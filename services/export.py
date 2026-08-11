@@ -7,13 +7,17 @@ import csv
 import io
 import re
 import time
+from collections.abc import Mapping
 from datetime import datetime
+from functools import lru_cache
 from typing import Any, Callable, Iterable
 
 from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.responses import JSONResponse
 
 from cw_platform.config_base import CONFIG as CONFIG_DIR, load_config
+from cw_platform.history_events import base_key_from_history_event, history_epoch_from_key, is_history_event_key
+from cw_platform.modules_registry import load_sync_ops
 from cw_platform.provider_instances import sanitize_instance_label
 
 router = APIRouter(prefix="/api", tags=["export"])
@@ -160,12 +164,85 @@ def _items_bucket(s: dict[str, Any], provider: str, feature: str, instance_id: s
     return {}
 
 
-def _combined_items_bucket(s: dict[str, Any], provider: str, instance_id: str | None = None) -> dict[str, Any]:
-    history = _items_bucket(s, provider, "history", instance_id=instance_id)
+@lru_cache(maxsize=64)
+def _provider_rewatch_read_supported(provider: str) -> bool:
+    ops = load_sync_ops(str(provider or "").upper())
+    caps = ops.capabilities() if ops and callable(getattr(ops, "capabilities", None)) else {}
+    hist = caps.get("history") if isinstance(caps, Mapping) else None
+    rewatches = hist.get("rewatches") if isinstance(hist, Mapping) else None
+    return bool(isinstance(rewatches, Mapping) and rewatches.get("read"))
+
+
+def _event_sort_value(key: str, item: dict[str, Any]) -> tuple[int, str]:
+    epoch = history_epoch_from_key(key)
+    if epoch is None:
+        raw = str(item.get("watched_at") or item.get("watchedAt") or item.get("viewed_at") or "")
+        if raw:
+            try:
+                epoch = int(datetime.fromisoformat(raw.replace("Z", "+00:00").replace(" ", "T")).timestamp())
+            except Exception:
+                epoch = 0
+        else:
+            epoch = 0
+    return int(epoch or 0), str(key or "")
+
+
+def _collapse_history_bucket(bucket: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for raw_key, raw_item in (bucket or {}).items():
+        key = str(raw_key)
+        item = dict(raw_item or {}) if isinstance(raw_item, dict) else {}
+        base = base_key_from_history_event(key) if is_history_event_key(key) else key
+        prev = out.get(base)
+        if not prev or _event_sort_value(key, item) >= _event_sort_value(str(prev.get("_cw_export_source_key") or base), prev):
+            item["_cw_export_source_key"] = key
+            out[base] = item
+    return out
+
+
+def _history_items_bucket(
+    s: dict[str, Any],
+    provider: str,
+    instance_id: str | None = None,
+    *,
+    include_rewatches: bool = True,
+) -> dict[str, Any]:
+    bucket = _items_bucket(s, provider, "history", instance_id=instance_id)
+    if include_rewatches and _provider_rewatch_read_supported(provider):
+        return bucket
+    return _collapse_history_bucket(bucket)
+
+
+def _combined_items_bucket(
+    s: dict[str, Any],
+    provider: str,
+    instance_id: str | None = None,
+    *,
+    include_rewatches: bool = True,
+) -> dict[str, Any]:
+    history = _history_items_bucket(s, provider, instance_id=instance_id, include_rewatches=include_rewatches)
     ratings = _items_bucket(s, provider, "ratings", instance_id=instance_id)
     merged: dict[str, dict[str, Any]] = {str(k): dict(v or {}) for k, v in history.items()}
+    ratings_by_base = {base_key_from_history_event(str(k)): dict(v or {}) for k, v in ratings.items()}
+    if include_rewatches and _provider_rewatch_read_supported(provider):
+        for key, history_item in list(merged.items()):
+            rating_item = ratings_by_base.get(base_key_from_history_event(key))
+            if not rating_item:
+                continue
+            out = _merge_best(history_item, rating_item)
+            for fld in ("watched_at", "watchedAt", "viewed_at"):
+                if history_item.get(fld):
+                    out[fld] = history_item[fld]
+            for fld in ("rating", "user_rating", "rated_at"):
+                if rating_item.get(fld) not in (None, ""):
+                    out[fld] = rating_item[fld]
+            merged[key] = out
+
     for k, rating_item in ratings.items():
         key = str(k)
+        base = base_key_from_history_event(key)
+        if include_rewatches and _provider_rewatch_read_supported(provider) and any(base_key_from_history_event(hk) == base for hk in merged):
+            continue
         src = dict(rating_item or {})
         if key not in merged:
             merged[key] = src
@@ -184,13 +261,29 @@ def _combined_items_bucket(s: dict[str, Any], provider: str, instance_id: str | 
     return merged
 
 
-def _feature_bucket(s: dict[str, Any], provider: str, feature: str, instance_id: str | None = None) -> dict[str, Any]:
+def _feature_bucket(
+    s: dict[str, Any],
+    provider: str,
+    feature: str,
+    instance_id: str | None = None,
+    *,
+    include_rewatches: bool = True,
+) -> dict[str, Any]:
     if feature == "combined":
-        return _combined_items_bucket(s, provider, instance_id=instance_id)
+        return _combined_items_bucket(s, provider, instance_id=instance_id, include_rewatches=include_rewatches)
+    if feature == "history":
+        return _history_items_bucket(s, provider, instance_id=instance_id, include_rewatches=include_rewatches)
     return _items_bucket(s, provider, feature, instance_id=instance_id)
 
-def _iter_items(s: dict[str, Any], provider: str, feature: str, instance_id: str | None = None) -> Iterable[tuple[str, dict[str, Any]]]:
-    b = _feature_bucket(s, provider, feature, instance_id=instance_id)
+def _iter_items(
+    s: dict[str, Any],
+    provider: str,
+    feature: str,
+    instance_id: str | None = None,
+    *,
+    include_rewatches: bool = True,
+) -> Iterable[tuple[str, dict[str, Any]]]:
+    b = _feature_bucket(s, provider, feature, instance_id=instance_id, include_rewatches=include_rewatches)
     for k, it in (b or {}).items():
         yield str(k), (it or {})
 
@@ -281,8 +374,24 @@ def _match_query(key: str, it: dict[str, Any], q: str) -> bool:
     return all(tok in hay for tok in tokens)
 
 
-def _filter_keys(s: dict[str, Any], provider: str, feature: str, q: str, instance_id: str | None = None) -> list[str]:
-    return _filter_keys_with_media(s, provider, feature, q, _DEFAULT_MEDIA_TYPES, instance_id=instance_id)
+def _filter_keys(
+    s: dict[str, Any],
+    provider: str,
+    feature: str,
+    q: str,
+    instance_id: str | None = None,
+    *,
+    include_rewatches: bool = True,
+) -> list[str]:
+    return _filter_keys_with_media(
+        s,
+        provider,
+        feature,
+        q,
+        _DEFAULT_MEDIA_TYPES,
+        instance_id=instance_id,
+        include_rewatches=include_rewatches,
+    )
 
 
 def _filter_keys_with_media(
@@ -292,9 +401,11 @@ def _filter_keys_with_media(
     q: str,
     media_types: tuple[str, ...],
     instance_id: str | None = None,
+    *,
+    include_rewatches: bool = True,
 ) -> list[str]:
     keys: list[str] = []
-    for k, it in _iter_items(s, provider, feature, instance_id=instance_id):
+    for k, it in _iter_items(s, provider, feature, instance_id=instance_id, include_rewatches=include_rewatches):
         t, *_ = _row_base(it)
         if t in media_types and _match_query(k, it, q):
             keys.append(k)
@@ -560,19 +671,32 @@ def _build_letterboxd(
     instance_id: str | None = None,
     *,
     include_watched_date: bool = True,
+    include_rewatches: bool = True,
 ) -> Response:
-    src_items = [(k, it) for k, it in _iter_items(s, provider, feature, instance_id=instance_id) if (not keys or k in keys)]
+    src_items = [
+        (k, it)
+        for k, it in _iter_items(s, provider, feature, instance_id=instance_id, include_rewatches=include_rewatches)
+        if (not keys or k in keys)
+    ]
     header, rows = _letterboxd_rows(feature, src_items, include_watched_date=include_watched_date)
     ts = time.strftime("%Y%m%d")
     return _csv_response(f"letterboxd_{feature}_{provider.lower()}_{ts}.csv", header, rows)
 
 
-def _build_imdb(provider: str, feature: str, s: dict[str, Any], keys: list[str], instance_id: str | None = None) -> Response:
+def _build_imdb(
+    provider: str,
+    feature: str,
+    s: dict[str, Any],
+    keys: list[str],
+    instance_id: str | None = None,
+    *,
+    include_rewatches: bool = True,
+) -> Response:
     if feature != "watchlist":
         raise HTTPException(400, "IMDb export supports watchlist only")
     header = ["const"]
     rows: list[list[str]] = []
-    for k, it in _iter_items(s, provider, "watchlist", instance_id=instance_id):
+    for k, it in _iter_items(s, provider, "watchlist", instance_id=instance_id, include_rewatches=include_rewatches):
         if keys and k not in keys:
             continue
         _, _, _, _, ids = _row_base(it)
@@ -582,10 +706,18 @@ def _build_imdb(provider: str, feature: str, s: dict[str, Any], keys: list[str],
     return _csv_response(f"imdb_watchlist_{provider.lower()}_{ts}.csv", header, rows)
 
 
-def _build_justwatch(provider: str, feature: str, s: dict[str, Any], keys: list[str], instance_id: str | None = None) -> Response:
+def _build_justwatch(
+    provider: str,
+    feature: str,
+    s: dict[str, Any],
+    keys: list[str],
+    instance_id: str | None = None,
+    *,
+    include_rewatches: bool = True,
+) -> Response:
     header = ["tmdbID", "imdbID", "Title", "Year", "Type"]
     rows: list[list[str]] = []
-    for k, it in _iter_items(s, provider, feature, instance_id=instance_id):
+    for k, it in _iter_items(s, provider, feature, instance_id=instance_id, include_rewatches=include_rewatches):
         if keys and k not in keys:
             continue
         t, title, year, _wd, ids = _row_base(it)
@@ -594,7 +726,15 @@ def _build_justwatch(provider: str, feature: str, s: dict[str, Any], keys: list[
     return _csv_response(f"justwatch_{feature}_{provider.lower()}_{ts}.csv", header, rows)
 
 
-def _build_yamtrack(provider: str, feature: str, s: dict[str, Any], keys: list[str], instance_id: str | None = None) -> Response:
+def _build_yamtrack(
+    provider: str,
+    feature: str,
+    s: dict[str, Any],
+    keys: list[str],
+    instance_id: str | None = None,
+    *,
+    include_rewatches: bool = True,
+) -> Response:
     header = [
         "media_id",
         "source",
@@ -612,7 +752,7 @@ def _build_yamtrack(provider: str, feature: str, s: dict[str, Any], keys: list[s
         "progressed_at",
     ]
     rows: list[list[str]] = []
-    for k, it in _iter_items(s, provider, feature, instance_id=instance_id):
+    for k, it in _iter_items(s, provider, feature, instance_id=instance_id, include_rewatches=include_rewatches):
         if keys and k not in keys:
             continue
         t, title, _year, _fallback_date, ids = _row_base(it)
@@ -650,7 +790,15 @@ def _build_yamtrack(provider: str, feature: str, s: dict[str, Any], keys: list[s
     ts = time.strftime("%Y%m%d")
     return _csv_response(f"yamtrack_{feature}_{provider.lower()}_{ts}.csv", header, rows)
 
-def _tmdb_build_imdb_v3(provider: str, feature: str, s: dict[str, Any], keys: list[str], instance_id: str | None = None) -> Response:
+def _tmdb_build_imdb_v3(
+    provider: str,
+    feature: str,
+    s: dict[str, Any],
+    keys: list[str],
+    instance_id: str | None = None,
+    *,
+    include_rewatches: bool = True,
+) -> Response:
     ts = time.strftime("%Y%m%d")
     if feature == "watchlist":
         header = [
@@ -674,7 +822,7 @@ def _tmdb_build_imdb_v3(provider: str, feature: str, s: dict[str, Any], keys: li
         ]
         rows: list[list[str]] = []
         pos = 0
-        for k, it in _iter_items(s, provider, "watchlist", instance_id=instance_id):
+        for k, it in _iter_items(s, provider, "watchlist", instance_id=instance_id, include_rewatches=include_rewatches):
             if keys and k not in keys:
                 continue
             t, title, year, _wd, ids = _row_base(it)
@@ -722,7 +870,7 @@ def _tmdb_build_imdb_v3(provider: str, feature: str, s: dict[str, Any], keys: li
             "Directors",
         ]
         rows: list[list[str]] = []
-        for k, it in _iter_items(s, provider, "ratings", instance_id=instance_id):
+        for k, it in _iter_items(s, provider, "ratings", instance_id=instance_id, include_rewatches=include_rewatches):
             if keys and k not in keys:
                 continue
             t, title, year, watched, ids = _row_base(it)
@@ -753,7 +901,15 @@ def _tmdb_build_imdb_v3(provider: str, feature: str, s: dict[str, Any], keys: li
     raise HTTPException(400, "TMDB supports watchlist and ratings only")
 
 
-def _tmdb_build_trakt_v2(provider: str, feature: str, s: dict[str, Any], keys: list[str], instance_id: str | None = None) -> Response:
+def _tmdb_build_trakt_v2(
+    provider: str,
+    feature: str,
+    s: dict[str, Any],
+    keys: list[str],
+    instance_id: str | None = None,
+    *,
+    include_rewatches: bool = True,
+) -> Response:
     header = [
         "rated_at",
         "type",
@@ -781,7 +937,7 @@ def _tmdb_build_trakt_v2(provider: str, feature: str, s: dict[str, Any], keys: l
     ts = time.strftime("%Y%m%d")
     rows: list[list[str]] = []
     src = "ratings" if feature == "ratings" else "watchlist"
-    for k, it in _iter_items(s, provider, src, instance_id=instance_id):
+    for k, it in _iter_items(s, provider, src, instance_id=instance_id, include_rewatches=include_rewatches):
         if keys and k not in keys:
             continue
         t, title, year, watched, ids = _row_base(it)
@@ -815,7 +971,15 @@ def _tmdb_build_trakt_v2(provider: str, feature: str, s: dict[str, Any], keys: l
     return _csv_response(f"tmdb_traktv2_{src}_{provider.lower()}_{ts}.csv", header, rows)
 
 
-def _tmdb_build_simkl_v1(provider: str, feature: str, s: dict[str, Any], keys: list[str], instance_id: str | None = None) -> Response:
+def _tmdb_build_simkl_v1(
+    provider: str,
+    feature: str,
+    s: dict[str, Any],
+    keys: list[str],
+    instance_id: str | None = None,
+    *,
+    include_rewatches: bool = True,
+) -> Response:
     header = [
         "SIMKL_ID",
         "Title",
@@ -833,7 +997,7 @@ def _tmdb_build_simkl_v1(provider: str, feature: str, s: dict[str, Any], keys: l
     ts = time.strftime("%Y%m%d")
     rows: list[list[str]] = []
     src = "ratings" if feature == "ratings" else "watchlist"
-    for k, it in _iter_items(s, provider, src, instance_id=instance_id):
+    for k, it in _iter_items(s, provider, src, instance_id=instance_id, include_rewatches=include_rewatches):
         if keys and k not in keys:
             continue
         t, title, year, watched, ids = _row_base(it)
@@ -857,16 +1021,24 @@ def _tmdb_build_simkl_v1(provider: str, feature: str, s: dict[str, Any], keys: l
     return _csv_response(f"tmdb_simklv1_{src}_{provider.lower()}_{ts}.csv", header, rows)
 
 
-def _build_tmdb(provider: str, feature: str, s: dict[str, Any], keys: list[str], instance_id: str | None = None) -> Response:
+def _build_tmdb(
+    provider: str,
+    feature: str,
+    s: dict[str, Any],
+    keys: list[str],
+    instance_id: str | None = None,
+    *,
+    include_rewatches: bool = True,
+) -> Response:
     p = provider.upper().strip()
     if p == "TRAKT":
-        return _tmdb_build_trakt_v2(provider, feature, s, keys, instance_id=instance_id)
+        return _tmdb_build_trakt_v2(provider, feature, s, keys, instance_id=instance_id, include_rewatches=include_rewatches)
     if p == "SIMKL":
-        return _tmdb_build_simkl_v1(provider, feature, s, keys, instance_id=instance_id)
-    return _tmdb_build_imdb_v3(provider, feature, s, keys, instance_id=instance_id)
+        return _tmdb_build_simkl_v1(provider, feature, s, keys, instance_id=instance_id, include_rewatches=include_rewatches)
+    return _tmdb_build_imdb_v3(provider, feature, s, keys, instance_id=instance_id, include_rewatches=include_rewatches)
 
 
-_BUILDERS: dict[str, Callable[[str, str, dict[str, Any], list[str], str | None], Response]] = {
+_BUILDERS: dict[str, Callable[..., Response]] = {
     "letterboxd": _build_letterboxd,
     "imdb": _build_imdb,
     "justwatch": _build_justwatch,
@@ -925,6 +1097,7 @@ def api_export_options() -> dict[str, Any]:
         }
         for fmt in labels
     }
+    rewatches = {p: _provider_rewatch_read_supported(p) for p in provs}
     return {
         "providers": provs,
         "instances": instances,
@@ -933,6 +1106,7 @@ def api_export_options() -> dict[str, Any]:
         "formats": formats,
         "labels": labels,
         "capabilities": capabilities,
+        "rewatches": rewatches,
         "media_types": list(_MEDIA_TYPES),
         "default_media_types": list(_DEFAULT_MEDIA_TYPES),
     }
@@ -946,18 +1120,31 @@ def api_export_sample(
     format: str = Query("letterboxd", pattern="^(letterboxd|imdb|justwatch|yamtrack|tmdb)$"),
     media_types: str = Query("movie", description="CSV of movie,show,season,episode"),
     include_watched_date: bool = Query(True, description="Letterboxd only: include WatchedDate for history exports"),
+    include_rewatches: bool = Query(True, description="Keep separate history events when supported by the source provider"),
     limit: int = Query(25, ge=1, le=250),
     q: str = Query("", description="case-insensitive multi-token contains"),
 ) -> dict[str, Any]:
     feature = feature.lower().strip()
+    q = q if isinstance(q, str) else ""
+    limit = limit if isinstance(limit, int) else 25
     s = _load_state(_state_features_for_export(feature))
     provider = (provider or "").upper().strip()
     inst = (provider_instance or "all").strip() or "all"
     fmt = format.lower().strip()
     media = _parse_media_types(media_types)
+    rewatch_supported = _provider_rewatch_read_supported(provider)
+    rewatch_mode = bool(include_rewatches and rewatch_supported)
     if provider and provider in _providers_in_state(s):
-        keys = _filter_keys_with_media(s, provider, feature, q, media, instance_id=inst)
-        bucket = _feature_bucket(s, provider, feature, instance_id=inst)
+        keys = _filter_keys_with_media(
+            s,
+            provider,
+            feature,
+            q,
+            media,
+            instance_id=inst,
+            include_rewatches=rewatch_mode,
+        )
+        bucket = _feature_bucket(s, provider, feature, instance_id=inst, include_rewatches=rewatch_mode)
         matched = [(k, bucket.get(k, {})) for k in keys]
         exportable, warnings, validation = _validate_items(
             fmt,
@@ -999,6 +1186,8 @@ def api_export_sample(
         "warnings": warnings,
         "validation": validation,
         "media_types": list(media),
+        "rewatches_supported": rewatch_supported,
+        "include_rewatches": rewatch_mode,
     }
 
 
@@ -1010,16 +1199,19 @@ def api_export_file(
     format: str = Query("letterboxd", pattern="^(letterboxd|imdb|justwatch|yamtrack|tmdb)$"),
     media_types: str = Query("movie", description="CSV of movie,show,season,episode"),
     include_watched_date: bool = Query(True, description="Letterboxd only: include WatchedDate for history exports"),
+    include_rewatches: bool = Query(True, description="Keep separate history events when supported by the source provider"),
     q: str = Query("", description="optional search filter (server-side)"),
     ids: str = Query("", description="optional CSV of keys to include (overrides q)"),
 ) -> Response:
     provider_in = (provider or "").upper().strip()
     provider_eff = provider_in or "TRAKT"
     feature = feature.lower().strip()
+    q = q if isinstance(q, str) else ""
     s = _load_state(_state_features_for_export(feature))
     fmt = format.lower().strip()
     inst = (provider_instance or "all").strip() or "all"
     media = _parse_media_types(media_types)
+    rewatch_mode = bool(include_rewatches and _provider_rewatch_read_supported(provider_eff))
 
     if fmt not in _BUILDERS:
         raise HTTPException(400, "Unknown format")
@@ -1030,7 +1222,7 @@ def api_export_file(
 
     if ids.strip():
         requested_keys = [k.strip() for k in ids.split(",") if k.strip()]
-        bucket = _feature_bucket(s, provider_eff, feature, instance_id=inst)
+        bucket = _feature_bucket(s, provider_eff, feature, instance_id=inst, include_rewatches=rewatch_mode)
         items = [
             (k, bucket.get(k, {}))
             for k in requested_keys
@@ -1038,11 +1230,19 @@ def api_export_file(
         ]
     else:
         requested_keys = (
-            _filter_keys_with_media(s, provider_eff, feature, q, media, instance_id=inst)
+            _filter_keys_with_media(
+                s,
+                provider_eff,
+                feature,
+                q,
+                media,
+                instance_id=inst,
+                include_rewatches=rewatch_mode,
+            )
             if provider_eff in _providers_in_state(s)
             else []
         )
-        bucket = _feature_bucket(s, provider_eff, feature, instance_id=inst)
+        bucket = _feature_bucket(s, provider_eff, feature, instance_id=inst, include_rewatches=rewatch_mode)
         items = [(k, bucket.get(k, {})) for k in requested_keys]
 
     exportable, _warnings, _validation = _validate_items(
@@ -1060,5 +1260,6 @@ def api_export_file(
             keys,
             inst,
             include_watched_date=include_watched_date,
+            include_rewatches=rewatch_mode,
         )
-    return _BUILDERS[fmt](provider_eff, feature, s, keys, inst)
+    return _BUILDERS[fmt](provider_eff, feature, s, keys, inst, include_rewatches=rewatch_mode)

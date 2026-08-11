@@ -41,6 +41,7 @@ from .syncAPI import (
 
 from services.analyzer import router as analyzer_router
 from services.export import router as export_router
+from services.importer import router as importer_router
 
 __all__ = [
     "config_router",
@@ -63,6 +64,7 @@ __all__ = [
     "version_router",
     "analyzer_router",
     "export_router",
+    "importer_router",
     "editor_router",
     "events_router",
     "provider_instances_router",
@@ -105,6 +107,7 @@ def register(
     app.include_router(version_router)
     app.include_router(analyzer_router)
     app.include_router(export_router)
+    app.include_router(importer_router)
     app.include_router(editor_router)
     app.include_router(events_router)
     app.include_router(provider_instances_router)

@@ -625,3 +625,102 @@ def test_editor_uses_page_scroll_for_table() -> None:
     assert "function startColumnResize" in js
     assert "#page-editor.cw-editor-wide .cw-side{display:none!important}" in css
     assert ".cw-col-resize" in css
+
+
+def test_connected_crosswatch_is_always_listed_even_without_synced_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    import api.editorAPI as editor
+
+    class Store:
+        def __init__(self, base: object) -> None:
+            self.base = base
+
+        def provider_names(self) -> list[str]:
+            return ["MDBLIST", "PLEX"]
+
+    monkeypatch.setattr(editor, "StateStore", Store)
+    monkeypatch.setattr(editor, "_load_policy", lambda: {})
+    monkeypatch.setattr(editor, "load_config", lambda: {"crosswatch": {"connected": True, "enabled": True}})
+
+    assert editor.api_editor_state_providers()["providers"] == ["MDBLIST", "PLEX", "CROSSWATCH"]
+
+
+def test_disconnected_crosswatch_is_not_listed(monkeypatch: pytest.MonkeyPatch) -> None:
+    import api.editorAPI as editor
+
+    class Store:
+        def __init__(self, base: object) -> None:
+            self.base = base
+
+        def provider_names(self) -> list[str]:
+            return ["PLEX"]
+
+    monkeypatch.setattr(editor, "StateStore", Store)
+    monkeypatch.setattr(editor, "_load_policy", lambda: {})
+    monkeypatch.setattr(editor, "load_config", lambda: {"crosswatch": {"connected": False, "enabled": True}})
+
+    assert editor.api_editor_state_providers()["providers"] == ["PLEX"]
+
+
+def test_crosswatch_already_in_state_is_not_duplicated(monkeypatch: pytest.MonkeyPatch) -> None:
+    import api.editorAPI as editor
+
+    class Store:
+        def __init__(self, base: object) -> None:
+            self.base = base
+
+        def provider_names(self) -> list[str]:
+            return ["CROSSWATCH", "PLEX"]
+
+    monkeypatch.setattr(editor, "StateStore", Store)
+    monkeypatch.setattr(editor, "_load_policy", lambda: {})
+    monkeypatch.setattr(editor, "load_config", lambda: {"crosswatch": {"connected": True, "enabled": True}})
+
+    assert editor.api_editor_state_providers()["providers"] == ["CROSSWATCH", "PLEX"]
+
+
+def test_crosswatch_falls_back_to_tracker_when_no_baseline(monkeypatch: pytest.MonkeyPatch) -> None:
+    import api.editorAPI as editor
+
+    seen: dict[str, object] = {}
+
+    class Ops:
+        def build_index(self, cfg: dict, *, feature: str) -> dict:
+            seen["cfg"] = dict(cfg)
+            seen["feature"] = feature
+            return {"tmdb:1@100": {"type": "movie", "title": "Heat"}}
+
+    monkeypatch.setattr(editor, "load_sync_ops", lambda name: Ops() if name == "CROSSWATCH" else None)
+    monkeypatch.setattr(editor, "load_config", lambda: {"crosswatch": {"connected": True, "enabled": True}})
+
+    items = editor._load_state_items("history", "CROSSWATCH", "default", raw_state={})
+
+    assert items == {"tmdb:1@100": {"type": "movie", "title": "Heat"}}
+    assert seen["feature"] == "history"
+    assert seen["cfg"]["_cw_readonly"] is True
+    assert seen["cfg"]["_cw_history_rewatches"] is True
+
+
+def test_crosswatch_baseline_wins_over_the_tracker_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    import api.editorAPI as editor
+
+    class Ops:
+        def build_index(self, cfg: dict, *, feature: str) -> dict:
+            raise AssertionError("tracker must not be read when a baseline exists")
+
+    monkeypatch.setattr(editor, "load_sync_ops", lambda name: Ops())
+    monkeypatch.setattr(editor, "load_config", lambda: {"crosswatch": {"connected": True}})
+
+    raw = {"providers": {"CROSSWATCH": {"history": {"baseline": {"items": {"tmdb:9": {"title": "Baseline"}}}}}}}
+
+    assert editor._load_state_items("history", "CROSSWATCH", "default", raw_state=raw) == {"tmdb:9": {"title": "Baseline"}}
+
+
+def test_other_providers_never_read_the_crosswatch_tracker(monkeypatch: pytest.MonkeyPatch) -> None:
+    import api.editorAPI as editor
+
+    def boom(name: str) -> object:
+        raise AssertionError("no provider other than CROSSWATCH may fall back")
+
+    monkeypatch.setattr(editor, "load_sync_ops", boom)
+
+    assert editor._load_state_items("history", "PLEX", "default", raw_state={}) == {}
