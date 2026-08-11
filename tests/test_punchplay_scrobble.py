@@ -77,6 +77,30 @@ def test_sink_is_registered_in_the_factory() -> None:
     assert isinstance(made, PunchPlaySink)
 
 
+def test_punchplay_is_available_as_configured_watcher_destination() -> None:
+    from api.scrobblerManagementAPI import _destination_availability
+    from providers.scrobble.routes import ROUTE_RATING_SINKS, ROUTE_SINKS, build_route_cfg, normalize_route
+    from providers.webhooks.config import sink_configured, webhook_sinks
+
+    cfg = {
+        "plex": {"account_token": "source-token"},
+        "punchplay": {"access_token": "at", "device_id": "crosswatch-abc"},
+        "scrobble": {"webhook": {"sinks": ["punchplay"]}},
+    }
+    route = normalize_route({"id": "R1", "provider": "plex", "sink": "punchplay"}, "R1")
+    view = build_route_cfg(cfg, route)
+
+    assert "punchplay" in ROUTE_SINKS
+    assert "punchplay" in ROUTE_RATING_SINKS
+    assert route["sink"] == "punchplay"
+    assert view["punchplay"]["access_token"] == "at"
+    assert sink_configured(cfg, "punchplay", "default") is True
+    assert "punchplay" in webhook_sinks(cfg, "plex", "default")
+
+    availability = {row["provider"]: row for row in _destination_availability(cfg)}
+    assert availability["punchplay"]["profiles"][0]["configured"] is True
+
+
 def test_start_pause_resume_stop_lifecycle(sink) -> None:
     s, calls = sink
 
@@ -110,14 +134,81 @@ def test_new_session_key_gets_a_new_session_id(sink) -> None:
     assert calls[0]["json"]["playback_session_id"] != calls[1]["json"]["playback_session_id"]
 
 
-def test_stop_below_threshold_is_downgraded_to_pause(sink) -> None:
+def test_stop_below_threshold_is_an_incomplete_stop(sink) -> None:
     s, calls = sink
 
     s.send(Event(action="start", progress=5.0))
     s.send(Event(action="stop", progress=40.0))
 
-    assert [_action_of(c) for c in calls] == ["start", "pause"]
-    assert "watched" not in calls[1]["json"]
+    assert [_action_of(c) for c in calls] == ["start", "stop"]
+    assert calls[1]["json"]["watched"] is False, "an incomplete stop saves resume progress, never a watch"
+
+
+def test_pause_without_a_live_session_becomes_an_incomplete_stop(sink) -> None:
+    s, calls = sink
+
+    s.send(Event(action="pause", progress=40.0))
+
+    assert [_action_of(c) for c in calls] == ["stop"], "a standalone pause is rejected with 409"
+    assert calls[0]["json"]["watched"] is False
+
+
+def test_failed_start_is_retried_as_a_start(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.scrobble.punchplay import sink as s
+
+    calls: list[str] = []
+    codes = iter([500, 200, 200])
+
+    def fake(adapter: Any, method: str, url: str, **kw: Any) -> _Resp:
+        calls.append(url.rsplit("/", 1)[-1])
+        return _Resp(next(codes, 200), {"error": "server_error"})
+
+    monkeypatch.setattr(s, "punchplay_request", fake)
+    s._SESSIONS.clear()
+
+    a = s.PunchPlaySink(cfg_provider=lambda: dict(CFG))
+    a.send(Event(action="start", progress=1.0))
+    a.send(Event(action="start", progress=5.0))
+
+    assert calls == ["start", "start"], "a rejected start must not leave a phantom local session"
+    assert len(s._SESSIONS) == 1
+
+
+def test_failed_stop_keeps_the_session_for_a_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.scrobble.punchplay import sink as s
+
+    calls: list[str] = []
+    codes = iter([200, 500, 200])
+
+    def fake(adapter: Any, method: str, url: str, **kw: Any) -> _Resp:
+        calls.append(url.rsplit("/", 1)[-1])
+        return _Resp(next(codes, 200), {"error": "server_error"})
+
+    monkeypatch.setattr(s, "punchplay_request", fake)
+    s._SESSIONS.clear()
+
+    a = s.PunchPlaySink(cfg_provider=lambda: dict(CFG))
+    a.send(Event(action="start", progress=5.0))
+    a.send(Event(action="stop", progress=95.0))
+    a.send(Event(action="stop", progress=95.0))
+
+    assert calls == ["start", "stop", "stop"]
+
+
+def test_zero_threshold_omits_watched_threshold(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.scrobble.punchplay import sink as s
+
+    captured: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        s, "punchplay_request",
+        lambda adapter, method, url, **kw: captured.append(kw["json"]) or _Resp(200, {}),
+    )
+    s._SESSIONS.clear()
+
+    cfg = {**CFG, "scrobble": {"punchplay": {"watched_at": 0}}}
+    s.PunchPlaySink(cfg_provider=lambda: cfg).send(Event(action="stop", progress=95.0))
+
+    assert "watched_threshold" not in captured[0], "the spec requires watched_threshold > 0"
 
 
 def test_stop_above_threshold_marks_watched(sink) -> None:
@@ -154,11 +245,34 @@ def test_episode_payload_carries_season_and_episode(sink) -> None:
     s, calls = sink
 
     s.send(Event(action="start", media_type="episode", season=1, number=2,
-                 ids={"tmdb": "95396"}, title="Severance"))
+                 ids={"tmdb": "5978363", "tmdb_show": "95396"}, title="Severance"))
     p = calls[0]["json"]
 
     assert p["media_type"] == "episode"
     assert p["season"] == 1 and p["episode"] == 2
+
+
+def test_episode_payload_identifies_the_show(sink) -> None:
+    s, calls = sink
+
+    s.send(Event(action="start", media_type="episode", season=6, number=2,
+                 ids={"tmdb": "5978363", "imdb": "tt35707151", "tvdb": "10958852",
+                      "tmdb_show": "69478", "imdb_show": "tt5834204", "tvdb_show": "328487"},
+                 title="The Handmaid's Tale"))
+    p = calls[0]["json"]
+
+    assert p["tmdb_id"] == 69478, "episode playback must identify the show, not the episode"
+    assert p["imdb_id"] == "tt5834204"
+    assert p["tvdb_id"] == 328487
+
+
+def test_episode_without_show_ids_is_skipped(sink) -> None:
+    s, calls = sink
+
+    s.send(Event(action="start", media_type="episode", season=1, number=2,
+                 ids={"tmdb": "5978363"}, title="Severance"))
+
+    assert calls == []
 
 
 def test_episode_without_numbering_is_skipped(sink) -> None:
@@ -406,30 +520,49 @@ def test_rating_sink_lists_include_punchplay() -> None:
         "assets/js/modals/scrobbler-webhook/index.js",
     ):
         text = (root / rel).read_text(encoding="utf-8")
+        assert '"punchplay"' in text.split("const sinks")[1].split("]")[0], rel
         assert '"punchplay"' in text.split("ratingSinks")[1].split("]")[0], rel
+        assert 'punchplay: "PunchPlay"' in text, rel
+
+    webhook = (root / "assets/js/modals/scrobbler-webhook/index.js").read_text(encoding="utf-8")
+    assert '" (not connected)"' not in webhook
+    assert "availableSinks().includes(sink)" in webhook
+    assert "availableRatingSinks()" in webhook
 
     api = (root / "api" / "scrobblerManagementAPI.py").read_text(encoding="utf-8")
     assert '"punchplay": bool(watch.get("plex_punchplay_ratings"))' in api
+    assert '"plex_punchplay_ratings"' in api
 
 
-def test_payload_validates_against_the_spec() -> None:
-    import yaml
-    from pathlib import Path
+# PlaybackInput from https://docs.punchplay.tv/openapi.yaml; the schema is additionalProperties: false
+PLAYBACK_INPUT_FIELDS = {
+    "event_id", "media_type", "title", "year", "imdb_id", "tmdb_id", "tvdb_id", "punchplay_id",
+    "season", "episode", "episode_end", "absolute_episode", "episode_title", "multi_episode",
+    "anime", "progress", "duration_seconds", "position_seconds", "device_id",
+    "playback_session_id", "event_created_at", "client_version", "watched", "watched_threshold",
+    "raw_filename", "jellyfin_user_id",
+}
+PLAYBACK_INPUT_REQUIRED = {"event_id", "event_created_at", "media_type", "playback_session_id", "title"}
 
-    spec_path = Path("C:/Users/pasca/AppData/Local/Temp/claude/c--Users-pasca-source-repos-GITHUB-repos-CrossWatch/4849a183-4294-45db-bfc8-af09e4d4b2b8/scratchpad/ppdocs/openapi.yaml")
-    if not spec_path.exists():
-        pytest.skip("openapi.yaml not vendored")
 
-    schema = yaml.safe_load(spec_path.read_text(encoding="utf-8"))["components"]["schemas"]["PlaybackInput"]
-    props = schema.get("properties") or {}
-
+@pytest.mark.parametrize("action,progress", [("start", 5.0), ("pause", 40.0), ("stop", 95.0)])
+def test_payload_validates_against_the_spec(monkeypatch: pytest.MonkeyPatch, action: str, progress: float) -> None:
     from providers.scrobble.punchplay import sink as s
 
     captured: list[dict[str, Any]] = []
-    s.punchplay_request = lambda adapter, method, url, **kw: captured.append(kw["json"]) or _Resp(200, {})  # type: ignore[assignment]
+    monkeypatch.setattr(
+        s, "punchplay_request",
+        lambda adapter, method, url, **kw: captured.append(kw["json"]) or _Resp(200, {}),
+    )
     s._SESSIONS.clear()
-    s.PunchPlaySink(cfg_provider=lambda: dict(CFG)).send(Event(action="stop", progress=95.0))
 
-    payload = captured[0]
-    for key in payload:
-        assert key in props, f"field {key!r} is not declared in PlaybackInput"
+    a = s.PunchPlaySink(cfg_provider=lambda: dict(CFG))
+    a.send(Event(action="start", progress=1.0))
+    a.send(Event(action=action, progress=progress))
+
+    for payload in captured:
+        unknown = set(payload) - PLAYBACK_INPUT_FIELDS
+        assert not unknown, f"fields not declared in PlaybackInput: {sorted(unknown)}"
+        assert PLAYBACK_INPUT_REQUIRED <= set(payload)
+        assert 0.0 <= payload["progress"] <= 1.0
+        assert payload.get("watched_threshold", 1.0) > 0.0

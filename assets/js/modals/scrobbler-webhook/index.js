@@ -1,6 +1,6 @@
 /* CrossWatch - Scrobbler Webhook Modal */
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const label = (v) => window.CW?.ProviderMeta?.label?.(v) || ({ plex: "Plex", jellyfin: "Jellyfin", emby: "Emby", trakt: "Trakt", simkl: "SIMKL", mdblist: "MDBList", crosswatch: "CrossWatch", floppy: "Floppy" }[String(v || "").toLowerCase()] || String(v || "").toUpperCase());
+const label = (v) => window.CW?.ProviderMeta?.label?.(v) || ({ plex: "Plex", jellyfin: "Jellyfin", emby: "Emby", trakt: "Trakt", simkl: "SIMKL", mdblist: "MDBList", crosswatch: "CrossWatch", floppy: "Floppy", punchplay: "PunchPlay" }[String(v || "").toLowerCase()] || String(v || "").toUpperCase());
 const sinks = ["crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay"];
 const ratingSinks = ["crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay"];
 const webhookSources = new Set(["plex", "jellyfin", "emby"]);
@@ -271,29 +271,38 @@ function sinksUsedBySource() {
     .map((w) => String(w.sink || "").toLowerCase()));
 }
 
+function availableSinks() {
+  return sinks.filter((s) => sinkProfiles(s).length > 0);
+}
+
+function availableRatingSinks() {
+  return ratingSinks.filter((s) => sinkProfiles(s).length > 0);
+}
+
 function selectedSinkKey() {
   const cur = selectedWebhook();
-  if (cur.sink) return String(cur.sink).toLowerCase();
+  const current = String(cur.sink || "").toLowerCase();
+  if (current && sinkProfiles(current).length) return current;
   const used = sinksUsedBySource();
-  return sinks.find((s) => sinkProfiles(s).length && !used.has(s)) || sinks.find((s) => sinkProfiles(s).length) || "trakt";
+  const available = availableSinks();
+  return available.find((s) => !used.has(s)) || available[0] || "";
 }
 
 function selectedSinkInstance(sink) {
   const cur = selectedWebhook();
   if (String(cur.sink || "").toLowerCase() === sink && cur.sink_instance) return String(cur.sink_instance);
-  return String(sinkProfiles(sink)[0]?.instance || "default");
+  return String(sinkProfiles(sink)[0]?.instance || "");
 }
 
 function sinkSelect(current) {
-  return sinks.map((s) => {
-    const ok = sinkProfiles(s).length > 0;
-    return `<option value="${esc(s)}" ${s === current ? "selected" : ""} ${ok ? "" : "disabled"}>${esc(label(s))}${ok ? "" : " (not connected)"}</option>`;
-  }).join("");
+  const available = availableSinks();
+  if (!available.length) return `<option value="" selected disabled>No configured destination provider</option>`;
+  return available.map((s) => `<option value="${esc(s)}" ${s === current ? "selected" : ""}>${esc(label(s))}</option>`).join("");
 }
 
 function sinkProfileSelect(sink, currentInst) {
   const profiles = sinkProfiles(sink);
-  if (!profiles.length) return `<option value="default">Not connected</option>`;
+  if (!profiles.length) return `<option value="" selected disabled>No configured profile</option>`;
   const cur = String(currentInst || "default");
   return profiles.map((p) => `<option value="${esc(p.instance)}" ${p.instance === cur ? "selected" : ""}>${esc(profileName(p.instance))}</option>`).join("");
 }
@@ -324,6 +333,7 @@ function fieldIcon(icon, labelText, html) {
 function sourcePanel(current) {
   const sink = selectedSinkKey();
   const sinkInst = selectedSinkInstance(sink);
+  const sinkDisabled = sink ? "" : "disabled";
   return `
     <section class="scrm-panel ${activeTab === "source" ? "active" : ""}" data-panel="source">
       <div class="scrm-journey scrm-journey-compact">
@@ -343,8 +353,8 @@ function sourcePanel(current) {
         <div class="scrm-provider-card ${providerClass(sink)}">
           <div class="scrm-card-head"><span class="scrm-provider-mark">${providerIcon(sink)}</span><div><strong>Destination</strong><small>${esc(label(sink))}</small></div></div>
           <div class="scrm-fields">
-            ${fieldIcon("gps_fixed", "Tracker", `<select class="input" id="scw-sink">${sinkSelect(sink)}</select>`)}
-            ${fieldIcon("person", "Profile", `<select class="input" id="scw-sink-instance">${sinkProfileSelect(sink, sinkInst)}</select>`)}
+            ${fieldIcon("gps_fixed", "Tracker", `<select class="input" id="scw-sink" ${sinkDisabled}>${sinkSelect(sink)}</select>`)}
+            ${fieldIcon("person", "Profile", `<select class="input" id="scw-sink-instance" ${sinkDisabled}>${sinkProfileSelect(sink, sinkInst)}</select>`)}
           </div>
         </div>
       </div>
@@ -404,11 +414,12 @@ function filtersPanel(provider, filt) {
 
 function globalRatingTargets() {
   const g = props.overview?.source_state?.global_plex_ratings || {};
-  return ratingSinks.filter((s) => g[s]);
+  return availableRatingSinks().filter((s) => g[s]);
 }
 
 function ratingsPanel(provider, ratingsTargets) {
   if (provider !== "plex") return "";
+  const targets = availableRatingSinks();
   const globalTargets = globalRatingTargets();
   const globalWarn = globalTargets.length
     ? `<div class="scrm-note is-warn"><span class="material-symbols-rounded">warning</span><span>Global Plex ratings is on and already forwarding to <strong>${esc(globalTargets.map(label).join(", "))}</strong>. This webhook sends ratings <em>in addition</em> to the global one — only enable trackers here if this profile needs different destinations.</span></div>`
@@ -420,7 +431,7 @@ function ratingsPanel(provider, ratingsTargets) {
         <div><strong>Plex ratings</strong><p>Forward Plex ratings received on this webhook to the selected trackers.</p></div>
       </div>
       ${globalWarn}
-      <div class="scrm-targets">${ratingSinks.map((sink) => `<label class="scrm-target"><input type="checkbox" data-rating="${esc(sink)}" ${ratingsTargets.includes(sink) ? "checked" : ""}><span class="scrm-target-mark">${providerIcon(sink)}</span><span>${esc(label(sink))}</span></label>`).join("")}</div>
+      <div class="scrm-targets">${targets.length ? targets.map((sink) => `<label class="scrm-target"><input type="checkbox" data-rating="${esc(sink)}" ${ratingsTargets.includes(sink) ? "checked" : ""}><span class="scrm-target-mark">${providerIcon(sink)}</span><span>${esc(label(sink))}</span></label>`).join("") : `<span class="scrm-muted">No configured rating destinations</span>`}</div>
     </section>
   `;
 }
@@ -540,7 +551,7 @@ function payload() {
   const instance = src.instance || "default";
   const body = { provider, provider_instance: instance };
   const sink = String(root.querySelector("#scw-sink")?.value || "").trim().toLowerCase();
-  if (sink && sinks.includes(sink)) {
+  if (sink && availableSinks().includes(sink)) {
     body.sinks = [sink];
     body.sink_instances = { [sink]: root.querySelector("#scw-sink-instance")?.value || "default" };
     if (originalSink && originalSink !== sink) body.prev_sink = originalSink;
