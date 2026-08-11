@@ -42,7 +42,7 @@
 </p>
 
 
-**CrossWatch (CW)** is a synchronization engine that keeps your **Plex, Jellyfin, Emby, SIMKL, Floppy, Trakt, AniList, TMDb, MDBList, PublicMetaDB, Tautulli, Kodi, Nuvio, Stremio and CW local tracker** in sync. It runs locally with a web UI where you link accounts, define sync pairs, run them manually or on a schedule, and review stats and history. CW also includes its own tracker to keep your data safe with snapshots. With Profiles, you can manage separate sync setups for yourself and for friends or family too, with their own servers and/or tracker API's.
+**CrossWatch (CW)** is a synchronization engine that act as a bridge and keeps your **Plex, Jellyfin, Emby, SIMKL, Floppy, Trakt, AniList, TMDb, MDBList, PublicMetaDB, PunchPlay Tautulli, Kodi, Nuvio, Stremio and CW local tracker** in sync. It runs locally with a web UI where you link accounts, define sync pairs, run them manually or on a schedule, and review stats and history. CW also includes its own tracker to keep your data safe with snapshots. With Profiles, you can manage separate sync setups for yourself and for friends or family too, with their own servers and/or tracker API's.
 
 ### CW in a nutshell:
 * **One brain for all your media syncs** A single place to configure everything.
@@ -50,12 +50,12 @@
 * **Multi media-server** and **multi tracker** support with profiles.
 * **Synchronization**
   * Watchlists, Ratings, History and Progress
-  * Rewatches: keep separate plays in sync (Trakt, SIMKL, PublicMetaDB, Floppy, CW)
+  * Rewatches: keep separate plays in sync for supported trackers.
   * Anime ID mapping (powered by AniBridge and animeApi) for AniList and SIMKL pairs, with custom mappings.
 * **Scrobble (tracks your activity)**
-  * **Watcher** (Plex/Emby/Jellyfin/Kodi to Trakt/SIMKL/MDBList/Floppy/CW)
+  * **Watcher** (Plex/Emby/Jellyfin/Kodi to supported trackers)
     * Does not require Plex Pass or Emby Premiere. Yay!
-  * **Webhooks** (Plex/Emby/Jellyfin to Trakt/SIMKL/MDBList)
+  * **Webhooks** (Plex/Emby/Jellyfin to supported trackers)
 * **Tools**
   * Analyzer: Finds items that are **stuck** or inconsistent between providers.
   * Playback Progress Manager: View and edit unfinished playback sessions across providers.
@@ -63,7 +63,7 @@
   * Events Viewer: Search and inspect sync runs.
   * Captures: Rollback tool for provider watchlist, ratings, and history.
 
-And much more...such as:
+And much, much more...such as:
 * Simple and advanced scheduling: From standard to more detailed pair schedules
 * CW Tracker Keeps snapshots/backups from your media servers and trackers.
 * Unified Watchlist: View all watchlist items in one place.
@@ -136,4 +136,3 @@ Every cent goes to the <b>ALS Foundation</b> in the Netherlands</center>
 <p align="center">
   Huge thanks to our sponsors for keeping this project moving.
 </p>
-
