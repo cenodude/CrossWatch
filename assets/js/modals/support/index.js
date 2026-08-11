@@ -3,6 +3,8 @@
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 const REQUEST_TIMEOUT_MS = 45_000;
+const DOWNLOAD_TIMEOUT_MS = 600_000;
+const timeoutError = (label, ms) => new Error(`${label} timed out after ${Math.round(ms / 1000)}s`);
 const SECTIONS = [
   { key: "config", label: "Redacted config", desc: "config.json with tokens, keys and hashes masked." },
   { key: "diagnostics", label: "Diagnostics", desc: "Database and event-archive health, environment, baseline shape." },
@@ -15,7 +17,7 @@ const esc = (value) => String(value ?? "").replace(/[&<>"]/g, (ch) => ({ "&": "&
 
 async function fjson(url) {
   const ctrl = new AbortController();
-  const timer = window.setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+  const timer = window.setTimeout(() => ctrl.abort(timeoutError("Request", REQUEST_TIMEOUT_MS)), REQUEST_TIMEOUT_MS);
   try {
     const r = await fetch(url, { cache: "no-store", signal: ctrl.signal });
     if (!r.ok) throw new Error(`${r.status} ${r.statusText || ""}`.trim());
@@ -27,7 +29,7 @@ async function fjson(url) {
 
 async function fblob(url) {
   const ctrl = new AbortController();
-  const timer = window.setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+  const timer = window.setTimeout(() => ctrl.abort(timeoutError("Download", DOWNLOAD_TIMEOUT_MS)), DOWNLOAD_TIMEOUT_MS);
   try {
     const r = await fetch(url, { cache: "no-store", signal: ctrl.signal });
     if (!r.ok) throw new Error(`${r.status} ${r.statusText || ""}`.trim());

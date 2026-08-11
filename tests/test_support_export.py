@@ -2,10 +2,35 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import zipfile
+from pathlib import Path
 
 from cw_platform.orchestrator._state_store import StateStore
 from services import support
+
+REPO = Path(__file__).resolve().parents[1]
+SUPPORT_JS = REPO / "assets" / "js" / "modals" / "support" / "index.js"
+
+
+def test_support_download_does_not_reuse_the_metadata_timeout() -> None:
+    js = SUPPORT_JS.read_text(encoding="utf-8")
+
+    fblob = js.split("async function fblob(")[1].split("\n}")[0]
+    assert "DOWNLOAD_TIMEOUT_MS" in fblob
+    assert "REQUEST_TIMEOUT_MS" not in fblob
+
+    download_ms = int(re.search(r"DOWNLOAD_TIMEOUT_MS\s*=\s*([\d_]+)", js).group(1).replace("_", ""))
+    request_ms = int(re.search(r"REQUEST_TIMEOUT_MS\s*=\s*([\d_]+)", js).group(1).replace("_", ""))
+    assert download_ms > request_ms
+
+
+def test_support_aborts_carry_a_reason_so_the_ui_never_says_user_aborted() -> None:
+    js = SUPPORT_JS.read_text(encoding="utf-8")
+
+    assert "ctrl.abort()" not in js
+    for call in re.findall(r"ctrl\.abort\((.*?)\), \w+_TIMEOUT_MS\)", js):
+        assert call.strip().startswith("timeoutError(")
 
 
 def _baseline(items: dict) -> dict:
