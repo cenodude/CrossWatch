@@ -418,6 +418,26 @@ DEFAULT_CFG: dict[str, Any] = {
         },
     },
 
+    "scrob": {
+        "server_url": "",                               # http(s)://host:7330 (the URL you open Scrob with)
+        "api_key": "",                                  # Scrob API key from Connections > API Key
+        "username": "",                                 # Scrob account username (writes need a signed in session)
+        "password": "",                                 # Scrob account password
+        "api_prefix": "",                               # Detected on connect: "" direct backend, "/api/proxy" behind the Scrob frontend
+        "access_token": "",                             # Short lived Scrob JWT, re-issued from username/password
+        "expires_at": 0,                                # Unix seconds the access token expires at
+        "totp_enabled": False,                          # Scrob account uses 2FA, so the token cannot be renewed unattended
+        "reauth_required": False,                       # 2FA session expired; reads keep working, writes need a new code
+        "verify_ssl": False,                            # Verify TLS certificates
+        "timeout": 12.0,                                # HTTP timeout (seconds)
+        "watchlist_name": "Watchlist",                  # Scrob list used as the CrossWatch watchlist
+        "history_max_pages": 500,                       # Safety cap for paged history reads
+        "rate_limit": {
+            "get_per_sec": 10,
+            "post_per_sec": 5,
+        },
+    },
+
     "playback_progress": {
         "disabled_profiles": [],                        # Provider profiles excluded from Continue Watching, e.g. ["trakt:default"]
         "provider_timeout_seconds": 20.0,               # Max time this screen waits for provider profiles during one refresh
@@ -674,6 +694,7 @@ DEFAULT_CFG: dict[str, Any] = {
             "JELLYFIN": 500,
             "EMBY": 500,
             "FLOPPY": 500,
+            "SCROB": 500,
             "STREMIO": 500,
             "NUVIO": 500,
             "KODI": 500
@@ -833,6 +854,7 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
         "nuvio": {"access_token", "refresh_token", "_pending_tv_login", "_pending_tv_caller"},
         "stremio": {"auth_key", "authKey"},
         "floppy": {"api_token"},
+        "scrob": {"api_key", "password", "access_token"},
         "tautulli": {"api_key"},
         "trakt": {"access_token", "refresh_token", "client_secret"},
         "jellyfin": {"access_token", "api_key", "password"},
@@ -1528,6 +1550,71 @@ def _normalize_floppy(cfg: dict[str, Any]) -> None:
                 _block(inst)
 
 
+def _normalize_scrob(cfg: dict[str, Any]) -> None:
+    s0 = cfg.get("scrob")
+    if isinstance(s0, dict):
+        s = s0
+    else:
+        s = {}
+        cfg["scrob"] = s
+    insts = s.get("instances") if isinstance(s.get("instances"), dict) else None
+
+    def _block(block: dict[str, Any]) -> None:
+        server = str(block.get("server_url") or "").strip().rstrip("/")
+        if server and not server.startswith(("http://", "https://")):
+            server = "http://" + server
+        block["server_url"] = server.rstrip("/")
+        block["api_key"] = str(block.get("api_key") or "").strip()
+        block["username"] = str(block.get("username") or "").strip()
+        block["password"] = str(block.get("password") or "")
+        prefix = str(block.get("api_prefix") or "").strip().strip("/")
+        block["api_prefix"] = f"/{prefix}" if prefix else ""
+        block["totp_enabled"] = bool(block.get("totp_enabled"))
+        block["reauth_required"] = bool(block.get("reauth_required"))
+        block["access_token"] = str(block.get("access_token") or "").strip()
+        try:
+            block["expires_at"] = int(block.get("expires_at") or 0)
+        except Exception:
+            block["expires_at"] = 0
+        block["verify_ssl"] = bool(block.get("verify_ssl", False))
+        try:
+            timeout = float(block.get("timeout", 12.0) or 12.0)
+        except Exception:
+            timeout = 12.0
+        block["timeout"] = max(1.0, min(timeout, 120.0))
+        block["watchlist_name"] = str(block.get("watchlist_name") or "Watchlist").strip() or "Watchlist"
+        try:
+            pages = int(block.get("history_max_pages", 500) or 500)
+        except Exception:
+            pages = 500
+        block["history_max_pages"] = max(1, min(pages, 100000))
+        caps = block.get("capabilities")
+        block["capabilities"] = {str(k): bool(v) for k, v in caps.items()} if isinstance(caps, dict) else {}
+        rl0 = block.get("rate_limit") if isinstance(block.get("rate_limit"), dict) else {}
+        rl = dict(rl0 or {})
+
+        def _rate(key: str, default: float) -> float:
+            try:
+                value = float(rl.get(key, default))
+            except Exception:
+                value = default
+            return max(0.0, min(value, 100.0))
+
+        get_rps = _rate("get_per_sec", 10.0)
+        post_rps = _rate("post_per_sec", 5.0)
+        block["rate_limit"] = {
+            "get_per_sec": int(get_rps) if float(get_rps).is_integer() else get_rps,
+            "post_per_sec": int(post_rps) if float(post_rps).is_integer() else post_rps,
+        }
+
+    _block(s)
+    if isinstance(insts, dict):
+        s["instances"] = insts
+        for inst in insts.values():
+            if isinstance(inst, dict):
+                _block(inst)
+
+
 def _is_hhmm(v: str) -> bool:
     s = (v or "").strip()
     if len(s) != 5 or s[2] != ":":
@@ -2031,6 +2118,7 @@ def load_config() -> dict[str, Any]:
     _normalize_nuvio(cfg)
     _normalize_stremio(cfg)
     _normalize_floppy(cfg)
+    _normalize_scrob(cfg)
     _normalize_anime_mapping(cfg)
     _normalize_scheduling(cfg)
     _normalize_app_auth(cfg)
@@ -2085,6 +2173,7 @@ def save_config(cfg: dict[str, Any]) -> None:
     _normalize_nuvio(data)
     _normalize_stremio(data)
     _normalize_floppy(data)
+    _normalize_scrob(data)
     _normalize_anime_mapping(data)
     _normalize_scheduling(data)
     _normalize_app_auth(data)

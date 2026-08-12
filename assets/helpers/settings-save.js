@@ -7,12 +7,13 @@ const _cwSecretIds = [
   "plex_home_pin", "simkl_client_id", "simkl_client_secret",
   "trakt_client_id", "trakt_client_secret", "anilist_client_id", "anilist_client_secret",
   "tmdb_api_key", "tmdb_sync_api_key", "tmdb_sync_session_id", "mdblist_key", "publicmetadb_key", "tautulli_key", "floppy_token",
-  "kodi_password"
+  "scrob_key", "scrob_password", "kodi_password"
 ];
 const _cwTouchedIds = [
   ..._cwSecretIds,
   "tautulli_server", "tautulli_user_id",
   "floppy_server", "floppy_verify_ssl",
+  "scrob_server", "scrob_username", "scrob_verify_ssl", "scrob_totp",
   "cw_tracker_label", "cw_tracker_retention_days", "cw_tracker_auto_snapshot", "cw_tracker_max_snapshots",
   "cw_tracker_restore_watchlist", "cw_tracker_restore_history", "cw_tracker_restore_ratings", "cw_tracker_restore_progress"
 ];
@@ -316,6 +317,28 @@ function _cwProviderAuthError(provider, code) {
     if (key.startsWith("validation_http_")) return "Floppy validation failed";
     return "Saving Floppy failed";
   }
+  if (provider === "scrob") {
+    if (key === "server_url_required") return "Enter Scrob server URL";
+    if (key === "api_key_required") return "Enter your Scrob API key";
+    if (key === "username_required") return "Enter your Scrob username";
+    if (key === "password_required") return "Enter your Scrob password";
+    if (key === "invalid_api_key") return "Invalid Scrob API key";
+    if (key === "invalid_credentials") return "Invalid Scrob username or password";
+    if (key === "totp_required") return "Enter the 6 digit code from your authenticator app";
+    if (key === "invalid_totp_code") return "That two factor code was not accepted";
+    if (key === "credentials_mismatch") return "That API key belongs to a different Scrob account than this login";
+    if (key === "password_login_disabled") return "Password login is disabled on this Scrob server";
+    if (key === "email_not_confirmed") return "Confirm your Scrob account email first";
+    if (key === "api_not_found") return "No Scrob API found at this URL";
+    if (key === "api_prefix_mismatch") return "Scrob API not reachable at this URL";
+    if (key === "validation_timeout") return "Scrob validation timed out";
+    if (key === "unreachable" || key === "validation_failed") return "Could not reach Scrob";
+    if (key === "invalid_ssl") return "Scrob SSL validation failed";
+    if (key === "validation_bad_response") return "Scrob returned an unexpected response";
+    if (key === "server_error") return "Scrob server error";
+    if (key.startsWith("validation_http_")) return "Scrob validation failed";
+    return "Saving Scrob failed";
+  }
   if (provider === "publicmetadb") {
     if (key === "api_key_required") return "Enter your PublicMetaDB API key";
     if (key === "invalid_api_key") return "Invalid PublicMetaDB API key";
@@ -396,6 +419,26 @@ async function _cwValidateFloppySecret(inst, payload) {
   if (!resp?.ok || body?.ok === false) {
     _cwAbortSave(_cwProviderAuthError("floppy", body?.error || body?.detail || `http_${resp?.status || 0}`));
   }
+}
+
+async function _cwValidateScrobSecret(inst, payload) {
+  const server = _cwNorm(payload?.server_url);
+  const key = _cwNorm(payload?.api_key);
+  const username = _cwNorm(payload?.username);
+  const password = typeof payload?.password === "string" ? payload.password : "";
+  const touched = !!(server || key || username || password || typeof payload?.verify_ssl === "boolean" || _cwNorm(payload?.totp_code));
+  if (!touched) return null;
+  const url = `/api/scrob/save?instance=${encodeURIComponent(_cwNormInst(inst))}&validate_only=1`;
+  const resp = await _cwRequest(url, {
+    method: "POST",
+    headers: _cwJSONHeaders,
+    body: JSON.stringify({ ...(payload || {}), validate_only: true })
+  }, 20000);
+  const body = await _cwReadBody(resp);
+  if (!resp?.ok || body?.ok === false) {
+    _cwAbortSave(_cwProviderAuthError("scrob", body?.error || body?.detail || `http_${resp?.status || 0}`));
+  }
+  return body || null;
 }
 
 async function _cwSaveAppAuth(serverCfg) {
@@ -726,7 +769,8 @@ async function saveSettings() {
         publicmetadb: _cwInstBlock(serverCfg?.publicmetadb, _cwSelectedInst("publicmetadb")),
         tmdb_sync: _cwInstBlock(serverCfg?.tmdb_sync, _cwSelectedInst("tmdb_sync", "cw.ui.tmdb_sync.auth.instance.v1")),
         kodi: _cwInstBlock(serverCfg?.kodi, _cwSelectedInst("kodi", "cw.ui.kodi.auth.instance.v1")),
-        floppy: _cwInstBlock(serverCfg?.floppy, _cwSelectedInst("floppy", "cw.ui.floppy.auth.instance.v1"))
+        floppy: _cwInstBlock(serverCfg?.floppy, _cwSelectedInst("floppy", "cw.ui.floppy.auth.instance.v1")),
+        scrob: _cwInstBlock(serverCfg?.scrob, _cwSelectedInst("scrob", "cw.ui.scrob.auth.instance.v1"))
       };
       const publicmetadbInst = _cwSelectedInst("publicmetadb");
       const publicmetadbKey = _cwReadSecret("publicmetadb_key", _cwNorm(secrets.publicmetadb?.api_key));
@@ -801,6 +845,43 @@ async function saveSettings() {
         if (floppyServerChanged) ftarget.server_url = floppyServer;
         if (floppyToken.changed) _cwApplySecret(ftarget, "api_token", floppyToken);
         if (floppyVerifyChanged) ftarget.verify_ssl = floppyVerify;
+        mark();
+      }
+
+      const scrobInst = _cwSelectedInst("scrob", "cw.ui.scrob.auth.instance.v1");
+      const scrobPrev = secrets.scrob || {};
+      const scrobPending = window.__cwScrobPendingAuth?.[scrobInst];
+      const scrobPendingValid = !!(
+        scrobPending?.data &&
+        (!window.cwAuth?.scrob?.currentSignature || scrobPending.signature === window.cwAuth.scrob.currentSignature())
+      );
+      const scrobFieldIds = ["scrob_server", "scrob_key", "scrob_username", "scrob_password", "scrob_verify_ssl", "scrob_totp"];
+      const scrobTouched = scrobFieldIds.some((id) => _cwTouched(id));
+      let scrobAuth = scrobPendingValid ? { ...(scrobPending.data || {}) } : null;
+      if (!scrobAuth && scrobTouched) {
+        const scrobServer = _cwNorm(_cwEl("scrob_server")?.value || "");
+        const scrobKey = _cwReadSecret("scrob_key", _cwNorm(scrobPrev?.api_key));
+        const scrobPassword = _cwReadSecret("scrob_password", _cwNorm(scrobPrev?.password));
+        const scrobUserEl = _cwEl("scrob_username");
+        const scrobVerifyEl = _cwEl("scrob_verify_ssl");
+        const scrobPayload = {};
+        if (scrobServer) scrobPayload.server_url = scrobServer;
+        if (scrobKey.changed && scrobKey.set) scrobPayload.api_key = scrobKey.set;
+        if (scrobUserEl && (scrobUserEl.dataset?.touched || _cwNorm(scrobUserEl.value))) scrobPayload.username = _cwNorm(scrobUserEl.value || "");
+        if (scrobPassword.changed && scrobPassword.set) scrobPayload.password = scrobPassword.set;
+        if (scrobVerifyEl) scrobPayload.verify_ssl = !!scrobVerifyEl.checked;
+        if (_cwNorm(_cwEl("scrob_totp")?.value || "")) scrobPayload.totp_code = _cwNorm(_cwEl("scrob_totp")?.value || "");
+        scrobAuth = await _cwValidateScrobSecret(scrobInst, scrobPayload);
+      }
+      if (scrobAuth?.ok) {
+        cfg.scrob = cfg.scrob && typeof cfg.scrob === "object" ? cfg.scrob : {};
+        const starget = _cwEnsureInstBlock(cfg.scrob, scrobInst);
+        [
+          "server_url", "api_key", "username", "password", "verify_ssl", "api_prefix",
+          "access_token", "expires_at", "capabilities", "totp_enabled", "reauth_required"
+        ].forEach((key) => {
+          if (Object.prototype.hasOwnProperty.call(scrobAuth, key)) starget[key] = scrobAuth[key];
+        });
         mark();
       }
     } catch (e) {

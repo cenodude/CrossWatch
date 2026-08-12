@@ -2433,6 +2433,161 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
 
 
 
+    # SCROB
+    @app.post("/api/scrob/save", tags=["auth"])
+    def api_scrob_save(
+        payload: dict[str, Any] = Body(...),
+        instance: str | None = Query(None),
+        validate_only: bool = Query(False),
+    ) -> dict[str, Any]:
+        from providers.auth import _auth_SCROB as scrob_auth
+
+        inst = normalize_instance_id(instance)
+        raw = payload or {}
+        validate_only = bool(validate_only or raw.get("validate_only") or raw.get("dry_run"))
+        server_in = scrob_auth.normalize_server_url(raw.get("server_url") or raw.get("server") or "")
+        key_in = str(raw.get("api_key") or raw.get("key") or "").strip()
+        user_in = str(raw.get("username") or "").strip()
+        pass_in = str(raw.get("password") or "")
+        totp_in = str(raw.get("totp_code") or "").strip()
+
+        def _masked(value: str) -> bool:
+            return value in ("\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022", "********", "**********") or bool(value and set(value) <= {"*"})
+
+        cfg = load_config()
+        current = ensure_instance_block(cfg, "scrob", inst)
+        final_server = server_in or scrob_auth.normalize_server_url(current.get("server_url"))
+        final_key = str(current.get("api_key") or "").strip() if _masked(key_in) or not key_in else key_in
+        final_user = user_in or str(current.get("username") or "").strip()
+        final_pass = str(current.get("password") or "") if _masked(pass_in) or not pass_in else pass_in
+        verify_ssl = coerce_bool(raw.get("verify_ssl", current.get("verify_ssl", False)), False)
+
+        if not final_server:
+            return {"ok": False, "error": "server_url_required", "instance": inst}
+        if not final_key:
+            return {"ok": False, "error": "api_key_required", "instance": inst}
+        if not final_user:
+            return {"ok": False, "error": "username_required", "instance": inst}
+        if not final_pass:
+            return {"ok": False, "error": "password_required", "instance": inst}
+
+        ok, reason, detail = scrob_auth.validate_credentials(
+            final_server,
+            final_key,
+            final_user,
+            final_pass,
+            totp_code=totp_in,
+            timeout=float(current.get("timeout", 12.0) or 12.0),
+            verify_ssl=verify_ssl,
+        )
+        if not ok:
+            _safe_log(log_fn, "SCROB", f"[SCROB] validation failed reason={reason} instance={inst}")
+            return {"ok": False, "error": reason, "instance": inst, "requires_2fa": reason in ("totp_required", "invalid_totp_code")}
+
+        result = {
+            "ok": True,
+            "server_url": final_server,
+            "api_key": final_key,
+            "has_key": True,
+            "username": final_user,
+            "password": final_pass,
+            "has_password": True,
+            "verify_ssl": verify_ssl,
+            "instance": inst,
+            "api_prefix": str(detail.get("api_prefix") or ""),
+            "access_token": str(detail.get("access_token") or ""),
+            "expires_at": int(detail.get("expires_at") or 0),
+            "capabilities": dict(detail.get("capabilities") or {}),
+            "totp_enabled": bool(detail.get("totp_enabled")),
+            "reauth_required": False,
+        }
+        if validate_only:
+            _safe_log(log_fn, "SCROB", f"[SCROB] validated instance={inst} prefix={result['api_prefix'] or '/'}")
+            return result
+
+        current["server_url"] = final_server
+        current["api_key"] = final_key
+        current["username"] = final_user
+        current["password"] = final_pass
+        current["verify_ssl"] = verify_ssl
+        current["api_prefix"] = str(detail.get("api_prefix") or "")
+        current["access_token"] = str(detail.get("access_token") or "")
+        current["expires_at"] = int(detail.get("expires_at") or 0)
+        current["capabilities"] = dict(detail.get("capabilities") or {})
+        current["totp_enabled"] = bool(detail.get("totp_enabled"))
+        current["reauth_required"] = False
+        save_config(cfg)
+        _safe_log(log_fn, "SCROB", f"[SCROB] saved instance={inst} prefix={current['api_prefix'] or '/'}")
+        if isinstance(probe_cache, dict):
+            probe_cache["scrob"] = (0.0, False)
+        return {k: v for k, v in result.items() if k not in ("api_key", "password", "access_token")}
+
+    @app.get("/api/scrob/status", tags=["auth"])
+    def api_scrob_status(instance: str | None = Query(None), verify: int | None = Query(None)) -> dict[str, Any]:
+        from providers.auth import _auth_SCROB as scrob_auth
+
+        inst = normalize_instance_id(instance)
+        cfg = load_config()
+        s = ensure_instance_block(cfg, "scrob", inst)
+        server = scrob_auth.normalize_server_url(s.get("server_url"))
+        if not scrob_auth.is_configured(s):
+            return {"connected": False, "instance": inst}
+        base = {
+            "connected": True,
+            "server_url": server,
+            "has_key": True,
+            "username": str(s.get("username") or ""),
+            "verify_ssl": coerce_bool(s.get("verify_ssl", False), False),
+            "instance": inst,
+            "capabilities": dict(s.get("capabilities") or {}),
+            "totp_enabled": bool(s.get("totp_enabled")),
+            "reauth_required": bool(s.get("reauth_required")),
+        }
+        if not verify:
+            return base
+        ok, reason, detail = scrob_auth.validate_credentials(
+            server,
+            str(s.get("api_key") or ""),
+            str(s.get("username") or ""),
+            str(s.get("password") or ""),
+            timeout=float(s.get("timeout", 12.0) or 12.0),
+            verify_ssl=coerce_bool(s.get("verify_ssl", False), False),
+        )
+        if ok:
+            s["api_prefix"] = str(detail.get("api_prefix") or "")
+            s["access_token"] = str(detail.get("access_token") or "")
+            s["expires_at"] = int(detail.get("expires_at") or 0)
+            s["capabilities"] = dict(detail.get("capabilities") or {})
+            save_config(cfg)
+            base["capabilities"] = s["capabilities"]
+        return {**base, "connected": bool(ok), **({} if ok else {"reason": reason})}
+
+    @app.post("/api/scrob/disconnect", tags=["auth"])
+    def api_scrob_disconnect(instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            s = ensure_instance_block(cfg, "scrob", inst)
+            s["server_url"] = ""
+            s["api_key"] = ""
+            s["username"] = ""
+            s["password"] = ""
+            s["api_prefix"] = ""
+            s["access_token"] = ""
+            s["expires_at"] = 0
+            s["capabilities"] = {}
+            s["totp_enabled"] = False
+            s["reauth_required"] = False
+            save_config(cfg)
+            _safe_log(log_fn, "SCROB", f"[SCROB] disconnected instance={inst}")
+            if isinstance(probe_cache, dict):
+                probe_cache["scrob"] = (0.0, False)
+            return {"ok": True, "instance": inst}
+        except Exception as e:
+            _safe_log(log_fn, "SCROB", f"[SCROB] ERROR disconnect: {e}")
+            return {"ok": False, "error": "disconnect_failed", "instance": inst}
+
+
     # TRAKT
     def trakt_request_pin(instance_id: Any) -> dict[str, Any]:
         prov = _import_provider("providers.auth._auth_TRAKT")

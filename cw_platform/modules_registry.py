@@ -26,6 +26,7 @@ MODULES: dict[str, dict[str, str]] = {
         "_auth_ANILIST":  "providers.auth._auth_ANILIST",
         "_auth_TMDB":     "providers.auth._auth_TMDB",
         "_auth_PUNCHPLAY": "providers.auth._auth_PUNCHPLAY",
+        "_auth_SCROB":    "providers.auth._auth_SCROB",
     },
     "SYNC": {
         "_mod_PLEX":       "providers.sync._mod_PLEX",
@@ -44,6 +45,7 @@ MODULES: dict[str, dict[str, str]] = {
         "_mod_ANILIST":    "providers.sync._mod_ANILIST",
         "_mod_TMDB":       "providers.sync._mod_TMDB",
         "_mod_PUNCHPLAY":  "providers.sync._mod_PUNCHPLAY",
+        "_mod_SCROB":      "providers.sync._mod_SCROB",
     },
 }
 
