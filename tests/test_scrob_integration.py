@@ -164,6 +164,14 @@ def test_scrobbler_management_lists_scrob_as_a_watcher_source():
     assert "scrob" in SINK_PROVIDERS
 
 
+def test_scrobbler_management_marks_scrob_watcher_source_configured():
+    from api.scrobblerManagementAPI import _scrobble_source_connected
+
+    full = {"server_url": "http://s", "api_key": "k", "username": "u", "password": "p"}
+    assert _scrobble_source_connected({"scrob": full}, "scrob", "default") is True
+    assert _scrobble_source_connected({"scrob": {**full, "password": ""}}, "scrob", "default") is False
+
+
 def test_playback_progress_registers_the_scrob_adapter():
     from services.playback_progress.service import PHASE1_PROVIDERS
     from services.playback_progress.adapters.scrob import ScrobPlaybackAdapter

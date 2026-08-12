@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from cw_platform.config_base import load_config, save_config
 from cw_platform.provider_instances import get_provider_block, list_instance_ids, normalize_instance_id
 from cw_platform.provider_usage import WEBHOOK_SOURCE_PROVIDERS, provider_label, webhook_source_enabled
+from providers.auth import runtime as auth_runtime
 from providers.scrobble.routes import (
     ROUTE_PROVIDERS,
     ROUTE_SINKS,
@@ -116,6 +117,9 @@ def _scrobble_source_connected(cfg: Mapping[str, Any], provider: str, instance: 
     if key == "kodi":
         block = get_provider_block(_dict(cfg), "kodi", normalize_instance_id(instance))
         return bool(str(block.get("server") or "").strip() and block.get("connection_verified") is True)
+    if key == "scrob":
+        block = get_provider_block(_dict(cfg), "scrob", normalize_instance_id(instance))
+        return auth_runtime.is_configured("scrob", block)
     return media_source_connected(cfg, key, instance)
 
 
