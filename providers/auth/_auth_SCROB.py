@@ -675,7 +675,7 @@ def html() -> str:
   <style>
     #sec-scrob .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
     #sec-scrob .inline{display:flex;gap:8px;align-items:center}
-    #sec-scrob .verify{display:flex;gap:8px;align-items:center;margin-top:10px}
+    #sec-scrob .verify{display:flex;gap:8px;align-items:center;margin-top:8px}
     #sec-scrob .msg{margin-left:auto;padding:8px 12px;border-radius:12px;border:1px solid rgba(0,255,170,.18);background:rgba(0,255,170,.08);color:#b9ffd7;font-weight:600}
     #sec-scrob .msg.warn{border-color:rgba(255,210,0,.18);background:rgba(255,210,0,.08);color:#ffe9a6}
     #sec-scrob .msg.hidden{display:none}
@@ -717,7 +717,7 @@ def html() -> str:
                 <input id="scrob_key" name="scrob_key" type="password" placeholder="********" autocomplete="off" spellcheck="false" autocapitalize="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
               </div>
             </div>
-            <div class="grid2" style="margin-top:12px">
+            <div class="grid2" style="margin-top:10px">
               <div>
                 <label for="scrob_username">Username</label>
                 <input id="scrob_username" name="scrob_username" type="text" placeholder="scrob" autocomplete="off" spellcheck="false" autocapitalize="off">
@@ -727,16 +727,16 @@ def html() -> str:
                 <input id="scrob_password" name="scrob_password" type="password" placeholder="********" autocomplete="off" spellcheck="false" autocapitalize="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
               </div>
             </div>
-            <div id="scrob_totp_row" class="hidden" style="margin-top:12px;max-width:240px">
+            <div id="scrob_totp_row" class="hidden" style="margin-top:10px;max-width:240px">
               <label for="scrob_totp">Two factor code</label>
               <input id="scrob_totp" name="scrob_totp" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="123456" maxlength="10" spellcheck="false">
               <div class="muted" style="margin-top:6px">Scrob issues a session that lasts 7 days and cannot be renewed on its own. Reads and scrobbling keep working after that; enter a new code to resume writes.</div>
             </div>
-            <div id="scrob_reauth" class="msg warn hidden" style="margin-top:10px;margin-left:0">
+            <div id="scrob_reauth" class="msg warn hidden" style="margin-top:8px;margin-left:0">
               Two factor session expired. Reads and scrobbling are still running - enter a new code to resume history, ratings and watchlist writes.
             </div>
             <label class="verify"><input id="scrob_verify_ssl" type="checkbox"> Verify SSL</label>
-            <div id="scrob_actions_row" class="inline" style="margin-top:12px">
+            <div id="scrob_actions_row" class="inline" style="margin-top:10px">
               <button id="scrob_connect" class="btn" type="button">Connect Scrob</button>
               <button id="scrob_disconnect" type="button" hidden aria-hidden="true" tabindex="-1"></button>
               <div id="scrob_msg" class="msg ok hidden" role="status" aria-live="polite"></div>
