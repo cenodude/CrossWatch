@@ -36,7 +36,7 @@ from .scrobbleAPI import _ensure_media_profile_webhook_ids, _ensure_route_rating
 router = APIRouter(prefix="/api/scrobbler", tags=["scrobbler-management"])
 
 SOURCE_PROVIDERS = tuple(WEBHOOK_SOURCE_PROVIDERS)
-WATCHER_SOURCE_PROVIDERS = ("plex", "jellyfin", "emby", "kodi")
+WATCHER_SOURCE_PROVIDERS = ("plex", "jellyfin", "emby", "kodi", "scrob")
 SINK_PROVIDERS = tuple(sorted(ROUTE_SINKS))
 ALLOWED_FILTER_KEYS = {
     "username_whitelist",

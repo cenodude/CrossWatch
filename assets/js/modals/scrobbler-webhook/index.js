@@ -1,8 +1,8 @@
 /* CrossWatch - Scrobbler Webhook Modal */
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const label = (v) => window.CW?.ProviderMeta?.label?.(v) || ({ plex: "Plex", jellyfin: "Jellyfin", emby: "Emby", trakt: "Trakt", simkl: "SIMKL", mdblist: "MDBList", crosswatch: "CrossWatch", floppy: "Floppy", punchplay: "PunchPlay" }[String(v || "").toLowerCase()] || String(v || "").toUpperCase());
-const sinks = ["crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay"];
-const ratingSinks = ["crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay"];
+const label = (v) => window.CW?.ProviderMeta?.label?.(v) || ({ plex: "Plex", jellyfin: "Jellyfin", emby: "Emby", trakt: "Trakt", simkl: "SIMKL", mdblist: "MDBList", crosswatch: "CrossWatch", floppy: "Floppy", punchplay: "PunchPlay", scrob: "Scrob" }[String(v || "").toLowerCase()] || String(v || "").toUpperCase());
+const sinks = ["crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "scrob"];
+const ratingSinks = ["crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "scrob"];
 const webhookSources = new Set(["plex", "jellyfin", "emby"]);
 
 function flashCopied(btn) {
@@ -271,12 +271,18 @@ function sinksUsedBySource() {
     .map((w) => String(w.sink || "").toLowerCase()));
 }
 
+function sourceProviderKey() {
+  return String(selectedWebhook().provider || "").toLowerCase();
+}
+
 function availableSinks() {
-  return sinks.filter((s) => sinkProfiles(s).length > 0);
+  const self = sourceProviderKey();
+  return sinks.filter((s) => s !== self && sinkProfiles(s).length > 0);
 }
 
 function availableRatingSinks() {
-  return ratingSinks.filter((s) => sinkProfiles(s).length > 0);
+  const self = sourceProviderKey();
+  return ratingSinks.filter((s) => s !== self && sinkProfiles(s).length > 0);
 }
 
 function selectedSinkKey() {
