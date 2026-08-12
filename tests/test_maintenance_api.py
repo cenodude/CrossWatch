@@ -452,7 +452,7 @@ def test_clear_provider_cache_preserves_pair_scoped_history_mapping_state(tmp_pa
         "emby.health.shadow.json",
         "currently_watching.json",
     }
-    preserved = set()
+    preserved = {"anime_mapping_overrides.json"}
 
     for name in sync_owned_state | runtime_cache | preserved:
         (state_dir / name).write_text("{}", encoding="utf-8")

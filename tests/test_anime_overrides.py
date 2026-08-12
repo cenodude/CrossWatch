@@ -80,6 +80,79 @@ def test_delete_removes_only_the_named_rule(config_base: Path) -> None:
     assert ov.delete_override("nope") is False
 
 
+def test_export_round_trips_through_import(config_base: Path) -> None:
+    ov.upsert_override(_rule(match_id="1", title="One"))
+    ov.upsert_override(_rule(match_id="2", title="Two"))
+    payload = ov.export_payload()
+    assert len(payload["overrides"]) == 2
+
+    ov.save_overrides([])
+    result = ov.import_overrides(payload, mode="merge")
+
+    assert result["added"] == 2
+    assert result["updated"] == 0
+    assert result["skipped_count"] == 0
+    assert [r["title"] for r in ov.load_overrides()] == ["One", "Two"]
+
+
+def test_import_merge_keeps_untouched_rules_and_preserves_created_at(config_base: Path) -> None:
+    keep = ov.upsert_override(_rule(match_id="1", title="Keep"))
+    existing = ov.upsert_override(_rule(match_id="2", title="Old"))
+
+    result = ov.import_overrides(
+        {"overrides": [_rule(id=existing["id"], match_id="2", title="New"), _rule(match_id="3", title="Fresh")]},
+        mode="merge",
+    )
+
+    rows = {r["id"]: r for r in ov.load_overrides()}
+    assert result["added"] == 1
+    assert result["updated"] == 1
+    assert len(rows) == 3
+    assert rows[keep["id"]]["title"] == "Keep"
+    assert rows[existing["id"]]["title"] == "New"
+    assert rows[existing["id"]]["created_at"] == existing["created_at"]
+
+
+def test_import_replace_drops_rules_not_in_the_file(config_base: Path) -> None:
+    ov.upsert_override(_rule(match_id="1", title="Gone"))
+    result = ov.import_overrides([_rule(match_id="9", title="Only")], mode="replace")
+
+    assert result["mode"] == "replace"
+    assert [r["title"] for r in ov.load_overrides()] == ["Only"]
+    assert result["total"] == 1
+
+
+def test_import_skips_invalid_rules_but_keeps_the_valid_ones(config_base: Path) -> None:
+    result = ov.import_overrides(
+        {
+            "overrides": [
+                _rule(match_id="1", title="Good"),
+                _rule(match_id="2", title="Bad", match_provider="nope"),
+                "not-a-rule",
+            ]
+        },
+        mode="merge",
+    )
+
+    assert result["imported"] == 1
+    assert result["skipped_count"] == 2
+    assert result["skipped"][0]["title"] == "Bad"
+    assert [r["title"] for r in ov.load_overrides()] == ["Good"]
+
+
+def test_import_rejects_a_file_with_no_usable_rules(config_base: Path) -> None:
+    ov.upsert_override(_rule(match_id="1", title="Keep"))
+
+    with pytest.raises(ov.OverrideError):
+        ov.import_overrides({"overrides": [_rule(match_provider="nope")]}, mode="replace")
+    with pytest.raises(ov.OverrideError):
+        ov.import_overrides({"rules": []}, mode="merge")
+    with pytest.raises(ov.OverrideError):
+        ov.import_overrides({"overrides": []}, mode="wipe")
+
+    assert [r["title"] for r in ov.load_overrides()] == ["Keep"]
+
+
 @pytest.mark.parametrize(
     "patch",
     [

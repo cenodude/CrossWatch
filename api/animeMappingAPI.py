@@ -3,9 +3,11 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import json
+import time
 from typing import Any
 
-from fastapi import APIRouter, Body, Path as PathParam
+from fastapi import APIRouter, Body, Path as PathParam, Response
 from fastapi.responses import JSONResponse
 
 from _logging import log
@@ -13,11 +15,14 @@ from _logging import log
 from cw_platform.anime_mapping.auto_update import refresh_from_config as refresh_auto_update
 from cw_platform.anime_mapping.auto_update import status as auto_update_status
 from cw_platform.anime_mapping.overrides import (
+    IMPORT_MODES,
     MATCH_PROVIDERS,
     MEDIA_TYPES,
     TARGET_NAMESPACES,
     OverrideError,
     delete_override,
+    export_payload,
+    import_overrides,
     load_overrides,
     safe_override_error,
     stats as override_stats,
@@ -252,6 +257,61 @@ def api_anime_mapping_overrides_list() -> JSONResponse:
             extra={"error_type": e.__class__.__name__, "error": str(e)},
         )
         return JSONResponse({"ok": False, "error": e.__class__.__name__, "message": _client_error_message("override list")}, status_code=500)
+
+
+@router.get("/overrides/export")
+def api_anime_mapping_overrides_export() -> Response:
+    try:
+        payload = export_payload()
+    except Exception as e:
+        log(
+            "overrides_export_failed",
+            level="error",
+            module="ANIME_MAPPING",
+            extra={"error_type": e.__class__.__name__, "error": str(e)},
+        )
+        return JSONResponse({"ok": False, "error": e.__class__.__name__, "message": _client_error_message("override export")}, status_code=500)
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    log("overrides_exported", level="debug", module="ANIME_MAPPING", extra={"rules": len(payload.get("overrides") or [])})
+    return Response(
+        content=json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="crosswatch-anime-mappings-{stamp}.json"'},
+    )
+
+
+@router.post("/overrides/import")
+def api_anime_mapping_overrides_import(payload: dict[str, Any] | None = Body(default=None)) -> JSONResponse:
+    data = payload if isinstance(payload, dict) else {}
+    mode = str(data.get("mode") or "merge").strip().lower()
+    if mode not in IMPORT_MODES:
+        return JSONResponse({"ok": False, "error": "invalid_mode", "message": "mode must be 'merge' or 'replace'"}, status_code=400)
+    source = data.get("payload") if "payload" in data else data
+    try:
+        result = import_overrides(source, mode=mode)
+    except OverrideError as e:
+        return JSONResponse({"ok": False, "error": "invalid_import", "message": safe_override_error(e)}, status_code=400)
+    except Exception as e:
+        log(
+            "overrides_import_failed",
+            level="error",
+            module="ANIME_MAPPING",
+            extra={"error_type": e.__class__.__name__, "error": str(e)},
+        )
+        return JSONResponse({"ok": False, "error": e.__class__.__name__, "message": _client_error_message("override import")}, status_code=500)
+    log(
+        "overrides_imported",
+        level="debug",
+        module="ANIME_MAPPING",
+        extra={
+            "mode": result.get("mode"),
+            "added": result.get("added"),
+            "updated": result.get("updated"),
+            "skipped": result.get("skipped_count"),
+            "total": result.get("total"),
+        },
+    )
+    return JSONResponse({"ok": True, "result": result, "overrides": load_overrides(), "stats": override_stats()})
 
 
 @router.post("/overrides")

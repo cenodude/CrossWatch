@@ -48,8 +48,13 @@ _SAFE_OVERRIDE_ERRORS: dict[str, str] = {
         "The last episode cannot be lower than the first",
         "An episode rule needs a season",
         f"At most {_MAX_OVERRIDES} rules are supported",
+        "mode must be 'merge' or 'replace'",
+        "The file does not contain a list of rules",
+        "The file contains no valid rules",
     )
 }
+
+IMPORT_MODES = ("merge", "replace")
 
 
 def safe_override_error(exc: Exception) -> str:
@@ -254,6 +259,82 @@ def delete_override(rule_id: Any) -> bool:
             return False
         save_overrides(kept)
     return True
+
+
+def export_payload() -> dict[str, Any]:
+    return {"overrides": load_overrides(), "updated_at": int(time.time())}
+
+
+def _rows_from_payload(raw: Any) -> list[Any]:
+    if isinstance(raw, list):
+        return list(raw)
+    if isinstance(raw, Mapping):
+        rows = raw.get("overrides")
+        if isinstance(rows, list):
+            return list(rows)
+    raise OverrideError("The file does not contain a list of rules")
+
+
+def import_overrides(raw: Any, *, mode: str = "merge") -> dict[str, Any]:
+    wanted = str(mode or "merge").strip().lower()
+    if wanted not in IMPORT_MODES:
+        raise OverrideError("mode must be 'merge' or 'replace'")
+
+    incoming = _rows_from_payload(raw)
+    if len(incoming) > _MAX_OVERRIDES:
+        raise OverrideError(f"At most {_MAX_OVERRIDES} rules are supported")
+
+    parsed: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for index, row in enumerate(incoming):
+        if not isinstance(row, Mapping):
+            skipped.append({"index": index, "title": "", "reason": GENERIC_OVERRIDE_ERROR})
+            continue
+        try:
+            clean = normalize_override(row)
+        except OverrideError as e:
+            skipped.append({"index": index, "title": _text(row.get("title"), 64), "reason": safe_override_error(e)})
+            continue
+        clean["updated_at"] = _as_int(row.get("updated_at")) or clean["updated_at"]
+        parsed.append(clean)
+
+    if incoming and not parsed:
+        raise OverrideError("The file contains no valid rules")
+
+    added = 0
+    updated = 0
+    with _LOCK:
+        current = load_overrides() if wanted == "merge" else []
+        by_id: dict[str, dict[str, Any]] = {}
+        order: list[str] = []
+        for row in current:
+            rid = str(row.get("id") or "")
+            by_id[rid] = dict(row)
+            order.append(rid)
+        for clean in parsed:
+            rid = str(clean.get("id") or "")
+            previous = by_id.get(rid)
+            if previous is None:
+                order.append(rid)
+                added += 1
+            else:
+                clean["created_at"] = previous.get("created_at") or clean["created_at"]
+                updated += 1
+            by_id[rid] = clean
+        if len(order) > _MAX_OVERRIDES:
+            raise OverrideError(f"At most {_MAX_OVERRIDES} rules are supported")
+        save_overrides([by_id[rid] for rid in order])
+
+    return {
+        "mode": wanted,
+        "received": len(incoming),
+        "imported": len(parsed),
+        "added": added,
+        "updated": updated,
+        "skipped": skipped[:50],
+        "skipped_count": len(skipped),
+        "total": len(order),
+    }
 
 
 def _ids_of(item: Mapping[str, Any]) -> dict[str, str]:

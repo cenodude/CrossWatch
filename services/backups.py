@@ -13,6 +13,8 @@ import json
 import os
 import re
 import shutil
+import sqlite3
+import tempfile
 import uuid
 import zipfile
 
@@ -48,6 +50,8 @@ _FULL_DIRS = (
 _OPTIONAL_RESTORE_DIRS = (
     "cache",
 )
+_SQLITE_SUFFIXES = (".sqlite3", ".sqlite", ".db")
+_SQLITE_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
 
 
 def _utc_now() -> datetime:
@@ -226,6 +230,36 @@ def _candidate_roots(
     return out
 
 
+def _is_sqlite_db(rel: str) -> bool:
+    name = PurePosixPath(rel).name
+    return any(name.endswith(suffix) for suffix in _SQLITE_SUFFIXES)
+
+
+def _sqlite_sidecar_owner(rel: str) -> str | None:
+    posix = PurePosixPath(rel)
+    name = posix.name
+    for suffix in _SQLITE_SIDECAR_SUFFIXES:
+        if not name.endswith(suffix):
+            continue
+        base = name[: -len(suffix)]
+        if _is_sqlite_db(base):
+            return str(posix.with_name(base))
+    return None
+
+
+def _snapshot_sqlite(src: Path, dst: Path) -> None:
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    source = sqlite3.connect(str(src), timeout=15.0)
+    try:
+        target = sqlite3.connect(str(dst), timeout=15.0)
+        try:
+            source.backup(target)
+        finally:
+            target.close()
+    finally:
+        source.close()
+
+
 def _sha256_file(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as f:
@@ -310,7 +344,8 @@ def create_backup(
         },
     )
 
-    files: list[Path] = []
+    members: list[tuple[str, Path]] = []
+    sidecars: dict[str, list[tuple[str, Path]]] = {}
     seen: set[str] = set()
     for root in _candidate_roots(sc, include_snapshots=include_snapshots, include_reports=include_reports, include_cache=include_cache):
         for file_path in _iter_files_under(root):
@@ -318,16 +353,41 @@ def create_backup(
             if rel_file in seen:
                 continue
             seen.add(rel_file)
-            files.append(file_path)
+            owner = _sqlite_sidecar_owner(rel_file)
+            if owner is not None:
+                sidecars.setdefault(owner, []).append((rel_file, file_path))
+                continue
+            members.append((rel_file, file_path))
 
-    LOG.debug("backup file selection completed", extra={"scope": sc, "file_count": len(files)})
+    LOG.debug("backup file selection completed", extra={"scope": sc, "file_count": len(members)})
 
     manifest_files: list[dict[str, Any]] = []
     total_size = 0
+    snapshot_dir: tempfile.TemporaryDirectory[str] | None = None
+    db_snapshots = 0
+    db_snapshot_errors: list[str] = []
     try:
+        for idx, (rel_file, src) in enumerate(members):
+            if not _is_sqlite_db(rel_file):
+                continue
+            if snapshot_dir is None:
+                snapshot_dir = tempfile.TemporaryDirectory(prefix="cw-backup-db-", dir=str(_backups_dir()))
+            dst = Path(snapshot_dir.name) / f"{idx}-{PurePosixPath(rel_file).name}"
+            try:
+                _snapshot_sqlite(src, dst)
+            except Exception as e:
+                db_snapshot_errors.append(f"{rel_file}: {type(e).__name__}")
+                members.extend(sidecars.get(rel_file) or ())
+                continue
+            members[idx] = (rel_file, dst)
+            db_snapshots += 1
+
+        if db_snapshot_errors:
+            LOG.warn(f"backup could not snapshot {len(db_snapshot_errors)} database(s); copied raw files instead")
+            LOG.debug("backup database snapshot errors", extra={"scope": sc, "errors": _safe_log_errors(db_snapshot_errors)})
+
         with zipfile.ZipFile(tmp, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
-            for file_path in files:
-                rel_file = _rel_from_config(file_path)
+            for rel_file, file_path in members:
                 st = file_path.stat()
                 total_size += int(st.st_size)
                 digest = _sha256_file(file_path)
@@ -357,6 +417,7 @@ def create_backup(
                 "master_key_included": key_included,
                 "external_key_required": bool(encrypted and not key_included),
                 "env_key_configured": _is_env_key_configured(),
+                "database_snapshots": db_snapshots,
             }
             zf.writestr(MANIFEST_NAME, json.dumps(manifest, indent=2, sort_keys=False) + "\n")
         os.replace(tmp, target)
@@ -368,6 +429,12 @@ def create_backup(
         LOG.error(f"backup create failed scope={sc} trigger={trigger or 'manual'}: {type(e).__name__}")
         LOG.debug(f"backup create failure detail: {_error_text(e)}", extra={"scope": sc, "target": rel})
         raise
+    finally:
+        if snapshot_dir is not None:
+            try:
+                snapshot_dir.cleanup()
+            except Exception:
+                pass
 
     result = {
         "ok": True,
@@ -630,6 +697,19 @@ def restore_backup(path: str, *, create_pre_restore: bool = True) -> dict[str, A
     except zipfile.BadZipFile:
         LOG.warn(f"backup restore failed invalid archive path={rel}")
         return {"ok": False, "error": "invalid_backup_archive", "restored": restored, "errors": errors}
+
+    restored_set = set(restored)
+    for member in restored:
+        if not _is_sqlite_db(member):
+            continue
+        for suffix in _SQLITE_SIDECAR_SUFFIXES:
+            sidecar = f"{member}{suffix}"
+            if sidecar in restored_set:
+                continue
+            try:
+                _resolve_restore_target(sidecar).unlink(missing_ok=True)
+            except Exception as e:
+                errors.append(f"{sidecar}: {type(e).__name__}")
 
     result = {
         "ok": len(errors) == 0,
