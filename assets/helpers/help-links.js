@@ -16,6 +16,7 @@
     anilist: "crosswatch/settings/connections/trackers/anilist",
     punchplay: "crosswatch/settings/connections/trackers/punchplay",
     floppy: "crosswatch/settings/connections/trackers/floppy",
+    scrob: "crosswatch/settings/connections/trackers/scrob",
     crosswatch: "crosswatch/settings/connections/trackers/crosswatch",
     nuvio: "crosswatch/settings/connections/media-clients/nuvio",
     kodi: "crosswatch/settings/connections/media-clients/kodi",

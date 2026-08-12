@@ -47,7 +47,7 @@
 
   const AUTH_GROUPS = Object.freeze([
     { id: "sec-auth-media", title: "Media servers", keys: ["PLEX", "JELLYFIN", "EMBY"] },
-    { id: "sec-auth-trackers", title: "Trackers", keys: ["CROSSWATCH", "TRAKT", "SIMKL", "TMDB", "MDBLIST", "PUBLICMETADB", "ANILIST", "PUNCHPLAY", "FLOPPY"] },
+    { id: "sec-auth-trackers", title: "Trackers", keys: ["CROSSWATCH", "TRAKT", "SIMKL", "TMDB", "MDBLIST", "PUBLICMETADB", "ANILIST", "PUNCHPLAY", "FLOPPY", "SCROB"] },
     { id: "sec-auth-clients", title: "Media clients", keys: ["NUVIO", "KODI", "STREMIO"] },
     { id: "sec-auth-others", title: "Others", keys: ["TAUTULLI"] },
   ]);
@@ -162,6 +162,7 @@
     if (p === "mdblist") return hasConfiguredValue(b.api_key) || hasConfiguredValue(b.access_token);
     if (p === "punchplay") return hasConfiguredValue(b.access_token);
     if (p === "floppy") return hasConfiguredValue(b.server_url || b.server) && hasConfiguredValue(b.api_token || b.token);
+    if (p === "scrob") return hasConfiguredValue(b.server_url) && hasConfiguredValue(b.api_key) && hasConfiguredValue(b.username) && hasConfiguredValue(b.password);
     if (p === "nuvio") return (hasConfiguredValue(b.access_token) || hasConfiguredValue(b.refresh_token)) && hasConfiguredValue(b.profile_id);
     if (p === "kodi") return hasConfiguredValue(b.server) && b.connection_verified === true;
     if (p === "stremio") return hasConfiguredValue(b.auth_key) || hasConfiguredValue(b.authKey);
@@ -517,6 +518,15 @@
       order: [".mdbl-method-row", "#mdblist_api_panel", "#mdblist_device_panel", ".cw-connection-method-action-row", ".inline"],
       code: ["#mdblist_device_panel"],
       actions: [{ row: ".mdbl-method-row", status: "#mdblist_msg", buttons: "#mdblist_device_start, #mdblist_device_cancel, #mdblist_device_restart, #mdblist_save", extract: ".mdbl-actions", order: "6" }]
+    },
+    SCROB: {
+      provider: "scrob", logo: "SCROB", help: window.CW.HelpLinks.url("scrob"), deleteSelector: "#scrob_disconnect",
+      tabs: { auth: ["lock", "Authentication", "Connect your Scrob server"] },
+      copy: { auth: ["Scrob Authentication", "Connect your self hosted Scrob server."] },
+      journey: ["Connect to Scrob", "Copy the API key from Scrob > Connections > API Key, then enter the same URL you open Scrob with plus your Scrob username and password.", "111,54,204", "174,69,200", "SCROB"],
+      steps: [["1", "Enter server URL", "The address you open Scrob with"], ["2", "Paste the API key", "Scrob > Connections > API Key"], ["3", "Sign in", "Scrob only accepts writes from a signed in session"]],
+      order: [".grid2", "#scrob_totp_row", "#scrob_reauth", ".verify", "#scrob_actions_row"],
+      actions: [{ row: "#scrob_actions_row", status: "#scrob_msg", buttons: "#scrob_connect" }]
     },
     PUNCHPLAY: {
       provider: "punchplay", logo: "PUNCHPLAY", help: window.CW.HelpLinks.url("punchplay"), deleteSelector: "#punchplay_disconnect",

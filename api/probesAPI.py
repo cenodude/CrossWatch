@@ -65,6 +65,7 @@ PROVIDERS: tuple[str, ...] = (
     "stremio",
     "floppy",
     "punchplay",
+    "scrob",
 )
 
 # Caches
@@ -135,6 +136,7 @@ PROBE_CFG_KEY: dict[str, str] = {
     "STREMIO": "stremio",
     "FLOPPY": "floppy",
     "PUNCHPLAY": "punchplay",
+    "SCROB": "scrob",
     "CROSSWATCH": "crosswatch",
     "CW": "crosswatch",
 }
@@ -277,6 +279,13 @@ def _probe_key(provider_id: str, cfg: Mapping[str, Any]) -> str:
         tok = str((pp.get("access_token") or "")).strip()
         exp = str(pp.get("expires_at") or "0")
         return f"punchplay|tok:{_secret_cache_tag(tok)}|exp:{exp}" if tok else "punchplay|unconfigured"
+
+    if p == "scrob":
+        sc = cfg.get("scrob") or {}
+        base = _norm_url(sc.get("server_url"))
+        key = str((sc.get("api_key") or "")).strip()
+        user = str((sc.get("username") or "")).strip()
+        return f"scrob|srv:{_secret_cache_tag(base)}|key:{_secret_cache_tag(key)}|user:{_secret_cache_tag(user)}" if (base and key) else "scrob|unconfigured"
 
     if p == "crosswatch":
         c = cfg.get("crosswatch") or {}
@@ -1226,6 +1235,67 @@ def _probe_floppy_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> t
     return ok, rsn
 
 
+def _probe_scrob_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
+    key = _probe_key("scrob", cfg)
+    bust_ts = _consume_bust("scrob")
+    now = time.time()
+    cached = PROBE_DETAIL_CACHE.get(key)
+    if cached and (now - cached[0]) < max_age_sec and (not bust_ts or cached[0] >= bust_ts):
+        return cached[1], cached[2]
+
+    from providers.auth import _auth_SCROB as scrob
+
+    s: Mapping[str, Any] = (cfg.get("scrob") or {}) if isinstance(cfg.get("scrob"), Mapping) else {}
+    if not scrob.is_configured(s):
+        rsn = "Scrob: missing server URL, API key or account"
+        with _CACHE_LOCK:
+            PROBE_DETAIL_CACHE[key] = (now, False, rsn)
+        return False, rsn
+
+    ok = False
+    reason = "request_failed"
+    try:
+        client = scrob.client_from_block(s)
+        if scrob.needs_reauth(s):
+            payload = client.request_json("GET", scrob.PROFILE_PATH)
+            ok = isinstance(payload, Mapping)
+            reason = "" if ok else "validation_bad_response"
+        else:
+            client.access_token = scrob.access_token_for(cfg, session=client.session)
+            payload = client.request_json("GET", scrob.ME_PATH)
+            ok = isinstance(payload, Mapping) and bool(payload.get("id"))
+            reason = "" if ok else "validation_bad_response"
+    except scrob.ScrobAuthError as exc:
+        reason = str(exc.reason or "request_failed")
+    except Exception:
+        reason = "request_failed"
+
+    rsn = "" if ok else {
+        "server_url_required": "Scrob: missing server URL",
+        "api_key_required": "Scrob: missing API key",
+        "not_configured": "Scrob: missing server URL, API key or account",
+        "invalid_api_key": "Scrob: invalid API key",
+        "invalid_credentials": "Scrob: reconnect required",
+        "credentials_mismatch": "Scrob: API key and login are different accounts",
+        "invalid_totp_code": "Scrob: invalid two factor code",
+        "password_login_disabled": "Scrob: password login is disabled on this server",
+        "email_not_confirmed": "Scrob: account email is not confirmed",
+        "unauthorized": "Scrob: reconnect required",
+        "api_prefix_mismatch": "Scrob: API not reachable at this URL",
+        "api_not_found": "Scrob: API not found on this server",
+        "validation_timeout": "Scrob: validation timed out",
+        "unreachable": "Scrob: server unreachable",
+        "invalid_ssl": "Scrob: SSL validation failed",
+        "validation_bad_response": "Scrob: invalid response",
+        "server_error": "Scrob: server error",
+        "totp_required": "Scrob: two factor re-authentication required",
+    }.get(str(reason or ""), "Scrob: probe failed")
+
+    with _CACHE_LOCK:
+        PROBE_DETAIL_CACHE[key] = (now, ok, rsn)
+    return ok, rsn
+
+
 def _probe_punchplay_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
     key = _probe_key("punchplay", cfg)
     bust_ts = _consume_bust("punchplay")
@@ -1474,6 +1544,40 @@ def mdblist_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> d
     with _CACHE_LOCK:
         _USERINFO_CACHE[key] = (now, out)
     return out
+
+def scrob_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict[str, Any]:
+    key = _probe_key("scrob", cfg)
+    bust_ts = _consume_bust("scrob")
+    now = time.time()
+    cached = _USERINFO_CACHE.get(key)
+    if cached and (now - cached[0]) < max_age_sec and (not bust_ts or cached[0] >= bust_ts):
+        return dict(cached[1])
+
+    from providers.auth import _auth_SCROB as scrob
+
+    s = (cfg.get("scrob") or cfg.get("SCROB") or {}) or {}
+    if not scrob.is_configured(s):
+        return {}
+
+    out: dict[str, Any] = {}
+    try:
+        client = scrob.client_from_block(s)
+        client.access_token = scrob.access_token_for(cfg, session=client.session)
+        payload = client.request_json("GET", scrob.ME_PATH)
+        if isinstance(payload, Mapping):
+            username = str(payload.get("display_name") or payload.get("username") or "").strip()
+            if username:
+                out["username"] = username
+            email = str(payload.get("email") or "").strip()
+            if email:
+                out["email"] = email
+    except Exception:
+        return {}
+
+    with _CACHE_LOCK:
+        _USERINFO_CACHE[key] = (now, dict(out))
+    return dict(out)
+
 
 def punchplay_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict[str, Any]:
     key = _probe_key("punchplay", cfg)
@@ -1802,6 +1906,14 @@ def _prov_configured(cfg: dict[str, Any], name: str, instance_id: Any = "default
     if ck == "punchplay":
         return bool(str(blk.get("access_token") or "").strip())
 
+    if ck == "scrob":
+        return bool(
+            str(blk.get("server_url") or "").strip()
+            and str(blk.get("api_key") or "").strip()
+            and str(blk.get("username") or "").strip()
+            and str(blk.get("password") or "").strip()
+        )
+
     if ck == "tmdb_sync":
         return bool(str(blk.get("api_key") or "").strip() and str(blk.get("session_id") or "").strip())
 
@@ -1880,6 +1992,7 @@ DETAIL_PROBES: dict[str, Callable[..., tuple[bool, str]]] = {
     "STREMIO": _probe_stremio_detail,
     "FLOPPY": _probe_floppy_detail,
     "PUNCHPLAY": _probe_punchplay_detail,
+    "SCROB": _probe_scrob_detail,
 }
 USERINFO_FNS: dict[str, Callable[..., dict[str, Any]]] = {
     "PLEX": plex_user_info,
@@ -1889,6 +2002,7 @@ USERINFO_FNS: dict[str, Callable[..., dict[str, Any]]] = {
     "EMBY": emby_user_info,
     "MDBLIST": mdblist_user_info,
     "PUNCHPLAY": punchplay_user_info,
+    "SCROB": scrob_user_info,
 }
 
 # Registry API
@@ -2130,6 +2244,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
             stremio_ok, stremio_reason, cfg_stremio = _provider_tuple("STREMIO")
             floppy_ok, floppy_reason, cfg_floppy = _provider_tuple("FLOPPY")
             punchplay_ok, punchplay_reason, cfg_punchplay = _provider_tuple("PUNCHPLAY")
+            scrob_ok, scrob_reason, cfg_scrob = _provider_tuple("SCROB")
             taut_ok, taut_reason, cfg_taut = _provider_tuple("TAUTULLI")
             anilist_ok, anilist_reason, cfg_anilist = _provider_tuple("ANILIST")
 
@@ -2148,6 +2263,8 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 userinfo_jobs["MDBLIST"] = (mdblist_user_info, cfg_mdbl)
             if punchplay_ok:
                 userinfo_jobs["PUNCHPLAY"] = (punchplay_user_info, cfg_punchplay)
+            if scrob_ok:
+                userinfo_jobs["SCROB"] = (scrob_user_info, cfg_scrob)
 
             userinfo: dict[str, dict[str, Any]] = {}
             if userinfo_jobs:
@@ -2413,6 +2530,24 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                     "rep_instance": inst_sum.get("rep"),
                 }
 
+            if "SCROB" in active_providers:
+                inst_map, inst_sum = _instances_payload("SCROB")
+                s_block = (cfg_scrob.get("scrob") or {}) if isinstance(cfg_scrob.get("scrob"), Mapping) else {}
+                providers_out["SCROB"] = {
+                    "connected": scrob_ok,
+                    **({} if scrob_ok else {"reason": scrob_reason}),
+                    **(
+                        {"reauth_required": True, "notice": "Scrob 2FA session expired. Reads and scrobbling continue; enter a new code to resume writes."}
+                        if s_block.get("reauth_required")
+                        else {}
+                    ),
+                    "experimental": True,
+                    **({"server_url": s_block.get("server_url")} if s_block.get("server_url") else {}),
+                    "instances": inst_map,
+                    "instances_summary": inst_sum,
+                    "rep_instance": inst_sum.get("rep"),
+                }
+
             if "PUNCHPLAY" in active_providers:
                 inst_map, inst_sum = _instances_payload("PUNCHPLAY")
                 providers_out["PUNCHPLAY"] = {
@@ -2477,6 +2612,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 "stremio_connected": stremio_ok,
                 "floppy_connected": floppy_ok,
                 "punchplay_connected": punchplay_ok,
+                "scrob_connected": scrob_ok,
                 "tautulli_connected": taut_ok,
                 "debug": debug,
                 "can_run": bool(any_pair_ready),

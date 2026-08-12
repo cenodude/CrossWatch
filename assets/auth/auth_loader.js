@@ -19,6 +19,7 @@
     tautulli: "/assets/auth/auth.tautulli.js",
     anilist: "/assets/auth/auth.anilist.js",
     punchplay: "/assets/auth/auth.punchplay.js",
+    scrob: "/assets/auth/auth.scrob.js",
   };
 
   const SECTION_TO_PROVIDER = {
@@ -38,6 +39,7 @@
     "sec-tautulli": "tautulli",
     "sec-anilist": "anilist",
     "sec-punchplay": "punchplay",
+    "sec-scrob": "scrob",
   };
 
   const loaded = new Map();

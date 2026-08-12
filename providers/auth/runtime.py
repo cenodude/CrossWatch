@@ -13,7 +13,7 @@ def _key(provider: Any) -> str:
     return str(provider or "").strip().lower().replace("-", "_")
 
 
-def _backend(provider: Any):
+def _backend(provider: Any) -> Any:
     name = _key(provider)
     if name in {"mdb", "mdb_list", "mdblist"}:
         from providers.sync.mdblist import _auth as mdblist_auth
@@ -31,6 +31,10 @@ def _backend(provider: Any):
         from providers.auth import _auth_PUNCHPLAY as punchplay_auth
 
         return punchplay_auth
+    if name == "scrob":
+        from providers.auth import _auth_SCROB as scrob_auth
+
+        return scrob_auth
     raise NotImplementedError(f"No runtime auth backend for provider: {provider}")
 
 
