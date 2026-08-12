@@ -10,7 +10,7 @@ from difflib import SequenceMatcher
 from itertools import chain
 from typing import Any, Iterable, Mapping, cast
 
-from cw_platform.anime_mapping.episodes import resolve_absolute
+from cw_platform.anime_mapping.episodes import SourceCoordinate, resolve_absolute, resolve_source_coordinate
 from cw_platform.anime_mapping.service import (
     PAIR_FEATURE_OPTIONS_KEY,
     mapping_enabled_for_feature,
@@ -889,6 +889,42 @@ def _source_episode_id_aliases() -> dict[tuple[str, str], dict[str, Any]]:
     return out
 
 
+_AIRED_ID_KEYS = ("tmdb", "tvdb", "imdb")
+
+
+def _anime_source_coordinate(
+    show_ids: Mapping[str, Any],
+    native_number: int,
+    release_tag: str,
+    cache: dict[tuple[str, int], SourceCoordinate | None],
+) -> SourceCoordinate | None:
+    if not release_tag:
+        return None
+    key = (_show_identity_key(show_ids), int(native_number))
+    if key in cache:
+        return cache[key]
+    try:
+        found = resolve_source_coordinate(show_ids, native_number, release_tag=release_tag)
+    except Exception as exc:
+        _dbg("anibridge_reverse_failed", error=exc.__class__.__name__)
+        found = None
+    cache[key] = found
+    return found
+
+
+def _source_coordinate_show_ids(show_ids: Mapping[str, Any], coord: SourceCoordinate) -> dict[str, Any]:
+    provider = str(coord.provider or "").strip().lower()
+    ident = str(coord.ident or "").strip()
+    out = dict(show_ids)
+    if not provider or not ident or str(out.get(provider) or "").strip() == ident:
+        return out
+    out[provider] = ident
+    for other in _AIRED_ID_KEYS:
+        if other != provider:
+            out.pop(other, None)
+    return out
+
+
 def _apply_since_limit(
     out: dict[str, dict[str, Any]],
     *,
@@ -990,6 +1026,7 @@ def _parse_rows(
     headers: Mapping[str, str] | None = None,
     timeout: float | None = None,
     limit: int | None,
+    bridge_tag: str = "",
 ) -> tuple[dict[str, dict[str, Any]], set[str], int | None, int | None, int | None, int, int]:
     """Parse raw API rows into history event dicts. Returns (out, thaw, latest_movies, latest_shows, latest_anime, movies_cnt, eps_cnt)."""
     out: dict[str, dict[str, Any]] = {}
@@ -1005,11 +1042,14 @@ def _parse_rows(
     source_title_alias_cache: dict[str, dict[str, dict[str, Any]]] = {}
     source_abs_alias_cache: dict[str, dict[int, dict[str, Any]]] = {}
     source_ep_id_alias_cache: dict[tuple[str, str], dict[str, Any]] | None = None
+    source_coord_cache: dict[tuple[str, int], SourceCoordinate | None] = {}
     watched_coords_by_show = _watched_coordinates_by_show(show_rows)
     stat_with_ids = 0
     stat_no_ids = 0
     stat_exact_hit = 0
     stat_collision = 0
+    stat_coord_override = 0
+    stat_coord_bridge = 0
 
     for row in movie_rows:
         if not isinstance(row, Mapping):
@@ -1119,6 +1159,7 @@ def _parse_rows(
                 e_num = e_num_internal
                 alias: Mapping[str, Any] | None = None
                 show_key = ""
+                ep_show_ids: Mapping[str, Any] = show_ids
                 src_ep_ids = _episode_exact_ids(episode)
                 if src_ep_ids:
                     if source_ep_id_alias_cache is None:
@@ -1180,7 +1221,13 @@ def _parse_rows(
                                     e_num_internal,
                                 )
                     tvdb_map = episode.get("tvdb")
-                    if alias is not None:
+                    coord = _anime_source_coordinate(show_ids, e_num_internal, bridge_tag, source_coord_cache)
+                    if coord is not None and coord.basis == "user_override":
+                        s_num = coord.season
+                        e_num = coord.episode
+                        ep_show_ids = _source_coordinate_show_ids(show_ids, coord)
+                        stat_coord_override += 1
+                    elif alias is not None:
                         s_m = _int_or_none(alias.get("season"))
                         e_m = _int_or_none(alias.get("episode"))
                         if s_m is not None and s_m >= 0 and e_m is not None and e_m > 0:
@@ -1192,6 +1239,11 @@ def _parse_rows(
                         if s_m is not None and s_m >= 0 and e_m is not None and e_m >= 1:
                             s_num = s_m
                             e_num = e_m
+                    elif coord is not None:
+                        s_num = coord.season
+                        e_num = coord.episode
+                        ep_show_ids = _source_coordinate_show_ids(show_ids, coord)
+                        stat_coord_bridge += 1
                     elif session is not None and headers is not None and timeout is not None:
                         mapped = _anime_tvdb_season_episode_for_number(
                             session,
@@ -1223,12 +1275,12 @@ def _parse_rows(
                     "type": "episode",
                     "season": s_num,
                     "episode": e_num,
-                    "ids": dict(alias_ids or episode_ids or alias_show_ids or show_ids),
+                    "ids": dict(alias_ids or episode_ids or alias_show_ids or ep_show_ids),
                     "title": alias_title if isinstance(alias_title, str) and alias_title.strip() else f"S{s_num:02d}E{e_num:02d}",
                     "year": None,
                     "series_title": alias_series_title if isinstance(alias_series_title, str) and alias_series_title.strip() else series_name,
                     "series_year": alias_series_year if alias_series_year not in (None, "") else show_year,
-                    "show_ids": dict(alias_show_ids or show_ids),
+                    "show_ids": dict(alias_show_ids or ep_show_ids),
                     "watched": True,
                     "watched_at": watched_at,
                     "simkl_bucket": row_kind,
@@ -1262,6 +1314,8 @@ def _parse_rows(
         alias_rejected_collision=stat_collision,
         alias_table_size=len(source_ep_id_alias_cache or {}),
     )
+    if stat_coord_override or stat_coord_bridge:
+        _info("anibridge_readback", overrides=stat_coord_override, reverse=stat_coord_bridge)
     return out, thaw, latest_ts_movies, latest_ts_shows, latest_ts_anime, movies_cnt, eps_cnt
 
 
@@ -1346,6 +1400,7 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
         headers=headers,
         timeout=timeout,
         limit=None,  # apply limit to final result only
+        bridge_tag=_anibridge_release_tag(adapter),
     )
     if not rewatches:
         _dedupe_history_movies(fetched)
@@ -1674,6 +1729,13 @@ def _anibridge_config(adapter: Any) -> Mapping[str, Any] | None:
         if opts.get("use_anime_mapping") is False:
             return None
     return block
+
+
+def _anibridge_release_tag(adapter: Any) -> str:
+    block = _anibridge_config(adapter)
+    if block is None:
+        return ""
+    return str(block.get("release_tag") or "v3")
 
 
 def _with_anibridge_map(adapter: Any, item: Mapping[str, Any], block: Mapping[str, Any] | None) -> Mapping[str, Any]:

@@ -84,6 +84,8 @@ export default {
     let schema = { match_providers: [], target_namespaces: [], media_types: ["show", "movie"] };
     let editingId = "";
     let busy = false;
+    let simklReady = false;
+    let findResults = [];
 
     root.innerHTML = `
       <div class="cw-anime-overrides">
@@ -136,10 +138,33 @@ export default {
                 <div class="ao-rule-legend">Treat it as</div>
                 <div class="ao-inline">
                   <select id="ao-target-namespace"></select>
-                  <input id="ao-target-id" type="text" placeholder="ID" maxlength="64">
+                  <div class="ao-target-id">
+                    <input id="ao-target-id" type="text" placeholder="ID" maxlength="64">
+                    <button type="button" class="ao-find" id="ao-find" hidden>
+                      <span class="material-symbols-rounded" aria-hidden="true">search</span>
+                    </button>
+                  </div>
                 </div>
+                <p class="ao-find-note" id="ao-find-note" hidden></p>
               </div>
             </div>
+
+            <section class="ao-finder" id="ao-finder" hidden>
+              <div class="ao-finder-head">
+                <span class="material-symbols-rounded" aria-hidden="true">travel_explore</span>
+                <div>
+                  <strong>Look up on SIMKL</strong>
+                  <p>SIMKL targets only. Seasons are separate records there, so pick the exact one, or build the whole season chain in one go.</p>
+                </div>
+                <button type="button" class="ao-icon" id="ao-finder-close" title="Close lookup"><span class="material-symbols-rounded" aria-hidden="true">close</span></button>
+              </div>
+              <div class="ao-finder-search">
+                <input id="ao-finder-q" type="text" placeholder="Search SIMKL by title" maxlength="200">
+                <button type="button" class="ao-btn" id="ao-finder-go">Search</button>
+              </div>
+              <p class="ao-finder-status" id="ao-finder-status"></p>
+              <div class="ao-finder-list" id="ao-finder-list"></div>
+            </section>
 
             <div class="ao-episodes" id="ao-episodes">
               <div class="ao-rule-legend">Episode numbers (optional)</div>
@@ -210,15 +235,44 @@ export default {
       if (!busy) syncMediaType();
     }
 
+    async function refreshSimklStatus() {
+      try {
+        const data = await apiJson("/api/anime-mapping/simkl/status");
+        simklReady = !!data.configured;
+      } catch {
+        simklReady = false;
+      }
+      syncTargetTools();
+    }
+
     function fillSelect(node, values, current) {
       node.innerHTML = values.map((v) => `<option value="${esc(v)}">${esc(label(v))}</option>`).join("");
       if (current) node.value = current;
+    }
+
+    function syncTargetTools() {
+      const find = el("ao-find");
+      const note = el("ao-find-note");
+      if (!simklReady) {
+        find.hidden = true;
+        note.hidden = true;
+        el("ao-finder").hidden = true;
+        return;
+      }
+      const isSimkl = el("ao-target-namespace").value === "simkl";
+      find.hidden = false;
+      find.disabled = busy || !isSimkl;
+      find.title = isSimkl ? "Look this up on SIMKL" : "Lookup is available for SIMKL targets only";
+      note.hidden = isSimkl;
+      note.textContent = isSimkl ? "" : "Lookup is available for SIMKL targets only.";
+      if (!isSimkl) el("ao-finder").hidden = true;
     }
 
     function syncMediaType() {
       const isMovie = el("ao-media-type").value === "movie";
       el("ao-episodes").hidden = isMovie;
       el("ao-season-wrap").hidden = isMovie;
+      syncTargetTools();
       renderPreview();
     }
 
@@ -327,8 +381,130 @@ export default {
       fillSelect(el("ao-match-provider"), schema.match_providers || [], el("ao-match-provider").value);
       fillSelect(el("ao-target-namespace"), schema.target_namespaces || [], el("ao-target-namespace").value);
       renderList();
+      syncTargetTools();
     }
 
+    function setFindStatus(message, tone = "") {
+      el("ao-finder-status").textContent = message || "";
+      el("ao-finder-status").dataset.tone = tone;
+    }
+
+    function renderFindResults() {
+      if (!findResults.length) {
+        el("ao-finder-list").innerHTML = "";
+        return;
+      }
+      el("ao-finder-list").innerHTML = findResults.map((row, i) => `
+        <div class="ao-finder-row" data-i="${i}">
+          <div class="ao-finder-main">
+            <div class="ao-finder-title">${esc(row.label || row.title)}</div>
+            <div class="ao-finder-meta">
+              SIMKL ${esc(row.simkl)}${row.year ? ` &middot; ${esc(row.year)}` : ""}${row.tmdb ? ` &middot; TMDB ${esc(row.tmdb)}` : " &middot; no TMDB id"}
+            </div>
+          </div>
+          <div class="ao-finder-actions">
+            <button type="button" class="ao-btn" data-act="use">Use id</button>
+            <button type="button" class="ao-btn primary" data-act="plan">Build seasons</button>
+          </div>
+        </div>
+      `).join("");
+    }
+
+    async function runFind() {
+      const term = String(el("ao-finder-q").value || "").trim();
+      if (!term) { setFindStatus("Type a title to search for.", "err"); return; }
+      setBusy(true);
+      setFindStatus("Searching SIMKL...");
+      try {
+        const data = await apiJson(`/api/anime-mapping/simkl/search?q=${encodeURIComponent(term)}`);
+        findResults = Array.isArray(data.results) ? data.results : [];
+        renderFindResults();
+        setFindStatus(findResults.length ? `${findResults.length} result${findResults.length === 1 ? "" : "s"}.` : "Nothing found on SIMKL for that title.", findResults.length ? "ok" : "err");
+      } catch (e) {
+        findResults = [];
+        renderFindResults();
+        setFindStatus(String(e.message || e), "err");
+      } finally {
+        setBusy(false);
+        syncTargetTools();
+      }
+    }
+
+    async function buildSeasonRules(row) {
+      const form = readForm();
+      if (!form.match_id) { setFindStatus("Fill in the source ID first, the rules are built against it.", "err"); return; }
+      setBusy(true);
+      setFindStatus("Building the season chain...");
+      try {
+        const plan = await apiJson("/api/anime-mapping/simkl/plan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            simkl: row.simkl,
+            match_provider: form.match_provider,
+            match_id: form.match_id,
+            match_season: form.match_season == null ? 1 : form.match_season,
+            title: form.title || row.title,
+          }),
+        });
+        const planned = Array.isArray(plan.rules) ? plan.rules : [];
+        if (!planned.length) { setFindStatus("SIMKL returned no aired seasons for that entry.", "err"); return; }
+        const summary = planned
+          .map((r) => `  ${form.match_provider.toUpperCase()} S${r.match_season} E${r.episode_from}-${r.episode_to}  ->  SIMKL ${r.target_id}  (${r.note})`)
+          .join("\n");
+        const skipped = (plan.skipped || []).length ? `\n\nSkipped ${plan.skipped.length} unaired entr${plan.skipped.length === 1 ? "y" : "ies"}.` : "";
+        if (!window.confirm(`Add ${planned.length} rules covering ${plan.total_episodes} episodes?\n\n${summary}${skipped}`)) {
+          setFindStatus("Nothing added.");
+          return;
+        }
+        let added = 0;
+        for (const rule of planned) {
+          await apiJson(API, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(rule) });
+          added += 1;
+        }
+        await refresh();
+        resetForm();
+        el("ao-finder").hidden = true;
+        setIoStatus(`Added ${added} season rule${added === 1 ? "" : "s"} from SIMKL.`, "ok");
+        window.CW?.DOM?.showToast?.(`Added ${added} anime mapping rules`, true);
+      } catch (e) {
+        setFindStatus(String(e.message || e), "err");
+      } finally {
+        setBusy(false);
+        syncTargetTools();
+      }
+    }
+
+    el("ao-find").addEventListener("click", () => {
+      if (busy || !simklReady || el("ao-target-namespace").value !== "simkl") return;
+      const panel = el("ao-finder");
+      panel.hidden = !panel.hidden;
+      if (panel.hidden) return;
+      if (!el("ao-finder-q").value) el("ao-finder-q").value = el("ao-title").value || "";
+      el("ao-finder-q").focus();
+      if (el("ao-finder-q").value) runFind();
+    });
+
+    el("ao-finder-close").addEventListener("click", () => { el("ao-finder").hidden = true; });
+    el("ao-finder-go").addEventListener("click", runFind);
+    el("ao-finder-q").addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); runFind(); } });
+
+    el("ao-finder-list").addEventListener("click", async (ev) => {
+      const btn = ev.target.closest("button[data-act]");
+      if (!btn || busy) return;
+      const row = findResults[Number(btn.closest(".ao-finder-row")?.dataset.i)];
+      if (!row) return;
+      if (btn.dataset.act === "use") {
+        el("ao-target-id").value = row.simkl;
+        if (!el("ao-title").value) el("ao-title").value = row.title || "";
+        setFindStatus(`Using SIMKL ${row.simkl}.`, "ok");
+        renderPreview();
+        return;
+      }
+      await buildSeasonRules(row);
+    });
+
+    el("ao-target-namespace").addEventListener("change", syncTargetTools);
     el("ao-close").addEventListener("click", () => window.cxCloseModal?.());
     el("ao-media-type").addEventListener("change", syncMediaType);
     ["ao-ep-from", "ao-ep-to", "ao-ep-start", "ao-match-season"].forEach((id) => {
@@ -466,5 +642,6 @@ export default {
     } catch (e) {
       setStatus(`Could not load rules: ${e.message || e}`, "err");
     }
+    await refreshSimklStatus();
   },
 };

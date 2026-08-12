@@ -8,11 +8,12 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from .coordinates import covers, translate
-from .overrides import find_episode_override
+from .overrides import find_episode_override, find_source_override
 from .storage import normalize_release_tag, query_edges, query_show_pair
 
 NATIVE_ORDER = ("anidb", "mal", "anilist")
 AIRED_ORDER = ("tvdb", "tmdb")
+REVERSE_NAMESPACES = ("simkl", "anidb", "mal", "anilist", "kitsu")
 _ANIDB_REGULAR = "R"
 
 
@@ -21,6 +22,16 @@ class Resolution:
     absolute: int
     namespace: str
     target_id: str
+    basis: str
+    entry: str
+
+
+@dataclass(frozen=True)
+class SourceCoordinate:
+    provider: str
+    ident: str
+    season: int
+    episode: int
     basis: str
     entry: str
 
@@ -192,6 +203,113 @@ def _native_passthrough(tag: str, ids: Mapping[str, str], season: int, episode: 
             entry=f"{namespace}_native",
         )
     return None
+
+
+def _scope_season(scope: Any) -> int | None:
+    text = str(scope or "").strip().lower()
+    if not text.startswith("s") or not text[1:].isdigit():
+        return None
+    return int(text[1:])
+
+
+def _override_source_coordinate(ids: Mapping[str, str], absolute: int) -> SourceCoordinate | None:
+    for namespace in REVERSE_NAMESPACES:
+        ident = ids.get(namespace, "")
+        if not ident:
+            continue
+        try:
+            ruled = find_source_override(namespace, ident, absolute)
+        except Exception:
+            ruled = None
+        if ruled is None:
+            continue
+        return SourceCoordinate(
+            provider=ruled.provider,
+            ident=ruled.ident,
+            season=ruled.season,
+            episode=ruled.episode,
+            basis="user_override",
+            entry=f"override:{ruled.rule_id}",
+        )
+    return None
+
+
+def _bridge_source_coordinate(tag: str, ids: Mapping[str, str], absolute: int) -> SourceCoordinate | None:
+    found: dict[tuple[str, str], tuple[int, int]] = {}
+    for namespace in NATIVE_ORDER:
+        ident = ids.get(namespace, "")
+        if not ident:
+            continue
+        try:
+            rows = query_edges(tag, namespace, ident)
+        except Exception:
+            continue
+        for row in rows:
+            if not int(row.get("reverse") or 0):
+                continue
+            if namespace == "anidb" and str(row.get("source_scope") or "").strip().upper() != _ANIDB_REGULAR:
+                continue
+            provider = str(row.get("target_provider") or "").strip().lower()
+            if provider not in AIRED_ORDER:
+                continue
+            if str(row.get("target_kind") or "").strip().lower() != "show":
+                continue
+            season = _scope_season(row.get("target_scope"))
+            if season is None or season <= 0:
+                continue
+            target_id = str(row.get("target_id") or "").strip()
+            if not target_id:
+                continue
+            episode = translate(row.get("source_range"), row.get("target_range"), absolute)
+            if episode is None or episode <= 0:
+                continue
+            key = (provider, target_id)
+            prior = found.get(key)
+            if prior is not None and prior != (season, episode):
+                return None
+            found[key] = (season, episode)
+
+    if not found:
+        return None
+    coords = set(found.values())
+    if len(coords) != 1:
+        return None
+    season, episode = coords.pop()
+    for provider in AIRED_ORDER:
+        for (row_provider, target_id), _coord in found.items():
+            if row_provider != provider:
+                continue
+            return SourceCoordinate(
+                provider=provider,
+                ident=target_id,
+                season=season,
+                episode=episode,
+                basis="anibridge_reverse",
+                entry=f"{provider}_reverse",
+            )
+    return None
+
+
+def resolve_source_coordinate(
+    ids: Mapping[str, Any] | None,
+    absolute: Any,
+    *,
+    release_tag: str = "v3",
+) -> SourceCoordinate | None:
+    abs_num = _as_int(absolute)
+    if abs_num is None or abs_num <= 0:
+        return None
+    clean = {
+        str(k).strip().lower(): str(v).strip()
+        for k, v in dict(ids or {}).items()
+        if str(v or "").strip()
+    }
+    if not clean:
+        return None
+    ruled = _override_source_coordinate(clean, abs_num)
+    if ruled is not None:
+        return ruled
+    return _bridge_source_coordinate(normalize_release_tag(release_tag), clean, abs_num)
 
 
 def resolution_matches_ids(resolution: Resolution | None, ids: Mapping[str, Any] | None) -> bool:
