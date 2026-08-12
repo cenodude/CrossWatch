@@ -37,8 +37,21 @@ def normalize_server_url(value: Any) -> str:
     return server.rstrip("/")
 
 
+def provider_block(cfg: Mapping[str, Any] | None, instance_id: Any = None) -> dict[str, Any]:
+    block = get_provider_block(cfg or {}, "floppy", instance_id)
+    if block:
+        return block
+    base = (cfg or {}).get("floppy") if isinstance(cfg, Mapping) else None
+    if not isinstance(base, Mapping):
+        return {}
+    inst = normalize_instance_id(instance_id)
+    if inst == "default" or "instances" not in base:
+        return dict(base)
+    return {}
+
+
 def _block(cfg: Mapping[str, Any], instance_id: Any = None) -> dict[str, Any]:
-    return get_provider_block(cfg or {}, "floppy", instance_id)
+    return provider_block(cfg, instance_id)
 
 
 def is_configured(block: Mapping[str, Any] | None) -> bool:

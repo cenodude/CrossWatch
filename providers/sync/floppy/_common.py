@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from cw_platform.id_map import canonical_key, ids_from, minimal as id_minimal
-from providers.auth._auth_FLOPPY import FloppyAuthError, is_configured as auth_is_configured
+from providers.auth._auth_FLOPPY import FloppyAuthError, is_configured as auth_is_configured, provider_block
 from providers.sync._mod_common import safe_json
 
 
@@ -30,9 +30,7 @@ def int_or_none(value: Any) -> int | None:
 
 
 def configured_block(cfg: Mapping[str, Any] | None, instance_id: str = "default") -> dict[str, Any]:
-    from cw_platform.provider_instances import get_provider_block
-
-    return get_provider_block(cfg or {}, "floppy", instance_id)
+    return provider_block(cfg or {}, instance_id)
 
 
 def is_configured(cfg: Mapping[str, Any] | None, instance_id: str = "default") -> bool:
