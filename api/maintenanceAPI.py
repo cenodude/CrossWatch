@@ -58,7 +58,7 @@ SYNC_STATE_PATTERNS = (
 )
 
 CW_STATE_KEEP_DIRS = {"id"}
-CW_STATE_KEEP_FILES: set[str] = set()
+CW_STATE_KEEP_FILES: set[str] = {"anime_mapping_overrides.json"}
 
 
 def _is_sync_state_file(name: str) -> bool:
@@ -706,7 +706,7 @@ def maintenance_action_status(action: str) -> dict[str, Any]:
         retry_files = sum(1 for item in files if any(token in str(item.get("name") or "").lower() for token in retry_names))
         response.update(
             title="Retry provider items",
-            note="Clears provider runtime caches such as retry guards, phantom records and provider health. Sync aliases, mappings, history indexes, watermarks and tombstones stay untouched.",
+            note="Clears provider runtime caches such as retry guards, phantom records and provider health. Sync aliases, mappings, history indexes, watermarks, tombstones and your custom anime mapping rules stay untouched.",
             metrics=[
                 _metric("Runtime files", len(files)),
                 _metric("Retry / guard files", retry_files),

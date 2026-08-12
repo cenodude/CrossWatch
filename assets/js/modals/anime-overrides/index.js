@@ -163,13 +163,27 @@ export default {
           </section>
 
           <section class="ao-card">
-            <div class="ao-card-head compact">
+            <div class="ao-card-head compact has-tools">
               <span class="material-symbols-rounded" aria-hidden="true">list</span>
               <div>
                 <h3>Your rules <span class="ao-count" id="ao-count"></span></h3>
                 <p>Rules are checked in order, top first. Disabled rules are ignored.</p>
               </div>
+              <div class="ao-tools">
+                <select id="ao-import-mode" title="How an imported file is applied">
+                  <option value="merge">Merge into my rules</option>
+                  <option value="replace">Replace all rules</option>
+                </select>
+                <button type="button" class="ao-btn ao-btn-icon" id="ao-import">
+                  <span class="material-symbols-rounded" aria-hidden="true">upload</span>Import
+                </button>
+                <button type="button" class="ao-btn ao-btn-icon" id="ao-export">
+                  <span class="material-symbols-rounded" aria-hidden="true">download</span>Export
+                </button>
+                <input type="file" id="ao-file" accept="application/json,.json" hidden>
+              </div>
             </div>
+            <p class="ao-io-status" id="ao-io-status"></p>
             <div id="ao-list" class="ao-list"></div>
           </section>
         </div>
@@ -178,10 +192,16 @@ export default {
 
     const el = (id) => $(`#${id}`, root);
     const statusEl = el("ao-status");
+    const ioStatusEl = el("ao-io-status");
 
     function setStatus(message, tone = "") {
       statusEl.textContent = message || "";
       statusEl.dataset.tone = tone;
+    }
+
+    function setIoStatus(message, tone = "") {
+      ioStatusEl.textContent = message || "";
+      ioStatusEl.dataset.tone = tone;
     }
 
     function setBusy(on) {
@@ -333,6 +353,77 @@ export default {
       } catch (e) {
         setStatus(String(e.message || e), "err");
       } finally {
+        setBusy(false);
+      }
+    });
+
+    el("ao-export").addEventListener("click", async () => {
+      if (busy) return;
+      if (!rows.length) { setIoStatus("There is nothing to export yet.", "err"); return; }
+      setBusy(true);
+      setIoStatus("Preparing download...");
+      let url = "";
+      try {
+        const r = await fetch(`${API}/export`, { cache: "no-store", credentials: "same-origin" });
+        if (!r.ok) throw new Error(`${r.status} ${r.statusText || ""}`.trim());
+        const blob = await r.blob();
+        const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+$/, "Z");
+        url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `crosswatch-anime-mappings-${stamp}.json`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setIoStatus(`Exported ${rows.length} rule${rows.length === 1 ? "" : "s"}.`, "ok");
+      } catch (e) {
+        setIoStatus(`Export failed: ${e.message || e}`, "err");
+      } finally {
+        if (url) window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
+        setBusy(false);
+      }
+    });
+
+    el("ao-import").addEventListener("click", () => {
+      if (busy) return;
+      el("ao-file").value = "";
+      el("ao-file").click();
+    });
+
+    el("ao-file").addEventListener("change", async (ev) => {
+      const file = ev.target.files?.[0];
+      if (!file) return;
+      const mode = el("ao-import-mode").value;
+      if (mode === "replace" && rows.length && !window.confirm(`Replace all ${rows.length} existing rules with the contents of ${file.name}?`)) {
+        el("ao-file").value = "";
+        return;
+      }
+      setBusy(true);
+      setIoStatus(`Importing ${file.name}...`);
+      try {
+        let parsed;
+        try {
+          parsed = JSON.parse(await file.text());
+        } catch {
+          throw new Error("That file is not valid JSON");
+        }
+        const data = await apiJson(`${API}/import`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mode, payload: parsed }),
+        });
+        await refresh();
+        const res = data.result || {};
+        const parts = [`${res.added || 0} added`, `${res.updated || 0} updated`];
+        if (res.skipped_count) parts.push(`${res.skipped_count} skipped`);
+        setIoStatus(`Imported ${file.name}: ${parts.join(", ")}.`, res.skipped_count ? "" : "ok");
+        window.CW?.DOM?.showToast?.(`Anime mappings imported (${res.total || 0} rules)`, true);
+        const first = (res.skipped || [])[0];
+        if (first) setIoStatus(`${parts.join(", ")}. First skipped rule: ${first.title || `#${first.index}`} - ${first.reason}`, "err");
+      } catch (e) {
+        setIoStatus(`Import failed: ${e.message || e}`, "err");
+      } finally {
+        el("ao-file").value = "";
         setBusy(false);
       }
     });

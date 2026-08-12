@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -43,6 +44,83 @@ def test_restore_config_backup_creates_pre_restore_backup(tmp_path: Path, monkey
     assert restored["ok"] is True
     assert restored["pre_restore_backup"]["path"]
     assert json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))["version"] == "before"
+
+
+def _seed_wal_database(path: Path, value: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(str(path))
+    try:
+        con.execute("PRAGMA journal_mode=WAL")
+        con.execute("CREATE TABLE IF NOT EXISTS rows (v TEXT)")
+        con.execute("DELETE FROM rows")
+        con.execute("INSERT INTO rows (v) VALUES (?)", (value,))
+        con.commit()
+    finally:
+        con.close()
+
+
+def test_app_state_backup_captures_overrides_and_database_snapshot(tmp_path: Path, monkeypatch) -> None:
+    _patch_config_dir(monkeypatch, tmp_path)
+    import services.backups as backups
+
+    (tmp_path / "config.json").write_text("{}\n", encoding="utf-8")
+    overrides = tmp_path / ".cw_state" / "anime_mapping_overrides.json"
+    overrides.parent.mkdir(parents=True, exist_ok=True)
+    overrides.write_text('{"overrides":[{"id":"ovr_1"}]}', encoding="utf-8")
+
+    db = tmp_path / ".cw_databases" / "crosswatch.sqlite3"
+    _seed_wal_database(db, "committed")
+    live = sqlite3.connect(str(db))
+    live.execute("PRAGMA journal_mode=WAL")
+
+    try:
+        res = backups.create_backup(scope="app_state", label="unit", trigger="test")
+    finally:
+        live.close()
+
+    validation = backups.validate_backup(res["path"])
+    assert validation["ok"] is True
+
+    manifest = validation["manifest"]
+    paths = {row["path"] for row in manifest["files"]}
+    assert ".cw_state/anime_mapping_overrides.json" in paths
+    assert ".cw_databases/crosswatch.sqlite3" in paths
+    assert not any(p.endswith(("-wal", "-shm")) for p in paths)
+    assert manifest["database_snapshots"] == 1
+
+    _, archive = backups._resolve_backup_file(res["path"])
+    extracted = tmp_path / "extracted.sqlite3"
+    with zipfile.ZipFile(archive, "r") as zf, zf.open(".cw_databases/crosswatch.sqlite3") as src:
+        extracted.write_bytes(src.read())
+    con = sqlite3.connect(str(extracted))
+    try:
+        assert con.execute("SELECT v FROM rows").fetchone()[0] == "committed"
+    finally:
+        con.close()
+
+
+def test_restore_drops_stale_wal_sidecar(tmp_path: Path, monkeypatch) -> None:
+    _patch_config_dir(monkeypatch, tmp_path)
+    import services.backups as backups
+
+    (tmp_path / "config.json").write_text("{}\n", encoding="utf-8")
+    db = tmp_path / ".cw_databases" / "crosswatch.sqlite3"
+    _seed_wal_database(db, "before")
+    res = backups.create_backup(scope="app_state", label="unit", trigger="test")
+
+    _seed_wal_database(db, "after")
+    stale = Path(str(db) + "-wal")
+    stale.write_bytes(b"stale-wal")
+
+    restored = backups.restore_backup(res["path"], create_pre_restore=False)
+
+    assert restored["ok"] is True
+    assert not stale.exists()
+    con = sqlite3.connect(str(db))
+    try:
+        assert con.execute("SELECT v FROM rows").fetchone()[0] == "before"
+    finally:
+        con.close()
 
 
 def test_validate_rejects_archive_member_outside_restore_allowlist(tmp_path: Path, monkeypatch) -> None:
