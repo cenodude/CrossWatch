@@ -28,6 +28,15 @@ from cw_platform.anime_mapping.overrides import (
     stats as override_stats,
     upsert_override,
 )
+from cw_platform.anime_mapping.simkl_catalog import (
+    SimklCatalogError,
+    SimklNotConfigured,
+    configured as simkl_configured,
+    instances as simkl_instances,
+    plan_rules as simkl_plan_rules,
+    resolve_instance as simkl_resolve_instance,
+    search as simkl_search,
+)
 from cw_platform.anime_mapping.storage import normalize_release_tag, rebuild_sqlite_from_mappings
 from cw_platform.anime_mapping.updater import status as mapping_status, update as mapping_update
 from cw_platform.config_base import ANIME_MAPPING_PAIRS_DEFAULT, load_config, save_config
@@ -257,6 +266,72 @@ def api_anime_mapping_overrides_list() -> JSONResponse:
             extra={"error_type": e.__class__.__name__, "error": str(e)},
         )
         return JSONResponse({"ok": False, "error": e.__class__.__name__, "message": _client_error_message("override list")}, status_code=500)
+
+
+@router.get("/simkl/status")
+def api_anime_mapping_simkl_status(instance: str = "") -> JSONResponse:
+    resolved, key = simkl_resolve_instance(instance or None)
+    return JSONResponse(
+        {
+            "ok": True,
+            "configured": bool(key),
+            "instance": resolved if key else "",
+            "instances": simkl_instances(),
+        }
+    )
+
+
+@router.get("/simkl/search")
+def api_anime_mapping_simkl_search(q: str = "", limit: int = 25, instance: str = "") -> JSONResponse:
+    term = str(q or "").strip()
+    if not term:
+        return JSONResponse({"ok": True, "results": [], "configured": bool(simkl_configured(instance or None))})
+    try:
+        results = simkl_search(term, limit=limit, instance_id=instance or None)
+    except SimklNotConfigured as e:
+        return JSONResponse({"ok": False, "error": "simkl_not_configured", "message": str(e)}, status_code=409)
+    except SimklCatalogError as e:
+        log(
+            "simkl_search_failed",
+            level="warn",
+            module="ANIME_MAPPING",
+            extra={"error_type": e.__class__.__name__, "error": str(e)},
+        )
+        return JSONResponse({"ok": False, "error": "simkl_search_failed", "message": str(e)}, status_code=502)
+    return JSONResponse({"ok": True, "configured": True, "results": [r.as_dict() for r in results]})
+
+
+@router.post("/simkl/plan")
+def api_anime_mapping_simkl_plan(payload: dict[str, Any] | None = Body(default=None)) -> JSONResponse:
+    data = payload if isinstance(payload, dict) else {}
+    try:
+        plan = simkl_plan_rules(
+            data.get("simkl"),
+            match_provider=str(data.get("match_provider") or ""),
+            match_id=str(data.get("match_id") or ""),
+            match_season=data.get("match_season"),
+            title=str(data.get("title") or ""),
+            instance_id=str(data.get("instance") or "") or None,
+        )
+    except SimklNotConfigured as e:
+        return JSONResponse({"ok": False, "error": "simkl_not_configured", "message": str(e)}, status_code=409)
+    except SimklCatalogError as e:
+        return JSONResponse({"ok": False, "error": "simkl_plan_failed", "message": str(e)}, status_code=400)
+    except Exception as e:
+        log(
+            "simkl_plan_failed",
+            level="error",
+            module="ANIME_MAPPING",
+            extra={"error_type": e.__class__.__name__, "error": str(e)},
+        )
+        return JSONResponse({"ok": False, "error": e.__class__.__name__, "message": _client_error_message("season plan")}, status_code=500)
+    log(
+        "simkl_plan_built",
+        level="debug",
+        module="ANIME_MAPPING",
+        extra={"rules": len(plan.get("rules") or []), "episodes": plan.get("total_episodes")},
+    )
+    return JSONResponse({"ok": True, **plan})
 
 
 @router.get("/overrides/export")

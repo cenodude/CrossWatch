@@ -69,6 +69,15 @@ class EpisodeOverride:
     rule_id: str
 
 
+@dataclass(frozen=True)
+class SourceOverride:
+    provider: str
+    ident: str
+    season: int
+    episode: int
+    rule_id: str
+
+
 def overrides_path() -> Path:
     return (CONFIG_BASE() / ".cw_state" / "anime_mapping_overrides.json").resolve()
 
@@ -385,6 +394,59 @@ def find_episode_override(
             rule_id=str(row.get("id") or ""),
         )
     return None
+
+
+def find_source_override(
+    namespace: Any,
+    target_id: Any,
+    absolute: Any,
+    *,
+    rows: list[dict[str, Any]] | None = None,
+) -> SourceOverride | None:
+    ns = str(namespace or "").strip().lower()
+    tid = str(target_id or "").strip()
+    abs_num = _as_int(absolute)
+    if not ns or not tid or abs_num is None or abs_num <= 0:
+        return None
+
+    found: SourceOverride | None = None
+    for row in rows if rows is not None else load_overrides():
+        if not row.get("enabled", True) or row.get("media_type") != "show":
+            continue
+        if str(row.get("target_namespace") or "") != ns or str(row.get("target_id") or "") != tid:
+            continue
+        ep_from = row.get("episode_from")
+        ep_start = row.get("episode_start_at")
+        season = row.get("match_season")
+        if ep_from is None or ep_start is None or season is None:
+            continue
+        offset = abs_num - int(ep_start)
+        if offset < 0:
+            continue
+        episode = int(ep_from) + offset
+        ep_to = row.get("episode_to")
+        if ep_to is not None and episode > int(ep_to):
+            continue
+        candidate = SourceOverride(
+            provider=str(row.get("match_provider") or ""),
+            ident=str(row.get("match_id") or ""),
+            season=int(season),
+            episode=episode,
+            rule_id=str(row.get("id") or ""),
+        )
+        if not candidate.provider or not candidate.ident:
+            continue
+        if found is None:
+            found = candidate
+            continue
+        if (found.provider, found.ident, found.season, found.episode) != (
+            candidate.provider,
+            candidate.ident,
+            candidate.season,
+            candidate.episode,
+        ):
+            return None
+    return found
 
 
 def find_identity_overrides(

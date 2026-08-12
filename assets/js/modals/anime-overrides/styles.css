@@ -32,6 +32,32 @@
 .cw-anime-overrides .ao-rule-legend{font-size:12px;font-weight:900;color:var(--ao-muted);letter-spacing:.06em;text-transform:uppercase}
 .cw-anime-overrides .ao-inline{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:8px}
 .cw-anime-overrides .ao-arrow{display:grid;place-items:center;font-size:26px;color:var(--ao-accent)}
+.cw-anime-overrides .ao-target-id{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px}
+.cw-anime-overrides .ao-find{display:inline-flex;align-items:center;justify-content:center;width:42px;min-width:42px;height:42px;padding:0;border:1px solid color-mix(in srgb,var(--ao-accent) 40%,var(--ao-border));border-radius:12px;background:color-mix(in srgb,var(--ao-accent) 16%,var(--ao-card));color:var(--ao-accent);cursor:pointer}
+.cw-anime-overrides .ao-find[hidden]{display:none}
+.cw-anime-overrides .ao-find:disabled{opacity:.4;cursor:not-allowed;border-color:var(--ao-border);background:color-mix(in srgb,var(--ao-panel) 86%,#0b1321);color:var(--ao-muted)}
+.cw-anime-overrides .ao-find .material-symbols-rounded{font-size:20px}
+.cw-anime-overrides .ao-find-note{margin:0;font-size:12px;color:var(--ao-muted);opacity:.85}
+.cw-anime-overrides .ao-find-note[hidden]{display:none}
+
+.cw-anime-overrides .ao-finder{margin-top:12px;padding:12px;border:1px solid color-mix(in srgb,var(--ao-accent) 30%,var(--ao-border));border-radius:12px;background:color-mix(in srgb,var(--ao-accent) 7%,color-mix(in srgb,var(--ao-panel) 88%,#091321))}
+.cw-anime-overrides .ao-finder[hidden]{display:none}
+.cw-anime-overrides .ao-finder-head{display:grid;grid-template-columns:32px minmax(0,1fr) auto;align-items:start;gap:10px}
+.cw-anime-overrides .ao-finder-head>.material-symbols-rounded{width:32px;height:32px;display:grid;place-items:center;font-size:20px;color:var(--ao-accent)}
+.cw-anime-overrides .ao-finder-head strong{font-size:14px}
+.cw-anime-overrides .ao-finder-head p{margin:3px 0 0;font-size:12.5px}
+.cw-anime-overrides .ao-finder-search{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;margin-top:10px}
+.cw-anime-overrides .ao-finder-search .ao-btn{min-height:42px}
+.cw-anime-overrides .ao-finder-status{min-height:18px;margin:8px 0 0;font-size:12.5px;color:var(--ao-muted)}
+.cw-anime-overrides .ao-finder-status[data-tone="ok"]{color:var(--ao-good)}
+.cw-anime-overrides .ao-finder-status[data-tone="err"]{color:var(--ao-danger)}
+.cw-anime-overrides .ao-finder-list{display:grid;gap:6px;margin-top:6px;max-height:260px;overflow:auto}
+.cw-anime-overrides .ao-finder-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px;padding:9px 11px;border:1px solid var(--ao-border);border-radius:10px;background:color-mix(in srgb,var(--ao-panel) 90%,#0b1321)}
+.cw-anime-overrides .ao-finder-main{min-width:0;display:grid;gap:3px}
+.cw-anime-overrides .ao-finder-title{font-size:14px;font-weight:850;word-break:break-word}
+.cw-anime-overrides .ao-finder-meta{font-size:12px;color:var(--ao-muted)}
+.cw-anime-overrides .ao-finder-actions{display:flex;align-items:center;gap:6px}
+.cw-anime-overrides .ao-finder-actions .ao-btn{min-height:34px;padding:0 12px;font-size:12.5px}
 .cw-anime-overrides .ao-season[hidden]{display:none}
 .cw-anime-overrides .ao-episodes{margin-top:12px;display:grid;gap:8px}
 .cw-anime-overrides .ao-episodes[hidden]{display:none}
@@ -79,5 +105,7 @@
   .cw-anime-overrides .ao-tools select{min-width:0;flex:1 1 100%}
   .cw-anime-overrides .ao-rule-row{grid-template-columns:minmax(0,1fr)}
   .cw-anime-overrides .ao-arrow{transform:rotate(90deg)}
+  .cw-anime-overrides .ao-finder-row{grid-template-columns:minmax(0,1fr)}
+  .cw-anime-overrides .ao-finder-actions{justify-content:flex-start}
   .cw-anime-overrides .ao-grid,.cw-anime-overrides .ao-grid-3{grid-template-columns:minmax(0,1fr)}
 }
