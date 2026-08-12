@@ -33,6 +33,7 @@ const isTrakt=(v)=>same(v,"trakt");
 const isMDBList=(v)=>same(v,"mdblist");
 const isPublicMetaDB=(v)=>same(v,"publicmetadb");
 const isFloppy=(v)=>same(v,"floppy");
+const isScrob=(v)=>same(v,"scrob");
 const isStremio=(v)=>same(v,"stremio");
 const isPlex = (v) => same(v, "plex");
 const isKodi = (v) => same(v, "kodi");
@@ -48,6 +49,7 @@ function hasTrakt(state){return isTrakt(state?.src)||isTrakt(state?.dst)}
 function hasMDBList(state){return isMDBList(state?.src)||isMDBList(state?.dst)}
 function hasPublicMetaDB(state){return isPublicMetaDB(state?.src)||isPublicMetaDB(state?.dst)}
 function hasFloppy(state){return isFloppy(state?.src)||isFloppy(state?.dst)}
+function hasScrob(state){return isScrob(state?.src)||isScrob(state?.dst)}
 function hasStremio(state){return isStremio(state?.src)||isStremio(state?.dst)}
 function pairInstanceForKind(state, kind){
   const want=String(kind||"").trim().toLowerCase();
@@ -752,6 +754,7 @@ function applySubDisable(feature){
       "#cx-jf-wl-mode-fav","#cx-jf-wl-mode-pl","#cx-jf-wl-mode-col","#cx-jf-wl-pl-name",
       "#cx-em-wl-mode-fav","#cx-em-wl-mode-pl","#cx-em-wl-mode-col","#cx-em-wl-pl-name",
       "#cx-floppy-wl-name",
+      "#cx-scrob-wl-name",
       "#cx-wl-q","#cx-wl-delay","#cx-wl-guid",
       "#tr-wl-etag","#tr-wl-ttl","#tr-wl-batch","#tr-wl-log","#tr-wl-freeze"
     ],
@@ -1112,6 +1115,8 @@ function renderFeaturePanel(state){
     const pmwName = (pmw.watchlist_name || state.cfgRaw?.publicmetadb?.watchlist_name || "Watchlist");
     const floppyw = state.pairProviders?.floppy || {};
     const floppyName = (floppyw.watchlist_name || state.cfgRaw?.floppy?.watchlist_name || "Watchlist");
+    const scrobw = state.pairProviders?.scrob || {};
+    const scrobName = (scrobw.watchlist_name || state.cfgRaw?.scrob?.watchlist_name || "Watchlist");
     const trPair = (state.pairProviders?.trakt) || {};
     const showAnime = hasAnimeProvider(state);
     const canAnimeOnly = anilistCanReceive(state);
@@ -1204,6 +1209,17 @@ function renderFeaturePanel(state){
             <input id="cx-floppy-wl-name" class="input" type="text" value="${floppyName}" placeholder="Watchlist">
           </div>
         </div>
+      `:""}
+
+      ${hasScrob(state)?`
+        <div class="panel-title small" style="margin-top:6px">Scrob specifics</div>
+        <div class="grid2 compact">
+          <div class="opt-row" style="grid-column:1/-1">
+            <label for="cx-scrob-wl-name">List name</label>
+            <input id="cx-scrob-wl-name" class="input" type="text" value="${scrobName}" placeholder="Watchlist">
+          </div>
+        </div>
+        <div class="muted">Scrob has no dedicated watchlist, so CrossWatch syncs a normal Scrob list by name. It is created on the first push if it does not exist yet.</div>
       `:""}
     `;
 
@@ -2171,6 +2187,13 @@ function bindChangeHandlers(state,root){
       state.pairProviders.floppy=fp;
     }
 
+    if(id==="cx-scrob-wl-name"){
+      state.pairProviders=state.pairProviders||{};
+      const sb=Object.assign({},state.pairProviders.scrob||{});
+      sb.watchlist_name=(ID("cx-scrob-wl-name")?.value||"").trim()||"Watchlist";
+      state.pairProviders.scrob=sb;
+    }
+
     if (/^(plx-|jf-|em-)/.test(id)) {
       refreshProviderCardSummaries(state);
     }
@@ -2498,6 +2521,7 @@ function buildPayload(state,wrap){
   const useTr=(String(src).toUpperCase()==="TRAKT"||String(dst).toUpperCase()==="TRAKT");
   const usePmdb=(String(src).toUpperCase()==="PUBLICMETADB"||String(dst).toUpperCase()==="PUBLICMETADB");
   const useFloppy=(String(src).toUpperCase()==="FLOPPY"||String(dst).toUpperCase()==="FLOPPY");
+  const useScrob=(String(src).toUpperCase()==="SCROB"||String(dst).toUpperCase()==="SCROB");
   if(usePlex) prov.plex={strict_id_matching:getPairProviderStrictValue(state, "plex")};
   if(useJf) prov.jellyfin={strict_id_matching:getPairProviderStrictValue(state, "jellyfin")};
   if(useEm) prov.emby={strict_id_matching:getPairProviderStrictValue(state, "emby")};
@@ -2510,6 +2534,11 @@ function buildPayload(state,wrap){
     const fpSrc=pp.floppy||{};
     const name=(ID("cx-floppy-wl-name")?.value||fpSrc.watchlist_name||state.cfgRaw?.floppy?.watchlist_name||"Watchlist").trim()||"Watchlist";
     prov.floppy=Object.assign({},fpSrc,{watchlist_name:name});
+  }
+  if(useScrob){
+    const sbSrc=pp.scrob||{};
+    const name=(ID("cx-scrob-wl-name")?.value||sbSrc.watchlist_name||state.cfgRaw?.scrob?.watchlist_name||"Watchlist").trim()||"Watchlist";
+    prov.scrob=Object.assign({},sbSrc,{watchlist_name:name});
   }
   if(useTr){
     const trSrc=pp.trakt||{};
