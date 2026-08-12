@@ -48,6 +48,10 @@ def _client_error_message(action: str) -> str:
     return f"Anime Mapping {action} failed. Check the server logs for details."
 
 
+def _simkl_not_configured_message() -> str:
+    return "SIMKL lookup is not configured. Connect SIMKL and try again."
+
+
 def _release_tag(payload: dict[str, Any] | None = None) -> str:
     cfg = load_config() or {}
     data: dict[str, Any] = payload if isinstance(payload, dict) else {}
@@ -289,7 +293,16 @@ def api_anime_mapping_simkl_search(q: str = "", limit: int = 25, instance: str =
     try:
         results = simkl_search(term, limit=limit, instance_id=instance or None)
     except SimklNotConfigured as e:
-        return JSONResponse({"ok": False, "error": "simkl_not_configured", "message": str(e)}, status_code=409)
+        log(
+            "simkl_search_not_configured",
+            level="warn",
+            module="ANIME_MAPPING",
+            extra={"error_type": e.__class__.__name__, "error": str(e)},
+        )
+        return JSONResponse(
+            {"ok": False, "error": "simkl_not_configured", "message": _simkl_not_configured_message()},
+            status_code=409,
+        )
     except SimklCatalogError as e:
         log(
             "simkl_search_failed",
@@ -297,7 +310,10 @@ def api_anime_mapping_simkl_search(q: str = "", limit: int = 25, instance: str =
             module="ANIME_MAPPING",
             extra={"error_type": e.__class__.__name__, "error": str(e)},
         )
-        return JSONResponse({"ok": False, "error": "simkl_search_failed", "message": str(e)}, status_code=502)
+        return JSONResponse(
+            {"ok": False, "error": "simkl_search_failed", "message": _client_error_message("SIMKL search")},
+            status_code=502,
+        )
     return JSONResponse({"ok": True, "configured": True, "results": [r.as_dict() for r in results]})
 
 
@@ -314,9 +330,27 @@ def api_anime_mapping_simkl_plan(payload: dict[str, Any] | None = Body(default=N
             instance_id=str(data.get("instance") or "") or None,
         )
     except SimklNotConfigured as e:
-        return JSONResponse({"ok": False, "error": "simkl_not_configured", "message": str(e)}, status_code=409)
+        log(
+            "simkl_plan_not_configured",
+            level="warn",
+            module="ANIME_MAPPING",
+            extra={"error_type": e.__class__.__name__, "error": str(e)},
+        )
+        return JSONResponse(
+            {"ok": False, "error": "simkl_not_configured", "message": _simkl_not_configured_message()},
+            status_code=409,
+        )
     except SimklCatalogError as e:
-        return JSONResponse({"ok": False, "error": "simkl_plan_failed", "message": str(e)}, status_code=400)
+        log(
+            "simkl_plan_failed",
+            level="warn",
+            module="ANIME_MAPPING",
+            extra={"error_type": e.__class__.__name__, "error": str(e)},
+        )
+        return JSONResponse(
+            {"ok": False, "error": "simkl_plan_failed", "message": _client_error_message("SIMKL season plan")},
+            status_code=400,
+        )
     except Exception as e:
         log(
             "simkl_plan_failed",
