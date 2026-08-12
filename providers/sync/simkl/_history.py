@@ -1275,7 +1275,7 @@ def _parse_rows(
                     "type": "episode",
                     "season": s_num,
                     "episode": e_num,
-                    "ids": dict(alias_ids or episode_ids or alias_show_ids or ep_show_ids),
+                    "ids": dict(alias_ids or episode_ids or {}),
                     "title": alias_title if isinstance(alias_title, str) and alias_title.strip() else f"S{s_num:02d}E{e_num:02d}",
                     "year": None,
                     "series_title": alias_series_title if isinstance(alias_series_title, str) and alias_series_title.strip() else series_name,
