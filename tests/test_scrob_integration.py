@@ -431,3 +431,24 @@ def test_scrob_logo_is_not_cropped_to_its_empty_centre():
     assert "220%" not in pill.group(1)
 
     assert providers.count("{") == providers.count("}")
+
+
+def test_scrob_connection_panel_is_compacted_to_fit_without_scrolling():
+    import re
+
+    css = read("assets/css/auth-providers.css")
+    scoped = f'#page-settings #auth-providers .cw-connection-modal-panel[data-cw-connection-provider="scrob"]'
+
+    before = re.search(re.escape(scoped) + r"::before\{([^}]*)\}", css)
+    assert before, "the Scrob panel watermark is not limited"
+    base = re.search(r"#page-settings #auth-providers \.cw-connection-modal-panel::before\{([^}]*)\}", css).group(1)
+    assert "430px" in base and "430px" not in before.group(1)
+
+    journey = re.search(re.escape(scoped) + r" \.cw-auth-journey\{([^}]*)\}", css)
+    assert journey, "the Scrob journey banner is not compacted"
+    assert "!important" in journey.group(1), "the base journey margin uses !important"
+
+    markup = read("providers/auth/_auth_SCROB.py")
+    assert 'style="margin-top:12px"' not in markup
+
+    assert css.count("{") == css.count("}")

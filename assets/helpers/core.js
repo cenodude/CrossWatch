@@ -197,6 +197,18 @@
     return Object.values(instances).some(match);
   }
 
+  function hasScrobConfig(root) {
+    if (!root || typeof root !== "object") return false;
+    const match = (block) => {
+      if (!block || typeof block !== "object") return false;
+      return hasValue(block.server_url) && hasValue(block.api_key) && hasValue(block.username) && hasValue(block.password);
+    };
+    if (match(root)) return true;
+    const instances = root.instances;
+    if (!instances || typeof instances !== "object") return false;
+    return Object.values(instances).some(match);
+  }
+
   function hasFloppyConfig(root) {
     if (!root || typeof root !== "object") return false;
     const match = (block) => {
@@ -362,6 +374,7 @@
     if ([cfg?.nuvio, cfg?.auth?.nuvio].some(hasNuvioConfig)) set.add("NUVIO");
     if ([cfg?.kodi, cfg?.auth?.kodi].some(hasKodiConfig)) set.add("KODI");
     if ([cfg?.floppy, cfg?.auth?.floppy].some(hasFloppyConfig)) set.add("FLOPPY");
+    if ([cfg?.scrob, cfg?.auth?.scrob].some(hasScrobConfig)) set.add("SCROB");
     if ([cfg?.tmdb_sync, cfg?.auth?.tmdb_sync].some(hasTmdbConfig)) set.add("TMDB");
     if ([cfg?.tautulli, cfg?.auth?.tautulli].some((block) => hasAnyConfigValue(block, ["api_key", "server_url", "server"]))) set.add("TAUTULLI");
 
