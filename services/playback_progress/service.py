@@ -25,6 +25,7 @@ from .adapters.mdblist import MDBListPlaybackAdapter
 from .adapters.nuvio import NuvioPlaybackAdapter
 from .adapters.publicmetadb import PublicMetaDBPlaybackAdapter
 from .adapters.punchplay import PunchPlayPlaybackAdapter
+from .adapters.scrob import ScrobPlaybackAdapter
 from .adapters.simkl import SimklPlaybackAdapter
 from .adapters.stremio import StremioPlaybackAdapter
 from .adapters.trakt import TraktPlaybackAdapter
@@ -36,7 +37,7 @@ CACHE_TTL_SECONDS = 60.0
 MAX_WORKERS = 6
 DEFAULT_PROVIDER_TIMEOUT_SECONDS = 20.0
 GROUP_PROGRESS_TOLERANCE = 2.0
-PHASE1_PROVIDERS = ("crosswatch", "trakt", "simkl", "mdblist", "publicmetadb", "punchplay", "plex", "emby", "jellyfin", "nuvio", "kodi", "stremio", "floppy")
+PHASE1_PROVIDERS = ("crosswatch", "trakt", "simkl", "mdblist", "publicmetadb", "punchplay", "plex", "emby", "jellyfin", "nuvio", "kodi", "stremio", "floppy", "scrob")
 SORT_VALUES = {"last_updated", "progress_high", "progress_low", "remaining_time", "rating_high", "title", "provider"}
 LIVE_MEDIA_PROVIDERS = {"plex", "emby", "jellyfin", "kodi"}
 LIVE_ACTIVE_STATES = {"playing", "paused", "buffering"}
@@ -752,6 +753,7 @@ def _profile_has_explicit_identity(cfg: Mapping[str, Any], provider: str, instan
         "stremio": ("auth_key", "authKey"),
         "floppy": ("server_url", "api_token"),
         "punchplay": ("access_token", "refresh_token", "user_id", "username"),
+        "scrob": ("server_url", "api_key", "username"),
     }.get(str(provider or "").strip().lower(), ())
     return any(str(_path_value(raw, path) or "").strip() for path in identity_paths)
 
@@ -824,6 +826,7 @@ class PlaybackProgressService:
             "stremio": StremioPlaybackAdapter(),
             "floppy": FloppyPlaybackAdapter(),
             "punchplay": PunchPlayPlaybackAdapter(),
+            "scrob": ScrobPlaybackAdapter(),
             "crosswatch": CrossWatchPlaybackAdapter(),
         }
         self._cache: dict[tuple[str, str, str], dict[str, Any]] = {}

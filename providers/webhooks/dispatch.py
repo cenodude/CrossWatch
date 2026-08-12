@@ -81,6 +81,14 @@ def _make_sink(name: str, instance_id: str, cfg_provider: Callable[[], dict[str,
         from providers.scrobble.floppy.sink import FloppySink
 
         cls = FloppySink
+    elif sink == "punchplay":
+        from providers.scrobble.punchplay.sink import PunchPlaySink
+
+        cls = PunchPlaySink
+    elif sink == "scrob":
+        from providers.scrobble.scrob.sink import ScrobSink
+
+        cls = ScrobSink
     else:
         raise ValueError(f"Unknown sink: {sink}")
     for kwargs in (
