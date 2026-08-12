@@ -103,3 +103,68 @@ def test_rules_survive_a_dataset_rebuild(client: TestClient, config_base: Path) 
     storage.rebuild_sqlite_from_mappings(release_tag="v3")
 
     assert [x["id"] for x in ov.load_overrides()] == [created["id"]]
+
+
+def test_simkl_search_errors_do_not_expose_exception_text(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    from api import animeMappingAPI as api
+
+    def fail_search(*_args, **_kwargs):
+        raise api.SimklCatalogError("secret upstream path /srv/crosswatch/simkl.py")
+
+    monkeypatch.setattr(api, "simkl_search", fail_search)
+
+    r = client.get("/api/anime-mapping/simkl/search", params={"q": "frieren"})
+
+    assert r.status_code == 502
+    body = r.json()
+    assert body["error"] == "simkl_search_failed"
+    assert "secret upstream path" not in body["message"]
+    assert "server logs" in body["message"]
+
+
+def test_simkl_plan_errors_do_not_expose_exception_text(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    from api import animeMappingAPI as api
+
+    def fail_plan(*_args, **_kwargs):
+        raise api.SimklCatalogError("secret plan input /srv/crosswatch/rules.py")
+
+    monkeypatch.setattr(api, "simkl_plan_rules", fail_plan)
+
+    r = client.post("/api/anime-mapping/simkl/plan", json={"simkl": "12345"})
+
+    assert r.status_code == 400
+    body = r.json()
+    assert body["error"] == "simkl_plan_failed"
+    assert "secret plan input" not in body["message"]
+    assert "server logs" in body["message"]
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "kwargs"),
+    [
+        ("get", "/api/anime-mapping/simkl/search", {"params": {"q": "frieren"}}),
+        ("post", "/api/anime-mapping/simkl/plan", {"json": {"simkl": "12345"}}),
+    ],
+)
+def test_simkl_not_configured_errors_do_not_expose_exception_text(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+    path: str,
+    kwargs: dict[str, object],
+) -> None:
+    from api import animeMappingAPI as api
+
+    def fail_lookup(*_args, **_kwargs):
+        raise api.SimklNotConfigured("SIMKL rejected client id secret-client-id")
+
+    monkeypatch.setattr(api, "simkl_search", fail_lookup)
+    monkeypatch.setattr(api, "simkl_plan_rules", fail_lookup)
+
+    r = getattr(client, method)(path, **kwargs)
+
+    assert r.status_code == 409
+    body = r.json()
+    assert body["error"] == "simkl_not_configured"
+    assert "secret-client-id" not in body["message"]
+    assert body["message"] == "SIMKL lookup is not configured. Connect SIMKL and try again."
