@@ -1101,3 +1101,54 @@ def test_show_no_abs_or_title_mapping_applied(monkeypatch):
     eps = [v for v in out.values() if str(v.get("type")) == "episode"]
     assert len(eps) == 1
     assert (eps[0]["season"], eps[0]["episode"]) == (1, 7)
+
+
+def test_episodes_without_their_own_ids_do_not_inherit_show_ids(monkeypatch):
+    import sync.simkl._history as m
+
+    _set_source_aliases(monkeypatch, m, {})
+
+    show_row = {
+        "show": {"title": "Dragon Ball Z", "ids": {"simkl": 41487, "tmdb": "12971", "tvdb": "81472", "imdb": "tt0121220"}},
+        "seasons": [
+            {
+                "number": 1,
+                "episodes": [
+                    {"number": 1, "watched_at": "2024-05-05T00:00:00Z", "ids": {"tvdb": "355412"}},
+                    {"number": 2, "watched_at": "2024-05-05T00:00:00Z", "ids": {"tvdb": "355413"}},
+                    {"number": 100, "watched_at": "2024-05-05T00:00:00Z"},
+                    {"number": 101, "watched_at": "2024-05-05T00:00:00Z"},
+                ],
+            }
+        ],
+    }
+
+    out, *_ = m._parse_rows([], [show_row], [], limit=None)
+    eps = {v["episode"]: v for v in out.values() if str(v.get("type")) == "episode"}
+
+    assert eps[1]["ids"] == {"tvdb": "355412"}
+    assert eps[2]["ids"] == {"tvdb": "355413"}
+    assert eps[100]["ids"] == {}
+    assert eps[101]["ids"] == {}
+    assert all(e["show_ids"]["tvdb"] == "81472" for e in eps.values())
+
+
+def test_source_episode_id_aliases_survive_when_episode_ids_are_absent(monkeypatch):
+    import sync.simkl._history as m
+
+    aliases = {
+        f"k{n}": {
+            "season": 1,
+            "episode": n,
+            "ids": {} if n > 2 else {"tvdb": f"35541{n}"},
+            "show_ids": {"tmdb": "12971", "tvdb": "81472"},
+        }
+        for n in range(1, 6)
+    }
+    _set_source_aliases(monkeypatch, m, aliases)
+
+    out = m._source_episode_id_aliases()
+
+    assert ("tvdb", "355411") in out
+    assert ("tvdb", "355412") in out
+    assert ("tvdb", "81472") not in out

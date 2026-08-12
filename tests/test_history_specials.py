@@ -871,7 +871,7 @@ def test_simkl_special_episode_is_available_as_history_source() -> None:
     assert by_episode[1]["season"] == 0
     assert by_episode[1]["ids"] == {"tvdb": "900001"}
     assert by_episode[2]["season"] == 0
-    assert by_episode[2]["ids"] == SHOW_IDS
+    assert by_episode[2]["ids"] == {}
     assert by_episode[2]["show_ids"] == SHOW_IDS
     assert shows_ts is not None
     assert movies_count == 0
