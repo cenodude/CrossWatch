@@ -1,9 +1,9 @@
 /* CrossWatch - Scrobbler Route Modal */
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const label = (v) => ({ plex: "Plex", jellyfin: "Jellyfin", emby: "Emby", kodi: "Kodi", trakt: "Trakt", simkl: "SIMKL", mdblist: "MDBList", crosswatch: "CrossWatch", floppy: "Floppy", punchplay: "PunchPlay" }[String(v || "").toLowerCase()] || String(v || "").toUpperCase());
-const sources = ["plex", "jellyfin", "emby", "kodi"];
-const sinks = ["crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay"];
-const ratingSinks = ["crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay"];
+const label = (v) => ({ plex: "Plex", jellyfin: "Jellyfin", emby: "Emby", kodi: "Kodi", trakt: "Trakt", simkl: "SIMKL", mdblist: "MDBList", crosswatch: "CrossWatch", floppy: "Floppy", punchplay: "PunchPlay", scrob: "Scrob" }[String(v || "").toLowerCase()] || String(v || "").toUpperCase());
+const sources = ["plex", "jellyfin", "emby", "kodi", "scrob"];
+const sinks = ["crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "scrob"];
+const ratingSinks = ["crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "scrob"];
 
 function flashCopied(btn) {
   if (!btn) return;
@@ -81,15 +81,18 @@ function sourceProviders(selected = "") {
   return current && sources.includes(current) && !available.includes(current) ? [current, ...available] : available;
 }
 
-function sinkProviders(selected = "") {
-  const available = sinks.filter((p) => allSinkProfiles(p).length);
+function sinkProviders(selected = "", source = "") {
+  const self = String(source || "").toLowerCase();
+  const available = sinks.filter((p) => p !== self && allSinkProfiles(p).length);
   const current = String(selected || "").toLowerCase();
+  if (current === self) return available;
   return current && sinks.includes(current) && !available.includes(current) ? [current, ...available] : available;
 }
 
-function ratingSinkProviders(selected = []) {
-  const available = sinkProviders().filter((x) => ratingSinks.includes(x));
-  const selectedList = [...selected].map((x) => String(x || "").toLowerCase()).filter((x) => ratingSinks.includes(x));
+function ratingSinkProviders(selected = [], source = "") {
+  const self = String(source || "").toLowerCase();
+  const available = sinkProviders("", self).filter((x) => ratingSinks.includes(x));
+  const selectedList = [...selected].map((x) => String(x || "").toLowerCase()).filter((x) => ratingSinks.includes(x) && x !== self);
   return [...selectedList.filter((x) => !available.includes(x)), ...available];
 }
 
@@ -102,7 +105,7 @@ function nextId() {
 
 function defaultRoute() {
   const srcProvider = sourceProviders()[0] || "";
-  const sink = sinkProviders()[0] || "";
+  const sink = sinkProviders("", srcProvider)[0] || "";
   return {
     id: nextId(),
     enabled: true,
@@ -135,9 +138,9 @@ function optionsForProfiles(provider, selected, kind) {
   return missing + options || `<option value="">No configured profile</option>`;
 }
 
-function optionsForProviders(kind, selected) {
+function optionsForProviders(kind, selected, source = "") {
   const current = String(selected || "").toLowerCase();
-  const list = kind === "source" ? sourceProviders(current) : sinkProviders(current);
+  const list = kind === "source" ? sourceProviders(current) : sinkProviders(current, source);
   const configured = kind === "source" ? allSourceProfiles : allSinkProfiles;
   const empty = kind === "source" ? "No configured source provider" : "No configured destination provider";
   if (!list.length) return `<option value="">${empty}</option>`;
@@ -300,7 +303,7 @@ function routePanel(r) {
         <div class="scrm-provider-card ${providerClass(r.sink)}">
           <div class="scrm-card-head"><span class="scrm-provider-mark">${providerIcon(r.sink)}</span><div><strong>Destination</strong><small>${esc(label(r.sink))}</small></div></div>
           <div class="scrm-fields">
-            ${fieldIcon("gps_fixed", "Provider", `<select class="input" id="scr-sink">${optionsForProviders("sink", r.sink)}</select>`)}
+            ${fieldIcon("gps_fixed", "Provider", `<select class="input" id="scr-sink">${optionsForProviders("sink", r.sink, r.provider)}</select>`)}
             ${fieldIcon("person", "Profile", `<select class="input" id="scr-sink-instance">${optionsForProfiles(r.sink, r.sink_instance, "sink")}</select>`)}
           </div>
         </div>
@@ -388,7 +391,7 @@ function globalRatingTargets() {
 
 function ratingsPanel(r, ratings, ratingTargets) {
   if (r.provider !== "plex") return "";
-  const ratingSinkList = ratingSinkProviders(ratingTargets);
+  const ratingSinkList = ratingSinkProviders(ratingTargets, r.provider);
   const isOff = ratings.mode !== "custom";
   const globalTargets = globalRatingTargets();
   const globalWarn = globalTargets.length
@@ -748,6 +751,10 @@ export async function mount(shell, incoming = {}) {
       syncDraftFromDom();
       if (e.target.id === "scr-provider") {
         draft.provider_instance = allSourceProfiles(draft.provider)[0]?.instance || "";
+        if (draft.sink === draft.provider) draft.sink = sinkProviders("", draft.provider)[0] || "";
+        draft.sink_instance = allSinkProfiles(draft.sink)[0]?.instance || "";
+        const keptTargets = (draft.options.ratings?.targets || []).filter((t) => t !== draft.provider);
+        if (draft.options.ratings) draft.options.ratings.targets = keptTargets;
         if (draft.provider !== "plex") draft.options.ratings = { mode: "off", targets: [] };
       }
       if (e.target.id === "scr-sink") {
