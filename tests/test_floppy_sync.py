@@ -82,6 +82,47 @@ def test_floppy_module_uses_shared_rate_limiter() -> None:
     assert mod.client.session._rate_limiter_meta == {"get_per_sec": 12.0, "post_per_sec": 9.0}
 
 
+def test_floppy_module_uses_non_default_provider_config_view(monkeypatch: Any) -> None:
+    from cw_platform.provider_instances import build_provider_config_view
+    from providers.sync._mod_FLOPPY import FLOPPYModule
+    from providers.sync.floppy._common import is_configured
+
+    cfg = {
+        "floppy": {
+            "server_url": "https://default.local",
+            "api_token": "default-token",
+            "instances": {
+                "FLOPPY-P01": {
+                    "server_url": "https://p01.local",
+                    "api_token": "p01-token",
+                    "verify_ssl": True,
+                }
+            },
+        }
+    }
+    view = build_provider_config_view(cfg, "floppy", "FLOPPY-P01")
+    monkeypatch.setenv("CW_PAIR_DST", "FLOPPY")
+    monkeypatch.setenv("CW_PAIR_DST_INSTANCE", "FLOPPY-P01")
+
+    mod = FLOPPYModule(view)
+
+    assert is_configured(view, "FLOPPY-P01") is True
+    assert mod.client.server_url == "https://p01.local"
+    assert mod.client.api_token == "p01-token"
+    assert mod.client.verify_ssl is True
+
+
+def test_floppy_non_default_missing_instance_does_not_reuse_default_block() -> None:
+    from cw_platform.provider_instances import build_provider_config_view
+    from providers.sync.floppy._common import configured_block, is_configured
+
+    cfg = {"floppy": {"server_url": "https://default.local", "api_token": "default-token"}}
+    view = build_provider_config_view(cfg, "floppy", "FLOPPY-P01")
+
+    assert configured_block(view, "FLOPPY-P01") == {}
+    assert is_configured(view, "FLOPPY-P01") is False
+
+
 def test_floppy_watchlist_reads_configured_custom_list() -> None:
     from providers.sync.floppy import _watchlist
 
