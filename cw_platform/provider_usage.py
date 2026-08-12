@@ -30,6 +30,10 @@ _PROVIDER_LABELS = {
     "trakt": "Trakt",
     "simkl": "SIMKL",
     "mdblist": "MDBList",
+    "crosswatch": "CrossWatch",
+    "floppy": "Floppy",
+    "punchplay": "PunchPlay",
+    "scrob": "Scrob",
 }
 
 
@@ -120,6 +124,7 @@ def _enabled_webhook_sources(cfg: Mapping[str, Any]) -> list[tuple[str, str]]:
 
 
 def _webhook_usage(cfg: Mapping[str, Any], provider: str, instance: str) -> list[dict[str, Any]]:
+    from providers.scrobble.routes import ROUTE_SINKS
     from providers.webhooks.config import webhook_settings, webhook_sink_instance, webhook_sinks
 
     out: list[dict[str, Any]] = []
@@ -137,7 +142,7 @@ def _webhook_usage(cfg: Mapping[str, Any], provider: str, instance: str) -> list
             )
             continue
 
-        if provider not in {"trakt", "simkl", "mdblist"}:
+        if provider not in ROUTE_SINKS:
             continue
 
         settings = webhook_settings(cfg, source_prov, source_inst)
