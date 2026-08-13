@@ -1873,6 +1873,21 @@ def _anibridge_absolute(
     return absolute
 
 
+def _simkl_override_absolute(item: Mapping[str, Any], ids: Mapping[str, str]) -> int | None:
+    raw = item.get("_cw_anime_map")
+    if not isinstance(raw, Mapping):
+        return None
+    namespace = str(raw.get("namespace") or "").strip().lower()
+    if namespace != "simkl":
+        return None
+    target_id = str(raw.get("target_id") or "").strip()
+    simkl_id = str(ids.get("simkl") or "").strip()
+    if not target_id or target_id != simkl_id:
+        return None
+    absolute = _int_or_none(raw.get("absolute"))
+    return absolute if absolute is not None and absolute > 0 else None
+
+
 def _log_anime_resolve_summary(state: _AnimeResolveState) -> None:
     if state.checked <= 0:
         return
@@ -2279,6 +2294,11 @@ def _anime_retry_episode_number(
             return alias_native
     rows = _anime_episode_rows(session, headers, timeout, str(ids.get("simkl") or ""), episode_cache)
     if rows:
+        override_absolute = _simkl_override_absolute(item, ids)
+        if override_absolute is not None:
+            abs_hits = [row for row in rows if _row_anime_episode_number(row) == override_absolute]
+            if len(abs_hits) == 1:
+                return override_absolute
         direct = [
             row for row in rows
             if isinstance(row.get("tvdb"), Mapping)
