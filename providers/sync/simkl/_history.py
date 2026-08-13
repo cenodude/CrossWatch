@@ -2065,12 +2065,14 @@ def _anime_episode_rows(
     timeout: float,
     simkl_id: str,
     cache: dict[str, list[dict[str, Any]]],
+    *,
+    force_refresh: bool = False,
 ) -> list[dict[str, Any]]:
     simkl_id = str(simkl_id or "").strip()
     if not simkl_id:
         return []
     cached = cache.get(simkl_id)
-    if isinstance(cached, list):
+    if isinstance(cached, list) and not force_refresh:
         return cached
     try:
         resp = session.get(
@@ -2081,17 +2083,17 @@ def _anime_episode_rows(
         )
     except Exception as exc:
         _dbg("anime_episode_map_failed", simkl=simkl_id, error=exc.__class__.__name__)
-        return []
+        return cached if isinstance(cached, list) else []
     if not (200 <= getattr(resp, "status_code", 0) < 300):
         _dbg("anime_episode_map_miss", simkl=simkl_id, status=getattr(resp, "status_code", None))
-        return []
+        return cached if isinstance(cached, list) else []
     try:
         payload = resp.json() if (getattr(resp, "text", "") or "").strip() else []
     except Exception as exc:
         _dbg("anime_episode_map_malformed", simkl=simkl_id, error=exc.__class__.__name__)
         return []
     if not isinstance(payload, list):
-        return []
+        return cached if isinstance(cached, list) else []
     rows: list[dict[str, Any]] = []
     for row in payload:
         if not isinstance(row, Mapping):
@@ -2113,6 +2115,8 @@ def _anime_episode_rows(
     if rows:
         cache[simkl_id] = rows
         _save_anime_episode_map_cache(cache)
+    elif isinstance(cached, list):
+        return cached
     return rows
 
 
@@ -2299,6 +2303,19 @@ def _anime_retry_episode_number(
             abs_hits = [row for row in rows if _row_anime_episode_number(row) == override_absolute]
             if len(abs_hits) == 1:
                 return override_absolute
+            refreshed = _anime_episode_rows(
+                session,
+                headers,
+                timeout,
+                str(ids.get("simkl") or ""),
+                episode_cache,
+                force_refresh=True,
+            )
+            if refreshed is not rows:
+                abs_hits = [row for row in refreshed if _row_anime_episode_number(row) == override_absolute]
+                if len(abs_hits) == 1:
+                    return override_absolute
+                rows = refreshed
         direct = [
             row for row in rows
             if isinstance(row.get("tvdb"), Mapping)
