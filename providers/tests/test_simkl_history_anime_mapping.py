@@ -575,6 +575,44 @@ def test_simkl_target_override_refreshes_stale_episode_cache(monkeypatch):
     assert saved and stale_cache["2532478"][0]["episode"] == 1
 
 
+def test_simkl_target_override_beats_source_tvdb_redirect(monkeypatch):
+    import sync.simkl._history as m
+
+    _patch_fs(monkeypatch, m)
+    session = _Session(redirect_map={"424049": "1967108"}, episodes_map=_KAIJU_EPISODES)
+    state = m._AnimeResolveState({}, {})
+    item = {
+        "type": "episode",
+        "season": 1,
+        "episode": 13,
+        "watched_at": "2024-01-01T00:00:00Z",
+        "show_ids": {"tmdb": "207468", "tvdb": "424049"},
+        "series_title": "Kaiju No. 8",
+        "_cw_anime_map": {
+            "absolute": 1,
+            "namespace": "simkl",
+            "target_id": "2532478",
+            "entry": "override:ovr_kaiju_s2n4p7",
+            "release_tag": "v3",
+        },
+    }
+
+    ids = m._native_anime_ids_for_mismatched_show(session, {}, 5, item, state)
+    mapped = m._anime_retry_episode_number(
+        item,
+        ids,
+        session=session,
+        headers={},
+        timeout=5,
+        episode_cache={},
+        resolve_state=state,
+    )
+
+    assert ids == {"simkl": "2532478"}
+    assert mapped == 1
+    assert not any(call["url"] == m.URL_REDIRECT for call in session.gets)
+
+
 def test_read_back_native_e01_maps_to_tvdb_s04e17():
     import sync.simkl._history as m
 
