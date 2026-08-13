@@ -153,6 +153,7 @@ class HistoryCoordinateAliases:
                 for season, episode in self._axis_coordinates(show_ids_of(item), absolute):
                     frag = f"#s{season:02d}e{episode:02d}"
                     tokens.update(f"{p}{frag}" for p in prefixes)
+            return tokens
 
         coord = _episode_coordinate(item)
         if coord is not None and coord[0] > 0:

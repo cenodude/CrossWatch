@@ -148,6 +148,18 @@ def test_one_piece_matches_a_destination_that_numbers_episodes_absolutely(config
     assert "tmdb:37854#abs:75" in aliases.tokens(source)
 
 
+def test_a_row_with_its_own_absolute_never_claims_its_episode_number_is_one(config_base: Path) -> None:
+    dst_index = _mdblist_run(MDBLIST_ONE_PIECE_IDS, [(1, list(range(1, 21)))])
+    source = _episode(ONE_PIECE_IDS, 3, 11, absolute=21)
+    aliases = build_history_coordinate_aliases(CFG, "history", (dst_index,))
+
+    tokens = aliases.tokens(source)
+
+    assert "tmdb:37854#abs:21" in tokens
+    assert "tmdb:37854#abs:11" not in tokens
+    assert not _matched(aliases, source, dst_index["tmdb:37854#s01e11"])
+
+
 def test_per_season_restart_numbering_is_not_treated_as_absolute(config_base: Path) -> None:
     dst_index = _mdblist_run(MDBLIST_DBZ_IDS, [(1, list(range(1, 40))), (2, list(range(1, 36)))])
 
