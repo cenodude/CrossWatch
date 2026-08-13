@@ -201,6 +201,11 @@ def readonly(adapter: Any) -> bool:
     return bool(isinstance(cfg, Mapping) and cfg.get("_cw_readonly"))
 
 
+def current_state_only(adapter: Any) -> bool:
+    cfg = getattr(adapter, "config", None)
+    return bool(isinstance(cfg, Mapping) and cfg.get("_cw_current_state_only"))
+
+
 def may_persist(adapter: Any, path: Path) -> bool:
     return not readonly(adapter) and not pair_scoped() and not path.exists()
 

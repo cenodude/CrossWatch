@@ -32,7 +32,7 @@ router = APIRouter(prefix="/api/import", tags=["import"])
 
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 MAX_TEXT_BYTES = 8 * 1024 * 1024
-MAX_ZIP_FILES = 80
+MAX_ZIP_FILES = 1000
 MAX_ZIP_MEMBER_BYTES = 8 * 1024 * 1024
 MAX_ZIP_TOTAL_BYTES = 60 * 1024 * 1024
 MAX_ROWS = 50_000
@@ -1041,11 +1041,18 @@ def _existing_keys(cfg: Mapping[str, Any], instance: str) -> dict[str, Any]:
     if not ops:
         return {f: set() for f in FEATURES}
     cfg_view = build_provider_config_view(cfg, "CROSSWATCH", instance)
+    if hasattr(ops, "is_configured"):
+        try:
+            if not bool(ops.is_configured(cfg_view)):
+                return {f: {} for f in FEATURES}
+        except Exception:
+            return {f: {} for f in FEATURES}
     out: dict[str, Any] = {f: {} for f in FEATURES}
     for feature in FEATURES:
         try:
             view = dict(cfg_view)
             view["_cw_readonly"] = True
+            view["_cw_current_state_only"] = True
             if feature == "history":
                 view["_cw_history_rewatches"] = True
             idx = ops.build_index(view, feature=feature) or {}
