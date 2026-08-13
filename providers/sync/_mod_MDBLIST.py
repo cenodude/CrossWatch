@@ -733,6 +733,20 @@ class MDBLISTModule:
         mod = _FEATURES.get(feature)
         return mod.build_index(self, **kwargs) if mod else {}
 
+    def destination_comparison_view(
+        self,
+        feature: str,
+        index: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        if str(feature or "").strip().lower() != "history":
+            return index
+        mod = _FEATURES.get("history")
+        hook = getattr(mod, "destination_comparison_view", None)
+        if not callable(hook):
+            return index
+        out = hook(index, self)
+        return out if isinstance(out, Mapping) else index
+
     def add(
         self,
         feature: str,
@@ -944,6 +958,19 @@ class _MDBLISTOPS:
         feature: str,
     ) -> Mapping[str, dict[str, Any]]:
         return self._adapter(cfg).build_index(feature)
+
+    def destination_comparison_view(
+        self,
+        cfg: Mapping[str, Any],
+        *,
+        feature: str,
+        index: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        try:
+            return self._adapter(cfg).destination_comparison_view(feature, index)
+        except Exception as e:
+            _warn("destination_comparison_failed", feature=feature, error=str(e))
+            return index
 
     def add(
         self,

@@ -11,6 +11,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence, TypeGuard
 
+from cw_platform.anime_mapping.coordinates import translate
+from cw_platform.anime_mapping.episodes import resolve_absolute, resolve_axis_coordinates, resolve_source_coordinate
+from cw_platform.anime_mapping.service import (
+    PAIR_FEATURE_OPTIONS_KEY,
+    mapping_enabled_for_feature,
+    runtime_pair_feature_options,
+)
+from cw_platform.anime_mapping.storage import query_edges
 from cw_platform.history_events import history_sync_key, minimal_history_item
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
@@ -112,12 +120,238 @@ def _rewatches_enabled(adapter: Any) -> bool:
     return bool(isinstance(cfg, Mapping) and cfg.get("_cw_history_rewatches"))
 
 
+def _anime_mapping_enabled(adapter: Any) -> bool:
+    cfg = getattr(adapter, "config", None)
+    if not isinstance(cfg, Mapping):
+        return False
+    opts = runtime_pair_feature_options(cfg, "history")
+    if PAIR_FEATURE_OPTIONS_KEY in cfg:
+        return bool(opts.get("use_anime_mapping"))
+    return bool(opts.get("use_anime_mapping") or mapping_enabled_for_feature(cfg, "history"))
+
+
+def _anime_release_tag(adapter: Any) -> str:
+    cfg = getattr(adapter, "config", None)
+    block = cfg.get("anime_mapping") if isinstance(cfg, Mapping) else {}
+    if isinstance(block, Mapping):
+        tag = str(block.get("release_tag") or "").strip()
+        if tag:
+            return tag
+    return "v3"
+
+
 def _history_key(adapter: Any, item: Mapping[str, Any], fallback_key: Any = None) -> str:
     return history_sync_key(item, fallback_key, event_mode=_rewatches_enabled(adapter))
 
 
 def _history_minimal(adapter: Any, item: Mapping[str, Any], fallback_key: Any = None) -> dict[str, Any]:
     return minimal_history_item(item, fallback_key, event_mode=_rewatches_enabled(adapter))
+
+
+def _anime_evidence(item: Mapping[str, Any]) -> bool:
+    if str(item.get("simkl_bucket") or "").strip().lower() == "anime":
+        return True
+    if isinstance(item.get("_cw_anime_map"), Mapping):
+        return True
+    if item.get("_simkl_episode_number") not in (None, ""):
+        return True
+    for ids in (item.get("show_ids"), item.get("ids")):
+        if not isinstance(ids, Mapping):
+            continue
+        if any(str(ids.get(k) or "").strip() for k in ("mal", "anilist", "anidb", "kitsu")):
+            return True
+    return False
+
+
+def _anime_native_ids(item: Mapping[str, Any]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for ids in (item.get("show_ids"), item.get("ids")):
+        if not isinstance(ids, Mapping):
+            continue
+        for key in ("anidb", "mal", "anilist", "kitsu", "simkl"):
+            value = str(ids.get(key) or "").strip()
+            if value:
+                out.setdefault(key, value)
+    amap = item.get("_cw_anime_map")
+    if isinstance(amap, Mapping):
+        ns = str(amap.get("namespace") or "").strip().lower()
+        tid = str(amap.get("target_id") or "").strip()
+        if ns and tid:
+            out.setdefault(ns, tid)
+    return out
+
+
+def _anime_absolute_from_item(item: Mapping[str, Any]) -> int | None:
+    amap = item.get("_cw_anime_map")
+    if isinstance(amap, Mapping):
+        value = _as_int(amap.get("absolute"))
+        if value is not None and value > 0:
+            return value
+    for field in ("_simkl_episode_number", "_trakt_number_abs", "number_abs"):
+        value = _as_int(item.get(field))
+        if value is not None and value > 0:
+            return value
+    if _anime_evidence(item):
+        try:
+            res = resolve_absolute(item)
+        except Exception:
+            res = None
+        if res is not None and int(res.absolute) > 0:
+            return int(res.absolute)
+    return None
+
+
+def _tmdb_show_id(item: Mapping[str, Any]) -> str:
+    for ids in (item.get("show_ids"), item.get("ids")):
+        if not isinstance(ids, Mapping):
+            continue
+        value = str(ids.get("tmdb") or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _season_from_scope(value: Any) -> int | None:
+    text = str(value or "").strip().lower()
+    if not text.startswith("s"):
+        return None
+    return _as_int(text[1:])
+
+
+def _tmdb_coordinates_for_absolute(
+    item: Mapping[str, Any],
+    absolute: int,
+    *,
+    release_tag: str,
+) -> set[tuple[int, int]]:
+    native_ids = _anime_native_ids(item)
+    show_tmdb = _tmdb_show_id(item)
+    out: set[tuple[int, int]] = set()
+    for namespace in ("anidb", "mal", "anilist", "kitsu"):
+        ident = native_ids.get(namespace)
+        if not ident:
+            continue
+        try:
+            rows = query_edges(release_tag, namespace, ident)
+        except Exception:
+            rows = []
+        for row in rows:
+            if str(row.get("target_provider") or "").strip().lower() != "tmdb":
+                continue
+            if str(row.get("target_kind") or "").strip().lower() != "show":
+                continue
+            target_id = str(row.get("target_id") or "").strip()
+            if show_tmdb and target_id and target_id != show_tmdb:
+                continue
+            season = _season_from_scope(row.get("target_scope"))
+            if season is None or season < 0:
+                continue
+            episode = translate(row.get("source_range"), row.get("target_range"), absolute)
+            if episode is None or int(episode) <= 0:
+                continue
+            out.add((int(season), int(episode)))
+    return out
+
+
+def _mdblist_coordinate_for_anime(
+    item: Mapping[str, Any],
+    *,
+    release_tag: str,
+) -> tuple[int, int] | None:
+    if _type_norm(item.get("type")) != "episode" or not _anime_evidence(item):
+        return None
+    absolute = _anime_absolute_from_item(item)
+    if absolute is None or absolute <= 0:
+        return None
+
+    tmdb_coords = _tmdb_coordinates_for_absolute(item, absolute, release_tag=release_tag)
+    if len(tmdb_coords) == 1:
+        return next(iter(tmdb_coords))
+
+    native_ids = _anime_native_ids(item)
+    try:
+        src_coord = resolve_source_coordinate(native_ids, absolute, release_tag=release_tag)
+    except Exception:
+        src_coord = None
+    if src_coord is not None:
+        return int(src_coord.season), int(src_coord.episode)
+
+    try:
+        axis = resolve_axis_coordinates(native_ids, absolute, release_tag=release_tag)
+    except Exception:
+        axis = set()
+    if len(axis) == 1:
+        return next(iter(axis))
+    if (1, absolute) in axis:
+        return 1, absolute
+    return None
+
+
+def _with_mdblist_anime_coordinate(
+    adapter: Any,
+    item: Mapping[str, Any],
+    *,
+    release_tag: str | None = None,
+) -> dict[str, Any]:
+    out = dict(item or {})
+    if not _anime_mapping_enabled(adapter):
+        return out
+    coord = _mdblist_coordinate_for_anime(out, release_tag=release_tag or _anime_release_tag(adapter))
+    if coord is None:
+        return out
+    season, episode = coord
+    if season < 0 or episode <= 0:
+        return out
+    out["season"] = season
+    out["episode"] = episode
+    out["title"] = f"S{season:02d}E{episode:02d}"
+    return out
+
+
+def _comparison_alias_keys_for_episode(
+    adapter: Any,
+    item: Mapping[str, Any],
+    *,
+    release_tag: str,
+) -> dict[str, dict[str, Any]]:
+    if _type_norm(item.get("type")) != "episode":
+        return {}
+    try:
+        res = resolve_absolute(item, release_tag=release_tag)
+    except Exception:
+        res = None
+    if res is None or int(res.absolute) <= 0:
+        return {}
+
+    native_ids = {str(res.namespace): str(res.target_id)}
+    coords: set[tuple[int, int]] = set()
+    try:
+        coords.update(resolve_axis_coordinates(native_ids, int(res.absolute), release_tag=release_tag))
+    except Exception:
+        pass
+    try:
+        src_coord = resolve_source_coordinate(native_ids, int(res.absolute), release_tag=release_tag)
+    except Exception:
+        src_coord = None
+    if src_coord is not None:
+        coords.add((int(src_coord.season), int(src_coord.episode)))
+    coords.add((1, int(res.absolute)))
+
+    out: dict[str, dict[str, Any]] = {}
+    current = (_as_int(item.get("season")), _as_int(item.get("episode")))
+    for season, episode in coords:
+        if season is None or episode is None or int(season) < 0 or int(episode) <= 0:
+            continue
+        if (int(season), int(episode)) == current:
+            continue
+        alias_item = dict(item)
+        alias_item["season"] = int(season)
+        alias_item["episode"] = int(episode)
+        alias_item["title"] = f"S{int(season):02d}E{int(episode):02d}"
+        key = _history_key(adapter, alias_item)
+        if key:
+            out[key] = _history_minimal(adapter, alias_item, key)
+    return out
 
 
 def _migrate_cache(items: Mapping[str, Any]) -> tuple[dict[str, Any], bool]:
@@ -1092,6 +1326,35 @@ def build_index(
     return merged
 
 
+def destination_comparison_view(index: Mapping[str, Any], adapter: Any = None) -> dict[str, Any]:
+    if adapter is None or not _anime_mapping_enabled(adapter):
+        return dict(index or {})
+
+    release_tag = _anime_release_tag(adapter)
+    out: dict[str, Any] = {}
+    aliases = 0
+    remapped = 0
+    for key, item in (index or {}).items():
+        if not isinstance(item, Mapping):
+            out[str(key)] = item
+            continue
+        alias_items = _comparison_alias_keys_for_episode(adapter, item, release_tag=release_tag)
+        if alias_items:
+            remapped += 1
+            canonical_alias = next(iter(alias_items.values()))
+            out[str(key)] = dict(canonical_alias)
+            for alias_key, alias_item in alias_items.items():
+                if alias_key in out:
+                    continue
+                out[alias_key] = alias_item
+                aliases += 1
+            continue
+        out[str(key)] = dict(item)
+    if aliases or remapped:
+        _dbg("anime_comparison_view", aliases=aliases, remapped=remapped, before=len(index or {}), after=len(out))
+    return out
+
+
 def _stable_show_key(ids: Mapping[str, Any]) -> str:
     keep = {k: ids.get(k) for k in ("tmdb", "imdb", "tvdb", "trakt") if ids.get(k) is not None}
     return json.dumps(keep, sort_keys=True)
@@ -1289,7 +1552,7 @@ def _items_for_not_found(row: Mapping[str, Any], kind: str, sent_rows: Any = Non
     return out or [show]
 
 
-def _bucketize(items: Iterable[Mapping[str, Any]], *, unwatch: bool) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def _bucketize(adapter: Any, items: Iterable[Mapping[str, Any]], *, unwatch: bool) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     movies: list[dict[str, Any]] = []
     episodes: list[dict[str, Any]] = []
     shows_nested: dict[str, dict[str, Any]] = {}
@@ -1321,8 +1584,9 @@ def _bucketize(items: Iterable[Mapping[str, Any]], *, unwatch: bool) -> tuple[di
             dst["year"] = year
 
 
+    release_tag = _anime_release_tag(adapter)
     for raw in items or []:
-        m = dict(raw or {})
+        m = _with_mdblist_anime_coordinate(adapter, raw or {}, release_tag=release_tag)
         typ_raw = m.get("type")
         typ = str(typ_raw or "movie").strip().lower()
         if typ.endswith("s") and typ in ("movies", "shows", "seasons", "episodes"):
@@ -1736,7 +2000,7 @@ def _write(
             return play_result
         items_list = rollup_items
 
-    body, accepted = _bucketize(items_list, unwatch=unwatch)
+    body, accepted = _bucketize(adapter, items_list, unwatch=unwatch)
     if not body:
         _info("write_skipped", op="remove" if unwatch else "add", reason="empty_payload", unresolved=0)
         if event_mode:
