@@ -702,14 +702,23 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
 
     def _typed_tokens(it: Mapping[str, Any]) -> set[str]:
         typ = str(it.get("type") or "").strip().lower()
-        if typ in ("episode", "season"):
-            ids_raw = it.get("show_ids") or it.get("ids") or {}
-        else:
-            ids_raw = it.get("ids") or {}
-        ids = ids_raw if isinstance(ids_raw, Mapping) else {}
+        show_ids_raw = it.get("show_ids") if isinstance(it.get("show_ids"), Mapping) else {}
+        ids_raw = it.get("ids") if isinstance(it.get("ids"), Mapping) else {}
+        show_ids = dict(show_ids_raw or {})
+        ids = dict(ids_raw or {})
+        coord_ids: Mapping[str, Any] = (show_ids or ids) if typ in ("episode", "season") else ids
         toks: set[str] = set(coord_aliases.tokens(it))
 
         if typ == "episode":
+            if show_ids:
+                for k in ("tmdb", "imdb", "tvdb", "trakt"):
+                    v = ids.get(k)
+                    if v is None or str(v) == "":
+                        continue
+                    show_v = show_ids.get(k)
+                    if show_v is not None and str(show_v).lower() == str(v).lower():
+                        continue
+                    toks.add(f"{str(k).lower()}:{str(v).lower()}")
             try:
                 season_raw = it.get("season") if it.get("season") is not None else it.get("season_number")
                 episode_raw = it.get("episode") if it.get("episode") is not None else it.get("episode_number")
@@ -719,7 +728,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                 s, e = -1, 0
             if s >= 0 and e > 0:
                 frag = f"#s{s:02d}e{e:02d}"
-                for k, v in ids.items():
+                for k, v in coord_ids.items():
                     if v is None or str(v) == "":
                         continue
                     toks.add(f"{str(k).lower()}:{str(v).lower()}{frag}")
@@ -732,7 +741,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                 s = -1
             if s >= 0:
                 frag = f"#season:{s}"
-                for k, v in ids.items():
+                for k, v in coord_ids.items():
                     if v is None or str(v) == "":
                         continue
                     toks.add(f"{str(k).lower()}:{str(v).lower()}{frag}")

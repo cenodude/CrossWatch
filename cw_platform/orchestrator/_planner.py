@@ -30,6 +30,23 @@ def _strong_keys(item: Mapping[str, Any]) -> set[str]:
                 out.add(t)
         return out
 
+    show_ids: Mapping[str, Any] = {}
+    show_ids_raw = item.get("show_ids")
+    if isinstance(show_ids_raw, Mapping) and show_ids_raw:
+        show_ids = coalesce_ids(show_ids_raw) or {}
+
+    if typ == "episode" and show_ids:
+        for k in _STRONG_ID_KEYS:
+            own = ids.get(k)
+            if own is None or str(own).strip() == "":
+                continue
+            show = show_ids.get(k)
+            if show is not None and str(show).strip().lower() == str(own).strip().lower():
+                continue
+            t = _tok(k, own)
+            if t:
+                out.add(t)
+
     s = item.get("season") if item.get("season") is not None else item.get("season_number")
     e = item.get("episode") if item.get("episode") is not None else item.get("episode_number")
     try:
@@ -55,10 +72,7 @@ def _strong_keys(item: Mapping[str, Any]) -> set[str]:
                 out.add(t)
         return out
 
-    source_ids: Mapping[str, Any] = ids
-    show_ids_raw = item.get("show_ids")
-    if isinstance(show_ids_raw, Mapping) and show_ids_raw:
-        source_ids = coalesce_ids(show_ids_raw) or ids
+    source_ids: Mapping[str, Any] = show_ids or ids
 
     for k in _STRONG_ID_KEYS:
         t = _tok(k, source_ids.get(k))

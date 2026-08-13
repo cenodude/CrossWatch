@@ -20,6 +20,56 @@ def test_diff_adds_and_removes_minimally() -> None:
     assert set(adds[0].keys()) >= {"type", "title", "year", "ids"}
 
 
+def test_diff_matches_episode_level_ids_when_coordinates_differ() -> None:
+    src = {
+        "tmdb:37854#s23e01": {
+            "type": "episode",
+            "series_title": "One Piece",
+            "season": 23,
+            "episode": 1,
+            "ids": {"tvdb": "11526346"},
+            "show_ids": {"tmdb": "37854", "tvdb": "81797"},
+        }
+    }
+    dst = {
+        "tmdb:37854#s23e1156": {
+            "type": "episode",
+            "series_title": "One Piece",
+            "season": 23,
+            "episode": 1156,
+            "ids": {"tmdb": "7099881", "tvdb": "11526346"},
+            "show_ids": {"tmdb": "37854", "tvdb": "81797"},
+        }
+    }
+
+    assert diff(src, dst) == ([], [])
+
+
+def test_diff_does_not_match_inherited_show_ids_as_episode_ids() -> None:
+    src = {
+        "tmdb:37854#s23e01": {
+            "type": "episode",
+            "season": 23,
+            "episode": 1,
+            "ids": {"tmdb": "37854"},
+            "show_ids": {"tmdb": "37854"},
+        }
+    }
+    dst = {
+        "tmdb:37854#s23e02": {
+            "type": "episode",
+            "season": 23,
+            "episode": 2,
+            "ids": {"tmdb": "37854"},
+            "show_ids": {"tmdb": "37854"},
+        }
+    }
+
+    adds, removes = diff(src, dst)
+    assert len(adds) == 1
+    assert len(removes) == 1
+
+
 def test_diff_ratings_upserts_and_unrates() -> None:
     src = {
         "imdb:tt01": {"type": "movie", "title": "A", "year": 2000, "ids": {"imdb": "tt01"}, "rating": 7},

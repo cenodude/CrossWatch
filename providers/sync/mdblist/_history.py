@@ -316,26 +316,51 @@ def _comparison_alias_keys_for_episode(
 ) -> dict[str, dict[str, Any]]:
     if _type_norm(item.get("type")) != "episode":
         return {}
-    try:
-        res = resolve_absolute(item, release_tag=release_tag)
-    except Exception:
-        res = None
-    if res is None or int(res.absolute) <= 0:
+    absolute = _as_int(item.get("episode"))
+    season = _as_int(item.get("season"))
+    native_ids = _anime_native_ids(item)
+    coords: set[tuple[int, int]] = set()
+
+    # MDBList can return long-running anime with the absolute number in the
+    # episode field even when the season field is not season 1, e.g. One Piece
+    # S23E1156. In that case resolving the raw S/E as an aired coordinate can
+    # double-count the absolute offset, so use the episode value as absolute.
+    absolute_like = bool(absolute is not None and absolute >= 50 and season is not None and season > 1)
+    if absolute_like and native_ids:
+        try:
+            coords.update(resolve_axis_coordinates(native_ids, absolute, release_tag=release_tag))
+        except Exception:
+            pass
+        if coords:
+            coords.add((1, absolute))
+        else:
+            absolute = None
+    else:
+        absolute = None
+
+    if absolute_like and not native_ids:
         return {}
 
-    native_ids = {str(res.namespace): str(res.target_id)}
-    coords: set[tuple[int, int]] = set()
-    try:
-        coords.update(resolve_axis_coordinates(native_ids, int(res.absolute), release_tag=release_tag))
-    except Exception:
-        pass
-    try:
-        src_coord = resolve_source_coordinate(native_ids, int(res.absolute), release_tag=release_tag)
-    except Exception:
-        src_coord = None
-    if src_coord is not None:
-        coords.add((int(src_coord.season), int(src_coord.episode)))
-    coords.add((1, int(res.absolute)))
+    if absolute is None:
+        try:
+            res = resolve_absolute(item, release_tag=release_tag)
+        except Exception:
+            res = None
+        if res is None or int(res.absolute) <= 0:
+            return {}
+        absolute = int(res.absolute)
+        native_ids = {str(res.namespace): str(res.target_id)}
+        try:
+            coords.update(resolve_axis_coordinates(native_ids, absolute, release_tag=release_tag))
+        except Exception:
+            pass
+        try:
+            src_coord = resolve_source_coordinate(native_ids, absolute, release_tag=release_tag)
+        except Exception:
+            src_coord = None
+        if src_coord is not None:
+            coords.add((int(src_coord.season), int(src_coord.episode)))
+        coords.add((1, absolute))
 
     out: dict[str, dict[str, Any]] = {}
     current = (_as_int(item.get("season")), _as_int(item.get("episode")))

@@ -828,6 +828,15 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
         toks: set[str] = set(coord_aliases.tokens(it))
 
         if typ == "episode":
+            if show_ids:
+                for k in ("tmdb", "imdb", "tvdb", "trakt"):
+                    v = ids.get(k)
+                    if v is None or str(v) == "":
+                        continue
+                    show_v = show_ids.get(k)
+                    if show_v is not None and str(show_v).lower() == str(v).lower():
+                        continue
+                    toks.add(f"{str(k).lower()}:{str(v).lower()}")
             try:
                 season_raw = it.get("season") if it.get("season") is not None else it.get("season_number")
                 episode_raw = it.get("episode") if it.get("episode") is not None else it.get("episode_number")
