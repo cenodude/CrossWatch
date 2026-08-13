@@ -2296,9 +2296,11 @@ def _anime_retry_episode_number(
         alias_native = _confirmed_alias_native_number(ids, item, s_num, e_num, alias_cache)
         if alias_native is not None:
             return alias_native
+    override_absolute = _simkl_override_absolute(item, ids)
     rows = _anime_episode_rows(session, headers, timeout, str(ids.get("simkl") or ""), episode_cache)
+    if override_absolute is not None and not rows:
+        return override_absolute
     if rows:
-        override_absolute = _simkl_override_absolute(item, ids)
         if override_absolute is not None:
             abs_hits = [row for row in rows if _row_anime_episode_number(row) == override_absolute]
             if len(abs_hits) == 1:
@@ -2316,6 +2318,7 @@ def _anime_retry_episode_number(
                 if len(abs_hits) == 1:
                     return override_absolute
                 rows = refreshed
+            return override_absolute
         direct = [
             row for row in rows
             if isinstance(row.get("tvdb"), Mapping)

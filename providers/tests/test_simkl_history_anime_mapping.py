@@ -613,6 +613,40 @@ def test_simkl_target_override_beats_source_tvdb_redirect(monkeypatch):
     assert not any(call["url"] == m.URL_REDIRECT for call in session.gets)
 
 
+def test_simkl_target_override_is_authoritative_without_catalog_rows(monkeypatch):
+    import sync.simkl._history as m
+
+    _patch_fs(monkeypatch, m)
+    session = _Session(episodes_map={"2532478": []})
+    item = {
+        "type": "episode",
+        "season": 1,
+        "episode": 13,
+        "watched_at": "2024-01-01T00:00:00Z",
+        "show_ids": {"tmdb": "207468"},
+        "series_title": "Kaiju No. 8",
+        "_cw_anime_map": {
+            "absolute": 1,
+            "namespace": "simkl",
+            "target_id": "2532478",
+            "entry": "override:ovr_kaiju_s2n4p7",
+            "release_tag": "v3",
+        },
+    }
+
+    mapped = m._anime_retry_episode_number(
+        item,
+        {"simkl": "2532478"},
+        session=session,
+        headers={},
+        timeout=5,
+        episode_cache={},
+        resolve_state=m._AnimeResolveState({}, {}),
+    )
+
+    assert mapped == 1
+
+
 def test_read_back_native_e01_maps_to_tvdb_s04e17():
     import sync.simkl._history as m
 
