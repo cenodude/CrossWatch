@@ -21,6 +21,7 @@ from ._common import (
     _record_unresolved,
     _root,
     _snapshot_state,
+    current_state_only,
     latest_snapshot_file,
     latest_state_file,
     make_logger,
@@ -123,6 +124,8 @@ def _load_state(adapter: Any) -> dict[str, Any]:
         alt = latest_state_file(root, "watchlist")
         if alt and alt != path:
             raw = _read_json(alt)
+    if raw is None and current_state_only(adapter):
+        return {"ts": 0, "items": {}}
     if raw is None:
         snap = latest_snapshot_file(root, "watchlist")
         if snap:

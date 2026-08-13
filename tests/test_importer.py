@@ -22,6 +22,33 @@ def test_importer_rejects_zip_member_size() -> None:
     assert getattr(exc.value, "detail", {}).get("code") == importer.ERROR_ZIP_TOO_LARGE
 
 
+def test_importer_accepts_large_paginated_trakt_zip() -> None:
+    import services.importer as importer
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for index in range(127):
+            zf.writestr(f"watched-history-{index + 1}.json", b"[]")
+
+    members = importer._safe_zip_members(buf.getvalue())
+
+    assert len(members) == 127
+
+
+def test_importer_still_rejects_excessive_zip_members() -> None:
+    import services.importer as importer
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for index in range(importer.MAX_ZIP_FILES + 1):
+            zf.writestr(f"watched-history-{index + 1}.json", b"[]")
+
+    with pytest.raises(Exception) as exc:
+        importer._safe_zip_members(buf.getvalue())
+
+    assert getattr(exc.value, "detail", {}).get("code") == importer.ERROR_ZIP_TOO_MANY_FILES
+
+
 def test_letterboxd_preview_shapes_selectable_rows(monkeypatch: pytest.MonkeyPatch) -> None:
     import services.importer as importer
 
@@ -686,9 +713,33 @@ def test_preview_never_writes_to_the_target_tracker(tmp_path: Path) -> None:
     assert state.exists() and snapshots
 
     state.unlink()
-    importer._existing_keys(cfg, "default")
+    existing = importer._existing_keys(cfg, "default")
 
     assert not state.exists(), "preview recreated the tracker state file from a snapshot"
+    assert existing["history"] == {}
+
+
+def test_preview_ignores_existing_keys_when_crosswatch_target_is_disconnected(tmp_path: Path) -> None:
+    import services.importer as importer
+    from cw_platform.modules_registry import load_sync_ops
+    from cw_platform.provider_instances import build_provider_config_view
+
+    ops = load_sync_ops("CROSSWATCH")
+    assert ops is not None
+
+    root = tmp_path / "cw"
+    cfg = {"crosswatch": {"connected": True, "enabled": True, "root_dir": str(root)}}
+    view = dict(build_provider_config_view(cfg, "CROSSWATCH", "default"))
+    ops.add(
+        view,
+        [{"type": "movie", "title": "Heat", "ids": {"tmdb": "949"}, "rating": 8}],
+        feature="ratings",
+    )
+
+    disconnected = {"crosswatch": {"connected": False, "enabled": True, "root_dir": str(root)}}
+    existing = importer._existing_keys(disconnected, "default")
+
+    assert existing == {f: {} for f in importer.FEATURES}
 
 
 def test_preview_status_filter_keeps_full_summary() -> None:
