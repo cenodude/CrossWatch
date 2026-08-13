@@ -124,6 +124,12 @@ _DBZ_EPISODES = {"41487": [{"episode": n, "title": f"dbz{n}", "tvdb": {"season":
 # Attack on Titan's parent TVDB redirects to a cour whose native map only covers S1 (no S4).
 _AOT_REDIRECT = {"267440": "39687"}
 _AOT_EPISODES = {"39687": [{"episode": n, "title": f"aot{n}", "tvdb": {"season": 1, "episode": n}} for n in range(1, 26)]}
+_KAIJU_EPISODES = {
+    "2532478": [
+        {"episode": 1, "title": "Kaiju Weapon", "tvdb": {"season": 2, "episode": 1}},
+        {"episode": 2, "title": "The Next Generation's Trial", "tvdb": {"season": 2, "episode": 2}},
+    ]
+}
 
 
 def _shows_of(session, url):
@@ -492,6 +498,39 @@ def test_dbz_absolute_fallback_group_mapping(monkeypatch):
         episode_cache={},
     )
     assert mapped == {m._thaw_key(item): 40}
+
+
+def test_simkl_target_override_maps_split_target_native_episode(monkeypatch):
+    import sync.simkl._history as m
+
+    _patch_fs(monkeypatch, m)
+    session = _Session(episodes_map=_KAIJU_EPISODES)
+    adapter = _adapter(session)
+    item = {
+        "type": "episode",
+        "season": 1,
+        "episode": 13,
+        "watched_at": "2024-01-01T00:00:00Z",
+        "show_ids": {"tmdb": "207468"},
+        "series_title": "Kaiju No. 8",
+        "_cw_anime_map": {
+            "absolute": 1,
+            "namespace": "simkl",
+            "target_id": "2532478",
+            "entry": "override:ovr_kaiju_s2n4p7",
+            "release_tag": "v3",
+        },
+    }
+
+    mapped = m._anime_retry_episode_numbers_for_group(
+        [item],
+        {"simkl": "2532478"},
+        session=session,
+        headers={},
+        timeout=5,
+        episode_cache={},
+    )
+    assert mapped == {m._thaw_key(item): 1}
 
 
 def test_read_back_native_e01_maps_to_tvdb_s04e17():
