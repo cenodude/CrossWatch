@@ -290,6 +290,66 @@ def _bridge_source_coordinate(tag: str, ids: Mapping[str, str], absolute: int) -
     return None
 
 
+def _axis_coordinates(tag: str, ids: Mapping[str, str], absolute: int) -> dict[tuple[str, str], tuple[int, int]]:
+    found: dict[tuple[str, str], tuple[int, int] | None] = {}
+    for namespace in NATIVE_ORDER:
+        ident = ids.get(namespace, "")
+        if not ident:
+            continue
+        try:
+            rows = query_edges(tag, namespace, ident)
+        except Exception:
+            continue
+        for row in rows:
+            if not int(row.get("reverse") or 0):
+                continue
+            if namespace == "anidb" and str(row.get("source_scope") or "").strip().upper() != _ANIDB_REGULAR:
+                continue
+            provider = str(row.get("target_provider") or "").strip().lower()
+            if provider not in AIRED_ORDER:
+                continue
+            if str(row.get("target_kind") or "").strip().lower() != "show":
+                continue
+            season = _scope_season(row.get("target_scope"))
+            if season is None or season <= 0:
+                continue
+            target_id = str(row.get("target_id") or "").strip()
+            if not target_id:
+                continue
+            episode = translate(row.get("source_range"), row.get("target_range"), absolute)
+            if episode is None or episode <= 0:
+                continue
+            key = (provider, target_id)
+            coord = (season, episode)
+            if key in found and found[key] != coord:
+                found[key] = None
+            elif key not in found:
+                found[key] = coord
+    return {k: v for k, v in found.items() if v is not None}
+
+
+def resolve_axis_coordinates(
+    ids: Mapping[str, Any] | None,
+    absolute: Any,
+    *,
+    release_tag: str = "v3",
+) -> set[tuple[int, int]]:
+    abs_num = _as_int(absolute)
+    if abs_num is None or abs_num <= 0:
+        return set()
+    clean = {
+        str(k).strip().lower(): str(v).strip()
+        for k, v in dict(ids or {}).items()
+        if str(v or "").strip()
+    }
+    if not clean:
+        return set()
+    ruled = _override_source_coordinate(clean, abs_num)
+    if ruled is not None:
+        return {(ruled.season, ruled.episode)}
+    return set(_axis_coordinates(normalize_release_tag(release_tag), clean, abs_num).values())
+
+
 def resolve_source_coordinate(
     ids: Mapping[str, Any] | None,
     absolute: Any,

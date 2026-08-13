@@ -82,6 +82,7 @@ from ..anime_mapping.service import (
     config_with_pair_feature_options as _anime_config_with_pair_feature_options,
     enrich_index_for_pair as _anime_enrich_index_for_pair,
 )
+from ..anime_mapping.history_coords import build_history_coordinate_aliases as _build_history_coordinate_aliases
 from ._snapshots import (
     build_snapshots_for_feature,
     bust_snapshot_cache,
@@ -695,6 +696,10 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
     if manual_adds_B:
         B_eff = _merge_manual_adds(B_eff, manual_adds_B)
 
+    coord_aliases = _build_history_coordinate_aliases(cfg, feature, (A_eff, B_eff))
+    if coord_aliases.enabled:
+        dbg("anime_mapping.history_coords", feature=feature, a=a, b=b, **coord_aliases.stats())
+
     def _typed_tokens(it: Mapping[str, Any]) -> set[str]:
         typ = str(it.get("type") or "").strip().lower()
         if typ in ("episode", "season"):
@@ -702,7 +707,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         else:
             ids_raw = it.get("ids") or {}
         ids = ids_raw if isinstance(ids_raw, Mapping) else {}
-        toks: set[str] = set()
+        toks: set[str] = set(coord_aliases.tokens(it))
 
         if typ == "episode":
             try:
