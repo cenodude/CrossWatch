@@ -207,6 +207,10 @@ from ..anime_mapping.service import (
     config_with_pair_feature_options as _anime_config_with_pair_feature_options,
     enrich_index_for_pair as _anime_enrich_index_for_pair,
 )
+from ..anime_mapping.history_coords import (
+    HistoryCoordinateAliases as _HistoryCoordinateAliases,
+    build_history_coordinate_aliases as _build_history_coordinate_aliases,
+)
 from ._snapshots import (
     build_snapshots_for_feature,
     bust_snapshot_cache,
@@ -812,6 +816,8 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
         except Exception:
             pass
 
+    coord_aliases: _HistoryCoordinateAliases = _HistoryCoordinateAliases.disabled()
+
     def _typed_tokens(it: Mapping[str, Any]) -> set[str]:
         typ = str(it.get("type") or "").strip().lower()
         show_ids_raw = it.get("show_ids") if isinstance(it.get("show_ids"), Mapping) else {}
@@ -819,7 +825,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
         show_ids = dict(show_ids_raw or {})
         ids = dict(ids_raw or {})
 
-        toks: set[str] = set()
+        toks: set[str] = set(coord_aliases.tokens(it))
 
         if typ == "episode":
             try:
@@ -1165,6 +1171,10 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
             dst_full = collapse_history_latest(dst_full)
             prev_src = collapse_history_latest(prev_src)
             prev_dst = collapse_history_latest(prev_dst)
+
+    coord_aliases = _build_history_coordinate_aliases(cfg, feature, (src_idx, dst_full))
+    if coord_aliases.enabled:
+        dbg("anime_mapping.history_coords", feature=feature, src=src, dst=dst, **coord_aliases.stats())
 
     dst_canonical: dict[str, Any] = {}
     if feature == "history" and not history_event_mode:
