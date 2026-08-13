@@ -2509,13 +2509,16 @@ def _native_anime_ids_for_mismatched_show(
     item: Mapping[str, Any],
     state: _AnimeResolveState,
 ) -> dict[str, str]:
+    mapped = _anibridge_native_simkl_ids(session, headers, timeout, item, state)
+    if str(mapped.get("simkl") or "").strip():
+        return mapped
     show_ids = _show_ids_of_episode(item)
     tvdb = str(show_ids.get("tvdb") or "").strip()
     if tvdb:
         resolved = _resolved_anime_ids_for_tvdb(session, headers, timeout, tvdb, state)
         if str(resolved.get("simkl") or "").strip():
             return resolved
-    return _anibridge_native_simkl_ids(session, headers, timeout, item, state)
+    return {}
 
 
 def _build_anime_retry_payload(
