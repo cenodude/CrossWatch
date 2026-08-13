@@ -78,6 +78,60 @@ def test_destination_comparison_view_respects_pair_toggle(monkeypatch: Any) -> N
     assert m.destination_comparison_view(index, adapter) == index
 
 
+def test_destination_comparison_view_handles_absolute_episode_in_late_season(monkeypatch: Any) -> None:
+    from providers.sync.mdblist import _history as m
+
+    def fake_axis(ids: Mapping[str, Any], absolute: Any, **_: Any) -> set[tuple[int, int]]:
+        assert int(absolute) == 1156
+        return {(22, 1156), (23, 1)}
+
+    def fail_resolve_absolute(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("raw S23E1156 must not be resolved as an aired coordinate")
+
+    monkeypatch.setattr(m, "resolve_axis_coordinates", fake_axis)
+    monkeypatch.setattr(m, "resolve_absolute", fail_resolve_absolute)
+    monkeypatch.setattr(m, "resolve_source_coordinate", lambda *_args, **_kwargs: None)
+
+    adapter = Adapter(anime_mapping=True)
+    raw = _episode(
+        show_tmdb="37854",
+        season=23,
+        episode=1156,
+        ids={"tvdb": "11526346"},
+        show_ids={"tmdb": "37854", "tvdb": "81797", "mal": "21", "anidb": "69"},
+        series_title="One Piece",
+    )
+    index = {m._history_key(adapter, raw): raw}
+
+    out = m.destination_comparison_view(index, adapter)
+
+    assert "tmdb:37854#s23e01" in out
+    assert "tmdb:37854#s22e2311" not in out
+    assert out["tmdb:37854#s23e01"]["episode"] == 1
+
+
+def test_destination_comparison_view_skips_absolute_like_row_without_native_ids(monkeypatch: Any) -> None:
+    from providers.sync.mdblist import _history as m
+
+    def fail_resolve_absolute(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("absolute-like provider rows without native ids should not double-resolve")
+
+    monkeypatch.setattr(m, "resolve_absolute", fail_resolve_absolute)
+
+    adapter = Adapter(anime_mapping=True)
+    raw = _episode(
+        show_tmdb="37854",
+        season=23,
+        episode=1156,
+        ids={"tmdb": "7099881", "tvdb": "11526346"},
+        show_ids={"tmdb": "37854", "imdb": "tt0388629", "trakt": "37696", "mdblist": "8xaa"},
+        series_title="One Piece",
+    )
+    index = {m._history_key(adapter, raw): raw}
+
+    assert m.destination_comparison_view(index, adapter) == index
+
+
 def test_bucketize_prefers_tmdb_anime_coordinate_for_mdblist(monkeypatch: Any) -> None:
     from providers.sync.mdblist import _history as m
 
