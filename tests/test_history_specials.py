@@ -947,6 +947,51 @@ def test_issue_311_simkl_add_sends_episode_lookup_id(monkeypatch) -> None:
     ]
 
 
+def _simkl_add_capture(monkeypatch) -> list[dict[str, object]]:
+    requests: list[dict[str, object]] = []
+
+    class Session:
+        def post(self, _url, **kwargs):
+            requests.append(kwargs["json"])
+            payload = {
+                "added": {"movies": 1, "shows": 1, "episodes": 0},
+                "not_found": {"movies": [], "shows": [], "episodes": []},
+            }
+            return SimpleNamespace(status_code=201, text="json", json=lambda: payload)
+
+    monkeypatch.setattr(simkl_history, "_unfreeze", lambda _keys: None)
+    monkeypatch.setattr(simkl_history, "_inject_adds_into_cache", lambda _items: None)
+    return requests, SimpleNamespace(
+        client=SimpleNamespace(session=Session()),
+        cfg=SimpleNamespace(timeout=5, api_key="key", access_token="token"),
+    )
+
+
+def test_simkl_whole_show_add_carries_watched_at(monkeypatch) -> None:
+    requests, adapter = _simkl_add_capture(monkeypatch)
+    item = {"type": "show", "ids": {"tmdb": "12971"}, "watched_at": WATCHED_AT}
+
+    simkl_history.add(adapter, [item])
+
+    show = requests[0]["shows"][0]
+    assert "seasons" not in show
+    assert show["watched_at"] == WATCHED_AT
+
+
+def test_simkl_anime_movie_add_keeps_watched_at(monkeypatch) -> None:
+    requests, adapter = _simkl_add_capture(monkeypatch)
+    item = {
+        "type": "movie",
+        "simkl_bucket": "anime",
+        "ids": {"tmdb": "1311031"},
+        "watched_at": WATCHED_AT,
+    }
+
+    simkl_history.add(adapter, [item])
+
+    assert requests[0]["shows"][0]["watched_at"] == WATCHED_AT
+
+
 def test_issue_311_rejected_special_is_blocked_after_first_attempt(monkeypatch, tmp_path) -> None:
     class Session:
         def post(self, _url, **kwargs):
