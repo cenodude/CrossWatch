@@ -165,18 +165,23 @@ def _prune_sessions(now: float) -> None:
         _SESSIONS.pop(k, None)
 
 
+def _media_fingerprint(event: Any) -> str:
+    ids = getattr(event, "ids", None) or {}
+    seed = "|".join(f"{k}={v}" for k, v in sorted(ids.items()) if v)
+    seed = seed or str(getattr(event, "title", "") or "")
+    if str(getattr(event, "media_type", "") or "").lower() == "episode":
+        seed = f"{seed}|s{getattr(event, 'season', None)}e{getattr(event, 'number', None)}"
+    return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
+
+
 def _session_scope(event: Any, instance: str) -> str:
     parts = [
         str(getattr(event, "server_uuid", "") or ""),
         str(getattr(event, "session_key", "") or ""),
     ]
     scope = ":".join(p for p in parts if p)
-    if not scope:
-        ids = getattr(event, "ids", None) or {}
-        seed = "|".join(f"{k}={v}" for k, v in sorted(ids.items()) if v)
-        seed = seed or str(getattr(event, "title", "") or "")
-        scope = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:24]
-    return f"{instance}:{scope}"
+    fingerprint = _media_fingerprint(event)
+    return f"{instance}:{scope}:{fingerprint}" if scope else f"{instance}:{fingerprint}"
 
 
 class PunchPlaySink(ScrobbleSink):
@@ -285,6 +290,19 @@ class PunchPlaySink(ScrobbleSink):
             _log("PUNCHPLAY: skip scrobble, no supported ids", "DEBUG")
             return
 
+        title = str(getattr(event, "title", "") or "").strip()
+        if not title:
+            _log("PUNCHPLAY: skip scrobble, missing title", "DEBUG")
+            return
+
+        season = number = None
+        if media_type == "episode":
+            season = _as_int(getattr(event, "season", None))
+            number = _as_int(getattr(event, "number", None))
+            if season is None or number is None:
+                _log("PUNCHPLAY: skip scrobble, episode missing season/episode", "DEBUG")
+                return
+
         try:
             progress_pct = max(0.0, min(100.0, float(getattr(event, "progress", 0.0) or 0.0)))
         except Exception:
@@ -303,20 +321,13 @@ class PunchPlaySink(ScrobbleSink):
         payload["playback_session_id"] = session_id
         payload["event_created_at"] = int(now * 1000)
         payload["client_version"] = APP_AGENT
+        payload["title"] = title
 
-        title = str(getattr(event, "title", "") or "").strip()
-        if title:
-            payload["title"] = title
         year = _as_int(getattr(event, "year", None))
         if year:
             payload["year"] = year
 
         if media_type == "episode":
-            season = _as_int(getattr(event, "season", None))
-            number = _as_int(getattr(event, "number", None))
-            if season is None or number is None:
-                _log("PUNCHPLAY: skip scrobble, episode missing season/episode", "DEBUG")
-                return
             payload["season"] = season
             payload["episode"] = number
 
@@ -340,6 +351,13 @@ class PunchPlaySink(ScrobbleSink):
             if threshold > 0.0:
                 payload["watched_threshold"] = threshold
             payload["watched"] = watched
+
+        if "position_seconds" not in payload and (
+            action in ("pause", "progress") or (action == "stop" and not watched)
+        ):
+            _log(f"PUNCHPLAY: skip scrobble {action}, no position or duration", "DEBUG")
+            self._rollback(scope, before)
+            return
 
         self._post(cfg, event, action, payload, progress_pct, watched=watched, scope=scope, before=before)
 

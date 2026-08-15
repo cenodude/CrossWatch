@@ -283,6 +283,53 @@ def test_episode_without_numbering_is_skipped(sink) -> None:
     assert calls == []
 
 
+def test_event_without_a_title_is_skipped(sink) -> None:
+    s, calls = sink
+
+    s.send(Event(action="start", title=""))
+
+    assert calls == [], "title is a required field"
+
+
+def test_incomplete_stop_without_a_position_is_skipped(sink) -> None:
+    s, calls = sink
+
+    s.send(Event(action="start", progress=5.0))
+    s.send(Event(action="stop", progress=40.0, position_ms=None, duration_ms=None))
+
+    assert [_action_of(c) for c in calls] == ["start"], "an incomplete stop needs a resume position"
+
+
+def test_start_without_a_position_is_still_sent(sink) -> None:
+    s, calls = sink
+
+    s.send(Event(action="start", progress=5.0, position_ms=None, duration_ms=None))
+
+    assert [_action_of(c) for c in calls] == ["start"], "start has no position requirement"
+
+
+def test_a_skipped_write_does_not_leave_a_phantom_session(sink) -> None:
+    from providers.scrobble.punchplay import sink as s_mod
+
+    s, calls = sink
+
+    s.send(Event(action="stop", progress=40.0, position_ms=None, duration_ms=None))
+    s.send(Event(action="start", progress=5.0))
+
+    assert [_action_of(c) for c in calls] == ["start"]
+    assert len(s_mod._SESSIONS) == 1
+
+
+def test_a_recycled_session_key_on_new_media_gets_a_new_session_id(sink) -> None:
+    s, calls = sink
+
+    s.send(Event(action="start", session_key="42", ids={"tmdb": "550"}, title="Fight Club"))
+    s.send(Event(action="start", session_key="42", ids={"tmdb": "603"}, title="The Matrix"))
+
+    assert calls[0]["json"]["playback_session_id"] != calls[1]["json"]["playback_session_id"]
+    assert [_action_of(c) for c in calls] == ["start", "start"]
+
+
 def test_event_ids_are_unique_per_event(sink) -> None:
     s, calls = sink
 
