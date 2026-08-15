@@ -507,7 +507,6 @@ def test_progress_index_uses_in_progress_endpoint(monkeypatch: pytest.MonkeyPatc
     from providers.sync.punchplay import _progress as pr
 
     http = FakeHTTP([
-        _Resp(200, {"items": []}),
         _Resp(200, [
             {"id": 4, "type": "movie", "tmdbId": 550, "title": "Fight Club", "year": 1999,
              "progressSeconds": 1800, "durationSeconds": 8340, "progressPercent": 21.58,
@@ -520,21 +519,20 @@ def test_progress_index_uses_in_progress_endpoint(monkeypatch: pytest.MonkeyPatc
     idx = pr.build_index(Adapter())
 
     assert idx["tmdb:550"]["_punchplay_progress_id"] == "4"
-    assert http.calls[1]["method"] == "GET"
-    assert http.calls[1]["url"].endswith("/playback/in-progress")
+    assert http.calls[0]["method"] == "GET"
+    assert http.calls[0]["url"].endswith("/playback/in-progress")
 
 
-def test_progress_index_reads_continue_watching_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_progress_index_does_not_read_continue_watching(monkeypatch: pytest.MonkeyPatch) -> None:
     from providers.sync.punchplay import _progress as pr
 
     http = FakeHTTP([
-        _Resp(200, {"items": [
+        _Resp(200, [
             {"id": 9, "type": "episode", "tmdbId": 5978363, "showTmdbId": 69478,
              "showTitle": "The Handmaid's Tale", "episodeTitle": "Exile", "season": 6, "episode": 2,
              "progressSeconds": 753.0, "durationSeconds": 3307.93, "progressPercent": 22.764,
              "updatedAt": "2026-07-31T19:43:27.000Z"},
-        ]}),
-        _Resp(200, {"items": []}),
+        ]),
         _Resp(200, {"items": [], "hasMore": False, "nextAfter": None}),
     ])
     _patch(monkeypatch, pr, http)
@@ -542,15 +540,27 @@ def test_progress_index_reads_continue_watching_endpoint(monkeypatch: pytest.Mon
     idx = pr.build_index(Adapter())
 
     assert idx["tmdb:69478#s06e02"]["progress_ms"] == 753000
-    assert http.calls[0]["method"] == "GET"
-    assert http.calls[0]["url"].endswith("/me/continue-watching")
+    assert not any("/me/continue-watching" in call["url"] for call in http.calls)
+
+
+def test_continue_watching_show_rows_are_not_playback_items() -> None:
+    from providers.sync.punchplay import _progress as pr
+
+    row = {
+        "showTmdbId": 138502, "sourceId": 41, "mediaSource": "tmdb", "title": "X-Men '97",
+        "year": 2024, "overallPercent": 41.6, "minutesWatched": 132, "minutesRemaining": 185,
+        "episodeRuntimeMinutes": 33, "lastWatchedAt": "2026-08-14T14:34:49.000Z",
+        "lastWatchedSeason": 2, "lastWatchedEpisode": 2, "nextSeason": 2, "nextEpisode": 3,
+    }
+
+    assert pr._row_to_minimal(row) is None
+    assert pr._drop_reason(row) == "show_row_not_a_playback_item"
 
 
 def test_progress_index_merges_sync_snapshot_playback(monkeypatch: pytest.MonkeyPatch) -> None:
     from providers.sync.punchplay import _progress as pr
 
     http = FakeHTTP([
-        _Resp(200, {"items": []}),
         _Resp(200, {"items": []}),
         _Resp(200, {"items": [
             {"id": 7, "type": "episode", "tmdbId": 5978363, "showTmdbId": 69478,
@@ -564,8 +574,8 @@ def test_progress_index_merges_sync_snapshot_playback(monkeypatch: pytest.Monkey
     idx = pr.build_index(Adapter())
 
     assert idx["tmdb:69478#s06e02"]["progress_ms"] == 753000
-    assert http.calls[2]["url"].endswith("/me/sync/snapshot")
-    assert http.calls[2]["params"]["resource"] == "playback"
+    assert http.calls[1]["url"].endswith("/me/sync/snapshot")
+    assert http.calls[1]["params"]["resource"] == "playback"
 
 
 def test_progress_write_uses_incomplete_stop_for_passive_sync(monkeypatch: pytest.MonkeyPatch) -> None:
