@@ -948,6 +948,14 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
             return True
         return False
 
+    def _coord_only_present(idx: dict[str, Any], alias: dict[str, str], it: Mapping[str, Any]) -> bool:
+        coord_toks = coord_aliases.tokens(it) if coord_aliases.enabled else set()
+        if not coord_toks or _ck(it) in idx:
+            return False
+        if any(tok in alias for tok in (_typed_tokens(it) - coord_toks)):
+            return False
+        return any(tok in alias for tok in coord_toks)
+
     def _find_in_idx(idx: dict[str, Any], alias: dict[str, str], it: Mapping[str, Any]) -> Mapping[str, Any] | None:
         ck = _ck(it)
         if ck and ck in idx:
@@ -1382,11 +1390,16 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
             adds = [it for it in adds if not _present(dst_full, dst_alias, it)]
         elif feature == "history" and not history_event_mode:
             pruned: list[dict[str, Any]] = []
+            coord_pruned = 0
             for it in adds:
                 ck = _ck(it) or ""
                 if ck and _history_ts_from_key(ck) is None and _present(dst_full, dst_alias, it):
+                    if _coord_only_present(dst_full, dst_alias, it):
+                        coord_pruned += 1
                     continue
                 pruned.append(it)
+            if coord_pruned:
+                dbg("anime_mapping.coord_pruned", feature=feature, src=src, dst=dst, adds=coord_pruned)
             adds = pruned
 
     removes: list[dict[str, Any]] = []

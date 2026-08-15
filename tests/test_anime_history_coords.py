@@ -197,6 +197,30 @@ def test_a_source_index_cannot_mask_an_absolutely_numbered_destination(config_ba
     assert "tmdb:37854" in absolute_numbered_shows(src_index, dst_index)
 
 
+def test_a_single_completed_season_is_not_treated_as_absolute(config_base: Path) -> None:
+    xmen = {"tmdb": "138502", "imdb": "tt16026746", "tvdb": "412432"}
+    dst_index = _mdblist_run(xmen, [(1, list(range(1, 11)))])
+
+    assert absolute_numbered_shows(dst_index) == {}
+
+
+def test_a_new_season_does_not_alias_onto_the_first_season(config_base: Path) -> None:
+    xmen = {"tmdb": "138502", "imdb": "tt16026746", "tvdb": "412432"}
+    dst_index = _mdblist_run(xmen, [(1, list(range(1, 11)))])
+    source = _episode(xmen, 2, 1)
+    aliases = build_history_coordinate_aliases(CFG, "history", ({"a": source}, dst_index))
+
+    assert not _matched(aliases, source, dst_index["tmdb:138502#s01e01"])
+
+
+def test_an_absolute_run_never_claims_a_season_it_was_not_seen_in(config_base: Path) -> None:
+    dst_index = _mdblist_run(MDBLIST_ONE_PIECE_IDS, [(1, list(range(1, 62))), (22, list(range(62, 100)))])
+    aliases = build_history_coordinate_aliases(CFG, "history", (dst_index,))
+
+    assert "tmdb:37854#abs:7" in aliases.tokens(_episode(MDBLIST_ONE_PIECE_IDS, 1, 7))
+    assert aliases.tokens(_episode(MDBLIST_ONE_PIECE_IDS, 3, 7)) == set()
+
+
 def test_translated_episode_is_not_planned_again_on_a_second_sync(anime_index: Path) -> None:
     source = _episode(DRAGON_BALL_IDS, 2, 1, absolute=14)
     destination = _episode(MDBLIST_DRAGON_BALL_IDS, 1, 14)

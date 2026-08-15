@@ -820,6 +820,14 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             return True
         return False
 
+    def _coord_only_present(idx: dict[str, Any], alias: dict[str, str], it: Mapping[str, Any]) -> bool:
+        coord_toks = coord_aliases.tokens(it) if coord_aliases.enabled else set()
+        if not coord_toks or _ck(it) in idx:
+            return False
+        if any(tok in alias for tok in (_typed_tokens(it) - coord_toks)):
+            return False
+        return any(tok in alias for tok in coord_toks)
+
     def _find_in_idx(idx: dict[str, Any], alias: dict[str, str], it: Mapping[str, Any]) -> Mapping[str, Any] | None:
         """Find a matching row in idx for it using canonical key or token overlap."""
         ck = _ck(it)
@@ -1612,8 +1620,12 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                 else:
                     add_to_A.append(_minimal(v))
         elif not (feature == "history" and history_event_mode):
+            coord_pruned_to_B = 0
+            coord_pruned_to_A = 0
             for _k, v in A_eff.items():
                 if _present(B_eff, B_alias, v):
+                    if _coord_only_present(B_eff, B_alias, v):
+                        coord_pruned_to_B += 1
                     continue
                 tomb_blocks = _tomb_blocks_remove(v, prev_self=prevA, prev_self_alias=prevA_alias)
                 if allow_removals and (tomb_blocks or (_ck(v) in obsB) or (_ck(v) in shrinkB)) and (_prev_had(prevB, prevB_alias, v) or tomb_blocks):
@@ -1622,12 +1634,16 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                     add_to_B.append(_minimal(v))
             for _k, v in B_eff.items():
                 if _present(A_eff, A_alias, v):
+                    if _coord_only_present(A_eff, A_alias, v):
+                        coord_pruned_to_A += 1
                     continue
                 tomb_blocks = _tomb_blocks_remove(v, prev_self=prevB, prev_self_alias=prevB_alias)
                 if allow_removals and (tomb_blocks or (_ck(v) in obsA) or (_ck(v) in shrinkA)) and (_prev_had(prevA, prevA_alias, v) or tomb_blocks):
                     rem_from_B.append(_minimal(v))
                 else:
                     add_to_A.append(_minimal(v))
+            if coord_pruned_to_A or coord_pruned_to_B:
+                dbg("anime_mapping.coord_pruned", feature=feature, a=a, b=b, to_a=coord_pruned_to_A, to_b=coord_pruned_to_B)
     if not allow_adds:
         add_to_A.clear()
         add_to_B.clear()

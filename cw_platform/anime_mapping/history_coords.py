@@ -13,6 +13,7 @@ NATIVE_ANIME_ID_KEYS = ("mal", "anilist", "anidb", "kitsu")
 ABSOLUTE_FRAGMENT = "#abs:"
 _MIN_ABSOLUTE_RUN = 2
 _MAX_DUPLICATE_RATIO = 0.98
+_MAX_ORDINARY_SEASON = 50
 
 
 def _as_int(value: Any) -> int | None:
@@ -60,8 +61,8 @@ def _episode_coordinate(item: Mapping[str, Any]) -> tuple[int, int] | None:
     return season, episode
 
 
-def _absolute_numbered_shows_in(index: Mapping[str, Any] | None) -> dict[str, set[int]]:
-    per_show: dict[str, list[int]] = {}
+def _absolute_runs_in(index: Mapping[str, Any] | None) -> dict[str, tuple[set[int], set[int]]]:
+    per_show: dict[str, list[tuple[int, int]]] = {}
     for item in (index or {}).values():
         if not isinstance(item, Mapping) or not _is_episode(item):
             continue
@@ -69,10 +70,11 @@ def _absolute_numbered_shows_in(index: Mapping[str, Any] | None) -> dict[str, se
         if coord is None or coord[0] <= 0:
             continue
         for token in show_tokens(item):
-            per_show.setdefault(token, []).append(coord[1])
+            per_show.setdefault(token, []).append(coord)
 
-    out: dict[str, set[int]] = {}
-    for token, numbers in per_show.items():
+    out: dict[str, tuple[set[int], set[int]]] = {}
+    for token, coords in per_show.items():
+        numbers = [episode for _, episode in coords]
         if len(numbers) < _MIN_ABSOLUTE_RUN:
             continue
         unique = set(numbers)
@@ -80,21 +82,30 @@ def _absolute_numbered_shows_in(index: Mapping[str, Any] | None) -> dict[str, se
             continue
         if min(unique) != 1 or max(unique) != len(unique):
             continue
+        seasons = {season for season, _ in coords}
+        if len(seasons) < 2 and max(unique) <= _MAX_ORDINARY_SEASON:
+            continue
         counts: dict[int, int] = {}
         for number in numbers:
             counts[number] = counts.get(number, 0) + 1
         unambiguous = {n for n, c in counts.items() if c == 1}
         if unambiguous:
-            out[token] = unambiguous
+            out[token] = (unambiguous, seasons)
+    return out
+
+
+def absolute_numbered_runs(*indexes: Mapping[str, Any] | None) -> dict[str, tuple[set[int], set[int]]]:
+    out: dict[str, tuple[set[int], set[int]]] = {}
+    for index in indexes:
+        for token, (numbers, seasons) in _absolute_runs_in(index).items():
+            merged = out.setdefault(token, (set(), set()))
+            merged[0].update(numbers)
+            merged[1].update(seasons)
     return out
 
 
 def absolute_numbered_shows(*indexes: Mapping[str, Any] | None) -> dict[str, set[int]]:
-    out: dict[str, set[int]] = {}
-    for index in indexes:
-        for token, numbers in _absolute_numbered_shows_in(index).items():
-            out.setdefault(token, set()).update(numbers)
-    return out
+    return {token: numbers for token, (numbers, _) in absolute_numbered_runs(*indexes).items()}
 
 
 class HistoryCoordinateAliases:
@@ -106,7 +117,7 @@ class HistoryCoordinateAliases:
     ) -> None:
         self.enabled = bool(enabled)
         self.release_tag = normalize_release_tag(release_tag)
-        self._absolute_shows: dict[str, set[int]] = absolute_numbered_shows(*indexes) if self.enabled else {}
+        self._absolute_runs: dict[str, tuple[set[int], set[int]]] = absolute_numbered_runs(*indexes) if self.enabled else {}
         self._coord_cache: dict[tuple[str, int], frozenset[tuple[int, int]]] = {}
         self._ready: bool | None = None
 
@@ -135,7 +146,7 @@ class HistoryCoordinateAliases:
         return cached
 
     def stats(self) -> dict[str, int]:
-        return {"absolute_shows": len(self._absolute_shows), "coord_cache": len(self._coord_cache)}
+        return {"absolute_shows": len(self._absolute_runs), "coord_cache": len(self._coord_cache)}
 
     def tokens(self, item: Mapping[str, Any]) -> set[str]:
         if not self.enabled or not isinstance(item, Mapping) or not _is_episode(item):
@@ -158,7 +169,8 @@ class HistoryCoordinateAliases:
         coord = _episode_coordinate(item)
         if coord is not None and coord[0] > 0:
             for prefix in prefixes:
-                if coord[1] in self._absolute_shows.get(prefix, ()):
+                numbers, seasons = self._absolute_runs.get(prefix, ((), ()))
+                if coord[0] in seasons and coord[1] in numbers:
                     tokens.add(f"{prefix}{ABSOLUTE_FRAGMENT}{coord[1]}")
 
         return tokens
