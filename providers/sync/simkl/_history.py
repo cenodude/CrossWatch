@@ -1469,7 +1469,11 @@ def _show_add_entry(adapter: Any, item: Mapping[str, Any]) -> dict[str, Any] | N
         return None
     if _is_anime_like(item, ids):
         ids = _maybe_map_tvdb(adapter, ids)
-    return {"ids": ids, "use_tvdb_anime_seasons": True}
+    entry: dict[str, Any] = {"ids": ids, "use_tvdb_anime_seasons": True}
+    watched_at = str(item.get("watched_at") or item.get("watchedAt") or "").strip()
+    if watched_at:
+        entry["watched_at"] = watched_at
+    return entry
 
 
 def _show_scope_entry(
@@ -2795,9 +2799,6 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         bucket = str(item.get("simkl_bucket") or "").strip().lower()
         if typ == "movie" and bucket == "anime":
             entry = _show_add_entry(adapter, item)
-            watched_at = str(item.get("watched_at") or "").strip()
-            if entry and watched_at:
-                entry["watched_at"] = watched_at
             if entry:
                 shows_whole.append(entry)
                 key = _thaw_key(item)
