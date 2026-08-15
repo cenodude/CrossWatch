@@ -10,7 +10,6 @@ from typing import Any, Iterable, Mapping
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 from ._common import (
-    URL_CONTINUE_WATCHING,
     URL_IN_PROGRESS,
     cfg_section,
     instance_id,
@@ -96,6 +95,8 @@ def _percent_of(item: Mapping[str, Any]) -> float | None:
 
 def _drop_reason(row: Mapping[str, Any]) -> str:
     typ = str(row.get("type") or "").strip().lower()
+    if not typ:
+        return "show_row_not_a_playback_item" if _as_int(row.get("showTmdbId")) else "missing_type"
     if typ == "episode":
         if not _as_int(row.get("showTmdbId")):
             return "episode_missing_show_tmdb_id"
@@ -263,22 +264,6 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
             return
         collected[key] = minimal
 
-    continue_rows = 0
-    resp = punchplay_request(adapter, "GET", URL_CONTINUE_WATCHING)
-    if resp.status_code != 200:
-        _warn(FEATURE, "continue_watching_fetch_failed", status=resp.status_code, error=error_of(resp), request_id=request_id_of(resp))
-    else:
-        data = safe_json(resp)
-        rows: list[Mapping[str, Any]] = []
-        if isinstance(data, Mapping):
-            raw = data.get("items")
-            rows = [r for r in raw if isinstance(r, Mapping)] if isinstance(raw, list) else []
-        elif isinstance(data, list):
-            rows = [r for r in data if isinstance(r, Mapping)]
-        for row in rows:
-            continue_rows += 1
-            collect(row, source="continue_watching")
-
     resp = punchplay_request(adapter, "GET", URL_IN_PROGRESS)
     if resp.status_code != 200:
         _warn(FEATURE, "in_progress_fetch_failed", status=resp.status_code, error=error_of(resp), request_id=request_id_of(resp))
@@ -304,7 +289,6 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         "index_done",
         count=len(collected),
         rows=rows_seen,
-        continue_rows=continue_rows,
         snapshot_rows=snapshot_rows,
         dropped=len(dropped),
         drop_reasons=",".join(sorted(set(dropped))) or None,
