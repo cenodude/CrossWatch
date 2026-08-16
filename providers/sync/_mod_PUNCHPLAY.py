@@ -10,7 +10,7 @@ from typing import Any
 
 from cw_platform.provider_instances import normalize_instance_id
 from providers.auth._auth_PUNCHPLAY import ME_URL, is_configured as auth_is_configured
-from providers.sync._mod_common import SimpleRateLimiter, build_op_result, build_session
+from providers.sync._mod_common import SimpleRateLimiter, build_op_result, build_session, dedup_keys
 from providers.sync.punchplay import _history as feat_history
 from providers.sync.punchplay import _progress as feat_progress
 from providers.sync.punchplay import _ratings as feat_ratings
@@ -24,7 +24,7 @@ from providers.sync.punchplay._common import (
     request_id_of,
 )
 
-__VERSION__ = "0.1"
+__VERSION__ = "0.2"
 __all__ = ["get_manifest", "PUNCHPLAYModule", "OPS", "feat_history", "feat_progress", "feat_ratings", "feat_watchlist"]
 
 if "ctx" not in globals():
@@ -131,11 +131,22 @@ def _result_from(raw: Mapping[str, Any] | None) -> dict[str, Any]:
     data = dict(raw or {})
     confirmed = [str(k) for k in (data.get("confirmed_keys") or []) if k]
     unresolved_keys = [str(k) for k in (data.get("unresolved_keys") or []) if k]
+    skipped = [str(k) for k in (data.get("skipped_keys") or []) if k]
     deferred = [str(k) for k in (data.get("deferred_keys") or []) if k]
+    skipped_all = dedup_keys(list(skipped) + list(deferred))
+    accepted_raw = [str(k) for k in (data.get("accepted_keys") or []) if k]
+    accepted = dedup_keys(accepted_raw or (list(confirmed) + list(skipped_all)))
     extra: dict[str, Any] = {}
+    if skipped_all:
+        extra["skipped_keys"] = skipped_all
+        extra["skipped"] = len(skipped_all)
     if deferred:
         extra["deferred_keys"] = deferred
         extra["deferred"] = len(deferred)
+    if accepted:
+        extra["accepted_keys"] = accepted
+    if isinstance(data.get("status_counts"), Mapping):
+        extra["status_counts"] = dict(data.get("status_counts") or {})
     return build_op_result(
         ok=bool(data.get("ok", True)),
         count=len(confirmed),

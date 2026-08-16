@@ -24,6 +24,7 @@ from ._common import (
     punchplay_request,
     request_id_of,
     safe_json,
+    snapshot_pages,
     title_path_id,
     _dbg,
     _info,
@@ -53,16 +54,46 @@ def _as_int(value: Any) -> int | None:
     return out
 
 
+def _pick(row: Mapping[str, Any], *names: str) -> Any:
+    for name in names:
+        if name in row and row.get(name) is not None:
+            return row.get(name)
+    return None
+
+
+def _row_data(row: Mapping[str, Any]) -> Mapping[str, Any]:
+    data = row.get("data")
+    if not isinstance(data, Mapping):
+        return row
+    merged = dict(data)
+    for name in ("id", "history_id", "historyId", "watch_history_id", "watchHistoryId"):
+        if name in row and name not in merged:
+            merged[name] = row.get(name)
+    return merged
+
+
 def _row_to_minimal(row: Mapping[str, Any]) -> dict[str, Any] | None:
-    typ = str(row.get("type") or "").strip().lower()
-    watched = iso_z(row.get("watchedAt"))
+    data = _row_data(row)
+    typ_raw = str(_pick(data, "kind", "type", "mediaType", "media_type") or "").strip().lower()
+    if typ_raw in ("episode", "episodes"):
+        typ = "episode"
+    elif typ_raw in ("movie", "movies", "film"):
+        typ = "movie"
+    elif _pick(data, "season") is not None and _pick(data, "episode") is not None:
+        typ = "episode"
+    else:
+        typ = "movie"
+
+    watched = iso_z(_pick(data, "watched_at", "watchedAt"))
     if not watched:
         return None
 
     if typ == "episode":
-        show_tmdb = _as_int(row.get("showTmdbId"))
-        season = _as_int(row.get("season"))
-        episode = _as_int(row.get("episode"))
+        show_tmdb = _as_int(_pick(data, "show_tmdb_id", "showTmdbId", "showTmdbID", "title_tmdb_id", "titleTmdbId"))
+        if not show_tmdb:
+            show_tmdb = _as_int(_pick(data, "tmdb_id", "tmdbId"))
+        season = _as_int(_pick(data, "season"))
+        episode = _as_int(_pick(data, "episode"))
         if not show_tmdb or season is None or episode is None:
             return None
         out: dict[str, Any] = {
@@ -72,40 +103,74 @@ def _row_to_minimal(row: Mapping[str, Any]) -> dict[str, Any] | None:
             "season": season,
             "episode": episode,
         }
-        ep_tmdb = _as_int(row.get("tmdbId"))
+        ep_tmdb = _as_int(_pick(data, "episode_tmdb_id", "episodeTmdbId"))
+        if not ep_tmdb and _pick(data, "show_tmdb_id", "showTmdbId", "showTmdbID") is not None:
+            ep_tmdb = _as_int(_pick(data, "tmdbId"))
         if ep_tmdb:
             out["ids"] = {"tmdb": str(ep_tmdb)}
-        series_title = str(row.get("title") or "").strip()
+        series_title = str(_pick(data, "series_title", "show_title", "showTitle", "title") or "").strip()
         if series_title:
             out["series_title"] = series_title
-        ep_title = str(row.get("episodeTitle") or "").strip()
+        ep_title = str(_pick(data, "episode_title", "episodeTitle") or "").strip()
         if ep_title:
             out["title"] = ep_title
     else:
-        tmdb = _as_int(row.get("tmdbId"))
+        tmdb = _as_int(_pick(data, "tmdb_id", "tmdbId", "title_tmdb_id", "titleTmdbId", "resolved_tmdb_id"))
         if not tmdb:
             return None
         out = {"type": "movie", "ids": {"tmdb": str(tmdb)}}
-        title = str(row.get("title") or "").strip()
+        title = str(_pick(data, "title", "name") or "").strip()
         if title:
             out["title"] = title
-        year = _as_int(row.get("year"))
+        year = _as_int(_pick(data, "year"))
         if year:
             out["year"] = year
 
     out["watched_at"] = watched
-    entry_id = _as_int(row.get("id"))
+    entry_id = _as_int(_pick(data, "id", "history_id", "historyId", "watch_history_id", "watchHistoryId"))
     if entry_id:
         out[HISTORY_ID_FIELD] = [str(entry_id)]
         out[HISTORY_EVENT_ID_FIELD] = str(entry_id)
     return out
 
 
-def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
-    section = cfg_section(adapter) or {}
-    per_page = max(1, min(cfg_int(section, "history_per_page", HISTORY_PAGE_MAX), HISTORY_PAGE_MAX))
-    max_pages = cfg_int(section, "history_max_pages", 5000)
+def _collect_history_rows(rows: Any, collected: dict[str, dict[str, Any]]) -> int:
+    row_list = [r for r in rows if isinstance(r, Mapping)] if isinstance(rows, list) else []
+    for row in row_list:
+        minimal = _row_to_minimal(row)
+        if not minimal:
+            continue
+        key = _key_of(minimal)
+        if not key:
+            continue
+        existing = collected.get(key)
+        if existing is None:
+            collected[key] = minimal
+            continue
+        ids = list(existing.get(HISTORY_ID_FIELD) or [])
+        for hid in minimal.get(HISTORY_ID_FIELD) or []:
+            if hid not in ids:
+                ids.append(hid)
+        if str(minimal.get("watched_at") or "") > str(existing.get("watched_at") or ""):
+            minimal[HISTORY_ID_FIELD] = ids
+            collected[key] = minimal
+        else:
+            existing[HISTORY_ID_FIELD] = ids
+    return len(row_list)
 
+
+def _index_from_snapshot(adapter: Any, *, per_page: int) -> dict[str, dict[str, Any]]:
+    collected: dict[str, dict[str, Any]] = {}
+    pages = 0
+    rows = 0
+    for page in snapshot_pages(adapter, "history", feature=FEATURE, limit=per_page):
+        pages += 1
+        rows += _collect_history_rows(page, collected)
+    _dbg(FEATURE, "snapshot_scanned", rows=rows, indexed=len(collected), pages=pages)
+    return collected
+
+
+def _index_from_history_endpoint(adapter: Any, *, per_page: int, max_pages: int) -> dict[str, dict[str, Any]]:
     collected: dict[str, dict[str, Any]] = {}
     cursor: str | None = None
     pages = 0
@@ -126,34 +191,28 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         if not isinstance(data, Mapping):
             break
         rows = data.get("items")
-        rows = [r for r in rows if isinstance(r, Mapping)] if isinstance(rows, list) else []
-
-        for row in rows:
-            minimal = _row_to_minimal(row)
-            if not minimal:
-                continue
-            key = _key_of(minimal)
-            if not key:
-                continue
-            existing = collected.get(key)
-            if existing is None:
-                collected[key] = minimal
-                continue
-            ids = list(existing.get(HISTORY_ID_FIELD) or [])
-            for hid in minimal.get(HISTORY_ID_FIELD) or []:
-                if hid not in ids:
-                    ids.append(hid)
-            if str(minimal.get("watched_at") or "") > str(existing.get("watched_at") or ""):
-                minimal[HISTORY_ID_FIELD] = ids
-                collected[key] = minimal
-            else:
-                existing[HISTORY_ID_FIELD] = ids
+        row_count = _collect_history_rows(rows, collected)
 
         cursor = data.get("nextCursor") or None
-        if not cursor or not rows:
+        if not cursor or row_count <= 0:
             break
 
-    _info(FEATURE, "index_done", count=len(collected), pages=pages)
+    _dbg(FEATURE, "history_endpoint_scanned", indexed=len(collected), pages=pages)
+    return collected
+
+
+def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
+    section = cfg_section(adapter) or {}
+    per_page = max(1, min(cfg_int(section, "history_per_page", HISTORY_PAGE_MAX), HISTORY_PAGE_MAX))
+    max_pages = cfg_int(section, "history_max_pages", 5000)
+
+    collected = _index_from_snapshot(adapter, per_page=per_page)
+    source = "snapshot"
+    if not collected:
+        collected = _index_from_history_endpoint(adapter, per_page=per_page, max_pages=max_pages)
+        source = "history"
+
+    _info(FEATURE, "index_done", count=len(collected), source=source)
     return collected
 
 
