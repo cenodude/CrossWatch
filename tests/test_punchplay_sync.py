@@ -167,6 +167,42 @@ def test_deferred_is_not_treated_as_unresolved(monkeypatch: pytest.MonkeyPatch) 
     assert res["confirmed_keys"] == ["tmdb:550"]
 
 
+def test_skipped_is_not_counted_as_confirmed(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.punchplay import _watchlist as wl
+
+    http = FakeHTTP([_Resp(200, {"results": [
+        {"index": 0, "status": "skipped", "resolved_tmdb_id": 550},
+    ], "skipped": 1})])
+    _patch(monkeypatch, wl, http)
+
+    res = wl.add(Adapter(), [{"type": "movie", "title": "Fight Club", "ids": {"tmdb": "550"}}])
+
+    assert res["confirmed_keys"] == []
+    assert res["skipped_keys"] == ["tmdb:550"]
+    assert res["accepted_keys"] == ["tmdb:550"]
+
+
+def test_module_result_treats_deferred_as_skipped_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync._mod_PUNCHPLAY import OPS
+    from providers.sync.punchplay import _watchlist as wl
+
+    http = FakeHTTP([_Resp(200, {"results": [
+        {"index": 0, "status": "deferred", "reason": "unmatched", "client_item_id": "a"},
+    ], "deferred": 1})])
+    _patch(monkeypatch, wl, http)
+
+    res = OPS.add({"punchplay": {"access_token": "at"}}, [
+        {"type": "movie", "title": "A", "ids": {"imdb": "tt0000001"}},
+    ], feature="watchlist")
+
+    assert res["count"] == 0
+    assert res["confirmed_keys"] == []
+    assert res["deferred_keys"] == ["imdb:tt0000001"]
+    assert res["skipped_keys"] == ["imdb:tt0000001"]
+    assert res["accepted_keys"] == ["imdb:tt0000001"]
+    assert res["unresolved_keys"] == []
+
+
 def test_http_failure_marks_batch_unresolved(monkeypatch: pytest.MonkeyPatch) -> None:
     from providers.sync.punchplay import _watchlist as wl
 
@@ -393,21 +429,38 @@ def test_ratings_episode_scope(monkeypatch: pytest.MonkeyPatch) -> None:
 
 # --- history ------------------------------------------------------------------
 
-def test_history_index_uses_cursor_paginated_history_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_history_index_prefers_sync_snapshot_history(monkeypatch: pytest.MonkeyPatch) -> None:
     from providers.sync.punchplay import _history as hi
 
     http = FakeHTTP([_Resp(200, {"items": [
-        {"id": 7, "type": "movie", "tmdbId": 550, "title": "Fight Club", "year": 1999, "watchedAt": "2026-01-01T20:00:00.000Z"},
-    ], "nextCursor": None})])
+        {"id": 7, "kind": "movie", "tmdb_id": 550, "title": "Fight Club", "year": 1999, "watched_at": "2026-01-01T20:00:00.000Z"},
+    ], "hasMore": False, "nextAfter": None})])
     _patch(monkeypatch, hi, http)
 
     idx = hi.build_index(Adapter())
 
     assert "tmdb:550" in idx
     assert http.calls[0]["method"] == "GET"
-    assert http.calls[0]["url"].endswith("/me/history")
+    assert http.calls[0]["url"].endswith("/me/sync/snapshot")
+    assert http.calls[0]["params"]["resource"] == "history"
     assert http.calls[0]["params"]["limit"] == 100
-    assert "cursor" not in http.calls[0]["params"]
+    assert http.calls[0]["params"]["after"] == 0
+
+
+def test_history_index_reads_episode_from_sync_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.punchplay import _history as hi
+
+    http = FakeHTTP([_Resp(200, {"items": [
+        {"id": 49, "kind": "episode", "tmdb_id": 46260, "season": 1, "episode": 49,
+         "title": "Naruto", "episode_title": "Lee's Hidden Strength", "watched_at": "2026-01-01T20:00:00.000Z"},
+    ], "hasMore": False, "nextAfter": None})])
+    _patch(monkeypatch, hi, http)
+
+    idx = hi.build_index(Adapter())
+
+    assert idx["tmdb:46260#s01e49"]["show_ids"] == {"tmdb": "46260"}
+    assert idx["tmdb:46260#s01e49"]["season"] == 1
+    assert idx["tmdb:46260#s01e49"]["episode"] == 49
 
 
 def test_history_client_item_id_is_per_play(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -464,9 +517,9 @@ def test_history_index_collects_entry_ids_for_rewatches(monkeypatch: pytest.Monk
     from providers.sync.punchplay import _history as hi
 
     http = FakeHTTP([_Resp(200, {"items": [
-        {"id": 7, "type": "movie", "tmdbId": 550, "title": "Fight Club", "year": 1999, "watchedAt": "2026-01-01T20:00:00.000Z"},
-        {"id": 9, "type": "movie", "tmdbId": 550, "title": "Fight Club", "year": 1999, "watchedAt": "2026-06-01T20:00:00.000Z"},
-    ], "nextCursor": None})])
+        {"id": 7, "kind": "movie", "tmdb_id": 550, "title": "Fight Club", "year": 1999, "watched_at": "2026-01-01T20:00:00.000Z"},
+        {"id": 9, "kind": "movie", "tmdb_id": 550, "title": "Fight Club", "year": 1999, "watched_at": "2026-06-01T20:00:00.000Z"},
+    ], "hasMore": False, "nextAfter": None})])
     _patch(monkeypatch, hi, http)
 
     idx = hi.build_index(Adapter())

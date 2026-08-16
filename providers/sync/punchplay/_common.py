@@ -586,10 +586,13 @@ def classify_bulk_results(
     key_by_index: Mapping[int, str],
 ) -> dict[str, Any]:
     confirmed: list[str] = []
+    skipped_keys: list[str] = []
     unresolved_keys: list[str] = []
     deferred_keys: list[str] = []
+    accepted_keys: list[str] = []
     unresolved: list[dict[str, Any]] = []
     resolved_tmdb: dict[str, int] = {}
+    status_counts: dict[str, int] = {}
 
     rows = results if isinstance(results, list) else []
     seen_index: set[int] = set()
@@ -608,13 +611,23 @@ def classify_bulk_results(
         status = str(row.get("status") or "").strip()
         if not key:
             continue
-        if status in ("inserted", "updated", "removed", "skipped"):
+        if status:
+            status_counts[status] = status_counts.get(status, 0) + 1
+        if status in ("inserted", "updated", "removed"):
             confirmed.append(key)
+            accepted_keys.append(key)
+            tmdb = _as_int(row.get("resolved_tmdb_id"))
+            if tmdb:
+                resolved_tmdb[key] = tmdb
+        elif status == "skipped":
+            skipped_keys.append(key)
+            accepted_keys.append(key)
             tmdb = _as_int(row.get("resolved_tmdb_id"))
             if tmdb:
                 resolved_tmdb[key] = tmdb
         elif status == "deferred":
             deferred_keys.append(key)
+            accepted_keys.append(key)
         else:
             unresolved_keys.append(key)
             unresolved.append({
@@ -630,10 +643,13 @@ def classify_bulk_results(
 
     return {
         "confirmed_keys": confirmed,
+        "skipped_keys": skipped_keys,
         "unresolved_keys": unresolved_keys,
         "deferred_keys": deferred_keys,
+        "accepted_keys": accepted_keys,
         "unresolved": unresolved,
         "resolved_tmdb": resolved_tmdb,
+        "status_counts": status_counts,
     }
 
 
@@ -649,10 +665,13 @@ def bulk_write(
         raise PunchPlayError(f"unsupported bulk resource: {resource}")
 
     confirmed: list[str] = []
+    skipped_keys: list[str] = []
     unresolved_keys: list[str] = []
     deferred_keys: list[str] = []
+    accepted_keys: list[str] = []
     unresolved: list[dict[str, Any]] = []
     resolved_tmdb: dict[str, int] = {}
+    status_counts: dict[str, int] = {}
     ok = True
 
     for batch in chunk_items(items):
@@ -701,10 +720,14 @@ def bulk_write(
             key_by_index,
         )
         confirmed.extend(parsed["confirmed_keys"])
+        skipped_keys.extend(parsed["skipped_keys"])
         unresolved_keys.extend(parsed["unresolved_keys"])
         deferred_keys.extend(parsed["deferred_keys"])
+        accepted_keys.extend(parsed["accepted_keys"])
         unresolved.extend(parsed["unresolved"])
         resolved_tmdb.update(parsed["resolved_tmdb"])
+        for status, count in (parsed.get("status_counts") or {}).items():
+            status_counts[str(status)] = status_counts.get(str(status), 0) + int(count or 0)
 
         _dbg(
             feature,
@@ -714,6 +737,7 @@ def bulk_write(
             inserted=body.get("inserted") if isinstance(body, Mapping) else None,
             updated=body.get("updated") if isinstance(body, Mapping) else None,
             removed=body.get("removed") if isinstance(body, Mapping) else None,
+            skipped=body.get("skipped") if isinstance(body, Mapping) else None,
             deferred=body.get("deferred") if isinstance(body, Mapping) else None,
             invalid=body.get("invalid") if isinstance(body, Mapping) else None,
         )
@@ -721,8 +745,11 @@ def bulk_write(
     return {
         "ok": ok,
         "confirmed_keys": confirmed,
+        "skipped_keys": skipped_keys,
         "unresolved_keys": unresolved_keys,
         "deferred_keys": deferred_keys,
+        "accepted_keys": accepted_keys,
         "unresolved": unresolved,
         "resolved_tmdb": resolved_tmdb,
+        "status_counts": status_counts,
     }
