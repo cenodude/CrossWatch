@@ -7,6 +7,7 @@
   const HOST_ID = "cw-user-profile-manager";
   let providerInstances = {};
   let userProfiles = [];
+  let appUsers = [];
   let loading = false;
   let loadedOnce = false;
   let internalRefresh = false;
@@ -62,8 +63,12 @@
 
   function providerKeys() {
     return Object.keys(providerInstances || {})
-      .filter((provider) => Array.isArray(providerInstances[provider]) && providerInstances[provider].length)
+      .filter((provider) => instanceRows(provider).length)
       .sort((a, b) => providerLabel(a).localeCompare(providerLabel(b)));
+  }
+
+  function isDefaultInstanceId(id) {
+    return (txt(id || "default") || "default").toLowerCase() === "default";
   }
 
   function instanceRows(provider) {
@@ -72,7 +77,7 @@
         id: txt(row?.id || "default") || "default",
         label: txt(row?.display_label || row?.label || row?.id || "Default"),
       }))
-      .filter((row) => row.id);
+      .filter((row) => row.id && !isDefaultInstanceId(row.id));
   }
 
   function allInstanceRows() {
@@ -113,7 +118,10 @@
 
   function resourceRows(key) {
     const rows = Array.isArray(availableResources?.[key]) ? availableResources[key] : [];
-    return rows.filter((row) => txt(row?.id));
+    return rows.filter((row) => {
+      const refs = Array.isArray(row?.instances) ? row.instances : [];
+      return txt(row?.id) && refs.length && refs.every((ref) => !isDefaultInstanceId(ref?.instance));
+    });
   }
 
   function resourceTitle(key) {
@@ -156,24 +164,56 @@
   }
 
   function assignmentCount(profile) {
-    return Object.values(assignmentMap(profile)).reduce((total, values) => total + values.length, 0);
+    return Object.values(assignmentMap(profile)).reduce((total, values) => total + values.filter((value) => !isDefaultInstanceId(value)).length, 0);
   }
 
   function assignmentSummary(profile) {
-    const counts = profile?.resource_counts && typeof profile.resource_counts === "object" ? profile.resource_counts : {};
-    const providers = Number.isFinite(Number(counts.providers)) ? Number(counts.providers) : Object.keys(assignmentMap(profile)).length;
-    const resources = Number.isFinite(Number(counts.resources)) ? Number(counts.resources) : Object.values(resourceMap(profile)).reduce((total, values) => total + values.length, 0);
+    const providers = Object.values(assignmentMap(profile)).filter((values) => values.some((value) => !isDefaultInstanceId(value))).length;
+    const resources = Object.entries(resourceMap(profile)).reduce((total, [key, values]) => {
+      const visibleIds = new Set(resourceRows(key).map((row) => txt(row.id)));
+      return total + values.filter((value) => visibleIds.has(txt(value))).length;
+    }, 0);
     return `Providers: ${providers} - Resources: ${resources}`;
   }
 
+  function assignedUserSummary(profile) {
+    const pid = txt(profile?.id);
+    const names = appUsers
+      .filter((user) => !user?.protected && txt(user?.profile_id) === pid)
+      .map((user) => txt(user?.username || user?.label || user?.id))
+      .filter(Boolean);
+    if (!names.length) return "Assigned to: None";
+    const visible = names.slice(0, 3).join(", ");
+    return `Assigned to: ${visible}${names.length > 3 ? ` +${names.length - 3} more` : ""}`;
+  }
+
+  function instanceAssignedProfile(provider, instance) {
+    const ownerProvider = providerKey(provider);
+    const ownerInstance = txt(instance);
+    const currentProfileId = txt(modalProfileId);
+    if (!ownerProvider || !ownerInstance) return null;
+    return userProfiles.find((profile) => {
+      const pid = txt(profile?.id);
+      if (!pid || pid === currentProfileId) return false;
+      return (assignmentMap(profile)[ownerProvider] || []).map(txt).includes(ownerInstance);
+    }) || null;
+  }
+
+  function profileLabelForId(profileId) {
+    const pid = txt(profileId);
+    if (!pid) return "";
+    const profile = profileById(pid);
+    return txt(profile?.label || profile?.id || pid);
+  }
+
   function renderProfileCard(profile) {
-    const counts = profile?.resource_counts && typeof profile.resource_counts === "object" ? profile.resource_counts : {};
-    const count = Number.isFinite(Number(counts.providers)) ? Number(counts.providers) : Object.keys(assignmentMap(profile)).length;
+    const count = assignmentCount(profile);
     return `
       <button type="button" class="cw-auth-service-card cw-upm-profile-card" data-action="edit-profile" data-profile-id="${esc(profile.id)}">
         <span class="cw-auth-provider-mark cw-upm-card-icon"><span class="material-symbols-rounded cw-auth-provider-icon" aria-hidden="true">person</span></span>
         <span class="cw-auth-service-copy cw-upm-card-copy">
           <strong>${esc(profile.label || profile.id)}</strong>
+          <small>${esc(assignedUserSummary(profile))}</small>
           <small>${esc(assignmentSummary(profile))}</small>
         </span>
         <span class="cw-upm-card-pill">${count}</span>
@@ -202,7 +242,7 @@
     const required = resourceRequiredMap();
     const keys = providerKeys();
     if (!keys.length) {
-      return `<div class="cw-upm-empty">No configured provider instances available.</div>`;
+      return `<div class="cw-upm-empty">No named provider instances available. Default instances are reserved for the admin workspace here; create named instances such as PLEX-P01 and TRAKT-P01 for managed users.</div>`;
     }
     return `<div class="cw-upm-provider-grid">${keys.map((provider) => {
       const selected = new Set((insts[provider] || []).map(txt));
@@ -217,16 +257,18 @@
           <div class="cw-upm-instance-grid">
             ${rows.map((row) => {
               const lockedBy = required[providerKey(provider)]?.[row.id] || [];
+              const assignedProfile = instanceAssignedProfile(provider, row.id);
               const requiredProvider = !!required[providerKey(provider)];
               const locked = lockedBy.length > 0;
-              const blocked = requiredProvider && !locked;
+              const blocked = (requiredProvider && !locked) || !!assignedProfile;
+              const note = assignedProfile ? `Assigned to: ${assignedProfile.label || assignedProfile.id}` : (locked ? `Required by ${Array.from(new Set(lockedBy)).join(", ")}` : "");
               return `
               <label class="cw-upm-instance-option ${selected.has(row.id) || locked ? "is-selected" : ""} ${locked ? "is-required" : ""} ${blocked ? "is-blocked" : ""}">
-                <input type="checkbox" name="cw-upm-provider-${esc(provider)}" value="${esc(row.id)}" ${selected.has(row.id) || locked ? "checked" : ""} ${requiredProvider ? "disabled" : ""} style="position:absolute;opacity:0;pointer-events:none">
+                <input type="checkbox" name="cw-upm-provider-${esc(provider)}" value="${esc(row.id)}" ${selected.has(row.id) || locked ? "checked" : ""} ${requiredProvider || assignedProfile ? "disabled" : ""} style="position:absolute;opacity:0;pointer-events:none">
                 <span class="cw-upm-instance-copy">
                   <strong>${esc(row.label)}</strong>
                   <code>${esc(row.id)}</code>
-                  ${locked ? `<em>Required by ${esc(Array.from(new Set(lockedBy)).join(", "))}</em>` : ""}
+                  ${note ? `<em>${esc(note)}</em>` : ""}
                 </span>
               </label>`;
             }).join("")}
@@ -239,19 +281,20 @@
     const rows = resourceRows(key);
     const selected = draftResourceSet(key);
     const isOpen = openResourceSections.has(key);
-    const assignedElsewhere = (row) => {
+    const assignedProfileLabel = (row) => {
       const assigned = txt(row?.assigned_profile_id);
-      return assigned && assigned !== txt(modalProfileId);
+      return assigned && assigned !== txt(modalProfileId) ? profileLabelForId(assigned) || "another profile" : "";
     };
     return `
       <details class="cw-upm-resource-section" data-resource-section="${esc(key)}" ${isOpen ? "open" : ""}>
         <summary>
           <span>${esc(resourceTitle(key))}</span>
-          <strong>${selected.size}/${rows.length}</strong>
+          <strong>${rows.filter((row) => selected.has(txt(row.id))).length}/${rows.length}</strong>
         </summary>
         <div class="cw-upm-resource-grid">
           ${rows.length ? rows.map((row) => {
-            const disabled = assignedElsewhere(row);
+            const lockedLabel = assignedProfileLabel(row);
+            const disabled = !!lockedLabel;
             const isSelected = selected.has(txt(row.id));
             const features = key === "sync_pairs" && Array.isArray(row.features) ? row.features.map(txt).filter(Boolean) : [];
             return `
@@ -259,11 +302,11 @@
                 <input type="checkbox" data-resource-key="${esc(key)}" value="${esc(row.id)}" ${isSelected ? "checked" : ""} ${disabled ? "disabled" : ""} style="position:absolute;opacity:0;pointer-events:none">
                 <span class="cw-upm-resource-copy">
                   <strong>${esc(row.label || row.id)}</strong>
-                  <small>${disabled ? "Assigned to another profile" : `${(Array.isArray(row.instances) ? row.instances.length : 0)} required instance${(Array.isArray(row.instances) ? row.instances.length : 0) === 1 ? "" : "s"}`}</small>
+                  <small>${disabled ? `Assigned to: ${esc(lockedLabel)}` : `${(Array.isArray(row.instances) ? row.instances.length : 0)} required instance${(Array.isArray(row.instances) ? row.instances.length : 0) === 1 ? "" : "s"}`}</small>
                   ${features.length ? `<span class="cw-upm-resource-features">${features.map((feature) => `<em>${esc(feature)}</em>`).join("")}</span>` : ""}
                 </span>
               </label>`;
-          }).join("") : `<div class="cw-upm-empty">No ${esc(resourceTitle(key).toLowerCase())} configured.</div>`}
+          }).join("") : `<div class="cw-upm-empty">No ${esc(resourceTitle(key).toLowerCase())} available for managed users. Resources using default instances are hidden here; create resources with named instances first.</div>`}
         </div>
       </details>`;
   }
@@ -332,7 +375,7 @@
         ${userProfiles.map(renderProfileCard).join("")}
         ${renderAddCard()}
       </div>
-      <div class="cw-upm-status" id="cw-upm-status">${rows.length ? "" : "Only configured provider instances are shown when editing a user profile."}</div>
+      <div class="cw-upm-status" id="cw-upm-status">${rows.length ? "" : "No named provider instances are available for managed profiles. Default instances stay in the admin workspace; create separate named instances first."}</div>
       ${renderModal()}`;
   }
 
@@ -356,6 +399,12 @@
         resources: row?.resources && typeof row.resources === "object" ? row.resources : {},
         resource_counts: row?.resource_counts && typeof row.resource_counts === "object" ? row.resource_counts : {},
       })).filter((row) => row.id && row.label) : [];
+      try {
+        const userData = await json(`/api/app-auth/users?ts=${Date.now()}`);
+        appUsers = Array.isArray(userData?.items) ? userData.items : [];
+      } catch {
+        appUsers = [];
+      }
       loadedOnce = true;
     } catch (e) {
       const status = $("cw-upm-status");

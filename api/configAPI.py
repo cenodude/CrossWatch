@@ -161,6 +161,38 @@ def _preserve_sensitive_config_values(
             _preserve_sensitive_config_values(current[idx], incoming[idx], merged[idx], is_blank, is_sensitive_key, path + (str(idx),))
 
 
+def _public_ui_config(raw: dict[str, Any]) -> dict[str, Any]:
+    raw_ui = raw.get("ui")
+    ui: dict[str, Any] = raw_ui if isinstance(raw_ui, dict) else {}
+    keys = (
+        "show_watchlist_preview",
+        "show_recent_activity",
+        "show_recent_history_widget",
+        "show_latest_ratings_widget",
+        "show_recent_scrobble_widget",
+        "show_recent_progress_widget",
+        "show_recent_playlists_widget",
+        "recent_activity_display",
+        "recent_activity_limit",
+    )
+    return {key: ui[key] for key in keys if key in ui}
+
+
+def _public_block_configured(raw: dict[str, Any], *names: str) -> bool:
+    for name in names:
+        block = raw.get(name)
+        if not isinstance(block, dict):
+            continue
+        if str(block.get("api_key") or block.get("token") or block.get("access_token") or "").strip():
+            return True
+        instances = block.get("instances")
+        if isinstance(instances, dict):
+            for value in instances.values():
+                if isinstance(value, dict) and str(value.get("api_key") or value.get("token") or value.get("access_token") or "").strip():
+                    return True
+    return False
+
+
 def _after_config_save(env: dict[str, Any], cfg: dict[str, Any]) -> None:
     _log_scrobble_source_state(env, cfg)
 
@@ -405,13 +437,16 @@ def api_config_meta(request: Request) -> JSONResponse:
             pass
 
     authenticated = False
+    is_admin = False
     try:
         from . import appAuthAPI as app_auth
 
         token = request.cookies.get(app_auth.COOKIE_NAME)
         authenticated = app_auth.auth_required(raw) and app_auth.is_authenticated(raw, token)
+        is_admin = authenticated and app_auth.is_admin_authenticated(raw, token)
     except Exception:
         authenticated = False
+        is_admin = False
 
     payload = {
         "exists": exists,
@@ -429,7 +464,14 @@ def api_config_meta(request: Request) -> JSONResponse:
         "needs_upgrade": needs_upgrade,
         "legacy_pre_070": is_legacy_pre_070,
     }
-    if authenticated:
+    if authenticated or not auth_reset_required:
+        payload.update(
+            {
+                "ui": _public_ui_config(raw),
+                "tmdb_configured": _public_block_configured(raw, "tmdb", "tmdb_sync"),
+            }
+        )
+    if is_admin:
         payload.update(
             {
                 "path": str(p) if p is not None else None,

@@ -1,5 +1,5 @@
 # cw_platform/provider_usage.py
-# CrossWatch - Central usage detection for provider profiles referenced by Scrobbling.
+# CrossWatch - Central usage detection for provider profiles referenced by sync and scrobbling.
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
@@ -166,6 +166,44 @@ def _webhook_usage(cfg: Mapping[str, Any], provider: str, instance: str) -> list
     return out
 
 
+def _pair_id(pair: Mapping[str, Any], index: int) -> str:
+    raw = str(pair.get("id") or pair.get("pair_id") or pair.get("name") or "").strip()
+    return raw or f"pair-{index + 1}"
+
+
+def _pair_usage(cfg: Mapping[str, Any], provider: str, instance: str) -> list[dict[str, Any]]:
+    pairs = cfg.get("pairs")
+    if not isinstance(pairs, list):
+        return []
+
+    out: list[dict[str, Any]] = []
+    for index, pair_raw in enumerate(pairs):
+        if not isinstance(pair_raw, Mapping):
+            continue
+        pair = dict(pair_raw)
+        pair_id = _pair_id(pair, index)
+        enabled = coerce_bool(pair.get("enabled", True))
+        for role, prov_field, inst_fields in (
+            ("source", "source", ("source_instance", "src_instance")),
+            ("target", "target", ("target_instance", "dst_instance")),
+        ):
+            if provider_key(str(pair.get(prov_field) or "")) != provider:
+                continue
+            raw_inst = next((pair.get(field) for field in inst_fields if field in pair), None)
+            if normalize_instance_id(raw_inst) != instance:
+                continue
+            out.append(
+                {
+                    "feature": "sync_pair",
+                    "role": role,
+                    "pair_id": pair_id,
+                    "enabled": enabled,
+                    "label": f"Sync pair {pair_id}",
+                }
+            )
+    return out
+
+
 def find_provider_usage(
     cfg: dict[str, Any],
     provider: str,
@@ -178,6 +216,7 @@ def find_provider_usage(
     cfg_map = cfg if isinstance(cfg, Mapping) else {}
 
     usages: list[dict[str, Any]] = []
+    usages.extend(_pair_usage(cfg_map, prov, inst))
     usages.extend(_watcher_usage(cfg_map, prov, inst))
     usages.extend(_webhook_usage(cfg_map, prov, inst))
     return usages
@@ -190,6 +229,12 @@ def provider_in_use(cfg: dict[str, Any], provider: str, instance_id: str = "defa
 def describe_usage(usage: Mapping[str, Any]) -> str:
     feature = str(usage.get("feature") or "").strip().lower()
     role = str(usage.get("role") or "").strip().lower()
+    if feature == "sync_pair":
+        pair_id = str(usage.get("pair_id") or "").strip()
+        where = f"Sync pair {pair_id}" if pair_id else "a sync pair"
+        side = "source" if role == "source" else "target"
+        state = "" if usage.get("enabled") else " (disabled)"
+        return f"{where} ({side}){state}"
     if feature == "watcher":
         route_id = str(usage.get("route_id") or "").strip()
         where = f"Watcher route {route_id}" if route_id else "a Watcher route"
@@ -215,7 +260,7 @@ def usage_conflict_payload(
     subject = _label(prov, inst)
     message = (
         f"Cannot delete {subject} because it is used by {', '.join(details)}. "
-        "Remove this profile from Watcher or Webhooks first."
+        "Remove this profile from Sync pairs, Watcher, or Webhooks first."
         if details
         else f"Cannot delete {subject}."
     )

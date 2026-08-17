@@ -10,8 +10,10 @@ import re
 import secrets
 import base64
 import hashlib
+import threading
+from contextlib import contextmanager
 from datetime import datetime
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlsplit
@@ -54,6 +56,8 @@ DEFAULT_SCHEDULER_WEBHOOKS: dict[str, Any] = {
 }
 
 _ENC_PREFIX = "enc:v1:"
+_CONFIG_LOCK = threading.RLock()
+_CONFIG_FILE_LOCK_STATE = threading.local()
 
 def _config_key_file() -> Path:
     return CONFIG / ".cw_master_key"
@@ -172,6 +176,7 @@ def _is_sensitive_path(path: tuple[str, ...]) -> bool:
         "session_id",
         "token_hash", "salt", "hash",
         "device_code",
+        "pending_secret",
         "_pending_request_token",
         "_pending_tv_login",
         "_pending_tv_caller",
@@ -230,6 +235,9 @@ def _encrypt_secret_tree_stable(obj: Any, prev: Any, path: tuple[str, ...] = ())
 
 # Default config
 DEFAULT_CFG: dict[str, Any] = {
+    "user_profiles": {},
+    "provider_instance_ids": {},
+
     # --- Providers -----------------------------------------------------------
     "plex": {
         "server_url": "",                               # http(s)://host:32400 (required for sync & watcher).
@@ -832,6 +840,7 @@ DEFAULT_CFG: dict[str, Any] = {
         },
         "sessions": [],
         "last_login_at": 0,
+        "users": {},
     },
 
     # --- Pairs (UI-driven) ---------------------------------------------------
@@ -908,6 +917,21 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
                 if isinstance(s, dict) and s.get("token_hash"):
                     s["token_hash"] = MASK
 
+        totp = a.get("totp")
+        if isinstance(totp, dict):
+            _mask_leaf(totp, "secret")
+            _mask_leaf(totp, "pending_secret")
+
+        users = a.get("users")
+        if isinstance(users, dict):
+            for raw_user in users.values():
+                if not isinstance(raw_user, dict):
+                    continue
+                utotp = raw_user.get("totp")
+                if isinstance(utotp, dict):
+                    _mask_leaf(utotp, "secret")
+                    _mask_leaf(utotp, "pending_secret")
+
     # Webhook URL tokens
     sec = out.get("security")
     if isinstance(sec, dict):
@@ -929,6 +953,57 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
 # Helpers: paths, IO, merging, normalization
 def _cfg_file() -> Path:
     return CONFIG / "config.json"
+
+
+@contextmanager
+def _config_file_lock() -> Iterator[None]:
+    depth = int(getattr(_CONFIG_FILE_LOCK_STATE, "depth", 0) or 0)
+    if depth > 0:
+        _CONFIG_FILE_LOCK_STATE.depth = depth + 1
+        try:
+            yield
+        finally:
+            _CONFIG_FILE_LOCK_STATE.depth = depth
+        return
+    lock_path = CONFIG / "config.json.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+b") as f:
+        _CONFIG_FILE_LOCK_STATE.depth = 1
+        try:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+
+                    f.seek(0)
+                    msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            except Exception:
+                pass
+            yield
+        finally:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+
+                    f.seek(0)
+                    msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            except Exception:
+                pass
+            _CONFIG_FILE_LOCK_STATE.depth = 0
+
+
+@contextmanager
+def _config_io_lock() -> Iterator[None]:
+    with _CONFIG_LOCK:
+        with _config_file_lock():
+            yield
 
 
 def config_path() -> Path:
@@ -954,21 +1029,23 @@ def backup_config_file() -> Path | None:
 
 
 def _read_json(p: Path) -> dict[str, Any]:
-    with p.open("r", encoding="utf-8") as f:
-        return json.load(f)
+    with _config_io_lock():
+        with p.open("r", encoding="utf-8") as f:
+            return json.load(f)
 
 
 def _write_json_atomic(p: Path, data: dict[str, Any]) -> None:
-    p.parent.mkdir(parents=True, exist_ok=True)
-    import os as _os, time as _time, secrets, threading
+    with _config_io_lock():
+        p.parent.mkdir(parents=True, exist_ok=True)
+        import os as _os, time as _time, secrets, threading
 
-    suffix = f".{_time.time_ns()}.{_os.getpid()}.{threading.get_ident()}.{secrets.token_hex(4)}.tmp"
-    tmp = p.with_suffix(suffix)
+        suffix = f".{_time.time_ns()}.{_os.getpid()}.{threading.get_ident()}.{secrets.token_hex(4)}.tmp"
+        tmp = p.with_suffix(suffix)
 
-    with tmp.open("w", encoding="utf-8", newline="\n") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-        f.write("\n")
-    tmp.replace(p)
+        with tmp.open("w", encoding="utf-8", newline="\n") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+        tmp.replace(p)
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -1967,6 +2044,31 @@ def _normalize_ui(cfg: dict[str, Any]) -> None:
     tls["key_file"] = str(tls.get("key_file", "") or "").strip()
 
 
+def _normalize_pair_profile_ids(cfg: dict[str, Any]) -> None:
+    pairs = cfg.get("pairs")
+    if not isinstance(pairs, list):
+        return
+
+    def _normalize_user_profile_id(value: Any) -> str:
+        return str(value or "").strip().lower()
+
+    try:
+        from cw_platform.provider_instances import list_user_profiles
+
+        valid = {_normalize_user_profile_id(row.get("id")) for row in list_user_profiles(cfg) if _normalize_user_profile_id(row.get("id"))}
+    except Exception:
+        valid = set()
+
+    for it in pairs:
+        if not isinstance(it, dict):
+            continue
+        pid = _normalize_user_profile_id(it.get("profile_id"))
+        if pid and pid in valid:
+            it["profile_id"] = pid
+        else:
+            it.pop("profile_id", None)
+
+
 def _normalize_app_auth(cfg: dict[str, Any]) -> None:
     a = _ensure_dict(cfg, "app_auth")
     raw_enabled = bool(a.get("enabled", False))
@@ -1996,11 +2098,46 @@ def _normalize_app_auth(cfg: dict[str, Any]) -> None:
     except Exception:
         plex_sso["linked_at"] = 0
     if not plex_sso["linked_plex_account_id"]:
-        plex_sso["enabled"] = False
         plex_sso["linked_username"] = ""
         plex_sso["linked_email"] = ""
         plex_sso["linked_thumb"] = ""
         plex_sso["linked_at"] = 0
+
+    oidc = _ensure_dict(a, "oidc")
+    oidc["enabled"] = bool(oidc.get("enabled", False))
+    oidc["issuer"] = str(oidc.get("issuer", "") or "").strip().rstrip("/")
+    oidc["client_id"] = str(oidc.get("client_id", "") or "").strip()
+    oidc["client_secret"] = str(oidc.get("client_secret", "") or "").strip()
+    scopes = str(oidc.get("scopes", "openid profile email") or "openid profile email").strip()
+    scope_parts: list[str] = []
+    for scope in scopes.split():
+        if scope and scope not in scope_parts:
+            scope_parts.append(scope)
+    if "openid" not in scope_parts:
+        scope_parts.insert(0, "openid")
+    oidc["scopes"] = " ".join(scope_parts)
+    if not oidc["issuer"] or not oidc["client_id"]:
+        oidc["enabled"] = False
+
+    oidc_identity = a.get("oidc_identity")
+    if isinstance(oidc_identity, dict):
+        clean_oidc_identity: dict[str, Any] = {
+            "iss": str(oidc_identity.get("iss", "") or "").strip().rstrip("/"),
+            "sub": str(oidc_identity.get("sub", "") or "").strip(),
+            "username": str(oidc_identity.get("username", "") or "").strip(),
+            "email": str(oidc_identity.get("email", "") or "").strip(),
+            "picture": str(oidc_identity.get("picture", "") or "").strip(),
+        }
+        try:
+            clean_oidc_identity["linked_at"] = int(oidc_identity.get("linked_at", 0) or 0)
+        except Exception:
+            clean_oidc_identity["linked_at"] = 0
+        if clean_oidc_identity["iss"] and clean_oidc_identity["sub"]:
+            a["oidc_identity"] = clean_oidc_identity
+        else:
+            a.pop("oidc_identity", None)
+    else:
+        a.pop("oidc_identity", None)
 
     pwd = _ensure_dict(a, "password")
     pwd["scheme"] = str(pwd.get("scheme", "pbkdf2_sha256") or "pbkdf2_sha256").strip() or "pbkdf2_sha256"
@@ -2010,6 +2147,17 @@ def _normalize_app_auth(cfg: dict[str, Any]) -> None:
         pwd["iterations"] = 260_000
     pwd["salt"] = str(pwd.get("salt", "") or "").strip()
     pwd["hash"] = str(pwd.get("hash", "") or "").strip()
+
+    atotp = _ensure_dict(a, "totp")
+    atotp["enabled"] = bool(atotp.get("enabled", False))
+    atotp["secret"] = str(atotp.get("secret", "") or "").strip()
+    atotp["pending_secret"] = str(atotp.get("pending_secret", "") or "").strip()
+    try:
+        atotp["pending_created_at"] = int(atotp.get("pending_created_at", 0) or 0)
+    except Exception:
+        atotp["pending_created_at"] = 0
+    if not atotp["secret"]:
+        atotp["enabled"] = False
 
     has_configured_credentials = bool(a["username"] and pwd["salt"] and pwd["hash"])
 
@@ -2033,6 +2181,184 @@ def _normalize_app_auth(cfg: dict[str, Any]) -> None:
         a["last_login_at"] = int(a.get("last_login_at", 0) or 0)
     except Exception:
         a["last_login_at"] = 0
+
+    raw_users = a.get("users")
+    clean_users: dict[str, Any] = {}
+
+    def _clean_managed_display_name(raw_user: dict[str, Any]) -> str:
+        return " ".join(str(raw_user.get("display_name", "") or "").strip().split())[:64]
+
+    def _clean_managed_recovery_codes(raw_user: dict[str, Any]) -> list[dict[str, Any]]:
+        codes = raw_user.get("recovery_codes")
+        if not isinstance(codes, list):
+            return []
+        return [dict(row) for row in codes if isinstance(row, dict)]
+
+    def _clean_managed_avatar(raw_user: dict[str, Any]) -> dict[str, Any]:
+        avatar = raw_user.get("avatar")
+        if not isinstance(avatar, dict):
+            return {}
+        raw_file = str(avatar.get("file") or "")
+        if "/" in raw_file or "\\" in raw_file:
+            return {}
+        name = os.path.basename(raw_file)
+        if not re.fullmatch(r"[a-f0-9]{32}\.(png|jpg|webp)", name):
+            return {}
+        content_type = str(avatar.get("content_type") or "").strip().lower()
+        if content_type not in {"image/png", "image/jpeg", "image/webp"}:
+            return {}
+        try:
+            updated_at = int(avatar.get("updated_at", 0) or 0)
+        except Exception:
+            updated_at = 0
+        return {"file": name, "content_type": content_type, "updated_at": updated_at}
+
+    def _clean_managed_preferences(raw_user: dict[str, Any]) -> dict[str, bool]:
+        prefs = raw_user.get("preferences")
+        if not isinstance(prefs, dict):
+            return {}
+        return {
+            "playing_card": prefs.get("playing_card") is not False,
+            "quick_add": prefs.get("quick_add") is not False,
+        }
+
+    def _clean_managed_plex_sso(raw_user: dict[str, Any]) -> dict[str, Any]:
+        plex_sso_user = raw_user.get("plex_sso")
+        if not isinstance(plex_sso_user, dict):
+            return {}
+        account_id = str(plex_sso_user.get("account_id") or plex_sso_user.get("linked_plex_account_id") or "").strip()
+        if not account_id:
+            return {}
+        try:
+            linked_at = int(plex_sso_user.get("linked_at", 0) or 0)
+        except Exception:
+            linked_at = 0
+        return {
+            "account_id": account_id,
+            "username": str(plex_sso_user.get("username") or plex_sso_user.get("linked_username") or "").strip(),
+            "email": str(plex_sso_user.get("email") or plex_sso_user.get("linked_email") or "").strip(),
+            "thumb": str(plex_sso_user.get("thumb") or plex_sso_user.get("linked_thumb") or "").strip(),
+            "linked_at": linked_at,
+        }
+
+    def _clean_managed_oidc(raw_user: dict[str, Any]) -> dict[str, Any]:
+        oidc_user = raw_user.get("oidc")
+        if not isinstance(oidc_user, dict):
+            return {}
+        iss = str(oidc_user.get("iss") or "").strip().rstrip("/")
+        sub = str(oidc_user.get("sub") or "").strip()
+        if not iss or not sub:
+            return {}
+        try:
+            linked_at = int(oidc_user.get("linked_at", 0) or 0)
+        except Exception:
+            linked_at = 0
+        return {
+            "iss": iss,
+            "sub": sub,
+            "username": str(oidc_user.get("username") or "").strip(),
+            "email": str(oidc_user.get("email") or "").strip(),
+            "picture": str(oidc_user.get("picture") or "").strip(),
+            "linked_at": linked_at,
+        }
+
+    raw_admin_profile = dict(a)
+    a.pop("display_name", None)
+    a.pop("recovery_codes", None)
+    a.pop("avatar", None)
+    a.pop("preferences", None)
+    display_name = _clean_managed_display_name(raw_admin_profile)
+    if display_name:
+        a["display_name"] = display_name
+    recovery_codes = _clean_managed_recovery_codes(raw_admin_profile)
+    if recovery_codes:
+        a["recovery_codes"] = recovery_codes
+    avatar = _clean_managed_avatar(raw_admin_profile)
+    if avatar:
+        a["avatar"] = avatar
+    preferences = _clean_managed_preferences(raw_admin_profile)
+    if preferences:
+        a["preferences"] = preferences
+
+    if isinstance(raw_users, dict):
+        for raw_id, raw_user in raw_users.items():
+            uid_raw = str(raw_id or "").strip().lower()
+            uid_compact = uid_raw.replace("-", "")
+            if re.fullmatch(r"[a-f0-9]{32}", uid_compact):
+                uid = uid_compact
+            elif re.fullmatch(r"[a-z0-9][a-z0-9-]{1,63}", uid_raw):
+                uid = uid_raw
+            else:
+                continue
+            if not isinstance(raw_user, dict):
+                continue
+            username = " ".join(str(raw_user.get("username", "") or "").strip().split())[:64]
+            if not username:
+                continue
+            upwd_raw = raw_user.get("password")
+            if not isinstance(upwd_raw, dict):
+                continue
+            try:
+                user_iters = int(upwd_raw.get("iterations", 260_000) or 260_000)
+            except Exception:
+                user_iters = 260_000
+            upwd = {
+                "scheme": str(upwd_raw.get("scheme", "pbkdf2_sha256") or "pbkdf2_sha256").strip() or "pbkdf2_sha256",
+                "iterations": user_iters,
+                "salt": str(upwd_raw.get("salt", "") or "").strip(),
+                "hash": str(upwd_raw.get("hash", "") or "").strip(),
+            }
+            if not upwd["salt"] or not upwd["hash"]:
+                continue
+            perms_raw = raw_user.get("permissions")
+            perms = perms_raw if isinstance(perms_raw, dict) else {}
+            raw_totp = raw_user.get("totp")
+            user_totp = raw_totp if isinstance(raw_totp, dict) else {}
+            clean_totp = {
+                "enabled": bool(user_totp.get("enabled", False)),
+                "secret": str(user_totp.get("secret", "") or "").strip(),
+                "pending_secret": str(user_totp.get("pending_secret", "") or "").strip(),
+            }
+            try:
+                clean_totp["pending_created_at"] = int(user_totp.get("pending_created_at", 0) or 0)
+            except Exception:
+                clean_totp["pending_created_at"] = 0
+            if not clean_totp["secret"]:
+                clean_totp["enabled"] = False
+            clean_user = {
+                "username": username,
+                "enabled": bool(raw_user.get("enabled", True)),
+                "role": "user",
+                "profile_id": str(raw_user.get("profile_id", "") or "").strip().lower(),
+                "permissions": {
+                    "dashboard": bool(perms.get("dashboard", True)),
+                    "watchlist": bool(perms.get("watchlist", True)),
+                    "playback": bool(perms.get("playback", True)),
+                    "write": bool(perms.get("write", False)),
+                },
+                "password": upwd,
+                "totp": clean_totp,
+            }
+            display_name = _clean_managed_display_name(raw_user)
+            if display_name:
+                clean_user["display_name"] = display_name
+            recovery_codes = _clean_managed_recovery_codes(raw_user)
+            if recovery_codes:
+                clean_user["recovery_codes"] = recovery_codes
+            avatar = _clean_managed_avatar(raw_user)
+            if avatar:
+                clean_user["avatar"] = avatar
+            preferences = _clean_managed_preferences(raw_user)
+            if preferences:
+                clean_user["preferences"] = preferences
+            plex_sso_user = _clean_managed_plex_sso(raw_user)
+            if plex_sso_user:
+                clean_user["plex_sso"] = plex_sso_user
+            oidc_user = _clean_managed_oidc(raw_user)
+            if oidc_user:
+                clean_user["oidc"] = oidc_user
+            clean_users[uid] = clean_user
+    a["users"] = clean_users
 
     if a["reset_required"]:
         sess = _ensure_dict(a, "session")
@@ -2123,12 +2449,19 @@ def load_config() -> dict[str, Any]:
     _normalize_scheduling(cfg)
     _normalize_app_auth(cfg)
     _normalize_scrobble_webhook(cfg)
+    _normalize_pair_profile_ids(cfg)
     pairs = cfg.get("pairs")
     if isinstance(pairs, list):
         for it in pairs:
             if isinstance(it, dict):
                 it["features"] = _normalize_features_map(it.get("features"))  # type: ignore[arg-type]
     _normalize_ui(cfg)
+    try:
+        from cw_platform.provider_instances import ensure_provider_instance_uids
+
+        ensure_provider_instance_uids(cfg)
+    except Exception:
+        pass
 
     # First-run marker for welcome/setup
     if first_run:
@@ -2139,14 +2472,8 @@ def load_config() -> dict[str, Any]:
         except Exception:
             pass
 
-    # Ensure webhook URL tokens exist
     try:
-        cfg, wh_changed = _ensure_webhook_ids(cfg)
-        if wh_changed:
-            try:
-                save_config(cfg)
-            except Exception:
-                pass
+        cfg, _ = _ensure_webhook_ids(cfg)
     except Exception:
         pass
 
@@ -2179,6 +2506,13 @@ def save_config(cfg: dict[str, Any]) -> None:
     _normalize_app_auth(data)
     _normalize_scrobble_webhook(data)
     _normalize_ui(data)
+    _normalize_pair_profile_ids(data)
+    try:
+        from cw_platform.provider_instances import ensure_provider_instance_uids
+
+        ensure_provider_instance_uids(data)
+    except Exception:
+        pass
     pairs = data.get("pairs")
     if isinstance(pairs, list):
         for it in pairs:
@@ -2193,4 +2527,26 @@ def save_config(cfg: dict[str, Any]) -> None:
     except Exception:
         prev_raw = {}
 
+    if not bool(getattr(_CONFIG_FILE_LOCK_STATE, "atomic_update", False)):
+        try:
+            prev_cfg = cast(dict[str, Any], _transform_secret_tree(prev_raw, decrypt=True)) if isinstance(prev_raw, dict) else {}
+            prev_auth = prev_cfg.get("app_auth") if isinstance(prev_cfg, dict) else None
+            if isinstance(prev_auth, dict):
+                data["app_auth"] = prev_auth
+        except Exception:
+            pass
+
     _write_json_atomic(_cfg_file(), cast(dict[str, Any], _encrypt_secret_tree_stable(data, prev_raw)))
+
+
+def update_config(mutator: Any) -> tuple[dict[str, Any], Any]:
+    with _config_io_lock():
+        cfg = load_config()
+        result = mutator(cfg)
+        prev_atomic = bool(getattr(_CONFIG_FILE_LOCK_STATE, "atomic_update", False))
+        _CONFIG_FILE_LOCK_STATE.atomic_update = True
+        try:
+            save_config(cfg)
+        finally:
+            _CONFIG_FILE_LOCK_STATE.atomic_update = prev_atomic
+        return cfg, result
