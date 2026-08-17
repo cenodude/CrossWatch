@@ -3,16 +3,17 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 import io
 import json
 import os
 from pathlib import Path
 
-from fastapi import APIRouter, Body, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Body, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
+from cw_platform.access_policy import managed_profile_instances, request_user, user_can_access_instance
 from cw_platform.config_base import CONFIG as CONFIG_DIR, load_config
 from cw_platform.history_events import history_sync_key, is_history_event_key, minimal_history_item
 from cw_platform.id_map import canonical_key, merge_ids, minimal
@@ -25,8 +26,10 @@ from cw_platform.playlists import PlaylistSnapshot, supports_playlists
 from cw_platform import playlists_runner
 from cw_platform.provider_instances import (
     build_provider_config_view,
+    get_provider_block,
     list_instance_ids,
     normalize_instance_id,
+    sanitize_instance_label,
 )
 from services import playlists as playlist_svc
 
@@ -37,6 +40,68 @@ from services.editor import (
 router = APIRouter(prefix="/api/editor", tags=["editor"])
 
 _STATE_BASE = Path(CONFIG_DIR)
+
+
+def _is_admin_request(request: Request | None) -> bool:
+    user = request_user(request)
+    return not user or bool(user.get("is_admin"))
+
+
+def _require_instance_scope(cfg: Mapping[str, Any], request: Request | None, provider: Any, instance: Any) -> None:
+    if not user_can_access_instance(cfg, request_user(request), provider, instance):
+        raise HTTPException(status_code=403, detail="profile_scope_denied")
+
+
+def _instance_for_request(cfg: Mapping[str, Any], request: Request | None, provider: Any, instance: Any) -> str:
+    inst = normalize_instance_id(instance)
+    if instance not in (None, ""):
+        return inst
+    user = request_user(request)
+    if not user or bool(user.get("is_admin")):
+        return inst
+    allowed = managed_profile_instances(cfg, user).get(str(provider or "").strip().upper()) or []
+    return normalize_instance_id(allowed[0]) if allowed else inst
+
+
+def _filter_provider_names_for_request(cfg: Mapping[str, Any], request: Request | None, providers: list[str]) -> list[str]:
+    user = request_user(request)
+    if not user or bool(user.get("is_admin")):
+        return providers
+    allowed = set(managed_profile_instances(cfg, user).keys())
+    return [provider for provider in providers if str(provider or "").strip().upper() in allowed]
+
+
+def _filter_targets_for_request(cfg: Mapping[str, Any], request: Request | None, targets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    user = request_user(request)
+    if not user or bool(user.get("is_admin")):
+        return targets
+    return [
+        target for target in targets
+        if user_can_access_instance(cfg, user, target.get("provider"), target.get("instance") or "default")
+    ]
+
+
+def _instance_owner_labels(cfg: Mapping[str, Any], provider: Any, instance: Any) -> list[str]:
+    try:
+        from cw_platform.provider_instances import user_profiles_for_instance
+
+        rows = user_profiles_for_instance(cfg, provider, instance)
+    except Exception:
+        return []
+    labels = [str(row.get("label") or "").strip() for row in rows if isinstance(row, Mapping)]
+    return sorted({label for label in labels if label})
+
+
+def _shared_instance_note(cfg: Mapping[str, Any], provider: Any, instance: Any) -> dict[str, Any]:
+    owners = _instance_owner_labels(cfg, provider, instance)
+    return {"owners": owners, "shared": len(owners) > 1}
+
+
+def _provider_instance_label(cfg: Mapping[str, Any], provider: str, instance: Any) -> str:
+    inst = normalize_instance_id(instance)
+    block = get_provider_block(cfg, provider, inst)
+    friendly = sanitize_instance_label(block.get("label") if isinstance(block, Mapping) else "")
+    return friendly or ("Default" if inst == "default" else inst)
 
 def _load_current_state_features(features: set[str] | list[str] | tuple[str, ...]) -> dict[str, Any]:
     try:
@@ -225,56 +290,63 @@ def _save_policy_manual(
     provider_instance: str | None = None,
 ) -> None:
     adds_items = _canonicalize_manual_items(adds_items, kind)
-    raw = _load_policy()
-    providers = raw.get("providers")
-    if not isinstance(providers, dict):
-        providers = {}
-        raw["providers"] = providers
 
-    key = None
-    if provider in providers:
-        key = provider
-    else:
-        pl = str(provider).lower()
-        for k in providers.keys():
-            if str(k).lower() == pl:
-                key = str(k)
-                break
-    if key is None:
-        key = provider
-        providers[key] = {}
+    def _mutate(raw: dict[str, Any]) -> None:
+        providers = raw.get("providers")
+        if not isinstance(providers, dict):
+            providers = {}
+            raw["providers"] = providers
 
-    node = providers.get(key)
-    if not isinstance(node, dict):
-        node = {}
-        providers[key] = node
+        key = None
+        if provider in providers:
+            key = provider
+        else:
+            pl = str(provider).lower()
+            for k in providers.keys():
+                if str(k).lower() == pl:
+                    key = str(k)
+                    break
+        if key is None:
+            key = provider
+            providers[key] = {}
 
-    inst = normalize_instance_id(provider_instance)
-    if inst != "default":
-        insts = node.get("instances")
-        if not isinstance(insts, dict):
-            insts = {}
-            node["instances"] = insts
-        in_node = insts.get(inst)
-        if not isinstance(in_node, dict):
-            in_node = {}
-            insts[inst] = in_node
-        node = in_node
+        node = providers.get(key)
+        if not isinstance(node, dict):
+            node = {}
+            providers[key] = node
 
-    f = node.get(kind)
-    if not isinstance(f, dict):
-        f = {}
-        node[kind] = f
+        inst = normalize_instance_id(provider_instance)
+        if inst != "default":
+            insts = node.get("instances")
+            if not isinstance(insts, dict):
+                insts = {}
+                node["instances"] = insts
+            in_node = insts.get(inst)
+            if not isinstance(in_node, dict):
+                in_node = {}
+                insts[inst] = in_node
+            node = in_node
 
-    f["blocks"] = list(blocks or [])
+        f = node.get(kind)
+        if not isinstance(f, dict):
+            f = {}
+            node[kind] = f
 
-    adds = f.get("adds")
-    if not isinstance(adds, dict):
-        adds = {}
-        f["adds"] = adds
-    adds["items"] = dict(adds_items or {})
+        f["blocks"] = list(blocks or [])
 
-    _save_policy(raw)
+        adds = f.get("adds")
+        if not isinstance(adds, dict):
+            adds = {}
+            f["adds"] = adds
+        adds["items"] = dict(adds_items or {})
+
+
+    try:
+        sqlite_manual_policy.update_policy(_STATE_BASE, _mutate)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to write policy: {e}")
 
 
 def _policy_from_state() -> dict[str, Any]:
@@ -673,16 +745,17 @@ def _merge_result_warnings(result: dict[str, Any], source: Any) -> None:
 
 
 @router.get("/playlists/endpoints")
-def api_editor_playlist_endpoints() -> dict[str, Any]:
+def api_editor_playlist_endpoints(request: Request = cast(Request, None)) -> dict[str, Any]:
     cfg = load_config() or {}
-    endpoints = playlist_svc.list_endpoints(cfg)
+    endpoints = _filter_targets_for_request(cfg, request, playlist_svc.list_endpoints(cfg))
     return {"ok": True, "endpoints": endpoints}
 
 
 @router.get("/playlists/{endpoint_id}")
-def api_editor_playlist_endpoint(endpoint_id: str) -> dict[str, Any]:
+def api_editor_playlist_endpoint(endpoint_id: str, request: Request = cast(Request, None)) -> dict[str, Any]:
     cfg = load_config() or {}
     ctx = _playlist_endpoint(cfg, endpoint_id)
+    _require_instance_scope(cfg, request, ctx["provider"], ctx["instance"])
     snap = ctx["ops"].get_playlist_snapshot(ctx["view"], ctx["playlist_id"], instance=ctx["instance"])
     if not isinstance(snap, PlaylistSnapshot):
         raise HTTPException(status_code=500, detail="Provider returned an invalid playlist snapshot")
@@ -703,9 +776,10 @@ def api_editor_playlist_endpoint(endpoint_id: str) -> dict[str, Any]:
 
 
 @router.post("/playlists/{endpoint_id}")
-def api_editor_playlist_endpoint_save(endpoint_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+def api_editor_playlist_endpoint_save(endpoint_id: str, payload: dict[str, Any] = Body(...), request: Request = cast(Request, None)) -> dict[str, Any]:
     cfg = load_config() or {}
     ctx = _playlist_endpoint(cfg, endpoint_id)
+    _require_instance_scope(cfg, request, ctx["provider"], ctx["instance"])
     snap = ctx["ops"].get_playlist_snapshot(ctx["view"], ctx["playlist_id"], instance=ctx["instance"])
     if not isinstance(snap, PlaylistSnapshot):
         raise HTTPException(status_code=500, detail="Provider returned an invalid playlist snapshot")
@@ -778,7 +852,8 @@ def _normalize_blocks(blocks_raw: Any) -> list[str]:
 
 
 @router.get("/state/providers")
-def api_editor_state_providers() -> dict[str, Any]:
+def api_editor_state_providers(request: Request = cast(Request, None)) -> dict[str, Any]:
+    cfg = load_config() or {}
     state_providers = StateStore(_STATE_BASE).provider_names()
     raw_policy = _load_policy()
     providers = _union_providers({"providers": {name: {} for name in state_providers}}, raw_policy)
@@ -787,6 +862,7 @@ def api_editor_state_providers() -> dict[str, Any]:
         if name.lower() not in known:
             providers.append(name)
             known.add(name.lower())
+    providers = _filter_provider_names_for_request(cfg, request, providers)
     return {"providers": providers}
 
 
@@ -798,16 +874,19 @@ def api_editor_get_state(
     provider: str | None = None,
     provider_instance: str | None = None,
     endpoint: str | None = None,
+    request: Request = cast(Request, None),
 ) -> dict[str, Any]:
     k = _normalize_kind(kind)
     src = (source or "state").strip().lower()
     if src in ("playlist", "playlists", "playlist-endpoint"):
-        return api_editor_playlist_endpoint((endpoint or snapshot or "").strip())
+        return api_editor_playlist_endpoint((endpoint or snapshot or "").strip(), request=request)
 
+    cfg = load_config() or {}
     if src in ("state", "current"):
         raw_state = _load_current_state_features({k})
         raw_policy = _load_policy()
         providers = _union_providers(raw_state, raw_policy)
+        providers = _filter_provider_names_for_request(cfg, request, providers)
         chosen = (provider or "").strip() or (providers[0] if providers else "")
         if not chosen:
             return {
@@ -823,7 +902,8 @@ def api_editor_get_state(
                 "manual_blocks": [],
             }
 
-        inst = normalize_instance_id(provider_instance)
+        inst = _instance_for_request(cfg, request, chosen, provider_instance)
+        _require_instance_scope(cfg, request, chosen, inst)
 
         items = _load_state_items(k, chosen, inst, raw_state=raw_state)
         st_adds, st_blocks = _load_state_manual(k, chosen, inst, raw_state=raw_state) if raw_state else ({}, [])
@@ -852,11 +932,13 @@ def api_editor_get_state(
             "items": items,
             "manual_adds": manual_adds,
             "manual_blocks": manual_blocks,
+            "instance_sharing": _shared_instance_note(cfg, chosen, inst),
         }
     if src in ("manual", "manual-overrides", "policy", "overrides"):
         raw_state = _load_current_state_features({k})
         raw_policy = _load_policy()
         providers = _union_providers(raw_state, raw_policy)
+        providers = _filter_provider_names_for_request(cfg, request, providers)
         chosen = (provider or "").strip() or (providers[0] if providers else "")
         if not chosen:
             return {
@@ -872,7 +954,8 @@ def api_editor_get_state(
                 "manual_blocks": [],
             }
 
-        inst = normalize_instance_id(provider_instance)
+        inst = _instance_for_request(cfg, request, chosen, provider_instance)
+        _require_instance_scope(cfg, request, chosen, inst)
         pol_adds, pol_blocks = _load_policy_manual(k, chosen, inst, raw_policy=raw_policy)
         if not pol_adds and not pol_blocks and raw_state:
             pol_adds, pol_blocks = _load_state_manual(k, chosen, inst, raw_state=raw_state)
@@ -898,6 +981,7 @@ def api_editor_get_state(
             "items": manual_adds,
             "manual_adds": manual_adds,
             "manual_blocks": manual_blocks,
+            "instance_sharing": _shared_instance_note(cfg, chosen, inst),
         }
     raise HTTPException(status_code=400, detail=f"Unsupported source: {src}")
 
@@ -970,22 +1054,24 @@ def _canonicalize_manual_items(items: dict[str, Any], feature: str) -> dict[str,
 
 
 @router.post("")
-def api_editor_save_state(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+def api_editor_save_state(payload: dict[str, Any] = Body(...), request: Request = cast(Request, None)) -> dict[str, Any]:
     kind = _normalize_kind(str(payload.get("kind") or "watchlist"))
     src = str(payload.get("source") or "state").strip().lower()
     items_raw = payload.get("items")
     items = _normalize_items(items_raw)
     if src in ("playlist", "playlists", "playlist-endpoint"):
         endpoint_id = str(payload.get("endpoint") or payload.get("snapshot") or "").strip()
-        return api_editor_playlist_endpoint_save(endpoint_id, payload)
+        return api_editor_playlist_endpoint_save(endpoint_id, payload, request=request)
 
     if src in ("state", "current", "manual", "manual-overrides", "policy", "overrides"):
+        cfg = load_config() or {}
         provider = str(payload.get("provider") or "").strip()
         if not provider:
             raise HTTPException(status_code=400, detail=f"Missing provider for source={src}")
         items = _canonicalize_manual_items(items, kind)
 
-        inst = normalize_instance_id(payload.get("provider_instance"))
+        inst = _instance_for_request(cfg, request, provider, payload.get("provider_instance"))
+        _require_instance_scope(cfg, request, provider, inst)
 
         blocks = _normalize_blocks(payload.get("blocks"))
 
@@ -1008,7 +1094,9 @@ def api_editor_save_state(payload: dict[str, Any] = Body(...)) -> dict[str, Any]
     raise HTTPException(status_code=400, detail=f"Unsupported source: {src}")
 
 @router.get("/state/manual/export")
-def api_editor_state_manual_export() -> StreamingResponse:
+def api_editor_state_manual_export(request: Request = cast(Request, None)) -> StreamingResponse:
+    if not _is_admin_request(request):
+        raise HTTPException(status_code=403, detail="profile_scope_denied")
     pol = _load_policy()
     data = json.dumps(pol, ensure_ascii=False, sort_keys=True).encode("utf-8")
     return StreamingResponse(
@@ -1022,7 +1110,10 @@ def api_editor_state_manual_export() -> StreamingResponse:
 async def api_editor_state_manual_import(
     mode: str = Query("merge"),
     file: UploadFile = File(...),
+    request: Request = cast(Request, None),
 ) -> dict[str, Any]:
+    if not _is_admin_request(request):
+        raise HTTPException(status_code=403, detail="profile_scope_denied")
     payload = await file.read()
     try:
         incoming = json.loads(payload.decode("utf-8"))
@@ -1035,9 +1126,18 @@ async def api_editor_state_manual_import(
     if mode_n not in ("merge", "replace"):
         raise HTTPException(status_code=400, detail="Invalid mode")
 
-    current = _load_policy()
-    merged = _merge_policy(current, incoming, mode_n)
-    _save_policy(merged)
+    def _mutate(raw: dict[str, Any]) -> dict[str, Any]:
+        merged = _merge_policy(raw, incoming, mode_n)
+        raw.clear()
+        raw.update(merged)
+        return merged
+
+    try:
+        _raw, merged = sqlite_manual_policy.update_policy(_STATE_BASE, _mutate)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to write policy: {e}")
 
     stats = _policy_stats(merged)
     return {"ok": True, "mode": mode_n, **stats}
@@ -1099,13 +1199,15 @@ def _editor_send_targets(cfg: dict[str, Any], feature: str) -> list[dict[str, An
                 label = str(ops.label() or label)
             except Exception:
                 pass
+            instance_label = _provider_instance_label(cfg, provider, instance)
 
             targets.append(
                 {
                     "provider": provider,
                     "instance": instance,
                     "label": label,
-                    "display": label if instance == "default" else f"{label} ({instance})",
+                    "instance_label": instance_label,
+                    "display": label if instance == "default" else f"{label} ({instance_label})",
                     "feature": feat,
                     "history_enabled": bool(supported.get("history")),
                     "ratings_enabled": bool(supported.get("ratings")),
@@ -1119,10 +1221,10 @@ def _editor_send_targets(cfg: dict[str, Any], feature: str) -> list[dict[str, An
 
 
 @router.get("/send/providers")
-def api_editor_send_providers(kind: str = Query("watchlist")) -> dict[str, Any]:
+def api_editor_send_providers(kind: str = Query("watchlist"), request: Request = cast(Request, None)) -> dict[str, Any]:
     cfg = load_config() or {}
     feature = _normalize_kind(kind)
-    return {"ok": True, "kind": feature, "providers": _editor_send_targets(cfg, feature)}
+    return {"ok": True, "kind": feature, "providers": _filter_targets_for_request(cfg, request, _editor_send_targets(cfg, feature))}
 
 
 def _normalize_send_item(raw: Any, feature: str) -> dict[str, Any] | None:
@@ -1244,7 +1346,7 @@ def _merge_sent_items_into_state(provider: str, instance: str, feature: Kind, it
 
 
 @router.post("/send")
-def api_editor_send(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+def api_editor_send(payload: dict[str, Any] = Body(...), request: Request = cast(Request, None)) -> dict[str, Any]:
     feature = _normalize_kind(str(payload.get("kind") or "watchlist"))
     raw_items = payload.get("items")
     items_in = list(raw_items.values()) if isinstance(raw_items, dict) else raw_items
@@ -1268,7 +1370,7 @@ def api_editor_send(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
 
     dry_run = bool(payload.get("dry_run", False))
     cfg = load_config() or {}
-    available = _editor_send_targets(cfg, feature)
+    available = _filter_targets_for_request(cfg, request, _editor_send_targets(cfg, feature))
     target_map = {
         (str(it.get("provider") or "").upper(), normalize_instance_id(it.get("instance") or "default")): it
         for it in available
@@ -1388,7 +1490,7 @@ def _rebuild_watchlist_wall(state: dict[str, Any]) -> None:
 
 
 @router.get("/state/import/providers")
-def api_editor_state_import_providers() -> dict[str, Any]:
+def api_editor_state_import_providers(request: Request = cast(Request, None)) -> dict[str, Any]:
     if not _import_enabled():
         return {"enabled": False, "providers": []}
 
@@ -1408,6 +1510,12 @@ def api_editor_state_import_providers() -> dict[str, Any]:
             inst_ids = list_instance_ids(cfg, name)
         except Exception:
             inst_ids = ["default"]
+        user = request_user(request)
+        if user and not bool(user.get("is_admin")):
+            allowed = managed_profile_instances(cfg, user).get(str(name or "").strip().upper()) or []
+            inst_ids = [inst for inst in inst_ids if normalize_instance_id(inst) in set(allowed)]
+            if not inst_ids:
+                continue
 
         configured = False
         if hasattr(ops, "is_configured"):
@@ -1427,7 +1535,10 @@ def api_editor_state_import_providers() -> dict[str, Any]:
                 "name": name,
                 "label": label or name,
                 "configured": configured,
-                "instances": inst_ids,
+                "instances": [
+                    {"id": normalize_instance_id(inst), "label": _provider_instance_label(cfg, name, inst)}
+                    for inst in inst_ids
+                ],
                 "features": {
                     "watchlist": bool(feats.get("watchlist")),
                     "history": bool(feats.get("history")),
@@ -1442,12 +1553,13 @@ def api_editor_state_import_providers() -> dict[str, Any]:
 
 
 @router.post("/state/import")
-def api_editor_state_import(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+def api_editor_state_import(payload: dict[str, Any] = Body(...), request: Request = cast(Request, None)) -> dict[str, Any]:
     if not _import_enabled():
         raise HTTPException(status_code=403, detail="State import is disabled (enable runtime.debug_mods).")
 
+    cfg = load_config()
     provider = str((payload or {}).get("provider") or "").strip().upper()
-    provider_instance = normalize_instance_id((payload or {}).get("provider_instance"))
+    provider_instance = _instance_for_request(cfg, request, provider, (payload or {}).get("provider_instance"))
     feats_in = (payload or {}).get("features")
     mode = str((payload or {}).get("mode") or "replace").strip().lower()
     dry_run = bool((payload or {}).get("dry_run") or False)
@@ -1456,6 +1568,8 @@ def api_editor_state_import(payload: dict[str, Any] = Body(...)) -> dict[str, An
         raise HTTPException(status_code=400, detail="Missing provider")
     if mode not in ("replace", "merge"):
         raise HTTPException(status_code=400, detail="Invalid mode")
+
+    _require_instance_scope(cfg, request, provider, provider_instance)
 
     features: list[str]
     if isinstance(feats_in, list):
@@ -1468,7 +1582,6 @@ def api_editor_state_import(payload: dict[str, Any] = Body(...)) -> dict[str, An
     if not features:
         raise HTTPException(status_code=400, detail="No features selected")
 
-    cfg = load_config()
     cfg_view = build_provider_config_view(cfg, provider, provider_instance)
 
     ops = load_sync_ops(provider)

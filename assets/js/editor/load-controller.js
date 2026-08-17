@@ -5,6 +5,23 @@
   const Editor = (NS.Editor ||= {});
   let deferredRefreshTimer = null;
 
+  function renderInstanceSharingNote(sharing) {
+    const el = document.getElementById("cw-instance-shared");
+    if (!el) return;
+    const owners = Array.isArray(sharing?.owners) ? sharing.owners.filter(Boolean) : [];
+    if (!sharing?.shared || owners.length < 2) {
+      el.style.display = "none";
+      el.textContent = "";
+      return;
+    }
+    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    el.innerHTML =
+      `<span class="material-symbols-rounded" aria-hidden="true">group</span>` +
+      `<span>Shared profile. Blocks and manual entries here apply to every user of this instance: ` +
+      `<strong>${owners.map(esc).join(", ")}</strong>.</span>`;
+    el.style.display = "";
+  }
+
   function editorIsVisible(ctx = {}) {
     const host = ctx.host;
     return !!host && !!document.getElementById("page-editor") && host.getClientRects().length > 0;
@@ -102,6 +119,8 @@
             ctx.syncProfileIconSelect(ctx.instanceSel, true);
           }
         }
+
+        renderInstanceSharingNote(data && data.instance_sharing);
 
         state.selected = new Set();
         state.pageRids = [];
