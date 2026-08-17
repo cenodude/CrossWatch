@@ -37,8 +37,11 @@ def _request(
     method: str = "POST",
     headers: dict[str, str] | None = None,
     client: tuple[str, int] = ("127.0.0.1", 12345),
+    sec_fetch_site: str | None = "same-origin",
 ) -> Request:
     raw_headers = [(b"host", b"testserver")]
+    if sec_fetch_site:
+        raw_headers.append((b"sec-fetch-site", sec_fetch_site.encode("latin-1")))
     for k, v in (headers or {}).items():
         raw_headers.append((str(k).lower().encode("latin-1"), str(v).encode("latin-1")))
     scope = {
@@ -61,6 +64,33 @@ def _json_body(resp) -> dict:
     return json.loads(resp.body.decode("utf-8"))
 
 
+def _roundtrip_app_auth_user(monkeypatch, tmp_path, user: dict) -> dict:
+    from cw_platform import config_base
+
+    uid = "aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa"
+    cfg = _auth_cfg()
+    cfg["app_auth"]["users"] = {uid: user}
+    monkeypatch.setattr(config_base, "CONFIG", tmp_path)
+    monkeypatch.setattr(config_base, "_get_cipher", lambda *, create: None)
+
+    config_base.save_config(cfg)
+
+    return config_base.load_config()["app_auth"]["users"][uid]
+
+
+def _roundtrip_app_auth_root(monkeypatch, tmp_path, extra: dict) -> dict:
+    from cw_platform import config_base
+
+    cfg = _auth_cfg()
+    cfg["app_auth"].update(extra)
+    monkeypatch.setattr(config_base, "CONFIG", tmp_path)
+    monkeypatch.setattr(config_base, "_get_cipher", lambda *, create: None)
+
+    config_base.save_config(cfg)
+
+    return config_base.load_config()["app_auth"]
+
+
 def test_successful_login_clears_failed_login_state(monkeypatch) -> None:
     from api import appAuthAPI as auth
 
@@ -81,6 +111,97 @@ def test_successful_login_clears_failed_login_state(monkeypatch) -> None:
     assert ok.status_code == 200
     assert _json_body(ok)["ok"] is True
     assert auth._LOGIN_FAILS == {}
+
+
+def test_managed_user_profile_fields_survive_config_roundtrip(monkeypatch, tmp_path) -> None:
+    password = _auth_cfg()["app_auth"]["password"]
+    user = {
+        "username": "pascal",
+        "enabled": True,
+        "role": "user",
+        "profile_id": "11111111111141118111111111111111",
+        "permissions": {"dashboard": True, "watchlist": True, "playback": True, "write": True},
+        "password": password,
+        "display_name": "  Pascal   van den Berg  ",
+        "recovery_codes": [{"hash": "one", "used_at": 0}, "bad", {"hash": "two"}],
+        "avatar": {
+            "file": "abcdefabcdefabcdefabcdefabcdefab.png",
+            "content_type": "image/png",
+            "updated_at": "1786660000000",
+        },
+    }
+
+    saved = _roundtrip_app_auth_user(monkeypatch, tmp_path, user)
+
+    assert saved["display_name"] == "Pascal van den Berg"
+    assert saved["permissions"]["write"] is True
+    assert saved["recovery_codes"] == [{"hash": "one", "used_at": 0}, {"hash": "two"}]
+    assert saved["avatar"] == {
+        "file": "abcdefabcdefabcdefabcdefabcdefab.png",
+        "content_type": "image/png",
+        "updated_at": 1786660000000,
+    }
+
+
+def test_managed_user_bogus_avatar_is_stripped_on_config_roundtrip(monkeypatch, tmp_path) -> None:
+    password = _auth_cfg()["app_auth"]["password"]
+    user = {
+        "username": "pascal",
+        "enabled": True,
+        "role": "user",
+        "profile_id": "11111111111141118111111111111111",
+        "permissions": {"dashboard": True, "watchlist": True, "playback": True},
+        "password": password,
+        "avatar": {
+            "file": "../abcdefabcdefabcdefabcdefabcdefab.png",
+            "content_type": "image/png",
+            "updated_at": 123,
+        },
+    }
+
+    saved = _roundtrip_app_auth_user(monkeypatch, tmp_path, user)
+
+    assert "avatar" not in saved
+
+
+def test_admin_profile_fields_survive_config_roundtrip(monkeypatch, tmp_path) -> None:
+    saved = _roundtrip_app_auth_root(
+        monkeypatch,
+        tmp_path,
+        {
+            "display_name": "  CrossWatch   Admin  ",
+            "recovery_codes": [{"hash": "one"}, "bad", {"hash": "two", "used_at": 0}],
+            "avatar": {
+                "file": "1234567890abcdef1234567890abcdef.webp",
+                "content_type": "image/webp",
+                "updated_at": "1786660000000",
+            },
+        },
+    )
+
+    assert saved["display_name"] == "CrossWatch Admin"
+    assert saved["recovery_codes"] == [{"hash": "one"}, {"hash": "two", "used_at": 0}]
+    assert saved["avatar"] == {
+        "file": "1234567890abcdef1234567890abcdef.webp",
+        "content_type": "image/webp",
+        "updated_at": 1786660000000,
+    }
+
+
+def test_admin_bogus_avatar_is_stripped_on_config_roundtrip(monkeypatch, tmp_path) -> None:
+    saved = _roundtrip_app_auth_root(
+        monkeypatch,
+        tmp_path,
+        {
+            "avatar": {
+                "file": "1234567890abcdef1234567890abcdef.svg",
+                "content_type": "image/svg+xml",
+                "updated_at": 123,
+            },
+        },
+    )
+
+    assert "avatar" not in saved
 
 
 def test_logout_all_rejects_wrong_origin(monkeypatch) -> None:
@@ -154,7 +275,7 @@ def test_bootstrap_credentials_still_work_without_origin(monkeypatch) -> None:
     monkeypatch.setattr(auth, "load_config", lambda: cfg)
     monkeypatch.setattr(auth, "save_config", lambda *_args, **_kwargs: None)
 
-    req = _request("/api/app-auth/credentials")
+    req = _request("/api/app-auth/credentials", sec_fetch_site=None)
     r = auth.api_set_credentials(req, {"enabled": True, "username": "admin", "password": "secrett1"})
     assert r.status_code == 200
     data = _json_body(r)
@@ -372,3 +493,530 @@ def test_login_timeout_steps_up_to_five_and_ten_minutes(monkeypatch) -> None:
     assert last is not None
     assert last.status_code == 429
     assert _json_body(last)["retry_after"] == 600
+
+
+def test_admin_totp_requires_code_after_password(monkeypatch) -> None:
+    from api import appAuthAPI as auth
+
+    cfg = _auth_cfg()
+    monkeypatch.setattr(auth, "load_config", lambda: cfg)
+    monkeypatch.setattr(auth, "save_config", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(auth, "_now", lambda: 1_800_000_000)
+    auth._LOGIN_FAILS.clear()
+
+    admin_token, _exp = auth._issue_session(cfg, _request("/api/app-auth/login"))
+    admin_req = _request("/api/app-auth/totp/setup", headers={"cookie": f"{auth.COOKIE_NAME}={admin_token}"})
+    setup = auth.api_totp_setup(admin_req, {"user_id": "administrator"})
+    setup_data = _json_body(setup)
+    secret = setup_data["secret"]
+    code = auth._hotp(secret, 1_800_000_000 // auth.TOTP_STEP_SECONDS)
+    verified = auth.api_totp_verify(admin_req, {"user_id": "administrator", "code": code})
+
+    missing = auth.api_login(_request("/api/app-auth/login"), {"username": "admin", "password": "secrett1"})
+    bad = auth.api_login(_request("/api/app-auth/login", client=("127.0.0.2", 12345)), {"username": "admin", "password": "secrett1", "totp_code": "000000"})
+    good = auth.api_login(_request("/api/app-auth/login", client=("127.0.0.3", 12345)), {"username": "admin", "password": "secrett1", "totp_code": code})
+
+    assert setup.status_code == 200
+    assert setup_data["otpauth_url"].startswith("otpauth://totp/")
+    assert verified.status_code == 200
+    assert cfg["app_auth"]["totp"]["enabled"] is True
+    assert missing.status_code == 401
+    assert _json_body(missing)["requires_2fa"] is True
+    assert bad.status_code == 401
+    assert _json_body(bad)["requires_2fa"] is True
+    assert good.status_code == 200
+    assert _json_body(good)["ok"] is True
+
+
+def test_admin_can_enable_totp_for_managed_user(monkeypatch) -> None:
+    from api import appAuthAPI as auth
+
+    user_id = "aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa"
+    profile_id = "11111111111141118111111111111111"
+    cfg = _auth_cfg()
+    cfg["user_profiles"] = {profile_id: {"label": "Pascal", "instances": {"PLEX": ["PLEX-P01"]}}}
+    cfg["app_auth"]["users"] = {
+        user_id: {
+            "username": "pascal",
+            "enabled": True,
+            "role": "user",
+            "profile_id": profile_id,
+            "permissions": {"dashboard": True},
+            "password": auth._password_hash("secrett2"),
+        }
+    }
+    monkeypatch.setattr(auth, "load_config", lambda: cfg)
+    monkeypatch.setattr(auth, "save_config", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(auth, "_now", lambda: 1_800_000_000)
+    auth._LOGIN_FAILS.clear()
+
+    admin_token, _exp = auth._issue_session(cfg, _request("/api/app-auth/login"), auth._admin_identity(cfg["app_auth"]))
+    admin_req = _request("/api/app-auth/totp/setup", headers={"cookie": f"{auth.COOKIE_NAME}={admin_token}"})
+    setup = auth.api_totp_setup(admin_req, {"user_id": user_id})
+    secret = _json_body(setup)["secret"]
+    code = auth._hotp(secret, 1_800_000_000 // auth.TOTP_STEP_SECONDS)
+    verified = auth.api_totp_verify(admin_req, {"user_id": user_id, "code": code})
+    list_resp = auth.api_users_all(_request("/api/app-auth/users", method="GET", headers={"cookie": f"{auth.COOKIE_NAME}={admin_token}"}))
+    login = auth.api_login(_request("/api/app-auth/login"), {"username": "pascal", "password": "secrett2", "totp_code": code})
+
+    assert setup.status_code == 200
+    assert verified.status_code == 200
+    assert cfg["app_auth"]["users"][user_id]["totp"]["enabled"] is True
+    assert next(row for row in _json_body(list_resp)["items"] if row["id"] == user_id)["totp_enabled"] is True
+    assert login.status_code == 200
+    assert _json_body(login)["user"]["id"] == user_id
+
+
+def test_managed_user_cannot_manage_totp(monkeypatch) -> None:
+    from api import appAuthAPI as auth
+
+    user_id = "aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa"
+    cfg = _auth_cfg()
+    cfg["app_auth"]["users"] = {
+        user_id: {
+            "username": "pascal",
+            "enabled": True,
+            "role": "user",
+            "profile_id": "11111111111141118111111111111111",
+            "permissions": {"dashboard": True},
+            "password": auth._password_hash("secrett2"),
+        }
+    }
+    monkeypatch.setattr(auth, "load_config", lambda: cfg)
+    monkeypatch.setattr(auth, "save_config", lambda *_args, **_kwargs: None)
+
+    user = auth._public_user(user_id, cfg["app_auth"]["users"][user_id])
+    token, _exp = auth._issue_session(cfg, _request("/api/app-auth/login"), user)
+    req = _request("/api/app-auth/totp/setup", headers={"cookie": f"{auth.COOKIE_NAME}={token}"})
+    resp = auth.api_totp_setup(req, {})
+
+    assert resp.status_code == 401
+    assert _json_body(resp)["error"] == "Unauthorized"
+
+
+def test_managed_profile_totp_setup_returns_real_qr_svg(monkeypatch) -> None:
+    from api import appAuthAPI as auth
+    from api import profileAPI as profile_api
+
+    user_id = "aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa"
+    profile_id = "11111111111141118111111111111111"
+    cfg = _auth_cfg()
+    cfg["app_auth"]["users"] = {
+        user_id: {
+            "username": "pascal",
+            "enabled": True,
+            "role": "user",
+            "profile_id": profile_id,
+            "permissions": {"dashboard": True},
+            "password": auth._password_hash("secrett2"),
+        }
+    }
+    monkeypatch.setattr(profile_api, "load_config", lambda: cfg)
+    monkeypatch.setattr(profile_api, "update_config", lambda mutator: (cfg, mutator(cfg)))
+
+    user = auth._public_user(user_id, cfg["app_auth"]["users"][user_id])
+    token, _exp = auth._issue_session(cfg, _request("/api/app-auth/login"), user)
+    req = _request("/api/profile/totp/setup", headers={"cookie": f"{auth.COOKIE_NAME}={token}"})
+
+    resp = profile_api.api_profile_totp_setup(req)
+    body = _json_body(resp)
+
+    assert resp.status_code == 200
+    assert body["otpauth_url"].startswith("otpauth://totp/")
+    assert body["qr_svg"].startswith("<svg")
+    assert "<path" in body["qr_svg"]
+    assert 'shape-rendering="crispEdges"' not in body["qr_svg"]
+
+
+def test_admin_can_create_profile_linked_user_and_user_can_login(monkeypatch) -> None:
+    from api import appAuthAPI as auth
+
+    profile_id = "11111111111141118111111111111111"
+    cfg = _auth_cfg()
+    cfg["user_profiles"] = {profile_id: {"label": "Pascal", "instances": {"PLEX": ["PLEX-P01"]}}}
+    monkeypatch.setattr(auth, "load_config", lambda: cfg)
+    monkeypatch.setattr(auth, "save_config", lambda *_args, **_kwargs: None)
+    auth._LOGIN_FAILS.clear()
+
+    admin_token, _exp = auth._issue_session(cfg, _request("/api/app-auth/login"))
+    admin_req = _request("/api/app-auth/users", headers={"cookie": f"{auth.COOKIE_NAME}={admin_token}"})
+
+    created = auth.api_users_create(
+        admin_req,
+        {"username": "pascal", "password": "secrett2", "profile_id": profile_id, "permissions": {"watchlist": False}},
+    )
+    data = _json_body(created)
+    user_id = data["user"]["id"]
+
+    login = auth.api_login(_request("/api/app-auth/login"), {"username": "pascal", "password": "secrett2"})
+    login_body = _json_body(login)
+
+    assert created.status_code == 200
+    assert data["user"]["profile_id"] == profile_id
+    assert data["user"]["permissions"]["watchlist"] is False
+    assert login.status_code == 200
+    assert login_body["user"]["id"] == user_id
+    assert login_body["user"]["is_admin"] is False
+    assert cfg["app_auth"]["sessions"][-1]["user_id"] == user_id
+    assert cfg["app_auth"]["sessions"][-1]["profile_id"] == profile_id
+
+
+def test_managed_user_cannot_manage_users(monkeypatch) -> None:
+    from api import appAuthAPI as auth
+
+    profile_id = "11111111111141118111111111111111"
+    cfg = _auth_cfg()
+    cfg["user_profiles"] = {profile_id: {"label": "Pascal", "instances": {"PLEX": ["PLEX-P01"]}}}
+    cfg["app_auth"]["users"] = {
+        "aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa": {
+            "username": "pascal",
+            "enabled": True,
+            "role": "user",
+            "profile_id": profile_id,
+            "permissions": {"dashboard": True},
+            "password": auth._password_hash("secrett2"),
+        }
+    }
+    monkeypatch.setattr(auth, "load_config", lambda: cfg)
+    monkeypatch.setattr(auth, "save_config", lambda *_args, **_kwargs: None)
+
+    user = auth._public_user("aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa", cfg["app_auth"]["users"]["aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa"])
+    token, _exp = auth._issue_session(cfg, _request("/api/app-auth/login"), user)
+    req = _request("/api/app-auth/users", headers={"cookie": f"{auth.COOKIE_NAME}={token}"})
+
+    resp = auth.api_users_all(req)
+
+    assert resp.status_code == 401
+    assert _json_body(resp)["error"] == "Unauthorized"
+
+
+def test_managed_user_cannot_apply_auth_restart(monkeypatch) -> None:
+    from api import appAuthAPI as auth
+
+    profile_id = "11111111111141118111111111111111"
+    cfg = _auth_cfg()
+    cfg["app_auth"]["users"] = {
+        "aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa": {
+            "username": "pascal",
+            "enabled": True,
+            "role": "user",
+            "profile_id": profile_id,
+            "permissions": {"dashboard": True},
+            "password": auth._password_hash("secrett2"),
+        }
+    }
+    monkeypatch.setattr(auth, "load_config", lambda: cfg)
+    monkeypatch.setattr(auth, "save_config", lambda *_args, **_kwargs: None)
+
+    user = auth._public_user("aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa", cfg["app_auth"]["users"]["aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa"])
+    token, _exp = auth._issue_session(cfg, _request("/api/app-auth/login"), user)
+    req = _request("/api/app-auth/apply-now", headers={"cookie": f"{auth.COOKIE_NAME}={token}"})
+
+    resp = auth.api_apply_now(req, {})
+
+    assert resp.status_code == 401
+    assert _json_body(resp)["error"] == "Unauthorized"
+
+
+def test_non_admin_api_policy_blocks_sensitive_routes() -> None:
+    from api import appAuthAPI as auth
+
+    assert auth.non_admin_api_allowed("/api/dashboard/widgets", "GET") is True
+    assert auth.non_admin_api_allowed("/api/state/wall", "GET") is True
+    assert auth.non_admin_api_allowed("/api/state/wallpaper", "GET") is False
+    assert auth.non_admin_api_allowed("/api/watchlist", "GET") is True
+    assert auth.non_admin_api_allowed("/api/watchlist/", "GET") is True
+    assert auth.non_admin_api_allowed("/api/watchlist-delete", "GET") is False
+    assert auth.non_admin_api_allowed("/api/user-profiles", "GET") is True
+    assert auth.non_admin_api_allowed("/api/config/meta", "GET") is True
+    assert auth.non_admin_api_allowed("/api/watch/currently_watching", "GET") is True
+    assert auth.non_admin_api_allowed("/api/playback_progress/providers", "GET") is True
+    assert auth.non_admin_api_allowed("/api/playback_progress/settings", "GET") is True
+    assert auth.non_admin_api_allowed("/api/playback_progress/items", "GET") is True
+    assert auth.non_admin_api_allowed("/api/config", "GET") is False
+    assert auth.non_admin_api_allowed("/api/status", "GET") is True
+    assert auth.non_admin_api_allowed("/api/metadata/bulk", "POST") is True
+    assert auth.non_admin_api_allowed("/api/metadata/search", "GET") is True
+    assert auth.non_admin_api_allowed("/api/metadata/resolve", "POST") is True
+    assert auth.non_admin_api_allowed("/api/provider-instances", "GET") is True
+    assert auth.non_admin_api_allowed("/api/provider-instances/CROSSWATCH", "GET") is True
+    assert auth.non_admin_api_allowed("/api/provider-instances/CROSSWATCH/CW-P01", "PATCH") is False
+    assert auth.non_admin_api_allowed("/api/pairs", "GET") is True
+    assert auth.non_admin_api_allowed("/api/pairs", "POST") is True
+    assert auth.non_admin_api_allowed("/api/run", "POST") is True
+    assert auth.non_admin_api_allowed("/api/analyzer/state", "GET") is True
+    assert auth.non_admin_api_allowed("/api/events/search", "GET") is True
+    assert auth.non_admin_api_allowed("/api/export/options", "GET") is True
+    assert auth.non_admin_api_allowed("/api/import/commit", "POST") is True
+    assert auth.non_admin_api_allowed("/api/editor", "POST") is True
+    assert auth.non_admin_api_allowed("/api/playlists/mappings", "POST") is True
+    assert auth.non_admin_api_allowed("/api/snapshots/create", "POST") is True
+    assert auth.non_admin_api_allowed("/api/watch/start", "POST") is False
+    assert auth.non_admin_api_allowed("/api/playback_progress/settings", "POST") is False
+    assert auth.non_admin_api_allowed("/api/playback_progress/actions/remove", "POST") is True
+    assert auth.non_admin_api_allowed("/api/watchlist/delete", "POST") is True
+    assert auth.non_admin_api_allowed("/api/dashboard/widgets", "POST") is False
+    assert auth.non_admin_api_allowed("/api/app-auth/credentials", "POST") is False
+
+
+def test_global_unsafe_api_origin_gate_rejects_wrong_origin(monkeypatch) -> None:
+    import crosswatch
+    from api import appAuthAPI as auth
+
+    cfg = _auth_cfg()
+    token, _exp = auth._issue_session(cfg, _request("/api/app-auth/login"))
+    bad = _request(
+        "/api/config",
+        method="POST",
+        headers={"cookie": f"{auth.COOKIE_NAME}={token}", "origin": "http://evil.example"},
+    )
+    good = _request(
+        "/api/config",
+        method="POST",
+        headers={"cookie": f"{auth.COOKIE_NAME}={token}", "origin": "http://testserver"},
+    )
+
+    assert crosswatch._unsafe_api_origin_blocked(cfg, bad, token) is True
+    assert crosswatch._unsafe_api_origin_blocked(cfg, good, token) is False
+
+
+def test_global_unsafe_api_origin_gate_rejects_wrong_referer(monkeypatch) -> None:
+    import crosswatch
+    from api import appAuthAPI as auth
+
+    cfg = _auth_cfg()
+    token, _exp = auth._issue_session(cfg, _request("/api/app-auth/login"))
+    bad = _request(
+        "/api/config",
+        method="POST",
+        headers={"cookie": f"{auth.COOKIE_NAME}={token}", "referer": "http://evil.example/settings"},
+    )
+    good = _request(
+        "/api/config",
+        method="POST",
+        headers={"cookie": f"{auth.COOKIE_NAME}={token}", "referer": "http://testserver/settings"},
+    )
+
+    assert crosswatch._unsafe_api_origin_blocked(cfg, bad, token) is True
+    assert crosswatch._unsafe_api_origin_blocked(cfg, good, token) is False
+
+
+def test_fastapi_docs_are_disabled() -> None:
+    import crosswatch
+
+    assert crosswatch.app.docs_url is None
+    assert crosswatch.app.redoc_url is None
+    assert crosswatch.app.openapi_url is None
+
+
+def test_non_admin_permissions_gate_feature_reads() -> None:
+    import crosswatch
+
+    user = {"permissions": {"dashboard": True, "watchlist": False, "playback": True, "write": False}}
+
+    assert crosswatch._non_admin_permission_allowed(user, "/api/dashboard/widgets") is True
+    assert crosswatch._non_admin_permission_allowed(user, "/api/state/wall") is True
+    assert crosswatch._non_admin_permission_allowed(user, "/api/activity/recent") is True
+    assert crosswatch._non_admin_permission_allowed(user, "/api/watch/currently_watching") is True
+    assert crosswatch._non_admin_permission_allowed(user, "/api/status") is True
+    assert crosswatch._non_admin_permission_allowed(user, "/api/pairs") is True
+    assert crosswatch._non_admin_permission_allowed(user, "/api/playback_progress/items") is True
+    assert crosswatch._non_admin_permission_allowed(user, "/api/metadata/bulk", "POST") is True
+    assert crosswatch._non_admin_permission_allowed(user, "/api/watchlist") is False
+    assert crosswatch._non_admin_permission_allowed(user, "/api/watchlist/") is False
+    assert crosswatch._non_admin_permission_allowed(user, "/api/run", "POST") is False
+    assert crosswatch._non_admin_permission_allowed(user, "/api/watchlist/delete", "POST") is False
+    assert crosswatch._non_admin_permission_allowed(user, "/api/analyzer/state", "GET") is False
+    assert crosswatch._non_admin_permission_allowed(user, "/api/events/search", "GET") is False
+    assert crosswatch._non_admin_permission_allowed(user, "/api/export/options", "GET") is False
+
+    full = {"permissions": {"dashboard": True, "watchlist": True, "playback": True, "write": True}}
+    assert crosswatch._non_admin_permission_allowed(full, "/api/run", "POST") is True
+    assert crosswatch._non_admin_permission_allowed(full, "/api/pairs", "GET") is True
+    assert crosswatch._non_admin_permission_allowed(full, "/api/analyzer/state", "GET") is True
+    assert crosswatch._non_admin_permission_allowed(full, "/api/events/search", "GET") is True
+    assert crosswatch._non_admin_permission_allowed(full, "/api/export/options", "GET") is True
+
+    blocked = {"permissions": {"dashboard": False, "watchlist": True, "playback": False}}
+    assert crosswatch._non_admin_permission_allowed(blocked, "/api/watch/currently_watching") is False
+    assert crosswatch._non_admin_permission_allowed(blocked, "/api/playback_progress/items") is False
+    assert crosswatch._non_admin_permission_allowed(blocked, "/api/metadata/bulk", "POST") is True
+
+
+def test_non_admin_page_routes_are_not_gated_by_api_permissions() -> None:
+    import crosswatch
+
+    readonly = {"permissions": {"dashboard": True, "watchlist": False, "playback": False, "write": False}}
+    writer = {"permissions": {"dashboard": True, "watchlist": True, "playback": True, "write": True}}
+    none = {"permissions": {}}
+
+    for user in (readonly, writer, none):
+        assert crosswatch._non_admin_permission_allowed(user, "/") is True
+        assert crosswatch._non_admin_permission_allowed(user, "/profile") is True
+        assert crosswatch._non_admin_permission_allowed(user, "/login") is True
+
+
+def test_full_access_managed_user_reaches_every_allowlisted_api() -> None:
+    import crosswatch
+    from api import appAuthAPI as auth
+
+    full = {"permissions": {"dashboard": True, "watchlist": True, "playback": True, "write": True}}
+    routes = [
+        ("/api/config/meta", "GET"),
+        ("/api/provider-instances", "GET"),
+        ("/api/provider-instances/PLEX", "GET"),
+        ("/api/user-profiles", "GET"),
+        ("/api/version", "GET"),
+        ("/api/status", "GET"),
+        ("/api/insights", "GET"),
+        ("/api/watch/currently_watching", "GET"),
+        ("/api/watchlist", "GET"),
+        ("/api/pairs", "GET"),
+        ("/api/run", "POST"),
+        ("/api/metadata/bulk", "POST"),
+    ]
+
+    for path, method in routes:
+        assert auth.non_admin_api_allowed(path, method) is True, path
+        assert crosswatch._non_admin_permission_allowed(full, path, method) is True, path
+
+
+def test_disabling_managed_user_clears_sessions_and_invalidates_token(monkeypatch) -> None:
+    from api import appAuthAPI as auth
+
+    user_id = "aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa"
+    profile_id = "11111111111141118111111111111111"
+    cfg = _auth_cfg()
+    cfg["user_profiles"] = {profile_id: {"label": "Pascal", "instances": {"PLEX": ["PLEX-P01"]}}}
+    cfg["app_auth"]["users"] = {
+        user_id: {
+            "username": "pascal",
+            "enabled": True,
+            "role": "user",
+            "profile_id": profile_id,
+            "permissions": {"dashboard": True, "watchlist": True},
+            "password": auth._password_hash("secrett2"),
+        }
+    }
+    monkeypatch.setattr(auth, "load_config", lambda: cfg)
+    monkeypatch.setattr(auth, "save_config", lambda *_args, **_kwargs: None)
+
+    user = auth._public_user(user_id, cfg["app_auth"]["users"][user_id])
+    token, _exp = auth._issue_session(cfg, _request("/api/app-auth/login"), user)
+    current = auth.current_user(cfg, token)
+    assert current is not None
+    assert current["id"] == user_id
+
+    admin_token, _admin_exp = auth._issue_session(cfg, _request("/api/app-auth/login"), auth._admin_identity(cfg["app_auth"]))
+    req = _request(f"/api/app-auth/users/{user_id}", method="PUT", headers={"cookie": f"{auth.COOKIE_NAME}={admin_token}"})
+    resp = auth.api_users_update(req, user_id, {"enabled": False})
+
+    assert resp.status_code == 200
+    assert cfg["app_auth"]["sessions"] == [s for s in cfg["app_auth"]["sessions"] if s.get("user_id") != user_id]
+    assert auth.current_user(cfg, token) is None
+
+
+def test_deleting_managed_user_clears_sessions_and_invalidates_token(monkeypatch) -> None:
+    from api import appAuthAPI as auth
+
+    user_id = "aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa"
+    profile_id = "11111111111141118111111111111111"
+    cfg = _auth_cfg()
+    cfg["user_profiles"] = {profile_id: {"label": "Pascal", "instances": {"PLEX": ["PLEX-P01"]}}}
+    cfg["app_auth"]["users"] = {
+        user_id: {
+            "username": "pascal",
+            "enabled": True,
+            "role": "user",
+            "profile_id": profile_id,
+            "permissions": {"dashboard": True, "watchlist": True},
+            "password": auth._password_hash("secrett2"),
+        }
+    }
+    monkeypatch.setattr(auth, "load_config", lambda: cfg)
+    monkeypatch.setattr(auth, "save_config", lambda *_args, **_kwargs: None)
+
+    user = auth._public_user(user_id, cfg["app_auth"]["users"][user_id])
+    token, _exp = auth._issue_session(cfg, _request("/api/app-auth/login"), user)
+    current = auth.current_user(cfg, token)
+    assert current is not None
+    assert current["id"] == user_id
+
+    admin_token, _admin_exp = auth._issue_session(cfg, _request("/api/app-auth/login"), auth._admin_identity(cfg["app_auth"]))
+    req = _request(f"/api/app-auth/users/{user_id}", method="DELETE", headers={"cookie": f"{auth.COOKIE_NAME}={admin_token}"})
+    resp = auth.api_users_delete(req, user_id)
+
+    assert resp.status_code == 200
+    assert _json_body(resp)["deleted"] is True
+    assert user_id not in cfg["app_auth"]["users"]
+    assert cfg["app_auth"]["sessions"] == [s for s in cfg["app_auth"]["sessions"] if s.get("user_id") != user_id]
+    assert auth.current_user(cfg, token) is None
+
+
+def test_effective_user_profile_uses_managed_user_profile(monkeypatch) -> None:
+    from api import appAuthAPI as auth
+
+    profile_id = "11111111111141118111111111111111"
+    other_profile_id = "22222222222242228222222222222222"
+    cfg = _auth_cfg()
+    cfg["app_auth"]["users"] = {
+        "aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa": {
+            "username": "pascal",
+            "enabled": True,
+            "role": "user",
+            "profile_id": profile_id,
+            "permissions": {"dashboard": True},
+            "password": auth._password_hash("secrett2"),
+        }
+    }
+    user = auth._public_user("aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa", cfg["app_auth"]["users"]["aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa"])
+    token, _exp = auth._issue_session(cfg, _request("/api/app-auth/login"), user)
+
+    assert auth.effective_user_profile_id(cfg, token, other_profile_id) == profile_id
+    assert auth.effective_user_profile_id(cfg, token, "") == profile_id
+    assert auth.effective_user_profile_id(cfg, "", other_profile_id) == other_profile_id
+
+
+def test_managed_dashboard_user_can_read_scoped_insights_but_not_updates() -> None:
+    from api import appAuthAPI as auth
+
+    assert auth.non_admin_api_allowed("/api/insights", "GET") is True
+    assert auth.non_admin_api_allowed("/api/update", "GET") is False
+
+
+def test_login_audit_records_success_and_failure_without_secrets(monkeypatch) -> None:
+    from api import appAuthAPI as auth
+
+    cfg = _auth_cfg()
+    calls: list[tuple[str, dict]] = []
+    monkeypatch.setattr(auth, "load_config", lambda: cfg)
+    monkeypatch.setattr(auth, "save_config", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(auth, "record_audit", lambda action, **kwargs: calls.append((action, kwargs)) or 1)
+    auth._LOGIN_FAILS.clear()
+
+    req = _request("/api/app-auth/login")
+    auth.api_login(req, {"username": "admin", "password": "wrong"})
+    auth.api_login(req, {"username": "admin", "password": "secrett1", "remember_me": True})
+
+    assert [call[0] for call in calls] == ["login_failed", "login"]
+    failed = calls[0][1]
+    assert failed["fields"]["username"] == "admin"
+    assert "password" not in failed["fields"]
+    success = calls[1][1]
+    assert success["actor"]["username"] == "admin"
+    assert success["fields"] == {"remember_me": True}
+
+
+def test_audit_recorder_sanitizes_sensitive_fields(monkeypatch) -> None:
+    from cw_platform.event_archive import audit
+
+    rows: list[dict] = []
+    monkeypatch.setattr(audit, "record_events", lambda values: rows.extend(values) or len(values))
+
+    audit.record_audit("login_failed", actor={"id": "u1", "username": "pascal", "role": "user"}, fields={"password": "secret", "username": "pascal"})
+
+    assert rows[0]["domain"] == "audit"
+    detail = json.loads(rows[0]["detail"])
+    assert detail["actor"]["username"] == "pascal"
+    assert detail["fields"]["password"] == "[redacted]"
+    assert detail["fields"]["username"] == "pascal"

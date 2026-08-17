@@ -707,14 +707,16 @@ def test_user_profile_manager_screen_is_mounted() -> None:
     assert "cw-upm-provider-logo" in manager_js
     assert "cw-upm-provider-head" in manager_js
     assert "cw-upm-provider-grid" in manager_js
-    assert "cw-upm-instance-box" in manager_js
+    assert "cw-upm-instance-box" not in manager_js
     assert "cw-danger-confirm" in manager_js
     assert "Confirm delete" in manager_js
     assert "cwUserProfilesOpenNew" in manager_js
     assert "cw-upm-floating-host" in manager_js
     assert "w.confirm" not in manager_js
     assert "manage_accounts" not in manager_js
-    assert 'type="radio"' in manager_js
+    assert 'type="radio"' not in manager_js
+    assert 'type="checkbox" name="cw-upm-provider-${esc(provider)}"' in manager_js
+    assert 'style="position:absolute;opacity:0;pointer-events:none"' in manager_js
     assert "input:checked" in manager_js
     assert ".cw-user-profile-manager" in css
     assert ".cw-upm-service-grid" in css

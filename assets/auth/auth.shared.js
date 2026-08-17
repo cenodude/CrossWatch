@@ -6,6 +6,7 @@
   const el = (id) => d.getElementById(id);
   const txt = (v) => (typeof v === "string" ? v : (v == null ? "" : String(v))).trim();
   const notify = (m) => { try { if (typeof w.notify === "function") w.notify(m); } catch (_) {} };
+  const profileAdapters = new Map();
 
   function isMaskedSecret(v) {
     const value = txt(v);
@@ -87,6 +88,12 @@
   function describeUsage(usage) {
     const feature = txt(usage?.feature).toLowerCase();
     const role = txt(usage?.role).toLowerCase();
+    if (feature === "sync_pair") {
+      const pairId = txt(usage?.pair_id);
+      const where = pairId ? `Sync pair ${pairId}` : "a sync pair";
+      const side = role === "source" ? "source" : "target";
+      return `${where} (${side})${usage?.enabled ? "" : " (disabled)"}`;
+    }
     if (feature === "watcher") {
       const routeId = txt(usage?.route_id);
       const where = routeId ? `Watcher route ${routeId}` : "a Watcher route";
@@ -116,7 +123,7 @@
     const name = providerLabel(data?.provider);
     const subject = inst === "default" ? `${name} connection` : `${name} profile ${inst}`;
     const details = usages.map(describeUsage).join(", ");
-    return `Cannot delete ${subject} because it is used by ${details}. Remove this profile from Watcher or Webhooks first.`;
+    return `Cannot delete ${subject} because it is used by ${details}. Remove this profile from Sync pairs, Watcher, or Webhooks first.`;
   }
 
   const CONNECTION_WARN_VISIBLE_MS = 10000;
@@ -387,6 +394,9 @@
       const option = d.createElement("option");
       option.value = "default";
       option.textContent = "Default";
+      option.dataset.friendlyLabel = "";
+      option.dataset.userProfileLabel = "";
+      option.dataset.userProfileId = "";
       sel.appendChild(option);
       sel.value = "default";
     }
@@ -442,18 +452,64 @@
         const arr = await r.json().catch(() => []);
         const opts = Array.isArray(arr) ? arr : [];
         sel.innerHTML = "";
-        const addOpt = (id, text) => {
+        const addOpt = (id, text, meta) => {
           const option = d.createElement("option");
           option.value = String(id);
           option.textContent = String(text || id);
+          option.dataset.friendlyLabel = txt(meta?.friendly_label);
           sel.appendChild(option);
         };
-        addOpt("default", "Default");
-        opts.forEach((item) => { if (item && item.id && item.id !== "default") addOpt(item.id, item.label || item.id); });
+        const defaultRow = opts.find((item) => item && item.id === "default") || {};
+        addOpt("default", defaultRow.display_label || defaultRow.label || "Default", defaultRow);
+        opts.forEach((item) => {
+          if (item && item.id && item.id !== "default") addOpt(item.id, item.display_label || item.label || item.id, item);
+        });
         if (!Array.from(sel.options).some((option) => option.value === want)) want = "default";
         sel.value = want;
         setInstance(want);
+        syncMetaInputs();
       } catch (_) {}
+    }
+
+    function selectedOption() {
+      const sel = el(selectId);
+      return sel?.selectedOptions?.[0] || null;
+    }
+
+    function syncMetaInputs(force) {
+      const labelInput = el(`${selectId}_label`);
+      const option = selectedOption();
+      if (labelInput) {
+        if (!force && labelInput.dataset.dirty === "1") return;
+        labelInput.value = txt(option?.dataset?.friendlyLabel);
+        labelInput.dataset.loaded = "1";
+        labelInput.dataset.dirty = "";
+      }
+    }
+
+    async function saveProfileMeta() {
+      const labelInput = el(`${selectId}_label`);
+      const inst = getInstance();
+      const payload = {};
+      if (labelInput) payload.label = txt(labelInput.value).slice(0, 12);
+      if (labelInput && txt(labelInput.dataset.dirty) !== "1" && payload.label === txt(selectedOption()?.dataset?.friendlyLabel).slice(0, 12)) return;
+      try {
+        const r = await fetch(`/api/provider-instances/${encodeURIComponent(apiProvider)}/${encodeURIComponent(inst)}?ts=${Date.now()}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          cache: "no-store",
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok || j?.ok === false) throw new Error(String(j?.error || "save_failed"));
+        await refreshOptions(true);
+        syncMetaInputs(true);
+        try { w.invalidateConfigCache?.(); } catch {}
+        try { w.dispatchEvent(new CustomEvent("cw-user-profiles-changed")); } catch {}
+        try { w.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
+      } catch (e) {
+        notify("Could not save profile label: " + (e && e.message ? e.message : e));
+      }
     }
 
     function ensureUI(onChange) {
@@ -509,6 +565,24 @@
       addDefaultOption(sel);
       setInstance(getInstance());
 
+      const labelInput = d.createElement("input");
+      labelInput.id = `${selectId}_label`;
+      labelInput.name = `${selectId}_label`;
+      labelInput.className = "input cw-profile-label-input";
+      labelInput.type = "text";
+      labelInput.maxLength = 12;
+      labelInput.placeholder = "Display name";
+      labelInput.title = "Display name for this provider instance. Internal ID stays unchanged.";
+      labelInput.autocomplete = "off";
+      labelInput.spellcheck = false;
+
+      const labelWrap = d.createElement("label");
+      labelWrap.className = "cw-profile-label-field";
+      labelWrap.htmlFor = labelInput.id;
+      const labelCaption = d.createElement("span");
+      labelCaption.textContent = "Display name";
+      labelWrap.append(labelCaption, labelInput);
+
       const btnNew = d.createElement("button");
       btnNew.type = "button";
       btnNew.className = "btn secondary cw-profile-new";
@@ -521,13 +595,23 @@
       btnDel.id = `${selectId}_del`;
       btnDel.textContent = "Delete";
 
-      wrap.append(lab, sel, btnNew, btnDel);
+      wrap.append(lab, sel, labelWrap, btnNew, btnDel);
       head.appendChild(wrap);
       refreshOptions(true);
 
       sel.addEventListener("change", () => {
         setInstance(sel.value);
+        syncMetaInputs(true);
         try { Promise.resolve(onChange?.()).catch(() => {}); } catch (_) {}
+      });
+      [labelInput].forEach((input) => {
+        input.addEventListener("input", () => {
+          if (input === labelInput && input.value.length > 12) input.value = input.value.slice(0, 12);
+          input.dataset.dirty = "1";
+        });
+        input.addEventListener("change", () => {
+          input.dataset.dirty = "1";
+        });
       });
       btnNew.addEventListener("click", async () => {
         try {
@@ -567,7 +651,18 @@
       });
     }
 
-    return { getInstance, setInstance, api, cfgBlock, refreshOptions, ensureUI };
+    const adapter = { getInstance, setInstance, api, cfgBlock, refreshOptions, ensureUI, saveProfileMeta };
+    profileAdapters.set(selectId, adapter);
+    return adapter;
+  }
+
+  async function saveVisibleProfileLabels(root) {
+    const scope = root || d;
+    const selects = Array.from(scope.querySelectorAll?.(".cw-profile-switcher select") || []);
+    for (const sel of selects) {
+      const adapter = profileAdapters.get(String(sel.id || ""));
+      if (adapter) await adapter.saveProfileMeta();
+    }
   }
 
   (function wireQcAutoScroll() {
@@ -753,6 +848,7 @@
     clearConnectionWarnings,
     getConfig,
     saveMergedConfig,
+    saveVisibleProfileLabels,
     setStatusPill,
     setStatus,
     setConnectLocked,
