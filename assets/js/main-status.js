@@ -85,6 +85,22 @@
     return false;
   }
 
+  function isManagedUser() {
+    const auth = window.CW?.AuthState?.read?.();
+    if (auth && typeof auth === "object") return !!auth.isManaged;
+    return document.documentElement?.dataset?.cwRole === "user";
+  }
+
+  function isStatusProviderVisible(key, data, cfg = getCachedConfig()) {
+    if (!data || typeof data !== "object") return false;
+    const managed = isManagedUser();
+    if (!managed && !isProviderConfigured(key, cfg)) return false;
+    const instances = data.instances && typeof data.instances === "object" ? data.instances : null;
+    const summary = data.instances_summary && typeof data.instances_summary === "object" ? data.instances_summary : null;
+    if (!!(instances && Object.keys(instances).length) || Number(summary?.total || 0) > 0) return true;
+    return isProviderConfigured(key, cfg);
+  }
+
   function ensureDot(head) {
     const existing = head.querySelector(".auth-dot");
     if (existing) return existing;
@@ -367,7 +383,7 @@
     host.classList.add("vip-badges");
     if (btn && host.contains(btn)) host.removeChild(btn);
 
-    const keys = Object.keys(providers).filter((k) => isProviderConfigured(k, cfg)).sort();
+    const keys = Object.keys(providers).filter((k) => isStatusProviderVisible(k, providers[k], cfg)).sort();
     const none = !keys.length;
     host.classList.toggle("hidden", none);
     if (none) {

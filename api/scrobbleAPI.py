@@ -9,14 +9,16 @@ import secrets
 import hmac
 import urllib.parse
 import xml.etree.ElementTree as ET
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Query, Request, HTTPException, Body
 from fastapi.responses import JSONResponse
 from urllib.parse import parse_qs
 
+from cw_platform.account_match import media_account_allowed
+from cw_platform.access_policy import media_account_allowlist_for_profile
 from cw_platform.config_base import load_config, save_config
-from cw_platform.provider_instances import build_provider_config_view, list_instance_ids, normalize_instance_id
+from cw_platform.provider_instances import build_provider_config_view, instances_for_user_profile, list_instance_ids, normalize_instance_id
 from cw_platform.provider_usage import webhook_source_enabled
 from providers.webhooks.config import apply_webhook_settings, media_source_connected, webhook_sinks
 from providers.scrobble.routes import build_route_cfg_by_id, normalize_route_options, normalize_routes
@@ -487,7 +489,7 @@ async def api_webhook_regenerate(payload: dict[str, Any] | None = Body(default=N
     )
 
 
-def _env_logs(request: Request | None = None) -> tuple[dict[str, list[str]], int]:
+def _env_logs(request: Request = cast(Request, None)) -> tuple[dict[str, list[str]], int]:
     if request is not None:
         try:
             lb = getattr(request.app.state, "LOG_BUFFERS", None)
@@ -1091,11 +1093,67 @@ def api_plex_pms(instance: str | None = Query(None)) -> JSONResponse:
 
 
 
+def _currently_watching_user_filter(cfg: dict[str, Any], request: Request | None, requested_profile: Any) -> dict[str, Any]:
+    try:
+        from api.appAuthAPI import COOKIE_NAME, effective_user_profile_id
+        token = request.cookies.get(COOKIE_NAME) if request is not None else None
+        profile = effective_user_profile_id(cfg, token, requested_profile)
+    except Exception:
+        profile = "__none__"
+    if not str(profile or "").strip():
+        return {}
+    user_filter = instances_for_user_profile(cfg, profile)
+    return {
+        "instances": user_filter if user_filter else {"__NONE__": ["__NONE__"]},
+        "accounts": media_account_allowlist_for_profile(cfg, profile),
+    }
+
+
+def _currently_watching_provider(value: Any) -> str:
+    raw = str(value or "").strip().upper()
+    if raw in {"PLEXWATCHER", "PLEXTRAKT"}:
+        return "PLEX"
+    if raw in {"JELLYFINTRAKT"}:
+        return "JELLYFIN"
+    if raw in {"EMBYTRAKT"}:
+        return "EMBY"
+    return raw
+
+
+def _currently_watching_matches_user(item: dict[str, Any], user_filter: dict[str, Any]) -> bool:
+    if not user_filter:
+        return True
+    instance_filter = user_filter.get("instances") if isinstance(user_filter.get("instances"), dict) else user_filter
+    account_filter = user_filter.get("accounts") if isinstance(user_filter.get("accounts"), dict) else {}
+    provider = _currently_watching_provider(item.get("source") or item.get("provider") or item.get("source_provider"))
+    instance = normalize_instance_id(item.get("provider_instance") or item.get("source_instance") or item.get("instance"))
+    allowed = {normalize_instance_id(v) for v in instance_filter.get(provider, [])} if isinstance(instance_filter, dict) else set()
+    if not bool(provider and instance in allowed):
+        return False
+    allow = []
+    explicit_account_scope = False
+    if isinstance(account_filter, dict):
+        by_provider = account_filter.get(provider)
+        if isinstance(by_provider, dict):
+            explicit_account_scope = instance in by_provider
+            allow = by_provider.get(instance) or []
+    if not allow:
+        return not explicit_account_scope
+    return media_account_allowed(
+        allow,
+        item.get("account") or item.get("username") or item.get("user") or "",
+        account_id=item.get("account_id") or item.get("user_id") or "",
+        account_uuid=item.get("account_uuid") or item.get("user_uuid") or "",
+    )
+
+
 @router.get("/api/watch/currently_watching")
-def api_currently_watching() -> JSONResponse:
+def api_currently_watching(request: Request = cast(Request, None), user_profile: str = Query("")) -> JSONResponse:
     data: Any = None
     streams: list[dict[str, Any]] = []
     streams_count = 0
+    cfg = load_config() or {}
+    user_filter = _currently_watching_user_filter(cfg, request, user_profile)
     try:
         data = _cw_load_state()
     except Exception as e:
@@ -1131,6 +1189,9 @@ def api_currently_watching() -> JSONResponse:
                 return (active_rank, -int(it.get("updated") or 0))
 
             active_items = [it for it in items if _is_active(it.get("state"))]
+            if user_filter:
+                items = [it for it in items if _currently_watching_matches_user(it, user_filter)]
+                active_items = [it for it in active_items if _currently_watching_matches_user(it, user_filter)]
             active_items.sort(key=_prio)
             streams = active_items or items
             streams_count = len(active_items)
@@ -1139,6 +1200,11 @@ def api_currently_watching() -> JSONResponse:
             data = primary
         except Exception:
             pass
+
+    if user_filter and isinstance(data, dict) and not _currently_watching_matches_user(data, user_filter):
+        data = None
+        streams = []
+        streams_count = 0
 
     if not streams_count:
         streams_count = len(streams) if streams else (1 if isinstance(data, dict) and data.get("title") else 0)
