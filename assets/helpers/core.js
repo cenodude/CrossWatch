@@ -98,6 +98,31 @@
     return ROUTE_TABS.has(tab) ? tab : "main";
   }
 
+  function canUseRouteTab(tab) {
+    const normalized = normalizeRouteTab(tab);
+    const auth = window.CW?.AuthState?.read?.();
+    const managed = auth ? auth.isManaged : document.documentElement?.dataset?.cwRole === "user";
+    if (!managed) return true;
+    const perms = auth?.permissions || {};
+    if (normalized === "main") return perms.dashboard !== false;
+    if (normalized === "playback_progress") return perms.playback !== false;
+    if (normalized === "watchlist") return perms.watchlist !== false;
+    if (["snapshots", "playlists", "editor"].includes(normalized)) return perms.write === true;
+    return false;
+  }
+
+  function allowedRouteTab(value) {
+    const tab = normalizeRouteTab(value);
+    if (canUseRouteTab(tab)) return tab;
+    if (canUseRouteTab("main")) return "main";
+    if (canUseRouteTab("watchlist")) return "watchlist";
+    if (canUseRouteTab("playback_progress")) return "playback_progress";
+    if (canUseRouteTab("snapshots")) return "snapshots";
+    if (canUseRouteTab("playlists")) return "playlists";
+    if (canUseRouteTab("editor")) return "editor";
+    return "main";
+  }
+
   function normalizeSettingsPane(value) {
     const pane = routeSegment(value);
     if (pane === "pairs") return "sync";
@@ -485,27 +510,44 @@
     scheduleApplySyncVisibility();
   }
 
-  const pairsMemory = { ts: 0, list: null, pending: null };
+  const pairsMemory = { scope: "", ts: 0, list: null, pending: null };
+
+  function pairsCacheScope() {
+    const auth = window.CW?.AuthState?.read?.();
+    const managed = auth ? auth.isManaged : document.documentElement?.dataset?.cwRole === "user";
+    const profileId = auth?.profileId || document.documentElement?.dataset?.cwProfileId || "";
+    return managed ? `user:${String(profileId || "").trim() || "none"}` : "admin";
+  }
+
+  function pairsCacheKey() {
+    return `${PAIRS_CACHE_KEY}:${pairsCacheScope()}`;
+  }
 
   function _invalidatePairsCache() {
+    const key = pairsCacheKey();
     pairsMemory.ts = 0;
     pairsMemory.list = null;
     pairsMemory.pending = null;
-    try { localStorage.removeItem(PAIRS_CACHE_KEY); } catch {}
+    pairsMemory.scope = "";
+    try { localStorage.removeItem(key); localStorage.removeItem(PAIRS_CACHE_KEY); } catch {}
     try { CW.Cache?.invalidate?.("pairs"); } catch {}
   }
 
   function _savePairsCache(pairs) {
     const list = Array.isArray(pairs) ? pairs : [];
+    const scope = pairsCacheScope();
+    pairsMemory.scope = scope;
     pairsMemory.ts = Date.now();
     pairsMemory.list = list;
-    try { localStorage.setItem(PAIRS_CACHE_KEY, JSON.stringify({ pairs: list, t: pairsMemory.ts })); } catch {}
+    try { localStorage.setItem(`${PAIRS_CACHE_KEY}:${scope}`, JSON.stringify({ pairs: list, t: pairsMemory.ts, scope })); } catch {}
   }
 
   function _loadPairsCache() {
-    if (Array.isArray(pairsMemory.list) && pairsMemory.ts) return { pairs: pairsMemory.list, t: pairsMemory.ts };
+    const scope = pairsCacheScope();
+    if (pairsMemory.scope === scope && Array.isArray(pairsMemory.list) && pairsMemory.ts) return { pairs: pairsMemory.list, t: pairsMemory.ts };
     try {
-      return JSON.parse(localStorage.getItem(PAIRS_CACHE_KEY) || "null");
+      const cached = JSON.parse(localStorage.getItem(`${PAIRS_CACHE_KEY}:${scope}`) || "null");
+      return cached?.scope === scope ? cached : null;
     } catch {
       return null;
     }
@@ -513,9 +555,9 @@
 
   async function _getPairsFresh(force = false) {
     const now = Date.now();
-    if (!force && Array.isArray(pairsMemory.list) && (now - pairsMemory.ts) < PAIRS_TTL_MS) return pairsMemory.list;
+    const scope = pairsCacheScope();
+    if (!force && pairsMemory.scope === scope && Array.isArray(pairsMemory.list) && (now - pairsMemory.ts) < PAIRS_TTL_MS) return pairsMemory.list;
     if (pairsMemory.pending) return pairsMemory.pending;
-
     pairsMemory.pending = (async () => {
       try {
         const list = typeof API.Pairs?.list === "function"
@@ -533,6 +575,11 @@
 
     return pairsMemory.pending;
   }
+
+  window.addEventListener("cw:auth-state-changed", () => {
+    _invalidatePairsCache();
+    try { window.cx && (window.cx.pairs = []); } catch {}
+  });
 
   async function isWatchlistEnabledInPairs() {
     const cached = _loadPairsCache();
@@ -1004,7 +1051,17 @@
   }
 
   async function showTab(name) {
-    const tab = normalizeRouteTab(name);
+    let tab = allowedRouteTab(name);
+    const auth = window.CW?.AuthState?.read?.();
+    const managed = auth ? auth.isManaged : document.documentElement.dataset.cwRole === "user";
+    if (managed) {
+      const perms = auth?.permissions || {};
+      const dashboardAllowed = perms.dashboard !== false;
+      const watchlistAllowed = perms.watchlist !== false;
+      const playbackAllowed = perms.playback !== false;
+      const writeAllowed = perms.write === true;
+      if (!(tab === "main" && dashboardAllowed) && !(tab === "watchlist" && watchlistAllowed) && !(tab === "playback_progress" && playbackAllowed) && !(["snapshots", "playlists", "editor"].includes(tab) && writeAllowed)) tab = allowedRouteTab(tab);
+    }
     writeRouteHash(tab);
 
     if (state.currentTab === tab) {
@@ -1137,13 +1194,15 @@
 
   window.addEventListener("hashchange", () => {
     const route = readRouteHash();
+    const tab = allowedRouteTab(route.tab);
     routeSyncing = true;
     try {
-      if (route.tab === "settings") window.__cwSettingsPane = route.pane;
-      Promise.resolve(showTab(route.tab)).catch(() => {});
-      if (route.tab === "settings") setTimeout(() => window.cwSettingsSelect?.(route.pane), 0);
+      if (tab === "settings") window.__cwSettingsPane = route.pane;
+      Promise.resolve(showTab(tab)).catch(() => {});
+      if (tab === "settings") setTimeout(() => window.cwSettingsSelect?.(route.pane), 0);
     } finally {
       routeSyncing = false;
+      if (tab !== route.tab) writeRouteHash(tab);
     }
   });
 
@@ -1174,6 +1233,12 @@
     queueSafe(() => {
       hardRefreshMain().catch(() => {});
     });
+  });
+
+  window.addEventListener("cw:overview-profile-changed", () => {
+    const current = normalizeRouteTab(state.currentTab || document.documentElement?.dataset?.tab || document.body?.dataset?.tab || "main");
+    const tab = allowedRouteTab(current);
+    if (tab !== current) Promise.resolve(showTab(tab)).catch(() => {});
   });
 
   window.addEventListener("load", () => {
@@ -1382,7 +1447,14 @@
       runSync();
     }));
 
-    let pairs = Array.isArray(window.cx?.pairs) && window.cx.pairs.length ? window.cx.pairs : await _getPairsFresh(false);
+    const auth = window.CW?.AuthState?.read?.();
+    let pairs = await _getPairsFresh(auth?.isManaged === true);
+    window.cx = window.cx || {};
+    window.cx.pairs = Array.isArray(pairs) ? pairs : [];
+    const profileId = String(auth?.profileId || document.documentElement?.dataset?.cwProfileId || "").trim();
+    if (auth?.isManaged === true) {
+      pairs = (Array.isArray(pairs) ? pairs : []).filter((pair) => String(pair?.profile_id || "").trim() === profileId);
+    }
     const runnable = (Array.isArray(pairs) ? pairs : []).filter(pairCanRun);
     if (!runnable.length) {
       const empty = document.createElement("div");
@@ -1708,6 +1780,7 @@
   }
 
   async function checkForUpdate() {
+    if (document.documentElement?.dataset?.cwRole === "user") return null;
     try {
       const payload = await requestJSON("/api/update", {}, 15000);
       const current = String(payload.current_version ?? payload.current ?? "0.0.0").trim();
@@ -1761,6 +1834,7 @@
     let retryTimer = null;
     const run = async () => {
       try {
+        if (document.documentElement?.dataset?.cwRole === "user") return;
         if (window.__cwAuthBootstrapPromise) {
           try { await window.__cwAuthBootstrapPromise; } catch {}
         }

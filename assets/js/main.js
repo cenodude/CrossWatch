@@ -120,11 +120,15 @@
   };
 
   const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
+  const managedReadOnly = () => document.documentElement?.dataset?.cwRole === "user" && document.documentElement?.dataset?.cwPermWrite !== "on";
 
   const ensureOpsStatusDock = () => {
-    const row = document.querySelector("#ops-card .action-row");
-    if (!row || row.querySelector(".cw-status-dock")) return;
-    row.appendChild(Object.assign(document.createElement("div"), { className: "cw-status-dock" }));
+    const card = document.querySelector("#ops-card");
+    const row = card?.querySelector?.(".action-row");
+    if (!card || !row) return;
+    let dock = Array.from(card.children || []).find((node) => node?.classList?.contains("cw-status-dock")) || row.querySelector(".cw-status-dock");
+    if (!dock) dock = Object.assign(document.createElement("div"), { className: "cw-status-dock" });
+    if (dock.parentElement !== card || dock.previousElementSibling !== row) row.insertAdjacentElement("afterend", dock);
   };
   ensureOpsStatusDock();
   window.addEventListener("cw:ops-layout-refresh", ensureOpsStatusDock);
@@ -801,11 +805,13 @@
   }
 
   renderAll();
-  wireRunButton();
-  openSummaryStream();
-  openLogStream();
   queuePairsRefresh();
-  tick();
+  if (!managedReadOnly()) {
+    wireRunButton();
+    openSummaryStream();
+    openLogStream();
+    tick();
+  }
 })();
 
 (() => {
@@ -846,12 +852,23 @@
   let closeTimer = 0;
   let peekTimer = 0;
   let dragState = null;
+  let authWriteAllowed = window.CW?.AuthState?.read?.()?.isManaged ? window.CW.AuthState.read().permissions.write === true : null;
 
   const currentTab = () => String(DOC.dataset.tab || document.body?.dataset?.tab || "main").trim().toLowerCase();
+  const canWrite = () => {
+    const auth = window.CW?.AuthState?.read?.();
+    if (auth?.isManaged) return auth.permissions.write === true;
+    return authWriteAllowed === true || (authWriteAllowed === null && DOC.dataset.cwRole !== "user");
+  };
   const onMainTab = () => currentTab() === "main";
   const uiCfg = () => (window._cfgCache && typeof window._cfgCache === "object" ? window._cfgCache.ui || {} : {});
-  const desktopEnabled = () => uiCfg().show_quick_add_desktop !== false;
-  const mobileEnabled = () => uiCfg().show_quick_add_mobile !== false;
+  const accountQuickAddEnabled = () => {
+    const auth = window.CW?.AuthState?.read?.();
+    const prefs = auth?.preferences || auth?.user?.preferences || {};
+    return prefs.quick_add !== false;
+  };
+  const desktopEnabled = () => uiCfg().show_quick_add_desktop !== false && accountQuickAddEnabled();
+  const mobileEnabled = () => uiCfg().show_quick_add_mobile !== false && accountQuickAddEnabled();
   const canOpen = () => typeof window.openManualWatchedModal === "function";
   const hasTmdbMetadata = () => {
     const cfg = window._cfgCache && typeof window._cfgCache === "object" ? window._cfgCache : {};
@@ -1015,8 +1032,8 @@
     const el = ensureRoot();
     const mobile = isMobileLayout();
     const tmdbReady = hasTmdbMetadata();
-    const showDesktop = !mobile && onMainTab() && desktopEnabled() && tmdbReady;
-    const showMobile = mobile && onMainTab() && mobileEnabled() && tmdbReady;
+    const showDesktop = canWrite() && !mobile && onMainTab() && desktopEnabled() && tmdbReady;
+    const showMobile = canWrite() && mobile && onMainTab() && mobileEnabled() && tmdbReady;
     const showAny = showDesktop || showMobile;
     el.classList.toggle("hidden", !showAny);
     el.classList.toggle("is-desktop", showDesktop);
@@ -1026,12 +1043,29 @@
     if (showDesktop) maybePeek();
   };
 
+  const refreshAuthAccess = async () => {
+    try {
+      const res = await fetch("/api/app-auth/status", { cache: "no-store", credentials: "same-origin" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const status = await res.json();
+      const auth = window.CW?.AuthState?.apply?.(status);
+      authWriteAllowed = auth?.isManaged ? auth.permissions.write === true : null;
+    } catch {
+      const auth = window.CW?.AuthState?.read?.();
+      authWriteAllowed = auth?.isManaged ? auth.permissions.write === true : null;
+    }
+    syncVisibility();
+  };
+
   const refreshSoon = () => syncVisibility();
   window.addEventListener("resize", syncVisibility, { passive: true });
   document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && syncVisibility());
   document.addEventListener("tab-changed", syncVisibility);
   document.addEventListener("config-saved", syncVisibility);
+  window.addEventListener("cw:auth-state-changed", syncVisibility);
+  window.addEventListener("auth-changed", refreshAuthAccess);
   window.addEventListener("load", syncVisibility, { once: true });
   window.setInterval(syncVisibility, 1500);
+  refreshAuthAccess();
   refreshSoon();
 })();
