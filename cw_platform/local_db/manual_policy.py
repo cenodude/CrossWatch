@@ -277,6 +277,20 @@ def load_policy(base_path: str | Path, policy_path: str | Path | None = None) ->
         return out
 
 
+def update_policy(base_path: str | Path, mutator: Any, policy_path: str | Path | None = None) -> tuple[dict[str, Any], Any]:
+    with _LOCK:
+        raw = load_policy(base_path, policy_path)
+        if not isinstance(raw, dict):
+            raw = {"version": 1, "providers": {}}
+        if not isinstance(raw.get("providers"), dict):
+            raw["providers"] = {}
+        if "version" not in raw:
+            raw["version"] = 1
+        result = mutator(raw)
+        save_policy(base_path, raw, policy_path)
+        return raw, result
+
+
 def save_policy(base_path: str | Path, policy: Mapping[str, Any], policy_path: str | Path | None = None) -> None:
     with _LOCK:
         conn = get_conn(base_path)

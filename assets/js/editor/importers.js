@@ -65,7 +65,14 @@
 
     if (ctx.importInstanceSel) {
       const ids = (p && Array.isArray(p.instances)) ? p.instances : ["default"];
-      const instObjs = ids.map(x => ({ id: String(x), label: String(x) }));
+      const instObjs = ids.map(x => {
+        if (x && typeof x === "object") {
+          const id = String(x.id || "default");
+          return { id, label: String(x.label || x.display_label || id) };
+        }
+        const id = String(x || "default");
+        return { id, label: id === "default" ? "Default" : id };
+      });
       const nextInst = ctx.renderInstanceOptions?.(ctx.importInstanceSel, instObjs, state.importProviderInstance);
       if (nextInst !== state.importProviderInstance) {
         state.importProviderInstance = nextInst;

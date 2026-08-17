@@ -5,12 +5,13 @@ from __future__ import annotations
 
 import logging
 from datetime import date as dt_date, datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 import requests
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse
 
+from cw_platform.access_policy import filter_instances_for_user, request_user
 from cw_platform.modules_registry import load_sync_ops, sync_provider_names
 from cw_platform.provider_instances import build_provider_config_view, list_instance_ids, normalize_instance_id
 
@@ -135,7 +136,7 @@ def _manual_external_ids(media_type: str, tmdb_id: Any) -> dict[str, Any]:
     return out
 
 
-def _manual_history_targets(cfg: dict[str, Any]) -> list[dict[str, Any]]:
+def _manual_history_targets(cfg: dict[str, Any], user: Any = None) -> list[dict[str, Any]]:
     merged: dict[tuple[str, str], dict[str, Any]] = {}
 
     for provider in sync_provider_names(upper=True):
@@ -155,9 +156,9 @@ def _manual_history_targets(cfg: dict[str, Any]) -> list[dict[str, Any]]:
             continue
 
         try:
-            instances = list_instance_ids(cfg, provider)
+            instances = filter_instances_for_user(cfg, user, provider, list_instance_ids(cfg, provider))
         except Exception:
-            instances = ["default"]
+            instances = filter_instances_for_user(cfg, user, provider, ["default"])
 
         for raw_instance in instances:
             instance = normalize_instance_id(raw_instance)
@@ -191,15 +192,15 @@ def _manual_history_targets(cfg: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 @router.get("/providers")
-def api_manual_providers() -> JSONResponse:
+def api_manual_providers(request: Request = cast(Request, None)) -> JSONResponse:
     from cw_platform.config_base import load_config
 
     cfg = load_config() or {}
-    return JSONResponse({"ok": True, "providers": _manual_history_targets(cfg)}, status_code=200)
+    return JSONResponse({"ok": True, "providers": _manual_history_targets(cfg, request_user(request))}, status_code=200)
 
 
 @router.post("/watched")
-def api_manual_watched(payload: dict[str, Any] = Body(...)) -> JSONResponse:
+def api_manual_watched(payload: dict[str, Any] = Body(...), request: Request = cast(Request, None)) -> JSONResponse:
     from cw_platform.config_base import load_config
 
     cfg = load_config() or {}
@@ -241,7 +242,7 @@ def api_manual_watched(payload: dict[str, Any] = Body(...)) -> JSONResponse:
     if raw_rating not in (None, "") and rating is None:
         return JSONResponse({"ok": False, "error": "invalid_rating"}, status_code=400)
 
-    available = _manual_history_targets(cfg)
+    available = _manual_history_targets(cfg, request_user(request))
     target_map = {
         (str(it.get("provider") or "").upper(), normalize_instance_id(it.get("instance") or "default")): it
         for it in available
