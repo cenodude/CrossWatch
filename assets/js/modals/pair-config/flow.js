@@ -136,7 +136,7 @@ export function createFlowController({ ID, Q, byName, renderWarnings }) {
     if (!ok && two.checked) ID("cx-mode-one").checked = true;
     two.nextElementSibling?.classList.toggle("disabled", !ok);
     const title = ID("cx-flow-title");
-    if (title) title.textContent = ID("cx-mode-two")?.checked ? "Two-way (bidirectional)" : "One-way";
+    if (title) title.textContent = ID("cx-mode-two")?.checked ? "Two-way" : "One-way";
     renderFlowFeatureDots(state);
     renderFlowRailDots(state);
     applyFlowTheme(state);

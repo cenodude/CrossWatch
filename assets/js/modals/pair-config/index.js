@@ -201,10 +201,13 @@ const tpl=()=>`
                 <div class="flow-title">Sync flow: <span id="cx-flow-title">One-way</span></div>
                 <div id="cx-flow-features" class="flow-feature-dots" aria-label="Enabled connection features"></div>
               </div>
-              <div class="flow-mode-inline">
-                <div class="seg">
-                  <input type="radio" name="cx-mode" id="cx-mode-one" value="one"/><label for="cx-mode-one">One-way</label>
-                  <input type="radio" name="cx-mode" id="cx-mode-two" value="two"/><label for="cx-mode-two" title="${TWO_WAY_WARNING}">Two-way</label>
+              <div class="flow-control-row">
+                <div id="cx-user-profile-slot" class="cx-user-profile-slot"></div>
+                <div class="flow-mode-inline">
+                  <div class="seg">
+                    <input type="radio" name="cx-mode" id="cx-mode-one" value="one"/><label for="cx-mode-one">One-way</label>
+                    <input type="radio" name="cx-mode" id="cx-mode-two" value="two"/><label for="cx-mode-two" title="${TWO_WAY_WARNING}">Two-way</label>
+                  </div>
                 </div>
               </div>
             </div>
@@ -231,7 +234,7 @@ const tpl=()=>`
 // State
 function defaultState(){
   return {
-    providers:[],src:null,dst:null,src_instance:"default",dst_instance:"default",instanceMap:{},feature:"globals",mode:"one-way",enabled:true,
+    providers:[],src:null,dst:null,src_instance:"default",dst_instance:"default",instanceMap:{},userProfiles:[],selected_user_profile_id:"",applying_user_profile:false,feature:"globals",mode:"one-way",enabled:true,
     options:{
       watchlist:{enable:false,add:false,remove:false},
       ratings:{enable:false,add:false,remove:false,types:["movies","shows","seasons","episodes"],mode:"all",from_date:""},
@@ -336,6 +339,17 @@ async function loadProviderInstances(state){
     const j=r.ok?await r.json():{};
     state.instanceMap=(j&&typeof j==="object")?j:{};
   }catch{state.instanceMap={}}
+}
+
+async function loadUserProfiles(state){
+  try{
+    const r=await fetch("/api/user-profiles",{cache:"no-store"});
+    const j=r.ok?await r.json():{};
+    const rows=Array.isArray(j?.items)?j.items:[];
+    state.userProfiles=rows
+      .map(row=>({id:String(row?.id||"").trim(),label:String(row?.label||row?.id||"").trim(),instances:row?.instances&&typeof row.instances==="object"?row.instances:{}}))
+      .filter(row=>row.id&&row.label);
+  }catch{state.userProfiles=[]}
 }
 
 async function loadProviders(state){
@@ -675,8 +689,8 @@ function renderProviderSelects(state){
   };
   bindCardTrigger(ID("cx-src-trigger"),srcSel);
   bindCardTrigger(ID("cx-dst-trigger"),dstSel);
-  srcSel.onchange=()=>{state.src=srcSel.value||null;upd();renderInstanceSelects(state);updateFlow(state,true);refreshTabs(state);renderFeaturePanel(state);renderWarnings(state)};
-  dstSel.onchange=()=>{state.dst=dstSel.value||null;upd();renderInstanceSelects(state);updateFlow(state,true);refreshTabs(state);renderFeaturePanel(state);renderWarnings(state)};
+  srcSel.onchange=()=>{resetPairUserProfileControl(state);state.src=srcSel.value||null;upd();renderInstanceSelects(state);updateFlow(state,true);refreshTabs(state);renderFeaturePanel(state);renderWarnings(state)};
+  dstSel.onchange=()=>{resetPairUserProfileControl(state);state.dst=dstSel.value||null;upd();renderInstanceSelects(state);updateFlow(state,true);refreshTabs(state);renderFeaturePanel(state);renderWarnings(state)};
   upd();renderInstanceSelects(state);ID("cx-mode-two").checked=state.mode==="two-way";ID("cx-mode-one").checked=!ID("cx-mode-two").checked;ID("cx-enabled").checked=!!state.enabled;
 }
 
@@ -689,17 +703,25 @@ function renderInstanceSelects(state){
     const key=String(prov||"").toUpperCase();
     const raw=map[key]||map[String(prov||"").toLowerCase()]||[];
     const arr=Array.isArray(raw)?raw:[];
-    const ids=[];
+    const rows=[];
     for(const x of arr){
-      if(typeof x==="string") ids.push(x);
-      else if(x&&typeof x==="object"&&x.id) ids.push(String(x.id));
+      if(typeof x==="string"){
+        const id=norm(x);
+        if(id) rows.push({id,label:id==="default"?"Default":id});
+      }else if(x&&typeof x==="object"&&x.id){
+        const id=norm(x.id);
+        const label=String(x.display_label||x.label||x.id||"").trim()||(id==="default"?"Default":id);
+        if(id) rows.push({id,label});
+      }
     }
-    const uniq=["default",...ids.map(norm).filter(x=>x&&x!=="default")];
-    return [...new Set(uniq)];
+    const byId=new Map([["default",{id:"default",label:"Default"}]]);
+    rows.filter(row=>row.id&&row.id!=="default").forEach(row=>byId.set(row.id,row));
+    return Array.from(byId.values());
   };
   const fill=(sel, prov, cur)=>{
-    const ids=optsFor(prov);
-    sel.innerHTML=ids.map(id=>`<option value="${id}">${id==="default"?"Default":id}</option>`).join("");
+    const rows=optsFor(prov);
+    const ids=rows.map(row=>row.id);
+    sel.innerHTML=rows.map(row=>`<option value="${escHTML(row.id)}" title="${escHTML(row.id)}">${escHTML(row.label)}</option>`).join("");
     const want=norm(cur);
     sel.value=ids.includes(want)?want:"default";
     sel.disabled=!prov;
@@ -710,7 +732,7 @@ function renderInstanceSelects(state){
   state.src_instance=norm(srcInstSel.value);
   state.dst_instance=norm(dstInstSel.value);
 
-  const onInstChange=()=>{try{renderFeaturePanel(state)}catch{}};
+  const onInstChange=()=>{if(!state.applying_user_profile) resetPairUserProfileControl(state);try{renderFeaturePanel(state)}catch{}};
   srcInstSel.onchange=()=>{state.src_instance=norm(srcInstSel.value);onInstChange()};
   dstInstSel.onchange=()=>{state.dst_instance=norm(dstInstSel.value);onInstChange()};
 
@@ -718,6 +740,66 @@ function renderInstanceSelects(state){
     G.CW?.ProfileSelect?.enhanceProfile?.(srcInstSel,{className:"cx-profile-select-glass"});
     G.CW?.ProfileSelect?.enhanceProfile?.(dstInstSel,{className:"cx-profile-select-glass"});
   }catch{}
+  renderPairUserProfileControl(state);
+}
+
+function resetPairUserProfileControl(state){
+  if(state) state.selected_user_profile_id="";
+  const sel=ID("cx-user-profile");
+  if(!sel) return;
+  sel.value="";
+}
+
+function profileInstanceValues(profile, provider){
+  const key=String(provider||"").trim().toUpperCase();
+  const insts=profile&&typeof profile==="object"?profile.instances:null;
+  const raw=insts&&typeof insts==="object"?insts[key]:null;
+  return (Array.isArray(raw)?raw:[raw]).map(x=>String(x||"").trim()).filter(Boolean);
+}
+
+function profileCanOwnCurrentPair(profile,state){
+  const srcKey=String(state.src||"").trim().toUpperCase();
+  const dstKey=String(state.dst||"").trim().toUpperCase();
+  const srcInst=String(state.src_instance||"default").trim()||"default";
+  const dstInst=String(state.dst_instance||"default").trim()||"default";
+  if(!srcKey||!dstKey) return true;
+  return profileInstanceValues(profile,srcKey).includes(srcInst)&&profileInstanceValues(profile,dstKey).includes(dstInst);
+}
+
+function eligiblePairUserProfiles(state){
+  const profiles=Array.isArray(state.userProfiles)?state.userProfiles:[];
+  return profiles.filter(p=>profileCanOwnCurrentPair(p,state));
+}
+
+function renderPairUserProfileControl(state){
+  const slot=ID("cx-user-profile-slot");
+  if(!slot) return;
+  let row=ID("cx-user-profile-row");
+  if(!row){
+    row=document.createElement("div");
+    row.id="cx-user-profile-row";
+    row.className="cx-user-profile-row";
+    row.innerHTML=`<select id="cx-user-profile" class="cx-user-profile-select" aria-label="Connection user profile"></select>`;
+    slot.appendChild(row);
+  }
+  const allProfiles=Array.isArray(state.userProfiles)?state.userProfiles:[];
+  const profiles=eligiblePairUserProfiles(state);
+  slot.classList.toggle("hidden",!allProfiles.length);
+  row.classList.toggle("hidden",!allProfiles.length);
+  const sel=ID("cx-user-profile");
+  if(!sel) return;
+  const current=String(state.selected_user_profile_id||sel.value||"");
+  sel.innerHTML=`<option value="">Unassigned</option>${profiles.map(p=>`<option value="${escHTML(p.id)}">${escHTML(p.label)}</option>`).join("")}`;
+  const keep=profiles.some(p=>p.id===current)?current:"";
+  sel.value=keep;
+  state.selected_user_profile_id=keep;
+  if(sel.__cwUserProfileBound) return;
+  sel.__cwUserProfileBound=true;
+  sel.addEventListener("change",()=>{
+    const selected=String(sel.value||"");
+    const profile=eligiblePairUserProfiles(state).find(p=>p.id===selected);
+    state.selected_user_profile_id=profile?selected:"";
+  });
 }
 
 // Fold toggles (works with draggable modals)
@@ -2513,6 +2595,9 @@ function buildPayload(state,wrap){
   if(history && !pairSupportsHistoryRewatches(state, src, dst, modeTwo)) history.rewatches=false;
   const features=sanitizeFeaturesForPair({src,dst,twoWay:modeTwo},{watchlist,ratings,history,progress,playlists:get("playlists")});
   const payload={source:src,target:dst,source_instance:String(srcInst||"default"),target_instance:String(dstInst||"default"),enabled,mode:modeTwo?"two-way":"one-way",features};
+  const eid=wrap.dataset&&wrap.dataset.editingId?String(wrap.dataset.editingId||""):"";
+  const selectedProfileId=String(state.selected_user_profile_id||ID("cx-user-profile")?.value||"").trim();
+  if(selectedProfileId||eid) payload.profile_id=selectedProfileId;
   const prov={};
   const pp=state.pairProviders||{};
   const usePlex=(String(src).toUpperCase()==="PLEX"||String(dst).toUpperCase()==="PLEX");
@@ -2571,7 +2656,7 @@ function buildPayload(state,wrap){
     }
   }
   if(Object.keys(prov).length) payload.providers=prov;
-  const eid=wrap.dataset&&wrap.dataset.editingId?String(wrap.dataset.editingId||""):"";if(eid)payload.id=eid;return payload;
+  if(eid)payload.id=eid;return payload;
 }
 
 // Save:
@@ -2622,12 +2707,14 @@ export default{
       const r0=state.options.ratings, rI=f.ratings||{};
       state.options.ratings=Object.assign({},r0,rI,{types:Array.isArray(rI.types)&&rI.types.length?rI.types:r0.types,mode:rI.mode||r0.mode,from_date:rI.from_date||r0.from_date||""});
       state.pairProviders = normalizePairProviders(pair.providers);
+      state.selected_user_profile_id=String(pair.profile_id||"").trim();
       wrap.dataset.editingId=pair?.id?String(pair.id):"";
     }
 
     await loadConfigBits(state);
     await loadProviders(state);
     await loadProviderInstances(state);
+    await loadUserProfiles(state);
 
     state.feature="globals";
     renderProviderSelects(state);

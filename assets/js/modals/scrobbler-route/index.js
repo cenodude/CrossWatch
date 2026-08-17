@@ -31,6 +31,8 @@ const lastTab = {};
 let boundRoot = null;
 let clickHandler = null;
 let changeHandler = null;
+let userProfiles = [];
+let selectedUserProfileId = "";
 
 function detachHandlers() {
   if (boundRoot?.__cwScrobblerRouteAbort) {
@@ -59,6 +61,23 @@ async function request(url, method, body) {
     throw err;
   }
   return data;
+}
+
+async function loadUserProfiles() {
+  try {
+    const res = await fetch("/api/user-profiles", { cache: "no-store", credentials: "same-origin" });
+    const data = res.ok ? await res.json() : {};
+    const rows = Array.isArray(data?.items) ? data.items : [];
+    userProfiles = rows
+      .map((row) => ({
+        id: String(row?.id || "").trim(),
+        label: String(row?.label || row?.id || "").trim(),
+        instances: row?.instances && typeof row.instances === "object" ? row.instances : {},
+      }))
+      .filter((row) => row.id && row.label);
+  } catch {
+    userProfiles = [];
+  }
 }
 
 function clone(v) {
@@ -134,7 +153,7 @@ function optionsForProfiles(provider, selected, kind) {
   const current = String(selected || "");
   const selectedExists = list.some((p) => p.instance === current);
   const missing = current && !selectedExists ? `<option value="${esc(current)}" selected disabled>${esc(profileLabel(provider, current, kind))} (not configured)</option>` : "";
-  const options = list.map((p) => `<option value="${esc(p.instance)}" ${p.instance === current ? "selected" : ""}>${esc(profileName(p.instance))}</option>`).join("");
+  const options = list.map((p) => `<option value="${esc(p.instance)}" title="${esc(p.instance)}" ${p.instance === current ? "selected" : ""}>${esc(profileOptionLabel(p))}</option>`).join("");
   return missing + options || `<option value="">No configured profile</option>`;
 }
 
@@ -153,13 +172,54 @@ function optionsForProviders(kind, selected, source = "") {
 function profileLabel(provider, instance, kind) {
   const list = kind === "source" ? allSourceProfiles(provider) : allSinkProfiles(provider);
   const p = list.find((x) => x.instance === instance);
-  return profileName(p?.instance || instance);
+  return profileOptionLabel(p || { instance });
+}
+
+function profileOptionLabel(profile) {
+  const label = String(profile?.display_label || profile?.label || profile?.profile_label || profile?.sink_label || "").trim();
+  return label || profileName(profile?.instance);
 }
 
 function profileName(instance) {
   const value = String(instance || "").trim();
   if (!value || value === "default") return "Default";
   return value;
+}
+
+function userProfileField() {
+  if (!userProfiles.length) return "";
+  const current = String(selectedUserProfileId || draft?.profile_id || "");
+  const options = userProfiles.map((p) => `<option value="${esc(p.id)}" ${p.id === current ? "selected" : ""}>${esc(p.label)}</option>`).join("");
+  return `<div class="scrm-profile-row">${fieldIcon("person", "Assigned profile", `<select class="input" id="scr-user-profile"><option value="">Unassigned</option>${options}</select>`)}</div>`;
+}
+
+function assignedInstance(profile, provider, kind) {
+  const key = String(provider || "").toUpperCase();
+  const raw = profile?.instances?.[key];
+  const values = (Array.isArray(raw) ? raw : [raw]).map((x) => String(x || "").trim()).filter(Boolean);
+  if (!values.length) return "";
+  const configured = (kind === "source" ? allSourceProfiles(provider) : allSinkProfiles(provider)).map((p) => String(p.instance || ""));
+  return values.find((value) => configured.includes(value)) || "";
+}
+
+function applyUserProfile(profileId) {
+  const profile = userProfiles.find((row) => row.id === String(profileId || ""));
+  draft.profile_id = profile ? String(profile.id || "") : "";
+  if (!profile) return false;
+  const srcChoices = sources.filter((provider) => assignedInstance(profile, provider, "source"));
+  const sinkChoices = sinks.filter((provider) => provider !== draft.provider && assignedInstance(profile, provider, "sink"));
+  if (srcChoices.length) {
+    draft.provider = srcChoices.includes(draft.provider) ? draft.provider : srcChoices[0];
+    draft.provider_instance = assignedInstance(profile, draft.provider, "source") || draft.provider_instance;
+  }
+  if (draft.sink === draft.provider) draft.sink = "";
+  const nextSinkChoices = sinks.filter((provider) => provider !== draft.provider && assignedInstance(profile, provider, "sink"));
+  const choices = nextSinkChoices.length ? nextSinkChoices : sinkChoices;
+  if (choices.length) {
+    draft.sink = choices.includes(draft.sink) ? draft.sink : choices[0];
+    draft.sink_instance = assignedInstance(profile, draft.sink, "sink") || draft.sink_instance;
+  }
+  return true;
 }
 
 function normInst(v) {
@@ -291,6 +351,7 @@ function routePanel(r) {
         <div><strong>Choose the source, then send it to a tracker</strong><p>Watcher routes listen to one configured media profile and forward matching play events to one configured destination profile.</p></div>
         ${journeyHelp("scrobbler-watcher")}
       </div>
+      ${userProfileField()}
       <div class="scrm-route-grid">
         <div class="scrm-provider-card ${providerClass(r.provider)}">
           <div class="scrm-card-head"><span class="scrm-provider-mark">${providerIcon(r.provider)}</span><div><strong>Source</strong><small>${esc(label(r.provider))}</small></div></div>
@@ -537,6 +598,7 @@ function collect() {
     provider_instance: providerInstanceEl ? providerInstanceEl.value : draft.provider_instance || "",
     sink: sinkEl ? sinkEl.value : draft.sink || "",
     sink_instance: sinkInstanceEl ? sinkInstanceEl.value : draft.sink_instance || "",
+    profile_id: root.querySelector("#scr-user-profile")?.value || selectedUserProfileId || draft.profile_id || "",
     filters,
     options: {
       auto_remove_watchlist: root.querySelector("#scr-auto")?.value || "inherit",
@@ -652,9 +714,12 @@ export async function mount(shell, incoming = {}) {
   draft = null;
   saving = false;
   confirmDelete = false;
+  selectedUserProfileId = "";
   modalKey = String(props.mode === "create" ? "__new__" : (props.route?.id || "__new__"));
   activeTab = normalizeActiveTab("route");
   if (root) root.dataset.scrmTab = activeTab;
+  await loadUserProfiles();
+  selectedUserProfileId = String(props.route?.profile_id || "");
   render();
   if (props.mode === "delete") armDeleteConfirm(root.querySelector("[data-delete]"));
   boundRoot = root;
@@ -746,6 +811,15 @@ export async function mount(shell, incoming = {}) {
     e.stopPropagation();
   };
   changeHandler = (e) => {
+    if (e.target.id === "scr-user-profile") {
+      const keepTab = currentActiveTab();
+      syncDraftFromDom();
+      const selected = String(e.target.value || "");
+      selectedUserProfileId = applyUserProfile(selected) ? selected : "";
+      render();
+      preserveVisiblePanel(keepTab);
+      return;
+    }
     if (["scr-provider", "scr-sink"].includes(e.target.id)) {
       const keepTab = currentActiveTab();
       syncDraftFromDom();
@@ -789,6 +863,8 @@ export function unmount() {
   confirmDelete = false;
   if (deleteTimer) clearTimeout(deleteTimer);
   deleteTimer = 0;
+  userProfiles = [];
+  selectedUserProfileId = "";
   activeTab = "route";
 }
 
