@@ -213,6 +213,24 @@ def test_history_add_sends_watched_at_for_movies():
     assert body == {"completed": True, "watched_at": "2026-08-01T20:00:00.000Z", "media_type": "movie", "tmdb_id": 550}
 
 
+def test_history_add_event_keys_are_accounted_by_applier(monkeypatch: pytest.MonkeyPatch):
+    from cw_platform.orchestrator import _applier
+
+    unresolved_writes: list[Any] = []
+    monkeypatch.setattr(_applier, "record_unresolved", lambda *a, **k: unresolved_writes.append((a, k)) or {"ok": True})
+
+    adapter = FakeAdapter({("POST", "history"): ResponseStub(200, {"status": "ok"})})
+    item = {"type": "movie", "ids": {"tmdb": "550"}, "watched_at": "2026-08-01T20:00:00.000Z", "_cw_event_key": "tmdb:550@1754078400"}
+    raw = _history.add(adapter, [item])
+
+    normalized = _applier._normalize(raw, [item], "apply:add", dst="SCROB", feature="history", emit=lambda *a, **k: None)
+
+    assert normalized["confirmed"] == 1
+    assert normalized["unresolved"] == 0
+    assert normalized["unresolved_keys"] == []
+    assert unresolved_writes == []
+
+
 def test_history_add_sends_full_episode_context():
     adapter = FakeAdapter({("POST", "history"): ResponseStub(200, {"status": "ok"})})
     item = {
