@@ -7,6 +7,7 @@ from typing import Any, Mapping, cast
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 from providers.sync._mod_MDBLIST import MDBLISTModule, OPS as MDBLIST_OPS
+from providers.sync.mdblist import _progress as mdblist_progress
 
 from ..models import PlaybackActionResult, PlaybackCapabilities, PlaybackListResult, PlaybackRecord, clean_mapping, utc_now_iso
 from .base import PlaybackProgressAdapter, enrich_parallel, has_metadata_ids, metadata_rating, public_failure, rating_from_sources, tmdb_metadata_provider
@@ -82,8 +83,19 @@ def _ids(obj: Any) -> dict[str, Any]:
     if not isinstance(raw, Mapping):
         return {}
     out: dict[str, Any] = {}
-    for key in ("imdb", "tmdb", "tvdb", "trakt", "mdblist"):
-        value = raw.get(key) or raw.get(f"{key}_id")
+    key_aliases = {
+        "imdb": ("imdb", "imdb_id", "imdbid"),
+        "tmdb": ("tmdb", "tmdb_id", "tmdbid"),
+        "tvdb": ("tvdb", "tvdb_id", "tvdbid"),
+        "trakt": ("trakt", "trakt_id", "traktid"),
+        "mdblist": ("mdblist", "mdblist_id", "mdblistid"),
+    }
+    for key, aliases in key_aliases.items():
+        value = None
+        for alias in aliases:
+            value = raw.get(alias)
+            if value is not None and value != "":
+                break
         if value is None or value == "":
             continue
         if key in {"tmdb", "tvdb", "trakt"}:
@@ -136,37 +148,28 @@ def _history_item(record: Mapping[str, Any]) -> dict[str, Any]:
     return clean_mapping(item)
 
 
-def _progress_body_from_record(record: Mapping[str, Any], progress_percent: float) -> dict[str, Any]:
-    item = _history_item(record)
-    media_type = str(record.get("media_type") or item.get("type") or "").lower()
-    ids = clean_mapping(item.get("ids") if isinstance(item.get("ids"), Mapping) else {})
-    body: dict[str, Any] = {"progress": progress_percent}
+def _progress_body_from_item(item: Mapping[str, Any], media_type: str, progress_percent: float) -> tuple[dict[str, Any] | None, str | None]:
+    media_type = str(media_type or item.get("type") or "").lower()
     if media_type == "movie":
-        movie: dict[str, Any] = {}
-        if ids:
-            movie["ids"] = ids
-        if item.get("title"):
-            movie["title"] = item.get("title")
-        if item.get("year") is not None:
-            movie["year"] = item.get("year")
-        body["movie"] = movie
-        return clean_mapping(body)
-    show_ids = clean_mapping(item.get("show_ids") if isinstance(item.get("show_ids"), Mapping) else {})
-    show: dict[str, Any] = {}
-    if show_ids:
-        show["ids"] = show_ids
-    if item.get("series_title"):
-        show["title"] = item.get("series_title")
-    episode: dict[str, Any] = {}
-    if item.get("season") is not None:
-        episode["season"] = item.get("season")
-    if item.get("episode") is not None:
-        episode["number"] = item.get("episode")
-    if ids:
-        episode["ids"] = ids
-    body["show"] = show
-    body["episode"] = episode
-    return clean_mapping(body)
+        return mdblist_progress._movie_body(item, progress_percent)
+    if media_type == "episode":
+        return mdblist_progress._episode_body(item, progress_percent)
+    return None, "mdblist_media_type_unsupported"
+
+
+def _progress_body_from_record(record: Mapping[str, Any], progress_percent: float) -> tuple[dict[str, Any] | None, str | None]:
+    item = _history_item(record)
+    return _progress_body_from_item(item, str(record.get("media_type") or item.get("type") or ""), progress_percent)
+
+
+def _progress_error_message(reason: str | None) -> str:
+    messages = {
+        "mdblist_movie_imdb_missing": "MDBList needs an IMDb id before movie progress can be edited.",
+        "mdblist_show_imdb_missing": "MDBList needs a show IMDb id before episode progress can be edited.",
+        "mdblist_episode_number_missing": "MDBList needs season and episode numbers before episode progress can be edited.",
+        "mdblist_media_type_unsupported": "MDBList progress editing is unsupported for this media type.",
+    }
+    return messages.get(str(reason or ""), "MDBList progress edit payload could not be built for this record.")
 
 
 class MDBListPlaybackAdapter(PlaybackProgressAdapter):
@@ -331,6 +334,7 @@ class MDBListPlaybackAdapter(PlaybackProgressAdapter):
             rating_title = title if media_type == "movie" else series_title or title
             if has_metadata_ids(rating_ids):
                 rating = metadata_rating(metadata, media_type=media_type, ids=rating_ids, title=rating_title, year=year)
+        edit_body, _edit_reason = _progress_body_from_item(history_item, media_type, 50.0)
         return PlaybackRecord(
             provider=self.provider,
             provider_label=self.provider_label,
@@ -358,7 +362,7 @@ class MDBListPlaybackAdapter(PlaybackProgressAdapter):
             backdrop_url=_first_str(row.get("backdrop"), row.get("backdrop_url"), row.get("fanart")),
             can_remove_progress=caps.remove_progress,
             can_mark_watched=caps.mark_watched,
-            can_update_progress=caps.update_progress,
+            can_update_progress=bool(caps.update_progress and edit_body),
             capability_messages=[] if caps.configured else [caps.reason],
             provider_metadata={
                 "history_item": history_item,
@@ -440,11 +444,22 @@ class MDBListPlaybackAdapter(PlaybackProgressAdapter):
         instance_label: str,
     ) -> PlaybackActionResult:
         try:
+            body, reason = _progress_body_from_record(record, progress_percent)
+            if body is None:
+                return public_failure(
+                    provider=self.provider,
+                    instance_id=instance_id,
+                    operation="update_progress",
+                    message=_progress_error_message(reason),
+                    error_code=reason or "invalid_payload",
+                    remote_id=str(record.get("remote_id") or ""),
+                    canonical_key=str(record.get("canonical_key") or ""),
+                )
             mod = _module(config_view, instance_id)
             response = mod.client.post(
                 f"{mod.client.BASE}/scrobble/pause",
                 params={"apikey": mod.cfg.api_key},
-                json=_progress_body_from_record(record, progress_percent),
+                json=body,
             )
             if response.status_code in {200, 201, 202}:
                 return PlaybackActionResult(
