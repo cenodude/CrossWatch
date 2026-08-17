@@ -44,6 +44,14 @@ const canonProv = (v) => {
 const provKey = (v) => canonProv(v).toLowerCase();
 const instKey = (v) => String(v || "default").trim() || "default";
 const provLabel = (v) => ProviderMeta().label?.(canonProv(v)) || canonProv(v);
+const overviewFilter = () => window.CW?.OverviewProfile?.filter || {};
+const overviewHasScope = () => !!Object.keys(overviewFilter() || {}).length;
+const overviewInstancesFor = (provider) => {
+  const filter = overviewFilter();
+  const up = canonProv(provider);
+  const low = provKey(provider);
+  return Array.isArray(filter[up]) ? filter[up].map(instKey) : Array.isArray(filter[low]) ? filter[low].map(instKey) : null;
+};
 
 const HTML = `
   <div class="cx-head">
@@ -86,7 +94,6 @@ const parseInstanceList = (raw) => {
     const label = typeof it === "object" && it ? String(it.label || "").trim() : "";
     if (label) out.labels[id] = label;
   }
-  if (!out.ids.includes("default")) out.ids.unshift("default");
   return out;
 };
 
@@ -173,7 +180,7 @@ const getAllowedProviders = (cfg = window._cfgCache || {}) => {
 };
 
 const buildProviders = async () => {
-  const labels = {}, byProvider = {}, [instApi, cfg] = await Promise.all([jget(`/api/provider-instances?cb=${Date.now()}`), jget(`/api/config?cb=${Date.now()}`)]);
+  const labels = {}, byProvider = {}, [instApi, cfg] = await Promise.all([jget(`/api/provider-instances?configured_only=true&cb=${Date.now()}`), jget(`/api/config?cb=${Date.now()}`)]);
   const metaOrder = ProviderMeta().order || [];
   const relevant = new Set((Array.isArray(metaOrder) ? metaOrder : []).map(canonProv));
   const instMap = instApi || {}, allowed = getAllowedProviders(cfg || window._cfgCache || {});
@@ -184,8 +191,13 @@ const buildProviders = async () => {
   };
   for (const prov of Array.from(allowed).filter((key) => relevant.has(key)).map(provKey).filter(Boolean).sort((a, b) => a.localeCompare(b))) {
     const parsed = parseInstanceList(await getRaw(prov));
-    if (!parsed.ids.length) continue;
-    byProvider[prov] = parsed.ids;
+    const scoped = overviewInstancesFor(prov);
+    if (overviewHasScope() && !Array.isArray(scoped)) continue;
+    const ids = Array.isArray(scoped)
+      ? parsed.ids.filter((id) => scoped.includes(instKey(id)))
+      : parsed.ids;
+    if (!ids.length) continue;
+    byProvider[prov] = ids;
     labels[prov] = parsed.labels;
   }
   return { byProvider, labels };
@@ -226,7 +238,7 @@ export default {
 
       const provKeys = Object.keys(byProvider).sort((a, b) => a.localeCompare(b));
       if (!provKeys.length) {
-        if (loading) loading.textContent = "No configured providers yet.";
+        if (loading) loading.textContent = overviewHasScope() ? "No provider instances assigned to this profile." : "No configured providers yet.";
       } else {
         if (loading) loading.style.display = "none";
         if (grid) {
