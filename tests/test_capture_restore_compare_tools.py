@@ -621,7 +621,7 @@ def test_captures_ui_scheduler_queue_hides_when_empty() -> None:
     queue_body = js[js.index("function renderScheduleQueue()") : js.index("  function setScheduleQueueFeedback(")]
 
     assert 'id="ss-schedule-queue-wrap" class="ss-queue hidden"' in js
-    assert 'wrap.classList.toggle("hidden", !items.length);' in queue_body
+    assert 'wrap.classList.toggle("hidden", !schedulerAvailable() || !items.length);' in queue_body
     assert 'host.innerHTML = "";' in queue_body
     assert '.join(" / ")' in queue_body
     assert "Ã" not in queue_body
