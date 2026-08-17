@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import pytest
 
 from cw_platform.local_db import close_conn
 from providers.scrobble import currently_watching
+
+
+def _loads_body(body: bytes | memoryview[int]) -> Any:
+    return json.loads(bytes(body))
 
 
 @pytest.fixture()
@@ -45,7 +50,7 @@ def test_currently_watching_round_trips_through_db_and_api(isolated_db) -> None:
     from api.scrobbleAPI import api_currently_watching
 
     response = api_currently_watching()
-    payload = json.loads(response.body)
+    payload = _loads_body(response.body)
 
     assert payload["streams_count"] == 1
     assert payload["currently_watching"]["_key"] == "plex:P01:session-1"

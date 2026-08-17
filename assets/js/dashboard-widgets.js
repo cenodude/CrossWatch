@@ -14,6 +14,7 @@
   let dirtyVersion = 1;
   let lastLoadedAt = 0;
   let lastSettings = null;
+  let currentConfig = null;
   let scrobbleStopRefreshTimer = null;
   const PAGE_STEP = 9;
   const RATING_PAGE_STEP = 9;
@@ -36,7 +37,8 @@
     watchlist: { title: "No watchlist items yet", copy: "Synced watchlist titles will appear here." },
     error: { title: "Could not load this widget", copy: "Try refreshing again in a moment." },
   };
-  const LAYOUT_KEY = "cw.dashboardWidgets.layout.v3";
+  const ON_PROFILE_PAGE = !!document.getElementById("profile-hero");
+  const LAYOUT_KEY = ON_PROFILE_PAGE ? "cw.profileWidgets.layout.v1" : "cw.dashboardWidgets.layout.v3";
   const SETTINGS_KEY = "cw.dashboardWidgets.settings.v1";
   const WIDGETS = [
     { key: "watchlist", id: "placeholder-card", label: "Watchlist" },
@@ -390,12 +392,29 @@
     throw lastError || new Error("dashboard_widgets_failed");
   }
 
+  function overviewProfileId() {
+    return String(window.CW?.OverviewProfile?.id || "").trim();
+  }
+
   async function getConfig(force = false) {
     if (cfgPromise) return cfgPromise;
     cfgPromise = (async () => {
       try {
         if (window.CW?.API?.Config?.load) return window.CW.API.Config.load(!!force);
-        return await fetchJSON("/api/config");
+        try {
+          if (document.documentElement?.dataset?.cwRole === "user") {
+            const meta = await fetchJSON("/api/config/meta");
+            const ui = meta && typeof meta.ui === "object" ? meta.ui : {};
+            return { ok: true, __public_meta: true, ui, user_interface: ui, tmdb_configured: meta?.tmdb_configured === true, tmdb: meta?.tmdb_configured === true ? { api_key: "configured" } : {} };
+          }
+          return await fetchJSON("/api/config");
+        } catch (e) {
+          const msg = String(e?.message || e || "");
+          if (!msg.includes("401") && !msg.includes("403")) throw e;
+          const meta = await fetchJSON("/api/config/meta");
+          const ui = meta && typeof meta.ui === "object" ? meta.ui : {};
+          return { ok: true, __public_meta: true, ui, user_interface: ui, tmdb_configured: meta?.tmdb_configured === true, tmdb: meta?.tmdb_configured === true ? { api_key: "configured" } : {} };
+        }
       } finally {
         window.setTimeout(() => { cfgPromise = null; }, 1500);
       }
@@ -404,6 +423,7 @@
   }
 
   function isOnMain() {
+    if (ON_PROFILE_PAGE) return true;
     const tab = String(document.documentElement.dataset.tab || "").toLowerCase();
     if (tab) return tab === "main";
     return !!document.getElementById("tab-main")?.classList.contains("active");
@@ -421,6 +441,7 @@
   }
 
   function hasTmdbKeyInConfig(cfg) {
+    if (cfg?.tmdb_configured === true) return true;
     const pickFromBlock = (block) => {
       if (!block || typeof block !== "object") return "";
       const direct = String(block.api_key || "").trim();
@@ -436,18 +457,63 @@
     return !!pickFromBlock(cfg?.tmdb);
   }
 
+  function configProviderBlock(provider) {
+    const key = String(provider || "").trim().toLowerCase();
+    if (!key || !currentConfig || typeof currentConfig !== "object") return null;
+    const keys = key === "crosswatch" ? ["crosswatch", "cw"] : key === "tmdb" ? ["tmdb_sync", "tmdb"] : [key];
+    for (const item of keys) {
+      const block = currentConfig[item];
+      if (block && typeof block === "object") return block;
+    }
+    return null;
+  }
+
+  function configuredInstanceLabel(provider, instance) {
+    const inst = String(instance || "default").trim() || "default";
+    const block = configProviderBlock(provider);
+    const node = inst.toLowerCase() === "default"
+      ? block
+      : (block?.instances && typeof block.instances === "object" ? block.instances[inst] : null);
+    const friendly = String(node?.label || "").trim();
+    if (friendly) return friendly;
+    return inst.toLowerCase() === "default" ? "Default" : inst;
+  }
+
   function hideDashboardWidgets() {
     $("#dashboard-widgets-card")?.classList.add("hidden");
   }
 
+  const LAYOUT_TOOLS = [
+    ["customize", "tune", "Customize widgets"],
+    ["show-all", "visibility", "Show all widgets"],
+    ["reset", "restart_alt", "Reset widget layout"],
+  ];
+
   function updateLayoutToolbar() {
     const card = $("#dashboard-widgets-card");
-    card?.classList.toggle("is-customizing", customizeOpen);
+    if (!card) return;
+    if (!ON_PROFILE_PAGE) {
+      customizeOpen = false;
+      card.classList.remove("is-customizing");
+      card.querySelector(".cw-dashboard-layout-toolbar")?.remove();
+      return;
+    }
+    card.classList.toggle("is-customizing", customizeOpen);
+    let bar = card.querySelector(".cw-dashboard-layout-toolbar");
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.className = "cw-dashboard-layout-toolbar";
+      bar.innerHTML = `<div class="cw-dashboard-layout-tools">${LAYOUT_TOOLS.map(([action, icon, label]) => `
+        <button type="button" class="cw-dashboard-layout-btn" data-cw-dashboard-layout="${action}" title="${label}" aria-label="${label}"><span class="material-symbols-rounded" aria-hidden="true">${icon}</span></button>`).join("")}</div>`;
+      card.prepend(bar);
+    }
+    let hidden = 0;
+    try { hidden = hiddenWidgetCount(); } catch { hidden = 0; }
+    bar.classList.toggle("has-hidden", hidden > 0);
+    bar.querySelector('[data-cw-dashboard-layout="show-all"]')?.toggleAttribute("disabled", hidden === 0);
   }
 
   function ensureLayoutToolbar() {
-    const card = $("#dashboard-widgets-card");
-    card?.querySelector(".cw-dashboard-layout-toolbar")?.remove();
     updateLayoutToolbar();
   }
 
@@ -571,6 +637,10 @@
 
   function ensureWidgetControls() {
     const card = $("#dashboard-widgets-card");
+    if (!ON_PROFILE_PAGE) {
+      card?.querySelectorAll(".cw-dash-layout-controls").forEach((node) => node.remove());
+      return;
+    }
     if (card && !card.__cwDashboardDropWired) {
       card.addEventListener("dragover", (ev) => {
         if (dragWidgetKey) updateDashboardDragScroll(ev);
@@ -703,17 +773,19 @@
     for (const src of Array.isArray(sources) ? sources : []) {
       const provider = String(src?.provider || "").trim().toUpperCase();
       const instance = String(src?.instance || "default").trim() || "default";
+      const instanceLabel = String(src?.instance_label || src?.profile_label || src?.label || "").trim();
       const key = `${provider}:${instance}`;
       if (!provider || seen.has(key)) continue;
       seen.add(key);
-      rows.push({ provider, instance });
+      rows.push({ provider, instance, instanceLabel });
       if (rows.length >= max) break;
     }
     return rows;
   }
 
-  function sourceLabel({ provider, instance }) {
-    return instance.toLowerCase() === "default" ? providerLabel(provider) : `${providerLabel(provider)} (${instance})`;
+  function sourceLabel({ provider, instance, instanceLabel }) {
+    const label = String(instanceLabel || configuredInstanceLabel(provider, instance)).trim();
+    return instance.toLowerCase() === "default" && label === "Default" ? providerLabel(provider) : `${providerLabel(provider)} (${label})`;
   }
 
   function sourceRouteTitle(sources) {
@@ -724,9 +796,9 @@
   }
 
   function sourceIcons(sources, max = 4) {
-    return sourceRows(sources, max).map(({ provider, instance }) => {
+    return sourceRows(sources, max).map(({ provider, instance, instanceLabel }) => {
       const logo = providerLogo(provider);
-      const label = sourceLabel({ provider, instance });
+      const label = sourceLabel({ provider, instance, instanceLabel });
       return logo
         ? `<span class="cw-dash-source"><img src="${esc(logo)}" alt="${esc(label)} logo"></span>`
         : `<span class="cw-dash-source cw-dash-source--text" aria-label="${esc(label)}">${esc(providerShort(provider).slice(0, 3))}</span>`;
@@ -738,9 +810,9 @@
   }
 
   function ratingSourceIcons(sources, max = 3) {
-    return sourceRows(sources, max).map(({ provider, instance }) => {
+    return sourceRows(sources, max).map(({ provider, instance, instanceLabel }) => {
       const logo = providerLogo(provider);
-      const label = sourceLabel({ provider, instance });
+      const label = sourceLabel({ provider, instance, instanceLabel });
       return logo
         ? `<span class="cw-rating-provider-icon" title="${esc(label)}" aria-label="${esc(label)}"><img src="${esc(logo)}" alt=""></span>`
         : `<span class="cw-rating-provider-icon cw-rating-provider-icon--text" title="${esc(label)}" aria-label="${esc(label)}">${esc(providerShort(provider).slice(0, 3))}</span>`;
@@ -758,7 +830,7 @@
     const provider = String(source?.provider || "").trim().toUpperCase();
     if (!provider) return "";
     const instance = String(source?.instance || "default").trim() || "default";
-    const profile = scrobbleProfileLabel(instance);
+    const profile = String(source?.instanceLabel || source?.instance_label || source?.profile_label || "").trim() || scrobbleProfileLabel(instance);
     const providerName = providerLabel(provider);
     const logo = providerMeta().logLogoPath?.(provider) || providerLogo(provider);
     const providerIcon = logo
@@ -781,10 +853,11 @@
     const add = (row) => {
       const provider = String(row?.provider || "").trim().toUpperCase();
       const instance = String(row?.instance || "default").trim() || "default";
+      const instanceLabel = String(row?.instanceLabel || row?.instance_label || row?.profile_label || row?.label || "").trim();
       const key = `${provider}:${instance}`;
       if (!provider || seen.has(key)) return;
       seen.add(key);
-      rows.push({ provider, instance });
+      rows.push({ provider, instance, instanceLabel });
     };
     add(scrobbleSourceRow(item));
     sourceRows(item?.targets, 8)
@@ -965,8 +1038,8 @@
   }
 
   function detailSources(item) {
-    return sourceRows(item?.sources, 6).map(({ provider, instance }) => ({
-      label: sourceLabel({ provider, instance }),
+    return sourceRows(item?.sources, 6).map(({ provider, instance, instanceLabel }) => ({
+      label: sourceLabel({ provider, instance, instanceLabel }),
       short: providerShort(provider),
       logo: providerLogo(provider),
     }));
@@ -1468,6 +1541,7 @@
     if (forceConfig) cfgPromise = null;
     const seq = ++loadSeq;
     const refreshVersion = dirtyVersion;
+    try { await window.CW?.OverviewProfile?.ready; } catch {}
     let cfg;
     try {
       cfg = await getConfig(forceConfig);
@@ -1484,6 +1558,7 @@
       return;
     }
     const settings = widgetSettings(cfg?.ui || cfg?.user_interface || {});
+    currentConfig = cfg;
     lastSettings = settings;
     if (seq !== loadSeq || !isOnMain()) return;
     if (!preserve || !hasLoaded) {
@@ -1529,6 +1604,8 @@
         progress_limit: String(MAX_WIDGET_ITEMS),
         playlists_limit: String(MAX_WIDGET_ITEMS),
       });
+      const userProfile = overviewProfileId();
+      if (userProfile) params.set("user_profile", userProfile);
       const data = await fetchWidgetPayload(`/api/dashboard/widgets?${params.toString()}`);
       if (seq !== loadSeq || !isOnMain()) return;
 
@@ -1695,6 +1772,8 @@
       } else hideDashboardWidgets();
     });
     window.addEventListener("settings-changed", () => markWidgetsDirty(300, { forceConfig: true }));
+    window.addEventListener("cw-user-profiles-changed", () => markWidgetsDirty(150, { forceConfig: true, preserve: hasLoaded }));
+    window.addEventListener("cw:overview-profile-changed", () => markWidgetsDirty(0, { preserve: hasLoaded }));
     window.addEventListener("activity-log-cleared", () => markWidgetsDirty(100));
     window.addEventListener("sync-complete", () => markWidgetsDirty(250));
     window.addEventListener("cw:scrobble-stopped", scheduleScrobbleStopRefresh);
