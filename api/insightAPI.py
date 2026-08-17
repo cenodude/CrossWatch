@@ -19,8 +19,10 @@ from cw_platform.modules_registry import sync_provider_names
 from cw_platform.provider_instances import (
     ensure_instance_block,
     get_provider_block,
+    instances_for_user_profile,
     list_instance_ids,
     normalize_instance_id,
+    provider_display_key,
     sanitize_instance_label,
 )
 
@@ -343,10 +345,12 @@ def register_insights(app: FastAPI) -> None:
 
     @app.get("/api/insights", tags=["insight"])
     def api_insights(
+        request: Request,
         limit_samples: int = Query(60),
         history: int = Query(3),
         runtime: int = Query(0),
         include_events: int = Query(1),
+        user_profile: str = Query(""),
     ) -> JSONResponse:
         CW, load_config, _, get_runtime = _env()
         STATS = getattr(CW, "STATS", None)
@@ -1068,6 +1072,105 @@ def register_insights(app: FastAPI) -> None:
         state: dict[str, Any] | None = _load_state_features(state_features)
         events_raw: list[dict[str, Any]] = []
         _lane_cache: dict[tuple[int, int, int], tuple[dict[str, dict[str, Any]], dict[str, bool]]] = {}
+        cfg = load_config() or {}
+        scoped_profile = ""
+        user_filter: dict[str, list[str]] = {}
+
+        try:
+            from api.appAuthAPI import COOKIE_NAME, effective_user_profile_id
+
+            token = request.cookies.get(COOKIE_NAME)
+            scoped_profile = effective_user_profile_id(cfg, token, user_profile)
+        except Exception:
+            scoped_profile = "__none__"
+
+        if str(scoped_profile or "").strip():
+            user_filter = instances_for_user_profile(cfg, scoped_profile)
+            if not user_filter:
+                user_filter = {"__NONE__": ["__NONE__"]}
+
+        wanted_instances: dict[str, set[str]] = {}
+        for provider, instances in user_filter.items():
+            prov = provider_display_key(provider)
+            vals = {
+                normalize_instance_id(inst)
+                for inst in (instances if isinstance(instances, list) else [instances])
+                if normalize_instance_id(inst)
+            }
+            if prov and vals:
+                wanted_instances[prov] = vals
+
+        def _allows_instance(provider: Any, instance: Any) -> bool:
+            if not wanted_instances:
+                return True
+            prov = provider_display_key(provider)
+            inst = normalize_instance_id(instance)
+            return bool(prov and inst and inst in wanted_instances.get(prov, set()))
+
+        def _item_matches_scope(item: dict[str, Any]) -> bool:
+            if not wanted_instances:
+                return True
+            sources = item.get("sources_by_provider") or item.get("sourcesByProvider")
+            if isinstance(sources, dict):
+                for provider, raw_instances in sources.items():
+                    values = raw_instances if isinstance(raw_instances, list) else [raw_instances]
+                    if any(_allows_instance(provider, inst) for inst in values):
+                        return True
+            return _allows_instance(
+                item.get("provider") or item.get("source") or item.get("added_src"),
+                item.get("provider_instance") or item.get("source_instance") or item.get("added_instance") or item.get("instance"),
+            )
+
+        def _event_matches_scope(item: dict[str, Any]) -> bool:
+            if not wanted_instances:
+                return True
+            checks = (
+                (item.get("provider"), item.get("provider_instance") or item.get("instance")),
+                (item.get("source"), item.get("source_instance")),
+                (item.get("target"), item.get("target_instance")),
+            )
+            if any(_allows_instance(provider, instance) for provider, instance in checks):
+                return True
+            targets = item.get("targets")
+            if isinstance(targets, list):
+                for target in targets:
+                    if isinstance(target, dict) and _allows_instance(target.get("target") or target.get("provider"), target.get("target_instance") or target.get("instance")):
+                        return True
+            return False
+
+        def _scope_state(src: dict[str, Any] | None) -> dict[str, Any] | None:
+            if not wanted_instances or not isinstance(src, dict):
+                return src
+            out = dict(src)
+            providers = src.get("providers")
+            if isinstance(providers, dict):
+                scoped_providers: dict[str, Any] = {}
+                for provider, pdata in providers.items():
+                    prov = provider_display_key(provider)
+                    allowed = wanted_instances.get(prov)
+                    if not allowed or not isinstance(pdata, dict):
+                        continue
+                    next_data: dict[str, Any] = {}
+                    if "default" in allowed:
+                        next_data.update({k: v for k, v in pdata.items() if k != "instances"})
+                    insts = pdata.get("instances")
+                    if isinstance(insts, dict):
+                        keep = {
+                            str(iid): idata
+                            for iid, idata in insts.items()
+                            if normalize_instance_id(iid) in allowed and isinstance(idata, dict)
+                        }
+                        if keep:
+                            next_data["instances"] = keep
+                    if next_data:
+                        scoped_providers[str(provider)] = next_data
+                out["providers"] = scoped_providers
+            wall_items = src.get("wall")
+            if isinstance(wall_items, list):
+                out["wall"] = [item for item in wall_items if isinstance(item, dict) and _item_matches_scope(item)]
+            return out
+
+        state = _scope_state(state)
 
         def _safe_parse_epoch(v: Any) -> int:
             try:
@@ -1488,9 +1591,11 @@ def register_insights(app: FastAPI) -> None:
             try:
                 with lock:
                     data = STATS.data or {}
-                samples_raw = list((data or {}).get("samples") or [])
+                samples_raw = [] if wanted_instances else list((data or {}).get("samples") or [])
                 
                 events_raw = list((data or {}).get("events") or [])
+                if wanted_instances:
+                    events_raw = [e for e in events_raw if isinstance(e, dict) and _event_matches_scope(e)]
                 if int(include_events):
                     state_for_maps = state or {}
                     key_map, id_map = _build_show_title_maps(state_for_maps)
@@ -1513,7 +1618,7 @@ def register_insights(app: FastAPI) -> None:
                     events = _sort_events(events)
                 else:
                     events = []
-                http_block = dict((data or {}).get("http") or {})
+                http_block = {} if wanted_instances else dict((data or {}).get("http") or {})
                 generated_at = (data or {}).get("generated_at")
 
                 samples: list[dict[str, Any]] = [r for r in samples_raw if isinstance(r, dict)]
@@ -1537,7 +1642,7 @@ def register_insights(app: FastAPI) -> None:
         rows: list[dict[str, Any]] = []
         try:
             history_limit = max(0, int(history))
-            if history_limit > 0:
+            if history_limit > 0 and not wanted_instances:
                 from cw_platform.local_db.sync_reports import base_path_from_report_dir, list_reports
 
                 rows = list_reports(
@@ -1557,8 +1662,9 @@ def register_insights(app: FastAPI) -> None:
 
         if not wall and state:
             wall = list(state.get("wall") or [])
+        if wanted_instances:
+            wall = [item for item in wall if isinstance(item, dict) and _item_matches_scope(item)]
 
-        cfg = load_config() or {}
         api_key = str(((cfg.get("tmdb") or {}).get("api_key") or "")).strip()
         use_tmdb = bool(api_key) and bool(int(runtime)) and CACHE_DIR is not None
 
@@ -1631,6 +1737,8 @@ def register_insights(app: FastAPI) -> None:
                 profiles: list[dict[str, str]] = []
                 for inst in list_instance_ids(cfg, "crosswatch"):
                     norm = normalize_instance_id(inst)
+                    if wanted_instances and not _allows_instance("crosswatch", norm):
+                        continue
                     block = get_provider_block(cfg, "crosswatch", norm)
                     if not block and norm != "default":
                         continue
@@ -1640,7 +1748,7 @@ def register_insights(app: FastAPI) -> None:
 
                 info["_profiles"] = profiles
                 info["_by_profile"] = by_profile
-                info.update(by_profile.get("default") or {})
+                info.update(by_profile.get("default") or (by_profile.get(profiles[0]["id"]) if profiles else {}) or {})
             except Exception:
                 pass
             return info
@@ -1698,7 +1806,7 @@ def register_insights(app: FastAPI) -> None:
         }
 
         prov_block: dict[str, Any] = (state or {}).get("providers") or {}
-        providers_set: set[str] = set(sync_provider_names(upper=False))
+        providers_set: set[str] = {provider.lower() for provider in wanted_instances} if wanted_instances else set(sync_provider_names(upper=False))
         try:
             providers_set.update(
                 str(k).strip().lower()
@@ -1711,6 +1819,10 @@ def register_insights(app: FastAPI) -> None:
         try:
             raw_pairs = (cfg.get("pairs") or cfg.get("connections") or [])
             cfg_pairs: list[Any] = raw_pairs if isinstance(raw_pairs, list) else []
+            if wanted_instances:
+                from cw_platform.access_policy import profile_allows_pair
+
+                cfg_pairs = [p for p in cfg_pairs if isinstance(p, dict) and profile_allows_pair(user_filter, p)]
             for p in cfg_pairs:
                 if not isinstance(p, dict):
                     continue
@@ -1723,7 +1835,7 @@ def register_insights(app: FastAPI) -> None:
         except Exception:
             cfg_pairs = []
 
-        active: dict[str, bool] = {k: False for k in providers_set}
+        active: dict[str, bool] = {k: bool(wanted_instances) for k in providers_set}
         try:
             for p in (cfg_pairs or []):
                 if not isinstance(p, dict):
@@ -1854,6 +1966,11 @@ def register_insights(app: FastAPI) -> None:
                 instances_by_provider[key] = insts
         except Exception:
             pass
+        if wanted_instances:
+            instances_by_provider = {
+                provider.lower(): sorted(instances)
+                for provider, instances in wanted_instances.items()
+            }
 
         providers_instances_by_feature: dict[str, dict[str, dict[str, int]]] = {
             feat: {k: {"default": 0} for k in providers_set} for feat in feature_keys
@@ -1871,7 +1988,7 @@ def register_insights(app: FastAPI) -> None:
                     inst_counts: dict[str, int] = {}
                     for inst_id, node in _iter_provider_feature_nodes(pdata, feat):
                         inst_counts[inst_id] = _count_items(node, feat)
-                    if "default" not in inst_counts:
+                    if "default" not in inst_counts and not wanted_instances:
                         inst_counts["default"] = 0
                     providers_instances_by_feature[feat][key] = inst_counts
                     providers_by_feature[feat][key] = sum(int(v or 0) for v in inst_counts.values())
@@ -1931,7 +2048,7 @@ def register_insights(app: FastAPI) -> None:
                             "episodes": int(per_counts.get("episodes") or 0),
                         }
 
-                    if "default" not in inst_mse:
+                    if "default" not in inst_mse and not wanted_instances:
                         inst_mse["default"] = {"movies": 0, "shows": 0, "anime": 0, "episodes": 0}
 
                     providers_instances_mse_by_feature[feat][key] = inst_mse
@@ -2105,4 +2222,6 @@ def register_insights(app: FastAPI) -> None:
             "added": int(wl.get("added", 0) or 0),
             "removed": int(wl.get("removed", 0) or 0),
         }
+        if scoped_profile:
+            payload["user_profile"] = str(scoped_profile or "").strip()
         return JSONResponse(payload)

@@ -382,7 +382,7 @@ def list_events(
 
     display_items = _group_route_fanout(items) if group_routes else items
     start = max(0, int(offset or 0))
-    cap = max(1, min(500, int(limit or 100)))
+    cap = max(1, min(DEFAULT_LIMIT, int(limit or 100)))
     page = display_items[start:start + cap]
     return {
         "ok": True,

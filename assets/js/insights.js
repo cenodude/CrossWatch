@@ -17,6 +17,16 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
   const featureLabel = v => featureMeta.label?.(v) || FEAT_LABEL[lc(v)] || String(v || "");
   const providerLabel = v => providerMeta.label?.(v) || String(v || "");
   const providerLogo = v => providerMeta.logoPath?.(v) || "";
+  const overviewProfile = () => w.CW?.OverviewProfile || null;
+  const overviewProfileId = () => String(overviewProfile()?.id || "").trim();
+  const overviewFilter = () => overviewProfile()?.filter || {};
+  const overviewInstancesFor = prov => {
+    const filter = overviewFilter();
+    const up = String(prov || "").trim().toUpperCase();
+    const low = lc(prov);
+    return Array.isArray(filter[up]) ? filter[up].map(String) : Array.isArray(filter[low]) ? filter[low].map(String) : null;
+  };
+  const overviewHasScope = () => !!Object.keys(overviewFilter() || {}).length;
   const titleOf = x => x?.display_title || x?.title || x?.series_title || x?.name || (x?.type === "episode" && x?.series_title && Number.isInteger(x?.season) && Number.isInteger(x?.episode) ? `${x.series_title} S${String(x.season).padStart(2,"0")}E${String(x.episode).padStart(2,"0")}` : x?.key) || "item";
   const subtitleOf = x => x?.display_subtitle || "";
   const readJSON = (key, fallback = {}) => { try { return JSON.parse(localStorage.getItem(key) || "{}") || fallback; } catch { return fallback; } };
@@ -127,6 +137,10 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
 
   const getConfiguredProviders = async force => {
     try {
+      if (document.documentElement?.dataset?.cwRole === "user") {
+        const keys = Object.keys(overviewFilter() || {}).map(k => String(k || "").trim()).filter(Boolean);
+        if (keys.length) return new Set(keys);
+      }
       let cfg = w._cfgCache;
       const needsConfigLoad = force || !cfg || typeof cfg !== "object" || !Object.keys(cfg).length;
       if (needsConfigLoad && typeof w.CW?.API?.Config?.load === "function") {
@@ -165,25 +179,31 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
 
   function filterProviderTotals(block, instancesByProvider = {}) {
     const raw = block?.raw || {}, instCounts = raw.providers_instances, instMse = raw.providers_instances_mse;
-    if (!selectionDiffers(_prefs, instancesByProvider) || !instCounts || typeof instCounts !== "object") {
+    const activeOverviewFilter = overviewFilter();
+    const hasOverviewFilter = !!Object.keys(activeOverviewFilter || {}).length;
+    if (!hasOverviewFilter && (!selectionDiffers(_prefs, instancesByProvider) || !instCounts || typeof instCounts !== "object")) {
       return { providers: block.providers || {}, mse: raw.providers_mse || null, now: block.now };
     }
     const out = {}, outMse = {}, selected = _prefs?.instances || {}, zero = () => ({ movies:0, shows:0, anime:0, episodes:0 });
     for (const [prov, byInst] of Object.entries(instCounts || {})) {
       const key = lc(prov), map = byInst && typeof byInst === "object" ? byInst : {}, keys = Object.keys(map), want = Array.isArray(selected[key]) ? selected[key].map(String) : selected[key] === undefined ? keys : [];
-      out[key] = want.reduce((sum, id) => sum + (map[id] | 0), 0);
+      const overviewWant = activeOverviewFilter[String(prov || "").toUpperCase()] || activeOverviewFilter[String(prov || "").toLowerCase()];
+      const finalWant = hasOverviewFilter ? want.filter(id => (overviewWant || []).map(String).includes(String(id))) : want;
+      out[key] = finalWant.reduce((sum, id) => sum + (map[id] | 0), 0);
       const mseMap = instMse?.[key] && typeof instMse[key] === "object" ? instMse[key] : {}, agg = zero();
-      for (const id of want) {
+      for (const id of finalWant) {
         const part = mseMap[id];
         if (!part || typeof part !== "object") continue;
         agg.movies += part.movies | 0; agg.shows += part.shows | 0; agg.anime += part.anime | 0; agg.episodes += part.episodes | 0;
       }
       outMse[key] = agg;
     }
-    for (const [prov, v] of Object.entries(block.providers || {})) if (out[lc(prov)] === undefined) out[lc(prov)] = v | 0;
-    for (const [prov, v] of Object.entries(raw.providers_mse || {})) if (outMse[lc(prov)] === undefined) outMse[lc(prov)] = v;
+    if (!hasOverviewFilter) {
+      for (const [prov, v] of Object.entries(block.providers || {})) if (out[lc(prov)] === undefined) out[lc(prov)] = v | 0;
+      for (const [prov, v] of Object.entries(raw.providers_mse || {})) if (outMse[lc(prov)] === undefined) outMse[lc(prov)] = v;
+    }
     const vals = Object.values(out).map(v => v | 0).filter(v => v > 0);
-    return { providers: out, mse: outMse, now: vals.length ? Math.max(...vals) : block.now | 0 };
+    return { providers: out, mse: outMse, now: vals.length ? Math.max(...vals) : hasOverviewFilter ? 0 : block.now | 0 };
   }
 
   function pickBlock(data, feat) {
@@ -285,20 +305,25 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
   w.addEventListener("resize", refitProviderNumbers, { passive: true });
 
   const footWrap = () => {
+    const stats = $("#stats-card");
+    if (!stats) {
+      $("#insights-footer")?.remove();
+      return null;
+    }
     let foot = $("#insights-footer");
     if (!foot) {
       foot = d.createElement("div");
       foot.id = "insights-footer";
       foot.className = "ins-footer";
       foot.innerHTML = '<div class="ins-foot-wrap"></div>';
-      ($("#stats-card") || d.body).appendChild(foot);
+      stats.appendChild(foot);
     }
     return $(".ins-foot-wrap", foot) || foot;
   };
 
   function placeSwitchBeforeTiles() {
     const wrap = footWrap(), sw = $("#insights-switch"), grid = $("#stat-providers");
-    if (!sw) return;
+    if (!wrap || !sw) return;
     if (!wrap.contains(sw)) wrap.appendChild(sw);
     const ref = grid?.parentNode === wrap ? grid : null;
     if (sw.nextSibling !== ref) try { wrap.insertBefore(sw, ref); } catch {}
@@ -323,6 +348,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
 
   function ensureSwitch() {
     const wrap = footWrap();
+    if (!wrap) return;
     let host = $("#insights-switch");
     if (!host) {
       host = d.createElement("div");
@@ -356,13 +382,23 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     markActiveSwitcher();
   }
 
-  const providerSelected = prov => {
+  const providerSelected = (prov, instancesByProvider = {}) => {
+    const scoped = overviewInstancesFor(prov);
+    if (overviewHasScope() && !Array.isArray(scoped)) return false;
     const cur = _prefs?.instances?.[lc(prov)];
-    return cur === undefined || !Array.isArray(cur) ? cur !== false : cur.length > 0;
+    const selected = cur === undefined || !Array.isArray(cur)
+      ? (cur !== false ? (instancesByProvider?.[lc(prov)] || instancesByProvider?.[String(prov || "").toUpperCase()] || []) : [])
+      : cur.map(String);
+    if (!overviewHasScope()) return cur === undefined || !Array.isArray(cur) ? cur !== false : cur.length > 0;
+    if (!Array.isArray(scoped)) return false;
+    if (!selected.length) return scoped.length > 0;
+    const allowed = new Set(scoped.map(String));
+    return selected.some(id => allowed.has(String(id)));
   };
 
   function renderProviderStats(provTotals = {}, provActive = {}, configuredSet = new Set(), breakdownMap = {}, instancesByProvider = {}, animate = true) {
     const wrap = footWrap();
+    if (!wrap) return;
     let host = $("#stat-providers");
     if (!host) {
       host = d.createElement("div");
@@ -371,6 +407,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     } else if (host.parentNode !== wrap) wrap.appendChild(host);
     if (!host.dataset.bound) {
       host.addEventListener("click", ev => {
+        if (document.documentElement?.dataset?.cwRole === "user") return;
         const tile = ev.target.closest('.tile[data-provider="crosswatch"]');
         if (tile && _feature !== "playlists") openCrosswatchSnapshotPicker(_feature);
       });
@@ -491,9 +528,11 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     const list = $(".list", wrap);
     if (!list) return;
     const display = recentSyncsDisplay();
+    const profile = window.CW?.OverviewProfile;
     const rows = (Array.isArray(hist) ? hist : []).slice()
       .sort((a, b) => new Date(b.finished_at || b.started_at || 0) - new Date(a.finished_at || a.started_at || 0))
       .filter(row => row?.features_enabled?.[_feature] !== false)
+      .filter(row => !profile?.filter || !Object.keys(profile.filter || {}).length || profile.matchesEndpoint(row?.source, row?.source_instance) || profile.matchesEndpoint(row?.target, row?.target_instance))
       .filter(row => display.mode !== "hours" || ((rowTs(row) || 0) >= display.sinceMs))
       .slice(0, display.limit);
     if (!rows.length) return void (list.innerHTML = `<div class="history-item"><div class="history-meta muted">${display.mode === "hours" ? `No runs in the last ${display.hours} hours` : "No runs for this feature"}</div></div>`);
@@ -555,8 +594,9 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
   async function refreshInsights(force = false) {
     if (authSetupPending()) return;
     try {
+      const profileParam = overviewProfileId() ? `&user_profile=${encodeURIComponent(overviewProfileId())}` : "";
       const [data] = await Promise.all([
-        fetchJSON(`/api/insights?limit_samples=60&history=60${force ? `&t=${Date.now()}` : ""}`),
+        fetchJSON(`/api/insights?limit_samples=60&history=60${profileParam}${force ? `&t=${Date.now()}` : ""}`),
         getConfiguredProviders(force).catch(() => null),
       ]);
       await renderFromData(data, false, force);
@@ -573,8 +613,9 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     if (!force && now - _lastStatsFetch < 900) return;
     _lastStatsFetch = now;
     try {
+      const profileParam = overviewProfileId() ? `&user_profile=${encodeURIComponent(overviewProfileId())}` : "";
       const [data] = await Promise.all([
-        fetchJSON(`/api/insights?limit_samples=0&history=0&include_events=0${force ? `&t=${Date.now()}` : ""}`),
+        fetchJSON(`/api/insights?limit_samples=0&history=0&include_events=0${profileParam}${force ? `&t=${Date.now()}` : ""}`),
         getConfiguredProviders(force).catch(() => null),
       ]);
       await renderFromData(data, true, force);
@@ -596,6 +637,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
   }
 
   w.addEventListener("insights:settings-changed", () => { _prefs = loadPrefs(); _visibleFeats = visibleFeatures(_prefs); _feature = clampFeature(_feature); localStorage.setItem("insights.feature", _feature); refreshInsightsFastThenFull(true); });
+  w.addEventListener("cw:overview-profile-changed", () => refreshInsightsFastThenFull(true));
 
   w.Insights = Object.assign(w.Insights || {}, {
     renderSparkline, refreshInsights, refreshStats, fetchJSON, animateNumber, animateChart, titleOf, subtitleOf,

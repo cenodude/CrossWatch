@@ -186,7 +186,18 @@
     if (configCheck) return configCheck;
     configCheck = (async () => {
       try {
-        const cfg = await fetchJSON("/api/config");
+        let cfg;
+        if (window.CW?.API?.Config?.load) {
+          cfg = await window.CW.API.Config.load(false);
+        } else {
+          try {
+            cfg = document.documentElement?.dataset?.cwRole === "user" ? await fetchJSON("/api/config/meta") : await fetchJSON("/api/config");
+          } catch (e) {
+            const msg = String(e?.message || e || "");
+            if (!msg.includes("401") && !msg.includes("403")) throw e;
+            cfg = await fetchJSON("/api/config/meta");
+          }
+        }
         if (cfg && typeof cfg === "object") window._cfgCache = cfg;
         const ui = cfg && typeof cfg.ui === "object" ? cfg.ui : {};
         const enabled = typeof ui.show_recent_activity === "boolean" ? !!ui.show_recent_activity : true;
@@ -223,6 +234,8 @@
       const display = recentDisplay();
       const params = new URLSearchParams({ limit: String(display.limit) });
       if (display.mode === "hours" && display.since) params.set("since", String(display.since));
+      const userProfile = String(window.CW?.OverviewProfile?.id || "").trim();
+      if (userProfile) params.set("user_profile", userProfile);
       const data = await fetchJSON(`/api/activity/recent?${params.toString()}`);
       if (!data || data.ok !== true || !Array.isArray(data.items)) {
         throw new Error("invalid_activity_response");
@@ -289,7 +302,8 @@
     const q = encodeURIComponent(String($("#activity-q", modal)?.value || ""));
     const media = encodeURIComponent(String($("#activity-media", modal)?.value || "all"));
     const status = encodeURIComponent(String($("#activity-status", modal)?.value || "all"));
-    return `limit=${PAGE_SIZE}&offset=${state.offset}&media_type=${media}&status=${status}&q=${q}`;
+    const userProfile = encodeURIComponent(String(window.CW?.OverviewProfile?.id || "").trim());
+    return `limit=${PAGE_SIZE}&offset=${state.offset}&media_type=${media}&status=${status}&q=${q}${userProfile ? `&user_profile=${userProfile}` : ""}`;
   }
 
   async function loadActivityPage(reset) {
@@ -365,6 +379,10 @@
   });
   window.addEventListener("settings-changed", () => setTimeout(refreshRecentActivity, 300));
   window.addEventListener("activity-log-cleared", () => {
+    refreshRecentActivity();
+    if (state.modal && !state.modal.classList.contains("hidden")) loadActivityPage(true);
+  });
+  window.addEventListener("cw:overview-profile-changed", () => {
     refreshRecentActivity();
     if (state.modal && !state.modal.classList.contains("hidden")) loadActivityPage(true);
   });
