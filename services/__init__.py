@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Callable
 from fastapi import FastAPI
 
-from . import watchlist, scheduling, statistics, editor, analyzer, export, importer, snapshots, authPlex
+from . import watchlist, scheduling, statistics, editor, analyzer, export, importer, snapshots, authPlex, authOidc
 
 SERVICE_MODULES = (watchlist, scheduling, statistics, editor, analyzer, export, importer)
 
@@ -18,6 +18,7 @@ __all__ = [
     "importer",
     "snapshots",
     "authPlex",
+    "authOidc",
     "register",
 ]
 

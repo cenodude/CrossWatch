@@ -10,11 +10,12 @@ import time
 from collections.abc import Mapping
 from datetime import datetime
 from functools import lru_cache
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, cast
 
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 
+from cw_platform.access_policy import managed_profile_instances, request_user, user_can_access_instance
 from cw_platform.config_base import CONFIG as CONFIG_DIR, load_config
 from cw_platform.history_events import base_key_from_history_event, history_epoch_from_key, is_history_event_key
 from cw_platform.modules_registry import load_sync_ops
@@ -56,6 +57,28 @@ def _load_config_safe() -> dict[str, Any]:
         return {}
 
 
+def _allowed_provider_map(cfg: Mapping[str, Any], request: Request | None) -> dict[str, list[str]] | None:
+    user = request_user(request)
+    if not user or bool(user.get("is_admin")):
+        return None
+    return managed_profile_instances(cfg, user)
+
+
+def _export_instance_for_request(cfg: Mapping[str, Any], request: Request | None, provider: str, provider_instance: str) -> str:
+    inst = str(provider_instance or "all").strip() or "all"
+    user = request_user(request)
+    if not user or bool(user.get("is_admin")):
+        return inst
+    allowed = managed_profile_instances(cfg, user).get(str(provider or "").strip().upper()) or []
+    if inst.lower() in {"all", "any", "*"}:
+        if allowed:
+            return allowed[0]
+        raise HTTPException(403, "profile_scope_denied")
+    if not user_can_access_instance(cfg, user, provider, inst):
+        raise HTTPException(403, "profile_scope_denied")
+    return inst
+
+
 def _cfg_block_for_provider(cfg: dict[str, Any], provider: str) -> dict[str, Any]:
     p = str(provider or "").strip().lower()
     keys = [p]
@@ -72,13 +95,16 @@ def _cfg_block_for_provider(cfg: dict[str, Any], provider: str) -> dict[str, Any
 
 def _configured_instance_label(cfg: dict[str, Any], provider: str, instance_id: str, fallback: str) -> str:
     inst = str(instance_id or "").strip()
-    if not inst or inst.lower() == _DEFAULT_INSTANCE:
-        return "Default"
     blk = _cfg_block_for_provider(cfg, provider)
-    insts = blk.get("instances")
-    ib = insts.get(inst) if isinstance(insts, dict) else None
+    if not inst or inst.lower() == _DEFAULT_INSTANCE:
+        ib = blk
+    else:
+        insts = blk.get("instances")
+        ib = insts.get(inst) if isinstance(insts, dict) else None
     label = sanitize_instance_label((ib or {}).get("label") if isinstance(ib, dict) else "")
-    return f"{fallback} - {label}" if label else fallback
+    if label:
+        return label if not inst or inst.lower() == _DEFAULT_INSTANCE else f"{fallback} - {label}"
+    return "Default" if not inst or inst.lower() == _DEFAULT_INSTANCE else fallback
 
 
 _DEFAULT_INSTANCE = "default"
@@ -1048,10 +1074,14 @@ _BUILDERS: dict[str, Callable[..., Response]] = {
 
 
 @router.get("/export/options", response_class=JSONResponse)
-def api_export_options() -> dict[str, Any]:
+def api_export_options(request: Request = cast(Request, None)) -> dict[str, Any]:
     s = _load_state(_EXPORT_STATE_FEATURES)
     cfg = _load_config_safe()
     provs = _providers_in_state(s)
+    allowed_map = _allowed_provider_map(cfg, request)
+    if allowed_map is not None:
+        allowed_providers = set(allowed_map.keys())
+        provs = [provider for provider in provs if str(provider or "").strip().upper() in allowed_providers]
     features = ["watchlist", "history", "ratings", "combined"]
 
     def insts_for(p: str) -> list[dict[str, str]]:
@@ -1064,6 +1094,9 @@ def api_export_options() -> dict[str, Any]:
             for inst_id in sorted(insts.keys(), key=lambda x: str(x)):
                 iid = str(inst_id)
                 out.append({"id": iid, "label": _configured_instance_label(cfg, p, iid, iid)})
+        if allowed_map is not None:
+            allowed = set(allowed_map.get(str(p or "").strip().upper()) or [])
+            out = [row for row in out if str(row.get("id") or "default") in allowed]
         return out
 
     instances: dict[str, list[dict[str, str]]] = {p: insts_for(p) for p in provs}
@@ -1123,13 +1156,15 @@ def api_export_sample(
     include_rewatches: bool = Query(True, description="Keep separate history events when supported by the source provider"),
     limit: int = Query(25, ge=1, le=250),
     q: str = Query("", description="case-insensitive multi-token contains"),
+    request: Request = cast(Request, None),
 ) -> dict[str, Any]:
     feature = feature.lower().strip()
     q = q if isinstance(q, str) else ""
     limit = limit if isinstance(limit, int) else 25
     s = _load_state(_state_features_for_export(feature))
     provider = (provider or "").upper().strip()
-    inst = (provider_instance or "all").strip() or "all"
+    cfg = _load_config_safe()
+    inst = _export_instance_for_request(cfg, request, provider, provider_instance)
     fmt = format.lower().strip()
     media = _parse_media_types(media_types)
     rewatch_supported = _provider_rewatch_read_supported(provider)
@@ -1202,6 +1237,7 @@ def api_export_file(
     include_rewatches: bool = Query(True, description="Keep separate history events when supported by the source provider"),
     q: str = Query("", description="optional search filter (server-side)"),
     ids: str = Query("", description="optional CSV of keys to include (overrides q)"),
+    request: Request = cast(Request, None),
 ) -> Response:
     provider_in = (provider or "").upper().strip()
     provider_eff = provider_in or "TRAKT"
@@ -1209,7 +1245,8 @@ def api_export_file(
     q = q if isinstance(q, str) else ""
     s = _load_state(_state_features_for_export(feature))
     fmt = format.lower().strip()
-    inst = (provider_instance or "all").strip() or "all"
+    cfg = _load_config_safe()
+    inst = _export_instance_for_request(cfg, request, provider_eff, provider_instance)
     media = _parse_media_types(media_types)
     rewatch_mode = bool(include_rewatches and _provider_rewatch_read_supported(provider_eff))
 

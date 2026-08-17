@@ -16,9 +16,10 @@ import re
 import threading
 
 import requests
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from cw_platform.access_policy import filter_pairs_for_user, pair_ids_for_user, request_user
 from cw_platform.config_base import CONFIG as CONFIG_DIR, load_config
 from cw_platform.orchestrator._history_rewatches import history_event_present
 from cw_platform.local_db.legacy_files import DB_MANAGED_ARTIFACTS
@@ -48,6 +49,7 @@ _INFLIGHT_LOCKS: dict[tuple[Any, ...], threading.Lock] = {}
 _LOG = logging.getLogger("crosswatch.analyzer")
 _TRACKER_PROVIDER_BASES = {"CROSSWATCH", "TRAKT", "SIMKL", "MDBLIST", "ANILIST"}
 _MEDIA_SERVER_PROVIDER_BASES = {"PLEX", "EMBY", "JELLYFIN"}
+_STRICT_PAIRS_PREFIX = "__cw_strict_pairs__:"
 
 
 def _sig_lock(sig: tuple[Any, ...]) -> threading.Lock:
@@ -292,15 +294,29 @@ def _safe_scope(value: str) -> str:
 def _parse_pairs_raw(pairs_raw: str | None) -> list[str]:
     if not pairs_raw:
         return []
+    raw_text = str(pairs_raw)
+    if raw_text.startswith(_STRICT_PAIRS_PREFIX):
+        raw_text = raw_text[len(_STRICT_PAIRS_PREFIX):]
     out: list[str] = []
     seen: set[str] = set()
-    for part in str(pairs_raw).split(","):
+    for part in raw_text.split(","):
         v = str(part or "").strip()
         if not v or v in seen:
             continue
         seen.add(v)
         out.append(v)
     return out
+
+
+def _scoped_pairs_arg(request: Request | None, pairs_raw: str | None) -> str | None:
+    user = request_user(request)
+    if not user or bool(user.get("is_admin")):
+        return pairs_raw
+    cfg = _cfg()
+    allowed = pair_ids_for_user(cfg, user)
+    requested = _parse_pairs_raw(pairs_raw)
+    selected = [pid for pid in requested if pid in allowed] if requested else sorted(allowed)
+    return _STRICT_PAIRS_PREFIX + ",".join(selected)
 
 
 def _pair_id(pair: Mapping[str, Any]) -> str:
@@ -437,6 +453,7 @@ def _load_state_at(path: Path) -> dict[str, Any]:
 
 
 def _load_state_handles(pairs_raw: str | None, features: Iterable[str] | None = None) -> list[dict[str, Any]]:
+    strict_pairs = str(pairs_raw or "").startswith(_STRICT_PAIRS_PREFIX)
     pairs = _parse_pairs_raw(pairs_raw)
     handles: list[dict[str, Any]] = []
     if pairs:
@@ -452,7 +469,6 @@ def _load_state_handles(pairs_raw: str | None, features: Iterable[str] | None = 
             handles.append({"pair": pid, "safe": safe, "path": path, "state": _load_state_at(path)})
         if handles:
             return handles
-
     state = _load_main_state(features)
     if state.get("providers") or _main_state_db_exists():
         return [{"pair": None, "safe": None, "main": True, "state": state}]
@@ -4061,7 +4077,8 @@ def _detail_for_item(pairs_raw: str | None, provider: str, feature: str, key: st
     return {"targets": missing_targets, "hints": hints, "target_show_info": details}
 
 @router.get("/analyzer/state", response_class=JSONResponse)
-def api_state(pairs: str | None = None, offset: int = 0, limit: int = 250) -> dict[str, Any]:
+def api_state(pairs: str | None = None, offset: int = 0, limit: int = 250, request: Request = cast(Request, None)) -> dict[str, Any]:
+    pairs = _scoped_pairs_arg(request, pairs)
     try:
         items, counts = _cached_scoped_rows(pairs)
     except HTTPException as e:
@@ -4083,20 +4100,28 @@ def api_state(pairs: str | None = None, offset: int = 0, limit: int = 250) -> di
 
 
 @router.get("/analyzer/problems", response_class=JSONResponse)
-def api_problems(pairs: str | None = None, include_system: bool = False, include_hints: bool = False) -> dict[str, Any]:
+def api_problems(pairs: str | None = None, include_system: bool = False, include_hints: bool = False, request: Request = cast(Request, None)) -> dict[str, Any]:
+    pairs = _scoped_pairs_arg(request, pairs)
+    user = request_user(request)
+    if user and not bool(user.get("is_admin")):
+        include_system = False
     return _cached_analysis(pairs, include_system=include_system, include_hints=include_hints)
 
 
 @router.get("/analyzer/system", response_class=JSONResponse)
-def api_system(pairs: str | None = None) -> dict[str, Any]:
+def api_system(pairs: str | None = None, request: Request = cast(Request, None)) -> dict[str, Any]:
+    user = request_user(request)
+    if user and not bool(user.get("is_admin")):
+        return {"problems": [], "summary": {"total": 0, "by_severity": {}, "by_category": {}, "by_type": {}}}
     return _cached_system()
 
 
 @router.get("/analyzer/pair-activity", response_class=JSONResponse)
-def api_pair_activity() -> dict[str, Any]:
+def api_pair_activity(request: Request = cast(Request, None)) -> dict[str, Any]:
     cfg = _cfg()
     out: list[dict[str, Any]] = []
-    for pair in cfg.get("pairs") or []:
+    pairs = filter_pairs_for_user(cfg, request_user(request), [pair for pair in cfg.get("pairs") or [] if isinstance(pair, dict)])
+    for pair in pairs:
         if not isinstance(pair, dict):
             continue
         pid = str(pair.get("id") or "").strip()
@@ -4114,17 +4139,20 @@ def api_pair_activity() -> dict[str, Any]:
 
 
 @router.get("/analyzer/detail", response_class=JSONResponse)
-def api_detail(provider: str, feature: str, key: str, pairs: str | None = None) -> dict[str, Any]:
+def api_detail(provider: str, feature: str, key: str, pairs: str | None = None, request: Request = cast(Request, None)) -> dict[str, Any]:
+    pairs = _scoped_pairs_arg(request, pairs)
     return _detail_for_item(pairs, provider, feature, key)
 
 
 @router.get("/analyzer/ratings-audit", response_class=JSONResponse)
-def api_ratings_audit(pairs: str | None = None) -> dict[str, Any]:
+def api_ratings_audit(pairs: str | None = None, request: Request = cast(Request, None)) -> dict[str, Any]:
+    pairs = _scoped_pairs_arg(request, pairs)
     s = _load_state(pairs, {"ratings"})
     return _ratings_audit(s)
 
 @router.get("/analyzer/cw-state", response_class=JSONResponse)
-def api_cw_state(pairs: str | None = None) -> dict[str, Any]:
+def api_cw_state(pairs: str | None = None, request: Request = cast(Request, None)) -> dict[str, Any]:
+    pairs = _scoped_pairs_arg(request, pairs)
     try:
         handles = _load_state_handles(pairs)
         scopes = {h.get("safe") for h in handles if h.get("safe")}
@@ -4134,7 +4162,8 @@ def api_cw_state(pairs: str | None = None) -> dict[str, Any]:
     return _read_cw_state(allowed)
 
 @router.post("/analyzer/patch", response_class=JSONResponse)
-def api_patch(payload: dict[str, Any], pairs: str | None = None) -> dict[str, Any]:
+def api_patch(payload: dict[str, Any], pairs: str | None = None, request: Request = cast(Request, None)) -> dict[str, Any]:
+    pairs = _scoped_pairs_arg(request, pairs)
     for f in ("provider", "feature", "key", "ids"):
         if f not in payload:
             raise HTTPException(400, f"Missing {f}")
@@ -4199,7 +4228,8 @@ def api_patch(payload: dict[str, Any], pairs: str | None = None) -> dict[str, An
     return {"ok": True, "new_key": new_key}
 
 @router.post("/analyzer/suggest", response_class=JSONResponse)
-def api_suggest(payload: dict[str, Any], pairs: str | None = None) -> dict[str, Any]:
+def api_suggest(payload: dict[str, Any], pairs: str | None = None, request: Request = cast(Request, None)) -> dict[str, Any]:
+    pairs = _scoped_pairs_arg(request, pairs)
     for f in ("provider", "feature", "key"):
         if f not in payload:
             raise HTTPException(400, f"Missing {f}")
@@ -4209,7 +4239,8 @@ def api_suggest(payload: dict[str, Any], pairs: str | None = None) -> dict[str, 
 
 
 @router.post("/analyzer/fix", response_class=JSONResponse)
-def api_fix(payload: dict[str, Any], pairs: str | None = None) -> dict[str, Any]:
+def api_fix(payload: dict[str, Any], pairs: str | None = None, request: Request = cast(Request, None)) -> dict[str, Any]:
+    pairs = _scoped_pairs_arg(request, pairs)
     for f in ("type", "provider", "feature", "key"):
         if f not in payload:
             raise HTTPException(400, f"Missing {f}")
@@ -4239,7 +4270,8 @@ def api_fix(payload: dict[str, Any], pairs: str | None = None) -> dict[str, Any]
     return out or {"ok": True}
 
 @router.patch("/analyzer/item", response_class=JSONResponse)
-def api_edit(payload: dict[str, Any], pairs: str | None = None) -> dict[str, Any]:
+def api_edit(payload: dict[str, Any], pairs: str | None = None, request: Request = cast(Request, None)) -> dict[str, Any]:
+    pairs = _scoped_pairs_arg(request, pairs)
     for f in ("provider", "feature", "key", "updates"):
         if f not in payload:
             raise HTTPException(400, f"Missing {f}")
@@ -4296,7 +4328,8 @@ def api_edit(payload: dict[str, Any], pairs: str | None = None) -> dict[str, Any
     return {"ok": True, "new_key": new_key}
 
 @router.delete("/analyzer/item", response_class=JSONResponse)
-def api_delete(payload: dict[str, Any], pairs: str | None = None) -> dict[str, Any]:
+def api_delete(payload: dict[str, Any], pairs: str | None = None, request: Request = cast(Request, None)) -> dict[str, Any]:
+    pairs = _scoped_pairs_arg(request, pairs)
     for f in ("provider", "feature", "key"):
         if f not in payload:
             raise HTTPException(400, f"Missing {f}")

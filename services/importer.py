@@ -11,12 +11,13 @@ import time
 import zipfile
 from collections.abc import Iterable, Mapping
 from datetime import date as dt_date, datetime, timezone
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
-from fastapi import APIRouter, Body, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Body, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from cw_platform.access_policy import request_user, user_can_access_instance
 from cw_platform.config_base import load_config
 from cw_platform.history_events import history_sync_key
 from cw_platform.id_map import canonical_key, coalesce_ids, minimal as id_minimal
@@ -1256,8 +1257,12 @@ def _public_rows(rows: Iterable[Mapping[str, Any]], limit: int, offset: int) -> 
 
 
 @router.get("/options", response_class=JSONResponse)
-def api_import_options() -> dict[str, Any]:
+def api_import_options(request: Request = cast(Request, None)) -> dict[str, Any]:
     cfg = load_config() or {}
+    targets = [
+        target for target in _target_instances(cfg)
+        if user_can_access_instance(cfg, request_user(request), "CROSSWATCH", target.get("id") or "default")
+    ]
     return {
         "sources": [
             {"id": "auto", "label": "Auto detect"},
@@ -1269,7 +1274,7 @@ def api_import_options() -> dict[str, Any]:
             {"id": "yamtrack", "label": "Yamtrack CSV"},
             {"id": "generic", "label": "Generic CSV/JSON"},
         ],
-        "targets": _target_instances(cfg),
+        "targets": targets,
         "features": sorted(FEATURES),
         "media_types": list(DEFAULT_MEDIA_TYPES),
         "statuses": list(STATUSES),
@@ -1293,12 +1298,16 @@ async def api_import_preview(
     file: UploadFile = File(...),
     source: str = Form("auto"),
     target_instance: str = Form("default"),
+    request: Request = cast(Request, None),
 ) -> dict[str, Any]:
     _clean_cache()
     requested = str(source or "auto").strip().lower()
     if requested not in IMPORT_SOURCES:
         raise _api_error(ERROR_UNSUPPORTED_FILE_TYPE, detail="Unsupported import source.")
     instance = normalize_instance_id(target_instance)
+    cfg = load_config() or {}
+    if not user_can_access_instance(cfg, request_user(request), "CROSSWATCH", instance):
+        raise _api_error(ERROR_TARGET_UNAVAILABLE, status_code=403, detail="profile_scope_denied")
     data = await _read_upload(file)
     filename = str(file.filename or "upload").strip()
     files = _safe_zip_members(data) if zipfile.is_zipfile(io.BytesIO(data)) else [(filename, data)]
@@ -1313,7 +1322,6 @@ async def api_import_preview(
     if not raw_rows:
         raise _api_error(ERROR_NO_ROWS, detail="No importable rows were found.")
 
-    cfg = load_config() or {}
     rows = _shape_rows(raw_rows, cfg, instance, detected)
     import_id = hashlib.sha256(f"{time.time_ns()}|{filename}|{len(data)}".encode("utf-8")).hexdigest()[:32]
     _PREVIEWS[import_id] = {
@@ -1348,11 +1356,15 @@ def api_import_preview_rows(
     q: str = Query(""),
     limit: int = Query(100, ge=1, le=MAX_PREVIEW_ROWS),
     offset: int = Query(0, ge=0),
+    request: Request = cast(Request, None),
 ) -> dict[str, Any]:
     _clean_cache()
     preview = _PREVIEWS.get(import_id)
     if not preview:
         raise _api_error(ERROR_PREVIEW_NOT_FOUND, status_code=404, detail="The import preview expired.")
+    cfg = load_config() or {}
+    if not user_can_access_instance(cfg, request_user(request), "CROSSWATCH", preview.get("target_instance") or "default"):
+        raise _api_error(ERROR_TARGET_UNAVAILABLE, status_code=403, detail="profile_scope_denied")
     feature_set = {f.strip() for f in features.split(",") if f.strip() in FEATURES}
     media_set = {m.strip() for m in media_types.split(",") if m.strip() in MEDIA_TYPES}
     base_rows = _filtered_rows(preview.get("rows") or [], features=feature_set, media_types=media_set, status="all", q=q)
@@ -1370,7 +1382,7 @@ def api_import_preview_rows(
 
 
 @router.post("/commit", response_class=JSONResponse)
-def api_import_commit(payload: ImportCommitRequest = Body(...)) -> dict[str, Any]:
+def api_import_commit(payload: ImportCommitRequest = Body(...), request: Request = cast(Request, None)) -> dict[str, Any]:
     _clean_cache()
     preview = _PREVIEWS.get(payload.import_id)
     if not preview:
@@ -1382,6 +1394,8 @@ def api_import_commit(payload: ImportCommitRequest = Body(...)) -> dict[str, Any
 
     cfg = load_config() or {}
     instance = normalize_instance_id(payload.target_instance or preview.get("target_instance") or "default")
+    if not user_can_access_instance(cfg, request_user(request), "CROSSWATCH", instance):
+        raise _api_error(ERROR_TARGET_UNAVAILABLE, status_code=403, detail="profile_scope_denied")
     if not _target_connected(cfg, instance):
         raise _api_error(ERROR_TARGET_UNAVAILABLE, status_code=503, detail="Connect the CrossWatch tracker before importing.")
     cfg_view = build_provider_config_view(cfg, "CROSSWATCH", instance)
