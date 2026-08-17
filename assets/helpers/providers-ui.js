@@ -347,6 +347,7 @@
       "sec-auth-trackers": "radar",
       "sec-auth-clients": "tv",
       "sec-auth-metadata": "database",
+      "sec-user-profiles": "groups",
     };
     const groupData = AUTH_GROUPS.filter((group) => group.id !== "sec-auth-others").map((group) => {
       const supported = group.keys.filter((key) => !!authProviderInfo(key).sectionId);
@@ -369,9 +370,15 @@
       ...groupData,
       { ...META_GROUP, cards: metadataCards, okCount: metadataCards.filter((card) => card.status.ok).length, total: META_GROUP.keys.length, copy: sectionCopy[META_GROUP.id] },
     ];
-    const summaryCards = sections.map((section) => `<div class="cw-auth-summary-card ${section.okCount ? "" : "is-empty"}" data-cw-auth-summary="${section.id}">
+    const userProfilesRaw = cfg?.user_profiles;
+    const userProfileCount = userProfilesRaw && typeof userProfilesRaw === "object" ? Object.keys(userProfilesRaw).length : 0;
+    const summarySections = [
+      ...sections,
+      { id: "sec-user-profiles", title: "User profiles", okCount: userProfileCount, total: userProfileCount || 0 },
+    ];
+    const summaryCards = summarySections.map((section) => `<div class="cw-auth-summary-card ${section.okCount ? "" : "is-empty"}" data-cw-auth-summary="${section.id}">
       <span class="cw-auth-summary-icon material-symbols-rounded" aria-hidden="true">${summaryIcon[section.id] || "hub"}</span>
-      <span><strong>${section.title}</strong><small>${section.okCount}/${section.total}</small></span>
+      <span><strong>${section.title}</strong><small>${section.id === "sec-user-profiles" ? `${section.okCount} profile${section.okCount === 1 ? "" : "s"}` : `${section.okCount}/${section.total}`}</small></span>
     </div>`).join("");
     const renderCard = (card) => {
       const attr = card.type === "metadata" ? `data-cw-meta-open="${card.key}"` : `data-cw-auth-open="${card.key}"`;
@@ -399,6 +406,14 @@
         <span class="material-symbols-rounded cw-auth-chevron" aria-hidden="true">arrow_forward</span>
       </button>`;
     };
+    const userProfileSection = `<section class="cw-auth-service-section cw-user-profile-section" data-cw-auth-group="sec-user-profiles">
+        <div class="cw-auth-service-head">
+          <h4>User profiles</h4>
+          <p>Manage people and the configured provider instances assigned to them.</p>
+          <span class="material-symbols-rounded cw-auth-section-chevron" aria-hidden="true">expand_more</span>
+        </div>
+        <div id="cw-user-profile-manager" class="cw-user-profile-manager" aria-live="polite"></div>
+      </section>`;
     const serviceSections = sections.map((section) => {
       const addCard = section.cards.length < section.total ? renderAddCard(section) : "";
       const cards = `${section.cards.map(renderCard).join("")}${addCard}`;
@@ -416,8 +431,9 @@
         <div class="cw-auth-summary-row">
           ${summaryCards}
         </div>
-        <div class="cw-auth-service-list">${serviceSections}</div>
+        <div class="cw-auth-service-list">${userProfileSection}${serviceSections}</div>
       </div>`;
+    try { window.cwUserProfilesManager?.init?.(true); } catch {}
     const overlay = document.getElementById("cw-auth-connection-overlay");
     renderAuthPicker(overlay, cfg, overlay?.dataset?.cwPickerMode || "provider");
   }
@@ -1535,6 +1551,7 @@
           if (info.key === "NUVIO") await window.cwAuth?.nuvio?.saveSelectedProfile?.({ silent: true });
           const ret = window.saveSettings?.();
           if (ret && typeof ret.then === "function") await ret;
+          await window.CW?.AuthShared?.saveVisibleProfileLabels?.(panel);
           flashConnectionResult(btn, true);
           loadConfig(true).then((cfg) => syncConnectionSuccessState(panel, info, cfg)).catch(() => {});
           if (!keepOpen) setTimeout(closeAuthProviderOverlay, 1100);
