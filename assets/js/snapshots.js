@@ -3,6 +3,8 @@
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function () {
   const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
+  const isManagedUser = () => document.documentElement?.dataset?.cwRole === "user";
+  const schedulerAvailable = () => !isManagedUser();
   let authRetryWired = false;
 
   const $ = (sel, root = document) => root.querySelector(sel);
@@ -566,7 +568,9 @@ function bundleKey(s) {
       window.setTimeout(() => refresh(true, false), 80);
     });
     $("#ss-create", page)?.addEventListener("click", () => onCreate());
-    $("#ss-add-schedule", page)?.addEventListener("click", () => onAddToScheduler());
+    const addScheduleBtn = $("#ss-add-schedule", page);
+    if (schedulerAvailable()) addScheduleBtn?.addEventListener("click", () => onAddToScheduler());
+    else addScheduleBtn?.remove();
     $("#ss-send-schedule-queue", page)?.addEventListener("click", () => onSendScheduleQueue());
     $("#ss-clear-schedule-queue", page)?.addEventListener("click", () => {
       state.scheduleQueue = [];
@@ -1846,7 +1850,7 @@ function renderSelected() {
     const clearBtn = $("#ss-clear-schedule-queue", page);
     if (!host) return;
     const items = Array.isArray(state.scheduleQueue) ? state.scheduleQueue : [];
-    if (wrap) wrap.classList.toggle("hidden", !items.length);
+    if (wrap) wrap.classList.toggle("hidden", !schedulerAvailable() || !items.length);
     if (sendBtn) sendBtn.disabled = !items.length;
     if (clearBtn) clearBtn.disabled = !items.length;
     if (!items.length) {
