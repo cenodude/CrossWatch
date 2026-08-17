@@ -249,6 +249,12 @@ def get_manifest() -> Mapping[str, Any]:
             "bidirectional": True,
             "provides_ids": True,
             "index_semantics": "present",
+            "watchlist": {
+                "observed_deletes": True,
+                "types": {"movies": True, "shows": True, "seasons": False, "episodes": False},
+                "upsert": True,
+                "remove": True,
+            },
             "history": {
                 "observed_deletes": True,
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
@@ -813,6 +819,12 @@ class _MDBLISTOPS:
             "bidirectional": True,
             "provides_ids": True,
             "index_semantics": "present",
+            "watchlist": {
+                "observed_deletes": True,
+                "types": {"movies": True, "shows": True, "seasons": False, "episodes": False},
+                "upsert": True,
+                "remove": True,
+            },
             "history": {
                 "observed_deletes": True,
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},

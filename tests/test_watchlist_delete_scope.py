@@ -186,3 +186,53 @@ def test_delete_watchlist_batch_never_loads_foreign_instance_credentials(monkeyp
     )
 
     assert views == [{"PLEX": "PLEX-P02"}]
+
+
+def test_delete_watchlist_batch_routes_generic_watchlist_remove_providers(monkeypatch) -> None:
+    import services.watchlist as wl
+
+    state = {
+        "providers": {
+            "STREMIO": {"watchlist": {"baseline": {"items": {"imdb:tt123": {"type": "movie", "ids": {"imdb": "tt123"}}}}}},
+            "NUVIO": {"watchlist": {"baseline": {"items": {"tmdb:603": {"type": "movie", "ids": {"tmdb": "603"}}}}}},
+        }
+    }
+    called: list[tuple[str, list[str]]] = []
+
+    def _fake_ops(provider, items, cfg):
+        called.append((provider, [str(x.get("key")) for x in items]))
+
+    monkeypatch.setattr(wl, "_registry_sync_providers", lambda: ["STREMIO", "NUVIO"])
+    monkeypatch.setattr(wl, "_ops_supports_watchlist_remove", lambda p: p in {"STREMIO", "NUVIO"})
+    monkeypatch.setattr(wl, "_delete_on_ops_watchlist_batch", _fake_ops)
+    monkeypatch.setattr(wl, "_save_sync_state", lambda *a, **k: None)
+
+    out = wl.delete_watchlist_batch(["imdb:tt123", "tmdb:603"], "ALL", state, {})
+
+    assert out["ok"] is True
+    assert ("STREMIO", ["imdb:tt123", "tmdb:603"]) in called
+    assert ("NUVIO", ["imdb:tt123", "tmdb:603"]) in called
+    assert out["details"]["STREMIO"]["removed"] == 1
+    assert out["details"]["NUVIO"]["removed"] == 1
+
+
+def test_watchlist_aliases_include_simkl_and_mdblist_native_ids(monkeypatch) -> None:
+    import services.watchlist as wl
+
+    monkeypatch.setattr(wl, "_registry_sync_providers", lambda: ["SIMKL", "MDBLIST"])
+    monkeypatch.setattr(wl, "_load_hide_set", lambda: set())
+
+    state = {
+        "providers": {
+            "SIMKL": {"watchlist": {"baseline": {"items": {"simkl:42": {"type": "show", "ids": {"simkl": "42"}, "title": "Native"}}}}},
+            "MDBLIST": {"watchlist": {"baseline": {"items": {"mdblist:99": {"type": "movie", "ids": {"mdblist": "99"}, "title": "Native"}}}}},
+        }
+    }
+
+    rows = wl.build_watchlist(state, tmdb_ok=False)
+    by_key = {row["key"]: row for row in rows}
+
+    assert "simkl:42" in by_key
+    assert "simkl:42" in by_key["simkl:42"]["aliases"]
+    assert "mdblist:99" in by_key
+    assert "mdblist:99" in by_key["mdblist:99"]["aliases"]

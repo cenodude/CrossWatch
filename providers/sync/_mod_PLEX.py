@@ -511,7 +511,7 @@ def get_manifest() -> Mapping[str, Any]:
             "provides_ids": True,
             "index_semantics": "present",
             "history": {"index_semantics": "present", "observed_deletes": True},
-            "watchlist": {"writes": "discover_first", "pms_fallback": True},
+            "watchlist": {"writes": "discover_first", "pms_fallback": True, "upsert": True, "remove": True},
             "ratings": {
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
                 "upsert": True,
@@ -1497,7 +1497,7 @@ class _PlexOPS:
             "provides_ids": True,
             "index_semantics": "present",
             "history": {"index_semantics": "present", "observed_deletes": True},
-            "watchlist": {"writes": "discover_first", "pms_fallback": True},
+            "watchlist": {"writes": "discover_first", "pms_fallback": True, "upsert": True, "remove": True},
             "ratings": {
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
                 "upsert": True,
