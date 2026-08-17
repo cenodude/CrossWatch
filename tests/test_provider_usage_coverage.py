@@ -87,6 +87,44 @@ def test_disabled_webhook_source_releases_its_sinks():
         assert find_provider_usage(cfg, sink) == []
 
 
+def test_sync_pair_source_instance_is_protected_from_deletion():
+    cfg = {
+        "pairs": [
+            {
+                "id": "alice-sync",
+                "enabled": True,
+                "source": "JELLYFIN",
+                "source_instance": "JELLYFIN-P02",
+                "target": "CROSSWATCH",
+                "target_instance": "CW-P01",
+            }
+        ]
+    }
+
+    usages = find_provider_usage(cfg, "jellyfin", "JELLYFIN-P02")
+
+    assert any(u["feature"] == "sync_pair" and u["role"] == "source" for u in usages), usages
+
+
+def test_sync_pair_target_instance_is_protected_from_deletion():
+    cfg = {
+        "pairs": [
+            {
+                "id": "alice-sync",
+                "enabled": False,
+                "source": "CROSSWATCH",
+                "src_instance": "CW-P01",
+                "target": "JELLYFIN",
+                "dst_instance": "JELLYFIN-P02",
+            }
+        ]
+    }
+
+    usages = find_provider_usage(cfg, "jellyfin", "JELLYFIN-P02")
+
+    assert any(u["feature"] == "sync_pair" and u["role"] == "target" and u["enabled"] is False for u in usages), usages
+
+
 @pytest.mark.parametrize("sink", sorted(ROUTE_SINKS))
 def test_every_route_sink_is_buildable_by_both_sink_factories(sink: str):
     from providers.scrobble.watch_manager import _make_sink as watcher_sink

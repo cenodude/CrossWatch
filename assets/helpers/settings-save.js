@@ -583,6 +583,14 @@ async function saveSettings() {
     }
 
     try {
+      const flushUsers = _cwFn("cwAppUsersSavePending", window);
+      if (flushUsers) await flushUsers();
+    } catch (e) {
+      console.warn("saveSettings: app users save failed", e);
+      if (e?.__cwAbortSave) throw e;
+    }
+
+    try {
       const tpEl = _cwTrustedProxiesEl();
       if (tpEl) {
         const uniq = [];

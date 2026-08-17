@@ -137,6 +137,7 @@ function cwUiSettingsHubInit() {
     "app_auth_password2",
     "app_auth_remember_enabled",
     "app_auth_remember_days",
+    "app_auth_totp_code",
     "trusted_proxies"
   ];
 
@@ -182,7 +183,7 @@ async function cwAppAuthPlexRefreshStatus() {
     if (label) {
       if (!st || !st.linked) label.textContent = "Not linked";
       else {
-        const who = [st.linked_username, st.linked_email].filter(Boolean).join(" · ");
+        const who = [st.linked_username, st.linked_email].filter(Boolean).join(" - ");
         label.textContent = who || "Linked";
       }
     }
@@ -262,6 +263,277 @@ window.cwAppAuthPlexUnlink = async function cwAppAuthPlexUnlink() {
     try { _cwShowToast?.("Plex sign-in unlinked", true); } catch {}
   } catch (e) {
     try { _cwShowToast?.(String(e?.message || e || "Plex unlink failed"), false); } catch {}
+  }
+};
+
+function cwSetSelectValue(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.value = String(value);
+}
+
+function cwSetInputValue(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.value = String(value || "");
+}
+
+async function cwAppAuthOidcRefreshStatus() {
+  let cfg = null;
+  try {
+    const cr = await fetch("/api/app-auth/oidc/config", { cache: "no-store", credentials: "same-origin" });
+    cfg = cr.ok ? await cr.json() : null;
+    if (cfg?.ok) {
+      cwSetSelectValue("app_auth_oidc_enabled", cfg.enabled ? "true" : "false");
+      cwSetInputValue("app_auth_oidc_issuer", cfg.issuer || "");
+      cwSetInputValue("app_auth_oidc_client_id", cfg.client_id || "");
+      cwSetInputValue("app_auth_oidc_client_secret", "");
+      cwSetInputValue("app_auth_oidc_scopes", cfg.scopes || "openid profile email");
+      const secret = document.getElementById("app_auth_oidc_client_secret");
+      if (secret) secret.placeholder = cfg.client_secret_configured ? "(leave blank to keep)" : "Client secret";
+    }
+  } catch {}
+  try {
+    const r = await fetch("/api/app-auth/oidc/status", { cache: "no-store", credentials: "same-origin" });
+    const st = r.ok ? await r.json() : null;
+    const label = document.getElementById("app_auth_oidc_state");
+    if (label) {
+      if (!cfg?.configured && !st?.configured) label.textContent = "Not configured";
+      else if (!st?.linked) label.textContent = "Configured, not linked";
+      else {
+        const who = [st.linked_username, st.linked_email].filter(Boolean).join(" - ");
+        label.textContent = who || "Linked";
+      }
+    }
+    const linkBtn = document.getElementById("btn-app-auth-oidc-link");
+    const unlinkBtn = document.getElementById("btn-app-auth-oidc-unlink");
+    if (linkBtn) linkBtn.disabled = !(cfg?.configured || st?.configured);
+    if (unlinkBtn) unlinkBtn.disabled = !(st && st.linked);
+    return st;
+  } catch {
+    const label = document.getElementById("app_auth_oidc_state");
+    if (label) label.textContent = "Unavailable";
+    return null;
+  }
+}
+
+window.cwAppAuthOidcSaveConfig = async function cwAppAuthOidcSaveConfig() {
+  const btn = document.getElementById("btn-app-auth-oidc-save");
+  const original = btn?.textContent || "Save OIDC";
+  try {
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "Saving...";
+    }
+    const secret = document.getElementById("app_auth_oidc_client_secret");
+    const body = {
+      enabled: String(document.getElementById("app_auth_oidc_enabled")?.value || "false") === "true",
+      issuer: document.getElementById("app_auth_oidc_issuer")?.value || "",
+      client_id: document.getElementById("app_auth_oidc_client_id")?.value || "",
+      client_secret: secret?.value || "",
+      keep_client_secret: !(secret?.value || "").trim(),
+      scopes: document.getElementById("app_auth_oidc_scopes")?.value || "openid profile email",
+    };
+    const r = await fetch("/api/app-auth/oidc/config", {
+      method: "POST",
+      cache: "no-store",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await r.json().catch(() => null);
+    if (!r.ok || !data?.ok) throw new Error(data?.error || `OIDC save failed (${r.status})`);
+    if (secret) secret.value = "";
+    await cwAppAuthOidcRefreshStatus();
+    try { _cwShowToast?.("OIDC configuration saved", true); } catch {}
+  } catch (e) {
+    try { _cwShowToast?.(String(e?.message || e || "OIDC save failed"), false); } catch {}
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  }
+};
+
+window.cwAppAuthOidcLink = async function cwAppAuthOidcLink() {
+  const btn = document.getElementById("btn-app-auth-oidc-link");
+  const original = btn?.textContent || "Link OIDC account";
+  const popup = window.open("about:blank", "cw_oidc_link", "width=720,height=760,popup=yes");
+  try {
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "Waiting for OIDC...";
+    }
+    const r = await fetch("/api/app-auth/oidc/link/start", {
+      method: "POST",
+      cache: "no-store",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    const data = await r.json().catch(() => null);
+    if (!r.ok || !data?.ok || !data?.state || !data?.auth_url) {
+      if (popup && !popup.closed) popup.close();
+      throw new Error(data?.error || `OIDC link failed (${r.status})`);
+    }
+    if (popup && !popup.closed) popup.location.href = data.auth_url;
+    else window.open(data.auth_url, "_blank", "noopener,noreferrer");
+    for (;;) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      const pr = await fetch("/api/app-auth/oidc/link/check", {
+        method: "POST",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ state: data.state }),
+      });
+      const pd = await pr.json().catch(() => null);
+      if (pr.ok && pd?.ok && pd.pending === true) continue;
+      if (!pr.ok || !pd?.ok) throw new Error(pd?.error || `OIDC link failed (${pr.status})`);
+      if (popup && !popup.closed) popup.close();
+      await cwAppAuthOidcRefreshStatus();
+      try { _cwShowToast?.("OIDC sign-in linked", true); } catch {}
+      return;
+    }
+  } catch (e) {
+    if (popup && !popup.closed) popup.close();
+    try { _cwShowToast?.(String(e?.message || e || "OIDC link failed"), false); } catch {}
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  }
+};
+
+window.cwAppAuthOidcUnlink = async function cwAppAuthOidcUnlink() {
+  const ok = window.confirm("Unlink OIDC sign-in from this CrossWatch admin?");
+  if (!ok) return;
+  try {
+    const r = await fetch("/api/app-auth/oidc/unlink", {
+      method: "POST",
+      cache: "no-store",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    const data = await r.json().catch(() => null);
+    if (!r.ok || !data?.ok) throw new Error(data?.error || `OIDC unlink failed (${r.status})`);
+    await cwAppAuthOidcRefreshStatus();
+    try { _cwShowToast?.("OIDC sign-in unlinked", true); } catch {}
+  } catch (e) {
+    try { _cwShowToast?.(String(e?.message || e || "OIDC unlink failed"), false); } catch {}
+  }
+};
+
+function cwAppAuthTotpRender(st) {
+  const enabled = !!st?.totp_enabled;
+  const state = document.getElementById("app_auth_totp_state");
+  const setup = document.getElementById("app_auth_totp_setup");
+  const setupBtn = document.getElementById("btn-app-auth-totp-setup");
+  const verifyBtn = document.getElementById("btn-app-auth-totp-verify");
+  const disableBtn = document.getElementById("btn-app-auth-totp-disable");
+  const secret = document.getElementById("app_auth_totp_secret");
+  const code = document.getElementById("app_auth_totp_code");
+  const pending = !!(secret && String(secret.value || "").trim());
+  if (state) state.textContent = enabled ? "2FA: on" : (pending ? "2FA: setup pending" : "2FA: off");
+  if (setup) setup.classList.toggle("hidden", !pending);
+  if (setupBtn) setupBtn.classList.toggle("hidden", pending);
+  if (verifyBtn) verifyBtn.classList.toggle("hidden", !pending);
+  if (disableBtn) disableBtn.disabled = !enabled && !pending;
+  if (code && !code.__cwTotpWired) {
+    code.addEventListener("input", () => { code.value = String(code.value || "").replace(/\D+/g, "").slice(0, 6); });
+    code.__cwTotpWired = true;
+  }
+}
+
+window.cwAppAuthTotpSetup = async function cwAppAuthTotpSetup() {
+  const btn = document.getElementById("btn-app-auth-totp-setup");
+  const original = btn?.textContent || "Set up 2FA";
+  try {
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "Creating...";
+    }
+    const r = await fetch("/api/app-auth/totp/setup", {
+      method: "POST",
+      cache: "no-store",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: "administrator" }),
+    });
+    const data = await r.json().catch(() => null);
+    if (!r.ok || !data?.ok) throw new Error(data?.error || `2FA setup failed (${r.status})`);
+    const secret = document.getElementById("app_auth_totp_secret");
+    const code = document.getElementById("app_auth_totp_code");
+    if (secret) secret.value = data.secret || "";
+    if (code) code.value = "";
+    cwAppAuthTotpRender({ totp_enabled: !!data.enabled });
+    try { code?.focus?.(); } catch {}
+    try { _cwShowToast?.("2FA secret created", true); } catch {}
+  } catch (e) {
+    try { _cwShowToast?.(String(e?.message || e || "2FA setup failed"), false); } catch {}
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  }
+};
+
+window.cwAppAuthTotpVerify = async function cwAppAuthTotpVerify() {
+  const code = String(document.getElementById("app_auth_totp_code")?.value || "").replace(/\D+/g, "").slice(0, 6);
+  if (code.length !== 6) {
+    try { _cwShowToast?.("Enter the 6 digit code", false); } catch {}
+    return;
+  }
+  try {
+    const r = await fetch("/api/app-auth/totp/verify", {
+      method: "POST",
+      cache: "no-store",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: "administrator", code }),
+    });
+    const data = await r.json().catch(() => null);
+    if (!r.ok || !data?.ok) throw new Error(data?.error || `2FA verify failed (${r.status})`);
+    const secret = document.getElementById("app_auth_totp_secret");
+    const codeEl = document.getElementById("app_auth_totp_code");
+    if (secret) secret.value = "";
+    if (codeEl) codeEl.value = "";
+    await cwRefreshAppAuthStatus();
+    try { _cwShowToast?.("2FA enabled", true); } catch {}
+  } catch (e) {
+    try { _cwShowToast?.(String(e?.message || e || "2FA verify failed"), false); } catch {}
+  }
+};
+
+window.cwAppAuthTotpDisable = async function cwAppAuthTotpDisable() {
+  const btn = document.getElementById("btn-app-auth-totp-disable");
+  if (btn && btn.dataset.confirmTotpDisable !== "1") {
+    btn.dataset.confirmTotpDisable = "1";
+    const original = btn.innerHTML || "Disable 2FA";
+    btn.innerHTML = "Confirm disable";
+    setTimeout(() => { try { delete btn.dataset.confirmTotpDisable; btn.innerHTML = original; } catch {} }, 2200);
+    return;
+  }
+  try {
+    const r = await fetch("/api/app-auth/totp/disable", {
+      method: "POST",
+      cache: "no-store",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: "administrator" }),
+    });
+    const data = await r.json().catch(() => null);
+    if (!r.ok || !data?.ok) throw new Error(data?.error || `2FA disable failed (${r.status})`);
+    const secret = document.getElementById("app_auth_totp_secret");
+    const code = document.getElementById("app_auth_totp_code");
+    if (secret) secret.value = "";
+    if (code) code.value = "";
+    await cwRefreshAppAuthStatus();
+    try { _cwShowToast?.("2FA disabled", true); } catch {}
+  } catch (e) {
+    try { _cwShowToast?.(String(e?.message || e || "2FA disable failed"), false); } catch {}
   }
 };
 
@@ -1527,9 +1799,12 @@ async function loadConfig() {
     const btn = document.getElementById("btn-auth-logout");
     if (btn) btn.disabled = !(st && st.authenticated);
     cwRenderOtherSessions(st);
+    cwAppAuthTotpRender(st);
   } catch {}
 
   try { await cwAppAuthPlexRefreshStatus(); } catch {}
+  try { await cwAppAuthOidcRefreshStatus(); } catch {}
+  try { await window.cwAppUsersRefresh?.(); } catch {}
   try { cwUiSettingsHubUpdate?.(); } catch {}
 
   try { window.updateSimklButtonState?.(); } catch {}
@@ -1627,6 +1902,8 @@ async function cwRefreshAppAuthStatus() {
   const btn = document.getElementById("btn-auth-logout");
   if (btn) btn.disabled = !(st && st.authenticated);
   cwRenderOtherSessions(st);
+  cwAppAuthTotpRender(st);
+  try { await window.cwAppUsersRefresh?.(); } catch {}
 }
 
 window.cwAppLogout = async function cwAppLogout() {
