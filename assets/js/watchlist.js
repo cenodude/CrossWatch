@@ -49,14 +49,17 @@
     const keys = providerMeta().watchlistProviders?.();
     return Array.isArray(keys) && keys.length
       ? keys
-      : ["PLEX","SIMKL","ANILIST","TRAKT","TMDB","JELLYFIN","EMBY","MDBLIST","PUBLICMETADB","FLOPPY","CROSSWATCH"];
+      : ["CROSSWATCH","PLEX","JELLYFIN","EMBY","SIMKL","TRAKT","ANILIST","TMDB","MDBLIST","PUBLICMETADB","PUNCHPLAY","FLOPPY","SCROB","NUVIO","STREMIO"];
   };
   const PROVIDERS = watchlistProviderKeys();
   const visibleProviders = () => PROVIDERS.filter((p) => p !== "CROSSWATCH" || activeProviders.has("CROSSWATCH"));
   const providerOptions=(empty="All")=>`<option value="">${empty}</option>${visibleProviders().map(p=>`<option value="${p}">${providerLabel(p)}</option>`).join("")}`;
   const deleteProviderOptions=pick=>`<option value="ALL">ALL (default)</option>${(pick ? PROVIDERS.filter(p=>pick.has(p)) : visibleProviders()).map(p=>`<option value="${p}">${providerLabel(p)}</option>`).join("")}`;
   const cwProfileOptions=()=>crosswatchProfiles.map(p=>`<option value="${escOpt(p.id)}">${escOpt(p.label || p.id)}</option>`).join("");
-  const isProfileUser = () => document.documentElement?.dataset?.cwRole === "user";
+  const isProfileUser = () => {
+    const doc = document.documentElement;
+    return doc?.dataset?.cwRole === "user" && doc?.dataset?.cwPermWrite !== "on";
+  };
   const hasFloppyConfig = root => {
     const match = block => block && typeof block === "object" && (block.server_url || block.server) && (block.api_token || block.token);
     return !!(match(root) || (root?.instances && Object.values(root.instances).some(match)));
@@ -1975,6 +1978,8 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
         if (cfg?.emby?.access_token || cfg?.emby?.api_key || cfg?.emby?.token) active.add("EMBY");
         if (cfg?.mdblist?.api_key || cfg?.mdblist?.access_token) active.add("MDBLIST");
         if (cfg?.publicmetadb?.api_key) active.add("PUBLICMETADB");
+        if (cfg?.nuvio?.access_token || cfg?.auth?.nuvio?.access_token || cfg?.nuvio?.instances) active.add("NUVIO");
+        if (cfg?.stremio?.auth_key || cfg?.stremio?.authKey || cfg?.auth?.stremio?.auth_key || cfg?.auth?.stremio?.authKey) active.add("STREMIO");
         if ([cfg?.floppy, cfg?.auth?.floppy].some(hasFloppyConfig)) active.add("FLOPPY");
       }
     } catch {}

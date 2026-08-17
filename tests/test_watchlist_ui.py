@@ -67,6 +67,14 @@ def test_watchlist_delete_all_option_has_no_badge() -> None:
     assert 'providerSelectOptionData(value, option, "ALL (default)", false)' in js
 
 
+def test_watchlist_allows_full_managed_users_to_select_delete() -> None:
+    js = (ROOT / "assets" / "js" / "watchlist.js").read_text(encoding="utf-8")
+
+    assert 'cwPermWrite !== "on"' in js
+    assert 'doc?.dataset?.cwRole === "user" && doc?.dataset?.cwPermWrite !== "on"' in js
+    assert 'if (!isProfileUser() && chk.checked)' in js
+
+
 def test_watchlist_column_resize_can_truncate_without_overflow() -> None:
     js = (ROOT / "assets" / "js" / "watchlist.js").read_text(encoding="utf-8")
     css = (ROOT / "assets" / "css" / "pages.css").read_text(encoding="utf-8")

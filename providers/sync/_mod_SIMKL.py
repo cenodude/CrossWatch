@@ -241,6 +241,9 @@ def get_manifest() -> Mapping[str, Any]:
             "watchlist": {
                 "index_semantics": "present",
                 "observed_deletes": True,
+                "types": {"movies": True, "shows": True, "anime": True, "seasons": False, "episodes": False},
+                "upsert": True,
+                "remove": True,
             },
             "history": {
                 "index_semantics": "present",
@@ -742,6 +745,9 @@ class _SIMKLOPS:
             "watchlist": {
                 "index_semantics": "present",
                 "observed_deletes": True,
+                "types": {"movies": True, "shows": True, "anime": True, "seasons": False, "episodes": False},
+                "upsert": True,
+                "remove": True,
             },
             "history": {
                 "index_semantics": "present",
