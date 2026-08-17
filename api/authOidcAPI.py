@@ -22,6 +22,7 @@ except ImportError:
 
 router = APIRouter(prefix="/api/app-auth/oidc", tags=["app-auth"])
 FLOW_COOKIE_NAME = "cw_oidc_flow"
+TOTP_COOKIE_NAME = "cw_oidc_2fa"
 FLOW_COOKIE_PATH = "/api/app-auth/oidc"
 PENDING_2FA_TTL_SEC = 10 * 60
 _PENDING_2FA: dict[str, dict[str, Any]] = {}
@@ -42,6 +43,28 @@ def _set_flow_cookie(resp: Response, nonce: str, request: Request) -> None:
 def _del_flow_cookie(resp: Response, request: Request) -> None:
     resp.delete_cookie(
         FLOW_COOKIE_NAME,
+        path=FLOW_COOKIE_PATH,
+        httponly=True,
+        samesite="lax",
+        secure=app_auth._effective_scheme_is_https(request),
+    )
+
+
+def _set_2fa_cookie(resp: Response, token: str, request: Request) -> None:
+    resp.set_cookie(
+        TOTP_COOKIE_NAME,
+        token,
+        path=FLOW_COOKIE_PATH,
+        httponly=True,
+        samesite="lax",
+        secure=app_auth._effective_scheme_is_https(request),
+        max_age=PENDING_2FA_TTL_SEC,
+    )
+
+
+def _del_2fa_cookie(resp: Response, request: Request) -> None:
+    resp.delete_cookie(
+        TOTP_COOKIE_NAME,
         path=FLOW_COOKIE_PATH,
         httponly=True,
         samesite="lax",
@@ -172,7 +195,7 @@ def _prune_pending_2fa() -> None:
         _PENDING_2FA.pop(key, None)
 
 
-def _totp_prompt_html(token: str, error: str = "") -> str:
+def _totp_prompt_html(error: str = "") -> str:
     import html as html_lib
 
     note = f'<p class="err">{html_lib.escape(error)}</p>' if error else ""
@@ -187,16 +210,15 @@ button:disabled{{opacity:.6;cursor:default}}</style></head><body><div class="box
 <form id="f" autocomplete="off"><input id="c" name="code" inputmode="text" autocomplete="one-time-code" placeholder="123456" autofocus>
 <button id="b" type="submit">Verify</button></form></div>
 <script>
-const t={token!r};
 document.getElementById('f').addEventListener('submit',async(e)=>{{
   e.preventDefault();
   const b=document.getElementById('b');b.disabled=true;
   try{{
     const r=await fetch('/api/app-auth/oidc/2fa',{{method:'POST',headers:{{'Content-Type':'application/json'}},
-      credentials:'same-origin',cache:'no-store',body:JSON.stringify({{state:t,code:document.getElementById('c').value}})}});
+      credentials:'same-origin',cache:'no-store',body:JSON.stringify({{code:document.getElementById('c').value}})}});
     const d=await r.json().catch(()=>({{}}));
     if(r.ok&&d.ok){{location.href=d.next||'/';return;}}
-    location.href='/api/app-auth/oidc/2fa/retry?state='+encodeURIComponent(t);
+    location.href='/api/app-auth/oidc/2fa/retry';
   }}catch(err){{b.disabled=false;}}
 }});
 </script></body></html>"""
@@ -219,8 +241,9 @@ def _totp_pending_response(request: Request, cfg: dict[str, Any], res: dict[str,
         "flow_nonce_hash": authOidc._sha256_hex(flow_nonce),
         "expires_at": app_auth._now() + PENDING_2FA_TTL_SEC,
     }
-    resp = HTMLResponse(_totp_prompt_html(token), headers={"Cache-Control": "no-store"})
+    resp = HTMLResponse(_totp_prompt_html(), headers={"Cache-Control": "no-store"})
     _set_flow_cookie(resp, flow_nonce, request)
+    _set_2fa_cookie(resp, token, request)
     return resp
 
 
@@ -367,33 +390,38 @@ def api_oidc_callback(request: Request, state: str = Query(""), code: str = Quer
 
 
 @router.get("/2fa/retry")
-def api_oidc_2fa_retry(request: Request, state: str = Query("")) -> Response:
+def api_oidc_2fa_retry(request: Request) -> Response:
     _prune_pending_2fa()
-    token = str(state or "").strip()
+    token = str(request.cookies.get(TOTP_COOKIE_NAME) or "").strip()
     rec = _PENDING_2FA.get(token)
     if not isinstance(rec, dict) or not _flow_nonce_matches(request, str(rec.get("flow_nonce_hash") or "")):
         _PENDING_2FA.pop(token, None)
         resp = RedirectResponse(url="/login", status_code=302)
         _del_flow_cookie(resp, request)
+        _del_2fa_cookie(resp, request)
         return resp
-    return HTMLResponse(_totp_prompt_html(token, "Invalid verification code"), headers={"Cache-Control": "no-store"})
+    return HTMLResponse(_totp_prompt_html("Invalid verification code"), headers={"Cache-Control": "no-store"})
 
 
 @router.post("/2fa")
 def api_oidc_2fa(request: Request, payload: dict[str, Any] = Body(default_factory=dict)) -> JSONResponse:
     _prune_pending_2fa()
     cfg = load_config()
-    token = str((payload or {}).get("state") or "").strip()
+    token = str(request.cookies.get(TOTP_COOKIE_NAME) or (payload or {}).get("state") or "").strip()
     rec = _PENDING_2FA.get(token)
     if not isinstance(rec, dict) or not _flow_nonce_matches(request, str(rec.get("flow_nonce_hash") or "")):
         _PENDING_2FA.pop(token, None)
-        return JSONResponse({"ok": False, "error": "Sign-in expired. Start again."}, status_code=400, headers={"Cache-Control": "no-store"})
+        resp = JSONResponse({"ok": False, "error": "Sign-in expired. Start again."}, status_code=400, headers={"Cache-Control": "no-store"})
+        _del_2fa_cookie(resp, request)
+        return resp
 
     identity = _identity_dict(rec.get("identity"))
     user = _resolve_oidc_user(cfg, identity)
     if user is None:
         _PENDING_2FA.pop(token, None)
-        return JSONResponse({"ok": False, "error": "This OIDC account is not linked for CrossWatch sign-in"}, status_code=403, headers={"Cache-Control": "no-store"})
+        resp = JSONResponse({"ok": False, "error": "This OIDC account is not linked for CrossWatch sign-in"}, status_code=403, headers={"Cache-Control": "no-store"})
+        _del_2fa_cookie(resp, request)
+        return resp
 
     ok_rl, retry = app_auth._rate_limit_ok(request)
     if not ok_rl:
@@ -427,7 +455,9 @@ def api_oidc_2fa(request: Request, payload: dict[str, Any] = Body(default_factor
         login_user, session_token, exp = result
     except (KeyError, ValueError):
         _PENDING_2FA.pop(token, None)
-        return JSONResponse({"ok": False, "error": "This OIDC account is not linked for CrossWatch sign-in"}, status_code=403, headers={"Cache-Control": "no-store"})
+        resp = JSONResponse({"ok": False, "error": "This OIDC account is not linked for CrossWatch sign-in"}, status_code=403, headers={"Cache-Control": "no-store"})
+        _del_2fa_cookie(resp, request)
+        return resp
 
     _PENDING_2FA.pop(token, None)
     app_auth._rate_limit_reset(request)
@@ -437,6 +467,7 @@ def api_oidc_2fa(request: Request, payload: dict[str, Any] = Body(default_factor
     dest = _safe_next(rec.get("next_url")) if login_user.get("is_admin") else "/profile"
     resp = JSONResponse({"ok": True, "next": dest}, headers={"Cache-Control": "no-store"})
     _del_flow_cookie(resp, request)
+    _del_2fa_cookie(resp, request)
     app_auth._set_cookie(resp, session_token, exp, request, persistent=bool(rec.get("remember_me")))
     return resp
 

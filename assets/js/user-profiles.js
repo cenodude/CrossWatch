@@ -221,9 +221,8 @@
               const locked = lockedBy.length > 0;
               const blocked = requiredProvider && !locked;
               return `
-              <label class="cw-upm-instance-option ${locked ? "is-required" : ""} ${blocked ? "is-blocked" : ""}">
-                <input type="checkbox" name="cw-upm-provider-${esc(provider)}" value="${esc(row.id)}" ${selected.has(row.id) || locked ? "checked" : ""} ${requiredProvider ? "disabled" : ""}>
-                <span class="cw-upm-instance-box" aria-hidden="true"></span>
+              <label class="cw-upm-instance-option ${selected.has(row.id) || locked ? "is-selected" : ""} ${locked ? "is-required" : ""} ${blocked ? "is-blocked" : ""}">
+                <input type="checkbox" name="cw-upm-provider-${esc(provider)}" value="${esc(row.id)}" ${selected.has(row.id) || locked ? "checked" : ""} ${requiredProvider ? "disabled" : ""} style="position:absolute;opacity:0;pointer-events:none">
                 <span class="cw-upm-instance-copy">
                   <strong>${esc(row.label)}</strong>
                   <code>${esc(row.id)}</code>
@@ -257,8 +256,7 @@
             const features = key === "sync_pairs" && Array.isArray(row.features) ? row.features.map(txt).filter(Boolean) : [];
             return `
               <label class="cw-upm-resource-option ${isSelected ? "is-selected" : ""} ${disabled ? "is-disabled" : ""}" data-resource-option>
-                <input type="checkbox" data-resource-key="${esc(key)}" value="${esc(row.id)}" ${isSelected ? "checked" : ""} ${disabled ? "disabled" : ""}>
-                <span class="cw-upm-instance-box" aria-hidden="true"></span>
+                <input type="checkbox" data-resource-key="${esc(key)}" value="${esc(row.id)}" ${isSelected ? "checked" : ""} ${disabled ? "disabled" : ""} style="position:absolute;opacity:0;pointer-events:none">
                 <span class="cw-upm-resource-copy">
                   <strong>${esc(row.label || row.id)}</strong>
                   <small>${disabled ? "Assigned to another profile" : `${(Array.isArray(row.instances) ? row.instances.length : 0)} required instance${(Array.isArray(row.instances) ? row.instances.length : 0) === 1 ? "" : "s"}`}</small>

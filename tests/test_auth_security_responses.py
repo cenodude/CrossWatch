@@ -112,14 +112,18 @@ def test_oidc_2fa_retry_uses_fixed_error_message() -> None:
     }
     try:
         resp = oidc_api.api_oidc_2fa_retry(
-            _request("/api/app-auth/oidc/2fa/retry", method="GET", cookies={oidc_api.FLOW_COOKIE_NAME: nonce}),
-            state=token,
+            _request(
+                "/api/app-auth/oidc/2fa/retry",
+                method="GET",
+                cookies={oidc_api.FLOW_COOKIE_NAME: nonce, oidc_api.TOTP_COOKIE_NAME: token},
+            ),
         )
     finally:
         oidc_api._PENDING_2FA.clear()
 
     body = resp.body.decode("utf-8")
     assert resp.status_code == 200
+    assert token not in body
     assert "Invalid verification code" in body
 
 
