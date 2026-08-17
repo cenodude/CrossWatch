@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, cast
@@ -15,6 +16,8 @@ from cw_platform.local_db import watchlist_hide as sqlite_watchlist_hide
 from cw_platform.modules_registry import load_sync_ops, sync_provider_names
 from cw_platform.orchestrator._state_store import StateStore
 from cw_platform.provider_instances import build_config_view, list_instance_ids, normalize_instance_id
+
+_LOG = logging.getLogger("crosswatch.services.watchlist")
 
 try:
     from plexapi.myplex import MyPlexAccount
@@ -299,7 +302,7 @@ def _ids_from_key_or_item(key: str, item: dict[str, Any]) -> dict[str, Any]:
     if len(parts) >= 2:
         k = parts[-2].lower().strip()
         v = parts[-1].strip()
-        if k in {"tmdb", "imdb", "tvdb", "trakt", "slug", "jellyfin", "emby", "anilist", "mal"} and v:
+        if k in {"tmdb", "imdb", "tvdb", "trakt", "simkl", "mdblist", "slug", "jellyfin", "emby", "anilist", "mal"} and v:
             ids.setdefault(k, v)
     if "thetvdb" in ids and "tvdb" not in ids:
         ids["tvdb"] = ids.get("thetvdb")
@@ -313,6 +316,7 @@ def _ids_from_key_or_item(key: str, item: dict[str, Any]) -> dict[str, Any]:
         "tvdb",
         "trakt",
         "simkl",
+        "mdblist",
         "slug",
         "jellyfin",
         "emby",
@@ -328,7 +332,7 @@ def _ids_from_key_or_item(key: str, item: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-_WATCHLIST_ALIAS_ID_KEYS = ("tmdb", "imdb", "tvdb", "trakt", "slug", "anilist", "mal")
+_WATCHLIST_ALIAS_ID_KEYS = ("tmdb", "imdb", "tvdb", "trakt", "simkl", "mdblist", "slug", "anilist", "mal")
 
 
 def _watchlist_alias_tokens(key: str, item: dict[str, Any]) -> set[str]:
@@ -383,7 +387,7 @@ def _group_watchlist_refs(
 
 def _preferred_watchlist_key(alias_keys: list[str], info: dict[str, Any], typ: str) -> str:
     ids = _ids_from_key_or_item("", info)
-    ordered = ("tmdb", "imdb", "tvdb", "trakt", "slug", "anilist", "mal")
+    ordered = ("tmdb", "imdb", "tvdb", "trakt", "simkl", "mdblist", "slug", "anilist", "mal")
 
     for name in ordered:
         value = ids.get(name)
@@ -1634,8 +1638,9 @@ def delete_watchlist_batch(
                     if _del_key_from_provider_items(state, p, k, instance_id=inst):
                         removed.add(k)
                 per_instance[inst] = {"ok": True, "removed": len(removed)}
-            except Exception as e:
-                per_instance[inst] = {"ok": False, "error": str(e)}
+            except Exception:
+                _LOG.warning("watchlist batch delete failed for %s/%s", p, inst, exc_info=True)
+                per_instance[inst] = {"ok": False, "error": "delete_failed"}
         return {"ok": any(v.get("ok") for v in per_instance.values()), "per_instance": per_instance, "removed": len(removed)}
 
     if prov == "ALL":
@@ -1675,17 +1680,19 @@ def delete_watchlist_item(
     allowed_instances: Mapping[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     prov = (provider or "ALL").upper().strip()
-    try:
-        state = _load_sync_state(_sync_state_base(state_path))
-    except Exception as e:
-        return {"ok": False, "status": "error", "provider": prov, "key": key, "error": str(e)}
-
     def _log(level: str, msg: str) -> None:
         try:
             if callable(log):
                 log(level, msg)
         except Exception:
             pass
+
+    try:
+        state = _load_sync_state(_sync_state_base(state_path))
+    except Exception:
+        _LOG.warning("watchlist delete failed while loading state", exc_info=True)
+        _log("SYNC", f"[WL] delete {key} on {prov} failed")
+        return {"ok": False, "status": "error", "provider": prov, "key": key, "error": "delete_failed"}
 
     try:
         res = delete_watchlist_batch(
@@ -1700,9 +1707,10 @@ def delete_watchlist_item(
         _log("SYNC", f"[WL] delete {key} on {prov}: {'OK' if res.get('ok') else 'NOOP'}")
         res.setdefault("key", key)
         return res
-    except Exception as e:
-        _log("SYNC", f"[WL] delete {key} on {prov} failed: {e}")
-        return {"ok": False, "status": "error", "provider": prov, "key": key, "error": str(e)}
+    except Exception:
+        _LOG.warning("watchlist delete failed for provider %s", prov, exc_info=True)
+        _log("SYNC", f"[WL] delete {key} on {prov} failed")
+        return {"ok": False, "status": "error", "provider": prov, "key": key, "error": "delete_failed"}
 
 def detect_available_watchlist_providers(
     cfg: dict[str, Any],

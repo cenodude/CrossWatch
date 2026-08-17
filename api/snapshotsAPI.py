@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import logging
 from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Body, Query, Request
@@ -29,6 +30,7 @@ from services.snapshots import (
 )
 
 router = APIRouter(prefix="/api/snapshots", tags=["snapshots"])
+_LOG = logging.getLogger("crosswatch.api.snapshots")
 
 RestoreMode = Literal["merge", "clear_restore"]
 Feature = Literal["watchlist", "ratings", "history", "progress", "all"]
@@ -46,6 +48,16 @@ _SAFE_ERROR_PREFIXES = (
     "Advanced compare supports",
     "Invalid capture contents",
     "Invalid compare kind",
+    "snapshot_manifest_failed",
+    "snapshot_list_failed",
+    "snapshot_read_failed",
+    "snapshot_diff_failed",
+    "snapshot_create_failed",
+    "snapshot_progress_failed",
+    "snapshot_restore_failed",
+    "snapshot_delete_failed",
+    "snapshot_clear_failed",
+    "snapshot_tools_clear_failed",
 )
 
 
@@ -66,6 +78,10 @@ def _err(msg: str, *, status_code: int = 400, extra: dict[str, Any] | None = Non
     if extra:
         payload.update(extra)
     return JSONResponse(payload, status_code=status_code)
+
+
+def _log_failure(action: str, exc: Exception) -> None:
+    _LOG.warning("%s failed", action, exc_info=True)
 
 
 def _is_admin_request(request: Request | None) -> bool:
@@ -114,7 +130,8 @@ def api_snapshots_manifest(request: Request = cast(Request, None)) -> JSONRespon
             providers = scoped
         return _ok({"providers": providers})
     except Exception as e:
-        return _err(str(e))
+        _log_failure("snapshot manifest request", e)
+        return _err("snapshot_manifest_failed")
 
 
 @router.get("/list")
@@ -123,7 +140,8 @@ def api_snapshots_list(request: Request = cast(Request, None)) -> JSONResponse:
         cfg = load_config() or {}
         return _ok({"snapshots": _filter_snapshot_rows(cfg, request, list_snapshots())})
     except Exception as e:
-        return _err(str(e))
+        _log_failure("snapshot list request", e)
+        return _err("snapshot_list_failed")
 
 
 @router.get("/read")
@@ -135,7 +153,8 @@ def api_snapshots_read(path: str = Query(..., description="Relative path under /
             return _scope_denied()
         return _ok({"snapshot": snap})
     except Exception as e:
-        return _err(str(e))
+        _log_failure("snapshot read request", e)
+        return _err("snapshot_read_failed")
 
 
 
@@ -154,7 +173,8 @@ def api_snapshots_diff(
         res = diff_snapshots(a, b, limit=limit, max_changes=max_changes)
         return _ok({"diff": res})
     except Exception as e:
-        return _err(str(e))
+        _log_failure("snapshot diff request", e)
+        return _err("snapshot_diff_failed")
 
 
 @router.get("/diff/extended")
@@ -187,7 +207,8 @@ def api_snapshots_diff_extended(
         )
         return _ok({"diff": res})
     except Exception as e:
-        return _err(str(e))
+        _log_failure("snapshot extended diff request", e)
+        return _err("snapshot_diff_failed")
 
 @router.post("/create")
 def api_snapshots_create(body: dict[str, Any] = Body(...), request: Request = cast(Request, None)) -> JSONResponse:
@@ -207,7 +228,8 @@ def api_snapshots_create(body: dict[str, Any] = Body(...), request: Request = ca
         res = create_snapshot(provider, feature, label=label, instance_id=instance, progress_id=progress_id or None)  # type: ignore[arg-type]
         return _ok({"snapshot": res})
     except Exception as e:
-        return _err(str(e))
+        _log_failure("snapshot create request", e)
+        return _err("snapshot_create_failed")
 
 
 @router.get("/capture-progress/{progress_id}")
@@ -218,7 +240,8 @@ def api_snapshots_capture_progress(progress_id: str) -> JSONResponse:
             return _ok({"progress": {"ok": False, "done": False, "stage": "waiting", "message": "Waiting for capture to start.", "percent": 0}})
         return _ok({"progress": progress})
     except Exception as e:
-        return _err(str(e))
+        _log_failure("snapshot capture progress request", e)
+        return _err("snapshot_progress_failed")
 
 
 @router.post("/restore")
@@ -241,7 +264,8 @@ def api_snapshots_restore(body: dict[str, Any] = Body(...), request: Request = c
         res = restore_snapshot(path, mode=mode, instance_id=instance)  # type: ignore[arg-type]
         return _ok({"result": res})
     except Exception as e:
-        return _err(str(e))
+        _log_failure("snapshot restore request", e)
+        return _err("snapshot_restore_failed")
 
 
 @router.post("/delete")
@@ -255,7 +279,8 @@ def api_snapshots_delete(body: dict[str, Any] = Body(...), request: Request = ca
         res = delete_snapshot(path, delete_children=delete_children)
         return _ok({"result": res})
     except Exception as e:
-        return _err(str(e))
+        _log_failure("snapshot delete request", e)
+        return _err("snapshot_delete_failed")
 
 
 @router.post("/clear")
@@ -265,10 +290,11 @@ def api_snapshots_clear(request: Request = cast(Request, None)) -> JSONResponse:
             return _scope_denied()
         result = delete_all_snapshots()
         if not result.get("ok"):
-            return _err("snapshot_clear_failed", extra={"result": result})
+            return _err("snapshot_clear_failed")
         return _ok({"result": result, "summary": result.get("summary") or {}})
     except Exception as e:
-        return _err(str(e))
+        _log_failure("snapshot clear request", e)
+        return _err("snapshot_clear_failed")
 
 
 @router.post("/tools/clear")
@@ -294,4 +320,5 @@ def api_snapshots_tools_clear(body: dict[str, Any] = Body(...), request: Request
         res = clear_provider_features(provider, features, instance_id=instance)  # type: ignore[arg-type]
         return _ok({"result": res})
     except Exception as e:
-        return _err(str(e))
+        _log_failure("snapshot tools clear request", e)
+        return _err("snapshot_tools_clear_failed")
