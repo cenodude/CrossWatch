@@ -57,6 +57,39 @@ function _activeDetailsLogEl() {
   return document.getElementById("det-log");
 }
 
+function _detailsManagedUser() {
+  try {
+    const state = window.CW?.AuthState?.read?.() || {};
+    if (state.is_admin || state.isAdmin) return false;
+    if (state.managed || state.is_managed || state.isManaged) return true;
+    const role = String(state.role || document.documentElement?.dataset?.cwRole || "").toLowerCase();
+    return role === "user" || role === "managed";
+  } catch {
+    return false;
+  }
+}
+
+function _syncManagedDetailsTabs() {
+  const managed = _detailsManagedUser();
+  const tabWatch = document.getElementById("det-tab-watcher");
+  const tabDebug = document.getElementById("det-tab-debug");
+  const watchPanel = document.getElementById("det-panel-watcher");
+  const debugPanel = document.getElementById("det-panel-debug");
+  [tabWatch, tabDebug, watchPanel, debugPanel].forEach((el) => {
+    if (!el) return;
+    el.hidden = managed;
+    el.setAttribute("aria-hidden", String(managed));
+  });
+  if (managed && (window._detailsTab === "watcher" || window._detailsTab === "debug")) {
+    window._detailsTab = "sync";
+  }
+  if (managed) {
+    try { closeWatcherLog(); } catch {}
+    try { closeDebugLog(); } catch {}
+  }
+  return managed;
+}
+
 function _pruneDetailsLog(el) {
   const max = Number(window.DETAILS_MAX_LINES || 0) || 600;
   if (!el || !el.childNodes || el.childNodes.length <= max) return;
@@ -510,7 +543,8 @@ async function _copyDetailsLog(btn) {
 }
 
 function setDetailsTab(tab) {
-  const t = (tab === "watcher" || tab === "debug") ? tab : "sync";
+  const managed = _syncManagedDetailsTabs();
+  const t = managed ? "sync" : ((tab === "watcher" || tab === "debug") ? tab : "sync");
   window._detailsTab = t;
 
   const syncPanel  = document.getElementById("det-panel-sync");
@@ -551,6 +585,7 @@ function setDetailsTab(tab) {
 }
 
 function initDetailsTabs() {
+  _syncManagedDetailsTabs();
   if (window._detailsTabsWired) return;
   const tabSync  = document.getElementById("det-tab-sync");
   const tabWatch = document.getElementById("det-tab-watcher");
@@ -560,8 +595,8 @@ function initDetailsTabs() {
   _wireDetailsConsoleStatus();
 
   tabSync.addEventListener("click", () => setDetailsTab("sync"));
-  tabWatch.addEventListener("click", () => setDetailsTab("watcher"));
-  tabDebug.addEventListener("click", () => setDetailsTab("debug"));
+  tabWatch.addEventListener("click", () => { if (!_detailsManagedUser()) setDetailsTab("watcher"); });
+  tabDebug.addEventListener("click", () => { if (!_detailsManagedUser()) setDetailsTab("debug"); });
 
   const btnCopy = document.getElementById("det-copy");
   if (btnCopy) {
@@ -668,6 +703,7 @@ function closeDebugLog() {
 }
 
 function openDebugLog() {
+  if (_detailsManagedUser()) return;
   const el = document.getElementById("det-debug-log");
   const details = document.getElementById("details");
   const tabDebug = document.getElementById("det-tab-debug");
@@ -788,6 +824,7 @@ function openDebugLog() {
 }
 
 async function openWatcherLog() {
+  if (_detailsManagedUser()) return;
   const el = document.getElementById("det-watch-log");
   const details = document.getElementById("details");
   const tabWatch = document.getElementById("det-tab-watcher");

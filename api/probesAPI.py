@@ -15,9 +15,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Mapping
 
 import requests
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 
+from cw_platform.access_policy import filter_pairs_for_user, managed_profile_instances, request_user
 from cw_platform.config_base import load_config as _load_config
 
 from cw_platform.provider_instances import get_provider_block, list_instance_ids, normalize_instance_id, provider_key
@@ -2008,22 +2009,27 @@ USERINFO_FNS: dict[str, Callable[..., dict[str, Any]]] = {
 # Registry API
 def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) -> None:
     @app.get("/api/status", tags=["Probes"])
-    def api_status(fresh: int = Query(0)) -> JSONResponse:
+    def api_status(request: Request, fresh: int = Query(0)) -> JSONResponse:
+        cfg0 = load_config_fn() or {}
+        scoped_user = request_user(request)
+        managed_scope = bool(scoped_user and not scoped_user.get("is_admin"))
         now = time.time()
         cached = STATUS_CACHE["data"]
         age = (now - STATUS_CACHE["ts"]) if cached else 1e9
-        if not fresh and cached and age < STATUS_TTL:
+        if not managed_scope and not fresh and cached and age < STATUS_TTL:
             return JSONResponse(cached, headers={"Cache-Control": "no-store"})
 
         with STATUS_LOCK:
             now = time.time()
             cached = STATUS_CACHE["data"]
             age = (now - STATUS_CACHE["ts"]) if cached else 1e9
-            if not fresh and cached and age < STATUS_TTL:
+            if not managed_scope and not fresh and cached and age < STATUS_TTL:
                 return JSONResponse(cached, headers={"Cache-Control": "no-store"})
 
-            cfg = load_config_fn() or {}
+            cfg = cfg0 if managed_scope else (load_config_fn() or {})
             pairs = cfg.get("pairs") or []
+            if managed_scope:
+                pairs = filter_pairs_for_user(cfg, scoped_user, [p for p in pairs if isinstance(p, dict)])
             enabled_pairs = [p for p in pairs if isinstance(p, dict) and p.get("enabled", True) is not False]
             any_pair_ready = any(_pair_ready(cfg, p) for p in enabled_pairs)
 
@@ -2094,6 +2100,13 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                     _add(s, "default")
                 return out
 
+            allowed_instances = managed_profile_instances(cfg, scoped_user) if managed_scope else {}
+
+            def _scope_allows(prov: str, inst: Any) -> bool:
+                if not managed_scope:
+                    return True
+                return normalize_instance_id(inst) in set(allowed_instances.get(prov) or [])
+
             pair_targets = _pair_targets()
             watcher_targets = _watcher_targets(cfg)
 
@@ -2104,7 +2117,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
 
             for prov, inst in pair_targets:
                 c = _canon_probe_code(prov)
-                if not c:
+                if not c or not _scope_allows(c, inst):
                     continue
                 targets.add((c, inst))
                 prov_sources.setdefault(c, set()).add("pair")
@@ -2112,7 +2125,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
 
             for prov, inst in watcher_targets:
                 c = _canon_probe_code(prov)
-                if not c:
+                if not c or not _scope_allows(c, inst):
                     continue
                 targets.add((c, inst))
                 prov_sources.setdefault(c, set()).add("watcher")
@@ -2125,7 +2138,9 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                     normalize_instance_id(inst)
                     for inst in list_instance_ids(cfg, ck)
                 }
-                if prov == "NUVIO":
+                if managed_scope:
+                    insts &= set(allowed_instances.get(prov) or [])
+                if managed_scope or prov == "NUVIO":
                     insts = {
                         inst
                         for inst in insts
@@ -2620,8 +2635,9 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 "providers": providers_out,
             }
 
-            STATUS_CACHE["ts"] = now
-            STATUS_CACHE["data"] = data
+            if not managed_scope:
+                STATUS_CACHE["ts"] = now
+                STATUS_CACHE["data"] = data
             return JSONResponse(data, headers={"Cache-Control": "no-store"})
 
     @app.post("/api/debug/clear_probe_cache", tags=["Probes"])
