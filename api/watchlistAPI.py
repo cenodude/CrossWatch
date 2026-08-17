@@ -6,9 +6,10 @@ from __future__ import annotations
 import urllib.parse
 from typing import Any, Literal, cast
 
-from fastapi import APIRouter, Body, Path as FPath, Query
+from fastapi import APIRouter, Body, Path as FPath, Query, Request
 from fastapi.responses import JSONResponse
 
+from cw_platform.provider_instances import instances_for_user_profile, normalize_instance_id, provider_display_key
 from services.watchlist import (
     _feat_enabled,
     _find_item_in_state,
@@ -120,6 +121,108 @@ def _active_pair_watchlist_providers(cfg: dict[str, Any]) -> list[str]:
     return out
 
 
+def _item_matches_user_filter(item: dict[str, Any], user_filter: dict[str, list[str]]) -> bool:
+    if not user_filter:
+        return True
+    wanted = {
+        provider_display_key(provider): {normalize_instance_id(inst) for inst in (instances or [])}
+        for provider, instances in user_filter.items()
+    }
+    sources = item.get("sources_by_provider") or item.get("sourcesByProvider")
+    if isinstance(sources, dict):
+        for provider, raw_instances in sources.items():
+            prov = provider_display_key(provider)
+            values = raw_instances if isinstance(raw_instances, list) else [raw_instances]
+            for inst in values:
+                if normalize_instance_id(inst) in wanted.get(prov, set()):
+                    return True
+    provider = item.get("added_src") or item.get("source") or item.get("provider")
+    instance = item.get("added_instance") or item.get("source_instance") or item.get("instance")
+    prov = provider_display_key(provider)
+    return bool(prov) and normalize_instance_id(instance) in wanted.get(prov, set())
+
+
+def _item_for_user_filter(item: dict[str, Any], user_filter: dict[str, list[str]]) -> dict[str, Any] | None:
+    if not user_filter:
+        return item
+    wanted = {
+        provider_display_key(provider): {normalize_instance_id(inst) for inst in (instances or [])}
+        for provider, instances in user_filter.items()
+    }
+    sources = item.get("sources_by_provider") or item.get("sourcesByProvider")
+    if not isinstance(sources, dict):
+        return item if _item_matches_user_filter(item, user_filter) else None
+    scoped_sources: dict[str, list[str]] = {}
+    for provider, raw_instances in sources.items():
+        prov = provider_display_key(provider)
+        values = raw_instances if isinstance(raw_instances, list) else [raw_instances]
+        keep = [
+            normalize_instance_id(inst)
+            for inst in values
+            if normalize_instance_id(inst) in wanted.get(prov, set())
+        ]
+        if keep:
+            scoped_sources[str(provider).lower()] = keep
+    if not scoped_sources:
+        return None
+    out = dict(item)
+    providers = sorted(scoped_sources.keys())
+    out["sources_by_provider"] = scoped_sources
+    out["sourcesByProvider"] = scoped_sources
+    out["sources"] = providers
+    out["status"] = f"{providers[0]}_only" if len(providers) == 1 else "both"
+    out["sync_count"] = len(providers)
+    return out
+
+
+def _effective_user_filter(cfg: dict[str, Any], request: Request | None, requested_profile: str) -> tuple[str, dict[str, list[str]]]:
+    try:
+        from api.appAuthAPI import COOKIE_NAME, effective_user_profile_id
+
+        token = request.cookies.get(COOKIE_NAME) if request is not None else None
+        profile = effective_user_profile_id(cfg, token, requested_profile)
+    except Exception:
+        profile = "__none__"
+    scoped = bool(str(profile or "").strip())
+    user_filter = instances_for_user_profile(cfg, profile) if scoped else {}
+    if scoped and not user_filter:
+        user_filter = {"__NONE__": ["__NONE__"]}
+    return str(profile or "").strip(), user_filter
+
+
+def _delete_scope(cfg: dict[str, Any], request: Request | None) -> dict[str, list[str]] | None:
+    profile, user_filter = _effective_user_filter(cfg, request, "")
+    if not profile:
+        return None
+    allowed: dict[str, list[str]] = {}
+    for provider, raw in (user_filter or {}).items():
+        prov = provider_display_key(provider)
+        values = raw if isinstance(raw, list) else [raw]
+        keep = [normalize_instance_id(value) for value in values if normalize_instance_id(value)]
+        if prov and keep:
+            allowed[prov] = keep
+    return allowed
+
+
+def _scope_permits(allowed: dict[str, list[str]] | None, provider: str, instance: Any) -> bool:
+    if allowed is None:
+        return True
+    if not allowed:
+        return False
+    prov = provider_display_key(provider)
+    if not prov or prov == "ALL":
+        return True
+    owned = allowed.get(prov) or []
+    if not owned:
+        return False
+    inst = normalize_instance_id(instance) if str(instance or "").strip() else ""
+    return inst in owned if inst else True
+
+
+def _scope_denied() -> JSONResponse:
+    return JSONResponse({"ok": False, "error": "profile_scope_denied"}, status_code=403)
+
+
 def _tmdb_api_key(cfg: dict[str, Any]) -> str:
     def _pick_from_block(blk: Any) -> str:
         if not isinstance(blk, dict):
@@ -189,7 +292,7 @@ def _candidate_keys_from_ids(ids: dict[str, Any]) -> list[str]:
             out.append(k)
     return out
 
-def _bulk_delete(provider: str, keys_raw: list[Any], provider_instance: str | None = None) -> dict[str, Any]:
+def _bulk_delete(provider: str, keys_raw: list[Any], provider_instance: str | None = None, allowed_instances: dict[str, list[str]] | None = None) -> dict[str, Any]:
     from cw_platform.config_base import load_config
     from crosswatch import STATS, _append_log
 
@@ -220,6 +323,11 @@ def _bulk_delete(provider: str, keys_raw: list[Any], provider_instance: str | No
             return {"ok": False, "error": f"provider '{prov}' not connected"}
         targets = [prov]
 
+    if allowed_instances is not None:
+        targets = [p for p in targets if allowed_instances.get(provider_display_key(p))]
+        if not targets:
+            return {"ok": False, "error": "profile_scope_denied"}
+
     results: list[dict[str, Any]] = []
     deleted_sum = 0
 
@@ -229,13 +337,22 @@ def _bulk_delete(provider: str, keys_raw: list[Any], provider_instance: str | No
             deleted = 0
             for spec in specs:
                 primary_key = str(spec.get("key") or "")
-                resolved_key = _resolve_key_spec_for_provider(state, p, spec, instance_id=inst_p)
+                if allowed_instances is None:
+                    resolved_key = _resolve_key_spec_for_provider(state, p, spec, instance_id=inst_p)
+                else:
+                    resolved_key = None
+                    for owned in allowed_instances.get(provider_display_key(p)) or []:
+                        if inst_p and normalize_instance_id(inst_p) != owned:
+                            continue
+                        resolved_key = _resolve_key_spec_for_provider(state, p, spec, instance_id=owned)
+                        if resolved_key:
+                            break
                 if not resolved_key:
                     per_key.append({"key": primary_key, "deleted": 0, "attempted": False, "reason": "not_in_state"})
                     continue
                 kind, label = _item_label(state, resolved_key, p)
                 safe_label = (label or "").replace("'", "’")
-                r = delete_watchlist_batch([resolved_key], p, state, cfg, provider_instance=inst_p) or {}
+                r = delete_watchlist_batch([resolved_key], p, state, cfg, provider_instance=inst_p, allowed_instances=allowed_instances) or {}
                 d = int(r.get("deleted", 0)) if isinstance(r, dict) else 0
                 per_key.append({"key": primary_key, "resolved_key": resolved_key, "deleted": d, "attempted": True})
                 deleted += d
@@ -403,6 +520,7 @@ def remove_from_plex_by_ids(
 @router.get("", include_in_schema=False)
 @router.get("/")
 def api_watchlist(
+    request: Request = cast(Request, None),
     overview: Literal["none", "short", "full"] = Query(
         "none",
         description="Attach overview from TMDb",
@@ -423,6 +541,7 @@ def api_watchlist(
         le=2000,
         description="Cap enriched items",
     ),
+    user_profile: str = Query("", description="Optional user profile id to scope provider instances"),
 ) -> JSONResponse:
 
     try:
@@ -451,9 +570,26 @@ def api_watchlist(
             status_code=200,
         )
 
+    profile, user_filter = _effective_user_filter(cfg, request, user_profile)
+    if user_filter:
+        items = [
+            scoped
+            for it in items
+            if isinstance(it, dict)
+            for scoped in [_item_for_user_filter(it, user_filter)]
+            if scoped is not None
+        ]
+
     if not items:
         return JSONResponse(
-            {"ok": False, "error": "No snapshot data found.", "missing_tmdb_key": not has_key},
+            {
+                "ok": bool(profile),
+                "items": [],
+                "error": "" if profile else "No snapshot data found.",
+                "missing_tmdb_key": not has_key,
+                "last_sync_epoch": st.get("last_sync_epoch"),
+                "meta_enriched": 0,
+            },
             status_code=200,
         )
 
@@ -530,6 +666,7 @@ def api_watchlist(
 @router.delete("/{key}")
 def api_watchlist_delete(
     key: str = FPath(...),
+    request: Request = cast(Request, None),
     provider: str | None = Query("ALL", description="Provider id or ALL"),
     provider_instance: str | None = Query(None, description="Provider instance id (optional)"),
 ) -> JSONResponse:
@@ -540,13 +677,18 @@ def api_watchlist_delete(
         key = urllib.parse.unquote(key)
 
     prov = (provider or "ALL").upper().strip()
+    cfg = load_config()
+    allowed = _delete_scope(cfg, request)
+    if not _scope_permits(allowed, prov, provider_instance):
+        return _scope_denied()
     raw_res = delete_watchlist_item(
         key=key,
         state_path=None,
-        cfg=load_config(),
+        cfg=cfg,
         provider=prov,
         provider_instance=provider_instance,
         log=_append_log,
+        allowed_instances=allowed,
     )
 
     res: dict[str, Any]
@@ -568,17 +710,23 @@ def api_watchlist_delete(
     res = _sanitize_response_errors(res, "delete_failed")
     return JSONResponse(res, status_code=(200 if res.get("ok") else 400))
 
-@router.post("/delete")
-def api_watchlist_delete_multi(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+def _scoped_bulk_delete(request: Request | None, payload: dict[str, Any]) -> Any:
+    from cw_platform.config_base import load_config
+
     provider = str(payload.get("provider") or "ALL").strip().upper()
     provider_instance = payload.get("provider_instance")
     keys = payload.get("keys") or []
-    return _bulk_delete(provider, keys, provider_instance=provider_instance)
+    allowed = _delete_scope(load_config(), request)
+    if not _scope_permits(allowed, provider, provider_instance):
+        return _scope_denied()
+    return _bulk_delete(provider, keys, provider_instance=provider_instance, allowed_instances=allowed)
+
+
+@router.post("/delete")
+def api_watchlist_delete_multi(request: Request = cast(Request, None), payload: dict[str, Any] = Body(...)) -> Any:
+    return _scoped_bulk_delete(request, payload)
 
 
 @router.post("/delete_batch")
-def api_watchlist_delete_batch(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
-    provider = str(payload.get("provider") or "ALL").strip().upper()
-    provider_instance = payload.get("provider_instance")
-    keys = payload.get("keys") or []
-    return _bulk_delete(provider, keys, provider_instance=provider_instance)
+def api_watchlist_delete_batch(request: Request = cast(Request, None), payload: dict[str, Any] = Body(...)) -> Any:
+    return _scoped_bulk_delete(request, payload)
