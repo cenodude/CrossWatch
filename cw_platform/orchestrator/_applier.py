@@ -148,6 +148,33 @@ def _normalize(
     except Exception:  # pragma: no cover
         _ckey = None  # type: ignore
 
+    try:
+        from ..history_events import history_event_key as _history_event_key  # type: ignore
+    except Exception:  # pragma: no cover
+        _history_event_key = None  # type: ignore
+
+    def _accounting_keys(item: Mapping[str, Any]) -> list[str]:
+        keys: list[str] = []
+
+        def _add(value: Any) -> None:
+            raw = str(value or "").strip()
+            if raw and raw not in keys:
+                keys.append(raw)
+
+        if str(feature or "").lower() == "history":
+            _add(item.get("_cw_event_key"))
+            if _history_event_key:
+                try:
+                    _add(_history_event_key(item, item.get("_cw_event_key")))
+                except Exception:
+                    pass
+        if _ckey:
+            try:
+                _add(_ckey(item) or "")
+            except Exception:
+                pass
+        return keys
+
     if isinstance(unresolved_list, list) and unresolved_list:
         def _unwrap(x: Mapping[str, Any]) -> tuple[Mapping[str, Any], str | None]:
             inner = x.get("item")
@@ -278,17 +305,12 @@ def _normalize(
         for it in items:
             if not isinstance(it, Mapping):
                 continue
-            k = ""
-            if _ckey:
-                try:
-                    k = str(_ckey(it) or "")
-                except Exception:
-                    k = ""
-            if k and k in accounted:
+            item_keys = _accounting_keys(it)
+            if any(k in accounted for k in item_keys):
                 continue
             leftover.append(it)
-            if k:
-                unresolved_keys.append(k)
+            if item_keys:
+                unresolved_keys.append(item_keys[0])
         if leftover:
             unresolved += len(leftover)
             try:
