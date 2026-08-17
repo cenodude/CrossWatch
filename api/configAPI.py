@@ -647,6 +647,9 @@ def api_config_migrate() -> dict[str, Any]:
     current = dict(env["load"]() or {})
     backup_path = None
     forced_paths: list[str] = []
+    resource_id_paths: list[str] = []
+    profile_cleanup_paths: list[str] = []
+    obsolete_paths: list[str] = []
 
     try:
         try:
@@ -718,6 +721,25 @@ def api_config_migrate() -> dict[str, Any]:
         pass
 
     try:
+        ensure_resource_ids = getattr(base, "ensure_config_resource_ids", None)
+        if callable(ensure_resource_ids):
+            result = ensure_resource_ids(cfg)
+            if isinstance(result, list):
+                resource_id_paths = [str(path) for path in result]
+        cleanup_profiles = getattr(base, "cleanup_invalid_resource_profile_ids", None)
+        if callable(cleanup_profiles):
+            result = cleanup_profiles(cfg)
+            if isinstance(result, list):
+                profile_cleanup_paths = [str(path) for path in result]
+        cleanup_obsolete = getattr(base, "cleanup_obsolete_config_keys", None)
+        if callable(cleanup_obsolete):
+            result = cleanup_obsolete(cfg)
+            if isinstance(result, list):
+                obsolete_paths = [str(path) for path in result]
+    except Exception:
+        return {"ok": False, "error": "resource_id_migration_failed"}
+
+    try:
         ui = cfg.get("ui")
         if isinstance(ui, dict):
             ui.pop("_autogen", None)
@@ -737,4 +759,7 @@ def api_config_migrate() -> dict[str, Any]:
         "ok": True,
         "backup": backup_path,
         "forced_paths": forced_paths,
+        "resource_id_paths": resource_id_paths,
+        "profile_cleanup_paths": profile_cleanup_paths,
+        "obsolete_paths": obsolete_paths,
     }

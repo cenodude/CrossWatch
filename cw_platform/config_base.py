@@ -951,6 +951,66 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
 
 
 # Helpers: paths, IO, merging, normalization
+CONFIG_TOP_LEVEL_ORDER: tuple[str, ...] = (
+    "version",
+    "security",
+    "app_auth",
+    "user_profiles",
+    "provider_instance_ids",
+    "plex",
+    "jellyfin",
+    "emby",
+    "kodi",
+    "tautulli",
+    "trakt",
+    "simkl",
+    "mdblist",
+    "anilist",
+    "tmdb_sync",
+    "publicmetadb",
+    "punchplay",
+    "nuvio",
+    "stremio",
+    "floppy",
+    "scrob",
+    "crosswatch",
+    "metadata",
+    "tmdb",
+    "anime_mapping",
+    "sync",
+    "pairs",
+    "scrobble",
+    "scheduling",
+    "playlists",
+    "playback_progress",
+    "runtime",
+    "features",
+    "ui",
+)
+
+OBSOLETE_CONFIG_KEYS: tuple[str, ...] = ("mobile_auth",)
+
+
+def cleanup_obsolete_config_keys(cfg: dict[str, Any]) -> list[str]:
+    changed: list[str] = []
+    for key in OBSOLETE_CONFIG_KEYS:
+        if key in cfg:
+            cfg.pop(key, None)
+            changed.append(key)
+    return changed
+
+
+def _order_config_for_write(data: dict[str, Any]) -> dict[str, Any]:
+    ordered: dict[str, Any] = {}
+    for key in CONFIG_TOP_LEVEL_ORDER:
+        if key in data:
+            ordered[key] = data[key]
+    for key, value in data.items():
+        if key not in ordered:
+            ordered[key] = value
+    return ordered
+
+
 def _cfg_file() -> Path:
     return CONFIG / "config.json"
 
@@ -2069,6 +2129,201 @@ def _normalize_pair_profile_ids(cfg: dict[str, Any]) -> None:
             it.pop("profile_id", None)
 
 
+def _new_resource_id(prefix: str) -> str:
+    return f"{prefix}_{secrets.token_hex(6)}"
+
+
+def _clean_resource_id(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _unique_resource_id(prefix: str, used: set[str]) -> str:
+    for _ in range(100):
+        rid = _new_resource_id(prefix)
+        if rid not in used:
+            return rid
+    raise RuntimeError("unable to allocate config resource id")
+
+
+def _replace_string_ref(node: dict[str, Any], key: str, refs: dict[str, str]) -> bool:
+    raw = node.get(key)
+    value = _clean_resource_id(raw)
+    if value and value in refs:
+        node[key] = refs[value]
+        return True
+    return False
+
+
+def _rewrite_scheduler_resource_refs(cfg: dict[str, Any], pair_refs: dict[str, str], route_refs: dict[str, str]) -> list[str]:
+    if not pair_refs and not route_refs:
+        return []
+    changed: list[str] = []
+    scheduling = cfg.get("scheduling")
+    if not isinstance(scheduling, dict):
+        return changed
+    advanced = scheduling.get("advanced")
+    if not isinstance(advanced, dict):
+        return changed
+
+    jobs = advanced.get("jobs")
+    if isinstance(jobs, list):
+        for idx, job in enumerate(jobs):
+            if isinstance(job, dict) and _replace_string_ref(job, "pair_id", pair_refs):
+                changed.append(f"scheduling.advanced.jobs[{idx}].pair_id")
+
+    workflows = advanced.get("workflows")
+    if isinstance(workflows, list):
+        for wi, workflow in enumerate(workflows):
+            steps = workflow.get("steps") if isinstance(workflow, dict) else None
+            if not isinstance(steps, list):
+                continue
+            for si, step in enumerate(steps):
+                if isinstance(step, dict) and _replace_string_ref(step, "pair_id", pair_refs):
+                    changed.append(f"scheduling.advanced.workflows[{wi}].steps[{si}].pair_id")
+
+    event_rules = advanced.get("event_rules")
+    if not isinstance(event_rules, list):
+        event_rules = advanced.get("eventRules")
+    if isinstance(event_rules, list):
+        for ri, rule in enumerate(event_rules):
+            if not isinstance(rule, dict):
+                continue
+            action = rule.get("action")
+            if isinstance(action, dict):
+                if _replace_string_ref(action, "pair_id", pair_refs):
+                    changed.append(f"scheduling.advanced.event_rules[{ri}].action.pair_id")
+                if _replace_string_ref(action, "pairId", pair_refs):
+                    changed.append(f"scheduling.advanced.event_rules[{ri}].action.pairId")
+            elif _replace_string_ref(rule, "pair_id", pair_refs):
+                changed.append(f"scheduling.advanced.event_rules[{ri}].pair_id")
+            source = str(rule.get("source") or "watcher").strip().lower() or "watcher"
+            filters = rule.get("filters")
+            if source == "watcher" and isinstance(filters, dict):
+                if _replace_string_ref(filters, "route_id", route_refs):
+                    changed.append(f"scheduling.advanced.event_rules[{ri}].filters.route_id")
+                if _replace_string_ref(filters, "routeId", route_refs):
+                    changed.append(f"scheduling.advanced.event_rules[{ri}].filters.routeId")
+    return changed
+
+
+def ensure_config_resource_ids(cfg: dict[str, Any]) -> list[str]:
+    """Persist stable IDs for legacy resource rows that used positional fallbacks."""
+    changed: list[str] = []
+    pair_refs: dict[str, str] = {}
+    route_refs: dict[str, str] = {}
+
+    pairs = cfg.get("pairs")
+    if isinstance(pairs, list):
+        used: set[str] = set()
+        for idx, pair in enumerate(pairs):
+            if not isinstance(pair, dict):
+                continue
+            raw_id = _clean_resource_id(pair.get("id"))
+            raw_pair_id = _clean_resource_id(pair.get("pair_id"))
+            candidate = raw_id or raw_pair_id
+            if candidate and candidate not in used:
+                if pair.get("id") != candidate:
+                    pair["id"] = candidate
+                    changed.append(f"pairs[{idx}].id")
+                used.add(candidate)
+                continue
+            rid = _unique_resource_id("pair", used)
+            pair["id"] = rid
+            used.add(rid)
+            changed.append(f"pairs[{idx}].id")
+            legacy = f"pair-{idx + 1}"
+            if not candidate:
+                pair_refs[legacy] = rid
+
+    scrobble = cfg.get("scrobble")
+    watch = scrobble.get("watch") if isinstance(scrobble, dict) else None
+    routes = watch.get("routes") if isinstance(watch, dict) else None
+    if isinstance(routes, list):
+        used_routes: set[str] = set()
+        for idx, route in enumerate(routes):
+            if not isinstance(route, dict):
+                continue
+            raw_id = _clean_resource_id(route.get("id"))
+            raw_route_id = _clean_resource_id(route.get("route_id"))
+            candidate = raw_id or raw_route_id
+            if candidate and candidate not in used_routes:
+                if route.get("id") != candidate:
+                    route["id"] = candidate
+                    changed.append(f"scrobble.watch.routes[{idx}].id")
+                used_routes.add(candidate)
+                continue
+            rid = _unique_resource_id("route", used_routes)
+            route["id"] = rid
+            used_routes.add(rid)
+            changed.append(f"scrobble.watch.routes[{idx}].id")
+            legacy = f"R{idx + 1}"
+            if not candidate:
+                route_refs[legacy] = rid
+
+    changed.extend(_rewrite_scheduler_resource_refs(cfg, pair_refs, route_refs))
+    return changed
+
+
+def cleanup_invalid_resource_profile_ids(cfg: dict[str, Any]) -> list[str]:
+    changed: list[str] = []
+    try:
+        from cw_platform.provider_instances import list_user_profiles, normalize_user_profile_id
+
+        valid = {normalize_user_profile_id(row.get("id")) for row in list_user_profiles(cfg)}
+        valid = {pid for pid in valid if pid}
+    except Exception:
+        return changed
+
+    def clean_pid(value: Any) -> str:
+        pid = normalize_user_profile_id(value)
+        return pid if pid and pid in valid else ""
+
+    scrobble = cfg.get("scrobble")
+    watch = scrobble.get("watch") if isinstance(scrobble, dict) else None
+    routes = watch.get("routes") if isinstance(watch, dict) else None
+    if isinstance(routes, list):
+        for idx, route in enumerate(routes):
+            if not isinstance(route, dict):
+                continue
+            raw = route.get("profile_id") if "profile_id" in route else route.get("profileId")
+            pid = clean_pid(raw)
+            if pid:
+                if route.get("profile_id") != pid:
+                    route["profile_id"] = pid
+                    changed.append(f"scrobble.watch.routes[{idx}].profile_id")
+                if "profileId" in route:
+                    route.pop("profileId", None)
+                    changed.append(f"scrobble.watch.routes[{idx}].profileId")
+            else:
+                if "profile_id" in route:
+                    route.pop("profile_id", None)
+                    changed.append(f"scrobble.watch.routes[{idx}].profile_id")
+                if "profileId" in route:
+                    route.pop("profileId", None)
+                    changed.append(f"scrobble.watch.routes[{idx}].profileId")
+
+    webhook = scrobble.get("webhook") if isinstance(scrobble, dict) else None
+    assignments = webhook.get("user_profile_assignments") if isinstance(webhook, dict) else None
+    if isinstance(webhook, dict) and isinstance(assignments, dict):
+        for resource_id, value in list(assignments.items()):
+            pid = clean_pid(value)
+            if pid:
+                if assignments.get(resource_id) != pid:
+                    assignments[resource_id] = pid
+                    changed.append(f"scrobble.webhook.user_profile_assignments.{resource_id}")
+            else:
+                assignments.pop(resource_id, None)
+                changed.append(f"scrobble.webhook.user_profile_assignments.{resource_id}")
+        if not assignments:
+            webhook.pop("user_profile_assignments", None)
+            changed.append("scrobble.webhook.user_profile_assignments")
+    elif isinstance(webhook, dict) and "user_profile_assignments" in webhook:
+        webhook.pop("user_profile_assignments", None)
+        changed.append("scrobble.webhook.user_profile_assignments")
+
+    return changed
+
+
 def _normalize_app_auth(cfg: dict[str, Any]) -> None:
     a = _ensure_dict(cfg, "app_auth")
     raw_enabled = bool(a.get("enabled", False))
@@ -2436,6 +2691,7 @@ def load_config() -> dict[str, Any]:
                         inst_block["connected"] = True
     except Exception:
         pass
+    cleanup_obsolete_config_keys(cfg)
     _normalize_tmdb_sync(cfg)
     _normalize_trakt(cfg)
     _normalize_simkl(cfg)
@@ -2450,6 +2706,7 @@ def load_config() -> dict[str, Any]:
     _normalize_app_auth(cfg)
     _normalize_scrobble_webhook(cfg)
     _normalize_pair_profile_ids(cfg)
+    cleanup_invalid_resource_profile_ids(cfg)
     pairs = cfg.get("pairs")
     if isinstance(pairs, list):
         for it in pairs:
@@ -2492,6 +2749,7 @@ def save_config(cfg: dict[str, Any]) -> None:
     except Exception:
         pass
     data["version"] = _current_version_norm()
+    cleanup_obsolete_config_keys(data)
     _normalize_tmdb_sync(data)
     _normalize_trakt(data)
     _normalize_simkl(data)
@@ -2502,11 +2760,13 @@ def save_config(cfg: dict[str, Any]) -> None:
     _normalize_floppy(data)
     _normalize_scrob(data)
     _normalize_anime_mapping(data)
+    ensure_config_resource_ids(data)
     _normalize_scheduling(data)
     _normalize_app_auth(data)
     _normalize_scrobble_webhook(data)
     _normalize_ui(data)
     _normalize_pair_profile_ids(data)
+    cleanup_invalid_resource_profile_ids(data)
     try:
         from cw_platform.provider_instances import ensure_provider_instance_uids
 
@@ -2536,7 +2796,8 @@ def save_config(cfg: dict[str, Any]) -> None:
         except Exception:
             pass
 
-    _write_json_atomic(_cfg_file(), cast(dict[str, Any], _encrypt_secret_tree_stable(data, prev_raw)))
+    final_data = _order_config_for_write(cast(dict[str, Any], _encrypt_secret_tree_stable(data, prev_raw)))
+    _write_json_atomic(_cfg_file(), final_data)
 
 
 def update_config(mutator: Any) -> tuple[dict[str, Any], Any]:
