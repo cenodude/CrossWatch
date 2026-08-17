@@ -230,6 +230,24 @@ def test_user_profile_crud_api(monkeypatch) -> None:
     assert deleted == {"ok": True, "deleted": True}
 
 
+def test_user_profile_validation_errors_do_not_expose_exception_text(monkeypatch) -> None:
+    store: dict[str, Any] = {
+        "user_profiles": {BOB_PROFILE_ID: {"label": "Bob", "instances": {}}},
+    }
+
+    def unsafe_update(_mutator):
+        raise ValueError("Traceback: leaked internal path C:\\config\\secret.json")
+
+    monkeypatch.setattr(provider_api, "load_config", lambda: json.loads(json.dumps(store)))
+    monkeypatch.setattr(provider_api, "update_config", unsafe_update)
+
+    created = provider_api.api_user_profiles_create({"label": "Alice"}, request=_admin_req())
+    updated = provider_api.api_user_profiles_update(BOB_PROFILE_ID, {"label": "Bobby"}, request=_admin_req())
+
+    assert created == {"ok": False, "error": "invalid_user_profile"}
+    assert updated == {"ok": False, "error": "invalid_user_profile"}
+
+
 def test_user_profile_delete_blocks_when_assigned_to_user(monkeypatch) -> None:
     store: dict[str, Any] = {
         "user_profiles": {BOB_PROFILE_ID: {"label": "Bob", "instances": {"PLEX": ["PLEX-P01"]}}},

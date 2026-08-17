@@ -278,6 +278,13 @@ def _admin_required_response(request: Request | None, cfg: dict[str, Any]) -> JS
     return _admin_required(request, cfg)
 
 
+def _profile_value_error(exc: ValueError) -> str:
+    code = str(exc.args[0] if exc.args else "").strip()
+    if code in {"invalid_user_profile", "duplicate_user_profile_label"}:
+        return code
+    return "invalid_user_profile"
+
+
 @router.get("/provider-instances")
 def api_provider_instances_all(request: Request = cast(Request, None), configured_only: bool = False) -> JSONResponse:
     cfg = dict(load_config() or {})
@@ -520,7 +527,7 @@ def api_user_profiles_create(payload: dict[str, Any] = Body(default_factory=dict
     try:
         _, profile = update_config(_mutate)
     except ValueError as exc:
-        return {"ok": False, "error": str(exc)}
+        return {"ok": False, "error": _profile_value_error(exc)}
     return {"ok": True, "profile": profile}
 
 
@@ -562,7 +569,7 @@ def api_user_profiles_update(profile_id: str, payload: dict[str, Any] = Body(def
     except KeyError:
         return {"ok": False, "error": "not_found"}
     except ValueError as exc:
-        return {"ok": False, "error": str(exc)}
+        return {"ok": False, "error": _profile_value_error(exc)}
     return {"ok": True, "profile": profile}
 
 
