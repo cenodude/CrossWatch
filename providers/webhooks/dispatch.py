@@ -8,6 +8,8 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from cw_platform.provider_instances import normalize_instance_id
+from cw_platform.access_policy import webhook_effective_profile_id
+from cw_platform.user_profile_resources import webhook_assigned_profile_id, webhook_resource_id
 from providers.scrobble.scrobble import ScrobbleAction, ScrobbleEvent
 from providers.webhooks.config import sink_configured, webhook_settings, webhook_sink_instance, webhook_sinks
 
@@ -112,12 +114,32 @@ def _route_cfg(cfg: dict[str, Any], provider: str, provider_instance: str, sink:
     out = copy.deepcopy(cfg) if isinstance(cfg, dict) else {}
     sc = out.setdefault("scrobble", {})
     watch = sc.setdefault("watch", {})
+    wh = webhook_settings(out, provider, provider_instance)
+    resource_id = webhook_resource_id(provider, provider_instance, sink, sink_instance)
+    assigned_profile_id = webhook_assigned_profile_id(out, resource_id)
+    effective_profile_id = webhook_effective_profile_id(
+        out,
+        {
+            "provider": provider,
+            "provider_instance": provider_instance,
+            "sink": sink,
+            "sink_instance": sink_instance,
+        },
+    )
     watch["route_id"] = f"webhook:{provider}:{normalize_instance_id(provider_instance)}:{sink}:{sink_instance}"
     watch["route_provider"] = provider
     watch["route_provider_instance"] = normalize_instance_id(provider_instance)
     watch["route_sink"] = sink
     watch["route_sink_instance"] = sink_instance
     watch["event_method"] = "webhook"
+    watch["route_profile_id"] = assigned_profile_id
+    watch["route_effective_profile_id"] = effective_profile_id
+    if provider == "plex":
+        watch["filters"] = dict(wh.get("filters_plex") or {})
+    elif provider == "emby":
+        watch["filters"] = dict(wh.get("filters_emby") or {})
+    elif provider == "jellyfin":
+        watch["filters"] = dict(wh.get("filters_jellyfin") or {})
     return out
 
 

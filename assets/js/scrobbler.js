@@ -56,10 +56,12 @@
   }
 
   function webhookProfileName(x) {
-    return x.provider_instance === "default" ? "Default" : x.provider_instance;
+    return String(x.profile_label || x.source_label || x.provider_instance || "default").trim() || "Default";
   }
 
-  function instanceName(v) {
+  function instanceName(v, labelValue = "") {
+    const labelText = String(labelValue || "").trim();
+    if (labelText) return labelText;
     return String(v || "default") === "default" ? "Default" : String(v || "default");
   }
 
@@ -121,7 +123,7 @@
               <div class="sc2-route-flow-wrap">
                 <div class="sc2-route-endpoint">${providerLogo(x.provider)}<div><strong>${esc(label(x.provider))}</strong><span>${esc(webhookProfileName(x))}</span></div></div>
                 <div class="sc2-rt-conn"><span class="sc2-rt-conn-line"></span></div>
-                <div class="sc2-route-endpoint sc2-route-endpoint-sink"><div><strong>${esc(label(x.sink))}</strong><span>${esc(instanceName(x.sink_instance))}</span></div>${providerLogo(x.sink)}</div>
+                <div class="sc2-route-endpoint sc2-route-endpoint-sink"><div><strong>${esc(label(x.sink))}</strong><span>${esc(instanceName(x.sink_instance, x.sink_profile_label))}</span></div>${providerLogo(x.sink)}</div>
               </div>
               <div class="sc2-route-meta">
                 <span class="sc2-route-type"><span class="material-symbols-rounded">webhook</span>Webhook</span>
@@ -157,14 +159,15 @@
           ${rows.length ? rows.map((r) => `
             <article class="sc2-route sc2-route-card ${r.enabled ? "is-enabled" : "is-disabled"} ${r.runtime?.running ? "is-live" : "is-idle"}" data-action="edit-route" data-route="${esc(r.id)}" title="Edit route">
               <div class="sc2-route-flow-wrap">
-                <div class="sc2-route-endpoint">${providerLogo(r.provider)}<div><strong>${esc(label(r.provider))}</strong><span>${esc(instanceName(r.provider_instance))}</span></div></div>
+                <div class="sc2-route-endpoint">${providerLogo(r.provider)}<div><strong>${esc(label(r.provider))}</strong><span>${esc(instanceName(r.provider_instance, r.source_label))}</span></div></div>
                 <div class="sc2-rt-conn"><span class="sc2-rt-conn-line"></span></div>
-                <div class="sc2-route-endpoint sc2-route-endpoint-sink"><div><strong>${esc(label(r.sink))}</strong><span>${esc(instanceName(r.sink_instance))}</span></div>${providerLogo(r.sink)}</div>
+                <div class="sc2-route-endpoint sc2-route-endpoint-sink"><div><strong>${esc(label(r.sink))}</strong><span>${esc(instanceName(r.sink_instance, r.sink_label))}</span></div>${providerLogo(r.sink)}</div>
               </div>
               <div class="sc2-route-meta">
                 <span class="sc2-route-type"><span class="material-symbols-rounded">sensors</span>Watcher</span>
                 <span class="sc2-route-id">${esc(r.id || "Route")}</span>
                 <span class="sc2-route-filters sc2-muted">${esc(routeFilterSummary(r.filters))}</span>
+                ${r.needs_account_filter ? `<span class="sc2-route-warn" title="This route is assigned to a user profile but has no account whitelist, so play events are blocked."><span class="material-symbols-rounded">warning</span>No account filter</span>` : ""}
               </div>
               <div class="sc2-route-actions">
                 <button type="button" class="btn small sc2-round-action sc2-route-toggle ${r.enabled ? "is-on" : "is-off"}" data-action="toggle-route" data-route="${esc(r.id)}" title="${esc(r.enabled ? "Disable route" : "Enable route")}" aria-label="${esc(r.enabled ? "Disable route" : "Enable route")}"><span class="material-symbols-rounded">power_settings_new</span><span>${esc(r.enabled ? "On" : "Off")}</span></button>

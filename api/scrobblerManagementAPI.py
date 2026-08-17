@@ -10,8 +10,10 @@ from typing import Any
 from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse
 
+from cw_platform.access_policy import managed_profile_id, profile_label_for_id, request_user, route_effective_profile_id, webhook_effective_profile_id
 from cw_platform.config_base import load_config, save_config
-from cw_platform.provider_instances import get_provider_block, list_instance_ids, normalize_instance_id
+from cw_platform.provider_instances import get_provider_block, list_instance_ids, list_user_profiles, normalize_instance_id, normalize_user_profile_id, sanitize_instance_label
+from cw_platform.user_profile_resources import webhook_assigned_profile_id, webhook_resource_id
 from cw_platform.provider_usage import WEBHOOK_SOURCE_PROVIDERS, provider_label, webhook_source_enabled
 from providers.auth import runtime as auth_runtime
 from providers.scrobble.routes import (
@@ -20,6 +22,7 @@ from providers.scrobble.routes import (
     normalize_route,
     normalize_route_options,
     normalize_routes,
+    route_needs_account_filter,
 )
 from providers.scrobble.sources import legacy_mode_for_sources, scrobble_sources
 from providers.webhooks.config import (
@@ -106,6 +109,15 @@ def _instances(cfg: Mapping[str, Any], provider: str) -> list[str]:
         return [normalize_instance_id(x) for x in list_instance_ids(cfg, provider)]
     except Exception:
         return ["default"]
+
+
+def _instance_display_label(cfg: Mapping[str, Any], provider: str, instance: Any) -> str:
+    inst = normalize_instance_id(instance)
+    block = get_provider_block(_dict(cfg), provider, inst)
+    friendly = sanitize_instance_label(block.get("label") if isinstance(block, Mapping) else "")
+    if friendly:
+        return friendly
+    return "Default" if inst == "default" else inst
 
 
 def _profile_exists(cfg: Mapping[str, Any], provider: str, instance: str) -> bool:
@@ -336,7 +348,7 @@ def _destination_availability(cfg: Mapping[str, Any]) -> list[dict[str, Any]]:
                 {
                     "provider": sink,
                     "instance": inst,
-                    "label": provider_label(sink, inst),
+                    "label": _instance_display_label(cfg, sink, inst),
                     "configured": ready,
                     "reason": "" if ready else "not_configured",
                 }
@@ -356,7 +368,7 @@ def _eligible_sources(cfg: Mapping[str, Any]) -> list[dict[str, Any]]:
                 {
                     "provider": provider,
                     "instance": inst,
-                    "label": provider_label(provider, inst),
+                    "label": _instance_display_label(cfg, provider, inst),
                     "configured": configured,
                     "eligible": configured,
                     "explicit": explicit,
@@ -399,10 +411,11 @@ def _webhook_cards(cfg: dict[str, Any], request: Request) -> list[dict[str, Any]
                         "provider": provider,
                         "provider_label": provider_label(provider),
                         "provider_instance": inst,
-                        "profile_label": provider_label(provider, inst),
+                        "profile_label": _instance_display_label(cfg, provider, inst),
                         "sink": sink,
                         "sink_label": provider_label(sink),
                         "sink_instance": sink_inst,
+                        "sink_profile_label": _instance_display_label(cfg, sink, sink_inst),
                         "sink_ready": ready,
                         "enabled": src_enabled,
                         "source_configured": source_configured,
@@ -410,6 +423,8 @@ def _webhook_cards(cfg: dict[str, Any], request: Request) -> list[dict[str, Any]
                         "active": bool(src_enabled and source_configured and ready),
                         "endpoint_url": endpoint,
                         "webhook_token": token,
+                        "id": webhook_resource_id(provider, inst, sink, sink_inst),
+                        "profile_id": webhook_assigned_profile_id(cfg, webhook_resource_id(provider, inst, sink, sink_inst)),
                         "effective_settings": safe_eff,
                         "explicit_settings": safe_expl,
                     }
@@ -456,10 +471,21 @@ def _normalized_routes(cfg: dict[str, Any], request: Request) -> list[dict[str, 
         row["options"] = options
         row["runtime"] = {"running": bool(running_by_id.get(str(route.get("id") or "")))}
         row["ratings_webhook_url"] = _route_ratings_url(request, ratings)
-        row["source_label"] = provider_label(str(row.get("provider") or ""), row.get("provider_instance"))
-        row["sink_label"] = provider_label(str(row.get("sink") or ""), row.get("sink_instance"))
+        row["source_label"] = _instance_display_label(cfg, str(row.get("provider") or ""), row.get("provider_instance"))
+        row["sink_label"] = _instance_display_label(cfg, str(row.get("sink") or ""), row.get("sink_instance"))
+        profile_id = str(row.get("profile_id") or "").strip()
+        if profile_id:
+            row["profile_label"] = profile_label_for_id(cfg, profile_id)
+        row["needs_account_filter"] = route_needs_account_filter(cfg, route)
         out.append(row)
     return out
+
+
+def _user_can_access_route(cfg: Mapping[str, Any], user: Mapping[str, Any] | None, route: Mapping[str, Any]) -> bool:
+    if not isinstance(user, Mapping) or bool(user.get("is_admin")):
+        return True
+    pid = managed_profile_id(user)
+    return bool(pid and route_effective_profile_id(cfg, route) == pid)
 
 
 def _summary(cfg: dict[str, Any], request: Request, webhooks: list[dict[str, Any]], routes: list[dict[str, Any]], runtime: dict[str, Any]) -> dict[str, Any]:
@@ -483,6 +509,11 @@ def build_overview(cfg: dict[str, Any], request: Request) -> dict[str, Any]:
     sources = scrobble_sources(cfg)
     webhooks = _webhook_cards(cfg, request)
     routes = _normalized_routes(cfg, request)
+    user = request_user(request)
+    if isinstance(user, Mapping) and not bool(user.get("is_admin")):
+        pid = managed_profile_id(user)
+        webhooks = [row for row in webhooks if pid and webhook_effective_profile_id(cfg, row) == pid]
+        routes = [row for row in routes if _user_can_access_route(cfg, user, row)]
     runtime = _runtime_status(request, cfg)
     sc = _dict(cfg.get("scrobble"))
     watch = _dict(sc.get("watch"))
@@ -601,6 +632,16 @@ def _route_key(route: Mapping[str, Any]) -> tuple[str, str, str, str]:
     )
 
 
+def _normalize_route_profile_id(cfg: Mapping[str, Any], value: Any) -> str:
+    pid = normalize_user_profile_id(value)
+    if not pid:
+        return ""
+    for row in list_user_profiles(cfg):
+        if normalize_user_profile_id(row.get("id")) == pid:
+            return pid
+    return ""
+
+
 def _validate_route(cfg: Mapping[str, Any], route: dict[str, Any]) -> dict[str, Any]:
     normalized = normalize_route(route, str(route.get("id") or "R1"))
     provider = str(normalized.get("provider") or "").strip().lower()
@@ -613,6 +654,11 @@ def _validate_route(cfg: Mapping[str, Any], route: dict[str, Any]) -> dict[str, 
     _require_sink_profile(cfg, sink, str(normalized.get("sink_instance") or "default"))
     normalized["filters"] = _normalize_filters(normalized.get("filters"), provider, "filters")
     normalized["options"] = normalize_route_options(normalized.get("options"))
+    profile_id = _normalize_route_profile_id(cfg, route.get("profile_id") or route.get("profileId") or normalized.get("profile_id"))
+    if profile_id:
+        normalized["profile_id"] = profile_id
+    else:
+        normalized.pop("profile_id", None)
     ratings = _dict(_dict(normalized.get("options")).get("ratings"))
     targets = [str(t or "").strip().lower() for t in (ratings.get("targets") or []) if str(t or "").strip()]
     if ratings.get("mode") == "custom":
