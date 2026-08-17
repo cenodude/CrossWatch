@@ -85,7 +85,7 @@ def test_publicmetadb_special_episode_round_trip_shape() -> None:
 
 
 def test_mdblist_groups_multiple_specials_under_one_season() -> None:
-    body, accepted = _bucketize([_special(1), _special(2)], unwatch=False)
+    body, accepted = _bucketize(None, [_special(1), _special(2)], unwatch=False)
 
     shows = body["shows_nested"]
     assert len(shows) == 1
@@ -113,7 +113,7 @@ def test_mdblist_episode_tmdb_uses_flat_episode_payload() -> None:
         "watched_at": WATCHED_AT,
     }
 
-    body, accepted = _bucketize([item], unwatch=False)
+    body, accepted = _bucketize(None, [item], unwatch=False)
 
     assert body == {"episodes": [{"ids": {"tmdb": 1359983}, "watched_at": WATCHED_AT}]}
     assert accepted[0]["ids"] == {"tmdb": 1359983}
@@ -557,8 +557,8 @@ def test_mdblist_episode_tmdb_needs_show_tmdb_to_go_flat() -> None:
         "watched_at": WATCHED_AT,
     }
 
-    body_flat, accepted_flat = _bucketize([without_coordinates], unwatch=False)
-    body_nested, _accepted_nested = _bucketize([with_coordinates], unwatch=False)
+    body_flat, accepted_flat = _bucketize(None, [without_coordinates], unwatch=False)
+    body_nested, _accepted_nested = _bucketize(None, [with_coordinates], unwatch=False)
 
     assert "episodes" not in body_flat
     assert accepted_flat == []
