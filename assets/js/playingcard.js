@@ -13,6 +13,7 @@
   };
 
   const hasTmdbKey = (cfg) => {
+    if (cfg?.tmdb_configured === true) return true;
     const key = cfg?.tmdb?.api_key;
     return typeof key === "string" ? key.trim().length > 0 : !!key;
   };
@@ -20,7 +21,9 @@
   const isUiEnabled = () => {
     const cfg = getCfg();
     const ui = cfg?.ui || {};
-    return !!cfg && ui.show_playingcard !== false && hasTmdbKey(cfg);
+    const auth = window.CW?.AuthState?.read?.();
+    const prefs = auth?.preferences || auth?.user?.preferences || {};
+    return !!cfg && ui.show_playingcard !== false && prefs.playing_card !== false && hasTmdbKey(cfg);
   };
 
   const isActiveState = (s) => ["playing", "paused", "buffering"].includes(String(s || "").toLowerCase());
@@ -189,18 +192,32 @@
     return sortStreams(items.slice());
   };
 
+  const profileScope = () => String(window.CW?.OverviewProfile?.id || "").trim();
+  const currentlyWatchingUrl = () => {
+    const id = profileScope();
+    return id ? `/api/watch/currently_watching?user_profile=${encodeURIComponent(id)}` : "/api/watch/currently_watching";
+  };
+
   const fetchCurrentlyWatchingData = async (force = false) => {
     if (authSetupPending()) return { streams: [], primary: null, ts: 0 };
+    try { await window.CW?.OverviewProfile?.ready; } catch {}
     const now = Date.now();
+    const scope = profileScope();
+    if (CARD.cacheScope !== scope) {
+      CARD.cacheScope = scope;
+      CARD.cachePayload = null;
+      CARD.cacheAt = 0;
+      window[SHARED_WATCH_KEY] = null;
+    }
     const shared = window[SHARED_WATCH_KEY];
-    if (!force && shared && typeof shared === "object" && (now - (Number(shared.at) || 0)) < CACHE_TTL_MS) {
+    if (!force && shared && typeof shared === "object" && shared.scope === scope && (now - (Number(shared.at) || 0)) < CACHE_TTL_MS) {
       return shared.payload || { streams: [], primary: null, ts: 0 };
     }
     if (!force && CARD.cachePayload && (now - CARD.cacheAt) < CACHE_TTL_MS) return CARD.cachePayload;
     if (CARD.cacheBusy) return CARD.cacheBusy;
     CARD.cacheBusy = (async () => {
       try {
-        const r = await fetch("/api/watch/currently_watching", { cache: "no-store" });
+        const r = await fetch(currentlyWatchingUrl(), { cache: "no-store" });
         if (!r.ok) return { streams: [], primary: null, ts: 0 };
         const j = await r.json();
         const streams = activeStreamsFromPayload(j);
@@ -218,7 +235,7 @@
         const payload = { streams, primary: streams[0] || null, ts };
         CARD.cachePayload = payload;
         CARD.cacheAt = Date.now();
-        window[SHARED_WATCH_KEY] = { at: CARD.cacheAt, payload };
+        window[SHARED_WATCH_KEY] = { scope, at: CARD.cacheAt, payload };
         return payload;
       } catch {
         return { streams: [], primary: null, ts: 0 };
@@ -237,6 +254,7 @@
     tick: null,
     cacheBusy: null,
     cacheAt: 0,
+    cacheScope: "",
     cachePayload: null,
     serverTs: 0,
     durationByKey: new Map(),
@@ -482,6 +500,18 @@
 
   window.addEventListener("currently-watching-updated", () => {
     refreshCard(CARD.selectedKey, false).catch(() => {});
+  });
+
+  window.addEventListener("cw:overview-profile-changed", () => {
+    CARD.cachePayload = null;
+    CARD.cacheAt = 0;
+    CARD.cacheScope = profileScope();
+    window[SHARED_WATCH_KEY] = null;
+    refreshCard("", true).catch(() => {});
+  });
+
+  window.addEventListener("cw:auth-state-changed", () => {
+    refreshCard(CARD.selectedKey, true).catch(() => {});
   });
 
   window.updatePlayingCard = (payload) => refreshCard(keyOf(payload || {}), false);
