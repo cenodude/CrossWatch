@@ -706,6 +706,17 @@ def _profile_key(provider: Any, instance_id: Any) -> str:
     return f"{str(provider or '').strip().lower()}:{normalize_instance_id(instance_id)}"
 
 
+def _user_filter_allows(user_filter: Mapping[str, Any] | None, provider: Any, instance_id: Any) -> bool:
+    if not isinstance(user_filter, Mapping) or not user_filter:
+        return True
+    prov = str(provider or "").strip().upper()
+    allowed = user_filter.get(prov)
+    if not isinstance(allowed, list):
+        return False
+    inst = normalize_instance_id(instance_id)
+    return inst in {normalize_instance_id(value) for value in allowed}
+
+
 def _path_value(block: Mapping[str, Any], path: str) -> Any:
     value: Any = block
     for part in path.split("."):
@@ -836,12 +847,14 @@ class PlaybackProgressService:
         provider_key = str(provider or "").strip().lower()
         return self.adapters.get(provider_key)
 
-    def provider_instances(self, cfg: Mapping[str, Any] | None = None) -> list[dict[str, str]]:
+    def provider_instances(self, cfg: Mapping[str, Any] | None = None, user_filter: Mapping[str, Any] | None = None) -> list[dict[str, str]]:
         config = cfg or load_config()
         out: list[dict[str, str]] = []
         for provider in PHASE1_PROVIDERS:
             for instance_id in list_instance_ids(config, provider):
                 inst = normalize_instance_id(instance_id)
+                if not _user_filter_allows(user_filter, provider, inst):
+                    continue
                 if not _profile_has_explicit_identity(config, provider, inst):
                     continue
                 out.append(
@@ -853,10 +866,10 @@ class PlaybackProgressService:
                 )
         return out
 
-    def capabilities(self, cfg: Mapping[str, Any] | None = None) -> list[PlaybackCapabilities]:
+    def capabilities(self, cfg: Mapping[str, Any] | None = None, user_filter: Mapping[str, Any] | None = None) -> list[PlaybackCapabilities]:
         config = cfg or load_config()
         out: list[PlaybackCapabilities] = []
-        for spec in self.provider_instances(config):
+        for spec in self.provider_instances(config, user_filter=user_filter):
             provider = spec["provider"]
             adapter = self._adapter(provider)
             if not adapter:
@@ -996,19 +1009,20 @@ class PlaybackProgressService:
         page: int = 1,
         page_size: int = 50,
         force_refresh: bool = False,
+        user_filter: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         cfg = load_config()
         provider_filter = str(provider or "").strip().lower()
         instance_filter = normalize_instance_id(instance_id) if instance_id else ""
         specs = [
             spec
-            for spec in self.provider_instances(cfg)
+            for spec in self.provider_instances(cfg, user_filter=user_filter)
             if (not provider_filter or spec["provider"] == provider_filter)
             and (not instance_filter or spec["instance_id"] == instance_filter)
         ]
         readable_specs: list[dict[str, str]] = []
         skipped_errors: list[dict[str, Any]] = []
-        capabilities = self.capabilities(cfg)
+        capabilities = self.capabilities(cfg, user_filter=user_filter)
         cap_by_key = {(cap.provider, cap.instance_id): cap for cap in capabilities}
         for spec in specs:
             cap = cap_by_key.get((spec["provider"], spec["instance_id"]))
@@ -1081,11 +1095,11 @@ class PlaybackProgressService:
             "refreshed_at": utc_now_iso(),
         }
 
-    def settings(self, cfg: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    def settings(self, cfg: Mapping[str, Any] | None = None, user_filter: Mapping[str, Any] | None = None) -> dict[str, Any]:
         config = cfg or load_config()
         disabled = _disabled_profiles(config)
         profiles = []
-        for cap in self.capabilities(config):
+        for cap in self.capabilities(config, user_filter=user_filter):
             key = _profile_key(cap.provider, cap.instance_id)
             profiles.append(
                 {
@@ -1223,10 +1237,16 @@ class PlaybackProgressService:
             return None, {}, inst
         return adapter, build_provider_config_view(cfg, provider_key, inst), inst
 
-    def remove(self, payload: Mapping[str, Any]) -> dict[str, Any]:
-        cfg = load_config()
+    def _scope_denied(self, provider: str, instance_id: str, operation: str) -> dict[str, Any]:
+        LOG.warn(f"{operation} denied by profile scope provider={provider} instance={instance_id}")
+        return PlaybackActionResult(False, provider, instance_id, operation, error_code="profile_scope_denied", message="This provider instance is not assigned to your profile.").to_dict()
+
+    def remove(self, payload: Mapping[str, Any], *, user_filter: Mapping[str, Any] | None = None) -> dict[str, Any]:
         provider = str(payload.get("provider") or "").lower()
         instance_id = normalize_instance_id(payload.get("instance_id"))
+        if not _user_filter_allows(user_filter, provider, instance_id):
+            return self._scope_denied(provider, instance_id, "remove_progress")
+        cfg = load_config()
         record_value = payload.get("record")
         record = _as_mapping(record_value) if isinstance(record_value, Mapping) else payload
         adapter, config_view, inst = self._adapter_for_action(cfg, provider, instance_id)
@@ -1243,10 +1263,12 @@ class PlaybackProgressService:
             LOG.warn(f"remove progress failed provider={provider} instance={inst} error={result.error_code or 'provider_error'}")
         return result.to_dict()
 
-    def mark_watched(self, payload: Mapping[str, Any]) -> dict[str, Any]:
-        cfg = load_config()
+    def mark_watched(self, payload: Mapping[str, Any], *, user_filter: Mapping[str, Any] | None = None) -> dict[str, Any]:
         provider = str(payload.get("provider") or "").lower()
         instance_id = normalize_instance_id(payload.get("instance_id"))
+        if not _user_filter_allows(user_filter, provider, instance_id):
+            return self._scope_denied(provider, instance_id, "mark_watched")
+        cfg = load_config()
         record_value = payload.get("record")
         record = _as_mapping(record_value) if isinstance(record_value, Mapping) else payload
         adapter, config_view, inst = self._adapter_for_action(cfg, provider, instance_id)
@@ -1280,7 +1302,7 @@ class PlaybackProgressService:
             return PlaybackActionResult(True, provider, instance_id, "remove_progress", remote_id=str(record.get("remote_id") or ""), canonical_key=str(record.get("canonical_key") or ""), message="Cleanup skipped because remove progress is unsupported.")
         return adapter.remove_progress(config_view, record, instance_id=instance_id, instance_label=instance_label)
 
-    def bulk(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+    def bulk(self, payload: Mapping[str, Any], *, user_filter: Mapping[str, Any] | None = None) -> dict[str, Any]:
         action = str(payload.get("action") or "").strip().lower()
         items_value = payload.get("items")
         items: list[Any] = items_value if isinstance(items_value, list) else []
@@ -1295,19 +1317,19 @@ class PlaybackProgressService:
                 if not record.get("can_remove_progress"):
                     results.append({"ok": False, "provider": item.get("provider"), "instance_id": item.get("instance_id"), "operation": action, "remote_id": item.get("remote_id"), "canonical_key": item.get("canonical_key"), "error_code": "unsupported", "message": "Remove Progress is unsupported for this record."})
                     continue
-                results.append(self.remove(item))
+                results.append(self.remove(item, user_filter=user_filter))
             elif action == "mark_watched":
                 if not record.get("can_mark_watched"):
                     results.append({"ok": False, "provider": item.get("provider"), "instance_id": item.get("instance_id"), "operation": action, "remote_id": item.get("remote_id"), "canonical_key": item.get("canonical_key"), "error_code": "unsupported", "message": "Mark as Watched is unsupported for this record."})
                     continue
-                results.append(self.mark_watched(item))
+                results.append(self.mark_watched(item, user_filter=user_filter))
             elif action == "update_progress":
                 if not record.get("can_update_progress"):
                     results.append({"ok": False, "provider": item.get("provider"), "instance_id": item.get("instance_id"), "operation": action, "remote_id": item.get("remote_id"), "canonical_key": item.get("canonical_key"), "error_code": "unsupported", "message": "Edit Progress is unsupported for this record."})
                     continue
                 update_item = dict(item)
                 update_item["progress_percent"] = payload.get("progress_percent")
-                results.append(self.update_progress(update_item))
+                results.append(self.update_progress(update_item, user_filter=user_filter))
             else:
                 results.append({"ok": False, "operation": action, "error_code": "unsupported_action", "message": "Unsupported bulk action."})
         successful = sum(1 for r in results if r.get("ok"))
@@ -1322,9 +1344,11 @@ class PlaybackProgressService:
             "unsupported": unsupported,
         }
 
-    def update_progress(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+    def update_progress(self, payload: Mapping[str, Any], *, user_filter: Mapping[str, Any] | None = None) -> dict[str, Any]:
         provider = str(payload.get("provider") or "").lower()
         instance_id = normalize_instance_id(payload.get("instance_id"))
+        if not _user_filter_allows(user_filter, provider, instance_id):
+            return self._scope_denied(provider, instance_id, "update_progress")
         cfg = load_config()
         record_value = payload.get("record")
         record = _as_mapping(record_value) if isinstance(record_value, Mapping) else payload
