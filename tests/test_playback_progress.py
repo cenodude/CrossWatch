@@ -14,6 +14,7 @@ from services.playback_progress.service import (
     _profile_has_explicit_identity,
     _record_group_keys,
     _share_artwork_metadata,
+    _user_filter_allows,
     _validated_progress_percent,
     PlaybackProgressService,
 )
@@ -82,6 +83,36 @@ def test_playback_progress_frontend_includes_kodi_provider_key():
     keys = js.split("PLAYBACK_PROVIDER_KEYS")[1].split("]")[0]
     for provider in ("crosswatch", "trakt", "simkl", "mdblist", "publicmetadb", "plex", "emby", "jellyfin", "nuvio", "kodi", "stremio", "floppy"):
         assert f'"{provider}"' in keys, provider
+
+
+def test_playback_progress_frontend_is_readonly_for_managed_users():
+    js = (ROOT / "assets" / "js" / "playback_progress.js").read_text(encoding="utf-8")
+
+    assert 'document.documentElement?.dataset?.cwRole === "user"' in js
+    assert "if (isReadOnly()) return;" in js
+    assert "user_profile" in js
+    assert "window.CW?.OverviewProfile?.id" in js
+    assert 'window.addEventListener("cw:overview-profile-changed"' in js
+    assert "CARD.cacheScope" not in js
+
+
+def test_playback_progress_provider_instances_respect_user_filter():
+    service = PlaybackProgressService()
+    cfg = {
+        "plex": {
+            "instances": {
+                "PLEX-P01": {"server_url": "http://plex-a"},
+                "PLEX-P02": {"server_url": "http://plex-b"},
+            }
+        },
+        "trakt": {"access_token": "token"},
+    }
+
+    specs = service.provider_instances(cfg, user_filter={"PLEX": ["PLEX-P02"]})
+
+    assert _user_filter_allows({"PLEX": ["PLEX-P02"]}, "plex", "PLEX-P02") is True
+    assert _user_filter_allows({"PLEX": ["PLEX-P02"]}, "plex", "PLEX-P01") is False
+    assert [(row["provider"], row["instance_id"]) for row in specs] == [("plex", "PLEX-P02")]
 
 
 class _PolicyOps:
@@ -259,7 +290,7 @@ def test_media_server_episode_metadata_resolution_passes_show_year():
             "progress_ms": 1119000,
             "duration_ms": 2675904,
         },
-        metadata,
+        cast(TmdbProvider, metadata),
         "P01",
         "Plex P01",
         caps,
@@ -1216,8 +1247,10 @@ def test_tmdb_metadata_provider_is_reused_across_refreshes():
     cfg = {"tmdb": {"api_key": "shared-key"}, "metadata": {"ttl_hours": 720}}
 
     first = base_adapter.tmdb_metadata_provider(cfg)
+    assert first is not None
     first._cache["probe"] = (time.time(), {"cached": True})
     second = base_adapter.tmdb_metadata_provider(cfg)
+    assert second is not None
 
     assert first is second
     assert "probe" in second._cache

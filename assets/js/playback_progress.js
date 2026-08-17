@@ -22,6 +22,10 @@
   };
   const PLAYBACK_PROVIDER_KEYS = ["crosswatch", "trakt", "simkl", "mdblist", "publicmetadb", "punchplay", "plex", "emby", "jellyfin", "nuvio", "kodi", "stremio", "floppy"];
   const DEFAULT_PROVIDER_TIMEOUT_SECONDS = 20;
+  const isManagedUser = () => document.documentElement?.dataset?.cwRole === "user";
+  const canWrite = () => document.documentElement?.dataset?.cwPermWrite === "on";
+  const isReadOnly = () => isManagedUser() && !canWrite();
+  const canEditSettings = () => !isManagedUser();
   const state = {
     mounted: false,
     page: 1,
@@ -413,6 +417,7 @@
   }
 
   async function openSettings() {
+    if (!canEditSettings()) return;
     const dlg = document.getElementById("pp-settings-dialog");
     const list = document.getElementById("pp-settings-list");
     const timeout = document.getElementById("pp-settings-timeout");
@@ -433,6 +438,7 @@
   }
 
   async function saveSettings() {
+    if (!canEditSettings()) return;
     const dlg = document.getElementById("pp-settings-dialog");
     const list = document.getElementById("pp-settings-list");
     const timeout = document.getElementById("pp-settings-timeout");
@@ -610,9 +616,10 @@
     if (!state.errors.length) return el.classList.add("hidden");
     const count = state.errors.length;
     const partial = state.items.length > 0;
+    const settingsAction = canEditSettings() ? `<button class="pp-btn" type="button" data-pp-error-action="settings">${icon("settings")}Settings</button>` : "";
     el.innerHTML = `<div class="pp-error-head">
       <div><div class="pp-error-title">${icon(partial ? "sync_problem" : "error")}<span>${partial ? "Some providers could not refresh" : "Playback Progress could not refresh"}</span></div><div class="pp-error-copy">${partial ? "Showing available records from the providers that responded." : "Check the provider connection or try again in a moment."}</div></div>
-      <div class="pp-error-actions"><button class="pp-btn" type="button" data-pp-error-action="settings">${icon("settings")}Settings</button><button class="pp-btn" type="button" data-pp-error-action="retry">${icon("refresh")}Retry</button></div>
+      <div class="pp-error-actions">${settingsAction}<button class="pp-btn" type="button" data-pp-error-action="retry">${icon("refresh")}Retry</button></div>
     </div><div class="pp-error-list">${state.errors.slice(0, 6).map(errorItem).join("")}</div>${count > 6 ? `<div class="pp-error-copy">${esc(count - 6)} more provider notice${count - 6 === 1 ? "" : "s"} hidden.</div>` : ""}`;
     el.classList.remove("hidden");
   }
@@ -636,10 +643,11 @@
     const ratingText = fmtRating(it.rating);
     const ratingChip = ratingText ? `<span class="pp-rating-chip" title="Rating ${esc(ratingText)}" aria-label="Rating ${esc(ratingText)}">${icon("star")}${esc(ratingText)}</span>` : "";
     const timing = [remaining ? `<span>${esc(remaining)}</span>` : "", paused ? `<span class="${live ? "pp-live" : "pp-paused"}">${esc(paused)}</span>` : ""].filter(Boolean).join("");
-    const actionWatch = it.can_mark_watched ? `<button class="pp-btn pp-action-btn pp-action-watch" data-action="watch" data-key="${esc(key)}" title="Mark as watched" aria-label="Mark as watched">${icon("check_circle")}<span>Watched</span></button>` : "";
-    const actionEdit = it.can_update_progress ? `<button class="pp-btn pp-action-btn pp-action-edit" data-action="edit" data-key="${esc(key)}" title="Edit progress" aria-label="Edit progress">${icon("edit")}<span>Edit</span></button>` : "";
-    const actionRemove = it.can_remove_progress ? `<button class="pp-btn pp-action-btn pp-action-remove" data-action="remove" data-key="${esc(key)}" title="Remove progress" aria-label="Remove progress">${icon("delete")}<span>Remove</span></button>` : "";
-    return `<article class="pp-card${selected}" data-key="${esc(key)}" role="checkbox" aria-checked="${state.selected.has(key) ? "true" : "false"}" tabindex="0"${backdropStyle}>
+    const actionsAllowed = !isReadOnly();
+    const actionWatch = actionsAllowed && it.can_mark_watched ? `<button class="pp-btn pp-action-btn pp-action-watch" data-action="watch" data-key="${esc(key)}" title="Mark as watched" aria-label="Mark as watched">${icon("check_circle")}<span>Watched</span></button>` : "";
+    const actionEdit = actionsAllowed && it.can_update_progress ? `<button class="pp-btn pp-action-btn pp-action-edit" data-action="edit" data-key="${esc(key)}" title="Edit progress" aria-label="Edit progress">${icon("edit")}<span>Edit</span></button>` : "";
+    const actionRemove = actionsAllowed && it.can_remove_progress ? `<button class="pp-btn pp-action-btn pp-action-remove" data-action="remove" data-key="${esc(key)}" title="Remove progress" aria-label="Remove progress">${icon("delete")}<span>Remove</span></button>` : "";
+    return `<article class="pp-card${selected}" data-key="${esc(key)}"${actionsAllowed ? ` role="checkbox" aria-checked="${state.selected.has(key) ? "true" : "false"}" tabindex="0"` : ""}${backdropStyle}>
       <div class="pp-art"><img src="${esc(posterImg)}"${posterFallbackAttr} data-poster-key="${esc(posterKey)}" alt="" loading="lazy" decoding="async" onerror="const fallback=this.dataset.fallbackSrc;if(fallback){delete this.dataset.fallbackSrc;this.src=fallback}else{this.onerror=null;this.src='/assets/img/placeholder_poster.svg'}"></div>
       <div class="pp-body">
         <div class="pp-top">
@@ -656,6 +664,11 @@
 
   function updateBulk() {
     const bulk = document.getElementById("pp-bulk");
+    if (isReadOnly()) {
+      state.selected.clear();
+      bulk?.classList.add("hidden");
+      return;
+    }
     const count = state.selected.size;
     document.getElementById("pp-selected-count").textContent = String(count);
     bulk.classList.toggle("hidden", count === 0);
@@ -694,6 +707,8 @@
 
   function query(force = false, all = false) {
     const params = new URLSearchParams();
+    const profileId = String(window.CW?.OverviewProfile?.id || "").trim();
+    if (profileId) params.set("user_profile", profileId);
     const [provider, instance] = String(state.filters.provider || "").split(":");
     if (provider) params.set("provider", provider);
     if (instance) params.set("instance_id", instance);
@@ -755,6 +770,7 @@
   }
 
   async function act(action, item) {
+    if (isReadOnly()) return;
     const bulkAction = action === "watch" ? "mark_watched" : action === "edit" ? "update_progress" : "remove_progress";
     const payloads = actionPayloads([item], bulkAction);
     let progressPercent = null;
@@ -787,6 +803,7 @@
   }
 
   async function bulk(action) {
+    if (isReadOnly()) return;
     const selected = [...state.selected.values()];
     if (!selected.length) return;
     const allRecords = selected.flatMap((it) => recordsOf(it));
@@ -866,7 +883,7 @@
         return;
       }
       const card = e.target?.closest?.(".pp-card[data-key]");
-      if (card) {
+      if (card && !isReadOnly()) {
         const item = state.items.find((it) => recordKey(it) === card.dataset.key);
         if (!item) return;
         if (state.selected.has(card.dataset.key)) state.selected.delete(card.dataset.key);
@@ -880,6 +897,7 @@
         return;
       }
       if (e.key !== " " && e.key !== "Enter") return;
+      if (isReadOnly()) return;
       const card = e.target?.closest?.(".pp-card[data-key]");
       if (!card) return;
       e.preventDefault();
@@ -899,6 +917,9 @@
       bind();
       state.mounted = true;
     }
+    el.classList.toggle("is-readonly", isReadOnly());
+    document.getElementById("pp-settings")?.classList.toggle("hidden", !canEditSettings());
+    if (isReadOnly()) state.selected.clear();
     startSyncClock();
     load(false);
   }
@@ -908,6 +929,12 @@
     if ((e.detail?.id || e.detail?.tab) === "playback_progress") mount();
   });
   window.addEventListener("currently-watching-updated", () => {
+    const page = document.getElementById("page-playback_progress");
+    if (page && !page.classList.contains("hidden")) load(false);
+  });
+  window.addEventListener("cw:overview-profile-changed", () => {
+    state.selected.clear();
+    state.page = 1;
     const page = document.getElementById("page-playback_progress");
     if (page && !page.classList.contains("hidden")) load(false);
   });
