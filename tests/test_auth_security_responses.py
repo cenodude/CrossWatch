@@ -209,6 +209,57 @@ def test_app_auth_mutation_errors_do_not_expose_exception_text(monkeypatch) -> N
         assert _json_body(resp)["error"] == expected_error
 
 
+def test_snapshots_api_errors_do_not_expose_exception_text(monkeypatch) -> None:
+    from api import snapshotsAPI
+
+    secret = "Traceback C:\\secret\\snapshots.json <script>alert(1)</script>"
+
+    def _boom() -> list[dict[str, Any]]:
+        raise RuntimeError(secret)
+
+    monkeypatch.setattr(snapshotsAPI, "list_snapshots", _boom)
+
+    resp = snapshotsAPI.api_snapshots_list(_request("/api/snapshots/list", method="GET"))
+    body = resp.body.decode("utf-8")
+
+    assert resp.status_code == 400
+    assert secret not in body
+    assert _json_body(resp)["error"] == "snapshot_list_failed"
+
+
+def test_watchlist_delete_errors_do_not_expose_exception_text(monkeypatch) -> None:
+    from api import watchlistAPI
+    import cw_platform.config_base as config_base
+
+    secret = "Traceback C:\\secret\\watchlist.json <script>alert(1)</script>"
+
+    monkeypatch.setattr(config_base, "load_config", lambda: {})
+    monkeypatch.setattr(
+        watchlistAPI,
+        "delete_watchlist_item",
+        lambda **_kwargs: {
+            "ok": False,
+            "status": "error",
+            "provider": "PLEX",
+            "error": secret,
+            "details": {"default": {"ok": False, "error": secret}},
+        },
+    )
+
+    resp = watchlistAPI.api_watchlist_delete(
+        "tmdb:603",
+        request=_request("/api/watchlist/tmdb:603", method="DELETE"),
+        provider="PLEX",
+    )
+    body = resp.body.decode("utf-8")
+    payload = _json_body(resp)
+
+    assert resp.status_code == 400
+    assert secret not in body
+    assert payload["error"] == "delete_failed"
+    assert payload["details"]["default"]["error"] == "delete_failed"
+
+
 def test_oidc_link_conflict_does_not_expose_exception_text(monkeypatch) -> None:
     from api import appAuthAPI as auth
     from api import authOidcAPI as oidc_api
