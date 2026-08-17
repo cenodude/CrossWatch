@@ -393,9 +393,31 @@ def _bulk_delete(provider: str, keys_raw: list[Any], provider_instance: str | No
     }
 
 # Auto-remove code
+def _origin_allowed_instances(cfg: dict[str, Any], origin: Any) -> dict[str, list[str]] | None:
+    if not origin:
+        return None
+    if isinstance(origin, (tuple, list)):
+        parts = list(origin) + ["", ""]
+        prov_raw, inst_raw = parts[0], parts[1]
+    else:
+        prov_raw, _, inst_raw = str(origin).partition(":")
+    if not str(prov_raw or "").strip():
+        return None
+    from cw_platform.access_policy import origin_owner_instances
+
+    return origin_owner_instances(cfg, prov_raw, inst_raw)
+
+
+def _origin_instances_for(allowed: dict[str, list[str]] | None, provider: str) -> list[str | None]:
+    if allowed is None:
+        return [None]
+    return list(allowed.get(provider_display_key(provider)) or [])
+
+
 def remove_across_providers_by_ids(
     ids: dict[str, Any],
     media_type: str | None = None,
+    origin: Any = None,
 ) -> dict[str, Any]:
     from cw_platform.config_base import load_config
     from crosswatch import _append_log
@@ -409,7 +431,10 @@ def remove_across_providers_by_ids(
     if not keys:
         return {"ok": False, "error": "no candidate keys from ids"}
 
+    allowed = _origin_allowed_instances(cfg, origin)
     providers = _active_pair_watchlist_providers(cfg) or _active_providers(cfg)
+    if allowed is not None:
+        providers = [p for p in providers if allowed.get(provider_display_key(p))]
     if not providers:
         return {"ok": False, "error": "no connected providers"}
 
@@ -418,9 +443,12 @@ def remove_across_providers_by_ids(
 
     for prov in providers:
         found_key = None
-        for k in keys:
-            if _find_item_in_state_for_provider(state, k, prov):
-                found_key = k
+        for inst in _origin_instances_for(allowed, prov):
+            for k in keys:
+                if _find_item_in_state_for_provider(state, k, prov, instance_id=inst):
+                    found_key = k
+                    break
+            if found_key:
                 break
 
         if not found_key:
@@ -435,7 +463,7 @@ def remove_across_providers_by_ids(
             continue
 
         try:
-            r = delete_watchlist_batch([found_key], prov, state, cfg) or {}
+            r = delete_watchlist_batch([found_key], prov, state, cfg, allowed_instances=allowed) or {}
             deleted = int(r.get("deleted", 0)) if isinstance(r, dict) else 0
             total_deleted += deleted
             ok = deleted > 0
@@ -469,6 +497,7 @@ def remove_from_provider_by_ids(
     provider: str,
     ids: dict[str, Any],
     media_type: str | None = None,
+    origin: Any = None,
 ) -> dict[str, Any]:
     from cw_platform.config_base import load_config
     from crosswatch import _append_log
@@ -481,21 +510,28 @@ def remove_from_provider_by_ids(
     if prov not in _active_providers(cfg):
         return {"ok": False, "error": f"provider '{prov}' not connected"}
 
+    allowed = _origin_allowed_instances(cfg, origin)
+    if allowed is not None and not allowed.get(provider_display_key(prov)):
+        return {"ok": False, "reason": "profile_scope_denied", "provider": prov}
+
     keys = _candidate_keys_from_ids(ids)
     if not keys:
         return {"ok": False, "error": "no candidate keys from ids"}
 
     found_key = None
-    for k in keys:
-        if _find_item_in_state_for_provider(state, k, prov):
-            found_key = k
+    for inst in _origin_instances_for(allowed, prov):
+        for k in keys:
+            if _find_item_in_state_for_provider(state, k, prov, instance_id=inst):
+                found_key = k
+                break
+        if found_key:
             break
 
     if not found_key:
         return {"ok": False, "reason": "not_in_state"}
 
     try:
-        r = delete_watchlist_batch([found_key], prov, state, cfg) or {}
+        r = delete_watchlist_batch([found_key], prov, state, cfg, allowed_instances=allowed) or {}
         deleted = int(r.get("deleted", 0)) if isinstance(r, dict) else 0
         ok = deleted > 0
         kind, label = _item_label(state, found_key, prov)
@@ -512,8 +548,9 @@ def remove_from_provider_by_ids(
 def remove_from_plex_by_ids(
     ids: dict[str, Any],
     media_type: str | None = None,
+    origin: Any = None,
 ) -> dict[str, Any]:
-    return remove_from_provider_by_ids("PLEX", ids, media_type)
+    return remove_from_provider_by_ids("PLEX", ids, media_type, origin=origin)
 
 
 

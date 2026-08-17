@@ -810,7 +810,7 @@ def _body_ids_desc(b: dict[str, Any]) -> str:
     return str(ids or "none")
 
 
-def _call_remove_across(ids: dict[str, Any], media_type: str) -> None:
+def _call_remove_across(ids: dict[str, Any], media_type: str, origin: str = "") -> None:
     if not isinstance(ids, dict) or not ids:
         return
     try:
@@ -831,13 +831,13 @@ def _call_remove_across(ids: dict[str, Any], media_type: str) -> None:
         pass
     try:
         if callable(_rm_across):
-            _rm_across(ids, media_type)
+            _rm_across(ids, media_type, scope=origin or None)
             return
     except Exception:
         pass
     try:
         if callable(_rm_across_api):
-            _rm_across_api(ids, media_type)  # type: ignore[misc]
+            _rm_across_api(ids, media_type, origin=origin or None)  # type: ignore[misc]
             return
     except Exception:
         pass
@@ -1120,7 +1120,7 @@ def process_webhook(
         if r.status_code < 400:
             if intended == "/scrobble/stop" and prog >= watched_at and not st.get("wl_removed") is True:
                 try:
-                    _call_remove_across(ids_all or {}, media_type)
+                    _call_remove_across(ids_all or {}, media_type, origin=f"emby:{provider_instance}")
                     st = {**st, "wl_removed": True}
                 except Exception:
                     pass
