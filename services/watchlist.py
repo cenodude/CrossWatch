@@ -1536,6 +1536,7 @@ def delete_watchlist_batch(
     cfg: dict[str, Any],
     provider_instance: str | None = None,
     state_path: Path | None = None,
+    allowed_instances: Mapping[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     prov = (prov or "").upper().strip()
     keys = [k for k in (keys or []) if isinstance(k, str) and k.strip()]
@@ -1549,10 +1550,21 @@ def delete_watchlist_batch(
     if prov == "ALL":
         inst_sel = None
 
+    def _allowed_for(p: str) -> set[str] | None:
+        if allowed_instances is None:
+            return None
+        raw = allowed_instances.get(str(p or "").upper()) or []
+        return {normalize_instance_id(v) for v in (raw if isinstance(raw, list) else [raw]) if normalize_instance_id(v)}
+
     def _instance_targets(p: str) -> list[str]:
+        allow = _allowed_for(p)
+        if allow is not None and not allow:
+            return []
         hits: set[str] = set()
         for inst_id, blk in _iter_provider_instance_blocks(state, p):
             if inst_sel and inst_id != inst_sel:
+                continue
+            if allow is not None and normalize_instance_id(inst_id) not in allow:
                 continue
             items = _items_from_block(blk)
             if not isinstance(items, dict) or not items:
@@ -1560,9 +1572,9 @@ def delete_watchlist_batch(
             for k in keys:
                 if k in items:
                     hits.add(inst_id)
-        if not hits and inst_sel:
+        if not hits and inst_sel and (allow is None or inst_sel in allow):
             hits.add(inst_sel)
-        if not hits:
+        if not hits and allow is None:
             hits.add(_DEFAULT_INSTANCE)
         return sorted(hits, key=lambda x: (x != _DEFAULT_INSTANCE, x))
 
@@ -1632,6 +1644,8 @@ def delete_watchlist_batch(
         deleted_sum = 0
 
         for p in _registry_sync_providers():
+            if allowed_instances is not None and not _allowed_for(p):
+                continue
             res = _delete_for_provider(p)
             details[p] = res
             ok_any |= bool(res.get("ok"))
@@ -1658,6 +1672,7 @@ def delete_watchlist_item(
     log: Any = None,
     provider: str | None = None,
     provider_instance: str | None = None,
+    allowed_instances: Mapping[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     prov = (provider or "ALL").upper().strip()
     try:
@@ -1680,6 +1695,7 @@ def delete_watchlist_item(
             cfg=cfg,
             provider_instance=provider_instance,
             state_path=state_path,
+            allowed_instances=allowed_instances,
         ) or {}
         _log("SYNC", f"[WL] delete {key} on {prov}: {'OK' if res.get('ok') else 'NOOP'}")
         res.setdefault("key", key)

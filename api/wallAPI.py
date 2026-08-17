@@ -4,14 +4,15 @@
 from __future__ import annotations
 
 import threading
-from typing import Any
-from fastapi import FastAPI, Query
+from typing import Any, cast
+from fastapi import FastAPI, Query, Request
 
 from cw_platform.config_base import CONFIG, config_path, load_config
 from cw_platform.local_db import manual_policy as sqlite_manual_policy
 from cw_platform.local_db import state as sqlite_state
 from cw_platform.local_db import watchlist_hide as sqlite_watchlist_hide
 from cw_platform.orchestrator._state_store import StateStore
+from cw_platform.provider_instances import instances_for_user_profile, normalize_instance_id, provider_display_key
 from services.watchlist import build_watchlist, detect_available_watchlist_providers
 
 
@@ -29,7 +30,7 @@ def _path_key(path: Any) -> tuple[str, int, int]:
         return (str(path or ""), 0, 0)
 
 
-def _cache_key(*, both_only: bool, active_only: bool, limit: int) -> tuple[Any, ...]:
+def _cache_key(*, both_only: bool, active_only: bool, limit: int, user_profile: str = "") -> tuple[Any, ...]:
     return (
         sqlite_state.fingerprint(CONFIG, {"watchlist"}),
         sqlite_manual_policy.fingerprint(CONFIG, {"watchlist"}),
@@ -38,6 +39,7 @@ def _cache_key(*, both_only: bool, active_only: bool, limit: int) -> tuple[Any, 
         bool(both_only),
         bool(active_only),
         int(limit or 0),
+        str(user_profile or "").strip(),
     )
 
 
@@ -102,21 +104,85 @@ def _configured_provider_ids(cfg: dict[str, Any]) -> list[str]:
     ]
 
 
+def _item_matches_user_filter(item: dict[str, Any], user_filter: dict[str, list[str]]) -> bool:
+    if not user_filter:
+        return True
+    wanted = {
+        provider_display_key(provider): {normalize_instance_id(inst) for inst in (instances or [])}
+        for provider, instances in user_filter.items()
+    }
+    sources = item.get("sources_by_provider") or item.get("sourcesByProvider")
+    if isinstance(sources, dict):
+        for provider, raw_instances in sources.items():
+            prov = provider_display_key(provider)
+            values = raw_instances if isinstance(raw_instances, list) else [raw_instances]
+            for inst in values:
+                if normalize_instance_id(inst) in wanted.get(prov, set()):
+                    return True
+    provider = item.get("added_src") or item.get("source") or item.get("provider")
+    instance = item.get("added_instance") or item.get("source_instance") or item.get("instance")
+    prov = provider_display_key(provider)
+    return bool(prov) and normalize_instance_id(instance) in wanted.get(prov, set())
+
+
+def _item_for_user_filter(item: dict[str, Any], user_filter: dict[str, list[str]]) -> dict[str, Any] | None:
+    if not user_filter:
+        return item
+    wanted = {
+        provider_display_key(provider): {normalize_instance_id(inst) for inst in (instances or [])}
+        for provider, instances in user_filter.items()
+    }
+    sources = item.get("sources_by_provider") or item.get("sourcesByProvider")
+    if not isinstance(sources, dict):
+        return item if _item_matches_user_filter(item, user_filter) else None
+    scoped_sources: dict[str, list[str]] = {}
+    for provider, raw_instances in sources.items():
+        prov = provider_display_key(provider)
+        values = raw_instances if isinstance(raw_instances, list) else [raw_instances]
+        keep = [
+            normalize_instance_id(inst)
+            for inst in values
+            if normalize_instance_id(inst) in wanted.get(prov, set())
+        ]
+        if keep:
+            scoped_sources[str(provider).lower()] = keep
+    if not scoped_sources:
+        return None
+    out = dict(item)
+    providers = sorted(scoped_sources.keys())
+    out["sources_by_provider"] = scoped_sources
+    out["sourcesByProvider"] = scoped_sources
+    out["sources"] = providers
+    out["status"] = f"{providers[0]}_only" if len(providers) == 1 else "both"
+    out["sync_count"] = len(providers)
+    return out
+
+
 def register_wall(app: FastAPI) -> None:
     @app.get("/api/state/wall", tags=["wall"])
     def api_state_wall(
+        request: Request = cast(Request, None),
         both_only: bool = Query(False, description="Keep only items present on multiple providers"),
         active_only: bool = Query(False, description="Keep only items from configured providers"),
         limit: int = Query(0, ge=0, le=100, description="Optional item limit"),
+        user_profile: str = Query("", description="Optional user profile id to scope provider instances"),
     ) -> dict[str, Any]:
-        key = _cache_key(both_only=both_only, active_only=active_only, limit=limit)
+        from api.appAuthAPI import COOKIE_NAME, effective_user_profile_id
+
+        cfg = load_config() or {}
+        token = request.cookies.get(COOKIE_NAME) if request is not None else None
+        profile = effective_user_profile_id(cfg, token, user_profile)
+        key = _cache_key(both_only=both_only, active_only=active_only, limit=limit, user_profile=profile)
         with _WALL_CACHE_LOCK:
             if _WALL_CACHE.get("key") == key and isinstance(_WALL_CACHE.get("data"), dict):
                 return dict(_WALL_CACHE["data"])
 
-        cfg = load_config() or {}
         st = _load_state()
         api_key = _tmdb_api_key(cfg)
+        scoped = bool(str(profile or "").strip())
+        user_filter = instances_for_user_profile(cfg, profile) if scoped else {}
+        if scoped and not user_filter:
+            user_filter = {"__NONE__": ["__NONE__"]}
 
         items = build_watchlist(st, tmdb_ok=bool(api_key)) or []
         active = {pid.lower(): True for pid in _configured_provider_ids(cfg)}
@@ -127,10 +193,19 @@ def register_wall(app: FastAPI) -> None:
                 return False
             if active_only and status.endswith("_only"):
                 base = status[:-5]
-                return active.get(base, False)
+                if not active.get(base, False):
+                    return False
+            if not _item_matches_user_filter(it, user_filter):
+                return False
             return True
 
-        items = [it for it in items if keep(it)]
+        items = [
+            scoped
+            for it in items
+            if keep(it)
+            for scoped in [_item_for_user_filter(it, user_filter)]
+            if scoped is not None
+        ]
         total = len(items)
         if limit:
             items = items[:limit]
