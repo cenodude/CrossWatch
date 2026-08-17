@@ -33,6 +33,14 @@ const maybeTS = (v) => {
   return String(v);
 };
 
+const detailOf = (e) => {
+  try {
+    return typeof e?.detail === "string" ? (e.detail ? JSON.parse(e.detail) : {}) : (e?.detail || {});
+  } catch {
+    return {};
+  }
+};
+
 const PAGE_SIZE = 25;
 const RUN_ITEMS_PAGE_SIZE = 100;
 
@@ -117,6 +125,24 @@ const BADGE = {
   scrobble_failed: "Scrobble failed",
   rating_applied: "Rated",
   rating_failed: "Rating failed",
+  audit_login: "Login",
+  audit_login_failed: "Login failed",
+  audit_login_blocked: "Login blocked",
+  audit_2fa_required: "2FA required",
+  audit_2fa_failed: "2FA failed",
+  audit_logout: "Logout",
+  audit_logout_all: "Logout all",
+  audit_logout_others: "Logout others",
+  audit_user_created: "User created",
+  audit_user_updated: "User updated",
+  audit_user_deleted: "User deleted",
+  audit_credentials_updated: "Credentials updated",
+  audit_totp_setup: "2FA setup",
+  audit_totp_enabled: "2FA enabled",
+  audit_totp_disabled: "2FA disabled",
+  audit_plex_sso_linked: "Plex SSO linked",
+  audit_plex_sso_unlinked: "Plex SSO unlinked",
+  audit_api_action: "User action",
 };
 
 const badgeOf = (e) => {
@@ -146,6 +172,24 @@ const ICON = {
   scrobble_failed: "error",
   rating_applied: "star",
   rating_failed: "error",
+  audit_login: "login",
+  audit_login_failed: "error",
+  audit_login_blocked: "block",
+  audit_2fa_required: "password",
+  audit_2fa_failed: "gpp_bad",
+  audit_logout: "logout",
+  audit_logout_all: "logout",
+  audit_logout_others: "logout",
+  audit_user_created: "person_add",
+  audit_user_updated: "manage_accounts",
+  audit_user_deleted: "person_remove",
+  audit_credentials_updated: "admin_panel_settings",
+  audit_totp_setup: "password",
+  audit_totp_enabled: "verified_user",
+  audit_totp_disabled: "shield_lock",
+  audit_plex_sso_linked: "link",
+  audit_plex_sso_unlinked: "link_off",
+  audit_api_action: "touch_app",
 };
 
 const iconOf = (e) => {
@@ -161,6 +205,10 @@ const sevOf = (e) => {
   if (["tombstone_created", "tombstone_pruned"].includes(e.event_type)) return "warn";
   if (["scrobble_completed", "rating_applied"].includes(e.event_type)) return "ok";
   if (["scrobble_failed", "rating_failed"].includes(e.event_type)) return "error";
+  if (String(e.event_type || "").startsWith("audit_")) {
+    const st = String(detailOf(e).status || e.reason_code || "").toLowerCase();
+    return ["failed", "blocked", "denied"].includes(st) ? "error" : "ok";
+  }
   if (e.event_type === "scrobble_started") return "info";
   if (e.event_type === "unresolved_cleared") return "ok";
   const s = String(e.severity || "").toLowerCase();
@@ -192,7 +240,13 @@ const titleLine = (e) => {
     case "scrobble_failed": return `Scrobble failed${e.reason_code ? ` · ${e.reason_code}` : ""}`;
     case "rating_applied": return "Rating forwarded";
     case "rating_failed": return `Rating failed${e.reason_code ? ` · ${e.reason_code}` : ""}`;
-    default: return String(e.event_type || "").replace(/_/g, " ");
+    default: {
+      if (String(e.event_type || "").startsWith("audit_")) {
+        const d = detailOf(e);
+        return d.message || BADGE[e.event_type] || String(e.event_type || "").replace(/_/g, " ");
+      }
+      return String(e.event_type || "").replace(/_/g, " ");
+    }
   }
 };
 
@@ -202,11 +256,13 @@ const EVENT_TYPES = [
   "provider_health", "sync_run_started", "sync_run_finished",
 ];
 const SCROBBLE_TYPES = ["", "scrobble_started", "scrobble_completed", "scrobble_failed", "rating_applied", "rating_failed"];
+const AUDIT_TYPES = ["", "audit_login", "audit_login_failed", "audit_login_blocked", "audit_2fa_required", "audit_2fa_failed", "audit_logout", "audit_logout_all", "audit_logout_others", "audit_user_created", "audit_user_updated", "audit_user_deleted", "audit_credentials_updated", "audit_totp_setup", "audit_totp_enabled", "audit_totp_disabled", "audit_plex_sso_linked", "audit_plex_sso_unlinked", "audit_api_action"];
 const OUTCOME_ITEMS = {
   sync: [{ value: "", label: "Any outcome" }, { value: "successful", label: "Successful" }, { value: "problems", label: "Problems" }, { value: "informational", label: "Informational" }],
   scrobble: [{ value: "", label: "Any outcome" }, { value: "completed", label: "Watched" }, { value: "failed", label: "Failed" }, { value: "rated", label: "Rated" }, { value: "running", label: "In progress" }],
+  audit: [{ value: "", label: "Any outcome" }, { value: "completed", label: "Successful" }, { value: "failed", label: "Failed" }, { value: "informational", label: "Informational" }],
 };
-const typeItems = (dom) => (dom === "scrobble" ? SCROBBLE_TYPES : EVENT_TYPES).map((t) => ({ value: t, label: t ? BADGE[t] || t.replace(/_/g, " ") : "All types" }));
+const typeItems = (dom) => (dom === "audit" ? AUDIT_TYPES : (dom === "scrobble" ? SCROBBLE_TYPES : EVENT_TYPES)).map((t) => ({ value: t, label: t ? BADGE[t] || t.replace(/_/g, " ") : "All types" }));
 
 // group helpers
 const GROUP_SEV = { success: "ok", warning: "warn", error: "error", info: "info" };
@@ -378,6 +434,11 @@ export default {
       shell.style.setProperty("--cxModalMaxW", "1240px");
       shell.style.setProperty("--cxModalMaxH", "760px");
     }
+    let isAdmin = true;
+    try {
+      const auth = await fjson("/api/app-auth/status", { cache: "no-store" });
+      isAdmin = !auth?.enabled || !!auth?.is_admin;
+    } catch {}
 
     const ls = (k, d) => { try { return localStorage.getItem(k) || d; } catch { return d; } };
     const lset = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
@@ -561,7 +622,8 @@ export default {
     ddCategory.el.style.display = (mode === "grouped") ? "" : "none";
 
     let view = ls("cw.events.view", domain === "scrobble" ? "scrobble" : "sync");
-    if (view === "sync" || view === "scrobble") domain = view;
+    if (view === "audit" && !isAdmin) view = "sync";
+    if (view === "sync" || view === "scrobble" || view === "audit") domain = view;
     let statsRange = ls("cw.events.stats.range", "30d");
 
     const toolbarEl = Q(".ev-toolbar", root);
@@ -571,16 +633,21 @@ export default {
 
     const applyDomainUI = () => {
       const scrobble = domain === "scrobble";
+      const audit = domain === "audit";
       ddCategory.setItems(OUTCOME_ITEMS[domain] || OUTCOME_ITEMS.sync);
       ddType.setItems(typeItems(domain));
-      if (scrobble) { ddFeature.reset(); ddPair.reset(); }
-      ddFeature.el.style.display = scrobble ? "none" : "";
-      ddPair.el.style.display = scrobble ? "none" : "";
+      if (scrobble || audit) { ddFeature.reset(); ddPair.reset(); }
+      if (audit) { ddProvider.reset(); ddOrigin.reset(); }
+      ddFeature.el.style.display = (scrobble || audit) ? "none" : "";
+      ddPair.el.style.display = (scrobble || audit) ? "none" : "";
+      ddProvider.el.style.display = audit ? "none" : "";
+      ddOrigin.el.style.display = audit ? "none" : "";
     };
 
     const VIEW_TABS = [
       { value: "sync", label: "Sync", icon: "sync" },
       { value: "scrobble", label: "Scrobble", icon: "play_circle" },
+      ...(isAdmin ? [{ value: "audit", label: "Audits", icon: "admin_panel_settings" }] : []),
       { value: "statistics", label: "Statistics", icon: "bar_chart" },
     ];
     const RANGE_TABS = [["24h", "24H"], ["7d", "7D"], ["30d", "30D"], ["90d", "90D"]];
@@ -622,7 +689,7 @@ export default {
     const setView = (v) => {
       if (v === view) return;
       view = v; lset("cw.events.view", v);
-      if (v === "sync" || v === "scrobble") {
+      if (v === "sync" || v === "scrobble" || v === "audit") {
         domain = v; lset("cw.events.domain", v);
         state.selected = null; state.didInitialSelect = false; clearDetail();
         applyDomainUI();
@@ -708,7 +775,7 @@ export default {
       if (ddOrigin.value) p.set("origin_provider", ddOrigin.value);
       if (ddFeature.value) p.set("feature", ddFeature.value);
       if (ddPair.value) p.set("pair_key", ddPair.value);
-      if (grouped() && ddCategory.value) p.set(domain === "scrobble" ? "status" : "category", ddCategory.value);
+      if (grouped() && ddCategory.value) p.set((domain === "scrobble" || domain === "audit") ? "status" : "category", ddCategory.value);
       p.set("domain", domain);
       const { since, until } = rangeEpoch();
       if (since) p.set("since", since);
@@ -852,7 +919,7 @@ export default {
         actions = `<button class="ev-linkbtn" id="ev-empty-open">Back to Open</button>`;
       } else {
         icon = "inbox"; head = "No events in the archive.";
-        hint = domain === "scrobble" ? "Start watching something to record scrobble threads here." : "Run a sync to start recording events here.";
+        hint = domain === "audit" ? "Logins and user actions will appear here." : (domain === "scrobble" ? "Start watching something to record scrobble threads here." : "Run a sync to start recording events here.");
         actions = "";
       }
       return `<div class="ev-empty ev-empty-list"><span class="material-symbols-rounded" aria-hidden="true">${icon}</span><div class="ev-empty-head">${esc(head)}</div><div class="ev-empty-hint">${esc(hint)}</div><div class="ev-empty-actions">${actions}</div></div>`;
@@ -956,7 +1023,7 @@ export default {
       if (page != null) state.page = page;
       updateHidden();
       const url = grouped()
-        ? (domain === "scrobble" ? `/api/events/groups?${buildQuery(state.page)}` : `/api/events/tree?${buildQuery(state.page)}`)
+        ? ((domain === "scrobble" || domain === "audit") ? `/api/events/groups?${buildQuery(state.page)}` : `/api/events/tree?${buildQuery(state.page)}`)
         : `/api/events/search?view=events&${buildQuery(state.page)}`;
       try {
         const data = await fjson(url);
@@ -1555,8 +1622,68 @@ export default {
       bindRunItemsPager();
     };
 
+    const auditRowsHTML = (e) => {
+      const d = detailOf(e);
+      const actor = d.actor && typeof d.actor === "object" ? d.actor : {};
+      const target = d.target && typeof d.target === "object" ? d.target : {};
+      const req = d.request && typeof d.request === "object" ? d.request : {};
+      const fields = d.fields && typeof d.fields === "object" ? d.fields : {};
+      const rows = [
+        ["Actor", [actor.username, actor.role].filter(Boolean).join(" - ") || "–"],
+        ["Actor ID", actor.id || "–"],
+        ["Profile", actor.profile_id || "–"],
+        ["Target", [target.type, target.id].filter(Boolean).join(" ") || "–"],
+        ["Status", d.status || e.reason_code || "success"],
+        ["Method", req.method || "–"],
+        ["Path", req.path || "–"],
+        ["IP", req.ip || "–"],
+        ["User agent", req.user_agent || "–"],
+      ];
+      for (const [k, v] of Object.entries(fields)) rows.push([k, v == null ? "–" : String(v)]);
+      return rows.map(([k, v]) => `<div class="k">${esc(k)}</div><div class="v">${esc(v)}</div>`).join("");
+    };
+
+    const renderAuditDetail = (detail, eventOverride = null) => {
+      const g = detail.group || eventOverride || {};
+      const events = Array.isArray(detail.events) && detail.events.length ? detail.events : (eventOverride ? [eventOverride] : []);
+      const e = eventOverride || events[events.length - 1] || g;
+      const sv = sevOf(e);
+      const acknowledged = !!(g.acknowledged_at || e.acknowledged_at);
+      const ackId = g.id || e.id;
+      const ackLabel = acknowledged ? "Acknowledged" : "Acknowledge";
+      const ackIcon = acknowledged ? "check_circle" : "check";
+      const timeline = events.length
+        ? events.slice().reverse().map((row) => {
+          const rs = sevOf(row);
+          return `<div class="ev-tl" data-id="${esc(row.id || "")}"><span class="ev-tl-time">${esc(TS(row.created_at))}</span><span class="ev-tl-dot ${rs}"></span><span class="ev-tl-body"><span class="ev-tl-head"><span class="ev-tl-title">${esc(titleLine(row))}</span><span class="ev-badge ${rs}">${esc(badgeOf(row))}</span></span></span></div>`;
+        }).join("")
+        : `<div class="ev-empty ev-empty-inline">No event timeline available.</div>`;
+      detailEl.innerHTML = `
+        <div class="ev-dhead">
+          <div class="ev-dhead-row">
+            <span class="ev-badge ${sv}">${esc(badgeOf(e))}</span>
+            <span class="ev-dhead-spacer"></span>
+            <span class="ev-dtime">${esc(TS(g.last_event_at || e.created_at))}</span>
+            ${ackId ? `<button class="ev-hbtn ev-hbtn-accent${acknowledged ? " on" : ""}" id="ev-ack-detail" type="button"><span class="material-symbols-rounded" aria-hidden="true">${ackIcon}</span><span>${ackLabel}</span></button>` : ""}
+          </div>
+          <div class="ev-dtitle">${esc(g.summary || titleLine(e))}</div>
+        </div>
+        <h4>Audit</h4><div class="ev-kv">${auditRowsHTML(e)}</div>
+        <h4>Timeline</h4><div class="ev-timeline">${timeline}</div>
+        <details class="ev-tech"><summary>Raw data</summary><div class="ev-tech-body"><pre class="cw-scrollbars">${esc(JSON.stringify({ group: detail.group || null, events }, null, 2))}</pre></div></details>`;
+      detailEl.scrollTop = 0;
+      Q("#ev-ack-detail", detailEl)?.addEventListener("click", () => {
+        if (!ackId) return;
+        if (acknowledged) unacknowledgeRow(ackId); else acknowledgeRow(ackId);
+      });
+    };
+
     // event detail (raw mode)
     const renderEventDetail = (ctx, e) => {
+      if (String(e.domain || "").toLowerCase() === "audit") {
+        renderAuditDetail({ event: e, events: [e] }, e);
+        return;
+      }
       const c = ctx.context || {};
       const rel = ctx.related || {};
       const sv = sevOf(e);
@@ -1621,7 +1748,7 @@ export default {
           const detail = await fjson(`/api/events/groups/${encodeURIComponent(id)}?run_items_limit=${RUN_ITEMS_PAGE_SIZE}&run_items_offset=0`);
           if (!alive) return;
           if (!detail || detail.ok === false) throw new Error("not found");
-          if (domain === "scrobble") renderScrobbleDetail(detail); else renderGroupDetail(detail);
+          if (domain === "scrobble") renderScrobbleDetail(detail); else if (domain === "audit") renderAuditDetail(detail); else renderGroupDetail(detail);
         } else {
           const ctx = await fjson(`/api/events/context?event_id=${encodeURIComponent(id)}`);
           if (!alive) return;
@@ -1705,7 +1832,7 @@ export default {
     });
     Q("#ev-refresh", root).addEventListener("click", () => doRefresh());
     Q("#ev-clear", root).addEventListener("click", async () => {
-      const label = domain === "scrobble" ? "scrobble" : "sync";
+      const label = domain === "audit" ? "audit" : (domain === "scrobble" ? "scrobble" : "sync");
       if (!window.confirm(`Delete all ${label} events from the archive?\n\nThis clears the ${label} history from the SQLite event archive.\nThis cannot be undone.`)) return;
       const btn = Q("#ev-clear", root);
       btn?.classList.add("busy");

@@ -31,6 +31,8 @@ const lastTab = {};
 let boundRoot = null;
 let clickHandler = null;
 let changeHandler = null;
+let userProfiles = [];
+let selectedUserProfileId = "";
 
 function detachHandlers() {
   if (boundRoot?.__cwScrobblerWebhookAbort) {
@@ -59,6 +61,23 @@ async function api(url, body) {
     throw err;
   }
   return data;
+}
+
+async function loadUserProfiles() {
+  try {
+    const res = await fetch("/api/user-profiles", { cache: "no-store", credentials: "same-origin" });
+    const data = res.ok ? await res.json() : {};
+    const rows = Array.isArray(data?.items) ? data.items : [];
+    userProfiles = rows
+      .map((row) => ({
+        id: String(row?.id || "").trim(),
+        label: String(row?.label || row?.id || "").trim(),
+        instances: row?.instances && typeof row.instances === "object" ? row.instances : {},
+      }))
+      .filter((row) => row.id && row.label);
+  } catch {
+    userProfiles = [];
+  }
 }
 
 function allProfiles() {
@@ -197,18 +216,66 @@ function sourceProfileSelect(provider, currentInst) {
   const dis = props.mode === "edit" ? "disabled" : "";
   const cur = String(currentInst || "default");
   if (!list.length) return `<select class="input" id="scw-source-instance" ${dis}><option value="default">Default</option></select>`;
-  return `<select class="input" id="scw-source-instance" ${dis}>${list.map((p) => `<option value="${esc(p.instance)}" ${p.instance === cur ? "selected" : ""}>${esc(profileName(p.instance))}</option>`).join("")}</select>`;
+  return `<select class="input" id="scw-source-instance" ${dis}>${list.map((p) => `<option value="${esc(p.instance)}" title="${esc(p.instance)}" ${p.instance === cur ? "selected" : ""}>${esc(profileOptionLabel(p))}</option>`).join("")}</select>`;
 }
 
 function profileLabel(provider, instance) {
   const p = allProfiles().find((x) => x.provider === provider && x.instance === instance);
-  return profileName(p?.instance || instance);
+  return profileOptionLabel(p || { instance });
+}
+
+function profileOptionLabel(profile) {
+  const label = String(profile?.display_label || profile?.label || profile?.profile_label || profile?.sink_label || "").trim();
+  return label || profileName(profile?.instance);
 }
 
 function profileName(instance) {
   const value = String(instance || "").trim();
   if (!value || value === "default") return "Default";
   return value;
+}
+
+function userProfileField() {
+  if (!userProfiles.length || props.mode === "edit") return "";
+  const current = String(selectedUserProfileId || "");
+  const options = userProfiles.map((p) => `<option value="${esc(p.id)}" ${p.id === current ? "selected" : ""}>${esc(p.label)}</option>`).join("");
+  return `<div class="scrm-profile-row">${fieldIcon("person", "User profile", `<select class="input" id="scw-user-profile"><option value="">Manual profiles</option>${options}</select>`)}</div>`;
+}
+
+function assignedInstance(profile, provider, kind) {
+  const key = String(provider || "").toUpperCase();
+  const raw = profile?.instances?.[key];
+  const values = (Array.isArray(raw) ? raw : [raw]).map((x) => String(x || "").trim()).filter(Boolean);
+  if (!values.length) return "";
+  const configured = kind === "source" ? sourceProfiles(provider) : sinkProfiles(provider);
+  const configuredIds = configured.map((p) => String(p.instance || ""));
+  return values.find((value) => configuredIds.includes(value)) || "";
+}
+
+function applyUserProfile(profileId) {
+  const profile = userProfiles.find((row) => row.id === String(profileId || ""));
+  if (!profile) return false;
+  const sourceChoices = [...webhookSources].filter((provider) => assignedInstance(profile, provider, "source"));
+  const current = selectedWebhook();
+  const provider = sourceChoices.includes(String(current.provider || "").toLowerCase())
+    ? String(current.provider || "").toLowerCase()
+    : (sourceChoices[0] || String(current.provider || "").toLowerCase());
+  const instance = assignedInstance(profile, provider, "source") || current.provider_instance || "default";
+  const sinkChoices = sinks.filter((sink) => sink !== provider && assignedInstance(profile, sink, "sink"));
+  const sink = sinkChoices.includes(String(current.sink || "").toLowerCase())
+    ? String(current.sink || "").toLowerCase()
+    : (sinkChoices[0] || "");
+  props.webhook = {
+    provider,
+    provider_instance: instance,
+    enabled: true,
+    endpoint_url: "",
+    sink,
+    sink_instance: sink ? (assignedInstance(profile, sink, "sink") || selectedSinkInstance(sink) || "default") : "",
+    effective_settings: {},
+    explicit_settings: {},
+  };
+  return true;
 }
 
 function normInst(v) {
@@ -310,7 +377,7 @@ function sinkProfileSelect(sink, currentInst) {
   const profiles = sinkProfiles(sink);
   if (!profiles.length) return `<option value="" selected disabled>No configured profile</option>`;
   const cur = String(currentInst || "default");
-  return profiles.map((p) => `<option value="${esc(p.instance)}" ${p.instance === cur ? "selected" : ""}>${esc(profileName(p.instance))}</option>`).join("");
+  return profiles.map((p) => `<option value="${esc(p.instance)}" title="${esc(p.instance)}" ${p.instance === cur ? "selected" : ""}>${esc(profileOptionLabel(p))}</option>`).join("");
 }
 
 function endpointBlock(current) {
@@ -347,6 +414,7 @@ function sourcePanel(current) {
         <div><strong>Attach a webhook to a media profile</strong><p>Forward inbound Plex, Jellyfin, or Emby webhook events to one tracker.</p></div>
         ${journeyHelp("scrobbler-webhooks")}
       </div>
+      ${userProfileField()}
       <div class="scrm-route-grid">
         <div class="scrm-provider-card ${providerClass(current.provider)}">
           <div class="scrm-card-head"><span class="scrm-provider-mark">${providerIcon(current.provider)}</span><div><strong>Source</strong><small>${esc(label(current.provider))}</small></div></div>
@@ -719,10 +787,12 @@ export async function mount(shell, incoming = {}) {
   props = incoming;
   saving = false;
   destructive = "";
+  selectedUserProfileId = "";
   modalKey = String(props.mode === "create" ? "__new__" : `${props.webhook?.provider || ""}:${props.webhook?.provider_instance || ""}`);
   activeTab = normalizeActiveTab("source");
   if (root) root.dataset.scrmTab = activeTab;
   originalSink = String(props.webhook?.sink || "").toLowerCase();
+  await loadUserProfiles();
   render();
   boundRoot = root;
   const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
@@ -805,7 +875,14 @@ export async function mount(shell, incoming = {}) {
     e.stopPropagation();
   };
   changeHandler = (e) => {
+    if (e.target.id === "scw-user-profile") {
+      const selected = String(e.target.value || "");
+      selectedUserProfileId = applyUserProfile(selected) ? selected : "";
+      render();
+      return;
+    }
     if (e.target.id === "scw-source-provider") {
+      selectedUserProfileId = "";
       const provider = String(e.target.value || "plex").toLowerCase();
       const instance = sourceProfiles(provider)[0]?.instance || "default";
       props.webhook = { provider, provider_instance: instance, enabled: true, endpoint_url: "", sink: "", sink_instance: "", effective_settings: {}, explicit_settings: {} };
@@ -813,17 +890,20 @@ export async function mount(shell, incoming = {}) {
       return;
     }
     if (e.target.id === "scw-source-instance") {
+      selectedUserProfileId = "";
       props.webhook = { ...selectedWebhook(), provider_instance: String(e.target.value || "default"), endpoint_url: "" };
       render();
       return;
     }
     if (e.target.id === "scw-sink") {
+      selectedUserProfileId = "";
       const sink = String(e.target.value || "").toLowerCase();
       props.webhook = { ...selectedWebhook(), sink, sink_instance: sinkProfiles(sink)[0]?.instance || "default" };
       render();
       return;
     }
     if (e.target.id === "scw-sink-instance") {
+      selectedUserProfileId = "";
       props.webhook = { ...selectedWebhook(), sink: selectedSinkKey(), sink_instance: e.target.value || "default" };
       return;
     }
@@ -845,6 +925,8 @@ export function unmount() {
   saving = false;
   destructive = "";
   originalSink = "";
+  userProfiles = [];
+  selectedUserProfileId = "";
   activeTab = "source";
 }
 

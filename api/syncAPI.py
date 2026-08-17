@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from typing import Any, cast
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from datetime import datetime, timezone, date
 from contextlib import contextmanager
@@ -16,6 +16,8 @@ from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 from cw_platform.modules_registry import get_sync_module_path_by_name, sync_provider_names, sync_provider_supports_feature
+from cw_platform.access_policy import filter_pairs_for_user, managed_profile_id, managed_profile_instances, pair_ids_for_user, request_user, user_can_access_pair
+from cw_platform.provider_instances import list_user_profiles, normalize_user_profile_id
 from cw_platform.local_db.legacy_files import LAST_SYNC_JSON
 from cw_platform.reason_labels import friendly_reason
 from cw_platform.run_control import (
@@ -647,6 +649,18 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
             req_pair_id = str((overrides or {}).get("pair_id") or (overrides or {}).get("pair_scope") or "").strip()
         except Exception:
             req_pair_id = ""
+        req_pair_ids: set[str] = set()
+        try:
+            raw_scope = (overrides or {}).get("pair_scope_ids")
+            if isinstance(raw_scope, list):
+                req_pair_ids = {str(value or "").strip() for value in raw_scope if str(value or "").strip()}
+        except Exception:
+            req_pair_ids = set()
+
+        if req_pair_ids:
+            _summary_set("pair_scope_ids", sorted(req_pair_ids))
+            cfg = dict(cfg)
+            cfg["pairs"] = [p for p in (cfg.get("pairs") or []) if str(p.get("id") or "") in req_pair_ids]
 
         if req_pair_id:
             pair = next((p for p in (cfg.get("pairs") or []) if str(p.get("id") or "") == req_pair_id), None)
@@ -660,6 +674,7 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
             pair_src = str(pair.get("source") or pair_src)
             pair_dst = str(pair.get("target") or pair_dst)
             pair_mode = str(pair.get("mode") or pair_mode).strip().lower() or pair_mode
+            _summary_set("pair_scope_ids", [req_pair_id])
             _sync_progress_ui(f"[i] Running single pair: {pair_src} → {pair_dst} ({req_pair_id})")
 
         with _orch_scope_env():
@@ -1700,7 +1715,7 @@ def _is_sync_running() -> bool:
 
 # API endpoint to list sync providers
 @router.get("/sync/providers")
-def api_sync_providers() -> JSONResponse:
+def api_sync_providers(request: Request = cast(Request, None)) -> JSONResponse:
     HIDDEN = {"BASE"}
     FEATURE_KEYS = ("watchlist", "ratings", "history", "playlists", "progress")
     try:
@@ -1888,6 +1903,10 @@ def api_sync_providers() -> JSONResponse:
         seen.add(mf["name"])
         items.append(mf)
     items.sort(key=lambda x: (x.get("label") or x.get("name") or "").lower())
+    user = request_user(request)
+    if user and not bool(user.get("is_admin")):
+        allowed = set(managed_profile_instances(cfg, user).keys())
+        items = [item for item in items if str(item.get("name") or "").strip().upper() in allowed]
     return JSONResponse(items)
 
 # Pairs data models
@@ -1900,6 +1919,7 @@ class PairIn(BaseModel):
     enabled: bool | None = None
     providers: dict[str, Any] | None = None
     features: dict[str, Any] | None = None
+    profile_id: str | None = None
 
 class PairPatch(BaseModel):
     source: str | None = None
@@ -1910,9 +1930,44 @@ class PairPatch(BaseModel):
     enabled: bool | None = None
     providers: dict[str, Any] | None = None
     features: dict[str, Any] | None = None
+    profile_id: str | None = None
+
+def _request_user(request: Request | None) -> dict[str, Any] | None:
+    try:
+        user = getattr(getattr(request, "state", None), "cw_user", None)
+        return user if isinstance(user, dict) else None
+    except Exception:
+        return None
+
+
+def _managed_pair_blocked(cfg: dict[str, Any], request: Request | None, pair: Mapping[str, Any]) -> bool:
+    user = _request_user(request)
+    return bool(user and not user.get("is_admin") and not user_can_access_pair(cfg, user, pair))
+
+
+def _valid_profile_ids(cfg: Mapping[str, Any]) -> set[str]:
+    return {normalize_user_profile_id(row.get("id")) for row in list_user_profiles(cfg) if normalize_user_profile_id(row.get("id"))}
+
+
+def _normalize_pair_profile_id(cfg: Mapping[str, Any], raw: Any) -> str:
+    pid = normalize_user_profile_id(raw)
+    return pid if pid and pid in _valid_profile_ids(cfg) else ""
+
+
+def _apply_pair_profile_scope(cfg: dict[str, Any], request: Request | None, item: dict[str, Any]) -> None:
+    user = _request_user(request)
+    if user and not user.get("is_admin"):
+        item["profile_id"] = managed_profile_id(user)
+        return
+    pid = _normalize_pair_profile_id(cfg, item.get("profile_id"))
+    if pid:
+        item["profile_id"] = pid
+    else:
+        item.pop("profile_id", None)
+
 
 @router.get("/pairs")
-def api_pairs_list() -> JSONResponse:
+def api_pairs_list(request: Request = cast(Request, None)) -> JSONResponse:
     load_config, save_config = _env()
     try:
         cfg = load_config()
@@ -1942,9 +1997,18 @@ def api_pairs_list() -> JSONResponse:
                 if newp != (it.get("providers") or {}):
                     it["providers"] = newp
                     dirty = True
-        if dirty:
+            pid = _normalize_pair_profile_id(cfg, it.get("profile_id"))
+            if pid:
+                if it.get("profile_id") != pid:
+                    it["profile_id"] = pid
+                    dirty = True
+            elif "profile_id" in it:
+                it.pop("profile_id", None)
+                dirty = True
+        user = _request_user(request)
+        if dirty and not (user and not user.get("is_admin")):
             save_config(cfg)
-        return JSONResponse(arr)
+        return JSONResponse(filter_pairs_for_user(cfg, user, arr))
     except Exception as e:
         try:
             _rt()[8]("TRBL", f"/api/pairs GET failed: {e}")
@@ -1953,7 +2017,7 @@ def api_pairs_list() -> JSONResponse:
         return JSONResponse({"ok": False, "error": _public_error("pairs_list_failed")}, status_code=500)
 
 @router.post("/pairs")
-def api_pairs_add(payload: PairIn = Body(...)) -> dict[str, Any]:
+def api_pairs_add(payload: PairIn = Body(...), request: Request = cast(Request, None)) -> dict[str, Any]:
     load_config, save_config = _env()
     try:
         cfg = load_config()
@@ -1965,7 +2029,10 @@ def api_pairs_add(payload: PairIn = Body(...)) -> dict[str, Any]:
         item["target_instance"] = _norm_instance_id(item.get("target_instance"))
         item["enabled"] = coerce_bool(item.get("enabled", False))
         item["features"] = _normalize_features(item.get("features") or {"watchlist": True})
+        _apply_pair_profile_scope(cfg, request, item)
         _enforce_pair_feature_constraints(item)
+        if _managed_pair_blocked(cfg, request, item):
+            return {"ok": False, "error": "profile_scope_denied"}
         prov = _normalize_pair_providers(item.get("providers"))
         if prov:
             item["providers"] = prov
@@ -1984,11 +2051,15 @@ def api_pairs_add(payload: PairIn = Body(...)) -> dict[str, Any]:
         return {"ok": False, "error": _public_error("pair_create_failed")}
 
 @router.post("/pairs/reorder")
-def api_pairs_reorder(order: list[str] = Body(...)) -> dict:
+def api_pairs_reorder(order: list[str] = Body(...), request: Request = cast(Request, None)) -> dict:
     load_config, save_config = _env()
     try:
         cfg = load_config()
         arr = _cfg_pairs(cfg)
+        user = _request_user(request)
+        if user and not user.get("is_admin"):
+            allowed_ids = {str(pair.get("id") or "") for pair in filter_pairs_for_user(cfg, user, arr)}
+            order = [pid for pid in (order or []) if str(pid) in allowed_ids]
 
         index_map = {str(p.get("id")): i for i, p in enumerate(arr)}
         seen: set[str] = set()
@@ -2027,7 +2098,7 @@ def api_pairs_reorder(order: list[str] = Body(...)) -> dict:
         return {"ok": False, "error": _public_error("pair_reorder_failed")}
 
 @router.put("/pairs/{pair_id}")
-def api_pairs_update(pair_id: str, payload: PairPatch = Body(...)) -> dict[str, Any]:
+def api_pairs_update(pair_id: str, payload: PairPatch = Body(...), request: Request = cast(Request, None)) -> dict[str, Any]:
     load_config, save_config = _env()
     try:
         cfg = load_config()
@@ -2036,6 +2107,8 @@ def api_pairs_update(pair_id: str, payload: PairPatch = Body(...)) -> dict[str, 
 
         for it in arr:
             if str(it.get("id")) == str(pair_id):
+                if _managed_pair_blocked(cfg, request, it):
+                    return {"ok": False, "error": "profile_scope_denied"}
                 if "features" in upd:
                     it["features"] = _normalize_features(upd.pop("features"))
                 if "providers" in upd:
@@ -2046,8 +2119,12 @@ def api_pairs_update(pair_id: str, payload: PairPatch = Body(...)) -> dict[str, 
                     upd["target_instance"] = _norm_instance_id(upd.get("target_instance"))
                 for k, v in upd.items():
                     it[k] = v
+                if "profile_id" in upd:
+                    _apply_pair_profile_scope(cfg, request, it)
 
                 _enforce_pair_feature_constraints(it)
+                if _managed_pair_blocked(cfg, request, it):
+                    return {"ok": False, "error": "profile_scope_denied"}
                 save_config(cfg)
                 return {"ok": True}
         return {"ok": False, "error": "not_found"}
@@ -2107,12 +2184,15 @@ def _purge_pair_state(pair_id: str) -> dict[str, Any]:
     return {'removed': removed, 'errors': errors}
 
 @router.delete("/pairs/{pair_id}")
-def api_pairs_delete(pair_id: str, purge_state: bool = True) -> dict[str, Any]:
+def api_pairs_delete(pair_id: str, purge_state: bool = True, request: Request = cast(Request, None)) -> dict[str, Any]:
     load_config, save_config = _env()
     state = {"removed": [], "errors": []}
     try:
         cfg = load_config()
         arr = _cfg_pairs(cfg)
+        pair = next((it for it in arr if str(it.get("id")) == str(pair_id)), None)
+        if pair is not None and _managed_pair_blocked(cfg, request, pair):
+            return {"ok": False, "error": "profile_scope_denied"}
         before = len(arr)
         arr[:] = [it for it in arr if str(it.get("id")) != str(pair_id)]
         deleted = before - len(arr)
@@ -2299,9 +2379,64 @@ def api_provider_counts(
         return _provider_counts_current()
     return _provider_counts_fast(max_age=max_age, force=bool(force))
 
+
+def _enabled_from_pairs(pairs: Sequence[Mapping[str, Any]]) -> dict[str, bool]:
+    out = _lanes_enabled_defaults()
+    for key in FEATURE_KEYS:
+        out[key] = False
+    for pair in pairs:
+        feats = pair.get("features")
+        if not isinstance(feats, Mapping):
+            continue
+        for key in FEATURE_KEYS:
+            value = feats.get(key)
+            if isinstance(value, Mapping):
+                out[key] = out[key] or coerce_bool(value.get("enable", value.get("enabled", True)), True)
+            else:
+                out[key] = out[key] or coerce_bool(value, False)
+    return out
+
+
+def _empty_summary_for_pairs(pairs: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    return {
+        "running": False,
+        "features": {key: {"added": 0, "removed": 0, "updated": 0} for key in FEATURE_KEYS},
+        "enabled": _enabled_from_pairs(pairs),
+        "timeline": {},
+        "provider_counts": {},
+        "pair_scope_ids": [str(pair.get("id") or "").strip() for pair in pairs if str(pair.get("id") or "").strip()],
+    }
+
+
+def _scope_summary_for_user(cfg: dict[str, Any], user: Mapping[str, Any] | None, snap: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(user, Mapping) or bool(user.get("is_admin")):
+        return snap
+    pairs = filter_pairs_for_user(cfg, user, [pair for pair in (cfg.get("pairs") or []) if isinstance(pair, dict)])
+    allowed_ids = {str(pair.get("id") or "").strip() for pair in pairs if str(pair.get("id") or "").strip()}
+    scope_raw = snap.get("pair_scope_ids")
+    scope_ids = {str(value or "").strip() for value in scope_raw if str(value or "").strip()} if isinstance(scope_raw, list) else set()
+    if scope_ids and not (scope_ids & allowed_ids):
+        return _empty_summary_for_pairs(pairs)
+    if not scope_ids and (snap.get("run_id") or snap.get("running")):
+        return _empty_summary_for_pairs(pairs)
+    out = dict(snap)
+    out["enabled"] = _enabled_from_pairs(pairs)
+    out["pair_scope_ids"] = sorted(scope_ids & allowed_ids) if scope_ids else sorted(allowed_ids)
+    allowed_providers: set[str] = set()
+    for pair in pairs:
+        for key in ("source", "target"):
+            prov = str(pair.get(key) or "").strip().upper()
+            if prov:
+                allowed_providers.add(prov)
+    for key in ("provider_counts", "provider_counts_pre", "provider_counts_post"):
+        counts = out.get(key)
+        if isinstance(counts, Mapping):
+            out[key] = {str(k).upper(): v for k, v in counts.items() if str(k).strip().upper() in allowed_providers}
+    return out
+
 # Trigger sync run endpoint
 @router.post("/run")
-def api_run_sync(payload: dict | None = Body(None)) -> dict[str, Any]:
+def api_run_sync(payload: dict | None = Body(None), request: Request = cast(Request, None)) -> dict[str, Any]:
     rt = _rt()
     LOG_BUFFERS, RUNNING_PROCS, SYNC_PROC_LOCK = rt[0], rt[1], rt[2]
     with SYNC_PROC_LOCK:
@@ -2309,11 +2444,14 @@ def api_run_sync(payload: dict | None = Body(None)) -> dict[str, Any]:
             return {"ok": False, "error": "Sync already running"}
         cfg = _env()[0]()
         pairs = list((cfg or {}).get("pairs") or [])
+        user = _request_user(request)
+        if user and not user.get("is_admin"):
+            pairs = filter_pairs_for_user(cfg, user, pairs)
 
         pair_id = ""
         try:
             if isinstance(payload, dict):
-                pair_id = str(payload.get("pair_id") or payload.get("pairId") or "").strip()
+                pair_id = str(payload.get("pair_id") or payload.get("pairId") or payload.get("pair_scope") or "").strip()
         except Exception:
             pair_id = ""
 
@@ -2337,10 +2475,19 @@ def api_run_sync(payload: dict | None = Body(None)) -> dict[str, Any]:
             clear_queue_stop()
 
         run_id = str(int(time.time()))
+        overrides = {
+            key: value
+            for key, value in (payload or {}).items()
+            if key not in {"pair_id", "pairId", "pair_scope", "pair_scope_ids"}
+        }
+        if pair_id:
+            overrides["pair_id"] = pair_id
+        if user and not user.get("is_admin"):
+            overrides["pair_scope_ids"] = [str(pair.get("id") or "") for pair in pairs if str(pair.get("id") or "")]
         th = threading.Thread(
             target=_run_pairs_thread,
             args=(run_id,),
-            kwargs={"overrides": (payload or {})},
+            kwargs={"overrides": overrides},
             daemon=True,
         )
         th.start()
@@ -2348,11 +2495,35 @@ def api_run_sync(payload: dict | None = Body(None)) -> dict[str, Any]:
         _rt()[8]("SYNC", f"[i] Triggered sync run {run_id}")
         return {"ok": True, "run_id": run_id}
 
+def run_log_visible_to_user(cfg: Mapping[str, Any], user: Mapping[str, Any] | None) -> bool:
+    if not isinstance(user, Mapping) or bool(user.get("is_admin")):
+        return True
+    try:
+        allowed = pair_ids_for_user(dict(cfg or {}), user)
+        scope_raw = _summary_snapshot().get("pair_scope_ids")
+        scope_ids = {str(value or "").strip() for value in scope_raw if str(value or "").strip()} if isinstance(scope_raw, list) else set()
+    except Exception:
+        return False
+    return bool(scope_ids) and scope_ids.issubset(allowed)
+
+
 @router.post("/run/cancel")
-def api_cancel_sync() -> dict[str, Any]:
+def api_cancel_sync(request: Request = cast(Request, None)) -> Any:
     if not _is_sync_running():
         clear_cancel()
         return {"ok": False, "error": "No sync running", "running": False}
+    user = _request_user(request)
+    if user and not user.get("is_admin"):
+        try:
+            cfg = _env()[0]()
+            allowed_ids = pair_ids_for_user(cfg, user)
+            snap = _summary_snapshot()
+            scope_raw = snap.get("pair_scope_ids")
+            scope_ids = {str(value or "").strip() for value in scope_raw if str(value or "").strip()} if isinstance(scope_raw, list) else set()
+            if not scope_ids or not (scope_ids & allowed_ids):
+                return JSONResponse({"ok": False, "error": "profile_scope_denied"}, status_code=403)
+        except Exception:
+            return JSONResponse({"ok": False, "error": "profile_scope_denied"}, status_code=403)
     run_id = str(_summary_snapshot().get("run_id") or "")
     state = request_cancel(run_id, reason="user")
     _summary_set("cancel_requested", True)
@@ -2373,7 +2544,12 @@ def api_cancel_status() -> dict[str, Any]:
 
 
 @router.get("/run/summary")
-def api_run_summary() -> JSONResponse:
+def api_run_summary(request: Request = cast(Request, None)) -> JSONResponse:
+    try:
+        cfg = _env()[0]()
+    except Exception:
+        cfg = {}
+    user = _request_user(request)
     snap0 = _summary_snapshot()
     snap = dict(snap0 or {})
     snap.setdefault("features", {})
@@ -2395,10 +2571,18 @@ def api_run_summary() -> JSONResponse:
     except Exception:
         pass
 
-    return JSONResponse(snap)
+    return JSONResponse(_scope_summary_for_user(cfg, user, snap))
 
 @router.get("/run/unresolved")
-def api_run_unresolved() -> JSONResponse:
+def api_run_unresolved(request: Request = cast(Request, None)) -> JSONResponse:
+    user = _request_user(request)
+    if user and not user.get("is_admin"):
+        try:
+            cfg = _env()[0]()
+        except Exception:
+            cfg = {}
+        if not run_log_visible_to_user(cfg, user):
+            return JSONResponse({"total": 0, "items": []})
     try:
         from cw_platform.orchestrator._unresolved import load_unresolved_items
         records = load_unresolved_items()
@@ -2437,13 +2621,18 @@ def api_run_unresolved() -> JSONResponse:
     return JSONResponse({"total": len(items), "items": items})
 
 @router.get("/run/summary/file")
-def api_run_summary_file() -> Response:
+def api_run_summary_file(request: Request = cast(Request, None)) -> Response:
+    try:
+        cfg = _env()[0]()
+    except Exception:
+        cfg = {}
+    user = _request_user(request)
     snap0 = _summary_snapshot()
     snap = dict(snap0 or {})
     snap.setdefault("features", {})
     snap.setdefault("enabled", _lanes_enabled_defaults())
 
-    js = json.dumps(snap, indent=2)
+    js = json.dumps(_scope_summary_for_user(cfg, user, snap), indent=2)
     return Response(
         content=js,
         media_type="application/json",
@@ -2458,6 +2647,12 @@ _SSE_HEARTBEAT_COMMENT = ": keep-alive\n\n"
 async def api_run_summary_stream(request: Request) -> StreamingResponse:
     import html, re
     TAG_RE = re.compile(r"<[^>]+>")
+    try:
+        cfg_for_scope = _env()[0]()
+    except Exception:
+        cfg_for_scope = {}
+    user_for_scope = _request_user(request)
+    managed_scope = bool(user_for_scope and not user_for_scope.get("is_admin"))
 
     def dehtml(s: str) -> str:
         return html.unescape(TAG_RE.sub("", s or ""))
@@ -2521,13 +2716,14 @@ async def api_run_summary_stream(request: Request) -> StreamingResponse:
                 break
             emitted = False
             buf_len = 0
+            log_visible = (not managed_scope) or run_log_visible_to_user(cfg_for_scope, user_for_scope)
             try:
                 buf = LOG_BUFFERS.get("SYNC") or []
                 buf_len = len(buf)
                 if last_idx > len(buf):
                     last_idx = 0
                 if last_idx < len(buf):
-                    for line in buf[last_idx:]:
+                    for line in buf[last_idx:] if log_visible else []:
                         raw = dehtml(line).strip()
                         if raw.startswith("{"):
                             try:
@@ -2554,6 +2750,7 @@ async def api_run_summary_stream(request: Request) -> StreamingResponse:
                 except Exception:
                     pass
 
+            snap = _scope_summary_for_user(cfg_for_scope, user_for_scope, snap)
             key = (
                 snap.get("running"),
                 snap.get("exit_code"),

@@ -217,6 +217,7 @@
       const f = pr.features || {};
       const srcTone = brandTone(src);
       const dstTone = brandTone(dst);
+      const profileLabel = String(pr.profile_label || pr.profile_id || "").trim();
 
       return `
         <div class="pair-card brand-${brandKey(src)} dst-${brandKey(dst)} ${enabled ? "" : "pair-disabled"}" data-id="${pr.id || ""}" data-source="${src}" data-target="${dst}" data-mode="${modeLabel}" style="--src-solid:${srcTone.solid};--src-rgb:${srcTone.rgb};--dst-solid:${dstTone.solid};--dst-rgb:${dstTone.rgb};--accent:${srcTone.solid};--accent-rgb:${srcTone.rgb}">
@@ -227,6 +228,7 @@
               <span class="arrow" data-tip="${modeLabel}">${arrow}</span>
               ${pill(dst, dstInst, "dst")}
               <span class="pair-pill mode" data-tip="${modeLabel}">${modeLabel}</span>
+              ${profileLabel ? `<span class="pair-pill mode profile" data-tip="Assigned profile">${esc(profileLabel)}</span>` : ""}
             </div>
             <div class="pair-actions">
               <div class="feat-beads" role="group" aria-label="Enabled features">
