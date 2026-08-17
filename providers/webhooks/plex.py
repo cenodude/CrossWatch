@@ -86,7 +86,7 @@ def _archive(event_type: str, media_type: str, md: dict[str, Any], ids: dict[str
         pass
 
 
-def _call_remove_across(ids: dict[str, Any], media_type: str) -> None:
+def _call_remove_across(ids: dict[str, Any], media_type: str, origin: str = "") -> None:
     if not isinstance(ids, dict) or not ids:
         return
     try:
@@ -107,13 +107,13 @@ def _call_remove_across(ids: dict[str, Any], media_type: str) -> None:
         pass
     try:
         if callable(_rm_across):
-            _rm_across(ids, media_type)
+            _rm_across(ids, media_type, scope=origin or None)
             return
     except Exception:
         pass
     try:
         if callable(_rm_across_api):
-            _rm_across_api(ids, media_type)  # type: ignore[arg-type]
+            _rm_across_api(ids, media_type, origin=origin or None)  # type: ignore[arg-type]
             return
     except Exception:
         pass
@@ -1629,7 +1629,7 @@ def process_webhook(
     if r.status_code < 400:
         if intended == "/scrobble/stop" and prog >= watched_at and not (st.get("wl_removed") is True):
             try:
-                _call_remove_across(ids_all2 or {}, media_type)
+                _call_remove_across(ids_all2 or {}, media_type, origin=f"plex:{provider_instance}")
                 st = {**st, "wl_removed": True}
             except Exception:
                 pass

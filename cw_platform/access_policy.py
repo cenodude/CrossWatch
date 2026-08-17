@@ -45,8 +45,8 @@ def managed_profile_id(user: Mapping[str, Any] | None) -> str:
     return normalize_user_profile_id(user.get("profile_id"))
 
 
-def managed_profile_instances(cfg: Mapping[str, Any], user: Mapping[str, Any] | None) -> dict[str, list[str]]:
-    pid = managed_profile_id(user)
+def profile_instances_map(cfg: Mapping[str, Any], profile_id: Any) -> dict[str, list[str]]:
+    pid = normalize_user_profile_id(profile_id)
     if not pid:
         return {}
     out: dict[str, list[str]] = {}
@@ -57,6 +57,17 @@ def managed_profile_instances(cfg: Mapping[str, Any], user: Mapping[str, Any] | 
         if prov and keep:
             out[prov] = keep
     return out
+
+
+def managed_profile_instances(cfg: Mapping[str, Any], user: Mapping[str, Any] | None) -> dict[str, list[str]]:
+    return profile_instances_map(cfg, managed_profile_id(user))
+
+
+def origin_owner_instances(cfg: Mapping[str, Any], provider: Any, instance: Any) -> dict[str, list[str]] | None:
+    pid = sole_instance_owner_profile_id(cfg, provider, instance)
+    if not pid:
+        return None
+    return profile_instances_map(cfg, pid)
 
 
 def profile_allows_instance(profile_instances: Mapping[str, list[str]], provider: Any, instance: Any) -> bool:

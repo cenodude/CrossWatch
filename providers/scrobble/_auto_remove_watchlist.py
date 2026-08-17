@@ -80,7 +80,7 @@ def remove_across_providers_by_ids(
     try:
         import api.watchlistAPI as WLAPI
 
-        res = WLAPI.remove_across_providers_by_ids(norm, media_type or "")
+        res = WLAPI.remove_across_providers_by_ids(norm, media_type or "", origin=scope)
         ok = bool(res.get("ok")) if isinstance(res, dict) else bool(res)
         if ok:
             _log(f"auto-remove OK ids={norm} media={media_type}")
@@ -104,7 +104,14 @@ def remove_across_providers_by_ids(
             keys = list(dict.fromkeys(keys))
             if not keys:
                 return {"ok": False, "error": "no-keys"}
-            res2 = delete_watchlist_batch(keys=keys, prov="ALL", state=st, cfg=cfg) or {}
+            allowed = None
+            if scope:
+                from cw_platform.access_policy import origin_owner_instances
+
+                prov_raw, _, inst_raw = str(scope).partition(":")
+                if str(prov_raw or "").strip():
+                    allowed = origin_owner_instances(cfg, prov_raw, inst_raw)
+            res2 = delete_watchlist_batch(keys=keys, prov="ALL", state=st, cfg=cfg, allowed_instances=allowed) or {}
             ok2 = bool(res2.get("ok"))
             if ok2:
                 _log(f"fallback delete_watchlist_batch OK ids={norm}")
@@ -144,6 +151,7 @@ def _extract_evt(evt: Any) -> dict[str, Any]:
 def auto_remove_if_config_allows(
     evt: Any,
     cfg: dict[str, Any] | None = None,
+    scope: str | None = None,
 ) -> dict[str, Any] | None:
     try:
         if cfg is None:
@@ -186,10 +194,10 @@ def auto_remove_if_config_allows(
         return None
 
     _log(f"auto-remove (WL-AUTO) executing for movie ids={ids}", "INFO")
-    return remove_across_providers_by_ids(ids, "movie")
+    return remove_across_providers_by_ids(ids, "movie", scope=scope)
 
 
-def remove_by_ids(ids: dict[str, Any] | None, media_type: str | None = None) -> dict[str, Any]:
+def remove_by_ids(ids: dict[str, Any] | None, media_type: str | None = None, scope: str | None = None) -> dict[str, Any]:
     mt = str(media_type or "").strip().lower()
     if mt != "movie":
         _log(
@@ -197,4 +205,4 @@ def remove_by_ids(ids: dict[str, Any] | None, media_type: str | None = None) -> 
             "DEBUG",
         )
         return {"ok": False, "skipped": True, "reason": "not_movie"}
-    return remove_across_providers_by_ids(ids or {}, "movie")
+    return remove_across_providers_by_ids(ids or {}, "movie", scope=scope)
