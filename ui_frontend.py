@@ -3,15 +3,20 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import html as html_lib
+import logging
 from pathlib import Path
 import time
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from starlette.staticfiles import StaticFiles
 from api.versionAPI import CURRENT_VERSION
+from cw_platform.access_policy import clean_managed_permissions
 
 __all__ = ["register_assets_and_favicons", "register_ui_root", "get_index_html"]
+
+_LOG = logging.getLogger("crosswatch.ui_frontend")
 
 _ASSET_VERSION_CACHE: dict[str, float | str] = {"ts": 0.0, "val": CURRENT_VERSION}
 
@@ -92,33 +97,231 @@ def register_assets_and_favicons(app: FastAPI, root: Path) -> None:
 
 def register_ui_root(app: FastAPI) -> None:
     @app.get("/", include_in_schema=False, tags=["ui"])
-    def ui_root(request: Request) -> HTMLResponse:
-        return HTMLResponse(get_index_html(), headers={"Cache-Control": "no-store"})
+    def ui_root(request: Request) -> Response:
+        user = getattr(getattr(request, "state", None), "cw_user", None)
+        if isinstance(user, dict) and user.get("is_admin") is False:
+            perms = _managed_user_permissions(user)
+            view = str(request.query_params.get("view") or "").strip().lower()
+            read_view_allowed = (
+                view == "watchlist" and perms.get("watchlist")
+            ) or (
+                view == "playback_progress" and perms.get("playback")
+            )
+            if not perms.get("write") and not read_view_allowed:
+                return RedirectResponse(url="/profile", status_code=302)
+            if perms.get("write") and request.query_params.get("main") != "1":
+                return RedirectResponse(url="/profile", status_code=302)
+        include_admin = not (isinstance(user, dict) and user.get("is_admin") is False)
+        return HTMLResponse(get_index_html(include_admin=include_admin, user=user), headers={"Cache-Control": "no-store"})
+
+    @app.get("/profile", include_in_schema=False, tags=["ui"])
+    def ui_profile(request: Request) -> Response:
+        user = getattr(getattr(request, "state", None), "cw_user", None)
+        if not isinstance(user, dict):
+            try:
+                from api.appAuthAPI import COOKIE_NAME, auth_required as app_auth_required, current_user as app_current_user
+                from cw_platform.config_base import load_config
+
+                cfg = load_config()
+                user = app_current_user(cfg, request.cookies.get(COOKIE_NAME)) if app_auth_required(cfg) else None
+            except Exception:
+                user = None
+        if not isinstance(user, dict):
+            return RedirectResponse(url="/login", status_code=302)
+        return HTMLResponse(get_profile_html(user=user), headers={"Cache-Control": "no-store"})
 
 
 _HELPER_SCRIPTS = (
-    "help-links.js", "provider-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "api.js", "core.js", "details-log.js",
+    "help-links.js", "provider-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "api.js", "core.js", "details-log.js",
     "media-meta.js", "trailer.js", "playing-card.js", "watchlist-preview.js", "providers-ui.js", "settings-ui.js", "settings-save.js", "maintenance.js", "backups.js",
     "restart_apply.js",
 )
 _APP_SCRIPTS = (
-    "syncbar.js", "run-summary-stream.js", "main.js", "connections.overlay.js", "connections.pairs.overlay.js", "scheduler.js",
+    "syncbar.js", "run-summary-stream.js", "overview-profile.js", "main.js", "connections.overlay.js", "connections.pairs.overlay.js", "scheduler.js",
     "schedulerbanner.js", "playingcard.js", "insights.js", "activity.js", "dashboard-widgets.js", "auth-dots.js", "main-status.js",
-    "scrobbler.js",
+    "scrobbler.js", "user-profiles.js", "app-users.js",
 )
-def _asset_block() -> str:
-    helper_tags = "\n".join(f'<script src="/assets/helpers/{name}?v=__CW_VERSION__"></script>' for name in _HELPER_SCRIPTS)
-    app_tags = "\n".join(f'<script src="/assets/js/{name}?v=__CW_VERSION__" defer></script>' for name in _APP_SCRIPTS)
-    return "\n".join((
-        helper_tags,
+_USER_HELPER_SCRIPTS = (
+    "help-links.js", "provider-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "api.js", "core.js",
+    "media-meta.js", "trailer.js", "playing-card.js", "watchlist-preview.js",
+)
+_USER_APP_SCRIPTS = (
+    "overview-profile.js", "main.js", "playingcard.js", "insights.js", "activity.js", "dashboard-widgets.js", "auth-dots.js", "main-status.js",
+)
+_FULL_USER_HELPER_SCRIPTS = tuple(dict.fromkeys((*_USER_HELPER_SCRIPTS, "details-log.js")))
+_FULL_USER_APP_SCRIPTS = tuple(dict.fromkeys(("syncbar.js", "run-summary-stream.js", "schedulerbanner.js", *_USER_APP_SCRIPTS)))
+
+
+def _remove_html_range(html: str, start: str, end: str) -> str:
+    start_index = html.find(start)
+    if start_index < 0:
+        return html
+    end_index = html.find(end, start_index)
+    if end_index < 0:
+        return html
+    return html[:start_index] + html[end_index:]
+
+
+def _replace_html_range(html: str, start: str, end: str, replacement: str) -> str:
+    start_index = html.find(start)
+    if start_index < 0:
+        return html
+    end_index = html.find(end, start_index)
+    if end_index < 0:
+        return html
+    return html[:start_index] + replacement + html[end_index:]
+
+
+def _remove_html_section(html: str, marker: str) -> str:
+    start_index = html.find(marker)
+    if start_index < 0:
+        return html
+    depth = 0
+    scan = start_index
+    while scan < len(html):
+        next_open = html.find("<section", scan)
+        next_close = html.find("</section>", scan)
+        if next_close < 0:
+            return html
+        if next_open >= 0 and next_open < next_close:
+            depth += 1
+            scan = next_open + 8
+            continue
+        depth -= 1
+        scan = next_close + len("</section>")
+        if depth <= 0:
+            while scan < len(html) and html[scan] in "\r\n":
+                scan += 1
+            return html[:start_index] + html[scan:]
+    return html
+
+
+def _managed_user_permissions(user: dict | None) -> dict[str, bool]:
+    return clean_managed_permissions(user.get("permissions") if isinstance(user, dict) else {})
+
+
+def _remove_line(html: str, line: str) -> str:
+    return html.replace(line + "\n", "")
+
+
+_ADMIN_ONLY_MARKERS: tuple[tuple[str, str], ...] = (
+    ('id="tab-settings-menu"', "settings tab menu"),
+    ('id="page-settings"', "settings pane"),
+    ('id="app_user_manager"', "user manager"),
+    ("app_auth_oidc_client_secret", "OIDC credentials form"),
+)
+
+
+def _assert_admin_shell_stripped(html: str) -> None:
+    leaked = [label for marker, label in _ADMIN_ONLY_MARKERS if marker in html]
+    if not leaked:
+        return
+    _LOG.error(
+        "managed-user shell still contains admin-only markup (%s) - the index template changed and the strip markers no longer match",
+        ", ".join(leaked),
+    )
+    raise RuntimeError("managed_user_shell_strip_failed:" + ",".join(sorted(leaked)))
+
+
+def _nav_profile_link() -> str:
+    return '    <a id="cw-nav-profile-link" class="cw-nav-profile-link" href="/profile" title="Open profile" aria-label="Open profile"><span id="cw-nav-profile-avatar" class="cw-nav-profile-avatar material-symbols-rounded" aria-hidden="true">person</span></a>'
+
+
+def _managed_user_shell(html: str, user: dict | None = None) -> str:
+    perms = _managed_user_permissions(user)
+    write_allowed = bool(perms.get("write"))
+    dashboard_allowed = bool(perms.get("dashboard")) and write_allowed
+    watchlist_allowed = bool(perms.get("watchlist"))
+    playback_allowed = bool(perms.get("playback"))
+    logout_tab = '    <button id="cw-managed-logout" class="tab" type="button" onclick="fetch(\'/api/app-auth/logout\',{method:\'POST\',credentials:\'same-origin\',cache:\'no-store\'}).finally(()=>location.href=\'/login\')">Logout</button>'
+    if write_allowed:
+        tabs = [
+            '    <button id="tab-main" class="tab active" type="button" onclick="showTab(\'main\')">Main</button>',
+            '    <button id="tab-watchlist" class="tab" type="button" onclick="showTab(\'watchlist\')">Watchlist</button>',
+            '    <button id="tab-playback_progress" class="tab" type="button" onclick="showTab(\'playback_progress\')">Playback</button>',
+            '    <button id="tab-snapshots" class="tab" type="button" onclick="showTab(\'snapshots\')">Captures</button>',
+            '    <button id="tab-playlists" class="tab" type="button" onclick="showTab(\'playlists\')">Playlists</button>',
+            '    <button id="tab-editor" class="tab" type="button" onclick="showTab(\'editor\')">Editor</button>',
+            logout_tab,
+            _nav_profile_link(),
+        ]
+        html = _replace_html_range(
+            html,
+            '  <nav class="tabs" aria-label="Primary navigation">\n',
+            '  </nav>',
+            '  <nav class="tabs" aria-label="Primary navigation">\n' + "\n".join(tabs) + "\n",
+        )
+    else:
+        tabs = ['    <button id="tab-main" class="tab" data-cw-profile-home="1" type="button" onclick="location.href=\'/profile\'">Main</button>']
+        if watchlist_allowed:
+            tabs.append('    <button id="tab-watchlist" class="tab" type="button" onclick="showTab(\'watchlist\')">Watchlist</button>')
+        if playback_allowed:
+            tabs.append('    <button id="tab-playback_progress" class="tab" type="button" onclick="showTab(\'playback_progress\')">Playback</button>')
+        tabs.append(logout_tab)
+        tabs.append(_nav_profile_link())
+        html = html.replace(
+            '<div class="brand" role="button" tabindex="0" title="Go to Main" onclick="showTab(\'main\')" onkeypress="if(event.key===\'Enter\'||event.key===\' \')showTab(\'main\')">',
+            '<div class="brand" role="button" tabindex="0" title="Go to Profile" onclick="location.href=\'/profile\'" onkeypress="if(event.key===\'Enter\'||event.key===\' \')location.href=\'/profile\'">',
+        )
+        html = _replace_html_range(
+            html,
+            '  <nav class="tabs" aria-label="Primary navigation">\n',
+            '  </nav>',
+            '  <nav class="tabs" aria-label="Primary navigation">\n' + "\n".join(tabs) + "\n",
+        )
+        html = html.replace('    <button id="tab-snapshots" class="tab" type="button" onclick="showTab(\'snapshots\')">Captures</button>\n', "")
+        html = html.replace('    <button id="tab-playlists" class="tab" type="button" onclick="showTab(\'playlists\')">Playlists</button>\n', "")
+        html = html.replace('    <button id="tab-editor" class="tab" type="button" onclick="showTab(\'editor\')">Editor</button>\n', "")
+        for fragment in (
+            '  <section id="page-snapshots" class="card hidden tab-page"></section>\n\n',
+            '  <section id="page-playlists" class="card hidden tab-page"></section>\n\n',
+            '  <section id="page-editor" class="card hidden tab-page"></section>\n\n',
+        ):
+            html = html.replace(fragment, "")
+    if not dashboard_allowed:
+        html = _remove_line(html, '    <button id="tab-main" class="tab active" type="button" onclick="showTab(\'main\')">Main</button>')
+        html = _remove_html_section(html, '  <section id="ops-card"')
+        html = _remove_html_section(html, '  <section id="stats-card"')
+        html = _remove_html_section(html, '  <section id="dashboard-widgets-card"')
+    if not playback_allowed:
+        html = _remove_line(html, '    <button id="tab-playback_progress" class="tab" type="button" onclick="showTab(\'playback_progress\')">Playback</button>')
+        html = html.replace('  <section id="page-playback_progress" class="card hidden tab-page">\n    <div id="playback-progress-root">\n      <div class="cw-page-loading">Loading Playback Progress...</div>\n    </div>\n  </section>\n\n', "")
+    if not watchlist_allowed:
+        html = _remove_line(html, '    <button id="tab-watchlist" class="tab" type="button" onclick="showTab(\'watchlist\')">Watchlist</button>')
+        html = html.replace('  <section id="page-watchlist" class="card hidden tab-page"></section>\n\n', "")
+    html = _remove_html_range(
+        html,
+        '    <div class="cw-tabmenu" id="tab-settings-menu">',
+        '    <div class="cw-tabmenu" id="tab-about-menu">',
+    )
+    html = _remove_html_range(
+        html,
+        '  <section id="page-settings" class="card hidden">',
+        "\n\n</main>",
+    )
+    _assert_admin_shell_stripped(html)
+    return html
+
+
+def _asset_block(include_admin: bool = True, user: dict | None = None) -> str:
+    full_user = not include_admin and bool(_managed_user_permissions(user).get("write"))
+    helper_scripts = _HELPER_SCRIPTS if include_admin else (_FULL_USER_HELPER_SCRIPTS if full_user else _USER_HELPER_SCRIPTS)
+    app_scripts = _APP_SCRIPTS if include_admin else (_FULL_USER_APP_SCRIPTS if full_user else _USER_APP_SCRIPTS)
+    helper_tags = "\n".join(f'<script src="/assets/helpers/{name}?v=__CW_VERSION__"></script>' for name in helper_scripts)
+    app_tags = "\n".join(f'<script src="/assets/js/{name}?v=__CW_VERSION__" defer></script>' for name in app_scripts)
+    admin_only_tags = (
         '<script src="/assets/helpers/media_user_picker.js?v=__CW_VERSION__" defer></script>',
         '<script src="/assets/helpers/whitelist_table.js?v=__CW_VERSION__" defer></script>',
-        '<script src="/assets/crosswatch.js?v=__CW_VERSION__"></script>',
-        app_tags,
         '<script src="/assets/auth/auth.shared.js?v=__CW_VERSION__"></script>',
         '<script src="/assets/auth/auth_loader.js?v=__CW_VERSION__" defer></script>',
         '<script src="/assets/auth/auth.tmdb.js?v=__CW_VERSION__" defer></script>',
         '<script type="module" src="/assets/js/modals.js?v=__CW_VERSION__"></script>',
+    ) if include_admin else (('<script type="module" src="/assets/js/modals.js?v=__CW_VERSION__"></script>',) if full_user else ())
+    return "\n".join((
+        helper_tags,
+        '<script src="/assets/crosswatch.js?v=__CW_VERSION__"></script>',
+        app_tags,
+        *admin_only_tags,
         '<script src="/assets/js/theme-flat-runtime.js?v=__CW_VERSION__" defer></script>',
     ))
 
@@ -229,6 +432,7 @@ def _get_index_html_static() -> str:
 <link rel="stylesheet" href="/assets/css/components.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/css/pages.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/ui-shell.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/css/app-users.css?v=__CW_VERSION__">
 <script>
 (() => {
   try {
@@ -322,6 +526,7 @@ def _get_index_html_static() -> str:
         <button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwAboutMenuSelect('help')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">help</span><span>Help</span></button>
       </div>
     </div>
+    <a id="cw-nav-profile-link" class="cw-nav-profile-link" href="/profile" title="Open profile" aria-label="Open profile"><span id="cw-nav-profile-avatar" class="cw-nav-profile-avatar material-symbols-rounded" aria-hidden="true">person</span></a>
   </nav>
 
   <div class="cw-ui-toggle" aria-label="UI mode">
@@ -727,6 +932,7 @@ def _get_index_html_static() -> str:
             </div>
             <div class="cw-settings-pane-head-actions">
               <div class="cw-settings-jumpbar cw-connections-actions" aria-label="Connection actions">
+                <button type="button" class="cw-settings-jump" onclick="window.cwUserProfilesNew?.()"><span class="material-symbols-rounded" aria-hidden="true">add</span>Add profile</button>
                 <button type="button" class="cw-settings-jump" onclick="window.openAddMetadata?.()"><span class="material-symbols-rounded" aria-hidden="true">add</span>Add metadata</button>
                 <button type="button" class="cw-settings-jump" onclick="window.openAddConnection?.()"><span class="material-symbols-rounded" aria-hidden="true">add</span>Add provider</button>
               </div>
@@ -1111,6 +1317,23 @@ def _get_index_html_static() -> str:
                             <div class="sub" style="margin-top:0.35rem">Used only when session caching is enabled. Maximum 365 days.</div>
                           </div>
                         </div>
+                        <div class="cw-auth-totp-field">
+                          <div class="cw-field-label-row">
+                            <strong>Two-factor authentication</strong>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="Two-factor authentication: Require a six digit authenticator app code after the password." aria-label="Two-factor authentication help">help</button>
+                          </div>
+                          <div class="sub" id="app_auth_totp_state">2FA: off</div>
+                          <div class="cw-auth-totp-setup hidden" id="app_auth_totp_setup">
+                            <div class="sub">Add this secret to your authenticator app, then enter the current code.</div>
+                            <input id="app_auth_totp_secret" type="text" readonly autocomplete="off" aria-label="Two-factor setup secret">
+                            <input id="app_auth_totp_code" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code" placeholder="123456">
+                          </div>
+                          <div class="cw-settings-inline-action" style="margin-top:0.75rem">
+                            <button class="btn primary" type="button" id="btn-app-auth-totp-setup" onclick="cwAppAuthTotpSetup?.()">Set up 2FA</button>
+                            <button class="btn primary hidden" type="button" id="btn-app-auth-totp-verify" onclick="cwAppAuthTotpVerify?.()">Verify code</button>
+                            <button class="btn danger" type="button" id="btn-app-auth-totp-disable" onclick="cwAppAuthTotpDisable?.()">Disable 2FA</button>
+                          </div>
+                        </div>
                         <div>
                           <div class="cw-field-label-row">
                             <strong>Linked Plex account</strong>
@@ -1122,8 +1345,47 @@ def _get_index_html_static() -> str:
                             <button class="btn" type="button" id="btn-app-auth-plex-unlink" onclick="cwAppAuthPlexUnlink?.()">Unlink</button>
                           </div>
                         </div>
+                        <div class="cw-auth-oidc-field">
+                          <div class="cw-field-label-row">
+                            <strong>OIDC sign-in</strong>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="OIDC sign-in: Configure an external OpenID Connect provider and link this administrator account." aria-label="OIDC sign-in help">help</button>
+                          </div>
+                          <div class="sub" id="app_auth_oidc_state">Not configured</div>
+                          <div class="cw-app-oidc-grid">
+                            <select id="app_auth_oidc_enabled" aria-label="OIDC enabled">
+                              <option value="false">Disabled</option>
+                              <option value="true">Enabled</option>
+                            </select>
+                            <input id="app_auth_oidc_issuer" type="url" autocomplete="off" placeholder="Issuer URL">
+                            <input id="app_auth_oidc_client_id" type="text" autocomplete="off" placeholder="Client ID">
+                            <input id="app_auth_oidc_client_secret" type="password" autocomplete="new-password" placeholder="Client secret">
+                            <input id="app_auth_oidc_scopes" type="text" autocomplete="off" placeholder="openid profile email">
+                          </div>
+                          <div class="cw-app-oidc-actions">
+                            <button class="btn primary" type="button" id="btn-app-auth-oidc-save" onclick="cwAppAuthOidcSaveConfig?.()">Save OIDC</button>
+                            <button class="btn primary" type="button" id="btn-app-auth-oidc-link" onclick="cwAppAuthOidcLink?.()">Link OIDC account</button>
+                            <button class="btn" type="button" id="btn-app-auth-oidc-unlink" onclick="cwAppAuthOidcUnlink?.()">Unlink</button>
+                          </div>
+                        </div>
                       </div>
                     </form>
+
+                    <div class="cw-settings-block cw-app-card cw-app-user-card" id="app_user_manager">
+                      <div class="cw-app-card-head">
+                        <span class="material-symbols-rounded cw-app-card-icon" aria-hidden="true">group</span>
+                        <div>
+                          <div class="cw-settings-block-title">User manager</div>
+                          <div class="sub">Create user accounts and connect each account to a user profile.</div>
+                        </div>
+                      </div>
+                      <form class="cw-app-user-create" id="app_user_create_form" autocomplete="off" onsubmit="return false">
+                        <input id="app_user_username" type="text" autocomplete="username" placeholder="Username">
+                        <input id="app_user_password" type="password" autocomplete="new-password" placeholder="Password">
+                        <select id="app_user_profile"></select>
+                        <button class="btn primary" type="button" id="btn-app-user-create">Add user</button>
+                      </form>
+                      <div class="cw-app-user-list" id="app_users_list"></div>
+                    </div>
 
                     <div class="cw-settings-block cw-app-card">
                       <div class="cw-app-card-head">
@@ -1474,8 +1736,476 @@ __CW_ASSET_BLOCK__
 
 """
 
-def get_index_html() -> str:
-    html = _get_index_html_static().replace("__CW_ASSET_BLOCK__", _asset_block())
+def get_index_html(include_admin: bool = True, user: dict | None = None) -> str:
+    html = _get_index_html_static().replace("__CW_ASSET_BLOCK__", _asset_block(include_admin=include_admin, user=user))
+    if not include_admin:
+        perms = _managed_user_permissions(user)
+        profile_id = html_lib.escape(str((user or {}).get("profile_id") or ""), quote=True) if isinstance(user, dict) else ""
+        dashboard_allowed = bool(perms.get("dashboard")) and bool(perms.get("write"))
+        attrs = (
+            f'<html lang="en" data-cw-role="user" '
+            f'data-cw-perm-dashboard="{"on" if dashboard_allowed else "off"}" '
+            f'data-cw-perm-watchlist="{"on" if perms.get("watchlist") else "off"}" '
+            f'data-cw-perm-playback="{"on" if perms.get("playback") else "off"}" '
+            f'data-cw-perm-write="{"on" if perms.get("write") else "off"}" '
+            f'data-cw-profile-id="{profile_id}"'
+        )
+        html = html.replace('<html lang="en"', attrs, 1)
+        html = _managed_user_shell(html, user)
+    return (
+        html
+        .replace("__CW_CURRENT_VERSION__", CURRENT_VERSION)
+        .replace("__CW_VERSION__", _asset_version_token())
+    )
+
+
+def get_profile_html(user: dict | None = None) -> str:
+    is_admin = bool(isinstance(user, dict) and user.get("is_admin"))
+    perms = {"dashboard": True, "watchlist": True, "playback": True, "write": True} if is_admin else _managed_user_permissions(user)
+    esc = lambda value: html_lib.escape(str(value or ""), quote=True)
+    role = "admin" if is_admin else "user"
+    role_label = "Administrator" if is_admin else "Managed User"
+    profile_id = "" if is_admin else esc((user or {}).get("profile_id"))
+    username = esc((user or {}).get("username"))
+    display_name = esc((user or {}).get("display_name") or (user or {}).get("label") or (user or {}).get("username") or ("Administrator" if is_admin else "Profile"))
+    write = "on" if perms.get("write") else "off"
+    preferences_allowed = is_admin or bool(perms.get("write"))
+    preferences_tab = (
+        '    <button id="profile-tab-preferences" type="button" data-profile-tab="preferences">Preferences</button>'
+        if preferences_allowed else ""
+    )
+    preferences_panel = """  <section id="profile-panel-preferences" class="cw-profile-panel">
+    <div class="cw-profile-security-grid">
+      <article class="cw-profile-widget">
+        <div class="cw-profile-widget-head"><h2>Interface</h2></div>
+        <p class="cw-profile-pref-intro">Choose which optional surfaces appear while you browse.</p>
+        <label class="cw-profile-pref">
+          <span><strong>Playing card</strong><small>Show the floating now-playing card while something is streaming.</small></span>
+          <input id="profile-pref-playing-card" type="checkbox" checked>
+        </label>
+        <label class="cw-profile-pref">
+          <span><strong>Quick add</strong><small>Show the quick add shortcut for logging watched items by hand.</small></span>
+          <input id="profile-pref-quick-add" type="checkbox" checked>
+        </label>
+        <div class="cw-profile-actions">
+          <button id="profile-pref-save" class="btn primary" type="button">Save preferences</button>
+        </div>
+      </article>
+    </div>
+  </section>""" if preferences_allowed else ""
+    dashboard = "on" if perms.get("dashboard") else "off"
+    watchlist = "on" if perms.get("watchlist") else "off"
+    playback = "on" if perms.get("playback") else "off"
+    write_nav = is_admin or bool(perms.get("write"))
+    watchlist_href = "/?main=1#watchlist" if is_admin or perms.get("write") else "/?view=watchlist#watchlist"
+    playback_href = "/?main=1#playback_progress" if is_admin or perms.get("write") else "/?view=playback_progress#playback_progress"
+    settings_nav = (
+        '<div class="cw-tabmenu" id="tab-settings-menu">'
+        '<button id="tab-settings" class="tab" type="button" aria-haspopup="menu" aria-expanded="false" onclick="window.cwToggleSettingsMenu(event)"><span>Settings</span><span class="tab-caret" aria-hidden="true"></span></button>'
+        '<div class="cw-menu hidden" id="cw-settings-menu" role="menu" aria-labelledby="tab-settings">'
+        '<button class="cw-menu-item active" data-settings-pane="overview" type="button" role="menuitem" aria-current="page" onclick="window.cwSettingsMenuSelect(\'overview\')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">grid_view</span><span>Settings overview</span></button>'
+        '<div class="cw-menu-sep" role="separator" aria-hidden="true"></div>'
+        '<button class="cw-menu-item" data-settings-pane="providers" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect(\'providers\')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">device_hub</span><span>Connections</span></button>'
+        '<button class="cw-menu-item" data-settings-pane="sync" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect(\'pairs\')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">sync_alt</span><span>Sync pairs</span></button>'
+        '<button class="cw-menu-item" data-settings-pane="scrobbler" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect(\'scrobbler\')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">sensors</span><span>Scrobbler</span></button>'
+        '<button class="cw-menu-item" data-settings-pane="scheduling" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect(\'scheduling\')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">schedule</span><span>Scheduling</span></button>'
+        '<button class="cw-menu-item" data-settings-pane="app" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect(\'app\')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">security</span><span>UI and Security</span></button>'
+        '<button class="cw-menu-item" data-settings-pane="maintenance" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect(\'maintenance\')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">build</span><span>Maintenance</span></button>'
+        '<div class="cw-menu-sep" role="separator" aria-hidden="true"></div>'
+        '<button class="cw-menu-item danger" type="button" role="menuitem" onclick="window.cwSettingsMenuLogout()"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">logout</span><span>Log out</span></button>'
+        '</div></div>'
+    )
+    about_nav = (
+        '<div class="cw-tabmenu" id="tab-about-menu">'
+        '<button id="tab-about" class="tab" type="button" aria-haspopup="menu" aria-expanded="false" onclick="window.cwToggleAboutMenu(event)"><span>About</span><span class="tab-caret" aria-hidden="true"></span></button>'
+        '<div class="cw-menu hidden" id="cw-about-menu" role="menu" aria-labelledby="tab-about">'
+        '<button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwAboutMenuSelect(\'about\')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">info</span><span>About</span></button>'
+        '<button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwAboutMenuSelect(\'help\')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">help</span><span>Help</span></button>'
+        '</div></div>'
+    )
+    nav_items: list[str] = []
+    if is_admin:
+        nav_items.extend([
+            '<a class="tab active" href="/?main=1#main">Main</a>',
+            '<a class="tab" href="/?main=1#watchlist">Watchlist</a>',
+            '<a class="tab" href="/?main=1#playback_progress">Playback</a>',
+            '<a class="tab" href="/?main=1#snapshots">Captures</a>',
+            '<a class="tab" href="/?main=1#playlists">Playlists</a>',
+            '<a class="tab" href="/?main=1#editor">Editor</a>',
+            settings_nav,
+            about_nav,
+        ])
+    elif write_nav:
+        nav_items.extend([
+            '<a class="tab active" href="/?main=1#main">Main</a>',
+            '<a class="tab" href="/?main=1#watchlist">Watchlist</a>',
+            '<a class="tab" href="/?main=1#playback_progress">Playback</a>',
+            '<a class="tab" href="/?main=1#snapshots">Captures</a>',
+            '<a class="tab" href="/?main=1#playlists">Playlists</a>',
+            '<a class="tab" href="/?main=1#editor">Editor</a>',
+            '<button id="cw-profile-logout" class="tab" type="button">Logout</button>',
+        ])
+    else:
+        nav_items.append('<a class="tab active" href="/profile">Main</a>')
+        if perms.get("watchlist"):
+            nav_items.append(f'<a class="tab" href="{watchlist_href}">Watchlist</a>')
+        if perms.get("playback"):
+            nav_items.append(f'<a class="tab" href="{playback_href}">Playback</a>')
+        nav_items.append('<button id="cw-profile-logout" class="tab" type="button">Logout</button>')
+    nav_items.append(_nav_profile_link().strip())
+    profile_nav = "\n    ".join(nav_items)
+    html = f"""<!DOCTYPE html>
+<html lang="en" data-cw-role="{role}" data-cw-page="profile" data-cw-perm-dashboard="{dashboard}" data-cw-perm-watchlist="{watchlist}" data-cw-perm-playback="{playback}" data-cw-perm-write="{write}" data-cw-profile-id="{profile_id}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<title>Profile | CrossWatch</title>
+<link rel="icon" type="image/png" sizes="64x64" href="/assets/pwa/favicon-64.png?v=__CW_VERSION__">
+<meta name="theme-color" content="#0b0b0f">
+<script>
+(() => {{
+  try {{
+    const raw = localStorage.getItem("cw.ui.theme") || "flat-dark";
+    const theme = raw === "flat-light" ? "flat-light" : raw === "original" ? "original" : "flat-dark";
+    if (theme === "original") delete document.documentElement.dataset.cwTheme;
+    else document.documentElement.dataset.cwTheme = theme;
+    document.documentElement.classList.toggle("cw-theme-light", theme === "flat-light");
+    document.documentElement.classList.toggle("cw-theme-dark", theme === "flat-dark");
+    document.documentElement.classList.toggle("cw-theme-original", theme === "original");
+  }} catch {{
+    document.documentElement.dataset.cwTheme = "flat-dark";
+  }}
+}})();
+</script>
+<link rel="stylesheet" href="/assets/themes/tokens.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/css/base.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/css/providers.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/crosswatch.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/css/layout.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/css/components.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/css/pages.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/ui-shell.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/css/profile-page.css?v=__CW_VERSION__">
+<link rel="preload" href="/assets/fonts/material-symbols-rounded-full-v355.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/assets/fonts/material-symbols-rounded.css?v=__CW_VERSION__">
+<link id="cw-theme-flat-css" rel="stylesheet" href="/assets/themes/flat.css?v=__CW_VERSION__" media="not all" disabled>
+<link id="cw-theme-original-css" rel="stylesheet" href="/assets/themes/original-coverage.css?v=__CW_VERSION__" media="not all" disabled>
+<script>
+(() => {{
+  const original = document.documentElement.classList.contains("cw-theme-original");
+  const flatLink = document.getElementById("cw-theme-flat-css");
+  const originalLink = document.getElementById("cw-theme-original-css");
+  if (flatLink) {{ flatLink.disabled = original; flatLink.media = original ? "not all" : "all"; }}
+  if (originalLink) {{ originalLink.disabled = !original; originalLink.media = original ? "all" : "not all"; }}
+}})();
+</script>
+</head>
+<body class="cw-profile-page">
+<header class="cw-profile-topbar">
+  <a class="brand" href="/profile" title="Go to profile">
+    <img class="logo" src="/assets/pwa/favicon-64.png?v=__CW_VERSION__" alt="CrossWatch">
+    <span class="brand-text"><span class="name">CrossWatch</span><span class="version">__CW_CURRENT_VERSION__</span></span>
+  </a>
+  <nav class="tabs" aria-label="Primary navigation">
+    {profile_nav}
+  </nav>
+</header>
+<main class="cw-profile-shell" data-profile-id="{profile_id}" data-username="{username}" data-display-name="{display_name}">
+  <section class="cw-profile-hero" id="profile-hero">
+    <div class="cw-profile-hero-art" id="profile-hero-art"></div>
+    <div class="cw-profile-hero-now" id="profile-hero-now"></div>
+    <div class="cw-profile-hero-seam" id="profile-hero-seam"></div>
+    <div class="cw-profile-hero-shade"></div>
+    <div class="cw-profile-identity">
+      <div class="cw-profile-avatar-wrap">
+        <button id="profile-avatar-button" class="cw-profile-avatar" type="button" title="Replace profile picture" aria-label="Replace profile picture"><span class="material-symbols-rounded" aria-hidden="true">person</span></button>
+        <input id="profile-avatar-input" type="file" accept="image/png,image/jpeg,image/webp" hidden>
+      </div>
+      <div class="cw-profile-nameblock">
+        <span id="profile-role" class="cw-profile-role">{role_label}</span>
+        <h1 id="profile-display-name">{display_name}</h1>
+        <div id="profile-username" class="cw-profile-username">@{username}</div>
+        <div id="profile-member-since" class="cw-profile-since hidden"><span class="material-symbols-rounded" aria-hidden="true">person</span><span></span></div>
+        <div id="profile-hero-chips" class="cw-profile-chips"></div>
+      </div>
+    </div>
+    <article class="cw-profile-last hidden" role="button" tabindex="0" aria-label="Show last watched details">
+      <div class="cw-profile-last-copy">
+        <div class="cw-profile-last-head">
+          <span class="cw-profile-last-kicker">Last Watched</span>
+          <strong id="profile-last-title">Nothing watched yet</strong>
+          <span id="profile-last-meta">History will appear here.</span>
+          <span id="profile-last-provider"></span>
+        </div>
+      </div>
+      <img id="profile-last-poster" class="cw-profile-last-poster" src="/assets/img/placeholder_poster.svg" alt="">
+    </article>
+    <div id="profile-now" class="cw-profile-now hidden" aria-live="polite">
+      <div class="cw-profile-now-copy">
+        <div class="cw-profile-now-head">
+          <span class="cw-profile-now-dot" aria-hidden="true"></span>
+          <span class="cw-profile-now-kicker">Now Playing</span>
+          <strong id="profile-now-title"></strong>
+          <span id="profile-now-meta"></span>
+        </div>
+        <div class="cw-profile-now-track"><span id="profile-now-fill"></span></div>
+        <div class="cw-profile-now-times"><span id="profile-now-pct"></span><span id="profile-now-left"></span></div>
+      </div>
+      <img id="profile-now-poster" class="cw-profile-now-poster" src="/assets/img/placeholder_poster.svg" alt="">
+    </div>
+  </section>
+  <div class="cw-profile-tabs" role="tablist" aria-label="Profile tabs">
+    <button id="profile-tab-overview" class="active" type="button" data-profile-tab="overview">Overview</button>
+    <button id="profile-tab-security" type="button" data-profile-tab="security">Security</button>
+{preferences_tab}
+  </div>
+  <section id="profile-panel-overview" class="cw-profile-panel active">
+    <div class="cw-profile-pair-grid">
+      <article class="cw-profile-widget">
+        <div class="cw-profile-widget-head"><h2>Continue Watching</h2><a href="{playback_href}">View all</a></div>
+        <div id="profile-progress" class="cw-profile-poster-row"></div>
+      </article>
+      <article class="cw-profile-widget">
+        <div class="cw-profile-widget-head"><h2>Recent Watchlist</h2><a href="{watchlist_href}">View all</a></div>
+        <div id="profile-watchlist" class="cw-profile-list"></div>
+      </article>
+    </div>
+    <div class="cw-profile-pair-grid">
+      <article class="cw-profile-widget">
+        <div class="cw-profile-widget-head"><h2>Recent Activity</h2><button id="activity-view-all" class="ghost refresh-insights" type="button">View all</button></div>
+        <div class="stat-block" id="recent-activity-block">
+          <div id="recent-activity" class="history-list"></div>
+        </div>
+      </article>
+      <article class="cw-profile-widget">
+        <div class="cw-profile-widget-head"><h2>Quick Stats</h2></div>
+        <div id="profile-quick-stats" class="cw-profile-quick-grid"></div>
+      </article>
+    </div>
+  <section id="dashboard-widgets-card" class="cw-dashboard-widgets hidden" aria-label="Media widgets">
+    <article id="placeholder-card" class="card cw-main-card cw-main-card--wall cw-dash-widget cw-dash-widget--watchlist cw-dash-widget--wide hidden">
+      <div class="title">Watchlist</div>
+      <div class="cw-main-card-head cw-main-card-head--compact">
+        <div class="cw-main-card-head-copy">
+          <div class="cw-dash-title-row">
+            <span class="material-symbols-rounded" aria-hidden="true">movie</span>
+            <h3>Watchlist</h3>
+          </div>
+        </div>
+        <span id="watchlist-count-chip" class="cw-widget-count-chip hidden" aria-live="polite"></span>
+        <button class="cw-watchlist-see-all" type="button" onclick="showTab('watchlist')" title="View all" aria-label="Open Watchlist page"><span class="material-symbols-rounded" aria-hidden="true">arrow_forward</span></button>
+      </div>
+      <div id="wall-msg" class="wall-msg">Loading...</div>
+      <div class="wall-wrap">
+        <div id="edgeL" class="edge left"></div><div id="edgeR" class="edge right"></div>
+        <div id="poster-row" class="row-scroll" aria-label="Watchlist"></div>
+        <button class="nav prev" type="button" onclick="scrollWall(-1)" aria-label="Scroll left"><</button>
+        <button class="nav next" type="button" onclick="scrollWall(1)" aria-label="Scroll right">></button>
+      </div>
+    </article>
+
+    <article id="recent-history-widget" class="cw-dash-widget cw-dash-widget--history">
+      <div class="cw-dash-widget-head">
+        <div class="cw-dash-title-row">
+          <span class="material-symbols-rounded" aria-hidden="true">play_arrow</span>
+          <h3>Recent History</h3>
+        </div>
+        <div class="cw-dash-head-actions">
+          <span id="recent-history-count-chip" class="cw-widget-count-chip hidden" aria-live="polite"></span>
+          <button id="recent-history-refresh" class="cw-dash-ghost" type="button" title="Refresh recent history" aria-label="Refresh recent history"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
+        </div>
+      </div>
+      <div id="recent-history-list" class="cw-history-widget-list cw-widget-scrollbar" aria-live="polite"></div>
+    </article>
+
+    <article id="latest-ratings-widget" class="cw-dash-widget cw-dash-widget--ratings">
+      <div class="cw-dash-widget-head">
+        <div class="cw-dash-title-row">
+          <span class="material-symbols-rounded" aria-hidden="true">star</span>
+          <h3>Latest Ratings</h3>
+        </div>
+        <div class="cw-dash-head-actions">
+          <span id="latest-ratings-count-chip" class="cw-widget-count-chip hidden" aria-live="polite"></span>
+          <button id="latest-ratings-refresh" class="cw-dash-ghost" type="button" title="Refresh latest ratings" aria-label="Refresh latest ratings"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
+        </div>
+      </div>
+      <div id="latest-ratings-grid" class="cw-ratings-widget-grid" aria-live="polite"></div>
+    </article>
+
+    <article id="recent-scrobble-widget" class="cw-dash-widget cw-dash-widget--scrobble">
+      <div class="cw-dash-widget-head">
+        <div class="cw-dash-title-row">
+          <span class="material-symbols-rounded" aria-hidden="true">sensors</span>
+          <h3>Recent Scrobble</h3>
+        </div>
+        <div class="cw-dash-head-actions">
+          <span id="recent-scrobble-count-chip" class="cw-widget-count-chip hidden" aria-live="polite"></span>
+          <button id="recent-scrobble-refresh" class="cw-dash-ghost" type="button" title="Refresh recent scrobble" aria-label="Refresh recent scrobble"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
+        </div>
+      </div>
+      <div id="recent-scrobble-list" class="cw-history-widget-list cw-widget-scrollbar" aria-live="polite"></div>
+    </article>
+
+    <article id="recent-progress-widget" class="cw-dash-widget cw-dash-widget--progress">
+      <div class="cw-dash-widget-head">
+        <div class="cw-dash-title-row">
+          <span class="material-symbols-rounded" aria-hidden="true">timelapse</span>
+          <h3>Recent Progress</h3>
+        </div>
+        <div class="cw-dash-head-actions">
+          <span id="recent-progress-count-chip" class="cw-widget-count-chip hidden" aria-live="polite"></span>
+          <button id="recent-progress-refresh" class="cw-dash-ghost" type="button" title="Refresh recent progress" aria-label="Refresh recent progress"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
+        </div>
+      </div>
+      <div id="recent-progress-list" class="cw-history-widget-list cw-widget-scrollbar" aria-live="polite"></div>
+    </article>
+
+    <article id="recent-playlists-widget" class="cw-dash-widget cw-dash-widget--playlists">
+      <div class="cw-dash-widget-head">
+        <div class="cw-dash-title-row">
+          <span class="material-symbols-rounded" aria-hidden="true">queue_music</span>
+          <h3>Recent Playlists</h3>
+        </div>
+        <div class="cw-dash-head-actions">
+          <span id="recent-playlists-count-chip" class="cw-widget-count-chip hidden" aria-live="polite"></span>
+          <button id="recent-playlists-refresh" class="cw-dash-ghost" type="button" title="Refresh recent playlists" aria-label="Refresh recent playlists"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
+        </div>
+      </div>
+      <div id="recent-playlists-list" class="cw-history-widget-list cw-widget-scrollbar" aria-live="polite"></div>
+    </article>
+  </section>
+  </section>
+  <section id="profile-panel-security" class="cw-profile-panel">
+    <div class="cw-profile-security-grid">
+      <article class="cw-profile-widget">
+        <div class="cw-profile-widget-head"><h2>Account</h2></div>
+        <form id="profile-name-form" class="cw-profile-form">
+          <label>Display name<input id="profile-display-input" maxlength="64" autocomplete="name"></label>
+          <button class="btn primary" type="submit">Save profile</button>
+        </form>
+        <div class="cw-profile-avatar-actions">
+          <button id="profile-avatar-replace" class="btn" type="button">Replace picture</button>
+          <button id="profile-avatar-remove" class="btn danger" type="button">Remove picture</button>
+        </div>
+        <div id="profile-avatar-upload-status" class="cw-profile-upload hidden" role="status" aria-live="polite">
+          <div class="cw-profile-upload-head"><span id="profile-avatar-upload-label">Uploading picture</span><strong id="profile-avatar-upload-percent">0%</strong></div>
+          <div class="cw-profile-upload-bar"><span id="profile-avatar-upload-bar"></span></div>
+        </div>
+      </article>
+      <article class="cw-profile-widget">
+        <div class="cw-profile-widget-head"><h2>Password</h2></div>
+        <form id="profile-password-form" class="cw-profile-form">
+          <input type="text" name="username" value="{username}" autocomplete="username" hidden>
+          <label>Current password<input id="profile-current-password" type="password" autocomplete="current-password"></label>
+          <label>New password<input id="profile-new-password" type="password" autocomplete="new-password"></label>
+          <button class="btn primary" type="submit">Change password</button>
+        </form>
+      </article>
+      <article class="cw-profile-widget">
+        <div class="cw-profile-widget-head"><h2>Two-factor authentication</h2><span id="profile-2fa-state" class="cw-profile-pill">Off</span></div>
+        <div id="profile-2fa-setup" class="cw-profile-2fa"></div>
+        <div class="cw-profile-actions">
+          <button id="profile-2fa-setup-btn" class="btn primary" type="button">Set up 2FA</button>
+          <button id="profile-2fa-disable-btn" class="btn danger" type="button">Disable 2FA</button>
+          <button id="profile-recovery-btn" class="btn" type="button">Recovery codes</button>
+        </div>
+      </article>
+      <article class="cw-profile-widget">
+        <div class="cw-profile-widget-head"><h2>Linked Plex account</h2><span id="profile-plex-state" class="cw-profile-pill">Off</span></div>
+        <div id="profile-plex-summary" class="cw-profile-linked">No Plex account linked.</div>
+        <div class="cw-profile-actions">
+          <button id="profile-plex-link" class="btn primary" type="button">Link Plex account</button>
+          <button id="profile-plex-unlink" class="btn" type="button">Unlink</button>
+        </div>
+      </article>
+      <article class="cw-profile-widget">
+        <div class="cw-profile-widget-head"><h2>Linked OIDC account</h2><span id="profile-oidc-state" class="cw-profile-pill">Off</span></div>
+        <div id="profile-oidc-summary" class="cw-profile-linked">No OIDC account linked.</div>
+        <div class="cw-profile-actions">
+          <button id="profile-oidc-link" class="btn primary" type="button">Link OIDC account</button>
+          <button id="profile-oidc-unlink" class="btn" type="button">Unlink</button>
+        </div>
+      </article>
+      <article class="cw-profile-widget">
+        <div class="cw-profile-widget-head"><h2>Active Sessions</h2></div>
+        <div id="profile-sessions" class="cw-profile-list"></div>
+        <button id="profile-revoke-sessions" class="btn" type="button">Revoke other sessions</button>
+      </article>
+    </div>
+  </section>
+{preferences_panel}
+</main>
+<div id="profile-toast" class="cw-profile-toast hidden" role="status" aria-live="polite"></div>
+<script>
+(() => {{
+  const $ = id => document.getElementById(id);
+  const closeMenu = id => {{
+    const menu = $(id === "settings" ? "cw-settings-menu" : "cw-about-menu");
+    const button = $(id === "settings" ? "tab-settings" : "tab-about");
+    menu?.classList.add("hidden");
+    button?.setAttribute("aria-expanded", "false");
+  }};
+  const closeAll = () => {{ closeMenu("settings"); closeMenu("about"); }};
+  const toggleMenu = (id, event) => {{
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    const menu = $(id === "settings" ? "cw-settings-menu" : "cw-about-menu");
+    const button = $(id === "settings" ? "tab-settings" : "tab-about");
+    if (!menu || !button) return;
+    const open = menu.classList.contains("hidden");
+    closeAll();
+    menu.classList.toggle("hidden", !open);
+    button.setAttribute("aria-expanded", String(open));
+  }};
+  const openSettings = pane => {{
+    const paths = {{
+      overview: "settings",
+      providers: "settings/providers",
+      pairs: "settings/sync",
+      sync: "settings/sync",
+      scrobbler: "settings/scrobbler",
+      scheduling: "settings/scheduling",
+      app: "settings/app",
+      maintenance: "settings/maintenance"
+    }};
+    window.location.href = "/?main=1#" + (paths[pane] || "settings");
+  }};
+  window.cwToggleSettingsMenu = event => toggleMenu("settings", event);
+  window.cwToggleAboutMenu = event => toggleMenu("about", event);
+  window.cwSettingsMenuSelect = pane => {{ closeMenu("settings"); openSettings(pane); }};
+  window.cwAboutMenuSelect = what => {{
+    closeMenu("about");
+    if (what === "help") window.open("https://wiki.crosswatch.app", "_blank", "noopener,noreferrer");
+    else window.location.href = "/?main=1#about";
+  }};
+  window.cwSettingsMenuLogout = async () => {{
+    closeMenu("settings");
+    try {{ await fetch("/api/app-auth/logout", {{ method: "POST", credentials: "same-origin", cache: "no-store" }}); }} catch {{}}
+    window.location.href = "/login";
+  }};
+  document.addEventListener("click", event => {{
+    if (!$("tab-settings-menu")?.contains(event.target)) closeMenu("settings");
+    if (!$("tab-about-menu")?.contains(event.target)) closeMenu("about");
+  }}, true);
+  document.addEventListener("keydown", event => {{
+    if (event.key === "Escape") closeAll();
+  }}, true);
+}})();
+</script>
+<script src="/assets/helpers/provider-meta.js?v=__CW_VERSION__"></script>
+<script src="/assets/helpers/api.js?v=__CW_VERSION__"></script>
+<script src="/assets/helpers/media-meta.js?v=__CW_VERSION__"></script>
+<script src="/assets/helpers/trailer.js?v=__CW_VERSION__"></script>
+<script src="/assets/helpers/playing-card.js?v=__CW_VERSION__"></script>
+<script src="/assets/helpers/watchlist-preview.js?v=__CW_VERSION__"></script>
+<script>window.cwIsAuthSetupPending = window.cwIsAuthSetupPending || (() => window.__cwAuthSetupPending === true);</script>
+<script src="/assets/js/dashboard-widgets.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/js/activity.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/js/profile-page.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/js/theme-flat-runtime.js?v=__CW_VERSION__" defer></script>
+</body>
+</html>"""
     return (
         html
         .replace("__CW_CURRENT_VERSION__", CURRENT_VERSION)

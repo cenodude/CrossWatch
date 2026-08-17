@@ -36,10 +36,16 @@ from api import (
 from api.appAuthAPI import (
     COOKIE_NAME as APP_AUTH_COOKIE,
     auth_required as app_auth_required,
+    current_user as app_current_user,
     is_authenticated as app_is_authenticated,
+    non_admin_api_allowed as app_non_admin_api_allowed,
+    _origin_allowed as app_origin_allowed,
+    _origin_blocked_response as app_origin_blocked_response,
     setup_lock_required as app_auth_setup_lock_required,
     register_app_auth,
 )
+from cw_platform.access_policy import clean_managed_permissions
+from cw_platform.event_archive.audit import record_audit
 
 from _logging import log as LOG, BLUE, GREEN, DIM, RED, YELLOW, RESET  # type: ignore
 BACKUP_LOG = LOG.child("BACKUP")
@@ -362,10 +368,123 @@ def _compute_next_run_from_cfg(scfg: dict[str, Any] | None, now_ts: int | None =
 
 # API
 _apply_auth_reset_env_once()
-app = FastAPI()
+app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=5)
 
 from api.scrobbleAPI import WebhookAuthError
+
+def _non_admin_permission_allowed(user: dict, path: str, method: str = "GET") -> bool:
+    if not path.startswith("/api/"):
+        return True
+    perms = clean_managed_permissions(user.get("permissions") if isinstance(user, dict) else {})
+    write = bool(perms.get("write"))
+    m = str(method or "GET").upper()
+    if path == "/api/profile" or path.startswith("/api/profile/"):
+        return True
+    if path == "/api/metadata/bulk":
+        return bool(perms.get("dashboard") or perms.get("watchlist") or perms.get("playback"))
+    if path in {"/api/metadata/search", "/api/metadata/resolve"}:
+        return write
+    if m in {"POST", "PUT", "PATCH", "DELETE"}:
+        if not write:
+            return False
+        if path.startswith("/api/watchlist"):
+            return bool(perms.get("watchlist"))
+        if path.startswith("/api/playback_progress/"):
+            return bool(perms.get("playback"))
+        if path.startswith("/api/activity/"):
+            return bool(perms.get("dashboard"))
+        return True
+    if path.startswith("/api/watchlist"):
+        return bool(perms.get("watchlist"))
+    if path in {"/api/playback_progress/providers", "/api/playback_progress/settings", "/api/playback_progress/items"}:
+        return bool(perms.get("playback"))
+    if path == "/api/insights":
+        return bool(perms.get("dashboard"))
+    if path.startswith("/api/dashboard/") or path.startswith("/api/state/wall") or path.startswith("/api/activity/") or path == "/api/watch/currently_watching":
+        return bool(perms.get("dashboard"))
+    if path in {"/api/status", "/api/sync/providers", "/api/sync/providers/counts"}:
+        return bool(perms.get("dashboard"))
+    if path == "/api/logs/stream":
+        return write
+    if path == "/api/logs/watcher":
+        return False
+    if path == "/api/pairs":
+        return bool(perms.get("dashboard"))
+    if path.startswith("/api/pairs/") or path.startswith("/api/run"):
+        return write
+    for prefix in (
+        "/api/analyzer",
+        "/api/events",
+        "/api/export",
+        "/api/import",
+        "/api/editor",
+        "/api/playlists",
+        "/api/snapshots",
+        "/api/manual",
+    ):
+        if path == prefix or path.startswith(prefix + "/"):
+            return write
+    return True
+
+def _unsafe_api_origin_blocked(cfg: dict, request: Request, token: str | None) -> bool:
+    method = str(getattr(request, "method", "") or "").upper()
+    path = request.url.path or "/"
+    if method not in {"POST", "PUT", "PATCH", "DELETE"}:
+        return False
+    if not path.startswith("/api/") or path.startswith("/api/app-auth/"):
+        return False
+    if not app_auth_required(cfg) or not token or not app_is_authenticated(cfg, token):
+        return False
+    return not app_origin_allowed(request)
+
+def _audit_api_action(request: Request, response: Response, user: dict[str, Any]) -> None:
+    method = str(getattr(request, "method", "") or "").upper()
+    if method not in {"POST", "PUT", "PATCH", "DELETE"}:
+        return
+    path = request.url.path or "/"
+    if not path.startswith("/api/") or path.startswith("/api/app-auth/"):
+        return
+    areas = (
+        ("/api/run", "sync"),
+        ("/api/analyzer", "analyzer"),
+        ("/api/events", "events"),
+        ("/api/import", "import_export"),
+        ("/api/export", "import_export"),
+        ("/api/watchlist", "watchlist"),
+        ("/api/playback", "playback"),
+        ("/api/playlists", "playlists"),
+        ("/api/editor", "editor"),
+        ("/api/snapshots", "captures"),
+        ("/api/manual", "manual_entry"),
+        ("/api/pairs", "sync_pairs"),
+        ("/api/config", "settings"),
+        ("/api/provider-instances", "providers"),
+        ("/api/user-profiles", "profiles"),
+    )
+    area = ""
+    for prefix, label in areas:
+        if path == prefix or path.startswith(prefix + "/"):
+            area = label
+            break
+    if not area:
+        return
+    status_code = int(getattr(response, "status_code", 0) or 0)
+    ok = 200 <= status_code < 400
+    try:
+        record_audit(
+            "api_action",
+            actor=user,
+            request=request,
+            status="success" if ok else "failed",
+            target_type=area,
+            target_id=path,
+            message=f"{user.get('username') or 'User'} used {area.replace('_', ' ')}",
+            fields={"method": method, "status_code": status_code},
+            source_kind="api",
+        )
+    except Exception:
+        pass
 
 @app.exception_handler(WebhookAuthError)
 async def _handle_webhook_auth_error(request: Request, exc: WebhookAuthError) -> JSONResponse:
@@ -478,7 +597,27 @@ async def app_auth_gate(request: Request, call_next):
 
     token = request.cookies.get(APP_AUTH_COOKIE)
     if app_is_authenticated(cfg, token):
-        return await call_next(request)
+        if _unsafe_api_origin_blocked(cfg, request, token):
+            return app_origin_blocked_response()
+        user = app_current_user(cfg, token)
+        if user is None:
+            if path.startswith("/api/"):
+                return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401, headers={"Cache-Control": "no-store"})
+            return RedirectResponse(url="/login", status_code=302)
+        try:
+            request.state.cw_user = user
+        except Exception:
+            pass
+        if not user.get("is_admin"):
+            if not app_non_admin_api_allowed(path, request.method) or not _non_admin_permission_allowed(user, path, request.method):
+                if path.startswith("/api/"):
+                    return JSONResponse({"ok": False, "error": "Administrator access required"}, status_code=403, headers={"Cache-Control": "no-store"})
+                if path != "/profile":
+                    return RedirectResponse(url="/profile", status_code=302)
+                return PlainTextResponse("Forbidden", status_code=403, headers={"Cache-Control": "no-store"})
+        response = await call_next(request)
+        _audit_api_action(request, response, user)
+        return response
 
     if path.startswith("/api/"):
         return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401, headers={"Cache-Control": "no-store"})
@@ -846,6 +985,14 @@ app.router.lifespan_context = _lifespan
 async def cache_headers_for_api(request: Request, call_next):
     resp = await call_next(request)
     path = request.url.path
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    resp.headers.setdefault("Referrer-Policy", "same-origin")
+    resp.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    resp.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://image.tmdb.org https://www.themoviedb.org https://media.trakt.tv; connect-src 'self'; font-src 'self'; frame-src 'self' https://wiki.crosswatch.app https://www.youtube-nocookie.com https://www.youtube.com https://player.vimeo.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+    )
 
     if path.startswith("/api/"):
         resp.headers["Cache-Control"] = "no-store"
@@ -902,12 +1049,34 @@ async def api_logs_stream_initial(
     plain: bool = Query(False),
 ):
     tag = _norm_log_tag(tag)
+    try:
+        user = getattr(getattr(request, "state", None), "cw_user", None)
+    except Exception:
+        user = None
+    managed = isinstance(user, dict) and not user.get("is_admin")
+    if managed and tag != "SYNC":
+        return JSONResponse({"ok": False, "error": "Administrator access required"}, status_code=403, headers={"Cache-Control": "no-store"})
+
+    def _run_visible() -> bool:
+        if not managed:
+            return True
+        try:
+            from api.syncAPI import run_log_visible_to_user
+
+            return run_log_visible_to_user(load_config() or {}, user)
+        except Exception:
+            return False
 
     async def agen():
+        visible = _run_visible()
+        if not visible:
+            yield "event: scope\ndata: 1\n\n"
         buf = list(_get_log_buf(tag))
         base = int(LOG_BASE_SEQ.get(tag, int(LOG_NEXT_SEQ.get(tag, 1))))
         if since is not None:
             last_seq = max(int(since), base - 1)
+        elif not visible:
+            last_seq = base + len(buf) - 1
         else:
             buf_len = len(buf)
             start = max(0, buf_len - int(tail)) if tail else 0
@@ -926,6 +1095,13 @@ async def api_logs_stream_initial(
             base = int(LOG_BASE_SEQ.get(tag, int(LOG_NEXT_SEQ.get(tag, 1))))
             if last_seq < base - 1:
                 last_seq = base - 1
+            if not _run_visible():
+                last_seq = max(last_seq, base + len(new_buf) - 1)
+                if time.time() - last > 15:
+                    yield "event: ping\ndata: 1\n\n"
+                    last = time.time()
+                await asyncio.sleep(0.25)
+                continue
             start_seq = max(last_seq + 1, base)
             start_idx = int(start_seq - base)
             if start_idx < 0:
@@ -967,6 +1143,12 @@ async def api_logs_watcher(
     skip_backlog: bool = Query(False),
     plain: bool = Query(False),
 ):
+    try:
+        user = getattr(getattr(request, "state", None), "cw_user", None)
+    except Exception:
+        user = None
+    if isinstance(user, dict) and not user.get("is_admin"):
+        return JSONResponse({"ok": False, "error": "Administrator access required"}, status_code=403, headers={"Cache-Control": "no-store"})
     tags_sel = _watch_log_selection(tags)
 
     async def agen():

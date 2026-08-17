@@ -13,6 +13,7 @@ from .recorder import (
     record_run_finished,
     RunRecorder,
 )
+from .audit import record_audit
 from .importer import import_all
 from .scrobble_recorder import record_watch, record_webhook
 from .query import recent, search, by_item, by_run, status, acknowledge, unacknowledge
@@ -41,6 +42,7 @@ __all__ = [
     "make_event",
     "compute_event_hash",
     "record_events",
+    "record_audit",
     "record_run_started",
     "record_run_finished",
     "RunRecorder",

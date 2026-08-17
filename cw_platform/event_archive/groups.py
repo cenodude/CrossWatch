@@ -37,6 +37,26 @@ _SCROBBLE_STATUS = {
     "rating_applied": "rated",
     "rating_failed": "failed",
 }
+_AUDIT_STATUS = {
+    "audit_login": "completed",
+    "audit_logout": "completed",
+    "audit_logout_all": "completed",
+    "audit_logout_others": "completed",
+    "audit_user_created": "completed",
+    "audit_user_updated": "completed",
+    "audit_user_deleted": "completed",
+    "audit_credentials_updated": "completed",
+    "audit_totp_setup": "completed",
+    "audit_totp_enabled": "completed",
+    "audit_totp_disabled": "completed",
+    "audit_plex_sso_linked": "completed",
+    "audit_plex_sso_unlinked": "completed",
+    "audit_api_action": "completed",
+    "audit_login_failed": "failed",
+    "audit_login_blocked": "failed",
+    "audit_2fa_failed": "failed",
+    "audit_2fa_required": "informational",
+}
 _PAST = {"add": "added", "remove": "removed", "update": "updated"}
 _SEVERITY = {
     "completed": "success", "resolved": "success", "rated": "success",
@@ -47,7 +67,7 @@ _PROBLEM_TYPES_SQL = "('write_failed','unresolved_recorded','blackbox_promoted',
 _UNRESOLVED_TYPES_SQL = "('write_failed','unresolved_recorded')"
 
 # DO NOT FORGET to update the version when the correlation key/status/summary logic
-CORRELATION_VERSION = 13
+CORRELATION_VERSION = 14
 
 
 def _with_reason_labels(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -102,6 +122,9 @@ def _g(r: Any, key: str) -> Any:
 
 
 def group_hash(r: Any) -> str:
+    if str(_g(r, "domain") or "").strip().lower() == "audit":
+        ident = str(_g(r, "event_hash") or _g(r, "id") or _g(r, "created_at") or "").strip()
+        return hashlib.sha256(f"\x00audit\x1f{ident}".encode("utf-8", "replace")).hexdigest()
     if str(_g(r, "domain") or "sync") == "scrobble":
         token = session_token(_g(r, "session_key"), _g(r, "created_at"))
         ident = str(_g(r, "item_key") or "").strip() or str(_g(r, "title") or "").strip().lower()
@@ -143,6 +166,18 @@ def group_hash(r: Any) -> str:
 
 def _derive_status(events: list[dict[str, Any]], extra_problems: int = 0) -> str:
     types = {e.get("event_type") for e in events}
+
+    if any(str(e.get("domain") or "").strip().lower() == "audit" for e in events):
+        best, best_ts = "informational", -1
+        for e in events:
+            st = _AUDIT_STATUS.get(str(e.get("event_type") or ""))
+            if st is None:
+                reason = str(e.get("reason_code") or "").strip().lower()
+                st = "failed" if reason in {"failed", "blocked", "denied"} else "completed"
+            ts = int(e.get("created_at") or 0)
+            if ts >= best_ts:
+                best_ts, best = ts, st
+        return best
 
     if types & set(_SCROBBLE_STATUS):
         best, best_ts = None, -1
@@ -210,6 +245,24 @@ def _summarize(status: str, events: list[dict[str, Any]], feature: str, dst: str
     types = {e.get("event_type") for e in events}
     last = events[-1] if events else {}
     feat_disp = str(feature or "").title()
+
+    if any(str(e.get("domain") or "").strip().lower() == "audit" for e in events):
+        d = _detail(last)
+        actor_raw = d.get("actor")
+        target_raw = d.get("target")
+        actor: dict[str, Any] = actor_raw if isinstance(actor_raw, dict) else {}
+        target: dict[str, Any] = target_raw if isinstance(target_raw, dict) else {}
+        actor_name = str(actor.get("username") or actor.get("id") or "Unknown user")
+        target_type = str(target.get("type") or "").replace("_", " ")
+        target_id = str(target.get("id") or "").strip()
+        msg = str(d.get("message") or "").strip()
+        action = str(last.get("operation") or last.get("event_type") or "audit").replace("audit_", "").replace("_", " ")
+        if msg:
+            return msg
+        target_txt = f" {target_type} {target_id}".strip()
+        suffix = f" for {target_txt}" if target_txt else ""
+        text = f"{actor_name} {action}{suffix}".strip()
+        return text[:1].upper() + text[1:]
 
     if types & set(_SCROBBLE_STATUS):
         return _summarize_scrobble(status, events, dst)
@@ -492,7 +545,7 @@ def correlate(*, conn: sqlite3.Connection | None = None, reset: bool = False) ->
             _LOG.warning("event correlation reset failed: %s", exc)
     try:
         rows = c.execute(
-            "SELECT id, domain, feature, operation, item_key, title, season, episode, created_at, "
+            "SELECT id, event_hash, domain, feature, operation, item_key, title, season, episode, created_at, "
             "source_kind, session_key, source_provider, source_instance, destination_provider, destination_instance, "
             "pair_key, run_id FROM events WHERE group_id IS NULL"
         ).fetchall()

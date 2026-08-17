@@ -5,6 +5,31 @@
   const JSON_HDR = { "Content-Type": "application/json" };
   const NS = (window.CW ||= {});
   const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
+  const isManagedUser = () => document.documentElement?.dataset?.cwRole === "user";
+  const canManagedWrite = () => document.documentElement?.dataset?.cwPermWrite === "on";
+
+  (function installManagedFetchGuard(){
+    const original = window.fetch;
+    if (typeof original !== "function" || original.__cwManagedGuard) return;
+    window.fetch = Object.assign(async function(resource, init){
+      const method = String(init?.method || resource?.method || "GET").toUpperCase();
+      if (isManagedUser() && (method === "GET" || method === "HEAD")) {
+        try {
+          const raw = typeof resource === "string" ? resource : String(resource?.url || "");
+          const url = new URL(raw, location.origin);
+          if (url.origin === location.origin) {
+            if (url.pathname === "/api/config") {
+              url.pathname = "/api/config/meta";
+              resource = url.pathname + url.search;
+            } else if (url.pathname === "/api/update") {
+              return new Response('{"update_available":false}', { status: 200, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
+            }
+          }
+        } catch {}
+      }
+      return original.call(this, resource, init);
+    }, { __cwManagedGuard: true });
+  })();
 
   function withTimeout(ms = 9000){
     const ac = new AbortController();
@@ -56,6 +81,11 @@
   function invalidate(keys){
     const list = !keys ? [..._memo.keys()] : (Array.isArray(keys) ? keys : [keys]);
     list.forEach((key) => {
+      if (key === KEY.pairs) {
+        [..._memo.keys()].forEach((memoKey) => {
+          if (String(memoKey).startsWith(`${KEY.pairs}:`)) _memo.delete(memoKey);
+        });
+      }
       const s = _memo.get(key);
       if (!s) return;
       s.ts = 0;
@@ -97,10 +127,37 @@
     getCfg(){ return _slot(KEY.config).value || window._cfgCache || null; },
   };
 
+  function authScopeKey(base){
+    const doc = document.documentElement;
+    const role = doc?.dataset?.cwRole === "user" ? "user" : "admin";
+    const profile = role === "user" ? String(doc?.dataset?.cwProfileId || "").trim() : "admin";
+    return `${base}:${role}:${profile || "none"}`;
+  }
+
+  function publicConfigFromMeta(meta){
+    const ui = meta && typeof meta.ui === "object" ? meta.ui : {};
+    const tmdbConfigured = meta?.tmdb_configured === true;
+    return {
+      ok: true,
+      __public_meta: true,
+      ui,
+      user_interface: ui,
+      tmdb_configured: tmdbConfigured,
+      tmdb: tmdbConfigured ? { api_key: "configured" } : {},
+    };
+  }
+
   const Config = {
     load(force = false){
       return memo(KEY.config, TTL.config, async () => {
-        const cfg = await j('/api/config');
+        let cfg;
+        try {
+          cfg = isManagedUser() ? publicConfigFromMeta(await j('/api/config/meta')) : await j('/api/config');
+        } catch (e) {
+          const msg = String(e?.message || e || "");
+          if (!msg.startsWith("401 ") && !msg.startsWith("403 ")) throw e;
+          cfg = publicConfigFromMeta(await j('/api/config/meta'));
+        }
         try { window._cfgCache = cfg; } catch {}
         return cfg;
       }, force);
@@ -114,7 +171,7 @@
   };
 
   const Pairs = {
-    list(force = false){ return memo(KEY.pairs, TTL.pairs, () => j('/api/pairs'), force); },
+    list(force = false){ return memo(authScopeKey(KEY.pairs), TTL.pairs, () => j('/api/pairs'), force); },
     async save(p){
       const has = !!(p && p.id);
       const url = has ? `/api/pairs/${encodeURIComponent(p.id)}` : '/api/pairs';

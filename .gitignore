@@ -51,6 +51,7 @@ docker-compose.override.yml
 # CrossWatch configuration and secrets
 /config/
 /config.json
+/config.json.lock
 /state.json
 /profiles.json
 /last_sync.json
