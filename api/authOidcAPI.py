@@ -196,7 +196,7 @@ document.getElementById('f').addEventListener('submit',async(e)=>{{
       credentials:'same-origin',cache:'no-store',body:JSON.stringify({{state:t,code:document.getElementById('c').value}})}});
     const d=await r.json().catch(()=>({{}}));
     if(r.ok&&d.ok){{location.href=d.next||'/';return;}}
-    location.href='/api/app-auth/oidc/2fa/retry?state='+encodeURIComponent(t)+'&e='+encodeURIComponent(d.error||'Invalid verification code');
+    location.href='/api/app-auth/oidc/2fa/retry?state='+encodeURIComponent(t);
   }}catch(err){{b.disabled=false;}}
 }});
 </script></body></html>"""
@@ -367,7 +367,7 @@ def api_oidc_callback(request: Request, state: str = Query(""), code: str = Quer
 
 
 @router.get("/2fa/retry")
-def api_oidc_2fa_retry(request: Request, state: str = Query(""), e: str = Query("")) -> Response:
+def api_oidc_2fa_retry(request: Request, state: str = Query("")) -> Response:
     _prune_pending_2fa()
     token = str(state or "").strip()
     rec = _PENDING_2FA.get(token)
@@ -376,7 +376,7 @@ def api_oidc_2fa_retry(request: Request, state: str = Query(""), e: str = Query(
         resp = RedirectResponse(url="/login", status_code=302)
         _del_flow_cookie(resp, request)
         return resp
-    return HTMLResponse(_totp_prompt_html(token, "Invalid verification code" if e else ""), headers={"Cache-Control": "no-store"})
+    return HTMLResponse(_totp_prompt_html(token, "Invalid verification code"), headers={"Cache-Control": "no-store"})
 
 
 @router.post("/2fa")

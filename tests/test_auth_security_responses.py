@@ -99,13 +99,12 @@ def test_oidc_callback_error_query_is_not_reflected() -> None:
     assert "OIDC sign-in was cancelled or failed." in body
 
 
-def test_oidc_2fa_retry_error_query_is_not_reflected() -> None:
+def test_oidc_2fa_retry_uses_fixed_error_message() -> None:
     from api import authOidcAPI as oidc_api
     from services import authOidc
 
     token = "pending-token"
     nonce = "flow-nonce"
-    marker = "<script>alert(1)</script>"
     oidc_api._PENDING_2FA.clear()
     oidc_api._PENDING_2FA[token] = {
         "flow_nonce_hash": authOidc._sha256_hex(nonce),
@@ -115,14 +114,12 @@ def test_oidc_2fa_retry_error_query_is_not_reflected() -> None:
         resp = oidc_api.api_oidc_2fa_retry(
             _request("/api/app-auth/oidc/2fa/retry", method="GET", cookies={oidc_api.FLOW_COOKIE_NAME: nonce}),
             state=token,
-            e=marker,
         )
     finally:
         oidc_api._PENDING_2FA.clear()
 
     body = resp.body.decode("utf-8")
     assert resp.status_code == 200
-    assert marker not in body
     assert "Invalid verification code" in body
 
 

@@ -222,7 +222,7 @@
               const blocked = requiredProvider && !locked;
               return `
               <label class="cw-upm-instance-option ${locked ? "is-required" : ""} ${blocked ? "is-blocked" : ""}">
-                <input type="radio" name="cw-upm-provider-${esc(provider)}" value="${esc(row.id)}" ${selected.has(row.id) || locked ? "checked" : ""} ${requiredProvider ? "disabled" : ""}>
+                <input type="checkbox" name="cw-upm-provider-${esc(provider)}" value="${esc(row.id)}" ${selected.has(row.id) || locked ? "checked" : ""} ${requiredProvider ? "disabled" : ""}>
                 <span class="cw-upm-instance-box" aria-hidden="true"></span>
                 <span class="cw-upm-instance-copy">
                   <strong>${esc(row.label)}</strong>
