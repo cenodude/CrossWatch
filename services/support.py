@@ -339,19 +339,20 @@ _REDACTED = "<redacted>"
 _IDENTITY_KEYS = frozenset({
     "access_token", "account_id", "api_key", "api_token", "apikey", "auth_key", "authkey",
     "avatar", "base_url", "cert_file", "client_id", "client_secret", "default_url",
-    "device_id", "email", "failure_url", "hash", "home_pin", "host", "hostname", "ip",
-    "key_file", "label", "linked_email", "linked_plex_account_id", "linked_thumb",
-    "linked_username", "machine_id", "name", "passwd", "password", "path", "pin",
-    "playlist_id", "playlist_name", "pms_token", "pms_token_server", "profile_id",
-    "profile_name", "refresh_token", "root", "root_dir", "salt", "server", "server_url",
-    "server_uuid", "session_id", "start_url", "state_dir", "success_url", "thumb", "token",
+    "device_id", "display_name", "email", "failure_url", "file", "hash", "home_pin", "host", "hostname",
+    "ip", "iss", "issuer", "key_file", "label", "linked_email", "linked_plex_account_id",
+    "linked_thumb", "linked_username", "machine_id", "name", "passwd", "password", "path",
+    "pending_secret", "picture", "pin", "playlist_id", "playlist_name", "pms_token", "pms_token_server",
+    "profile_id", "profile_name", "refresh_token", "root", "root_dir", "salt", "secret",
+    "server", "server_url", "server_uuid", "session_id", "start_url", "state_dir", "sub",
+    "success_url", "thumb", "token",
     "token_hash", "ua", "uri", "url", "user", "user_id", "username", "uuid",
     "verification_url", "watchlist_list_id", "watchlist_name", "webhook_id", "webhook_token",
 })
 
 _COUNT_LIST_KEYS = frozenset({
-    "devices", "libraries", "pairings", "server_uuid_blacklist", "server_uuid_whitelist",
-    "sessions", "username_whitelist", "webhook_ids",
+    "devices", "libraries", "pairings", "recovery_codes", "server_uuid_blacklist",
+    "server_uuid_whitelist", "sessions", "username_whitelist", "webhook_ids",
 })
 
 _URLISH_RE = re.compile(r"(?i)^(?:[a-z][a-z0-9+.-]*://|/[^\s]*/|[a-z]:[\\/])")
@@ -604,11 +605,12 @@ def build_bundle(pair_ids: Sequence[str] | None = None, sections: Iterable[str] 
             files.append(name)
 
         write_json("state.json", payload)
-        write_json("pairs.json", {
+        pairs_snapshot = _scrub({
             "generated_at": _iso(),
             "pairs": _pairs(cfg),
             "scrobble_routes": _scrobble_routes(cfg),
         })
+        write_json("pairs.json", pairs_snapshot if isinstance(pairs_snapshot, dict) else {})
 
         if "config" in wanted:
             try:

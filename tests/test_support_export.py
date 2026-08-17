@@ -20,8 +20,12 @@ def test_support_download_does_not_reuse_the_metadata_timeout() -> None:
     assert "DOWNLOAD_TIMEOUT_MS" in fblob
     assert "REQUEST_TIMEOUT_MS" not in fblob
 
-    download_ms = int(re.search(r"DOWNLOAD_TIMEOUT_MS\s*=\s*([\d_]+)", js).group(1).replace("_", ""))
-    request_ms = int(re.search(r"REQUEST_TIMEOUT_MS\s*=\s*([\d_]+)", js).group(1).replace("_", ""))
+    download_match = re.search(r"DOWNLOAD_TIMEOUT_MS\s*=\s*([\d_]+)", js)
+    request_match = re.search(r"REQUEST_TIMEOUT_MS\s*=\s*([\d_]+)", js)
+    assert download_match is not None
+    assert request_match is not None
+    download_ms = int(download_match.group(1).replace("_", ""))
+    request_ms = int(request_match.group(1).replace("_", ""))
     assert download_ms > request_ms
 
 
@@ -213,3 +217,126 @@ def test_bundle_masks_config_secrets(tmp_path, monkeypatch) -> None:
 
     assert redacted["trakt"]["access_token"] != "super-secret-token"
     assert redacted["trakt"]["client_id"] == "<redacted>"
+
+
+def test_bundle_masks_managed_users_totp_and_oidc(tmp_path, monkeypatch) -> None:
+    cfg = _setup(tmp_path, monkeypatch)
+    cfg["app_auth"] = {
+        "enabled": True,
+        "username": "admin-user",
+        "password": {"salt": "admin-salt", "hash": "admin-hash"},
+        "session": {"token_hash": "admin-session-token", "expires_at": 1},
+        "sessions": [
+            {
+                "token_hash": "managed-session-token",
+                "ua": "managed-browser",
+                "ip": "192.168.1.5",
+                "user_id": "user-one",
+            }
+        ],
+        "totp": {"enabled": True, "secret": "ADMIN-TOTP", "pending_secret": "ADMIN-PENDING"},
+        "recovery_codes": [{"hash": "admin-recovery-hash", "used_at": 0}],
+        "oidc": {
+            "enabled": True,
+            "issuer": "https://issuer.example",
+            "client_id": "oidc-client",
+            "client_secret": "oidc-secret",
+            "scopes": "openid profile email",
+        },
+        "oidc_identity": {
+            "iss": "https://issuer.example",
+            "sub": "admin-sub",
+            "username": "admin-oidc",
+            "email": "admin@example.com",
+            "picture": "https://issuer.example/admin.png",
+            "linked_at": 1,
+        },
+        "users": {
+            "user-one": {
+                "username": "managed-user",
+                "display_name": "Managed Real Name",
+                "profile_id": "profile-one",
+                "password": {"salt": "user-salt", "hash": "user-hash"},
+                "totp": {"enabled": True, "secret": "USER-TOTP", "pending_secret": "USER-PENDING"},
+                "recovery_codes": [{"hash": "user-recovery-hash", "used_at": 0}],
+                "avatar": {
+                    "file": "abc123456789abc123456789abc12345.png",
+                    "content_type": "image/png",
+                    "updated_at": 1,
+                },
+                "oidc": {
+                    "iss": "https://issuer.example",
+                    "sub": "managed-sub",
+                    "username": "managed-oidc",
+                    "email": "managed@example.com",
+                    "picture": "https://issuer.example/managed.png",
+                    "linked_at": 1,
+                },
+                "plex_sso": {
+                    "account_id": "plex-account",
+                    "username": "plex-user",
+                    "email": "plex@example.com",
+                    "thumb": "https://plex.example/thumb.png",
+                    "linked_at": 1,
+                },
+            }
+        },
+    }
+    cfg["pairs"][0]["profile_id"] = "profile-one"
+
+    archive = zipfile.ZipFile(io.BytesIO(support.build_bundle(None, ["config"])))
+    redacted = json.loads(archive.read("config.redacted.json"))
+    pairs = json.loads(archive.read("pairs.json"))
+    auth = redacted["app_auth"]
+    managed = auth["users"]["user-one"]
+    text = json.dumps({"config": redacted, "pairs": pairs})
+
+    for secret in (
+        "admin-user",
+        "admin-salt",
+        "admin-hash",
+        "admin-session-token",
+        "managed-session-token",
+        "managed-browser",
+        "192.168.1.5",
+        "ADMIN-TOTP",
+        "ADMIN-PENDING",
+        "admin-recovery-hash",
+        "https://issuer.example",
+        "oidc-client",
+        "oidc-secret",
+        "admin-sub",
+        "admin-oidc",
+        "admin@example.com",
+        "managed-user",
+        "Managed Real Name",
+        "profile-one",
+        "user-salt",
+        "user-hash",
+        "USER-TOTP",
+        "USER-PENDING",
+        "user-recovery-hash",
+        "abc123456789abc123456789abc12345.png",
+        "managed-sub",
+        "managed-oidc",
+        "managed@example.com",
+        "plex-account",
+        "plex-user",
+        "plex@example.com",
+    ):
+        assert secret not in text
+
+    assert auth["username"] == "<redacted>"
+    assert auth["session"]["token_hash"] == "<redacted>"
+    assert auth["sessions"] == "<1 item>"
+    assert auth["totp"]["secret"] == "<redacted>"
+    assert auth["recovery_codes"] == "<1 item>"
+    assert auth["oidc"]["client_secret"] == "<redacted>"
+    assert auth["oidc_identity"]["sub"] == "<redacted>"
+    assert managed["display_name"] == "<redacted>"
+    assert managed["totp"]["pending_secret"] == "<redacted>"
+    assert managed["recovery_codes"] == "<1 item>"
+    assert managed["avatar"]["file"] == "<redacted>"
+    assert managed["oidc"]["email"] == "<redacted>"
+    assert managed["plex_sso"]["account_id"] == "<redacted>"
+    assert pairs["pairs"][0]["profile_id"] == "<redacted>"
