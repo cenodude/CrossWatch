@@ -72,7 +72,9 @@ def test_manifest_matches_validated_contract() -> None:
     caps = man["capabilities"]
 
     assert man["name"] == "PUNCHPLAY"
-    assert man["version"] == "0.1"
+    from providers.sync._mod_PUNCHPLAY import __VERSION__
+
+    assert man["version"] == __VERSION__
     assert man["experimental"] is True
     assert man["bidirectional"] is True
 
