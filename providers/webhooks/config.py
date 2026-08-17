@@ -84,6 +84,14 @@ def webhook_sink_instance(settings: Mapping[str, Any] | None, sink: str) -> str:
     return normalize_instance_id(str(instances.get(str(sink or "").strip().lower()) or "default"))
 
 
+def profile_scoped_webhook(cfg: Mapping[str, Any] | None, provider: str, provider_instance: Any = None) -> bool:
+    try:
+        from cw_platform.user_profile_resources import webhook_profile_scoped
+    except Exception:
+        return False
+    return webhook_profile_scoped(_dict(cfg), provider, provider_instance)
+
+
 def sink_configured(cfg: Mapping[str, Any] | None, sink: str, instance_id: Any = None) -> bool:
     key = str(sink or "").strip().lower()
     if key == "crosswatch":

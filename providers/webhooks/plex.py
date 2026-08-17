@@ -25,7 +25,7 @@ from providers.scrobble._auto_remove_watchlist import remove_across_providers_by
 from providers.scrobble.scrobble import mask_account as _mask_account
 from providers.scrobble.plex.ratings_sync import RATING_SINKS
 from providers.scrobble.sources import source_enabled
-from providers.webhooks.config import configured_webhook_sinks, webhook_sink_instance
+from providers.webhooks.config import configured_webhook_sinks, profile_scoped_webhook, webhook_sink_instance
 from providers.webhooks.dispatch import dispatch_scrobble as _dispatch_scrobble
 
 try:
@@ -1187,6 +1187,10 @@ def process_webhook(
 
     if srv_uuid_allow and (not srv_uuid_evt or srv_uuid_evt not in srv_uuid_allow):
         _emit(logger, f"ignored server '{srv_uuid_evt or 'none'}' (allowed={sorted(srv_uuid_allow)})", "DEBUG")
+        return {"ok": True, "ignored": True}
+
+    if not allow_users and profile_scoped_webhook(cfg, "plex", provider_instance):
+        _emit(logger, "blocked - profile-scoped webhook has no username whitelist", "WARNING")
         return {"ok": True, "ignored": True}
 
     if not _account_matches(allow_users, payload, logger=logger):

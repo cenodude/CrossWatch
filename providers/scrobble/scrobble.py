@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Literal, Protocol
 
+from cw_platform.account_match import media_account_allowed, normalize_media_account_name
+
 try:
     from _logging import log as BASE_LOG
 except Exception:
@@ -69,7 +71,7 @@ def _ids_from_meta(meta: dict[str, Any]) -> dict[str, str]:
 
 
 def _norm_user(s: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", (s or "").lower())
+    return normalize_media_account_name(s)
 
 
 def _as_filter_set(value: Any) -> set[str]:
@@ -442,32 +444,15 @@ class Dispatcher:
             if want_user != user_id:
                 return False
 
-        if not wl:
-            return _allow()
+        scoped = bool(str(((cfg.get("scrobble") or {}).get("watch") or {}).get("route_profile_id") or "").strip())
+        if not wl and scoped:
+            rid = str(((cfg.get("scrobble") or {}).get("watch") or {}).get("route_id") or "?")
+            _log(f"route {rid}: blocked account '{ev.account or '?'}' - profile-scoped route has no username whitelist", "WARNING")
+            return False
 
-        def norm(s: str) -> str:
-            return _norm_user(s)
-
-        wl_list = wl if isinstance(wl, list) else [wl]
-
-        if any(
-            not str(x).lower().startswith(("id:", "uuid:"))
-            and norm(str(x)) == norm(ev.account or "")
-            for x in wl_list
-        ):
-            return _allow()
-
-        for e in wl_list:
-            s = str(e).strip().lower()
-            if s.startswith("id:") and acc_id and s.split(":", 1)[1].strip() == acc_id:
-                return _allow()
-            if s.startswith("uuid:") and acc_uuid and s.split(":", 1)[1].strip() == acc_uuid:
-                return _allow()
-            if s.startswith("id:") and user_id and s.split(":", 1)[1].strip().lower() == user_id:
-                return _allow()
-            if s.startswith("uuid:") and user_id and s.split(":", 1)[1].strip().lower() == user_id:
-                return _allow()
-        return False
+        if not media_account_allowed(wl, ev.account or "", account_id=acc_id, account_uuid=acc_uuid, user_id=user_id, default_allow=not scoped):
+            return False
+        return _allow()
 
     def _should_send(self, ev: ScrobbleEvent, cfg: dict[str, Any]) -> bool:
         sk = ev.session_key or "?"

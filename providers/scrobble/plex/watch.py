@@ -19,6 +19,7 @@ except Exception:
     BASE_LOG = None
 
 from cw_platform.config_base import load_config, save_config
+from cw_platform.account_match import media_account_allowed, normalize_media_account_name
 from cw_platform.provider_instances import ensure_instance_block, normalize_instance_id
 from providers.scrobble.scrobble import (
     Dispatcher,
@@ -1404,7 +1405,7 @@ def _emit(logger: Callable[..., None] | None, msg: str, level: str = "INFO") -> 
 
 
 def _norm_user(s: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", (s or "").lower())
+    return normalize_media_account_name(s)
 
 
 def _account_key(payload: dict[str, Any]) -> str:
@@ -1422,27 +1423,8 @@ def _account_key(payload: dict[str, Any]) -> str:
     return "unknown"
 
 
-def _account_allowed(allow: Any, payload: dict[str, Any]) -> bool:
-    if not allow:
-        return True
-    allow_list = allow if isinstance(allow, list) else [allow]
-    acc = payload.get("Account") or {}
-    title = str((acc.get("title") if isinstance(acc, dict) else "") or "")
-    acc_id = str((acc.get("id") if isinstance(acc, dict) else "") or "")
-    acc_uuid = str((acc.get("uuid") if isinstance(acc, dict) else "") or "").lower()
-
-    for e in allow_list:
-        s = str(e).strip()
-        if not s:
-            continue
-        sl = s.lower()
-        if sl.startswith("id:") and acc_id and sl.split(":", 1)[1].strip() == acc_id:
-            return True
-        if sl.startswith("uuid:") and acc_uuid and sl.split(":", 1)[1].strip() == acc_uuid:
-            return True
-        if not sl.startswith(("id:", "uuid:")) and _norm_user(s) == _norm_user(title):
-            return True
-    return False
+def _account_allowed(allow: Any, payload: dict[str, Any], *, default_allow: bool = True) -> bool:
+    return media_account_allowed(allow, payload, default_allow=default_allow)
 
 
 def _server_allowed(want_uuid: str, payload: dict[str, Any]) -> bool:
@@ -1772,7 +1754,10 @@ def process_rating_webhook(
     if not _server_filters_allowed(filt, payload):
         return {"ok": True, "ignored": True}
 
-    if not _account_allowed(wl, payload):
+    scoped = bool(str(watch_cfg.get("route_profile_id") or "").strip())
+    if not _account_allowed(wl, payload, default_allow=not scoped):
+        if not wl and scoped:
+            _emit(logger, f"route {watch_cfg.get('route_id') or '?'}: rating blocked - profile-scoped route has no username whitelist", "WARNING")
         return {"ok": True, "ignored": True}
 
     if not _library_allowed(cfg, payload):

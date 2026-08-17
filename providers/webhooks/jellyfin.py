@@ -18,7 +18,7 @@ from providers.scrobble.currently_watching import update_from_payload as _cw_upd
 from providers.scrobble._auto_remove_watchlist import remove_across_providers_by_ids as _rm_across
 from providers.scrobble.scrobble import mask_account as _mask_account
 from providers.scrobble.sources import source_enabled
-from providers.webhooks.config import configured_webhook_sinks
+from providers.webhooks.config import configured_webhook_sinks, profile_scoped_webhook
 from providers.webhooks.dispatch import dispatch_scrobble as _dispatch_scrobble
 try:
     from api.watchlistAPI import remove_across_providers_by_ids as _rm_across_api
@@ -1115,6 +1115,10 @@ def process_webhook(
                 pass
 
         _emit(logger, f"incoming '{event}' user='{_mask_account(acc_title)}' media='{media_name_dbg}'", "DEBUG")
+
+        if not allow_users and profile_scoped_webhook(cfg, "jellyfin", provider_instance):
+            _emit(logger, "blocked - profile-scoped webhook has no username whitelist", "WARNING")
+            return {"ok": True, "ignored": True}
 
         if allow_users and acc_title and acc_title not in allow_users:
             _emit(logger, f"ignored user '{_mask_account(acc_title)}'", "DEBUG")

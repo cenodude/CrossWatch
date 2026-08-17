@@ -3,7 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 from typing import Any
-from cw_platform.provider_instances import get_provider_block, normalize_instance_id
+from cw_platform.provider_instances import get_provider_block, normalize_instance_id, normalize_user_profile_id
 
 
 
@@ -147,8 +147,9 @@ def normalize_route(route: dict[str, Any], fallback_id: str) -> dict[str, Any]:
     if not isinstance(filters, dict):
         filters = {}
     options = normalize_route_options(r.get("options"))
+    profile_id = normalize_user_profile_id(r.get("profile_id") or r.get("profileId"))
 
-    return {
+    out = {
         "id": rid,
         "enabled": enabled,
         "provider": prov,
@@ -158,6 +159,9 @@ def normalize_route(route: dict[str, Any], fallback_id: str) -> dict[str, Any]:
         "filters": filters,
         "options": options,
     }
+    if profile_id:
+        out["profile_id"] = profile_id
+    return out
 
 
 def normalize_routes(cfg: dict[str, Any]) -> list[dict[str, Any]]:
@@ -171,6 +175,34 @@ def normalize_routes(cfg: dict[str, Any]) -> list[dict[str, Any]]:
             continue
         out.append(normalize_route(raw, f"R{i + 1}"))
     return out
+
+
+def route_profile_id(cfg: dict[str, Any], route: dict[str, Any]) -> str:
+    try:
+        from cw_platform.access_policy import route_effective_profile_id
+
+        return route_effective_profile_id(cfg, route)
+    except Exception:
+        return normalize_user_profile_id((route or {}).get("profile_id"))
+
+
+def route_assigned_profile_id(cfg: dict[str, Any], route: dict[str, Any]) -> str:
+    raw = (route or {}).get("profile_id") or (route or {}).get("profileId")
+    try:
+        from cw_platform.access_policy import valid_user_profile_id
+
+        return valid_user_profile_id(cfg, raw)
+    except Exception:
+        return normalize_user_profile_id(raw)
+
+
+def route_needs_account_filter(cfg: dict[str, Any], route: dict[str, Any]) -> bool:
+    if not route_assigned_profile_id(cfg, route):
+        return False
+    filters = (route or {}).get("filters")
+    raw = filters.get("username_whitelist") if isinstance(filters, dict) else None
+    values = raw if isinstance(raw, list) else ([raw] if raw else [])
+    return not any(str(value or "").strip() for value in values)
 
 
 def find_route(cfg: dict[str, Any], route_id: str | None) -> dict[str, Any] | None:
@@ -223,6 +255,8 @@ def build_route_cfg(cfg: dict[str, Any], route: dict[str, Any]) -> dict[str, Any
 
     w["filters"] = _deep_clone(r.get("filters") or {})
     w["route_id"] = r["id"]
+    w["route_profile_id"] = route_assigned_profile_id(out, r)
+    w["route_effective_profile_id"] = route_profile_id(out, r)
     w["route_provider"] = r["provider"]
     w["route_provider_instance"] = r["provider_instance"]
     w["route_sink"] = r["sink"]
