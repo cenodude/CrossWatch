@@ -47,7 +47,7 @@ def _request(
     headers: dict[str, str] | None = None,
     client: tuple[str, int] = ("127.0.0.1", 12345),
 ) -> Request:
-    raw_headers = [(b"host", b"testserver")]
+    raw_headers = [(b"host", b"testserver"), (b"sec-fetch-site", b"same-origin")]
     for k, v in (headers or {}).items():
         raw_headers.append((str(k).lower().encode("latin-1"), str(v).encode("latin-1")))
     scope = {
@@ -64,6 +64,14 @@ def _request(
         "server": ("testserver", 80),
     }
     return Request(scope)
+
+
+def _bind_config(monkeypatch, plex_api, cfg: dict) -> None:
+    from api import appAuthAPI as auth
+
+    monkeypatch.setattr(plex_api, "load_config", lambda: cfg)
+    monkeypatch.setattr(auth, "load_config", lambda: cfg)
+    monkeypatch.setattr(auth, "save_config", lambda *_args, **_kwargs: None)
 
 
 def _json_body(resp) -> dict:
@@ -83,8 +91,7 @@ def test_plex_login_check_issues_cookie_for_linked_identity(monkeypatch) -> None
 
     cfg = _auth_cfg()
     cfg["app_auth"]["plex_sso"].update({"enabled": True, "linked_plex_account_id": "plex-123", "linked_username": "plexadmin"})
-    monkeypatch.setattr(plex_api, "load_config", lambda: cfg)
-    monkeypatch.setattr(plex_api, "save_config", lambda *_args, **_kwargs: None)
+    _bind_config(monkeypatch, plex_api, cfg)
     monkeypatch.setattr(
         plex_api.authPlex,
         "check_flow",
@@ -108,13 +115,93 @@ def test_plex_login_check_issues_cookie_for_linked_identity(monkeypatch) -> None
     assert "Max-Age=" in set_cookie
 
 
+def test_plex_login_check_issues_cookie_for_managed_linked_identity(monkeypatch) -> None:
+    from api import authPlexAPI as plex_api
+
+    cfg = _auth_cfg()
+    cfg["app_auth"]["plex_sso"]["enabled"] = True
+    cfg["app_auth"]["users"] = {
+        "u1": {
+            "username": "pascal",
+            "enabled": True,
+            "role": "user",
+            "profile_id": "profile-1",
+            "permissions": {"dashboard": True, "watchlist": True, "playback": True, "write": False},
+            "plex_sso": {"account_id": "plex-managed", "username": "plexpascal", "email": "plex@example.com", "thumb": ""},
+        }
+    }
+    _bind_config(monkeypatch, plex_api, cfg)
+    monkeypatch.setattr(
+        plex_api.authPlex,
+        "check_flow",
+        lambda *_args, **_kwargs: {
+            "ok": True,
+            "pending": False,
+            "remember_me": False,
+            "flow_nonce_hash": plex_api.authPlex._sha256_hex("flow-nonce"),
+            "identity": {"id": "plex-managed", "username": "plexpascal", "email": "plex@example.com", "thumb": ""},
+        },
+    )
+
+    req = _request("/api/app-auth/plex/check", headers={"cookie": f"{plex_api.FLOW_COOKIE_NAME}=flow-nonce"})
+    resp = plex_api.api_plex_check(req, {"state": "ok"})
+
+    assert resp.status_code == 200
+    assert _json_body(resp)["ok"] is True
+    assert len(cfg["app_auth"]["sessions"]) == 1
+    assert cfg["app_auth"]["sessions"][0]["user_id"] == "u1"
+    assert cfg["app_auth"]["sessions"][0]["role"] == "user"
+    assert cfg["app_auth"]["sessions"][0]["profile_id"] == "profile-1"
+    assert "cw_auth=" in _all_set_cookie_headers(resp)
+
+
+def test_plex_login_check_requires_admin_totp_when_enabled(monkeypatch) -> None:
+    from api import appAuthAPI as auth
+    from api import authPlexAPI as plex_api
+
+    cfg = _auth_cfg()
+    secret = "JBSWY3DPEHPK3PXP"
+    cfg["app_auth"]["plex_sso"].update({"enabled": True, "linked_plex_account_id": "plex-123", "linked_username": "plexadmin"})
+    cfg["app_auth"]["totp"] = {"enabled": True, "secret": secret, "pending_secret": "", "pending_created_at": 0}
+    _bind_config(monkeypatch, plex_api, cfg)
+    monkeypatch.setattr(auth, "_now", lambda: 1_800_000_000)
+    auth._LOGIN_FAILS.clear()
+    plex_api._PENDING_2FA.clear()
+    monkeypatch.setattr(
+        plex_api.authPlex,
+        "check_flow",
+        lambda *_args, **_kwargs: {
+            "ok": True,
+            "pending": False,
+            "remember_me": True,
+            "flow_nonce_hash": plex_api.authPlex._sha256_hex("flow-nonce"),
+            "identity": {"id": "plex-123", "username": "plexadmin", "email": "plex@example.com", "thumb": ""},
+        },
+    )
+
+    req = _request("/api/app-auth/plex/check", headers={"cookie": f"{plex_api.FLOW_COOKIE_NAME}=flow-nonce"})
+    first = plex_api.api_plex_check(req, {"state": "ok"})
+    bad = plex_api.api_plex_check(req, {"state": "ok", "totp_code": "000000"})
+    assert cfg["app_auth"]["sessions"] == []
+    code = auth._hotp(secret, 1_800_000_000 // auth.TOTP_STEP_SECONDS)
+    good = plex_api.api_plex_check(req, {"state": "ok", "totp_code": code})
+
+    assert first.status_code == 401
+    assert _json_body(first)["requires_2fa"] is True
+    assert bad.status_code == 401
+    assert _json_body(bad)["requires_2fa"] is True
+    assert good.status_code == 200
+    assert _json_body(good)["ok"] is True
+    assert len(cfg["app_auth"]["sessions"]) == 1
+    assert "cw_auth=" in _all_set_cookie_headers(good)
+
+
 def test_plex_login_check_rejects_wrong_identity(monkeypatch) -> None:
     from api import authPlexAPI as plex_api
 
     cfg = _auth_cfg()
     cfg["app_auth"]["plex_sso"].update({"enabled": True, "linked_plex_account_id": "plex-123", "linked_username": "plexadmin"})
-    monkeypatch.setattr(plex_api, "load_config", lambda: cfg)
-    monkeypatch.setattr(plex_api, "save_config", lambda *_args, **_kwargs: None)
+    _bind_config(monkeypatch, plex_api, cfg)
     monkeypatch.setattr(
         plex_api.authPlex,
         "check_flow",
@@ -139,7 +226,7 @@ def test_plex_link_check_requires_existing_app_session(monkeypatch) -> None:
     from api import authPlexAPI as plex_api
 
     cfg = _auth_cfg()
-    monkeypatch.setattr(plex_api, "load_config", lambda: cfg)
+    _bind_config(monkeypatch, plex_api, cfg)
 
     req = _request("/api/app-auth/plex/link/check")
     resp = plex_api.api_plex_link_check(req, {"state": "missing"})
@@ -153,8 +240,7 @@ def test_plex_link_check_persists_linked_identity(monkeypatch) -> None:
     from api import authPlexAPI as plex_api
 
     cfg = _auth_cfg()
-    monkeypatch.setattr(plex_api, "load_config", lambda: cfg)
-    monkeypatch.setattr(plex_api, "save_config", lambda *_args, **_kwargs: None)
+    _bind_config(monkeypatch, plex_api, cfg)
     monkeypatch.setattr(
         plex_api.authPlex,
         "check_flow",
@@ -187,7 +273,7 @@ def test_plex_start_requires_linked_account_for_login(monkeypatch) -> None:
     from api import authPlexAPI as plex_api
 
     cfg = _auth_cfg()
-    monkeypatch.setattr(plex_api, "load_config", lambda: cfg)
+    _bind_config(monkeypatch, plex_api, cfg)
 
     req = _request("/api/app-auth/plex/start")
     resp = plex_api.api_plex_start(req, {})
@@ -201,8 +287,7 @@ def test_plex_start_sets_flow_cookie(monkeypatch) -> None:
 
     cfg = _auth_cfg()
     cfg["app_auth"]["plex_sso"].update({"enabled": True, "linked_plex_account_id": "plex-123", "linked_username": "plexadmin"})
-    monkeypatch.setattr(plex_api, "load_config", lambda: cfg)
-    monkeypatch.setattr(plex_api, "save_config", lambda *_args, **_kwargs: None)
+    _bind_config(monkeypatch, plex_api, cfg)
     monkeypatch.setattr(
         plex_api.authPlex,
         "start_flow",
@@ -221,8 +306,7 @@ def test_plex_login_check_requires_matching_flow_cookie(monkeypatch) -> None:
 
     cfg = _auth_cfg()
     cfg["app_auth"]["plex_sso"].update({"enabled": True, "linked_plex_account_id": "plex-123", "linked_username": "plexadmin"})
-    monkeypatch.setattr(plex_api, "load_config", lambda: cfg)
-    monkeypatch.setattr(plex_api, "save_config", lambda *_args, **_kwargs: None)
+    _bind_config(monkeypatch, plex_api, cfg)
     monkeypatch.setattr(
         plex_api.authPlex,
         "check_flow",
