@@ -152,6 +152,10 @@ def _unauthorized() -> JSONResponse:
     return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401, headers={"Cache-Control": "no-store"})
 
 
+def _plex_link_conflict_error() -> str:
+    return "This Plex account is already linked to another CrossWatch account"
+
+
 def _require_authenticated(request: Request, cfg: dict[str, Any]) -> str | None:
     token = request.cookies.get(app_auth.COOKIE_NAME)
     if not app_auth.auth_required(cfg):
@@ -421,8 +425,8 @@ def api_plex_link_check(request: Request, payload: dict[str, Any] = Body(...)) -
         target_id, target_user, st = link_result
     except PermissionError:
         return _unauthorized()
-    except ValueError as exc:
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=409, headers={"Cache-Control": "no-store"})
+    except ValueError:
+        return JSONResponse({"ok": False, "error": _plex_link_conflict_error()}, status_code=409, headers={"Cache-Control": "no-store"})
     app_auth._audit(request, "plex_sso_linked", actor=actor, target_type="plex_sso", target_id=identity.get("id"), message=f"Plex SSO was linked to {target_user.get('username') or target_id}", fields={"plex_username": identity.get("username"), "user_id": target_id})
     resp = JSONResponse({"ok": True, "pending": False, **st}, headers={"Cache-Control": "no-store"})
     _del_flow_cookie(resp, request)

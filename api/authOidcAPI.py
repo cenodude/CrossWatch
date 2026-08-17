@@ -95,6 +95,10 @@ def _unauthorized() -> JSONResponse:
     return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401, headers={"Cache-Control": "no-store"})
 
 
+def _oidc_link_conflict_error() -> str:
+    return "This OIDC account is already linked to another CrossWatch account"
+
+
 def _require_authenticated(request: Request, cfg: dict[str, Any]) -> str | None:
     token = request.cookies.get(app_auth.COOKIE_NAME)
     if not app_auth.auth_required(cfg):
@@ -302,7 +306,7 @@ def api_oidc_start(request: Request, remember_me: bool = Query(False), next: str
 @router.get("/callback")
 def api_oidc_callback(request: Request, state: str = Query(""), code: str = Query(""), error: str = Query("")) -> Response:
     if error:
-        resp = HTMLResponse(f"OIDC error: {error}", status_code=400, headers={"Cache-Control": "no-store"})
+        resp = HTMLResponse("OIDC sign-in was cancelled or failed.", status_code=400, headers={"Cache-Control": "no-store"})
         _del_flow_cookie(resp, request)
         return resp
     cfg = load_config()
@@ -319,7 +323,7 @@ def api_oidc_callback(request: Request, state: str = Query(""), code: str = Quer
         _del_flow_cookie(resp, request)
         return resp
     if not res.get("ok"):
-        resp = HTMLResponse(str(res.get("error") or "OIDC sign-in failed"), status_code=int(res.get("status_code") or 400), headers={"Cache-Control": "no-store"})
+        resp = HTMLResponse("OIDC sign-in failed. Start again.", status_code=int(res.get("status_code") or 400), headers={"Cache-Control": "no-store"})
         _del_flow_cookie(resp, request)
         return resp
     if res.get("intent") == "link":
@@ -372,7 +376,7 @@ def api_oidc_2fa_retry(request: Request, state: str = Query(""), e: str = Query(
         resp = RedirectResponse(url="/login", status_code=302)
         _del_flow_cookie(resp, request)
         return resp
-    return HTMLResponse(_totp_prompt_html(token, str(e or "")[:160]), headers={"Cache-Control": "no-store"})
+    return HTMLResponse(_totp_prompt_html(token, "Invalid verification code" if e else ""), headers={"Cache-Control": "no-store"})
 
 
 @router.post("/2fa")
@@ -483,7 +487,7 @@ def api_oidc_link_check(request: Request, payload: dict[str, Any] = Body(...)) -
     if res.get("pending"):
         return JSONResponse({"ok": True, "pending": True}, headers={"Cache-Control": "no-store"})
     if not res.get("ok"):
-        return JSONResponse({"ok": False, "error": str(res.get("error") or "OIDC link failed")}, status_code=int(res.get("status_code") or 400), headers={"Cache-Control": "no-store"})
+        return JSONResponse({"ok": False, "error": "OIDC link failed"}, status_code=int(res.get("status_code") or 400), headers={"Cache-Control": "no-store"})
     identity = _identity_dict(res.get("identity"))
     requested_target_id = str(res.get("target_user_id") or "").strip()
 
@@ -503,8 +507,8 @@ def api_oidc_link_check(request: Request, payload: dict[str, Any] = Body(...)) -
         target_id, target_user, st = link_result
     except PermissionError:
         return _unauthorized()
-    except ValueError as exc:
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=409, headers={"Cache-Control": "no-store"})
+    except ValueError:
+        return JSONResponse({"ok": False, "error": _oidc_link_conflict_error()}, status_code=409, headers={"Cache-Control": "no-store"})
     app_auth._audit(request, "oidc_linked", actor=actor, target_type="oidc", target_id=identity.get("sub"), message=f"OIDC was linked to {target_user.get('username') or target_id}", fields={"oidc_username": identity.get("username"), "user_id": target_id})
     return JSONResponse({"ok": True, "pending": False, **st}, headers={"Cache-Control": "no-store"})
 

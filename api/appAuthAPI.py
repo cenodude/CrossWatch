@@ -60,6 +60,11 @@ LOGIN_FAIL_TTL_SEC = 60 * 60
 
 _LOG = logging.getLogger("crosswatch.api.app_auth")
 
+_ERR_CREATE_USER_FAILED = "Unable to create user"
+_ERR_UPDATE_USER_FAILED = "Unable to update user"
+_ERR_UPDATE_CREDENTIALS_FAILED = "Unable to update credentials"
+_ERR_VERIFY_TOTP_FAILED = "Unable to verify two-factor setup"
+
 _LOGIN_FAILS: dict[str, dict[str, Any]] = {}
 _TRUSTED_PROXY_CACHE: dict[str, Any] = {"at": 0.0, "nets": []}
 
@@ -1969,10 +1974,10 @@ def api_users_create(request: Request, payload: dict[str, Any] = Body(default_fa
     try:
         cfg, created = _update_config(_mutate)
         user_id, raw = created
-    except ValueError as exc:
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=409, headers={"Cache-Control": "no-store"})
-    except KeyError as exc:
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400, headers={"Cache-Control": "no-store"})
+    except ValueError:
+        return JSONResponse({"ok": False, "error": _ERR_CREATE_USER_FAILED}, status_code=409, headers={"Cache-Control": "no-store"})
+    except KeyError:
+        return JSONResponse({"ok": False, "error": _ERR_CREATE_USER_FAILED}, status_code=400, headers={"Cache-Control": "no-store"})
     _audit(
         request,
         "user_created",
@@ -2038,10 +2043,10 @@ def api_users_update(request: Request, user_id: str, payload: dict[str, Any] = B
         cfg, raw = _update_config(_mutate)
     except KeyError:
         return JSONResponse({"ok": False, "error": "Not found"}, status_code=404, headers={"Cache-Control": "no-store"})
-    except RuntimeError as exc:
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=409, headers={"Cache-Control": "no-store"})
-    except ValueError as exc:
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400, headers={"Cache-Control": "no-store"})
+    except RuntimeError:
+        return JSONResponse({"ok": False, "error": _ERR_UPDATE_USER_FAILED}, status_code=409, headers={"Cache-Control": "no-store"})
+    except ValueError:
+        return JSONResponse({"ok": False, "error": _ERR_UPDATE_USER_FAILED}, status_code=400, headers={"Cache-Control": "no-store"})
     _audit(
         request,
         "user_updated",
@@ -2190,10 +2195,10 @@ def api_set_credentials(request: Request, payload: dict[str, Any] = Body(...)) -
 
     try:
         cfg, enabled_result = _update_config(_mutate_enable)
-    except RuntimeError as exc:
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=409)
-    except ValueError as exc:
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    except RuntimeError:
+        return JSONResponse({"ok": False, "error": _ERR_UPDATE_CREDENTIALS_FAILED}, status_code=409)
+    except ValueError:
+        return JSONResponse({"ok": False, "error": _ERR_UPDATE_CREDENTIALS_FAILED}, status_code=400)
     a, token2, exp2 = enabled_result
     _audit(req, "credentials_updated", actor=current_user(cfg, token2), message="Application authentication credentials were updated", fields={"enabled": True, "username": username, "password_changed": bool(password), "remember_session_enabled": a.get("remember_session_enabled"), "remember_session_days": a.get("remember_session_days")})
 
@@ -2283,10 +2288,10 @@ def api_totp_verify(request: Request, payload: dict[str, Any] | None = Body(defa
         target_id, target_user, t = result
     except KeyError:
         return JSONResponse({"ok": False, "error": "Not found"}, status_code=404, headers={"Cache-Control": "no-store"})
-    except ValueError as exc:
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400, headers={"Cache-Control": "no-store"})
-    except RuntimeError as exc:
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400, headers={"Cache-Control": "no-store"})
+    except ValueError:
+        return JSONResponse({"ok": False, "error": _ERR_VERIFY_TOTP_FAILED}, status_code=400, headers={"Cache-Control": "no-store"})
+    except RuntimeError:
+        return JSONResponse({"ok": False, "error": _ERR_VERIFY_TOTP_FAILED}, status_code=400, headers={"Cache-Control": "no-store"})
     _audit(request, "totp_enabled", actor=actor, target_type="user", target_id=target_id, message=f"Two-factor authentication was enabled for {target_user.get('username') or target_id}")
     return JSONResponse({"ok": True, "user_id": target_id, "totp": _totp_public(t)}, headers={"Cache-Control": "no-store"})
 
