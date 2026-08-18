@@ -919,11 +919,11 @@
       }))
       .filter(x => x.id);
 
-    if (!norm.some(x => x.id === "default")) norm.unshift({ id: "default", label: "Default" });
+    if (!norm.length) norm.push({ id: "default", label: "Default" });
 
     const ids = norm.map(x => x.id);
     let next = String(current || "");
-    if (!next || !ids.includes(next)) next = "default";
+    if (!next || !ids.includes(next)) next = ids.includes("default") ? "default" : ids[0];
     const opts = norm.map(x => `<option value="${_escapeHtml(x.id)}">${_escapeHtml(x.label || x.id)}</option>`).join("");
     selectEl.innerHTML = opts;
     selectEl.value = next;
