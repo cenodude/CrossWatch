@@ -1756,46 +1756,6 @@
     });
   }
 
-  function ensureMainUpdateSlot() {
-    let slot = byId("st-main-update");
-    if (slot) return slot;
-
-    const syncButton = Array.from(document.querySelectorAll("button")).find((btn) => /synchroni[sz]e/i.test(btn.textContent || ""));
-    const actionsRow = syncButton
-      ? (syncButton.closest(".sync-actions, .cx-sync-actions, .actions, .row, .toolbar") || syncButton.parentElement)
-      : document.querySelector(".sync-actions, .cx-sync-actions, .actions, .row, .toolbar");
-
-    slot = document.createElement("div");
-    slot.id = "st-main-update";
-    slot.className = "hidden";
-    if (actionsRow?.parentElement) {
-      actionsRow.insertAdjacentElement("afterend", slot);
-      return slot;
-    }
-
-    const previewHeader = Array.from(document.querySelectorAll("h2, .section-title")).find((node) => /watchlist\s*preview/i.test(node.textContent || ""));
-    if (previewHeader?.parentElement) {
-      previewHeader.insertAdjacentElement("beforebegin", slot);
-      return slot;
-    }
-
-    const main = document.querySelector('#tab-main, [data-tab="main"], .page-main, main') || document.body;
-    main.insertBefore(slot, main.firstChild || null);
-    return slot;
-  }
-
-  function renderMainUpdatePill(hasUpdate, latest, url) {
-    const host = ensureMainUpdateSlot();
-    if (!host) return;
-    if (hasUpdate && latest) {
-      host.innerHTML = `<div class="pill"><span class="dot" aria-hidden="true"></span><span>Update <strong>${latest}</strong> available · <a href="${url}" target="_blank" rel="noopener">Release notes</a></span></div>`;
-      host.classList.remove("hidden");
-      return;
-    }
-    host.classList.add("hidden");
-    host.textContent = "";
-  }
-
   async function checkForUpdate() {
     if (document.documentElement?.dataset?.cwRole === "user") return null;
     try {
@@ -1834,7 +1794,6 @@
         }
       }
 
-      renderMainUpdatePill(hasUpdate, latest, url);
       return updateDetail;
     } catch (err) {
       const updateDetail = { current: String(window.CW_CURRENT_VERSION || ""), latest: null, url: "", available: false, known: true, unavailable: true };

@@ -297,8 +297,12 @@
     const hiddenCount = orderedFeats(true).filter((feat) => feat.layout.hidden).length + (window.CW?.DashboardWidgets?.hiddenCount?.() || 0);
     const unhideAll = hubLayoutHost.querySelector("[data-layout-action='show-all']");
     if (unhideAll) {
+      const label = hiddenCount ? `Unhide ${hiddenCount} hidden block${hiddenCount === 1 ? "" : "s"}` : "No hidden blocks";
       unhideAll.disabled = hiddenCount === 0;
-      unhideAll.title = hiddenCount ? "Unhide all blocks" : "No hidden blocks";
+      unhideAll.title = label;
+      unhideAll.setAttribute("aria-label", label);
+      unhideAll.dataset.hiddenCount = String(hiddenCount);
+      unhideAll.classList.toggle("has-hidden", hiddenCount > 0);
     }
     hubLayoutHost.classList.toggle("has-hidden", hiddenCount > 0);
   };
@@ -349,6 +353,7 @@
     renderHubLayoutStrip();
   };
   window.addEventListener("cw:dashboard-widgets-layout-changed", renderHubLayoutStrip);
+  window.addEventListener("load", renderHubLayoutStrip);
 
   const createLaneControls = (feat) => {
     const iconButton = (icon, title, cls = "") => {
