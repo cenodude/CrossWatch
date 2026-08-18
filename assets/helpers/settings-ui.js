@@ -1280,6 +1280,8 @@ function cwBuildTmdbPanel() {
   });
   keyInput.addEventListener("input", () => {
     keyInput.dataset.verified = "";
+    keyInput.dataset.touched = "1";
+    keyInput.dataset.masked = "0";
     const msg = document.getElementById("tmdb_check_msg");
     if (msg) {
       msg.textContent = "";
@@ -2006,8 +2008,8 @@ function cwReadTmdbKeyForVerify() {
   const input = document.getElementById("tmdb_api_key");
   const value = String(input?.value || "").trim();
   const masked = !!value && (input?.dataset?.masked === "1" || value === "********" || /^[*•]+$/.test(value));
-  if (masked) return { has: true, value: "********" };
-  return { has: !!value, value };
+  if (masked) return { has: true, masked: true, value: "********" };
+  return { has: !!value, masked: false, value };
 }
 
 function cwSetTmdbCheckMessage(ok, text) {
@@ -2032,10 +2034,12 @@ async function cwVerifyTmdbKey() {
   try {
     if (btn) btn.disabled = true;
     cwSetTmdbCheckMessage(true, "Checking...");
-    const r = await fetch("/api/tmdb/verify", {
+    const fresh = !state.masked;
+    const r = await fetch(fresh ? "/api/tmdb/save" : "/api/tmdb/verify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       cache: "no-store",
+      credentials: "same-origin",
       body: JSON.stringify({ api_key: state.value }),
     });
     const data = await r.json().catch(() => ({}));
@@ -2044,6 +2048,12 @@ async function cwVerifyTmdbKey() {
     cwSetTmdbCheckMessage(ok, ok ? "Connected" : (data?.error || "TMDb key check failed."));
     try { cwMetaSettingsHubUpdate(); } catch {}
     if (ok) {
+      if (fresh) {
+        try { await cwRefreshTmdbMetadataState({ force: true, overwrite: true }); } catch {}
+        if (input) input.dataset.verified = "1";
+        try { cwMetaSettingsHubUpdate(); } catch {}
+        try { window.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
+      }
       try { document.dispatchEvent(new CustomEvent("cw-provider-connected", { bubbles: true, detail: { provider: "tmdb", key: "TMDB_METADATA" } })); } catch {}
     }
     return ok;
