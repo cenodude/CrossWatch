@@ -142,7 +142,7 @@ def test_verification_failure_confirms_nothing(monkeypatch):
     _no_sleep(monkeypatch, m)
     items = list(_parsed(m, _aot_rows([1, 2], [])).values())
     saved: list = []
-    monkeypatch.setattr(m, "_cache_save", lambda payload: saved.append(payload))
+    monkeypatch.setattr(m, "_cache_save", lambda payload, **_kw: saved.append(payload))
     forgotten: list = []
     monkeypatch.setattr(m, "_forget_source_aliases", lambda its: forgotten.extend(its))
 
