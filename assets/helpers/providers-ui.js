@@ -424,7 +424,7 @@
     const userProfileSection = `<section class="cw-auth-service-section cw-user-profile-section" data-cw-auth-group="sec-user-profiles">
         <div class="cw-auth-service-head">
           <h4>User profiles</h4>
-          <p>Manage people and the configured provider instances assigned to them.</p>
+          <p>Manage people and provider instances linked to Managed User accounts.</p>
           <span class="material-symbols-rounded cw-auth-section-chevron" aria-hidden="true">expand_more</span>
         </div>
         <div id="cw-user-profile-manager" class="cw-user-profile-manager" aria-live="polite"></div>

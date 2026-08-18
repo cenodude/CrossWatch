@@ -242,7 +242,7 @@
     const required = resourceRequiredMap();
     const keys = providerKeys();
     if (!keys.length) {
-      return `<div class="cw-upm-empty">No named provider instances available. Default instances are reserved for the admin workspace here; create named instances such as PLEX-P01 and TRAKT-P01 for managed users.</div>`;
+      return `<div class="cw-upm-empty">No named provider instances available. Default instances are reserved for the admin workspace here; create named instances such as PLEX-P01 for managed users.</div>`;
     }
     return `<div class="cw-upm-provider-grid">${keys.map((provider) => {
       const selected = new Set((insts[provider] || []).map(txt));
@@ -369,13 +369,12 @@
       host.innerHTML = renderModal();
       return;
     }
-    const rows = allInstanceRows();
     host.innerHTML = `
       <div class="cw-auth-service-grid cw-upm-service-grid">
         ${userProfiles.map(renderProfileCard).join("")}
         ${renderAddCard()}
       </div>
-      <div class="cw-upm-status" id="cw-upm-status">${rows.length ? "" : "No named provider instances are available for managed profiles. Default instances stay in the admin workspace; create separate named instances first."}</div>
+      <div class="cw-upm-status" id="cw-upm-status"></div>
       ${renderModal()}`;
   }
 

@@ -10,7 +10,7 @@ from typing import Any
 from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse
 
-from cw_platform.access_policy import managed_profile_id, profile_label_for_id, request_user, route_effective_profile_id, webhook_effective_profile_id
+from cw_platform.access_policy import managed_profile_id, profile_label_for_id, request_user, route_effective_profile_id, valid_user_profile_id, webhook_effective_profile_id
 from cw_platform.config_base import load_config, save_config
 from cw_platform.provider_instances import get_provider_block, list_instance_ids, list_user_profiles, normalize_instance_id, normalize_user_profile_id, sanitize_instance_label
 from cw_platform.user_profile_resources import webhook_assigned_profile_id, webhook_resource_id
@@ -406,29 +406,31 @@ def _webhook_cards(cfg: dict[str, Any], request: Request) -> list[dict[str, Any]
             for sink in sink_list:
                 sink_inst = webhook_sink_instance(settings, sink)
                 ready = sink_configured(cfg, sink, sink_inst)
-                out.append(
-                    {
-                        "provider": provider,
-                        "provider_label": provider_label(provider),
-                        "provider_instance": inst,
-                        "profile_label": _instance_display_label(cfg, provider, inst),
-                        "sink": sink,
-                        "sink_label": provider_label(sink),
-                        "sink_instance": sink_inst,
-                        "sink_profile_label": _instance_display_label(cfg, sink, sink_inst),
-                        "sink_ready": ready,
-                        "enabled": src_enabled,
-                        "source_configured": source_configured,
-                        "explicit": True,
-                        "active": bool(src_enabled and source_configured and ready),
-                        "endpoint_url": endpoint,
-                        "webhook_token": token,
-                        "id": webhook_resource_id(provider, inst, sink, sink_inst),
-                        "profile_id": webhook_assigned_profile_id(cfg, webhook_resource_id(provider, inst, sink, sink_inst)),
-                        "effective_settings": safe_eff,
-                        "explicit_settings": safe_expl,
-                    }
-                )
+                row = {
+                    "provider": provider,
+                    "provider_label": provider_label(provider),
+                    "provider_instance": inst,
+                    "profile_label": _instance_display_label(cfg, provider, inst),
+                    "sink": sink,
+                    "sink_label": provider_label(sink),
+                    "sink_instance": sink_inst,
+                    "sink_profile_label": _instance_display_label(cfg, sink, sink_inst),
+                    "sink_ready": ready,
+                    "enabled": src_enabled,
+                    "source_configured": source_configured,
+                    "explicit": True,
+                    "active": bool(src_enabled and source_configured and ready),
+                    "endpoint_url": endpoint,
+                    "webhook_token": token,
+                    "id": webhook_resource_id(provider, inst, sink, sink_inst),
+                    "profile_id": webhook_assigned_profile_id(cfg, webhook_resource_id(provider, inst, sink, sink_inst)),
+                    "effective_settings": safe_eff,
+                    "explicit_settings": safe_expl,
+                }
+                user_pid = valid_user_profile_id(cfg, row.get("profile_id"))
+                row["user_profile_id"] = user_pid
+                row["user_profile_label"] = profile_label_for_id(cfg, user_pid) if user_pid else ""
+                out.append(row)
     return out
 
 
@@ -476,6 +478,9 @@ def _normalized_routes(cfg: dict[str, Any], request: Request) -> list[dict[str, 
         profile_id = str(row.get("profile_id") or "").strip()
         if profile_id:
             row["profile_label"] = profile_label_for_id(cfg, profile_id)
+        user_pid = valid_user_profile_id(cfg, route.get("profile_id"))
+        row["user_profile_id"] = user_pid
+        row["user_profile_label"] = profile_label_for_id(cfg, user_pid) if user_pid else ""
         row["needs_account_filter"] = route_needs_account_filter(cfg, route)
         out.append(row)
     return out

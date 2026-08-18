@@ -690,7 +690,7 @@ def test_user_profile_manager_screen_is_mounted() -> None:
     assert "sec-user-profiles" not in settings_html
     assert "cw-user-profile-manager" in providers_js
     assert "sec-user-profiles" in providers_js
-    assert "Manage people and the configured provider instances assigned to them." in providers_js
+    assert "Manage people and provider instances linked to Managed User accounts." in providers_js
     assert "/api/user-profiles" in manager_js
     assert "/api/provider-instances" in manager_js
     assert "configured_only=true" in manager_js
@@ -765,52 +765,31 @@ def test_user_profile_manager_screen_is_mounted() -> None:
     assert ".cw-app-user-delete.is-confirming" in app_users_css
 
 
-def test_pair_config_profile_selector_sits_before_mode_control() -> None:
+def test_pair_config_has_no_user_profile_selector() -> None:
     js = Path("assets/js/modals/pair-config/index.js").read_text("utf-8")
-    css = Path("assets/js/modals/pair-config/styles.css").read_text("utf-8")
 
-    assert "cx-user-profile-slot" in js
-    assert js.index("cx-user-profile-slot") < js.index("flow-mode-inline")
-    assert "slot.appendChild(row)" in js
-    assert ".flow-control-row" in css
-    assert "cx-user-profile-select" in js
-    assert "resetPairUserProfileControl(state)" in js
-    assert 'sel.value=""' in js
-    assert "selected_user_profile_id" in js
-    assert "applying_user_profile" in js
-    assert "eligiblePairUserProfiles(state)" in js
-    assert "profileCanOwnCurrentPair(profile,state)" in js
-    assert ".cx-user-profile-select" in css
-    assert "cx-user-profile-label" not in js
-    assert ">User profile<" not in js
-    assert "display_label||x.label||x.id" in js
-    assert 'title="${escHTML(row.id)}"' in js
+    assert "cx-user-profile" not in js
+    assert "renderPairUserProfileControl" not in js
+    assert "eligiblePairUserProfiles" not in js
+    assert "/api/user-profiles" not in js
+    # editing a pair must preserve its existing assignment, not clear it
+    assert 'const selectedProfileId=String(state.selected_user_profile_id||"").trim();' in js
+    assert 'state.selected_user_profile_id=String(pair.profile_id||"").trim();' in js
 
 
-def test_scrobbler_modals_have_conditional_user_profile_selector() -> None:
+def test_scrobbler_modals_have_no_user_profile_selector() -> None:
     route_js = Path("assets/js/modals/scrobbler-route/index.js").read_text("utf-8")
     webhook_js = Path("assets/js/modals/scrobbler-webhook/index.js").read_text("utf-8")
-    css = Path("assets/css/components.css").read_text("utf-8")
 
-    assert "/api/user-profiles" in route_js
-    assert "/api/user-profiles" in webhook_js
-    assert "id=\"scr-user-profile\"" in route_js
-    assert "id=\"scw-user-profile\"" in webhook_js
-    assert "if (!userProfiles.length) return \"\"" in route_js
-    assert "if (!userProfiles.length || props.mode === \"edit\") return \"\"" in webhook_js
-    assert "selectedUserProfileId" in route_js
-    assert "selectedUserProfileId" in webhook_js
-    assert 'selectedUserProfileId = applyUserProfile(selected) ? selected : ""' in route_js
-    assert 'selectedUserProfileId = applyUserProfile(selected) ? selected : ""' in webhook_js
-    assert '${p.id === current ? "selected" : ""}' in route_js
-    assert '${p.id === current ? "selected" : ""}' in webhook_js
-    assert "profileOptionLabel(profile)" in route_js
-    assert "profileOptionLabel(profile)" in webhook_js
-    assert "display_label || profile?.label" in route_js
-    assert "display_label || profile?.label" in webhook_js
-    assert 'title="${esc(p.instance)}"' in route_js
-    assert 'title="${esc(p.instance)}"' in webhook_js
-    assert ".scrm-profile-row" in css
+    for js in (route_js, webhook_js):
+        assert "/api/user-profiles" not in js
+        assert "userProfileField" not in js
+        assert "applyUserProfile" not in js
+        assert "selectedUserProfileId" not in js
+    assert 'id="scr-user-profile"' not in route_js
+    assert 'id="scw-user-profile"' not in webhook_js
+    # saving a route keeps whatever the user profile modal assigned
+    assert 'profile_id: draft.profile_id || "",' in route_js
 
 
 def test_events_audit_domain_is_admin_only_for_managed_users(monkeypatch) -> None:
@@ -2563,3 +2542,128 @@ def test_status_provider_visibility_reuses_configured_set() -> None:
     assert "isStatusProviderVisible(key, data, cfg = getCachedConfig(), configured = null)" in status
     assert "isStatusProviderVisible(k, providers[k], cfg, configured)" in status
     assert "typeof set.has === \"function\"" in status
+
+
+def _profile_scoped_webhook_cfg(assigned: bool = True) -> dict[str, Any]:
+    profile_id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    instance_uid = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    webhook: dict[str, Any] = {"profiles": {"plex": {"default": {"enabled": True, "sinks": ["trakt"]}}}}
+    if assigned:
+        webhook["user_profile_assignments"] = {"plex:default:trakt:default": profile_id}
+    return {
+        "plex": {"server_url": "http://plex:32400", "account_token": "t", "instances": {}},
+        "trakt": {"client_id": "c", "client_secret": "s", "access_token": "t", "instances": {}},
+        "provider_instance_ids": {instance_uid: {"provider": "PLEX", "instance": "default"}},
+        # the profile owns the instance in both cases; only the explicit assignment differs
+        "user_profiles": {profile_id: {"label": "Alice", "instance_uids": [instance_uid]}},
+        "scrobble": {"webhook": webhook},
+    }
+
+
+def test_watcher_route_rows_expose_user_profile_label() -> None:
+    import sys
+
+    sys.path.insert(0, "tests")
+    from test_scrobble_account_scope import _cfg
+
+    from api.scrobblerManagementAPI import _normalized_routes
+
+    assigned = _normalized_routes(_cfg(profile=True, whitelist=["dad"]), None)[0]
+    assert assigned["user_profile_label"] == "Alice"
+
+    # an admin picking a profile-owned instance must NOT mark the route as that profile
+    derived = _normalized_routes(_cfg(profile=True, whitelist=["dad"], assign=False), None)[0]
+    assert derived["user_profile_label"] == ""
+    assert derived["user_profile_id"] == ""
+
+    plain = _normalized_routes(_cfg(profile=False, whitelist=None), None)[0]
+    assert plain["user_profile_label"] == ""
+    assert plain["user_profile_id"] == ""
+
+
+def test_webhook_rows_expose_user_profile_without_touching_instance_label() -> None:
+    from api.scrobblerManagementAPI import _webhook_cards
+
+    request = SimpleNamespace(base_url="http://cw:9898/", headers={})
+
+    row = _webhook_cards(_profile_scoped_webhook_cfg(True), request)[0]
+    assert row["user_profile_label"] == "Alice"
+    assert row["profile_label"] == "Default"
+
+    # owned instance but no explicit assignment must stay unlabelled
+    bare = _webhook_cards(_profile_scoped_webhook_cfg(False), request)[0]
+    assert bare["user_profile_label"] == ""
+    assert bare["profile_label"] == "Default"
+
+
+def test_route_and_webhook_cards_render_profile_connector() -> None:
+    js = Path("assets/js/scrobbler.js").read_text("utf-8")
+
+    assert "function profileConnector(row)" in js
+    assert "user_profile_label" in js
+    # webhook cards iterate x, watcher routes iterate r
+    webhooks = js.split("function renderWebhooks(", 1)[1].split("function renderRoutes(", 1)[0]
+    routes = js.split("function renderRoutes(", 1)[1]
+    assert "${profileConnector(x)}" in webhooks
+    assert "${profileConnector(r)}" in routes
+    assert '<div class="sc2-rt-conn"><span class="sc2-rt-conn-line"></span></div>' not in webhooks
+
+
+def test_route_card_accent_is_purple_only_with_user_profile() -> None:
+    css = Path("assets/css/components.css").read_text("utf-8")
+
+    # default and live accents stay green for cards without a user profile
+    live = css.split(".sc2-route-card.is-live:not(.sc2-route-add-card)::after{", 1)[1].split("}", 1)[0]
+    assert "57d889" in live and "124,92,255" not in live
+
+    # purple is opt-in via the card class, and never overrides the disabled state
+    assert ".sc2-route-card.has-user-profile:not(.is-disabled):not(.sc2-route-add-card)::after" in css
+    assert ".sc2-route-card.has-user-profile.is-live:not(.is-disabled):not(.sc2-route-add-card)::after" in css
+
+    # the connector still absorbs free space so the sink endpoint stays flush right
+    assert ".sc2-rt-conn.has-profile{min-width" not in css
+    assert "flex:0 1 150px" not in css
+
+    chip = css.split(".sc2-rt-profile{", 1)[1].split("}", 1)[0]
+    assert "max-width:min(100%,150px)" in chip
+    name = css.split(".sc2-rt-profile-name{", 1)[1].split("}", 1)[0]
+    assert "text-overflow:ellipsis" in name
+
+
+def test_cards_tag_user_profile_class() -> None:
+    js = Path("assets/js/scrobbler.js").read_text("utf-8")
+    webhooks = js.split("function renderWebhooks(", 1)[1].split("function renderRoutes(", 1)[0]
+    routes = js.split("function renderRoutes(", 1)[1]
+
+    assert '${x.user_profile_label ? "has-user-profile" : ""}' in webhooks
+    assert '${r.user_profile_label ? "has-user-profile" : ""}' in routes
+
+
+def test_assigned_resources_lock_their_provider_and_instance_selects() -> None:
+    route_js = Path("assets/js/modals/scrobbler-route/index.js").read_text("utf-8")
+    webhook_js = Path("assets/js/modals/scrobbler-webhook/index.js").read_text("utf-8")
+    pair_js = Path("assets/js/modals/pair-config/index.js").read_text("utf-8")
+
+    for select in ("scr-provider", "scr-provider-instance", "scr-sink", "scr-sink-instance"):
+        assert f'id="{select}"${{lockAttr}}' in route_js
+    assert "function profileLockName()" in route_js
+    assert 'const lockAttr = lockName ? " disabled" : "";' in route_js
+
+    assert "function profileLockName()" in webhook_js
+    assert 'const dis = props.mode === "edit" || profileLockName() ? "disabled" : "";' in webhook_js
+    assert "const sinkDisabled = sink && !lockName ? \"\" : \"disabled\";" in webhook_js
+
+    assert "function pairProfileLocked(state){" in pair_js
+    assert "function applyPairProfileLock(state){" in pair_js
+    assert '["cx-src","cx-dst","cx-src-inst","cx-dst-inst"].forEach' in pair_js
+    assert "applyPairProfileLock(state);" in pair_js
+
+
+def test_profile_lock_notes_are_styled() -> None:
+    comp = Path("assets/css/components.css").read_text("utf-8")
+    pair_css = Path("assets/js/modals/pair-config/styles.css").read_text("utf-8")
+
+    assert ".scrm-lock-note{" in comp
+    assert ".cx-profile-lock-note{" in pair_css
+    assert "cursor:not-allowed" in comp
+    assert "cursor:not-allowed" in pair_css
