@@ -99,6 +99,18 @@
     <span>Tracker</span>
     <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
   </article>
+  <article class="cw-provider-card is-punchplay">
+    <img class="cw-provider-mark" src="images/providers/PUNCHPLAY.png" alt="" aria-hidden="true">
+    <strong>PunchPlay</strong>
+    <span>Tracker</span>
+    <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
+  </article>
+  <article class="cw-provider-card is-scrob">
+    <img class="cw-provider-mark" src="images/providers/SCROB.png" alt="" aria-hidden="true">
+    <strong>SCROB</strong>
+    <span>Tracker</span>
+    <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
+  </article>
   <article class="cw-provider-card is-mdblist">
     <img class="cw-provider-mark" src="images/providers/MDBLIST.svg" alt="" aria-hidden="true">
     <strong>MDBList</strong>
