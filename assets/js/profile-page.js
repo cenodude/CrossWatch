@@ -10,14 +10,63 @@
     if (!res.ok || data?.ok === false) throw new Error(data?.error || `HTTP ${res.status}`);
     return data;
   };
+  const profileRouteSegment = (value) => {
+    try {
+      value = decodeURIComponent(String(value || ""));
+    } catch {
+      value = String(value || "");
+    }
+    return value.trim().toLowerCase().replace(/-/g, "_");
+  };
+  const redirectProfileAppHash = () => {
+    if (window.location?.pathname !== "/profile") return false;
+    const raw = String(window.location?.hash || "");
+    if (!raw) return false;
+    const tab = profileRouteSegment(raw.replace(/^#\/?/, "").split("?")[0].split("/")[0]);
+    const appTabs = new Set(["main", "watchlist", "playback_progress", "snapshots", "playlists", "editor", "settings"]);
+    if (!appTabs.has(tab)) return false;
+    const doc = document.documentElement;
+    const isAdmin = doc?.dataset?.cwRole !== "user";
+    const canWrite = doc?.dataset?.cwPermWrite === "on";
+    const canReadWatchlist = tab === "watchlist" && doc?.dataset?.cwPermWatchlist !== "off";
+    const canReadPlayback = tab === "playback_progress" && doc?.dataset?.cwPermPlayback !== "off";
+    if (isAdmin) {
+      window.location.replace(`/${raw}`);
+      return true;
+    }
+    if (canWrite) {
+      window.location.replace(`/?main=1${raw}`);
+      return true;
+    }
+    if (canReadWatchlist || canReadPlayback) {
+      window.location.replace(`/?view=${encodeURIComponent(tab)}${raw}`);
+      return true;
+    }
+    return false;
+  };
+  if (redirectProfileAppHash()) return;
+  window.addEventListener("hashchange", redirectProfileAppHash);
   const post = (url, body) => api(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
   const del = (url) => api(url, { method: "DELETE" });
   const providerLabel = (provider) => window.CW?.ProviderMeta?.label?.(provider) || String(provider || "").toUpperCase();
+  const providerKey = (provider) => window.CW?.ProviderMeta?.keyOf?.(provider) || String(provider || "").trim().toUpperCase();
+  const providerLogo = (provider) => window.CW?.ProviderMeta?.logoPath?.(provider) || "";
   const visibleProviderLabel = (provider) => {
     const raw = String(provider || "").trim();
     if (!raw || raw === "?" || /^unknown$/i.test(raw) || /^none$/i.test(raw)) return "";
     const label = String(providerLabel(raw) || "").trim();
     return (!label || label === "?" || /^unknown$/i.test(label) || /^none$/i.test(label)) ? "" : label;
+  };
+  const providerBadgeHtml = (provider) => {
+    const label = visibleProviderLabel(provider);
+    if (!label) return "";
+    const key = providerKey(provider).toLowerCase().replace(/[^a-z0-9-]+/g, "");
+    const logo = providerLogo(provider);
+    const icon = logo
+      ? `<img class="cw-profile-provider-logo" src="${esc(logo)}" alt="" loading="lazy" onerror="this.hidden=true;this.nextElementSibling.hidden=false">`
+      : "";
+    const fallbackHidden = logo ? " hidden" : "";
+    return `<span class="cw-profile-provider-badge" data-provider="${esc(key)}">${icon}<span class="cw-profile-provider-fallback"${fallbackHidden}>${esc(label)}</span><span>${esc(label)}</span></span>`;
   };
   const providerOf = (item) => item?.source || item?.provider || item?.sources?.[0]?.provider || "";
   const mediaValue = (item) => String(item?.media_type || item?.type || item?.art_type || "").toLowerCase();
@@ -49,6 +98,11 @@
     const year = !mediaType(item) && item?.year ? `&year=${encodeURIComponent(String(item.year))}` : "";
     return `/art/tmdb/${kind}/${encodeURIComponent(id)}?kind=poster&size=${encodeURIComponent(size)}${title}${year}`;
   };
+  const watchlistArtEvidence = (item) => {
+    const title = item?.title ? `&title=${encodeURIComponent(String(item.title))}` : "";
+    const year = item?.year ? `&year=${encodeURIComponent(String(item.year))}` : "";
+    return title + year;
+  };
   const tmdbBackdrop = (item) => {
     const id = tmdbId(item);
     if (!id) return "";
@@ -59,6 +113,23 @@
     const direct = String(item?.backdrop_url || item?.background_url || item?.background || item?.fanart || "").trim();
     if (direct) return direct;
     return tmdbBackdrop(item);
+  };
+  const watchlistPreviewArt = (item, size = "w300") => {
+    const id = tmdbId(item);
+    if (!id) return "";
+    const season = Number(item?.season_number || item?.episode?.season_number || item?.episode?.season || item?.season || 0);
+    const episode = Number(item?.episode_number || item?.episode?.episode_number || item?.episode?.number || item?.episode || 0);
+    if (mediaType(item) && season > 0 && episode > 0) {
+      return `/art/tmdb/tv/${encodeURIComponent(String(id))}?kind=still&season=${encodeURIComponent(String(season))}&episode=${encodeURIComponent(String(episode))}&size=${encodeURIComponent(size)}${watchlistArtEvidence(item)}`;
+    }
+    const kind = mediaType(item) ? "tv" : "movie";
+    const locale = encodeURIComponent(window.__CW_LOCALE || navigator.language || "en-US");
+    return `/art/tmdb/${kind}/${encodeURIComponent(String(id))}?kind=backdrop&size=${encodeURIComponent(size)}&locale=${locale}${watchlistArtEvidence(item)}`;
+  };
+  const watchlistWidgetArt = (item, size = "w300") => {
+    const preview = window.CW?.WatchlistPreview;
+    const cover = preview?.artUrl?.(item, "w342") || "/assets/img/placeholder_poster.svg";
+    return preview?.gridArtUrl?.(item, size) || cover;
   };
   const heroBackdrop = (item) => tmdbBackdrop(item) || backdrop(item);
   const relTime = (value) => {
@@ -80,6 +151,21 @@
     el.__timer = setTimeout(() => el.classList.add("hidden"), 3200);
   };
   const empty = (text) => `<div class="cw-profile-empty">${esc(text)}</div>`;
+  const skelLines = `<span class="cw-profile-skel-lines"><span class="cw-skel-line cw-skel-line--title"></span><span class="cw-skel-line cw-skel-line--meta"></span></span>`;
+  const skelShapes = {
+    progress: `<div class="cw-cw-card cw-dash-skeleton cw-dash-skeleton-row cw-profile-skel" aria-hidden="true"><span class="cw-cw-art cw-skel-block"></span>${skelLines}</div>`,
+    watchlist: `<div class="cw-profile-row cw-dash-skeleton cw-dash-skeleton-row cw-profile-skel" aria-hidden="true"><span class="cw-skel-block"></span>${skelLines}<span class="cw-profile-skel-pill cw-skel-dot"></span></div>`,
+    stats: `<div class="cw-profile-stat cw-dash-skeleton cw-dash-skeleton-row cw-profile-skel" aria-hidden="true"><span class="cw-profile-skel-icon cw-skel-block"></span>${skelLines}</div>`,
+  };
+  const skeleton = (kind, count) => Array.from({ length: count }, () => skelShapes[kind]).join("");
+
+  function paintOverviewSkeletons() {
+    const hosts = [["#profile-progress", "progress", 3], ["#profile-watchlist", "watchlist", 3], ["#profile-quick-stats", "stats", 6]];
+    for (const [sel, kind, count] of hosts) {
+      const host = $(sel);
+      if (host) host.innerHTML = skeleton(kind, count);
+    }
+  }
   let profile = null;
   let posterSeq = 0;
   const posterItems = new Map();
@@ -251,10 +337,12 @@
   function progressCard(item) {
     const key = storePosterItem(item);
     const pct = progressPct(item);
-    const art = backdrop(item) || poster(item, "w780");
-    const sub = episodeOf(item) || yearOf(item) || "";
+    const art = watchlistPreviewArt(item) || poster(item, "w780");
+    const episode = episodeOf(item);
+    const sub = episode || yearOf(item) || "";
+    const episodeBadge = episode ? `<span class="cw-cw-episode">${esc(episode)}</span>` : "";
     return `<button class="cw-cw-card" type="button" data-profile-poster-key="${esc(key)}" aria-label="Show details for ${esc(titleOf(item))}">
-      <span class="cw-cw-art"><img src="${esc(art)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'"></span>
+      <span class="cw-cw-art">${episodeBadge}<img src="${esc(art)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'"></span>
       <span class="cw-cw-title">${esc(titleOf(item))}</span>
       <span class="cw-cw-sub">${esc(sub)}</span>
       <span class="cw-cw-foot">
@@ -287,14 +375,36 @@
     return 0;
   }
 
-  function watchlistRow(item) {
+  function syncedEpoch(item, fallbackEpoch = 0) {
+    for (const key of ["synced_epoch", "synced_at", "updated_epoch", "updated_at", "last_synced", "last_sync_epoch"]) {
+      const raw = Number(item?.[key]);
+      if (Number.isFinite(raw) && raw > 0) return raw > 1e12 ? Math.round(raw / 1000) : raw;
+    }
+    for (const key of ["synced_at", "updated_at", "last_synced"]) {
+      const raw = item?.[key];
+      if (typeof raw === "string" && raw.trim()) {
+        const parsed = Date.parse(raw);
+        if (Number.isFinite(parsed)) return Math.floor(parsed / 1000);
+      }
+    }
+    const fallback = Number(fallbackEpoch || 0);
+    return Number.isFinite(fallback) && fallback > 0 ? (fallback > 1e12 ? Math.round(fallback / 1000) : fallback) : 0;
+  }
+
+  function watchlistRow(item, fallbackSyncEpoch = 0) {
     const key = storePosterItem(item);
-    const meta = [mediaKindLabel(item), yearOf(item)].filter(Boolean).join(" - ");
+    const kind = mediaKindLabel(item);
+    const year = yearOf(item);
     const when = addedEpoch(item);
+    const syncedWhen = syncedEpoch(item, fallbackSyncEpoch);
+    const meta = [kind, year, when ? `updated ${relTime(when)}` : ""].filter(Boolean).join(" - ");
+    const art = watchlistWidgetArt(item);
+    const synced = item?.synced === false || item?.is_synced === false ? "" : `<span class="cw-profile-watchlist-status">Synced</span>`;
+    const syncBadge = syncedWhen ? `<span class="cw-profile-watchlist-sync">${esc(relTime(syncedWhen))}</span>` : "";
     return `<button class="cw-profile-row cw-profile-click-row" type="button" data-profile-poster-key="${esc(key)}" aria-label="Show details for ${esc(titleOf(item))}">
-      <img src="${esc(poster(item, "w185"))}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'">
-      <div><strong>${esc(titleOf(item))}</strong><span>${esc(meta)}</span></div>
-      <small>${esc(when ? `Added ${relTime(when)}` : "")}</small>
+      <span class="cw-profile-watchlist-art">${syncBadge}<img src="${esc(art)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'"></span>
+      <div class="cw-profile-watchlist-copy"><strong>${esc(titleOf(item))}</strong><span>${esc(meta)}</span></div>
+      ${synced}
     </button>`;
   }
 
@@ -336,10 +446,10 @@
     $("#profile-last-poster").src = poster(item, "w185");
     $("#profile-last-title").textContent = titleOf(item);
     $("#profile-last-meta").textContent = [episodeOf(item) || yearOf(item), relTime(item.ts || item.last_watched_at || item.watched_at)].filter(Boolean).join(" - ");
-    const provider = visibleProviderLabel(providerOf(item));
+    const provider = providerBadgeHtml(providerOf(item));
     const providerNode = $("#profile-last-provider");
     if (providerNode) {
-      providerNode.textContent = provider;
+      providerNode.innerHTML = provider;
       providerNode.hidden = !provider;
     }
   }
@@ -437,29 +547,32 @@
     const sampleStats = statsFromItems(sampled);
     const breakdown = insights?.features?.history?.breakdown || {};
     const watchtime = insights?.watchtime || {};
-    const movies = Number(watchtime.movies ?? breakdown.movies ?? sampleStats.movies) || 0;
-    const shows = (Number(watchtime.shows ?? breakdown.shows ?? sampleStats.shows) || 0) + (Number(breakdown.anime || 0) || 0);
+    const movies = Number(breakdown.movies ?? watchtime.movies ?? sampleStats.movies) || 0;
+    const shows = Number(breakdown.shows ?? watchtime.shows ?? sampleStats.shows) || 0;
+    const anime = Number(breakdown.anime) || 0;
     const episodes = Number(breakdown.episodes ?? sampleStats.episodes) || 0;
     const watchlist = Number(wall?.total ?? (wall?.items || []).length) || 0;
     const fallbackHours = scrobble.reduce((sum, item) => sum + durationMinutes(item), 0) / 60;
     const hours = Number(widgets?.recent_scrobble?.scrobble_hours ?? fallbackHours) || 0;
     const values = [
-      ["movie", "Movies", numberFmt.format(movies)],
-      ["tv", "TV Shows", numberFmt.format(shows)],
-      ["subscriptions", "Episodes", numberFmt.format(episodes)],
-      ["bookmark", "Watchlist Items", numberFmt.format(watchlist)],
-      ["schedule", "Hours Watched", hours ? `${numberFmt.format(Math.round(hours * 10) / 10)} h` : "0 h"],
+      ["movies", "movie", "theaters", "Movies", numberFmt.format(movies), "Total movies in your syncs"],
+      ["tv", "tv", "live_tv", "TV Shows", numberFmt.format(shows), "Total TV shows in your syncs"],
+      ["anime", "animation", "auto_awesome", "Anime", numberFmt.format(anime), "Total anime in your syncs"],
+      ["episodes", "subscriptions", "stacked_bar_chart", "Episodes", numberFmt.format(episodes), "Total episodes in your syncs"],
+      ["watchlist", "bookmark", "format_list_bulleted", "Watchlist Items", numberFmt.format(watchlist), "Items on your watchlist"],
+      ["hours", "schedule", "show_chart", "Hours Watched", hours ? `${numberFmt.format(Math.round(hours * 10) / 10)} h` : "0 h", "Total time spent watching"],
     ];
-    $("#profile-quick-stats").innerHTML = values.map(([icon, label, value]) => `
-      <div class="cw-profile-stat">
+    $("#profile-quick-stats").innerHTML = values.map(([key, icon, backdropIcon, label, value, description]) => `
+      <div class="cw-profile-stat cw-profile-stat--${esc(key)}" data-stat="${esc(key)}" data-stat-bg="${esc(backdropIcon)}">
         <span class="material-symbols-rounded" aria-hidden="true">${esc(icon)}</span>
-        <div><small>${esc(label)}</small><strong>${esc(value)}</strong></div>
+        <div class="cw-profile-stat-copy"><small>${esc(label)}</small><strong>${esc(value)}</strong><span>${esc(description)}</span></div>
       </div>`).join("");
   }
 
   async function loadOverview() {
     posterSeq = 0;
     posterItems.clear();
+    paintOverviewSkeletons();
     const [widgets, wall, progress, insights, status] = await Promise.all([
       api("/api/dashboard/widgets?include=history,ratings,scrobble,progress&history_limit=8&ratings_limit=9&scrobble_limit=8&progress_limit=8"),
       api("/api/state/wall?limit=8"),
@@ -481,7 +594,7 @@
       services: connectedServices(status),
     });
     $("#profile-progress").innerHTML = progressItems.length ? progressItems.slice(0, 9).map(progressCard).join("") : empty("No recent progress yet.");
-    $("#profile-watchlist").innerHTML = watchlistItems.length ? watchlistItems.slice(0, 3).map(watchlistRow).join("") : empty("No watchlist items yet.");
+    $("#profile-watchlist").innerHTML = watchlistItems.length ? watchlistItems.slice(0, 3).map((item) => watchlistRow(item, wall?.last_sync_epoch)).join("") : empty("No watchlist items yet.");
     refreshNowPlaying();
   }
 
@@ -608,9 +721,45 @@
     });
   }
 
+  function recoveryCodesList(codes) {
+    const wrap = document.createElement("div");
+    wrap.className = "cw-profile-codes";
+    const title = document.createElement("strong");
+    title.textContent = "Recovery codes";
+    wrap.appendChild(title);
+    for (const value of codes) {
+      const code = document.createElement("code");
+      code.textContent = value;
+      wrap.appendChild(code);
+    }
+    return wrap;
+  }
+
   function showRecoveryCodes(codes) {
     const host = $("#profile-2fa-setup");
-    host.innerHTML = `<div class="cw-profile-codes"><strong>Recovery codes</strong>${codes.map((code) => `<code>${esc(code)}</code>`).join("")}</div>`;
+    if (!host) return;
+    const values = (Array.isArray(codes) ? codes : []).map((code) => String(code || "").trim()).filter(Boolean);
+    host.replaceChildren();
+    const wrap = document.createElement("div");
+    wrap.className = "cw-profile-codes cw-profile-codes--locked";
+    const title = document.createElement("strong");
+    title.textContent = values.length ? "Recovery codes ready" : "No recovery codes available";
+    const copy = document.createElement("span");
+    copy.textContent = values.length
+      ? "These one-time codes are hidden until you reveal them."
+      : "No new recovery codes were returned.";
+    wrap.append(title, copy);
+    if (values.length) {
+      const reveal = document.createElement("button");
+      reveal.className = "btn";
+      reveal.type = "button";
+      reveal.textContent = "Show recovery codes";
+      reveal.addEventListener("click", () => {
+        host.replaceChildren(recoveryCodesList(values));
+      }, { once: true });
+      wrap.appendChild(reveal);
+    }
+    host.appendChild(wrap);
   }
 
   function renderPlexStatus(status) {
@@ -864,6 +1013,7 @@
   let nowTimer = null;
 
   async function init() {
+    paintOverviewSkeletons();
     wireTabs();
     wirePreferences();
     wireAvatar();

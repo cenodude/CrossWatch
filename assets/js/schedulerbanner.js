@@ -114,6 +114,8 @@
 #ops-card #sched-inline-log .cw-hub-tip-action{display:block;margin-top:5px;padding-top:6px;border-top:1px solid color-mix(in srgb,var(--hub-muted) 24%,transparent);color:color-mix(in srgb,var(--service-state) 72%,var(--hub-text));font-weight:500;}
 #ops-card #sched-inline-log .hub-status-group:first-child .sched:first-child .cw-hub-tip{left:0;transform:translateX(0) translateY(4px);}
 #ops-card #sched-inline-log .hub-status-group:first-child .sched:first-child[data-tip]:hover>.cw-hub-tip,#ops-card #sched-inline-log .hub-status-group:first-child .sched:first-child[data-tip]:focus-visible>.cw-hub-tip{transform:translateX(0) translateY(0);}
+#ops-card #sched-inline-log :is(#chip-watch,#chip-hook) .cw-hub-tip{left:0;right:auto;width:min(360px,calc(100vw - 32px));min-width:0;max-width:calc(100vw - 32px);transform:translateX(0) translateY(4px);}
+#ops-card #sched-inline-log :is(#chip-watch,#chip-hook)[data-tip]:hover>.cw-hub-tip,#ops-card #sched-inline-log :is(#chip-watch,#chip-hook)[data-tip]:focus-visible>.cw-hub-tip{transform:translateX(0) translateY(0);}
 #ops-card #sched-inline-log .hub-group-system .sched:last-child .cw-hub-tip{left:auto;right:0;transform:translateX(0) translateY(4px);}
 #ops-card #sched-inline-log .hub-group-system .sched:last-child[data-tip]:hover>.cw-hub-tip,#ops-card #sched-inline-log .hub-group-system .sched:last-child[data-tip]:focus-visible>.cw-hub-tip{transform:translateX(0) translateY(0);}
 html[data-cw-theme="flat-dark"] #ops-card{--hub-service-good:#57b58a;--hub-service-bad:#d86672;--hub-service-disabled:#7c8491;--hub-action-bg:#20242d;--hub-action-hover:#272c36;--hub-card-bg:#20242d;--hub-card-border:rgba(255,255,255,.13);--hub-text:#eef1f6;--hub-muted:#a9b0bd;}

@@ -1019,6 +1019,7 @@
     byId("page-editor")?.classList.toggle("hidden", tab !== "editor");
     byId("page-settings")?.classList.toggle("hidden", tab !== "settings");
 
+    delete document.documentElement.dataset.cwInitialTab;
     document.documentElement.dataset.tab = tab;
     if (document.body) document.body.dataset.tab = tab;
   }

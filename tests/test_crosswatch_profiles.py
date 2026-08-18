@@ -708,6 +708,31 @@ def test_user_profile_manager_screen_is_mounted() -> None:
     assert "cw-upm-provider-head" in manager_js
     assert "cw-upm-provider-grid" in manager_js
     assert "cw-upm-instance-box" not in manager_js
+    assert "permissions: { dashboard: true, watchlist: true, playback: true, write: true }" in app_users_js
+    assert "permissions: { dashboard: true, watchlist: true, playback: true, write: false }" not in app_users_js
+    assert "#page-settings .cw-app-user-create .cw-icon-select-btn" in app_users_css
+    assert "#page-settings .cw-app-user-create.has-no-profiles .cw-icon-select" in app_users_css
+    assert "cw-app-user-profile-select-wrap-hidden" in app_users_js
+    assert "function createProfileWrap(profileSelect)" in app_users_js
+    assert "function normalizeCreateProfileWrap(profileSelect)" in app_users_js
+    assert "function enhanceCreateProfileSelect(profileSelect)" in app_users_js
+    assert "(profileWrap || profileSelect).insertAdjacentElement(\"afterend\", addBtn);" in app_users_js
+    assert "profileWrap = enhanceCreateProfileSelect(profileSelect);" in app_users_js
+    assert "setTimeout(() => refresh(), 160);" in app_users_js
+    assert "profileWrap.hidden = true;" in app_users_js
+    assert "height: 44px !important;" in app_users_css
+    assert "max-height: 44px !important;" in app_users_css
+    assert '#page-settings #app_auth_fields :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, .cw-icon-select, .cw-icon-select-btn)' in app_users_css
+    assert "#page-settings .cw-app-user-controls .cw-icon-select-btn" in app_users_css
+    assert "height: 42px !important;" in app_users_css
+    assert "max-height: 42px !important;" in app_users_css
+    assert "#page-settings #app_auth_fields .cw-auth-totp-field" in app_users_css
+    assert "#page-settings #app_auth_fields .cw-auth-plex-field" in app_users_css
+    assert "#page-settings #app_auth_fields .cw-auth-totp-field > .cw-settings-inline-action" in app_users_css
+    assert "#page-settings #app_auth_fields .cw-auth-plex-field > .cw-settings-inline-action" in app_users_css
+    assert "#page-settings #app_auth_fields :is(.cw-auth-totp-field, .cw-auth-plex-field) > .sub" in app_users_css
+    assert "grid-template-columns: repeat(2, minmax(0, 1fr));" in app_users_css
+    assert "grid-template-columns: repeat(2, minmax(0, 1fr)) !important;" in app_users_css
     assert "cw-danger-confirm" in manager_js
     assert "Confirm delete" in manager_js
     assert "cwUserProfilesOpenNew" in manager_js
@@ -1186,6 +1211,57 @@ def test_crosswatch_tracker_settings_live_only_in_connection_modal() -> None:
     assert "cw_tracker_root_dir" not in auth_js
     assert "cw_tracker_root_dir" not in settings_save
     assert "cw_tracker_restore_progress" in auth_html
+
+
+def test_tmdb_metadata_modal_refreshes_saved_key_before_opening() -> None:
+    settings_ui = Path("assets/helpers/settings-ui.js").read_text("utf-8")
+    settings_save = Path("assets/helpers/settings-save.js").read_text("utf-8")
+    providers_ui = Path("assets/helpers/providers-ui.js").read_text("utf-8")
+
+    assert "async function cwRefreshTmdbMetadataState" in settings_ui
+    assert "cfg?.tmdb?.api_key || cfg?.metadata?.tmdb_api_key" in settings_ui
+    assert "window.CW?.AuthShared?.maskSecret" in settings_ui
+    assert "window.CW.AuthShared.maskSecret(input, hasKey)" in settings_ui
+    assert "window.cwRefreshTmdbMetadataState = cwRefreshTmdbMetadataState" in settings_ui
+    assert "cwRefreshTmdbMetadataState," in settings_ui
+    assert "serverCfg?.tmdb?.api_key || serverCfg?.metadata?.tmdb_api_key" in settings_save
+
+    opener = providers_ui.split("async function openMetadataProviderForm", 1)[1].split("const overlay = ensureAuthOverlay", 1)[0]
+    assert 'if (info.key === "TMDB_METADATA")' in opener
+    assert "await window.cwRefreshTmdbMetadataState?.({ force: true })" in opener
+    assert opener.index("window.cwMetaProviderEnsure") < opener.index("window.cwRefreshTmdbMetadataState")
+
+    after_enhance = providers_ui.split("enhanceConnectionModal(section, overlay, info.key);", 1)[1].split("requestAnimationFrame", 1)[0]
+    assert "window.cwRefreshTmdbMetadataState?.()" in after_enhance
+
+
+def test_connection_modals_mount_and_bind_before_opening() -> None:
+    providers_ui = Path("assets/helpers/providers-ui.js").read_text("utf-8")
+
+    ensure_overlay = providers_ui.split("function ensureAuthOverlay", 1)[1].split("function providerHome", 1)[0]
+    assert "slot.appendChild(overlay);" in ensure_overlay
+    assert "bindAuthPresentation(slot);" in ensure_overlay
+    assert ensure_overlay.index("slot.appendChild(overlay);") < ensure_overlay.index("bindAuthPresentation(slot);")
+
+    add_provider = providers_ui.split("async function openAddConnection", 1)[1].split("async function openAddMetadata", 1)[0]
+    assert "bindAuthPresentation(slot);" in add_provider
+    assert "await mountAuthProviders();" in add_provider
+    assert 'openAuthOverlay("picker", "", "provider")' in add_provider
+    assert add_provider.index("await mountAuthProviders();") < add_provider.index('openAuthOverlay("picker", "", "provider")')
+
+    add_metadata = providers_ui.split("async function openAddMetadata", 1)[1].split("const ProvidersUI", 1)[0]
+    assert "bindAuthPresentation(slot);" in add_metadata
+    assert "await mountMetadataProviders();" in add_metadata
+    assert 'openAuthOverlay("picker", "", "metadata")' in add_metadata
+    assert add_metadata.index("await mountMetadataProviders();") < add_metadata.index('openAuthOverlay("picker", "", "metadata")')
+
+    metadata_form = providers_ui.split("async function openMetadataProviderForm", 1)[1].split("function pruneEmptyProfileOnClose", 1)[0]
+    assert "window.cwBuildTmdbPanel?.();" in metadata_form
+    assert "await mountMetadataProviders(true);" in metadata_form
+    assert metadata_form.index("window.cwBuildTmdbPanel?.();") < metadata_form.index("await mountMetadataProviders(true);")
+
+    auth_form = providers_ui.split("async function openAuthProviderForm", 1)[1].split("async function openMetadataProviderForm", 1)[0]
+    assert "await mountAuthProviders(true);" in auth_form
 
 
 def test_maintenance_tracker_archive_uses_profile_selector_toolbar() -> None:
@@ -1692,8 +1768,19 @@ def test_profile_nav_uses_full_user_links_for_write_managed_user() -> None:
     assert 'href="/?main=1#snapshots">Captures</a>' in html
     assert 'href="/?main=1#playlists">Playlists</a>' in html
     assert 'href="/?main=1#editor">Editor</a>' in html
+    assert 'href="/?main=1#watchlist">View all</a>' in html
+    assert 'href="/?main=1#playback_progress">View all</a>' in html
     assert 'href="/?main=1#settings">Settings</a>' not in html
     assert 'id="cw-profile-logout"' in html
+
+
+def test_profile_page_redirects_stale_app_hashes_to_the_app_shell() -> None:
+    js = Path("assets/js/profile-page.js").read_text("utf-8")
+
+    assert 'window.location?.pathname !== "/profile"' in js
+    assert '"playback_progress"' in js
+    assert 'window.location.replace(`/?main=1${raw}`)' in js
+    assert 'window.location.replace(`/?view=${encodeURIComponent(tab)}${raw}`)' in js
 
 
 def test_profile_page_supports_admin_account() -> None:
@@ -1706,17 +1793,62 @@ def test_profile_page_supports_admin_account() -> None:
     assert 'data-cw-role="admin"' in html
     assert 'data-cw-profile-id=""' in html
     assert 'id="profile-role" class="cw-profile-role">Administrator</span>' in html
-    assert 'class="tab active" href="/?main=1#main">Main</a>' in html
-    assert 'href="/?main=1#watchlist">Watchlist</a>' in html
-    assert 'href="/?main=1#playback_progress">Playback</a>' in html
-    assert 'href="/?main=1#snapshots">Captures</a>' in html
-    assert 'href="/?main=1#playlists">Playlists</a>' in html
-    assert 'href="/?main=1#editor">Editor</a>' in html
+    assert 'class="tab active" href="/">Main</a>' in html
+    assert 'href="/#watchlist">Watchlist</a>' in html
+    assert 'href="/#playback_progress">Playback</a>' in html
+    assert 'href="/#snapshots">Captures</a>' in html
+    assert 'href="/#playlists">Playlists</a>' in html
+    assert 'href="/#editor">Editor</a>' in html
     assert 'id="tab-settings" class="tab"' in html
     assert '<span>Settings</span><span class="tab-caret"' in html
     assert 'id="tab-about" class="tab"' in html
     assert '<span>About</span><span class="tab-caret"' in html
     assert 'id="cw-profile-logout"' not in html
+
+
+def test_profile_admin_menu_opens_local_modals_without_main_flash() -> None:
+    import re
+    import subprocess
+    import sys
+
+    import ui_frontend
+
+    html = ui_frontend.get_profile_html(
+        user={"is_admin": True, "username": "admin", "display_name": "Administrator"},
+    )
+
+    assert "/assets/js/modals/core/styles.css" in html
+    assert "/assets/js/modals.js" in html
+    assert 'id="cw-help-overlay"' in html
+    assert 'window.openHelp = () => window.cwOpenHelp?.();' in html
+    assert 'else if (await ensureModals()) window.openAbout?.();' in html
+    assert 'window.location.href = "/#" + (paths[pane] || "settings");' in html
+    assert "window.__CW_VERSION__" not in html
+    assert 'window.location.href = "/?main=1#"' not in html
+    assert 'window.location.href = "/?main=1#about"' not in html
+
+    scripts = re.findall(r"<script(?: [^>]*)?>(.*?)</script>", html, re.S)
+    menu_script = next(script for script in scripts if "cwToggleSettingsMenu" in script)
+    script_path = Path(".pytest_tmp") / "profile-menu-script.js"
+    script_path.parent.mkdir(exist_ok=True)
+    script_path.write_text(menu_script, encoding="utf-8")
+    result = subprocess.run(["node", "--check", str(script_path)], text=True, capture_output=True)
+    if result.returncode != 0 and sys.platform.startswith("win"):
+        result = subprocess.run(["cmd", "/c", "node", "--check", str(script_path)], text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_main_shell_has_early_hash_route_hint() -> None:
+    import ui_frontend
+
+    html = ui_frontend.get_index_html(include_admin=True)
+    core_js = Path("assets/helpers/core.js").read_text("utf-8")
+
+    assert "data-cw-initial-tab" in html
+    assert 'const tabs = new Set(["watchlist", "playback_progress", "snapshots", "playlists", "editor", "settings"]);' in html
+    assert 'html[data-cw-initial-tab]:not([data-cw-initial-tab="main"]) #ops-card' in html
+    assert 'html[data-cw-initial-tab="settings"] #page-settings' in html
+    assert "delete document.documentElement.dataset.cwInitialTab;" in core_js
 
 
 def test_profile_2fa_setup_uses_spacious_qr_layout() -> None:
@@ -1731,6 +1863,97 @@ def test_profile_2fa_setup_uses_spacious_qr_layout() -> None:
     assert ".cw-profile-qr-code{display:grid;place-items:center;width:184px;height:184px" in css
     assert ".cw-profile-qr-copy{display:grid;gap:9px" in css
     assert ".cw-profile-qr-verify{display:grid;grid-template-columns:minmax(120px,1fr) auto" in css
+
+
+def test_profile_last_watched_uses_provider_branding_icons() -> None:
+    js = Path("assets/js/profile-page.js").read_text("utf-8")
+    css = Path("assets/css/profile-page.css").read_text("utf-8")
+
+    assert "window.CW?.ProviderMeta?.logoPath?.(provider)" in js
+    assert "providerBadgeHtml(providerOf(item))" in js
+    assert "providerNode.innerHTML = provider;" in js
+    assert "cw-profile-provider-badge" in css
+    assert "cw-profile-provider-logo" in css
+    assert "body.cw-profile-page #dashboard-widgets-card .cw-dash-layout-controls{right:104px;top:14px;gap:10px}" in css
+    assert 'const art = watchlistPreviewArt(item) || poster(item, "w780");' in js
+    helper = js[js.index("const watchlistPreviewArt ="):js.index("const heroBackdrop =")]
+    assert "backdrop_url" not in helper and "background_url" not in helper and "fanart" not in helper
+    assert 'return `/art/tmdb/${kind}/${encodeURIComponent(String(id))}?kind=backdrop&size=${encodeURIComponent(size)}&locale=${locale}${watchlistArtEvidence(item)}`;' in js
+    assert "updated ${relTime(when)}" in js
+    assert "cw-profile-watchlist-status" in js
+    assert "cw-profile-watchlist-sync" in js
+    assert "function syncedEpoch(item, fallbackEpoch = 0)" in js
+    assert "watchlistRow(item, wall?.last_sync_epoch)" in js
+    assert "#profile-watchlist .cw-profile-row{grid-template-columns:clamp(150px,28%,270px) minmax(0,1fr) auto;grid-template-rows:76px" in css
+    assert "height:76px;min-height:76px;padding:0 14px 0 0;overflow:hidden;border-radius:14px;align-items:center;text-decoration:none!important" in css
+    assert "#profile-watchlist .cw-profile-watchlist-art{position:relative;display:block;align-self:stretch;width:100%;height:100%;min-height:0;overflow:hidden;border-radius:13px 0 0 13px" in css
+    assert "#profile-watchlist .cw-profile-watchlist-art img{display:block;width:100%;height:100%;min-height:0;object-fit:cover;object-position:center}" in css
+    assert "#profile-watchlist .cw-profile-watchlist-sync{position:absolute;left:8px;top:8px;z-index:2" in css
+    assert "#profile-watchlist .cw-profile-watchlist-copy{display:flex;flex-direction:column;justify-content:center;align-self:center;justify-self:start;min-width:0;min-height:0;height:100%;text-decoration:none!important}" in css
+    assert "#profile-watchlist .cw-profile-watchlist-copy strong{font-size:15px;line-height:1.18;color:var(--profile-text);text-decoration:none!important}" in css
+    assert "#profile-watchlist .cw-profile-watchlist-status{display:inline-flex;align-items:center;justify-content:center;align-self:center;justify-self:center;height:28px;min-height:28px" in css
+
+
+def test_profile_watchlist_rows_reuse_widget_art_url() -> None:
+    js = Path("assets/js/profile-page.js").read_text("utf-8")
+    helper = Path("assets/helpers/watchlist-preview.js").read_text("utf-8")
+    css = Path("assets/css/profile-page.css").read_text("utf-8")
+
+    assert "artUrl,\n    gridArtUrl," in helper
+    assert 'const cover = preview?.artUrl?.(item, "w342") || "/assets/img/placeholder_poster.svg";' in js
+    assert "return preview?.gridArtUrl?.(item, size) || cover;" in js
+    row = js[js.index("function watchlistRow(item, fallbackSyncEpoch = 0)"):js.index("function posterCard(item)")]
+    assert "const art = watchlistWidgetArt(item);" in row
+    assert "backdrop(item)" not in row
+    assert "this.src='/assets/img/placeholder_poster.svg'" in row
+    assert "body.cw-profile-page #dashboard-widgets-card #placeholder-card .poster *{text-decoration:none!important}" in css
+
+
+def test_watchlist_widget_stacks_updated_stamp_on_profile_only() -> None:
+    helper = Path("assets/helpers/watchlist-preview.js").read_text("utf-8")
+    shared_css = Path("assets/crosswatch.css").read_text("utf-8")
+    css = Path("assets/css/profile-page.css").read_text("utf-8")
+
+    assert '<small class="wl-meta-stacked">${esc(stackedMeta)}</small>' in helper
+    assert 'const stackedMeta = [typeLabel, item.year || ""].filter(Boolean).join(" - ");' in helper
+    assert 'timeLabel ? `<small class="wl-meta-stacked-updated">${esc(`updated ${timeLabel}`)}</small>` : ""' in helper
+    assert "#placeholder-card .poster .cap small.wl-meta-stacked,#placeholder-card .poster .cap small.wl-meta-stacked-updated{display:none !important}" in shared_css
+    assert '[data-widget-view="grid"] .poster .wl-meta-compact{\n  display:none!important}' in css
+    assert '.poster :is(.wl-meta-stacked,.wl-meta-stacked-updated){\n  display:block!important}' in css
+
+
+def test_dashboard_layout_tools_are_profile_page_only() -> None:
+    shared_css = Path("assets/crosswatch.css").read_text("utf-8")
+
+    assert "body:not(.cw-profile-page) .cw-dashboard-layout-toolbar{display:none}" in shared_css
+
+
+def test_quick_stats_counts_movies_and_shows_from_history_breakdown() -> None:
+    js = Path("assets/js/profile-page.js").read_text("utf-8")
+
+    stats = js[js.index("function renderQuickStats("):js.index('$("#profile-quick-stats").innerHTML')]
+    assert "const movies = Number(breakdown.movies ?? watchtime.movies ?? sampleStats.movies) || 0;" in stats
+    assert "const shows = Number(breakdown.shows ?? watchtime.shows ?? sampleStats.shows) || 0;" in stats
+    assert "const anime = Number(breakdown.anime) || 0;" in stats
+    assert "const episodes = Number(breakdown.episodes ?? sampleStats.episodes) || 0;" in stats
+    assert 'const breakdown = insights?.features?.history?.breakdown || {};' in stats
+    assert '["anime", "animation", "auto_awesome", "Anime", numberFmt.format(anime), "Total anime in your syncs"],' in stats
+    assert "cw-profile-stat--anime" in Path("assets/css/profile-page.css").read_text("utf-8")
+
+
+def test_profile_overview_paints_shimmer_skeletons_before_data_lands() -> None:
+    js = Path("assets/js/profile-page.js").read_text("utf-8")
+    css = Path("assets/css/profile-page.css").read_text("utf-8")
+
+    assert "async function init() {\n    paintOverviewSkeletons();" in js
+    assert "posterItems.clear();\n    paintOverviewSkeletons();" in js
+    for host in ("#profile-progress", "#profile-watchlist", "#profile-quick-stats"):
+        assert host in js[js.index("function paintOverviewSkeletons()"):js.index("function setAvatar(url)")]
+    for primitive in ("cw-dash-skeleton", "cw-dash-skeleton-row", "cw-skel-block", "cw-skel-line--title", "cw-skel-line--meta", "cw-skel-dot"):
+        assert primitive in js, primitive
+    assert ".cw-profile-skel{position:relative;pointer-events:none;cursor:default}" in css
+    assert "#profile-watchlist .cw-profile-skel>.cw-skel-block{align-self:stretch" in css
+    assert "#profile-quick-stats .cw-profile-skel-icon{width:56px;height:56px;border-radius:50%}" in css
 
 
 def test_overview_profile_helper_locks_managed_shell_to_profile() -> None:
