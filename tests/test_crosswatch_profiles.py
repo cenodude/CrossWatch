@@ -1870,8 +1870,9 @@ def test_profile_last_watched_uses_provider_branding_icons() -> None:
     css = Path("assets/css/profile-page.css").read_text("utf-8")
 
     assert "window.CW?.ProviderMeta?.logoPath?.(provider)" in js
-    assert "providerBadgeHtml(providerOf(item))" in js
-    assert "providerNode.innerHTML = provider;" in js
+    assert "providerBadgeElement(providerOf(item))" in js
+    assert "providerNode.replaceChildren();" in js
+    assert "icon.addEventListener(\"error\"" in js
     assert "cw-profile-provider-badge" in css
     assert "cw-profile-provider-logo" in css
     assert "body.cw-profile-page #dashboard-widgets-card .cw-dash-layout-controls{right:104px;top:14px;gap:10px}" in css

@@ -57,16 +57,36 @@
     const label = String(providerLabel(raw) || "").trim();
     return (!label || label === "?" || /^unknown$/i.test(label) || /^none$/i.test(label)) ? "" : label;
   };
-  const providerBadgeHtml = (provider) => {
+  const providerBadgeElement = (provider) => {
     const label = visibleProviderLabel(provider);
-    if (!label) return "";
+    if (!label) return null;
     const key = providerKey(provider).toLowerCase().replace(/[^a-z0-9-]+/g, "");
     const logo = providerLogo(provider);
-    const icon = logo
-      ? `<img class="cw-profile-provider-logo" src="${esc(logo)}" alt="" loading="lazy" onerror="this.hidden=true;this.nextElementSibling.hidden=false">`
-      : "";
-    const fallbackHidden = logo ? " hidden" : "";
-    return `<span class="cw-profile-provider-badge" data-provider="${esc(key)}">${icon}<span class="cw-profile-provider-fallback"${fallbackHidden}>${esc(label)}</span><span>${esc(label)}</span></span>`;
+    const badge = document.createElement("span");
+    badge.className = "cw-profile-provider-badge";
+    badge.dataset.provider = key;
+
+    const fallback = document.createElement("span");
+    fallback.className = "cw-profile-provider-fallback";
+    fallback.textContent = label;
+    if (logo) {
+      const icon = document.createElement("img");
+      icon.className = "cw-profile-provider-logo";
+      icon.src = logo;
+      icon.alt = "";
+      icon.loading = "lazy";
+      icon.addEventListener("error", () => {
+        icon.hidden = true;
+        fallback.hidden = false;
+      }, { once: true });
+      fallback.hidden = true;
+      badge.appendChild(icon);
+    }
+
+    const text = document.createElement("span");
+    text.textContent = label;
+    badge.append(fallback, text);
+    return badge;
   };
   const providerOf = (item) => item?.source || item?.provider || item?.sources?.[0]?.provider || "";
   const mediaValue = (item) => String(item?.media_type || item?.type || item?.art_type || "").toLowerCase();
@@ -446,10 +466,11 @@
     $("#profile-last-poster").src = poster(item, "w185");
     $("#profile-last-title").textContent = titleOf(item);
     $("#profile-last-meta").textContent = [episodeOf(item) || yearOf(item), relTime(item.ts || item.last_watched_at || item.watched_at)].filter(Boolean).join(" - ");
-    const provider = providerBadgeHtml(providerOf(item));
+    const provider = providerBadgeElement(providerOf(item));
     const providerNode = $("#profile-last-provider");
     if (providerNode) {
-      providerNode.innerHTML = provider;
+      providerNode.replaceChildren();
+      if (provider) providerNode.appendChild(provider);
       providerNode.hidden = !provider;
     }
   }
