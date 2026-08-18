@@ -474,7 +474,7 @@ export default {
             <span id="ev-mode"></span>
             <button class="ev-tbtn" id="ev-more" type="button" aria-expanded="false"><span class="material-symbols-rounded" aria-hidden="true">tune</span><span>More filters</span><span class="ev-more-dot" id="ev-more-dot" hidden></span><span class="material-symbols-rounded ev-tbtn-caret" aria-hidden="true">expand_more</span></button>
             <button class="ev-tbtn ev-tbtn-refresh" id="ev-refresh" type="button"><span class="material-symbols-rounded" aria-hidden="true">refresh</span><span>Refresh</span></button>
-            <button class="ev-tbtn" id="ev-clear" type="button" title="Delete all events from the archive"><span class="material-symbols-rounded" aria-hidden="true">delete_sweep</span><span>Clear</span></button>
+            ${isAdmin ? `<button class="ev-tbtn" id="ev-clear" type="button" title="Delete all events from the archive"><span class="material-symbols-rounded" aria-hidden="true">delete_sweep</span><span>Clear</span></button>` : ``}
           </div>
           <div class="ev-morefilters" id="ev-morefilters" hidden>
             <div class="ev-mf-row">
@@ -1047,10 +1047,12 @@ export default {
     };
 
     let toastTimer = null;
-    const showToast = (msg, undoFn) => {
+    const showToast = (msg, undoFn, tone) => {
       clearTimeout(toastTimer);
+      const bad = tone === "error";
       toastEl.hidden = false;
-      toastEl.innerHTML = `<span class="material-symbols-rounded ev-toast-ic" aria-hidden="true">check_circle</span><span>${esc(msg)}</span>${undoFn ? `<button type="button" class="ev-toast-undo">Undo</button>` : ""}`;
+      toastEl.classList.toggle("ev-toast-error", bad);
+      toastEl.innerHTML = `<span class="material-symbols-rounded ev-toast-ic" aria-hidden="true">${bad ? "error" : "check_circle"}</span><span>${esc(msg)}</span>${undoFn ? `<button type="button" class="ev-toast-undo">Undo</button>` : ""}`;
       toastEl.querySelector(".ev-toast-undo")?.addEventListener("click", async () => {
         clearTimeout(toastTimer);
         toastEl.hidden = true;
@@ -1831,7 +1833,7 @@ export default {
       btn.classList.toggle("on", open);
     });
     Q("#ev-refresh", root).addEventListener("click", () => doRefresh());
-    Q("#ev-clear", root).addEventListener("click", async () => {
+    Q("#ev-clear", root)?.addEventListener("click", async () => {
       const label = domain === "audit" ? "audit" : (domain === "scrobble" ? "scrobble" : "sync");
       if (!window.confirm(`Delete all ${label} events from the archive?\n\nThis clears the ${label} history from the SQLite event archive.\nThis cannot be undone.`)) return;
       const btn = Q("#ev-clear", root);
@@ -1841,8 +1843,9 @@ export default {
         if (!alive) return;
         state.selected = null; state.collapsed.clear(); clearDetail();
         await load(0);
-        showToast(res?.ok ? `Archive cleared (${state.total} remaining).` : "Clear failed.");
-      } catch (err) { showToast(`Clear failed: ${err.message}`); } finally { btn?.classList.remove("busy"); }
+        if (res?.ok) showToast(`Archive cleared (${state.total} remaining).`);
+        else showToast("Clear failed.", null, "error");
+      } catch (err) { showToast(`Clear failed: ${err.message}`, null, "error"); } finally { btn?.classList.remove("busy"); }
     });
     Q("#ev-prev-top", root).addEventListener("click", () => { if (state.page > 0) load(state.page - 1); });
     Q("#ev-next-top", root).addEventListener("click", () => { if (state.page < pageCount() - 1) load(state.page + 1); });
