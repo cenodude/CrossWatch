@@ -496,24 +496,28 @@ window.cwIsAuthSetupPending = () => window.__cwAuthSetupPending === true;
         const meta = boot?.meta || {};
         if (!boot?.meta && !forceSetup) return;
 
-        async function ensureModals() {
-          if (typeof window.openUpgradeWarning === "function" || typeof window.openSetupWizard === "function") return true;
+        async function ensureModals(required) {
+          const ready = () => typeof window[required] === "function";
+          if (ready()) return true;
           try {
             const v = encodeURIComponent(String(window.APP_VERSION || window.__CW_VERSION__ || Date.now()));
             await import(`/assets/js/modals.js?v=${v}`);
-            return true;
           } catch (e) {
             console.warn("[crosswatch] modals.js failed to load/execute", e);
-            return false;
           }
+          for (let i = 0; i < 100 && !ready(); i++) {
+            await new Promise(r => setTimeout(r, 50));
+          }
+          if (!ready()) console.warn(`[crosswatch] modals.js loaded but ${required} is unavailable`);
+          return ready();
         }
 
         const firstRun = await _cwShouldOpenSetupWizard(meta);
 
         if (firstRun) {
-          if (await ensureModals()) {
+          if (await ensureModals("openSetupWizard")) {
             try {
-              await window.openSetupWizard?.({
+              await window.openSetupWizard({
                 ...meta,
                 auth_setup_required: true,
                 setup_wizard_required: true,
@@ -525,7 +529,7 @@ window.cwIsAuthSetupPending = () => window.__cwAuthSetupPending === true;
         }
 
         if (meta.needs_upgrade) {
-          if (await ensureModals()) { try { await window.openUpgradeWarning?.(meta); } catch (e) { console.warn(e); } }
+          if (await ensureModals("openUpgradeWarning")) { try { await window.openUpgradeWarning(meta); } catch (e) { console.warn(e); } }
         }
       } catch {}
     })();

@@ -2146,6 +2146,12 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                         for inst in insts
                         if _prov_configured(cfg, prov, inst)
                     }
+                else:
+                    insts = {
+                        inst
+                        for inst in insts
+                        if inst != "default" or _prov_configured(cfg, prov, inst)
+                    }
                 if insts:
                     configured_instances[prov] = insts
 
@@ -2162,9 +2168,11 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 }
                 if used:
                     return used
-                if "default" in insts:
+                ready = {inst for inst in insts if _prov_configured(cfg, prov, inst)}
+                pool = ready or insts
+                if "default" in pool:
                     return {"default"}
-                return {sorted(insts, key=lambda x: (x != "default", x))[0]}
+                return {sorted(pool, key=lambda x: (x != "default", x))[0]}
 
             for prov in DETAIL_PROBES.keys():
                 for inst in _probe_targets_for(prov):
@@ -2202,7 +2210,11 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
 
             def _rep_instance(prov: str) -> str:
                 items = per.get(prov) or {}
-                used = used_instances.get(prov) or set()
+                used = {
+                    inst
+                    for inst in (used_instances.get(prov) or set())
+                    if _prov_configured(cfg, prov, inst)
+                }
                 used_non_default = sorted([i for i in used if i != "default"])
 
                 for inst in used_non_default:
@@ -2224,6 +2236,13 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 for inst, tup in items.items():
                     if tup[0]:
                         return inst
+
+                probed = sorted(
+                    [i for i in items if _prov_configured(cfg, prov, i)],
+                    key=lambda x: (x != "default", x),
+                )
+                if probed:
+                    return probed[0]
 
                 if "default" in items:
                     return "default"
@@ -2337,7 +2356,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 ok_count = 0
                 probed_count = 0
                 for inst in inst_ids:
-                    payload: dict[str, Any] = {"configured": True, "probed": False}
+                    payload: dict[str, Any] = {"configured": bool(_prov_configured(cfg, prov, inst)), "probed": False}
                     if inst in items:
                         ok, rsn, _ = items.get(inst) or (False, "", {})
                         payload["connected"] = bool(ok)
