@@ -890,7 +890,7 @@ def test_simkl_special_episode_remove_uses_episode_lookup_ids(monkeypatch) -> No
             payload = {"movies": [], "shows": [], "anime": []}
             return SimpleNamespace(status_code=200, ok=True, text="json", headers={}, json=lambda: payload)
 
-    monkeypatch.setattr(simkl_history, "_cache_save", lambda _items: None)
+    monkeypatch.setattr(simkl_history, "_cache_save", lambda _items, **_kw: None)
     monkeypatch.setattr(simkl_history, "_forget_source_aliases", lambda _items: None)
     monkeypatch.setattr(simkl_history, "_unfreeze", lambda _keys: None)
     adapter = SimpleNamespace(
@@ -2517,16 +2517,24 @@ def test_black_mirror_episode_not_found_reaches_retry(monkeypatch) -> None:
 # --- SIMKL delta must expose deletions; Trakt exact-identity deletion ---
 
 
-def _simkl_index_env(monkeypatch, tmp_path, *, cached, rows, acts):
+def _simkl_index_env(monkeypatch, tmp_path, *, cached, rows, acts, history_removed=""):
     import providers.sync.simkl._history as sh
 
     calls = {"since": [], "saved": []}
 
     monkeypatch.setattr(sh, "_cache_load", lambda: dict(cached))
-    monkeypatch.setattr(sh, "_cache_doc_is_stale", lambda: False)
-    monkeypatch.setattr(sh, "_cache_save", lambda items: calls["saved"].append(dict(items)))
+    monkeypatch.setattr(sh, "_cache_doc_is_stale", lambda *_a, **_kw: False)
+    monkeypatch.setattr(sh, "_cache_save", lambda items, **_kw: calls["saved"].append(dict(items)))
     monkeypatch.setattr(sh, "normalize_flat_watermarks", lambda: None)
-    monkeypatch.setattr(sh, "get_watermark", lambda name: "2024-01-01T00:00:00Z" if name == "history" else "")
+    monkeypatch.setattr(
+        sh,
+        "get_watermark",
+        lambda name: (
+            "2024-01-01T00:00:00Z"
+            if name == "history"
+            else (history_removed if name == "history_removed" else "")
+        ),
+    )
     monkeypatch.setattr(sh, "update_watermark_if_new", lambda *a, **k: None)
     monkeypatch.setattr(sh, "_unfreeze", lambda *a, **k: None)
     monkeypatch.setattr(sh, "fetch_activities", lambda *a, **k: (acts, None))
@@ -2547,16 +2555,30 @@ def _simkl_adapter():
     )
 
 
-def _simkl_acts(*, movies=None, shows=None, anime=None):
-    return {"tv_shows": {"all": shows or "2024-01-01T00:00:00Z"},
-            "movies": {"all": movies or "2024-01-01T00:00:00Z"},
-            "anime": {"all": anime or "2024-01-01T00:00:00Z"}}
+def _simkl_acts(*, movies=None, shows=None, anime=None, removed_movies=None, removed_shows=None, removed_anime=None):
+    out = {"tv_shows": {"all": shows or "2024-01-01T00:00:00Z"},
+           "movies": {"all": movies or "2024-01-01T00:00:00Z"},
+           "anime": {"all": anime or "2024-01-01T00:00:00Z"}}
+    if removed_movies:
+        out["movies"]["removed_from_list"] = removed_movies
+    if removed_shows:
+        out["tv_shows"]["removed_from_list"] = removed_shows
+    if removed_anime:
+        out["anime"]["removed_from_list"] = removed_anime
+    return out
 
 
 def test_simkl_anime_removal_triggers_full_replacement(monkeypatch, tmp_path) -> None:
     cached = {"tmdb:12971#s01e40@1704067200": {"type": "episode", "season": 1, "episode": 40}}
-    acts = _simkl_acts(anime="2026-07-21T00:00:00Z")
-    sh, calls = _simkl_index_env(monkeypatch, tmp_path, cached=cached, rows={"movies": [], "shows": [], "anime": []}, acts=acts)
+    acts = _simkl_acts(anime="2026-07-21T00:00:00Z", removed_anime="2026-07-21T00:00:00Z")
+    sh, calls = _simkl_index_env(
+        monkeypatch,
+        tmp_path,
+        cached=cached,
+        rows={"movies": [], "shows": [], "anime": []},
+        acts=acts,
+        history_removed="2024-01-01T00:00:00Z",
+    )
 
     out = sh.build_index(_simkl_adapter())
 
@@ -2567,8 +2589,15 @@ def test_simkl_anime_removal_triggers_full_replacement(monkeypatch, tmp_path) ->
 
 def test_simkl_regular_show_removal_triggers_full_replacement(monkeypatch, tmp_path) -> None:
     cached = {"tmdb:225634#s01e01@1704067200": {"type": "episode", "season": 1, "episode": 1}}
-    acts = _simkl_acts(shows="2026-07-21T00:00:00Z")
-    sh, calls = _simkl_index_env(monkeypatch, tmp_path, cached=cached, rows={"movies": [], "shows": [], "anime": []}, acts=acts)
+    acts = _simkl_acts(shows="2026-07-21T00:00:00Z", removed_shows="2026-07-21T00:00:00Z")
+    sh, calls = _simkl_index_env(
+        monkeypatch,
+        tmp_path,
+        cached=cached,
+        rows={"movies": [], "shows": [], "anime": []},
+        acts=acts,
+        history_removed="2024-01-01T00:00:00Z",
+    )
 
     out = sh.build_index(_simkl_adapter())
 

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 
 AOT_SHOW_IDS = {"tmdb": "1429", "tvdb": "267440", "simkl": 1429000}
+BB_SHOW_IDS = {"tmdb": "1396", "tvdb": "81189", "simkl": 1396000}
 OLD_WATCHED = "2024-01-01T00:00:00Z"
 NEW_WATCHED = "2024-06-01T00:00:00Z"
 
@@ -17,14 +18,22 @@ def _state_store(monkeypatch, m):
     return store
 
 
-def _aot_row(coords, watched_at=OLD_WATCHED):
+def _show_row(coords, watched_at=OLD_WATCHED, *, title="Attack on Titan", year=2013, ids=None):
     seasons: dict[int, list[dict]] = {}
     for s, e in coords:
         seasons.setdefault(s, []).append({"number": e, "watched_at": watched_at})
     return {
-        "show": {"title": "Attack on Titan", "year": 2013, "ids": dict(AOT_SHOW_IDS)},
+        "show": {"title": title, "year": year, "ids": dict(ids or AOT_SHOW_IDS)},
         "seasons": [{"number": s, "episodes": eps} for s, eps in sorted(seasons.items())],
     }
+
+
+def _aot_row(coords, watched_at=OLD_WATCHED):
+    return _show_row(coords, watched_at, title="Attack on Titan", year=2013, ids=AOT_SHOW_IDS)
+
+
+def _bb_row(coords, watched_at=OLD_WATCHED):
+    return _show_row(coords, watched_at, title="Breaking Bad", year=2008, ids=BB_SHOW_IDS)
 
 
 def _coords_of(index):
@@ -32,6 +41,14 @@ def _coords_of(index):
         (v["season"], v["episode"])
         for v in index.values()
         if str(v.get("type")) == "episode" and v.get("series_title") == "Attack on Titan"
+    )
+
+
+def _series_coords_of(index, title):
+    return sorted(
+        (v["season"], v["episode"])
+        for v in index.values()
+        if str(v.get("type")) == "episode" and v.get("series_title") == title
     )
 
 
@@ -63,7 +80,7 @@ def _seed_cache(m, coords, watched_at=OLD_WATCHED):
     return seed
 
 
-def test_activity_change_refetches_full_library_without_date_from(monkeypatch):
+def test_activity_change_fetches_delta_with_watermark_and_replaces_touched_show(monkeypatch):
     import sync.simkl._history as m
 
     _state_store(monkeypatch, m)
@@ -97,7 +114,7 @@ def test_activity_change_refetches_full_library_without_date_from(monkeypatch):
 
     out = m.build_index(adapter)
 
-    assert since_seen == [None]
+    assert since_seen == [OLD_WATCHED]
     assert _coords_of(out) == sorted(seeded + [(4, 29)])
     assert out[stale_key]["series_title"] == "Attack on Titan"
     assert m._cache_load().keys() == out.keys()
@@ -109,6 +126,10 @@ def test_absent_episode_is_dropped_immediately(monkeypatch):
     _state_store(monkeypatch, m)
     seeded = [(1, 1), (1, 2), (2, 1)]
     _seed_cache(m, seeded)
+    legacy = m._cache_load()
+    for row in legacy.values():
+        row.pop("_cw_scope", None)
+    m._cache_save(legacy)
 
     surviving = {"movies": [], "shows": [_aot_row([(1, 1), (2, 1)], OLD_WATCHED)], "anime": []}
     adapter = _patch_index_env(
@@ -124,6 +145,163 @@ def test_absent_episode_is_dropped_immediately(monkeypatch):
 
     assert _coords_of(out) == [(1, 1), (2, 1)]
     assert m._cache_load().keys() == out.keys()
+
+
+def test_delta_touching_one_show_leaves_other_show_cached(monkeypatch):
+    import sync.simkl._history as m
+
+    _state_store(monkeypatch, m)
+    seed, *_ = m._parse_rows([], [_aot_row([(1, 1)]), _bb_row([(1, 1), (1, 2)])], [], limit=None)
+    m._cache_save(seed)
+
+    rows = {"movies": [], "shows": [_aot_row([(1, 1), (1, 2)], NEW_WATCHED)], "anime": []}
+    adapter = _patch_index_env(
+        monkeypatch,
+        m,
+        watermark=OLD_WATCHED,
+        removed_watermark="",
+        acts=_acts(NEW_WATCHED),
+        rows=rows,
+    )
+
+    out = m.build_index(adapter)
+
+    assert _series_coords_of(out, "Attack on Titan") == [(1, 1), (1, 2)]
+    assert _series_coords_of(out, "Breaking Bad") == [(1, 1), (1, 2)]
+
+
+DBZ_S1_IDS = {"tmdb": "12971", "tvdb": "81472", "simkl": 46128}
+DBZ_S2_IDS = {"tmdb": "12972", "tvdb": "81472", "simkl": 46129}
+
+
+def _anime_row(coords, watched_at=OLD_WATCHED, *, title, ids):
+    row = _show_row(coords, watched_at, title=title, year=1989, ids=ids)
+    row["anime_type"] = "tv"
+    return row
+
+
+def test_delta_on_split_anime_record_keeps_the_sibling_record(monkeypatch):
+    import sync.simkl._history as m
+
+    _state_store(monkeypatch, m)
+    seed, *_ = m._parse_rows(
+        [],
+        [],
+        [
+            _anime_row([(1, 1), (1, 2)], title="Dragon Ball Z", ids=DBZ_S1_IDS),
+            _anime_row([(1, 1), (1, 2)], title="Dragon Ball Z Season 2", ids=DBZ_S2_IDS),
+        ],
+        limit=None,
+    )
+    m._cache_save(seed)
+    assert _series_coords_of(seed, "Dragon Ball Z Season 2") == [(1, 1), (1, 2)]
+
+    rows = {
+        "movies": [],
+        "shows": [],
+        "anime": [_anime_row([(1, 1), (1, 2), (1, 3)], NEW_WATCHED, title="Dragon Ball Z", ids=DBZ_S1_IDS)],
+    }
+    adapter = _patch_index_env(
+        monkeypatch,
+        m,
+        watermark=OLD_WATCHED,
+        removed_watermark="",
+        acts=_acts(NEW_WATCHED),
+        rows=rows,
+    )
+
+    out = m.build_index(adapter)
+
+    assert _series_coords_of(out, "Dragon Ball Z") == [(1, 1), (1, 2), (1, 3)]
+    assert _series_coords_of(out, "Dragon Ball Z Season 2") == [(1, 1), (1, 2)]
+
+
+def test_empty_delta_keeps_cache(monkeypatch):
+    import sync.simkl._history as m
+
+    _state_store(monkeypatch, m)
+    seed = _seed_cache(m, [(1, 1), (1, 2)])
+    since_seen: list = []
+    adapter = _patch_index_env(
+        monkeypatch,
+        m,
+        watermark=OLD_WATCHED,
+        removed_watermark="",
+        acts=_acts(NEW_WATCHED),
+        rows={"movies": [], "shows": [], "anime": []},
+    )
+    monkeypatch.setattr(
+        m, "_fetch_all_items",
+        lambda *a, since_iso=None, **k: (since_seen.append(since_iso), {"movies": [], "shows": [], "anime": []})[1],
+    )
+
+    out = m.build_index(adapter)
+
+    assert since_seen == [OLD_WATCHED]
+    assert out == seed
+
+
+def test_rewatch_mode_uses_the_watermark_and_keeps_cache(monkeypatch):
+    import sync.simkl._history as m
+
+    _state_store(monkeypatch, m)
+    seed, *_ = m._parse_rows([], [_aot_row([(1, 1)]), _bb_row([(1, 1), (1, 2)])], [], limit=None)
+    m._cache_save(seed, rewatches=True)
+
+    since_seen: list = []
+    rows = {"movies": [], "shows": [_aot_row([(1, 1), (1, 2)], NEW_WATCHED)], "anime": []}
+    adapter = _patch_index_env(
+        monkeypatch,
+        m,
+        watermark=OLD_WATCHED,
+        removed_watermark="",
+        acts=_acts(NEW_WATCHED),
+        rows=rows,
+    )
+    adapter.config = {"_cw_history_rewatches": True}
+    monkeypatch.setattr(m, "_rewatch_account_ok", lambda *a, **k: True)
+    monkeypatch.setattr(
+        m, "_fetch_all_items",
+        lambda *a, since_iso=None, **k: (since_seen.append(since_iso), dict(rows))[1],
+    )
+
+    out = m.build_index(adapter)
+
+    assert since_seen == [OLD_WATCHED]
+    assert _series_coords_of(out, "Attack on Titan") == [(1, 1), (1, 2)]
+    assert _series_coords_of(out, "Breaking Bad") == [(1, 1), (1, 2)]
+
+
+def test_rewatch_toggle_forces_a_cold_full_pull(monkeypatch):
+    import sync.simkl._history as m
+
+    _state_store(monkeypatch, m)
+    seed = _seed_cache(m, [(1, 1), (1, 2)])
+    m._cache_save(seed, rewatches=False)
+    assert m._cache_doc_is_stale(True) is True
+    assert m._cache_doc_is_stale(False) is False
+
+    since_seen: list = []
+    rows = {"movies": [], "shows": [_aot_row([(1, 1)], NEW_WATCHED)], "anime": []}
+    adapter = _patch_index_env(
+        monkeypatch,
+        m,
+        watermark=OLD_WATCHED,
+        removed_watermark="",
+        acts=_acts(NEW_WATCHED),
+        rows=rows,
+    )
+    adapter.config = {"_cw_history_rewatches": True}
+    monkeypatch.setattr(m, "_rewatch_account_ok", lambda *a, **k: True)
+    monkeypatch.setattr(
+        m, "_fetch_all_items",
+        lambda *a, since_iso=None, **k: (since_seen.append(since_iso), dict(rows))[1],
+    )
+
+    out = m.build_index(adapter)
+
+    assert since_seen == [None]
+    assert _coords_of(out) == [(1, 1)]
 
 
 def test_removal_refresh_replaces_cache_and_prunes(monkeypatch):
@@ -150,7 +328,7 @@ def test_removal_refresh_replaces_cache_and_prunes(monkeypatch):
     assert m._cache_load().keys() == out.keys()
 
 
-def test_injected_episode_survives_full_replace_within_grace(monkeypatch):
+def test_injected_episode_survives_delta_replace_within_grace(monkeypatch):
     import sync.simkl._history as m
 
     _state_store(monkeypatch, m)

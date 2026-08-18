@@ -441,15 +441,26 @@ def _cache_load() -> dict[str, dict[str, Any]]:
     return out
 
 
-def _cache_doc_is_stale() -> bool:
+def _cache_doc_mode() -> bool:
+    data = _load_json(_cache_path())
+    return bool(data.get("rewatches")) if isinstance(data, dict) else False
+
+
+def _cache_doc_is_stale(rewatches: bool | None = None) -> bool:
     data = _load_json(_cache_path())
     if not isinstance(data, dict) or not data:
         return False
-    return int(data.get("schema") or 0) != _CACHE_SCHEMA
+    if int(data.get("schema") or 0) != _CACHE_SCHEMA:
+        return True
+    return rewatches is not None and bool(data.get("rewatches")) != bool(rewatches)
 
 
-def _cache_save(items: Mapping[str, Any]) -> None:
-    _save_json(_cache_path(), {"schema": _CACHE_SCHEMA, "generated_at": _as_iso(_now_epoch()), "items": dict(items)})
+def _cache_save(items: Mapping[str, Any], *, rewatches: bool | None = None) -> None:
+    mode = _cache_doc_mode() if rewatches is None else bool(rewatches)
+    _save_json(
+        _cache_path(),
+        {"schema": _CACHE_SCHEMA, "generated_at": _as_iso(_now_epoch()), "rewatches": mode, "items": dict(items)},
+    )
 
 
 def _with_native_identity(item: Mapping[str, Any], info: Mapping[str, Any] | None) -> Mapping[str, Any]:
@@ -538,6 +549,9 @@ def _inject_adds_into_cache(items_list: list[Mapping[str, Any]]) -> None:
             anime_type = str(item.get("anime_type") or "").strip().lower()
             if anime_type:
                 entry["anime_type"] = anime_type
+        scope = _history_scope(entry, event_key=event_key)
+        if scope:
+            entry["_cw_scope"] = scope
         entry["_cw_injected_at"] = int(time.time())
         to_inject[event_key] = entry
 
@@ -962,6 +976,115 @@ def _show_identity_key(show_ids: Mapping[str, Any]) -> str:
     return json.dumps({str(k): str(v) for k, v in show_ids.items() if v not in (None, "")}, sort_keys=True)
 
 
+_SCOPE_ID_PRIORITY = ("simkl", "anidb", "mal", "anilist", "kitsu", "tmdb", "imdb", "trakt", "tvdb")
+_SCOPE_ID_PRIORITY_ANIME = tuple(k for k in _SCOPE_ID_PRIORITY if k != "tvdb")
+
+
+def _scope_id(value: Any) -> str:
+    if value in (None, "", True, False):
+        return ""
+    text = str(value).strip()
+    return text.lower() if text.lower().startswith("tt") else text
+
+
+def _scope_ids(item: Mapping[str, Any], field: str) -> Mapping[str, Any]:
+    value = item.get(field)
+    return value if isinstance(value, Mapping) else {}
+
+
+def _scope_priority(item: Mapping[str, Any]) -> tuple[str, ...]:
+    bucket = str(item.get("simkl_bucket") or "").strip().lower()
+    if bucket == "anime" or str(item.get("anime_type") or "").strip():
+        return _SCOPE_ID_PRIORITY_ANIME
+    return _SCOPE_ID_PRIORITY
+
+
+def _scope_tokens(prefix: str, ids: Mapping[str, Any], priority: tuple[str, ...]) -> set[str]:
+    out: set[str] = set()
+    for key in priority:
+        value = _scope_id((ids or {}).get(key))
+        if value:
+            out.add(f"{prefix}:{key}:{value}")
+    return out
+
+
+def _primary_scope(prefix: str, ids: Mapping[str, Any], priority: tuple[str, ...]) -> str:
+    for key in priority:
+        value = _scope_id((ids or {}).get(key))
+        if value:
+            return f"{prefix}:{key}:{value}"
+    return ""
+
+
+def _history_scope(item: Mapping[str, Any], *, event_key: str | None = None) -> str:
+    typ = str(item.get("type") or "").strip().lower()
+    priority = _scope_priority(item)
+    if typ == "episode":
+        scope = _primary_scope("show", _scope_ids(item, "show_ids"), priority)
+        if scope:
+            return scope
+        if event_key and "#" in event_key:
+            return f"show:key:{str(event_key).split('@', 1)[0].split('#', 1)[0]}"
+        return ""
+    return _primary_scope(typ or "item", _scope_ids(item, "ids"), priority) or (str(event_key).split("@", 1)[0] if event_key else "")
+
+
+_SCOPE_FALLBACK_NS = "key"
+
+
+def _history_scope_map(item: Mapping[str, Any], *, event_key: str | None = None) -> dict[str, str]:
+    typ = str(item.get("type") or "").strip().lower()
+    priority = _scope_priority(item)
+    out: dict[str, str] = {}
+    if typ == "episode":
+        for token in _scope_tokens("show", _scope_ids(item, "show_ids"), priority):
+            out[token.split(":", 2)[1]] = token
+        if event_key and "#" in event_key:
+            out[_SCOPE_FALLBACK_NS] = f"show:key:{str(event_key).split('@', 1)[0].split('#', 1)[0]}"
+    else:
+        for token in _scope_tokens(typ or "item", _scope_ids(item, "ids"), priority):
+            out[token.split(":", 2)[1]] = token
+        if event_key:
+            out[_SCOPE_FALLBACK_NS] = str(event_key).split("@", 1)[0]
+    stored = str(item.get("_cw_scope") or "").strip()
+    if stored:
+        parts = stored.split(":", 2)
+        if len(parts) == 3:
+            out.setdefault(parts[1], stored)
+    return {ns: token for ns, token in out.items() if token}
+
+
+def _delta_replace_cache(
+    cached: Mapping[str, Any],
+    fetched: Mapping[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    touched: dict[str, set[str]] = {}
+    for key, value in fetched.items():
+        if not isinstance(value, Mapping):
+            continue
+        for ns, token in _history_scope_map(value, event_key=str(key)).items():
+            touched.setdefault(ns, set()).add(token)
+    if not touched:
+        return {str(k): dict(v) for k, v in cached.items() if isinstance(v, Mapping)}
+
+    final: dict[str, dict[str, Any]] = {}
+    for key, value in cached.items():
+        if not isinstance(value, Mapping):
+            continue
+        scope = _history_scope_map(value, event_key=str(key))
+        replaced = False
+        for ns in (*_scope_priority(value), _SCOPE_FALLBACK_NS):
+            token = scope.get(ns)
+            if token is None or ns not in touched:
+                continue
+            replaced = token in touched[ns]
+            break
+        if not replaced:
+            final[str(key)] = dict(value)
+    final.update({str(k): dict(v) for k, v in fetched.items() if isinstance(v, Mapping)})
+    return final
+
+
 def _watched_raw_coordinates(row: Mapping[str, Any]) -> set[tuple[int, int]]:
     coords: set[tuple[int, int]] = set()
     for season in row.get("seasons") or []:
@@ -1070,6 +1193,9 @@ def _parse_rows(
         event_key = f"{bucket_key}@{ts}"
         if event_key in out:
             continue
+        scope = _history_scope(movie_norm, event_key=event_key)
+        if scope:
+            movie_norm["_cw_scope"] = scope
         out[event_key] = movie_norm
         thaw.add(bucket_key)
         movies_cnt += 1
@@ -1136,6 +1262,9 @@ def _parse_rows(
                     bucket_key = simkl_key_of(movie_item)
                     event_key = f"{bucket_key}@{ts}"
                     if event_key not in out:
+                        scope = _history_scope(movie_item, event_key=event_key)
+                        if scope:
+                            movie_item["_cw_scope"] = scope
                         out[event_key] = movie_item
                         thaw.add(bucket_key)
                         added += 1
@@ -1295,6 +1424,9 @@ def _parse_rows(
                 event_key = f"{bucket_key}@{ts}"
                 if event_key in out:
                     continue
+                scope = _history_scope(ep, event_key=event_key)
+                if scope:
+                    ep["_cw_scope"] = scope
                 out[event_key] = ep
                 thaw.add(bucket_key)
                 eps_cnt += 1
@@ -1325,10 +1457,11 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
     normalize_flat_watermarks()
     rewatches = _rewatches_enabled(adapter)
 
-    cached = {} if rewatches else _cache_load()
-    cache_stale = True if rewatches else _cache_doc_is_stale()
+    cached = _cache_load()
+    cache_stale = _cache_doc_is_stale(rewatches)
     wm = "" if cache_stale else (get_watermark("history") or "")
     removed_wm = get_watermark("history_removed") or ""
+    expired_injection = bool(cached and _has_expired_injection(cached))
 
     acts, _ = fetch_activities(session, _headers(adapter, force_refresh=True), timeout=timeout)
 
@@ -1347,9 +1480,8 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
         removal_changed = bool(removed_wm) and any(t > removed_wm for t in removal_candidates)
 
         unchanged = bool(wm) and (not act_latest or act_latest <= wm) and not removal_changed
-        if unchanged and cached and _has_expired_injection(cached):
+        if unchanged and expired_injection:
             unchanged = False
-            _dbg("index_reconcile", reason="injected_grace_expired", strategy="full_replace")
         if unchanged and cached:
             _dbg("index_cache_hit", source="cache", reason="activities_unchanged", watermark=wm, count=len(cached))
             _info("index_done", count=len(cached), source="cache")
@@ -1370,10 +1502,14 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
         date_from: str | None = None
         strategy = "full"
         reason = "cold_start"
-    else:
+    elif removal_changed or expired_injection:
         date_from = None
         strategy = "full_replace"
-        reason = "removed_from_list_changed" if removal_changed else "activities_changed"
+        reason = "removed_from_list_changed" if removal_changed else "injected_grace_expired"
+    else:
+        date_from = wm
+        strategy = "delta_replace"
+        reason = "activities_changed"
 
     _dbg("index_reconcile", reason=reason, strategy=strategy, date_from=date_from or "-", watermark=wm or "-")
 
@@ -1406,7 +1542,14 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
         _dedupe_history_movies(fetched)
     _dbg("index_fetch_counts", movies=movies_cnt, episodes=eps_cnt, from_date=date_from or "")
 
-    final = fetched
+    if strategy == "delta_replace":
+        final = _delta_replace_cache(cached, fetched)
+        if not rewatches:
+            _dedupe_history_movies(final)
+        if not fetched and movies_cnt == 0 and eps_cnt == 0:
+            _dbg("index_reconcile", reason="incremental_empty", strategy="delta_keep_cache", watermark=wm or "-")
+    else:
+        final = fetched
     carried = 0
     now_epoch = int(time.time())
     for k, v in cached.items():
@@ -1420,19 +1563,17 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
     if carried:
         _dbg("index_reconcile", reason="injected_write_grace", carried=carried, strategy=strategy)
 
-    if not rewatches:
-        _cache_save(final)
+    _cache_save(final, rewatches=rewatches)
 
-    if not rewatches:
-        latest_any = max([t for t in (latest_ts_movies, latest_ts_shows, latest_ts_anime) if isinstance(t, int)], default=None)
-        if act_latest:
-            update_watermark_if_new("history", act_latest)
-        elif latest_any is not None:
-            update_watermark_if_new("history", _as_iso(latest_any))
+    latest_any = max([t for t in (latest_ts_movies, latest_ts_shows, latest_ts_anime) if isinstance(t, int)], default=None)
+    if act_latest:
+        update_watermark_if_new("history", act_latest)
+    elif latest_any is not None:
+        update_watermark_if_new("history", _as_iso(latest_any))
 
-        removal_candidates = [t for t in (rm_m, rm_s, rm_a) if isinstance(t, str) and t]
-        if removal_candidates:
-            update_watermark_if_new("history_removed", max(removal_candidates))
+    removal_candidates = [t for t in (rm_m, rm_s, rm_a) if isinstance(t, str) and t]
+    if removal_candidates:
+        update_watermark_if_new("history_removed", max(removal_candidates))
 
     if not rewatches:
         _unfreeze(thaw)
