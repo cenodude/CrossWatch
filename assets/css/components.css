@@ -509,8 +509,3 @@ html[data-cw-theme="flat-dark"] .cx-modal-shell:has(#cx-modal.editor-raw-modal){
 .sc2-route-card.has-user-profile:not(.is-disabled):not(.sc2-route-add-card)::after{background:linear-gradient(180deg,#7c5cff,rgba(124,92,255,0.5))}
 .sc2-route-card.has-user-profile.is-live:not(.is-disabled):not(.sc2-route-add-card)::after{background:linear-gradient(180deg,#7c5cff,rgba(124,92,255,0.55));box-shadow:0 0 18px rgba(124,92,255,0.42)}
 
-.scrm-lock-note{display:flex;align-items:flex-start;gap:10px;margin:0 0 12px;padding:11px 14px;border:1px solid rgba(124,92,255,0.4);border-radius:12px;background:rgba(124,92,255,0.1)}
-.scrm-lock-note .material-symbols-rounded{flex:0 0 auto;color:#a78bfa;font-size:19px;line-height:1.2}
-.scrm-lock-note strong{display:block;color:rgba(235,240,255,0.95);font-size:13px;font-weight:900}
-.scrm-lock-note p{margin:3px 0 0;color:rgba(196,205,232,0.78);font-size:12px;font-weight:650}
-.scrm-route-grid.is-profile-locked select[disabled]{opacity:0.62;cursor:not-allowed}

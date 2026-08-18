@@ -18,11 +18,11 @@ on:
       draft:
         description: "Create the GitHub Release as a draft"
         type: boolean
-        default: false
+        default: true
       discussion:
         description: "Create a discussion for this release"
         type: boolean
-        default: true
+        default: false
       discussion_category:
         description: "Discussion category"
         type: choice
@@ -97,10 +97,29 @@ jobs:
             exit 1
           fi
 
-          echo "Releasing v${version}"
+          if [ -n "${IN_VERSION}" ]; then
+            if [ -n "${last}" ]; then
+              IFS=. read -r prev_major prev_minor _prev_patch <<< "${last#v}"
+              IFS=. read -r new_major new_minor _new_patch <<< "${version}"
+              if [ "${prev_major}" = "${new_major}" ] && [ "${prev_minor}" = "${new_minor}" ]; then
+                kind="Update"
+              else
+                kind="Release"
+              fi
+            else
+              kind="Release"
+            fi
+          elif [ "${IN_BUMP}" = "patch" ]; then
+            kind="Update"
+          else
+            kind="Release"
+          fi
+
+          echo "Releasing v${version} as ${kind} ${version}"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "tag=v${version}" >> "$GITHUB_OUTPUT"
           echo "previous=${last}" >> "$GITHUB_OUTPUT"
+          echo "title=${kind} ${version}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
@@ -154,6 +173,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.ver.outputs.tag }}
+          TITLE: ${{ steps.ver.outputs.title }}
           PREVIOUS: ${{ steps.ver.outputs.previous }}
           DRAFT: ${{ inputs.draft }}
           LATEST: ${{ inputs.latest }}
@@ -161,7 +181,7 @@ jobs:
           DISCUSSION_CATEGORY: ${{ inputs.discussion_category }}
         run: |
           set -euo pipefail
-          args=(--title "${TAG}" --generate-notes --verify-tag)
+          args=(--title "${TITLE}" --generate-notes --verify-tag)
           if [ -n "${PREVIOUS}" ]; then args+=(--notes-start-tag "${PREVIOUS}"); fi
           if [ "${DRAFT}" = "true" ]; then args+=(--draft); fi
           if [ "${LATEST}" = "true" ]; then args+=(--latest); fi
