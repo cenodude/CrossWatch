@@ -1807,11 +1807,30 @@ def test_profile_page_supports_admin_account() -> None:
 
 
 def test_profile_admin_menu_opens_local_modals_without_main_flash() -> None:
-    import re
     import subprocess
     import sys
+    from html.parser import HTMLParser
 
     import ui_frontend
+
+    class ScriptCollector(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__()
+            self.in_script = False
+            self.scripts: list[str] = []
+
+        def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+            if tag.lower() == "script":
+                self.in_script = True
+                self.scripts.append("")
+
+        def handle_endtag(self, tag: str) -> None:
+            if tag.lower() == "script":
+                self.in_script = False
+
+        def handle_data(self, data: str) -> None:
+            if self.in_script and self.scripts:
+                self.scripts[-1] += data
 
     html = ui_frontend.get_profile_html(
         user={"is_admin": True, "username": "admin", "display_name": "Administrator"},
@@ -1827,8 +1846,9 @@ def test_profile_admin_menu_opens_local_modals_without_main_flash() -> None:
     assert 'window.location.href = "/?main=1#"' not in html
     assert 'window.location.href = "/?main=1#about"' not in html
 
-    scripts = re.findall(r"<script(?: [^>]*)?>(.*?)</script>", html, re.S)
-    menu_script = next(script for script in scripts if "cwToggleSettingsMenu" in script)
+    parser = ScriptCollector()
+    parser.feed(html)
+    menu_script = next(script for script in parser.scripts if "cwToggleSettingsMenu" in script)
     script_path = Path(".pytest_tmp") / "profile-menu-script.js"
     script_path.parent.mkdir(exist_ok=True)
     script_path.write_text(menu_script, encoding="utf-8")
@@ -1870,9 +1890,8 @@ def test_profile_last_watched_uses_provider_branding_icons() -> None:
     css = Path("assets/css/profile-page.css").read_text("utf-8")
 
     assert "window.CW?.ProviderMeta?.logoPath?.(provider)" in js
-    assert "providerBadgeElement(providerOf(item))" in js
-    assert "providerNode.replaceChildren();" in js
-    assert "icon.addEventListener(\"error\"" in js
+    assert "providerBadgeHtml(providerOf(item))" in js
+    assert "providerNode.innerHTML = provider;" in js
     assert "cw-profile-provider-badge" in css
     assert "cw-profile-provider-logo" in css
     assert "body.cw-profile-page #dashboard-widgets-card .cw-dash-layout-controls{right:104px;top:14px;gap:10px}" in css
