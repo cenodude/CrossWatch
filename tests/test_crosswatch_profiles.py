@@ -2681,6 +2681,13 @@ def test_version_stamp_file_beats_stale_env(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("APP_VERSION", raising=False)
     assert versionAPI.resolve_current_version() == versionAPI.FALLBACK_VERSION
 
+    # dev images build without the arg, so the placeholder must fall through
+    stamp.write_text("v0.0.0", encoding="utf-8")
+    monkeypatch.setenv("APP_VERSION", "v0.0.0")
+    assert versionAPI.resolve_current_version() == versionAPI.FALLBACK_VERSION
+    stamp.write_text("0.0.0", encoding="utf-8")
+    assert versionAPI.resolve_current_version() == versionAPI.FALLBACK_VERSION
+
 
 def test_dockerfile_stamps_version_into_the_image() -> None:
     dockerfile = Path("Dockerfile").read_text("utf-8")
