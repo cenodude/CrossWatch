@@ -1666,6 +1666,7 @@
     ensureLayoutToolbar();
     ensureWidgetControls();
     revealFromCache();
+    window.dispatchEvent(new CustomEvent("cw:dashboard-widgets-layout-changed"));
     $("#recent-history-refresh")?.addEventListener("click", (e) => refreshFromButton(e.currentTarget));
     $("#latest-ratings-refresh")?.addEventListener("click", (e) => refreshFromButton(e.currentTarget));
     $("#recent-scrobble-refresh")?.addEventListener("click", (e) => refreshFromButton(e.currentTarget));
