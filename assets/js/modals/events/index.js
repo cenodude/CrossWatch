@@ -8,11 +8,25 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => (
   { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
 ));
 
+let eventScope = null;
+
+function withEventScope(u) {
+  if (eventScope === null) return u;
+  try {
+    const url = new URL(u, location.origin);
+    if (!url.pathname.startsWith("/api/events/")) return u;
+    url.searchParams.set("user_profile", eventScope || "all");
+    return `${url.pathname}${url.search}`;
+  } catch {
+    return u;
+  }
+}
+
 const fjson = async (u, o = {}) => {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort("timeout"), 30000);
   try {
-    const r = await fetch(u, { ...o, signal: ctrl.signal });
+    const r = await fetch(withEventScope(u), { ...o, signal: ctrl.signal });
     if (!r.ok) throw new Error(r.status);
     return await r.json();
   } finally { clearTimeout(t); }
@@ -586,6 +600,15 @@ export default {
     const ddOrigin = createDropdown({ label: "Any origin", items: [{ value: "", label: "Any origin" }], onChange: () => load(0) });
     const ddFeature = createDropdown({ label: "Any feature", items: [{ value: "", label: "Any feature" }, ...["history", "ratings", "watchlist", "progress"].map((f) => ({ value: f, label: FEATURE_LABEL[f] }))], onChange: () => load(0) });
     const ddPair = createDropdown({ label: "Any pair", items: [{ value: "", label: "Any pair" }], onChange: () => load(0) });
+    const ddProfile = createDropdown({
+      label: "All profiles",
+      items: [{ value: "", label: "All profiles" }],
+      onChange: (v) => {
+        eventScope = v;
+        if (view === "statistics") loadStats();
+        else load(0);
+      },
+    });
     const ddCategory = createDropdown({
       label: "Any outcome", align: "right",
       items: OUTCOME_ITEMS[domain] || OUTCOME_ITEMS.sync,
@@ -593,7 +616,23 @@ export default {
     });
     Q("#ev-cat", root).appendChild(ddCategory.el);
     Q("#ev-range", root).appendChild(ddRange.el);
-    const hiddenDds = [ddType, ddProvider, ddOrigin, ddFeature, ddPair];
+    if (isAdmin) {
+      eventScope = String(window.CW?.OverviewProfile?.id || "").trim();
+      ddProfile.value = eventScope;
+      (async () => {
+        try {
+          const data = await fjson("/api/user-profiles", { cache: "no-store" });
+          const rows = (Array.isArray(data?.items) ? data.items : [])
+            .map((row) => ({ value: String(row?.id || "").trim(), label: String(row?.label || row?.id || "").trim() }))
+            .filter((row) => row.value && row.label);
+          if (!rows.length) return;
+          ddProfile.setItems([{ value: "", label: "All profiles" }, ...rows]);
+          ddProfile.value = eventScope;
+        } catch {}
+      })();
+    }
+
+    const hiddenDds = [ddType, ddProvider, ddOrigin, ddFeature, ddPair, ...(isAdmin ? [ddProfile] : [])];
     for (const dd of hiddenDds) filtersEl.appendChild(dd.el);
     dropdowns.push(ddCategory, ddRange, ...hiddenDds);
 
@@ -662,7 +701,7 @@ export default {
       tabsRightEl.innerHTML = `<span class="ev-statsrange-label" id="ev-statsrange-label"></span><div class="ev-seg ev-seg-range">${RANGE_TABS.map(([v, l]) => `<button type="button" class="ev-seg-btn${v === statsRange ? " on" : ""}" data-r="${v}">${l}</button>`).join("")}</div><button class="ev-tbtn" id="ev-stats-refresh" type="button"><span class="material-symbols-rounded" aria-hidden="true">refresh</span><span>Refresh</span></button>`;
       tabsRightEl.querySelectorAll(".ev-seg-btn").forEach((b) => b.addEventListener("click", () => {
         if (b.dataset.r === statsRange) return;
-        statsRange = b.dataset.r; lset("cw.events.stats.range", statsRange); renderStatsRange(); loadStats();
+        statsRange = b.dataset.r; lset("cw.events.stats.range", statsRange); renderStatsRange(); placeProfileDd(); loadStats();
       }));
       Q("#ev-stats-refresh", root)?.addEventListener("click", () => loadStats());
     };
@@ -676,6 +715,14 @@ export default {
 
     const loadStats = async () => { const d = await statsView.load({ range: statsRange, force: true }); if (d) setStatsLabel(d); };
 
+    const placeProfileDd = () => {
+      if (!isAdmin) return;
+      const stats = view === "statistics";
+      const host = stats ? tabsRightEl : filtersEl;
+      if (ddProfile.el.parentElement !== host) host.insertBefore(ddProfile.el, host.firstChild);
+      ddProfile.el.style.display = domain === "audit" && !stats ? "none" : "";
+    };
+
     const applyView = () => {
       const stats = view === "statistics";
       toolbarEl.style.display = stats ? "none" : "";
@@ -684,6 +731,7 @@ export default {
       tabsRightEl.hidden = !stats;
       renderViewTabs();
       if (stats) { renderStatsRange(); loadStats(); }
+      placeProfileDd();
     };
 
     const setView = (v) => {

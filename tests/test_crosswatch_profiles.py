@@ -2841,3 +2841,40 @@ def test_status_badges_hide_out_of_scope_providers() -> None:
     assert 'return instances.some((instance) => profile.matchesEndpoint(key, instance));' in js
     assert 'return profile.matchesEndpoint(key, "default");' in js
     assert 'window.addEventListener("cw:overview-profile-changed", () => {' in js
+
+
+def test_view_as_query_overrides_ambient_header(monkeypatch) -> None:
+    from cw_platform import access_policy
+
+    cfg = _view_as_cfg()
+    cfg["user_profiles"][BOB_PROFILE_ID] = {"label": "Bob", "instances": {"PLEX": ["PLEX-P01"]}}
+    monkeypatch.setattr("cw_platform.config_base.load_config", lambda *a, **k: cfg)
+    admin = {"id": "administrator", "is_admin": True}
+
+    def req(header: str = "", query: str = "") -> Any:
+        return SimpleNamespace(
+            state=SimpleNamespace(cw_user=admin),
+            headers={"x-cw-view-as": header} if header else {},
+            query_params={"user_profile": query} if query else {},
+        )
+
+    both = access_policy.request_user(req(header=ALICE_PROFILE_ID, query=BOB_PROFILE_ID))
+    assert both is not None and both["profile_id"] == BOB_PROFILE_ID
+
+    explicit_all = access_policy.request_user(req(header=ALICE_PROFILE_ID, query="all"))
+    assert explicit_all is admin
+
+    header_only = access_policy.request_user(req(header=ALICE_PROFILE_ID))
+    assert header_only is not None and header_only["profile_id"] == ALICE_PROFILE_ID
+
+
+def test_events_modal_has_profile_filter_in_more_filters() -> None:
+    js = Path("assets/js/modals/events/index.js").read_text("utf-8")
+
+    assert "function withEventScope(u)" in js
+    assert 'if (!url.pathname.startsWith("/api/events/")) return u;' in js
+    assert 'url.searchParams.set("user_profile", eventScope || "all");' in js
+    assert "const ddProfile = createDropdown({" in js
+    assert "const placeProfileDd = () => {" in js
+    assert "const host = stats ? tabsRightEl : filtersEl;" in js
+    assert "renderStatsRange(); placeProfileDd(); loadStats();" in js
