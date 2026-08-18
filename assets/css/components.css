@@ -498,3 +498,19 @@ html[data-cw-theme="flat-dark"] .cx-modal-shell:has(#cx-modal.editor-raw-modal){
 .sb-note.hide{display:none}
 @media(max-width:640px){.sb-head-side{width:100%;justify-content:flex-start}.sb-note{min-width:0}}
 @media(max-width:640px){#ux-progress{min-height:144px}}
+
+.sc2-rt-conn.has-profile .sc2-rt-conn-line{opacity:0.5}
+.sc2-rt-profile{position:relative;z-index:1;display:inline-flex;align-items:center;gap:5px;max-width:min(100%,150px);min-width:0;padding:3px 9px 3px 6px;border-radius:999px;border:1px solid rgba(124,92,255,0.45);background:linear-gradient(180deg,rgba(124,92,255,0.28),rgba(124,92,255,0.14));color:#d5cbff;-webkit-text-fill-color:#d5cbff;box-shadow:0 0 14px rgba(124,92,255,0.26),inset 0 1px 0 rgba(255,255,255,0.08);font-size:11px;font-weight:800;line-height:1;white-space:nowrap;cursor:default}
+.sc2-rt-profile .material-symbols-rounded{width:auto;height:auto;flex:0 0 auto;padding:0;border:0;border-radius:0;background:none;box-shadow:none;color:#a78bfa;font-size:14px !important;line-height:1}
+.sc2-rt-profile-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sc2-route-card.is-disabled .sc2-rt-profile{filter:grayscale(0.45)}
+
+
+.sc2-route-card.has-user-profile:not(.is-disabled):not(.sc2-route-add-card)::after{background:linear-gradient(180deg,#7c5cff,rgba(124,92,255,0.5))}
+.sc2-route-card.has-user-profile.is-live:not(.is-disabled):not(.sc2-route-add-card)::after{background:linear-gradient(180deg,#7c5cff,rgba(124,92,255,0.55));box-shadow:0 0 18px rgba(124,92,255,0.42)}
+
+.scrm-lock-note{display:flex;align-items:flex-start;gap:10px;margin:0 0 12px;padding:11px 14px;border:1px solid rgba(124,92,255,0.4);border-radius:12px;background:rgba(124,92,255,0.1)}
+.scrm-lock-note .material-symbols-rounded{flex:0 0 auto;color:#a78bfa;font-size:19px;line-height:1.2}
+.scrm-lock-note strong{display:block;color:rgba(235,240,255,0.95);font-size:13px;font-weight:900}
+.scrm-lock-note p{margin:3px 0 0;color:rgba(196,205,232,0.78);font-size:12px;font-weight:650}
+.scrm-route-grid.is-profile-locked select[disabled]{opacity:0.62;cursor:not-allowed}

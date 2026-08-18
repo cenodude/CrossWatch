@@ -65,6 +65,16 @@
     return String(v || "default") === "default" ? "Default" : String(v || "default");
   }
 
+  function profileConnector(row) {
+    const name = String(row?.user_profile_label || "").trim();
+    if (!name) return `<div class="sc2-rt-conn"><span class="sc2-rt-conn-line"></span></div>`;
+    return `<div class="sc2-rt-conn has-profile"><span class="sc2-rt-conn-line"></span>
+      <span class="sc2-rt-profile" title="${esc(`User profile: ${name}`)}">
+        <span class="material-symbols-rounded" aria-hidden="true">person</span>
+        <span class="sc2-rt-profile-name">${esc(name)}</span>
+      </span></div>`;
+  }
+
   function routeFilterSummary(filters = {}) {
     const parts = [];
     const users = Array.isArray(filters.username_whitelist) ? filters.username_whitelist : [];
@@ -119,10 +129,10 @@
           ${rows.map((x) => {
             const [text] = webhookState(x);
             return `
-            <article class="sc2-route sc2-route-card sc2-webhook-card ${x.enabled ? "is-enabled" : "is-disabled"} ${x.active ? "is-live" : "is-idle"}" data-action="edit-webhook" data-provider="${esc(x.provider)}" data-instance="${esc(x.provider_instance)}" data-sink="${esc(x.sink)}" title="Edit webhook">
+            <article class="sc2-route sc2-route-card sc2-webhook-card ${x.enabled ? "is-enabled" : "is-disabled"} ${x.active ? "is-live" : "is-idle"} ${x.user_profile_label ? "has-user-profile" : ""}" data-action="edit-webhook" data-provider="${esc(x.provider)}" data-instance="${esc(x.provider_instance)}" data-sink="${esc(x.sink)}" title="Edit webhook">
               <div class="sc2-route-flow-wrap">
                 <div class="sc2-route-endpoint">${providerLogo(x.provider)}<div><strong>${esc(label(x.provider))}</strong><span>${esc(webhookProfileName(x))}</span></div></div>
-                <div class="sc2-rt-conn"><span class="sc2-rt-conn-line"></span></div>
+                ${profileConnector(x)}
                 <div class="sc2-route-endpoint sc2-route-endpoint-sink"><div><strong>${esc(label(x.sink))}</strong><span>${esc(instanceName(x.sink_instance, x.sink_profile_label))}</span></div>${providerLogo(x.sink)}</div>
               </div>
               <div class="sc2-route-meta">
@@ -157,10 +167,10 @@
         <div class="sc2-section-head"><div><h4>Watcher routes</h4><p>Configure routes that send play events from media servers to trackers.</p></div></div>
         <div class="sc2-route-card-grid">
           ${rows.length ? rows.map((r) => `
-            <article class="sc2-route sc2-route-card ${r.enabled ? "is-enabled" : "is-disabled"} ${r.runtime?.running ? "is-live" : "is-idle"}" data-action="edit-route" data-route="${esc(r.id)}" title="Edit route">
+            <article class="sc2-route sc2-route-card ${r.enabled ? "is-enabled" : "is-disabled"} ${r.runtime?.running ? "is-live" : "is-idle"} ${r.user_profile_label ? "has-user-profile" : ""}" data-action="edit-route" data-route="${esc(r.id)}" title="Edit route">
               <div class="sc2-route-flow-wrap">
                 <div class="sc2-route-endpoint">${providerLogo(r.provider)}<div><strong>${esc(label(r.provider))}</strong><span>${esc(instanceName(r.provider_instance, r.source_label))}</span></div></div>
-                <div class="sc2-rt-conn"><span class="sc2-rt-conn-line"></span></div>
+                ${profileConnector(r)}
                 <div class="sc2-route-endpoint sc2-route-endpoint-sink"><div><strong>${esc(label(r.sink))}</strong><span>${esc(instanceName(r.sink_instance, r.sink_label))}</span></div>${providerLogo(r.sink)}</div>
               </div>
               <div class="sc2-route-meta">
