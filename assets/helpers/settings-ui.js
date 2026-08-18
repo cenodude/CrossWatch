@@ -1391,7 +1391,7 @@ function cwMetaSettingsHubUpdate() {
   const chip = document.getElementById("hub_tmdb_key");
 
   const cfg = window._cfgCache || {};
-  const cfgKey = String(cfg?.tmdb?.api_key || "").trim();
+  const cfgKey = String(cfg?.tmdb?.api_key || cfg?.metadata?.tmdb_api_key || "").trim();
   const cfgMasked = cfgKey === "*****" || /^[•]+$/.test(cfgKey);
   const cfgHasKey = cfgKey.length > 0 || cfgMasked;
 
@@ -1430,6 +1430,48 @@ function cwMetaSettingsHubUpdate() {
   }
 
   try { window.syncMetadataProviderDot?.(); } catch {}
+}
+
+async function cwRefreshTmdbMetadataState(opts = {}) {
+  const input = document.getElementById("tmdb_api_key");
+  if (!input) return false;
+
+  const keyFrom = (cfg) => String(cfg?.tmdb?.api_key || cfg?.metadata?.tmdb_api_key || "").trim();
+  let key = keyFrom(window._cfgCache || {});
+  const force = opts?.force === true;
+
+  if ((force || !key) && typeof fetch === "function") {
+    try {
+      const r = await fetch("/api/config", { cache: "no-store", credentials: "same-origin" });
+      if (r.ok) {
+        const fresh = await r.json().catch(() => null);
+        if (fresh && typeof fresh === "object") {
+          window._cfgCache = fresh;
+          key = keyFrom(fresh);
+        }
+      }
+    } catch {}
+  }
+
+  const hasKey = !!key;
+  const touched = input.dataset?.touched === "1";
+  if (!touched || opts?.overwrite === true) {
+    try {
+      if (window.CW?.AuthShared?.maskSecret) window.CW.AuthShared.maskSecret(input, hasKey);
+      else {
+        input.value = hasKey ? "********" : "";
+        input.dataset.masked = hasKey ? "1" : "0";
+        input.dataset.loaded = "1";
+        input.dataset.touched = "";
+        input.dataset.clear = "";
+      }
+    } catch {}
+    input.dataset.verified = hasKey ? "" : "0";
+  }
+
+  try { cwMetaSettingsHubUpdate(); } catch {}
+  try { updateTmdbHint(); } catch {}
+  return hasKey;
 }
 
 function cwMetaSettingsHubInit() {
@@ -1519,6 +1561,7 @@ try {
   window.cwMetaSettingsHubInit = cwMetaSettingsHubInit;
   window.cwMetaSettingsHubUpdate = cwMetaSettingsHubUpdate;
   window.cwMetaSettingsHubEnsure = cwMetaSettingsHubEnsure;
+  window.cwRefreshTmdbMetadataState = cwRefreshTmdbMetadataState;
 } catch {}
 
 async function loadConfig() {
@@ -1744,7 +1787,7 @@ async function loadConfig() {
   setRaw("anilist_client_secret", val(cfg.anilist?.client_secret));
 
   
-  setRaw("tmdb_api_key",        val(cfg.tmdb?.api_key));
+  setRaw("tmdb_api_key",        val(cfg.tmdb?.api_key || cfg.metadata?.tmdb_api_key));
 
   
   setRaw("mdblist_key",         val(cfg.mdblist?.api_key));
@@ -2085,6 +2128,7 @@ function setTraktSuccess(show) {
     cwAnimeMappingRun,
     cwBuildTmdbPanel,
     cwDeleteTmdbKey,
+    cwRefreshTmdbMetadataState,
     cwMetaSettingsSelect,
     cwMetaSettingsHubUpdate,
     cwMetaSettingsHubInit,

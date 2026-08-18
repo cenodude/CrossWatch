@@ -661,6 +661,39 @@ def test_admin_can_create_profile_linked_user_and_user_can_login(monkeypatch) ->
     assert cfg["app_auth"]["sessions"][-1]["profile_id"] == profile_id
 
 
+def test_created_managed_user_defaults_to_full_access(monkeypatch) -> None:
+    from api import appAuthAPI as auth
+
+    profile_id = "11111111111141118111111111111111"
+    cfg = _auth_cfg()
+    cfg["user_profiles"] = {profile_id: {"label": "Pascal", "instances": {"PLEX": ["PLEX-P01"]}}}
+    monkeypatch.setattr(auth, "load_config", lambda: cfg)
+    monkeypatch.setattr(auth, "save_config", lambda *_args, **_kwargs: None)
+
+    admin_token, _exp = auth._issue_session(cfg, _request("/api/app-auth/login"))
+    admin_req = _request("/api/app-auth/users", headers={"cookie": f"{auth.COOKIE_NAME}={admin_token}"})
+
+    created = auth.api_users_create(
+        admin_req,
+        {"username": "pascal", "password": "secrett2", "profile_id": profile_id},
+    )
+    restricted = auth.api_users_create(
+        admin_req,
+        {"username": "readonly", "password": "secrett3", "profile_id": profile_id, "permissions": {"write": False}},
+    )
+
+    created_perms = _json_body(created)["user"]["permissions"]
+    restricted_perms = _json_body(restricted)["user"]["permissions"]
+
+    assert created.status_code == 200
+    assert created_perms == {"dashboard": True, "watchlist": True, "playback": True, "write": True}
+    assert restricted.status_code == 200
+    assert restricted_perms["write"] is False
+    assert restricted_perms["dashboard"] is True
+    assert restricted_perms["watchlist"] is True
+    assert restricted_perms["playback"] is True
+
+
 def test_managed_user_cannot_manage_users(monkeypatch) -> None:
     from api import appAuthAPI as auth
 

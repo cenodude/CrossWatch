@@ -271,6 +271,7 @@
         <form class="cw-auth-provider-form hidden" id="cw-auth-provider-form" autocomplete="off" onsubmit="return false"></form>
       </div>`;
     slot.appendChild(overlay);
+    bindAuthPresentation(slot);
     return overlay;
   }
 
@@ -1639,7 +1640,11 @@
     if (!document.getElementById(info.sectionId)) await mountAuthProviders();
     const overlay = ensureAuthOverlay(slot);
     const form = overlay.querySelector("#cw-auth-provider-form");
-    const section = document.getElementById(info.sectionId);
+    let section = document.getElementById(info.sectionId);
+    if (!section) {
+      await mountAuthProviders(true);
+      section = document.getElementById(info.sectionId);
+    }
     if (!form || !section) return;
     parkActiveAuthForm();
     form.appendChild(section);
@@ -1662,9 +1667,25 @@
     if (!slot) return;
     if (!document.getElementById(info.sectionId)) await mountMetadataProviders();
     try { window.cwMetaProviderEnsure?.(); } catch {}
+    if (info.key === "TMDB_METADATA") {
+      try { await window.cwRefreshTmdbMetadataState?.({ force: true }); } catch {}
+    }
     const overlay = ensureAuthOverlay(slot);
     const form = overlay.querySelector("#cw-auth-provider-form");
-    const section = document.getElementById(info.sectionId);
+    let section = document.getElementById(info.sectionId);
+    if (!section) {
+      try {
+        if (info.key === "TMDB_METADATA") window.cwBuildTmdbPanel?.();
+        if (info.key === "ANIME_MAPPING") window.cwBuildAnimeMappingPanel?.();
+        window.cwMetaProviderEnsure?.();
+      } catch {}
+      section = document.getElementById(info.sectionId);
+    }
+    if (!section) {
+      await mountMetadataProviders(true);
+      try { window.cwMetaProviderEnsure?.(); } catch {}
+      section = document.getElementById(info.sectionId);
+    }
     if (!form || !section) return;
     parkActiveAuthForm();
     form.appendChild(section);
@@ -1685,6 +1706,9 @@
       try { window.cwAnimeMappingRefreshStatus?.(); } catch {}
     }
     enhanceConnectionModal(section, overlay, info.key);
+    if (info.key === "TMDB_METADATA") {
+      try { window.cwRefreshTmdbMetadataState?.(); } catch {}
+    }
     requestAnimationFrame(() => overlay.querySelector("[data-cw-auth-close]")?.focus?.());
   }
 
@@ -2079,14 +2103,30 @@
     refreshAuthPresentation(slot, false).catch(() => {});
   }, true);
 
+  async function openAddConnection() {
+    const slot = document.getElementById("auth-providers");
+    if (!slot) return;
+    bindAuthPresentation(slot);
+    await mountAuthProviders();
+    openAuthOverlay("picker", "", "provider");
+  }
+
+  async function openAddMetadata() {
+    const slot = document.getElementById("auth-providers");
+    if (!slot) return;
+    bindAuthPresentation(slot);
+    await mountMetadataProviders();
+    openAuthOverlay("picker", "", "metadata");
+  }
+
   const ProvidersUI = {
     updateFlowRailLogos,
     ensureProvidersPaneReady,
     mountAuthProviders,
     mountMetadataProviders,
     loadProviders,
-    openAddConnection: () => openAuthOverlay("picker", "", "provider"),
-    openAddMetadata: () => openAuthOverlay("picker", "", "metadata"),
+    openAddConnection,
+    openAddMetadata,
     openAuthProviderForm,
     openMetadataProviderForm,
     closeAuthProviderOverlay,
