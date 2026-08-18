@@ -79,20 +79,28 @@ def profile_allows_instance(profile_instances: Mapping[str, list[str]], provider
 VIEW_AS_HEADER = "x-cw-view-as"
 
 
+VIEW_AS_ALL = {"all", "__all__"}
+
+
 def requested_view_as_profile(request: Any) -> str:
-    raw = ""
+    query_raw = ""
+    try:
+        query_raw = str(request.query_params.get("user_profile") or "").strip()
+    except Exception:
+        query_raw = ""
+    if query_raw.lower() in VIEW_AS_ALL:
+        return ""
+    pid = normalize_user_profile_id(query_raw)
+    if pid:
+        return pid
+    header_raw = ""
     try:
         headers = getattr(request, "headers", None)
         if headers is not None:
-            raw = headers.get(VIEW_AS_HEADER) or ""
+            header_raw = headers.get(VIEW_AS_HEADER) or ""
     except Exception:
-        raw = ""
-    if not raw:
-        try:
-            raw = request.query_params.get("user_profile") or ""
-        except Exception:
-            raw = ""
-    return normalize_user_profile_id(raw)
+        header_raw = ""
+    return normalize_user_profile_id(header_raw)
 
 
 def impersonated_user(user: Mapping[str, Any], profile_id: str) -> dict[str, Any]:
