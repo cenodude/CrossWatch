@@ -7,8 +7,10 @@
   const providerKey = (value) => window.CW?.ProviderMeta?.keyOf?.(value) || String(value || "").trim().toUpperCase();
   const instanceKey = (value) => String(value || DEFAULT_INSTANCE).trim() || DEFAULT_INSTANCE;
 
+  const STORE_KEY = "cw.overview.profile";
   let profiles = [];
   let activeId = "";
+  let isAdmin = false;
   let authUser = null;
   let readyResolve = null;
   const SHELL_MANAGED = document.documentElement?.dataset?.cwRole === "user";
@@ -27,6 +29,17 @@
       if (insts.length) out[prov] = [...new Set(insts)].slice(0, 1);
     }
     return out;
+  }
+
+  function storedId() {
+    try { return String(localStorage.getItem(STORE_KEY) || "").trim(); } catch { return ""; }
+  }
+
+  function storeId(id) {
+    try {
+      if (id) localStorage.setItem(STORE_KEY, id);
+      else localStorage.removeItem(STORE_KEY);
+    } catch {}
   }
 
   function activeProfile() {
@@ -110,8 +123,42 @@
     }
   }
 
+  function setActive(id) {
+    if (!isAdmin) return false;
+    const next = String(id || "").trim();
+    const valid = next && profiles.some((row) => row.id === next) ? next : "";
+    if (valid === activeId) return false;
+    activeId = valid;
+    storeId(valid);
+    render();
+    emit();
+    return true;
+  }
+
+  function renderPicker() {
+    const host = $("#cw-view-as");
+    const select = $("#cw-view-as-select");
+    if (!host || !select) return;
+    host.classList.toggle("hidden", !isAdmin);
+    if (!isAdmin) return;
+    const rows = profiles.length ? [{ id: "", label: "All profiles" }, ...profiles] : [{ id: "", label: "No profiles" }];
+    const signature = rows.map((row) => `${row.id}::${row.label}`).join("|");
+    if (select.dataset.signature !== signature) {
+      select.innerHTML = rows.map((row) => `<option value="${esc(row.id)}">${esc(row.label)}</option>`).join("");
+      select.dataset.signature = signature;
+    }
+    select.value = activeId;
+    select.disabled = profiles.length === 0;
+    if (!select.dataset.bound) {
+      select.dataset.bound = "1";
+      select.addEventListener("change", () => setActive(select.value));
+    }
+    try { window.CW?.ProfileSelect?.enhanceProfile?.(select, { className: "cw-view-as-picker" }); } catch {}
+  }
+
   function render() {
     renderProfileLink();
+    renderPicker();
   }
 
   async function hydrateCurrentUserProfile() {
@@ -148,23 +195,25 @@
   function applyAuthStatus(status) {
     const state = window.CW?.AuthState?.apply ? window.CW.AuthState.apply(status) : null;
     authUser = state?.user || status?.user || null;
-    const isAdmin = Boolean(state?.isAdmin || status?.is_admin || authUser?.is_admin);
+    isAdmin = Boolean(state?.isAdmin || status?.is_admin || authUser?.is_admin);
     const managed = Boolean(state?.isManaged || SHELL_MANAGED || (authUser && authUser.is_admin === false));
     if (!isAdmin && managed) activeId = String(state?.profileId || authUser?.profile_id || SHELL_PROFILE_ID || "").trim();
-    else activeId = "";
+    else activeId = isAdmin ? storedId() : "";
   }
 
   async function refresh() {
+    try { await window.__cwAuthBootstrapPromise; } catch {}
     try {
       try {
         applyAuthStatus(await fetchJSON("/api/app-auth/status"));
       } catch {
         const state = window.CW?.AuthState?.read?.() || {};
         authUser = state.user || (SHELL_PROFILE_ID ? { is_admin: false, profile_id: SHELL_PROFILE_ID, permissions: {} } : null);
-        activeId = state.profileId || SHELL_PROFILE_ID;
+        isAdmin = Boolean(state.isAdmin) && !SHELL_MANAGED;
+        activeId = isAdmin ? storedId() : (state.profileId || SHELL_PROFILE_ID);
       }
       await hydrateCurrentUserProfile();
-      if (activeId) {
+      if (activeId || isAdmin) {
         const data = await fetchJSON("/api/user-profiles");
         profiles = (Array.isArray(data?.items) ? data.items : [])
           .map((row) => ({
@@ -176,7 +225,13 @@
       } else {
         profiles = [];
       }
-    } catch {
+      if (isAdmin && !profiles.length) console.warn("[OverviewProfile] /api/user-profiles returned no usable rows");
+      if (isAdmin && activeId && !profiles.some((row) => row.id === activeId)) {
+        activeId = "";
+        storeId("");
+      }
+    } catch (err) {
+      console.warn("[OverviewProfile] refresh failed", err);
       profiles = [];
     }
     render();
@@ -190,6 +245,9 @@
     ready,
     refresh,
     render,
+    setActive,
+    get profiles() { return profiles.slice(); },
+    get isAdmin() { return isAdmin; },
     get id() { return activeId; },
     get label() { return activeProfile()?.label || ""; },
     get profile() { return activeProfile(); },
@@ -200,6 +258,9 @@
   };
 
   window.addEventListener("cw-user-profiles-changed", () => refresh());
+  window.addEventListener("cw-auth-setup-pending", (event) => {
+    if (event?.detail?.pending === false) refresh();
+  });
   window.addEventListener("cw:auth-state-changed", (event) => {
     const next = event?.detail?.user;
     if (next && typeof next === "object") {

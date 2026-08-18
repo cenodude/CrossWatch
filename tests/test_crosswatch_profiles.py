@@ -1934,8 +1934,12 @@ def test_overview_profile_helper_locks_managed_shell_to_profile() -> None:
     assert "dataset?.cwProfileId" in js
     assert 'status?.is_admin || authUser?.is_admin' in js
     assert 'activeId = String(state?.profileId || authUser?.profile_id || SHELL_PROFILE_ID || "").trim();' in js
-    assert 'else activeId = "";' in js
-    assert "localStorage" not in js
+    assert 'else activeId = isAdmin ? storedId() : "";' in js
+    assert 'if (!isAdmin) return false;' in js
+    assert 'host.classList.toggle("hidden", !isAdmin);' in js
+    assert 'isAdmin = Boolean(state.isAdmin) && !SHELL_MANAGED;' in js
+    assert 'await window.__cwAuthBootstrapPromise;' in js
+    assert 'cw-auth-setup-pending' in js
     assert "overview-profile-select" not in js
 
 
@@ -2696,3 +2700,144 @@ def test_dockerfile_stamps_version_into_the_image() -> None:
     # the stamp must be written in the runtime stage, after the app is copied
     assert dockerfile.index("COPY --from=appsrc") < dockerfile.index("/app/VERSION")
     assert "VERSION" in Path(".gitignore").read_text("utf-8")
+
+
+def test_filter_pairs_for_profile_scopes_by_assignment_and_instances() -> None:
+    from cw_platform.access_policy import filter_pairs_for_profile
+
+    cfg = {
+        "user_profiles": {
+            ALICE_PROFILE_ID: {"label": "Alice", "instances": {"PLEX": ["PLEX-P01"], "CROSSWATCH": ["CW-P01"]}},
+            BOB_PROFILE_ID: {"label": "Bob", "instances": {"PLEX": ["PLEX-P02"]}},
+        },
+    }
+    _configured_refs(cfg, [("PLEX", "PLEX-P01"), ("PLEX", "PLEX-P02"), ("CROSSWATCH", "CW-P01")])
+    pairs = [
+        {"id": "own", "profile_id": ALICE_PROFILE_ID, "source": "PLEX", "source_instance": "PLEX-P01", "target": "CROSSWATCH", "target_instance": "CW-P01"},
+        {"id": "wrong_instance", "profile_id": ALICE_PROFILE_ID, "source": "PLEX", "source_instance": "PLEX-P02", "target": "CROSSWATCH", "target_instance": "CW-P01"},
+        {"id": "unassigned", "profile_id": "", "source": "PLEX", "source_instance": "PLEX-P01", "target": "CROSSWATCH", "target_instance": "CW-P01"},
+        {"id": "other_profile", "profile_id": BOB_PROFILE_ID, "source": "PLEX", "source_instance": "PLEX-P02", "target": "CROSSWATCH", "target_instance": "CW-P01"},
+    ]
+
+    kept = [row.get("id") for row in filter_pairs_for_profile(cfg, ALICE_PROFILE_ID, pairs)]
+    assert kept == ["own"]
+
+    assert [row.get("id") for row in filter_pairs_for_profile(cfg, "", pairs)] == ["own", "wrong_instance", "unassigned", "other_profile"]
+
+
+def test_status_probe_scope_accepts_admin_requested_profile(monkeypatch) -> None:
+    import api.probesAPI as probes_api
+
+    cfg = {
+        "user_profiles": {ALICE_PROFILE_ID: {"label": "Alice", "instances": {"PLEX": ["PLEX-P01"]}}},
+    }
+    _configured_refs(cfg, [("PLEX", "PLEX-P01")])
+
+    from api.appAuthAPI import effective_user_profile_id
+
+    assert effective_user_profile_id(cfg, None, ALICE_PROFILE_ID) == ALICE_PROFILE_ID
+    assert effective_user_profile_id(cfg, None, "") == ""
+
+    src = Path("api/probesAPI.py").read_text("utf-8")
+    assert 'def api_status(request: Request, fresh: int = Query(0), user_profile: str = Query(""))' in src
+    assert "scope_profile = _status_scope_profile(cfg0, request, user_profile)" in src
+    assert "managed_scope = bool(scope_profile) or bool(scoped_user and not scoped_user.get(\"is_admin\"))" in src
+    assert "filter_pairs_for_profile(cfg, scope_profile," in src
+    assert probes_api is not None
+
+
+def test_status_frontend_sends_selected_profile() -> None:
+    api_js = Path("assets/helpers/api.js").read_text("utf-8")
+    core_js = Path("assets/helpers/core.js").read_text("utf-8")
+
+    assert "`/api/status?user_profile=${encodeURIComponent(profile)}`" in api_js
+    assert '`${KEY.status}:${profile || "all"}`' in api_js
+    assert "key === KEY.pairs || key === KEY.status" in api_js
+    assert "const statusCacheKey = ()" in core_js
+    assert "localStorage.setItem(statusCacheKey()" in core_js
+    assert 'window.CW?.Cache?.invalidate?.(["status"])' in core_js
+
+
+def _view_as_request(user: dict[str, Any], *, header: str = "", query: str = "") -> Any:
+    return SimpleNamespace(
+        state=SimpleNamespace(cw_user=user),
+        headers={"x-cw-view-as": header} if header else {},
+        query_params={"user_profile": query} if query else {},
+    )
+
+
+def _view_as_cfg() -> dict[str, Any]:
+    cfg = {"user_profiles": {ALICE_PROFILE_ID: {"label": "Alice", "instances": {"PLEX": ["PLEX-P01"]}}}}
+    _configured_refs(cfg, [("PLEX", "PLEX-P01")])
+    return cfg
+
+
+def test_request_user_impersonates_profile_for_admin(monkeypatch) -> None:
+    from cw_platform import access_policy
+
+    cfg = _view_as_cfg()
+    monkeypatch.setattr("cw_platform.config_base.load_config", lambda *a, **k: cfg)
+    admin = {"id": "administrator", "username": "admin", "is_admin": True}
+
+    plain = access_policy.request_user(_view_as_request(admin))
+    assert plain is admin
+
+    scoped = access_policy.request_user(_view_as_request(admin, header=ALICE_PROFILE_ID))
+    assert scoped is not None
+    assert scoped["is_admin"] is False
+    assert scoped["profile_id"] == ALICE_PROFILE_ID
+    assert scoped["view_as"] is True
+    assert scoped["permissions"]["write"] is True
+
+    via_query = access_policy.request_user(_view_as_request(admin, query=ALICE_PROFILE_ID))
+    assert via_query is not None and via_query["profile_id"] == ALICE_PROFILE_ID
+
+    unknown = access_policy.request_user(_view_as_request(admin, header="0" * 32))
+    assert unknown is admin
+
+
+def test_managed_user_cannot_impersonate_another_profile(monkeypatch) -> None:
+    from cw_platform import access_policy
+
+    cfg = _view_as_cfg()
+    cfg["user_profiles"][BOB_PROFILE_ID] = {"label": "Bob", "instances": {"PLEX": ["PLEX-P01"]}}
+    monkeypatch.setattr("cw_platform.config_base.load_config", lambda *a, **k: cfg)
+    managed = {"id": "bob", "is_admin": False, "profile_id": BOB_PROFILE_ID, "permissions": {"write": False}}
+
+    scoped = access_policy.request_user(_view_as_request(managed, header=ALICE_PROFILE_ID))
+    assert scoped is managed
+    assert scoped["profile_id"] == BOB_PROFILE_ID
+
+
+def test_view_as_leaves_audit_identity_untouched(monkeypatch) -> None:
+    from cw_platform import access_policy
+
+    cfg = _view_as_cfg()
+    monkeypatch.setattr("cw_platform.config_base.load_config", lambda *a, **k: cfg)
+    admin = {"id": "administrator", "username": "admin", "is_admin": True}
+    request = _view_as_request(admin, header=ALICE_PROFILE_ID)
+
+    access_policy.request_user(request)
+    assert request.state.cw_user is admin
+    assert request.state.cw_user["is_admin"] is True
+
+
+def test_view_as_header_transport_is_scoped_to_safe_and_allowlisted_calls() -> None:
+    api_js = Path("assets/helpers/api.js").read_text("utf-8")
+    sync_api = Path("api/syncAPI.py").read_text("utf-8")
+
+    assert 'const VIEW_AS_HEADER = "X-CW-View-As";' in api_js
+    assert 'const VIEW_AS_WRITE_PATHS = ["/api/run", "/api/export", "/api/import"];' in api_js
+    assert 'const viewAsProfile = () => (isManagedUser() ? "" : String(window.CW?.OverviewProfile?.id || "").trim());' in api_js
+    assert 'if (method === "GET" || method === "HEAD") return true;' in api_js
+    assert "user = request_user(request)" in sync_api
+
+
+def test_status_badges_hide_out_of_scope_providers() -> None:
+    js = Path("assets/js/main-status.js").read_text("utf-8")
+
+    assert "function matchesOverviewProfile(key, data)" in js
+    assert "if (!matchesOverviewProfile(key, data)) return false;" in js
+    assert 'return instances.some((instance) => profile.matchesEndpoint(key, instance));' in js
+    assert 'return profile.matchesEndpoint(key, "default");' in js
+    assert 'window.addEventListener("cw:overview-profile-changed", () => {' in js

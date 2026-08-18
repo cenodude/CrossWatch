@@ -96,8 +96,22 @@
     return document.documentElement?.dataset?.cwRole === "user";
   }
 
+  function overviewProfileScope() {
+    const profile = window.CW?.OverviewProfile;
+    return String(profile?.id || "").trim() ? profile : null;
+  }
+
+  function matchesOverviewProfile(key, data) {
+    const profile = overviewProfileScope();
+    if (!profile) return true;
+    const instances = data?.instances && typeof data.instances === "object" ? Object.keys(data.instances) : [];
+    if (!instances.length) return profile.matchesEndpoint(key, "default");
+    return instances.some((instance) => profile.matchesEndpoint(key, instance));
+  }
+
   function isStatusProviderVisible(key, data, cfg = getCachedConfig(), configured = null) {
     if (!data || typeof data !== "object") return false;
+    if (!matchesOverviewProfile(key, data)) return false;
     const set = configured || configuredProviderSet(cfg);
     const managed = isManagedUser();
     if (!managed && !isProviderConfigured(key, cfg, set)) return false;
@@ -548,6 +562,10 @@
     },
     true
   );
+
+  window.addEventListener("cw:overview-profile-changed", () => {
+    try { renderProviders(); } catch {}
+  });
 
   window.addEventListener("auth-changed", () => {
     const done = dots ? dots.onConfigChanged() : refreshAuthDots(true);

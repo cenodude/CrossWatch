@@ -7,6 +7,14 @@
   const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
   const isManagedUser = () => document.documentElement?.dataset?.cwRole === "user";
   const canManagedWrite = () => document.documentElement?.dataset?.cwPermWrite === "on";
+  const VIEW_AS_HEADER = "X-CW-View-As";
+  const VIEW_AS_WRITE_PATHS = ["/api/run", "/api/export", "/api/import"];
+  const viewAsProfile = () => (isManagedUser() ? "" : String(window.CW?.OverviewProfile?.id || "").trim());
+
+  function viewAsAllowed(method, pathname){
+    if (method === "GET" || method === "HEAD") return true;
+    return VIEW_AS_WRITE_PATHS.some((base) => pathname === base || pathname.startsWith(`${base}/`));
+  }
 
   (function installManagedFetchGuard(){
     const original = window.fetch;
@@ -24,6 +32,18 @@
             } else if (url.pathname === "/api/update") {
               return new Response('{"update_available":false}', { status: 200, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
             }
+          }
+        } catch {}
+      }
+      const profile = viewAsProfile();
+      if (profile) {
+        try {
+          const raw = typeof resource === "string" ? resource : String(resource?.url || "");
+          const url = new URL(raw, location.origin);
+          if (url.origin === location.origin && url.pathname.startsWith("/api/") && viewAsAllowed(method, url.pathname)) {
+            const headers = new Headers(init?.headers || (typeof resource === "string" ? undefined : resource?.headers) || {});
+            headers.set(VIEW_AS_HEADER, profile);
+            init = { ...(init || {}), headers };
           }
         } catch {}
       }
@@ -81,9 +101,9 @@
   function invalidate(keys){
     const list = !keys ? [..._memo.keys()] : (Array.isArray(keys) ? keys : [keys]);
     list.forEach((key) => {
-      if (key === KEY.pairs) {
+      if (key === KEY.pairs || key === KEY.status) {
         [..._memo.keys()].forEach((memoKey) => {
-          if (String(memoKey).startsWith(`${KEY.pairs}:`)) _memo.delete(memoKey);
+          if (String(memoKey).startsWith(`${key}:`)) _memo.delete(memoKey);
         });
       }
       const s = _memo.get(key);
@@ -205,7 +225,13 @@
     currentlyWatching(force = false){ return memo(KEY.currentlyWatching, TTL.currentlyWatching, () => j('/api/watch/currently_watching'), force); }
   };
 
-  const Status = { get(force = false){ return memo(KEY.status, TTL.status, () => j('/api/status'), force); } };
+  const Status = {
+    get(force = false){
+      const profile = String(window.CW?.OverviewProfile?.id || "").trim();
+      const url = profile ? `/api/status?user_profile=${encodeURIComponent(profile)}` : '/api/status';
+      return memo(`${KEY.status}:${profile || "all"}`, TTL.status, () => j(url), force);
+    }
+  };
   const Insights = { get(force = false){ return memo(KEY.insights, TTL.insights, () => j('/api/insights'), force); } };
   const Settings = { overview(force = false){ return memo(KEY.settingsOverview, TTL.settingsOverview, () => j('/api/settings/overview'), force); } };
 

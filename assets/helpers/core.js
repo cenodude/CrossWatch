@@ -78,6 +78,7 @@
   const PAIRS_CACHE_KEY = "cw.pairs.v1";
   const PAIRS_TTL_MS = 15_000;
   const STATUS_CACHE_KEY = "cw.status.v1";
+  const statusCacheKey = () => `${STATUS_CACHE_KEY}.${String(window.CW?.OverviewProfile?.id || "").trim() || "all"}`;
   const DETAILS_MAX_LINES = 300;
   const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
   const ROUTE_TABS = new Set(["main", "watchlist", "playback_progress", "snapshots", "playlists", "editor", "settings"]);
@@ -662,13 +663,13 @@
 
   function saveStatusCache(providers) {
     try {
-      localStorage.setItem(STATUS_CACHE_KEY, JSON.stringify({ providers: normalizeProviders(providers), updatedAt: Date.now(), v: 1 }));
+      localStorage.setItem(statusCacheKey(), JSON.stringify({ providers: normalizeProviders(providers), updatedAt: Date.now(), v: 1 }));
     } catch {}
   }
 
   function loadStatusCache(maxAgeMs = 10 * 60 * 1000) {
     try {
-      const cached = JSON.parse(localStorage.getItem(STATUS_CACHE_KEY) || "null");
+      const cached = JSON.parse(localStorage.getItem(statusCacheKey()) || "null");
       if (!cached?.providers) return null;
       if ((Date.now() - (cached.updatedAt || 0)) > maxAgeMs) return null;
       return { providers: normalizeProviders(cached.providers), updatedAt: cached.updatedAt };
@@ -1253,6 +1254,8 @@
   });
 
   window.addEventListener("cw:overview-profile-changed", () => {
+    try { window.CW?.Cache?.invalidate?.(["status"]); } catch {}
+    queueSafe(() => { refreshStatus(true); });
     const current = normalizeRouteTab(state.currentTab || document.documentElement?.dataset?.tab || document.body?.dataset?.tab || "main");
     const tab = allowedRouteTab(current);
     if (tab !== current) Promise.resolve(showTab(tab)).catch(() => {});

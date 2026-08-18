@@ -18,7 +18,7 @@ import requests
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 
-from cw_platform.access_policy import filter_pairs_for_user, managed_profile_instances, request_user
+from cw_platform.access_policy import filter_pairs_for_profile, filter_pairs_for_user, managed_profile_instances, profile_instances_map, request_user
 from cw_platform.config_base import load_config as _load_config
 
 from cw_platform.provider_instances import get_provider_block, list_instance_ids, normalize_instance_id, provider_key
@@ -2008,11 +2008,21 @@ USERINFO_FNS: dict[str, Callable[..., dict[str, Any]]] = {
 
 # Registry API
 def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) -> None:
+    def _status_scope_profile(cfg: Mapping[str, Any], request: Request, requested: Any) -> str:
+        try:
+            from api.appAuthAPI import COOKIE_NAME, effective_user_profile_id
+
+            token = request.cookies.get(COOKIE_NAME) if request is not None else None
+            return str(effective_user_profile_id(dict(cfg or {}), token, requested) or "").strip()
+        except Exception:
+            return ""
+
     @app.get("/api/status", tags=["Probes"])
-    def api_status(request: Request, fresh: int = Query(0)) -> JSONResponse:
+    def api_status(request: Request, fresh: int = Query(0), user_profile: str = Query("")) -> JSONResponse:
         cfg0 = load_config_fn() or {}
         scoped_user = request_user(request)
-        managed_scope = bool(scoped_user and not scoped_user.get("is_admin"))
+        scope_profile = _status_scope_profile(cfg0, request, user_profile)
+        managed_scope = bool(scope_profile) or bool(scoped_user and not scoped_user.get("is_admin"))
         now = time.time()
         cached = STATUS_CACHE["data"]
         age = (now - STATUS_CACHE["ts"]) if cached else 1e9
@@ -2028,7 +2038,9 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
 
             cfg = cfg0 if managed_scope else (load_config_fn() or {})
             pairs = cfg.get("pairs") or []
-            if managed_scope:
+            if scope_profile:
+                pairs = filter_pairs_for_profile(cfg, scope_profile, [p for p in pairs if isinstance(p, dict)])
+            elif managed_scope:
                 pairs = filter_pairs_for_user(cfg, scoped_user, [p for p in pairs if isinstance(p, dict)])
             enabled_pairs = [p for p in pairs if isinstance(p, dict) and p.get("enabled", True) is not False]
             any_pair_ready = any(_pair_ready(cfg, p) for p in enabled_pairs)
@@ -2100,7 +2112,11 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                     _add(s, "default")
                 return out
 
-            allowed_instances = managed_profile_instances(cfg, scoped_user) if managed_scope else {}
+            allowed_instances = (
+                profile_instances_map(cfg, scope_profile)
+                if scope_profile
+                else (managed_profile_instances(cfg, scoped_user) if managed_scope else {})
+            )
 
             def _scope_allows(prov: str, inst: Any) -> bool:
                 if not managed_scope:
