@@ -24,11 +24,13 @@ import services.playback_progress.adapters.base as base_adapter
 import services.playback_progress.adapters.media_servers as media_servers_adapter
 import services.playback_progress.service as playback_service
 import services.playback_progress.adapters.floppy as floppy_playback_adapter
+import services.playback_progress.adapters.mdblist as mdblist_playback_adapter
 import services.playback_progress.adapters.nuvio as nuvio_playback_adapter
 import services.playback_progress.adapters.stremio as stremio_playback_adapter
 from services.playback_progress.adapters.crosswatch import CrossWatchPlaybackAdapter
 from services.playback_progress.adapters.media_servers import JellyfinPlaybackAdapter, KodiPlaybackAdapter
 from services.playback_progress.adapters.trakt import _trakt_image_url
+from providers.sync.mdblist import _progress as mdblist_progress
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -169,6 +171,70 @@ def test_playback_progress_edit_validation_honors_duration_floor():
 
     assert _progress_edit_max_exclusive(adapter, _record(duration_seconds=3600)) == 90
     assert _progress_edit_max_exclusive(adapter, _record(duration_seconds=30)) == 100
+
+
+class _NoMetadata:
+    def fetch(self, **_kwargs):
+        return {}
+
+
+def _mdblist_caps() -> PlaybackCapabilities:
+    return PlaybackCapabilities(
+        provider="mdblist",
+        provider_label="MDBList",
+        instance_id="default",
+        instance_label="MDBList Default",
+        configured=True,
+        read=True,
+        remove_progress=True,
+        mark_watched=True,
+        update_progress=True,
+    )
+
+
+def test_mdblist_playback_adapter_parses_official_id_keys_and_uses_documented_movie_payload():
+    row = {
+        "id": 10467596,
+        "progress": 21,
+        "paused_at": "2026-08-17T19:51:05Z",
+        "type": "movie",
+        "movie": {"title": "Evil Dead Burn", "year": 2026, "ids": {"imdbid": "tt1234567", "tmdbid": 550, "traktid": 1}},
+    }
+
+    record = mdblist_playback_adapter.MDBListPlaybackAdapter()._normalize(row, "default", "MDBList Default", _mdblist_caps(), _NoMetadata())
+    assert record is not None
+
+    body, reason = mdblist_playback_adapter._progress_body_from_record(record.to_dict(), 21)
+
+    assert record.ids == {"imdb": "tt1234567", "tmdb": 550, "trakt": 1}
+    assert record.can_update_progress is True
+    assert reason is None
+    assert body == {"movie": {"ids": {"imdb": "tt1234567"}}, "progress": 21, "app_version": mdblist_progress._app_version()}
+
+
+def test_mdblist_playback_adapter_uses_documented_nested_episode_payload():
+    row = {
+        "id": 10467597,
+        "progress": 26,
+        "paused_at": "2026-08-17T19:51:05Z",
+        "type": "episode",
+        "episode": {"season": 6, "number": 2, "title": "Exile", "ids": {"imdbid": "tt7654321", "tmdbid": 5978363}},
+        "show": {"title": "The Handmaid's Tale", "year": 2017, "ids": {"imdbid": "tt5834204", "tmdbid": 69478, "tvdbid": 321239}},
+    }
+
+    record = mdblist_playback_adapter.MDBListPlaybackAdapter()._normalize(row, "default", "MDBList Default", _mdblist_caps(), _NoMetadata())
+    assert record is not None
+
+    body, reason = mdblist_playback_adapter._progress_body_from_record(record.to_dict(), 26)
+
+    assert record.provider_metadata["show_ids"] == {"imdb": "tt5834204", "tmdb": "69478", "tvdb": "321239"}
+    assert record.can_update_progress is True
+    assert reason is None
+    assert body == {
+        "show": {"ids": {"imdb": "tt5834204"}, "season": {"number": 6, "episode": {"number": 2}}},
+        "progress": 26,
+        "app_version": mdblist_progress._app_version(),
+    }
 
 
 def test_combined_record_keeps_available_artwork_regardless_of_input_order():
