@@ -76,13 +76,71 @@ def profile_allows_instance(profile_instances: Mapping[str, list[str]], provider
     return bool(prov and inst and inst in list(profile_instances.get(prov) or []))
 
 
+VIEW_AS_HEADER = "x-cw-view-as"
+
+
+def requested_view_as_profile(request: Any) -> str:
+    raw = ""
+    try:
+        headers = getattr(request, "headers", None)
+        if headers is not None:
+            raw = headers.get(VIEW_AS_HEADER) or ""
+    except Exception:
+        raw = ""
+    if not raw:
+        try:
+            raw = request.query_params.get("user_profile") or ""
+        except Exception:
+            raw = ""
+    return normalize_user_profile_id(raw)
+
+
+def impersonated_user(user: Mapping[str, Any], profile_id: str) -> dict[str, Any]:
+    return {
+        "id": user.get("id"),
+        "username": user.get("username"),
+        "is_admin": False,
+        "profile_id": profile_id,
+        "permissions": {"dashboard": True, "watchlist": True, "playback": True, "write": True},
+        "view_as": True,
+        "view_as_admin_id": user.get("id"),
+    }
+
+
 def request_user(request: Any) -> Mapping[str, Any] | None:
     try:
         state = getattr(request, "state", None)
         user = getattr(state, "cw_user", None) or getattr(state, "user", None)
     except Exception:
         return None
-    return user if isinstance(user, Mapping) else None
+    if not isinstance(user, Mapping):
+        return None
+    if not bool(user.get("is_admin")):
+        return user
+    pid = requested_view_as_profile(request)
+    if not pid:
+        return user
+    state = getattr(request, "state", None)
+    cached = getattr(state, "cw_view_as", None) if state is not None else None
+    if isinstance(cached, tuple) and len(cached) == 2 and cached[0] == pid:
+        return cached[1] or user
+
+    def _remember(value: dict[str, Any] | None) -> Mapping[str, Any]:
+        try:
+            setattr(state, "cw_view_as", (pid, value))
+        except Exception:
+            pass
+        return value or user
+
+    try:
+        from .config_base import load_config
+
+        cfg = load_config() or {}
+    except Exception:
+        return _remember(None)
+    if not valid_user_profile_id(cfg, pid):
+        return _remember(None)
+    return _remember(impersonated_user(user, pid))
 
 
 def user_can_access_instance(cfg: Mapping[str, Any], user: Mapping[str, Any] | None, provider: Any, instance: Any) -> bool:
@@ -240,6 +298,18 @@ def filter_pairs_for_user(cfg: Mapping[str, Any], user: Mapping[str, Any] | None
     if not isinstance(user, Mapping) or bool(user.get("is_admin")):
         return [decorate_pair_profile(cfg, pair) for pair in pairs if isinstance(pair, Mapping)]
     return [decorate_pair_profile(cfg, pair) for pair in pairs if isinstance(pair, Mapping) and user_can_access_pair(cfg, user, pair)]
+
+
+def filter_pairs_for_profile(cfg: Mapping[str, Any], profile_id: Any, pairs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    pid = normalize_user_profile_id(profile_id)
+    if not pid:
+        return [decorate_pair_profile(cfg, pair) for pair in pairs if isinstance(pair, Mapping)]
+    instances = profile_instances_map(cfg, pid)
+    return [
+        decorate_pair_profile(cfg, pair)
+        for pair in pairs
+        if isinstance(pair, Mapping) and pair_profile_id(pair) == pid and profile_allows_pair(instances, pair)
+    ]
 
 
 def pair_ids_for_user(cfg: Mapping[str, Any], user: Mapping[str, Any] | None) -> set[str]:

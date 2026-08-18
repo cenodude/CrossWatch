@@ -705,6 +705,8 @@
       safe(esSummary?.close?.bind(esSummary));
       const url = new URL("/api/run/summary/stream", document.baseURI);
       url.searchParams.set("_ts", String(nowTs()));
+      const viewAs = String(window.CW?.OverviewProfile?.id || "").trim();
+      if (viewAs) url.searchParams.set("user_profile", viewAs);
       esSummary = new EventSource(url.toString());
       window.esSum = esSummary;
       esSummary.onmessage = (ev) => {
@@ -774,6 +776,12 @@
     openSummaryStream();
     openLogStream();
     pullSummary().then(renderAll);
+  });
+
+  window.addEventListener("cw:overview-profile-changed", () => {
+    safe(() => window.openSummaryStream?.());
+    safe(() => pullSummary());
+    safe(queuePairsRefresh);
   });
 
   window.addEventListener("cw-auth-setup-pending", (ev) => {

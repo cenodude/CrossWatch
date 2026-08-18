@@ -311,3 +311,11 @@ html[data-cw-role=user][data-cw-perm-write=off] #cw-quick-add{display:none!impor
 html[data-cw-role=user][data-cw-perm-dashboard=off] #tab-main:not([data-cw-profile-home]){display:none!important}
 html[data-cw-role=user][data-cw-perm-playback=off] #tab-playback_progress{display:none!important}
 html[data-cw-role=user][data-cw-perm-watchlist=off] #tab-watchlist{display:none!important}
+.cw-view-as{display:inline-flex;align-items:center;min-width:0;max-width:220px;margin-left:auto;flex:0 0 auto}
+.cw-view-as.hidden{display:none!important}
+.cw-view-as .cw-icon-select{min-width:150px;max-width:220px}
+.cw-view-as .cw-icon-select-btn{min-height:34px;padding:0 10px;border-radius:999px;font-size:12px;font-weight:700}
+#stats-card .cw-main-card-head{align-items:center}
+#stats-card .cw-view-as .cw-icon-select-btn{min-height:30px;padding:0 9px;font-size:11px}
+html[data-overview-profile=scoped] .cw-view-as .cw-icon-select-btn{border-color:rgba(124,92,255,0.55);background:rgba(124,92,255,0.16);color:#e6dfff}
+html[data-overview-profile=scoped] #ops-card.card.cw-main-card,html[data-overview-profile=scoped] #stats-card.card.cw-main-card{box-shadow:inset 0 0 0 1px rgba(124,92,255,0.45)}

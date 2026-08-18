@@ -660,6 +660,9 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
       <div class="cw-main-card-head-copy">
         <div class="cw-main-card-kicker">Statistics</div>
       </div>
+      <div id="cw-view-as" class="cw-view-as hidden">
+        <select id="cw-view-as-select" aria-label="View data as profile"></select>
+      </div>
     </div>
 
     <div class="stats-modern v2">

@@ -1934,8 +1934,8 @@ class PairPatch(BaseModel):
 
 def _request_user(request: Request | None) -> dict[str, Any] | None:
     try:
-        user = getattr(getattr(request, "state", None), "cw_user", None)
-        return user if isinstance(user, dict) else None
+        user = request_user(request)
+        return dict(user) if isinstance(user, Mapping) else None
     except Exception:
         return None
 
