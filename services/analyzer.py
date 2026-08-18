@@ -20,6 +20,12 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from cw_platform.access_policy import filter_pairs_for_user, pair_ids_for_user, request_user
+from cw_platform.anime_mapping.history_coords import (
+    HistoryCoordinateAliases,
+    build_history_coordinate_aliases,
+    native_anime_absolute,
+)
+from cw_platform.anime_mapping.storage import index_ready as anime_index_ready
 from cw_platform.config_base import CONFIG as CONFIG_DIR, load_config
 from cw_platform.orchestrator._history_rewatches import history_event_present
 from cw_platform.local_db.legacy_files import DB_MANAGED_ARTIFACTS
@@ -2348,6 +2354,107 @@ def _alias_peer_present(ctx: "_AnalysisContext", dst_tok: str, dest_key: str, it
     return True
 
 
+def _history_coord_peer_tokens(item: Mapping[str, Any]) -> set[str]:
+    typ = str(item.get("type") or "").strip().lower()
+    if typ not in {"episode", "season"}:
+        return set()
+    season = _hist_num(item.get("season") if item.get("season") is not None else item.get("season_number"))
+    if season is None:
+        return set()
+    if typ == "episode":
+        episode = _hist_num(item.get("episode") if item.get("episode") is not None else item.get("episode_number"))
+        if episode is None:
+            return set()
+        frag = (
+            f"#s{int(season):02d}e{int(episode):02d}"
+            if isinstance(season, int) and isinstance(episode, int)
+            else f"#s{season}e{episode}"
+        )
+    else:
+        frag = f"#season:{season}"
+
+    out: set[str] = set()
+    for source in (item.get("show_ids"), item.get("ids")):
+        if not isinstance(source, Mapping):
+            continue
+        for key, value in source.items():
+            if value in (None, ""):
+                continue
+            out.add(f"{str(key).strip().lower()}:{str(value).strip().lower()}{frag}")
+    return out
+
+
+@dataclass
+class _AnimeCoordPair:
+    aliases: HistoryCoordinateAliases
+    peer_minutes: dict[str, list[int | None]]
+
+
+class _AnimeHistoryCoords:
+    def __init__(self, state: dict[str, Any], cfg: Mapping[str, Any] | None) -> None:
+        self.state = state
+        self.cfg = dict(cfg or {})
+        block = self.cfg.get("anime_mapping")
+        self.enabled = bool(isinstance(block, Mapping) and block.get("enabled", False))
+        self._pairs: dict[tuple[str, str], _AnimeCoordPair | None] = {}
+
+    def _build(self, src_tok: str, dst_tok: str) -> _AnimeCoordPair | None:
+        src_items = _bucket(self.state, src_tok, "history") or {}
+        dst_items = _bucket(self.state, dst_tok, "history") or {}
+        if not src_items or not dst_items:
+            return None
+        aliases = build_history_coordinate_aliases(self.cfg, "history", (src_items, dst_items))
+        if not aliases.enabled:
+            return None
+        peers: dict[str, list[int | None]] = {}
+        for value in dst_items.values():
+            if not isinstance(value, Mapping):
+                continue
+            tokens = set(aliases.tokens(value)) | _history_coord_peer_tokens(value)
+            if not tokens:
+                continue
+            minute = _minute_epoch(value.get("watched_at"))
+            for token in tokens:
+                peers.setdefault(token, []).append(minute)
+        if not peers:
+            return None
+        return _AnimeCoordPair(aliases=aliases, peer_minutes=peers)
+
+    def pair(self, src_tok: str, dst_tok: str) -> _AnimeCoordPair | None:
+        if not self.enabled:
+            return None
+        key = (src_tok, dst_tok)
+        if key not in self._pairs:
+            try:
+                self._pairs[key] = self._build(src_tok, dst_tok)
+            except Exception:
+                self._pairs[key] = None
+        return self._pairs[key]
+
+    def match(
+        self,
+        src_tok: str,
+        dst_tok: str,
+        item: Mapping[str, Any],
+        *,
+        require_minute: bool = False,
+    ) -> bool:
+        entry = self.pair(src_tok, dst_tok)
+        if entry is None:
+            return False
+        tokens = entry.aliases.tokens(item)
+        if not tokens:
+            return False
+        src_minute = _minute_epoch(item.get("watched_at")) if require_minute else None
+        for token in tokens:
+            for dst_minute in entry.peer_minutes.get(token) or ():
+                if not require_minute:
+                    return True
+                if src_minute is None or dst_minute is None or src_minute == dst_minute:
+                    return True
+        return False
+
+
 @dataclass
 class _AnalysisContext:
     state: dict[str, Any]
@@ -2361,6 +2468,13 @@ class _AnalysisContext:
     history_pair_aliases: dict[tuple[str, str], dict[str, Any]] = field(default_factory=dict)
     history_keys: dict[str, dict[str, Any]] = field(default_factory=dict)
     history_rewatch_pairs: set[tuple[str, str]] = field(default_factory=set)
+    anime_coords: _AnimeHistoryCoords | None = None
+
+    def anime_history_match(self, src_tok: str, dst_tok: str, item: Mapping[str, Any], *, require_minute: bool = False) -> bool:
+        coords = self.anime_coords
+        if coords is None:
+            return False
+        return coords.match(src_tok, dst_tok, item, require_minute=require_minute)
 
 
 def _analysis_context(s: dict[str, Any], cfg: dict[str, Any] | None = None) -> _AnalysisContext:
@@ -2378,7 +2492,50 @@ def _analysis_context(s: dict[str, Any], cfg: dict[str, Any] | None = None) -> _
         history_pair_aliases=_history_pair_alias_index(pairs, config),
         history_keys=_history_key_index(s),
         history_rewatch_pairs=_history_rewatch_pair_set(config),
+        anime_coords=_AnimeHistoryCoords(s, config),
     )
+
+
+def _target_peer_match(
+    ctx: _AnalysisContext,
+    prov: str,
+    feat: str,
+    item_key: str,
+    item: dict[str, Any],
+    dst: str,
+) -> str:
+    prov_key = _norm_prov_token(prov)
+    feat_key = str(feat or "").lower()
+    dst_key = _norm_prov_token(dst)
+    if not _passes_pair_lib_filter(ctx.pair_libs, prov_key, feat_key, dst_key, item):
+        return "filtered"
+    if not _passes_pair_type_filter(ctx.pair_types, prov_key, feat_key, dst_key, item):
+        return "filtered"
+
+    vv = dict(item)
+    vv["_key"] = item_key
+    # For history episodes/seasons, exact show+season+episode identity wins over
+    # generic alias overlap: provider episode IDs differ across Emby/Jellyfin.
+    if feat_key == "history":
+        alias_dest = _alias_peer_key(ctx, prov_key, dst_key, item_key, item)
+        if alias_dest:
+            return "pair_alias" if _alias_peer_present(ctx, dst_key, alias_dest, item) else ""
+        rewatch = (prov_key, dst_key) in ctx.history_rewatch_pairs
+        if rewatch:
+            dest_items = (ctx.history_keys or {}).get(dst_key) or {}
+            if history_event_present(item, item_key, dest_items, _history_event_tokens, 0):
+                return "history_event"
+            return "anime_coords" if ctx.anime_history_match(prov_key, dst_key, item, require_minute=True) else ""
+        exact_key = _history_exact_key(item)
+        if exact_key is not None:
+            if exact_key in (ctx.history_exact.get(dst_key) or set()):
+                return "history_exact"
+    target_aliases = ctx.aliases.get((dst_key, feat_key)) or {}
+    if any(alias in target_aliases for alias in _alias_keys(vv)):
+        return "alias"
+    if feat_key == "history" and ctx.anime_history_match(prov_key, dst_key, item):
+        return "anime_coords"
+    return ""
 
 
 def _target_has_peer(
@@ -2389,31 +2546,7 @@ def _target_has_peer(
     item: dict[str, Any],
     dst: str,
 ) -> bool:
-    prov_key = _norm_prov_token(prov)
-    feat_key = str(feat or "").lower()
-    dst_key = _norm_prov_token(dst)
-    if not _passes_pair_lib_filter(ctx.pair_libs, prov_key, feat_key, dst_key, item):
-        return True
-    if not _passes_pair_type_filter(ctx.pair_types, prov_key, feat_key, dst_key, item):
-        return True
-
-    vv = dict(item)
-    vv["_key"] = item_key
-    # For history episodes/seasons, exact show+season+episode identity wins over
-    # generic alias overlap: provider episode IDs differ across Emby/Jellyfin.
-    if feat_key == "history":
-        alias_dest = _alias_peer_key(ctx, prov_key, dst_key, item_key, item)
-        if alias_dest:
-            return _alias_peer_present(ctx, dst_key, alias_dest, item)
-        if (prov_key, dst_key) in ctx.history_rewatch_pairs:
-            dest_items = (ctx.history_keys or {}).get(dst_key) or {}
-            return history_event_present(item, item_key, dest_items, _history_event_tokens, 0)
-        exact_key = _history_exact_key(item)
-        if exact_key is not None:
-            if exact_key in (ctx.history_exact.get(dst_key) or set()):
-                return True
-    target_aliases = ctx.aliases.get((dst_key, feat_key)) or {}
-    return any(alias in target_aliases for alias in _alias_keys(vv))
+    return bool(_target_peer_match(ctx, prov, feat, item_key, item, dst))
 
 
 def _eligible_targets(ctx: _AnalysisContext, prov: str, feat: str, item: dict[str, Any]) -> list[str]:
@@ -2472,6 +2605,7 @@ def _has_peer_by_pairs(
         history_pair_aliases=_history_pair_alias_index(pairs, cfg or {}),
         history_keys=_history_key_index(s),
         history_rewatch_pairs=_history_rewatch_pair_set(cfg or {}),
+        anime_coords=_AnimeHistoryCoords(s, cfg or {}),
     )
     filtered_targets = _eligible_targets(ctx, prov_key, feat_key, item)
     if not filtered_targets:
@@ -2491,6 +2625,7 @@ def _pair_stats(
         for dst in targets:
             total = 0
             synced = 0
+            anime_synced = 0
 
             for k, v in src_items.items():
                 if not isinstance(v, dict):
@@ -2499,19 +2634,23 @@ def _pair_stats(
                     continue
 
                 total += 1
-                if _target_has_peer(analysis, prov, feat, k, v, dst):
+                match = _target_peer_match(analysis, prov, feat, k, v, dst)
+                if match:
                     synced += 1
+                if match == "anime_coords":
+                    anime_synced += 1
 
-            stats.append(
-                {
-                    "source": prov,
-                    "target": dst,
-                    "feature": feat,
-                    "total": total,
-                    "synced": synced,
-                    "unsynced": max(total - synced, 0),
-                }
-            )
+            rec: dict[str, Any] = {
+                "source": prov,
+                "target": dst,
+                "feature": feat,
+                "total": total,
+                "synced": synced,
+                "unsynced": max(total - synced, 0),
+            }
+            if anime_synced:
+                rec["anime_synced"] = anime_synced
+            stats.append(rec)
     return stats
 
 
@@ -2842,6 +2981,78 @@ def _history_normalization_issues(s: dict[str, Any], cfg: dict[str, Any] | None 
             issues.append(issue)
 
     return issues
+
+
+def _anime_mapping_diagnostics(ctx: _AnalysisContext) -> list[dict[str, Any]]:
+    config = ctx.cfg if isinstance(ctx.cfg, Mapping) else {}
+    history_pairs = [
+        (src, dst)
+        for (src, feat), targets in (ctx.pairs or {}).items()
+        if str(feat or "").lower() == "history"
+        for dst in targets
+    ]
+    if not history_pairs:
+        return []
+
+    block = config.get("anime_mapping")
+    block = block if isinstance(block, Mapping) else {}
+    enabled = bool(block.get("enabled", False))
+
+    opted_in: list[str] = []
+    for pr in config.get("pairs") or []:
+        if not isinstance(pr, Mapping) or pr.get("enabled") is False:
+            continue
+        feats = pr.get("features")
+        hist = feats.get("history") if isinstance(feats, Mapping) else None
+        if not isinstance(hist, Mapping) or not bool(hist.get("use_anime_mapping")):
+            continue
+        src = str(pr.get("src") or pr.get("source") or "").upper().strip()
+        dst = str(pr.get("dst") or pr.get("target") or "").upper().strip()
+        if src and dst:
+            opted_in.append(f"{src}>{dst}")
+
+    probs: list[dict[str, Any]] = []
+    if opted_in and not enabled:
+        pair_list = sorted(set(opted_in))
+        probs.append(
+            {
+                "severity": "warn",
+                "type": "anime_mapping_disabled_globally",
+                "feature": "history",
+                "pairs": pair_list,
+                "message": (
+                    f"Anime episode mapping is enabled on {', '.join(pair_list)}, but the global Anime ID Mapping "
+                    "switch is off, so no episode translation runs. Anime episodes numbered differently on each "
+                    "side stay reported as missing until you enable it under Settings > Metadata > Anime ID Mapping."
+                ),
+            }
+        )
+        return probs
+
+    if not enabled:
+        return probs
+
+    release_tag = str(block.get("release_tag") or "v3")
+    try:
+        ready = bool(anime_index_ready(release_tag))
+    except Exception:
+        ready = False
+    if not ready:
+        probs.append(
+            {
+                "severity": "warn",
+                "type": "anime_mapping_index_not_ready",
+                "feature": "history",
+                "release_tag": release_tag,
+                "message": (
+                    "Anime ID Mapping is on, but the AniBridge episode index is not ready. Absolute-to-aired "
+                    "episode translation is skipped, so anime episodes can still be reported as missing. "
+                    "Run Update now or Rebuild index under Settings > Metadata > Anime ID Mapping."
+                ),
+            }
+        )
+    return probs
+
 
 def _history_show_signature(rec: dict[str, Any]) -> str | None:
     typ = str(rec.get("type") or "").strip().lower()
@@ -3345,6 +3556,31 @@ def _attention_mismatch_rows(problems: Iterable[Mapping[str, Any]]) -> list[dict
     return rows
 
 
+def _anime_resolved_unresolved(ctx: _AnalysisContext | None, rec: Mapping[str, Any]) -> bool:
+    if ctx is None:
+        return False
+    coords = getattr(ctx, "anime_coords", None)
+    if coords is None or not coords.enabled:
+        return False
+    if str(rec.get("feature") or "").lower() != "history":
+        return False
+    item = rec.get("item")
+    if not isinstance(item, Mapping) or not item:
+        return False
+    dst_base = _provider_base(rec.get("provider"))
+    if not dst_base:
+        return False
+    for (src_tok, feat), targets in (ctx.pairs or {}).items():
+        if str(feat or "").lower() != "history":
+            continue
+        for dst_tok in targets:
+            if _provider_base(dst_tok) != dst_base:
+                continue
+            if coords.match(src_tok, dst_tok, item):
+                return True
+    return False
+
+
 def _attention_from_analysis(
     problems: Iterable[Mapping[str, Any]],
     allowed_scopes: set[str] | None,
@@ -3365,7 +3601,19 @@ def _attention_from_analysis(
             for rec in records
             if (_provider_base(rec.get("provider")), str(rec.get("feature") or "").lower()) in scope_bases
         ]
-    return _attention_model(mismatch_rows, records)
+
+    anime_resolved = 0
+    kept: list[dict[str, Any]] = []
+    for rec in records:
+        if _anime_resolved_unresolved(ctx, rec):
+            anime_resolved += 1
+            continue
+        kept.append(rec)
+
+    out = _attention_model(mismatch_rows, kept)
+    if anime_resolved:
+        out["counts"]["anime_resolved"] = anime_resolved
+    return out
 
 
 def _unresolved_reason_message(dst: str, feature: str, reasons: list[str]) -> str:
@@ -3383,6 +3631,23 @@ def _annotate_reason_message(rec: dict[str, Any], provider: str, feature: str) -
     message = _unresolved_reason_message(provider, feature, [reason])
     if message:
         rec["reason_message"] = message
+
+
+def _anime_history_hint(ctx: _AnalysisContext, feat: str, item: Mapping[str, Any]) -> dict[str, Any] | None:
+    coords = ctx.anime_coords
+    if coords is None or not coords.enabled:
+        return None
+    if str(feat or "").lower() != "history":
+        return None
+    if native_anime_absolute(item) is None:
+        return None
+    return {
+        "kind": "anime_episode_mapping",
+        "message": (
+            "This entry uses native anime episode numbering. Anime episode mapping is active, but none of the "
+            "translated season/episode coordinates matched an entry on the destination."
+        ),
+    }
 
 
 def _missing_peer_hints(
@@ -3512,6 +3777,9 @@ def _problems(
                     prob["message"] = TRACKER_TO_MEDIA_SERVER_MESSAGE
                 if include_hints:
                     hints = _missing_peer_hints(unresolved_index, feat, alias_keys, missing_targets, blocked)
+                    anime_hint = _anime_history_hint(analysis, feat, v)
+                    if anime_hint:
+                        hints.append(anime_hint)
                     if tracker_to_media and not blocked:
                         hints.append(
                             {
@@ -3605,6 +3873,10 @@ def _problems(
 
     try:
         probs.extend(_history_normalization_issues(s, analysis.cfg))
+    except Exception:
+        pass
+    try:
+        probs.extend(_anime_mapping_diagnostics(analysis))
     except Exception:
         pass
     scan_end = time.perf_counter()
@@ -4071,6 +4343,10 @@ def _detail_for_item(pairs_raw: str | None, provider: str, feature: str, key: st
     blocked = bool(blocks and any(kk in blocks for kk in [key, *alias_keys]))
 
     hints = _missing_peer_hints(_unresolved_index(allowed), feat_key, alias_keys, missing_targets, blocked)
+    if missing_targets:
+        anime_hint = _anime_history_hint(context, feat_key, it)
+        if anime_hint:
+            hints.append(anime_hint)
     details = _missing_peer_show_hints(feat_key, it, missing_targets, context.history_show_index)
     if blocked:
         details = ([{"target": "ALL", "feature": feat_key, "message": f"Blocked by {_MANUAL_POLICY_REF}."}] + details)
