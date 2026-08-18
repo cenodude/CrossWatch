@@ -698,6 +698,29 @@ def test_editor_ui_renders_the_shared_instance_note() -> None:
     assert ".cw-shared-note{" in css
 
 
+def test_events_clear_is_hidden_from_managed_users() -> None:
+    import pathlib
+
+    from api import eventsAPI
+
+    assert 'if _managed_request(request):' in pathlib.Path("api/eventsAPI.py").read_text(encoding="utf-8")
+    assert eventsAPI.events_clear.__module__ == "api.eventsAPI"
+
+    modal = pathlib.Path("assets/js/modals/events/index.js").read_text(encoding="utf-8")
+    assert '${isAdmin ? `<button class="ev-tbtn" id="ev-clear"' in modal
+    assert 'Q("#ev-clear", root)?.addEventListener' in modal
+    assert 'showToast("Clear failed.", null, "error")' in modal
+
+
+def test_editor_profile_picker_does_not_invent_a_default_profile() -> None:
+    import pathlib
+
+    editor = pathlib.Path("assets/js/editor.js").read_text(encoding="utf-8")
+    assert 'norm.unshift({ id: "default", label: "Default" })' not in editor
+    assert 'if (!norm.length) norm.push({ id: "default", label: "Default" });' in editor
+    assert 'next = ids.includes("default") ? "default" : ids[0];' in editor
+
+
 # Profile page: created_at, preferences, and the Main widget grid
 def test_user_shapes_expose_created_at_and_preferences() -> None:
     from api.appAuthAPI import _admin_identity, _public_user, clean_user_preferences
