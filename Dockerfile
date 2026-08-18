@@ -58,6 +58,7 @@ RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/run-sync.sh
 # --- runtime env ---
 ARG APP_VERSION=v0.0.0
 ENV APP_VERSION=${APP_VERSION}
+RUN printf '%s' "${APP_VERSION}" > /app/VERSION && chmod 0444 /app/VERSION
 ENV RUNTIME_DIR=/config \
     WEB_HOST=0.0.0.0 \
     WEB_PORT=8787 \

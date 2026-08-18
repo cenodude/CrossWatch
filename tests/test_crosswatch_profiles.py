@@ -2657,3 +2657,35 @@ def test_scrobbler_modals_have_conditional_user_profile_selector() -> None:
     assert 'title="${esc(p.instance)}"' in route_js
     assert 'title="${esc(p.instance)}"' in webhook_js
     assert ".scrm-profile-row" in css
+
+
+def test_version_stamp_file_beats_stale_env(tmp_path, monkeypatch) -> None:
+    from api import versionAPI
+
+    stamp = tmp_path / "VERSION"
+    monkeypatch.setattr(versionAPI, "VERSION_FILE", stamp)
+
+    # a container env pinned by Portainer or Watchtower must not win
+    stamp.write_text("v0.11.1", encoding="utf-8")
+    monkeypatch.setenv("APP_VERSION", "v0.11.0")
+    assert versionAPI.resolve_current_version() == "v0.11.1"
+
+    # without a stamp the env still works, for bare python runs
+    stamp.unlink()
+    assert versionAPI.resolve_current_version() == "v0.11.0"
+
+    # an empty or truncated stamp must not blank the version
+    stamp.write_text("   ", encoding="utf-8")
+    assert versionAPI.resolve_current_version() == "v0.11.0"
+
+    monkeypatch.delenv("APP_VERSION", raising=False)
+    assert versionAPI.resolve_current_version() == versionAPI.FALLBACK_VERSION
+
+
+def test_dockerfile_stamps_version_into_the_image() -> None:
+    dockerfile = Path("Dockerfile").read_text("utf-8")
+
+    assert 'RUN printf \'%s\' "${APP_VERSION}" > /app/VERSION' in dockerfile
+    # the stamp must be written in the runtime stage, after the app is copied
+    assert dockerfile.index("COPY --from=appsrc") < dockerfile.index("/app/VERSION")
+    assert "VERSION" in Path(".gitignore").read_text("utf-8")
