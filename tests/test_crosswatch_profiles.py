@@ -2377,3 +2377,189 @@ def test_insights_snapshot_modal_is_crosswatch_profile_aware() -> None:
     assert "provider_instance=" in insights_js
     assert "user_profile=${encodeURIComponent(overviewProfileId())}" in insights_js
     assert '"/config/.cw_provider/snapshots"' not in insights_js
+
+
+def test_status_probes_resolve_provider_without_configured_default() -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from api import probesAPI as probes
+
+    cases = [
+        ("JELLYFIN", "jellyfin", "JELLYFIN-P01", {"server": "http://jf:8096", "access_token": "t"}),
+        ("EMBY", "emby", "EMBY-P01", {"server": "http://emby:8096", "access_token": "t"}),
+        ("PLEX", "plex", "PLEX-P01", {"account_token": "t"}),
+        ("TRAKT", "trakt", "TRAKT-P01", {"access_token": "t", "client_id": "c"}),
+        ("SIMKL", "simkl", "SIMKL-P01", {"access_token": "t", "client_id": "c"}),
+        ("MDBLIST", "mdblist", "MDBLIST-P01", {"api_key": "k"}),
+        ("TAUTULLI", "tautulli", "TAUTULLI-P01", {"server_url": "http://t:8181", "api_key": "k"}),
+    ]
+
+    for prov, ck, inst, blk in cases:
+        cfg = {ck: {"instances": {inst: dict(blk)}}}
+        probes.invalidate_provider_caches(ck)
+
+        app = FastAPI()
+        probes.register_probes(app, lambda cfg=cfg: cfg)
+        block = TestClient(app).get("/api/status?fresh=1").json()["providers"][prov]
+
+        summary = block["instances_summary"]
+        assert list(block["instances"]) == [inst], prov
+        assert summary["total"] == 1, prov
+        assert summary["rep"] == inst, prov
+        assert block["rep_instance"] == inst, prov
+        assert block["instances"][inst]["probed"] is True, prov
+
+
+def test_status_probes_keep_partially_configured_named_instances() -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from api import probesAPI as probes
+
+    cfg = {
+        "kodi": {"instances": {"KODI-P01": {"server": "http://kodi:8080"}}},
+        "tmdb_sync": {"instances": {"TMDB-P01": {"api_key": "k"}}},
+    }
+    for ck in ("kodi", "tmdb"):
+        probes.invalidate_provider_caches(ck)
+
+    app = FastAPI()
+    probes.register_probes(app, lambda: cfg)
+    providers = TestClient(app).get("/api/status?fresh=1").json()["providers"]
+
+    assert list(providers["KODI"]["instances"]) == ["KODI-P01"]
+    assert list(providers["TMDB"]["instances"]) == ["TMDB-P01"]
+
+
+def test_connection_cards_show_default_and_friendly_profile_names() -> None:
+    ui = Path("assets/helpers/providers-ui.js").read_text("utf-8")
+
+    assert "function profileFriendlyName(cfg, provider, id)" in ui
+    assert "PROFILE_PILL_LIMIT" in ui
+    assert 'is-overflow' in ui
+    # default is no longer stripped from the card badges
+    assert '.filter((id) => String(id || "").trim().toLowerCase() !== "default")' not in ui
+
+    css = Path("assets/css/auth-providers.css").read_text("utf-8")
+    pill = css.split(".cw-auth-profile-pill{", 1)[1].split("}", 1)[0]
+    assert "text-overflow:ellipsis" in pill
+    assert "overflow:hidden" in pill
+    strip = css.split(".cw-auth-profile-strip{", 1)[1].split("}", 1)[0]
+    assert "max-width:" in strip and "overflow:hidden" in strip
+
+
+def test_connection_delete_guard_ignores_unconfigured_default() -> None:
+    ui = Path("assets/helpers/providers-ui.js").read_text("utf-8")
+    guard = ui.split("function connectionDeleteBlockedByProfiles(", 1)[1].split("\n  }", 1)[0]
+
+    assert 'if (!ids.includes("default")) return false;' in guard
+    assert 'ids.some((id) => id !== "default")' in guard
+
+
+def test_profile_delete_refreshes_config_cache() -> None:
+    shared = Path("assets/auth/auth.shared.js").read_text("utf-8")
+    handler = shared.split("btnDel.addEventListener(", 1)[1].split("\n      });", 1)[0]
+
+    assert "invalidateConfigCache" in handler
+    assert "Config?.load?.(true)" in handler
+    assert "auth-changed" in handler
+
+
+def test_profile_switcher_skips_unconfigured_default() -> None:
+    shared = Path("assets/auth/auth.shared.js").read_text("utf-8")
+
+    assert 'if (want === "default" && defaultRow.configured === false)' in shared
+    assert 'item.id !== "default" && item.configured' in shared
+
+
+def test_auth_remount_preserves_open_connection_overlay() -> None:
+    ui = Path("assets/helpers/providers-ui.js").read_text("utf-8")
+    body = ui.split("async function mountAuthProviders(", 1)[1].split("initMountedAuthSections(slot);", 1)[0]
+
+    assert 'const overlay = slot.querySelector(":scope > .cw-auth-overlay");' in body
+    assert "overlay?.remove();" in body
+    assert body.index("overlay?.remove();") < body.index("slot.innerHTML = authHtml;")
+    assert "liveSectionIds" in body
+    assert "slot.appendChild(overlay);" in body
+
+
+def test_status_probes_ignore_pair_reference_to_unconfigured_default() -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from api import probesAPI as probes
+
+    cfg = {
+        "jellyfin": {"instances": {"JELLYFIN-P01": {"server": "http://jf:8096", "access_token": "t"}}},
+        "pairs": [{"enabled": True, "source": "JELLYFIN", "target": "TRAKT", "features": {"watchlist": {"enable": True}}}],
+        "trakt": {"access_token": "t", "client_id": "c"},
+    }
+    probes.invalidate_provider_caches("jellyfin")
+
+    app = FastAPI()
+    probes.register_probes(app, lambda: cfg)
+    block = TestClient(app).get("/api/status?fresh=1").json()["providers"]["JELLYFIN"]
+
+    assert block["rep_instance"] == "JELLYFIN-P01"
+    assert block["instances_summary"]["rep"] == "JELLYFIN-P01"
+    assert block["instances"]["default"]["configured"] is False
+    assert block["instances"]["default"]["used"] is True
+    assert block["instances"]["JELLYFIN-P01"]["configured"] is True
+
+
+def test_status_probes_keep_used_default_when_it_is_configured() -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from api import probesAPI as probes
+
+    cfg = {
+        "jellyfin": {
+            "server": "http://main:8096",
+            "access_token": "t",
+            "instances": {"JELLYFIN-P01": {"server": "http://jf:8096", "access_token": "t"}},
+        },
+        "pairs": [{"enabled": True, "source": "JELLYFIN", "source_instance": "default", "target": "TRAKT", "features": {"watchlist": {"enable": True}}}],
+        "trakt": {"access_token": "t", "client_id": "c"},
+    }
+    probes.invalidate_provider_caches("jellyfin")
+
+    app = FastAPI()
+    probes.register_probes(app, lambda: cfg)
+    block = TestClient(app).get("/api/status?fresh=1").json()["providers"]["JELLYFIN"]
+
+    assert block["rep_instance"] == "default"
+    assert block["instances"]["default"]["configured"] is True
+
+
+def test_sync_visibility_skips_redundant_select_rebuilds() -> None:
+    core = Path("assets/helpers/core.js").read_text("utf-8")
+    fn = core.split("function applySyncVisibility()", 1)[1].split("\n  }", 1)[0]
+
+    assert "const wanted = PROVIDER_ORDER.filter((key) => allowed.has(key));" in fn
+    assert "current.every((value, i) => value === wanted[i])" in fn
+    assert "card.dataset?.prov || card.dataset?.syncProv" in fn
+    assert "if (card.style.display !== display)" in fn
+    assert "const named = host.querySelectorAll(\".prov-card\");" in fn
+
+
+def test_auth_dots_batch_layout_reads_before_writes() -> None:
+    status = Path("assets/js/main-status.js").read_text("utf-8")
+    apply_fn = status.split("function applyAuthDots(cfg)", 1)[1].split("\n  }", 1)[0]
+    read_fn = status.split("function readDotTargets()", 1)[1].split("\n  }", 1)[0]
+
+    assert "const targets = readDotTargets();" in apply_fn
+    assert "const configured = configuredProviderSet(cfg);" in apply_fn
+    assert apply_fn.index("readDotTargets()") < apply_fn.index("writeDot(")
+    assert "getComputedStyle(head).display" in read_fn
+    assert "head.style" not in read_fn
+
+
+def test_status_provider_visibility_reuses_configured_set() -> None:
+    status = Path("assets/js/main-status.js").read_text("utf-8")
+
+    assert "function configuredProviderSet(cfg = getCachedConfig())" in status
+    assert "isStatusProviderVisible(key, data, cfg = getCachedConfig(), configured = null)" in status
+    assert "isStatusProviderVisible(k, providers[k], cfg, configured)" in status
+    assert "typeof set.has === \"function\"" in status

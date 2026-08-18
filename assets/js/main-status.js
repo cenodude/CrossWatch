@@ -76,13 +76,18 @@
     try { delete window._cfgCache; } catch {}
   };
 
-  function isProviderConfigured(key, cfg = getCachedConfig()) {
+  function configuredProviderSet(cfg = getCachedConfig()) {
     try {
       if (typeof window.getConfiguredProviders === "function") {
-        return window.getConfiguredProviders(cfg).has(up(key));
+        const set = window.getConfiguredProviders(cfg);
+        if (set && typeof set.has === "function") return set;
       }
     } catch {}
-    return false;
+    return new Set();
+  }
+
+  function isProviderConfigured(key, cfg = getCachedConfig(), configured = null) {
+    return (configured || configuredProviderSet(cfg)).has(up(key));
   }
 
   function isManagedUser() {
@@ -91,47 +96,55 @@
     return document.documentElement?.dataset?.cwRole === "user";
   }
 
-  function isStatusProviderVisible(key, data, cfg = getCachedConfig()) {
+  function isStatusProviderVisible(key, data, cfg = getCachedConfig(), configured = null) {
     if (!data || typeof data !== "object") return false;
+    const set = configured || configuredProviderSet(cfg);
     const managed = isManagedUser();
-    if (!managed && !isProviderConfigured(key, cfg)) return false;
+    if (!managed && !isProviderConfigured(key, cfg, set)) return false;
     const instances = data.instances && typeof data.instances === "object" ? data.instances : null;
     const summary = data.instances_summary && typeof data.instances_summary === "object" ? data.instances_summary : null;
     if (!!(instances && Object.keys(instances).length) || Number(summary?.total || 0) > 0) return true;
-    return isProviderConfigured(key, cfg);
+    return isProviderConfigured(key, cfg, set);
   }
 
-  function ensureDot(head) {
-    const existing = head.querySelector(".auth-dot");
-    if (existing) return existing;
-    if (getComputedStyle(head).display !== "flex") {
-      Object.assign(head.style, { display: "flex", alignItems: "center" });
-    }
+  function createDot(head, needsFlex) {
+    if (needsFlex) Object.assign(head.style, { display: "flex", alignItems: "center" });
     return head.appendChild(
       Object.assign(document.createElement("span"), { className: "auth-dot" })
     );
   }
 
-  function setDot(id, on) {
-    const sec = $(id);
-    const head = sec?.querySelector(".head") || sec?.firstElementChild;
-    if (!head) return false;
-    const dot = ensureDot(head);
-    const want = !!on;
+  function readDotTargets() {
+    const out = [];
+    AUTH_MAP.forEach(([id, key]) => {
+      const sec = $(id);
+      const head = sec?.querySelector(".head") || sec?.firstElementChild;
+      if (!head) return;
+      const dot = head.querySelector(".auth-dot");
+      out.push({ key, head, dot, needsFlex: dot ? false : getComputedStyle(head).display !== "flex" });
+    });
+    return out;
+  }
+
+  function writeDot(target, want) {
+    const dot = target.dot || createDot(target.head, target.needsFlex);
     const state = want ? "1" : "0";
-    if (dot.dataset.on === state) return true;
+    if (dot.dataset.on === state) return;
     dot.dataset.on = state;
     dot.classList.toggle("on", want);
     dot.title = want ? "Configured" : "Not configured";
     dot.setAttribute("aria-label", dot.title);
-    return true;
   }
 
   function applyAuthDots(cfg) {
     if (cfg && typeof cfg === "object") {
       try { window._cfgCache = cfg; } catch {}
     }
-    return AUTH_MAP.reduce((any, [id, key]) => setDot(id, isProviderConfigured(key, cfg)) || any, false);
+    const targets = readDotTargets();
+    if (!targets.length) return false;
+    const configured = configuredProviderSet(cfg);
+    targets.forEach((target) => writeDot(target, configured.has(up(target.key))));
+    return true;
   }
 
   async function refreshAuthDots(force = false) {
@@ -383,7 +396,8 @@
     host.classList.add("vip-badges");
     if (btn && host.contains(btn)) host.removeChild(btn);
 
-    const keys = Object.keys(providers).filter((k) => isStatusProviderVisible(k, providers[k], cfg)).sort();
+    const configured = configuredProviderSet(cfg);
+    const keys = Object.keys(providers).filter((k) => isStatusProviderVisible(k, providers[k], cfg, configured)).sort();
     const none = !keys.length;
     host.classList.toggle("hidden", none);
     if (none) {

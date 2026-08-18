@@ -465,6 +465,10 @@
           if (item && item.id && item.id !== "default") addOpt(item.id, item.display_label || item.label || item.id, item);
         });
         if (!Array.from(sel.options).some((option) => option.value === want)) want = "default";
+        if (want === "default" && defaultRow.configured === false) {
+          const firstReady = opts.find((item) => item && item.id && item.id !== "default" && item.configured);
+          if (firstReady) want = String(firstReady.id);
+        }
         sel.value = want;
         setInstance(want);
         syncMetaInputs();
@@ -644,6 +648,10 @@
           if (!r.ok || j.ok === false) throw new Error(String(j.error || "delete_failed"));
           setInstance("default");
           await refreshOptions(false);
+          try { w.invalidateConfigCache?.(); } catch (_) {}
+          try { await w.CW?.API?.Config?.load?.(true); } catch (_) {}
+          try { w.dispatchEvent(new CustomEvent("cw-user-profiles-changed")); } catch (_) {}
+          try { w.dispatchEvent(new CustomEvent("auth-changed")); } catch (_) {}
           try { Promise.resolve(onChange?.()).catch(() => {}); } catch (_) {}
         } catch (e) {
           notify("Could not delete profile: " + (e && e.message ? e.message : e));

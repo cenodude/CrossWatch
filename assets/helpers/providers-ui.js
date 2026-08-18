@@ -193,16 +193,30 @@
     return Array.from(new Set(out)).sort((a, b) => (a !== "default") - (b !== "default") || a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
   }
 
+  function profileFriendlyName(cfg, provider, id) {
+    const raw = String(id || "").trim();
+    const isDefault = raw.toLowerCase() === "default";
+    const block = providerConfigBlock(cfg, provider);
+    const instances = block?.instances;
+    const source = isDefault ? block : (instances && typeof instances === "object" ? instances[raw] : null);
+    const label = source && typeof source === "object" ? String(source.label || "").trim() : "";
+    return label || (isDefault ? "Default" : profileDisplayName(raw));
+  }
+
+  const PROFILE_PILL_LIMIT = 3;
+
   function authProfileBadges(card, cfg) {
-    const ids = configuredProfileIds(cfg, card.provider, !!card.status?.ok)
-      .filter((id) => String(id || "").trim().toLowerCase() !== "default");
+    const ids = configuredProfileIds(cfg, card.provider, !!card.status?.ok);
     if (!ids.length) return "";
     const label = ids.length === 1 ? "Configured profile" : "Configured profiles";
-    const pills = ids.map((id) => {
-      const name = profileDisplayName(id);
-      return `<span class="cw-auth-profile-pill" title="${escHtml(`${label}: ${name}`)}">${escHtml(name)}</span>`;
-    }).join("");
-    return `<span class="cw-auth-profile-strip" aria-label="${label}">${pills}</span>`;
+    const names = ids.map((id) => profileFriendlyName(cfg, card.provider, id));
+    const shown = names.slice(0, PROFILE_PILL_LIMIT);
+    const rest = names.slice(PROFILE_PILL_LIMIT);
+    const pills = shown.map((name) => `<span class="cw-auth-profile-pill" title="${escHtml(`${label}: ${name}`)}">${escHtml(name)}</span>`);
+    if (rest.length) {
+      pills.push(`<span class="cw-auth-profile-pill is-overflow" title="${escHtml(`${label}: ${rest.join(", ")}`)}">+${rest.length}</span>`);
+    }
+    return `<span class="cw-auth-profile-strip" aria-label="${escHtml(`${label}: ${names.join(", ")}`)}">${pills.join("")}</span>`;
   }
 
   function authProviderKeysWithSections() {
@@ -1464,7 +1478,9 @@
     const sel = panel.querySelector(".cw-profile-switcher select");
     const current = String(sel?.value || "default").toLowerCase();
     if (current !== "default") return false;
-    return configuredProfileIds(getCachedConfig(), info.provider).some((id) => String(id).toLowerCase() !== "default");
+    const ids = configuredProfileIds(getCachedConfig(), info.provider).map((id) => String(id).toLowerCase());
+    if (!ids.includes("default")) return false;
+    return ids.some((id) => id !== "default");
   }
 
   function setConnectionSaveBusy(btn, busy) {
@@ -1842,10 +1858,22 @@
         const slot = document.getElementById("auth-providers");
         if (!slot) return;
         if (!authHtml || force) authHtml = await apiText("/api/auth/providers/html");
+        const overlay = slot.querySelector(":scope > .cw-auth-overlay");
+        const liveSectionIds = new Set(
+          Array.from(overlay?.querySelectorAll("#cw-auth-provider-form > .section[id]") || [], (node) => node.id)
+        );
+        overlay?.remove();
         slot.innerHTML = authHtml;
+        if (overlay) {
+          Array.from(slot.querySelectorAll(".section[id]")).forEach((node) => {
+            if (liveSectionIds.has(node.id)) node.remove();
+          });
+          slot.appendChild(overlay);
+        }
         bindAuthPresentation(slot);
         ensureAuthShell(slot);
         initMountedAuthSections(slot);
+        if (overlay) slot.appendChild(overlay);
 
         window.initMDBListAuthUI?.();
         window.initPublicMetaDBAuthUI?.();

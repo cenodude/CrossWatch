@@ -451,22 +451,27 @@
       : getConfiguredProviders();
     const host = byId("providers_list");
     if (host) {
-      const cards = host.querySelectorAll(".prov-card").length
-        ? host.querySelectorAll(".prov-card")
-        : host.querySelectorAll(":scope > .card, :scope > *");
+      const named = host.querySelectorAll(".prov-card");
+      const cards = named.length ? named : host.querySelectorAll(":scope > .card, :scope > *");
 
       cards.forEach((card) => {
-        const key = String(card.dataset?.prov || "").toUpperCase() || resolveProviderKeyFromNode(card);
+        const cached = String(card.dataset?.prov || card.dataset?.syncProv || "").toUpperCase();
+        const key = cached || resolveProviderKeyFromNode(card);
         if (!key) return;
-        card.dataset.syncProv = key;
-        card.style.display = allowed.has(key) ? "" : "none";
+        if (card.dataset.syncProv !== key) card.dataset.syncProv = key;
+        const display = allowed.has(key) ? "" : "none";
+        if (card.style.display !== display) card.style.display = display;
       });
     }
+
+    const wanted = PROVIDER_ORDER.filter((key) => allowed.has(key));
 
     ["source-provider", "target-provider"].forEach((id) => {
       const select = byId(id);
       if (!select) return;
       const hadPlaceholder = !!select.options[0] && select.options[0].value === "";
+      const current = Array.from(select.options || [], (option) => option.value).filter(Boolean);
+      if (current.length === wanted.length && current.every((value, i) => value === wanted[i])) return;
       const previous = String(select.value || "").toUpperCase();
       select.innerHTML = "";
       if (hadPlaceholder) {
@@ -475,7 +480,7 @@
         placeholder.textContent = "— select —";
         select.appendChild(placeholder);
       }
-      PROVIDER_ORDER.filter((key) => allowed.has(key)).forEach((key) => select.appendChild(buildProviderOption(key)));
+      wanted.forEach((key) => select.appendChild(buildProviderOption(key)));
       select.value = previous && allowed.has(previous) ? previous : (hadPlaceholder ? "" : select.value);
     });
   }
