@@ -24,14 +24,21 @@ VERSION_FILE = Path(__file__).resolve().parent.parent / "VERSION"
 FALLBACK_VERSION = "v0.11.1"
 
 
+def _usable_version(value: Any) -> str:
+    raw = str(value or "").strip()
+    return "" if raw.lower().lstrip("v") in ("", "0.0.0") else raw
+
+
 def resolve_current_version() -> str:
     try:
-        stamped = VERSION_FILE.read_text(encoding="utf-8").strip()
+        stamped = VERSION_FILE.read_text(encoding="utf-8")
     except Exception:
         stamped = ""
-    if stamped:
-        return stamped
-    return (os.getenv("APP_VERSION") or "").strip() or FALLBACK_VERSION
+    for candidate in (stamped, os.getenv("APP_VERSION")):
+        usable = _usable_version(candidate)
+        if usable:
+            return usable
+    return FALLBACK_VERSION
 
 
 CURRENT_VERSION = resolve_current_version()
