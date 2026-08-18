@@ -738,7 +738,9 @@ def test_settings_oidc_security_form_uses_two_column_layout() -> None:
     css = pathlib.Path("assets/css/app-users.css").read_text(encoding="utf-8")
 
     assert 'class="cw-auth-oidc-field"' in html
+    assert 'class="cw-auth-plex-field"' in html
     assert "#page-settings #app_auth_fields > .cw-settings-2col > .cw-auth-oidc-field" in css
+    assert "#page-settings #app_auth_fields .cw-auth-plex-field > .cw-settings-inline-action" in css
     assert "grid-column: 1 / -1;" in css
     assert "#page-settings .cw-auth-oidc-field .cw-app-oidc-grid" in css
     assert "grid-template-columns: repeat(2, minmax(0, 1fr));" in css
@@ -750,7 +752,10 @@ def test_profile_page_hosts_the_main_widget_grid() -> None:
     html = ui_frontend.get_profile_html(
         {"is_admin": False, "username": "P", "permissions": {"dashboard": True, "watchlist": True, "playback": True, "write": True}}
     )
+    main_html = ui_frontend.get_index_html(include_admin=True)
     assert 'id="dashboard-widgets-card"' in html
+    assert 'id="placeholder-card"' not in html
+    assert 'id="placeholder-card"' in main_html
     assert "/assets/js/dashboard-widgets.js" in html
     assert "cwIsAuthSetupPending" in html
 
@@ -759,8 +764,18 @@ def test_profile_widget_layout_is_stored_separately_from_main() -> None:
     import pathlib
 
     js = pathlib.Path("assets/js/dashboard-widgets.js").read_text(encoding="utf-8")
+    preview_js = pathlib.Path("assets/helpers/watchlist-preview.js").read_text(encoding="utf-8")
     assert 'const ON_PROFILE_PAGE = !!document.getElementById("profile-hero");' in js
-    assert 'ON_PROFILE_PAGE ? "cw.profileWidgets.layout.v1" : "cw.dashboardWidgets.layout.v3"' in js
+    assert 'ON_PROFILE_PAGE ? "cw.profileWidgets.layout.v3" : "cw.dashboardWidgets.layout.v3"' in js
+    assert 'const ALL_WIDGETS = [' in js
+    assert 'const WIDGETS = ON_PROFILE_PAGE ? ALL_WIDGETS.filter((widget) => widget.key !== "watchlist") : ALL_WIDGETS;' in js
+    assert 'watchlist: { order: 0, size: "large", span: 1, view: "icon", horizontalView: "media", hidden: false }' in js
+    assert 'ratings: { order: 2, size: "small", span: 1, view: "grid", horizontalView: "media", hidden: false }' in js
+    reset_branch = js[js.index('} else if (action === "reset") {'):js.index("markWidgetsDirty(0);", js.index('} else if (action === "reset") {'))]
+    assert "customizeOpen = false;" in reset_branch
+    assert "function profileWatchlistWidgetHidden()" in preview_js
+    assert "return !!document.getElementById(\"profile-hero\");" in preview_js
+    assert "if (profileWatchlistWidgetHidden()) { hidePreviewCard(card, row, msg, { preserve: true }); return false; }" in preview_js
 
 
 # Profile page rebuild: hero, layout, preferences
@@ -775,12 +790,17 @@ def _profile_html() -> str:
 
 def test_profile_hero_has_both_art_layers_and_now_playing_readout() -> None:
     html = _profile_html()
+    import pathlib
+
+    css = pathlib.Path("assets/css/profile-page.css").read_text(encoding="utf-8")
     for marker in ('id="profile-hero-art"', 'id="profile-hero-now"', 'id="profile-hero-seam"',
                    'id="profile-now"', 'id="profile-now-fill"', 'id="profile-member-since"',
                    'id="profile-hero-chips"', 'class="cw-profile-last hidden" role="button" tabindex="0"',
                    'class="cw-profile-last-poster"'):
         assert marker in html, marker
     assert "profile-last-details" not in html
+    assert ".cw-profile-shell{width:calc(100vw - 40px);max-width:none;" in css
+    assert "width:min(1380px,calc(100vw - 40px))" not in css
 
 
 def test_profile_overview_uses_the_new_pair_layout() -> None:
@@ -887,15 +907,18 @@ def test_continue_watching_card_matches_the_spec() -> None:
     js = pathlib.Path("assets/js/profile-page.js").read_text(encoding="utf-8")
     card = js[js.index("function progressCard(item)"):js.index("function mediaKindLabel(item)")]
     # landscape artwork, not a portrait poster
-    assert "backdrop(item) || poster(item" in card
+    assert "watchlistPreviewArt(item) || poster(item" in card
     assert 'class="cw-cw-art"' in card
     # title, episode/year sub-line, bar + percentage, nothing else
     for marker in ("cw-cw-title", "cw-cw-sub", "cw-cw-track", "cw-cw-pct"):
         assert marker in card, marker
+    assert 'const episode = episodeOf(item);' in card
+    assert 'class="cw-cw-episode"' in card
     assert "provider" not in card.lower()
 
     css = pathlib.Path("assets/css/profile-page.css").read_text(encoding="utf-8")
     assert "aspect-ratio:16/9" in css
+    assert "#profile-progress .cw-cw-episode{" in css
     assert "-webkit-line-clamp:2" in css
     assert "#profile-progress{display:flex" in css and "overflow-x:auto" in css
 
@@ -916,9 +939,39 @@ def test_widget_layout_toolbar_offers_reset() -> None:
     js = pathlib.Path("assets/js/dashboard-widgets.js").read_text(encoding="utf-8")
     body = js[js.index("function updateLayoutToolbar()"):js.index("function ensureLayoutToolbar()")]
     assert "card.prepend(bar)" in body
+    assert "if (!ON_PROFILE_PAGE)" not in body
     assert '"reset"' in js
     for action in ("customize", "show-all", "reset"):
         assert f'["{action}"' in js or f'"{action}",' in js
+
+
+def test_widget_layout_controls_are_available_on_main_too() -> None:
+    import pathlib
+
+    js = pathlib.Path("assets/js/dashboard-widgets.js").read_text(encoding="utf-8")
+    css = pathlib.Path("assets/crosswatch.css").read_text(encoding="utf-8")
+    body = js[js.index("function ensureWidgetControls()"):js.index("function syncControlIcons()")]
+
+    assert "querySelectorAll(\".cw-dash-layout-controls\").forEach((node) => node.remove())" not in body
+    assert "if (!ON_PROFILE_PAGE)" not in body
+    assert ".cw-dash-layout-controls{position:absolute;right:104px" in css
+    assert "display:flex;align-items:center;gap:10px" in css
+    assert "#placeholder-card .cw-dash-layout-controls{right:104px" in css
+
+
+def test_profile_widget_items_open_the_profile_preview_drawer() -> None:
+    import pathlib
+
+    js = pathlib.Path("assets/js/dashboard-widgets.js").read_text(encoding="utf-8")
+    helper = js[js.index("function openProfileWidgetPreview"):js.index("function historyCard")]
+    click = js[js.index('const itemLink = event.target?.closest?.("[data-cw-widget-item]")'):js.index('const btn = event.target?.closest?.("[data-cw-widget-more]")')]
+
+    assert "ON_PROFILE_PAGE" in helper
+    assert "window.CW?.WatchlistPreview?.openPreviewDrawer || window.openPreviewDrawer" in helper
+    assert "latestItems[kind]?.[Number(index)]" in helper
+    assert "void open(item);" in helper
+    assert "if (openProfileWidgetPreview(kind, index)) return;" in click
+    assert "void openDetailCard(kind, index);" in click
 
 
 def test_profile_widgets_adopt_the_profile_card_style() -> None:
@@ -943,10 +996,12 @@ def test_watchlist_shows_three_rows_with_an_added_stamp() -> None:
     import pathlib
 
     js = pathlib.Path("assets/js/profile-page.js").read_text(encoding="utf-8")
-    assert "watchlistItems.slice(0, 3).map(watchlistRow)" in js
-    added = js[js.index("function addedEpoch(item)"):js.index("function watchlistRow(item)")]
+    assert "watchlistItems.slice(0, 3).map((item) => watchlistRow(item, wall?.last_sync_epoch))" in js
+    added = js[js.index("function addedEpoch(item)"):js.index("function watchlistRow(item, fallbackSyncEpoch = 0)")]
     assert "added_epoch" in added and "added_when" in added and "Date.parse" in added
-    assert "`Added ${relTime(when)}`" in js
+    assert "function syncedEpoch(item, fallbackEpoch = 0)" in added
+    assert "updated ${relTime(when)}" in js
+    assert 'class="cw-profile-watchlist-sync"' in js
 
 
 def test_watchlist_widget_is_renamed() -> None:
@@ -969,6 +1024,48 @@ def test_profile_widget_skin_is_scoped_and_unmuted() -> None:
     assert ".cw-dash-title-row h3{font-size:16px" in skin
     assert ".cw-dash-widget.is-auto-collapsed{opacity:1}" in skin
     assert ".cw-dashboard-layout-tools{top:-54px" in skin
+    assert '#placeholder-card[data-widget-size="small"][data-widget-view="grid"] .poster{' in skin
+    assert "grid-template-columns:clamp(150px,34%,220px) minmax(190px,1fr) auto!important" in skin
+    assert "#placeholder-card[data-widget-size=\"small\"][data-widget-view=\"grid\"] .poster .wl-status" in skin
+
+
+def test_main_dashboard_widget_title_icons_stay_visible() -> None:
+    import pathlib
+    import ui_frontend
+
+    html = ui_frontend.get_index_html(include_admin=True)
+    crosswatch_css = pathlib.Path("assets/crosswatch.css").read_text(encoding="utf-8")
+    flat_css = pathlib.Path("assets/themes/flat.css").read_text(encoding="utf-8")
+    profile_css = pathlib.Path("assets/css/profile-page.css").read_text(encoding="utf-8")
+
+    for icon in ("play_arrow", "star", "sensors", "timelapse", "queue_music"):
+        assert f'<span class="material-symbols-rounded" aria-hidden="true">{icon}</span>' in html
+
+    assert ".cw-dash-title-row .material-symbols-rounded{display:inline-grid" in crosswatch_css
+    assert "body:not(.cw-profile-page) #dashboard-widgets-card .cw-dash-title-row .material-symbols-rounded" in flat_css
+    assert "display:inline-grid!important" in flat_css
+    assert "body.cw-profile-page #dashboard-widgets-card .cw-dash-title-row>.material-symbols-rounded{display:none}" in profile_css
+
+
+def test_latest_ratings_age_badges_are_not_hard_clipped() -> None:
+    import pathlib
+
+    css = pathlib.Path("assets/css/components.css").read_text(encoding="utf-8")
+    rule = css[css.index("#latest-ratings-grid .cw-rating-age-badge{"):css.index("#latest-ratings-grid .cw-rating-provider-icons{")]
+
+    assert "width:max-content" in rule
+    assert "max-width:calc(100% - 44px)" in rule
+    assert "max-width:78px" not in rule
+
+
+def test_sync_hub_watcher_tooltip_stays_inside_viewport() -> None:
+    import pathlib
+
+    js = pathlib.Path("assets/js/schedulerbanner.js").read_text(encoding="utf-8")
+
+    assert ":is(#chip-watch,#chip-hook) .cw-hub-tip" in js
+    assert "left:0;right:auto;width:min(360px,calc(100vw - 32px));min-width:0;max-width:calc(100vw - 32px)" in js
+    assert ":is(#chip-watch,#chip-hook)[data-tip]:hover>.cw-hub-tip" in js
 
 
 def test_main_dashboard_styles_are_not_touched() -> None:

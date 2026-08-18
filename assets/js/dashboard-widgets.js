@@ -38,9 +38,9 @@
     error: { title: "Could not load this widget", copy: "Try refreshing again in a moment." },
   };
   const ON_PROFILE_PAGE = !!document.getElementById("profile-hero");
-  const LAYOUT_KEY = ON_PROFILE_PAGE ? "cw.profileWidgets.layout.v1" : "cw.dashboardWidgets.layout.v3";
+  const LAYOUT_KEY = ON_PROFILE_PAGE ? "cw.profileWidgets.layout.v3" : "cw.dashboardWidgets.layout.v3";
   const SETTINGS_KEY = "cw.dashboardWidgets.settings.v1";
-  const WIDGETS = [
+  const ALL_WIDGETS = [
     { key: "watchlist", id: "placeholder-card", label: "Watchlist" },
     { key: "history", id: "recent-history-widget", label: "Recent History" },
     { key: "ratings", id: "latest-ratings-widget", label: "Latest Ratings" },
@@ -48,11 +48,12 @@
     { key: "progress", id: "recent-progress-widget", label: "Recent Progress" },
     { key: "playlists", id: "recent-playlists-widget", label: "Recent Playlists" },
   ];
+  const WIDGETS = ON_PROFILE_PAGE ? ALL_WIDGETS.filter((widget) => widget.key !== "watchlist") : ALL_WIDGETS;
   const WIDGET_KEYS = WIDGETS.map((widget) => widget.key);
   const DEFAULT_LAYOUT = {
     watchlist: { order: 0, size: "large", span: 1, view: "icon", horizontalView: "media", hidden: false },
     history: { order: 1, size: "small", span: 1, view: "grid", horizontalView: "media", hidden: false },
-    ratings: { order: 2, size: "small", span: 1, view: "icon", horizontalView: "media", hidden: false },
+    ratings: { order: 2, size: "small", span: 1, view: "grid", horizontalView: "media", hidden: false },
     scrobble: { order: 3, size: "small", span: 1, view: "grid", horizontalView: "media", hidden: false },
     playlists: { order: 4, size: "small", span: 1, view: "grid", horizontalView: "poster", hidden: false },
     progress: { order: 5, size: "small", span: 1, view: "grid", horizontalView: "media", hidden: false },
@@ -154,7 +155,7 @@
   }
 
   function widgetNode(key) {
-    const id = WIDGETS.find((widget) => widget.key === key)?.id;
+    const id = ALL_WIDGETS.find((widget) => widget.key === key)?.id;
     return id ? document.getElementById(id) : null;
   }
 
@@ -492,12 +493,6 @@
   function updateLayoutToolbar() {
     const card = $("#dashboard-widgets-card");
     if (!card) return;
-    if (!ON_PROFILE_PAGE) {
-      customizeOpen = false;
-      card.classList.remove("is-customizing");
-      card.querySelector(".cw-dashboard-layout-toolbar")?.remove();
-      return;
-    }
     card.classList.toggle("is-customizing", customizeOpen);
     let bar = card.querySelector(".cw-dashboard-layout-toolbar");
     if (!bar) {
@@ -637,10 +632,6 @@
 
   function ensureWidgetControls() {
     const card = $("#dashboard-widgets-card");
-    if (!ON_PROFILE_PAGE) {
-      card?.querySelectorAll(".cw-dash-layout-controls").forEach((node) => node.remove());
-      return;
-    }
     if (card && !card.__cwDashboardDropWired) {
       card.addEventListener("dragover", (ev) => {
         if (dragWidgetKey) updateDashboardDragScroll(ev);
@@ -1119,6 +1110,15 @@
     const meta = await getDetailMeta(item);
     if (!detailCard?.isVisible?.() || detailKey !== key) return true;
     renderDetailCard(item, meta || null, false);
+    return true;
+  }
+
+  function openProfileWidgetPreview(kind, index) {
+    if (!ON_PROFILE_PAGE || !["history", "ratings", "scrobble", "progress"].includes(kind)) return false;
+    const item = latestItems[kind]?.[Number(index)];
+    const open = window.CW?.WatchlistPreview?.openPreviewDrawer || window.openPreviewDrawer;
+    if (!item || !open) return false;
+    void open(item);
     return true;
   }
 
@@ -1684,6 +1684,7 @@
           saveLayout(Object.fromEntries(WIDGET_KEYS.map((key) => [key, { ...widgetLayout[key], hidden: false }])));
           markWidgetsDirty(0);
         } else if (action === "reset") {
+          customizeOpen = false;
           resetLayout();
           markWidgetsDirty(0);
         }
@@ -1752,6 +1753,7 @@
         const index = Number(itemLink.getAttribute("data-cw-widget-index") || -1);
         if (["history", "ratings", "scrobble", "progress"].includes(kind) && Number.isInteger(index) && index >= 0) {
           event.preventDefault();
+          if (openProfileWidgetPreview(kind, index)) return;
           void openDetailCard(kind, index);
           return;
         }

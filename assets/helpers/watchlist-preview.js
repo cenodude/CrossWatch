@@ -699,9 +699,13 @@
       const typeLabel = isTV(item.type || item.entity || item.media_type) ? (epLabel || "TV Series") : "Movie";
       const compactMeta = [typeLabel, item.year || "", timeLabel ? `updated ${timeLabel}` : ""].filter(Boolean).join(" - ");
       const horizontalMeta = [typeLabel, item.year || ""].filter(Boolean).join(" \u2022 ");
+      const stackedMeta = [typeLabel, item.year || ""].filter(Boolean).join(" - ");
+      const stackedUpdated = timeLabel ? `<small class="wl-meta-stacked-updated">${esc(`updated ${timeLabel}`)}</small>` : "";
       cap.innerHTML = `
         <strong>${esc(item.title || "")}</strong>
         <small class="wl-meta-compact">${esc(compactMeta)}</small>
+        <small class="wl-meta-stacked">${esc(stackedMeta)}</small>
+        ${stackedUpdated}
         <small class="wl-meta-horizontal">${esc(horizontalMeta)}</small>`;
       link.appendChild(cap);
 
@@ -735,6 +739,7 @@
     const row = document.getElementById("poster-row");
     if (!card || !msg || !row) return;
     if (!isOnMain()) { hidePreviewCard(card, row, msg, { preserve: true }); return; }
+    if (profileWatchlistWidgetHidden()) { hidePreviewCard(card, row, msg, { preserve: true }); return false; }
 
     const myReq = ++wallReqSeq;
     const refreshVersion = window.__cwWallPreviewDirtyVersion;
@@ -758,6 +763,7 @@
       const gate = await previewGate();
       if (myReq !== wallReqSeq) return false;
       if (!isOnMain()) { hidePreviewCard(card, row, msg, { preserve: true }); return false; }
+      if (profileWatchlistWidgetHidden()) { hidePreviewCard(card, row, msg, { preserve: true }); return false; }
       if (!gate.allowed) {
         clearWallCache();
         hidePreviewCard(card, row, msg);
@@ -770,6 +776,7 @@
       const data = wallResult.data;
       if (myReq !== wallReqSeq) return false;
       if (!isOnMain()) { hidePreviewCard(card, row, msg, { preserve: true }); return false; }
+      if (profileWatchlistWidgetHidden()) { hidePreviewCard(card, row, msg, { preserve: true }); return false; }
       if (data?.missing_tmdb_key) { clearWallCache(); hidePreviewCard(card, row, msg); return false; }
       if (!data?.ok) { msg.textContent = data?.error || "No state data found."; return false; }
 
@@ -832,6 +839,10 @@
     return !!document.getElementById("tab-main")?.classList.contains("active");
   }
 
+  function profileWatchlistWidgetHidden() {
+    return !!document.getElementById("profile-hero");
+  }
+
   async function isWatchlistPreviewAllowed() {
     try {
       const cfg = await getConfig();
@@ -853,6 +864,10 @@
         hidePreviewCard(card, row, msg, { preserve: true });
         return false;
       }
+      if (profileWatchlistWidgetHidden()) {
+        hidePreviewCard(card, row, msg, { preserve: true });
+        return false;
+      }
       card?.classList.remove("hidden");
       const rendered = hasRenderedWall(row);
       if (!force && !previewNeedsRefresh() && (window.wallLoaded || rendered)) return true;
@@ -867,6 +882,10 @@
         }
       }
       if (!isOnMain()) {
+        hidePreviewCard(card, row, msg, { preserve: true });
+        return false;
+      }
+      if (profileWatchlistWidgetHidden()) {
         hidePreviewCard(card, row, msg, { preserve: true });
         return false;
       }
@@ -887,6 +906,7 @@
       if (!card) return false;
 
       if (!isOnMain()) { hidePreviewCard(card, row, msg, { preserve: true }); return false; }
+      if (profileWatchlistWidgetHidden()) { hidePreviewCard(card, row, msg, { preserve: true }); return false; }
       card.classList.remove("hidden");
       const rendered = hasRenderedWall(row);
       if (msg && !window.wallLoaded && !rendered) {
@@ -929,6 +949,7 @@
     openPreviewDrawer,
     closePreviewDrawer,
     artUrl,
+    gridArtUrl,
     applyWidgetView,
     prewarmWallImages,
     loadWall,

@@ -459,6 +459,31 @@ def _get_index_html_static() -> str:
   } catch {}
 })();
 </script>
+<script>
+(() => {
+  try {
+    const route = String(window.location.hash || "").replace(/^#\/?/, "").split("?")[0].split("/")[0].trim().toLowerCase().replace(/-/g, "_");
+    const tabs = new Set(["watchlist", "playback_progress", "snapshots", "playlists", "editor", "settings"]);
+    const tab = tabs.has(route) ? route : "main";
+    document.documentElement.dataset.cwInitialTab = tab;
+    document.documentElement.dataset.tab = tab;
+  } catch {
+    document.documentElement.dataset.cwInitialTab = "main";
+  }
+})();
+</script>
+<style>
+html[data-cw-initial-tab]:not([data-cw-initial-tab="main"]) #ops-card,
+html[data-cw-initial-tab]:not([data-cw-initial-tab="main"]) #stats-card,
+html[data-cw-initial-tab]:not([data-cw-initial-tab="main"]) #dashboard-widgets-card,
+html[data-cw-initial-tab]:not([data-cw-initial-tab="main"]) #log-panel{display:none!important}
+html[data-cw-initial-tab="watchlist"] #page-watchlist,
+html[data-cw-initial-tab="playback_progress"] #page-playback_progress,
+html[data-cw-initial-tab="snapshots"] #page-snapshots,
+html[data-cw-initial-tab="playlists"] #page-playlists,
+html[data-cw-initial-tab="editor"] #page-editor,
+html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
+</style>
 
 <link rel="preload" href="/assets/fonts/material-symbols-rounded-full-v355.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/assets/fonts/material-symbols-rounded.css?v=__CW_VERSION__">
@@ -1334,7 +1359,7 @@ def _get_index_html_static() -> str:
                             <button class="btn danger" type="button" id="btn-app-auth-totp-disable" onclick="cwAppAuthTotpDisable?.()">Disable 2FA</button>
                           </div>
                         </div>
-                        <div>
+                        <div class="cw-auth-plex-field">
                           <div class="cw-field-label-row">
                             <strong>Linked Plex account</strong>
                             <button type="button" class="cw-field-help material-symbols-rounded" title="Linked Plex account: Adds optional Sign in with Plex on the login screen while keeping the local password as fallback." aria-label="Linked Plex account help">help</button>
@@ -1797,8 +1822,9 @@ def get_profile_html(user: dict | None = None) -> str:
     watchlist = "on" if perms.get("watchlist") else "off"
     playback = "on" if perms.get("playback") else "off"
     write_nav = is_admin or bool(perms.get("write"))
-    watchlist_href = "/?main=1#watchlist" if is_admin or perms.get("write") else "/?view=watchlist#watchlist"
-    playback_href = "/?main=1#playback_progress" if is_admin or perms.get("write") else "/?view=playback_progress#playback_progress"
+    app_href_prefix = "/" if is_admin else "/?main=1"
+    watchlist_href = f"{app_href_prefix}#watchlist" if is_admin or perms.get("write") else "/?view=watchlist#watchlist"
+    playback_href = f"{app_href_prefix}#playback_progress" if is_admin or perms.get("write") else "/?view=playback_progress#playback_progress"
     settings_nav = (
         '<div class="cw-tabmenu" id="tab-settings-menu">'
         '<button id="tab-settings" class="tab" type="button" aria-haspopup="menu" aria-expanded="false" onclick="window.cwToggleSettingsMenu(event)"><span>Settings</span><span class="tab-caret" aria-hidden="true"></span></button>'
@@ -1826,12 +1852,12 @@ def get_profile_html(user: dict | None = None) -> str:
     nav_items: list[str] = []
     if is_admin:
         nav_items.extend([
-            '<a class="tab active" href="/?main=1#main">Main</a>',
-            '<a class="tab" href="/?main=1#watchlist">Watchlist</a>',
-            '<a class="tab" href="/?main=1#playback_progress">Playback</a>',
-            '<a class="tab" href="/?main=1#snapshots">Captures</a>',
-            '<a class="tab" href="/?main=1#playlists">Playlists</a>',
-            '<a class="tab" href="/?main=1#editor">Editor</a>',
+            '<a class="tab active" href="/">Main</a>',
+            '<a class="tab" href="/#watchlist">Watchlist</a>',
+            '<a class="tab" href="/#playback_progress">Playback</a>',
+            '<a class="tab" href="/#snapshots">Captures</a>',
+            '<a class="tab" href="/#playlists">Playlists</a>',
+            '<a class="tab" href="/#editor">Editor</a>',
             settings_nav,
             about_nav,
         ])
@@ -1889,6 +1915,7 @@ def get_profile_html(user: dict | None = None) -> str:
 <link rel="stylesheet" href="/assets/css/profile-page.css?v=__CW_VERSION__">
 <link rel="preload" href="/assets/fonts/material-symbols-rounded-full-v355.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/assets/fonts/material-symbols-rounded.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/js/modals/core/styles.css?v=__CW_VERSION__">
 <link id="cw-theme-flat-css" rel="stylesheet" href="/assets/themes/flat.css?v=__CW_VERSION__" media="not all" disabled>
 <link id="cw-theme-original-css" rel="stylesheet" href="/assets/themes/original-coverage.css?v=__CW_VERSION__" media="not all" disabled>
 <script>
@@ -1920,6 +1947,7 @@ def get_profile_html(user: dict | None = None) -> str:
     <div class="cw-profile-identity">
       <div class="cw-profile-avatar-wrap">
         <button id="profile-avatar-button" class="cw-profile-avatar" type="button" title="Replace profile picture" aria-label="Replace profile picture"><span class="material-symbols-rounded" aria-hidden="true">person</span></button>
+        <span class="cw-profile-avatar-badge material-symbols-rounded" aria-hidden="true">photo_camera</span>
         <input id="profile-avatar-input" type="file" accept="image/png,image/jpeg,image/webp" hidden>
       </div>
       <div class="cw-profile-nameblock">
@@ -1984,27 +2012,6 @@ def get_profile_html(user: dict | None = None) -> str:
       </article>
     </div>
   <section id="dashboard-widgets-card" class="cw-dashboard-widgets hidden" aria-label="Media widgets">
-    <article id="placeholder-card" class="card cw-main-card cw-main-card--wall cw-dash-widget cw-dash-widget--watchlist cw-dash-widget--wide hidden">
-      <div class="title">Watchlist</div>
-      <div class="cw-main-card-head cw-main-card-head--compact">
-        <div class="cw-main-card-head-copy">
-          <div class="cw-dash-title-row">
-            <span class="material-symbols-rounded" aria-hidden="true">movie</span>
-            <h3>Watchlist</h3>
-          </div>
-        </div>
-        <span id="watchlist-count-chip" class="cw-widget-count-chip hidden" aria-live="polite"></span>
-        <button class="cw-watchlist-see-all" type="button" onclick="showTab('watchlist')" title="View all" aria-label="Open Watchlist page"><span class="material-symbols-rounded" aria-hidden="true">arrow_forward</span></button>
-      </div>
-      <div id="wall-msg" class="wall-msg">Loading...</div>
-      <div class="wall-wrap">
-        <div id="edgeL" class="edge left"></div><div id="edgeR" class="edge right"></div>
-        <div id="poster-row" class="row-scroll" aria-label="Watchlist"></div>
-        <button class="nav prev" type="button" onclick="scrollWall(-1)" aria-label="Scroll left"><</button>
-        <button class="nav next" type="button" onclick="scrollWall(1)" aria-label="Scroll right">></button>
-      </div>
-    </article>
-
     <article id="recent-history-widget" class="cw-dash-widget cw-dash-widget--history">
       <div class="cw-dash-widget-head">
         <div class="cw-dash-title-row">
@@ -2137,6 +2144,12 @@ def get_profile_html(user: dict | None = None) -> str:
 {preferences_panel}
 </main>
 <div id="profile-toast" class="cw-profile-toast hidden" role="status" aria-live="polite"></div>
+<div id="cw-help-overlay" class="hidden" aria-hidden="true">
+  <div id="cw-help-card">
+    <button id="cw-help-close" class="btn" type="button" onclick="window.cwCloseHelp()">Close</button>
+    <iframe id="cw-help-frame" title="CrossWatch Help" loading="lazy" referrerpolicy="no-referrer"></iframe>
+  </div>
+</div>
 <script>
 (() => {{
   const $ = id => document.getElementById(id);
@@ -2158,6 +2171,30 @@ def get_profile_html(user: dict | None = None) -> str:
     menu.classList.toggle("hidden", !open);
     button.setAttribute("aria-expanded", String(open));
   }};
+  const setHelp = open => {{
+    const overlay = $("cw-help-overlay");
+    if (!overlay) return;
+    if (open) {{
+      const frame = $("cw-help-frame");
+      if (frame && !frame.src) frame.src = "https://wiki.crosswatch.app";
+      overlay.classList.remove("hidden");
+      overlay.setAttribute("aria-hidden", "false");
+    }} else {{
+      overlay.classList.add("hidden");
+      overlay.setAttribute("aria-hidden", "true");
+    }}
+  }};
+  const ensureModals = async () => {{
+    if (typeof window.openAbout === "function") return true;
+    try {{
+      const version = encodeURIComponent(String(window.APP_VERSION || window["__CW_" + "VERSION__"] || Date.now()));
+      await import(`/assets/js/modals.js?v=${{version}}`);
+      return typeof window.openAbout === "function";
+    }} catch (error) {{
+      console.warn("[profile] modals.js failed to load", error);
+      return false;
+    }}
+  }};
   const openSettings = pane => {{
     const paths = {{
       overview: "settings",
@@ -2169,15 +2206,21 @@ def get_profile_html(user: dict | None = None) -> str:
       app: "settings/app",
       maintenance: "settings/maintenance"
     }};
-    window.location.href = "/?main=1#" + (paths[pane] || "settings");
+    window.location.href = "/#" + (paths[pane] || "settings");
   }};
+  window.CW_CURRENT_VERSION = "__CW_CURRENT_VERSION__";
+  window.APP_VERSION = "__CW_VERSION__";
+  window["__CW_" + "VERSION__"] = window.APP_VERSION;
+  window.cwOpenHelp = () => setHelp(true);
+  window.cwCloseHelp = () => setHelp(false);
+  window.openHelp = () => window.cwOpenHelp?.();
   window.cwToggleSettingsMenu = event => toggleMenu("settings", event);
   window.cwToggleAboutMenu = event => toggleMenu("about", event);
   window.cwSettingsMenuSelect = pane => {{ closeMenu("settings"); openSettings(pane); }};
-  window.cwAboutMenuSelect = what => {{
+  window.cwAboutMenuSelect = async what => {{
     closeMenu("about");
-    if (what === "help") window.open("https://wiki.crosswatch.app", "_blank", "noopener,noreferrer");
-    else window.location.href = "/?main=1#about";
+    if (what === "help") window.openHelp?.();
+    else if (await ensureModals()) window.openAbout?.();
   }};
   window.cwSettingsMenuLogout = async () => {{
     closeMenu("settings");
@@ -2185,14 +2228,18 @@ def get_profile_html(user: dict | None = None) -> str:
     window.location.href = "/login";
   }};
   document.addEventListener("click", event => {{
+    const overlay = $("cw-help-overlay");
+    const card = $("cw-help-card");
+    if (overlay && !overlay.classList.contains("hidden") && card && !card.contains(event.target)) window.cwCloseHelp?.();
     if (!$("tab-settings-menu")?.contains(event.target)) closeMenu("settings");
     if (!$("tab-about-menu")?.contains(event.target)) closeMenu("about");
   }}, true);
   document.addEventListener("keydown", event => {{
-    if (event.key === "Escape") closeAll();
+    if (event.key === "Escape") {{ window.cwCloseHelp?.(); closeAll(); }}
   }}, true);
 }})();
 </script>
+<script type="module" src="/assets/js/modals.js?v=__CW_VERSION__"></script>
 <script src="/assets/helpers/provider-meta.js?v=__CW_VERSION__"></script>
 <script src="/assets/helpers/api.js?v=__CW_VERSION__"></script>
 <script src="/assets/helpers/media-meta.js?v=__CW_VERSION__"></script>
