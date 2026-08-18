@@ -30,6 +30,11 @@ from ._common import (
     unresolved_home_scope_not_applied,
 )
 
+from ._history import (
+    _build_guid_index as _hist_build_guid_index,
+    _pms_find_in_guid_index as _hist_find_in_guid_index,
+)
+
 
 _dbg, _info, _warn, _error, _log = make_logger("progress")
 
@@ -584,6 +589,39 @@ def _resolve_rating_key(adapter: Any, it: Mapping[str, Any]) -> str | None:
         except Exception:
             pass
 
+    if guid_candidates:
+        rk_idx = None
+        try:
+            _hist_build_guid_index(adapter, allowed)
+            rk_idx = _hist_find_in_guid_index("show" if is_episode else "movie", guid_candidates)
+        except Exception:
+            rk_idx = None
+        if dbg:
+            _dbg("resolve_hit" if rk_idx else "resolve_miss", source="guid_index", rating_key=str(rk_idx or ""))
+        if rk_idx:
+            try:
+                obj_idx = srv.fetchItem(int(rk_idx))  # type: ignore[attr-defined]
+            except Exception:
+                obj_idx = None
+            if obj_idx is not None:
+                otype = str(getattr(obj_idx, "type", "") or "").lower()
+                if not is_episode and otype == "movie":
+                    if _allowed_obj(obj_idx, "guid_index"):
+                        return str(rk_idx)
+                if is_episode:
+                    if otype == "episode":
+                        if _allowed_obj(obj_idx, "guid_index"):
+                            return str(rk_idx)
+                    if otype in ("show", "season"):
+                        rk_ep = episode_rating_key_from_show(obj_idx, it.get("season"), it.get("episode"))
+                        if rk_ep:
+                            try:
+                                ep_obj = srv.fetchItem(int(rk_ep))  # type: ignore[attr-defined]
+                            except Exception:
+                                ep_obj = None
+                            if ep_obj is not None and _allowed_obj(ep_obj, "guid_index_episode_number"):
+                                return rk_ep
+
     strict = bool(plex_cfg_get(adapter, "strict_id_matching", False))
     if strict:
         if outside_scope_seen:
@@ -595,6 +633,8 @@ def _resolve_rating_key(adapter: Any, it: Mapping[str, Any]) -> str | None:
     series_title = str(it.get("series_title") or "").strip()
     query_title = series_title if is_episode and series_title else title
     if not query_title:
+        if outside_scope_seen:
+            setattr(adapter, "_plex_progress_last_resolve_hint", "outside_library_scope")
         return None
 
     season = it.get("season")
