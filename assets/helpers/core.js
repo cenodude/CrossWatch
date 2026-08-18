@@ -234,6 +234,18 @@
     return Object.values(instances).some(match);
   }
 
+  function hasCrosswatchConfig(root) {
+    if (!root || typeof root !== "object") return false;
+    const match = (block) => {
+      if (!block || typeof block !== "object") return false;
+      return block.connected === true && block.enabled !== false;
+    };
+    if (match(root)) return true;
+    const instances = root.instances;
+    if (!instances || typeof instances !== "object") return false;
+    return Object.values(instances).some(match);
+  }
+
   function hasFloppyConfig(root) {
     if (!root || typeof root !== "object") return false;
     const match = (block) => {
@@ -403,8 +415,7 @@
     if ([cfg?.tmdb_sync, cfg?.auth?.tmdb_sync].some(hasTmdbConfig)) set.add("TMDB");
     if ([cfg?.tautulli, cfg?.auth?.tautulli].some((block) => hasAnyConfigValue(block, ["api_key", "server_url", "server"]))) set.add("TAUTULLI");
 
-    const crosswatch = cfg?.crosswatch || cfg?.CrossWatch || {};
-    if ((cfg?.crosswatch || cfg?.CrossWatch) && crosswatch.connected === true && crosswatch.enabled !== false) set.add("CROSSWATCH");
+    if ([cfg?.crosswatch, cfg?.CrossWatch].some(hasCrosswatchConfig)) set.add("CROSSWATCH");
     return set;
   }
 
