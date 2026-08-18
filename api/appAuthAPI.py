@@ -316,6 +316,13 @@ def _clean_permissions(v: Any) -> dict[str, bool]:
     return clean_managed_permissions(v)
 
 
+def _clean_create_permissions(v: Any) -> dict[str, bool]:
+    defaults = {"dashboard": True, "watchlist": True, "playback": True, "write": True}
+    if isinstance(v, dict):
+        return clean_managed_permissions({**defaults, **v})
+    return clean_managed_permissions(defaults)
+
+
 def clean_user_preferences(raw: Any) -> dict[str, bool]:
     src = raw if isinstance(raw, dict) else {}
     return {
@@ -1965,7 +1972,7 @@ def api_users_create(request: Request, payload: dict[str, Any] = Body(default_fa
             "enabled": bool((payload or {}).get("enabled", True)),
             "role": "user",
             "profile_id": profile_id,
-            "permissions": _clean_permissions((payload or {}).get("permissions")),
+            "permissions": _clean_create_permissions((payload or {}).get("permissions")),
             "password": _password_hash(password),
             "created_at": _now(),
         }

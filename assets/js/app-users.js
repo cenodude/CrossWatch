@@ -45,10 +45,34 @@
     if (createBtn) createBtn.disabled = !createReady();
   }
 
+  function createProfileWrap(profileSelect) {
+    if (!profileSelect) return null;
+    const next = profileSelect.nextElementSibling;
+    if (next?.classList?.contains("cw-icon-select") && (!next.__cwNativeSelect || next.__cwNativeSelect === profileSelect)) return next;
+    return Array.from(profileSelect.parentElement?.children || [])
+      .find((node) => node?.classList?.contains("cw-icon-select") && node.__cwNativeSelect === profileSelect) || null;
+  }
+
+  function normalizeCreateProfileWrap(profileSelect) {
+    const wrap = createProfileWrap(profileSelect);
+    if (wrap && profileSelect.nextElementSibling !== wrap) {
+      profileSelect.insertAdjacentElement("afterend", wrap);
+    }
+    return wrap;
+  }
+
+  function enhanceCreateProfileSelect(profileSelect) {
+    if (!profileSelect || !profiles.length) return normalizeCreateProfileWrap(profileSelect);
+    normalizeCreateProfileWrap(profileSelect);
+    try { w.CW?.IconSelect?.enhance?.(profileSelect, { className: "cw-plain-select" }); } catch {}
+    return normalizeCreateProfileWrap(profileSelect);
+  }
+
   function renderCreateProfileControl(profileSelect) {
     if (!profileSelect) return;
     let addBtn = $("btn-app-user-profile-create");
     const createForm = profileSelect.closest(".cw-app-user-create");
+    let profileWrap = normalizeCreateProfileWrap(profileSelect);
     const usernameInput = $("app_user_username");
     const passwordInput = $("app_user_password");
     const createBtn = $("btn-app-user-create");
@@ -62,13 +86,19 @@
       profileSelect.classList.add("cw-app-user-profile-select-hidden");
       profileSelect.style.display = "none";
       profileSelect.setAttribute("aria-hidden", "true");
+      if (profileWrap) {
+        profileWrap.hidden = true;
+        profileWrap.classList.add("cw-app-user-profile-select-wrap-hidden");
+        profileWrap.style.display = "none";
+        profileWrap.setAttribute("aria-hidden", "true");
+      }
       if (!addBtn) {
         addBtn = d.createElement("button");
         addBtn.className = "btn primary cw-app-user-add-profile";
         addBtn.type = "button";
         addBtn.id = "btn-app-user-profile-create";
         addBtn.textContent = "Add profile";
-        profileSelect.insertAdjacentElement("afterend", addBtn);
+        (profileWrap || profileSelect).insertAdjacentElement("afterend", addBtn);
       }
       addBtn.hidden = false;
       addBtn.classList.remove("hidden");
@@ -83,6 +113,13 @@
     profileSelect.classList.remove("cw-app-user-profile-select-hidden");
     profileSelect.style.display = "";
     profileSelect.removeAttribute("aria-hidden");
+    profileWrap = enhanceCreateProfileSelect(profileSelect);
+    if (profileWrap) {
+      profileWrap.hidden = false;
+      profileWrap.classList.remove("cw-app-user-profile-select-wrap-hidden");
+      profileWrap.style.display = "";
+      profileWrap.removeAttribute("aria-hidden");
+    }
     if (addBtn) {
       addBtn.hidden = true;
       addBtn.classList.add("hidden");
@@ -240,7 +277,7 @@
       await api("/api/app-auth/users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, profile_id: profileId, password, permissions: { dashboard: true, watchlist: true, playback: true, write: false } }),
+        body: JSON.stringify({ username, profile_id: profileId, password, permissions: { dashboard: true, watchlist: true, playback: true, write: true } }),
       });
       if ($("app_user_username")) $("app_user_username").value = "";
       if ($("app_user_password")) $("app_user_password").value = "";
@@ -461,7 +498,10 @@
   w.cwAppUsersRefresh = refresh;
   w.cwAppUsersSavePending = savePending;
   d.addEventListener("DOMContentLoaded", () => { refresh(); });
-  w.addEventListener("cw-user-profiles-changed", () => { refresh(); });
+  w.addEventListener("cw-user-profiles-changed", () => {
+    refresh();
+    setTimeout(() => refresh(), 160);
+  });
   d.addEventListener("cw-settings-pane-changed", (event) => {
     if (txt(event?.detail?.pane).toLowerCase() === "security") refresh();
   });

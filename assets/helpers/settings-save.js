@@ -782,7 +782,7 @@ async function saveSettings() {
       };
       const publicmetadbInst = _cwSelectedInst("publicmetadb");
       const publicmetadbKey = _cwReadSecret("publicmetadb_key", _cwNorm(secrets.publicmetadb?.api_key));
-      const tmdbKey = _cwReadSecret("tmdb_api_key", _cwNorm(serverCfg?.tmdb?.api_key));
+      const tmdbKey = _cwReadSecret("tmdb_api_key", _cwNorm(serverCfg?.tmdb?.api_key || serverCfg?.metadata?.tmdb_api_key));
       await _cwValidateProviderSecret("publicmetadb", publicmetadbInst, publicmetadbKey);
       await _cwValidateTmdbSecret(tmdbKey);
       [

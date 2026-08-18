@@ -41,6 +41,98 @@
   width: 100%;
 }
 
+#page-settings #app_auth_fields :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, .cw-icon-select, .cw-icon-select-btn) {
+  box-sizing: border-box !important;
+  width: 100%;
+  min-width: 0;
+  height: 44px !important;
+  min-height: 44px !important;
+  max-height: 44px !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  line-height: 1.2 !important;
+}
+
+#page-settings #app_auth_fields .cw-auth-totp-field {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+  align-items: start;
+  align-content: start;
+  height: 100%;
+}
+
+#page-settings #app_auth_fields .cw-auth-plex-field {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+  align-items: start;
+  align-content: start;
+  height: 100%;
+}
+
+#page-settings #app_auth_fields .cw-auth-totp-field > :not(.btn) {
+  grid-column: 1 / -1;
+}
+
+#page-settings #app_auth_fields .cw-auth-plex-field > :not(.btn) {
+  grid-column: 1 / -1;
+}
+
+#page-settings #app_auth_fields :is(.cw-auth-totp-field, .cw-auth-plex-field) > .sub {
+  min-height: 3.1rem;
+}
+
+#page-settings #app_auth_fields .cw-auth-totp-field > .btn {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  margin: 0;
+  padding: 0 14px;
+}
+
+#page-settings #app_auth_fields .cw-auth-totp-field > .btn.hidden {
+  display: none !important;
+}
+
+#page-settings #app_auth_fields .cw-auth-totp-field > .cw-settings-inline-action {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 10px 12px !important;
+  align-items: stretch !important;
+  width: 100% !important;
+  margin-top: 0.75rem !important;
+}
+
+#page-settings #app_auth_fields .cw-auth-plex-field > .cw-settings-inline-action {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 10px 12px !important;
+  align-items: stretch !important;
+  width: 100% !important;
+  margin-top: 0.75rem !important;
+}
+
+#page-settings #app_auth_fields .cw-auth-totp-field > .cw-settings-inline-action > .btn {
+  width: 100% !important;
+  min-width: 0 !important;
+  min-height: 44px !important;
+  margin: 0 !important;
+  padding: 0 14px !important;
+}
+
+#page-settings #app_auth_fields .cw-auth-plex-field > .cw-settings-inline-action > .btn {
+  width: 100% !important;
+  min-width: 0 !important;
+  min-height: 44px !important;
+  margin: 0 !important;
+  padding: 0 14px !important;
+}
+
+#page-settings #app_auth_fields .cw-auth-totp-field > .cw-settings-inline-action > .btn.hidden {
+  display: none !important;
+}
+
 #page-settings .cw-app-user-create {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) 112px;
@@ -52,10 +144,42 @@
 
 #page-settings .cw-app-user-create input,
 #page-settings .cw-app-user-create select {
-  width: 100%;
-  min-width: 0;
-  height: 44px;
-  min-height: 44px;
+  box-sizing: border-box !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  height: 44px !important;
+  min-height: 44px !important;
+  max-height: 44px !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  line-height: 1.2 !important;
+}
+
+#page-settings .cw-app-user-create .cw-icon-select {
+  box-sizing: border-box !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  height: 44px !important;
+  min-height: 44px !important;
+  max-height: 44px !important;
+}
+
+#page-settings .cw-app-user-create .cw-icon-select-btn {
+  box-sizing: border-box !important;
+  height: 44px !important;
+  min-height: 44px !important;
+  max-height: 44px !important;
+  padding: 0 16px !important;
+  border-radius: 16px !important;
+  line-height: 1.2 !important;
+}
+
+#page-settings .cw-app-user-create .cw-icon-select-main {
+  min-height: 0;
+}
+
+#page-settings .cw-app-user-create .cw-icon-select-icon {
+  display: none;
 }
 
 #page-settings .cw-app-user-create #btn-app-user-create {
@@ -92,10 +216,19 @@
   }
 }
 
+@media (max-width: 520px) {
+  #page-settings #app_auth_fields .cw-auth-totp-field,
+  #page-settings #app_auth_fields .cw-auth-plex-field {
+    grid-template-columns: 1fr;
+  }
+}
+
 #page-settings .cw-app-user-create.has-no-profiles input,
 #page-settings .cw-app-user-create.has-no-profiles select,
+#page-settings .cw-app-user-create.has-no-profiles .cw-icon-select,
 #page-settings .cw-app-user-create.has-no-profiles #btn-app-user-create,
-#page-settings .cw-app-user-create .cw-app-user-profile-select-hidden {
+#page-settings .cw-app-user-create .cw-app-user-profile-select-hidden,
+#page-settings .cw-app-user-create .cw-app-user-profile-select-wrap-hidden {
   display: none !important;
 }
 
@@ -507,12 +640,35 @@
 #page-settings .cw-app-user-controls input,
 #page-settings .cw-app-user-controls select,
 #page-settings .cw-app-user-access select {
-  box-sizing: border-box;
-  width: 100%;
-  min-width: 0;
-  height: 42px;
-  min-height: 42px;
-  border-radius: 14px;
+  box-sizing: border-box !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  height: 42px !important;
+  min-height: 42px !important;
+  max-height: 42px !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  border-radius: 14px !important;
+  line-height: 1.2 !important;
+}
+
+#page-settings .cw-app-user-controls .cw-icon-select {
+  box-sizing: border-box !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  height: 42px !important;
+  min-height: 42px !important;
+  max-height: 42px !important;
+}
+
+#page-settings .cw-app-user-controls .cw-icon-select-btn {
+  box-sizing: border-box !important;
+  height: 42px !important;
+  min-height: 42px !important;
+  max-height: 42px !important;
+  padding: 0 14px !important;
+  border-radius: 14px !important;
+  line-height: 1.2 !important;
 }
 
 #page-settings .cw-app-user-perms {
