@@ -109,3 +109,6 @@ playwright/.auth/
 # Temporary files
 *.tmp
 *.bak
+
+# build-time version stamp (written by Dockerfile)
+VERSION
