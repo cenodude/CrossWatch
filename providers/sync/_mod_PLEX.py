@@ -229,6 +229,19 @@ def _split_keys(lst: Iterable[Mapping[str, Any]], unresolved: Any) -> tuple[list
     return attempted, sorted(ukeys), confirmed
 
 
+def _progress_skipped_keys(results: Any) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for row in results or []:
+        if not isinstance(row, Mapping) or str(row.get("status") or "") != "skipped":
+            continue
+        key = str(row.get("key") or "").strip()
+        if key and key not in seen:
+            seen.add(key)
+            out.append(key)
+    return out
+
+
 _PLEX_HISTORY_META_FIELDS = (
     "accepted_keys",
     "presence_confirmed_keys",
@@ -1429,13 +1442,19 @@ class PLEXModule:
         try:
             cnt, unresolved = mod.add(self, lst)
             _attempted, unresolved_keys, confirmed_keys = _split_keys(lst, unresolved)
+            results = list(getattr(self, "_progress_write_results", [])) if feature == "progress" else []
+            skipped_keys = _progress_skipped_keys(results)
+            if skipped_keys:
+                skipped_set = set(skipped_keys)
+                confirmed_keys = [k for k in confirmed_keys if k not in skipped_set]
             res: dict[str, Any] = {
                 "ok": True,
                 "count": int(cnt),
                 "unresolved": unresolved,
                 "confirmed_keys": confirmed_keys,
                 "unresolved_keys": unresolved_keys,
-                "results": list(getattr(self, "_progress_write_results", [])) if feature == "progress" else [],
+                "skipped_keys": skipped_keys,
+                "results": results,
             }
             if feature == "history":
                 hm = getattr(self, "_plex_history_write_meta", None)

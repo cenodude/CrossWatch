@@ -775,7 +775,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                     or int(getattr(obj, "viewCount", 0) or 0) > 0
                 )
                 source_timestamp = it0.get("progress_at") or it0.get("lastViewedAt")
-                target_timestamp = getattr(obj, "lastViewedAt", None) or getattr(obj, "viewedAt", None) or getattr(obj, "updatedAt", None)
+                target_timestamp = getattr(obj, "lastViewedAt", None) or getattr(obj, "viewedAt", None)
                 target_progress = _to_int(getattr(obj, "viewOffset", None))
                 duration = _to_int(getattr(obj, "duration", None)) or _to_int(it0.get("duration_ms")) or 0
                 ms_i = _progress_ms_for_write(it0, duration)
@@ -802,6 +802,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 )
                 context = {
                     "provider": "plex", "provider_instance": os.getenv("CW_PAIR_DST_INSTANCE") or "default",
+                    "key": str(canonical_key(id_minimal(it0)) or ""),
                     "remote_item_id": str(rk), "library_id": _library_id(obj) or it0.get("library_id"),
                     "source_timestamp": source_timestamp, "target_timestamp": target_timestamp,
                     "source_progress": ms_i, "target_progress": target_progress, "reason": decision.reason,
