@@ -1242,155 +1242,65 @@ def _del_cookie(resp: Response, request: Request) -> None:
 
 _LOGIN_PAGE_CSS = """
 :root{
-  --cw-bg:#06111d;--cw-panel:rgba(7,16,28,.82);--cw-panel-strong:rgba(8,17,30,.94);
+  --cw-text:#edf6ff;--cw-soft:rgba(214,231,249,.72);--cw-accent:#8c6dff;
   --cw-border:rgba(177,146,255,.16);--cw-border-strong:rgba(165,126,255,.30);
-  --cw-text:#edf6ff;--cw-soft:rgba(214,231,249,.72);--cw-accent:#8c6dff;--cw-accent-2:#c08cff;
   --cw-warn-bg:rgba(255,178,102,.10);--cw-warn-border:rgba(255,192,120,.24);
   --cw-danger-bg:rgba(255,98,114,.12);--cw-danger-border:rgba(255,133,146,.22);
   --cw-shadow:0 32px 80px rgba(0,0,0,.42);
 }
 *{box-sizing:border-box}
 html,body{min-height:100%}
-body{
-  margin:0;display:grid;place-items:center;min-height:100vh;min-height:100svh;color:var(--cw-text);
-  font-family:"Segoe UI Variable","Avenir Next","Trebuchet MS",sans-serif;
-  background:
-    radial-gradient(900px circle at 8% 10%, rgba(140,109,255,.18), transparent 42%),
-    radial-gradient(780px circle at 92% 18%, rgba(192,140,255,.18), transparent 40%),
-    radial-gradient(760px circle at 50% 110%, rgba(112,92,214,.16), transparent 42%),
-    linear-gradient(180deg,#07111b 0%,#03070c 100%);
-  overflow-x:hidden;overflow-y:auto;padding:16px;
-}
-body::before{
-  content:"";position:fixed;inset:0;pointer-events:none;opacity:.28;background-size:44px 44px;
-  background-image:
-    linear-gradient(rgba(255,255,255,.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,255,255,.03) 1px, transparent 1px);
-  mask-image:radial-gradient(circle at center, rgba(0,0,0,.85), transparent 82%);
-}
-.cw-login-shell{
-  width:min(1040px,calc(100vw - 32px));display:grid;
-  grid-template-columns:minmax(0,1.05fr) minmax(360px,.95fr);
-  border:1px solid var(--cw-border);border-radius:28px;overflow:hidden;
-  background:linear-gradient(135deg, rgba(7,15,27,.90), rgba(4,10,20,.78));
-  box-shadow:var(--cw-shadow);backdrop-filter:blur(16px) saturate(135%);
-  -webkit-backdrop-filter:blur(16px) saturate(135%);
-}
-.cw-hero{
-  position:relative;display:flex;flex-direction:column;padding:34px 34px 30px;
-  background:
-    radial-gradient(420px circle at 14% 10%, rgba(140,109,255,.22), transparent 42%),
-    radial-gradient(460px circle at 80% 28%, rgba(192,140,255,.16), transparent 38%),
-    linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.01));
-  border-right:1px solid rgba(255,255,255,.06);
-}
-.cw-hero::after{
-  content:"";position:absolute;right:26px;bottom:26px;width:188px;height:188px;border-radius:36px;
-  background:url("/assets/img/CROSSWATCH.svg") center/62% no-repeat, linear-gradient(135deg, rgba(140,109,255,.18), rgba(192,140,255,.05));
-  border:1px solid rgba(255,255,255,.06);opacity:.96;transform:rotate(14deg);pointer-events:none;
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.04);filter:drop-shadow(0 20px 40px rgba(0,0,0,.22));
-}
+body{margin:0;padding:16px;display:grid;place-items:center;min-height:100vh;min-height:100svh;overflow-x:hidden;overflow-y:auto;color:var(--cw-text);font-family:"Segoe UI Variable","Avenir Next","Trebuchet MS",sans-serif;background:radial-gradient(900px circle at 8% 10%, rgba(140,109,255,.18), transparent 42%),radial-gradient(780px circle at 92% 18%, rgba(192,140,255,.18), transparent 40%),radial-gradient(760px circle at 50% 110%, rgba(112,92,214,.16), transparent 42%),linear-gradient(180deg,#07111b 0%,#03070c 100%)}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;opacity:.28;background-size:44px 44px;background-image:linear-gradient(rgba(255,255,255,.03) 1px, transparent 1px),linear-gradient(90deg, rgba(255,255,255,.03) 1px, transparent 1px);mask-image:radial-gradient(circle at center, rgba(0,0,0,.85), transparent 82%)}
+.cw-login-shell{width:min(1040px,calc(100vw - 32px));display:grid;grid-template-columns:minmax(0,1.05fr) minmax(360px,.95fr);border:1px solid var(--cw-border);border-radius:28px;overflow:hidden;background:linear-gradient(135deg, rgba(7,15,27,.90), rgba(4,10,20,.78));box-shadow:var(--cw-shadow);backdrop-filter:blur(16px) saturate(135%);-webkit-backdrop-filter:blur(16px) saturate(135%)}
+.cw-hero{position:relative;display:flex;flex-direction:column;padding:34px 34px 30px;border-right:1px solid rgba(255,255,255,.06);background:radial-gradient(420px circle at 14% 10%, rgba(140,109,255,.22), transparent 42%),radial-gradient(460px circle at 80% 28%, rgba(192,140,255,.16), transparent 38%),linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.01))}
+.cw-hero::after{content:"";position:absolute;right:26px;bottom:26px;width:188px;height:188px;border-radius:36px;border:1px solid rgba(255,255,255,.06);opacity:.96;transform:rotate(14deg);pointer-events:none;background:url("/assets/img/CROSSWATCH.svg") center/62% no-repeat, linear-gradient(135deg, rgba(140,109,255,.18), rgba(192,140,255,.05));box-shadow:inset 0 1px 0 rgba(255,255,255,.04);filter:drop-shadow(0 20px 40px rgba(0,0,0,.22))}
 .cw-mark{display:flex;align-items:center;margin-top:6px}
 .cw-mark img{width:min(360px,100%);height:auto;display:block;filter:drop-shadow(0 18px 30px rgba(0,0,0,.34))}
 .cw-hero h1{margin:28px 0 12px;max-width:12ch;font-size:clamp(34px,4.6vw,56px);line-height:.98;letter-spacing:-.04em;font-weight:900}
 .cw-hero p{margin:0;max-width:44ch;color:var(--cw-soft);font-size:15px;line-height:1.65}
-.cw-metrics{display:grid;grid-template-columns:1fr;gap:12px;max-width:320px;margin-top:auto;padding-top:32px}
-.cw-login{
-  display:grid;align-content:center;gap:18px;padding:34px;
-  background:linear-gradient(180deg, rgba(6,12,22,.94), rgba(5,10,18,.98));
-}
+.cw-metrics{display:grid;gap:12px;max-width:320px;margin-top:auto;padding-top:32px}
+.cw-login{display:grid;align-content:center;gap:18px;padding:34px;background:linear-gradient(180deg, rgba(6,12,22,.94), rgba(5,10,18,.98))}
 .cw-login-head,.cw-form,.cw-field,.cw-help-copy{display:grid}
 .cw-login-head{gap:8px}.cw-form{gap:14px}.cw-field{gap:7px}.cw-help-copy{gap:3px;min-width:0}
-.cw-login-kicker,.cw-field label,.cw-help-kicker{
-  font-weight:800;text-transform:uppercase;letter-spacing:.08em
-}
+.cw-login-kicker,.cw-field label,.cw-help-kicker{font-weight:800;text-transform:uppercase;letter-spacing:.08em}
 .cw-login-kicker{font-size:12px;letter-spacing:.12em;color:rgba(210,231,251,.64)}
 .cw-login h2{margin:0;font-size:30px;line-height:1.05;letter-spacing:-.03em;font-weight:900}
 .cw-login .sub{margin:0;color:var(--cw-soft);font-size:14px;line-height:1.55}
-.cw-banner,.cw-msg{
-  display:none;padding:13px 14px;border:1px solid transparent;border-radius:18px;
-  font-size:13px;line-height:1.55;
-}
+.cw-banner,.cw-msg{display:none;padding:13px 14px;border:1px solid transparent;border-radius:18px;font-size:13px;line-height:1.55}
 .cw-banner.show,.cw-msg.show{display:block}
 .cw-banner{background:linear-gradient(180deg, var(--cw-warn-bg), rgba(255,255,255,.02));border-color:var(--cw-warn-border);color:#ffe9cf}
 .cw-banner a{color:#fff3de;font-weight:800}
 .cw-msg{background:linear-gradient(180deg, var(--cw-danger-bg), rgba(255,255,255,.02));border-color:var(--cw-danger-border);color:#ffd9dd}
 .cw-field label{font-size:12px;color:rgba(231,242,255,.86)}
-.cw-field input{
-  width:100%;min-height:52px;padding:0 16px;border:1px solid rgba(255,255,255,.10);border-radius:18px;
-  background:rgba(2,8,19,.76);color:var(--cw-text);font:inherit;
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.03);
-  transition:border-color .18s ease, box-shadow .18s ease, background .18s ease, transform .18s ease;
-}
-.cw-field input:focus{
-  outline:none;transform:translateY(-1px);border-color:var(--cw-border-strong);background:rgba(4,10,22,.94);
-  box-shadow:0 0 0 4px rgba(140,109,255,.14), inset 0 1px 0 rgba(255,255,255,.04);
-}
+.cw-field input{width:100%;min-height:52px;padding:0 16px;border:1px solid rgba(255,255,255,.10);border-radius:18px;background:rgba(2,8,19,.76);color:var(--cw-text);font:inherit;box-shadow:inset 0 1px 0 rgba(255,255,255,.03);transition:border-color .18s ease, box-shadow .18s ease, background .18s ease, transform .18s ease}
+.cw-field input:focus{outline:none;transform:translateY(-1px);border-color:var(--cw-border-strong);background:rgba(4,10,22,.94);box-shadow:0 0 0 4px rgba(140,109,255,.14), inset 0 1px 0 rgba(255,255,255,.04)}
 .cw-totp-hidden{display:none!important}
-.cw-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));align-items:start;gap:14px}
-.cw-action-primary{min-width:0}
-.cw-action-plex,.cw-action-oidc{display:grid;gap:12px;min-width:0}
-.cw-remember{
-  display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid rgba(255,255,255,.08);border-radius:16px;
-  background:rgba(255,255,255,.03);color:var(--cw-soft);
-}
+.cw-remember{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid rgba(255,255,255,.08);border-radius:16px;background:rgba(255,255,255,.03);color:var(--cw-soft)}
 .cw-remember input{width:18px;height:18px;margin-top:2px;flex:0 0 auto;accent-color:var(--cw-accent)}
 .cw-remember b{display:block;color:var(--cw-text);font-size:13px}
 .cw-remember span{display:block;margin-top:3px;font-size:12px;line-height:1.45}
-.cw-login .btn{
-  min-width:144px;min-height:52px;border:1px solid rgba(166,126,255,.30);border-radius:18px;
-  background:linear-gradient(135deg, rgba(123,95,255,.96), rgba(186,96,255,.88));color:#f5f9ff;
-  font-weight:900;font-size:16px;letter-spacing:.01em;
-  box-shadow:0 18px 36px rgba(106,66,255,.30), inset 0 1px 0 rgba(255,255,255,.14);
-  transition:transform .14s ease, box-shadow .18s ease, filter .18s ease;
-}
+.cw-actions{display:grid;gap:16px}
+.cw-sso{display:grid;gap:12px}
+.cw-sso-sep{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;color:rgba(210,231,251,.50);font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.12em}
+.cw-sso-sep::before,.cw-sso-sep::after{content:"";height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.22),transparent)}
+.cw-sso-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px}
+.cw-sso-btn{font-size:15px}
+.cw-sso-copy{margin:0 2px;color:var(--cw-soft);font-size:12.5px;line-height:1.5;text-align:center}
+.cw-login .btn{min-height:52px;border:1px solid rgba(166,126,255,.30);border-radius:18px;background:linear-gradient(135deg, rgba(123,95,255,.96), rgba(186,96,255,.88));color:#f5f9ff;font-weight:900;font-size:16px;letter-spacing:.01em;box-shadow:0 18px 36px rgba(106,66,255,.30), inset 0 1px 0 rgba(255,255,255,.14);transition:transform .14s ease, box-shadow .18s ease, filter .18s ease}
 .cw-login .btn:hover{transform:translateY(-1px);filter:brightness(1.04)}
 .cw-login .btn:disabled{opacity:.72;cursor:progress;transform:none;box-shadow:none}
-.cw-plex-btn{
-  position:relative;overflow:hidden;width:100%;min-height:58px;
-  border:1px solid rgba(255,203,103,.32)!important;border-radius:28px!important;
-  background:
-    linear-gradient(135deg, rgba(255,187,24,.98), rgba(206,132,0,.94))!important;
-  color:#fff7eb!important;
-  box-shadow:0 16px 34px rgba(156,97,0,.28), inset 0 1px 0 rgba(255,255,255,.18)!important;
-}
-.cw-plex-btn::before{
-  content:"";position:absolute;inset:-16% -2% -16% auto;width:170px;pointer-events:none;opacity:.22;
-  background:
-    linear-gradient(135deg, transparent 0 38%, rgba(111,68,0,.46) 38% 53%, transparent 53% 60%, rgba(111,68,0,.36) 60% 75%, transparent 75%);
-  transform:skewX(-10deg);
-}
-.cw-plex-btn::after{
-  content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
-  background:linear-gradient(180deg, rgba(255,255,255,.12), transparent 34%, transparent 72%, rgba(93,57,0,.10));
-}
+.cw-plex-btn{position:relative;overflow:hidden;border:1px solid rgba(255,203,103,.32)!important;background:linear-gradient(135deg, rgba(255,187,24,.98), rgba(206,132,0,.94))!important;color:#fff7eb!important;box-shadow:0 16px 34px rgba(156,97,0,.28), inset 0 1px 0 rgba(255,255,255,.18)!important}
+.cw-plex-btn::before{content:"";position:absolute;inset:-16% -2% -16% auto;width:120px;pointer-events:none;opacity:.22;transform:skewX(-10deg);background:linear-gradient(135deg, transparent 0 38%, rgba(111,68,0,.46) 38% 53%, transparent 53% 60%, rgba(111,68,0,.36) 60% 75%, transparent 75%)}
+.cw-plex-btn::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:linear-gradient(180deg, rgba(255,255,255,.12), transparent 34%, transparent 72%, rgba(93,57,0,.10))}
 .cw-plex-btn span{position:relative;z-index:1}
 .cw-plex-btn:hover{filter:brightness(1.05)!important}
-.cw-oidc-btn{
-  width:100%;min-height:58px;border-radius:28px!important;
-  border:1px solid rgba(147,197,253,.34)!important;
-  background:linear-gradient(135deg,rgba(59,130,246,.92),rgba(99,102,241,.88))!important;
-  color:#eef6ff!important;
-  box-shadow:0 16px 34px rgba(59,130,246,.22), inset 0 1px 0 rgba(255,255,255,.16)!important;
-}
-.cw-plex-copy{
-  margin:12px 2px 0;color:rgba(245,225,191,.82);font-size:13px;line-height:1.5;
-}
-.cw-help-link{
-  display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;
-  padding:14px 16px;border:1px solid rgba(255,255,255,.08);border-radius:18px;
-  background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.02));
-  color:rgba(236,244,255,.92);text-decoration:none;
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.03);
-  transition:border-color .16s ease, transform .16s ease, filter .16s ease;
-}
+.cw-oidc-btn{border:1px solid rgba(147,197,253,.34)!important;background:linear-gradient(135deg,rgba(59,130,246,.92),rgba(99,102,241,.88))!important;color:#eef6ff!important;box-shadow:0 16px 34px rgba(59,130,246,.22), inset 0 1px 0 rgba(255,255,255,.16)!important}
+.cw-help-link{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;padding:14px 16px;border:1px solid rgba(255,255,255,.08);border-radius:18px;background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.02));color:rgba(236,244,255,.92);text-decoration:none;box-shadow:inset 0 1px 0 rgba(255,255,255,.03);transition:border-color .16s ease, transform .16s ease, filter .16s ease}
 .cw-help-link:hover{transform:translateY(-1px);filter:brightness(1.04);border-color:rgba(146,118,255,.24)}
 .cw-help-kicker{font-size:11px;letter-spacing:.14em;color:rgba(228,234,255,.54)}
 .cw-help-sub{font-size:12.5px;line-height:1.5;font-weight:600;color:var(--cw-soft)}
-.cw-help-icon{
-  width:34px;height:34px;display:grid;place-items:center;flex:0 0 auto;border:1px solid rgba(166,126,255,.18);border-radius:12px;
-  background:linear-gradient(135deg,rgba(123,95,255,.18),rgba(186,96,255,.12));color:#eef3ff;
-}
+.cw-help-icon{width:34px;height:34px;display:grid;place-items:center;flex:0 0 auto;border:1px solid rgba(166,126,255,.18);border-radius:12px;background:linear-gradient(135deg,rgba(123,95,255,.18),rgba(186,96,255,.12));color:#eef3ff}
 .cw-help-icon svg{width:18px;height:18px;display:block}
 @media (max-width:860px){
   .cw-login-shell{grid-template-columns:1fr}
@@ -1400,7 +1310,7 @@ body::before{
   .cw-login{padding:24px}
 }
 @media (max-width:560px){
-  body{display:block;min-height:100svh;padding:10px}
+  body{display:block;padding:10px}
   .cw-login-shell{width:min(100vw - 20px,1040px);border-radius:22px;margin:0 auto}
   .cw-hero,.cw-login{padding:18px}
   .cw-hero::after{display:none}
@@ -1413,9 +1323,6 @@ body::before{
   .cw-field input,.cw-login .btn{min-height:48px}
   .cw-remember{padding:9px 10px}
   .cw-remember span{font-size:11.5px;line-height:1.4}
-  .cw-actions{grid-template-columns:1fr;align-items:stretch}
-  .cw-action-primary,.cw-action-plex,.cw-action-oidc{min-width:100%}
-  .cw-login .btn{width:100%}
 }
 @media (max-width:400px){
   body{padding:8px}
@@ -1426,86 +1333,63 @@ body::before{
 """
 
 
-def _login_html(username: str, *, plex_sso_available: bool = False, oidc_available: bool = False) -> str:
-    plex_html = ""
+def _login_html(*, plex_sso_available: bool = False, oidc_available: bool = False) -> str:
+    sso = ""
     if plex_sso_available:
-        plex_html = """
-        <div class="cw-action-plex">
-          <button class="btn cw-plex-btn" id="go-plex" type="button"><span>Sign in with Plex</span></button>
-          <p class="cw-plex-copy">Use your linked Plex account, then return here to finish sign-in.</p>
-        </div>
-        """
-    oidc_html = ""
+        sso += '<button class="btn cw-sso-btn cw-plex-btn" id="go-plex" type="button"><span>Plex</span></button>'
     if oidc_available:
-        oidc_html = """
-        <div class="cw-action-oidc">
-          <button class="btn cw-oidc-btn" id="go-oidc" type="button"><span>Sign in with OIDC</span></button>
-          <p class="cw-plex-copy">Use your linked external account, then return to CrossWatch.</p>
-        </div>
-        """
+        sso += '<button class="btn cw-sso-btn cw-oidc-btn" id="go-oidc" type="button"><span>OIDC</span></button>'
+    if sso:
+        sso = (
+            '<div class="cw-sso"><div class="cw-sso-sep"><span>or continue with</span></div>'
+            f'<div class="cw-sso-row">{sso}</div>'
+            '<p class="cw-sso-copy">Use your linked account, then return here to finish sign-in.</p></div>'
+        )
     return f"""<!doctype html>
-<html lang=\"en\"><head>
-  <meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
+<html lang="en"><head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Sign in | CrossWatch</title>
-  <link rel=\"icon\" type=\"image/svg+xml\" href=\"/favicon.svg\">
-  <link rel=\"stylesheet\" href=\"/assets/crosswatch.css\">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="stylesheet" href="/assets/crosswatch.css">
   <style>{_LOGIN_PAGE_CSS}</style>
 </head><body>
-  <div class=\"cw-login-shell\">
-    <section class=\"cw-hero\" aria-hidden=\"true\">
-      <div class=\"cw-mark\">
-        <img src=\"/assets/img/CrossWatch.png\" alt=\"CrossWatch\">
-      </div>
+  <div class="cw-login-shell">
+    <section class="cw-hero" aria-hidden="true">
+      <div class="cw-mark"><img src="/assets/img/CrossWatch.png" alt="CrossWatch"></div>
       <h1>Sign in to your sync hub</h1>
       <p>CrossWatch keeps your media world synced, simple and self hosted.</p>
-      <div class=\"cw-metrics\">
-        <a class=\"cw-help-link\" href=\"https://wiki.crosswatch.app/\" target=\"_blank\" rel=\"noopener noreferrer\">
-          <span class=\"cw-help-copy\">
-            <span class=\"cw-help-kicker\">Documentation</span>
-            <span class=\"cw-help-sub\">Setup guides and troubleshooting help.</span>
+      <div class="cw-metrics">
+        <a class="cw-help-link" href="https://wiki.crosswatch.app/" target="_blank" rel="noopener noreferrer">
+          <span class="cw-help-copy">
+            <span class="cw-help-kicker">Documentation</span>
+            <span class="cw-help-sub">Setup guides and troubleshooting help.</span>
           </span>
-          <span class=\"cw-help-icon\" aria-hidden=\"true\">
-            <svg viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">
-              <path d=\"M6 5.75C6 4.78 6.78 4 7.75 4H18a1 1 0 0 1 1 1v12.25A2.75 2.75 0 0 1 16.25 20H8.75A2.75 2.75 0 0 1 6 17.25V5.75Z\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linejoin=\"round\"/>
-              <path d=\"M9 8h6M9 11h6M9 14h4\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\"/>
-              <path d=\"M6.25 17.5H16\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\"/>
+          <span class="cw-help-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="1.8">
+              <path d="M6 5.75C6 4.78 6.78 4 7.75 4H18a1 1 0 0 1 1 1v12.25A2.75 2.75 0 0 1 16.25 20H8.75A2.75 2.75 0 0 1 6 17.25V5.75Z" stroke-linejoin="round"/>
+              <path d="M9 8h6M9 11h6M9 14h4M6.25 17.5H16" stroke-linecap="round"/>
             </svg>
           </span>
         </a>
       </div>
     </section>
-    <section class=\"cw-login\">
-      <div class=\"cw-login-head\">
-        <div class=\"cw-login-kicker\">Authentication</div>
+    <section class="cw-login">
+      <div class="cw-login-head">
+        <div class="cw-login-kicker">Authentication</div>
         <h2>Welcome back</h2>
-        <p class=\"sub\">Use your local CrossWatch credentials to continue.</p>
+        <p class="sub">Use your local CrossWatch credentials to continue.</p>
       </div>
-      <div id=\"help\" class=\"cw-banner\" role=\"status\" aria-live=\"polite\"></div>
-      <div id=\"msg\" class=\"cw-msg\" role=\"alert\" aria-live=\"assertive\"></div>
-      <form class=\"cw-form\" id=\"login-form\" autocomplete=\"on\">
-        <div class=\"cw-field\">
-          <label for=\"u\">Username</label>
-          <input id=\"u\" name=\"username\" autocomplete=\"username\">
-        </div>
-        <div class=\"cw-field\">
-          <label for=\"p\">Password</label>
-          <input id=\"p\" name=\"password\" type=\"password\" autocomplete=\"current-password\">
-        </div>
-        <div class=\"cw-field cw-totp-hidden\" id=\"totp-wrap\">
-          <label for=\"totp\">Verification code</label>
-          <input id=\"totp\" name=\"totp\" type=\"text\" inputmode=\"numeric\" pattern=\"[0-9]*\" maxlength=\"6\" autocomplete=\"one-time-code\">
-        </div>
-        <label class=\"cw-remember\" for=\"remember\">
-          <input id=\"remember\" name=\"remember\" type=\"checkbox\">
+      <div id="help" class="cw-banner" role="status" aria-live="polite"></div>
+      <div id="msg" class="cw-msg" role="alert" aria-live="assertive"></div>
+      <form class="cw-form" id="login-form" autocomplete="on">
+        <div class="cw-field"><label for="u">Username</label><input id="u" name="username" autocomplete="username"></div>
+        <div class="cw-field"><label for="p">Password</label><input id="p" name="password" type="password" autocomplete="current-password"></div>
+        <div class="cw-field cw-totp-hidden" id="totp-wrap"><label for="totp">Verification code</label><input id="totp" name="totp" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code"></div>
+        <label class="cw-remember" for="remember">
+          <input id="remember" name="remember" type="checkbox">
           <span><b>Remember me</b><span>Keep this browser signed in for up to {DEFAULT_REMEMBER_ME_DAYS} days.</span></span>
         </label>
-        <div class=\"cw-actions\">
-          <div class=\"cw-action-primary\">
-            <button class=\"btn acc\" id=\"go\" type=\"submit\">Sign in</button>
-          </div>
-          {plex_html}
-          {oidc_html}
-        </div>
+        <div class="cw-actions"><button class="btn acc" id="go" type="submit">Sign in</button>{sso}</div>
       </form>
     </section>
   </div>
@@ -1516,6 +1400,7 @@ def _login_html(username: str, *, plex_sso_available: bool = False, oidc_availab
     const btn=$('go');
     const plexBtn=$('go-plex');
     const oidcBtn=$('go-oidc');
+    const setBtnLabel=(el,text)=>{{ if(!el) return; const s=el.querySelector('span'); if(s) s.textContent=text; else el.textContent=text; }};
     let needs2fa=false;
     let plexPolling=false;
     let plex2faState='';
@@ -1580,7 +1465,7 @@ def _login_html(username: str, *, plex_sso_available: bool = False, oidc_availab
         btn.disabled=false;
         if(plexBtn) plexBtn.disabled=false;
         btn.textContent=needs2fa?'Verify':'Sign in';
-        if(plexBtn) plexBtn.textContent=plex2faState?'Verify Plex':'Sign in with Plex';
+        setBtnLabel(plexBtn, plex2faState?'Verify':'Plex');
       }}
     }}
     async function login(){{
@@ -1626,7 +1511,7 @@ def _login_html(username: str, *, plex_sso_available: bool = False, oidc_availab
       const popup=window.open('about:blank','cw_plex_auth','width=620,height=760,popup=yes');
       if(plexBtn){{
         plexBtn.disabled=true;
-        plexBtn.textContent='Waiting for Plex...';
+        setBtnLabel(plexBtn,'Waiting...');
       }}
       try{{
         const r=await fetch('/api/app-auth/plex/start',{{method:'POST',headers:{{'Content-Type':'application/json'}},credentials:'same-origin',body:JSON.stringify({{remember_me:remember}})}});
@@ -1666,7 +1551,7 @@ def _login_html(username: str, *, plex_sso_available: bool = False, oidc_availab
         plexPolling=false;
         if(plexBtn){{
           plexBtn.disabled=false;
-          plexBtn.textContent=plex2faState?'Verify Plex':'Sign in with Plex';
+          setBtnLabel(plexBtn, plex2faState?'Verify':'Plex');
         }}
       }}
     }}
@@ -2359,8 +2244,6 @@ def register_app_auth(app) -> None:
         cfg = load_config()
         if not auth_required(cfg):
             return RedirectResponse(url="/", status_code=302)
-        a = _cfg_auth(cfg)
-        username = str(a.get("username") or "")
         try:
             from services import authPlex
 
@@ -2373,7 +2256,7 @@ def register_app_auth(app) -> None:
             oidc_available = authOidc.login_available(cfg)
         except Exception:
             oidc_available = False
-        return HTMLResponse(_login_html(username, plex_sso_available=plex_sso_available, oidc_available=oidc_available), headers={"Cache-Control": "no-store"})
+        return HTMLResponse(_login_html(plex_sso_available=plex_sso_available, oidc_available=oidc_available), headers={"Cache-Control": "no-store"})
 
     @app.get("/logout", include_in_schema=False, tags=["ui"])
     def ui_logout(request: Request) -> Response:
