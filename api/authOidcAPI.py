@@ -254,7 +254,7 @@ def api_oidc_status(request: Request) -> JSONResponse:
     authed = app_auth.auth_required(cfg) and app_auth.is_authenticated(cfg, token)
     user = app_auth.current_user(cfg, token) if authed else None
     a = app_auth._cfg_auth(cfg)
-    raw_user = _linked_raw_for_user(a, user) if user else None
+    raw_user = _linked_raw_for_user(a, user) if user and not user.get("is_admin") else None
     st = authOidc.get_status(cfg, raw_user)
     payload = {
         "enabled": bool(st["enabled"]),
