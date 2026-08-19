@@ -1253,6 +1253,9 @@ def _probe_scrob_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tu
             PROBE_DETAIL_CACHE[key] = (now, False, rsn)
         return False, rsn
 
+    hint = cfg.get("_cw_probe") if isinstance(cfg.get("_cw_probe"), Mapping) else {}
+    inst = normalize_instance_id((hint or {}).get("instance"))
+
     ok = False
     reason = "request_failed"
     try:
@@ -1262,7 +1265,7 @@ def _probe_scrob_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tu
             ok = isinstance(payload, Mapping)
             reason = "" if ok else "validation_bad_response"
         else:
-            client.access_token = scrob.access_token_for(cfg, session=client.session)
+            client.access_token = scrob.access_token_for(cfg, instance_id=inst, session=client.session)
             payload = client.request_json("GET", scrob.ME_PATH)
             ok = isinstance(payload, Mapping) and bool(payload.get("id"))
             reason = "" if ok else "validation_bad_response"
@@ -1560,10 +1563,13 @@ def scrob_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dic
     if not scrob.is_configured(s):
         return {}
 
+    hint = cfg.get("_cw_probe") if isinstance(cfg.get("_cw_probe"), Mapping) else {}
+    inst = normalize_instance_id((hint or {}).get("instance"))
+
     out: dict[str, Any] = {}
     try:
         client = scrob.client_from_block(s)
-        client.access_token = scrob.access_token_for(cfg, session=client.session)
+        client.access_token = scrob.access_token_for(cfg, instance_id=inst, session=client.session)
         payload = client.request_json("GET", scrob.ME_PATH)
         if isinstance(payload, Mapping):
             username = str(payload.get("display_name") or payload.get("username") or "").strip()

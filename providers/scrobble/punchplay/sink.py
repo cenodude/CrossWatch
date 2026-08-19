@@ -15,7 +15,7 @@ import requests
 from cw_platform.config_base import load_config
 from cw_platform.event_archive import record_watch
 from cw_platform.local_db.ttl_dedupe import once_per_ttl
-from cw_platform.provider_instances import get_provider_block, normalize_instance_id
+from cw_platform.provider_instances import normalize_instance_id, resolve_provider_block
 from services.activity import record_scrobble_event
 
 try:
@@ -210,7 +210,7 @@ class PunchPlaySink(ScrobbleSink):
 
     def _block(self, cfg: Mapping[str, Any]) -> dict[str, Any]:
         try:
-            return get_provider_block(cfg, "punchplay", self.instance_id) or {}
+            return resolve_provider_block(cfg, "punchplay", self.instance_id) or {}
         except Exception:
             block = cfg.get("punchplay") if isinstance(cfg, Mapping) else None
             return dict(block) if isinstance(block, Mapping) else {}

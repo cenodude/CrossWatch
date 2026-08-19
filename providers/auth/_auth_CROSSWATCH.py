@@ -7,7 +7,7 @@ from collections.abc import Mapping, MutableMapping
 from typing import Any
 
 from ._auth_base import AuthManifest, AuthProvider, AuthStatus
-from cw_platform.provider_instances import get_provider_block, normalize_instance_id
+from cw_platform.provider_instances import normalize_instance_id, resolve_provider_block
 
 
 class CrossWatchAuth(AuthProvider):
@@ -28,7 +28,7 @@ class CrossWatchAuth(AuthProvider):
 
     def get_status(self, cfg: Mapping[str, Any], *, instance_id: Any = None) -> AuthStatus:
         inst = normalize_instance_id(instance_id)
-        block = get_provider_block(cfg or {}, "crosswatch", inst)
+        block = resolve_provider_block(cfg or {}, "crosswatch", inst)
         exists = isinstance((cfg or {}).get("crosswatch"), Mapping) or isinstance((cfg or {}).get("CrossWatch"), Mapping)
         ok = bool(exists) and block.get("connected") is True and block.get("enabled") is not False
         label = "CrossWatch Local Tracker" if inst == "default" else f"CrossWatch Local Tracker ({inst})"

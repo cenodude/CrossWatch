@@ -2305,7 +2305,7 @@ def _provider_counts_from_db() -> dict[str, int] | None:
     except Exception:
         return None
     if not counts:
-        return None
+        return {}
     out = _provider_count_defaults(counts)
     for key, value in counts.items():
         name = str(key or "").strip().upper()
@@ -2317,7 +2317,7 @@ def _provider_counts_from_db() -> dict[str, int] | None:
 
 def _provider_counts_current() -> dict[str, int]:
     counts = _provider_counts_from_db()
-    if counts is not None:
+    if counts:
         return counts
     cached = _PROVIDER_COUNTS_CACHE.get("data")
     return dict(cached) if isinstance(cached, dict) else _provider_count_defaults()
@@ -2362,7 +2362,7 @@ def _provider_counts_fast(*, max_age: int = 30, force: bool = False) -> dict:
     ):
         return dict(_PROVIDER_COUNTS_CACHE["data"])
     counts = _provider_counts_from_db()
-    if counts is None:
+    if not counts:
         counts = dict(_PROVIDER_COUNTS_CACHE.get("data") or _provider_count_defaults())
     _PROVIDER_COUNTS_CACHE["ts"] = now
     _PROVIDER_COUNTS_CACHE["data"] = counts

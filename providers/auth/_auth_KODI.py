@@ -9,7 +9,7 @@ from typing import Any, cast
 import requests
 from requests.auth import HTTPBasicAuth
 
-from cw_platform.provider_instances import ensure_instance_block, get_provider_block, normalize_instance_id
+from cw_platform.provider_instances import ensure_instance_block, normalize_instance_id, resolve_provider_block
 
 from ._auth_base import AuthManifest, AuthProvider, AuthStatus
 
@@ -237,7 +237,7 @@ def verify_connection(
 
 
 def _block(cfg: Mapping[str, Any], instance_id: Any = None) -> dict[str, Any]:
-    return get_provider_block(cfg or {}, "kodi", instance_id)
+    return resolve_provider_block(cfg or {}, "kodi", instance_id)
 
 
 class KodiAuth(AuthProvider):

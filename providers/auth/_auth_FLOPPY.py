@@ -10,7 +10,7 @@ import requests
 
 from ._auth_base import AuthManifest, AuthProvider, AuthStatus
 from cw_platform.config_base import load_config, save_config
-from cw_platform.provider_instances import ensure_instance_block, get_provider_block, normalize_instance_id
+from cw_platform.provider_instances import ensure_instance_block, normalize_instance_id, resolve_provider_block
 
 __VERSION__ = "0.1"
 UA = "CrossWatch/1.0"
@@ -38,16 +38,7 @@ def normalize_server_url(value: Any) -> str:
 
 
 def provider_block(cfg: Mapping[str, Any] | None, instance_id: Any = None) -> dict[str, Any]:
-    block = get_provider_block(cfg or {}, "floppy", instance_id)
-    if block:
-        return block
-    base = (cfg or {}).get("floppy") if isinstance(cfg, Mapping) else None
-    if not isinstance(base, Mapping):
-        return {}
-    inst = normalize_instance_id(instance_id)
-    if inst == "default" or "instances" not in base:
-        return dict(base)
-    return {}
+    return resolve_provider_block(cfg or {}, "floppy", instance_id)
 
 
 def _block(cfg: Mapping[str, Any], instance_id: Any = None) -> dict[str, Any]:

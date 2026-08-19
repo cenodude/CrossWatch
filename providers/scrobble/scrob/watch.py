@@ -17,7 +17,7 @@ except Exception:
     BASE_LOG = None
 
 from cw_platform.config_base import load_config
-from cw_platform.provider_instances import get_provider_block, normalize_instance_id
+from cw_platform.provider_instances import normalize_instance_id, resolve_provider_block
 from providers.scrobble.currently_watching import update_from_event as _cw_update
 from providers.scrobble.currently_watching import update_from_payload as _cw_update_payload
 from providers.scrobble.scrob.sink import is_crosswatch_session
@@ -186,7 +186,7 @@ class ScrobWatchService:
 
     def _block(self, cfg: Mapping[str, Any]) -> dict[str, Any]:
         try:
-            return get_provider_block(cfg, "scrob", self._instance_id) or {}
+            return resolve_provider_block(cfg, "scrob", self._instance_id) or {}
         except Exception:
             return _dict(cfg.get("scrob"))
 
