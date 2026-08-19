@@ -9,6 +9,8 @@ from typing import Any
 
 import requests
 
+from cw_platform.provider_instances import resolve_provider_block
+
 from .._log import log as cw_log
 from .._mod_common import SimpleRateLimiter
 from providers.auth._auth_SCROB import (
@@ -67,12 +69,10 @@ def mapping(value: Any) -> dict[str, Any]:
 
 
 def cfg_section(adapter: Any) -> Mapping[str, Any]:
-    cfg = getattr(adapter, "config", None)
-    if isinstance(cfg, Mapping) and isinstance(cfg.get("scrob"), Mapping):
-        return cfg["scrob"]
-    raw = getattr(adapter, "raw_cfg", None)
-    if isinstance(raw, Mapping) and isinstance(raw.get("scrob"), Mapping):
-        return raw["scrob"]
+    inst = instance_id(adapter)
+    for source in (getattr(adapter, "config", None), getattr(adapter, "raw_cfg", None)):
+        if isinstance(source, Mapping) and isinstance(source.get("scrob"), Mapping):
+            return resolve_provider_block(source, "scrob", inst)
     return {}
 
 

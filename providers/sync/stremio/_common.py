@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from cw_platform.id_map import canonical_key, ids_from, merge_ids, minimal as id_minimal
-from cw_platform.provider_instances import get_provider_block
+from cw_platform.provider_instances import resolve_provider_block
 from providers.auth._auth_STREMIO import is_configured as auth_is_configured
 
 COLLECTION = "libraryItem"
@@ -23,7 +23,7 @@ def is_capture_mode() -> bool:
 
 
 def configured_block(cfg: Mapping[str, Any] | None, instance_id: Any = "default") -> dict[str, Any]:
-    return get_provider_block(cfg or {}, "stremio", instance_id)
+    return resolve_provider_block(cfg or {}, "stremio", instance_id)
 
 
 def is_configured(cfg: Mapping[str, Any] | None, instance_id: Any = "default") -> bool:

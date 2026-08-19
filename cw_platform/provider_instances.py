@@ -352,6 +352,19 @@ def get_provider_block(cfg: Mapping[str, Any], provider_name: str, instance_id: 
     return {}
 
 
+def resolve_provider_block(cfg: Mapping[str, Any], provider_name: str, instance_id: Any = None) -> dict[str, Any]:
+    block = get_provider_block(cfg, provider_name, instance_id)
+    if block:
+        return block
+
+    base = cfg.get(provider_key(provider_name)) if isinstance(cfg, Mapping) else None
+    if not isinstance(base, Mapping):
+        return {}
+    if normalize_instance_id(instance_id) == _DEFAULT_INSTANCE or _INSTANCES_KEY not in base:
+        return dict(base)
+    return {}
+
+
 def list_instance_ids(cfg: Mapping[str, Any], provider_name: str) -> list[str]:
     key = provider_key(provider_name)
     base = cfg.get(key) if isinstance(cfg, Mapping) else None

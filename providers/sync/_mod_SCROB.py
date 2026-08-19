@@ -12,7 +12,7 @@ import requests
 
 from ._log import log as cw_log
 from ._mod_common import build_session
-from cw_platform.provider_instances import get_provider_block, normalize_instance_id
+from cw_platform.provider_instances import normalize_instance_id, resolve_provider_block
 from providers.auth._auth_SCROB import is_configured as auth_configured
 
 try:  # type: ignore[name-defined]
@@ -103,7 +103,7 @@ def _feature_label(method: str, url: str, kw: Mapping[str, Any]) -> str:
 class SCROBModule:
     def __init__(self, cfg: Mapping[str, Any], *, instance_id: Any = None):
         self.instance_id = normalize_instance_id(instance_id)
-        block = get_provider_block(cfg or {}, "scrob", self.instance_id) or {}
+        block = resolve_provider_block(cfg or {}, "scrob", self.instance_id) or {}
         if not auth_configured(block):
             _log("error", "missing config", instance=self.instance_id)
             raise RuntimeError("Scrob is not connected: server_url, api_key, username and password are required")
@@ -202,7 +202,7 @@ class _SCROBOPS:
         return dict(CAPABILITIES)
 
     def is_configured(self, cfg: Mapping[str, Any]) -> bool:
-        block = get_provider_block(cfg or {}, "scrob", None) or {}
+        block = resolve_provider_block(cfg or {}, "scrob", None) or {}
         if auth_configured(block):
             return True
         root = (cfg or {}).get("scrob")
