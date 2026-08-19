@@ -792,7 +792,9 @@ export default {
       if (all || k === "origin") ddOrigin.reset();
       if (all || k === "feature") ddFeature.reset();
       if (all || k === "pair") ddPair.reset();
-      load(0);
+      if (isAdmin && (all || k === "profile")) { eventScope = ""; ddProfile.value = ""; }
+      if (view === "statistics") loadStats();
+      else load(0);
     };
 
     const updateHidden = () => {
@@ -803,6 +805,7 @@ export default {
       if (ddOrigin.value) chips.push({ k: "origin", label: `Origin: ${ddOrigin.labelOf(ddOrigin.value)}` });
       if (ddFeature.value) chips.push({ k: "feature", label: ddFeature.labelOf(ddFeature.value) });
       if (ddPair.value) chips.push({ k: "pair", label: ddPair.labelOf(ddPair.value) });
+      if (isAdmin && eventScope) chips.push({ k: "profile", label: ddProfile.labelOf(eventScope) });
       const active = chips.length > 0;
       moreDotEl.hidden = !active;
       moreBtn.classList.toggle("has-active", active);

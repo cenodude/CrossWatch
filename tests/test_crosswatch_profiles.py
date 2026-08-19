@@ -2878,6 +2878,8 @@ def test_events_modal_has_profile_filter_in_more_filters() -> None:
     assert "const placeProfileDd = () => {" in js
     assert "const host = stats ? tabsRightEl : filtersEl;" in js
     assert "renderStatsRange(); placeProfileDd(); loadStats();" in js
+    assert 'if (isAdmin && (all || k === "profile")) { eventScope = ""; ddProfile.value = ""; }' in js
+    assert 'if (isAdmin && eventScope) chips.push({ k: "profile", label: ddProfile.labelOf(eventScope) });' in js
 
 
 def test_profile_hero_prefers_last_scrobble_over_history() -> None:
