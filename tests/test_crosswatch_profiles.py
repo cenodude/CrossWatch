@@ -2637,6 +2637,45 @@ def test_pair_config_profile_selector_sits_before_mode_control() -> None:
     assert "display_label||x.label||x.id" in js
     assert 'title="${escHTML(row.id)}"' in js
 
+
+def test_pair_config_instance_select_hides_unconfigured_default() -> None:
+    js = Path("assets/js/modals/pair-config/index.js").read_text("utf-8")
+    block = js.split("function renderInstanceSelects(", 1)[1].split("function resetPairUserProfileControl(", 1)[0]
+
+    assert '[["default",{id:"default",label:"Default"}]]' not in block
+    assert 'typeof x.configured==="boolean"?x.configured:null' in block
+    assert 'const gated=all.some(row=>typeof row.configured==="boolean")' in block
+    assert "gated?all.filter(row=>row.configured!==false):all.slice()" in block
+    assert 'sel.value=ids.includes(want)?want:ids[0]' in block
+    assert 'sel.value=ids.includes(want)?want:"default"' not in block
+
+
+def test_pair_config_pins_saved_instance_that_became_unconfigured() -> None:
+    js = Path("assets/js/modals/pair-config/index.js").read_text("utf-8")
+    block = js.split("function renderInstanceSelects(", 1)[1].split("function resetPairUserProfileControl(", 1)[0]
+
+    assert "savedInstances:{src:null,dst:null}" in js
+    assert "state.savedInstances={src:{provider:state.src,instance:state.src_instance}" in js
+    assert 'String(row.provider||"").toUpperCase()!==String(prov||"").toUpperCase()' in block
+    assert "if(pin&&pin===want&&!rows.some(row=>row.id===pin))" in block
+    assert 'pin==="default"?[stale,...rows]:[...rows,stale]' in block
+    assert "row.stale?`${row.label} - not configured`:row.label" in block
+    assert 'rows=[{id:"default",label:"Default",stale:!!state.instancesLoaded}]' in block
+    assert "state.instancesLoaded=!!r.ok" in js
+
+
+def test_provider_instances_report_unconfigured_default_beside_configured_profile(monkeypatch) -> None:
+    from api import providerInstancesAPI as provider_api
+
+    cfg = {"plex": {"instances": {"PLEX-P01": {"account_token": "tok"}}}}
+    monkeypatch.setattr(provider_api, "load_config", lambda: cfg)
+
+    rows = _loads_body(provider_api.api_provider_instances_all().body)["PLEX"]
+    by_id = {row["id"]: row for row in rows}
+
+    assert by_id["default"]["configured"] is False
+    assert by_id["PLEX-P01"]["configured"] is True
+
 def test_scrobbler_modals_have_conditional_user_profile_selector() -> None:
     route_js = Path("assets/js/modals/scrobbler-route/index.js").read_text("utf-8")
     webhook_js = Path("assets/js/modals/scrobbler-webhook/index.js").read_text("utf-8")

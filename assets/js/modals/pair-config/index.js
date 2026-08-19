@@ -234,7 +234,7 @@ const tpl=()=>`
 // State
 function defaultState(){
   return {
-    providers:[],src:null,dst:null,src_instance:"default",dst_instance:"default",instanceMap:{},userProfiles:[],selected_user_profile_id:"",applying_user_profile:false,feature:"globals",mode:"one-way",enabled:true,
+    providers:[],src:null,dst:null,src_instance:"default",dst_instance:"default",instanceMap:{},instancesLoaded:false,savedInstances:{src:null,dst:null},userProfiles:[],selected_user_profile_id:"",applying_user_profile:false,feature:"globals",mode:"one-way",enabled:true,
     options:{
       watchlist:{enable:false,add:false,remove:false},
       ratings:{enable:false,add:false,remove:false,types:["movies","shows","seasons","episodes"],mode:"all",from_date:""},
@@ -338,7 +338,8 @@ async function loadProviderInstances(state){
     const r=await fetch("/api/provider-instances",{cache:"no-store"});
     const j=r.ok?await r.json():{};
     state.instanceMap=(j&&typeof j==="object")?j:{};
-  }catch{state.instanceMap={}}
+    state.instancesLoaded=!!r.ok;
+  }catch{state.instanceMap={};state.instancesLoaded=false}
 }
 
 async function loadUserProfiles(state){
@@ -703,32 +704,44 @@ function renderInstanceSelects(state){
     const key=String(prov||"").toUpperCase();
     const raw=map[key]||map[String(prov||"").toLowerCase()]||[];
     const arr=Array.isArray(raw)?raw:[];
-    const rows=[];
+    const byId=new Map();
     for(const x of arr){
       if(typeof x==="string"){
         const id=norm(x);
-        if(id) rows.push({id,label:id==="default"?"Default":id});
+        if(id) byId.set(id,{id,label:id==="default"?"Default":id,configured:null});
       }else if(x&&typeof x==="object"&&x.id){
         const id=norm(x.id);
         const label=String(x.display_label||x.label||x.id||"").trim()||(id==="default"?"Default":id);
-        if(id) rows.push({id,label});
+        if(id) byId.set(id,{id,label,configured:typeof x.configured==="boolean"?x.configured:null});
       }
     }
-    const byId=new Map([["default",{id:"default",label:"Default"}]]);
-    rows.filter(row=>row.id&&row.id!=="default").forEach(row=>byId.set(row.id,row));
     return Array.from(byId.values());
   };
-  const fill=(sel, prov, cur)=>{
-    const rows=optsFor(prov);
-    const ids=rows.map(row=>row.id);
-    sel.innerHTML=rows.map(row=>`<option value="${escHTML(row.id)}" title="${escHTML(row.id)}">${escHTML(row.label)}</option>`).join("");
+  const pinnedFor=(slot, prov)=>{
+    const row=(state.savedInstances||{})[slot];
+    if(!row||typeof row!=="object") return "";
+    if(String(row.provider||"").toUpperCase()!==String(prov||"").toUpperCase()) return "";
+    return norm(row.instance);
+  };
+  const fill=(sel, prov, cur, pin)=>{
+    const all=optsFor(prov);
     const want=norm(cur);
-    sel.value=ids.includes(want)?want:"default";
+    const gated=all.some(row=>typeof row.configured==="boolean");
+    let rows=gated?all.filter(row=>row.configured!==false):all.slice();
+    if(pin&&pin===want&&!rows.some(row=>row.id===pin)){
+      const known=all.find(row=>row.id===pin)||{id:pin,label:pin==="default"?"Default":pin};
+      const stale={...known,stale:true};
+      rows=pin==="default"?[stale,...rows]:[...rows,stale];
+    }
+    if(!rows.length) rows=[{id:"default",label:"Default",stale:!!state.instancesLoaded}];
+    const ids=rows.map(row=>row.id);
+    sel.innerHTML=rows.map(row=>`<option value="${escHTML(row.id)}" title="${escHTML(row.id)}">${escHTML(row.stale?`${row.label} - not configured`:row.label)}</option>`).join("");
+    sel.value=ids.includes(want)?want:ids[0];
     sel.disabled=!prov;
   };
 
-  fill(srcInstSel, state.src, state.src_instance);
-  fill(dstInstSel, state.dst, state.dst_instance);
+  fill(srcInstSel, state.src, state.src_instance, pinnedFor("src", state.src));
+  fill(dstInstSel, state.dst, state.dst_instance, pinnedFor("dst", state.dst));
   state.src_instance=norm(srcInstSel.value);
   state.dst_instance=norm(dstInstSel.value);
 
@@ -2697,6 +2710,7 @@ export default{
       state.dst=up(pair.target||pair.dst||state.dst);
       state.src_instance=String(pair.source_instance||"default");
       state.dst_instance=String(pair.target_instance||"default");
+      state.savedInstances={src:{provider:state.src,instance:state.src_instance},dst:{provider:state.dst,instance:state.dst_instance}};
       state.mode=pair.mode||state.mode;
       state.enabled=typeof pair.enabled==="boolean"?pair.enabled:true;
       const f=pair.features||{}, safe=(v,d)=>Object.assign({},d,v||{});
