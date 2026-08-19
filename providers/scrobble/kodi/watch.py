@@ -20,7 +20,7 @@ from providers.scrobble.currently_watching import update_from_event as _cw_updat
 from providers.scrobble.currently_watching import update_from_payload as _cw_update_payload
 from providers.scrobble.scrobble import Dispatcher, ScrobbleEvent, ScrobbleSink, mask_account
 from providers.scrobble.sources import source_enabled
-from providers.sync.kodi._common import path_scope_status
+from providers.sync.kodi._common import EXTERNAL_ID_KEYS, path_scope_status, uniqueid_name, uniqueid_namespace
 
 BASE_POLL_SECONDS = 1.75
 MIN_POLL_SECONDS = 1.5
@@ -111,7 +111,7 @@ def _stable_server_uuid(server: str) -> str:
 
 
 def _norm_unique_key(key: Any) -> str:
-    return "".join(ch for ch in str(key or "").strip().lower() if ch.isalnum())
+    return uniqueid_name(key)
 
 
 def _normalize_uniqueids(uniqueid: Any, media_type: str) -> dict[str, str]:
@@ -129,13 +129,7 @@ def _normalize_uniqueids(uniqueid: Any, media_type: str) -> dict[str, str]:
             continue
         nk = _norm_unique_key(key)
         is_show = media_type == "episode" and any(part in nk for part in ("show", "tvshow", "series"))
-        target = None
-        if "imdb" in nk or text.lower().startswith("tt"):
-            target = "imdb"
-        elif "tmdb" in nk or "themoviedb" in nk:
-            target = "tmdb"
-        elif "tvdb" in nk or "thetvdb" in nk:
-            target = "tvdb"
+        target = uniqueid_namespace(nk, text)
         if target:
             if media_type == "episode":
                 put(f"{target}_show" if is_show else f"{target}_episode", text)
@@ -150,7 +144,7 @@ def _has_show_ids(ids: Mapping[str, Any]) -> bool:
 
 def _show_ids_from_uniqueids(uniqueid: Any) -> dict[str, str]:
     base = _normalize_uniqueids(uniqueid, "movie")
-    return {f"{key}_show": value for key, value in base.items() if key in {"imdb", "tmdb", "tvdb"} and value}
+    return {f"{key}_show": value for key, value in base.items() if key in EXTERNAL_ID_KEYS and value}
 
 
 def _item_identity(item: Mapping[str, Any], media_type: str) -> str:
