@@ -871,7 +871,8 @@ def test_profile_css_defines_the_crossover() -> None:
     assert ".cw-profile-hero-now{" in css
     assert ".cw-profile-hero-art{position:absolute;inset:0;" in css
     assert ".cw-profile-last{position:absolute;z-index:3;right:46px;bottom:34px;width:min(470px,38vw);" in css
-    assert ".cw-profile-last-poster{width:76px;height:102px;" in css
+    assert ".cw-profile-last-poster{width:90px;height:auto;justify-self:end;margin:-11px -15px -11px 0;" in css
+    assert "border-radius:0 15px 15px 0" in css
     assert ".cw-profile-hero.is-playing .cw-profile-last{display:none}" in css
     assert ".cw-profile-hero.is-playing .cw-profile-hero-art{" in css
     assert css.count("{") == css.count("}")
@@ -937,7 +938,11 @@ def test_continue_watching_card_matches_the_spec() -> None:
         assert marker in card, marker
     assert 'const episode = episodeOf(item);' in card
     assert 'class="cw-cw-episode"' in card
-    assert "provider" not in card.lower()
+    # provider icons overlay the artwork; no provider text on the card body
+    assert 'class="cw-cw-providers"' in card
+    assert "progressProviders(item).map(providerIconHtml)" in card
+    body = card[card.index('class="cw-cw-title"'):]
+    assert "provider" not in body.lower()
 
     css = pathlib.Path("assets/css/profile-page.css").read_text(encoding="utf-8")
     assert "aspect-ratio:16/9" in css

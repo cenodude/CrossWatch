@@ -57,6 +57,17 @@
     const label = String(providerLabel(raw) || "").trim();
     return (!label || label === "?" || /^unknown$/i.test(label) || /^none$/i.test(label)) ? "" : label;
   };
+  const providerIconHtml = (provider) => {
+    const label = visibleProviderLabel(provider);
+    if (!label) return "";
+    const key = providerKey(provider).toLowerCase().replace(/[^a-z0-9-]+/g, "");
+    const logo = providerLogo(provider);
+    const icon = logo
+      ? `<img class="cw-profile-provider-logo" src="${esc(logo)}" alt="" loading="lazy" onerror="this.onerror=null;this.hidden=true;this.nextElementSibling.hidden=false">`
+      : "";
+    const fallbackHidden = logo ? " hidden" : "";
+    return `<span class="cw-profile-provider-badge cw-profile-provider-badge--icon" data-provider="${esc(key)}" title="${esc(label)}" aria-label="${esc(label)}">${icon}<span class="cw-profile-provider-fallback"${fallbackHidden}>${esc(label.slice(0, 2))}</span></span>`;
+  };
   const providerBadgeHtml = (provider) => {
     const label = visibleProviderLabel(provider);
     if (!label) return "";
@@ -68,7 +79,24 @@
     const fallbackHidden = logo ? " hidden" : "";
     return `<span class="cw-profile-provider-badge" data-provider="${esc(key)}">${icon}<span class="cw-profile-provider-fallback"${fallbackHidden}>${esc(label)}</span><span>${esc(label)}</span></span>`;
   };
-  const providerOf = (item) => item?.source || item?.provider || item?.sources?.[0]?.provider || "";
+  const providerName = (value) => {
+    if (!value) return "";
+    if (typeof value === "string") return value;
+    if (typeof value === "object") return String(value.provider || value.name || value.key || "");
+    return String(value);
+  };
+  const providerOf = (item) => providerName(item?.source) || providerName(item?.provider) || providerName(item?.sources?.[0]) || "";
+  const providerRoute = (item) => {
+    const source = providerName(item?.source) || providerName(item?.provider);
+    const rest = [];
+    const push = (value) => {
+      const name = providerName(value);
+      if (name && name !== source && !rest.includes(name)) rest.push(name);
+    };
+    for (const row of Array.isArray(item?.targets) ? item.targets : []) push(row);
+    for (const row of Array.isArray(item?.sources) ? item.sources : []) push(row);
+    return { source: source || rest.shift() || "", sinks: rest, routed: !!source };
+  };
   const mediaValue = (item) => String(item?.media_type || item?.type || item?.art_type || "").toLowerCase();
   const mediaType = (item) => /^(tv|show|shows|series|season|episode|anime|anime_episode)$/i.test(mediaValue(item));
   const objectOf = (value) => value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -334,6 +362,22 @@
     return Math.max(0, Math.min(100, raw));
   }
 
+  const progressProviders = (item) => {
+    const out = [];
+    const push = (value) => {
+      const name = providerName(value);
+      if (!name || name.toLowerCase() === "combined" || out.includes(name)) return;
+      out.push(name);
+    };
+    for (const row of Array.isArray(item?.providers) ? item.providers : []) push(row);
+    for (const row of Array.isArray(item?.sources) ? item.sources : []) push(row);
+    if (!out.length) {
+      push(item?.provider);
+      push(item?.source);
+    }
+    return out;
+  };
+
   function progressCard(item) {
     const key = storePosterItem(item);
     const pct = progressPct(item);
@@ -341,8 +385,10 @@
     const episode = episodeOf(item);
     const sub = episode || yearOf(item) || "";
     const episodeBadge = episode ? `<span class="cw-cw-episode">${esc(episode)}</span>` : "";
+    const providerIcons = progressProviders(item).map(providerIconHtml).filter(Boolean).join("");
+    const providerStrip = providerIcons ? `<span class="cw-cw-providers">${providerIcons}</span>` : "";
     return `<button class="cw-cw-card" type="button" data-profile-poster-key="${esc(key)}" aria-label="Show details for ${esc(titleOf(item))}">
-      <span class="cw-cw-art">${episodeBadge}<img src="${esc(art)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'"></span>
+      <span class="cw-cw-art">${episodeBadge}${providerStrip}<img src="${esc(art)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'"></span>
       <span class="cw-cw-title">${esc(titleOf(item))}</span>
       <span class="cw-cw-sub">${esc(sub)}</span>
       <span class="cw-cw-foot">
@@ -421,8 +467,37 @@
     return `<button class="cw-profile-row cw-profile-click-row" type="button" data-profile-poster-key="${esc(key)}" aria-label="Show details for ${esc(titleOf(item))}"><img src="${esc(poster(item, "w185"))}" alt="" loading="lazy" onerror="this.onerror=null;this.replaceWith(Object.assign(document.createElement('span'),{className:'material-symbols-rounded',textContent:'${fallbackIcon}'}))"><div><strong>${esc(titleOf(item))}</strong><span>${esc(meta)}</span></div><span></span></button>`;
   }
 
-  function renderHero(historyItems) {
-    const item = Array.isArray(historyItems) && historyItems.length ? historyItems[0] : null;
+  const watchedEpoch = (item) => {
+    const raw = Number(item?.ts || item?.sort_epoch || item?.last_watched_at || item?.watched_at || 0);
+    if (!Number.isFinite(raw) || raw <= 0) return 0;
+    return raw > 100000000000 ? Math.floor(raw / 1000) : raw;
+  };
+
+  const newestItem = (rows) => {
+    if (!Array.isArray(rows) || !rows.length) return null;
+    return rows.reduce((best, row) => (watchedEpoch(row) > watchedEpoch(best) ? row : best), rows[0]) || null;
+  };
+
+  function bindLastWatchedPreview(node) {
+    if (!node || node.dataset.previewBound === "1") return;
+    node.dataset.previewBound = "1";
+    const openLast = (event) => {
+      const current = posterItems.get(node.dataset.profilePosterKey || "");
+      const open = window.CW?.WatchlistPreview?.openPreviewDrawer || window.openPreviewDrawer;
+      if (!current || !open) return;
+      event?.preventDefault?.();
+      event?.stopPropagation?.();
+      void open(current);
+    };
+    node.addEventListener("click", openLast);
+    node.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      openLast(event);
+    });
+  }
+
+  function renderHero(scrobbleItems, historyItems) {
+    const item = newestItem(scrobbleItems) || newestItem(historyItems);
     const hero = $("#profile-hero");
     const last = $(".cw-profile-last");
     const art = item ? heroBackdrop(item) : "";
@@ -442,15 +517,22 @@
     if (last) {
       last.dataset.profilePosterKey = key;
       last.setAttribute("aria-label", `Show details for ${titleOf(item)}`);
+      bindLastWatchedPreview(last);
     }
     $("#profile-last-poster").src = poster(item, "w185");
     $("#profile-last-title").textContent = titleOf(item);
-    $("#profile-last-meta").textContent = [episodeOf(item) || yearOf(item), relTime(item.ts || item.last_watched_at || item.watched_at)].filter(Boolean).join(" - ");
-    const provider = providerBadgeHtml(providerOf(item));
+    $("#profile-last-meta").textContent = [episodeOf(item) || yearOf(item), relTime(watchedEpoch(item))].filter(Boolean).join(" - ");
+    const route = providerRoute(item);
+    const sourceHtml = providerIconHtml(route.source);
+    const sinkHtml = route.sinks.map(providerIconHtml).filter(Boolean).join("");
+    const sep = sourceHtml && sinkHtml && route.routed
+      ? `<span class="cw-profile-provider-sep material-symbols-rounded" aria-hidden="true">chevron_right</span>`
+      : "";
+    const badges = `${sourceHtml}${sep}${sinkHtml}`;
     const providerNode = $("#profile-last-provider");
     if (providerNode) {
-      providerNode.innerHTML = provider;
-      providerNode.hidden = !provider;
+      providerNode.innerHTML = badges;
+      providerNode.hidden = !badges;
     }
   }
 
@@ -586,7 +668,7 @@
     const widgetProgress = widgets?.recent_progress?.items || [];
     const progressItems = progress?.items?.length ? progress.items : widgetProgress;
     const scrobbleTotal = Number(widgets?.recent_scrobble?.scrobble_total ?? widgets?.recent_scrobble?.total ?? scrobble.length) || 0;
-    renderHero(history);
+    renderHero(scrobble, history);
     renderQuickStats({ wall, widgets, progressItems, insights });
     const watchlistItems = Array.isArray(wall?.items) ? wall.items : [];
     renderHeroChips({
