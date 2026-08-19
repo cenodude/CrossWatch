@@ -387,7 +387,7 @@ def test_safe_next_rejects_login_and_logout_with_query() -> None:
 def test_login_page_next_guard_rejects_backslash() -> None:
     from api.appAuthAPI import _login_html
 
-    html = _login_html("admin")
+    html = _login_html()
     assert "u.origin === location.origin" in html
     assert "!next.includes('\\\\')" in html
 
