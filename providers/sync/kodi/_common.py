@@ -221,6 +221,32 @@ def to_float(value: Any) -> float | None:
         return None
 
 
+EXTERNAL_ID_KEYS: tuple[str, ...] = ("tmdb", "imdb", "tvdb", "anidb", "anilist", "mal", "kitsu")
+
+UNIQUEID_NAMESPACES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("anidb", ("anidb",)),
+    ("anilist", ("anilist",)),
+    ("kitsu", ("kitsu",)),
+    ("mal", ("myanimelist", "mal")),
+    ("imdb", ("imdb",)),
+    ("tmdb", ("tmdb", "themoviedb")),
+    ("tvdb", ("tvdb", "thetvdb")),
+)
+
+
+def uniqueid_name(key: Any) -> str:
+    return "".join(ch for ch in str(key or "").strip().lower() if ch.isalnum())
+
+
+def uniqueid_namespace(name: str, text: str) -> str | None:
+    if text.lower().startswith("tt"):
+        return "imdb"
+    for namespace, needles in UNIQUEID_NAMESPACES:
+        if any(needle in name for needle in needles):
+            return namespace
+    return None
+
+
 def normalize_uniqueids(uniqueid: Any) -> dict[str, str]:
     raw = uniqueid if isinstance(uniqueid, Mapping) else {}
     out: dict[str, str] = {}
@@ -228,13 +254,9 @@ def normalize_uniqueids(uniqueid: Any) -> dict[str, str]:
         text = str(value or "").strip()
         if not text:
             continue
-        name = "".join(ch for ch in str(key or "").strip().lower() if ch.isalnum())
-        if "imdb" in name or text.lower().startswith("tt"):
-            out.setdefault("imdb", text)
-        elif "tmdb" in name or "themoviedb" in name:
-            out.setdefault("tmdb", text)
-        elif "tvdb" in name or "thetvdb" in name:
-            out.setdefault("tvdb", text)
+        namespace = uniqueid_namespace(uniqueid_name(key), text)
+        if namespace:
+            out.setdefault(namespace, text)
     return out
 
 
@@ -298,7 +320,7 @@ def _has_external_identifiers(item: Mapping[str, Any]) -> bool:
     if isinstance(show_ids, Mapping):
         sources.append(show_ids)
     for src in sources:
-        if any(str(src.get(k) or "").strip() for k in ("tmdb", "imdb", "tvdb")):
+        if any(str(src.get(k) or "").strip() for k in EXTERNAL_ID_KEYS):
             return True
     return False
 

@@ -443,3 +443,56 @@ def test_scrobble_source_whitelist_ignores_unselected_paths(monkeypatch):
     assert logs[-1][0] == "DEBUG"
     assert "event filtered by scrobble whitelist" in logs[-1][1]
     assert "allowed=['/movies']" in logs[-1][1]
+
+
+def test_watcher_normalizes_native_anime_uniqueids():
+    got = kodi_watch._normalize_uniqueids(
+        {"anidb": "17969", "tvshow.anidb": "17969", "tvdb": "9515852", "tvshow.tvdb": "393478"},
+        "episode",
+    )
+
+    assert got == {
+        "anidb_episode": "17969",
+        "anidb_show": "17969",
+        "tvdb_episode": "9515852",
+        "tvdb_show": "393478",
+    }
+    assert kodi_watch._has_show_ids(got) is True
+
+
+def test_watcher_show_ids_carry_native_anime_namespaces():
+    got = kodi_watch._show_ids_from_uniqueids({"anidb": "17969", "tvdb": "393478", "MyAnimeList": "54918"})
+
+    assert got == {"anidb_show": "17969", "tvdb_show": "393478", "mal_show": "54918"}
+    assert kodi_watch._has_show_ids({"anidb_show": "17969"}) is False
+    assert kodi_watch._has_show_ids({"tvdb_show": "393478"}) is True
+
+
+def test_anidb_scraped_episode_scrobbles_as_anime(monkeypatch):
+    monkeypatch.setattr(kodi_watch, "_cw_update", lambda *a, **k: None)
+    script = RpcScript(
+        **{
+            "Player.GetActivePlayers": [active()],
+            "Player.GetItem": [
+                {
+                    "item": episode_item(
+                        title="Episode 5",
+                        showtitle="Tokyo Revengers: Tenjiku Hen",
+                        season=1,
+                        episode=5,
+                        uniqueid={"tvdb": "9515852", "tvshow.anidb": "17969", "tvshow.tvdb": "393478"},
+                    )
+                }
+            ],
+            "Player.GetProperties": [props(1, 12)],
+            "Profiles.GetCurrentProfile": [profile("Cinema")],
+        }
+    )
+    service, disp = svc(script)
+
+    assert service._tick() is True
+
+    ev = disp.events[-1]
+    assert ev.ids["anidb_show"] == "17969"
+    assert ev.ids["tvdb_show"] == "393478"
+    assert simkl_sink._show_ids(ev)["anidb"] == "17969"

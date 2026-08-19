@@ -335,3 +335,50 @@ def test_external_id_source_does_not_fallback_to_title_year():
     assert result["count"] == 0
     assert result["reason_counts"]["not_found"] == 1
     assert client.movie_writes == []
+
+
+def test_normalize_uniqueids_carries_native_anime_namespaces():
+    got = common.normalize_uniqueids(
+        {"anidb": "16627", "tvdb": "369144", "AniList": "139092", "MyAnimeList": "49784", "kitsu": "45154"}
+    )
+
+    assert got == {
+        "anidb": "16627",
+        "tvdb": "369144",
+        "anilist": "139092",
+        "mal": "49784",
+        "kitsu": "45154",
+    }
+
+
+def test_normalize_uniqueids_keeps_existing_namespace_behaviour():
+    assert common.normalize_uniqueids({"imdb": "tt2543164", "themoviedb": "329865", "thetvdb": "280619"}) == {
+        "imdb": "tt2543164",
+        "tmdb": "329865",
+        "tvdb": "280619",
+    }
+    assert common.normalize_uniqueids({"unknown": "tt99"}) == {"imdb": "tt99"}
+    assert common.normalize_uniqueids({"shoko": "12", "": "9"}) == {}
+
+
+def test_anidb_scraped_episode_keeps_native_show_identity():
+    ad = adapter(
+        FakeKodiClient(
+            [],
+            [episode(uniqueid={"tvdb": "9378874"}, season=1, episode=14, showtitle="Mairimashita! Iruma-kun")],
+            [tvshow(uniqueid={"anidb": "16627", "tvdb": "369144"})],
+        )
+    )
+
+    index = mod.feat_history.build_index(ad)
+    row = next(iter(index.values()))
+
+    assert row["show_ids"] == {"anidb": "16627", "tvdb": "369144"}
+    assert (row["season"], row["episode"]) == (1, 14)
+
+
+def test_native_only_show_ids_are_treated_as_external():
+    item = {"type": "episode", "show_ids": {"anidb": "16627"}, "season": 1, "episode": 14}
+
+    assert common._has_external_identifiers(item) is True
+    assert not any("|title:" in key for key in common.resolution_keys(item))

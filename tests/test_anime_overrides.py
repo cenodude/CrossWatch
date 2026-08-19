@@ -348,3 +348,24 @@ def test_stats_reports_the_store(config_base: Path) -> None:
     assert got["shows"] == 1
     assert got["movies"] == 1
     assert got["episode_rules"] == 1
+
+
+def test_anidb_keyed_override_applies_to_an_anidb_scraped_library(index: Path) -> None:
+    ov.upsert_override(
+        _rule(
+            title="Mairimashita! Iruma-kun",
+            match_provider="anidb",
+            match_id="16627",
+            match_season=1,
+            target_namespace="simkl",
+            target_id="1728821",
+            episode_from=1,
+            episode_to=21,
+            episode_start_at=1,
+        )
+    )
+
+    got = resolve_absolute(_episode({"tvdb": "369144", "anidb": "16627"}, 1, 14))
+
+    assert got is not None
+    assert (got.absolute, got.namespace, got.target_id, got.basis) == (14, "simkl", "1728821", "user_override")

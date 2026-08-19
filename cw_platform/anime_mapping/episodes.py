@@ -164,6 +164,10 @@ def resolve_absolute(
         agreed = {hit[0] for hit in found.values() if hit[0] > 0}
         if not agreed:
             continue
+        if _native_identity_conflict(ids, found):
+            native = _native_passthrough(tag, ids, season, episode)
+            if native is not None:
+                return native
         if len(agreed) != 1:
             return None
         absolute = agreed.pop()
@@ -178,6 +182,17 @@ def resolve_absolute(
                     entry=basis,
                 )
     return _native_passthrough(tag, ids, season, episode)
+
+
+def _native_identity_conflict(ids: Mapping[str, str], found: Mapping[str, tuple[int, str]]) -> bool:
+    for namespace in NATIVE_ORDER:
+        own = str(ids.get(namespace) or "").strip()
+        hit = found.get(namespace)
+        if not own or not hit or hit[0] <= 0 or not hit[1]:
+            continue
+        if hit[1] != own:
+            return True
+    return False
 
 
 def _native_passthrough(tag: str, ids: Mapping[str, str], season: int, episode: int) -> Resolution | None:

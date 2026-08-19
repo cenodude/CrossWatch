@@ -37,6 +37,16 @@ MAPPINGS: dict[str, Any] = {
         "anilist:701": {"1-12": "1-12"},
     },
     "tvdb_show:702:s1": {"anidb:702:S": {"1-12": "1-12"}},
+    "tvdb_show:369144:s1": {
+        "anidb:14660:R": {"1-23": "1-23"},
+        "anilist:107693": {"1-23": "1-23"},
+        "mal:39196": {"1-23": "1-23"},
+    },
+    "tvdb_show:369144:s3": {
+        "anidb:16627:R": {"1-21": "1-21"},
+        "anilist:139092": {"1-21": "1-21"},
+        "mal:49784": {"1-21": "1-21"},
+    },
 }
 
 
@@ -165,3 +175,29 @@ def test_migration_keeps_custom_entries() -> None:
     _normalize_anime_mapping(cfg)
     assert cfg["anime_mapping"]["use_for_pairs"][0] == "*"
     assert set(cfg["anime_mapping"]["features"]) >= {"watchlist", "ratings", "history"}
+
+
+def test_native_id_outranks_aired_axis_inference(index: Path) -> None:
+    got = resolve_absolute(_episode({"tvdb": "369144", "anidb": "16627"}, 1, 14))
+    assert got is not None
+    assert (got.absolute, got.namespace, got.target_id) == (14, "anidb", "16627")
+    assert got.entry == "anidb_native"
+
+
+def test_aired_axis_is_kept_without_a_native_id(index: Path) -> None:
+    got = resolve_absolute(_episode({"tvdb": "369144"}, 1, 14))
+    assert got is not None
+    assert (got.absolute, got.namespace, got.target_id) == (14, "anidb", "14660")
+    assert got.entry == "tvdb_direct"
+
+
+def test_agreeing_native_id_does_not_divert(index: Path) -> None:
+    got = resolve_absolute(_episode({"tvdb": "369144", "anidb": "14660"}, 1, 14))
+    assert got is not None
+    assert (got.absolute, got.target_id, got.basis) == (14, "14660", "anibridge_absolute")
+
+
+def test_conflicting_native_id_outside_season_one_keeps_aired_result(index: Path) -> None:
+    got = resolve_absolute(_episode({"tvdb": "81472", "anilist": "999"}, 2, 13))
+    assert got is not None
+    assert (got.absolute, got.basis) == (52, "anibridge_absolute")
