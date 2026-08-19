@@ -1842,8 +1842,8 @@ def test_profile_last_watched_uses_provider_branding_icons() -> None:
     css = Path("assets/css/profile-page.css").read_text("utf-8")
 
     assert "window.CW?.ProviderMeta?.logoPath?.(provider)" in js
-    assert "providerBadgeHtml(providerOf(item))" in js
-    assert "providerNode.innerHTML = provider;" in js
+    assert "route.sinks.map(providerIconHtml)" in js
+    assert "providerNode.innerHTML = badges;" in js
     assert "cw-profile-provider-badge" in css
     assert "cw-profile-provider-logo" in css
     assert "body.cw-profile-page #dashboard-widgets-card .cw-dash-layout-controls{right:104px;top:14px;gap:10px}" in css
@@ -2878,3 +2878,43 @@ def test_events_modal_has_profile_filter_in_more_filters() -> None:
     assert "const placeProfileDd = () => {" in js
     assert "const host = stats ? tabsRightEl : filtersEl;" in js
     assert "renderStatsRange(); placeProfileDd(); loadStats();" in js
+
+
+def test_profile_hero_prefers_last_scrobble_over_history() -> None:
+    js = Path("assets/js/profile-page.js").read_text("utf-8")
+
+    assert "function renderHero(scrobbleItems, historyItems)" in js
+    assert "const item = newestItem(scrobbleItems) || newestItem(historyItems);" in js
+    assert "renderHero(scrobble, history);" in js
+    assert "const watchedEpoch = (item) =>" in js
+    assert "relTime(watchedEpoch(item))" in js
+    assert "const providerName = (value) => {" in js
+    assert 'return String(value.provider || value.name || value.key || "");' in js
+    assert 'const providerOf = (item) => providerName(item?.source) || providerName(item?.provider) || providerName(item?.sources?.[0]) || "";' in js
+    assert "const providerRoute = (item) => {" in js
+    assert "const providerIconHtml = (provider) => {" in js
+    assert "for (const row of Array.isArray(item?.targets) ? item.targets : []) push(row);" in js
+    assert "for (const row of Array.isArray(item?.sources) ? item.sources : []) push(row);" in js
+    assert "const sinkHtml = route.sinks.map(providerIconHtml).filter(Boolean).join(\"\");" in js
+    assert "cw-profile-provider-badge--icon" in js
+    assert "function bindLastWatchedPreview(node) {" in js
+    assert "bindLastWatchedPreview(last);" in js
+    assert 'node.dataset.previewBound === "1"' in js
+
+    css = Path("assets/css/profile-page.css").read_text("utf-8")
+    assert "border-radius:0 15px 15px 0" in css
+    assert "grid-template-columns:minmax(0,1fr)90px" in css
+    assert "#profile-last-provider{flex:1 1 100%;display:flex;flex-wrap:wrap;gap:6px" in css
+    assert ".cw-profile-provider-badge--icon{gap:0;width:30px;min-width:30px;padding:0;justify-content:center}" in css
+
+
+def test_continue_watching_cards_show_provider_icons() -> None:
+    js = Path("assets/js/profile-page.js").read_text("utf-8")
+    css = Path("assets/css/profile-page.css").read_text("utf-8")
+
+    assert "const progressProviders = (item) => {" in js
+    assert "for (const row of Array.isArray(item?.providers) ? item.providers : []) push(row);" in js
+    assert 'name.toLowerCase() === "combined"' in js
+    assert 'const providerStrip = providerIcons ? `<span class="cw-cw-providers">${providerIcons}</span>` : "";' in js
+    assert "${episodeBadge}${providerStrip}<img" in js
+    assert ".cw-cw-providers{position:absolute;left:8px;bottom:8px;z-index:2;" in css
