@@ -729,9 +729,13 @@ function renderInstanceSelects(state){
     const gated=all.some(row=>typeof row.configured==="boolean");
     let rows=gated?all.filter(row=>row.configured!==false):all.slice();
     if(pin&&pin===want&&!rows.some(row=>row.id===pin)){
-      const known=all.find(row=>row.id===pin)||{id:pin,label:pin==="default"?"Default":pin};
-      const stale={...known,stale:true};
-      rows=pin==="default"?[stale,...rows]:[...rows,stale];
+      const known=all.find(row=>row.id===pin);
+      const neverConfigured=pin==="default"&&known&&known.configured===false;
+      if(!neverConfigured||!rows.length){
+        const base=known||{id:pin,label:pin==="default"?"Default":pin};
+        const stale={...base,stale:true};
+        rows=pin==="default"?[stale,...rows]:[...rows,stale];
+      }
     }
     if(!rows.length) rows=[{id:"default",label:"Default",stale:!!state.instancesLoaded}];
     const ids=rows.map(row=>row.id);
