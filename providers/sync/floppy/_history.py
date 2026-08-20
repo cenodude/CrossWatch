@@ -124,12 +124,12 @@ def _show_ids(item: Mapping[str, Any]) -> dict[str, str]:
     return out
 
 
-def _override_coordinate_for_absolute(
+def _override_target_for_absolute(
     item: Mapping[str, Any],
     tmdb_id: str,
     native_ids: Mapping[str, str],
     absolute: int,
-) -> tuple[int, int] | None:
+) -> tuple[str, int, int] | None:
     known_ids = _show_ids(item)
     if tmdb_id:
         known_ids.setdefault("tmdb", str(tmdb_id))
@@ -144,24 +144,31 @@ def _override_coordinate_for_absolute(
         if ruled is None:
             continue
         provider = str(ruled.provider or "").strip().lower()
-        expected = known_ids.get(provider)
-        if expected and str(ruled.ident or "").strip() != expected:
+        target_id = str(ruled.ident or "").strip()
+        if provider == "tmdb" and target_id:
+            expected = target_id
+        else:
+            expected = known_ids.get(provider)
+            if expected and target_id != expected:
+                continue
+            expected = tmdb_id
+        if provider != "tmdb":
             continue
-        if provider == "tmdb" and tmdb_id and str(ruled.ident or "").strip() != str(tmdb_id):
+        if not expected:
             continue
         season = int_or_none(ruled.season)
         episode = int_or_none(ruled.episode)
         if season is not None and season >= 0 and episode is not None and episode > 0:
-            return season, episode
+            return str(expected), season, episode
     return None
 
 
-def _anime_coordinate_for_absolute(
+def _anime_target_for_absolute(
     adapter: Any,
     tmdb_id: str,
     item: Mapping[str, Any],
     absolute: int,
-) -> tuple[int, int] | None:
+) -> tuple[str, int, int] | None:
     if not _anime_mapping_enabled(adapter):
         return None
     if str(item.get("type") or "").strip().lower() != "episode":
@@ -171,11 +178,11 @@ def _anime_coordinate_for_absolute(
         return None
 
     release_tag = _anime_release_tag(adapter)
-    override_coord = _override_coordinate_for_absolute(item, tmdb_id, native_ids, absolute)
-    if override_coord is not None:
-        return override_coord
+    override_target = _override_target_for_absolute(item, tmdb_id, native_ids, absolute)
+    if override_target is not None:
+        return override_target
 
-    found: set[tuple[int, int]] = set()
+    found: set[tuple[str, int, int]] = set()
     for namespace in ("anidb", "mal", "anilist", "kitsu"):
         ident = native_ids.get(namespace)
         if not ident:
@@ -192,7 +199,7 @@ def _anime_coordinate_for_absolute(
             if str(row.get("target_kind") or "").strip().lower() != "show":
                 continue
             target_id = str(row.get("target_id") or "").strip()
-            if target_id and str(target_id) != str(tmdb_id):
+            if not target_id:
                 continue
             season = _season_from_scope(row.get("target_scope"))
             if season is None or season < 0:
@@ -200,10 +207,22 @@ def _anime_coordinate_for_absolute(
             episode = translate(row.get("source_range"), row.get("target_range"), absolute)
             if episode is None or int(episode) <= 0:
                 continue
-            found.add((int(season), int(episode)))
+            found.add((target_id, int(season), int(episode)))
     if len(found) == 1:
         return next(iter(found))
     return None
+
+
+def _anime_coordinate_for_absolute(
+    adapter: Any,
+    tmdb_id: str,
+    item: Mapping[str, Any],
+    absolute: int,
+) -> tuple[int, int] | None:
+    target = _anime_target_for_absolute(adapter, tmdb_id, item, absolute)
+    if target is None:
+        return None
+    return target[1], target[2]
 
 
 def _season_from_scope(value: Any) -> int | None:
@@ -264,11 +283,9 @@ def _rekey_to_source_numbering(adapter: Any, out: dict[str, dict[str, Any]]) -> 
         owned_by_show.setdefault(show, {}).setdefault((season, episode), []).append(key)
 
     for show, record in shows.items():
-        owned = owned_by_show.get(show)
-        if not owned:
-            continue
         wanted: set[tuple[int, int]] = record["coords"]
-        missing = [coord for coord in wanted if coord not in owned]
+        source_owned = owned_by_show.get(show) or {}
+        missing = [coord for coord in wanted if coord not in source_owned]
         if not missing:
             continue
         layout: list[tuple[int, int]] | None = None
@@ -277,18 +294,22 @@ def _rekey_to_source_numbering(adapter: Any, out: dict[str, dict[str, Any]]) -> 
             if absolute is None:
                 continue
             source_item = (record.get("items") or {}).get(coord)
-            real = (
-                _anime_coordinate_for_absolute(adapter, show, source_item, absolute)
-                if isinstance(source_item, Mapping)
-                else None
-            )
+            real_show = show
+            real = None
+            if isinstance(source_item, Mapping):
+                target = _anime_target_for_absolute(adapter, show, source_item, absolute)
+                if target is not None:
+                    real_show, real = target[0], (target[1], target[2])
             if real is None:
                 if layout is None:
                     layout = show_layout(adapter, show)
                 if not layout:
                     continue
                 real = absolute_to_coord(layout, absolute)
-            if real is None or real == coord:
+            if real is None or (real == coord and real_show == show):
+                continue
+            owned = owned_by_show.get(real_show) or {}
+            if not owned:
                 continue
             keys = owned.get(real) or []
             key = ""
@@ -300,7 +321,7 @@ def _rekey_to_source_numbering(adapter: Any, out: dict[str, dict[str, Any]]) -> 
                     if source_event and candidate_event == source_event:
                         key = candidate
                         break
-            if not key and real not in wanted:
+            if not key and (real_show != show or real not in wanted):
                 key = keys[0] if keys else ""
             if not key:
                 continue
@@ -309,6 +330,11 @@ def _rekey_to_source_numbering(adapter: Any, out: dict[str, dict[str, Any]]) -> 
                 continue
             rekeyed = dict(item)
             rekeyed["_floppy_season"], rekeyed["_floppy_episode"] = real
+            if real_show != show:
+                rekeyed["_floppy_tmdb_id"] = real_show
+                show_ids = dict(rekeyed.get("show_ids") or {})
+                show_ids["tmdb"] = show
+                rekeyed["show_ids"] = show_ids
             rekeyed["season"], rekeyed["episode"] = coord
             new_key = _history_key(adapter, rekeyed) if _rewatches_enabled(adapter) else canonical_item_key(rekeyed)
             if new_key in out:
@@ -325,23 +351,25 @@ def _rekey_to_source_numbering(adapter: Any, out: dict[str, dict[str, Any]]) -> 
     return out
 
 
-def _write_coord_result(adapter: Any, tmdb_id: str, item: Mapping[str, Any], season: int, episode: int) -> tuple[int, int, bool]:
+def _write_target_result(adapter: Any, tmdb_id: str, item: Mapping[str, Any], season: int, episode: int) -> tuple[str, int, int, bool]:
     stored = _floppy_coord(item)
     if stored is not None:
-        return stored[0], stored[1], _anime_write_needs_readback(adapter, item, season, episode, stored[0], stored[1])
+        target_id = str(item.get("_floppy_tmdb_id") or tmdb_id or "").strip()
+        return target_id, stored[0], stored[1], _anime_write_needs_readback(adapter, item, season, episode, stored[0], stored[1])
     absolute = _explicit_absolute(item)
     if absolute is None:
-        return season, episode, _anime_write_needs_readback(adapter, item, season, episode, season, episode)
-    mapped = _anime_coordinate_for_absolute(adapter, tmdb_id, item, absolute)
+        return tmdb_id, season, episode, _anime_write_needs_readback(adapter, item, season, episode, season, episode)
+    mapped = _anime_target_for_absolute(adapter, tmdb_id, item, absolute)
     if mapped is not None:
-        return mapped[0], mapped[1], _anime_write_needs_readback(adapter, item, season, episode, mapped[0], mapped[1])
+        target_id, mapped_season, mapped_episode = mapped
+        return target_id, mapped_season, mapped_episode, _anime_write_needs_readback(adapter, item, season, episode, mapped_season, mapped_episode)
     layout = show_layout(adapter, tmdb_id)
     if not layout or has_coord(layout, season, episode):
-        return season, episode, _anime_write_needs_readback(adapter, item, season, episode, season, episode)
+        return tmdb_id, season, episode, _anime_write_needs_readback(adapter, item, season, episode, season, episode)
     real = absolute_to_coord(layout, absolute)
     if real is not None:
-        return real[0], real[1], _anime_write_needs_readback(adapter, item, season, episode, real[0], real[1])
-    return season, episode, _anime_write_needs_readback(adapter, item, season, episode, season, episode)
+        return tmdb_id, real[0], real[1], _anime_write_needs_readback(adapter, item, season, episode, real[0], real[1])
+    return tmdb_id, season, episode, _anime_write_needs_readback(adapter, item, season, episode, season, episode)
 
 
 def _anime_write_needs_readback(
@@ -364,8 +392,13 @@ def _anime_write_needs_readback(
 
 
 def _write_coord(adapter: Any, tmdb_id: str, item: Mapping[str, Any], season: int, episode: int) -> tuple[int, int]:
-    real_season, real_episode, _verify = _write_coord_result(adapter, tmdb_id, item, season, episode)
+    _target_id, real_season, real_episode, _verify = _write_target_result(adapter, tmdb_id, item, season, episode)
     return real_season, real_episode
+
+
+def _write_target(adapter: Any, tmdb_id: str, item: Mapping[str, Any], season: int, episode: int) -> tuple[str, int, int]:
+    target_id, real_season, real_episode, _verify = _write_target_result(adapter, tmdb_id, item, season, episode)
+    return target_id, real_season, real_episode
 
 
 def _history_id(item: Mapping[str, Any]) -> str | None:
@@ -499,6 +532,10 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
     return _rekey_to_source_numbering(adapter, out)
 
 
+def destination_comparison_view(adapter: Any, index: Mapping[str, Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
+    return _rekey_to_source_numbering(adapter, {str(k): dict(v) for k, v in (index or {}).items() if isinstance(v, Mapping)})
+
+
 def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = False) -> dict[str, Any]:
     confirmed: list[str] = []
     unresolved_rows: list[dict[str, Any]] = []
@@ -540,7 +577,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
                 results.append({"status": "dry_run", "item": _history_minimal(adapter, raw), "canonical_key": key})
                 continue
             try:
-                season, episode, verify_after_write = _write_coord_result(adapter, tmdb_id, raw, season, episode)
+                tmdb_id, season, episode, verify_after_write = _write_target_result(adapter, tmdb_id, raw, season, episode)
                 existing_history = _episode_history(adapter, tmdb_id, season, episode)
                 if _rewatches_enabled(adapter) or not existing_history:
                     api_post(adapter, f"media/tv/tmdb/{tmdb_id}/{season}/episodes/{episode}/watch", json={"end_date": _watched_at(raw)})
@@ -605,7 +642,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
                 season, episode = _episode_numbers(raw)
                 if not tmdb_id or season is None or episode is None:
                     raise ValueError("missing episode ids")
-                season, episode = _write_coord(adapter, tmdb_id, raw, season, episode)
+                tmdb_id, season, episode = _write_target(adapter, tmdb_id, raw, season, episode)
                 history_id = _history_id(raw)
                 if not history_id and _rewatches_enabled(adapter):
                     raise ValueError("missing history id")

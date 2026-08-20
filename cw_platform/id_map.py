@@ -365,6 +365,7 @@ def minimal(item: Mapping[str, Any]) -> dict[str, Any]:
         "_scrob_list_item_id",
         "_floppy_season",
         "_floppy_episode",
+        "_floppy_tmdb_id",
         "_cw_event_key",
         "_cw_rewatch_sync",
         "_cw_anime_map",

@@ -1007,6 +1007,8 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
     upd_to_B: list[dict[str, Any]] = []
     rem_from_A: list[dict[str, Any]] = []
     rem_from_B: list[dict[str, Any]] = []
+    unresolved_A: set[str] = set()
+    unresolved_B: set[str] = set()
 
     if feature == "ratings":
         A_f = _rate_filter(A_eff, fcfg)
@@ -1620,11 +1622,20 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                 else:
                     add_to_A.append(_minimal(v))
         elif not (feature == "history" and history_event_mode):
+            try:
+                unresolved_A = set(load_unresolved_keys(a, feature, cross_features=_cross_feature_unresolved(feature)) or [])
+                unresolved_B = set(load_unresolved_keys(b, feature, cross_features=_cross_feature_unresolved(feature)) or [])
+            except Exception:
+                unresolved_A = set()
+                unresolved_B = set()
             coord_pruned_to_B = 0
             coord_pruned_to_A = 0
             for _k, v in A_eff.items():
                 if _present(B_eff, B_alias, v):
                     if _coord_only_present(B_eff, B_alias, v):
+                        if _sync_key(v, str(_k)) in unresolved_B:
+                            add_to_B.append(_minimal(v))
+                            continue
                         coord_pruned_to_B += 1
                     continue
                 tomb_blocks = _tomb_blocks_remove(v, prev_self=prevA, prev_self_alias=prevA_alias)
@@ -1635,6 +1646,9 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             for _k, v in B_eff.items():
                 if _present(A_eff, A_alias, v):
                     if _coord_only_present(A_eff, A_alias, v):
+                        if _sync_key(v, str(_k)) in unresolved_A:
+                            add_to_A.append(_minimal(v))
+                            continue
                         coord_pruned_to_A += 1
                     continue
                 tomb_blocks = _tomb_blocks_remove(v, prev_self=prevB, prev_self_alias=prevB_alias)
@@ -1669,9 +1683,15 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         rem_from_B.clear()
         dbg("bootstrap.no-delete", a=a, b=b)
 
+    if not unresolved_A and not unresolved_B:
+        try:
+            unresolved_A = set(load_unresolved_keys(a, feature, cross_features=_cross_feature_unresolved(feature)) or [])
+            unresolved_B = set(load_unresolved_keys(b, feature, cross_features=_cross_feature_unresolved(feature)) or [])
+        except Exception:
+            unresolved_A = set()
+            unresolved_B = set()
+
     try:
-        unresolved_A = set(load_unresolved_keys(a, feature, cross_features=_cross_feature_unresolved(feature)) or [])
-        unresolved_B = set(load_unresolved_keys(b, feature, cross_features=_cross_feature_unresolved(feature)) or [])
         retryA = sum(1 for it in add_to_A if _sync_key(it) in unresolved_A)
         retryB = sum(1 for it in add_to_B if _sync_key(it) in unresolved_B)
         if retryA:

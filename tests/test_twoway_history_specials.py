@@ -66,19 +66,31 @@ class _Ops:
         return {"history": {"observed_deletes": False, "upsert": self.history_upsert}}
 
 
+class _CoordAliases:
+    enabled = True
+
+    def tokens(self, item: dict[str, Any]) -> set[str]:
+        return {f"anime:absolute:{item.get('_anime_absolute')}"}
+
+    def stats(self) -> dict[str, int]:
+        return {"absolute_shows": 1, "coord_cache": 1}
+
+
 def _run_two_way(
     monkeypatch,
     snapshots: dict[str, dict[str, dict[str, Any]]],
     *,
     trakt_upsert: bool = False,
     simkl_upsert: bool = False,
+    a: str = "TRAKT",
+    b: str = "SIMKL",
 ):
     trakt = _Ops(history_upsert=trakt_upsert)
     simkl = _Ops(history_upsert=simkl_upsert)
     monkeypatch.setattr(twoway, "build_snapshots_for_feature", lambda **_kwargs: snapshots)
     ctx = SimpleNamespace(
         config={"sync": {"include_observed_deletes": False, "blackbox": {"enabled": False}}, "runtime": {}},
-        providers={"TRAKT": trakt, "SIMKL": simkl},
+        providers={a: trakt, b: simkl},
         emit=lambda *_args, **_kwargs: None,
         emit_info=lambda *_args, **_kwargs: None,
         dbg=lambda *_args, **_kwargs: None,
@@ -89,7 +101,7 @@ def _run_two_way(
         stats_manual_blocked=0,
         apply_chunk_pause_ms=0,
     )
-    result = twoway._two_way_sync(ctx, "TRAKT", "SIMKL", feature="history", fcfg={}, health_map={})
+    result = twoway._two_way_sync(ctx, a, b, feature="history", fcfg={}, health_map={})
     return result, trakt, simkl
 
 
@@ -137,6 +149,53 @@ def test_trakt_simkl_two_way_routes_and_converges_special(monkeypatch) -> None:
     assert converged_result["adds_to_B"] == 0
     assert trakt.added == []
     assert simkl.added == []
+
+
+def test_two_way_retries_unresolved_coord_match(monkeypatch) -> None:
+    _patch_common(monkeypatch)
+    monkeypatch.setattr(twoway, "_build_history_coordinate_aliases", lambda *_args, **_kwargs: _CoordAliases())
+
+    source_item = {
+        "type": "episode",
+        "title": "Anime source",
+        "season": 2,
+        "episode": 1,
+        "watched_at": WATCHED_AT,
+        "ids": {},
+        "show_ids": {"tmdb": "111"},
+        "_anime_absolute": 14,
+    }
+    destination_item = {
+        "type": "episode",
+        "title": "Anime destination",
+        "season": 1,
+        "episode": 14,
+        "watched_at": WATCHED_AT,
+        "ids": {},
+        "show_ids": {"tvdb": "222"},
+        "_anime_absolute": 14,
+    }
+    source_key = canonical_key(source_item)
+    destination_key = canonical_key(destination_item)
+    monkeypatch.setattr(
+        twoway,
+        "load_unresolved_keys",
+        lambda dst, *_args, **_kwargs: {source_key} if dst == "DST" else set(),
+    )
+
+    result, trakt, simkl = _run_two_way(
+        monkeypatch,
+        {"SRC": {source_key: source_item}, "DST": {destination_key: destination_item}},
+        a="SRC",
+        b="DST",
+    )
+
+    assert result["adds_to_A"] == 0
+    assert result["resB_add"]["attempted"] == 1
+    assert trakt.added == []
+    assert len(simkl.added) == 1
+    assert simkl.added[0]["season"] == 2
+    assert simkl.added[0]["episode"] == 1
 
 
 def test_manual_history_date_correction_updates_upsert_peer(monkeypatch) -> None:
