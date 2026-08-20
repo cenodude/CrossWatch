@@ -155,7 +155,13 @@
     const entryConnected = profileStatusEntryConnected(entry);
     if (entryConnected === true) return "ok";
     if (entryConnected === false) return "fail";
-    if (entry && typeof entry === "object" && entry.probed === true) return "fail";
+    if (entry && typeof entry === "object") {
+      if (entry.probed === true) return "fail";
+      if (entry.configured === true) return "ok";
+    }
+    if (data?.instances && typeof data.instances === "object") {
+      return configuredProfileIds(cfg, provider, connected).some((pid) => String(pid) === String(id)) ? "ok" : "fail";
+    }
     if (data && typeof data.connected === "boolean") return data.connected ? "ok" : "fail";
     return configuredProfileIds(cfg, provider, connected).some((pid) => String(pid) === String(id)) ? "ok" : "fail";
   }
