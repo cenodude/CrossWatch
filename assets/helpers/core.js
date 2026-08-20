@@ -663,12 +663,18 @@
 
   function saveStatusCache(providers) {
     try {
-      localStorage.setItem(statusCacheKey(), JSON.stringify({ providers: normalizeProviders(providers), updatedAt: Date.now(), v: 1 }));
+      const payload = { providers: normalizeProviders(providers), updatedAt: Date.now(), v: 1 };
+      window._statusCache = payload;
+      localStorage.setItem(statusCacheKey(), JSON.stringify(payload));
     } catch {}
   }
 
   function loadStatusCache(maxAgeMs = 10 * 60 * 1000) {
     try {
+      const memory = window._statusCache;
+      if (memory?.providers && (Date.now() - (memory.updatedAt || 0)) <= maxAgeMs) {
+        return { providers: normalizeProviders(memory.providers), updatedAt: memory.updatedAt };
+      }
       const cached = JSON.parse(localStorage.getItem(statusCacheKey()) || "null");
       if (!cached?.providers) return null;
       if ((Date.now() - (cached.updatedAt || 0)) > maxAgeMs) return null;
