@@ -12,7 +12,7 @@ from cw_platform.anime_mapping.coordinates import translate
 from cw_platform.anime_mapping.overrides import find_source_override
 from cw_platform.anime_mapping.service import PAIR_FEATURE_OPTIONS_KEY, mapping_enabled_for_feature, runtime_pair_feature_options
 from cw_platform.anime_mapping.storage import query_edges
-from cw_platform.history_events import history_sync_key, minimal_history_item
+from cw_platform.history_events import history_epoch_from_value, history_sync_key, minimal_history_item
 from cw_platform.id_map import minimal as id_minimal
 from providers.sync._mod_common import build_op_result, unresolved_keys
 
@@ -185,6 +185,8 @@ def _anime_coordinate_for_absolute(
         except Exception:
             rows = []
         for row in rows:
+            if namespace == "anidb" and str(row.get("source_scope") or "").strip().upper() != "R":
+                continue
             if str(row.get("target_provider") or "").strip().lower() != "tmdb":
                 continue
             if str(row.get("target_kind") or "").strip().lower() != "show":
@@ -230,7 +232,7 @@ def prepare_source_snapshot(items: Iterable[Mapping[str, Any]]) -> int:
         if not tmdb_id:
             continue
         season, episode = _episode_numbers(item)
-        if season is None or episode is None or season < 1 or episode < 1:
+        if season is None or episode is None or season < 0 or episode < 1:
             continue
         record = shows.setdefault(tmdb_id, {"coords": set(), "abs": {}})
         record["coords"].add((season, episode))
@@ -248,7 +250,8 @@ def _rekey_to_source_numbering(adapter: Any, out: dict[str, dict[str, Any]]) -> 
     shows: dict[str, dict[str, Any]] = _SRC_SNAPSHOT.get("shows") or {}
     if not shows or not out or _SRC_SNAPSHOT.get("scope") != _pair_scope():
         return out
-    owned_by_show: dict[str, dict[tuple[int, int], str]] = {}
+    event_mode = _rewatches_enabled(adapter)
+    owned_by_show: dict[str, dict[tuple[int, int], list[str]]] = {}
     for key, item in out.items():
         if str(item.get("type") or "").strip().lower() != "episode":
             continue
@@ -258,7 +261,7 @@ def _rekey_to_source_numbering(adapter: Any, out: dict[str, dict[str, Any]]) -> 
         season, episode = _episode_numbers(item)
         if not show or season is None or episode is None:
             continue
-        owned_by_show.setdefault(show, {})[(season, episode)] = key
+        owned_by_show.setdefault(show, {}).setdefault((season, episode), []).append(key)
 
     for show, record in shows.items():
         owned = owned_by_show.get(show)
@@ -268,9 +271,7 @@ def _rekey_to_source_numbering(adapter: Any, out: dict[str, dict[str, Any]]) -> 
         missing = [coord for coord in wanted if coord not in owned]
         if not missing:
             continue
-        layout = show_layout(adapter, show)
-        if not layout:
-            continue
+        layout: list[tuple[int, int]] | None = None
         for coord in sorted(missing):
             absolute = record["abs"].get(coord)
             if absolute is None:
@@ -282,10 +283,25 @@ def _rekey_to_source_numbering(adapter: Any, out: dict[str, dict[str, Any]]) -> 
                 else None
             )
             if real is None:
+                if layout is None:
+                    layout = show_layout(adapter, show)
+                if not layout:
+                    continue
                 real = absolute_to_coord(layout, absolute)
-            if real is None or real == coord or real in wanted:
+            if real is None or real == coord:
                 continue
-            key = owned.get(real)
+            keys = owned.get(real) or []
+            key = ""
+            if event_mode and isinstance(source_item, Mapping):
+                source_key = _history_key(adapter, source_item)
+                source_event = source_key.rsplit("@", 1)[-1] if "@" in source_key else ""
+                for candidate in keys:
+                    candidate_event = candidate.rsplit("@", 1)[-1] if "@" in candidate else ""
+                    if source_event and candidate_event == source_event:
+                        key = candidate
+                        break
+            if not key and real not in wanted:
+                key = keys[0] if keys else ""
             if not key:
                 continue
             item = out.get(key)
@@ -299,26 +315,38 @@ def _rekey_to_source_numbering(adapter: Any, out: dict[str, dict[str, Any]]) -> 
                 continue
             out.pop(key, None)
             out[new_key] = rekeyed
-            owned.pop(real, None)
-            owned[coord] = new_key
+            if key in keys:
+                keys.remove(key)
+            if keys:
+                owned[real] = keys
+            else:
+                owned.pop(real, None)
+            owned.setdefault(coord, []).append(new_key)
     return out
 
 
-def _write_coord(adapter: Any, tmdb_id: str, item: Mapping[str, Any], season: int, episode: int) -> tuple[int, int]:
+def _write_coord_result(adapter: Any, tmdb_id: str, item: Mapping[str, Any], season: int, episode: int) -> tuple[int, int, bool]:
     stored = _floppy_coord(item)
     if stored is not None:
-        return stored
+        return stored[0], stored[1], False
     absolute = _explicit_absolute(item)
     if absolute is None:
-        return season, episode
+        return season, episode, False
     mapped = _anime_coordinate_for_absolute(adapter, tmdb_id, item, absolute)
     if mapped is not None:
-        return mapped
+        return mapped[0], mapped[1], mapped != (season, episode)
     layout = show_layout(adapter, tmdb_id)
     if not layout or has_coord(layout, season, episode):
-        return season, episode
+        return season, episode, False
     real = absolute_to_coord(layout, absolute)
-    return real if real is not None else (season, episode)
+    if real is not None:
+        return real[0], real[1], real != (season, episode)
+    return season, episode, False
+
+
+def _write_coord(adapter: Any, tmdb_id: str, item: Mapping[str, Any], season: int, episode: int) -> tuple[int, int]:
+    real_season, real_episode, _verify = _write_coord_result(adapter, tmdb_id, item, season, episode)
+    return real_season, real_episode
 
 
 def _history_id(item: Mapping[str, Any]) -> str | None:
@@ -341,6 +369,22 @@ def _episode_history(adapter: Any, tmdb_id: str, season: int, episode: int) -> l
         return paged(adapter, f"media/tv/tmdb/{tmdb_id}/{season}/{episode}/history")
     except Exception:
         return []
+
+
+def _history_rows_include_write(adapter: Any, item: Mapping[str, Any], rows: Iterable[Mapping[str, Any]]) -> bool:
+    rows_list = [row for row in rows or [] if isinstance(row, Mapping)]
+    if not rows_list:
+        return False
+    if not _rewatches_enabled(adapter):
+        return True
+    target = history_epoch_from_value(_watched_at(item))
+    if target is None:
+        return True
+    for row in rows_list:
+        row_ts = history_epoch_from_value(row.get("end_date") or row.get("progressed_at") or row.get("created_at") or row.get("watched_at"))
+        if row_ts == target:
+            return True
+    return False
 
 
 def _put_latest(out: dict[str, dict[str, Any]], item: dict[str, Any]) -> None:
@@ -477,9 +521,15 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
                 results.append({"status": "dry_run", "item": _history_minimal(adapter, raw), "canonical_key": key})
                 continue
             try:
-                season, episode = _write_coord(adapter, tmdb_id, raw, season, episode)
-                if _rewatches_enabled(adapter) or not _episode_history(adapter, tmdb_id, season, episode):
+                season, episode, verify_after_write = _write_coord_result(adapter, tmdb_id, raw, season, episode)
+                existing_history = _episode_history(adapter, tmdb_id, season, episode)
+                if _rewatches_enabled(adapter) or not existing_history:
                     api_post(adapter, f"media/tv/tmdb/{tmdb_id}/{season}/episodes/{episode}/watch", json={"end_date": _watched_at(raw)})
+                if verify_after_write and not _history_rows_include_write(adapter, raw, _episode_history(adapter, tmdb_id, season, episode)):
+                    entry = unresolved(raw, "floppy_history_write_not_readable")
+                    unresolved_rows.append(entry)
+                    results.append(entry)
+                    continue
             except Exception as exc:
                 entry = unresolved(raw, failure_reason(exc))
                 unresolved_rows.append(entry)

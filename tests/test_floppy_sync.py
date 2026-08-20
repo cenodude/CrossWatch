@@ -527,12 +527,15 @@ def _dbz_routes(watched: list[tuple[int, int]], layout: dict[int, int]) -> dict[
     return routes
 
 
-def _anime_history_cfg() -> dict[str, Any]:
-    return {
+def _anime_history_cfg(*, rewatches: bool = False) -> dict[str, Any]:
+    out = {
         "floppy": {"watchlist_name": "Watchlist"},
         "anime_mapping": {"enabled": True, "features": ["history"], "release_tag": "v3"},
         "_cw_pair_feature_options": {"feature": "history", "use_anime_mapping": True},
     }
+    if rewatches:
+        out["_cw_history_rewatches"] = True
+    return out
 
 
 def _anime_routes(tmdb_id: str, watched: list[tuple[int, int]], layout: dict[int, int]) -> dict[tuple[str, str], Any]:
@@ -549,6 +552,19 @@ def _anime_routes(tmdb_id: str, watched: list[tuple[int, int]], layout: dict[int
             "count": total,
         }
     return routes
+
+
+def _history_visible_after_post(consumption_id: int = 77) -> Any:
+    seen = 0
+
+    def route(_call: dict[str, Any]) -> dict[str, Any]:
+        nonlocal seen
+        seen += 1
+        if seen == 1:
+            return {"results": [], "count": 0}
+        return {"results": [{"consumption_id": consumption_id, "end_date": "2026-01-02T00:00:00Z"}], "count": 1}
+
+    return route
 
 
 def _overlord_iv_source(**extra: Any) -> dict[str, Any]:
@@ -591,7 +607,7 @@ def test_floppy_history_add_uses_anime_native_coordinate_before_layout_absolute(
     _history.prepare_source_snapshot([])
     _history.reset_layout_cache()
     routes = _anime_routes("64196", [], {1: 13, 2: 13, 3: 13, 4: 13})
-    routes[("GET", "media/tv/tmdb/64196/4/1/history")] = {"results": [], "count": 0}
+    routes[("GET", "media/tv/tmdb/64196/4/1/history")] = _history_visible_after_post()
     routes[("POST", "media/tv/tmdb/64196/4/episodes/1/watch")] = {"consumption_id": 77}
     adapter = AdapterStub(routes, _anime_history_cfg())
 
@@ -617,7 +633,7 @@ def test_floppy_history_add_prefers_user_anime_override(monkeypatch: Any) -> Non
     _history.prepare_source_snapshot([])
     _history.reset_layout_cache()
     routes = _anime_routes("64196", [], {1: 13, 2: 13, 3: 13, 4: 13, 9: 13})
-    routes[("GET", "media/tv/tmdb/64196/9/7/history")] = {"results": [], "count": 0}
+    routes[("GET", "media/tv/tmdb/64196/9/7/history")] = _history_visible_after_post()
     routes[("POST", "media/tv/tmdb/64196/9/episodes/7/watch")] = {"consumption_id": 77}
     adapter = AdapterStub(routes, _anime_history_cfg())
 
@@ -626,6 +642,61 @@ def test_floppy_history_add_prefers_user_anime_override(monkeypatch: Any) -> Non
     assert res["count"] == 1
     assert [c["path"] for c in adapter.client.session.calls if c["method"] == "POST"] == ["media/tv/tmdb/64196/9/episodes/7/watch"]
     assert not any(c["path"] == "media/tv/tmdb/64196/4/episodes/1/watch" for c in adapter.client.session.calls)
+
+
+def test_floppy_history_add_ignores_anidb_special_edges_for_regular_anime(monkeypatch: Any) -> None:
+    from providers.sync.floppy import _history
+
+    def fake_edges(tag: str, namespace: str, ident: str) -> list[dict[str, Any]]:
+        if tag == "v3" and namespace == "anidb" and ident == "18921":
+            return [
+                {
+                    "source_scope": "R",
+                    "target_provider": "tmdb",
+                    "target_kind": "show",
+                    "target_id": "65930",
+                    "target_scope": "s8",
+                    "source_range": "1-11",
+                    "target_range": "1-11",
+                },
+                {
+                    "source_scope": "S",
+                    "target_provider": "tmdb",
+                    "target_kind": "show",
+                    "target_id": "65930",
+                    "target_scope": "s0",
+                    "source_range": "1",
+                    "target_range": "18",
+                },
+            ]
+        return []
+
+    monkeypatch.setattr(_history, "query_edges", fake_edges)
+    _history.prepare_source_snapshot([])
+    _history.reset_layout_cache()
+    routes = _anime_routes("65930", [], {8: 11})
+    routes[("GET", "media/tv/tmdb/65930/8/1/history")] = _history_visible_after_post()
+    routes[("POST", "media/tv/tmdb/65930/8/episodes/1/watch")] = {"consumption_id": 77}
+    adapter = AdapterStub(routes, _anime_history_cfg())
+
+    res = _history.add(
+        adapter,
+        [
+            {
+                "type": "episode",
+                "series_title": "Boku no Hero Academia",
+                "season": 1,
+                "episode": 160,
+                "_simkl_episode_number": 1,
+                "watched_at": "2026-01-02T00:00:00Z",
+                "show_ids": {"tmdb": "65930", "anidb": "18921"},
+            }
+        ],
+    )
+
+    assert res["count"] == 1
+    assert [c["path"] for c in adapter.client.session.calls if c["method"] == "POST"] == ["media/tv/tmdb/65930/8/episodes/1/watch"]
+    assert not any(c["path"] == "media/tv/tmdb/65930/0/episodes/18/watch" for c in adapter.client.session.calls)
 
 
 def test_floppy_history_rekeys_anime_native_coordinate_without_false_missing(monkeypatch: Any) -> None:
@@ -644,6 +715,80 @@ def test_floppy_history_rekeys_anime_native_coordinate_without_false_missing(mon
     assert "tmdb:64196#s04e01" not in out
     assert out["tmdb:64196#s01e40"]["_floppy_season"] == 4
     assert out["tmdb:64196#s01e40"]["_floppy_episode"] == 1
+
+
+def test_floppy_history_rekeys_anime_event_coordinate_without_layout(monkeypatch: Any) -> None:
+    from providers.sync.floppy import _history
+
+    monkeypatch.setattr(_history, "query_edges", _fake_overlord_edges)
+    monkeypatch.setattr(_history, "show_layout", lambda *_args, **_kwargs: [])
+    _history.prepare_source_snapshot([])
+    _history.reset_layout_cache()
+    adapter = AdapterStub(_anime_routes("64196", [(4, 1)], {}), _anime_history_cfg(rewatches=True))
+
+    produced = _history.prepare_source_snapshot([_overlord_iv_source()])
+    out = _history.build_index(adapter)
+
+    assert produced == 1
+    assert "tmdb:64196#s01e40@1767312000" in out
+    assert "tmdb:64196#s04e01@1767312000" not in out
+    assert out["tmdb:64196#s01e40@1767312000"]["_floppy_season"] == 4
+    assert out["tmdb:64196#s01e40@1767312000"]["_floppy_episode"] == 1
+
+
+def test_floppy_history_rekeys_anime_special_event_without_stealing_regular(monkeypatch: Any) -> None:
+    from providers.sync.floppy import _history
+
+    def fake_edges(tag: str, namespace: str, ident: str) -> list[dict[str, Any]]:
+        if tag == "v3" and namespace == "mal" and ident == "11887":
+            return [
+                {
+                    "target_provider": "tmdb",
+                    "target_kind": "show",
+                    "target_id": "45807",
+                    "target_scope": "s1",
+                    "source_range": "1-4",
+                    "target_range": "1-4",
+                }
+            ]
+        return []
+
+    monkeypatch.setattr(_history, "query_edges", fake_edges)
+    monkeypatch.setattr(_history, "show_layout", lambda *_args, **_kwargs: [])
+    _history.prepare_source_snapshot([])
+    _history.reset_layout_cache()
+    routes = _anime_routes("45807", [(1, 1), (1, 1)], {})
+    routes[("GET", "media/episode")]["results"][0]["end_date"] = "2012-07-07T12:00:00Z"
+    routes[("GET", "media/episode")]["results"][1]["end_date"] = "2012-11-18T15:30:00Z"
+    adapter = AdapterStub(routes, _anime_history_cfg(rewatches=True))
+    source = [
+        {
+            "type": "episode",
+            "series_title": "Kokoro Connect",
+            "season": 1,
+            "episode": 1,
+            "watched_at": "2012-07-07T12:00:00Z",
+            "show_ids": {"tmdb": "45807", "mal": "11887"},
+        },
+        {
+            "type": "episode",
+            "series_title": "Kokoro Connect",
+            "season": 0,
+            "episode": 1,
+            "_simkl_episode_number": 1,
+            "watched_at": "2012-11-18T15:30:00Z",
+            "show_ids": {"tmdb": "45807", "mal": "11887"},
+        },
+    ]
+
+    produced = _history.prepare_source_snapshot(source)
+    out = _history.build_index(adapter)
+
+    assert produced == 2
+    assert "tmdb:45807#s01e01@1341662400" in out
+    assert "tmdb:45807#s00e01@1353252600" in out
+    assert out["tmdb:45807#s00e01@1353252600"]["_floppy_season"] == 1
+    assert out["tmdb:45807#s00e01@1353252600"]["_floppy_episode"] == 1
 
 
 def test_floppy_history_rekeys_absolute_source_numbering_onto_aired_episodes() -> None:
@@ -717,7 +862,7 @@ def test_floppy_history_add_writes_absolute_episode_to_its_aired_coordinate() ->
     _history.prepare_source_snapshot([])
     _history.reset_layout_cache()
     routes = _dbz_routes([], {1: 39, 2: 35})
-    routes[("GET", "media/tv/tmdb/12971/2/5/history")] = {"results": [], "count": 0}
+    routes[("GET", "media/tv/tmdb/12971/2/5/history")] = _history_visible_after_post()
     routes[("POST", "media/tv/tmdb/12971/2/episodes/5/watch")] = {"consumption_id": 77}
     adapter = AdapterStub(routes)
 
@@ -729,6 +874,27 @@ def test_floppy_history_add_writes_absolute_episode_to_its_aired_coordinate() ->
     assert res["count"] == 1
     assert [c["path"] for c in adapter.client.session.calls if c["method"] == "POST"] == ["media/tv/tmdb/12971/2/episodes/5/watch"]
     assert res["confirmed_keys"] == ["tmdb:12971#s01e44"]
+
+
+def test_floppy_history_add_marks_translated_episode_unresolved_when_write_is_not_readable() -> None:
+    from providers.sync.floppy import _history
+
+    _history.prepare_source_snapshot([])
+    _history.reset_layout_cache()
+    routes = _dbz_routes([], {1: 39, 2: 35})
+    routes[("GET", "media/tv/tmdb/12971/2/5/history")] = {"results": [], "count": 0}
+    routes[("POST", "media/tv/tmdb/12971/2/episodes/5/watch")] = {"consumption_id": 77}
+    adapter = AdapterStub(routes)
+
+    res = _history.add(
+        adapter,
+        [{"type": "episode", "show_ids": {"tmdb": "12971"}, "season": 1, "episode": 44, "_simkl_episode_number": 44, "watched_at": "2026-01-02T00:00:00Z"}],
+    )
+
+    assert res["count"] == 0
+    assert res["unresolved_keys"] == ["tmdb:12971#s01e44"]
+    assert res["unresolved"][0]["reason"] == "floppy_history_write_not_readable"
+    assert [c["path"] for c in adapter.client.session.calls if c["method"] == "POST"] == ["media/tv/tmdb/12971/2/episodes/5/watch"]
 
 
 def test_floppy_history_add_uses_stored_coordinate_without_layout_lookup() -> None:
