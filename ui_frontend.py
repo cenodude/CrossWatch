@@ -959,10 +959,11 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
               <p>Connect media servers and/or Trackers first (Providers) then configure Metadata (TMDb)</p>
             </div>
             <div class="cw-settings-pane-head-actions">
-              <div class="cw-settings-jumpbar cw-connections-actions" aria-label="Connection actions">
-                <button type="button" class="cw-settings-jump" onclick="window.cwUserProfilesNew?.()"><span class="material-symbols-rounded" aria-hidden="true">add</span>Add profile</button>
-                <button type="button" class="cw-settings-jump" onclick="window.openAddMetadata?.()"><span class="material-symbols-rounded" aria-hidden="true">add</span>Add metadata</button>
-                <button type="button" class="cw-settings-jump" onclick="window.openAddConnection?.()"><span class="material-symbols-rounded" aria-hidden="true">add</span>Add provider</button>
+              <div class="cw-conn-hero-summary" aria-label="Connection actions">
+                <button type="button" class="cw-conn-seg" onclick="window.cwUserProfilesNew?.()"><span class="material-symbols-rounded" aria-hidden="true">add</span><span>Add profile</span></button>
+                <button type="button" class="cw-conn-seg" onclick="window.openAddMetadata?.()"><span class="material-symbols-rounded" aria-hidden="true">add</span><span>Add metadata</span></button>
+                <button type="button" class="cw-conn-seg" onclick="window.openAddConnection?.()"><span class="material-symbols-rounded" aria-hidden="true">add</span><span>Add provider</span></button>
+                <button type="button" id="cw-conn-refresh" class="cw-conn-refresh" title="Re-check connections" aria-label="Re-check connections"><span class="material-symbol" aria-hidden="true">refresh</span></button>
               </div>
             </div>
             <span class="material-symbols-rounded cw-settings-hero-shape" aria-hidden="true">hub</span>
@@ -984,6 +985,14 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
               <div class="cw-settings-pane-kicker">Synchronization</div>
               <h3>Sync pairs</h3>
               <p>Choose providers and manage how data syncs between them.</p>
+            </div>
+            <div class="cw-settings-pane-head-actions">
+              <div class="cw-conn-hero-summary" aria-label="Sync summary">
+                <div class="cw-conn-seg is-stat"><strong id="cw-sync-stat-providers">0</strong><span>Providers</span></div>
+                <div class="cw-conn-seg is-stat"><strong id="cw-sync-stat-active">0</strong><span>Active pairs</span></div>
+                <div class="cw-conn-seg is-stat"><strong id="cw-sync-stat-disabled">0</strong><span>Disabled pairs</span></div>
+                <button type="button" id="cw-sync-refresh" class="cw-conn-refresh" title="Refresh providers and pairs" aria-label="Refresh providers and pairs"><span class="material-symbol" aria-hidden="true">refresh</span></button>
+              </div>
             </div>
             <span class="material-symbols-rounded cw-settings-hero-shape" aria-hidden="true">sync_alt</span>
           </div>
@@ -1009,9 +1018,10 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
               <p>Use standard for simple scheduling tasks or advanced for pair-based scheduling</p>
             </div>
             <div class="cw-settings-pane-head-actions">
-              <div class="cw-settings-jumpbar" id="sched-pane-tabs" aria-label="Scheduling sections">
-                <button type="button" class="cw-settings-jump active" data-sub="basic">Standard</button>
-                <button type="button" class="cw-settings-jump" data-sub="advanced">Advanced</button>
+              <div class="cw-conn-hero-summary" id="sched-pane-tabs" aria-label="Scheduling sections">
+                <button type="button" class="cw-conn-seg active" data-sub="basic">Standard</button>
+                <button type="button" class="cw-conn-seg" data-sub="advanced">Advanced</button>
+                <button type="button" id="cw-sched-refresh" class="cw-conn-refresh" title="Refresh scheduling" aria-label="Refresh scheduling"><span class="material-symbol" aria-hidden="true">refresh</span></button>
               </div>
             </div>
             <span class="material-symbols-rounded cw-settings-hero-shape" aria-hidden="true">event_repeat</span>
@@ -1066,9 +1076,10 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
                 <p>Manage sign-in, sessions, remembered browsers and trusted proxy access.</p>
               </div>
             </div>
-            <div class="cw-settings-jumpbar" aria-label="UI settings sections">
-              <button type="button" class="cw-settings-jump active" data-target="ui" onclick="cwUiSettingsJump?.('ui')">User Interface</button>
-              <button type="button" class="cw-settings-jump" data-target="security" onclick="cwUiSettingsJump?.('security')">Security</button>
+            <div class="cw-conn-hero-summary" aria-label="UI settings sections">
+              <button type="button" class="cw-conn-seg active" data-target="ui" onclick="cwUiSettingsJump?.('ui')">User Interface</button>
+              <button type="button" class="cw-conn-seg" data-target="security" onclick="cwUiSettingsJump?.('security')">Security</button>
+              <button type="button" id="cw-app-refresh" class="cw-conn-refresh" title="Refresh settings and users" aria-label="Refresh settings and users"><span class="material-symbol" aria-hidden="true">refresh</span></button>
             </div>
             <span class="material-symbols-rounded cw-app-hero-shape active" data-app-hero-shape="ui" aria-hidden="true">desktop_windows</span>
             <span class="material-symbols-rounded cw-app-hero-shape" data-app-hero-shape="security" aria-hidden="true">shield</span>

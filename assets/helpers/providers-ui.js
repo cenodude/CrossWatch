@@ -2041,9 +2041,13 @@
     if (!settingsVisible || !["providers", "sync"].includes(pane)) return;
 
     if (pane === "sync") {
+      wireSyncRefresh();
       await loadProviders(true);
+      renderSyncCounts();
       return;
     }
+
+    wireConnectionsRefresh();
 
     await Promise.allSettled([
       mountMetadataProviders(!!force),
@@ -2146,6 +2150,52 @@
     await mountMetadataProviders();
     openAuthOverlay("picker", "", "metadata");
   }
+
+  function wireConnectionsRefresh() {
+    const btn = document.getElementById("cw-conn-refresh");
+    if (!btn || btn.__cwBound) return;
+    btn.__cwBound = true;
+    btn.addEventListener("click", async () => {
+      if (btn.classList.contains("loading")) return;
+      btn.classList.add("loading", "spin");
+      try {
+        await window.refreshStatus?.(true);
+      } catch {}
+      btn.classList.remove("loading", "spin");
+    });
+  }
+
+  function renderSyncCounts() {
+    const providersEl = document.getElementById("cw-sync-stat-providers");
+    if (!providersEl) return;
+    const cx = window.cx || {};
+    const pairs = Array.isArray(cx.pairs) ? cx.pairs : [];
+    const active = pairs.filter((pair) => pair && pair.enabled !== false).length;
+    providersEl.textContent = String(Array.isArray(cx.providers) ? cx.providers.length : 0);
+    const activeEl = document.getElementById("cw-sync-stat-active");
+    if (activeEl) activeEl.textContent = String(active);
+    const disabledEl = document.getElementById("cw-sync-stat-disabled");
+    if (disabledEl) disabledEl.textContent = String(pairs.length - active);
+  }
+
+  function wireSyncRefresh() {
+    const btn = document.getElementById("cw-sync-refresh");
+    if (!btn || btn.__cwBound) return;
+    btn.__cwBound = true;
+    btn.addEventListener("click", async () => {
+      if (btn.classList.contains("loading")) return;
+      btn.classList.add("loading", "spin");
+      try {
+        await Promise.allSettled([window.loadProviders?.(true), window.loadPairs?.(true)]);
+        await window.cxRenderPairsOverlay?.(true);
+      } catch {}
+      btn.classList.remove("loading", "spin");
+      renderSyncCounts();
+    });
+  }
+
+  window.addEventListener("cx:pairs:changed", renderSyncCounts);
+  document.addEventListener("cx-state-change", renderSyncCounts);
 
   const ProvidersUI = {
     updateFlowRailLogos,
