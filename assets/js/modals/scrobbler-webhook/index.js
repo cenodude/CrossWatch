@@ -239,7 +239,7 @@ function userProfileField() {
   if (!userProfiles.length || props.mode === "edit") return "";
   const current = String(selectedUserProfileId || "");
   const options = userProfiles.map((p) => `<option value="${esc(p.id)}" ${p.id === current ? "selected" : ""}>${esc(p.label)}</option>`).join("");
-  return `<div class="scrm-profile-row">${fieldIcon("person", "User profile", `<select class="input" id="scw-user-profile"><option value="">Manual profiles</option>${options}</select>`)}</div>`;
+  return `<div class="scrm-profile-row">${fieldIcon("account_circle", "User profile", `<select class="input" id="scw-user-profile"><option value="">Manual profiles</option>${options}</select>`)}</div>`;
 }
 
 function assignedInstance(profile, provider, kind) {
@@ -420,7 +420,7 @@ function sourcePanel(current) {
           <div class="scrm-card-head"><span class="scrm-provider-mark">${providerIcon(current.provider)}</span><div><strong>Source</strong><small>${esc(label(current.provider))}</small></div></div>
           <div class="scrm-fields">
             ${fieldIcon("dns", "Media server", sourceProviderSelect(current))}
-            ${fieldIcon("person", "Profile", sourceProfileSelect(current.provider, current.provider_instance))}
+            ${fieldIcon("badge", "Profile", sourceProfileSelect(current.provider, current.provider_instance))}
           </div>
         </div>
         <div class="scrm-route-arrow"><span class="material-symbols-rounded">arrow_forward</span></div>
@@ -428,7 +428,7 @@ function sourcePanel(current) {
           <div class="scrm-card-head"><span class="scrm-provider-mark">${providerIcon(sink)}</span><div><strong>Destination</strong><small>${esc(label(sink))}</small></div></div>
           <div class="scrm-fields">
             ${fieldIcon("gps_fixed", "Tracker", `<select class="input" id="scw-sink" ${sinkDisabled}>${sinkSelect(sink)}</select>`)}
-            ${fieldIcon("person", "Profile", `<select class="input" id="scw-sink-instance" ${sinkDisabled}>${sinkProfileSelect(sink, sinkInst)}</select>`)}
+            ${fieldIcon("badge", "Profile", `<select class="input" id="scw-sink-instance" ${sinkDisabled}>${sinkProfileSelect(sink, sinkInst)}</select>`)}
           </div>
         </div>
       </div>

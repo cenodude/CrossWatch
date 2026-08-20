@@ -810,6 +810,7 @@ function renderPairUserProfileControl(state){
   const keep=profiles.some(p=>p.id===current)?current:"";
   sel.value=keep;
   state.selected_user_profile_id=keep;
+  try{G.CW?.ProfileSelect?.enhanceUserProfile?.(sel,{className:"cx-profile-select-glass"});}catch{}
   if(sel.__cwUserProfileBound) return;
   sel.__cwUserProfileBound=true;
   sel.addEventListener("change",()=>{
