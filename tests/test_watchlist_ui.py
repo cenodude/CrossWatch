@@ -85,3 +85,43 @@ def test_watchlist_column_resize_can_truncate_without_overflow() -> None:
     assert "text-overflow:ellipsis" in css
     assert "fillerWidth" in js
     assert "wl-fill-cell" in js
+
+
+def test_watchlist_provider_filter_lists_only_active_providers() -> None:
+    js = (ROOT / "assets" / "js" / "watchlist.js").read_text(encoding="utf-8")
+
+    assert "const visibleProviders = () => PROVIDERS.filter((p) => activeProviders.has(p));" in js
+    assert "p !== \"CROSSWATCH\" || activeProviders.has(\"CROSSWATCH\")" not in js
+
+
+def test_watchlist_profile_filter_covers_every_provider() -> None:
+    js = (ROOT / "assets" / "js" / "watchlist.js").read_text(encoding="utf-8")
+
+    assert "crosswatchProfiles" not in js
+    assert 'mkFilterControl("wl-profile", "Profile", providerSel)' in js
+    assert "loadProviderInstances" in js
+    assert '"/api/provider-instances"' in js
+    assert "const filterOn = !!provider && instancesFor(provider).length > 0;" in js
+    assert "const insts = instancesOfProvider(it, provider);" in js
+
+
+def test_watchlist_user_profile_filter_scopes_the_fetch() -> None:
+    js = (ROOT / "assets" / "js" / "watchlist.js").read_text(encoding="utf-8")
+    css = (ROOT / "assets" / "css" / "pages.css").read_text(encoding="utf-8")
+
+    assert 'mkFilterControl("wl-user-profile", "User profile", profileSel)' in js
+    assert "const usersOn = isAdminViewer() && userProfiles.length > 0;" in js
+    assert "user_profile=${encodeURIComponent(appliedUserProfile)}" in js
+    assert "applyUserProfileScope" in js
+    assert "#page-watchlist .wl-profile-select" in css
+
+
+def test_watchlist_user_profile_follows_the_global_view_as_picker() -> None:
+    js = (ROOT / "assets" / "js" / "watchlist.js").read_text(encoding="utf-8")
+
+    assert "const overviewProfile = () => window.CW?.OverviewProfile || null;" in js
+    assert 'const effectiveUserProfile = () => activeUserProfile || (userProfileTouched ? "" : globalUserProfile());' in js
+    assert "try { await op?.ready; } catch (_) {}" in js
+    assert 'window.addEventListener("cw:overview-profile-changed"' in js
+    assert "effectiveUserProfile() !== appliedUserProfile" in js
+    assert "userProfileTouched = true;" in js

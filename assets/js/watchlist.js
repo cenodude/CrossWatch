@@ -44,7 +44,15 @@
   const providerShortLabel = (value) => providerMeta().shortLabel?.(value) || providerLabel(value);
   const escOpt = s => String(s == null ? "" : s).replace(/[&<>"]/g, m => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;" }[m]));
   let activeProviders = new Set();
-  let crosswatchProfiles = [{ id: "default", label: "Default" }];
+  let configuredProviders = new Set();
+  const providerInstances = new Map();
+  let userProfiles = [];
+  let activeUserProfile = "";
+  let userProfileTouched = false;
+  let appliedUserProfile = "";
+  const overviewProfile = () => window.CW?.OverviewProfile || null;
+  const globalUserProfile = () => String(overviewProfile()?.id || "").trim();
+  const effectiveUserProfile = () => activeUserProfile || (userProfileTouched ? "" : globalUserProfile());
   const watchlistProviderKeys = () => {
     const keys = providerMeta().watchlistProviders?.();
     return Array.isArray(keys) && keys.length
@@ -52,10 +60,24 @@
       : ["CROSSWATCH","PLEX","JELLYFIN","EMBY","SIMKL","TRAKT","ANILIST","TMDB","MDBLIST","PUBLICMETADB","PUNCHPLAY","FLOPPY","SCROB","NUVIO","STREMIO"];
   };
   const PROVIDERS = watchlistProviderKeys();
-  const visibleProviders = () => PROVIDERS.filter((p) => p !== "CROSSWATCH" || activeProviders.has("CROSSWATCH"));
+  const visibleProviders = () => PROVIDERS.filter((p) => activeProviders.has(p));
   const providerOptions=(empty="All")=>`<option value="">${empty}</option>${visibleProviders().map(p=>`<option value="${p}">${providerLabel(p)}</option>`).join("")}`;
-  const deleteProviderOptions=pick=>`<option value="ALL">ALL (default)</option>${(pick ? PROVIDERS.filter(p=>pick.has(p)) : visibleProviders()).map(p=>`<option value="${p}">${providerLabel(p)}</option>`).join("")}`;
-  const cwProfileOptions=()=>crosswatchProfiles.map(p=>`<option value="${escOpt(p.id)}">${escOpt(p.label || p.id)}</option>`).join("");
+  const deleteProviderOptions=pick=>`<option value="ALL">ALL (default)</option>${(pick ? PROVIDERS.filter(p=>pick.has(p) && activeProviders.has(p)) : visibleProviders()).map(p=>`<option value="${p}">${providerLabel(p)}</option>`).join("")}`;
+  const instancesFor = provider => {
+    const raw = String(provider || "").trim();
+    if (!raw || raw.toUpperCase() === "ALL") return [];
+    const rows = providerInstances.get(providerKey(raw)) || [];
+    const scope = effectiveUserProfile();
+    return scope ? rows.filter(r => r.owners.includes(scope)) : rows;
+  };
+  const instanceOptions = (provider, empty = "All profiles") => `<option value="">${escOpt(empty)}</option>${instancesFor(provider).map(r=>`<option value="${escOpt(r.id)}">${escOpt(r.label)}</option>`).join("")}`;
+  const userProfileOptions = () => `<option value="">All user profiles</option>${userProfiles.map(p=>`<option value="${escOpt(p.id)}">${escOpt(p.label)}</option>`).join("")}`;
+  const isAdminViewer = () => document.documentElement?.dataset?.cwRole !== "user";
+  const applyUserProfileScope = () => {
+    activeProviders = effectiveUserProfile()
+      ? new Set([...configuredProviders].filter(p => instancesFor(p).length > 0))
+      : new Set(configuredProviders);
+  };
   const isProfileUser = () => {
     const doc = document.documentElement;
     return doc?.dataset?.cwRole === "user" && doc?.dataset?.cwPermWrite !== "on";
@@ -111,8 +133,10 @@
   let viewValueEl = null;
   let columnsBtn = null;
   let wideBtn = null;
-  let cwProfileLabel = null;
-  let cwProfileSel = null;
+  let profileLabelEl = null;
+  let profileSel = null;
+  let userProfileLabelEl = null;
+  let userProfileSel = null;
   let delProfile = null;
   function decorateToolbar() {
     const toolbar = host.querySelector(".wl-toolbar");
@@ -194,28 +218,42 @@
       wrap.classList.toggle("wl-hidden-control", !on);
     }
   };
-  const syncProfileSelectOptions = (selectEl, current = "default") => {
-    if (!selectEl) return "default";
-    const opts = cwProfileOptions();
-    selectEl.innerHTML = opts || '<option value="default">Default</option>';
+  const symbolOptionData = symbol => (value, option) => ({
+    label: String(option?.textContent || "").trim() || "Default",
+    icons: [{ symbol }],
+  });
+  const syncSelectOptions = (selectEl, html, current, symbol = "badge") => {
+    if (!selectEl) return "";
+    selectEl.innerHTML = html;
     const values = Array.from(selectEl.options).map(o => o.value);
-    const next = values.includes(current) ? current : "default";
+    const next = values.includes(String(current || "")) ? String(current || "") : (values[0] || "");
     selectEl.value = next;
+    try { window.CW?.ProfileSelect?.enhanceProfile?.(selectEl, { className: "wl-profile-select", getOptionData: symbolOptionData(symbol) }); } catch {}
     return next;
   };
-  function ensureCrosswatchProfileControls() {
-    if (providerSel && !cwProfileSel) {
-      cwProfileLabel = document.createElement("label");
-      cwProfileLabel.id = "wl-cw-profile-label";
-      cwProfileLabel.setAttribute("for", "wl-cw-profile");
-      cwProfileLabel.textContent = "Profile";
-      cwProfileSel = document.createElement("select");
-      cwProfileSel.id = "wl-cw-profile";
-      cwProfileSel.name = "wl-cw-profile";
-      cwProfileSel.className = "wl-input";
-      providerSel.insertAdjacentElement("afterend", cwProfileSel);
-      providerSel.insertAdjacentElement("afterend", cwProfileLabel);
-      syncProfileSelectOptions(cwProfileSel, "default");
+  const mkFilterControl = (id, labelText, anchor) => {
+    const label = document.createElement("label");
+    label.id = `${id}-label`;
+    label.setAttribute("for", id);
+    label.textContent = labelText;
+    const sel = document.createElement("select");
+    sel.id = id;
+    sel.name = id;
+    sel.className = "wl-input";
+    anchor.insertAdjacentElement("afterend", sel);
+    anchor.insertAdjacentElement("afterend", label);
+    return { label, sel };
+  };
+  function ensureProfileControls() {
+    if (providerSel && !profileSel) {
+      const built = mkFilterControl("wl-profile", "Profile", providerSel);
+      profileLabelEl = built.label;
+      profileSel = built.sel;
+    }
+    if (profileSel && !userProfileSel) {
+      const built = mkFilterControl("wl-user-profile", "User profile", profileSel);
+      userProfileLabelEl = built.label;
+      userProfileSel = built.sel;
     }
     if (delProv && !delProfile) {
       delProfile = document.createElement("select");
@@ -223,10 +261,9 @@
       delProfile.name = "wl-delete-profile";
       delProfile.className = "wl-input";
       delProv.insertAdjacentElement("afterend", delProfile);
-      syncProfileSelectOptions(delProfile, "default");
     }
   }
-  ensureCrosswatchProfileControls();
+  ensureProfileControls();
 
   /* Column sizing */
   const isRequiredColumn = column => !!(COLUMN_META[column] && COLUMN_META[column].required);
@@ -800,34 +837,68 @@
       delProv.value = Array.from(delProv.options).some((o) => o.value === current) ? current : "ALL";
       enhanceDeleteProviderSelect();
     }
-    syncCrosswatchProfileControls();
+    syncProfileControls();
   }
 
-  function syncCrosswatchProfileControls() {
-    ensureCrosswatchProfileControls();
-    const filterOn = String(providerSel?.value || "").toUpperCase() === "CROSSWATCH";
-    const deleteOn = String(delProv?.value || "").toUpperCase() === "CROSSWATCH";
-    const currentFilter = cwProfileSel?.value || "default";
-    const currentDelete = delProfile?.value || currentFilter || "default";
-    syncProfileSelectOptions(cwProfileSel, currentFilter);
-    syncProfileSelectOptions(delProfile, currentDelete);
-    setControlVisible(cwProfileLabel, filterOn);
-    setControlVisible(cwProfileSel, filterOn);
+  function syncProfileControls() {
+    ensureProfileControls();
+    const provider = String(providerSel?.value || "").trim();
+    const delProvider = String(delProv?.value || "ALL").trim();
+    const filterOn = !!provider && instancesFor(provider).length > 0;
+    const deleteOn = delProvider.toUpperCase() !== "ALL" && instancesFor(delProvider).length > 0;
+    const usersOn = isAdminViewer() && userProfiles.length > 0;
+    syncSelectOptions(profileSel, instanceOptions(provider), profileSel?.value);
+    syncSelectOptions(delProfile, instanceOptions(delProvider), delProfile?.value);
+    syncSelectOptions(userProfileSel, userProfileOptions(), effectiveUserProfile(), "account_circle");
+    setControlVisible(profileLabelEl, filterOn);
+    setControlVisible(profileSel, filterOn);
+    setControlVisible(userProfileLabelEl, usersOn);
+    setControlVisible(userProfileSel, usersOn);
     setControlVisible(delProfile, deleteOn);
   }
 
-  async function loadCrosswatchProfiles() {
+  const normInstanceRows = list => {
+    const rows = (Array.isArray(list) ? list : [])
+      .filter(row => row && row.id)
+      .map(row => ({
+        id: String(row.id).trim(),
+        label: String(row.display_label || row.friendly_label || row.label || row.id).trim() || String(row.id).trim(),
+        configured: row.configured !== false,
+        owners: (Array.isArray(row.user_profiles) ? row.user_profiles : []).map(o => String(o?.id || "").trim()).filter(Boolean),
+      }))
+      .filter(row => row.id);
+    const configured = rows.filter(row => row.configured);
+    return configured.length ? configured : rows;
+  };
+
+  async function loadProviderInstances() {
+    providerInstances.clear();
     try {
-      const data = await fetch("/api/provider-instances/CROSSWATCH", { cache: "no-store" }).then(r => r.ok ? r.json() : []);
-      const list = Array.isArray(data) ? data : [];
-      const norm = list
+      const data = await fetch("/api/provider-instances", { cache: "no-store" }).then(r => r.ok ? r.json() : null);
+      for (const [prov, rows] of Object.entries(data && typeof data === "object" ? data : {})) {
+        const norm = normInstanceRows(rows);
+        if (norm.length) providerInstances.set(providerKey(prov), norm);
+      }
+    } catch (_) {}
+    syncProfileControls();
+  }
+
+  async function loadUserProfiles() {
+    const op = overviewProfile();
+    try { await op?.ready; } catch (_) {}
+    const admin = op ? !!op.isAdmin : isAdminViewer();
+    userProfiles = admin && Array.isArray(op?.profiles)
+      ? op.profiles
         .map(x => ({ id: String(x?.id || "").trim(), label: String(x?.label || x?.id || "").trim() }))
-        .filter(x => x.id);
-      crosswatchProfiles = norm.length ? norm : [{ id: "default", label: "Default" }];
-    } catch (_) {
-      crosswatchProfiles = [{ id: "default", label: "Default" }];
+        .filter(x => x.id && x.label)
+      : [];
+    if (activeUserProfile && !userProfiles.some(x => x.id === activeUserProfile)) {
+      activeUserProfile = "";
+      userProfileTouched = false;
+      prefs.userProfile = "";
+      writePrefs(prefs);
     }
-    syncCrosswatchProfileControls();
+    syncProfileControls();
   }
 
   let TMDB_OK = true;
@@ -904,9 +975,14 @@
     if (q) bits.push(`Search: ${q}`);
     if (ty) bits.push(typeLabelFor({ type: ty }));
     if (provider) bits.push(providerLabel(provider));
-    if (provider.toUpperCase() === "CROSSWATCH" && cwProfileSel?.value) {
-      const row = crosswatchProfiles.find(p => p.id === cwProfileSel.value);
-      bits.push(row?.label || cwProfileSel.value);
+    if (provider && profileSel?.value) {
+      const row = instancesFor(provider).find(p => p.id === profileSel.value);
+      bits.push(row?.label || profileSel.value);
+    }
+    const userScope = effectiveUserProfile();
+    if (userScope) {
+      const row = userProfiles.find(p => p.id === userScope);
+      bits.push(`User: ${row?.label || userScope}`);
     }
     if (rel === "released") bits.push("Released only");
     if (rel === "unreleased") bits.push("Upcoming only");
@@ -1003,7 +1079,9 @@
 
   /* API fetches */
   const fetchWatchlist = async () => {
-    const r = await fetch("/api/watchlist/?limit=5000", { cache: "no-store" });
+    appliedUserProfile = effectiveUserProfile();
+    const scope = appliedUserProfile ? `&user_profile=${encodeURIComponent(appliedUserProfile)}` : "";
+    const r = await fetch(`/api/watchlist/?limit=5000${scope}`, { cache: "no-store" });
     if (!r.ok) throw new Error("watchlist fetch failed");
     const j = await r.json();
     TMDB_OK = !Boolean(j?.missing_tmdb_key);
@@ -1351,10 +1429,12 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
       if (q && !haystack.includes(q)) return false;
       if (ty && t !== ty) return false;
       if (provider && !providersOf(it).includes(provider)) return false;
-      if (provider === "CROSSWATCH") {
-        const inst = String(cwProfileSel?.value || "default").trim() || "default";
-        const insts = instancesOfProvider(it, "CROSSWATCH");
-        if (insts.length ? !insts.includes(inst) : inst !== "default") return false;
+      if (provider) {
+        const inst = String(profileSel?.value || "").trim();
+        if (inst) {
+          const insts = instancesOfProvider(it, provider);
+          if (insts.length ? !insts.includes(inst) : inst !== "default") return false;
+        }
       }
 
       if (releasedPref !== "both") {
@@ -1690,7 +1770,7 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
     delProv.innerHTML = deleteProviderOptions(union);
     if ([...delProv.options].some(o => o.value === prev)) delProv.value = prev;
     enhanceDeleteProviderSelect();
-    syncCrosswatchProfileControls();
+    syncProfileControls();
   }
 
   function updateSelCount(){
@@ -1737,9 +1817,7 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
     if (!selected.size) return snackbar("Nothing selected");
     const provider = (delProv?.value || "ALL");
     const PROV_UP = provider.toUpperCase();
-    const providerInstance = PROV_UP === "CROSSWATCH"
-      ? String(delProfile?.value || cwProfileSel?.value || "default").trim() || "default"
-      : "";
+    const providerInstance = PROV_UP === "ALL" ? "" : String(delProfile?.value || "").trim();
     const keys = [...selected];
     const total = keys.length, CHUNK = 50;
 
@@ -1800,9 +1878,19 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
 
   qEl.addEventListener("input", applyFilters, true);
   on([tEl], ["change","input"], applyFilters);
-  on([providerSel], ["change","input"], () => { syncCrosswatchProfileControls(); applyFilters(); });
-  cwProfileSel?.addEventListener("change", applyFilters, true);
-  cwProfileSel?.addEventListener("input", applyFilters, true);
+  on([providerSel], ["change","input"], () => { syncProfileControls(); applyFilters(); });
+  profileSel?.addEventListener("change", applyFilters, true);
+  profileSel?.addEventListener("input", applyFilters, true);
+  userProfileSel?.addEventListener("change", () => {
+    const next = String(userProfileSel.value || "").trim();
+    const prev = effectiveUserProfile();
+    userProfileTouched = true;
+    activeUserProfile = next;
+    prefs.userProfile = next;
+    writePrefs(prefs);
+    if (next === prev) { syncProfileControls(); return; }
+    void reloadForUserProfile();
+  }, true);
   delProfile?.addEventListener("change", updateSelCount, true);
 
   moreBtn.addEventListener("click", () => {
@@ -1824,20 +1912,31 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
   window.addEventListener("cw:overview-profile-changed", () => {
     host.classList.toggle("wl-readonly", isProfileUser());
     if (isProfileUser()) selected.clear();
+    if (watchlistInitStarted && effectiveUserProfile() !== appliedUserProfile) {
+      void reloadForUserProfile();
+      return;
+    }
+    void loadUserProfiles();
     render();
     updateSelCount();
   });
 
   clearBtn.addEventListener("click", () => {
     qEl.value = ""; tEl.value = ""; providerSel.value = "";
-    if (cwProfileSel) cwProfileSel.value = "default";
+    if (profileSel) profileSel.value = "";
+    enhanceProviderFilterSelect();
+    const prevUserProfile = effectiveUserProfile();
+    activeUserProfile = "";
+    userProfileTouched = false;
     releasedSel.value = "both"; overlaysSel.value = "yes"; genreSel.value = "";
     if (showHiddenChk) showHiddenChk.checked = false;
-    Object.assign(prefs, { released:"both", overlays:"yes", genre:"", showHidden:false }); writePrefs(prefs);
-    applyOverlayPrefUI(); applyFilters();
+    Object.assign(prefs, { released:"both", overlays:"yes", genre:"", showHidden:false, userProfile:"" }); writePrefs(prefs);
+    syncProfileControls();
+    applyOverlayPrefUI();
+    if (effectiveUserProfile() !== prevUserProfile) void reloadForUserProfile(); else applyFilters();
   }, true);
 
-  delProv.addEventListener("change", () => { syncCrosswatchProfileControls(); updateSelCount(); }, true);
+  delProv.addEventListener("change", () => { syncProfileControls(); updateSelCount(); }, true);
 
   sizeInput.addEventListener("input", () => {
     const px = Math.max(120, Math.min(320, Number(sizeInput.value) || 150));
@@ -1924,6 +2023,12 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
     try{ items=await fetchWatchlist(); addActiveProvidersFromItems(items); rebuildProviderOptions(); populateGenreOptions(buildGenreIndex(items)); applyFilters(); rebuildDeleteProviderOptions(); }
     catch(e){ console.warn("watchlist reload failed:", e); }
   }
+  async function reloadForUserProfile(){
+    await loadUserProfiles();
+    applyUserProfileScope();
+    await hardReloadWatchlist();
+    updateSelCount();
+  }
   function _wlBusy(on){ const b=document.getElementById("wl-refresh"); if(!b)return; b.disabled=!!on; b.classList.toggle("loading",!!on); b.classList.toggle("spin",!!on); }
   document.getElementById("wl-refresh")?.addEventListener("click", async()=>{ if(hardReloadWatchlist._busy)return; hardReloadWatchlist._busy=true; _wlBusy(true); try{ await hardReloadWatchlist(); } finally{ _wlBusy(false); hardReloadWatchlist._busy=false; } }, {passive:true});
   window.Watchlist=Object.assign(window.Watchlist||{}, { refresh: hardReloadWatchlist });
@@ -1984,8 +2089,13 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
       }
     } catch {}
 
-    activeProviders = active;
-    await loadCrosswatchProfiles();
+    configuredProviders = new Set(active);
+    activeProviders = new Set(active);
+    activeUserProfile = String(prefs.userProfile || "").trim();
+    userProfileTouched = !!activeUserProfile;
+    await loadUserProfiles();
+    await loadProviderInstances();
+    applyUserProfileScope();
     rebuildProviderOptions();
     items = await fetchWatchlist();
     addActiveProvidersFromItems(items);
