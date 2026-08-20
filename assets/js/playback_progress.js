@@ -494,7 +494,7 @@
       : String(window.CW?.OverviewProfile?.id || "");
     select.value = [...select.options].some((o) => o.value === want) ? want : "";
     state.filters.user_profile = select.value;
-    try { window.CW?.ProfileSelect?.enhanceProfile?.(select, { className: "cw-plain-select" }); } catch {}
+    try { window.CW?.ProfileSelect?.enhanceUserProfile?.(select, { className: "cw-plain-select" }); } catch {}
   }
 
   function providerOptions() {

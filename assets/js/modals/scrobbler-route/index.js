@@ -190,7 +190,7 @@ function userProfileField() {
   if (!userProfiles.length) return "";
   const current = String(selectedUserProfileId || draft?.profile_id || "");
   const options = userProfiles.map((p) => `<option value="${esc(p.id)}" ${p.id === current ? "selected" : ""}>${esc(p.label)}</option>`).join("");
-  return `<div class="scrm-profile-row">${fieldIcon("person", "Assigned profile", `<select class="input" id="scr-user-profile"><option value="">Unassigned</option>${options}</select>`)}</div>`;
+  return `<div class="scrm-profile-row">${fieldIcon("account_circle", "Assigned profile", `<select class="input" id="scr-user-profile"><option value="">Unassigned</option>${options}</select>`)}</div>`;
 }
 
 function assignedInstance(profile, provider, kind) {
@@ -357,7 +357,7 @@ function routePanel(r) {
           <div class="scrm-card-head"><span class="scrm-provider-mark">${providerIcon(r.provider)}</span><div><strong>Source</strong><small>${esc(label(r.provider))}</small></div></div>
           <div class="scrm-fields">
             ${fieldIcon("dns", "Provider", `<select class="input" id="scr-provider">${optionsForProviders("source", r.provider)}</select>`)}
-            ${fieldIcon("person", "Profile", `<select class="input" id="scr-provider-instance">${optionsForProfiles(r.provider, r.provider_instance, "source")}</select>`)}
+            ${fieldIcon("badge", "Profile", `<select class="input" id="scr-provider-instance">${optionsForProfiles(r.provider, r.provider_instance, "source")}</select>`)}
           </div>
         </div>
         <div class="scrm-route-arrow"><span class="material-symbols-rounded">arrow_forward</span></div>
@@ -365,7 +365,7 @@ function routePanel(r) {
           <div class="scrm-card-head"><span class="scrm-provider-mark">${providerIcon(r.sink)}</span><div><strong>Destination</strong><small>${esc(label(r.sink))}</small></div></div>
           <div class="scrm-fields">
             ${fieldIcon("gps_fixed", "Provider", `<select class="input" id="scr-sink">${optionsForProviders("sink", r.sink, r.provider)}</select>`)}
-            ${fieldIcon("person", "Profile", `<select class="input" id="scr-sink-instance">${optionsForProfiles(r.sink, r.sink_instance, "sink")}</select>`)}
+            ${fieldIcon("badge", "Profile", `<select class="input" id="scr-sink-instance">${optionsForProfiles(r.sink, r.sink_instance, "sink")}</select>`)}
           </div>
         </div>
       </div>

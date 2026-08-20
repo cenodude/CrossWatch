@@ -153,7 +153,7 @@
       select.dataset.bound = "1";
       select.addEventListener("change", () => setActive(select.value));
     }
-    try { window.CW?.ProfileSelect?.enhanceProfile?.(select, { className: "cw-view-as-picker" }); } catch {}
+    try { window.CW?.ProfileSelect?.enhanceUserProfile?.(select, { className: "cw-view-as-picker" }); } catch {}
   }
 
   function render() {

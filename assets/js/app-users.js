@@ -64,7 +64,7 @@
   function enhanceCreateProfileSelect(profileSelect) {
     if (!profileSelect || !profiles.length) return normalizeCreateProfileWrap(profileSelect);
     normalizeCreateProfileWrap(profileSelect);
-    try { w.CW?.IconSelect?.enhance?.(profileSelect, { className: "cw-plain-select" }); } catch {}
+    try { w.CW?.ProfileSelect?.enhanceUserProfile?.(profileSelect, { className: "cw-plain-select" }); } catch {}
     return normalizeCreateProfileWrap(profileSelect);
   }
 

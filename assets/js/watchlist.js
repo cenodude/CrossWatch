@@ -228,7 +228,10 @@
     const values = Array.from(selectEl.options).map(o => o.value);
     const next = values.includes(String(current || "")) ? String(current || "") : (values[0] || "");
     selectEl.value = next;
-    try { window.CW?.ProfileSelect?.enhanceProfile?.(selectEl, { className: "wl-profile-select", getOptionData: symbolOptionData(symbol) }); } catch {}
+    try {
+      if (symbol === "account_circle") window.CW?.ProfileSelect?.enhanceUserProfile?.(selectEl, { className: "wl-profile-select" });
+      else window.CW?.ProfileSelect?.enhanceProfile?.(selectEl, { className: "wl-profile-select", getOptionData: symbolOptionData(symbol) });
+    } catch {}
     return next;
   };
   const mkFilterControl = (id, labelText, anchor) => {
