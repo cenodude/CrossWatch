@@ -728,10 +728,10 @@ def _path_value(block: Mapping[str, Any], path: str) -> Any:
 
 def _profile_has_explicit_identity(cfg: Mapping[str, Any], provider: str, instance_id: Any) -> bool:
     inst = normalize_instance_id(instance_id)
-    if inst == "default":
-        return True
     provider_key = str(provider or "").strip().lower()
     if provider_key in {"cw", "crosswatch"}:
+        if inst == "default":
+            return True
         base = cfg.get("crosswatch") if isinstance(cfg, Mapping) else None
         insts = (base or {}).get("instances") if isinstance(base, Mapping) else None
         return bool(isinstance(insts, Mapping) and inst in insts and isinstance(insts.get(inst), Mapping))

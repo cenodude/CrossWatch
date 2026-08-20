@@ -1336,3 +1336,96 @@ def test_tmdb_cache_is_bounded(monkeypatch):
     assert "expired" not in provider._cache
     assert len(provider._cache) <= 10
     assert "fresh11" in provider._cache
+
+
+def test_provider_filter_uses_friendly_instance_labels() -> None:
+    js = Path("assets/js/playback_progress.js").read_text("utf-8")
+    block = js.split("function providerOptions(", 1)[1].split("function loadingCard(", 1)[0]
+
+    assert 'String(p.instance_label || "").trim() || profileLabel(p)' in block
+    assert "compactProfileLabel(p)" not in block
+    assert 'label: label || providerLabel(provider)' in block
+    assert 'label: label || "Default"' not in block
+
+
+def test_provider_pills_use_friendly_instance_labels() -> None:
+    js = Path("assets/js/playback_progress.js").read_text("utf-8")
+    pills = js.split("const providerPills = (it)", 1)[1].split("const profileLabel = (p)", 1)[0]
+    compact = js.split("const compactProfileLabel = (p)", 1)[1].split("const settingsProviderOrder", 1)[0]
+
+    assert "compactProfileLabel(p)" in pills
+    assert "return profileLabel(p);" in compact
+    assert "padStart(2" not in compact
+    assert 'if (id.toLowerCase() === "default") return "";' in compact
+
+
+def test_profile_label_drops_the_separator_left_by_the_prefix() -> None:
+    js = Path("assets/js/playback_progress.js").read_text("utf-8")
+    block = js.split("const profileLabel = (p)", 1)[1].split("const compactProfileLabel", 1)[0]
+
+    assert r'replace(/^[\s_-]+/, "")' in block
+
+
+def test_user_profile_filter_narrows_the_provider_instances() -> None:
+    from cw_platform.provider_instances import instances_for_user_profile
+    from services.playback_progress import get_service
+
+    cfg = {
+        "plex": {"instances": {"PLEX-P01": {"account_token": "t"}}},
+        "scrob": {"instances": {"SCROB-P01": {"server_url": "u", "api_key": "k", "username": "u", "password": "p"}}},
+        "user_profiles": {"up1": {"label": "Pazzie", "instances": {"PLEX": ["PLEX-P01"]}}},
+    }
+    service = get_service()
+
+    unscoped = {(s["provider"], s["instance_id"]) for s in service.provider_instances(cfg)}
+    scoped = {
+        (s["provider"], s["instance_id"])
+        for s in service.provider_instances(cfg, user_filter=instances_for_user_profile(cfg, "up1"))
+    }
+
+    assert ("plex", "PLEX-P01") in unscoped
+    assert ("scrob", "SCROB-P01") in unscoped
+    assert scoped == {("plex", "PLEX-P01")}
+
+
+def test_playback_page_has_a_hidden_user_profile_filter() -> None:
+    js = Path("assets/js/playback_progress.js").read_text("utf-8")
+
+    assert '<select class="pp-field hidden" id="pp-user-profile"' in js
+    assert '<option value="">All User Profiles</option>' in js
+
+
+def test_user_profile_filter_is_admin_only_and_hides_without_profiles() -> None:
+    js = Path("assets/js/playback_progress.js").read_text("utf-8")
+    rows = js.split("function userProfiles(", 1)[1].split("function userProfileOptions(", 1)[0]
+    opts = js.split("function userProfileOptions(", 1)[1].split("function providerOptions(", 1)[0]
+
+    assert "if (!op?.isAdmin) return [];" in rows
+    assert 'select.classList.toggle("hidden", !rows.length);' in opts
+    assert "if (!rows.length) return;" in opts
+
+
+def test_user_profile_filter_overrides_the_global_picker() -> None:
+    js = Path("assets/js/playback_progress.js").read_text("utf-8")
+    block = js.split("function query(", 1)[1].split("async function load(", 1)[0]
+
+    assert 'const scoped = String(state.filters.user_profile || "").trim();' in block
+    assert "state.userProfileTouched" in block
+    assert 'params.set("user_profile", profileId)' in block
+
+
+def test_user_profile_filter_mirrors_the_global_picker_until_touched() -> None:
+    js = Path("assets/js/playback_progress.js").read_text("utf-8")
+    block = js.split("function userProfileOptions(", 1)[1].split("function providerOptions(", 1)[0]
+
+    assert "state.userProfileTouched" in block
+    assert 'String(window.CW?.OverviewProfile?.id || "")' in block
+
+
+def test_settings_modal_shows_profile_names_without_the_provider() -> None:
+    js = Path("assets/js/playback_progress.js").read_text("utf-8")
+    block = js.split("const settingsProfileLabel = (p)", 1)[1].split("const settingsProviderCard", 1)[0]
+
+    assert "return profileLabel(p);" in block
+    assert "String(p.instance_label || id)" not in block
+    assert 'if (id === "default") return "Default";' in block

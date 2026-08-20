@@ -35,7 +35,8 @@
     providers: [],
     errors: [],
     selected: new Map(),
-    filters: { provider: "", media_type: "", progress: "", age: "", rating: "", search: "", sort: "last_updated" },
+    filters: { user_profile: "", provider: "", media_type: "", progress: "", age: "", rating: "", search: "", sort: "last_updated" },
+    userProfileTouched: false,
     busy: false,
     loaded: false,
     settings: null,
@@ -62,6 +63,7 @@
       <div class="pp-status" id="pp-status"></div>
       <div class="pp-toolbar">
         <input class="pp-field" id="pp-search" type="search" placeholder="Search">
+        <select class="pp-field hidden" id="pp-user-profile" aria-label="User profile"><option value="">All User Profiles</option></select>
         <select class="pp-field" id="pp-provider"><option value="">Loading providers...</option></select>
         <select class="pp-field" id="pp-type"><option value="">All Types</option><option value="movie">Movies</option><option value="episode">TV Episodes</option><option value="anime_episode">Anime Episodes</option></select>
         <select class="pp-field" id="pp-progress"><option value="">All Progress</option><option value="0:24.99">Under 25 percent</option><option value="25:50">25 to 50 percent</option><option value="50:75">50 to 75 percent</option><option value="75:100">Over 75 percent</option><option value="90:100">Nearly Finished</option></select>
@@ -222,7 +224,7 @@
     let label = String(p.instance_label || p.instance_id || "").trim();
     for (const prefix of [providerLabel, provider]) {
       if (prefix && label.toLowerCase().startsWith(prefix.toLowerCase())) {
-        label = label.slice(prefix.length).trim();
+        label = label.slice(prefix.length).replace(/^[\s_-]+/, "").trim();
       }
     }
     return label || (String(p.instance_id || "").trim() || "Default");
@@ -230,13 +232,7 @@
   const compactProfileLabel = (p) => {
     const id = String(p?.instance_id || "default").trim() || "default";
     if (id.toLowerCase() === "default") return "";
-    const label = profileLabel(p);
-    for (const value of [label, id]) {
-      const match = String(value || "").trim().match(/^(?:profile[\s_-]*)?p?0*(\d{1,2})$/i)
-        || String(value || "").trim().match(/(?:^|[\s_-])(?:profile[\s_-]*)?p?0*(\d{1,2})$/i);
-      if (match) return `P${String(match[1]).padStart(2, "0")}`;
-    }
-    return label;
+    return profileLabel(p);
   };
   const settingsProviderOrder = (provider) => {
     const p = String(provider || "").toLowerCase();
@@ -248,7 +244,7 @@
     const id = String(p.instance_id || "default");
     if (id === "default") return "Default";
     if (String(p.provider || "").toLowerCase() === "crosswatch" && /^CW-P\d+$/i.test(id)) return id.toUpperCase();
-    return String(p.instance_label || id);
+    return profileLabel(p);
   };
   const settingsProviderCard = (provider, profiles) => {
     const key = String(provider || "").toLowerCase();
@@ -469,11 +465,42 @@
     await load(true);
   }
 
+  function userProfiles() {
+    const op = window.CW?.OverviewProfile;
+    if (!op?.isAdmin) return [];
+    const rows = Array.isArray(op.profiles) ? op.profiles : [];
+    return rows.filter((row) => String(row?.id || "").trim());
+  }
+
+  function userProfileOptions() {
+    const select = document.getElementById("pp-user-profile");
+    if (!select) return;
+    const rows = userProfiles();
+    select.classList.toggle("hidden", !rows.length);
+    if (!rows.length) return;
+    const opts = ['<option value="">All User Profiles</option>'];
+    rows.forEach((row) => {
+      const id = String(row.id || "");
+      const label = String(row.label || row.name || id).trim() || id;
+      opts.push(`<option value="${esc(id)}">${esc(label)}</option>`);
+    });
+    const signature = opts.join("");
+    if (select.dataset.signature !== signature) {
+      select.innerHTML = signature;
+      select.dataset.signature = signature;
+    }
+    const want = state.userProfileTouched
+      ? String(state.filters.user_profile || "")
+      : String(window.CW?.OverviewProfile?.id || "");
+    select.value = [...select.options].some((o) => o.value === want) ? want : "";
+    state.filters.user_profile = select.value;
+  }
+
   function providerOptions() {
     const readable = state.providers.filter((p) => p.read && p.configured && p.included !== false);
     const opts = ['<option value="">All Providers</option>'];
     readable.forEach((p) => {
-      const label = compactProfileLabel(p);
+      const label = String(p.instance_label || "").trim() || profileLabel(p);
       const provider = String(p.provider || "");
       const instance = String(p.instance_id || "default");
       opts.push(`<option value="${esc(provider)}:${esc(instance)}" data-provider="${esc(provider)}" data-profile-label="${esc(label)}">${esc(label || providerLabel(provider))}</option>`);
@@ -489,7 +516,7 @@
         const provider = option?.dataset?.provider || String(value).split(":")[0];
         const label = option?.dataset?.profileLabel || "";
         return {
-          label: label || "Default",
+          label: label || providerLabel(provider),
           icons: [{ src: providerLogLogo(provider), alt: providerLabel(provider) }]
         };
       }
@@ -707,7 +734,8 @@
 
   function query(force = false, all = false) {
     const params = new URLSearchParams();
-    const profileId = String(window.CW?.OverviewProfile?.id || "").trim();
+    const scoped = String(state.filters.user_profile || "").trim();
+    const profileId = scoped || (state.userProfileTouched ? "" : String(window.CW?.OverviewProfile?.id || "").trim());
     if (profileId) params.set("user_profile", profileId);
     const [provider, instance] = String(state.filters.provider || "").split(":");
     if (provider) params.set("provider", provider);
@@ -746,6 +774,7 @@
       if (!state.lastRefreshFailed) state.lastSyncAt = Date.now();
       state.total = Number(data.total || 0);
       state.page = Number(data.page || 1);
+      userProfileOptions();
       providerOptions();
       renderStatus();
       renderErrors();
@@ -829,6 +858,12 @@
     r.addEventListener("change", (e) => {
       const t = e.target;
       if (!t) return;
+      if (t.id === "pp-user-profile") {
+        state.userProfileTouched = true;
+        state.selected.clear();
+        state.filters.provider = "";
+        update("user_profile", t.value);
+      }
       if (t.id === "pp-provider") update("provider", t.value);
       if (t.id === "pp-type") update("media_type", t.value);
       if (t.id === "pp-progress") update("progress", t.value);
@@ -932,9 +967,11 @@
     const page = document.getElementById("page-playback_progress");
     if (page && !page.classList.contains("hidden")) load(false);
   });
+  window.addEventListener("cw-user-profiles-changed", () => userProfileOptions());
   window.addEventListener("cw:overview-profile-changed", () => {
     state.selected.clear();
     state.page = 1;
+    userProfileOptions();
     const page = document.getElementById("page-playback_progress");
     if (page && !page.classList.contains("hidden")) load(false);
   });
