@@ -325,7 +325,9 @@ export default {
       ]);
       ex.state.opts=exOpts; im.state.opts=imOpts;
       if(imOpts.sources?.length) im.source.innerHTML=imOpts.sources.map(x=>`<option value="${esc(x.id)}">${esc(x.label||x.id)}</option>`).join("");
-      im.target.innerHTML=(imOpts.targets||[{id:"default",label:"Default"}]).map(x=>`<option value="${esc(x.id)}">${esc(x.label||x.id)}${x.connected===false?" (not connected)":""}</option>`).join("");
+      const imTargets=imOpts.targets||[{id:"default",label:"Default"}];
+      const imReady=imTargets.filter(x=>x.connected!==false);
+      im.target.innerHTML=(imReady.length?imReady:imTargets).map(x=>`<option value="${esc(x.id)}">${esc(x.label||x.id)}${x.connected===false?" (not connected)":""}</option>`).join("");
       syncTargetState();
       renderImportExpect();
       if(ex.state.opts.providers?.length){ex.provSel.innerHTML=ex.state.opts.providers.map(p=>`<option value="${esc(p)}">${esc(PM?.label?.(p)||p)}</option>`).join("")}else{ex.provSel.innerHTML='<option value="" disabled>(no providers)</option>';ex.provSel.disabled=ex.instSel.disabled=true;ex.instSel.innerHTML='<option value="all">All</option>'}
