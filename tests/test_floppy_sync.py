@@ -897,6 +897,145 @@ def test_floppy_history_add_marks_translated_episode_unresolved_when_write_is_no
     assert [c["path"] for c in adapter.client.session.calls if c["method"] == "POST"] == ["media/tv/tmdb/12971/2/episodes/5/watch"]
 
 
+def test_floppy_history_add_marks_stored_anime_coord_unresolved_when_write_is_not_readable() -> None:
+    from providers.sync.floppy import _history
+
+    _history.prepare_source_snapshot([])
+    _history.reset_layout_cache()
+    adapter = AdapterStub(
+        {
+            ("GET", "media/tv/tmdb/64196/4/1/history"): {"results": [], "count": 0},
+            ("POST", "media/tv/tmdb/64196/4/episodes/1/watch"): {"consumption_id": 77},
+        },
+        _anime_history_cfg(),
+    )
+
+    res = _history.add(adapter, [_overlord_iv_source(_floppy_season=4, _floppy_episode=1)])
+
+    assert res["count"] == 0
+    assert res["unresolved_keys"] == ["tmdb:64196#s01e40"]
+    assert res["unresolved"][0]["reason"] == "floppy_history_write_not_readable"
+    assert [c["path"] for c in adapter.client.session.calls if c["method"] == "POST"] == ["media/tv/tmdb/64196/4/episodes/1/watch"]
+
+
+def test_floppy_history_add_marks_stored_anime_coord_unresolved_when_only_old_history_exists() -> None:
+    from providers.sync.floppy import _history
+
+    _history.prepare_source_snapshot([])
+    _history.reset_layout_cache()
+    adapter = AdapterStub(
+        {
+            ("GET", "media/tv/tmdb/64196/4/1/history"): {
+                "results": [{"consumption_id": 77, "end_date": "2025-01-02T00:00:00Z"}],
+                "count": 1,
+            },
+        },
+        _anime_history_cfg(),
+    )
+
+    res = _history.add(adapter, [_overlord_iv_source(_floppy_season=4, _floppy_episode=1)])
+
+    assert res["count"] == 0
+    assert res["unresolved_keys"] == ["tmdb:64196#s01e40"]
+    assert res["unresolved"][0]["reason"] == "floppy_history_write_not_readable"
+    assert not any(c["method"] == "POST" for c in adapter.client.session.calls)
+
+
+def test_floppy_history_add_marks_native_anime_coord_unresolved_when_write_is_not_readable() -> None:
+    from providers.sync.floppy import _history
+
+    _history.prepare_source_snapshot([])
+    _history.reset_layout_cache()
+    adapter = AdapterStub(
+        {
+            ("GET", "media/tv/tmdb/64196/1/40/history"): {"results": [], "count": 0},
+            ("POST", "media/tv/tmdb/64196/1/episodes/40/watch"): {"consumption_id": 77},
+        },
+        _anime_history_cfg(),
+    )
+
+    res = _history.add(adapter, [_overlord_iv_source(_simkl_episode_number=None)])
+
+    assert res["count"] == 0
+    assert res["unresolved_keys"] == ["tmdb:64196#s01e40"]
+    assert res["unresolved"][0]["reason"] == "floppy_history_write_not_readable"
+    assert [c["path"] for c in adapter.client.session.calls if c["method"] == "POST"] == ["media/tv/tmdb/64196/1/episodes/40/watch"]
+
+
+def test_floppy_history_unreadable_write_retries_until_blackbox(monkeypatch: Any, tmp_path: Any) -> None:
+    from cw_platform.orchestrator import _blackbox
+    from cw_platform.orchestrator._applier import apply_add
+    from cw_platform.orchestrator._blackbox import record_attempts
+    from cw_platform.orchestrator._pairs_blocklist import apply_blocklist
+
+    monkeypatch.setattr(_blackbox, "STATE_DIR", tmp_path)
+    event_key = "tmdb:12971#s01e44@1767312000"
+    item = {
+        "type": "episode",
+        "show_ids": {"tmdb": "12971"},
+        "season": 1,
+        "episode": 44,
+        "watched_at": "2026-01-02T00:00:00Z",
+        "_cw_event_key": event_key,
+        "_cw_rewatch_sync": True,
+    }
+
+    class OpsStub:
+        def add(self, _cfg: dict[str, Any], _items: list[dict[str, Any]], *, feature: str, dry_run: bool = False) -> dict[str, Any]:
+            assert feature == "history"
+            assert dry_run is False
+            return {
+                "ok": False,
+                "count": 0,
+                "confirmed_keys": [],
+                "unresolved_keys": [event_key],
+                "unresolved": [{"reason": "floppy_history_write_not_readable", "item": item}],
+            }
+
+    res = apply_add(
+        dst_ops=OpsStub(),
+        cfg={},
+        dst_name="FLOPPY",
+        feature="history",
+        items=[item],
+        dry_run=False,
+        emit=lambda *_args, **_kwargs: None,
+        dbg=lambda *_args, **_kwargs: None,
+        chunk_size=100,
+        chunk_pause_ms=0,
+    )
+
+    assert res["unresolved_keys"] == [event_key]
+
+    pair_key = "FLOPPY-SIMKL"
+    assert apply_blocklist(
+        None,
+        [item],
+        dst="FLOPPY",
+        feature="history",
+        pair_key=pair_key,
+        cross_feature_unresolved=True,
+    ) == [item]
+
+    record_attempts(
+        "FLOPPY",
+        "history",
+        [event_key],
+        reason="apply:add:failed",
+        op="add",
+        pair=pair_key,
+        cfg={"sync": {"blackbox": {"enabled": True, "promote_after": 1, "pair_scoped": True}}},
+    )
+    assert apply_blocklist(
+        None,
+        [item],
+        dst="FLOPPY",
+        feature="history",
+        pair_key=pair_key,
+        cross_feature_unresolved=True,
+    ) == []
+
+
 def test_floppy_history_add_uses_stored_coordinate_without_layout_lookup() -> None:
     from providers.sync.floppy import _history
 
