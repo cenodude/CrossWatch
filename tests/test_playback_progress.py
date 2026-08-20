@@ -1429,3 +1429,20 @@ def test_settings_modal_shows_profile_names_without_the_provider() -> None:
     assert "return profileLabel(p);" in block
     assert "String(p.instance_label || id)" not in block
     assert 'if (id === "default") return "Default";' in block
+
+
+def test_provider_menu_is_wide_enough_for_qualified_labels() -> None:
+    js = Path("assets/js/playback_progress.js").read_text("utf-8")
+    block = js.split("function providerOptions(", 1)[1].split("function loadingCard(", 1)[0]
+
+    assert "menuMinWidth:" in block
+
+
+def test_late_shown_filters_are_enhanced_like_the_rest() -> None:
+    js = Path("assets/js/playback_progress.js").read_text("utf-8")
+    profile = js.split("function userProfileOptions(", 1)[1].split("function providerOptions(", 1)[0]
+    rating = js.split("function renderItems(", 1)[1].split("const markup =", 1)[0]
+
+    assert "ProfileSelect?.enhanceProfile?.(select" in profile
+    assert "IconSelect?.enhance?.(ratingFilter" in rating
+    assert "if (showRating)" in rating
