@@ -8,6 +8,10 @@ from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
 from typing import Any
 
+from cw_platform.anime_mapping.coordinates import translate
+from cw_platform.anime_mapping.overrides import find_source_override
+from cw_platform.anime_mapping.service import PAIR_FEATURE_OPTIONS_KEY, mapping_enabled_for_feature, runtime_pair_feature_options
+from cw_platform.anime_mapping.storage import query_edges
 from cw_platform.history_events import history_sync_key, minimal_history_item
 from cw_platform.id_map import minimal as id_minimal
 from providers.sync._mod_common import build_op_result, unresolved_keys
@@ -71,6 +75,142 @@ def _floppy_coord(item: Mapping[str, Any]) -> tuple[int, int] | None:
     return season, episode
 
 
+def _anime_mapping_enabled(adapter: Any) -> bool:
+    cfg = getattr(adapter, "config", None)
+    if not isinstance(cfg, Mapping):
+        return False
+    if PAIR_FEATURE_OPTIONS_KEY in cfg:
+        return bool(runtime_pair_feature_options(cfg, "history").get("use_anime_mapping"))
+    return bool(mapping_enabled_for_feature(cfg, "history"))
+
+
+def _anime_release_tag(adapter: Any) -> str:
+    cfg = getattr(adapter, "config", None)
+    block = cfg.get("anime_mapping") if isinstance(cfg, Mapping) else {}
+    if isinstance(block, Mapping):
+        value = str(block.get("release_tag") or "").strip()
+        if value:
+            return value
+    return "v3"
+
+
+def _anime_native_ids(item: Mapping[str, Any]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for raw in (item.get("show_ids"), item.get("ids")):
+        if not isinstance(raw, Mapping):
+            continue
+        for key in ("anidb", "mal", "anilist", "kitsu", "simkl"):
+            value = str(raw.get(key) or "").strip()
+            if value:
+                out.setdefault(key, value)
+    amap = item.get("_cw_anime_map")
+    if isinstance(amap, Mapping):
+        namespace = str(amap.get("namespace") or "").strip().lower()
+        target_id = str(amap.get("target_id") or "").strip()
+        if namespace and target_id:
+            out.setdefault(namespace, target_id)
+    return out
+
+
+def _show_ids(item: Mapping[str, Any]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    raw = item.get("show_ids") if isinstance(item.get("show_ids"), Mapping) else item.get("ids")
+    if not isinstance(raw, Mapping):
+        return out
+    for key, value in raw.items():
+        text = str(value or "").strip()
+        if text:
+            out[str(key).strip().lower()] = text
+    return out
+
+
+def _override_coordinate_for_absolute(
+    item: Mapping[str, Any],
+    tmdb_id: str,
+    native_ids: Mapping[str, str],
+    absolute: int,
+) -> tuple[int, int] | None:
+    known_ids = _show_ids(item)
+    if tmdb_id:
+        known_ids.setdefault("tmdb", str(tmdb_id))
+    for namespace in ("simkl", "anidb", "mal", "anilist", "kitsu"):
+        ident = native_ids.get(namespace, "")
+        if not ident:
+            continue
+        try:
+            ruled = find_source_override(namespace, ident, absolute)
+        except Exception:
+            ruled = None
+        if ruled is None:
+            continue
+        provider = str(ruled.provider or "").strip().lower()
+        expected = known_ids.get(provider)
+        if expected and str(ruled.ident or "").strip() != expected:
+            continue
+        if provider == "tmdb" and tmdb_id and str(ruled.ident or "").strip() != str(tmdb_id):
+            continue
+        season = int_or_none(ruled.season)
+        episode = int_or_none(ruled.episode)
+        if season is not None and season >= 0 and episode is not None and episode > 0:
+            return season, episode
+    return None
+
+
+def _anime_coordinate_for_absolute(
+    adapter: Any,
+    tmdb_id: str,
+    item: Mapping[str, Any],
+    absolute: int,
+) -> tuple[int, int] | None:
+    if not _anime_mapping_enabled(adapter):
+        return None
+    if str(item.get("type") or "").strip().lower() != "episode":
+        return None
+    native_ids = _anime_native_ids(item)
+    if not native_ids:
+        return None
+
+    release_tag = _anime_release_tag(adapter)
+    override_coord = _override_coordinate_for_absolute(item, tmdb_id, native_ids, absolute)
+    if override_coord is not None:
+        return override_coord
+
+    found: set[tuple[int, int]] = set()
+    for namespace in ("anidb", "mal", "anilist", "kitsu"):
+        ident = native_ids.get(namespace)
+        if not ident:
+            continue
+        try:
+            rows = query_edges(release_tag, namespace, ident)
+        except Exception:
+            rows = []
+        for row in rows:
+            if str(row.get("target_provider") or "").strip().lower() != "tmdb":
+                continue
+            if str(row.get("target_kind") or "").strip().lower() != "show":
+                continue
+            target_id = str(row.get("target_id") or "").strip()
+            if target_id and str(target_id) != str(tmdb_id):
+                continue
+            season = _season_from_scope(row.get("target_scope"))
+            if season is None or season < 0:
+                continue
+            episode = translate(row.get("source_range"), row.get("target_range"), absolute)
+            if episode is None or int(episode) <= 0:
+                continue
+            found.add((int(season), int(episode)))
+    if len(found) == 1:
+        return next(iter(found))
+    return None
+
+
+def _season_from_scope(value: Any) -> int | None:
+    text = str(value or "").strip().lower()
+    if not text.startswith("s"):
+        return None
+    return int_or_none(text[1:])
+
+
 def _pair_scope() -> str:
     for name in ("CW_PAIR_KEY", "CW_PAIR_SCOPE", "CW_SYNC_PAIR", "CW_PAIR"):
         value = str(os.getenv(name) or "").strip()
@@ -97,6 +237,7 @@ def prepare_source_snapshot(items: Iterable[Mapping[str, Any]]) -> int:
         hint = _absolute_hint(item, season, episode)
         if hint is not None:
             record["abs"][(season, episode)] = hint
+        record.setdefault("items", {})[(season, episode)] = dict(item)
         count += 1
     _SRC_SNAPSHOT["scope"] = _pair_scope()
     _SRC_SNAPSHOT["shows"] = shows
@@ -134,7 +275,14 @@ def _rekey_to_source_numbering(adapter: Any, out: dict[str, dict[str, Any]]) -> 
             absolute = record["abs"].get(coord)
             if absolute is None:
                 continue
-            real = absolute_to_coord(layout, absolute)
+            source_item = (record.get("items") or {}).get(coord)
+            real = (
+                _anime_coordinate_for_absolute(adapter, show, source_item, absolute)
+                if isinstance(source_item, Mapping)
+                else None
+            )
+            if real is None:
+                real = absolute_to_coord(layout, absolute)
             if real is None or real == coord or real in wanted:
                 continue
             key = owned.get(real)
@@ -163,6 +311,9 @@ def _write_coord(adapter: Any, tmdb_id: str, item: Mapping[str, Any], season: in
     absolute = _explicit_absolute(item)
     if absolute is None:
         return season, episode
+    mapped = _anime_coordinate_for_absolute(adapter, tmdb_id, item, absolute)
+    if mapped is not None:
+        return mapped
     layout = show_layout(adapter, tmdb_id)
     if not layout or has_coord(layout, season, episode):
         return season, episode

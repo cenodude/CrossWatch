@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 
 
@@ -524,6 +525,125 @@ def _dbz_routes(watched: list[tuple[int, int]], layout: dict[int, int]) -> dict[
             "count": total,
         }
     return routes
+
+
+def _anime_history_cfg() -> dict[str, Any]:
+    return {
+        "floppy": {"watchlist_name": "Watchlist"},
+        "anime_mapping": {"enabled": True, "features": ["history"], "release_tag": "v3"},
+        "_cw_pair_feature_options": {"feature": "history", "use_anime_mapping": True},
+    }
+
+
+def _anime_routes(tmdb_id: str, watched: list[tuple[int, int]], layout: dict[int, int]) -> dict[tuple[str, str], Any]:
+    routes: dict[tuple[str, str], Any] = {
+        ("GET", "media/movie"): {"results": [], "count": 0},
+        ("GET", "media/episode"): {
+            "results": [{"item_id": f"tv/tmdb/{tmdb_id}/{s}/{e}", "end_date": "2026-01-02T00:00:00Z", "consumption_id": 1000 + i} for i, (s, e) in enumerate(watched)],
+            "count": len(watched),
+        },
+    }
+    for season, total in layout.items():
+        routes[("GET", f"media/tv/tmdb/{tmdb_id}/{season}/episodes")] = {
+            "results": [{"item_id": f"tv/tmdb/{tmdb_id}/{season}/{n}", "episode_number": n} for n in range(1, total + 1)],
+            "count": total,
+        }
+    return routes
+
+
+def _overlord_iv_source(**extra: Any) -> dict[str, Any]:
+    return {
+        "type": "episode",
+        "series_title": "Overlord IV",
+        "season": 1,
+        "episode": 40,
+        "_simkl_episode_number": 1,
+        "watched_at": "2026-01-02T00:00:00Z",
+        "show_ids": {
+            "tmdb": "64196",
+            "mal": "48895",
+            "anilist": "133844",
+            "simkl": "1630649",
+        },
+        **extra,
+    }
+
+
+def _fake_overlord_edges(tag: str, namespace: str, ident: str) -> list[dict[str, Any]]:
+    if tag == "v3" and namespace == "mal" and ident == "48895":
+        return [
+            {
+                "target_provider": "tmdb",
+                "target_kind": "show",
+                "target_id": "64196",
+                "target_scope": "s4",
+                "source_range": "1-13",
+                "target_range": "1-13",
+            }
+        ]
+    return []
+
+
+def test_floppy_history_add_uses_anime_native_coordinate_before_layout_absolute(monkeypatch: Any) -> None:
+    from providers.sync.floppy import _history
+
+    monkeypatch.setattr(_history, "query_edges", _fake_overlord_edges)
+    _history.prepare_source_snapshot([])
+    _history.reset_layout_cache()
+    routes = _anime_routes("64196", [], {1: 13, 2: 13, 3: 13, 4: 13})
+    routes[("GET", "media/tv/tmdb/64196/4/1/history")] = {"results": [], "count": 0}
+    routes[("POST", "media/tv/tmdb/64196/4/episodes/1/watch")] = {"consumption_id": 77}
+    adapter = AdapterStub(routes, _anime_history_cfg())
+
+    res = _history.add(adapter, [_overlord_iv_source()])
+
+    assert res["count"] == 1
+    assert [c["path"] for c in adapter.client.session.calls if c["method"] == "POST"] == ["media/tv/tmdb/64196/4/episodes/1/watch"]
+    assert not any(c["path"] == "media/tv/tmdb/64196/1/episodes/1/watch" for c in adapter.client.session.calls)
+    assert res["confirmed_keys"] == ["tmdb:64196#s01e40"]
+
+
+def test_floppy_history_add_prefers_user_anime_override(monkeypatch: Any) -> None:
+    from providers.sync.floppy import _history
+
+    monkeypatch.setattr(_history, "query_edges", _fake_overlord_edges)
+
+    def fake_override(namespace: str, ident: str, absolute: int) -> Any:
+        if (namespace, ident, absolute) == ("mal", "48895", 1):
+            return SimpleNamespace(provider="tmdb", ident="64196", season=9, episode=7)
+        return None
+
+    monkeypatch.setattr(_history, "find_source_override", fake_override)
+    _history.prepare_source_snapshot([])
+    _history.reset_layout_cache()
+    routes = _anime_routes("64196", [], {1: 13, 2: 13, 3: 13, 4: 13, 9: 13})
+    routes[("GET", "media/tv/tmdb/64196/9/7/history")] = {"results": [], "count": 0}
+    routes[("POST", "media/tv/tmdb/64196/9/episodes/7/watch")] = {"consumption_id": 77}
+    adapter = AdapterStub(routes, _anime_history_cfg())
+
+    res = _history.add(adapter, [_overlord_iv_source()])
+
+    assert res["count"] == 1
+    assert [c["path"] for c in adapter.client.session.calls if c["method"] == "POST"] == ["media/tv/tmdb/64196/9/episodes/7/watch"]
+    assert not any(c["path"] == "media/tv/tmdb/64196/4/episodes/1/watch" for c in adapter.client.session.calls)
+
+
+def test_floppy_history_rekeys_anime_native_coordinate_without_false_missing(monkeypatch: Any) -> None:
+    from providers.sync.floppy import _history
+
+    monkeypatch.setattr(_history, "query_edges", _fake_overlord_edges)
+    _history.prepare_source_snapshot([])
+    _history.reset_layout_cache()
+    adapter = AdapterStub(_anime_routes("64196", [(4, 1)], {1: 13, 2: 13, 3: 13, 4: 13}), _anime_history_cfg())
+
+    produced = _history.prepare_source_snapshot([_overlord_iv_source()])
+    out = _history.build_index(adapter)
+
+    assert produced == 1
+    assert "tmdb:64196#s01e40" in out
+    assert "tmdb:64196#s04e01" not in out
+    assert out["tmdb:64196#s01e40"]["_floppy_season"] == 4
+    assert out["tmdb:64196#s01e40"]["_floppy_episode"] == 1
 
 
 def test_floppy_history_rekeys_absolute_source_numbering_onto_aired_episodes() -> None:
