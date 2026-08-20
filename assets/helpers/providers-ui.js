@@ -113,11 +113,70 @@
     return providers[lower] || providers[upper] || null;
   }
 
-  function authStatusFor(key, configured) {
+  function sortProfileIds(ids) {
+    return Array.from(new Set((ids || []).map((id) => String(id || "").trim()).filter(Boolean)))
+      .sort((a, b) => (a !== "default") - (b !== "default") || a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+  }
+
+  function profileStatusEntryConnected(entry) {
+    if (typeof entry === "boolean") return entry;
+    if (!entry || typeof entry !== "object") return null;
+    if (typeof entry.connected === "boolean") return entry.connected;
+    if (typeof entry.ok === "boolean") return entry.ok;
+    if (typeof entry.authorized === "boolean") return entry.authorized;
+    const text = String(entry.status || entry.state || "").trim().toLowerCase();
+    if (/^(ok|up|connected|ready|true|on|online|active|authorized|valid)$/.test(text)) return true;
+    if (/^(no|down|disconnected|false|off|disabled|failed|error|invalid|expired|unauthorized|forbidden)$/.test(text)) return false;
+    return null;
+  }
+
+  function profileStatusEntry(data, id) {
+    const inst = data?.instances;
+    if (!inst || typeof inst !== "object") return null;
+    const raw = String(id || "").trim();
+    if (Object.prototype.hasOwnProperty.call(inst, raw)) return inst[raw];
+    const found = Object.keys(inst).find((key) => String(key || "").toLowerCase() === raw.toLowerCase());
+    return found ? inst[found] : null;
+  }
+
+  function authProfileIds(cfg, provider, data = null, connected = false) {
+    const ids = configuredProfileIds(cfg, provider, connected);
+    const inst = data?.instances;
+    if (inst && typeof inst === "object") {
+      Object.keys(inst).forEach((id) => {
+        if (String(id || "").trim()) ids.push(String(id));
+      });
+    }
+    return sortProfileIds(ids);
+  }
+
+  function authProfileState(cfg, provider, id, data = statusProviderData(provider), connected = false) {
+    const entry = profileStatusEntry(data, id);
+    const entryConnected = profileStatusEntryConnected(entry);
+    if (entryConnected === true) return "ok";
+    if (entryConnected === false) return "fail";
+    if (entry && typeof entry === "object" && entry.probed === true) return "fail";
+    if (data && typeof data.connected === "boolean") return data.connected ? "ok" : "fail";
+    return configuredProfileIds(cfg, provider, connected).some((pid) => String(pid) === String(id)) ? "ok" : "fail";
+  }
+
+  function failedProfileIds(cfg, provider, data = statusProviderData(provider), connected = false) {
+    if (!data || typeof data !== "object") return [];
+    return authProfileIds(cfg, provider, data, connected).filter((id) => authProfileState(cfg, provider, id, data, connected) === "fail");
+  }
+
+  function authStatusFor(key, configured, cfg = getCachedConfig()) {
+    const data = statusProviderData(key);
+    const failed = failedProfileIds(cfg, String(key || "").toLowerCase(), data, configured);
+    if (failed.length) {
+      const names = failed.map((id) => profileFriendlyName(cfg, String(key || "").toLowerCase(), id));
+      const shown = names.slice(0, 2).join(", ");
+      const overflow = names.length > 2 ? ` +${names.length - 2}` : "";
+      return { text: `Check connection: ${shown}${overflow}`, ok: false };
+    }
     if (String(key || "").toUpperCase() === "NUVIO" && configured) {
       return { text: "Connected", ok: true };
     }
-    const data = statusProviderData(key);
     if (data && typeof data.connected === "boolean") {
       return data.connected ? { text: "Connected", ok: true } : { text: "Check connection", ok: false };
     }
@@ -190,7 +249,7 @@
       });
     }
     if (!out.length && connected) out.push("default");
-    return Array.from(new Set(out)).sort((a, b) => (a !== "default") - (b !== "default") || a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+    return sortProfileIds(out);
   }
 
   function profileFriendlyName(cfg, provider, id) {
@@ -206,17 +265,22 @@
   const PROFILE_PILL_LIMIT = 3;
 
   function authProfileBadges(card, cfg) {
-    const ids = configuredProfileIds(cfg, card.provider, !!card.status?.ok);
+    const data = statusProviderData(card.key || card.provider);
+    const ids = authProfileIds(cfg, card.provider, data, !!card.status?.ok);
     if (!ids.length) return "";
     const label = ids.length === 1 ? "Configured profile" : "Configured profiles";
-    const names = ids.map((id) => profileFriendlyName(cfg, card.provider, id));
+    const names = ids.map((id) => {
+      const name = profileFriendlyName(cfg, card.provider, id);
+      const state = authProfileState(cfg, card.provider, id, data, !!card.status?.ok);
+      return { id, name, state, stateLabel: state === "ok" ? "Connected" : "Check connection" };
+    });
     const shown = names.slice(0, PROFILE_PILL_LIMIT);
     const rest = names.slice(PROFILE_PILL_LIMIT);
-    const pills = shown.map((name) => `<span class="cw-auth-profile-pill" title="${escHtml(`${label}: ${name}`)}">${escHtml(name)}</span>`);
+    const pills = shown.map((item) => `<span class="cw-auth-profile-pill ${item.state === "ok" ? "is-connected" : "is-failed"}" title="${escHtml(`${item.name}: ${item.stateLabel}`)}"><span class="cw-auth-profile-dot ${item.state === "ok" ? "ok" : "fail"}" aria-hidden="true"></span><span class="cw-auth-profile-name">${escHtml(item.name)}</span></span>`);
     if (rest.length) {
-      pills.push(`<span class="cw-auth-profile-pill is-overflow" title="${escHtml(`${label}: ${rest.join(", ")}`)}">+${rest.length}</span>`);
+      pills.push(`<span class="cw-auth-profile-pill is-overflow" title="${escHtml(`${label}: ${rest.map((item) => `${item.name} (${item.stateLabel})`).join(", ")}`)}">+${rest.length}</span>`);
     }
-    return `<span class="cw-auth-profile-strip" aria-label="${escHtml(`${label}: ${names.join(", ")}`)}">${pills.join("")}</span>`;
+    return `<span class="cw-auth-profile-strip" aria-label="${escHtml(`${label}: ${names.map((item) => `${item.name} ${item.stateLabel}`).join(", ")}`)}">${pills.join("")}</span>`;
   }
 
   function authProviderKeysWithSections() {
@@ -369,7 +433,7 @@
       const visible = supported.filter((key) => configured.has(key));
       const cards = visible.map((key) => {
         const info = authProviderInfo(key);
-        const status = authStatusFor(key, configured.has(key));
+        const status = authStatusFor(key, configured.has(key), cfg);
         return { type: "provider", key: info.key, provider: String(info.key || "").toLowerCase(), label: info.label, status, logo: authProviderLogo(info.key) };
       });
       const okCount = cards.filter((card) => card.status.ok).length;
@@ -402,7 +466,7 @@
         <span class="cw-auth-provider-mark">${card.logo}</span>
         <span class="cw-auth-service-copy">
           <strong>${card.label}</strong>
-          <small><span class="cw-auth-status-dot ${card.status.ok ? "ok" : ""}"></span>${card.status.text}</small>
+          <small title="${escHtml(card.status.text)}"><span class="cw-auth-status-dot ${card.status.ok ? "ok" : ""}"></span><span class="cw-auth-status-text">${escHtml(card.status.text)}</span></small>
         </span>
         ${profiles}
         <span class="material-symbols-rounded cw-auth-chevron" aria-hidden="true">chevron_right</span>

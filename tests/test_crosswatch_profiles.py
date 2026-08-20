@@ -2405,6 +2405,25 @@ def test_connection_cards_show_default_and_friendly_profile_names() -> None:
     assert "max-width:" in strip and "overflow:hidden" in strip
 
 
+def test_connection_cards_name_failed_profiles_and_dot_each_profile() -> None:
+    ui = Path("assets/helpers/providers-ui.js").read_text("utf-8")
+
+    assert "function failedProfileIds(" in ui
+    assert "function authProfileState(" in ui
+    assert "Check connection: ${shown}${overflow}" in ui
+    assert "cw-auth-profile-dot" in ui
+    assert "cw-auth-profile-name" in ui
+    assert "is-connected" in ui
+    assert "is-failed" in ui
+
+    css = Path("assets/css/auth-providers.css").read_text("utf-8")
+    assert ".cw-auth-profile-dot.ok" in css
+    assert ".cw-auth-profile-dot.fail" in css
+    assert ".cw-auth-profile-name" in css
+    status_text = css.split(".cw-auth-status-text{", 1)[1].split("}", 1)[0]
+    assert "text-overflow:ellipsis" in status_text
+
+
 def test_connection_delete_guard_ignores_unconfigured_default() -> None:
     ui = Path("assets/helpers/providers-ui.js").read_text("utf-8")
     guard = ui.split("function connectionDeleteBlockedByProfiles(", 1)[1].split("\n  }", 1)[0]
