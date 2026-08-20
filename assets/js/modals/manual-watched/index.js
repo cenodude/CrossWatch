@@ -268,7 +268,7 @@ export default {
       const allowed = maxStep();
       if (state.step > allowed) state.step = allowed;
       const err = validation();
-      root.innerHTML = `<div class="cw-mw">
+      root.innerHTML = `<div class="cw-mw" data-step="${state.step}">
         <div class="cx-head">
           <div class="cw-mw-head">
             <span class="cw-mw-head-icon"><span class="material-symbols-rounded">add_circle</span></span>

@@ -236,46 +236,27 @@ function profileName(instance) {
 }
 
 function userProfileField() {
-  if (!userProfiles.length || props.mode === "edit") return "";
-  const current = String(selectedUserProfileId || "");
-  const options = userProfiles.map((p) => `<option value="${esc(p.id)}" ${p.id === current ? "selected" : ""}>${esc(p.label)}</option>`).join("");
-  return `<div class="scrm-profile-row">${fieldIcon("account_circle", "User profile", `<select class="input" id="scw-user-profile"><option value="">Manual profiles</option>${options}</select>`)}</div>`;
+  const current = String(selectedUserProfileId || selectedWebhook()?.user_profile_id || selectedWebhook()?.profile_id || "");
+  if (!current) return "";
+  const profile = userProfiles.find((p) => p.id === current);
+  if (!profile || !profileCanOwnWebhook(profile, selectedWebhook())) return "";
+  return `<div class="scrm-profile-row">${fieldIcon("account_circle", "Assigned profile", `<div class="scrm-profile-display" aria-label="Assigned user profile"><span>${esc(profile.label)}</span></div>`)}</div>`;
 }
 
-function assignedInstance(profile, provider, kind) {
+function profileInstanceValues(profile, provider) {
   const key = String(provider || "").toUpperCase();
   const raw = profile?.instances?.[key];
-  const values = (Array.isArray(raw) ? raw : [raw]).map((x) => String(x || "").trim()).filter(Boolean);
-  if (!values.length) return "";
-  const configured = kind === "source" ? sourceProfiles(provider) : sinkProfiles(provider);
-  const configuredIds = configured.map((p) => String(p.instance || ""));
-  return values.find((value) => configuredIds.includes(value)) || "";
+  return (Array.isArray(raw) ? raw : [raw]).map((x) => String(x || "").trim()).filter(Boolean);
 }
 
-function applyUserProfile(profileId) {
-  const profile = userProfiles.find((row) => row.id === String(profileId || ""));
-  if (!profile) return false;
-  const sourceChoices = [...webhookSources].filter((provider) => assignedInstance(profile, provider, "source"));
-  const current = selectedWebhook();
-  const provider = sourceChoices.includes(String(current.provider || "").toLowerCase())
-    ? String(current.provider || "").toLowerCase()
-    : (sourceChoices[0] || String(current.provider || "").toLowerCase());
-  const instance = assignedInstance(profile, provider, "source") || current.provider_instance || "default";
-  const sinkChoices = sinks.filter((sink) => sink !== provider && assignedInstance(profile, sink, "sink"));
-  const sink = sinkChoices.includes(String(current.sink || "").toLowerCase())
-    ? String(current.sink || "").toLowerCase()
-    : (sinkChoices[0] || "");
-  props.webhook = {
-    provider,
-    provider_instance: instance,
-    enabled: true,
-    endpoint_url: "",
-    sink,
-    sink_instance: sink ? (assignedInstance(profile, sink, "sink") || selectedSinkInstance(sink) || "default") : "",
-    effective_settings: {},
-    explicit_settings: {},
-  };
-  return true;
+function profileCanOwnWebhook(profile, webhook) {
+  if (!profile || !webhook) return false;
+  const provider = String(webhook.provider || "");
+  const sink = String(webhook.sink || selectedSinkKey() || "");
+  const providerInst = String(webhook.provider_instance || "default").trim() || "default";
+  const sinkInst = String(webhook.sink_instance || selectedSinkInstance(sink) || "default").trim() || "default";
+  if (!provider || !sink) return false;
+  return profileInstanceValues(profile, provider).includes(providerInst) && profileInstanceValues(profile, sink).includes(sinkInst);
 }
 
 function normInst(v) {
@@ -885,12 +866,6 @@ export async function mount(shell, incoming = {}) {
     e.stopPropagation();
   };
   changeHandler = (e) => {
-    if (e.target.id === "scw-user-profile") {
-      const selected = String(e.target.value || "");
-      selectedUserProfileId = applyUserProfile(selected) ? selected : "";
-      render();
-      return;
-    }
     if (e.target.id === "scw-source-provider") {
       selectedUserProfileId = "";
       const provider = String(e.target.value || "plex").toLowerCase();
