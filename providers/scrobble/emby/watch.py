@@ -16,6 +16,7 @@ except Exception:
 from cw_platform.config_base import load_config
 from providers.scrobble.scrobble import Dispatcher, ScrobbleSink, ScrobbleEvent, MediaType, mask_account as _mask_account
 from providers.scrobble.currently_watching import update_from_event as _cw_update, update_from_payload as _cw_update_payload
+from providers.scrobble.media_filters import event_ignore_reason, log_media_filter_drop
 from providers.scrobble.sources import source_enabled
 
 TRAKT_API = "https://api.trakt.tv"
@@ -758,6 +759,14 @@ class EmbyWatchService:
 
     def _passes_filters(self, ev: ScrobbleEvent, cfg: dict[str, Any]) -> bool:
         sk = str(ev.session_key or "")
+        ignore_reason = event_ignore_reason(ev, cfg)
+        if ignore_reason:
+            log_media_filter_drop(ev, ignore_reason)
+            if sk:
+                self._allowed_sessions.discard(sk)
+                self._scrobble_whitelist_sessions.discard(sk)
+            return False
+
         libs = self._scrobble_whitelist(cfg)
 
         if libs:

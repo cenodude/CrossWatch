@@ -410,9 +410,13 @@ function filtersPanel(r, f) {
     rows.push(filterRow({ title: "Server UUID allowlist", subtitle: "Control which servers are allowed.", id: "scr-allow", value: listText(f.server_uuid_whitelist || (f.server_uuid ? [f.server_uuid] : [])), placeholder: "One server UUID per line", dot: "scrm-dot-allow", addLabel: "server UUID", actionAttr: `data-fetch-uuid="scr-allow"`, actionIcon: "search", actionTitle: "Fetch server UUID" }));
     rows.push(filterRow({ title: "Server UUID blocklist", subtitle: "Control which servers are blocked.", id: "scr-block", value: listText(f.server_uuid_blacklist), placeholder: "One server UUID per line", dot: "scrm-dot-block", addLabel: "server UUID", actionAttr: `data-fetch-uuid="scr-block"`, actionIcon: "search", actionTitle: "Fetch server UUID" }));
   }
-  const toggle = isPlex
-    ? `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">live_tv</span><span><strong>Ignore Plex Live TV &amp; DVR</strong><small>Skip scrobbles from live channels and DVR recordings.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-live" ${f.ignore_live_tv_dvr ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`
-    : "";
+  rows.push(filterRow({ title: "Ignored path prefixes", subtitle: "Skip media files under these placeholder folders.", id: "scr-ignore-paths", value: listText(f.ignored_path_prefixes), placeholder: "One path prefix per line", dot: "scrm-dot-block", addLabel: "path" }));
+  rows.push(filterRow({ title: "Ignored filename patterns", subtitle: "Skip media files whose filename contains these values.", id: "scr-ignore-patterns", value: listText(f.ignored_filename_patterns), placeholder: "{edition-Trailer}", dot: "scrm-dot-block", addLabel: "pattern" }));
+  rows.push(filterRow({ title: "Ignored editions", subtitle: "Skip media with these edition names.", id: "scr-ignore-editions", value: listText(f.ignored_editions), placeholder: "Trailer", dot: "scrm-dot-block", addLabel: "edition" }));
+  const toggles = [
+    `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">movie_filter</span><span><strong>Ignore Agregarr placeholder trailers</strong><small>Skip files marked as Trailer editions or stored beside .comingsoon markers.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-ignore-agregarr" ${f.ignore_agregarr_trailers ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`,
+  ];
+  if (isPlex) toggles.push(`<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">live_tv</span><span><strong>Ignore Plex Live TV &amp; DVR</strong><small>Skip scrobbles from live channels and DVR recordings.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-live" ${f.ignore_live_tv_dvr ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`);
   return `
     <section class="scrm-panel ${activeTab === "filters" ? "active" : ""}" data-panel="filters">
       <div class="scrm-journey scrm-journey-compact">
@@ -421,7 +425,7 @@ function filtersPanel(r, f) {
         ${journeyHelp("scrobbler-filters")}
       </div>
       <div class="scrm-filter-rows">${rows.join("")}</div>
-      ${toggle}
+      ${toggles.join("")}
     </section>
   `;
 }
@@ -539,7 +543,7 @@ function render(errors = []) {
         <div class="scrm-panel-shell" data-scrm-provider="${esc(r.provider)}">
           <nav class="cw-subtiles scrm-nav" aria-label="Route sections">
             ${navButton("route", "route", "Route", "Source and destination")}
-            ${navButton("filters", "filter_alt", "Filters", "Users and server IDs")}
+            ${navButton("filters", "filter_alt", "Filters", "Users and media")}
             ${navButton("options", "tune", "Options", "Watchlist and thresholds")}
             ${r.provider === "plex" ? navButton("ratings", "star", "Ratings", "Plex webhook") : ""}
           </nav>
@@ -576,6 +580,10 @@ function collect() {
     server_uuid: allow[0] || "",
     server_uuid_whitelist: allow,
     server_uuid_blacklist: split(root.querySelector("#scr-block")?.value),
+    ignore_agregarr_trailers: !!root.querySelector("#scr-ignore-agregarr")?.checked,
+    ignored_path_prefixes: split(root.querySelector("#scr-ignore-paths")?.value),
+    ignored_filename_patterns: split(root.querySelector("#scr-ignore-patterns")?.value),
+    ignored_editions: split(root.querySelector("#scr-ignore-editions")?.value),
   };
   if (provider === "plex") filters.ignore_live_tv_dvr = !!root.querySelector("#scr-live")?.checked;
   const scrobble = {};

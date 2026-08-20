@@ -1116,9 +1116,10 @@ def process_webhook(
             f"webhook {intended} -> {r.status_code}",
             "DEBUG",
         )
+        activity_recorded = bool(rj.get("activity_recorded")) if isinstance(rj, dict) else False
 
         if r.status_code < 400:
-            if intended == "/scrobble/stop" and prog >= watched_at and not st.get("wl_removed") is True:
+            if activity_recorded and intended == "/scrobble/stop" and prog >= watched_at and not st.get("wl_removed") is True:
                 try:
                     _call_remove_across(ids_all or {}, media_type, origin=f"emby:{provider_instance}")
                     st = {**st, "wl_removed": True}
@@ -1130,7 +1131,7 @@ def process_webhook(
                 "last_event": ev_lc,
                 "last_pause_ts": now if intended == "pause" else st.get("last_pause_ts", 0.0),
                 "prog": prog,
-                "finished": intended == "/scrobble/stop" and prog >= watched_at,
+                "finished": activity_recorded and intended == "/scrobble/stop" and prog >= watched_at,
                 **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
                 "paused": intended == "pause",
                 **({"last_stop_ts": now} if intended == "/scrobble/stop" else {}),
@@ -1148,11 +1149,11 @@ def process_webhook(
             except Exception:
                 pass
 
-            if "trakt" in sinks_cfg and intended == "/scrobble/start":
+            if activity_recorded and "trakt" in sinks_cfg and intended == "/scrobble/start":
                 _archive("scrobble_started", media_type, md, payload, ids_all, acc_title, prog)
-            elif "trakt" in sinks_cfg and intended == "/scrobble/stop" and prog >= watched_at:
+            elif activity_recorded and "trakt" in sinks_cfg and intended == "/scrobble/stop" and prog >= watched_at:
                 _archive("scrobble_completed", media_type, md, payload, ids_all, acc_title, prog)
-            return {"ok": True, "status": 200, "action": intended, "trakt": rj}
+            return {"ok": True, "status": 200, "action": intended, "trakt": rj, "ignored": not activity_recorded}
 
         _emit(logger, f"{intended} {r.status_code} {(str(rj)[:180])}", "ERROR")
         if "trakt" in sinks_cfg and intended in ("/scrobble/start", "/scrobble/stop"):

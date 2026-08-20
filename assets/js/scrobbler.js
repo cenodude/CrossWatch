@@ -80,11 +80,25 @@
     const users = Array.isArray(filters.username_whitelist) ? filters.username_whitelist : [];
     const allow = Array.isArray(filters.server_uuid_whitelist) ? filters.server_uuid_whitelist : [];
     const block = Array.isArray(filters.server_uuid_blacklist) ? filters.server_uuid_blacklist : [];
+    const paths = Array.isArray(filters.ignored_path_prefixes) ? filters.ignored_path_prefixes : [];
+    const patterns = Array.isArray(filters.ignored_filename_patterns) ? filters.ignored_filename_patterns : [];
+    const editions = Array.isArray(filters.ignored_editions) ? filters.ignored_editions : [];
     if (users.length) parts.push(`${users.length} user${users.length === 1 ? "" : "s"}`);
     if (allow.length || filters.server_uuid) parts.push(`${allow.length || 1} UUID allow`);
     if (block.length) parts.push(`${block.length} UUID block`);
+    if (filters.ignore_agregarr_trailers) parts.push("Agregarr ignored");
+    if (paths.length) parts.push(`${paths.length} path ignored`);
+    if (patterns.length) parts.push(`${patterns.length} pattern ignored`);
+    if (editions.length) parts.push(`${editions.length} edition ignored`);
     if (filters.ignore_live_tv_dvr) parts.push("Live TV ignored");
     return parts.length ? parts.join(" - ") : "No filters";
+  }
+
+  function webhookFilterSummary(row = {}) {
+    const provider = String(row.provider || "").toLowerCase();
+    const key = provider === "plex" ? "filters_plex" : provider === "jellyfin" ? "filters_jellyfin" : "filters_emby";
+    const settings = row.effective_settings || {};
+    return routeFilterSummary(settings[key] || {});
   }
 
   function renderHeader(o) {
@@ -139,6 +153,7 @@
               <div class="sc2-route-meta">
                 <span class="sc2-route-type"><span class="material-symbols-rounded">webhook</span>Webhook</span>
                 <span class="sc2-route-id">${esc(text)}</span>
+                <span class="sc2-route-filters sc2-muted">${esc(webhookFilterSummary(x))}</span>
               </div>
               <div class="sc2-route-actions">
                 <button type="button" class="btn small sc2-round-action sc2-route-toggle ${x.enabled ? "is-on" : "is-off"}" data-action="toggle-webhook" data-provider="${esc(x.provider)}" data-instance="${esc(x.provider_instance)}" data-sink="${esc(x.sink)}" title="${esc(x.enabled ? "Disable source webhooks" : "Enable source webhooks")}" aria-label="${esc(x.enabled ? "Disable source webhooks" : "Enable source webhooks")}"><span class="material-symbols-rounded">power_settings_new</span><span>${x.enabled ? "On" : "Off"}</span></button>

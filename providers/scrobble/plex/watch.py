@@ -30,6 +30,7 @@ from providers.scrobble.scrobble import (
     mask_account as _mask_account,
 )
 from providers.scrobble.currently_watching import update_from_event as _cw_update, update_from_payload as _cw_update_payload
+from providers.scrobble.media_filters import event_ignore_reason, log_media_filter_drop
 from providers.scrobble.sources import source_enabled
 
 
@@ -773,6 +774,13 @@ class WatchService:
 
         cfg = self._active_cfg()
 
+        ignore_reason = event_ignore_reason(ev, cfg)
+        if ignore_reason:
+            log_media_filter_drop(ev, ignore_reason)
+            if cache_key:
+                self._allowed_sessions.discard(cache_key)
+            return False
+
         # # A whitelist must be validated per event
         libs = _as_set_str((((cfg.get("plex") or {}).get("scrobble") or {}).get("libraries")))
         if libs:
@@ -933,6 +941,35 @@ class WatchService:
             ids_raw: dict[str, Any] = dict(ev.ids or {}, plex=int(rk))
             ids_raw.update(_ids_from_guids_any(getattr(it, "guids", [])))
             ids = _normalize_ids(ids_raw)
+            raw = dict(ev.raw or {})
+            paths: list[str] = []
+            try:
+                parts = it.iterParts() if callable(getattr(it, "iterParts", None)) else []
+                for part in parts:
+                    file_val = getattr(part, "file", None)
+                    if file_val:
+                        paths.append(str(file_val))
+            except Exception:
+                pass
+            if not paths:
+                try:
+                    for media in getattr(it, "media", []) or []:
+                        for part in getattr(media, "parts", []) or []:
+                            file_val = getattr(part, "file", None)
+                            if file_val:
+                                paths.append(str(file_val))
+                except Exception:
+                    pass
+            if paths:
+                raw["_cw_file_paths"] = paths
+            for attr in ("editionTitle", "edition", "versionTitle"):
+                try:
+                    val = getattr(it, attr, None)
+                    if val:
+                        raw["_cw_edition_title"] = str(val)
+                        break
+                except Exception:
+                    pass
             season, number = ev.season, ev.number
             if media_type == "episode":
                 try:
@@ -960,7 +997,7 @@ class WatchService:
                 account=account,
                 server_uuid=ev.server_uuid,
                 session_key=ev.session_key,
-                raw=ev.raw,
+                raw=raw,
             )
         except Exception:
             return ev
@@ -1158,6 +1195,15 @@ class WatchService:
                 return
             ev = enriched
             sk = str(ev.session_key) if ev.session_key else None
+            ignore_reason = event_ignore_reason(ev, cfg)
+            if ignore_reason:
+                log_media_filter_drop(ev, ignore_reason)
+                if sk:
+                    cache_key = f"{sk}|{_norm_user(ev.account or '')}|{str(ev.server_uuid or '').strip().lower()}"
+                    self._allowed_sessions.discard(cache_key)
+                self._throttled_filtered_log(ev)
+                self._clear_currently_watching(ev)
+                return
             vo = None
             dur = None
             if isinstance(best_psn, dict):

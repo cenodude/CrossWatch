@@ -1625,9 +1625,10 @@ def process_webhook(
     except Exception:
         rj = {"raw": (r.text or "")[:200]}
     _emit(logger, f"webhook {intended} -> {r.status_code}", "DEBUG")
+    activity_recorded = bool(rj.get("activity_recorded")) if isinstance(rj, dict) else False
 
     if r.status_code < 400:
-        if intended == "/scrobble/stop" and prog >= watched_at and not (st.get("wl_removed") is True):
+        if activity_recorded and intended == "/scrobble/stop" and prog >= watched_at and not (st.get("wl_removed") is True):
             try:
                 _call_remove_across(ids_all2 or {}, media_type, origin=f"plex:{provider_instance}")
                 st = {**st, "wl_removed": True}
@@ -1637,21 +1638,21 @@ def process_webhook(
             "last_event": event,
             "last_pause_ts": (now if intended == "pause" else st.get("last_pause_ts", 0)),
             "prog": prog,
-            "finished": (intended == "/scrobble/stop" and prog >= watched_at),
+            "finished": (activity_recorded and intended == "/scrobble/stop" and prog >= watched_at),
             **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
         }
-        if intended == "/scrobble/stop" and prog >= watched_at:
+        if activity_recorded and intended == "/scrobble/stop" and prog >= watched_at:
             _LAST_FINISH_BY_ACC[_account_key(payload)] = {"rk": str(rk or ""), "ts": now}
         try:
             action_name = intended.rsplit("/", 1)[-1]
             _emit(logger, f"user='{_mask_account(acc_title)}' {action_name} {prog:.1f}% • {media_name_dbg}", "INFO")
         except Exception:
             pass
-        if "trakt" in sinks_cfg and intended == "/scrobble/start":
+        if activity_recorded and "trakt" in sinks_cfg and intended == "/scrobble/start":
             _archive("scrobble_started", media_type, md, ids_all2, acc_title, prog)
-        elif "trakt" in sinks_cfg and intended == "/scrobble/stop" and prog >= watched_at:
+        elif activity_recorded and "trakt" in sinks_cfg and intended == "/scrobble/stop" and prog >= watched_at:
             _archive("scrobble_completed", media_type, md, ids_all2, acc_title, prog)
-        return {"ok": True, "status": 200, "action": intended, "trakt": rj}
+        return {"ok": True, "status": 200, "action": intended, "trakt": rj, "ignored": not activity_recorded}
 
     if event in ("media.stop", "media.scrobble") and prog >= force_stop_at:
         _LAST_FINISH_BY_ACC[_account_key(payload)] = {"rk": str(rk or ""), "ts": now}

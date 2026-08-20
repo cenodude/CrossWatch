@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Iterable, Literal, Protocol
 
 from cw_platform.account_match import media_account_allowed, normalize_media_account_name
+from providers.scrobble.media_filters import event_ignore_reason, log_media_filter_drop
 
 try:
     from _logging import log as BASE_LOG
@@ -384,6 +385,13 @@ class Dispatcher:
         cache_key: str | None = None
         if ev.session_key:
             cache_key = f"{ev.session_key}|{_norm_user(ev.account or '')}|{str(ev.server_uuid or '').strip().lower()}"
+
+        ignore_reason = event_ignore_reason(ev, cfg)
+        if ignore_reason:
+            log_media_filter_drop(ev, ignore_reason)
+            return False
+
+        if cache_key:
             if cache_key in self._session_ok:
                 return True
 
