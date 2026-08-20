@@ -103,11 +103,6 @@ def _row_to_minimal(row: Mapping[str, Any]) -> dict[str, Any] | None:
             "season": season,
             "episode": episode,
         }
-        ep_tmdb = _as_int(_pick(data, "episode_tmdb_id", "episodeTmdbId"))
-        if not ep_tmdb and _pick(data, "show_tmdb_id", "showTmdbId", "showTmdbID") is not None:
-            ep_tmdb = _as_int(_pick(data, "tmdbId"))
-        if ep_tmdb:
-            out["ids"] = {"tmdb": str(ep_tmdb)}
         series_title = str(_pick(data, "series_title", "show_title", "showTitle", "title") or "").strip()
         if series_title:
             out["series_title"] = series_title

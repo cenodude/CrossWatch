@@ -177,9 +177,6 @@ def _row_to_minimal(row: Mapping[str, Any], adapter: Any | None = None) -> dict[
             "season": season,
             "episode": episode,
         }
-        ep_tmdb = _as_int(row.get("tmdbId"))
-        if ep_tmdb:
-            out["ids"] = {"tmdb": str(ep_tmdb)}
         show_title = str(row.get("showTitle") or "").strip()
         if show_title:
             out["series_title"] = show_title
