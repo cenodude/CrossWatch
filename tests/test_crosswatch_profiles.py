@@ -2616,6 +2616,20 @@ def test_cards_tag_user_profile_class() -> None:
     assert '${r.user_profile_label ? "has-user-profile" : ""}' in routes
 
 
+def test_scrobbler_cards_summarize_media_ignore_filters() -> None:
+    js = Path("assets/js/scrobbler.js").read_text("utf-8")
+    webhooks = js.split("function renderWebhooks(", 1)[1].split("function renderRoutes(", 1)[0]
+    routes = js.split("function renderRoutes(", 1)[1]
+
+    assert "ignore_agregarr_trailers" in js
+    assert "ignored_path_prefixes" in js
+    assert "ignored_filename_patterns" in js
+    assert "ignored_editions" in js
+    assert "function webhookFilterSummary(row = {})" in js
+    assert "${esc(webhookFilterSummary(x))}" in webhooks
+    assert "${esc(routeFilterSummary(r.filters))}" in routes
+
+
 def test_pair_config_profile_selector_sits_before_mode_control() -> None:
     js = Path("assets/js/modals/pair-config/index.js").read_text("utf-8")
     css = Path("assets/js/modals/pair-config/styles.css").read_text("utf-8")

@@ -10,6 +10,7 @@ from typing import Any
 from cw_platform.provider_instances import normalize_instance_id
 from cw_platform.access_policy import webhook_effective_profile_id
 from cw_platform.user_profile_resources import webhook_assigned_profile_id, webhook_resource_id
+from providers.scrobble.media_filters import event_ignore_reason, log_media_filter_drop
 from providers.scrobble.scrobble import ScrobbleAction, ScrobbleEvent
 from providers.webhooks.config import sink_configured, webhook_settings, webhook_sink_instance, webhook_sinks
 
@@ -221,12 +222,18 @@ def dispatch_scrobble(
     dispatched: list[str] = []
     for sink in sinks:
         inst = webhook_sink_instance(wh, sink)
+        route_cfg = _route_cfg(cfg, provider_lc, provider_inst, sink, inst)
+        ignore_reason = event_ignore_reason(ev, route_cfg)
+        if ignore_reason:
+            log_media_filter_drop(ev, ignore_reason)
+            _emit(logger, f"webhook sink {sink}:{inst} skipped by media filter: {ignore_reason}", "DEBUG")
+            targets.append({"target": sink, "target_instance": inst, "ok": True, "skipped": True, "ignored": True, "reason": ignore_reason})
+            continue
         if not sink_configured(cfg, sink, inst):
             targets.append({"target": sink, "target_instance": inst, "ok": False, "skipped": True, "error": "not_configured"})
             _emit(logger, f"webhook sink {sink}:{inst} skipped: not configured in Connections", "WARNING")
             continue
         dispatched.append(sink)
-        route_cfg = _route_cfg(cfg, provider_lc, provider_inst, sink, inst)
 
         def _provider(route_cfg: dict[str, Any] = route_cfg) -> dict[str, Any]:
             return route_cfg
@@ -244,7 +251,7 @@ def dispatch_scrobble(
         "action": path,
         "status": 200 if ok else 502,
         "route_dispatch": True,
-        "activity_recorded": True,
+        "activity_recorded": any(not bool(t.get("skipped")) and bool(t.get("ok")) for t in targets),
         "targets": targets,
     }
     _emit(logger, f"webhook dispatch {path} -> {','.join(dispatched) or 'none'} status={payload['status']}", "DEBUG")

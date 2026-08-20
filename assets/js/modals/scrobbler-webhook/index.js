@@ -474,6 +474,9 @@ function filtersPanel(provider, filt) {
     rows.push(filterRow({ title: "Server UUID allowlist", subtitle: "Control which servers are allowed.", id: "scw-allow", value: valuesText(filt.server_uuid_whitelist || (filt.server_uuid ? [filt.server_uuid] : [])), placeholder: "One server UUID per line", dot: "scrm-dot-allow", addLabel: "server UUID", actionAttr: `data-fetch-uuid="scw-allow"`, actionIcon: "search", actionTitle: "Fetch server UUID" }));
     rows.push(filterRow({ title: "Server UUID blocklist", subtitle: "Control which servers are blocked.", id: "scw-block", value: valuesText(filt.server_uuid_blacklist), placeholder: "One server UUID per line", dot: "scrm-dot-block", addLabel: "server UUID", actionAttr: `data-fetch-uuid="scw-block"`, actionIcon: "search", actionTitle: "Fetch server UUID" }));
   }
+  rows.push(filterRow({ title: "Ignored path prefixes", subtitle: "Skip media files under these placeholder folders.", id: "scw-ignore-paths", value: valuesText(filt.ignored_path_prefixes), placeholder: "One path prefix per line", dot: "scrm-dot-block", addLabel: "path" }));
+  rows.push(filterRow({ title: "Ignored filename patterns", subtitle: "Skip media files whose filename contains these values.", id: "scw-ignore-patterns", value: valuesText(filt.ignored_filename_patterns), placeholder: "{edition-Trailer}", dot: "scrm-dot-block", addLabel: "pattern" }));
+  rows.push(filterRow({ title: "Ignored editions", subtitle: "Skip media with these edition names.", id: "scw-ignore-editions", value: valuesText(filt.ignored_editions), placeholder: "Trailer", dot: "scrm-dot-block", addLabel: "edition" }));
   return `
     <section class="scrm-panel ${activeTab === "filters" ? "active" : ""}" data-panel="filters">
       <div class="scrm-journey scrm-journey-compact">
@@ -482,6 +485,7 @@ function filtersPanel(provider, filt) {
         ${journeyHelp("scrobbler-filters")}
       </div>
       <div class="scrm-filter-rows">${rows.join("")}</div>
+      <label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">movie_filter</span><span><strong>Ignore Agregarr placeholder trailers</strong><small>Skip files marked as Trailer editions or stored beside .comingsoon markers.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scw-ignore-agregarr" ${filt.ignore_agregarr_trailers ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>
     </section>
   `;
 }
@@ -588,7 +592,7 @@ function render(errs = []) {
         <div class="scrm-panel-shell" data-scrm-provider="${esc(provider)}">
           <nav class="cw-subtiles scrm-nav" aria-label="Webhook sections">
             ${navButton("source", "webhook", "Source", "Profile, destinations, URL")}
-            ${navButton("filters", "filter_alt", "Filters", "Users and server IDs")}
+            ${navButton("filters", "filter_alt", "Filters", "Users and media")}
             ${navButton("options", "tune", "Options", "Thresholds")}
             ${provider === "plex" ? navButton("ratings", "star", "Ratings", "Plex ratings") : ""}
           </nav>
@@ -630,7 +634,13 @@ function payload() {
     body.sink_instances = { [sink]: root.querySelector("#scw-sink-instance")?.value || "default" };
     if (originalSink && originalSink !== sink) body.prev_sink = originalSink;
   }
-  body.filters = { username_whitelist: splitValues(root.querySelector("#scw-users")?.value) };
+  body.filters = {
+    username_whitelist: splitValues(root.querySelector("#scw-users")?.value),
+    ignore_agregarr_trailers: !!root.querySelector("#scw-ignore-agregarr")?.checked,
+    ignored_path_prefixes: splitValues(root.querySelector("#scw-ignore-paths")?.value),
+    ignored_filename_patterns: splitValues(root.querySelector("#scw-ignore-patterns")?.value),
+    ignored_editions: splitValues(root.querySelector("#scw-ignore-editions")?.value),
+  };
   if (provider === "plex") {
     body.filters.server_uuid_whitelist = splitValues(root.querySelector("#scw-allow")?.value);
     body.filters.server_uuid_blacklist = splitValues(root.querySelector("#scw-block")?.value);
