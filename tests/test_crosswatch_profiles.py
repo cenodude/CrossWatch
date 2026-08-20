@@ -2411,6 +2411,8 @@ def test_connection_cards_name_failed_profiles_and_dot_each_profile() -> None:
     assert "function failedProfileIds(" in ui
     assert "function authProfileState(" in ui
     assert "Check connection: ${shown}${overflow}" in ui
+    assert "if (entry.configured === true) return \"ok\";" in ui
+    assert "data?.instances && typeof data.instances === \"object\"" in ui
     assert "cw-auth-profile-dot" in ui
     assert "cw-auth-profile-name" in ui
     assert "is-connected" in ui
