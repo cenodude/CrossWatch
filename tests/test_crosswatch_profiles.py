@@ -2651,7 +2651,7 @@ def test_scrobbler_cards_summarize_media_ignore_filters() -> None:
     assert "${esc(routeFilterSummary(r.filters))}" in routes
 
 
-def test_pair_config_profile_selector_sits_before_mode_control() -> None:
+def test_pair_config_profile_display_sits_before_mode_control() -> None:
     js = Path("assets/js/modals/pair-config/index.js").read_text("utf-8")
     css = Path("assets/js/modals/pair-config/styles.css").read_text("utf-8")
 
@@ -2659,16 +2659,16 @@ def test_pair_config_profile_selector_sits_before_mode_control() -> None:
     assert js.index("cx-user-profile-slot") < js.index("flow-mode-inline")
     assert "slot.appendChild(row)" in js
     assert ".flow-control-row" in css
-    assert "cx-user-profile-select" in js
+    assert "cx-user-profile-display" in js
     assert "resetPairUserProfileControl(state)" in js
-    assert 'sel.value=""' in js
     assert "selected_user_profile_id" in js
-    assert "applying_user_profile" in js
     assert "eligiblePairUserProfiles(state)" in js
     assert "profileCanOwnCurrentPair(profile,state)" in js
-    assert ".cx-user-profile-select" in css
+    assert ".cx-user-profile-display" in css
     assert "cx-user-profile-label" not in js
     assert ">User profile<" not in js
+    assert "id=\"cx-user-profile\"" not in js
+    assert "enhanceUserProfile" not in js
     assert "display_label||x.label||x.id" in js
     assert 'title="${escHTML(row.id)}"' in js
 
@@ -2711,23 +2711,25 @@ def test_provider_instances_report_unconfigured_default_beside_configured_profil
     assert by_id["default"]["configured"] is False
     assert by_id["PLEX-P01"]["configured"] is True
 
-def test_scrobbler_modals_have_conditional_user_profile_selector() -> None:
+def test_scrobbler_modals_have_conditional_user_profile_display() -> None:
     route_js = Path("assets/js/modals/scrobbler-route/index.js").read_text("utf-8")
     webhook_js = Path("assets/js/modals/scrobbler-webhook/index.js").read_text("utf-8")
     css = Path("assets/css/components.css").read_text("utf-8")
 
     assert "/api/user-profiles" in route_js
     assert "/api/user-profiles" in webhook_js
-    assert "id=\"scr-user-profile\"" in route_js
-    assert "id=\"scw-user-profile\"" in webhook_js
-    assert "if (!userProfiles.length) return \"\"" in route_js
-    assert "if (!userProfiles.length || props.mode === \"edit\") return \"\"" in webhook_js
+    assert "id=\"scr-user-profile\"" not in route_js
+    assert "id=\"scw-user-profile\"" not in webhook_js
+    assert "scrm-profile-display" in route_js
+    assert "scrm-profile-display" in webhook_js
+    assert "profileCanOwnRoute(profile, draft || {})" in route_js
+    assert "profileCanOwnWebhook(profile, selectedWebhook())" in webhook_js
     assert "selectedUserProfileId" in route_js
     assert "selectedUserProfileId" in webhook_js
-    assert 'selectedUserProfileId = applyUserProfile(selected) ? selected : ""' in route_js
-    assert 'selectedUserProfileId = applyUserProfile(selected) ? selected : ""' in webhook_js
-    assert '${p.id === current ? "selected" : ""}' in route_js
-    assert '${p.id === current ? "selected" : ""}' in webhook_js
+    assert "applyUserProfile" not in route_js
+    assert "applyUserProfile" not in webhook_js
+    assert "Manual profiles" not in webhook_js
+    assert "Unassigned" not in route_js
     assert "profileOptionLabel(profile)" in route_js
     assert "profileOptionLabel(profile)" in webhook_js
     assert "display_label || profile?.label" in route_js
@@ -2735,6 +2737,7 @@ def test_scrobbler_modals_have_conditional_user_profile_selector() -> None:
     assert 'title="${esc(p.instance)}"' in route_js
     assert 'title="${esc(p.instance)}"' in webhook_js
     assert ".scrm-profile-row" in css
+    assert ".scrm-profile-display" in css
 
 
 def test_version_stamp_file_beats_stale_env(tmp_path, monkeypatch) -> None:

@@ -187,39 +187,27 @@ function profileName(instance) {
 }
 
 function userProfileField() {
-  if (!userProfiles.length) return "";
   const current = String(selectedUserProfileId || draft?.profile_id || "");
-  const options = userProfiles.map((p) => `<option value="${esc(p.id)}" ${p.id === current ? "selected" : ""}>${esc(p.label)}</option>`).join("");
-  return `<div class="scrm-profile-row">${fieldIcon("account_circle", "Assigned profile", `<select class="input" id="scr-user-profile"><option value="">Unassigned</option>${options}</select>`)}</div>`;
+  if (!current) return "";
+  const profile = userProfiles.find((p) => p.id === current);
+  if (!profile || !profileCanOwnRoute(profile, draft || {})) return "";
+  return `<div class="scrm-profile-row">${fieldIcon("account_circle", "Assigned profile", `<div class="scrm-profile-display" aria-label="Assigned user profile"><span>${esc(profile.label)}</span></div>`)}</div>`;
 }
 
-function assignedInstance(profile, provider, kind) {
+function profileInstanceValues(profile, provider) {
   const key = String(provider || "").toUpperCase();
   const raw = profile?.instances?.[key];
-  const values = (Array.isArray(raw) ? raw : [raw]).map((x) => String(x || "").trim()).filter(Boolean);
-  if (!values.length) return "";
-  const configured = (kind === "source" ? allSourceProfiles(provider) : allSinkProfiles(provider)).map((p) => String(p.instance || ""));
-  return values.find((value) => configured.includes(value)) || "";
+  return (Array.isArray(raw) ? raw : [raw]).map((x) => String(x || "").trim()).filter(Boolean);
 }
 
-function applyUserProfile(profileId) {
-  const profile = userProfiles.find((row) => row.id === String(profileId || ""));
-  draft.profile_id = profile ? String(profile.id || "") : "";
-  if (!profile) return false;
-  const srcChoices = sources.filter((provider) => assignedInstance(profile, provider, "source"));
-  const sinkChoices = sinks.filter((provider) => provider !== draft.provider && assignedInstance(profile, provider, "sink"));
-  if (srcChoices.length) {
-    draft.provider = srcChoices.includes(draft.provider) ? draft.provider : srcChoices[0];
-    draft.provider_instance = assignedInstance(profile, draft.provider, "source") || draft.provider_instance;
-  }
-  if (draft.sink === draft.provider) draft.sink = "";
-  const nextSinkChoices = sinks.filter((provider) => provider !== draft.provider && assignedInstance(profile, provider, "sink"));
-  const choices = nextSinkChoices.length ? nextSinkChoices : sinkChoices;
-  if (choices.length) {
-    draft.sink = choices.includes(draft.sink) ? draft.sink : choices[0];
-    draft.sink_instance = assignedInstance(profile, draft.sink, "sink") || draft.sink_instance;
-  }
-  return true;
+function profileCanOwnRoute(profile, route) {
+  if (!profile || !route) return false;
+  const src = String(route.provider || "");
+  const sink = String(route.sink || "");
+  const srcInst = String(route.provider_instance || "default").trim() || "default";
+  const sinkInst = String(route.sink_instance || "default").trim() || "default";
+  if (!src || !sink) return false;
+  return profileInstanceValues(profile, src).includes(srcInst) && profileInstanceValues(profile, sink).includes(sinkInst);
 }
 
 function normInst(v) {
@@ -606,7 +594,7 @@ function collect() {
     provider_instance: providerInstanceEl ? providerInstanceEl.value : draft.provider_instance || "",
     sink: sinkEl ? sinkEl.value : draft.sink || "",
     sink_instance: sinkInstanceEl ? sinkInstanceEl.value : draft.sink_instance || "",
-    profile_id: root.querySelector("#scr-user-profile")?.value || selectedUserProfileId || draft.profile_id || "",
+    profile_id: selectedUserProfileId || draft.profile_id || "",
     filters,
     options: {
       auto_remove_watchlist: root.querySelector("#scr-auto")?.value || "inherit",
@@ -819,15 +807,6 @@ export async function mount(shell, incoming = {}) {
     e.stopPropagation();
   };
   changeHandler = (e) => {
-    if (e.target.id === "scr-user-profile") {
-      const keepTab = currentActiveTab();
-      syncDraftFromDom();
-      const selected = String(e.target.value || "");
-      selectedUserProfileId = applyUserProfile(selected) ? selected : "";
-      render();
-      preserveVisiblePanel(keepTab);
-      return;
-    }
     if (["scr-provider", "scr-sink"].includes(e.target.id)) {
       const keepTab = currentActiveTab();
       syncDraftFromDom();

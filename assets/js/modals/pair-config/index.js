@@ -234,7 +234,7 @@ const tpl=()=>`
 // State
 function defaultState(){
   return {
-    providers:[],src:null,dst:null,src_instance:"default",dst_instance:"default",instanceMap:{},instancesLoaded:false,savedInstances:{src:null,dst:null},userProfiles:[],selected_user_profile_id:"",applying_user_profile:false,feature:"globals",mode:"one-way",enabled:true,
+    providers:[],src:null,dst:null,src_instance:"default",dst_instance:"default",instanceMap:{},instancesLoaded:false,savedInstances:{src:null,dst:null},userProfiles:[],selected_user_profile_id:"",feature:"globals",mode:"one-way",enabled:true,
     options:{
       watchlist:{enable:false,add:false,remove:false},
       ratings:{enable:false,add:false,remove:false,types:["movies","shows","seasons","episodes"],mode:"all",from_date:""},
@@ -749,7 +749,7 @@ function renderInstanceSelects(state){
   state.src_instance=norm(srcInstSel.value);
   state.dst_instance=norm(dstInstSel.value);
 
-  const onInstChange=()=>{if(!state.applying_user_profile) resetPairUserProfileControl(state);try{renderFeaturePanel(state)}catch{}};
+  const onInstChange=()=>{resetPairUserProfileControl(state);try{renderFeaturePanel(state)}catch{}};
   srcInstSel.onchange=()=>{state.src_instance=norm(srcInstSel.value);onInstChange()};
   dstInstSel.onchange=()=>{state.dst_instance=norm(dstInstSel.value);onInstChange()};
 
@@ -762,9 +762,7 @@ function renderInstanceSelects(state){
 
 function resetPairUserProfileControl(state){
   if(state) state.selected_user_profile_id="";
-  const sel=ID("cx-user-profile");
-  if(!sel) return;
-  sel.value="";
+  try{if(state)renderPairUserProfileControl(state)}catch{}
 }
 
 function profileInstanceValues(profile, provider){
@@ -796,28 +794,15 @@ function renderPairUserProfileControl(state){
     row=document.createElement("div");
     row.id="cx-user-profile-row";
     row.className="cx-user-profile-row";
-    row.innerHTML=`<select id="cx-user-profile" class="cx-user-profile-select" aria-label="Connection user profile"></select>`;
     slot.appendChild(row);
   }
-  const allProfiles=Array.isArray(state.userProfiles)?state.userProfiles:[];
-  const profiles=eligiblePairUserProfiles(state);
-  slot.classList.toggle("hidden",!allProfiles.length);
-  row.classList.toggle("hidden",!allProfiles.length);
-  const sel=ID("cx-user-profile");
-  if(!sel) return;
-  const current=String(state.selected_user_profile_id||sel.value||"");
-  sel.innerHTML=`<option value="">Unassigned</option>${profiles.map(p=>`<option value="${escHTML(p.id)}">${escHTML(p.label)}</option>`).join("")}`;
-  const keep=profiles.some(p=>p.id===current)?current:"";
-  sel.value=keep;
-  state.selected_user_profile_id=keep;
-  try{G.CW?.ProfileSelect?.enhanceUserProfile?.(sel,{className:"cx-profile-select-glass"});}catch{}
-  if(sel.__cwUserProfileBound) return;
-  sel.__cwUserProfileBound=true;
-  sel.addEventListener("change",()=>{
-    const selected=String(sel.value||"");
-    const profile=eligiblePairUserProfiles(state).find(p=>p.id===selected);
-    state.selected_user_profile_id=profile?selected:"";
-  });
+  const current=String(state.selected_user_profile_id||"");
+  const profile=current?eligiblePairUserProfiles(state).find(p=>p.id===current):null;
+  if(!profile) state.selected_user_profile_id="";
+  const show=!!profile;
+  slot.classList.toggle("hidden",!show);
+  row.classList.toggle("hidden",!show);
+  row.innerHTML=show?`<div class="cx-user-profile-display" aria-label="Assigned user profile"><span class="material-symbols-rounded" aria-hidden="true">account_circle</span><span>${escHTML(profile.label)}</span></div>`:"";
 }
 
 // Fold toggles (works with draggable modals)
@@ -2614,7 +2599,7 @@ function buildPayload(state,wrap){
   const features=sanitizeFeaturesForPair({src,dst,twoWay:modeTwo},{watchlist,ratings,history,progress,playlists:get("playlists")});
   const payload={source:src,target:dst,source_instance:String(srcInst||"default"),target_instance:String(dstInst||"default"),enabled,mode:modeTwo?"two-way":"one-way",features};
   const eid=wrap.dataset&&wrap.dataset.editingId?String(wrap.dataset.editingId||""):"";
-  const selectedProfileId=String(state.selected_user_profile_id||ID("cx-user-profile")?.value||"").trim();
+  const selectedProfileId=String(state.selected_user_profile_id||"").trim();
   if(selectedProfileId||eid) payload.profile_id=selectedProfileId;
   const prov={};
   const pp=state.pairProviders||{};
