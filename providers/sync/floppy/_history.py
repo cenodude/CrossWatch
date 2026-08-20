@@ -328,20 +328,39 @@ def _rekey_to_source_numbering(adapter: Any, out: dict[str, dict[str, Any]]) -> 
 def _write_coord_result(adapter: Any, tmdb_id: str, item: Mapping[str, Any], season: int, episode: int) -> tuple[int, int, bool]:
     stored = _floppy_coord(item)
     if stored is not None:
-        return stored[0], stored[1], False
+        return stored[0], stored[1], _anime_write_needs_readback(adapter, item, season, episode, stored[0], stored[1])
     absolute = _explicit_absolute(item)
     if absolute is None:
-        return season, episode, False
+        return season, episode, _anime_write_needs_readback(adapter, item, season, episode, season, episode)
     mapped = _anime_coordinate_for_absolute(adapter, tmdb_id, item, absolute)
     if mapped is not None:
-        return mapped[0], mapped[1], mapped != (season, episode)
+        return mapped[0], mapped[1], _anime_write_needs_readback(adapter, item, season, episode, mapped[0], mapped[1])
     layout = show_layout(adapter, tmdb_id)
     if not layout or has_coord(layout, season, episode):
-        return season, episode, False
+        return season, episode, _anime_write_needs_readback(adapter, item, season, episode, season, episode)
     real = absolute_to_coord(layout, absolute)
     if real is not None:
-        return real[0], real[1], real != (season, episode)
-    return season, episode, False
+        return real[0], real[1], _anime_write_needs_readback(adapter, item, season, episode, real[0], real[1])
+    return season, episode, _anime_write_needs_readback(adapter, item, season, episode, season, episode)
+
+
+def _anime_write_needs_readback(
+    adapter: Any,
+    item: Mapping[str, Any],
+    source_season: int,
+    source_episode: int,
+    write_season: int,
+    write_episode: int,
+) -> bool:
+    if _floppy_coord(item) is not None and _explicit_absolute(item) is None and not _anime_native_ids(item):
+        return False
+    if not _anime_mapping_enabled(adapter):
+        return (write_season, write_episode) != (source_season, source_episode)
+    if _explicit_absolute(item) is not None:
+        return True
+    if _anime_native_ids(item):
+        return True
+    return (write_season, write_episode) != (source_season, source_episode)
 
 
 def _write_coord(adapter: Any, tmdb_id: str, item: Mapping[str, Any], season: int, episode: int) -> tuple[int, int]:
@@ -371,11 +390,11 @@ def _episode_history(adapter: Any, tmdb_id: str, season: int, episode: int) -> l
         return []
 
 
-def _history_rows_include_write(adapter: Any, item: Mapping[str, Any], rows: Iterable[Mapping[str, Any]]) -> bool:
+def _history_rows_include_write(adapter: Any, item: Mapping[str, Any], rows: Iterable[Mapping[str, Any]], *, exact_time: bool = False) -> bool:
     rows_list = [row for row in rows or [] if isinstance(row, Mapping)]
     if not rows_list:
         return False
-    if not _rewatches_enabled(adapter):
+    if not exact_time and not _rewatches_enabled(adapter):
         return True
     target = history_epoch_from_value(_watched_at(item))
     if target is None:
@@ -525,7 +544,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
                 existing_history = _episode_history(adapter, tmdb_id, season, episode)
                 if _rewatches_enabled(adapter) or not existing_history:
                     api_post(adapter, f"media/tv/tmdb/{tmdb_id}/{season}/episodes/{episode}/watch", json={"end_date": _watched_at(raw)})
-                if verify_after_write and not _history_rows_include_write(adapter, raw, _episode_history(adapter, tmdb_id, season, episode)):
+                if verify_after_write and not _history_rows_include_write(adapter, raw, _episode_history(adapter, tmdb_id, season, episode), exact_time=True):
                     entry = unresolved(raw, "floppy_history_write_not_readable")
                     unresolved_rows.append(entry)
                     results.append(entry)
