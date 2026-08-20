@@ -494,6 +494,7 @@
       : String(window.CW?.OverviewProfile?.id || "");
     select.value = [...select.options].some((o) => o.value === want) ? want : "";
     state.filters.user_profile = select.value;
+    try { window.CW?.ProfileSelect?.enhanceProfile?.(select, { className: "cw-plain-select" }); } catch {}
   }
 
   function providerOptions() {
@@ -511,6 +512,7 @@
     if ([...select.options].some((o) => o.value === cur)) select.value = cur;
     window.CW?.IconSelect?.enhance?.(select, {
       className: "cw-plain-select",
+      menuMinWidth: 260,
       getOptionData: (value, option) => {
         if (!value) return { label: "All Providers" };
         const provider = option?.dataset?.provider || String(value).split(":")[0];
@@ -705,7 +707,11 @@
     const grid = document.getElementById("pp-grid");
     grid.classList.remove("pp-loading-grid");
     const ratingFilter = document.getElementById("pp-rating");
-    ratingFilter.classList.toggle("hidden", !state.items.some((it) => Number(it.rating) > 0));
+    const showRating = state.items.some((it) => Number(it.rating) > 0);
+    ratingFilter.classList.toggle("hidden", !showRating);
+    if (showRating) {
+      try { window.CW?.IconSelect?.enhance?.(ratingFilter, { className: "cw-plain-select" }); } catch {}
+    }
     const markup = state.items.length ? state.items.map(card).join("") : `<div class="pp-empty">No playback records found.</div>`;
     if (preserveArtwork && state.items.length && grid.children.length) {
       const existing = new Map(
