@@ -1384,6 +1384,11 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
     src_alias = _alias_index(src_idx)
     dst_alias = _alias_index(dst_full)
 
+    try:
+        unresolved_known = set(load_unresolved_keys(dst, feature, cross_features=_cross_feature_unresolved(feature)) or [])
+    except Exception:
+        unresolved_known = set()
+
     if adds:
         # Progress uses upsert semantics (update resume position)
         if feature not in ("ratings", "history", "progress"):
@@ -1395,6 +1400,9 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                 ck = _ck(it) or ""
                 if ck and _history_ts_from_key(ck) is None and _present(dst_full, dst_alias, it):
                     if _coord_only_present(dst_full, dst_alias, it):
+                        if _sync_key(it) in unresolved_known:
+                            pruned.append(it)
+                            continue
                         coord_pruned += 1
                     continue
                 pruned.append(it)
@@ -1561,11 +1569,6 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                 blocked_keys=int(len(manual_blocks)),
             )
             ctx.stats_manual_blocked = int(getattr(ctx, "stats_manual_blocked", 0) or 0) + int(manual_blocked)
-
-    try:
-        unresolved_known = set(load_unresolved_keys(dst, feature, cross_features=_cross_feature_unresolved(feature)) or [])
-    except Exception:
-        unresolved_known = set()
 
     if unresolved_known:
         try:

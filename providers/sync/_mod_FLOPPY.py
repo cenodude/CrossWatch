@@ -136,6 +136,11 @@ class FLOPPYModule:
         mod = _FEATURE_MODULES.get(str(feature or "").strip().lower())
         return mod.build_index(self, **kwargs) if mod else {}
 
+    def destination_comparison_view(self, feature: str, index: Mapping[str, Mapping[str, Any]]) -> Mapping[str, dict[str, Any]]:
+        mod = _FEATURE_MODULES.get(str(feature or "").strip().lower())
+        hook = getattr(mod, "destination_comparison_view", None)
+        return hook(self, index) if callable(hook) else dict(index or {})
+
     def prepare_source_snapshot(self, feature: str, items: Any) -> int:
         mod = _FEATURE_MODULES.get(str(feature or "").strip().lower())
         hook = getattr(mod, "prepare_source_snapshot", None)
@@ -211,6 +216,9 @@ class _FLOPPYOPS:
 
     def build_index(self, cfg: Mapping[str, Any], *, feature: str) -> Mapping[str, dict[str, Any]]:
         return self._adapter(cfg).build_index(feature)
+
+    def destination_comparison_view(self, cfg: Mapping[str, Any], *, feature: str, index: Mapping[str, Mapping[str, Any]]) -> Mapping[str, dict[str, Any]]:
+        return self._adapter(cfg).destination_comparison_view(feature, index)
 
     def prepare_source_snapshot(self, cfg: Mapping[str, Any], *, feature: str, items: Any) -> int:
         return self._adapter(cfg).prepare_source_snapshot(feature, items)

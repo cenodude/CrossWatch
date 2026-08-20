@@ -8,6 +8,7 @@ from typing import Any, Iterable, Mapping
 
 import pytest
 
+from cw_platform.id_map import canonical_key
 from cw_platform.anime_mapping import storage
 from cw_platform.orchestrator.facade import Orchestrator
 
@@ -19,6 +20,16 @@ MAPPINGS: dict[str, Any] = {
 
 SRC_SHOW_IDS = {"tmdb": "12609", "imdb": "tt0088509", "tvdb": "76666", "mal": "223", "anilist": "223"}
 DST_SHOW_IDS = {"tmdb": "12609", "imdb": "tt0088509", "trakt": "12553"}
+
+
+class _CoordAliases:
+    enabled = True
+
+    def tokens(self, item: Mapping[str, Any]) -> set[str]:
+        return {f"anime:absolute:{item.get('_anime_absolute')}"}
+
+    def stats(self) -> dict[str, int]:
+        return {"absolute_shows": 1, "coord_cache": 1}
 
 
 @dataclass
@@ -116,7 +127,7 @@ def _cfg(anime_enabled: bool) -> dict[str, Any]:
     }
 
 
-def _run(monkeypatch: pytest.MonkeyPatch, anime_enabled: bool) -> FakeOps:
+def _run(monkeypatch: pytest.MonkeyPatch, anime_enabled: bool, *, unresolved_keys: set[str] | None = None) -> FakeOps:
     src = FakeOps("CROSSWATCH", {"tmdb:12609#s02e01": _episode(SRC_SHOW_IDS, 2, 1, absolute=14)})
     dst = FakeOps("MDBLIST", {"tmdb:12609#s01e14": _episode(DST_SHOW_IDS, 1, 14)})
     monkeypatch.setattr(
@@ -124,6 +135,10 @@ def _run(monkeypatch: pytest.MonkeyPatch, anime_enabled: bool) -> FakeOps:
         lambda: {"CROSSWATCH": src, "MDBLIST": dst},
     )
     monkeypatch.setattr("cw_platform.orchestrator._snapshots.provider_configured", lambda _cfg, _name: True)
+    monkeypatch.setattr(
+        "cw_platform.orchestrator._pairs_oneway.load_unresolved_keys",
+        lambda *_a, **_k: set(unresolved_keys or set()),
+    )
     Orchestrator(_cfg(anime_enabled)).run()
     return dst
 
@@ -145,3 +160,50 @@ def test_orchestrator_plans_no_add_with_the_anime_toggle_on(
 
     planned = [it for batch in dst.add_calls for it in batch]
     assert planned == []
+
+
+def test_orchestrator_retries_unresolved_coord_match_with_the_anime_toggle_on(
+    config_base: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_item = {
+        "type": "episode",
+        "title": "Anime source",
+        "season": 2,
+        "episode": 1,
+        "watched_at": "2024-01-01T00:00:00Z",
+        "ids": {},
+        "show_ids": {"tmdb": "111"},
+        "_anime_absolute": 14,
+    }
+    destination_item = {
+        "type": "episode",
+        "title": "Anime destination",
+        "season": 1,
+        "episode": 14,
+        "watched_at": "2024-01-01T00:00:00Z",
+        "ids": {},
+        "show_ids": {"tvdb": "222"},
+        "_anime_absolute": 14,
+    }
+    source_key = canonical_key(source_item)
+    destination_key = canonical_key(destination_item)
+    src = FakeOps("CROSSWATCH", {source_key: source_item})
+    dst = FakeOps("MDBLIST", {destination_key: destination_item})
+    monkeypatch.setattr(
+        "cw_platform.orchestrator.facade.load_sync_providers",
+        lambda: {"CROSSWATCH": src, "MDBLIST": dst},
+    )
+    monkeypatch.setattr("cw_platform.orchestrator._snapshots.provider_configured", lambda _cfg, _name: True)
+    monkeypatch.setattr(
+        "cw_platform.orchestrator._pairs_oneway._build_history_coordinate_aliases",
+        lambda *_a, **_k: _CoordAliases(),
+    )
+    monkeypatch.setattr(
+        "cw_platform.orchestrator._pairs_oneway.load_unresolved_keys",
+        lambda *_a, **_k: {source_key},
+    )
+    Orchestrator(_cfg(False)).run()
+
+    planned = [it for batch in dst.add_calls for it in batch]
+    assert len(planned) == 1
+    assert (planned[0].get("season"), planned[0].get("episode")) == (2, 1)

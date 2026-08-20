@@ -600,6 +600,43 @@ def _fake_overlord_edges(tag: str, namespace: str, ident: str) -> list[dict[str,
     return []
 
 
+def _mha_final_source(**extra: Any) -> dict[str, Any]:
+    return {
+        "type": "episode",
+        "series_title": "Boku no Hero Academia",
+        "season": 8,
+        "episode": 1,
+        "_simkl_episode_number": 1,
+        "watched_at": "2026-01-02T00:00:00Z",
+        "show_ids": {
+            "tmdb": "308405",
+            "imdb": "tt5626028",
+            "tvdb": "305074",
+            "simkl": "2607190",
+            "mal": "60098",
+            "anilist": "182896",
+            "kitsu": "49279",
+            "anidb": "18921",
+        },
+        **extra,
+    }
+
+
+def _fake_mha_final_edges(tag: str, namespace: str, ident: str) -> list[dict[str, Any]]:
+    if tag == "v3" and namespace == "mal" and ident == "60098":
+        return [
+            {
+                "target_provider": "tmdb",
+                "target_kind": "show",
+                "target_id": "65930",
+                "target_scope": "s8",
+                "source_range": "1-11",
+                "target_range": "1-11",
+            }
+        ]
+    return []
+
+
 def test_floppy_history_add_uses_anime_native_coordinate_before_layout_absolute(monkeypatch: Any) -> None:
     from providers.sync.floppy import _history
 
@@ -709,6 +746,87 @@ def test_floppy_history_rekeys_anime_native_coordinate_without_false_missing(mon
 
     produced = _history.prepare_source_snapshot([_overlord_iv_source()])
     out = _history.build_index(adapter)
+
+    assert produced == 1
+    assert "tmdb:64196#s01e40" in out
+    assert "tmdb:64196#s04e01" not in out
+    assert out["tmdb:64196#s01e40"]["_floppy_season"] == 4
+    assert out["tmdb:64196#s01e40"]["_floppy_episode"] == 1
+
+
+def test_floppy_history_add_uses_anime_target_tmdb_when_source_tmdb_conflicts(monkeypatch: Any) -> None:
+    from providers.sync.floppy import _history
+
+    monkeypatch.setattr(_history, "query_edges", _fake_mha_final_edges)
+    _history.prepare_source_snapshot([])
+    _history.reset_layout_cache()
+    routes = _anime_routes("65930", [], {8: 11})
+    routes[("GET", "media/tv/tmdb/65930/8/1/history")] = _history_visible_after_post()
+    routes[("POST", "media/tv/tmdb/65930/8/episodes/1/watch")] = {"consumption_id": 77}
+    adapter = AdapterStub(routes, _anime_history_cfg())
+
+    res = _history.add(adapter, [_mha_final_source()])
+
+    assert res["count"] == 1
+    assert res["confirmed_keys"] == ["tmdb:308405#s08e01"]
+    assert [c["path"] for c in adapter.client.session.calls if c["method"] == "POST"] == ["media/tv/tmdb/65930/8/episodes/1/watch"]
+    assert not any("media/tv/tmdb/308405" in c["path"] for c in adapter.client.session.calls)
+
+
+def test_floppy_history_destination_view_uses_anime_target_tmdb_when_source_tmdb_conflicts(monkeypatch: Any) -> None:
+    from providers.sync._mod_FLOPPY import OPS
+    from providers.sync.floppy import _history
+
+    monkeypatch.setattr(_history, "query_edges", _fake_mha_final_edges)
+    _history.prepare_source_snapshot([])
+    cfg = _anime_history_cfg()
+
+    produced = OPS.prepare_source_snapshot(cfg, feature="history", items={"tmdb:308405#s08e01": _mha_final_source()})
+    out = OPS.destination_comparison_view(
+        cfg,
+        feature="history",
+        index={
+            "tmdb:65930#s08e01": {
+                "type": "episode",
+                "show_ids": {"tmdb": "65930"},
+                "season": 8,
+                "episode": 1,
+                "watched_at": "2026-01-02T00:00:00Z",
+            }
+        },
+    )
+
+    assert produced == 1
+    assert "tmdb:308405#s08e01" in out
+    assert "tmdb:65930#s08e01" not in out
+    assert out["tmdb:308405#s08e01"]["_floppy_tmdb_id"] == "65930"
+    assert out["tmdb:308405#s08e01"]["_floppy_season"] == 8
+    assert out["tmdb:308405#s08e01"]["_floppy_episode"] == 1
+
+
+def test_floppy_history_destination_comparison_view_rekeys_collapsed_anime_coord(monkeypatch: Any) -> None:
+    from providers.sync._mod_FLOPPY import OPS
+    from providers.sync.floppy import _history
+
+    monkeypatch.setattr(_history, "query_edges", _fake_overlord_edges)
+    _history.prepare_source_snapshot([])
+    cfg = _anime_history_cfg()
+    source = _overlord_iv_source()
+
+    produced = OPS.prepare_source_snapshot(cfg, feature="history", items={"tmdb:64196#s01e40": source})
+    out = OPS.destination_comparison_view(
+        cfg,
+        feature="history",
+        index={
+            "tmdb:64196#s04e01": {
+                "type": "episode",
+                "show_ids": {"tmdb": "64196"},
+                "season": 4,
+                "episode": 1,
+                "watched_at": "2026-01-02T00:00:00Z",
+            }
+        },
+    )
 
     assert produced == 1
     assert "tmdb:64196#s01e40" in out
