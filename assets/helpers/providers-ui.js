@@ -106,7 +106,7 @@
   }
 
   function statusProviderData(key) {
-    const providers = window.loadStatusCache?.()?.providers || window._statusCache?.providers || {};
+    const providers = window.__CW_PROVIDER_STATUS__?.providers || window._statusCache?.providers || window.loadStatusCache?.()?.providers || {};
     if (!providers || typeof providers !== "object") return null;
     const upper = String(key || "").toUpperCase();
     const lower = upper.toLowerCase();

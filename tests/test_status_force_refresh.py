@@ -130,3 +130,11 @@ def test_client_sends_the_fresh_flag_only_on_a_forced_status_refresh() -> None:
 
     core_js = pathlib.Path("assets/helpers/core.js").read_text(encoding="utf-8")
     assert 'requestJSON(force ? "/api/status?fresh=1" : "/api/status", {}, 15000)' in core_js
+
+
+def test_provider_cards_prefer_live_status_over_persisted_status() -> None:
+    providers_ui = pathlib.Path("assets/helpers/providers-ui.js").read_text(encoding="utf-8")
+    assert "window.__CW_PROVIDER_STATUS__?.providers || window._statusCache?.providers || window.loadStatusCache?.()?.providers" in providers_ui
+
+    core_js = pathlib.Path("assets/helpers/core.js").read_text(encoding="utf-8")
+    assert "window._statusCache = payload;" in core_js
