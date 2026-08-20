@@ -96,9 +96,10 @@
           <p>Receive real time scrobbles via Watcher routes or webhooks. <b>Watcher is recommended</b></p>
         </div>
         <div class="cw-settings-pane-head-actions">
-          <div class="cw-settings-jumpbar" aria-label="Scrobbler actions">
-            <button type="button" class="cw-settings-jump" data-action="add-webhook"><span class="material-symbols-rounded" aria-hidden="true">add</span>Add webhook</button>
-            <button type="button" class="cw-settings-jump" data-action="add-route"><span class="material-symbols-rounded" aria-hidden="true">add</span>Add watcher</button>
+          <div class="cw-conn-hero-summary" aria-label="Scrobbler actions">
+            <button type="button" class="cw-conn-seg" data-action="add-webhook"><span class="material-symbols-rounded" aria-hidden="true">add</span><span>Add webhook</span></button>
+            <button type="button" class="cw-conn-seg" data-action="add-route"><span class="material-symbols-rounded" aria-hidden="true">add</span><span>Add watcher</span></button>
+            <button type="button" class="cw-conn-refresh" data-action="refresh-scrobbler" title="Refresh webhooks and watcher" aria-label="Refresh webhooks and watcher"><span class="material-symbol" aria-hidden="true">refresh</span></button>
           </div>
         </div>
         <span class="material-symbols-rounded cw-settings-hero-shape" aria-hidden="true">sensors</span>
@@ -609,6 +610,13 @@
       const action = btn.getAttribute("data-action");
       if (action === "dismiss-hybrid-warning") { state.hybridDismissed = true; btn.closest(".sc2-dismissible-note")?.remove(); return; }
       if (action === "open-connections") { try { w.cwSettingsSelect?.("providers"); } catch {} return; }
+      if (action === "refresh-scrobbler") {
+        if (btn.classList.contains("loading")) return;
+        btn.classList.add("loading", "spin");
+        try { await refresh(); } catch {}
+        btn.classList.remove("loading", "spin");
+        return;
+      }
       if (action === "add-webhook") await openModal("webhook", { mode: "create", overview: state.overview, onSaved: applyMutation });
       if (action === "edit-webhook") await openModal("webhook", { mode: "edit", overview: state.overview, webhook: findWebhook(btn.dataset.provider, btn.dataset.instance, btn.dataset.sink), onSaved: applyMutation });
       if (action === "toggle-webhook") await webhookToggle(findWebhook(btn.dataset.provider, btn.dataset.instance, btn.dataset.sink), btn);

@@ -672,6 +672,21 @@ function cwBuildSchedulerPanel() {
     btn.addEventListener("click", () => cwSchedSettingsSelect(btn.dataset.sub));
   });
 
+  const schedRefresh = document.getElementById("cw-sched-refresh");
+  if (schedRefresh && !schedRefresh.__cwBound) {
+    schedRefresh.__cwBound = true;
+    schedRefresh.addEventListener("click", async () => {
+      if (schedRefresh.classList.contains("loading")) return;
+      schedRefresh.classList.add("loading", "spin");
+      try {
+        window.CW?.Cache?.invalidate?.(["schedulingStatus"]);
+        await window.loadScheduling?.();
+        await window.refreshSchedulingBanner?.();
+      } catch {}
+      schedRefresh.classList.remove("loading", "spin");
+    });
+  }
+
   let lastSub = "basic";
   try { lastSub = (localStorage.getItem(SCHED_SETTINGS_TAB_KEY) || "basic").toLowerCase(); } catch {}
   cwSchedSettingsSelect((lastSub === "advanced") ? "advanced" : "basic", { persist: false });
@@ -2150,4 +2165,16 @@ function setTraktSuccess(show) {
 
   (window.CW ||= {}).SettingsUI = SettingsUI;
   Object.assign(window, SettingsUI);
+
+  document.addEventListener("click", async (ev) => {
+    const btn = ev.target?.closest?.("#cw-app-refresh");
+    if (!btn || btn.classList.contains("loading")) return;
+    btn.classList.add("loading", "spin");
+    try {
+      window.invalidateConfigCache?.();
+      await window.loadConfig?.();
+      await window.cwAppUsersRefresh?.();
+    } catch {}
+    btn.classList.remove("loading", "spin");
+  });
 })();
