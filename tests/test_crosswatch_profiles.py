@@ -2789,7 +2789,7 @@ def test_status_frontend_sends_selected_profile() -> None:
     api_js = Path("assets/helpers/api.js").read_text("utf-8")
     core_js = Path("assets/helpers/core.js").read_text("utf-8")
 
-    assert "`/api/status?user_profile=${encodeURIComponent(profile)}`" in api_js
+    assert "qs.push(`user_profile=${encodeURIComponent(profile)}`)" in api_js
     assert '`${KEY.status}:${profile || "all"}`' in api_js
     assert "key === KEY.pairs || key === KEY.status" in api_js
     assert "const statusCacheKey = ()" in core_js

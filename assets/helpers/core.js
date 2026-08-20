@@ -823,7 +823,7 @@
       await refreshPairedProviders(force ? 0 : 5000);
       const payload = typeof API.Status?.get === "function"
         ? await API.Status.get(!!force)
-        : await requestJSON("/api/status", {}, 15000);
+        : await requestJSON(force ? "/api/status?fresh=1" : "/api/status", {}, 15000);
       state.appDebug = !!payload?.debug;
       const providers = extractProviderStatus(payload);
       renderConnectorStatus(providers, { stale: false });
