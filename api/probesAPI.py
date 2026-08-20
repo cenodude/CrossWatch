@@ -2051,7 +2051,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
             enabled_pairs = [p for p in pairs if isinstance(p, dict) and p.get("enabled", True) is not False]
             any_pair_ready = any(_pair_ready(cfg, p) for p in enabled_pairs)
 
-            probe_age = 0 if fresh else PROBE_TTL
+            probe_age = PROBE_TTL
             user_age = USERINFO_TTL
 
             def _pair_targets() -> set[tuple[str, str]]:

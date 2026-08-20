@@ -228,7 +228,10 @@
   const Status = {
     get(force = false){
       const profile = String(window.CW?.OverviewProfile?.id || "").trim();
-      const url = profile ? `/api/status?user_profile=${encodeURIComponent(profile)}` : '/api/status';
+      const qs = [];
+      if (profile) qs.push(`user_profile=${encodeURIComponent(profile)}`);
+      if (force) qs.push('fresh=1');
+      const url = qs.length ? `/api/status?${qs.join('&')}` : '/api/status';
       return memo(`${KEY.status}:${profile || "all"}`, TTL.status, () => j(url), force);
     }
   };
