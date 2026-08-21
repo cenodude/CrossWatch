@@ -45,6 +45,11 @@ ACTION_NOTIFICATION = {
 KODI_WEBHOOK_PATH = "/webhooks/kodi/"
 
 
+def _is_bingebase_host(host: Any) -> bool:
+    text = str(host or "").strip().lower().rstrip(".")
+    return text == "bingebase.com" or text.endswith(".bingebase.com")
+
+
 def _cfg() -> dict[str, Any]:
     try:
         return load_config() or {}
@@ -81,7 +86,7 @@ def _redact_url(url: Any) -> str:
         if not parts.scheme or not parts.netloc:
             return "<redacted>"
         path = parts.path
-        if parts.netloc.lower().endswith("bingebase.com") and path.startswith(KODI_WEBHOOK_PATH):
+        if path.startswith(KODI_WEBHOOK_PATH):
             path = KODI_WEBHOOK_PATH.rstrip("/")
         return urlunsplit((parts.scheme, parts.netloc, path, "", ""))
     except Exception:
@@ -91,7 +96,7 @@ def _redact_url(url: Any) -> str:
 def _is_kodi_webhook(url: Any) -> bool:
     try:
         parts = urlsplit(str(url or "").strip())
-        return parts.netloc.lower().endswith("bingebase.com") and parts.path.startswith(KODI_WEBHOOK_PATH)
+        return _is_bingebase_host(parts.hostname) and parts.path.startswith(KODI_WEBHOOK_PATH)
     except Exception:
         return False
 

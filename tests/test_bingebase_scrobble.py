@@ -259,7 +259,7 @@ def test_failed_stop_does_not_record_recent_scrobble_activity(monkeypatch: pytes
 def test_secret_url_redaction(monkeypatch: pytest.MonkeyPatch) -> None:
     from cw_platform.config_base import redact_config
     from providers.scrobble.bingebase import sink as sink_mod
-    from providers.scrobble.bingebase.sink import BingeBaseSink, _redact_url
+    from providers.scrobble.bingebase.sink import BingeBaseSink, _is_kodi_webhook, _redact_url
 
     logs: list[str] = []
     sink = BingeBaseSink(cfg_provider=lambda: dict(CFG))
@@ -270,6 +270,9 @@ def test_secret_url_redaction(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert _redact_url(WEBHOOK_URL) == "https://bingebase.com/api/webhooks/jellyfin"
     assert _redact_url(KODI_WEBHOOK_URL) == "https://bingebase.com/webhooks/kodi"
+    assert _redact_url("https://evilbingebase.com/webhooks/kodi/device-access") == "https://evilbingebase.com/webhooks/kodi"
+    assert _is_kodi_webhook(KODI_WEBHOOK_URL) is True
+    assert _is_kodi_webhook("https://evilbingebase.com/webhooks/kodi/device-access") is False
     assert "secret-token" not in "\n".join(logs)
     assert "device-access" not in _redact_url(KODI_WEBHOOK_URL)
     assert "token=" not in "\n".join(logs)
