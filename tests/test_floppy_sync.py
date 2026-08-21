@@ -61,6 +61,23 @@ class AdapterStub:
         self.client = ClientStub(SessionStub(routes))
 
 
+def _install_tmdb_resolver(monkeypatch: Any, tmdb_id: str) -> list[dict[str, Any]]:
+    from providers.metadata import _meta_TMDB
+
+    calls: list[dict[str, Any]] = []
+
+    class FakeTmdb:
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            pass
+
+        def fetch(self, *, entity: str, ids: dict[str, str], need: dict[str, bool] | None = None, **_kwargs: Any) -> dict[str, Any]:
+            calls.append({"entity": entity, "ids": dict(ids), "need": dict(need or {})})
+            return {"ids": {"tmdb": tmdb_id}}
+
+    monkeypatch.setattr(_meta_TMDB, "TmdbProvider", FakeTmdb)
+    return calls
+
+
 def test_floppy_capabilities_expose_only_requested_features() -> None:
     from providers.sync._mod_FLOPPY import OPS
 
@@ -186,6 +203,28 @@ def test_floppy_watchlist_tracks_missing_item_before_add() -> None:
 
     assert res["count"] == 1
     assert [c["method"] for c in adapter.client.session.calls] == ["GET", "PUT", "POST", "PUT"]
+
+
+def test_floppy_watchlist_resolves_imdb_to_tmdb_when_metadata_configured(monkeypatch: Any) -> None:
+    from providers.sync.floppy import _watchlist
+
+    calls = _install_tmdb_resolver(monkeypatch, "550")
+    adapter = AdapterStub(
+        {
+            ("GET", "lists"): {"results": [{"id": 7, "name": "Watchlist"}], "count": 1},
+            ("PUT", "media/movie/tmdb/550/lists/7"): [],
+        },
+        {"floppy": {"watchlist_name": "Watchlist"}, "tmdb": {"api_key": "tmdb-key"}},
+    )
+
+    res = _watchlist.add(adapter, [{"type": "movie", "ids": {"imdb": "tt0137523"}, "title": "Fight Club"}])
+
+    assert res["count"] == 1
+    assert res["confirmed_keys"] == ["imdb:tt0137523"]
+    assert res["confirmed_destinations"]["imdb:tt0137523"]["key"] == "tmdb:550"
+    assert res["confirmed_destinations"]["imdb:tt0137523"]["item"]["ids"] == {"tmdb": "550", "imdb": "tt0137523"}
+    assert calls == [{"entity": "movie", "ids": {"imdb": "tt0137523"}, "need": {"poster": False, "backdrop": False, "ids": True}}]
+    assert adapter.client.session.calls[1]["path"] == "media/movie/tmdb/550/lists/7"
 
 
 def test_floppy_ratings_read_and_write_native_scale() -> None:
@@ -356,6 +395,32 @@ def test_floppy_progress_write_and_clear_use_playback_progress_api() -> None:
     assert adapter.client.session.calls[1]["json"] == {"media_type": "episode", "ids": {"tmdb": "22"}, "season_number": 1, "episode_number": 2, "position_seconds": None}
 
 
+def test_floppy_progress_resolves_show_imdb_to_tmdb_when_metadata_configured(monkeypatch: Any) -> None:
+    from providers.sync.floppy import _progress
+
+    calls = _install_tmdb_resolver(monkeypatch, "1399")
+    adapter = AdapterStub(
+        {("PUT", "playback/progress"): ResponseStub(204, {})},
+        {"floppy": {}, "tmdb": {"api_key": "tmdb-key"}},
+    )
+    item = {
+        "type": "episode",
+        "show_ids": {"imdb": "tt0944947"},
+        "season": 1,
+        "episode": 1,
+        "progress_ms": 600000,
+        "duration_ms": 3600000,
+    }
+
+    res = _progress.add(adapter, [item])
+
+    assert res["count"] == 1
+    assert res["confirmed_destinations"]["imdb:tt0944947#s01e01"]["key"] == "tmdb:1399#s01e01"
+    assert res["confirmed_destinations"]["imdb:tt0944947#s01e01"]["item"]["show_ids"] == {"tmdb": "1399", "imdb": "tt0944947"}
+    assert calls == [{"entity": "tv", "ids": {"imdb": "tt0944947"}, "need": {"poster": False, "backdrop": False, "ids": True}}]
+    assert adapter.client.session.calls[0]["json"]["ids"] == {"tmdb": "1399"}
+
+
 def test_floppy_history_reads_movies_and_episodes() -> None:
     from providers.sync.floppy import _history
 
@@ -377,6 +442,29 @@ def test_floppy_history_reads_movies_and_episodes() -> None:
     assert out["tmdb:11"]["watched_at"] == "2026-01-03T00:00:00Z"
     assert out["tmdb:11"]["_floppy_consumption_id"] == 43
     assert out["tmdb:22#s01e02"]["_floppy_consumption_id"] == 42
+
+
+def test_floppy_history_resolves_imdb_to_tmdb_when_metadata_configured(monkeypatch: Any) -> None:
+    from providers.sync.floppy import _history
+
+    _install_tmdb_resolver(monkeypatch, "550")
+    adapter = AdapterStub(
+        {("POST", "media/movie"): {"item_id": "movie/tmdb/550"}},
+        {"floppy": {}, "tmdb": {"api_key": "tmdb-key"}},
+    )
+
+    res = _history.add(adapter, [{"type": "movie", "ids": {"imdb": "tt0137523"}, "watched_at": "2026-01-01T00:00:00Z"}])
+
+    assert res["count"] == 1
+    assert res["confirmed_keys"] == ["imdb:tt0137523"]
+    assert res["confirmed_destinations"]["imdb:tt0137523"]["key"] == "tmdb:550"
+    assert res["confirmed_destinations"]["imdb:tt0137523"]["item"]["ids"] == {"tmdb": "550", "imdb": "tt0137523"}
+    assert adapter.client.session.calls[0]["json"] == {
+        "source": "tmdb",
+        "media_id": "550",
+        "status": 3,
+        "end_date": "2026-01-01T00:00:00Z",
+    }
 
 
 def test_floppy_movie_history_create_does_not_patch_after_create() -> None:

@@ -11,7 +11,7 @@ from typing import Any
 from cw_platform.id_map import minimal as id_minimal
 from providers.sync._mod_common import build_op_result, unresolved_keys
 
-from ._common import PLANNING, api_patch, canonical_item_key, failure_reason, floppy_type_for_item, item_from_row, paged, rating_number, track_media, tmdb_id_for_item, unresolved
+from ._common import PLANNING, api_patch, canonical_item_key, confirmed_destination, failure_reason, floppy_type_for_item, item_from_row, paged, rating_number, tmdb_enriched_item, track_media, tmdb_id_for_item, unresolved
 
 _SHADOW_TTL = 180.0
 _WRITE_SHADOW: dict[tuple[str, str], dict[str, Any]] = {}
@@ -83,35 +83,38 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
 
 def _write(adapter: Any, items: Iterable[Mapping[str, Any]], *, clear: bool, dry_run: bool = False) -> dict[str, Any]:
     confirmed: list[str] = []
+    confirmed_destinations: dict[str, dict[str, Any]] = {}
     skipped: list[str] = []
     unresolved_rows: list[dict[str, Any]] = []
     results: list[dict[str, Any]] = []
     for raw in [dict(x or {}) for x in items or [] if isinstance(x, Mapping)]:
         key = canonical_item_key(raw)
-        typ = floppy_type_for_item(raw)
-        tmdb_id = tmdb_id_for_item(raw)
-        rating = None if clear else rating_number(raw.get("rating"))
+        item = tmdb_enriched_item(adapter, raw)
+        typ = floppy_type_for_item(item)
+        tmdb_id = tmdb_id_for_item(item)
+        rating = None if clear else rating_number(item.get("rating"))
         if typ not in {"movie", "tv"}:
             skipped.append(key)
-            results.append({"status": "skipped", "reason": "floppy_rating_type_unsupported", "item": id_minimal(raw), "canonical_key": key})
+            results.append({"status": "skipped", "reason": "floppy_rating_type_unsupported", "item": id_minimal(item), "canonical_key": key})
             continue
         if not tmdb_id:
-            entry = unresolved(raw, "floppy_tmdb_id_missing")
+            entry = unresolved(item, "floppy_tmdb_id_missing")
             unresolved_rows.append(entry)
             results.append(entry)
             continue
         if rating is None and not clear:
-            entry = unresolved(raw, "floppy_rating_missing")
+            entry = unresolved(item, "floppy_rating_missing")
             unresolved_rows.append(entry)
             results.append(entry)
             continue
         if rating is not None and rating <= 0 and not clear:
             skipped.append(key)
-            results.append({"status": "skipped", "reason": "floppy_rating_zero_is_clear", "item": id_minimal(raw), "canonical_key": key})
+            results.append({"status": "skipped", "reason": "floppy_rating_zero_is_clear", "item": id_minimal(item), "canonical_key": key})
             continue
         if dry_run:
             confirmed.append(key)
-            results.append({"status": "dry_run", "item": id_minimal(raw), "canonical_key": key})
+            confirmed_destinations[key] = confirmed_destination(item)
+            results.append({"status": "dry_run", "item": id_minimal(item), "canonical_key": key})
             continue
         try:
             if clear:
@@ -119,18 +122,19 @@ def _write(adapter: Any, items: Iterable[Mapping[str, Any]], *, clear: bool, dry
             else:
                 track_media(adapter, typ, tmdb_id, payload={"status": PLANNING, "score": rating}, patch_payload={"score": rating})
         except Exception as exc:
-            entry = unresolved(raw, failure_reason(exc))
+            entry = unresolved(item, failure_reason(exc))
             unresolved_rows.append(entry)
             results.append(entry)
             continue
         confirmed.append(key)
+        confirmed_destinations[key] = confirmed_destination(item)
         if clear:
             _remember(adapter, key, None)
         else:
-            cached = id_minimal(raw)
+            cached = id_minimal(item)
             cached["rating"] = rating
-            if raw.get("rated_at"):
-                cached["rated_at"] = raw.get("rated_at")
+            if item.get("rated_at"):
+                cached["rated_at"] = item.get("rated_at")
             _remember(adapter, key, cached)
-        results.append({"status": "applied", "item": id_minimal(raw), "canonical_key": key})
-    return build_op_result(ok=not unresolved_rows, count=len(confirmed), confirmed_keys=confirmed, unresolved_keys=unresolved_keys(unresolved_rows, canonical_item_key), unresolved=unresolved_rows, results=results, attempted=len(confirmed) + len(skipped) + len(unresolved_rows), skipped=len(skipped), skipped_keys=skipped)
+        results.append({"status": "applied", "item": id_minimal(item), "canonical_key": key})
+    return build_op_result(ok=not unresolved_rows, count=len(confirmed), confirmed_keys=confirmed, confirmed_destinations=confirmed_destinations, unresolved_keys=unresolved_keys(unresolved_rows, canonical_item_key), unresolved=unresolved_rows, results=results, attempted=len(confirmed) + len(skipped) + len(unresolved_rows), skipped=len(skipped), skipped_keys=skipped)

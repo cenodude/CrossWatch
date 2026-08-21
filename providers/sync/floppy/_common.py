@@ -6,7 +6,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from cw_platform.id_map import canonical_key, ids_from, minimal as id_minimal
+from cw_platform.id_map import canonical_key, ids_from, merge_ids, minimal as id_minimal
 from providers.auth._auth_FLOPPY import FloppyAuthError, is_configured as auth_is_configured, provider_block
 from providers.sync._mod_common import safe_json
 
@@ -233,6 +233,89 @@ def tmdb_id_for_item(item: Mapping[str, Any], *, episode_show: bool = False) -> 
     ids = ids_from(src if isinstance(src, Mapping) else item)
     val = str(ids.get("tmdb") or "").strip()
     return val or None
+
+
+def _tmdb_metadata_provider(adapter: Any) -> Any | None:
+    cached = getattr(adapter, "_floppy_tmdb_provider", None)
+    if cached is not None:
+        return cached
+    cfg = getattr(adapter, "config", None) or getattr(adapter, "raw_cfg", None) or {}
+    if not isinstance(cfg, Mapping):
+        return None
+    tmdb_raw = cfg.get("tmdb")
+    metadata_raw = cfg.get("metadata")
+    tmdb: Mapping[str, Any] = tmdb_raw if isinstance(tmdb_raw, Mapping) else {}
+    metadata: Mapping[str, Any] = metadata_raw if isinstance(metadata_raw, Mapping) else {}
+    if not str(tmdb.get("api_key") or metadata.get("tmdb_api_key") or "").strip():
+        return None
+    try:
+        from providers.metadata._meta_TMDB import TmdbProvider
+
+        provider = TmdbProvider(lambda: dict(cfg), lambda _cfg: None)
+        setattr(adapter, "_floppy_tmdb_provider", provider)
+        return provider
+    except Exception:
+        return None
+
+
+def _metadata_lookup_ids(item: Mapping[str, Any], *, episode_show: bool = False) -> dict[str, str]:
+    show_ids = item.get("show_ids")
+    if episode_show and isinstance(show_ids, Mapping):
+        source = merge_ids({str(k): v for k, v in show_ids.items()}, {})
+    else:
+        source = merge_ids(ids_from(item), ids_from(id_minimal(item)))
+        if isinstance(show_ids, Mapping):
+            source = merge_ids(source, {str(k): v for k, v in show_ids.items()})
+    return {key: str(source.get(key) or "").strip() for key in ("tmdb", "imdb", "tvdb") if str(source.get(key) or "").strip()}
+
+
+def resolved_tmdb_id_for_item(adapter: Any, item: Mapping[str, Any], *, episode_show: bool = False) -> str | None:
+    direct = tmdb_id_for_item(item, episode_show=episode_show)
+    if direct:
+        return direct
+    lookup_ids = _metadata_lookup_ids(item, episode_show=episode_show)
+    if not lookup_ids:
+        return None
+    provider = _tmdb_metadata_provider(adapter)
+    if provider is None:
+        return None
+    typ = str(item.get("type") or id_minimal(item).get("type") or "").strip().lower()
+    entity = "tv" if episode_show or typ in {"episode", "episodes", "season", "seasons", "show", "series", "tv"} else "movie"
+    try:
+        detail = provider.fetch(entity=entity, ids=lookup_ids, need={"poster": False, "backdrop": False, "ids": True})
+    except Exception:
+        return None
+    if not isinstance(detail, Mapping):
+        return None
+    detail_ids = detail.get("ids")
+    if not isinstance(detail_ids, Mapping):
+        return None
+    tmdb = str(detail_ids.get("tmdb") or "").strip()
+    return tmdb if tmdb.isdigit() else None
+
+
+def tmdb_enriched_item(adapter: Any, item: Mapping[str, Any], *, episode_show: bool = False) -> dict[str, Any]:
+    out = dict(item)
+    tmdb_id = resolved_tmdb_id_for_item(adapter, out, episode_show=episode_show)
+    if not tmdb_id:
+        return out
+    if episode_show:
+        show_ids_raw = out.get("show_ids")
+        show_ids: Mapping[str, Any] = show_ids_raw if isinstance(show_ids_raw, Mapping) else {}
+        merged = dict(show_ids)
+        merged["tmdb"] = tmdb_id
+        out["show_ids"] = merged
+        return out
+    ids_raw = out.get("ids")
+    ids: Mapping[str, Any] = ids_raw if isinstance(ids_raw, Mapping) else {}
+    merged = dict(ids)
+    merged["tmdb"] = tmdb_id
+    out["ids"] = merged
+    return out
+
+
+def confirmed_destination(item: Mapping[str, Any]) -> dict[str, Any]:
+    return {"key": canonical_item_key(item), "item": id_minimal(item)}
 
 
 def canonical_item_key(item: Mapping[str, Any]) -> str:

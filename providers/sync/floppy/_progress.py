@@ -10,7 +10,7 @@ from cw_platform.id_map import minimal as id_minimal
 from providers.sync._mod_common import build_op_result, unresolved_keys
 from providers.sync._progress_policy import select_progress_record
 
-from ._common import api_put, canonical_item_key, failure_reason, paged, tmdb_id_for_item, unresolved
+from ._common import api_put, canonical_item_key, confirmed_destination, failure_reason, paged, tmdb_enriched_item, tmdb_id_for_item, unresolved
 
 
 def _int(value: Any) -> int | None:
@@ -162,19 +162,23 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
 
 def _write(adapter: Any, items: Iterable[Mapping[str, Any]], *, clear: bool, dry_run: bool = False) -> dict[str, Any]:
     confirmed: list[str] = []
+    confirmed_destinations: dict[str, dict[str, Any]] = {}
     unresolved_rows: list[dict[str, Any]] = []
     results: list[dict[str, Any]] = []
     for raw in [dict(x or {}) for x in items or [] if isinstance(x, Mapping)]:
         key = canonical_item_key(raw)
-        body, reason = _payload(raw, clear=clear)
+        typ = str(id_minimal(raw).get("type") or "").strip().lower()
+        item = tmdb_enriched_item(adapter, raw, episode_show=typ == "episode")
+        body, reason = _payload(item, clear=clear)
         if body is None:
-            entry = unresolved(raw, reason or "floppy_progress_unresolved")
+            entry = unresolved(item, reason or "floppy_progress_unresolved")
             unresolved_rows.append(entry)
             results.append(entry)
             continue
         if dry_run:
             confirmed.append(key)
-            results.append({"status": "dry_run", "item": id_minimal(raw), "canonical_key": key})
+            confirmed_destinations[key] = confirmed_destination(item)
+            results.append({"status": "dry_run", "item": id_minimal(item), "canonical_key": key})
             continue
         try:
             if clear:
@@ -182,10 +186,11 @@ def _write(adapter: Any, items: Iterable[Mapping[str, Any]], *, clear: bool, dry
             else:
                 api_put(adapter, "playback/progress", json=body)
         except Exception as exc:
-            entry = unresolved(raw, failure_reason(exc))
+            entry = unresolved(item, failure_reason(exc))
             unresolved_rows.append(entry)
             results.append(entry)
             continue
         confirmed.append(key)
-        results.append({"status": "applied", "item": id_minimal(raw), "canonical_key": key})
-    return build_op_result(ok=not unresolved_rows, count=len(confirmed), confirmed_keys=confirmed, unresolved_keys=unresolved_keys(unresolved_rows, canonical_item_key), unresolved=unresolved_rows, results=results, attempted=len(confirmed) + len(unresolved_rows))
+        confirmed_destinations[key] = confirmed_destination(item)
+        results.append({"status": "applied", "item": id_minimal(item), "canonical_key": key})
+    return build_op_result(ok=not unresolved_rows, count=len(confirmed), confirmed_keys=confirmed, confirmed_destinations=confirmed_destinations, unresolved_keys=unresolved_keys(unresolved_rows, canonical_item_key), unresolved=unresolved_rows, results=results, attempted=len(confirmed) + len(unresolved_rows))

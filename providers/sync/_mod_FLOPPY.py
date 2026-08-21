@@ -17,7 +17,7 @@ from providers.sync.floppy import _ratings as feat_ratings
 from providers.sync.floppy import _watchlist as feat_watchlist
 from providers.sync.floppy._common import api_delete, api_get, configured_block, is_configured, media_parts_from_item_id, paged
 
-__VERSION__ = "0.2"
+__VERSION__ = "0.3"
 __all__ = ["get_manifest", "FLOPPYModule", "OPS"]
 
 if "ctx" not in globals():
@@ -29,7 +29,13 @@ if "ctx" not in globals():
 
 
 _FEATURES = {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": False}
-_FEATURE_MODULES = {"watchlist": feat_watchlist, "ratings": feat_ratings, "history": feat_history, "progress": feat_progress}
+_FEATURE_MODULES: dict[str, Any] = {"watchlist": feat_watchlist, "ratings": feat_ratings, "history": feat_history, "progress": feat_progress}
+
+
+def _index_dict(value: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(value, Mapping):
+        return {}
+    return {str(k): dict(v) for k, v in value.items() if isinstance(v, Mapping)}
 
 
 def _rate_limit_settings(block: Mapping[str, Any]) -> dict[str, float]:
@@ -134,12 +140,12 @@ class FLOPPYModule:
 
     def build_index(self, feature: str, **kwargs: Any) -> Mapping[str, dict[str, Any]]:
         mod = _FEATURE_MODULES.get(str(feature or "").strip().lower())
-        return mod.build_index(self, **kwargs) if mod else {}
+        return _index_dict(mod.build_index(self, **kwargs)) if mod else {}
 
     def destination_comparison_view(self, feature: str, index: Mapping[str, Mapping[str, Any]]) -> Mapping[str, dict[str, Any]]:
         mod = _FEATURE_MODULES.get(str(feature or "").strip().lower())
         hook = getattr(mod, "destination_comparison_view", None)
-        return hook(self, index) if callable(hook) else dict(index or {})
+        return _index_dict(hook(self, index)) if callable(hook) else _index_dict(index)
 
     def prepare_source_snapshot(self, feature: str, items: Any) -> int:
         mod = _FEATURE_MODULES.get(str(feature or "").strip().lower())
