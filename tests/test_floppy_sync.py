@@ -773,6 +773,96 @@ def test_floppy_history_add_uses_anime_target_tmdb_when_source_tmdb_conflicts(mo
     assert not any("media/tv/tmdb/308405" in c["path"] for c in adapter.client.session.calls)
 
 
+def test_floppy_history_uses_anidb_when_native_targets_disagree(monkeypatch: Any) -> None:
+    from cw_platform.anime_mapping import episodes
+    from providers.sync.floppy import _history
+
+    def fake_edges(tag: str, namespace: str, ident: str, **_kwargs: Any) -> list[dict[str, Any]]:
+        if tag != "v3":
+            return []
+        if namespace == "anidb" and ident == "5841":
+            return [
+                {
+                    "reverse": 1,
+                    "source_scope": "R",
+                    "target_provider": "tmdb",
+                    "target_kind": "show",
+                    "target_id": "24835",
+                    "target_scope": "s2",
+                    "source_range": "1-22",
+                    "target_range": "1-22",
+                },
+                {
+                    "reverse": 1,
+                    "source_scope": "R",
+                    "target_provider": "tvdb",
+                    "target_kind": "show",
+                    "target_id": "80644",
+                    "target_scope": "s2",
+                    "source_range": "1-22",
+                    "target_range": "1-22",
+                },
+            ]
+        if namespace == "anilist" and ident == "4181":
+            return [
+                {
+                    "reverse": 1,
+                    "target_provider": "tmdb",
+                    "target_kind": "show",
+                    "target_id": "24835",
+                    "target_scope": "s0",
+                    "source_range": "1-2",
+                    "target_range": "3-4",
+                },
+                {
+                    "reverse": 1,
+                    "target_provider": "tmdb",
+                    "target_kind": "show",
+                    "target_id": "24835",
+                    "target_scope": "s2",
+                    "source_range": "3-24",
+                    "target_range": "1-22",
+                },
+            ]
+        return []
+
+    monkeypatch.setattr(episodes, "query_edges", fake_edges)
+    monkeypatch.setattr(_history, "query_edges", fake_edges)
+    _history.prepare_source_snapshot([])
+    _history.reset_layout_cache()
+    routes = _anime_routes("24835", [], {2: 22})
+    routes[("GET", "media/tv/tmdb/24835/2/1/history")] = _history_visible_after_post()
+    routes[("POST", "media/tv/tmdb/24835/2/episodes/1/watch")] = {"consumption_id": 77}
+    adapter = AdapterStub(routes, _anime_history_cfg())
+
+    res = _history.add(
+        adapter,
+        [
+            {
+                "type": "episode",
+                "series_title": "Clannad: After Story",
+                "season": 2,
+                "episode": 1,
+                "_simkl_episode_number": 1,
+                "watched_at": "2026-01-02T00:00:00Z",
+                "show_ids": {
+                    "tmdb": "248058",
+                    "tvdb": "80644",
+                    "simkl": "38483",
+                    "mal": "4181",
+                    "anilist": "4181",
+                    "anidb": "5841",
+                },
+            }
+        ],
+    )
+
+    assert res["count"] == 1
+    assert res["confirmed_keys"] == ["tmdb:248058#s02e01"]
+    assert [c["path"] for c in adapter.client.session.calls if c["method"] == "POST"] == ["media/tv/tmdb/24835/2/episodes/1/watch"]
+    assert not any("media/tv/tmdb/248058" in c["path"] for c in adapter.client.session.calls)
+
+
 def test_floppy_history_destination_view_uses_anime_target_tmdb_when_source_tmdb_conflicts(monkeypatch: Any) -> None:
     from providers.sync._mod_FLOPPY import OPS
     from providers.sync.floppy import _history

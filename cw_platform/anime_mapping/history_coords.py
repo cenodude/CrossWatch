@@ -10,6 +10,7 @@ from .episodes import resolve_axis_coordinates
 from .storage import index_ready, normalize_release_tag
 
 NATIVE_ANIME_ID_KEYS = ("mal", "anilist", "anidb", "kitsu")
+ABSOLUTE_ID_KEYS = ("tmdb", "imdb", "mal", "anilist", "anidb", "kitsu", "simkl")
 ABSOLUTE_FRAGMENT = "#abs:"
 _MIN_ABSOLUTE_RUN = 2
 _MAX_DUPLICATE_RATIO = 0.98
@@ -41,6 +42,10 @@ def show_tokens(item: Mapping[str, Any]) -> set[str]:
     return {f"{k}:{v.lower()}" for k, v in show_ids_of(item).items()}
 
 
+def absolute_show_tokens(item: Mapping[str, Any]) -> set[str]:
+    return {f"{k}:{v.lower()}" for k, v in show_ids_of(item).items() if k in ABSOLUTE_ID_KEYS}
+
+
 def native_anime_absolute(item: Mapping[str, Any]) -> int | None:
     if not _is_episode(item):
         return None
@@ -69,7 +74,7 @@ def _absolute_runs_in(index: Mapping[str, Any] | None) -> dict[str, tuple[set[in
         coord = _episode_coordinate(item)
         if coord is None or coord[0] <= 0:
             continue
-        for token in show_tokens(item):
+        for token in absolute_show_tokens(item):
             per_show.setdefault(token, []).append(coord)
 
     out: dict[str, tuple[set[int], set[int]]] = {}
@@ -159,7 +164,7 @@ class HistoryCoordinateAliases:
 
         absolute = native_anime_absolute(item)
         if absolute is not None:
-            tokens.update(f"{p}{ABSOLUTE_FRAGMENT}{absolute}" for p in prefixes)
+            tokens.update(f"{p}{ABSOLUTE_FRAGMENT}{absolute}" for p in absolute_show_tokens(item))
             if self._mapping_ready():
                 for season, episode in self._axis_coordinates(show_ids_of(item), absolute):
                     frag = f"#s{season:02d}e{episode:02d}"

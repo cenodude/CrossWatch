@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from cw_platform.anime_mapping.coordinates import translate
+from cw_platform.anime_mapping.episodes import resolve_source_coordinate
 from cw_platform.anime_mapping.overrides import find_source_override
 from cw_platform.anime_mapping.service import PAIR_FEATURE_OPTIONS_KEY, mapping_enabled_for_feature, runtime_pair_feature_options
 from cw_platform.anime_mapping.storage import query_edges
@@ -181,6 +182,18 @@ def _anime_target_for_absolute(
     override_target = _override_target_for_absolute(item, tmdb_id, native_ids, absolute)
     if override_target is not None:
         return override_target
+
+    try:
+        source_coord = resolve_source_coordinate(
+            _show_ids(item),
+            absolute,
+            release_tag=release_tag,
+            preferred_provider="tmdb",
+        )
+    except Exception:
+        source_coord = None
+    if source_coord is not None and source_coord.provider == "tmdb":
+        return source_coord.ident, source_coord.season, source_coord.episode
 
     found: set[tuple[str, int, int]] = set()
     for namespace in ("anidb", "mal", "anilist", "kitsu"):

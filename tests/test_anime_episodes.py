@@ -78,8 +78,10 @@ def test_prefers_anidb_when_available(index: Path) -> None:
     assert (got.absolute, got.namespace, got.target_id) == (5, "anidb", "1530")
 
 
-def test_disagreeing_namespaces_are_refused(index: Path) -> None:
-    assert resolve_absolute(_episode({"tvdb": "700"}, 1, 3)) is None
+def test_anidb_breaks_disagreements_between_native_namespaces(index: Path) -> None:
+    got = resolve_absolute(_episode({"tvdb": "700"}, 1, 3))
+    assert got is not None
+    assert (got.absolute, got.namespace, got.target_id) == (4, "anidb", "700")
 
 
 def test_agreeing_namespaces_are_accepted(index: Path) -> None:

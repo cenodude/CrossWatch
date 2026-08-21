@@ -19,12 +19,30 @@ DBZ_MAPPINGS: dict[str, Any] = {
     "tvdb_show:81472:s3": {"mal:813": {"1-33": "75-107"}},
 }
 
+CLANNAD_MAPPINGS: dict[str, Any] = {
+    "anidb:5841:R": {"tmdb_show:24835:s2": {"1-22": "1-22"}, "tvdb_show:80644:s2": {"1-22": "1-22"}},
+    "anilist:4181": {
+        "tmdb_show:24835:s0": {"1-2": "3-4"},
+        "tmdb_show:24835:s2": {"3-24": "1-22"},
+        "tvdb_show:80644:s2": {"1-24": "1-24"},
+    },
+}
+
 
 @pytest.fixture()
 def dbz_index(config_base: Path) -> Path:
     paths = storage.paths("v3")
     paths["root"].mkdir(parents=True, exist_ok=True)
     paths["mappings"].write_text(json.dumps(DBZ_MAPPINGS), encoding="utf-8")
+    storage.rebuild_sqlite_from_mappings(release_tag="v3")
+    return paths["db"]
+
+
+@pytest.fixture()
+def clannad_index(config_base: Path) -> Path:
+    paths = storage.paths("v3")
+    paths["root"].mkdir(parents=True, exist_ok=True)
+    paths["mappings"].write_text(json.dumps(CLANNAD_MAPPINGS), encoding="utf-8")
     storage.rebuild_sqlite_from_mappings(release_tag="v3")
     return paths["db"]
 
@@ -119,6 +137,17 @@ def test_anibridge_reverse_maps_absolute_back_to_aired(dbz_index: Path) -> None:
     assert coord.basis == "anibridge_reverse"
     assert (coord.provider, coord.ident) == ("tvdb", "81472")
     assert (coord.season, coord.episode) == (2, 1)
+
+
+def test_anidb_breaks_reverse_mapping_conflicts(clannad_index: Path) -> None:
+    coord = resolve_source_coordinate(
+        {"anidb": "5841", "anilist": "4181", "tmdb": "248058", "tvdb": "80644"},
+        1,
+        preferred_provider="tmdb",
+    )
+
+    assert coord is not None
+    assert (coord.provider, coord.ident, coord.season, coord.episode) == ("tmdb", "24835", 2, 1)
 
 
 def test_anibridge_reverse_round_trips_every_dbz_season(dbz_index: Path) -> None:
