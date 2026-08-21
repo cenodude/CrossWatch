@@ -9,7 +9,7 @@ from cw_platform.provider_instances import get_provider_block, normalize_instanc
 
 DEFAULT_INSTANCE_ID = "default"
 ROUTE_PROVIDERS = {"plex", "emby", "jellyfin", "kodi", "scrob"}
-ROUTE_SINKS = {"trakt", "simkl", "mdblist", "crosswatch", "floppy", "punchplay", "scrob"}
+ROUTE_SINKS = {"trakt", "simkl", "mdblist", "crosswatch", "floppy", "punchplay", "bingebase", "scrob"}
 ROUTE_RATING_SINKS = {"trakt", "simkl", "mdblist", "crosswatch", "floppy", "punchplay", "scrob"}
 ROUTE_OPTION_STATES = {"inherit", "on", "off"}
 ROUTE_RATINGS_MODES = {"off", "custom"}

@@ -1,7 +1,7 @@
 /* CrossWatch - Scrobbler Webhook Modal */
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const label = (v) => window.CW?.ProviderMeta?.label?.(v) || ({ plex: "Plex", jellyfin: "Jellyfin", emby: "Emby", trakt: "Trakt", simkl: "SIMKL", mdblist: "MDBList", crosswatch: "CrossWatch", floppy: "Floppy", punchplay: "PunchPlay", scrob: "Scrob" }[String(v || "").toLowerCase()] || String(v || "").toUpperCase());
-const sinks = ["crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "scrob"];
+const label = (v) => window.CW?.ProviderMeta?.label?.(v) || ({ plex: "Plex", jellyfin: "Jellyfin", emby: "Emby", trakt: "Trakt", simkl: "SIMKL", mdblist: "MDBList", crosswatch: "CrossWatch", floppy: "Floppy", punchplay: "PunchPlay", bingebase: "BingeBase", scrob: "Scrob" }[String(v || "").toLowerCase()] || String(v || "").toUpperCase());
+const sinks = ["crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "bingebase", "scrob"];
 const ratingSinks = ["crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "scrob"];
 const webhookSources = new Set(["plex", "jellyfin", "emby"]);
 
