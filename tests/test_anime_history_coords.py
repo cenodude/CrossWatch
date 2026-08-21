@@ -29,6 +29,22 @@ MAPPINGS: dict[str, Any] = {
 DRAGON_BALL_IDS = {"tmdb": "12609", "imdb": "tt0088509", "tvdb": "76666", "mal": "223", "anilist": "223"}
 DBZ_IDS = {"tmdb": "12971", "imdb": "tt0121220", "tvdb": "81472", "mal": "813", "anilist": "813"}
 ONE_PIECE_IDS = {"tmdb": "37854", "imdb": "tt0388629", "tvdb": "81797", "mal": "21", "anilist": "21"}
+CLANNAD_IDS = {
+    "tmdb": "24835",
+    "imdb": "tt1118804",
+    "tvdb": "80644",
+    "simkl": "40750",
+    "mal": "2167",
+    "anilist": "2167",
+}
+CLANNAD_AFTER_STORY_IDS = {
+    "tmdb": "248058",
+    "imdb": "tt1298820",
+    "tvdb": "80644",
+    "simkl": "38483",
+    "mal": "4181",
+    "anilist": "4181",
+}
 
 MDBLIST_DRAGON_BALL_IDS = {"tmdb": "12609", "imdb": "tt0088509", "trakt": "12553"}
 MDBLIST_DBZ_IDS = {"tmdb": "12971", "imdb": "tt0121220", "trakt": "12915"}
@@ -158,6 +174,16 @@ def test_a_row_with_its_own_absolute_never_claims_its_episode_number_is_one(conf
     assert "tmdb:37854#abs:21" in tokens
     assert "tmdb:37854#abs:11" not in tokens
     assert not _matched(aliases, source, dst_index["tmdb:37854#s01e11"])
+
+
+def test_shared_tvdb_absolute_token_does_not_merge_separate_anime_entries(config_base: Path) -> None:
+    source = _episode(CLANNAD_AFTER_STORY_IDS, 2, 1, absolute=1)
+    destination = _episode(CLANNAD_IDS, 1, 1, absolute=1)
+    aliases = build_history_coordinate_aliases(CFG, "history", ({"a": source}, {"b": destination}))
+
+    assert "tvdb:80644#abs:1" not in aliases.tokens(source)
+    assert "tvdb:80644#abs:1" not in aliases.tokens(destination)
+    assert not _matched(aliases, source, destination)
 
 
 def test_per_season_restart_numbering_is_not_treated_as_absolute(config_base: Path) -> None:

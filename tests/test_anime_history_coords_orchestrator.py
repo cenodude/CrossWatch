@@ -20,6 +20,22 @@ MAPPINGS: dict[str, Any] = {
 
 SRC_SHOW_IDS = {"tmdb": "12609", "imdb": "tt0088509", "tvdb": "76666", "mal": "223", "anilist": "223"}
 DST_SHOW_IDS = {"tmdb": "12609", "imdb": "tt0088509", "trakt": "12553"}
+CLANNAD_IDS = {
+    "tmdb": "24835",
+    "imdb": "tt1118804",
+    "tvdb": "80644",
+    "simkl": "40750",
+    "mal": "2167",
+    "anilist": "2167",
+}
+CLANNAD_AFTER_STORY_IDS = {
+    "tmdb": "248058",
+    "imdb": "tt1298820",
+    "tvdb": "80644",
+    "simkl": "38483",
+    "mal": "4181",
+    "anilist": "4181",
+}
 
 
 class _CoordAliases:
@@ -102,7 +118,7 @@ def _episode(show_ids: dict[str, str], season: int, episode: int, absolute: int 
     return out
 
 
-def _cfg(anime_enabled: bool) -> dict[str, Any]:
+def _cfg(anime_enabled: bool, *, source: str = "CROSSWATCH", target: str = "MDBLIST") -> dict[str, Any]:
     return {
         "runtime": {"debug": False, "snapshot_ttl_sec": 0, "apply_chunk_size": 0, "apply_chunk_pause_ms": 0},
         "anime_mapping": {"enabled": anime_enabled, "release_tag": "v3", "use_for_pairs": ["anilist", "simkl"]},
@@ -117,8 +133,8 @@ def _cfg(anime_enabled: bool) -> dict[str, Any]:
             {
                 "id": "p1",
                 "enabled": True,
-                "source": "CROSSWATCH",
-                "target": "MDBLIST",
+                "source": source,
+                "target": target,
                 "mode": "one-way",
                 "feature": "history",
                 "features": {"history": {"enable": True, "add": True, "remove": False}},
@@ -180,18 +196,18 @@ def test_orchestrator_retries_unresolved_coord_match_with_the_anime_toggle_on(
         "title": "Anime destination",
         "season": 1,
         "episode": 14,
-        "watched_at": "2024-01-01T00:00:00Z",
+        "watched_at": "2024-01-02T00:00:00Z",
         "ids": {},
         "show_ids": {"tvdb": "222"},
         "_anime_absolute": 14,
     }
     source_key = canonical_key(source_item)
     destination_key = canonical_key(destination_item)
-    src = FakeOps("CROSSWATCH", {source_key: source_item})
+    src = FakeOps("TRAKT", {source_key: source_item})
     dst = FakeOps("MDBLIST", {destination_key: destination_item})
     monkeypatch.setattr(
         "cw_platform.orchestrator.facade.load_sync_providers",
-        lambda: {"CROSSWATCH": src, "MDBLIST": dst},
+        lambda: {"TRAKT": src, "MDBLIST": dst},
     )
     monkeypatch.setattr("cw_platform.orchestrator._snapshots.provider_configured", lambda _cfg, _name: True)
     monkeypatch.setattr(
@@ -202,7 +218,37 @@ def test_orchestrator_retries_unresolved_coord_match_with_the_anime_toggle_on(
         "cw_platform.orchestrator._pairs_oneway.load_unresolved_keys",
         lambda *_a, **_k: {source_key},
     )
-    Orchestrator(_cfg(False)).run()
+    monkeypatch.setattr("cw_platform.orchestrator._pairs_oneway.load_blackbox_keys", lambda *_a, **_k: set())
+    monkeypatch.setattr("cw_platform.orchestrator._pairs_blocklist.load_blackbox_keys", lambda *_a, **_k: set())
+    Orchestrator(_cfg(False, source="TRAKT", target="MDBLIST")).run()
+
+    planned = [it for batch in dst.add_calls for it in batch]
+    assert len(planned) == 1
+    assert (planned[0].get("season"), planned[0].get("episode")) == (2, 1)
+
+
+def test_orchestrator_does_not_prune_separate_anime_entries_that_share_tvdb(
+    config_base: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_item = _episode(CLANNAD_AFTER_STORY_IDS, 2, 1, absolute=1)
+    destination_item = _episode(CLANNAD_IDS, 1, 1, absolute=1)
+    source_key = "tmdb:248058#s02e01"
+    destination_key = "tmdb:24835#s01e01"
+    src = FakeOps("SIMKL", {source_key: source_item})
+    dst = FakeOps("FLOPPY", {destination_key: destination_item})
+    monkeypatch.setattr(
+        "cw_platform.orchestrator.facade.load_sync_providers",
+        lambda: {"SIMKL": src, "FLOPPY": dst},
+    )
+    monkeypatch.setattr("cw_platform.orchestrator._snapshots.provider_configured", lambda _cfg, _name: True)
+    monkeypatch.setattr(
+        "cw_platform.orchestrator._pairs_oneway.load_unresolved_keys",
+        lambda *_a, **_k: set(),
+    )
+    monkeypatch.setattr("cw_platform.orchestrator._pairs_oneway.load_blackbox_keys", lambda *_a, **_k: set())
+    monkeypatch.setattr("cw_platform.orchestrator._pairs_blocklist.load_blackbox_keys", lambda *_a, **_k: set())
+
+    Orchestrator(_cfg(True, source="SIMKL", target="FLOPPY")).run()
 
     planned = [it for batch in dst.add_calls for it in batch]
     assert len(planned) == 1
