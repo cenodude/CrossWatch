@@ -55,6 +55,7 @@
     { key: "MDBLIST", paths: [["mdblist"], ["auth", "mdblist"]], keys: ["api_key", "access_token"] },
     { key: "PUBLICMETADB", paths: [["publicmetadb"], ["auth", "publicmetadb"]], keys: ["api_key"] },
     { key: "PUNCHPLAY", paths: [["punchplay"], ["auth", "punchplay"]], keys: ["access_token"] },
+    { key: "BINGEBASE", paths: [["bingebase"], ["auth", "bingebase"]], keys: ["access_token", "webhook_url"] },
     { key: "NUVIO", paths: [["nuvio"], ["auth", "nuvio"]], keys: ["access_token", "refresh_token"] },
     { key: "STREMIO", paths: [["stremio"], ["auth", "stremio"]], keys: ["auth_key", "authKey"] },
   ];

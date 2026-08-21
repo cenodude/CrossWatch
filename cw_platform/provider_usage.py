@@ -33,6 +33,7 @@ _PROVIDER_LABELS = {
     "crosswatch": "CrossWatch",
     "floppy": "Floppy",
     "punchplay": "PunchPlay",
+    "bingebase": "BingeBase",
     "scrob": "Scrob",
 }
 

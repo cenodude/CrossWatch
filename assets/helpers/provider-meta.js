@@ -18,10 +18,11 @@
     KODI: { key: "KODI", label: "Kodi", shortLabel: "Kodi", brandClass: "brand-kodi", badgeId: "badge-kodi", authSectionId: "sec-kodi", authGroupId: "sec-auth-clients", aliases: ["KODI", "XBMC"], statusLegacy: ["kodi_connected", "kodi"], hasLogo: true, hasLogLogo: false, logoFile: "KODI.png", tone: { solid: "#17b5d1", rgb: "23,181,209" }, ratings: true, history: true, progress: true, playlists: false },
     STREMIO: { key: "STREMIO", label: "Stremio", shortLabel: "Stremio", brandClass: "brand-stremio", badgeId: "badge-stremio", authSectionId: "sec-stremio", authGroupId: "sec-auth-clients", aliases: ["STREMIO"], statusLegacy: ["stremio_connected", "stremio"], hasLogo: true, hasLogLogo: false, logoFile: "STREMIO.png", tone: { solid: "#722cfe", rgb: "114,44,254" }, watchlist: true, ratings: true, history: true, progress: true, playlists: false },
     PUNCHPLAY: { key: "PUNCHPLAY", label: "PunchPlay", shortLabel: "PunchPlay", brandClass: "brand-punchplay", badgeId: "badge-punchplay", authSectionId: "sec-punchplay", authGroupId: "sec-auth-trackers", aliases: ["PUNCHPLAY", "PUNCH PLAY", "PUNCH-PLAY"], statusLegacy: ["punchplay_connected", "punchplay"], hasLogo: true, hasLogLogo: false, logoFile: "PUNCHPLAY.png", tone: { solid: "#f4400f", rgb: "244,64,15" }, watchlist: true, ratings: true, history: true, progress: true, playlists: false, scrobblerSink: true },
+    BINGEBASE: { key: "BINGEBASE", label: "BingeBase", shortLabel: "BingeBase", brandClass: "brand-bingebase", badgeId: "badge-bingebase", authSectionId: "sec-bingebase", authGroupId: "sec-auth-trackers", aliases: ["BINGEBASE", "BINGE BASE", "BINGE-BASE"], statusLegacy: ["bingebase_connected", "bingebase"], hasLogo: true, hasLogLogo: false, logoFile: "BINGEBASE.png", tone: { solid: "#ff8533", rgb: "255,133,51" }, watchlist: false, ratings: false, history: false, progress: false, playlists: false, scrobblerSink: true, scrobbleOnly: true, syncSurface: false },
     SCROB: { key: "SCROB", label: "Scrob", shortLabel: "Scrob", brandClass: "brand-scrob", badgeId: "badge-scrob", authSectionId: "sec-scrob", authGroupId: "sec-auth-trackers", aliases: ["SCROB"], statusLegacy: ["scrob_connected", "scrob"], hasLogo: true, hasLogLogo: false, logoFile: "SCROB.png", tone: { solid: "#6f36cc", rgb: "111,54,204" }, watchlist: true, ratings: true, history: true, progress: true, playlists: false, scrobblerSink: true },
     TAUTULLI: { key: "TAUTULLI", label: "Tautulli", shortLabel: "Tautulli", brandClass: "brand-tautulli", badgeId: "badge-tautulli", authSectionId: "sec-tautulli", authGroupId: "sec-auth-others", aliases: ["TAUTULLI"], statusLegacy: ["tautulli_connected", "tautulli"], hasLogo: true, hasLogLogo: false, tone: { solid: "#f59e0b", rgb: "245,158,11" } },
   });
-  const order = Object.freeze(["CROSSWATCH","PLEX","JELLYFIN","EMBY","SIMKL","TRAKT","ANILIST","TMDB","MDBLIST","PUBLICMETADB","PUNCHPLAY","FLOPPY","SCROB","NUVIO","KODI","STREMIO","TAUTULLI"]);
+  const order = Object.freeze(["CROSSWATCH","PLEX","JELLYFIN","EMBY","SIMKL","TRAKT","ANILIST","TMDB","MDBLIST","PUBLICMETADB","PUNCHPLAY","BINGEBASE","FLOPPY","SCROB","NUVIO","KODI","STREMIO","TAUTULLI"]);
   function normalizeToken(v){ return String(v || "").trim().toUpperCase().replace(/[^A-Z0-9]+/g, ""); }
   function aliasPool(key){
     const info = providers[key];
@@ -61,6 +62,7 @@
   function authProviders(){ return order.map((key) => get(key)).filter((info) => info?.authSectionId).map((info) => ({ key: info.key, sectionId: info.authSectionId, groupId: info.authGroupId || "" })); }
   function watchlistProviders(){ return order.filter((key) => !!get(key)?.watchlist); }
   function scrobblerSinks(){ return order.filter((key) => !!get(key)?.scrobblerSink); }
+  function syncSurfaceProvider(v){ return get(v)?.syncSurface !== false; }
   function assetPath(path){
     const version = String(window.APP_VERSION || window.__CW_VERSION__ || "").trim();
     return version ? `${path}?v=${encodeURIComponent(version)}` : path;
@@ -83,7 +85,7 @@
   (window.CW ||= {});
   window.CW.ProviderMeta = {
     providers, order, get, normalizeToken, keyOf, matchKey, label, shortLabel, aliases, aliasesMap, badgeId, sectionId, authGroupId,
-    statusLegacy, tone, statusProviders, authProviders, watchlistProviders, scrobblerSinks, assetPath, logoPath, logLogoPath, brandInfo, logoHtml,
+    statusLegacy, tone, statusProviders, authProviders, watchlistProviders, scrobblerSinks, syncSurfaceProvider, assetPath, logoPath, logLogoPath, brandInfo, logoHtml,
     logLogoHtml, logo: logoPath, logLogo: logLogoPath,
     labels: Object.fromEntries(order.map((key) => [key, label(key)])),
   };

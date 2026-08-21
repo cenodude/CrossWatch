@@ -17,6 +17,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
   const featureLabel = v => featureMeta.label?.(v) || FEAT_LABEL[lc(v)] || String(v || "");
   const providerLabel = v => providerMeta.label?.(v) || String(v || "");
   const providerLogo = v => providerMeta.logoPath?.(v) || "";
+  const providerOnSyncSurface = v => typeof providerMeta.syncSurfaceProvider === "function" ? providerMeta.syncSurfaceProvider(v) : true;
   const overviewProfile = () => w.CW?.OverviewProfile || null;
   const overviewProfileId = () => String(overviewProfile()?.id || "").trim();
   const overviewFilter = () => overviewProfile()?.filter || {};
@@ -420,6 +421,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     const conf = new Set([...configuredSet].map(canonical));
     const keys = [...new Set([...Object.keys(totals), ...Object.keys(active), ...conf])]
       .filter(k => conf.has(canonical(k)) && providerSelected(k, instancesByProvider))
+      .filter(k => providerOnSyncSurface(k))
       .sort((a, b) => a === "crosswatch" ? -1 : b === "crosswatch" ? 1 : a.localeCompare(b));
 
     if (!keys.length) {
