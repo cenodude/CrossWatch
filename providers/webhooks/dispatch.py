@@ -88,6 +88,10 @@ def _make_sink(name: str, instance_id: str, cfg_provider: Callable[[], dict[str,
         from providers.scrobble.punchplay.sink import PunchPlaySink
 
         cls = PunchPlaySink
+    elif sink == "bingebase":
+        from providers.scrobble.bingebase.sink import BingeBaseSink
+
+        cls = BingeBaseSink
     elif sink == "scrob":
         from providers.scrobble.scrob.sink import ScrobSink
 
