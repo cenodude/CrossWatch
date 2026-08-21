@@ -39,18 +39,24 @@ body:
     attributes:
       label: Providers involved
       options:
-        - label: Plex
-        - label: Emby
-        - label: Jellyfin
-        - label: MDBList
-        - label: PublicMetaDB
-        - label: Nuvio
-        - label: Kodi
-        - label: Tautulli
         - label: AniList
-        - label: Trakt
+        - label: BingeBase
+        - label: CrossWatch
+        - label: Emby
+        - label: Floppy
+        - label: Jellyfin
+        - label: Kodi
+        - label: MDBList
+        - label: Nuvio
+        - label: Plex
+        - label: PublicMetaDB
+        - label: PunchPlay
+        - label: Scrob
         - label: SIMKL
-        - label: CrossWatch Internal Tracker
+        - label: Stremio
+        - label: Tautulli
+        - label: TMDb
+        - label: Trakt
 
   - type: checkboxes
     id: areas
@@ -61,7 +67,7 @@ body:
         - label: History or watched state
         - label: Playback progress or resume position
         - label: Ratings
-        - label: Scrobble or webhook
+        - label: Scrobble (watcher/webhook)
         - label: Scheduler
         - label: Analyzer or item matching
         - label: Events
