@@ -47,7 +47,7 @@
 
   const AUTH_GROUPS = Object.freeze([
     { id: "sec-auth-media", title: "Media servers", keys: ["PLEX", "JELLYFIN", "EMBY"] },
-    { id: "sec-auth-trackers", title: "Trackers", keys: ["CROSSWATCH", "TRAKT", "SIMKL", "TMDB", "MDBLIST", "PUBLICMETADB", "ANILIST", "PUNCHPLAY", "FLOPPY", "SCROB"] },
+    { id: "sec-auth-trackers", title: "Trackers", keys: ["CROSSWATCH", "TRAKT", "SIMKL", "TMDB", "MDBLIST", "PUBLICMETADB", "ANILIST", "PUNCHPLAY", "BINGEBASE", "FLOPPY", "SCROB"] },
     { id: "sec-auth-clients", title: "Media clients", keys: ["NUVIO", "KODI", "STREMIO"] },
     { id: "sec-auth-others", title: "Others", keys: ["TAUTULLI"] },
   ]);
@@ -226,6 +226,7 @@
     if (p === "anilist") return hasConfiguredValue(b.access_token) || hasConfiguredValue(b.token);
     if (p === "mdblist") return hasConfiguredValue(b.api_key) || hasConfiguredValue(b.access_token);
     if (p === "punchplay") return hasConfiguredValue(b.access_token);
+    if (p === "bingebase") return hasConfiguredValue(b.access_token) || hasConfiguredValue(b.webhook_url);
     if (p === "floppy") return hasConfiguredValue(b.server_url || b.server) && hasConfiguredValue(b.api_token || b.token);
     if (p === "scrob") return hasConfiguredValue(b.server_url) && hasConfiguredValue(b.api_key) && hasConfiguredValue(b.username) && hasConfiguredValue(b.password);
     if (p === "nuvio") return (hasConfiguredValue(b.access_token) || hasConfiguredValue(b.refresh_token)) && hasConfiguredValue(b.profile_id);
@@ -468,7 +469,12 @@
     const renderCard = (card) => {
       const attr = card.type === "metadata" ? `data-cw-meta-open="${card.key}"` : `data-cw-auth-open="${card.key}"`;
       const profiles = card.type === "provider" ? authProfileBadges(card, cfg) : "";
+      const meta = card.type === "provider" && typeof providerMeta().get === "function" ? providerMeta().get(card.key) : null;
+      const scrobbleOnly = meta?.scrobbleOnly === true
+        ? '<span class="cw-auth-scrobble-only-badge material-symbols-rounded" title="Scrobble only (Watcher or Webhook)" aria-label="Scrobble only (Watcher or Webhook)">sync</span>'
+        : "";
       return `<button type="button" class="cw-auth-service-card" ${attr}>
+        ${scrobbleOnly}
         <span class="cw-auth-provider-mark">${card.logo}</span>
         <span class="cw-auth-service-copy">
           <strong>${card.label}</strong>
@@ -638,6 +644,16 @@
       order: ["#punchplay_device_panel", ".pp-actions"],
       code: ["#punchplay_device_panel"],
       actions: [{ row: ".pp-actions", status: "#punchplay_msg", buttons: "#punchplay_device_start, #punchplay_device_cancel, #punchplay_device_restart" }]
+    },
+    BINGEBASE: {
+      provider: "bingebase", logo: "BINGEBASE", help: window.CW.HelpLinks.url("bingebase"), deleteSelector: "#bingebase_disconnect", allowSaveWithoutConnection: true,
+      tabs: { auth: ["lock", "Authentication", "Connect with a device code"] },
+      copy: { auth: ["BingeBase Authentication", "Connect BingeBase with a device code and optional realtime webhook credentials."] },
+      journey: ["Connect to BingeBase", "Click Connect BingeBase and approve the code at bingebase.com/activate.\nBingeBase only provides scrobble.", "255,133,51", "248,241,232", "BINGEBASE"],
+      steps: [["1", "Start device login", "CrossWatch shows a short link code"], ["2", "Approve access", "Enter the code at bingebase.com/activate"], ["3", "Realtime", "Use the auto-filled Kodi webhook or paste an override"]],
+      order: ["#bingebase_realtime_panel", ".bb-actions", "#bingebase_device_panel"],
+      code: ["#bingebase_device_panel"],
+      actions: [{ row: ".bb-actions", status: "#bingebase_msg", buttons: "#bingebase_device_start, #bingebase_device_cancel, #bingebase_device_restart" }]
     },
     PUBLICMETADB: {
       provider: "publicmetadb", logo: "PUBLICMETADB", help: window.CW.HelpLinks.url("publicmetadb"), deleteSelector: "#publicmetadb_disconnect",
@@ -1012,9 +1028,10 @@
     const save = panel?.querySelector(".cw-connection-footer-save");
     if (!save) return;
     const connected = connectionModalCurrentConnected(panel, info, cfg);
-    save.disabled = !connected;
-    save.classList.toggle("is-disabled", !connected);
-    if (connected) save.removeAttribute("title");
+    const canSave = connected || !!info?.allowSaveWithoutConnection;
+    save.disabled = !canSave;
+    save.classList.toggle("is-disabled", !canSave);
+    if (canSave) save.removeAttribute("title");
     else save.title = "Connect this profile before saving.";
   }
 

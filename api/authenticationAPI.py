@@ -2061,6 +2061,86 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             _safe_log(log_fn, "PUNCHPLAY", f"[PUNCHPLAY] ERROR disconnect: {e}")
             return {"ok": False, "error": "internal"}
 
+    @app.post("/api/bingebase/device/start", tags=["auth"])
+    def api_bingebase_device_start(payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            res = _provider_auth().start_device_code("bingebase", cfg, instance_id=inst)
+            if isinstance(probe_cache, dict):
+                probe_cache["bingebase"] = (0.0, False)
+            _safe_log(log_fn, "BINGEBASE", f"[BINGEBASE] device start instance={inst} ok={bool(res.get('ok'))}")
+            return res
+        except Exception as e:
+            _safe_log(log_fn, "BINGEBASE", f"[BINGEBASE] ERROR device start type={type(e).__name__}")
+            return {"ok": False, "error": "internal", "instance": inst}
+
+    @app.post("/api/bingebase/device/poll", tags=["auth"])
+    def api_bingebase_device_poll(payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            res = _provider_auth().poll_device_code(
+                "bingebase",
+                cfg,
+                instance_id=inst,
+                device_code=str((payload or {}).get("device_code") or "").strip() or None,
+            )
+            if res.get("ok") and isinstance(probe_cache, dict):
+                probe_cache["bingebase"] = (0.0, False)
+            return res
+        except Exception as e:
+            _safe_log(log_fn, "BINGEBASE", f"[BINGEBASE] ERROR device poll type={type(e).__name__}")
+            return {"ok": False, "status": "internal", "instance": inst}
+
+    @app.post("/api/bingebase/device/cancel", tags=["auth"])
+    def api_bingebase_device_cancel(instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            from providers.auth import _auth_BINGEBASE as bingebase_auth
+
+            return bingebase_auth.cancel_device_code(load_config(), instance_id=inst)
+        except Exception as e:
+            _safe_log(log_fn, "BINGEBASE", f"[BINGEBASE] ERROR device cancel type={type(e).__name__}")
+            return {"ok": False, "error": "internal", "instance": inst}
+
+    @app.get("/api/bingebase/status", tags=["auth"])
+    def api_bingebase_status(instance: str | None = Query(None)) -> dict[str, Any]:
+        cfg = load_config()
+        inst = normalize_instance_id(instance)
+        p = ensure_instance_block(cfg, "bingebase", inst)
+        try:
+            from providers.auth import _auth_BINGEBASE as bingebase_auth
+
+            if bingebase_auth.ensure_default_webhook(p):
+                save_config(cfg)
+                if isinstance(probe_cache, dict):
+                    probe_cache["bingebase"] = (0.0, False)
+        except Exception:
+            pass
+        out = _provider_auth().status_for_block("bingebase", p)
+        out["instance"] = inst
+        return out
+
+    @app.post("/api/bingebase/disconnect", tags=["auth"])
+    def api_bingebase_disconnect(instance: str | None = Query(None)) -> Any:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            conflict = usage_conflict_response(cfg, "bingebase", inst)
+            if conflict is not None:
+                return conflict
+            from providers.auth import _auth_BINGEBASE as bingebase_auth
+
+            bingebase_auth.PROVIDER.disconnect(cfg, instance_id=inst)
+            _safe_log(log_fn, "BINGEBASE", f"[BINGEBASE] disconnected instance={inst}")
+            if isinstance(probe_cache, dict):
+                probe_cache["bingebase"] = (0.0, False)
+            return {"ok": True, "instance": inst}
+        except Exception as e:
+            _safe_log(log_fn, "BINGEBASE", f"[BINGEBASE] ERROR disconnect type={type(e).__name__}")
+            return {"ok": False, "error": "internal", "instance": inst}
+
     @app.post("/api/publicmetadb/save", tags=["auth"])
     def api_publicmetadb_save(payload: dict[str, Any] = Body(...), instance: str | None = Query(None)) -> dict[str, Any]:
         try:

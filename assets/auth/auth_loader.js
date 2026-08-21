@@ -19,6 +19,7 @@
     tautulli: "/assets/auth/auth.tautulli.js",
     anilist: "/assets/auth/auth.anilist.js",
     punchplay: "/assets/auth/auth.punchplay.js",
+    bingebase: "/assets/auth/auth.bingebase.js",
     scrob: "/assets/auth/auth.scrob.js",
   };
 
@@ -39,6 +40,7 @@
     "sec-tautulli": "tautulli",
     "sec-anilist": "anilist",
     "sec-punchplay": "punchplay",
+    "sec-bingebase": "bingebase",
     "sec-scrob": "scrob",
   };
 

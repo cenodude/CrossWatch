@@ -31,6 +31,10 @@ def _backend(provider: Any) -> Any:
         from providers.auth import _auth_PUNCHPLAY as punchplay_auth
 
         return punchplay_auth
+    if name in {"bingebase", "binge_base", "binge-base"}:
+        from providers.auth import _auth_BINGEBASE as bingebase_auth
+
+        return bingebase_auth
     if name == "scrob":
         from providers.auth import _auth_SCROB as scrob_auth
 

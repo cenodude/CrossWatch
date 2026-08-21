@@ -187,6 +187,7 @@ def _is_sensitive_path(path: tuple[str, ...]) -> bool:
         "password",
         "secret",
         "webhook_secret",
+        "webhook_url",
     }
     if leaf in exact:
         return True
@@ -395,6 +396,16 @@ DEFAULT_CFG: dict[str, Any] = {
             "playback_per_5min": 120,
             "sync_read_per_min": 120,
         },
+    },
+
+    "bingebase": {
+        "auth_method": "device_code",
+        "access_token": "",
+        "username": "",
+        "user_id": "",
+        "webhook_url": "",
+        "api_key": "",
+        "timeout": 20.0,
     },
 
     "nuvio": {
@@ -860,6 +871,7 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
         "mdblist": {"api_key", "access_token", "refresh_token", "_pending_device"},
         "publicmetadb": {"api_key"},
         "punchplay": {"access_token", "refresh_token", "_pending_device"},
+        "bingebase": {"access_token", "webhook_url", "api_key", "_pending_device"},
         "nuvio": {"access_token", "refresh_token", "_pending_tv_login", "_pending_tv_caller"},
         "stremio": {"auth_key", "authKey"},
         "floppy": {"api_token"},
@@ -969,6 +981,7 @@ CONFIG_TOP_LEVEL_ORDER: tuple[str, ...] = (
     "tmdb_sync",
     "publicmetadb",
     "punchplay",
+    "bingebase",
     "nuvio",
     "stremio",
     "floppy",

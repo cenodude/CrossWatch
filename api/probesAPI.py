@@ -66,6 +66,7 @@ PROVIDERS: tuple[str, ...] = (
     "stremio",
     "floppy",
     "punchplay",
+    "bingebase",
     "scrob",
 )
 
@@ -137,6 +138,7 @@ PROBE_CFG_KEY: dict[str, str] = {
     "STREMIO": "stremio",
     "FLOPPY": "floppy",
     "PUNCHPLAY": "punchplay",
+    "BINGEBASE": "bingebase",
     "SCROB": "scrob",
     "CROSSWATCH": "crosswatch",
     "CW": "crosswatch",
@@ -280,6 +282,13 @@ def _probe_key(provider_id: str, cfg: Mapping[str, Any]) -> str:
         tok = str((pp.get("access_token") or "")).strip()
         exp = str(pp.get("expires_at") or "0")
         return f"punchplay|tok:{_secret_cache_tag(tok)}|exp:{exp}" if tok else "punchplay|unconfigured"
+
+    if p == "bingebase":
+        bb = cfg.get("bingebase") or {}
+        tok = str((bb.get("access_token") or "")).strip()
+        wh = str((bb.get("webhook_url") or "")).strip()
+        api_key = str((bb.get("api_key") or "")).strip()
+        return f"bingebase|tok:{_secret_cache_tag(tok)}|wh:{_secret_cache_tag(wh)}|api:{_secret_cache_tag(api_key)}" if (tok or wh or api_key) else "bingebase|unconfigured"
 
     if p == "scrob":
         sc = cfg.get("scrob") or {}
@@ -1353,6 +1362,32 @@ def _probe_punchplay_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -
     return ok, rsn
 
 
+def _probe_bingebase_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
+    key = _probe_key("bingebase", cfg)
+    bust_ts = _consume_bust("bingebase")
+    now = time.time()
+    cached = PROBE_DETAIL_CACHE.get(key)
+    if cached and (now - cached[0]) < max_age_sec and (not bust_ts or cached[0] >= bust_ts):
+        return cached[1], cached[2]
+
+    p: Mapping[str, Any] = (cfg.get("bingebase") or {}) if isinstance(cfg.get("bingebase"), Mapping) else {}
+    has_auth = bool(str(p.get("access_token") or "").strip())
+    has_webhook = bool(str(p.get("webhook_url") or "").strip())
+    ok = bool(has_auth or has_webhook)
+    if ok and has_auth and has_webhook:
+        rsn = ""
+    elif ok and has_auth:
+        rsn = "BingeBase: authentication configured; webhook URL missing"
+    elif ok:
+        rsn = "BingeBase: realtime webhook configured"
+    else:
+        rsn = "BingeBase: missing authentication or webhook URL"
+
+    with _CACHE_LOCK:
+        PROBE_DETAIL_CACHE[key] = (now, ok, rsn)
+    return ok, rsn
+
+
 def _probe_kodi_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
     key = _probe_key("kodi", cfg)
     bust_ts = _consume_bust("kodi")
@@ -1638,6 +1673,38 @@ def punchplay_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) ->
         _USERINFO_CACHE[key] = (now, out)
     return out
 
+
+def bingebase_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict[str, Any]:
+    key = _probe_key("bingebase", cfg)
+    bust_ts = _consume_bust("bingebase")
+    now = time.time()
+    cached = _USERINFO_CACHE.get(key)
+    if cached and (now - cached[0]) < max_age_sec and (not bust_ts or cached[0] >= bust_ts) and isinstance(cached[1], dict):
+        return cached[1]
+
+    bb = (cfg.get("bingebase") or cfg.get("BINGEBASE") or {}) or {}
+    if not isinstance(bb, Mapping):
+        bb = {}
+
+    out: dict[str, Any] = {}
+    username = str(bb.get("username") or "").strip()
+    user_id = str(bb.get("user_id") or "").strip()
+    if username:
+        out["username"] = username
+    if user_id:
+        out["user_id"] = user_id
+    if str(bb.get("access_token") or "").strip():
+        out["auth_configured"] = True
+    if str(bb.get("webhook_url") or "").strip():
+        out["webhook_configured"] = True
+    if str(bb.get("api_key") or "").strip():
+        out["api_key_configured"] = True
+
+    with _CACHE_LOCK:
+        _USERINFO_CACHE[key] = (now, dict(out))
+    return out
+
+
 def simkl_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict[str, Any]:
     key = _probe_key("simkl", cfg)
     bust_ts = _consume_bust("simkl")
@@ -1913,6 +1980,9 @@ def _prov_configured(cfg: dict[str, Any], name: str, instance_id: Any = "default
     if ck == "punchplay":
         return bool(str(blk.get("access_token") or "").strip())
 
+    if ck == "bingebase":
+        return bool(str(blk.get("access_token") or "").strip() or str(blk.get("webhook_url") or "").strip())
+
     if ck == "scrob":
         return bool(
             str(blk.get("server_url") or "").strip()
@@ -1999,6 +2069,7 @@ DETAIL_PROBES: dict[str, Callable[..., tuple[bool, str]]] = {
     "STREMIO": _probe_stremio_detail,
     "FLOPPY": _probe_floppy_detail,
     "PUNCHPLAY": _probe_punchplay_detail,
+    "BINGEBASE": _probe_bingebase_detail,
     "SCROB": _probe_scrob_detail,
 }
 USERINFO_FNS: dict[str, Callable[..., dict[str, Any]]] = {
@@ -2009,6 +2080,7 @@ USERINFO_FNS: dict[str, Callable[..., dict[str, Any]]] = {
     "EMBY": emby_user_info,
     "MDBLIST": mdblist_user_info,
     "PUNCHPLAY": punchplay_user_info,
+    "BINGEBASE": bingebase_user_info,
     "SCROB": scrob_user_info,
 }
 
@@ -2300,6 +2372,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
             stremio_ok, stremio_reason, cfg_stremio = _provider_tuple("STREMIO")
             floppy_ok, floppy_reason, cfg_floppy = _provider_tuple("FLOPPY")
             punchplay_ok, punchplay_reason, cfg_punchplay = _provider_tuple("PUNCHPLAY")
+            bingebase_ok, bingebase_reason, cfg_bingebase = _provider_tuple("BINGEBASE")
             scrob_ok, scrob_reason, cfg_scrob = _provider_tuple("SCROB")
             taut_ok, taut_reason, cfg_taut = _provider_tuple("TAUTULLI")
             anilist_ok, anilist_reason, cfg_anilist = _provider_tuple("ANILIST")
@@ -2319,6 +2392,8 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 userinfo_jobs["MDBLIST"] = (mdblist_user_info, cfg_mdbl)
             if punchplay_ok:
                 userinfo_jobs["PUNCHPLAY"] = (punchplay_user_info, cfg_punchplay)
+            if bingebase_ok:
+                userinfo_jobs["BINGEBASE"] = (bingebase_user_info, cfg_bingebase)
             if scrob_ok:
                 userinfo_jobs["SCROB"] = (scrob_user_info, cfg_scrob)
 
@@ -2342,6 +2417,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
             info_anilist = userinfo.get("ANILIST", {})
             info_emby = userinfo.get("EMBY", {})
             info_mdbl = userinfo.get("MDBLIST", {})
+            info_bingebase = userinfo.get("BINGEBASE", {})
 
             trakt_block: dict[str, Any] = {"connected": trakt_ok}
             if not trakt_ok:
@@ -2615,6 +2691,28 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                     "rep_instance": inst_sum.get("rep"),
                 }
 
+            if "BINGEBASE" in active_providers:
+                inst_map, inst_sum = _instances_payload("BINGEBASE")
+                providers_out["BINGEBASE"] = {
+                    "connected": bingebase_ok,
+                    **({} if bingebase_ok else {"reason": bingebase_reason}),
+                    **(
+                        {}
+                        if not info_bingebase
+                        else {
+                            **({"username": info_bingebase.get("username")} if info_bingebase.get("username") else {}),
+                            **({"user_id": info_bingebase.get("user_id")} if info_bingebase.get("user_id") else {}),
+                            "auth_configured": bool(info_bingebase.get("auth_configured")),
+                            "webhook_configured": bool(info_bingebase.get("webhook_configured")),
+                            "api_key_configured": bool(info_bingebase.get("api_key_configured")),
+                        }
+                    ),
+                    "experimental": True,
+                    "instances": inst_map,
+                    "instances_summary": inst_sum,
+                    "rep_instance": inst_sum.get("rep"),
+                }
+
             def _scope_for(prov: str) -> str:
                 ss = prov_sources.get(prov) or set()
                 if "pair" in ss:
@@ -2668,6 +2766,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 "stremio_connected": stremio_ok,
                 "floppy_connected": floppy_ok,
                 "punchplay_connected": punchplay_ok,
+                "bingebase_connected": bingebase_ok,
                 "scrob_connected": scrob_ok,
                 "tautulli_connected": taut_ok,
                 "debug": debug,

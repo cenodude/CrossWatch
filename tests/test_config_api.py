@@ -294,6 +294,44 @@ def test_config_save_preserves_blank_stremio_auth_key(monkeypatch) -> None:
     assert saved["stremio"]["auth_key"] == "real-key"
 
 
+def test_config_save_preserves_masked_bingebase_webhook_url(monkeypatch) -> None:
+    from api import configAPI as cfg_api
+
+    saved: dict = {}
+
+    monkeypatch.setattr(
+        cfg_api,
+        "_env",
+        lambda: {
+            "CW": None,
+            "cfg_base": object(),
+            "load": lambda: {
+                "bingebase": {
+                    "access_token": "device-access",
+                    "webhook_url": "https://bingebase.com/webhooks/kodi/device-access",
+                },
+                "scrobble": {},
+            },
+            "save": lambda cfg: saved.update(cfg),
+            "prune": lambda *_: None,
+            "ensure": lambda *_: None,
+            "norm_pair": lambda *_: None,
+            "probes_cache": None,
+            "probes_status_cache": None,
+            "scheduler": None,
+        },
+    )
+
+    res = cfg_api.api_config_save(
+        cast(Any, SimpleNamespace(app=SimpleNamespace())),
+        {"bingebase": {"access_token": "\u2022" * 8, "webhook_url": "\u2022" * 8}},
+    )
+
+    assert res["ok"] is True
+    assert saved["bingebase"]["access_token"] == "device-access"
+    assert saved["bingebase"]["webhook_url"] == "https://bingebase.com/webhooks/kodi/device-access"
+
+
 def test_config_save_preserves_masked_totp_secrets(monkeypatch) -> None:
     from api import configAPI as cfg_api
 

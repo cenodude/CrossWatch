@@ -509,7 +509,10 @@ def api_config_save(request: Request, payload: dict[str, Any] = Body(...)) -> di
 
     def _blank(v: Any) -> bool:
         s = ("" if v is None else str(v)).strip()
-        return s in {"", MASK}
+        return (
+            s in {"", MASK, "********", "**********"}
+            or (len(s) >= 3 and all(ch in {"*", "\u2022"} for ch in s))
+        )
 
     def _is_sensitive_key(key: Any) -> bool:
         k = str(key or "").strip().lower()
@@ -531,6 +534,7 @@ def api_config_save(request: Request, payload: dict[str, Any] = Body(...)) -> di
             "_pending_request_token",
             "request_token",
             "token",
+            "webhook_url",
             # Webhook URL tokens (security.webhook_ids.*)
             "webhook_ids", "webhook_id",
             "plextrakt", "jellyfintrakt", "embytrakt", "plexwatcher",
