@@ -298,6 +298,16 @@ function providerClass(provider) {
   return `provider-${esc(String(provider || "").toLowerCase())}`;
 }
 
+function cssUrl(value) {
+  return String(value || "").replace(/['"\\\n\r\f]/g, "");
+}
+
+function providerCardAttrs(provider) {
+  const src = cssUrl(logo(provider));
+  const style = src ? ` style="--scrm-provider-watermark:url('${esc(src)}')"` : "";
+  return `class="scrm-provider-card ${providerClass(provider)}"${style}`;
+}
+
 function modalTitle() {
   return props.mode === "create" ? "Add webhook" : "Edit webhook";
 }
@@ -397,7 +407,7 @@ function sourcePanel(current) {
       </div>
       ${userProfileField()}
       <div class="scrm-route-grid">
-        <div class="scrm-provider-card ${providerClass(current.provider)}">
+        <div ${providerCardAttrs(current.provider)}>
           <div class="scrm-card-head"><span class="scrm-provider-mark">${providerIcon(current.provider)}</span><div><strong>Source</strong><small>${esc(label(current.provider))}</small></div></div>
           <div class="scrm-fields">
             ${fieldIcon("dns", "Media server", sourceProviderSelect(current))}
@@ -405,7 +415,7 @@ function sourcePanel(current) {
           </div>
         </div>
         <div class="scrm-route-arrow"><span class="material-symbols-rounded">arrow_forward</span></div>
-        <div class="scrm-provider-card ${providerClass(sink)}">
+        <div ${providerCardAttrs(sink)}>
           <div class="scrm-card-head"><span class="scrm-provider-mark">${providerIcon(sink)}</span><div><strong>Destination</strong><small>${esc(label(sink))}</small></div></div>
           <div class="scrm-fields">
             ${fieldIcon("gps_fixed", "Tracker", `<select class="input" id="scw-sink" ${sinkDisabled}>${sinkSelect(sink)}</select>`)}
