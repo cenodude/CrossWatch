@@ -86,7 +86,7 @@
     const match = block => block && typeof block === "object" && (block.server_url || block.server) && (block.api_token || block.token);
     return !!(match(root) || (root?.instances && Object.values(root.instances).some(match)));
   };
-  host.innerHTML=`<div class="wl-topline cw-page-hero cw-page-hero-watchlist" data-hero-icon="bookmark_added"><div class="wl-title-stack cw-page-hero-copy"><div class="cw-page-hero-kicker">WATCHLIST</div><div class="wl-title cw-page-hero-title">Watchlist</div><div class="wl-sub cw-page-hero-sub">Browse and manage your unified watchlist</div></div><div class="wl-hero-summary cw-page-hero-actions" id="wl-hero-summary" aria-label="Watchlist summary"><div class="wl-hero-seg"><strong id="wl-stat-total">0</strong><span>items</span></div><div class="wl-hero-seg"><strong id="wl-stat-visible">0</strong><span>visible</span></div><div class="wl-hero-seg wl-hero-sync"><span>Synced</span><strong id="wl-stat-sync">never</strong></div><button id="wl-refresh" class="wl-hero-refresh" title="Sync watchlist" aria-label="Sync watchlist"><span class="material-symbol ss-refresh-icon">refresh</span></button></div></div><div class="wl-wrap" id="watchlist-root"><div class="wl-main-shell"><div class="wl-toolbar"><div class="wl-toolbar-left"><label class="wl-chip wl-selectall"><input id="wl-select-all" type="checkbox"><span>Select all</span></label><span id="wl-count" class="wl-chip is-filter">0 selected</span></div><div class="wl-toolbar-right"><span id="wl-filter-state" class="wl-chip is-filter">All items</span></div></div><div id="wl-posters" class="wl-grid" style="display:none"></div><div id="wl-list" class="wl-table-wrap" style="display:none"><table class="wl-table"><colgroup><col class="c-sel"><col class="c-poster"><col class="c-title"><col class="c-rel"><col class="c-genre"><col class="c-type"><col class="c-sync"></colgroup><thead><tr><th style="text-align:center"><input id="wl-list-select-all" type="checkbox"></th><th class="sortable" data-sort="poster" data-col="poster" style="position:relative">Poster<span class="wl-resize"></span></th><th class="sortable" data-sort="title" data-col="title" style="position:relative">Title<span class="wl-resize"></span></th><th class="sortable" data-sort="release" data-col="rel" style="position:relative">Release<span class="wl-resize"></span></th><th class="sortable" data-sort="genre" data-col="genre" style="position:relative">Genre<span class="wl-resize"></span></th><th class="sortable" data-sort="type" data-col="type" style="position:relative">Type<span class="wl-resize"></span></th><th class="sortable" data-sort="sync" data-col="sync" style="position:relative">Sync<span class="wl-resize"></span></th></tr></thead><tbody id="wl-tbody"></tbody></table></div><div id="wl-pagination" class="wl-pagination" style="display:none"><button id="wl-page-prev" class="wl-btn">Previous</button><span id="wl-page-label" class="wl-muted">Page 1 of 1 • Rows 0–0 of 0</span><button id="wl-page-next" class="wl-btn">Next</button></div><div id="wl-empty" class="wl-empty wl-muted" style="display:none">No items match the current filters.</div></div><aside class="wl-side"><div class="ins-card"><div class="ins-row wl-ref-row" style="align-items:center"><div class="ins-icon"><span class="material-symbol">tune</span></div><div class="ins-title" style="margin-right:auto">Filters</div></div><div class="ins-row"><div class="ins-kv"><label for="wl-view">View</label><select id="wl-view" name="wl-view" class="wl-input" style="width:auto;padding:6px 10px"><option value="posters">Posters</option><option value="list">List</option></select><label for="wl-q">Search</label><input id="wl-q" name="wl-q" class="wl-input" placeholder="Search title..."><label for="wl-type">Type</label><select id="wl-type" name="wl-type" class="wl-input"><option value="">All types</option><option value="movie">Movies</option><option value="tv">Shows</option><option value="anime">Anime</option></select><label for="wl-provider">Provider</label><select id="wl-provider" name="wl-provider" class="wl-input">${providerOptions()}</select><label id="wl-size-label" for="wl-size">Size</label><input id="wl-size" name="wl-size" type="range" min="120" max="320" step="10" class="wl-input" style="padding:0"></div></div><div class="ins-row" id="wl-more-panel" style="display:none"><div class="ins-kv"><label for="wl-released">Released</label><select id="wl-released" name="wl-released" class="wl-input"><option value="both">Both</option><option value="released">Released</option><option value="unreleased">Upcoming</option></select><label id="wl-overlays-label" for="wl-overlays">Overlays</label><select id="wl-overlays" name="wl-overlays" class="wl-input"><option value="yes">On</option><option value="no">Off</option></select><label for="wl-genre">Genre</label><select id="wl-genre" name="wl-genre" class="wl-input"><option value="">All</option></select><label for="wl-show-hidden">Hidden</label><label class="wl-chip" style="justify-content:flex-start"><input id="wl-show-hidden" type="checkbox"><span>Include local hidden</span></label><div id="wl-cols-label" class="field-label">Columns</div><div id="wl-cols" class="wl-cols"><label class="wl-colchip"><input type="checkbox" name="wl-col" data-col="poster">Poster</label><label class="wl-colchip"><input type="checkbox" name="wl-col" data-col="rel">Release</label><label class="wl-colchip"><input type="checkbox" name="wl-col" data-col="genre">Genre</label><label class="wl-colchip"><input type="checkbox" name="wl-col" data-col="type">Type</label><label class="wl-colchip"><input type="checkbox" name="wl-col" data-col="sync">Sync</label></div></div></div><div class="ins-row" style="justify-content:flex-end;gap:8px"><button id="wl-more" class="wl-btn" aria-expanded="false">More</button><button id="wl-clear" class="wl-btn">Reset</button></div></div><div class="ins-card"><div class="ins-row wl-action-head"><div class="wl-action-title"><div class="ins-icon"><span class="material-symbol">flash_on</span></div><div class="ins-title">Actions</div></div><button type="button" class="wl-action-help" aria-label="Watchlist actions help" title="Delete selected items from the chosen provider, or from all providers. Hide local only removes selected items from the local CrossWatch view. Unhide all restores locally hidden items."><span class="material-symbol">help</span></button></div><div class="ins-row"><div class="wl-actions-panel"><div class="wl-action-row"><div class="wl-action-copy"><div class="wl-action-label">Delete from</div><div class="wl-action-hint">Selected items only</div></div><div class="wl-action-control is-select"><select id="wl-delete-provider" name="wl-delete-provider" class="wl-input">${deleteProviderOptions()}</select><button id="wl-delete" class="wl-btn danger" disabled>Delete</button></div></div><div class="wl-action-row"><div class="wl-action-copy"><div class="wl-action-label">Visibility</div><div class="wl-action-hint">Local view only</div></div><div class="wl-action-control"><button id="wl-hide" class="wl-btn" disabled>Hide local</button><button id="wl-unhide" class="wl-btn">Unhide all</button></div></div></div></div></div><div class="ins-card"><div class="ins-row"><div class="ins-icon"><span class="material-symbol">monitoring</span></div><div class="ins-title">Coverage Pulse</div></div><div class="ins-row"><div id="wl-metrics" class="ins-metrics"></div></div></div></aside></div><div id="wl-snack" class="wl-snack wl-hidden" role="status" aria-live="polite"></div>`;
+  host.innerHTML=`<div class="wl-topline cw-page-hero cw-page-hero-watchlist" data-hero-icon="bookmark_added"><div class="wl-title-stack cw-page-hero-copy"><div class="cw-page-hero-kicker">WATCHLIST</div><div class="wl-title cw-page-hero-title">Watchlist</div><div class="wl-sub cw-page-hero-sub">Browse and manage your unified watchlist</div></div><div class="wl-hero-summary cw-page-hero-actions" id="wl-hero-summary" aria-label="Watchlist summary"><div class="wl-hero-seg"><strong id="wl-stat-total">0</strong><span>items</span></div><div class="wl-hero-seg"><strong id="wl-stat-visible">0</strong><span>visible</span></div><div class="wl-hero-seg wl-hero-sync"><span>Synced</span><strong id="wl-stat-sync">never</strong></div><button id="wl-refresh" class="wl-hero-refresh" title="Sync watchlist" aria-label="Sync watchlist"><span class="material-symbol ss-refresh-icon">refresh</span></button></div></div><div class="wl-wrap" id="watchlist-root"><div class="wl-main-shell"><div class="wl-toolbar"><div class="wl-toolbar-left"><label class="wl-chip wl-selectall"><input id="wl-select-all" type="checkbox"><span>Select all</span></label><span id="wl-count" class="wl-chip is-filter">0 selected</span></div><div class="wl-toolbar-right"><button id="wl-filter-state" type="button" class="wl-chip is-filter wl-select-action">Select all</button></div></div><div id="wl-posters" class="wl-grid" style="display:none"></div><div id="wl-list" class="wl-table-wrap" style="display:none"><table class="wl-table"><colgroup><col class="c-sel"><col class="c-poster"><col class="c-title"><col class="c-rel"><col class="c-genre"><col class="c-type"><col class="c-sync"></colgroup><thead><tr><th style="text-align:center"><input id="wl-list-select-all" type="checkbox"></th><th class="sortable" data-sort="poster" data-col="poster" style="position:relative">Poster<span class="wl-resize"></span></th><th class="sortable" data-sort="title" data-col="title" style="position:relative">Title<span class="wl-resize"></span></th><th class="sortable" data-sort="release" data-col="rel" style="position:relative">Release<span class="wl-resize"></span></th><th class="sortable" data-sort="genre" data-col="genre" style="position:relative">Genre<span class="wl-resize"></span></th><th class="sortable" data-sort="type" data-col="type" style="position:relative">Type<span class="wl-resize"></span></th><th class="sortable" data-sort="sync" data-col="sync" style="position:relative">Sync<span class="wl-resize"></span></th></tr></thead><tbody id="wl-tbody"></tbody></table></div><div id="wl-pagination" class="wl-pagination" style="display:none"><button id="wl-page-prev" class="wl-btn">Previous</button><span id="wl-page-label" class="wl-muted">Page 1 of 1 • Rows 0–0 of 0</span><button id="wl-page-next" class="wl-btn">Next</button></div><div id="wl-empty" class="wl-empty wl-muted" style="display:none">No items match the current filters.</div></div><aside class="wl-side"><div class="ins-card"><div class="ins-row wl-ref-row" style="align-items:center"><div class="ins-icon"><span class="material-symbol">tune</span></div><div class="ins-title" style="margin-right:auto">Filters</div></div><div class="ins-row"><div class="ins-kv"><label for="wl-view">View</label><select id="wl-view" name="wl-view" class="wl-input" style="width:auto;padding:6px 10px"><option value="posters">Posters</option><option value="list">List</option></select><label for="wl-q">Search</label><input id="wl-q" name="wl-q" class="wl-input" placeholder="Search title..."><label for="wl-type">Type</label><select id="wl-type" name="wl-type" class="wl-input"><option value="">All types</option><option value="movie">Movies</option><option value="tv">Shows</option><option value="anime">Anime</option></select><label for="wl-provider">Provider</label><select id="wl-provider" name="wl-provider" class="wl-input">${providerOptions()}</select><label id="wl-size-label" for="wl-size">Size</label><input id="wl-size" name="wl-size" type="range" min="120" max="320" step="10" class="wl-input" style="padding:0"></div></div><div class="ins-row" id="wl-more-panel" style="display:none"><div class="ins-kv"><label for="wl-released">Released</label><select id="wl-released" name="wl-released" class="wl-input"><option value="both">Both</option><option value="released">Released</option><option value="unreleased">Upcoming</option></select><label id="wl-overlays-label" for="wl-overlays">Overlays</label><select id="wl-overlays" name="wl-overlays" class="wl-input"><option value="yes">On</option><option value="no">Off</option></select><label for="wl-genre">Genre</label><select id="wl-genre" name="wl-genre" class="wl-input"><option value="">All</option></select><label for="wl-show-hidden">Hidden</label><label class="wl-chip" style="justify-content:flex-start"><input id="wl-show-hidden" type="checkbox"><span>Include local hidden</span></label><div id="wl-cols-label" class="field-label">Columns</div><div id="wl-cols" class="wl-cols"><label class="wl-colchip"><input type="checkbox" name="wl-col" data-col="poster">Poster</label><label class="wl-colchip"><input type="checkbox" name="wl-col" data-col="rel">Release</label><label class="wl-colchip"><input type="checkbox" name="wl-col" data-col="genre">Genre</label><label class="wl-colchip"><input type="checkbox" name="wl-col" data-col="type">Type</label><label class="wl-colchip"><input type="checkbox" name="wl-col" data-col="sync">Sync</label></div></div></div><div class="ins-row" style="justify-content:flex-end;gap:8px"><button id="wl-more" class="wl-btn" aria-expanded="false">More</button><button id="wl-clear" class="wl-btn">Reset</button></div></div><div class="ins-card"><div class="ins-row wl-action-head"><div class="wl-action-title"><div class="ins-icon"><span class="material-symbol">flash_on</span></div><div class="ins-title">Actions</div></div><button type="button" class="wl-action-help" aria-label="Watchlist actions help" title="Delete selected items from the chosen provider, or from all providers. Hide local only removes selected items from the local CrossWatch view. Unhide all restores locally hidden items."><span class="material-symbol">help</span></button></div><div class="ins-row"><div class="wl-actions-panel"><div class="wl-action-row"><div class="wl-action-copy"><div class="wl-action-label">Delete from</div><div class="wl-action-hint">Selected items only</div></div><div class="wl-action-control is-select"><select id="wl-delete-provider" name="wl-delete-provider" class="wl-input">${deleteProviderOptions()}</select><button id="wl-delete" class="wl-btn danger" disabled>Delete</button></div></div><div class="wl-action-row"><div class="wl-action-copy"><div class="wl-action-label">Visibility</div><div class="wl-action-hint">Local view only</div></div><div class="wl-action-control"><button id="wl-hide" class="wl-btn" disabled>Hide local</button><button id="wl-unhide" class="wl-btn">Unhide all</button></div></div></div></div></div><div class="ins-card"><div class="ins-row"><div class="ins-icon"><span class="material-symbol">monitoring</span></div><div class="ins-title">Coverage Pulse</div></div><div class="ins-row"><div id="wl-metrics" class="ins-metrics"></div></div></div></aside></div><div id="wl-snack" class="wl-snack wl-hidden" role="status" aria-live="polite"></div>`;
   host.querySelector(".wl-actions-panel")?.closest(".ins-card")?.classList.add("wl-action-card");
   host.classList.toggle("wl-readonly", isProfileUser());
 
@@ -993,6 +993,60 @@
     if (showHiddenChk?.checked) bits.push("Hidden included");
     return bits.length ? bits.join(" • ") : "All items";
   };
+  const selectedFilteredKeys = () => filtered.map(it => normKey(it)).filter(Boolean);
+  const allFilteredSelected = () => {
+    const keys = selectedFilteredKeys();
+    return keys.length > 0 && keys.every(k => selected.has(k));
+  };
+  const syncSelectAllControls = () => {
+    const keys = selectedFilteredKeys();
+    const selectedCount = keys.filter(k => selected.has(k)).length;
+    const allSelected = keys.length > 0 && selectedCount === keys.length;
+    const partial = selectedCount > 0 && selectedCount < keys.length;
+    [selAll, listSelectAll].forEach(chk => {
+      if (!chk) return;
+      chk.checked = allSelected;
+      chk.indeterminate = partial;
+      chk.disabled = isProfileUser() || keys.length === 0;
+    });
+  };
+  const updateSelectionActionUI = () => {
+    if (!filterStateEl) return;
+    const summary = describeFilters();
+    const total = selectedFilteredKeys().length;
+    const allSelected = allFilteredSelected();
+    const hasFilters = summary !== "All items";
+    const readOnly = isProfileUser();
+    const disabled = readOnly || total === 0;
+    const actionText = readOnly
+      ? summary
+      : total === 0
+        ? "No items"
+        : allSelected
+          ? "Clear selection"
+          : (hasFilters ? "Select visible" : "Select all");
+    const actionTitle = readOnly
+      ? summary
+      : total === 0
+        ? `${summary}. No visible items.`
+        : allSelected
+          ? `Clear ${selected.size} selected item(s)`
+          : `${summary}. Select ${total} visible item(s).`;
+    const actionLabel = readOnly
+      ? summary
+      : total === 0
+        ? "No visible items"
+        : allSelected
+          ? `Clear ${selected.size} selected item(s)`
+          : `Select ${total} ${hasFilters ? "filtered" : "visible"} item(s)`;
+    filterStateEl.disabled = disabled;
+    filterStateEl.textContent = actionText;
+    filterStateEl.title = actionTitle;
+    filterStateEl.setAttribute("aria-label", actionLabel);
+    filterStateEl.setAttribute("aria-pressed", String(allSelected));
+    filterStateEl.classList.toggle("is-accent", !readOnly && (allSelected || selected.size > 0));
+    filterStateEl.classList.toggle("is-empty", disabled);
+  };
   const updateHeaderSummary = () => {
     if (topTotalEl) topTotalEl.textContent = String(items.length);
     if (topVisibleEl) topVisibleEl.textContent = String(filtered.length);
@@ -1000,10 +1054,8 @@
       topSyncEl.textContent = formatRelativeSync(watchlistMeta.lastSyncEpoch);
       topSyncEl.title = watchlistMeta.lastSyncEpoch ? new Date(watchlistMeta.lastSyncEpoch * 1000).toLocaleString() : "";
     }
-    if (filterStateEl) {
-      filterStateEl.textContent = describeFilters();
-      filterStateEl.title = filterStateEl.textContent;
-    }
+    syncSelectAllControls();
+    updateSelectionActionUI();
   };
   window.setInterval(updateHeaderSummary, 30000);
 
@@ -1733,7 +1785,6 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
         checked ? selected.add(key) : selected.delete(key);
         tr.classList.toggle("selected", checked);
         if (rowCheckbox) rowCheckbox.checked = checked;
-        if (listSelectAll) listSelectAll.checked = filtered.length > 0 && filtered.every(x => selected.has(normKey(x)));
         updateSelCount();
       };
       if (readOnly && rowCheckbox) rowCheckbox.disabled = true;
@@ -1748,7 +1799,7 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
     });
 
     listBodyEl.appendChild(frag);
-    if (listSelectAll) listSelectAll.checked = filtered.length > 0 && filtered.every(x => selected.has(normKey(x)));
+    syncSelectAllControls();
     updateSortHeaderUI();
     applyColumnLayout();
   }
@@ -1780,6 +1831,8 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
     if (isProfileUser()) selected.clear();
     selCount.textContent = `${selected.size} selected`;
     selCount.classList.toggle("is-accent", selected.size > 0);
+    syncSelectAllControls();
+    updateSelectionActionUI();
     rebuildDeleteProviderOptions();
     document.getElementById("wl-delete").disabled = isProfileUser() || !(delProv.value && selected.size);
     document.getElementById("wl-hide").disabled = isProfileUser() || selected.size === 0;
@@ -1908,9 +1961,24 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
   on([genreSel], ["change","input"], () => { prefs.genre = genreSel.value || ""; writePrefs(prefs); applyFilters(); });
   showHiddenChk?.addEventListener("change", () => { prefs.showHidden = !!showHiddenChk.checked; writePrefs(prefs); applyFilters(); }, true);
 
-  const selectAll = chk => { selected.clear(); if (!isProfileUser() && chk.checked) filtered.forEach(it => { const k = normKey(it); if (k) selected.add(k); }); };
-  selAll?.addEventListener("change", () => { selectAll(selAll); (viewMode === "posters" ? renderPosters : renderList)(); updateSelCount(); }, true);
+  const setFilteredSelection = checked => {
+    if (isProfileUser()) return;
+    for (const k of selectedFilteredKeys()) {
+      checked ? selected.add(k) : selected.delete(k);
+    }
+  };
+  const renderSelectionView = () => (viewMode === "posters" ? renderPosters : renderList)();
+  const selectAll = chk => setFilteredSelection(!!chk?.checked);
+  selAll?.addEventListener("change", () => { selectAll(selAll); renderSelectionView(); updateSelCount(); }, true);
   listSelectAll?.addEventListener("change", () => { selectAll(listSelectAll); renderList(); updateSelCount(); }, true);
+  filterStateEl?.addEventListener("click", () => {
+    const willSelect = !allFilteredSelected();
+    if (willSelect) setFilteredSelection(true);
+    else selected.clear();
+    renderSelectionView();
+    updateSelCount();
+    snackbar(willSelect ? "Selected visible items" : "Selection cleared");
+  }, true);
 
   window.addEventListener("cw:overview-profile-changed", () => {
     host.classList.toggle("wl-readonly", isProfileUser());
