@@ -133,6 +133,30 @@ def test_parse_watched_movie_record() -> None:
     assert item["poster"] == "https://image.example/fight-club.jpg"
 
 
+def test_history_read_indexes_native_tmdb_movie_id() -> None:
+    adapter = FakeAdapter([movie_record(_id="tmdb:550")])
+
+    index = _history.build_index(adapter)
+
+    assert set(index) == {"tmdb:550"}
+    assert index["tmdb:550"]["ids"] == {"tmdb": "550"}
+    assert adapter._stremio_read_drops["history"] == []
+
+
+def test_history_read_enriches_native_tmdb_movie_id_when_tmdb_provider_available(monkeypatch) -> None:
+    class Provider:
+        def fetch(self, **_kwargs: Any) -> dict[str, Any]:
+            return {"ids": {"tmdb": "550", "imdb": "tt0137523"}, "images": {}}
+
+    monkeypatch.setattr(_history, "tmdb_metadata_provider", lambda _adapter: Provider())
+    adapter = FakeAdapter([movie_record(_id="tmdb:550")])
+
+    index = _history.build_index(adapter)
+
+    assert set(index) == {"tmdb:550"}
+    assert index["tmdb:550"]["ids"] == {"tmdb": "550", "imdb": "tt0137523"}
+
+
 def test_parse_unwatched_movie_record() -> None:
     item = _history.parse_movie_history_record(movie_record(state={"lastWatched": None, "timesWatched": 0, "flaggedWatched": 0}))
 
@@ -173,6 +197,219 @@ def test_episode_history_read_does_not_expose_stremio_mtime_as_watched_at(monkey
     assert item["_stremio_changed_at"] == "2026-07-30T19:53:20Z"
 
 
+def native_orders(*orders: list[dict[str, Any]]):
+    return lambda _adapter, _record: (list(orders), True)
+
+
+def watched_value(videos: list[dict[str, Any]], watched_ids: set[str]) -> str:
+    video_ids = [str(v["id"]) for v in videos]
+    return _history.serialize_watched_bits([vid in watched_ids for vid in video_ids], video_ids)
+
+
+def title_provider(title: str):
+    class Provider:
+        def fetch(self, **_kwargs: Any) -> dict[str, Any]:
+            return {"title": title, "ids": {"tmdb": "1396"}, "images": {}}
+
+    return Provider()
+
+
+def test_history_read_indexes_native_tmdb_series_when_episode_order_available(monkeypatch) -> None:
+    videos = [{"id": "tmdb:1396:1:1", "season": 1, "episode": 1, "title": "Pilot"}]
+    monkeypatch.setattr(_history, "video_orders_for_series_record", native_orders(videos))
+    adapter = FakeAdapter([series_record(watched_value(videos, {"tmdb:1396:1:1"})) | {"_id": "tmdb:1396"}])
+
+    index = _history.build_index(adapter)
+
+    assert set(index) == {"tmdb:1396#s01e01"}
+    assert index["tmdb:1396#s01e01"]["show_ids"] == {"tmdb": "1396"}
+    assert adapter._stremio_read_drops["history"] == []
+
+
+def test_history_read_indexes_bare_numeric_series_once_tmdb_confirms_the_title(monkeypatch) -> None:
+    videos = [{"id": "1396:1:1", "season": 1, "episode": 1, "title": "Pilot"}]
+    monkeypatch.setattr(_history, "video_orders_for_series_record", native_orders(videos))
+    monkeypatch.setattr(_common, "tmdb_metadata_provider", lambda _adapter: title_provider("Breaking Bad"))
+    monkeypatch.setattr(_history, "tmdb_metadata_provider", lambda _adapter: title_provider("Breaking Bad"))
+    adapter = FakeAdapter([series_record(watched_value(videos, {"1396:1:1"})) | {"_id": "1396"}])
+
+    index = _history.build_index(adapter)
+
+    assert set(index) == {"tmdb:1396#s01e01"}
+    assert index["tmdb:1396#s01e01"]["_stremio_record_id"] == "1396"
+
+
+def test_history_read_drops_bare_numeric_id_when_tmdb_resolves_a_different_title(monkeypatch) -> None:
+    monkeypatch.setattr(_common, "tmdb_metadata_provider", lambda _adapter: title_provider("Some Other Show"))
+    adapter = FakeAdapter([series_record(watched_value(bb_videos(), {"tt0903747:1:1"}).replace("tt0903747", "1396")) | {"_id": "1396"}])
+
+    assert _history.build_index(adapter) == {}
+
+    drops = adapter._stremio_read_drops["history"]
+    assert drops[0]["reason"] == "bare_numeric_id_mismatch"
+    assert drops[0]["namespace"] == "tmdb_bare"
+
+
+def test_history_read_drops_bare_numeric_id_without_a_tmdb_key() -> None:
+    adapter = FakeAdapter([series_record(watched_value(bb_videos(), {"tt0903747:1:1"}).replace("tt0903747", "1396")) | {"_id": "1396"}])
+
+    assert _history.build_index(adapter) == {}
+
+    drops = adapter._stremio_read_drops["history"]
+    assert drops[0]["reason"] == "bare_numeric_id_unverified"
+    assert drops[0]["requires_id"] == "tmdb_api_key"
+
+
+def test_history_read_reports_reconstructed_order_that_disagrees_with_the_anchor(monkeypatch) -> None:
+    shifted = [
+        {"id": "tmdb:1396:1:1", "season": 1, "episode": 1, "title": "Pilot"},
+        {"id": "tmdb:1396:1:2", "season": 1, "episode": 2, "title": "Cat"},
+    ]
+    monkeypatch.setattr(_history, "video_orders_for_series_record", native_orders(shifted))
+    adapter = FakeAdapter([series_record(watched_value(bb_videos(), {"tt0903747:1:6"}).replace("tt0903747", "tmdb:1396")) | {"_id": "tmdb:1396"}])
+
+    assert _history.build_index(adapter) == {}
+
+    drops = adapter._stremio_read_drops["history"]
+    assert drops[0]["reason"] == "native_episode_order_unverified"
+
+
+def test_history_read_prefers_the_candidate_order_the_anchor_agrees_with(monkeypatch) -> None:
+    aired = [{"id": "tmdb:1396:1:1", "season": 1, "episode": 1, "title": "Pilot"}]
+    with_specials = [{"id": "tmdb:1396:0:1", "season": 0, "episode": 1, "title": "Special"}] + aired
+    monkeypatch.setattr(_history, "video_orders_for_series_record", native_orders(aired, with_specials))
+    adapter = FakeAdapter([series_record(watched_value(with_specials, {"tmdb:1396:1:1"})) | {"_id": "tmdb:1396"}])
+
+    index = _history.build_index(adapter)
+
+    assert set(index) == {"tmdb:1396#s01e01"}
+
+
+def test_history_read_reports_cinemeta_anchor_that_is_not_in_the_video_list(monkeypatch) -> None:
+    monkeypatch.setattr(_history, "cinemeta_videos", lambda _adapter, _imdb: bb_videos())
+    adapter = FakeAdapter([series_record(watched_value([{"id": "tt0903747:9:9"}], {"tt0903747:9:9"}))])
+
+    assert _history.build_index(adapter) == {}
+
+    drops = adapter._stremio_read_drops["history"]
+    assert drops[0]["reason"] == "watched_anchor_unmatched"
+
+
+def test_tmdb_native_video_orders_builds_aired_and_specials_candidates(monkeypatch) -> None:
+    class Provider:
+        def fetch(self, **_kwargs: Any) -> dict[str, Any]:
+            return {"title": "Breaking Bad", "ids": {"tmdb": "1396"}, "detail": {"number_of_seasons": 2}}
+
+        def _get(self, url: str, _params: dict[str, Any] | None = None) -> dict[str, Any]:
+            season = int(url.rsplit("/", 1)[-1])
+            if season == 0:
+                return {"episodes": [{"episode_number": 1, "name": "Special"}]}
+            return {"episodes": [{"episode_number": n, "name": f"S{season}E{n}"} for n in (1, 2)]}
+
+    monkeypatch.setattr(_history, "tmdb_metadata_provider", lambda _adapter: Provider())
+    adapter = FakeAdapter([])
+
+    orders = _history.tmdb_native_video_orders(adapter, "1396", video_prefix="tmdb:1396")
+
+    assert [v["id"] for v in orders[0]] == ["tmdb:1396:1:1", "tmdb:1396:1:2", "tmdb:1396:2:1", "tmdb:1396:2:2"]
+    assert [v["id"] for v in orders[1]][0] == "tmdb:1396:0:1"
+    assert _history.tmdb_native_video_orders(adapter, "1396", video_prefix="tmdb:1396") is orders
+
+
+def test_history_read_resolves_a_tvdb_keyed_series_through_tmdb(monkeypatch) -> None:
+    class Provider:
+        def fetch(self, *, ids: dict[str, Any], **_kwargs: Any) -> dict[str, Any]:
+            assert ids.get("tvdb") == "81189" or ids.get("tmdb") == "1396"
+            return {"title": "Breaking Bad", "ids": {"tmdb": "1396"}, "detail": {"number_of_seasons": 1}}
+
+        def _get(self, url: str, _params: dict[str, Any] | None = None) -> dict[str, Any]:
+            if url.endswith("/0"):
+                return {}
+            return {"episodes": [{"episode_number": 1, "name": "Pilot"}]}
+
+    monkeypatch.setattr(_history, "tmdb_metadata_provider", lambda _adapter: Provider())
+    videos = [{"id": "tvdb:81189:1:1"}]
+    adapter = FakeAdapter([series_record(watched_value(videos, {"tvdb:81189:1:1"})) | {"_id": "tvdb:81189"}])
+
+    index = _history.build_index(adapter)
+
+    assert set(index) == {"tvdb:81189#s01e01"}
+
+
+def test_history_read_does_not_guess_an_episode_order_for_anime_namespaces(monkeypatch) -> None:
+    class Provider:
+        def fetch(self, **_kwargs: Any) -> dict[str, Any]:
+            raise AssertionError("kitsu ids must not reach TMDb")
+
+    monkeypatch.setattr(_history, "tmdb_metadata_provider", lambda _adapter: Provider())
+    videos = [{"id": "kitsu:1234:1:1"}]
+    adapter = FakeAdapter([series_record(watched_value(videos, {"kitsu:1234:1:1"})) | {"_id": "kitsu:1234"}])
+
+    assert _history.build_index(adapter) == {}
+    assert adapter._stremio_read_drops["history"][0]["reason"] == "native_episode_namespace_unsupported"
+
+
+def test_history_read_reports_native_series_when_episode_order_unavailable() -> None:
+    adapter = FakeAdapter([series_record("tmdb:1396:1:1:6:eJxTYIACAAEpACE=") | {"_id": "tmdb:1396"}])
+
+    assert _history.build_index(adapter) == {}
+
+    drops = adapter._stremio_read_drops["history"]
+    assert drops[0]["record_id"] == "tmdb:1396"
+    assert drops[0]["record_type"] == "series"
+    assert drops[0]["namespace"] == "tmdb"
+    assert drops[0]["reason"] == "native_episode_index_unavailable"
+    assert drops[0]["requires_id"] == "tmdb_api_key"
+
+
+def test_stremio_ops_records_read_drops_as_scoped_unresolved(tmp_path, monkeypatch) -> None:
+    from cw_platform.orchestrator import _unresolved
+
+    class FakeStremioModule(FakeAdapter):
+        def build_index(self, feature: str, **_kwargs: Any) -> dict[str, dict[str, Any]]:
+            assert feature == "history"
+            return _history.build_index(self)
+
+    adapter = FakeStremioModule([series_record("tmdb:1396:1:1:6:eJxTYIACAAEpACE=") | {"_id": "tmdb:1396"}])
+    monkeypatch.setenv("CW_PAIR_SCOPE", "stremio-simkl")
+    monkeypatch.setattr(_unresolved, "STATE_DIR", tmp_path)
+    monkeypatch.setattr(mod.OPS, "_adapter", lambda _cfg: adapter)
+
+    assert mod.OPS.build_index({}, feature="history") == {}
+
+    pending = _unresolved.load_unresolved_pending("STREMIO", "history")
+    assert [row["key"] for row in pending] == ["tmdb:1396"]
+    assert pending[0]["reason"] == "stremio_read:native_episode_index_unavailable"
+    assert pending[0]["item"]["ids"] == {"tmdb": "1396"}
+    assert pending[0]["item"]["_stremio_record_id"] == "tmdb:1396"
+
+
+def test_stremio_ops_clears_read_drops_once_the_records_resolve(tmp_path, monkeypatch) -> None:
+    from cw_platform.orchestrator import _unresolved
+
+    videos = [{"id": "tmdb:1396:1:1", "season": 1, "episode": 1, "title": "Pilot"}]
+    record = series_record(watched_value(videos, {"tmdb:1396:1:1"})) | {"_id": "tmdb:1396"}
+
+    class FakeStremioModule(FakeAdapter):
+        def build_index(self, feature: str, **_kwargs: Any) -> dict[str, dict[str, Any]]:
+            return _history.build_index(self)
+
+    monkeypatch.setenv("CW_PAIR_SCOPE", "stremio-simkl")
+    monkeypatch.setattr(_unresolved, "STATE_DIR", tmp_path)
+
+    blind = FakeStremioModule([record])
+    monkeypatch.setattr(mod.OPS, "_adapter", lambda _cfg: blind)
+    assert mod.OPS.build_index({}, feature="history") == {}
+    assert [row["key"] for row in _unresolved.load_unresolved_pending("STREMIO", "history")] == ["tmdb:1396"]
+
+    monkeypatch.setattr(_history, "video_orders_for_series_record", native_orders(videos))
+    resolving = FakeStremioModule([record])
+    monkeypatch.setattr(mod.OPS, "_adapter", lambda _cfg: resolving)
+
+    assert set(mod.OPS.build_index({}, feature="history")) == {"tmdb:1396#s01e01"}
+    assert _unresolved.load_unresolved_pending("STREMIO", "history") == []
+
+
 def test_history_write_resolves_imdb_with_tmdb_and_uses_metahub_poster(monkeypatch) -> None:
     class Provider:
         def fetch(self, **_kwargs: Any) -> dict[str, Any]:
@@ -200,6 +437,102 @@ def test_history_write_resolves_imdb_with_tmdb_and_uses_metahub_poster(monkeypat
     assert written["_id"] == "tt14586350"
     assert written["poster"] == "https://images.metahub.space/poster/small/tt14586350/img"
     assert _history.decode_watched_episodes(written["state"]["watched"], ["tt14586350:1:7"]) == {"tt14586350:1:7"}
+
+
+def test_history_write_updates_the_native_record_instead_of_creating_an_imdb_twin(monkeypatch) -> None:
+    videos = [{"id": "tmdb:1396:1:1", "season": 1, "episode": 1, "title": "Pilot"}]
+    monkeypatch.setattr(_history, "video_orders_for_series_record", native_orders(videos))
+    record = series_record() | {"_id": "tmdb:1396", "type": "series"}
+    adapter = FakeAdapter([record])
+    item = {
+        "type": "episode",
+        "series_title": "Breaking Bad",
+        "ids": {"tmdb": "1396"},
+        "show_ids": {"tmdb": "1396", "imdb": "tt0903747"},
+        "season": 1,
+        "episode": 1,
+        "_stremio_record_id": "tmdb:1396",
+    }
+
+    result = _history.add(adapter, [item])
+    written = adapter.client.puts[-1][0]
+
+    assert result["count"] == 1
+    assert written["_id"] == "tmdb:1396"
+    assert _history.decode_watched_episodes(written["state"]["watched"], ["tmdb:1396:1:1"]) == {"tmdb:1396:1:1"}
+    assert set(adapter.client.records) == {"tmdb:1396"}
+
+
+def test_history_write_refuses_to_touch_a_bitfield_it_cannot_align(monkeypatch) -> None:
+    stored = [{"id": "tmdb:1396:1:1", "season": 1, "episode": 1}, {"id": "tmdb:1396:1:2", "season": 1, "episode": 2}]
+    monkeypatch.setattr(_history, "video_orders_for_series_record", native_orders([stored[0]]))
+    record = series_record(watched_value(stored, {"tmdb:1396:1:2"})) | {"_id": "tmdb:1396"}
+    adapter = FakeAdapter([record])
+    item = {
+        "type": "episode",
+        "ids": {"tmdb": "1396"},
+        "show_ids": {"tmdb": "1396"},
+        "season": 1,
+        "episode": 1,
+        "_stremio_record_id": "tmdb:1396",
+    }
+
+    result = _history.add(adapter, [item])
+
+    assert result["count"] == 0
+    assert result["unresolved"][0]["reason"] == "native_episode_order_unverified"
+    assert adapter.client.puts == []
+
+
+def test_history_write_ignores_a_native_record_id_the_item_ids_disagree_with(monkeypatch) -> None:
+    monkeypatch.setattr(_history, "cinemeta_videos", lambda _adapter, _imdb: bb_videos())
+    adapter = FakeAdapter([])
+    item = {
+        "type": "episode",
+        "series_title": "Breaking Bad",
+        "ids": {"imdb": "tt0903747"},
+        "show_ids": {"imdb": "tt0903747"},
+        "season": 1,
+        "episode": 1,
+        "_stremio_record_id": "tmdb:9999",
+    }
+
+    _history.add(adapter, [item])
+    written = adapter.client.puts[-1][0]
+
+    assert written["_id"] == "tt0903747"
+
+
+def test_watchlist_write_targets_the_native_record(monkeypatch) -> None:
+    record = movie_record(_id="tmdb:550", removed=False, temp=False)
+    adapter = FakeAdapter([record])
+    item = {"type": "movie", "title": "Fight Club", "ids": {"tmdb": "550"}, "_stremio_record_id": "tmdb:550"}
+
+    result = _watchlist.remove(adapter, [item])
+    written = adapter.client.puts[-1][0]
+
+    assert result["count"] == 1
+    assert written["_id"] == "tmdb:550"
+    assert written["removed"] is True
+
+
+def test_progress_read_drops_bare_numeric_id_without_a_tmdb_key() -> None:
+    record = movie_record(_id="1396", state={"timeOffset": 120_000, "duration": 600_000, "lastWatched": 1_785_441_100_000})
+    adapter = FakeAdapter([record])
+
+    assert _progress.build_index(adapter) == {}
+
+    drops = adapter._stremio_read_drops["progress"]
+    assert drops[0]["reason"] == "bare_numeric_id_unverified"
+
+
+def test_watchlist_read_drops_bare_numeric_id_without_a_tmdb_key() -> None:
+    adapter = FakeAdapter([movie_record(_id="1396", removed=False, temp=False)])
+
+    assert _watchlist.build_index(adapter) == {}
+
+    drops = adapter._stremio_read_drops["watchlist"]
+    assert drops[0]["reason"] == "bare_numeric_id_unverified"
 
 
 def test_history_write_batches_episodes_per_series(monkeypatch) -> None:
@@ -254,6 +587,18 @@ def test_parse_movie_progress_from_time_offset_and_duration() -> None:
     assert item["progress_ms"] == 120_000
     assert item["duration_ms"] == 600_000
     assert item["progress_percent"] == 20.0
+
+
+def test_progress_read_indexes_native_tmdb_movie_id() -> None:
+    record = movie_record(_id="tmdb:550", state={"timeOffset": 120_000, "duration": 600_000, "lastWatched": 1_785_441_100_000})
+    adapter = FakeAdapter([record])
+
+    index = _progress.build_index(adapter)
+
+    assert set(index) == {"tmdb:550"}
+    assert index["tmdb:550"]["ids"] == {"tmdb": "550"}
+    assert index["tmdb:550"]["progress_ms"] == 120_000
+    assert adapter._stremio_read_drops["progress"] == []
 
 
 def test_parse_episode_progress_uses_video_id() -> None:
@@ -393,6 +738,17 @@ def test_watchlist_reads_explicit_library_movies_and_series() -> None:
 
     assert set(index) == {"imdb:tt0137523", "imdb:tt0903747"}
     assert index["imdb:tt0903747"]["type"] == "show"
+
+
+def test_watchlist_read_indexes_native_tmdb_id() -> None:
+    movie = movie_record(_id="tmdb:550", removed=False, temp=False)
+    adapter = FakeAdapter([movie])
+
+    index = _watchlist.build_index(adapter)
+
+    assert set(index) == {"tmdb:550"}
+    assert index["tmdb:550"]["ids"] == {"tmdb": "550"}
+    assert adapter._stremio_read_drops["watchlist"] == []
 
 
 def test_watchlist_excludes_temporary_history_progress_records() -> None:

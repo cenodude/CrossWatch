@@ -15,20 +15,27 @@ from ._common import (
     canonical_item_key,
     imdb_ids_from_item,
     imdb_id,
+    ids_from_stremio_id,
     iso_from_epoch_ms,
     item_from_episode,
     item_from_movie_record,
     library_records,
     now_iso,
     positive_int,
+    native_record_ids,
+    read_drop_summary,
     read_merge_write,
+    record_read_drop,
+    reset_read_drop_report,
     state_of,
     stremio_id_for_item,
+    stremio_write_id_for_item,
     poster_url_from_item,
     tmdb_metadata_provider,
     to_int,
     video_id_for_episode,
 )
+from providers.sync._log import log as cw_log
 
 
 def _progress_percent(position: int, duration: int) -> float | None:
@@ -178,19 +185,21 @@ def parse_episode_progress_record(record: Mapping[str, Any]) -> dict[str, Any] |
     duration = positive_int(state.get("duration"))
     if position is None or position <= 0 or not duration:
         return None
-    show_id = imdb_id(record.get("_id"))
+    show_id = str(record.get("_id") or "").strip()
     video_id = str(state.get("video_id") or state.get("videoId") or "").strip()
     season = positive_int(state.get("season"))
     episode = positive_int(state.get("episode"))
     if video_id:
         parts = video_id.split(":")
-        if len(parts) >= 3 and imdb_id(parts[0]):
-            show_id = parts[0]
+        if len(parts) >= 3:
+            candidate = ":".join(parts[:-2])
+            if ids_from_stremio_id(candidate, "series"):
+                show_id = candidate
             season = positive_int(parts[-2])
             episode = positive_int(parts[-1])
     elif show_id and season and episode:
         video_id = f"{show_id}:{season}:{episode}"
-    if not show_id or not season or not episode:
+    if not show_id or not ids_from_stremio_id(show_id, "series") or not season or not episode:
         return None
     item = item_from_episode(show_id, season, episode, record, {"id": video_id, "season": season, "episode": episode})
     if not item:
@@ -206,14 +215,30 @@ def parse_episode_progress_record(record: Mapping[str, Any]) -> dict[str, Any] |
 
 def build_index(adapter: Any, **kwargs: Any) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
+    reset_read_drop_report(adapter, "progress")
     for record in library_records(adapter, incremental=bool(kwargs.get("incremental"))):
         typ = str(record.get("type") or "").strip().lower()
-        item = parse_movie_progress_record(record) if typ == "movie" else parse_episode_progress_record(record) if typ in {"series", "show"} else None
+        if typ not in {"movie", "series", "show"}:
+            continue
+        state = state_of(record)
+        position = to_int(state.get("timeOffset"))
+        duration = positive_int(state.get("duration"))
+        has_progress = position is not None and position > 0 and bool(duration)
+        ids, drop_reason = native_record_ids(adapter, record)
+        if not ids:
+            if has_progress:
+                record_read_drop(adapter, "progress", record, drop_reason or "unsupported_stremio_id", requires_id="tmdb_api_key" if drop_reason == "bare_numeric_id_unverified" else "known_native_id")
+            continue
+        item = parse_movie_progress_record(record) if typ == "movie" else parse_episode_progress_record(record)
         if not item:
             continue
+        item = _metadata_enriched(adapter, item, "episode" if str(item.get("type") or "").lower() == "episode" else "movie")
         key = canonical_item_key(item)
         selected, _reason = select_progress_record(out.get(key), item)
         out[key] = selected
+    summary = read_drop_summary(adapter, "progress")
+    if int(summary.get("dropped") or 0):
+        cw_log("STREMIO", "progress", "warn", "index_rows_dropped", indexed=len(out), **summary)
     return out
 
 
@@ -281,7 +306,7 @@ def _write(adapter: Any, items: Iterable[Mapping[str, Any]], clear: bool, *, dry
         key = canonical_item_key(item)
         typ = str(item.get("type") or id_minimal(item).get("type") or "").strip().lower()
         item = _metadata_enriched(adapter, item, typ)
-        stremio_id = stremio_id_for_item(item)
+        stremio_id = stremio_write_id_for_item(item)
         if not stremio_id or typ not in {"movie", "episode", "episodes"}:
             entry = _unresolved(item, "stremio_id_missing")
             unresolved.append(entry)

@@ -18,13 +18,19 @@ from ._common import (
     imdb_id,
     imdb_ids_from_item,
     item_from_movie_record,
+    item_from_series_record,
     library_records,
+    native_record_ids,
     now_iso,
     poster_url_from_item,
-    record_id,
+    read_drop_summary,
+    record_read_drop,
+    reset_read_drop_report,
     stremio_id_for_item,
+    stremio_write_id_for_item,
     tmdb_metadata_provider,
 )
+from providers.sync._log import log as cw_log
 
 
 def _image_url(detail: Mapping[str, Any], kind: str) -> str:
@@ -39,21 +45,6 @@ def _image_url(detail: Mapping[str, Any], kind: str) -> str:
             if url:
                 return url
     return ""
-
-
-def _item_from_series_record(record: Mapping[str, Any]) -> dict[str, Any] | None:
-    rid = imdb_id(record_id(record))
-    if not rid:
-        return None
-    item: dict[str, Any] = {"type": "show", "ids": {"imdb": rid}, "_stremio_id": rid}
-    title = str(record.get("name") or "").strip()
-    if title:
-        item["title"] = title
-    poster = str(record.get("poster") or "").strip()
-    if poster:
-        item["poster"] = poster
-    return item
-
 
 def _is_listed(record: Mapping[str, Any]) -> bool:
     return record.get("removed") is False and record.get("temp") is False
@@ -104,13 +95,24 @@ def _metadata_enriched(adapter: Any, item: Mapping[str, Any], typ: str) -> dict[
 
 def build_index(adapter: Any, **kwargs: Any) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
+    reset_read_drop_report(adapter, "watchlist")
     for record in library_records(adapter, incremental=bool(kwargs.get("incremental"))):
         if not _is_listed(record):
             continue
         typ = str(record.get("type") or "").strip().lower()
-        item = item_from_movie_record(record) if typ == "movie" else _item_from_series_record(record) if typ in {"series", "show"} else None
+        if typ not in {"movie", "series", "show"}:
+            continue
+        ids, drop_reason = native_record_ids(adapter, record)
+        if not ids:
+            record_read_drop(adapter, "watchlist", record, drop_reason or "unsupported_stremio_id", requires_id="tmdb_api_key" if drop_reason == "bare_numeric_id_unverified" else "known_native_id")
+            continue
+        item = item_from_movie_record(record) if typ == "movie" else item_from_series_record(record)
         if item:
+            item = _metadata_enriched(adapter, item, "show" if typ in {"series", "show"} else "movie")
             out[canonical_item_key(item)] = item
+    summary = read_drop_summary(adapter, "watchlist")
+    if int(summary.get("dropped") or 0):
+        cw_log("STREMIO", "watchlist", "warn", "index_rows_dropped", indexed=len(out), **summary)
     return out
 
 
@@ -149,7 +151,7 @@ def _write(adapter: Any, items: Iterable[Mapping[str, Any]], listed: bool, *, dr
             continue
         item = _metadata_enriched(adapter, raw, typ)
         key = canonical_item_key(item)
-        stremio_id = stremio_id_for_item(item)
+        stremio_id = stremio_write_id_for_item(item)
         if not stremio_id or typ not in {"movie", "show", "series", "tv"}:
             entry = _unresolved(item, "stremio_id_missing")
             unresolved.append(entry)
