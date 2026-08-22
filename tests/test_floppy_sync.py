@@ -747,6 +747,10 @@ def _one_piece_s23_source(**extra: Any) -> dict[str, Any]:
     }
 
 
+def _one_piece_s16e50_source(**extra: Any) -> dict[str, Any]:
+    return _one_piece_s23_source(season=16, episode=50, _simkl_episode_number=628, title="S16E50", **extra)
+
+
 def test_floppy_history_add_uses_anime_native_coordinate_before_layout_absolute(monkeypatch: Any) -> None:
     from providers.sync.floppy import _history
 
@@ -939,6 +943,139 @@ def test_floppy_history_ignores_detached_episode_rows_from_readback(monkeypatch:
     out = _history.build_index(adapter)
 
     assert out == {}
+
+
+def test_floppy_history_rekeys_real_absolute_row_over_detached_source_row(monkeypatch: Any) -> None:
+    from providers.sync.floppy import _history
+
+    monkeypatch.setattr(
+        _history,
+        "resolve_source_coordinate",
+        lambda *_args, **_kwargs: SimpleNamespace(provider="tmdb", ident="37854", season=23, episode=1),
+    )
+    monkeypatch.setattr(_history, "show_layout", lambda *_args, **_kwargs: [(23, n) for n in range(1156, 1182)])
+    _history.prepare_source_snapshot([_one_piece_s23_source()])
+    adapter = AdapterStub(
+        {
+            ("GET", "media/movie"): {"results": [], "count": 0},
+            ("GET", "media/episode"): {
+                "results": [
+                    {"item_id": "tv/tmdb/37854/23/1", "end_date": "2026-01-02T00:00:00Z", "consumption_id": 70},
+                    {"item_id": "tv/tmdb/37854/23/1156", "end_date": "2026-01-02T00:00:00Z", "consumption_id": 77},
+                ],
+                "count": 2,
+            },
+            ("GET", "media/tv/tmdb/37854/23/episodes"): {
+                "results": [{"item_id": f"tv/tmdb/37854/23/{n}", "episode_number": n} for n in range(1156, 1182)],
+                "count": 26,
+            },
+        },
+        _anime_history_cfg(),
+    )
+
+    out = _history.build_index(adapter)
+
+    assert list(out) == ["tmdb:37854#s23e01"]
+    assert out["tmdb:37854#s23e01"]["_floppy_episode"] == 1156
+    assert out["tmdb:37854#s23e01"]["_floppy_consumption_id"] == 77
+
+
+def test_floppy_history_augments_absolute_row_missing_from_global_history(monkeypatch: Any) -> None:
+    from providers.sync.floppy import _history
+
+    monkeypatch.setattr(
+        _history,
+        "resolve_source_coordinate",
+        lambda *_args, **_kwargs: SimpleNamespace(provider="tmdb", ident="37854", season=23, episode=1),
+    )
+    monkeypatch.setattr(_history, "show_layout", lambda *_args, **_kwargs: [(23, n) for n in range(1156, 1182)])
+    _history.prepare_source_snapshot([_one_piece_s23_source()])
+    adapter = AdapterStub(
+        {
+            ("GET", "media/movie"): {"results": [], "count": 0},
+            ("GET", "media/episode"): {
+                "results": [{"item_id": "tv/tmdb/37854/23/1", "end_date": "2026-01-02T00:00:00Z", "consumption_id": 70}],
+                "count": 1,
+            },
+            ("GET", "media/tv/tmdb/37854/23/episodes"): {
+                "results": [{"item_id": f"tv/tmdb/37854/23/{n}", "episode_number": n} for n in range(1156, 1182)],
+                "count": 26,
+            },
+            ("GET", "media/tv/tmdb/37854/23/1156/history"): {
+                "results": [{"consumption_id": 77, "end_date": "2026-01-02T00:00:00Z"}],
+                "count": 1,
+            },
+        },
+        _anime_history_cfg(),
+    )
+
+    out = _history.build_index(adapter)
+
+    assert list(out) == ["tmdb:37854#s23e01"]
+    assert out["tmdb:37854#s23e01"]["_floppy_episode"] == 1156
+    assert out["tmdb:37854#s23e01"]["_floppy_consumption_id"] == 77
+
+
+def test_floppy_history_rekeys_cross_season_absolute_row(monkeypatch: Any) -> None:
+    from providers.sync.floppy import _history
+
+    monkeypatch.setattr(
+        _history,
+        "resolve_source_coordinate",
+        lambda *_args, **_kwargs: SimpleNamespace(provider="tmdb", ident="37854", season=16, episode=50),
+    )
+    monkeypatch.setattr(_history, "show_layout", lambda *_args, **_kwargs: [(1, n) for n in range(1, 579)] + [(15, n) for n in range(579, 629)])
+    _history.prepare_source_snapshot([_one_piece_s16e50_source()])
+    adapter = AdapterStub(
+        {
+            ("GET", "media/movie"): {"results": [], "count": 0},
+            ("GET", "media/episode"): {
+                "results": [{"item_id": "tv/tmdb/37854/15/628", "end_date": "2026-01-02T00:00:00Z", "consumption_id": 77}],
+                "count": 1,
+            },
+            ("GET", "media/tv/tmdb/37854/16/episodes"): {
+                "results": [{"item_id": f"tv/tmdb/37854/16/{n}", "episode_number": n} for n in range(1, 50)],
+                "count": 49,
+            },
+        },
+        _anime_history_cfg(),
+    )
+
+    out = _history.build_index(adapter)
+
+    assert list(out) == ["tmdb:37854#s16e50"]
+    assert out["tmdb:37854#s16e50"]["_floppy_season"] == 15
+    assert out["tmdb:37854#s16e50"]["_floppy_episode"] == 628
+
+
+def test_floppy_history_add_falls_back_to_cross_season_absolute_layout(monkeypatch: Any) -> None:
+    from providers.sync.floppy import _history
+
+    monkeypatch.setattr(
+        _history,
+        "resolve_source_coordinate",
+        lambda *_args, **_kwargs: SimpleNamespace(provider="tmdb", ident="37854", season=16, episode=50),
+    )
+    monkeypatch.setattr(_history, "show_layout", lambda *_args, **_kwargs: [(1, n) for n in range(1, 579)] + [(15, n) for n in range(579, 629)])
+    _history.prepare_source_snapshot([])
+    _history.reset_layout_cache()
+    adapter = AdapterStub(
+        {
+            ("GET", "media/tv/tmdb/37854/16/episodes"): {
+                "results": [{"item_id": f"tv/tmdb/37854/16/{n}", "episode_number": n} for n in range(1, 50)],
+                "count": 49,
+            },
+            ("GET", "media/tv/tmdb/37854/15/628/history"): _history_visible_after_post(),
+            ("POST", "media/tv/tmdb/37854/15/episodes/628/watch"): {"consumption_id": 77},
+        },
+        _anime_history_cfg(),
+    )
+
+    res = _history.add(adapter, [_one_piece_s16e50_source()])
+
+    assert res["count"] == 1
+    assert res["confirmed_keys"] == ["tmdb:37854#s16e50"]
+    assert [c["path"] for c in adapter.client.session.calls if c["method"] == "POST"] == ["media/tv/tmdb/37854/15/episodes/628/watch"]
 
 
 def test_floppy_history_uses_anidb_when_native_targets_disagree(monkeypatch: Any) -> None:
