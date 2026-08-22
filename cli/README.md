@@ -17,6 +17,10 @@ cw status
 cw auth token create --local
 ```
 
+## CLI-only container mode
+
+Set `CW_CLI_ONLY=1` when you want CrossWatch to keep the API, CLI, webhooks and auth callbacks available, but stop serving the web UI.
+
 Outside a container, run it from the install root:
 
 ```

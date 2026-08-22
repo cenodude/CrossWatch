@@ -373,6 +373,7 @@ a[href="#content"],
 .cw-provider-card.is-simkl,
 .cw-provider-card.is-floppy,
 .cw-provider-card.is-punchplay,
+.cw-provider-card.is-bingebase,
 .cw-provider-card.is-scrob,
 .cw-provider-card.is-crosswatch,
 .cw-provider-card.is-anilist,
@@ -403,6 +404,7 @@ a[href="#content"],
 }
 
 .cw-provider-card.is-punchplay .cw-provider-mark,
+.cw-provider-card.is-bingebase .cw-provider-mark,
 .cw-provider-card.is-scrob .cw-provider-mark {
   width: 190px;
   height: 190px;
