@@ -1,4 +1,6 @@
-<img width="1672" height="941" alt="CW-new" src="https://github.com/user-attachments/assets/19e8bad7-79d3-450c-b9a7-de086cc68ffd" />
+
+<img width="1672" height="941" alt="59d12c86-1022-4b0e-92a0-70474db3ef41" src="https://github.com/user-attachments/assets/88602f46-8974-44f9-afca-5c9f977452db" />
+
 
 </center>
 
