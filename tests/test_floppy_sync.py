@@ -725,6 +725,28 @@ def _fake_mha_final_edges(tag: str, namespace: str, ident: str) -> list[dict[str
     return []
 
 
+def _one_piece_s23_source(**extra: Any) -> dict[str, Any]:
+    return {
+        "type": "episode",
+        "series_title": "One Piece",
+        "season": 23,
+        "episode": 1,
+        "_simkl_episode_number": 1156,
+        "watched_at": "2026-01-02T00:00:00Z",
+        "show_ids": {
+            "tmdb": "37854",
+            "imdb": "tt0388629",
+            "tvdb": "81797",
+            "simkl": "38636",
+            "mal": "21",
+            "anilist": "21",
+            "kitsu": "12",
+            "anidb": "69",
+        },
+        **extra,
+    }
+
+
 def test_floppy_history_add_uses_anime_native_coordinate_before_layout_absolute(monkeypatch: Any) -> None:
     from providers.sync.floppy import _history
 
@@ -859,6 +881,64 @@ def test_floppy_history_add_uses_anime_target_tmdb_when_source_tmdb_conflicts(mo
     assert res["confirmed_keys"] == ["tmdb:308405#s08e01"]
     assert [c["path"] for c in adapter.client.session.calls if c["method"] == "POST"] == ["media/tv/tmdb/65930/8/episodes/1/watch"]
     assert not any("media/tv/tmdb/308405" in c["path"] for c in adapter.client.session.calls)
+
+
+def test_floppy_history_add_falls_back_when_anime_target_coord_is_not_in_floppy_layout(monkeypatch: Any) -> None:
+    from providers.sync.floppy import _history
+
+    monkeypatch.setattr(
+        _history,
+        "resolve_source_coordinate",
+        lambda *_args, **_kwargs: SimpleNamespace(provider="tmdb", ident="37854", season=23, episode=1),
+    )
+    monkeypatch.setattr(
+        _history,
+        "show_layout",
+        lambda *_args, **_kwargs: [(1, n) for n in range(1, 1156)] + [(23, n) for n in range(1156, 1182)],
+    )
+    _history.prepare_source_snapshot([])
+    _history.reset_layout_cache()
+    routes = {
+        ("GET", "media/tv/tmdb/37854/23/episodes"): {
+            "results": [{"item_id": f"tv/tmdb/37854/23/{n}", "episode_number": n} for n in range(1156, 1182)],
+            "count": 26,
+        },
+        ("GET", "media/tv/tmdb/37854/23/1156/history"): _history_visible_after_post(),
+        ("POST", "media/tv/tmdb/37854/23/episodes/1156/watch"): {"consumption_id": 77},
+    }
+    adapter = AdapterStub(routes, _anime_history_cfg())
+
+    res = _history.add(adapter, [_one_piece_s23_source()])
+
+    assert res["count"] == 1
+    assert res["confirmed_keys"] == ["tmdb:37854#s23e01"]
+    assert [c["path"] for c in adapter.client.session.calls if c["method"] == "POST"] == ["media/tv/tmdb/37854/23/episodes/1156/watch"]
+    assert not any(c["path"] == "media/tv/tmdb/37854/23/episodes/1/watch" for c in adapter.client.session.calls)
+
+
+def test_floppy_history_ignores_detached_episode_rows_from_readback(monkeypatch: Any) -> None:
+    from providers.sync.floppy import _history
+
+    monkeypatch.setattr(_history, "show_layout", lambda *_args, **_kwargs: [(23, n) for n in range(1156, 1182)])
+    _history.prepare_source_snapshot([_one_piece_s23_source()])
+    adapter = AdapterStub(
+        {
+            ("GET", "media/movie"): {"results": [], "count": 0},
+            ("GET", "media/episode"): {
+                "results": [{"item_id": "tv/tmdb/37854/23/1", "end_date": "2026-01-02T00:00:00Z", "consumption_id": 77}],
+                "count": 1,
+            },
+            ("GET", "media/tv/tmdb/37854/23/episodes"): {
+                "results": [{"item_id": f"tv/tmdb/37854/23/{n}", "episode_number": n} for n in range(1156, 1182)],
+                "count": 26,
+            },
+        },
+        _anime_history_cfg(),
+    )
+
+    out = _history.build_index(adapter)
+
+    assert out == {}
 
 
 def test_floppy_history_uses_anidb_when_native_targets_disagree(monkeypatch: Any) -> None:
