@@ -29,4 +29,5 @@ body:
         - label: Scheduler
         - label: Analyzer, Events, Exporter
         - label: Web UI
+        - label: Command line interface
         - label: Config/API

@@ -34,6 +34,19 @@ body:
     validations:
       required: true
 
+  - type: dropdown
+    id: interface
+    attributes:
+      label: Interface
+      description: Where did you experience the problem?
+      multiple: false
+      options:
+        - Web user interface
+        - Command Line Interface
+      default: 0
+    validations:
+      required: true
+
   - type: checkboxes
     id: providers
     attributes:
@@ -75,6 +88,7 @@ body:
         - label: Metadata or IDs
         - label: Library selection or duplicate items
         - label: Web UI
+        - label: Command line interface
         - label: Configuration or API
 
   - type: textarea
