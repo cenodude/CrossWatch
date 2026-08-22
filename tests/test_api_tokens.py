@@ -77,7 +77,7 @@ def test_issue_and_resolve_round_trip(tokens_env) -> None:
     assert raw not in json.dumps(load_config())
     stored = load_config()["app_auth"]["api_tokens"][0]
     assert stored["version"] == 2
-    assert stored["digest_scheme"] == "sha256"
+    assert stored["digest_scheme"] == "hmac_sha256"
     assert isinstance(stored["token_digest"], str)
     assert len(stored["token_digest"]) == 64
     assert "token_hash" not in stored

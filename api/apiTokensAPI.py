@@ -3,7 +3,6 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-import hashlib
 import hmac
 import re
 import secrets
@@ -13,7 +12,7 @@ from typing import Any
 from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse
 
-from cw_platform.config_base import load_config
+from cw_platform.config_base import _load_config_key, load_config
 
 from .appAuthAPI import (
     ADMIN_USER_ID,
@@ -73,8 +72,11 @@ def _valid_token_hash(raw: Any) -> bool:
         return False
 
 
-def _token_digest(raw: str) -> str:
-    return hashlib.sha256(str(raw or "").encode("utf-8")).hexdigest()
+def _token_digest(raw: str, *, create_key: bool = False) -> str:
+    key = _load_config_key(create=create_key)
+    if not key:
+        return ""
+    return hmac.new(key, str(raw or "").encode("utf-8"), "sha256").hexdigest()
 
 
 def _valid_v1_entry(entry: dict[str, Any]) -> bool:
@@ -96,7 +98,7 @@ def _valid_v2_entry(entry: dict[str, Any]) -> bool:
     if not re.fullmatch(r"[a-f0-9]{16}", str(entry.get("id") or "")):
         return False
     digest = str(entry.get("token_digest") or "")
-    if str(entry.get("digest_scheme") or "") != "sha256" or not _SHA256_HEX_RE.fullmatch(digest):
+    if str(entry.get("digest_scheme") or "") != "hmac_sha256" or not _SHA256_HEX_RE.fullmatch(digest):
         return False
     exp = int(entry.get("expires_at") or 0)
     return exp <= 0 or exp > _now()
@@ -178,6 +180,8 @@ def resolve_api_token(cfg: dict[str, Any], raw: str) -> dict[str, Any] | None:
     if v2_match:
         token_id = v2_match.group(1)
         digest = _token_digest(token)
+        if not digest:
+            return None
         for entry in tokens:
             if str(entry.get("id") or "") != token_id or not _valid_v2_entry(entry):
                 continue
@@ -276,8 +280,8 @@ def issue_api_token(
             "id": entry_id,
             "version": 2,
             "name": label,
-            "token_digest": _token_digest(raw),
-            "digest_scheme": "sha256",
+            "token_digest": _token_digest(raw, create_key=True),
+            "digest_scheme": "hmac_sha256",
             "prefix": f"{TOKEN_PREFIX}{entry_id}.{secret[:6]}",
             "user_id": target,
             "username": str(identity.get("username") or ""),

@@ -293,7 +293,7 @@ def test_bootstrap_credentials_clear_untrusted_pre_auth_tokens(monkeypatch) -> N
     cfg["app_auth"]["password"] = {"scheme": "pbkdf2_sha256", "iterations": 260_000, "salt": "", "hash": ""}
     cfg["app_auth"]["api_tokens"] = [
         {"id": "legacy1", "token_hash": {"scheme": "pbkdf2_sha256", "iterations": 1, "salt": "a", "hash": "b"}},
-        {"id": "abcdefabcdefabcd", "version": 2, "token_digest": "a" * 64, "digest_scheme": "sha256"},
+        {"id": "abcdefabcdefabcd", "version": 2, "token_digest": "a" * 64, "digest_scheme": "hmac_sha256"},
     ]
     monkeypatch.setattr(auth, "load_config", lambda: cfg)
     monkeypatch.setattr(auth, "save_config", lambda *_args, **_kwargs: None)
@@ -312,7 +312,7 @@ def test_bootstrap_credentials_preserve_local_cli_pre_auth_tokens(monkeypatch) -
         "id": "abcdefabcdefabcd",
         "version": 2,
         "token_digest": "a" * 64,
-        "digest_scheme": "sha256",
+        "digest_scheme": "hmac_sha256",
         "created_via": "local_cli",
     }
     cfg = _auth_cfg(enabled=False)
@@ -336,7 +336,7 @@ def test_credentials_update_preserves_existing_tokens(monkeypatch) -> None:
         "id": "abcdefabcdefabcd",
         "version": 2,
         "token_digest": "a" * 64,
-        "digest_scheme": "sha256",
+        "digest_scheme": "hmac_sha256",
         "created_via": "api",
     }
     cfg = _auth_cfg()
