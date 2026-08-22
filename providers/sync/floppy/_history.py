@@ -17,9 +17,16 @@ from cw_platform.history_events import history_epoch_from_value, history_sync_ke
 from cw_platform.id_map import minimal as id_minimal
 from providers.sync._mod_common import build_op_result, unresolved_keys
 
-from ._common import COMPLETED, absolute_to_coord, api_delete, api_patch, api_post, canonical_item_key, confirmed_destination, failure_reason, has_coord, int_or_none, item_from_row, paged, reset_layout_cache, show_layout, tmdb_enriched_item, tmdb_id_for_item, track_media, unresolved
+from ._common import COMPLETED, absolute_to_coord, api_delete, api_patch, api_post, canonical_item_key, confirmed_destination, failure_reason, has_coord, int_or_none, item_from_row, media_parts_from_item_id, paged, reset_layout_cache, show_layout, tmdb_enriched_item, tmdb_id_for_item, track_media, unresolved
 
 _SRC_SNAPSHOT: dict[str, Any] = {"scope": None, "shows": {}}
+_SEASON_EPISODE_CACHE: dict[tuple[str, int], set[int] | None] = {}
+
+
+class FloppyCoordinateError(RuntimeError):
+    def __init__(self, message: str, *, reason: str = "floppy_episode_coord_missing") -> None:
+        super().__init__(message)
+        self.reason = reason
 
 
 def _rewatches_enabled(adapter: Any) -> bool:
@@ -74,6 +81,60 @@ def _floppy_coord(item: Mapping[str, Any]) -> tuple[int, int] | None:
     if season is None or episode is None or season < 0 or episode <= 0:
         return None
     return season, episode
+
+
+def _row_episode_number(row: Mapping[str, Any]) -> int | None:
+    for key in ("episode_number", "number", "episode"):
+        number = int_or_none(row.get(key))
+        if number is not None and number > 0:
+            return number
+    _, _, _, _, episode = media_parts_from_item_id(row.get("item_id"))
+    return episode if isinstance(episode, int) and episode > 0 else None
+
+
+def _season_episode_numbers(adapter: Any, tmdb_id: str, season: int) -> set[int] | None:
+    key = (str(tmdb_id or "").strip(), int(season))
+    if not key[0] or key[1] < 0:
+        return None
+    if key in _SEASON_EPISODE_CACHE:
+        return _SEASON_EPISODE_CACHE[key]
+    try:
+        rows = paged(adapter, f"media/tv/tmdb/{key[0]}/{key[1]}/episodes")
+    except Exception:
+        _SEASON_EPISODE_CACHE[key] = None
+        return None
+    numbers = {number for number in (_row_episode_number(row) for row in rows) if number}
+    _SEASON_EPISODE_CACHE[key] = numbers
+    return numbers
+
+
+def _floppy_coord_status(adapter: Any, tmdb_id: str, season: int, episode: int) -> bool | None:
+    if not tmdb_id or season < 0 or episode <= 0:
+        return None
+    numbers = _season_episode_numbers(adapter, tmdb_id, season)
+    if numbers is None:
+        return None
+    return episode in numbers
+
+
+def _detached_floppy_coord(adapter: Any, item: Mapping[str, Any]) -> bool:
+    if not _anime_mapping_enabled(adapter) or _SRC_SNAPSHOT.get("scope") != _pair_scope():
+        return False
+    if str(item.get("type") or "").strip().lower() != "episode":
+        return False
+    tmdb_id = tmdb_id_for_item(item, episode_show=True)
+    season, episode = _episode_numbers(item)
+    if not tmdb_id or season is None or episode is None:
+        return False
+    record = (_SRC_SNAPSHOT.get("shows") or {}).get(tmdb_id)
+    if not isinstance(record, Mapping):
+        return False
+    source_item = (record.get("items") or {}).get((season, episode))
+    if not isinstance(source_item, Mapping):
+        return False
+    if _explicit_absolute(source_item) is None or not _anime_native_ids(source_item):
+        return False
+    return _floppy_coord_status(adapter, tmdb_id, season, episode) is False
 
 
 def _anime_mapping_enabled(adapter: Any) -> bool:
@@ -256,6 +317,7 @@ def _pair_scope() -> str:
 def prepare_source_snapshot(items: Iterable[Mapping[str, Any]]) -> int:
     shows: dict[str, dict[str, Any]] = {}
     reset_layout_cache()
+    _SEASON_EPISODE_CACHE.clear()
     count = 0
     for item in items or []:
         if not isinstance(item, Mapping) or str(item.get("type") or "").strip().lower() != "episode":
@@ -375,14 +437,22 @@ def _write_target_result(adapter: Any, tmdb_id: str, item: Mapping[str, Any], se
     mapped = _anime_target_for_absolute(adapter, tmdb_id, item, absolute)
     if mapped is not None:
         target_id, mapped_season, mapped_episode = mapped
-        return target_id, mapped_season, mapped_episode, _anime_write_needs_readback(adapter, item, season, episode, mapped_season, mapped_episode)
+        if _floppy_coord_status(adapter, target_id, mapped_season, mapped_episode) is not False:
+            return target_id, mapped_season, mapped_episode, _anime_write_needs_readback(adapter, item, season, episode, mapped_season, mapped_episode)
+        layout = show_layout(adapter, target_id)
+        real = absolute_to_coord(layout, absolute)
+        if real is not None:
+            return target_id, real[0], real[1], _anime_write_needs_readback(adapter, item, season, episode, real[0], real[1])
+        raise FloppyCoordinateError(f"FLOPPY episode coordinate not found: tmdb:{target_id} S{mapped_season}E{mapped_episode}")
     layout = show_layout(adapter, tmdb_id)
-    if not layout or has_coord(layout, season, episode):
+    if not layout:
+        return tmdb_id, season, episode, _anime_write_needs_readback(adapter, item, season, episode, season, episode)
+    if has_coord(layout, season, episode):
         return tmdb_id, season, episode, _anime_write_needs_readback(adapter, item, season, episode, season, episode)
     real = absolute_to_coord(layout, absolute)
     if real is not None:
         return tmdb_id, real[0], real[1], _anime_write_needs_readback(adapter, item, season, episode, real[0], real[1])
-    return tmdb_id, season, episode, _anime_write_needs_readback(adapter, item, season, episode, season, episode)
+    raise FloppyCoordinateError(f"FLOPPY episode coordinate not found: tmdb:{tmdb_id} S{season}E{episode}")
 
 
 def _anime_write_needs_readback(
@@ -532,6 +602,8 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
             continue
         item = item_from_row(row, force_type="episode")
         if not item:
+            continue
+        if _detached_floppy_coord(adapter, item):
             continue
         item["watched"] = True
         item["watched_at"] = row.get("end_date") or row.get("progressed_at") or row.get("created_at")
