@@ -277,16 +277,7 @@ function duplicateWebhook(current) {
 }
 
 function logo(provider) {
-  return window.CW?.ProviderMeta?.logoPath?.(provider) || ({
-    plex: "/assets/img/PLEX.svg",
-    jellyfin: "/assets/img/JELLYFIN.svg",
-    emby: "/assets/img/EMBY.svg",
-    trakt: "/assets/img/TRAKT.svg",
-    simkl: "/assets/img/SIMKL.svg",
-    mdblist: "/assets/img/MDBLIST.svg",
-    crosswatch: "/assets/img/CROSSWATCH.svg",
-    floppy: "/assets/img/FLOPPY.png",
-  }[String(provider || "").toLowerCase()] || "");
+  return window.CW?.ProviderMeta?.logoPath?.(provider) || "";
 }
 
 function providerIcon(provider) {
@@ -302,10 +293,26 @@ function cssUrl(value) {
   return String(value || "").replace(/['"\\\n\r\f]/g, "");
 }
 
+function cssRgb(value, fallback = "95,141,255") {
+  const rgb = String(value || "").trim();
+  return /^(?:\d{1,3}\s*,\s*){2}\d{1,3}$/.test(rgb) ? rgb : fallback;
+}
+
+function providerRgb(provider) {
+  return cssRgb(window.CW?.ProviderMeta?.tone?.(provider)?.rgb);
+}
+
 function providerCardAttrs(provider) {
   const src = cssUrl(logo(provider));
-  const style = src ? ` style="--scrm-provider-watermark:url('${esc(src)}')"` : "";
+  const styles = [`--scrm-provider-rgb:${providerRgb(provider)}`];
+  if (src) styles.push(`--scrm-provider-watermark:url('${esc(src)}')`);
+  const style = ` style="${styles.join(";")}"`;
   return `class="scrm-provider-card ${providerClass(provider)}"${style}`;
+}
+
+function modalAttrs(provider) {
+  const rgb = providerRgb(provider);
+  return `class="cx-card scrm-modal scwm-modal ${providerClass(provider)}" style="--scrm-c1:${rgb};--scrm-c2:${rgb}"`;
 }
 
 function modalTitle() {
@@ -573,7 +580,7 @@ function render(errs = []) {
   if (provider !== "plex" && activeTab === "ratings") activeTab = "source";
   const dup = duplicateWebhook(current);
   root.innerHTML = `
-    <div class="cx-card scrm-modal scwm-modal ${providerClass(provider)}">
+    <div ${modalAttrs(provider)}>
       <div class="cx-head scrm-head">
         <span class="scrm-head-logo">${providerIcon(provider)}</span>
         <div class="scrm-head-copy"><strong>${esc(modalTitle())}</strong><span>${esc(label(provider))} ${esc(profileLabel(provider, current.provider_instance))} webhook endpoint</span></div>

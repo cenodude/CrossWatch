@@ -240,10 +240,26 @@ function cssUrl(value) {
   return String(value || "").replace(/['"\\\n\r\f]/g, "");
 }
 
+function cssRgb(value, fallback = "95,141,255") {
+  const rgb = String(value || "").trim();
+  return /^(?:\d{1,3}\s*,\s*){2}\d{1,3}$/.test(rgb) ? rgb : fallback;
+}
+
+function providerRgb(provider) {
+  return cssRgb(window.CW?.ProviderMeta?.tone?.(provider)?.rgb);
+}
+
 function providerCardAttrs(provider) {
   const src = cssUrl(logo(provider));
-  const style = src ? ` style="--scrm-provider-watermark:url('${esc(src)}')"` : "";
+  const styles = [`--scrm-provider-rgb:${providerRgb(provider)}`];
+  if (src) styles.push(`--scrm-provider-watermark:url('${esc(src)}')`);
+  const style = ` style="${styles.join(";")}"`;
   return `class="scrm-provider-card ${providerClass(provider)}"${style}`;
+}
+
+function modalAttrs(provider) {
+  const rgb = providerRgb(provider);
+  return `class="cx-card scrm-modal ${providerClass(provider)}" style="--scrm-c1:${rgb};--scrm-c2:${rgb}"`;
 }
 
 function routeTitle(r) {
@@ -531,7 +547,7 @@ function render(errors = []) {
   const ratingTargets = new Set(ratings.targets || []);
   const dup = props.mode !== "delete" && duplicateRoute(r);
   root.innerHTML = `
-    <div class="cx-card scrm-modal ${providerClass(r.provider)}">
+    <div ${modalAttrs(r.provider)}>
       <div class="cx-head scrm-head">
         <span class="scrm-head-logo">${providerIcon(r.provider)}</span>
         <div class="scrm-head-copy"><strong>${esc(routeTitle(r))}</strong><span>${esc(label(r.provider))} ${esc(profileLabel(r.provider, r.provider_instance, "source"))} to ${esc(label(r.sink))} ${esc(profileLabel(r.sink, r.sink_instance, "sink"))}</span></div>
