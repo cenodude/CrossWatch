@@ -1652,10 +1652,10 @@
         btn.__cwSaving = true;
         setConnectionSaveBusy(btn, true);
         try {
+          await window.CW?.AuthShared?.saveVisibleProfileLabels?.(panel);
           if (info.key === "NUVIO") await window.cwAuth?.nuvio?.saveSelectedProfile?.({ silent: true });
           const ret = window.saveSettings?.();
           if (ret && typeof ret.then === "function") await ret;
-          await window.CW?.AuthShared?.saveVisibleProfileLabels?.(panel);
           flashConnectionResult(btn, true);
           loadConfig(true).then((cfg) => syncConnectionSuccessState(panel, info, cfg)).catch(() => {});
           if (!keepOpen) setTimeout(closeAuthProviderOverlay, 1100);
@@ -1889,7 +1889,7 @@
         openMetadataProviderForm(pickMetaCard.dataset.cwMetaPick).catch((e) => console.warn("open metadata provider failed", e));
         return;
       }
-      if (target?.closest?.("[data-cw-auth-close]") || target?.classList?.contains("cw-auth-overlay")) {
+      if (target?.closest?.("[data-cw-auth-close]")) {
         event.preventDefault();
         closeAuthProviderOverlay();
       }

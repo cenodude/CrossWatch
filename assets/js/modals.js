@@ -72,8 +72,8 @@ window.cxOpenModalFor = async (pairOrId = null) => {
 window.openInsightSettingsModal = (props = {}) => ModalRegistry.open('insight-settings', props);
 window.openCaptureCompare = (props = {}) => ModalRegistry.open('capture-compare', props);
 window.openProviderCleanupModal = (props = {}) => ModalRegistry.open('provider-cleanup', props);
-window.openScrobblerWebhookModal = (props = {}) => ModalRegistry.open('scrobbler-webhook', props);
-window.openScrobblerRouteModal = (props = {}) => ModalRegistry.open('scrobbler-route', props);
+window.openScrobblerWebhookModal = (props = {}) => ModalRegistry.open('scrobbler-webhook', { ...props, dismissible: false });
+window.openScrobblerRouteModal = (props = {}) => ModalRegistry.open('scrobbler-route', { ...props, dismissible: false });
 window.openEditorRawModal = (props = {}) => ModalRegistry.open('editor-raw', props);
 window.openAnimeOverridesModal = (props = {}) => ModalRegistry.open('anime-overrides', props);
 window.openSupportModal = (props = {}) => ModalRegistry.open('support', props);
