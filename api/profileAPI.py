@@ -52,6 +52,7 @@ from cw_platform.provider_instances import list_user_profiles
 router = APIRouter(prefix="/api/profile", tags=["profile"])
 
 MAX_AVATAR_BYTES = 5 * 1024 * 1024
+AVATAR_CACHE_HEADERS = {"Cache-Control": "private, max-age=31536000, immutable"}
 AVATAR_TYPES = {
     "image/png": (".png", b"\x89PNG\r\n\x1a\n"),
     "image/jpeg": (".jpg", b"\xff\xd8\xff"),
@@ -194,7 +195,7 @@ def _avatar_response(raw: dict[str, Any]) -> Response:
                 pass
         return Response(content=DEFAULT_AVATAR_SVG, media_type="image/svg+xml", headers={"Cache-Control": "no-store"})
     media_type = str((avatar or {}).get("content_type") or "image/png") if isinstance(avatar, dict) else "image/png"
-    return FileResponse(path, media_type=media_type, headers={"Cache-Control": "no-store"})
+    return FileResponse(path, media_type=media_type, headers=AVATAR_CACHE_HEADERS)
 
 
 def _profile_label(cfg: dict[str, Any], profile_id: Any) -> str:
