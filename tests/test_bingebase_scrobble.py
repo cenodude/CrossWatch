@@ -172,12 +172,27 @@ def test_kodi_webhook_episode_payload_includes_show_identity(monkeypatch: pytest
 def test_start_pause_stop_mapping(sink) -> None:
     s, calls = sink
 
-    for action in ("start", "pause", "stop"):
-        s.send(Event(action=action))
+    s.send(Event(action="start"))
+    s.send(Event(action="pause"))
+    s.send(Event(action="stop", progress=95))
 
     payloads = [call["json"] for call in calls]
     assert [p["Event"] for p in payloads] == ["playback.start", "playback.pause", "playback.stop"]
     assert [p["NotificationType"] for p in payloads] == ["PlaybackStart", "PlaybackStart", "PlaybackStop"]
+
+
+def test_stop_below_watched_threshold_is_sent_as_pause_and_not_recorded(sink, monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.scrobble.bingebase import sink as sink_mod
+
+    s, calls = sink
+    activity: list[dict[str, Any]] = []
+    monkeypatch.setattr(sink_mod, "record_scrobble_event", lambda ev, **kwargs: activity.append(kwargs))
+
+    for progress in (67, 68, 69):
+        s.send(Event(action="stop", progress=progress))
+
+    assert [call["json"]["Event"] for call in calls] == ["playback.pause", "playback.pause", "playback.pause"]
+    assert activity == []
 
 
 def test_webhook_dispatch_reaches_bingebase(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -240,6 +255,45 @@ def test_successful_stop_records_recent_scrobble_activity(sink, monkeypatch: pyt
     assert activity[0]["target"] == "bingebase"
     assert activity[0]["target_instance"] == "default"
     assert activity[0]["progress"] == 97.0
+
+
+def test_repeated_completed_stop_records_once(sink, monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.scrobble.bingebase import sink as sink_mod
+
+    s, calls = sink
+    activity: list[dict[str, Any]] = []
+    monkeypatch.setattr(sink_mod, "record_scrobble_event", lambda ev, **kwargs: activity.append(kwargs))
+
+    s.send(Event(action="stop", progress=97))
+    s.send(Event(action="stop", progress=98))
+
+    assert len(calls) == 1
+    assert len(activity) == 1
+    assert activity[0]["progress"] == 97.0
+
+
+def test_watched_threshold_reads_bingebase_then_trakt_then_default() -> None:
+    from providers.scrobble.bingebase import sink as s
+
+    assert s._watched_at({"scrobble": {"bingebase": {"watched_at": 75}}}) == 75.0
+    assert s._watched_at({"scrobble": {"trakt": {"watched_at": 85}}}) == 85.0
+    assert s._watched_at({}) == s.DEFAULT_WATCHED_AT
+
+
+def test_repeated_completed_stop_is_deduped_even_if_activity_recording_fails(sink, monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.scrobble.bingebase import sink as sink_mod
+
+    s, calls = sink
+
+    def fail_record(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError("activity unavailable")
+
+    monkeypatch.setattr(sink_mod, "record_scrobble_event", fail_record)
+
+    s.send(Event(action="stop", progress=97))
+    s.send(Event(action="stop", progress=98))
+
+    assert len(calls) == 1
 
 
 def test_failed_stop_does_not_record_recent_scrobble_activity(monkeypatch: pytest.MonkeyPatch) -> None:
