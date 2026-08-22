@@ -10,9 +10,10 @@ from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from typing import Any
 
-from cw_platform.id_map import canonical_key, ids_from, merge_ids, minimal as id_minimal
+from cw_platform.id_map import ID_KEYS, canonical_key, ids_from, merge_ids, minimal as id_minimal
 from cw_platform.provider_instances import resolve_provider_block
 from providers.auth._auth_STREMIO import is_configured as auth_is_configured
+from providers.sync._log import log as cw_log
 
 COLLECTION = "libraryItem"
 DEFAULT_STREMIO_PROFILE_ID = "default"
@@ -112,6 +113,28 @@ def stremio_id_for_item(item: Mapping[str, Any]) -> str | None:
     return imdb_id(imdb_ids_from_item(item).get("imdb"))
 
 
+def stremio_record_id_for_item(item: Mapping[str, Any]) -> str | None:
+    rid = str(item.get("_stremio_record_id") or "").strip()
+    if not rid:
+        return None
+    typ = str(item.get("type") or "").strip().lower()
+    record_type = "series" if typ in {"episode", "episodes", "show", "series", "tv"} else "movie"
+    native = ids_from_stremio_id(rid, record_type)
+    if not native:
+        return None
+    if imdb_id(rid):
+        return rid
+    own = imdb_ids_from_item(item)
+    for key, value in native.items():
+        if str(own.get(key) or "").strip() == str(value).strip():
+            return rid
+    return None
+
+
+def stremio_write_id_for_item(item: Mapping[str, Any]) -> str | None:
+    return stremio_record_id_for_item(item) or stremio_id_for_item(item)
+
+
 def metahub_poster_url(stremio_id: Any) -> str:
     found = imdb_id(stremio_id)
     return f"https://images.metahub.space/poster/small/{found}/img" if found else ""
@@ -126,7 +149,7 @@ def poster_url_from_item(item: Mapping[str, Any], stremio_id: Any = None) -> str
 
 def video_id_for_episode(item: Mapping[str, Any], show_id: str) -> str | None:
     direct = str(item.get("_stremio_video_id") or item.get("video_id") or "").strip()
-    if direct:
+    if direct and direct.startswith(f"{show_id}:"):
         return direct
     season = positive_int(item.get("season"))
     episode = positive_int(item.get("episode"))
@@ -167,6 +190,209 @@ def state_of(record: Mapping[str, Any]) -> Mapping[str, Any]:
 
 def record_id(record: Mapping[str, Any]) -> str:
     return str(record.get("_id") or "").strip()
+
+
+def is_bare_numeric_id(value: Any) -> bool:
+    raw = str(value or "").strip()
+    return bool(raw) and raw.isdigit()
+
+
+def stremio_id_namespace(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return "missing"
+    if imdb_id(raw):
+        return "imdb"
+    if ":" in raw:
+        prefix = raw.split(":", 1)[0].strip().lower()
+        return prefix or "unknown"
+    if raw.isdigit():
+        return "tmdb_bare"
+    return "unknown"
+
+
+def ids_from_stremio_id(value: Any, record_type: Any = None) -> dict[str, str]:
+    raw = str(value or "").strip()
+    if not raw:
+        return {}
+    iid = imdb_id(raw)
+    if iid:
+        return {"imdb": iid}
+    if ":" in raw:
+        prefix, ident = raw.split(":", 1)
+        prefix = prefix.strip().lower()
+        ident = ident.strip()
+        if prefix in ID_KEYS and ident:
+            return {prefix: ident}
+        return {}
+    typ = str(record_type or "").strip().lower()
+    if raw.isdigit() and typ in {"movie", "series", "show", "tv"}:
+        return {"tmdb": raw}
+    return {}
+
+
+def _normalized_title(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    return "".join(ch for ch in raw if ch.isalnum())
+
+
+def _titles_agree(left: Any, right: Any) -> bool:
+    a, b = _normalized_title(left), _normalized_title(right)
+    if not a or not b:
+        return False
+    return a == b or a.startswith(b) or b.startswith(a)
+
+
+def verify_bare_numeric_id(adapter: Any, record: Mapping[str, Any]) -> tuple[bool, str | None]:
+    rid = record_id(record)
+    if not is_bare_numeric_id(rid):
+        return True, None
+    cache = getattr(adapter, "_stremio_bare_id_checks", None)
+    if not isinstance(cache, dict):
+        cache = {}
+        setattr(adapter, "_stremio_bare_id_checks", cache)
+    if rid in cache:
+        return cache[rid]
+    provider = tmdb_metadata_provider(adapter)
+    if provider is None:
+        result: tuple[bool, str | None] = (False, "bare_numeric_id_unverified")
+        cache[rid] = result
+        return result
+    typ = str(record.get("type") or "").strip().lower()
+    entity = "tv" if typ in {"series", "show", "tv"} else "movie"
+    try:
+        detail = provider.fetch(entity=entity, ids={"tmdb": rid}, need={"ids": True})
+    except Exception:
+        detail = None
+    title = str((detail or {}).get("title") or "").strip() if isinstance(detail, Mapping) else ""
+    if not title:
+        result = (False, "bare_numeric_id_unverified")
+    elif _titles_agree(title, record.get("name")):
+        result = (True, None)
+    else:
+        result = (False, "bare_numeric_id_mismatch")
+    cache[rid] = result
+    return result
+
+
+def ids_from_stremio_record(record: Mapping[str, Any]) -> dict[str, str]:
+    return ids_from_stremio_id(record_id(record), record.get("type"))
+
+
+def native_record_ids(adapter: Any, record: Mapping[str, Any]) -> tuple[dict[str, str], str | None]:
+    ids = ids_from_stremio_record(record)
+    if not ids:
+        return {}, "unsupported_stremio_id"
+    ok, reason = verify_bare_numeric_id(adapter, record)
+    if not ok:
+        return {}, reason or "bare_numeric_id_unverified"
+    return ids, None
+
+
+def _item_common_from_record(record: Mapping[str, Any], item_type: str) -> dict[str, Any] | None:
+    rid = record_id(record)
+    ids = ids_from_stremio_record(record)
+    if not ids:
+        return None
+    item: dict[str, Any] = {
+        "type": item_type,
+        "ids": ids,
+        "_stremio_id": rid,
+        "_stremio_record_id": rid,
+        "_stremio_record_namespace": stremio_id_namespace(rid),
+    }
+    title = str(record.get("name") or "").strip()
+    if title:
+        item["title"] = title
+    poster = str(record.get("poster") or "").strip()
+    if poster:
+        item["poster"] = poster
+    return item
+
+
+def reset_read_drop_report(adapter: Any, feature: str) -> None:
+    reports = getattr(adapter, "_stremio_read_drops", None)
+    if not isinstance(reports, dict):
+        reports = {}
+        setattr(adapter, "_stremio_read_drops", reports)
+    reports[str(feature or "").strip().lower()] = []
+
+
+def record_read_drop(adapter: Any, feature: str, record: Mapping[str, Any], reason: str, **fields: Any) -> None:
+    feature_s = str(feature or "").strip().lower()
+    rid = record_id(record)
+    entry = {
+        "record_id": rid,
+        "record_type": str(record.get("type") or "").strip().lower(),
+        "namespace": stremio_id_namespace(rid),
+        "reason": str(reason or "unsupported_stremio_id"),
+    }
+    title = str(record.get("name") or "").strip()
+    if title:
+        entry["title"] = title
+    entry.update({k: v for k, v in fields.items() if v is not None})
+    reports = getattr(adapter, "_stremio_read_drops", None)
+    if not isinstance(reports, dict):
+        reports = {}
+        setattr(adapter, "_stremio_read_drops", reports)
+    bucket = reports.setdefault(feature_s, [])
+    if isinstance(bucket, list):
+        bucket.append(entry)
+    cw_log("STREMIO", feature_s or "index", "debug", "index_row_dropped", **entry)
+
+
+def read_drop_unresolved_items(adapter: Any, feature: str) -> list[dict[str, Any]]:
+    reports = getattr(adapter, "_stremio_read_drops", None)
+    if not isinstance(reports, Mapping):
+        return []
+    rows = reports.get(str(feature or "").strip().lower())
+    if not isinstance(rows, list):
+        return []
+
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        rid = str(row.get("record_id") or "").strip()
+        if not rid:
+            continue
+        record_type = str(row.get("record_type") or "").strip().lower()
+        item_type = "movie" if record_type == "movie" else "show" if record_type in {"series", "show"} else record_type or "movie"
+        namespace = str(row.get("namespace") or "").strip().lower()
+        ids: dict[str, str] = ids_from_stremio_id(rid, record_type)
+        if not ids:
+            ids["slug"] = f"stremio:{rid}"
+
+        reason = str(row.get("reason") or "unsupported_stremio_id").strip()
+        item: dict[str, Any] = {
+            "type": item_type,
+            "ids": ids,
+            "_stremio_record_id": rid,
+            "_stremio_record_namespace": namespace,
+            "_stremio_drop_reason": reason,
+            "_cw_unresolved_hint": f"stremio_read:{reason}",
+        }
+        title = str(row.get("title") or "").strip()
+        if title:
+            item["title"] = title
+        out.append(item)
+    return out
+
+
+def read_drop_summary(adapter: Any, feature: str) -> dict[str, Any]:
+    reports = getattr(adapter, "_stremio_read_drops", None)
+    if not isinstance(reports, Mapping):
+        return {"dropped": 0, "drop_reasons": None, "drop_namespaces": None}
+    rows = reports.get(str(feature or "").strip().lower())
+    if not isinstance(rows, list):
+        return {"dropped": 0, "drop_reasons": None, "drop_namespaces": None}
+    reasons = sorted({str(row.get("reason") or "") for row in rows if isinstance(row, Mapping) and row.get("reason")})
+    namespaces = sorted({str(row.get("namespace") or "") for row in rows if isinstance(row, Mapping) and row.get("namespace")})
+    return {
+        "dropped": len(rows),
+        "drop_reasons": ",".join(reasons) or None,
+        "drop_namespaces": ",".join(namespaces) or None,
+    }
 
 
 def _extract_records(data: Any) -> list[Mapping[str, Any]]:
@@ -277,26 +503,29 @@ def read_merge_write(
 
 
 def item_from_movie_record(record: Mapping[str, Any]) -> dict[str, Any] | None:
-    rid = imdb_id(record_id(record))
-    if not rid:
-        return None
-    item: dict[str, Any] = {"type": "movie", "ids": {"imdb": rid}, "_stremio_id": rid}
-    title = str(record.get("name") or "").strip()
-    if title:
-        item["title"] = title
-    poster = str(record.get("poster") or "").strip()
-    if poster:
-        item["poster"] = poster
-    return item
+    return _item_common_from_record(record, "movie")
+
+
+def item_from_series_record(record: Mapping[str, Any]) -> dict[str, Any] | None:
+    return _item_common_from_record(record, "show")
 
 
 def item_from_episode(show_id: str, season: Any, episode: Any, record: Mapping[str, Any], video: Mapping[str, Any] | None = None) -> dict[str, Any] | None:
-    sid = imdb_id(show_id)
     sn = positive_int(season)
     ep = positive_int(episode)
-    if not sid or not sn or not ep:
+    ids = ids_from_stremio_id(show_id, "series")
+    if not ids or not sn or not ep:
         return None
-    item: dict[str, Any] = {"type": "episode", "show_ids": {"imdb": sid}, "ids": {"imdb": sid}, "season": sn, "episode": ep, "_stremio_id": sid}
+    item: dict[str, Any] = {
+        "type": "episode",
+        "show_ids": dict(ids),
+        "ids": dict(ids),
+        "season": sn,
+        "episode": ep,
+        "_stremio_id": str(show_id or "").strip(),
+        "_stremio_record_id": record_id(record),
+        "_stremio_record_namespace": stremio_id_namespace(record_id(record)),
+    }
     title = str((video or {}).get("title") or "").strip()
     if title:
         item["title"] = title

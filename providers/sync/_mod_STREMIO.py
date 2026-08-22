@@ -15,9 +15,9 @@ from providers.sync.stremio import _history as feat_history
 from providers.sync.stremio import _progress as feat_progress
 from providers.sync.stremio import _ratings as feat_ratings
 from providers.sync.stremio import _watchlist as feat_watchlist
-from providers.sync.stremio._common import DEFAULT_STREMIO_PROFILE_ID, datastore_meta, is_configured
+from providers.sync.stremio._common import DEFAULT_STREMIO_PROFILE_ID, datastore_meta, is_capture_mode, is_configured, read_drop_unresolved_items
 
-__VERSION__ = "0.1"
+__VERSION__ = "0.2"
 __all__ = ["get_manifest", "STREMIOModule", "OPS", "feat_history", "feat_progress", "feat_ratings", "feat_watchlist"]
 
 if "ctx" not in globals():
@@ -84,7 +84,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "upsert": True,
                 "remove": True,
                 "observed_deletes": True,
-                "requires_ids": ["imdb"],
+                "requires_ids": ["imdb", "tmdb", "tvdb", "mal", "anilist", "kitsu", "anidb"],
             },
             "watchlist": {
                 "read": True,
@@ -93,7 +93,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "upsert": True,
                 "remove": True,
                 "observed_deletes": True,
-                "requires_ids": ["imdb"],
+                "requires_ids": ["imdb", "tmdb", "tvdb", "mal", "anilist", "kitsu", "anidb"],
                 "custom_lists": False,
             },
             "ratings": {
@@ -116,7 +116,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "upsert": True,
                 "remove": True,
                 "observed_deletes": True,
-                "requires_ids": ["imdb"],
+                "requires_ids": ["imdb", "tmdb", "tvdb", "mal", "anilist", "kitsu", "anidb"],
                 "requires_duration": True,
                 "completion_policy": {"progress_write": {"mode": "none"}},
             },
@@ -219,7 +219,37 @@ class _STREMIOOPS:
         return self._adapter(cfg).health()
 
     def build_index(self, cfg: Mapping[str, Any], *, feature: str) -> Mapping[str, dict[str, Any]]:
-        return self._adapter(cfg).build_index(feature)
+        adapter = self._adapter(cfg)
+        index = adapter.build_index(feature)
+        self._record_read_unresolved(feature, adapter)
+        return index
+
+    def _record_read_unresolved(self, feature: str, adapter: STREMIOModule) -> None:
+        if is_capture_mode():
+            return
+        try:
+            from cw_platform.orchestrator._scope import pair_scope
+
+            if pair_scope() is None:
+                return
+            from cw_platform.orchestrator._unresolved import clear_unresolved, load_unresolved_map, record_unresolved
+
+            from cw_platform.id_map import canonical_key, minimal as id_minimal
+
+            items = read_drop_unresolved_items(adapter, feature)
+            fresh = {canonical_key(id_minimal(it)) for it in items}
+            prior = load_unresolved_map("STREMIO", feature, cross_features=False) or {}
+            stale = [
+                key
+                for key, meta in prior.items()
+                if str((meta or {}).get("reason") or "").startswith("stremio_read:") and key not in fresh
+            ]
+            if stale:
+                clear_unresolved("STREMIO", feature, stale)
+            if items:
+                record_unresolved("STREMIO", feature, items, hint="stremio_read:unsupported_stremio_id")
+        except Exception:
+            return
 
     def add(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool = False) -> dict[str, Any]:
         return self._adapter(cfg).add(feature, items, dry_run=dry_run)
