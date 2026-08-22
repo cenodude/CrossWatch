@@ -72,7 +72,21 @@ def test_watchlist_allows_full_managed_users_to_select_delete() -> None:
 
     assert 'cwPermWrite !== "on"' in js
     assert 'doc?.dataset?.cwRole === "user" && doc?.dataset?.cwPermWrite !== "on"' in js
-    assert 'if (!isProfileUser() && chk.checked)' in js
+    assert "const setFilteredSelection = checked => {" in js
+    assert "if (isProfileUser()) return;" in js
+
+
+def test_watchlist_filter_chip_selects_visible_items() -> None:
+    js = (ROOT / "assets" / "js" / "watchlist.js").read_text(encoding="utf-8")
+    css = (ROOT / "assets" / "css" / "pages.css").read_text(encoding="utf-8")
+
+    assert '<button id="wl-filter-state" type="button"' in js
+    assert "const selectedFilteredKeys = () => filtered.map(it => normKey(it)).filter(Boolean);" in js
+    assert 'filterStateEl?.addEventListener("click"' in js
+    assert "const actionText = readOnly" in js
+    assert 'filterStateEl.textContent = actionText;' in js
+    assert 'snackbar(willSelect ? "Selected visible items" : "Selection cleared");' in js
+    assert "#page-watchlist #wl-filter-state:disabled" in css
 
 
 def test_watchlist_column_resize_can_truncate_without_overflow() -> None:
