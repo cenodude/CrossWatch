@@ -105,6 +105,12 @@
     <span>Tracker</span>
     <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
   </article>
+  <article class="cw-provider-card is-bingebase">
+    <img class="cw-provider-mark" src="images/providers/BINGEBASE.png" alt="" aria-hidden="true">
+    <strong>BingeBase</strong>
+    <span>Scrobble tracker</span>
+    <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
+  </article>
   <article class="cw-provider-card is-scrob">
     <img class="cw-provider-mark" src="images/providers/SCROB.png" alt="" aria-hidden="true">
     <strong>SCROB</strong>
@@ -193,7 +199,7 @@
   <article>
     <span class="cw-token">LIVE</span>
     <h3>Watcher and webhooks</h3>
-    <p>Route Watcher play events from Plex, Emby, Jellyfin and Kodi to Trakt, SIMKL, MDBList, Floppy or the CW local tracker. Webhooks support Plex, Emby and Jellyfin to Trakt, SIMKL or MDBList, without needing Plex Pass or Emby Premiere.</p>
+    <p>Route Watcher play events from Plex, Emby, Jellyfin and Kodi to Trakt, SIMKL, MDBList, BingeBase, Floppy or the CW local tracker. Webhooks support Plex, Emby and Jellyfin to Trakt, SIMKL, MDBList or BingeBase, without needing Plex Pass or Emby Premiere.</p>
   </article>
   <article>
     <span class="cw-token">SAFE</span>
@@ -239,7 +245,7 @@
   <div>
     <p class="cw-kicker">Docker first</p>
     <h2>Start local. Stay in control.</h2>
-    <p>The web UI is exposed at <code>http://localhost:8787</code>. Keep your config in a Docker volume and update with the latest image when you are ready.</p>
+    <p>The web UI is exposed at <code>http://localhost:8787</code>. Set <code>CW_CLI_ONLY=1</code> when you want API/CLI-only mode. Keep your config in a Docker volume and update with the latest image when you are ready.</p>
     <div class="cw-actions">
       <a class="cw-button is-primary" href="https://wiki.crosswatch.app/getting-started/installation">Installation guide</a>
       <a class="cw-button" href="https://hub.docker.com/r/cenodude/crosswatch">Docker Hub</a>

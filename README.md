@@ -42,12 +42,13 @@
 </p>
 
 
-**CrossWatch (CW)** is a synchronization engine that act as a bridge and keeps your **Plex, Jellyfin, Emby, SIMKL, Floppy, Trakt, AniList, TMDb, MDBList, PublicMetaDB, PunchPlay, Scrob, Tautulli, Kodi, Nuvio, Stremio and CW local tracker** in sync. It runs locally with a web UI where you link accounts, define sync pairs, run them manually or on a schedule, and review stats and history. CW also includes its own tracker to keep your data safe with snapshots. With Profiles, you can manage separate sync setups for yourself and for friends or family too, with their own servers and/or tracker API's.
+**CrossWatch (CW)** is a synchronization engine that act as a bridge and keeps your **Plex, Jellyfin, Emby, SIMKL, Floppy, Trakt, AniList, TMDb, MDBList, PublicMetaDB, PunchPlay, BingeBase, Scrob, Tautulli, Kodi, Nuvio, Stremio and CW local tracker** in sync. It runs locally with a web UI where you link accounts, define sync pairs, run them manually or on a schedule, and review stats and history. CW also includes its own tracker to keep your data safe with snapshots. With Profiles, you can manage separate sync setups for yourself and for friends or family too, with their own servers and/or tracker API's.
 
 ### CW in a nutshell:
 * **One brain for all your media syncs** A single place to configure everything.
 * **Be your own Sync Hub** Create profiles for seperate media servers/users/trackers.
   * Managed user support (multi-users)
+* Web User Interface and/or Command Line Interface (CLI)
 * **Multi media-server** and **multi tracker** support with profiles.
 * **Synchronization**
   * Watchlists, Ratings, History and Progress
@@ -116,6 +117,8 @@ volumes:
 
 > The container exposes the web UI at:\
 > http://localhost:8787
+
+> Want no web UI? Add `-e CW_CLI_ONLY=1` or `CW_CLI_ONLY: "1"` in Compose. The API, CLI, webhooks and auth callbacks keep working.
 
 ## Sponsors
 
