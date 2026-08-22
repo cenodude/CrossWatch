@@ -10,20 +10,13 @@ import typer
 
 from .._context import Ctx
 from .._errors import CLIError
-from .._util import as_dict, error_text, fmt_ts
+from .._util import as_dict, error_text, fmt_ts, rows_from_payload
 
 capture_app = typer.Typer(help="Captures, the rollback tool for watchlist, ratings and history.", no_args_is_help=True)
 
 
 def _rows(payload: Any, *keys: str) -> list[dict[str, Any]]:
-    block = as_dict(payload)
-    for key in keys:
-        found = block.get(key)
-        if isinstance(found, list):
-            return [as_dict(i) for i in found]
-    if isinstance(payload, list):
-        return [as_dict(i) for i in payload]
-    return []
+    return rows_from_payload(payload, *keys)
 
 
 def _size(value: Any) -> str:
@@ -114,8 +107,11 @@ def capture_create(
     while time.time() < deadline:
         time.sleep(2.0)
         progress = as_dict(state.get(f"/api/snapshots/capture-progress/{progress_id}"))
-        status = str(progress.get("status") or progress.get("state") or "").lower()
-        note = str(progress.get("message") or progress.get("step") or "")
+        current = as_dict(progress.get("progress")) or progress
+        status = str(current.get("status") or current.get("state") or "").lower()
+        if not status and current.get("done") is True:
+            status = "done"
+        note = str(current.get("message") or current.get("step") or current.get("stage") or "")
         if note and note != last:
             state.out.info(note)
             last = note
@@ -218,7 +214,8 @@ def capture_diff(
         state.out.data(payload)
         return
     block = as_dict(payload)
-    summary = as_dict(block.get("summary")) or block
+    diff = as_dict(block.get("diff"))
+    summary = as_dict(block.get("summary")) or as_dict(diff.get("summary")) or diff or block
     state.out.kv(
         [
             ("Added", str(summary.get("added") or 0)),
@@ -227,7 +224,7 @@ def capture_diff(
         ],
         title="Diff",
     )
-    rows = _rows(payload, "items", "changes", "rows")
+    rows = _rows(diff or payload, "items", "changes", "rows")
     if rows:
         state.out.print()
         state.out.records(

@@ -8,21 +8,14 @@ from typing import Any
 import typer
 
 from .._context import Ctx
-from .._errors import CLIError
-from .._util import as_dict, error_text, fmt_ts
+from .._errors import EXIT_USAGE, CLIError
+from .._util import as_dict, error_text, fmt_ts, rows_from_payload
 
 progress_app = typer.Typer(help="Unfinished playback across providers.", no_args_is_help=True)
 
 
 def _rows(payload: Any) -> list[dict[str, Any]]:
-    block = as_dict(payload)
-    for key in ("items", "rows", "results"):
-        found = block.get(key)
-        if isinstance(found, list):
-            return [as_dict(i) for i in found]
-    if isinstance(payload, list):
-        return [as_dict(i) for i in payload]
-    return []
+    return rows_from_payload(payload, "items", "rows", "results")
 
 
 def _percent(row: dict[str, Any]) -> str:
@@ -35,6 +28,33 @@ def _percent(row: dict[str, Any]) -> str:
         return f"{float(value):.0f}%"
     except Exception:
         return "-"
+
+
+def _selected_rows(state: Ctx, keys: list[str]) -> list[dict[str, Any]]:
+    wanted = [str(k or "").strip() for k in keys if str(k or "").strip()]
+    if not wanted:
+        raise CLIError("No progress item keys given", exit_code=EXIT_USAGE)
+    payload = state.get("/api/playback_progress/items", params={"page_size": 250, "user_profile": ""})
+    rows = _rows(payload)
+    by_key: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        for candidate in {
+            str(row.get("key") or "").strip(),
+            str(row.get("canonical_key") or "").strip(),
+            str(row.get("id") or "").strip(),
+            str(row.get("remote_id") or "").strip(),
+        }:
+            if candidate:
+                by_key[candidate] = row
+    selected = [by_key[key] for key in wanted if key in by_key]
+    missing = [key for key in wanted if key not in by_key]
+    if missing:
+        raise CLIError(
+            f"{len(missing)} progress item(s) were not found",
+            hint=f"Missing: {', '.join(missing[:6])}",
+            exit_code=EXIT_USAGE,
+        )
+    return selected
 
 
 @progress_app.command("list")
@@ -60,6 +80,7 @@ def progress_list(
         params["progress_min"] = minimum
     if maximum:
         params["progress_max"] = maximum
+    params["page_size"] = max(1, min(int(limit or 50), 250))
     payload = state.get("/api/playback_progress/items", params=params or None)
     rows = _rows(payload)
     if state.out.json_mode:
@@ -68,7 +89,7 @@ def progress_list(
     state.out.records(
         rows[: max(1, limit)],
         [
-            ("KEY", lambda r: str(r.get("key") or r.get("id") or "-")[:26]),
+            ("KEY", lambda r: str(r.get("key") or r.get("canonical_key") or r.get("id") or r.get("remote_id") or "-")[:26]),
             ("TITLE", lambda r: str(r.get("title") or "-")[:40]),
             ("TYPE", lambda r: str(r.get("media_type") or r.get("type") or "-")),
             ("PROVIDER", lambda r: str(r.get("provider") or "-")),
@@ -115,10 +136,17 @@ def progress_settings(ctx: typer.Context) -> None:
     )
 
 
-def _act(state: Ctx, path: str, keys: list[str], extra: dict[str, Any] | None = None) -> dict[str, Any]:
-    body: dict[str, Any] = {"keys": keys}
-    if len(keys) == 1:
-        body["key"] = keys[0]
+def _bulk_act(state: Ctx, action: str, keys: list[str]) -> dict[str, Any]:
+    selected = _selected_rows(state, keys)
+    result = as_dict(state.post("/api/playback_progress/actions/bulk", json_body={"action": action, "items": selected}))
+    if result.get("ok") is False:
+        raise CLIError(error_text(result, "Rejected"))
+    return result
+
+
+def _single_act(state: Ctx, path: str, key: str, extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    selected = _selected_rows(state, [key])
+    body: dict[str, Any] = dict(selected[0])
     body.update(extra or {})
     result = as_dict(state.post(path, json_body=body))
     if result.get("ok") is False:
@@ -138,7 +166,7 @@ def progress_watched(
     wanted = [k.strip() for k in keys if k.strip()]
     if not yes and not typer.confirm(f"Mark {len(wanted)} item(s) watched?", default=False):
         raise CLIError("Cancelled", exit_code=0)
-    result = _act(state, "/api/playback_progress/actions/mark_watched", wanted)
+    result = _bulk_act(state, "mark_watched", wanted)
     if state.out.json_mode:
         state.out.data(result or {"ok": True})
         return
@@ -157,7 +185,7 @@ def progress_remove(
     wanted = [k.strip() for k in keys if k.strip()]
     if not yes and not typer.confirm(f"Remove progress for {len(wanted)} item(s)?", default=False):
         raise CLIError("Cancelled", exit_code=0)
-    result = _act(state, "/api/playback_progress/actions/remove", wanted)
+    result = _bulk_act(state, "remove_progress", wanted)
     if state.out.json_mode:
         state.out.data(result or {"ok": True})
         return
@@ -173,7 +201,7 @@ def progress_set(
     """Set the progress percent for one item."""
     state: Ctx = ctx.obj
     state.require_service("Updating playback progress")
-    result = _act(state, "/api/playback_progress/actions/update_progress", [key], {"progress": float(percent)})
+    result = _single_act(state, "/api/playback_progress/actions/update_progress", key, {"progress_percent": float(percent)})
     if state.out.json_mode:
         state.out.data(result or {"ok": True})
         return

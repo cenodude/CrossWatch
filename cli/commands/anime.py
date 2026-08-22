@@ -9,20 +9,13 @@ import typer
 
 from .._context import Ctx
 from .._errors import EXIT_USAGE, CLIError
-from .._util import as_dict, error_text, fmt_ts
+from .._util import as_dict, error_text, fmt_ts, rows_from_payload
 
 anime_app = typer.Typer(help="Anime id mapping and custom overrides.", no_args_is_help=True)
 
 
 def _rows(payload: Any, *keys: str) -> list[dict[str, Any]]:
-    block = as_dict(payload)
-    for key in keys:
-        found = block.get(key)
-        if isinstance(found, list):
-            return [as_dict(i) for i in found]
-    if isinstance(payload, list):
-        return [as_dict(i) for i in payload]
-    return []
+    return rows_from_payload(payload, *keys)
 
 
 @anime_app.command("status")

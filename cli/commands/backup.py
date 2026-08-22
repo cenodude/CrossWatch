@@ -9,20 +9,13 @@ import typer
 
 from .._context import Ctx
 from .._errors import CLIError
-from .._util import as_dict, error_text, fmt_ts
+from .._util import as_dict, error_text, fmt_ts, rows_from_payload
 
 backup_app = typer.Typer(help="CrossWatch tracker backups.", no_args_is_help=True)
 
 
 def _rows(payload: Any, *keys: str) -> list[dict[str, Any]]:
-    block = as_dict(payload)
-    for key in keys:
-        found = block.get(key)
-        if isinstance(found, list):
-            return [as_dict(i) for i in found]
-    if isinstance(payload, list):
-        return [as_dict(i) for i in payload]
-    return []
+    return rows_from_payload(payload, *keys)
 
 
 def _size(value: Any) -> str:
@@ -69,14 +62,16 @@ def backup_create(
     state.require_service("Taking a backup")
     body: dict[str, Any] = {}
     if note.strip():
-        body["note"] = note.strip()
+        body["label"] = note.strip()
     result = as_dict(state.post("/api/backups/create", json_body=body))
     if result.get("ok") is False:
         raise CLIError(error_text(result, "Backup rejected"))
     if state.out.json_mode:
         state.out.data(result)
         return
-    state.out.success(f"Backup created{': ' + str(result.get('path')) if result.get('path') else '.'}")
+    backup = as_dict(result.get("backup"))
+    path = str(backup.get("path") or result.get("path") or "")
+    state.out.success(f"Backup created{': ' + path if path else '.'}")
 
 
 @backup_app.command("validate")
@@ -153,7 +148,7 @@ def backup_schedule(
         if state.out.json_mode:
             state.out.data(payload)
             return
-        block = as_dict(payload)
+        block = as_dict(as_dict(payload).get("schedule")) or as_dict(payload)
         state.out.kv(
             [(key, value) for key, value in block.items() if not isinstance(value, (dict, list))],
             title="Backup schedule",
@@ -161,9 +156,11 @@ def backup_schedule(
         return
 
     state.require_service("Changing the backup schedule")
-    body: dict[str, Any] = dict(as_dict(state.get("/api/backups/schedule")))
+    body: dict[str, Any] = dict(as_dict(as_dict(state.get("/api/backups/schedule")).get("schedule")))
+    body["enabled"] = bool(body.get("enabled", body.get("active", False)))
     if enable is not None:
         body["enabled"] = bool(enable)
+        body["active"] = bool(enable)
     if every_hours:
         body["every_n_hours"] = int(every_hours)
     result = as_dict(state.post("/api/backups/schedule", json_body=body))
@@ -183,7 +180,7 @@ def backup_retention(
     """Set how many backups to keep and prune the rest."""
     state: Ctx = ctx.obj
     state.require_service("Changing backup retention")
-    result = as_dict(state.post("/api/backups/retention", json_body={"keep": int(keep)}))
+    result = as_dict(state.post("/api/backups/retention", json_body={"max_backups": int(keep)}))
     if result.get("ok") is False:
         raise CLIError(error_text(result, "Retention rejected"))
     if state.out.json_mode:
