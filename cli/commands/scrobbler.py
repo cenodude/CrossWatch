@@ -10,7 +10,7 @@ import typer
 from .._context import Ctx
 from .._errors import EXIT_USAGE, CLIError
 from .._render import state_text
-from .._util import as_dict, coerce_bool, error_text
+from .._util import as_dict, coerce_bool, error_text, rows_from_payload
 
 scrobbler_app = typer.Typer(help="Scrobbler routes and webhooks.", no_args_is_help=True)
 route_app = typer.Typer(help="Scrobble routes.", no_args_is_help=True)
@@ -18,14 +18,7 @@ webhook_app = typer.Typer(help="Scrobble webhooks.", no_args_is_help=True)
 
 
 def _rows(payload: Any, *keys: str) -> list[dict[str, Any]]:
-    block = as_dict(payload)
-    for key in keys:
-        found = block.get(key)
-        if isinstance(found, list):
-            return [as_dict(i) for i in found]
-    if isinstance(payload, list):
-        return [as_dict(i) for i in payload]
-    return []
+    return rows_from_payload(payload, *keys)
 
 
 def _fields(raw: list[str]) -> dict[str, Any]:
@@ -74,13 +67,17 @@ def scrobbler_event_routes(ctx: typer.Context) -> None:
     if state.out.json_mode:
         state.out.data(payload)
         return
+    block = as_dict(payload)
     rows = _rows(payload, "routes", "items")
+    if not rows:
+        rows = _rows(block.get("watcher_routes"), "items") + _rows(block.get("webhook_routes"), "items")
     state.out.records(
         rows,
         [
-            ("EVENT", lambda r: str(r.get("event") or r.get("type") or "-")),
-            ("SOURCE", lambda r: str(r.get("source") or r.get("provider") or "-")),
+            ("KIND", lambda r: str(r.get("source") or "-")),
+            ("PROVIDER", lambda r: str(r.get("provider") or "-")),
             ("SINK", lambda r: str(r.get("sink") or r.get("target") or "-")),
+            ("LABEL", lambda r: str(r.get("label") or "-")[:44]),
         ],
         title="Event routes",
         empty="No event routes.",
@@ -156,14 +153,35 @@ def webhook_urls(ctx: typer.Context) -> None:
     if state.out.json_mode:
         state.out.data(payload)
         return
-    rows = [[key, str(value)] for key, value in payload.items() if not isinstance(value, (dict, list))]
-    state.out.table(["NAME", "URL"], rows, title="Webhook URLs", empty="No webhook URLs yet.")
+    rows: list[list[str]] = []
+    ids = as_dict(payload.get("ids"))
+    for key, value in sorted(ids.items()):
+        if value:
+            rows.append([str(key), str(value)])
+    for hook in _rows(payload.get("profile_hooks")):
+        rows.append(
+            [
+                f"{hook.get('provider') or '-'}:{hook.get('instance') or 'default'}",
+                str(hook.get("webhook_token") or "-"),
+            ]
+        )
+    for hook in _rows(payload.get("route_hooks")):
+        rows.append(
+            [
+                f"route:{hook.get('route_id') or hook.get('id') or '-'}",
+                str(hook.get("webhook_token") or "-"),
+            ]
+        )
+    state.out.table(["NAME", "TOKEN"], rows, title="Webhook tokens", empty="No webhook tokens yet.")
 
 
 @webhook_app.command("regenerate")
 def webhook_regenerate(
     ctx: typer.Context,
     profile: str = typer.Option("", "--profile", help="Regenerate one profile instead of all."),
+    provider: str = typer.Option("", "--provider", "-p", help="Source provider profile to regenerate."),
+    instance: str = typer.Option("default", "--instance", "-i", help="Source provider instance/profile id."),
+    route: str = typer.Option("", "--route", help="Route id for ratings webhook tokens."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Do not ask for confirmation."),
 ) -> None:
     """Roll the webhook tokens. Existing URLs stop working."""
@@ -173,8 +191,23 @@ def webhook_regenerate(
         state.out.warn("Existing webhook URLs will stop working.")
         if not typer.confirm("Regenerate?", default=False):
             raise CLIError("Cancelled", exit_code=0)
-    if profile.strip():
-        result = as_dict(state.post("/api/scrobbler/webhooks/profile/regenerate", json_body={"profile": profile.strip()}))
+    raw_profile = profile.strip()
+    target_provider = provider.strip().lower()
+    target_instance = instance.strip() or "default"
+    if raw_profile and not target_provider:
+        target_provider, _, parsed_instance = raw_profile.partition(":")
+        target_provider = target_provider.strip().lower()
+        if parsed_instance.strip():
+            target_instance = parsed_instance.strip()
+    if route.strip():
+        result = as_dict(state.post("/api/webhooks/regenerate", json_body={"route_id": route.strip()}))
+    elif target_provider:
+        result = as_dict(
+            state.post(
+                "/api/scrobbler/webhooks/profile/regenerate",
+                json_body={"provider": target_provider, "provider_instance": target_instance},
+            )
+        )
     else:
         result = as_dict(state.post("/api/webhooks/regenerate"))
     if result.get("ok") is False:

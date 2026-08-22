@@ -10,21 +10,14 @@ import typer
 
 from .._context import Ctx
 from .._errors import EXIT_NOT_FOUND, EXIT_USAGE, CLIError
-from .._util import as_dict, error_text
+from .._util import as_dict, error_text, rows_from_payload
 
 export_app = typer.Typer(help="Export your data out of CrossWatch.", no_args_is_help=True)
 import_app = typer.Typer(help="Import data into CrossWatch.", no_args_is_help=True)
 
 
 def _rows(payload: Any, *keys: str) -> list[dict[str, Any]]:
-    block = as_dict(payload)
-    for key in keys:
-        found = block.get(key)
-        if isinstance(found, list):
-            return [as_dict(i) for i in found]
-    if isinstance(payload, list):
-        return [as_dict(i) for i in payload]
-    return []
+    return rows_from_payload(payload, *keys)
 
 
 def _options(state: Ctx, path: str, title: str) -> None:

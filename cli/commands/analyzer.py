@@ -9,7 +9,7 @@ import typer
 
 from .._context import Ctx
 from .._errors import CLIError
-from .._util import as_dict, error_text
+from .._util import as_dict, error_text, rows_from_payload
 
 analyzer_app = typer.Typer(help="Find items that are stuck or inconsistent between providers.", no_args_is_help=True)
 
@@ -19,14 +19,7 @@ def _scope(pairs: str) -> dict[str, Any] | None:
 
 
 def _items(payload: Any, *keys: str) -> list[dict[str, Any]]:
-    block = as_dict(payload)
-    for key in keys:
-        found = block.get(key)
-        if isinstance(found, list):
-            return [as_dict(i) for i in found]
-    if isinstance(payload, list):
-        return [as_dict(i) for i in payload]
-    return []
+    return rows_from_payload(payload, *keys)
 
 
 def _item_title(row: dict[str, Any]) -> str:

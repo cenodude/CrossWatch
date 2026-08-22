@@ -9,20 +9,29 @@ import typer
 
 from .._context import Ctx
 from .._errors import EXIT_USAGE, CLIError
-from .._util import as_dict, error_text
+from .._util import as_dict, error_text, rows_from_payload
 
 editor_app = typer.Typer(help="Inspect and adjust stored items.", no_args_is_help=True)
 
 
+def _row_key(row: dict[str, Any]) -> str:
+    return str(row.get("key") or row.get("id") or "").strip()
+
+
+def _id_value(row: dict[str, Any], name: str) -> str:
+    value = row.get(name)
+    if value not in (None, ""):
+        return str(value)
+    ids = row.get("ids")
+    if isinstance(ids, dict):
+        value = ids.get(name)
+        if value not in (None, ""):
+            return str(value)
+    return "-"
+
+
 def _rows(payload: Any, *keys: str) -> list[dict[str, Any]]:
-    block = as_dict(payload)
-    for key in keys:
-        found = block.get(key)
-        if isinstance(found, list):
-            return [as_dict(i) for i in found]
-    if isinstance(payload, list):
-        return [as_dict(i) for i in payload]
-    return []
+    return rows_from_payload(payload, *keys)
 
 
 @editor_app.command("list")
@@ -30,9 +39,9 @@ def editor_list(
     ctx: typer.Context,
     kind: str = typer.Option("watchlist", "--kind", "-k", help="watchlist, ratings, history or playlists."),
     provider: str = typer.Option("", "--provider", "-p", help="Limit to one provider."),
-    instance: str = typer.Option("", "--instance", "-i", help="Provider instance id."),
-    source: str = typer.Option("state", "--source", help="state or snapshot."),
-    snapshot: str = typer.Option("", "--snapshot", help="Snapshot path when source is snapshot."),
+    instance: str = typer.Option("", "--instance", "-i", "--profile", help="Provider instance/profile id."),
+    source: str = typer.Option("state", "--source", help="state/current, manual or playlist."),
+    snapshot: str = typer.Option("", "--snapshot", "--endpoint", help="Playlist endpoint id when source is playlist."),
     limit: int = typer.Option(50, "--limit", "-n", help="Maximum rows."),
 ) -> None:
     """List what the editor sees."""
@@ -49,16 +58,36 @@ def editor_list(
         state.out.data(payload)
         return
     rows = _rows(payload, "items", "rows")
+    workspace = as_dict(payload)
+    chosen_provider = str(workspace.get("provider") or provider or "-")
+    chosen_instance = str(workspace.get("provider_instance") or instance or "-")
+    if chosen_provider != "-":
+        for row in rows:
+            row.setdefault("provider", chosen_provider)
+            row.setdefault("provider_instance", chosen_instance)
+    state.out.kv(
+        [
+            ("Source", str(workspace.get("source") or source)),
+            ("Kind", str(workspace.get("kind") or kind)),
+            ("Provider", chosen_provider),
+            ("Profile", chosen_instance),
+            ("Rows", str(len(rows))),
+        ],
+        title="Editor workspace",
+    )
+    if rows:
+        state.out.print()
     state.out.records(
         rows[: max(1, limit)],
         [
-            ("KEY", lambda r: str(r.get("key") or r.get("id") or "-")[:28]),
-            ("TITLE", lambda r: str(r.get("title") or "-")[:40]),
+            ("KEY", lambda r: (_row_key(r) or "-")[:28]),
             ("TYPE", lambda r: str(r.get("type") or "-")),
+            ("TITLE", lambda r: str(r.get("title") or r.get("name") or "-")[:40]),
+            ("TMDB", lambda r: _id_value(r, "tmdb")),
             ("YEAR", lambda r: str(r.get("year") or "-")),
             ("PROVIDER", lambda r: str(r.get("provider") or "-")),
         ],
-        title=f"Editor: {kind} ({len(rows)})",
+        title=f"Editor: {source}/{kind} ({len(rows)})",
         empty="Nothing stored for that view.",
     )
 
@@ -80,7 +109,8 @@ def editor_providers(
             rows,
             [
                 ("PROVIDER", lambda r: str(r.get("name") or r.get("provider") or "-")),
-                ("INSTANCE", lambda r: str(r.get("instance") or "-")),
+                ("PROFILE", lambda r: str(r.get("instance") or r.get("provider_instance") or "-")),
+                ("DISPLAY", lambda r: str(r.get("display") or r.get("label") or "-")),
             ],
             title="Send targets",
         )
@@ -99,7 +129,12 @@ def editor_send(
     keys: list[str] = typer.Argument(..., help="Item keys."),
     provider: str = typer.Option(..., "--provider", "-p", help="Where to send them."),
     kind: str = typer.Option("watchlist", "--kind", "-k", help="Which feature."),
-    instance: str = typer.Option("", "--instance", "-i", help="Provider instance id."),
+    instance: str = typer.Option("", "--instance", "-i", "--profile", help="Target provider instance/profile id."),
+    source: str = typer.Option("state", "--source", help="state/current, manual or playlist."),
+    source_provider: str = typer.Option("", "--source-provider", help="Provider to read stored items from."),
+    source_instance: str = typer.Option("", "--source-instance", "--source-profile", help="Source provider instance/profile id."),
+    snapshot: str = typer.Option("", "--snapshot", "--endpoint", help="Playlist endpoint id when source is playlist."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview without writing."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Do not ask for confirmation."),
 ) -> None:
     """Send stored items to a provider."""
@@ -108,20 +143,43 @@ def editor_send(
     wanted = [k.strip() for k in keys if k.strip()]
     if not wanted:
         raise CLIError("Nothing to send", exit_code=EXIT_USAGE)
+    params: dict[str, Any] = {"kind": kind, "source": source}
+    if source_provider.strip():
+        params["provider"] = source_provider.strip().upper()
+    if source_instance.strip():
+        params["provider_instance"] = source_instance.strip()
+    if snapshot.strip():
+        params["snapshot"] = snapshot.strip()
+    current = state.get("/api/editor", params=params)
+    rows = _rows(current, "items", "rows")
+    by_key = {_row_key(row): row for row in rows if _row_key(row)}
+    selected = [by_key[key] for key in wanted if key in by_key]
+    missing = [key for key in wanted if key not in by_key]
+    if missing:
+        raise CLIError(
+            f"{len(missing)} item(s) were not found in that editor view",
+            hint=f"Missing: {', '.join(missing[:6])}",
+            exit_code=EXIT_USAGE,
+        )
     if not yes:
         state.out.warn(f"This writes {len(wanted)} item(s) to {provider.upper()}.")
         if not typer.confirm("Continue?", default=False):
             raise CLIError("Cancelled", exit_code=0)
-    body: dict[str, Any] = {"keys": wanted, "provider": provider.strip().upper(), "kind": kind}
-    if instance.strip():
-        body["provider_instance"] = instance.strip()
+    body: dict[str, Any] = {
+        "items": selected,
+        "providers": [{"provider": provider.strip().upper(), "instance": instance.strip() or "default"}],
+        "kind": kind,
+        "dry_run": dry_run,
+    }
     result = as_dict(state.post("/api/editor/send", json_body=body))
     if result.get("ok") is False:
         raise CLIError(error_text(result, "Send rejected"))
     if state.out.json_mode:
         state.out.data(result)
         return
-    state.out.success(f"Sent {len(wanted)} item(s) to {provider.upper()}.")
+    verb = "Would send" if dry_run else "Sent"
+    sent = int(result.get("sent") or len(selected))
+    state.out.success(f"{verb} {sent} item(s) to {provider.upper()}.")
 
 
 @editor_app.command("export")
@@ -138,7 +196,10 @@ def editor_export(ctx: typer.Context) -> None:
 
 
 @editor_app.command("sources")
-def editor_sources(ctx: typer.Context) -> None:
+def editor_sources(
+    ctx: typer.Context,
+    kind: str = typer.Option("watchlist", "--kind", "-k", help="Which feature to count."),
+) -> None:
     """Show which providers the editor can read state from."""
     state: Ctx = ctx.obj
     payload = state.get("/api/editor/state/providers")
@@ -147,14 +208,26 @@ def editor_sources(ctx: typer.Context) -> None:
         return
     rows = _rows(payload, "providers", "items")
     if rows:
+        for row in rows:
+            provider_name = str(row.get("name") or row.get("provider") or "").strip()
+            if not provider_name:
+                continue
+            try:
+                detail = as_dict(state.get("/api/editor", params={"kind": kind, "source": "state", "provider": provider_name.upper()}))
+            except CLIError:
+                continue
+            if row.get("count") in (None, ""):
+                row["count"] = detail.get("count")
+            if row.get("provider_instance") in (None, "") and row.get("instance") in (None, ""):
+                row["provider_instance"] = detail.get("provider_instance")
         state.out.records(
             rows,
             [
                 ("PROVIDER", lambda r: str(r.get("name") or r.get("provider") or "-")),
-                ("INSTANCE", lambda r: str(r.get("instance") or "-")),
+                ("PROFILE", lambda r: str(r.get("instance") or r.get("provider_instance") or "-")),
                 ("ITEMS", lambda r: str(r.get("count") or "-")),
             ],
-            title="State sources",
+            title=f"State sources: {kind}",
         )
         return
     block = as_dict(payload)

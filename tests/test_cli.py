@@ -570,6 +570,295 @@ def test_watcher_logs_uses_finite_watch_log_endpoint(
     ]
 
 
+def test_editor_list_reads_items_dict_payload(
+    clean_cli_env,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from cli._app import run_isolated
+
+    state = Ctx.build(url="http://cw.test", output="plain")
+    state._http = FakeTransport(
+        {
+            ("GET", "/api/editor"): {
+                "kind": "watchlist",
+                "source": "state",
+                "provider": "PLEX",
+                "provider_instance": "default",
+                "count": 1,
+                "items": {
+                    "tmdb:454639": {
+                        "type": "movie",
+                        "title": "Masters of the Universe",
+                        "ids": {"tmdb": 454639},
+                    }
+                },
+            },
+        }
+    )
+
+    assert run_isolated(state, ["editor", "list", "--provider", "plex", "--profile", "default"]) == 0
+    out = capsys.readouterr().out
+
+    assert "PLEX" in out
+    assert "tmdb:454639" in out
+    assert "Masters of the Universe" in out
+    assert "454639" in out
+    assert state._http.param_calls == [
+        (
+            "GET",
+            "/api/editor",
+            {"kind": "watchlist", "source": "state", "provider": "PLEX", "provider_instance": "default"},
+            None,
+        )
+    ]
+
+
+def test_editor_sources_prints_provider_names_from_string_payload(
+    clean_cli_env,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from cli._app import run_isolated
+
+    state = Ctx.build(url="http://cw.test", output="plain")
+    state._http = FakeTransport(
+        {
+            ("GET", "/api/editor/state/providers"): {"providers": ["PLEX", "TRAKT"]},
+            ("GET", "/api/editor"): {
+                "kind": "watchlist",
+                "source": "state",
+                "provider_instance": "default",
+                "count": 3,
+                "items": {},
+            },
+        }
+    )
+
+    assert run_isolated(state, ["editor", "sources"]) == 0
+    out = capsys.readouterr().out
+
+    assert "PLEX" in out
+    assert "TRAKT" in out
+    assert "3" in out
+    assert "-         -         -" not in out
+
+
+def test_editor_send_loads_selected_items_before_posting(
+    clean_cli_env,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from cli._app import run_isolated
+
+    state = Ctx.build(url="http://cw.test", output="plain")
+    state._http = FakeTransport(
+        {
+            ("GET", "/api/editor"): {
+                "items": {
+                    "tmdb:454639": {
+                        "type": "movie",
+                        "title": "Masters of the Universe",
+                        "ids": {"tmdb": 454639},
+                    }
+                },
+            },
+            ("POST", "/api/editor/send"): {"ok": True, "sent": 1},
+        }
+    )
+
+    assert run_isolated(
+        state,
+        ["editor", "send", "tmdb:454639", "--provider", "trakt", "--source-provider", "plex", "--yes"],
+    ) == 0
+    out = capsys.readouterr().out
+
+    assert "Sent 1 item(s) to TRAKT." in out
+    assert state._http.param_calls[0] == (
+        "GET",
+        "/api/editor",
+        {"kind": "watchlist", "source": "state", "provider": "PLEX"},
+        None,
+    )
+    body = state._http.calls[-1][2]
+    assert body["providers"] == [{"provider": "TRAKT", "instance": "default"}]
+    assert body["items"][0]["key"] == "tmdb:454639"
+    assert body["items"][0]["ids"]["tmdb"] == 454639
+
+
+def test_rows_from_payload_handles_dicts_and_strings() -> None:
+    from cli._util import rows_from_payload
+
+    assert rows_from_payload({"items": {"tmdb:1": {"title": "Heat"}}}, "items") == [
+        {"title": "Heat", "key": "tmdb:1"}
+    ]
+    assert rows_from_payload({"providers": ["PLEX"]}, "providers") == [
+        {"value": "PLEX", "name": "PLEX", "provider": "PLEX"}
+    ]
+
+
+def test_metadata_resolve_uses_api_entity_field(
+    clean_cli_env,
+) -> None:
+    from cli._app import run_isolated
+
+    state = Ctx.build(url="http://cw.test", output="json")
+    state._http = FakeTransport({("POST", "/api/metadata/resolve"): {"ok": True, "result": {}}})
+
+    assert run_isolated(state, ["metadata", "resolve", "tmdb=1399", "--type", "tv"]) == 0
+
+    assert state._http.calls == [
+        ("POST", "/api/metadata/resolve", {"ids": {"tmdb": "1399"}, "entity": "tv"})
+    ]
+
+
+def test_manual_watched_sends_editor_style_payload(
+    clean_cli_env,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from cli._app import run_isolated
+
+    state = Ctx.build(url="http://cw.test", output="plain")
+    state._http = FakeTransport({("POST", "/api/manual/watched"): {"ok": True, "results": []}})
+
+    assert run_isolated(
+        state,
+        [
+            "manual",
+            "watched",
+            "--field",
+            "tmdb=603",
+            "--field",
+            "type=movie",
+            "--field",
+            "rating=9",
+            "--provider",
+            "trakt",
+            "--at",
+            "2026-08-22",
+        ],
+    ) == 0
+
+    body = state._http.calls[-1][2]
+    assert body["item"]["tmdb"] == "603"
+    assert body["providers"] == [{"provider": "TRAKT", "instance": "default"}]
+    assert body["actions"] == {"history": True, "watchlist": False, "rating": True}
+    assert body["date_mode"] == "custom"
+    assert body["watched_on"] == "2026-08-22"
+    assert body["rating"] == "9"
+    assert "Recorded." in capsys.readouterr().out
+
+
+def test_backup_retention_uses_max_backups(
+    clean_cli_env,
+) -> None:
+    from cli._app import run_isolated
+
+    state = Ctx.build(url="http://cw.test", output="json")
+    state._http = FakeTransport({("POST", "/api/backups/retention"): {"ok": True, "result": {}}})
+
+    assert run_isolated(state, ["backup", "retention", "7"]) == 0
+
+    assert state._http.calls == [("POST", "/api/backups/retention", {"max_backups": 7})]
+
+
+def test_capture_diff_reads_nested_diff_rows(
+    clean_cli_env,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from cli._app import run_isolated
+
+    state = Ctx.build(url="http://cw.test", output="plain")
+    state._http = FakeTransport(
+        {
+            ("GET", "/api/snapshots/diff"): {
+                "ok": True,
+                "diff": {
+                    "summary": {"added": 1, "removed": 0, "changed": 0},
+                    "items": [{"kind": "added", "title": "Heat", "type": "movie"}],
+                },
+            },
+        }
+    )
+
+    assert run_isolated(state, ["capture", "diff", "old.json", "new.json"]) == 0
+
+    out = capsys.readouterr().out
+    assert "Heat" in out
+    assert "added" in out
+
+
+def test_scrobbler_event_routes_reads_watcher_and_webhook_routes(
+    clean_cli_env,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from cli._app import run_isolated
+
+    state = Ctx.build(url="http://cw.test", output="plain")
+    state._http = FakeTransport(
+        {
+            ("GET", "/api/scrobble/event_routes"): {
+                "ok": True,
+                "watcher_routes": [{"source": "watcher", "provider": "plex", "sink": "trakt", "label": "Plex -> Trakt"}],
+                "webhook_routes": [{"source": "webhook", "provider": "jellyfin", "label": "Jellyfin webhook"}],
+            },
+        }
+    )
+
+    assert run_isolated(state, ["scrobbler", "event-routes"]) == 0
+
+    out = capsys.readouterr().out
+    assert "Plex -> Trakt" in out
+    assert "Jellyfin webhook" in out
+
+
+def test_scrobbler_profile_webhook_regenerate_uses_provider_payload(
+    clean_cli_env,
+) -> None:
+    from cli._app import run_isolated
+
+    state = Ctx.build(url="http://cw.test", output="json")
+    state._http = FakeTransport({("POST", "/api/scrobbler/webhooks/profile/regenerate"): {"ok": True}})
+
+    assert run_isolated(state, ["scrobbler", "webhook", "regenerate", "--profile", "plex:P2", "--yes"]) == 0
+
+    assert state._http.calls == [
+        ("POST", "/api/scrobbler/webhooks/profile/regenerate", {"provider": "plex", "provider_instance": "P2"})
+    ]
+
+
+def test_progress_watched_loads_selected_records_before_bulk_action(
+    clean_cli_env,
+) -> None:
+    from cli._app import run_isolated
+
+    record = {
+        "key": "tmdb:603",
+        "provider": "trakt",
+        "instance_id": "default",
+        "remote_id": "abc",
+        "can_mark_watched": True,
+    }
+    state = Ctx.build(url="http://cw.test", output="json")
+    state._http = FakeTransport(
+        {
+            ("GET", "/api/playback_progress/items"): {"items": [record]},
+            ("POST", "/api/playback_progress/actions/bulk"): {"successful": 1, "failed": 0},
+        }
+    )
+
+    assert run_isolated(state, ["progress", "watched", "tmdb:603", "--yes"]) == 0
+
+    assert state._http.param_calls[0] == (
+        "GET",
+        "/api/playback_progress/items",
+        {"page_size": 250, "user_profile": ""},
+        None,
+    )
+    assert state._http.calls[-1] == (
+        "POST",
+        "/api/playback_progress/actions/bulk",
+        {"action": "mark_watched", "items": [record]},
+    )
+
+
 def _manifest(name: str, flow: str, fields: list[dict[str, Any]] | None = None):
     from cli.commands.auth import Manifest
 

@@ -9,20 +9,13 @@ import typer
 
 from .._context import Ctx
 from .._errors import CLIError
-from .._util import as_dict, error_text
+from .._util import as_dict, error_text, rows_from_payload
 
 watchlist_app = typer.Typer(help="The unified watchlist across providers.", no_args_is_help=True)
 
 
 def _rows(payload: Any) -> list[dict[str, Any]]:
-    block = as_dict(payload)
-    for key in ("items", "watchlist", "rows", "results"):
-        found = block.get(key)
-        if isinstance(found, list):
-            return [as_dict(i) for i in found]
-    if isinstance(payload, list):
-        return [as_dict(i) for i in payload]
-    return []
+    return rows_from_payload(payload, "items", "watchlist", "rows", "results")
 
 
 def _providers(row: dict[str, Any]) -> str:

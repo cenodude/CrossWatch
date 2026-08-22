@@ -20,6 +20,36 @@ def as_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def rows_from_payload(payload: Any, *keys: str) -> list[dict[str, Any]]:
+    def _coerce_rows(value: Any) -> list[dict[str, Any]]:
+        if isinstance(value, dict):
+            rows: list[dict[str, Any]] = []
+            for key, item in value.items():
+                row = dict(item) if isinstance(item, dict) else {"value": item}
+                row.setdefault("key", str(key))
+                rows.append(row)
+            return rows
+        if isinstance(value, list):
+            rows = []
+            for item in value:
+                if isinstance(item, dict):
+                    rows.append(dict(item))
+                    continue
+                text = str(item or "").strip()
+                if text:
+                    rows.append({"value": text, "name": text, "provider": text})
+            return rows
+        return []
+
+    block = as_dict(payload)
+    for key in keys:
+        if key in block:
+            return _coerce_rows(block.get(key))
+    if keys:
+        return _coerce_rows(payload) if isinstance(payload, list) else []
+    return _coerce_rows(payload)
+
+
 def error_text(payload: Any, default: str = "Rejected") -> str:
     block = payload if isinstance(payload, dict) else {}
     for key in ("message", "detail", "error", "status"):
