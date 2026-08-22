@@ -100,12 +100,15 @@
   const mediaValue = (item) => String(item?.media_type || item?.type || item?.art_type || "").toLowerCase();
   const mediaType = (item) => /^(tv|show|shows|series|season|episode|anime|anime_episode)$/i.test(mediaValue(item));
   const objectOf = (value) => value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const isEpisodeItem = (item) => /^(episode|anime_episode)$/i.test(mediaValue(item)) || !!(item?.episode_label || item?.episodeLabel || item?.episode_number || item?.season_number || item?.season || objectOf(item?.episode).season_number || objectOf(item?.episode).number);
   const tmdbId = (item) => {
     const ids = objectOf(item?.ids);
     const meta = objectOf(item?.provider_metadata);
+    const show = objectOf(item?.show || item?.series || item?.anime);
     const showIds = objectOf(meta.show_ids);
+    const nestedShowIds = objectOf(show.ids);
     if (mediaValue(item) === "movie") return item?.tmdb || item?.tmdb_id || ids.tmdb || ids.id || "";
-    return showIds.tmdb || ids.tmdb_show || item?.tmdb_show || ids.show_tmdb || item?.show_tmdb || item?.tmdb || item?.tmdb_id || ids.tmdb || "";
+    return showIds.tmdb || nestedShowIds.tmdb || show.tmdb || show.tmdb_id || ids.tmdb_show || item?.tmdb_show || ids.show_tmdb || item?.show_tmdb || item?.tmdb || item?.tmdb_id || ids.tmdb || "";
   };
   const titleOf = (item) => String(item?.series_title || item?.title || item?.name || item?.show_title || item?.label || "Untitled");
   const yearOf = (item) => String(item?.year || item?.release_year || item?.aired_year || "").trim();
@@ -117,12 +120,15 @@
     return s && e ? `S${String(s).padStart(2, "0")}E${String(e).padStart(2, "0")}` : "";
   };
   const poster = (item, size = "w342") => {
-    const src = String(item?.poster_url || item?.poster || item?.cover || item?.poster_cover || "");
+    const show = objectOf(item?.show || item?.series || item?.anime);
+    const src = String(isEpisodeItem(item)
+      ? (item?.show_cover_url || item?.show_cover || item?.show_poster_url || item?.show_poster || item?.series_poster || item?.series_cover || item?.grandparentThumb || show.poster_url || show.poster || show.cover || show.poster_cover || item?.poster_cover || "")
+      : (item?.poster_url || item?.poster || item?.cover || item?.poster_cover || ""));
     if (src) return src;
     const id = tmdbId(item);
     if (!id) return "/assets/img/placeholder_poster.svg";
     const kind = mediaType(item) ? "tv" : "movie";
-    const title = item?.series_title || item?.title ? `&title=${encodeURIComponent(String(item?.series_title || item?.title))}` : "";
+    const title = !isEpisodeItem(item) && (item?.series_title || item?.title) ? `&title=${encodeURIComponent(String(item?.series_title || item?.title))}` : "";
     const year = !mediaType(item) && item?.year ? `&year=${encodeURIComponent(String(item.year))}` : "";
     return `/art/tmdb/${kind}/${encodeURIComponent(id)}?kind=poster&size=${encodeURIComponent(size)}${title}${year}`;
   };
@@ -519,7 +525,14 @@
       last.setAttribute("aria-label", `Show details for ${titleOf(item)}`);
       bindLastWatchedPreview(last);
     }
-    $("#profile-last-poster").src = poster(item, "w185");
+    const lastPoster = $("#profile-last-poster");
+    if (lastPoster) {
+      lastPoster.onerror = () => {
+        lastPoster.onerror = null;
+        lastPoster.src = "/assets/img/placeholder_poster.svg";
+      };
+      lastPoster.src = poster(item, "w185");
+    }
     $("#profile-last-title").textContent = titleOf(item);
     $("#profile-last-meta").textContent = [episodeOf(item) || yearOf(item), relTime(watchedEpoch(item))].filter(Boolean).join(" - ");
     const route = providerRoute(item);

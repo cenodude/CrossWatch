@@ -57,9 +57,9 @@
 .cw-provider-cleanup .cc-progress-head span{display:block;margin-top:3px;font-size:12px;color:var(--cc-muted)}
 .cw-provider-cleanup .cc-progress-head b{color:#8fb7ff;font-size:15px}
 .cw-provider-cleanup .cc-progress-bar{position:relative;height:10px;border-radius:999px;background:color-mix(in srgb,var(--cc-bg) 72%,#020712);border:1px solid var(--cc-border);overflow:hidden}
-.cw-provider-cleanup .cc-progress-bar span{position:relative;display:block;width:0;height:100%;border-radius:999px;background:linear-gradient(90deg,#4b7bff,#7c5cff,#31d08b);transition:width .22s ease}
-.cw-provider-cleanup .cc-progress.active .cc-progress-bar span{background-image:linear-gradient(90deg,#4b7bff,#7c5cff,#31d08b),repeating-linear-gradient(120deg,rgba(255,255,255,0) 0,rgba(255,255,255,0) 8px,rgba(255,255,255,.34) 8px,rgba(255,255,255,.34) 14px);background-blend-mode:screen;background-size:100% 100%,28px 28px;animation:cc-progress-stripes .7s linear infinite}
-.cw-provider-cleanup .cc-progress.active .cc-progress-bar::after{content:"";position:absolute;top:0;bottom:0;left:0;width:30%;min-width:70px;border-radius:999px;background:linear-gradient(90deg,transparent,rgba(130,180,255,.22),transparent);animation:cc-progress-pulse 1.35s ease-in-out infinite}
+.cw-provider-cleanup .cc-progress-bar span{position:relative;display:block;width:0;height:100%;border-radius:999px;background:linear-gradient(90deg,#7c5cff,#a78bfa,#8b5cf6);transition:width .22s ease}
+.cw-provider-cleanup .cc-progress.active .cc-progress-bar span{background-image:linear-gradient(90deg,#7c5cff,#a78bfa,#8b5cf6),repeating-linear-gradient(120deg,rgba(255,255,255,0) 0,rgba(255,255,255,0) 8px,rgba(255,255,255,.34) 8px,rgba(255,255,255,.34) 14px);background-blend-mode:screen;background-size:100% 100%,28px 28px;animation:cc-progress-stripes .7s linear infinite}
+.cw-provider-cleanup .cc-progress.active .cc-progress-bar::after{content:"";position:absolute;top:0;bottom:0;left:0;width:30%;min-width:70px;border-radius:999px;background:linear-gradient(90deg,transparent,rgba(167,139,250,.24),transparent);animation:cc-progress-pulse 1.35s ease-in-out infinite}
 .cw-provider-cleanup .cc-progress.done .cc-progress-bar span{background:linear-gradient(90deg,#31d08b,#5ee0aa)}
 .cw-provider-cleanup .cc-progress.error .cc-progress-bar span{background:linear-gradient(90deg,#ef4444,#f97316)}
 @keyframes cc-progress-stripes{to{background-position:0 0,28px 0}}
