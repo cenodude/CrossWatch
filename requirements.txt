@@ -10,3 +10,5 @@ packaging
 cryptography
 defusedxml
 qrcode
+typer
+rich

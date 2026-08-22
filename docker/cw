@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# CrossWatch - CLI wrapper for the container
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
+
+set -Eeuo pipefail
+
+APP_DIR="${APP_DIR:-/app}"
+export PYTHONPATH="${APP_DIR}:${PYTHONPATH:-}"
+export CW_CLI_HOME="${CW_CLI_HOME:-${RUNTIME_DIR:-/config}/.cw_cli}"
+
+exec python "${APP_DIR}/cli/cw.py" "$@"

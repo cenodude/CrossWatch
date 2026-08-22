@@ -44,6 +44,12 @@ from api.appAuthAPI import (
     setup_lock_required as app_auth_setup_lock_required,
     register_app_auth,
 )
+from api.apiTokensAPI import (
+    extract_api_token as app_extract_api_token,
+    resolve_api_token as app_resolve_api_token,
+    touch_api_token as app_touch_api_token,
+    register_api_tokens,
+)
 from cw_platform.access_policy import clean_managed_permissions
 from cw_platform.event_archive.audit import record_audit
 
@@ -595,6 +601,25 @@ async def app_auth_gate(request: Request, call_next):
     if not app_auth_required(cfg):
         return await call_next(request)
 
+    api_token = app_extract_api_token(request)
+    if api_token:
+        api_user = app_resolve_api_token(cfg, api_token)
+        if api_user is None:
+            if path.startswith("/api/"):
+                return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401, headers={"Cache-Control": "no-store"})
+            return PlainTextResponse("Unauthorized", status_code=401, headers={"Cache-Control": "no-store"})
+        try:
+            request.state.cw_user = api_user
+        except Exception:
+            pass
+        if not api_user.get("is_admin"):
+            if not app_non_admin_api_allowed(path, request.method) or not _non_admin_permission_allowed(api_user, path, request.method):
+                return JSONResponse({"ok": False, "error": "Administrator access required"}, status_code=403, headers={"Cache-Control": "no-store"})
+        app_touch_api_token(str(api_user.get("api_token_id") or ""))
+        response = await call_next(request)
+        _audit_api_action(request, response, api_user)
+        return response
+
     token = request.cookies.get(APP_AUTH_COOKIE)
     if app_is_authenticated(cfg, token):
         if _unsafe_api_origin_blocked(cfg, request, token):
@@ -628,6 +653,7 @@ async def app_auth_gate(request: Request, call_next):
 register_assets_and_favicons(app, ROOT)
 register_ui_root(app)
 register_app_auth(app)
+register_api_tokens(app)
 
 # Misc utilities
 def get_primary_ip() -> str:

@@ -850,6 +850,7 @@ DEFAULT_CFG: dict[str, Any] = {
             "expires_at": 0,
         },
         "sessions": [],
+        "api_tokens": [],
         "last_login_at": 0,
         "users": {},
     },
@@ -928,6 +929,12 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
             for s in sessions:
                 if isinstance(s, dict) and s.get("token_hash"):
                     s["token_hash"] = MASK
+
+        api_tokens = a.get("api_tokens")
+        if isinstance(api_tokens, list):
+            for t in api_tokens:
+                if isinstance(t, dict) and t.get("token_hash"):
+                    t["token_hash"] = MASK
 
         totp = a.get("totp")
         if isinstance(totp, dict):
@@ -2445,6 +2452,10 @@ def _normalize_app_auth(cfg: dict[str, Any]) -> None:
 
     sessions = a.get("sessions")
     a["sessions"] = sessions if isinstance(sessions, list) else []
+
+    api_tokens = a.get("api_tokens")
+    a["api_tokens"] = [x for x in api_tokens if isinstance(x, dict)] if isinstance(api_tokens, list) else []
+
     try:
         a["last_login_at"] = int(a.get("last_login_at", 0) or 0)
     except Exception:
