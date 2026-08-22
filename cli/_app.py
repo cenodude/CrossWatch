@@ -13,11 +13,7 @@ from ._errors import EXIT_ERROR, EXIT_USAGE, CLIError
 from ._render import Output
 
 PROG = "cw"
-HELP = """CrossWatch command line.
-
-Talks to the running CrossWatch service over its API, and falls back to the
-local install for read-only and repair commands when the service is down.
-"""
+HELP = "CrossWatch command line."
 
 app = typer.Typer(
     name=PROG,

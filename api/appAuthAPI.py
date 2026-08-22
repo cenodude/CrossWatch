@@ -830,6 +830,23 @@ def auth_required(cfg: dict[str, Any]) -> bool:
     return bool(a.get("enabled")) and credentials_configured(cfg)
 
 
+def _trusted_pre_auth_api_tokens(a: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = a.get("api_tokens")
+    if not isinstance(raw, list):
+        return []
+    keep: list[dict[str, Any]] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            version = int(entry.get("version") or 0)
+        except Exception:
+            continue
+        if version == 2 and str(entry.get("created_via") or "") in {"local_cli", "local_bootstrap"}:
+            keep.append(entry)
+    return keep
+
+
 def reset_pending(cfg: dict[str, Any]) -> bool:
     a = _cfg_auth(cfg)
     return bool(a.get("reset_required"))
@@ -871,7 +888,7 @@ def _config_needs_upgrade(cfg: dict[str, Any]) -> bool:
 def setup_lock_required(cfg: dict[str, Any]) -> bool:
     if reset_pending(cfg):
         return True
-    return (not auth_required(cfg)) and _config_needs_upgrade(cfg)
+    return not auth_required(cfg)
 
 
 def _find_session(a: dict[str, Any], token: str | None) -> dict[str, Any] | None:
@@ -2027,6 +2044,7 @@ def api_set_credentials(request: Request, payload: dict[str, Any] = Body(...)) -
             latest_a["enabled"] = False
             latest_a["reset_required"] = False
             latest_a["username"] = username or str(latest_a.get("username") or "")
+            latest_a["api_tokens"] = []
             _clear_sessions(latest)
             return latest_a
 
@@ -2079,6 +2097,8 @@ def api_set_credentials(request: Request, payload: dict[str, Any] = Body(...)) -
         latest_a["enabled"] = True
         latest_a["username"] = username
         latest_a["reset_required"] = False
+        if (not configured0) or recovery_mode:
+            latest_a["api_tokens"] = _trusted_pre_auth_api_tokens(latest_a)
         _clear_sessions(latest)
         _clear_setup_autogen_flag(latest)
         _mark_upgrade_pending_if_needed(latest)

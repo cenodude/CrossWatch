@@ -246,6 +246,7 @@ def _apply_auth_reset_env_once() -> None:
         sess["token_hash"] = ""
         sess["expires_at"] = 0
         a["sessions"] = []
+        a["api_tokens"] = []
         a["last_login_at"] = 0
         save_config(cfg)
         print("[BOOT] CW_RESET_AUTH_ONCE detected: app authentication was reset. Remove the env var and set a new username/password in the UI.")
@@ -282,9 +283,12 @@ _APP_AUTH_SETUP_ALLOWED_PATHS = {
     "/login",
     "/logout",
     "/api/health",
+    "/api/status",
+    "/api/version",
     "/api/config/meta",
     "/api/app-auth/status",
     "/api/app-auth/credentials",
+    "/api/app-auth/tokens/whoami",
 }
 
 _PUBLIC_HEALTH_PATHS = {
@@ -312,7 +316,7 @@ def _redact_query_string(query: str) -> str:
         return ""
 
 _SECRET_KV_RE = re.compile(
-    r"(?i)(\b(?:api_key|apikey|access_token|refresh_token|client_secret|session_id|token|x-plex-token|password)\b\s*[=:]\s*)([^\s,;&]+)"
+    r"(?i)(\b(?:api_key|apikey|access_token|refresh_token|client_secret|session_id|token|token_digest|x-plex-token|password)\b\s*[=:]\s*)([^\s,;&]+)"
 )
 _URL_QS_RE = re.compile(
     r"(?i)([?&](?:api_key|apikey|access_token|refresh_token|client_secret|session_id|token|x-plex-token)=)([^&\s]+)"
@@ -320,10 +324,10 @@ _URL_QS_RE = re.compile(
 _AUTH_BEARER_RE = re.compile(r"(?i)(authorization\s*[:=]\s*bearer\s+)([^\s,;]+)")
 _BEARER_RE = re.compile(r"(?i)\bBearer\s+([^\s,;]+)")
 _JSON_DQ_RE = re.compile(
-    r'(?i)("(?:api_key|apikey|access_token|refresh_token|client_secret|session_id|token|x-plex-token|password|hash|salt)"\s*:\s*")([^"]*)(")'
+    r'(?i)("(?:api_key|apikey|access_token|refresh_token|client_secret|session_id|token|token_digest|x-plex-token|password|hash|salt)"\s*:\s*")([^"]*)(")'
 )
 _JSON_SQ_RE = re.compile(
-    r"(?i)('(?:api_key|apikey|access_token|refresh_token|client_secret|session_id|token|x-plex-token|password|hash|salt)'\s*:\s*')([^']*)(')"
+    r"(?i)('(?:api_key|apikey|access_token|refresh_token|client_secret|session_id|token|token_digest|x-plex-token|password|hash|salt)'\s*:\s*')([^']*)(')"
 )
 
 def _redact_secrets_in_text(s: str) -> str:

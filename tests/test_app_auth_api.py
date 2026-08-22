@@ -285,6 +285,89 @@ def test_bootstrap_credentials_still_work_without_origin(monkeypatch) -> None:
     assert cfg["app_auth"]["sessions"]
 
 
+def test_bootstrap_credentials_clear_untrusted_pre_auth_tokens(monkeypatch) -> None:
+    from api import appAuthAPI as auth
+
+    cfg = _auth_cfg(enabled=False)
+    cfg["app_auth"]["username"] = ""
+    cfg["app_auth"]["password"] = {"scheme": "pbkdf2_sha256", "iterations": 260_000, "salt": "", "hash": ""}
+    cfg["app_auth"]["api_tokens"] = [
+        {"id": "legacy1", "token_hash": {"scheme": "pbkdf2_sha256", "iterations": 1, "salt": "a", "hash": "b"}},
+        {"id": "abcdefabcdefabcd", "version": 2, "token_digest": "a" * 64, "digest_scheme": "sha256"},
+    ]
+    monkeypatch.setattr(auth, "load_config", lambda: cfg)
+    monkeypatch.setattr(auth, "save_config", lambda *_args, **_kwargs: None)
+
+    req = _request("/api/app-auth/credentials")
+    resp = auth.api_set_credentials(req, {"enabled": True, "username": "admin", "password": "secrett1"})
+
+    assert resp.status_code == 200
+    assert cfg["app_auth"]["api_tokens"] == []
+
+
+def test_bootstrap_credentials_preserve_local_cli_pre_auth_tokens(monkeypatch) -> None:
+    from api import appAuthAPI as auth
+
+    local_token = {
+        "id": "abcdefabcdefabcd",
+        "version": 2,
+        "token_digest": "a" * 64,
+        "digest_scheme": "sha256",
+        "created_via": "local_cli",
+    }
+    cfg = _auth_cfg(enabled=False)
+    cfg["app_auth"]["username"] = ""
+    cfg["app_auth"]["password"] = {"scheme": "pbkdf2_sha256", "iterations": 260_000, "salt": "", "hash": ""}
+    cfg["app_auth"]["api_tokens"] = [local_token]
+    monkeypatch.setattr(auth, "load_config", lambda: cfg)
+    monkeypatch.setattr(auth, "save_config", lambda *_args, **_kwargs: None)
+
+    req = _request("/api/app-auth/credentials")
+    resp = auth.api_set_credentials(req, {"enabled": True, "username": "admin", "password": "secrett1"})
+
+    assert resp.status_code == 200
+    assert cfg["app_auth"]["api_tokens"] == [local_token]
+
+
+def test_credentials_update_preserves_existing_tokens(monkeypatch) -> None:
+    from api import appAuthAPI as auth
+
+    existing_token = {
+        "id": "abcdefabcdefabcd",
+        "version": 2,
+        "token_digest": "a" * 64,
+        "digest_scheme": "sha256",
+        "created_via": "api",
+    }
+    cfg = _auth_cfg()
+    cfg["app_auth"]["api_tokens"] = [existing_token]
+    monkeypatch.setattr(auth, "load_config", lambda: cfg)
+    monkeypatch.setattr(auth, "save_config", lambda *_args, **_kwargs: None)
+
+    session, _exp = auth._issue_session(cfg, _request("/api/app-auth/login"))
+    req = _request("/api/app-auth/credentials", headers={"cookie": f"{auth.COOKIE_NAME}={session}"})
+    resp = auth.api_set_credentials(req, {"enabled": True, "username": "admin", "password": "newpass1"})
+
+    assert resp.status_code == 200
+    assert cfg["app_auth"]["api_tokens"] == [existing_token]
+
+
+def test_disabling_credentials_clears_tokens(monkeypatch) -> None:
+    from api import appAuthAPI as auth
+
+    cfg = _auth_cfg()
+    cfg["app_auth"]["api_tokens"] = [{"id": "abcdefabcdefabcd", "version": 2, "token_digest": "a" * 64}]
+    monkeypatch.setattr(auth, "load_config", lambda: cfg)
+    monkeypatch.setattr(auth, "save_config", lambda *_args, **_kwargs: None)
+
+    session, _exp = auth._issue_session(cfg, _request("/api/app-auth/login"))
+    req = _request("/api/app-auth/credentials", headers={"cookie": f"{auth.COOKIE_NAME}={session}"})
+    resp = auth.api_set_credentials(req, {"enabled": False, "username": "admin"})
+
+    assert resp.status_code == 200
+    assert cfg["app_auth"]["api_tokens"] == []
+
+
 def test_login_sets_session_cookie_when_remember_disabled(monkeypatch) -> None:
     from api import appAuthAPI as auth
 
@@ -412,14 +495,34 @@ def test_setup_lock_required_for_upgrade_without_auth(monkeypatch) -> None:
     assert auth.setup_lock_required(cfg) is True
 
 
-def test_setup_lock_not_required_when_up_to_date_without_auth(monkeypatch) -> None:
+def test_setup_lock_required_when_up_to_date_without_auth(monkeypatch) -> None:
     from api import appAuthAPI as auth
 
     cfg = _auth_cfg(enabled=False)
     cfg["version"] = "0.9.14"
     monkeypatch.setattr(auth, "_current_version_text", lambda: "0.9.14")
 
-    assert auth.setup_lock_required(cfg) is False
+    assert auth.setup_lock_required(cfg) is True
+
+
+def test_setup_lock_blocks_regular_api_until_credentials_exist(monkeypatch) -> None:
+    from fastapi.testclient import TestClient
+
+    import crosswatch
+
+    cfg = _auth_cfg(enabled=False)
+    cfg["app_auth"]["username"] = ""
+    cfg["app_auth"]["password"] = {"scheme": "pbkdf2_sha256", "iterations": 260_000, "salt": "", "hash": ""}
+    monkeypatch.setattr(crosswatch, "load_config", lambda: cfg)
+
+    client = TestClient(crosswatch.app)
+
+    blocked = client.get("/api/editor")
+    assert blocked.status_code == 403
+    assert blocked.json()["error"] == "Authentication setup required"
+
+    assert client.get("/api/app-auth/status").status_code == 200
+    assert client.get("/api/version").status_code == 200
 
 
 def test_credentials_reject_too_short_password(monkeypatch) -> None:

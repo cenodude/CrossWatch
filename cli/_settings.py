@@ -32,6 +32,51 @@ def settings_path() -> Path:
     return cli_home() / "cli.json"
 
 
+def _ownership_reference(path: Path) -> os.stat_result | None:
+    path_stat: os.stat_result | None = None
+    parent_stat: os.stat_result | None = None
+    config_stat: os.stat_result | None = None
+    try:
+        if path.exists():
+            path_stat = path.stat()
+    except Exception:
+        path_stat = None
+    try:
+        if path.parent.exists():
+            parent_stat = path.parent.stat()
+    except Exception:
+        parent_stat = None
+    try:
+        cfg = config_dir()
+        if cfg.exists():
+            config_stat = cfg.stat()
+    except Exception:
+        config_stat = None
+    if os.name != "nt":
+        try:
+            if os.geteuid() == 0:
+                for candidate in (config_stat, parent_stat):
+                    if candidate is not None and candidate.st_uid != 0:
+                        return candidate
+        except Exception:
+            pass
+    return path_stat or parent_stat or config_stat
+
+
+def _apply_owner_mode(path: Path, ref: os.stat_result | None, *, mode: int) -> None:
+    if ref is None:
+        return
+    if os.name != "nt":
+        try:
+            os.chown(path, ref.st_uid, ref.st_gid)
+        except Exception:
+            pass
+    try:
+        path.chmod(mode)
+    except Exception:
+        pass
+
+
 def load_settings() -> dict[str, Any]:
     path = settings_path()
     try:
@@ -44,11 +89,10 @@ def load_settings() -> dict[str, Any]:
 def save_settings(data: dict[str, Any]) -> Path:
     path = settings_path()
     path.parent.mkdir(parents=True, exist_ok=True)
+    ref = _ownership_reference(path)
+    _apply_owner_mode(path.parent, ref, mode=stat.S_IRWXU)
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    try:
-        path.chmod(stat.S_IRUSR | stat.S_IWUSR)
-    except Exception:
-        pass
+    _apply_owner_mode(path, ref, mode=stat.S_IRUSR | stat.S_IWUSR)
     return path
 
 
