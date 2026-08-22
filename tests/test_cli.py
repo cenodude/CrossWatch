@@ -65,6 +65,21 @@ def test_split_path_handles_dots_slashes_and_indexes() -> None:
         split_path("   ")
 
 
+def test_setup_required_error_points_to_local_auth_setup() -> None:
+    err = ApiError(403, {"error": "Authentication setup required"}, method="GET", path="/api/editor")
+
+    assert "Authentication setup required" in err.message
+    assert "cw --local auth setup --username admin" in err.hint
+
+
+def test_unauthorized_error_explains_local_token_create_saves_by_default() -> None:
+    err = ApiError(401, {"error": "Unauthorized"}, method="GET", path="/api/editor")
+
+    assert "cw --local auth token create" in err.hint
+    assert "saves the token by default" in err.hint
+    assert "CW_TOKEN" in err.hint
+
+
 def test_dotted_get_walks_dicts_and_lists() -> None:
     data = {"a": {"b": [{"c": 1}]}}
     assert dotted_get(data, "a.b[0].c") == 1
@@ -319,6 +334,45 @@ def test_local_transport_config_unset_removes_keys(config_base: Path) -> None:
     protected = transport.request("POST", "/api/config/unset", json_body={"paths": ["app_auth.enabled"]})
     assert protected["ok"] is False
     assert protected["error"] == "protected_path"
+
+
+def test_local_transport_can_setup_app_auth(config_base: Path) -> None:
+    import importlib
+
+    from cw_platform import config_base as cfg_base
+
+    importlib.reload(cfg_base)
+    (config_base / "config.json").write_text(
+        json.dumps(
+            {
+                "app_auth": {
+                    "enabled": False,
+                    "username": "",
+                    "password": {"scheme": "pbkdf2_sha256", "iterations": 260_000, "salt": "", "hash": ""},
+                    "api_tokens": [{"id": "legacy1", "token_hash": {"scheme": "pbkdf2_sha256", "iterations": 1, "salt": "a", "hash": "b"}}],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    from cli import _local
+
+    importlib.reload(_local)
+    transport = _local.LocalTransport()
+
+    result = transport.request(
+        "POST",
+        "/api/app-auth/credentials",
+        json_body={"enabled": True, "username": "admin", "password": "secrett1"},
+    )
+    cfg = cfg_base.load_config()
+
+    assert result["ok"] is True
+    assert cfg["app_auth"]["enabled"] is True
+    assert cfg["app_auth"]["username"] == "admin"
+    assert cfg["app_auth"]["password"]["hash"]
+    assert cfg["app_auth"]["api_tokens"] == []
 
 
 def test_config_path_helpers_match_the_cli_parser() -> None:

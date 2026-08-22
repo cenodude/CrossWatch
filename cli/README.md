@@ -28,11 +28,21 @@ python cli/cw.py status
 python -m cli status
 ```
 
+## First Setup
+
+Fresh install or deleted config? Set the CrossWatch admin password before using the API commands:
+
+```
+cw --local auth setup --username admin
+```
+
+By default this also creates and saves a CLI API token. Use `--no-token` if you only want to set the password.
+
 ## Tokens
 
-No auth enabled in CrossWatch? Nothing to do, it just works.
+Without app authentication configured, CrossWatch only exposes health/status/setup endpoints remotely. Use `cw --local auth setup` from the CrossWatch host or container for CLI-only installs.
 
-With auth on you need a token. Use `--local` for the first one, that writes straight to the config so it works before you can authenticate at all:
+With auth on you need a token. You can create another one locally from the CrossWatch host or container:
 
 ```
 cw --local auth token create --name cli

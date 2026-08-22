@@ -55,9 +55,13 @@ class ApiError(CLIError):
             message = f"{message} ({where})"
         code = EXIT_ERROR
         hint = ""
-        if self.status == 401:
+        setup_required = detail.lower() == "authentication setup required"
+        if setup_required:
             code = EXIT_UNAUTHORIZED
-            hint = "Create a token with 'cw auth token create --local' and export CW_TOKEN, or run 'cw auth token use <token>'."
+            hint = "Run 'cw --local auth setup --username admin' from the CrossWatch host or container to set the admin password and create a CLI token."
+        elif self.status == 401:
+            code = EXIT_UNAUTHORIZED
+            hint = "Run 'cw --local auth token create' on the CrossWatch host/container; it saves the token by default. For a token from another machine, use CW_TOKEN or 'cw auth token use <token>'."
         elif self.status == 403:
             code = EXIT_UNAUTHORIZED
             hint = "This token does not have permission for that action."

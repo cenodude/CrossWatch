@@ -8,6 +8,7 @@ import json
 import os
 import re
 import secrets
+import stat
 import base64
 import hashlib
 import threading
@@ -86,7 +87,9 @@ def _load_config_key(*, create: bool) -> bytes | None:
 
     key_path = _config_key_file()
     if key_path.exists():
-        return _normalize_fernet_key(key_path.read_text(encoding="utf-8"))
+        raw = key_path.read_text(encoding="utf-8")
+        _apply_owner_mode(key_path, _ownership_reference(_cfg_file()), mode=0o600)
+        return _normalize_fernet_key(raw)
 
     if not create:
         return None
@@ -99,10 +102,7 @@ def _load_config_key(*, create: bool) -> bytes | None:
     key = Fernet.generate_key()
     key_path.parent.mkdir(parents=True, exist_ok=True)
     key_path.write_text(key.decode("ascii"), encoding="utf-8")
-    try:
-        os.chmod(key_path, 0o600)
-    except Exception:
-        pass
+    _apply_owner_mode(key_path, _ownership_reference(_cfg_file()), mode=0o600)
     return key
 
 
@@ -174,7 +174,7 @@ def _is_sensitive_path(path: tuple[str, ...]) -> bool:
         "client_secret",
         "account_token", "pms_token", "home_pin",
         "session_id",
-        "token_hash", "salt", "hash",
+        "token_hash", "token_digest", "salt", "hash",
         "device_code",
         "pending_secret",
         "_pending_request_token",
@@ -935,6 +935,10 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
             for t in api_tokens:
                 if isinstance(t, dict) and t.get("token_hash"):
                     t["token_hash"] = MASK
+                if isinstance(t, dict) and t.get("token_digest"):
+                    t["token_digest"] = MASK
+                if isinstance(t, dict) and t.get("secret"):
+                    t["secret"] = MASK
 
         totp = a.get("totp")
         if isinstance(totp, dict):
@@ -1035,6 +1039,42 @@ def _cfg_file() -> Path:
     return CONFIG / "config.json"
 
 
+def _ownership_reference(path: Path) -> os.stat_result | None:
+    path_stat: os.stat_result | None = None
+    parent_stat: os.stat_result | None = None
+    try:
+        if path.exists():
+            path_stat = path.stat()
+    except Exception:
+        path_stat = None
+    try:
+        if path.parent.exists():
+            parent_stat = path.parent.stat()
+    except Exception:
+        parent_stat = None
+    if os.name != "nt" and path_stat is not None and parent_stat is not None:
+        try:
+            if os.geteuid() == 0 and path_stat.st_uid == 0 and parent_stat.st_uid != 0:
+                return parent_stat
+        except Exception:
+            pass
+    return path_stat or parent_stat
+
+
+def _apply_owner_mode(path: Path, ref: os.stat_result | None, *, mode: int | None = None) -> None:
+    if ref is None:
+        return
+    if os.name != "nt":
+        try:
+            os.chown(path, ref.st_uid, ref.st_gid)
+        except Exception:
+            pass
+    try:
+        os.chmod(path, mode if mode is not None else stat.S_IMODE(ref.st_mode))
+    except Exception:
+        pass
+
+
 @contextmanager
 def _config_file_lock() -> Iterator[None]:
     depth = int(getattr(_CONFIG_FILE_LOCK_STATE, "depth", 0) or 0)
@@ -1046,8 +1086,18 @@ def _config_file_lock() -> Iterator[None]:
             _CONFIG_FILE_LOCK_STATE.depth = depth
         return
     lock_path = CONFIG / "config.json.lock"
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with lock_path.open("a+b") as f:
+    try:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        f = lock_path.open("a+b")
+    except PermissionError:
+        _CONFIG_FILE_LOCK_STATE.depth = 1
+        try:
+            yield
+        finally:
+            _CONFIG_FILE_LOCK_STATE.depth = 0
+        return
+    _apply_owner_mode(lock_path, _ownership_reference(_cfg_file()), mode=0o660)
+    with f:
         _CONFIG_FILE_LOCK_STATE.depth = 1
         try:
             try:
@@ -1121,11 +1171,15 @@ def _write_json_atomic(p: Path, data: dict[str, Any]) -> None:
 
         suffix = f".{_time.time_ns()}.{_os.getpid()}.{threading.get_ident()}.{secrets.token_hex(4)}.tmp"
         tmp = p.with_suffix(suffix)
+        ref = _ownership_reference(p)
+        mode = stat.S_IMODE(ref.st_mode) if ref is not None and p.exists() else 0o600
 
         with tmp.open("w", encoding="utf-8", newline="\n") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
             f.write("\n")
+        _apply_owner_mode(tmp, ref, mode=mode)
         tmp.replace(p)
+        _apply_owner_mode(p, ref, mode=mode)
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:

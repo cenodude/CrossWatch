@@ -54,6 +54,7 @@ class LocalTransport(Transport):
         self._add("GET", "/api/scheduling", self._scheduling_get)
         self._add("GET", "/api/scheduling/status", self._scheduling_status)
         self._add("GET", "/api/scheduling/next", self._scheduling_next)
+        self._add("POST", "/api/app-auth/credentials", self._credentials_post)
         self._add("GET", "/api/app-auth/tokens", self._tokens_get)
         self._add("POST", "/api/app-auth/tokens", self._tokens_post)
         self._add("DELETE", "/api/app-auth/tokens/{token_id}", self._tokens_delete)
@@ -233,6 +234,43 @@ class LocalTransport(Transport):
         scfg = self._scheduling_get()
         return {"ok": True, "next_run_at": self._next_run_at(scfg), "config": scfg}
 
+    def _credentials_post(self, *, body: Any = None, **_: Any) -> dict[str, Any]:
+        try:
+            from api import appAuthAPI as auth
+        except Exception as exc:
+            raise CLIError(f"App authentication support unavailable: {exc}") from exc
+
+        payload = as_dict(body)
+        if not bool(payload.get("enabled", True)):
+            return {"ok": False, "error": "Local setup only enables authentication"}
+        username = str(payload.get("username") or "").strip()
+        password = str(payload.get("password") or "")
+        if not username:
+            return {"ok": False, "error": "Username is required"}
+        if len(password) < auth.MIN_PASSWORD_LENGTH:
+            return {"ok": False, "error": f"Password must be at least {auth.MIN_PASSWORD_LENGTH} characters"}
+
+        def _mutate(cfg: dict[str, Any]) -> dict[str, Any]:
+            was_configured = auth.auth_required(cfg)
+            was_reset = auth.reset_pending(cfg)
+            a = cfg.setdefault("app_auth", {})
+            if not isinstance(a, dict):
+                a = {}
+                cfg["app_auth"] = a
+            keep_tokens = auth._trusted_pre_auth_api_tokens(a) if ((not was_configured) or was_reset) else [t for t in a.get("api_tokens", []) if isinstance(t, dict)]
+            a["enabled"] = True
+            a["username"] = username
+            a["password"] = auth._password_hash(password)
+            a["reset_required"] = False
+            a["session"] = {"token_hash": "", "expires_at": 0}
+            a["sessions"] = []
+            a["api_tokens"] = keep_tokens
+            a["last_login_at"] = 0
+            return {"ok": True, "enabled": True}
+
+        _cfg, result = self._cfg_base.update_config(_mutate)
+        return result
+
     def _tokens_api(self) -> Any:
         try:
             from api import apiTokensAPI
@@ -257,6 +295,7 @@ class LocalTransport(Transport):
             name=str(payload.get("name") or ""),
             user_id=str(payload.get("user_id") or ""),
             expires_days=expires_days,
+            created_via="local_cli",
         )
         return {"ok": True, "token": raw, "entry": entry}
 

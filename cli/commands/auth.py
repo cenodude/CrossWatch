@@ -158,6 +158,54 @@ def _public(manifest: Manifest) -> dict[str, Any]:
     }
 
 
+@auth_app.command("setup")
+def app_setup(
+    ctx: typer.Context,
+    username: str = typer.Option("admin", "--username", "-u", help="CrossWatch admin username."),
+    password: str = typer.Option("", "--password", "-p", help="CrossWatch admin password. Prompts when omitted."),
+    create_token: bool = typer.Option(True, "--token/--no-token", help="Create and save a CLI API token after setup."),
+    token_name: str = typer.Option("CLI", "--token-name", help="Label for the generated CLI token."),
+    save: bool = typer.Option(True, "--save/--no-save", help="Store the generated token in the CLI settings file."),
+) -> None:
+    """Set up CrossWatch app authentication."""
+    state: Ctx = ctx.obj
+    pwd = password
+    if not pwd:
+        pwd = str(typer.prompt("Password", hide_input=True, confirmation_prompt=True) or "")
+    payload = as_dict(state.post("/api/app-auth/credentials", json_body={"enabled": True, "username": username, "password": pwd}))
+    if payload.get("ok") is False:
+        raise CLIError(error_text(payload, "Authentication setup failed"))
+
+    raw = ""
+    entry: dict[str, Any] = {}
+    stored = ""
+    if create_token:
+        token_payload = as_dict(state.post("/api/app-auth/tokens", json_body={"name": token_name, "expires_days": 0}))
+        if not token_payload.get("token"):
+            raise CLIError(error_text(token_payload, "Token creation failed"))
+        raw = str(token_payload.get("token") or "")
+        entry = as_dict(token_payload.get("entry"))
+        if save:
+            update_settings(token=raw, url=state.url)
+            stored = str(settings_path())
+
+    if state.out.json_mode:
+        state.out.data({"ok": True, "enabled": True, "token": raw, "entry": entry, "saved_to": stored})
+        return
+    rows: list[tuple[str, Any]] = [("Auth", "enabled"), ("Username", username)]
+    if create_token:
+        rows.extend(
+            [
+                ("Token", raw),
+                ("Token id", str(entry.get("id") or "-")),
+                ("Saved to", stored or "not saved"),
+            ]
+        )
+    state.out.kv(rows, title="CrossWatch auth setup")
+    if raw:
+        state.out.warn("This is the only time the token is shown. Store it somewhere safe.")
+
+
 def _nest(pairs: dict[str, Any], *, drop_prefix: bool) -> dict[str, Any]:
     body: dict[str, Any] = {}
     for key, value in pairs.items():
@@ -558,7 +606,7 @@ def token_create(
     expires_days: int = typer.Option(0, "--expires-days", help="Expire after N days. 0 means never."),
     save: bool = typer.Option(True, "--save/--no-save", help="Store the token in the CLI settings file."),
 ) -> None:
-    """Create an API token. Use --local to bootstrap when you have no token yet."""
+    """Create an API token. Use --local from the CrossWatch host or container for CLI-only setup."""
     state: Ctx = ctx.obj
     payload = as_dict(state.post("/api/app-auth/tokens", json_body={"name": name, "expires_days": int(expires_days)}))
     if not payload.get("token"):

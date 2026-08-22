@@ -84,7 +84,7 @@ def register(app: typer.Typer) -> None:
         pairs: bool = typer.Option(True, "--pairs/--no-pairs", help="Include the sync pair table."),
         fresh: bool = typer.Option(False, "--fresh", "-f", help="Re-probe providers instead of using the cached status."),
     ) -> None:
-        """Show engine, provider, pair, scheduler and watcher state at a glance."""
+        """Show engine, provider, pair, scheduler and watcher state."""
         state: Ctx = ctx.obj
         data = _collect(state, fresh=fresh)
         out = state.out

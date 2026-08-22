@@ -3,6 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import hmac
+import re
 import secrets
 import time
 from typing import Any
@@ -23,7 +25,6 @@ from .appAuthAPI import (
     _now,
     _origin_allowed,
     _origin_blocked_response,
-    _password_hash,
     _password_matches,
     _public_user,
     _update_config,
@@ -35,6 +36,11 @@ TOKEN_PREFIX = "cwt_"
 TOKEN_HEADER = "x-cw-token"
 MAX_TOKENS_PER_USER = 20
 TOUCH_INTERVAL_SEC = 300
+TOKEN_MAX_LENGTH = 256
+TOKEN_V2_SECRET_BYTES = 32
+
+_TOKEN_V2_RE = re.compile(r"^cwt_([a-f0-9]{16})\.([A-Za-z0-9_-]{32,})$")
+_TRUSTED_LOCAL_TOKEN_ORIGINS = {"local_cli", "local_bootstrap"}
 
 _TOUCH_CACHE: dict[str, float] = {}
 
@@ -65,13 +71,32 @@ def _valid_token_hash(raw: Any) -> bool:
         return False
 
 
-def _valid_entry(entry: dict[str, Any]) -> bool:
+def _valid_v1_entry(entry: dict[str, Any]) -> bool:
     if not _valid_token_hash(entry.get("token_hash")):
         return False
     if not str(entry.get("id") or "").strip():
         return False
     exp = int(entry.get("expires_at") or 0)
     return exp <= 0 or exp > _now()
+
+
+def _valid_v2_entry(entry: dict[str, Any]) -> bool:
+    try:
+        version = int(entry.get("version") or 0)
+    except Exception:
+        return False
+    if version != 2:
+        return False
+    if not re.fullmatch(r"[a-f0-9]{16}", str(entry.get("id") or "")):
+        return False
+    if not str(entry.get("secret") or "").strip():
+        return False
+    exp = int(entry.get("expires_at") or 0)
+    return exp <= 0 or exp > _now()
+
+
+def _valid_entry(entry: dict[str, Any]) -> bool:
+    return _valid_v2_entry(entry) or _valid_v1_entry(entry)
 
 
 def _prune_api_tokens(tokens: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -108,6 +133,7 @@ def _entry_identity(a: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any] 
 def _public_entry(entry: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": str(entry.get("id") or ""),
+        "version": 2 if _valid_v2_entry(entry) else 1,
         "name": str(entry.get("name") or ""),
         "prefix": str(entry.get("prefix") or ""),
         "user_id": _entry_user_id(entry),
@@ -134,14 +160,37 @@ def extract_api_token(request: Request) -> str:
 
 def resolve_api_token(cfg: dict[str, Any], raw: str) -> dict[str, Any] | None:
     token = str(raw or "").strip()
-    if not token or not token.startswith(TOKEN_PREFIX):
+    if not token or len(token) > TOKEN_MAX_LENGTH or not token.startswith(TOKEN_PREFIX):
         return None
     a = _cfg_auth(cfg)
     tokens = _cfg_api_tokens(a)
     if not tokens:
         return None
+
+    v2_match = _TOKEN_V2_RE.fullmatch(token)
+    if v2_match:
+        token_id = v2_match.group(1)
+        secret = v2_match.group(2)
+        for entry in tokens:
+            if str(entry.get("id") or "") != token_id or not _valid_v2_entry(entry):
+                continue
+            if not hmac.compare_digest(secret, str(entry.get("secret") or "")):
+                return None
+            identity = _entry_identity(a, entry)
+            if identity is None:
+                return None
+            out = dict(identity)
+            out["auth_kind"] = "api_token"
+            out["api_token_id"] = str(entry.get("id") or "")
+            out["api_token_name"] = str(entry.get("name") or "")
+            return out
+        return None
+
+    if "." in token:
+        return None
+
     for entry in tokens:
-        if not _valid_entry(entry):
+        if not _valid_v1_entry(entry):
             continue
         token_hash = entry.get("token_hash")
         if not isinstance(token_hash, dict) or not _password_matches(token_hash, token):
@@ -188,14 +237,19 @@ def issue_api_token(
     name: str,
     user_id: str = "",
     expires_days: int = 0,
+    created_via: str = "api",
 ) -> tuple[str, dict[str, Any]]:
     label = str(name or "").strip()[:64] or "CLI"
     days = max(0, int(expires_days or 0))
-    raw = TOKEN_PREFIX + secrets.token_urlsafe(32)
     entry_id = secrets.token_hex(8)
+    secret = secrets.token_urlsafe(TOKEN_V2_SECRET_BYTES)
+    raw = f"{TOKEN_PREFIX}{entry_id}.{secret}"
     created = _now()
     expires = created + days * 86400 if days else 0
     target = _normalize_app_user_id(user_id) or ADMIN_USER_ID
+    origin = str(created_via or "api").strip()
+    if origin not in {*_TRUSTED_LOCAL_TOKEN_ORIGINS, "api"}:
+        origin = "api"
 
     def _mutate(latest: dict[str, Any]) -> dict[str, Any]:
         a = latest.setdefault("app_auth", {})
@@ -213,11 +267,13 @@ def issue_api_token(
             raise KeyError("not_found")
         entry = {
             "id": entry_id,
+            "version": 2,
             "name": label,
-            "token_hash": _password_hash(raw),
-            "prefix": raw[: len(TOKEN_PREFIX) + 6],
+            "secret": secret,
+            "prefix": f"{TOKEN_PREFIX}{entry_id}.{secret[:6]}",
             "user_id": target,
             "username": str(identity.get("username") or ""),
+            "created_via": origin,
             "created_at": created,
             "expires_at": expires,
             "last_used_at": 0,
@@ -291,7 +347,7 @@ router = APIRouter(prefix="/api/app-auth/tokens", tags=["app-auth"])
 def _actor(request: Request) -> tuple[dict[str, Any] | None, JSONResponse | None]:
     cfg = load_config()
     if not auth_required(cfg):
-        return _admin_identity(_cfg_auth(cfg)), None
+        return None, _nostore({"ok": False, "error": "Authentication is not configured"}, 403)
     token = request.cookies.get(COOKIE_NAME)
     user = current_user(cfg, token)
     if user is None:
