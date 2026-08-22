@@ -10,6 +10,24 @@
     if (!res.ok || data?.ok === false) throw new Error(data?.error || `HTTP ${res.status}`);
     return data;
   };
+  const OVERVIEW_CACHE_TTL_MS = 10 * 60 * 1000;
+  const profileCacheKey = (name) => {
+    const shell = $(".cw-profile-shell");
+    const id = shell?.dataset?.profileId || shell?.dataset?.username || document.documentElement?.dataset?.cwProfileId || "self";
+    return `cw.profile.${id}.${name}.v1`;
+  };
+  const readCache = (key, ttl = OVERVIEW_CACHE_TTL_MS) => {
+    try {
+      const entry = JSON.parse(localStorage.getItem(key) || "null");
+      if (!entry || !entry.payload || Date.now() - Number(entry.t || 0) > ttl) return null;
+      return entry.payload;
+    } catch {
+      return null;
+    }
+  };
+  const writeCache = (key, payload) => {
+    try { localStorage.setItem(key, JSON.stringify({ t: Date.now(), payload })); } catch {}
+  };
   const profileRouteSegment = (value) => {
     try {
       value = decodeURIComponent(String(value || ""));
@@ -260,6 +278,54 @@
       xhr.ontimeout = () => reject(new Error("Upload timed out"));
       xhr.send(JSON.stringify({ data: dataUrl, content_type: contentType }));
     });
+  }
+
+  const readFileAsDataUrl = (file, onProgress) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Could not read profile picture"));
+    reader.onprogress = (event) => {
+      if (!event.lengthComputable) return;
+      onProgress?.(Math.min(45, Math.round((event.loaded / event.total) * 45)));
+    };
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.readAsDataURL(file);
+  });
+
+  const loadImage = (url) => new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("Could not decode profile picture"));
+    img.src = url;
+  });
+
+  const canvasToBlob = (canvas, type, quality) => new Promise((resolve) => {
+    try { canvas.toBlob(resolve, type, quality); } catch { resolve(null); }
+  });
+
+  async function prepareAvatarUpload(file) {
+    const previewUrl = URL.createObjectURL(file);
+    try {
+      const img = await loadImage(previewUrl);
+      const size = 320;
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext("2d", { alpha: false });
+      if (!ctx) throw new Error("Could not prepare profile picture");
+      ctx.fillStyle = "#101217";
+      ctx.fillRect(0, 0, size, size);
+      const source = Math.min(img.naturalWidth || img.width, img.naturalHeight || img.height);
+      const sx = Math.max(0, ((img.naturalWidth || img.width) - source) / 2);
+      const sy = Math.max(0, ((img.naturalHeight || img.height) - source) / 2);
+      ctx.drawImage(img, sx, sy, source, source, 0, 0, size, size);
+      const blob = await canvasToBlob(canvas, "image/webp", 0.84) || await canvasToBlob(canvas, "image/jpeg", 0.88);
+      if (!blob) throw new Error("Could not compress profile picture");
+      const dataUrl = await readFileAsDataUrl(blob);
+      return { previewUrl, dataUrl, contentType: blob.type || "image/jpeg" };
+    } catch {
+      const dataUrl = await readFileAsDataUrl(file);
+      return { previewUrl, dataUrl, contentType: file.type };
+    }
   }
 
   function renderProfile(data) {
@@ -664,17 +730,18 @@
       </div>`).join("");
   }
 
-  async function loadOverview() {
+  function renderProgressItems(progressItems) {
+    $("#profile-progress").innerHTML = progressItems.length ? progressItems.slice(0, 9).map(progressCard).join("") : empty("No recent progress yet.");
+  }
+
+  function renderOverview(payload = {}) {
     posterSeq = 0;
     posterItems.clear();
-    paintOverviewSkeletons();
-    const [widgets, wall, progress, insights, status] = await Promise.all([
-      api("/api/dashboard/widgets?include=history,ratings,scrobble,progress&history_limit=8&ratings_limit=9&scrobble_limit=8&progress_limit=8"),
-      api("/api/state/wall?limit=8"),
-      api("/api/playback_progress/items?page=1&page_size=8").catch(() => ({ items: [] })),
-      api("/api/insights?limit_samples=0&history=0&runtime=0&include_events=0").catch(() => null),
-      api("/api/status").catch(() => null),
-    ]);
+    const widgets = payload.widgets || {};
+    const wall = payload.wall || { items: [] };
+    const progress = payload.progress || { items: [] };
+    const insights = payload.insights || null;
+    const status = payload.status || null;
     const history = widgets?.recent_history?.items || [];
     const ratings = widgets?.latest_ratings?.items || [];
     const scrobble = widgets?.recent_scrobble?.items || [];
@@ -688,8 +755,42 @@
       itemsWatched: scrobbleTotal,
       services: connectedServices(status),
     });
-    $("#profile-progress").innerHTML = progressItems.length ? progressItems.slice(0, 9).map(progressCard).join("") : empty("No recent progress yet.");
+    renderProgressItems(progressItems);
     $("#profile-watchlist").innerHTML = watchlistItems.length ? watchlistItems.slice(0, 3).map((item) => watchlistRow(item, wall?.last_sync_epoch)).join("") : empty("No watchlist items yet.");
+  }
+
+  async function loadOverview() {
+    const cacheKey = profileCacheKey("overview");
+    const cached = readCache(cacheKey);
+    if (cached) renderOverview(cached);
+    else paintOverviewSkeletons();
+
+    const [widgetsRes, wallRes, insightsRes, statusRes] = await Promise.allSettled([
+      api("/api/dashboard/widgets?include=history,ratings,scrobble,progress&history_limit=8&ratings_limit=9&scrobble_limit=8&progress_limit=8"),
+      api("/api/state/wall?limit=8"),
+      api("/api/insights?limit_samples=0&history=0&runtime=0&include_events=0"),
+      api("/api/status"),
+    ]);
+    const next = {
+      widgets: widgetsRes.status === "fulfilled" ? widgetsRes.value : (cached?.widgets || {}),
+      wall: wallRes.status === "fulfilled" ? wallRes.value : (cached?.wall || { items: [] }),
+      progress: cached?.progress || { items: [] },
+      insights: insightsRes.status === "fulfilled" ? insightsRes.value : (cached?.insights || null),
+      status: statusRes.status === "fulfilled" ? statusRes.value : (cached?.status || null),
+    };
+    if (!next.progress?.items?.length && next.widgets?.recent_progress?.items?.length) {
+      next.progress = { items: next.widgets.recent_progress.items };
+    }
+    renderOverview(next);
+    writeCache(cacheKey, next);
+
+    api("/api/playback_progress/items?page=1&page_size=8").then((progress) => {
+      const fresh = { ...next, progress: progress || { items: [] } };
+      const progressItems = fresh.progress?.items?.length ? fresh.progress.items : (fresh.widgets?.recent_progress?.items || []);
+      renderProgressItems(progressItems);
+      renderQuickStats({ wall: fresh.wall, widgets: fresh.widgets, progressItems, insights: fresh.insights });
+      writeCache(cacheKey, fresh);
+    }).catch(() => {});
     refreshNowPlaying();
   }
 
@@ -753,23 +854,15 @@
         input.value = "";
         return;
       }
-      const reader = new FileReader();
       setAvatarUploadState({ visible: true, label: "Reading picture", percent: 3 });
-      reader.onerror = () => {
-        setAvatarUploadState({ visible: false });
-        toast("Could not read profile picture", true);
-        input.value = "";
-      };
-      reader.onprogress = (event) => {
-        if (!event.lengthComputable) return;
-        setAvatarUploadState({ visible: true, label: "Reading picture", percent: Math.min(45, Math.round((event.loaded / event.total) * 45)) });
-      };
-      reader.onload = async () => {
-        const preview = String(reader.result || "");
+      let previewUrl = "";
+      (async () => {
         try {
-          if (preview) setAvatar(preview);
+          const prepared = await prepareAvatarUpload(file);
+          previewUrl = prepared.previewUrl;
+          setAvatar(previewUrl);
           setAvatarUploadState({ visible: true, label: "Uploading picture", percent: 50 });
-          const data = await uploadAvatar(preview, file.type, (percent) => {
+          const data = await uploadAvatar(prepared.dataUrl, prepared.contentType, (percent) => {
             setAvatarUploadState({ visible: true, label: "Uploading picture", percent: Math.max(50, percent) });
           });
           if (data?.user?.avatar_url) data.user.avatar_url = bustUrl(data.user.avatar_url);
@@ -780,11 +873,11 @@
           setAvatar(profile?.avatar_url || "");
           toast(e.message || "Could not upload profile picture", true);
         } finally {
+          if (previewUrl) setTimeout(() => URL.revokeObjectURL(previewUrl), 1000);
           setTimeout(() => setAvatarUploadState({ visible: false }), 500);
           input.value = "";
         }
-      };
-      reader.readAsDataURL(file);
+      })();
     });
   }
 
@@ -1108,7 +1201,6 @@
   let nowTimer = null;
 
   async function init() {
-    paintOverviewSkeletons();
     wireTabs();
     wirePreferences();
     wireAvatar();
@@ -1118,18 +1210,18 @@
     wireOidcSso();
     wireLogout();
     wirePosterOverlay();
-    try {
-      await refreshProfile();
-      await refreshPlexStatus();
-      await refreshOidcStatus();
-      await loadOverview();
-      if (nowTimer) clearInterval(nowTimer);
-      nowTimer = setInterval(() => {
-        if (document.visibilityState === "visible") refreshNowPlaying();
-      }, 15000);
-    } catch (e) {
-      toast(e.message || "Profile could not be loaded", true);
-    }
+    const [profileResult, overviewResult] = await Promise.allSettled([
+      refreshProfile(),
+      loadOverview(),
+    ]);
+    void refreshPlexStatus();
+    void refreshOidcStatus();
+    if (profileResult.status === "rejected") toast(profileResult.reason?.message || "Profile could not be loaded", true);
+    if (overviewResult.status === "rejected") toast(overviewResult.reason?.message || "Profile overview could not be loaded", true);
+    if (nowTimer) clearInterval(nowTimer);
+    nowTimer = setInterval(() => {
+      if (document.visibilityState === "visible") refreshNowPlaying();
+    }, 15000);
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init, { once: true });
