@@ -173,6 +173,40 @@ def _env_truthy(name: str) -> bool:
     return str(os.getenv(name) or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+_WEBUI_PATHS = {
+    "/",
+    "/profile",
+    "/login",
+    "/logout",
+    "/favicon.ico",
+    "/favicon.svg",
+    "/favicon.png",
+    "/manifest.webmanifest",
+    "/sw.js",
+}
+
+
+def _cli_only_mode() -> bool:
+    return _env_truthy("CW_CLI_ONLY")
+
+
+def _webui_disabled_path(path: str) -> bool:
+    path = str(path or "/")
+    if path.startswith("/api/") or path.startswith("/webhook/"):
+        return False
+    if path == "/callback" or path.startswith("/callback/"):
+        return False
+    return path in _WEBUI_PATHS or path.startswith("/assets/")
+
+
+def _webui_disabled_response() -> PlainTextResponse:
+    return PlainTextResponse(
+        "CrossWatch web UI is disabled. Use the cw CLI or /api endpoints.",
+        status_code=404,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 def _apply_auth_reset_env_once() -> None:
     global _AUTH_RESET_ENV_APPLIED
     if _AUTH_RESET_ENV_APPLIED:
@@ -564,6 +598,9 @@ async def app_auth_gate(request: Request, call_next):
         return PlainTextResponse("Service unavailable", status_code=503, headers={"Cache-Control": "no-store"})
 
     path = request.url.path or "/"
+    if _cli_only_mode() and _webui_disabled_path(path):
+        return _webui_disabled_response()
+
     if path.startswith("/assets/"):
         return await call_next(request)
     
@@ -650,8 +687,9 @@ async def app_auth_gate(request: Request, call_next):
     return RedirectResponse(url="/login?next=" + quote(next_url), status_code=302)
 
 # Static files
-register_assets_and_favicons(app, ROOT)
-register_ui_root(app)
+if not _cli_only_mode():
+    register_assets_and_favicons(app, ROOT)
+    register_ui_root(app)
 register_app_auth(app)
 register_api_tokens(app)
 
@@ -1449,6 +1487,7 @@ def main(host: str = "0.0.0.0", port: int = 8787) -> None:
     boot.info(f"  {_c('Local:', DIM)}   {_c(f'{protocol}://127.0.0.1:{port}', GREEN)}")
     boot.info(f"  {_c('Docker:', DIM)}  {_c(f'{protocol}://{ip}:{port}', GREEN)}")
     boot.info(f"  {_c('Bind:', DIM)}    {_c(f'{host}:{port}', GREEN)}")
+    boot.info(f"  {_c('Mode:', DIM)}    {'CLI/API only' if _cli_only_mode() else 'Web UI + CLI/API'}")
     boot.info("")
     boot.info(f"  {_c('Cache:', DIM)}      {CACHE_DIR}")
     boot.info(f"  {_c('CW_STATE:', DIM)}   {CW_STATE_DIR}")

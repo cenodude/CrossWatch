@@ -29,6 +29,48 @@ def _items(payload: Any, *keys: str) -> list[dict[str, Any]]:
     return []
 
 
+def _item_title(row: dict[str, Any]) -> str:
+    item_type = str(row.get("item_type") or row.get("type") or row.get("type_name") or "").lower()
+    series = str(row.get("series_title") or "").strip()
+    title = str(row.get("title") or row.get("item_title") or "").strip()
+    season = row.get("season")
+    episode = row.get("episode")
+    if item_type == "episode" and series and season is not None and episode is not None:
+        try:
+            return f"{series} - S{int(season):02d}E{int(episode):02d}"
+        except Exception:
+            return f"{series} - S{season}E{episode}"
+    if item_type == "season" and series and season is not None:
+        try:
+            return f"{series} - S{int(season):02d}"
+        except Exception:
+            return f"{series} - S{season}"
+    return title or str(row.get("key") or "-")
+
+
+def _problem_detail(row: dict[str, Any]) -> str:
+    message = str(row.get("message") or row.get("text") or "").strip()
+    if message:
+        return message
+    targets = [str(t or "").upper() for t in row.get("targets") or [] if str(t or "").strip()]
+    if targets:
+        return "Missing at " + " & ".join(targets)
+    for detail in row.get("target_show_info") or []:
+        if isinstance(detail, dict) and str(detail.get("message") or "").strip():
+            return str(detail.get("message")).strip()
+    for hint in row.get("hints") or []:
+        if not isinstance(hint, dict):
+            continue
+        if str(hint.get("message") or "").strip():
+            return str(hint.get("message")).strip()
+        reasons = hint.get("reasons")
+        if isinstance(reasons, list) and reasons:
+            return ", ".join(str(r) for r in reasons if str(r).strip())
+        if str(hint.get("reason") or "").strip():
+            return str(hint.get("reason")).strip()
+    return str(row.get("code") or row.get("id") or row.get("type") or "-")
+
+
 @analyzer_app.command("problems")
 def analyzer_problems(
     ctx: typer.Context,
@@ -51,10 +93,11 @@ def analyzer_problems(
         rows[: max(1, limit)],
         [
             ("SEVERITY", lambda r: str(r.get("severity") or r.get("level") or "-")),
-            ("CODE", lambda r: str(r.get("code") or r.get("id") or "-")),
             ("PROVIDER", lambda r: str(r.get("provider") or "-")),
             ("FEATURE", lambda r: str(r.get("feature") or "-")),
-            ("WHAT", lambda r: str(r.get("message") or r.get("title") or r.get("text") or "-")[:60]),
+            ("TITLE", lambda r: _item_title(r)[:56]),
+            ("TYPE", lambda r: str(r.get("item_type") or r.get("type_name") or r.get("type") or "-")),
+            ("DETAIL", lambda r: _problem_detail(r)[:72]),
         ],
         title=f"Problems ({len(rows)})",
         empty="Nothing flagged.",

@@ -35,9 +35,11 @@ class FakeTransport(Transport):
     def __init__(self, routes: dict[tuple[str, str], Any] | None = None) -> None:
         self.routes = routes or {}
         self.calls: list[tuple[str, str, Any]] = []
+        self.param_calls: list[tuple[str, str, dict[str, Any] | None, Any]] = []
 
     def request(self, method: str, path: str, *, params: dict[str, Any] | None = None, json_body: Any = None) -> Any:
         self.calls.append((method.upper(), path, json_body))
+        self.param_calls.append((method.upper(), path, params, json_body))
         key = (method.upper(), path)
         if key not in self.routes:
             raise ApiError(404, {"error": "not found"}, method=method, path=path)
@@ -229,6 +231,7 @@ def test_force_local_never_touches_http() -> None:
 
 def test_strip_ansi_removes_colour_codes() -> None:
     assert strip_ansi("\x1b[92m[TRAKT]\x1b[0m done") == "[TRAKT] done"
+    assert strip_ansi('[WATCH] <span class="c94">INFO</span> route started') == "[WATCH] INFO route started"
 
 
 def test_yaml_rendering_round_trips_simple_structures() -> None:
@@ -464,6 +467,107 @@ def test_dispatch_without_flags_reuses_the_same_context(clean_cli_env) -> None:
 
     assert run_isolated(state, ["config", "path"]) == 0
     assert state._fell_back is True
+
+
+def test_analyzer_problems_prints_titles_for_missing_items(
+    clean_cli_env,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from cli._app import run_isolated
+
+    state = Ctx.build(url="http://cw.test", output="plain")
+    state._http = FakeTransport(
+        {
+            (
+                "GET",
+                "/api/analyzer/problems",
+            ): {
+                "problems": [
+                    {
+                        "severity": "warn",
+                        "type": "missing_peer",
+                        "provider": "NUVIO",
+                        "feature": "history",
+                        "key": "tmdb:329491",
+                        "title": "Episode 1",
+                        "series_title": "DAHMER - Monster: The Jeffrey Dahmer Story",
+                        "item_type": "episode",
+                        "season": 1,
+                        "episode": 1,
+                        "targets": ["FLOPPY"],
+                    }
+                ]
+            },
+        }
+    )
+
+    assert run_isolated(state, ["analyzer", "problems"]) == 0
+    out = capsys.readouterr().out
+
+    assert "DAHMER - Monster: The Jeffrey Dahmer Story - S01E01" in out
+    assert "Missing at FLOPPY" in out
+
+
+def test_watcher_now_reads_currently_watching_payload(
+    clean_cli_env,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from cli._app import run_isolated
+
+    state = Ctx.build(url="http://cw.test", output="plain")
+    state._http = FakeTransport(
+        {
+            (
+                "GET",
+                "/api/watch/currently_watching",
+            ): {
+                "ok": True,
+                "currently_watching": {
+                    "title": "Heat",
+                    "media_type": "movie",
+                    "source": "PLEX",
+                    "account": "Pascal",
+                    "progress_percent": 42,
+                    "state": "playing",
+                },
+                "streams_count": 1,
+            },
+        }
+    )
+
+    assert run_isolated(state, ["watcher", "now"]) == 0
+    out = capsys.readouterr().out
+
+    assert "Heat" in out
+    assert "PLEX" in out
+    assert "42%" in out
+
+
+def test_watcher_logs_uses_finite_watch_log_endpoint(
+    clean_cli_env,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from cli._app import run_isolated
+
+    state = Ctx.build(url="http://cw.test", output="plain")
+    state._http = FakeTransport(
+        {
+            ("GET", "/api/watch/logs"): {
+                "tags": ["WATCH"],
+                "tail": 20,
+                "lines": ['[WATCH] <span class="c94">INFO</span> route started'],
+            },
+        }
+    )
+
+    assert run_isolated(state, ["watcher", "logs", "--lines", "20"]) == 0
+    out = capsys.readouterr().out
+    assert "[WATCH] INFO route started" in out
+    assert "<span" not in out
+    assert state._http.calls == [("GET", "/api/watch/logs", None)]
+    assert state._http.param_calls == [
+        ("GET", "/api/watch/logs", {"tail": 20, "tags": "WATCH,WATCHM"}, None)
+    ]
 
 
 def _manifest(name: str, flow: str, fields: list[dict[str, Any]] | None = None):

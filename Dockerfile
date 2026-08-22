@@ -27,7 +27,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 # --- minimal OS deps ---
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates tzdata bash curl util-linux \
+ && apt-get install -y --no-install-recommends ca-certificates tzdata bash curl util-linux nano \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -63,8 +63,10 @@ RUN printf '%s' "${APP_VERSION}" > /app/VERSION && chmod 0444 /app/VERSION
 ENV RUNTIME_DIR=/config \
     WEB_HOST=0.0.0.0 \
     WEB_PORT=8787 \
-    WEBINTERFACE=yes \
-    DEV_SHELL_ON_FAIL=yes
+    CW_CLI_ONLY=0 \
+    DEV_SHELL_ON_FAIL=yes \
+    EDITOR=nano \
+    VISUAL=nano
 
 # --- healthcheck ---
 HEALTHCHECK --interval=30s --timeout=5s --retries=5 \

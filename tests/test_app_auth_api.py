@@ -842,6 +842,34 @@ def test_fastapi_docs_are_disabled() -> None:
     assert crosswatch.app.openapi_url is None
 
 
+def test_cli_only_env_disables_webui_but_not_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    import crosswatch
+
+    monkeypatch.setenv("CW_CLI_ONLY", "1")
+
+    assert crosswatch._cli_only_mode() is True
+    assert crosswatch._webui_disabled_path("/") is True
+    assert crosswatch._webui_disabled_path("/login") is True
+    assert crosswatch._webui_disabled_path("/assets/crosswatch.js") is True
+    assert crosswatch._webui_disabled_path("/api/status") is False
+    assert crosswatch._webui_disabled_path("/webhook/plex") is False
+    assert crosswatch._webui_disabled_path("/callback/trakt") is False
+
+
+def test_cli_only_mode_blocks_ui_response(monkeypatch: pytest.MonkeyPatch) -> None:
+    from fastapi.testclient import TestClient
+
+    import crosswatch
+
+    monkeypatch.setenv("CW_CLI_ONLY", "1")
+    monkeypatch.setattr(crosswatch, "load_config", lambda: {"app_auth": {"enabled": False}})
+
+    res = TestClient(crosswatch.app).get("/", follow_redirects=False)
+
+    assert res.status_code == 404
+    assert "web UI is disabled" in res.text
+
+
 def test_non_admin_permissions_gate_feature_reads() -> None:
     import crosswatch
 
