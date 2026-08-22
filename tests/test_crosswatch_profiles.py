@@ -1165,6 +1165,16 @@ def test_crosswatch_tracker_settings_live_only_in_connection_modal() -> None:
     assert "cw_tracker_restore_progress" in auth_html
 
 
+def test_provider_connection_modal_saves_profile_label_before_global_settings() -> None:
+    providers_ui = Path("assets/helpers/providers-ui.js").read_text("utf-8")
+
+    label_save = "saveVisibleProfileLabels?.(panel)"
+    settings_save = "window.saveSettings?.()"
+    assert label_save in providers_ui
+    assert settings_save in providers_ui
+    assert providers_ui.index(label_save) < providers_ui.index(settings_save)
+
+
 def test_tmdb_metadata_modal_refreshes_saved_key_before_opening() -> None:
     settings_ui = Path("assets/helpers/settings-ui.js").read_text("utf-8")
     settings_save = Path("assets/helpers/settings-save.js").read_text("utf-8")
@@ -2461,6 +2471,15 @@ def test_auth_remount_preserves_open_connection_overlay() -> None:
     assert "slot.appendChild(overlay);" in body
 
 
+def test_connection_overlay_ignores_backdrop_clicks() -> None:
+    ui = Path("assets/helpers/providers-ui.js").read_text("utf-8")
+    handler = ui.split("slot.addEventListener(\"click\",", 1)[1].split("\n    });", 1)[0]
+
+    assert "[data-cw-auth-close]" in handler
+    assert "closeAuthProviderOverlay();" in handler
+    assert "classList?.contains(\"cw-auth-overlay\")" not in handler
+
+
 def test_status_probes_ignore_pair_reference_to_unconfigured_default() -> None:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -2738,6 +2757,13 @@ def test_scrobbler_modals_have_conditional_user_profile_display() -> None:
     assert 'title="${esc(p.instance)}"' in webhook_js
     assert ".scrm-profile-row" in css
     assert ".scrm-profile-display" in css
+
+
+def test_scrobbler_route_and_webhook_modals_are_not_backdrop_dismissible() -> None:
+    modals_js = Path("assets/js/modals.js").read_text("utf-8")
+
+    assert "ModalRegistry.open('scrobbler-webhook', { ...props, dismissible: false })" in modals_js
+    assert "ModalRegistry.open('scrobbler-route', { ...props, dismissible: false })" in modals_js
 
 
 def test_version_stamp_file_beats_stale_env(tmp_path, monkeypatch) -> None:

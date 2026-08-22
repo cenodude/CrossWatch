@@ -562,6 +562,10 @@
       sel.id = selectId;
       sel.name = selectId;
       sel.className = "input";
+      sel.__cwIconSelectCfg = {
+        className: "cw-connection-profile-select",
+        menuClassName: `cw-connection-profile-menu cw-connection-profile-menu-${String(apiProvider || "").toLowerCase().replace(/[^a-z0-9_-]+/g, "-")}`,
+      };
       sel.style.minWidth = "160px";
       sel.style.width = "auto";
       sel.style.maxWidth = "220px";
