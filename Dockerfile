@@ -53,7 +53,8 @@ COPY --from=appsrc --chown=root:root /src /app
 # --- scripts ---
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY docker/run-sync.sh   /usr/local/bin/run-sync.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/run-sync.sh
+COPY docker/cw            /usr/local/bin/cw
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/run-sync.sh /usr/local/bin/cw /app/cli/cw.py
 
 # --- runtime env ---
 ARG APP_VERSION=v0.0.0

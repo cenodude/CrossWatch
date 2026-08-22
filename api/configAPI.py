@@ -7,6 +7,7 @@ from typing import Any
 
 import json
 import os
+import re
 from datetime import datetime, timezone
 
 from packaging.version import InvalidVersion, Version
@@ -640,6 +641,103 @@ def api_config_save(request: Request, payload: dict[str, Any] = Body(...)) -> di
             result["watcher_reload_error"] = "watcher_reload_failed"
             WATCH_LOG.error(f"watcher runtime refresh failed: {type(e).__name__}: {e}")
     return result
+
+PROTECTED_CONFIG_ROOTS = {"app_auth"}
+_CONFIG_INDEX_RE = re.compile(r"^\[(\d+)\]$")
+
+
+def _split_config_path(raw: Any) -> list[str]:
+    text = str(raw or "").strip()
+    if not text:
+        return []
+    parts: list[str] = []
+    for chunk in text.replace("/", ".").split("."):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        match = re.fullmatch(r"([^\[\]]*)((?:\[\d+\])*)", chunk)
+        if match is None:
+            parts.append(chunk)
+            continue
+        head, indexes = match.group(1), match.group(2)
+        if head:
+            parts.append(head)
+        for pos in re.findall(r"\[(\d+)\]", indexes):
+            parts.append(f"[{pos}]")
+    return parts
+
+
+def _delete_config_path(cfg: dict[str, Any], parts: list[str]) -> bool:
+    node: Any = cfg
+    for part in parts[:-1]:
+        index = _CONFIG_INDEX_RE.match(part)
+        if index is not None:
+            if not isinstance(node, list):
+                return False
+            pos = int(index.group(1))
+            if pos >= len(node):
+                return False
+            node = node[pos]
+            continue
+        if not isinstance(node, dict) or part not in node:
+            return False
+        node = node[part]
+    last = parts[-1]
+    index = _CONFIG_INDEX_RE.match(last)
+    if index is not None:
+        if not isinstance(node, list):
+            return False
+        pos = int(index.group(1))
+        if pos >= len(node):
+            return False
+        node.pop(pos)
+        return True
+    if not isinstance(node, dict) or last not in node:
+        return False
+    node.pop(last, None)
+    return True
+
+
+@router.post("/config/unset")
+def api_config_unset(request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    raw_paths = payload.get("paths")
+    if not isinstance(raw_paths, list):
+        raw_paths = [payload.get("path")] if payload.get("path") else []
+
+    requested = [str(p or "").strip() for p in raw_paths if str(p or "").strip()]
+    if not requested:
+        return {"ok": False, "error": "no_paths"}
+
+    env = _env()
+    cfg = dict(env["load"]() or {})
+    removed: list[str] = []
+    missing: list[str] = []
+
+    for raw in requested:
+        parts = _split_config_path(raw)
+        if not parts:
+            missing.append(raw)
+            continue
+        if parts[0] in PROTECTED_CONFIG_ROOTS:
+            return {"ok": False, "error": "protected_path", "path": raw}
+        if _delete_config_path(cfg, parts):
+            removed.append(raw)
+        else:
+            missing.append(raw)
+
+    if not removed:
+        return {"ok": False, "error": "not_found", "missing": missing}
+
+    try:
+        env["prune"](cfg)
+        env["ensure"](cfg)
+    except Exception:
+        pass
+
+    env["save"](cfg)
+    _after_config_save(env, cfg)
+    return {"ok": True, "removed": removed, "missing": missing}
+
 
 @router.post("/config/migrate")
 def api_config_migrate() -> dict[str, Any]:
