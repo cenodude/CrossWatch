@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime, timezone
+from html import unescape
 from typing import Any
 
 from ._errors import CLIError, EXIT_USAGE
@@ -239,6 +240,8 @@ def find_pair(pairs: list[dict[str, Any]], needle: str) -> dict[str, Any]:
 
 
 LOG_CONTROL_LINES = {"::CLEAR::"}
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+_SPAN_RE = re.compile(r"</?span\b[^>]*>", re.IGNORECASE)
 
 
 def is_log_control(line: str) -> bool:
@@ -246,4 +249,6 @@ def is_log_control(line: str) -> bool:
 
 
 def strip_ansi(text: str) -> str:
-    return re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]", "", str(text or ""))
+    cleaned = _ANSI_RE.sub("", str(text or ""))
+    cleaned = _SPAN_RE.sub("", cleaned)
+    return unescape(cleaned)

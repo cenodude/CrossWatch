@@ -13,6 +13,7 @@ from .._render import state_text
 from .._util import as_dict, coerce_bool, strip_ansi
 
 watcher_app = typer.Typer(help="Control the scrobble watcher.", no_args_is_help=True)
+DEFAULT_WATCHER_LOG_TAGS = "WATCH,WATCHM"
 
 
 def _status(state: Ctx) -> dict[str, Any]:
@@ -52,6 +53,47 @@ def _render(state: Ctx, payload: dict[str, Any]) -> None:
             ],
             title="Routes",
         )
+
+
+def _currently_watching_items(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        return [i for i in payload if isinstance(i, dict)]
+    if not isinstance(payload, dict):
+        return []
+
+    streams = payload.get("streams")
+    if isinstance(streams, list):
+        items = [i for i in streams if isinstance(i, dict)]
+        if items:
+            return items
+
+    items = payload.get("items")
+    if isinstance(items, list):
+        out = [i for i in items if isinstance(i, dict)]
+        if out:
+            return out
+
+    current = payload.get("currently_watching")
+    if isinstance(current, list):
+        return [i for i in current if isinstance(i, dict)]
+    if isinstance(current, dict) and (current.get("title") or current.get("name")):
+        return [current]
+
+    if payload.get("title") or payload.get("name"):
+        return [payload]
+    return []
+
+
+def _progress(item: dict[str, Any]) -> str:
+    value = item.get("progress")
+    if value is None:
+        value = item.get("progress_percent")
+    if value is None:
+        value = item.get("percent")
+    try:
+        return f"{int(float(value))}%"
+    except Exception:
+        return "-"
 
 
 @watcher_app.command("status")
@@ -105,19 +147,16 @@ def watcher_now(ctx: typer.Context) -> None:
     if state.out.json_mode:
         state.out.data(payload)
         return
-    items = payload if isinstance(payload, list) else (payload or {}).get("items") or []
-    items = [i for i in items if isinstance(i, dict)]
-    if not items and isinstance(payload, dict) and payload.get("title"):
-        items = [payload]
+    items = _currently_watching_items(payload)
     state.out.table(
         ["TITLE", "TYPE", "PROVIDER", "USER", "PROGRESS", "STATE"],
         [
             [
                 str(i.get("title") or i.get("name") or "-")[:52],
                 str(i.get("type") or i.get("media_type") or "-"),
-                str(i.get("provider") or i.get("server") or "-"),
-                str(i.get("username") or i.get("user") or "-"),
-                f"{int(float(i.get('progress') or 0))}%" if i.get("progress") is not None else "-",
+                str(i.get("provider") or i.get("source") or i.get("server") or "-"),
+                str(i.get("username") or i.get("user") or i.get("account") or "-"),
+                _progress(i),
                 str(i.get("state") or i.get("status") or "-"),
             ]
             for i in items
@@ -131,15 +170,13 @@ def watcher_now(ctx: typer.Context) -> None:
 def watcher_logs(
     ctx: typer.Context,
     lines: int = typer.Option(200, "--lines", "-n", min=1, max=3000, help="How many lines to show."),
-    tags: str = typer.Option("", "--tags", help="Comma separated watcher log tags."),
+    tags: str = typer.Option(DEFAULT_WATCHER_LOG_TAGS, "--tags", help="Comma separated watcher log tags."),
 ) -> None:
     """Show recent watcher log output."""
     state: Ctx = ctx.obj
     state.require_service("Reading watcher logs")
-    params: dict[str, Any] = {"tail": lines}
-    if tags.strip():
-        params["tags"] = tags.strip()
-    payload = state.get("/api/logs/watcher", params=params)
+    params: dict[str, Any] = {"tail": lines, "tags": tags.strip() or DEFAULT_WATCHER_LOG_TAGS}
+    payload = state.get("/api/watch/logs", params=params)
     if not isinstance(payload, dict):
         raise CLIError("Watcher log endpoint returned an unexpected payload")
     if state.out.json_mode:
