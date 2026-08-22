@@ -937,6 +937,8 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
                     t["token_hash"] = MASK
                 if isinstance(t, dict) and t.get("token_digest"):
                     t["token_digest"] = MASK
+                if isinstance(t, dict) and t.get("secret"):
+                    t["secret"] = MASK
 
         totp = a.get("totp")
         if isinstance(totp, dict):

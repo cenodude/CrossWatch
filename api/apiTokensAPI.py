@@ -12,7 +12,7 @@ from typing import Any
 from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse
 
-from cw_platform.config_base import _load_config_key, load_config
+from cw_platform.config_base import load_config
 
 from .appAuthAPI import (
     ADMIN_USER_ID,
@@ -40,7 +40,6 @@ TOKEN_MAX_LENGTH = 256
 TOKEN_V2_SECRET_BYTES = 32
 
 _TOKEN_V2_RE = re.compile(r"^cwt_([a-f0-9]{16})\.([A-Za-z0-9_-]{32,})$")
-_SHA256_HEX_RE = re.compile(r"^[a-f0-9]{64}$")
 _TRUSTED_LOCAL_TOKEN_ORIGINS = {"local_cli", "local_bootstrap"}
 
 _TOUCH_CACHE: dict[str, float] = {}
@@ -72,13 +71,6 @@ def _valid_token_hash(raw: Any) -> bool:
         return False
 
 
-def _token_digest(raw: str, *, create_key: bool = False) -> str:
-    key = _load_config_key(create=create_key)
-    if not key:
-        return ""
-    return hmac.new(key, str(raw or "").encode("utf-8"), "sha256").hexdigest()
-
-
 def _valid_v1_entry(entry: dict[str, Any]) -> bool:
     if not _valid_token_hash(entry.get("token_hash")):
         return False
@@ -97,8 +89,7 @@ def _valid_v2_entry(entry: dict[str, Any]) -> bool:
         return False
     if not re.fullmatch(r"[a-f0-9]{16}", str(entry.get("id") or "")):
         return False
-    digest = str(entry.get("token_digest") or "")
-    if str(entry.get("digest_scheme") or "") != "hmac_sha256" or not _SHA256_HEX_RE.fullmatch(digest):
+    if not str(entry.get("secret") or "").strip():
         return False
     exp = int(entry.get("expires_at") or 0)
     return exp <= 0 or exp > _now()
@@ -179,13 +170,11 @@ def resolve_api_token(cfg: dict[str, Any], raw: str) -> dict[str, Any] | None:
     v2_match = _TOKEN_V2_RE.fullmatch(token)
     if v2_match:
         token_id = v2_match.group(1)
-        digest = _token_digest(token)
-        if not digest:
-            return None
+        secret = v2_match.group(2)
         for entry in tokens:
             if str(entry.get("id") or "") != token_id or not _valid_v2_entry(entry):
                 continue
-            if not hmac.compare_digest(digest, str(entry.get("token_digest") or "")):
+            if not hmac.compare_digest(secret, str(entry.get("secret") or "")):
                 return None
             identity = _entry_identity(a, entry)
             if identity is None:
@@ -280,8 +269,7 @@ def issue_api_token(
             "id": entry_id,
             "version": 2,
             "name": label,
-            "token_digest": _token_digest(raw, create_key=True),
-            "digest_scheme": "hmac_sha256",
+            "secret": secret,
             "prefix": f"{TOKEN_PREFIX}{entry_id}.{secret[:6]}",
             "user_id": target,
             "username": str(identity.get("username") or ""),

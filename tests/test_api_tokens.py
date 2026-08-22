@@ -65,7 +65,7 @@ def tokens_env(config_base: Path, monkeypatch: pytest.MonkeyPatch):
 
 def test_issue_and_resolve_round_trip(tokens_env) -> None:
     mod = tokens_env
-    from cw_platform.config_base import load_config
+    from cw_platform.config_base import config_path, load_config
 
     raw, entry = mod.issue_api_token(load_config(), name="cli", expires_days=0)
 
@@ -77,10 +77,11 @@ def test_issue_and_resolve_round_trip(tokens_env) -> None:
     assert raw not in json.dumps(load_config())
     stored = load_config()["app_auth"]["api_tokens"][0]
     assert stored["version"] == 2
-    assert stored["digest_scheme"] == "hmac_sha256"
-    assert isinstance(stored["token_digest"], str)
-    assert len(stored["token_digest"]) == 64
+    assert isinstance(stored["secret"], str)
+    assert stored["secret"] in raw
+    assert stored["secret"] not in config_path().read_text(encoding="utf-8")
     assert "token_hash" not in stored
+    assert "token_digest" not in stored
 
     identity = mod.resolve_api_token(load_config(), raw)
     assert identity is not None
@@ -234,6 +235,7 @@ def test_listing_never_exposes_the_secret(tokens_env) -> None:
     assert raw not in blob
     assert "token_hash" not in blob
     assert "token_digest" not in blob
+    assert "secret" not in blob
 
 
 def test_extract_reads_header_and_bearer() -> None:
@@ -244,7 +246,7 @@ def test_extract_reads_header_and_bearer() -> None:
     assert mod.extract_api_token(_request("/api/status")) == ""
 
 
-def test_redaction_masks_token_digests(tokens_env) -> None:
+def test_redaction_masks_token_secrets(tokens_env) -> None:
     mod = tokens_env
     from cw_platform.config_base import load_config, redact_config
 
@@ -252,4 +254,4 @@ def test_redaction_masks_token_digests(tokens_env) -> None:
     redacted = redact_config(load_config())
 
     for entry in redacted["app_auth"]["api_tokens"]:
-        assert entry["token_digest"] == "•" * 8
+        assert entry["secret"] == "•" * 8
