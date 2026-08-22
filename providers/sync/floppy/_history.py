@@ -360,21 +360,31 @@ def _rekey_to_source_numbering(adapter: Any, out: dict[str, dict[str, Any]]) -> 
     for show, record in shows.items():
         wanted: set[tuple[int, int]] = record["coords"]
         source_owned = owned_by_show.get(show) or {}
-        missing = [coord for coord in wanted if coord not in source_owned]
-        if not missing:
+        candidates = sorted(coord for coord in record["abs"] if coord in wanted)
+        if not candidates:
             continue
         layout: list[tuple[int, int]] | None = None
-        for coord in sorted(missing):
+        for coord in candidates:
             absolute = record["abs"].get(coord)
             if absolute is None:
                 continue
             source_item = (record.get("items") or {}).get(coord)
+            if not isinstance(source_item, Mapping) or (not _anime_native_ids(source_item) and _explicit_absolute(source_item) is None):
+                continue
             real_show = show
             real = None
-            if isinstance(source_item, Mapping):
-                target = _anime_target_for_absolute(adapter, show, source_item, absolute)
-                if target is not None:
-                    real_show, real = target[0], (target[1], target[2])
+            target = _anime_target_for_absolute(adapter, show, source_item, absolute)
+            if target is not None:
+                real_show, real = target[0], (target[1], target[2])
+                if real == coord and real[1] != absolute:
+                    if _floppy_coord_status(adapter, real_show, real[0], absolute) is True:
+                        real = (real[0], absolute)
+                    else:
+                        if layout is None:
+                            layout = show_layout(adapter, real_show)
+                        fallback = absolute_to_coord(layout, absolute)
+                        if fallback is not None:
+                            real = fallback
             if real is None:
                 if layout is None:
                     layout = show_layout(adapter, show)
@@ -412,8 +422,21 @@ def _rekey_to_source_numbering(adapter: Any, out: dict[str, dict[str, Any]]) -> 
                 rekeyed["show_ids"] = show_ids
             rekeyed["season"], rekeyed["episode"] = coord
             new_key = _history_key(adapter, rekeyed) if _rewatches_enabled(adapter) else canonical_item_key(rekeyed)
-            if new_key in out:
+            existing = out.get(new_key)
+            if isinstance(existing, Mapping) and _floppy_coord(existing) == real:
                 continue
+            if isinstance(existing, Mapping) and key != new_key:
+                old_show = str((existing.get("show_ids") or {}).get("tmdb") or "").strip()
+                old_season, old_episode = _episode_numbers(existing)
+                old_owned = owned_by_show.get(old_show) or {}
+                old_keys = old_owned.get((old_season, old_episode)) or []
+                if new_key in old_keys:
+                    old_keys.remove(new_key)
+                if old_keys:
+                    old_owned[(old_season, old_episode)] = old_keys
+                else:
+                    old_owned.pop((old_season, old_episode), None)
+                out.pop(new_key, None)
             out.pop(key, None)
             out[new_key] = rekeyed
             if key in keys:
@@ -437,7 +460,16 @@ def _write_target_result(adapter: Any, tmdb_id: str, item: Mapping[str, Any], se
     mapped = _anime_target_for_absolute(adapter, tmdb_id, item, absolute)
     if mapped is not None:
         target_id, mapped_season, mapped_episode = mapped
-        if _floppy_coord_status(adapter, target_id, mapped_season, mapped_episode) is not False:
+        if (mapped_season, mapped_episode) == (season, episode) and mapped_episode != absolute:
+            if _floppy_coord_status(adapter, target_id, mapped_season, absolute) is True:
+                return target_id, mapped_season, absolute, _anime_write_needs_readback(adapter, item, season, episode, mapped_season, absolute)
+            layout = show_layout(adapter, target_id)
+            real = absolute_to_coord(layout, absolute)
+            if real is not None:
+                return target_id, real[0], real[1], _anime_write_needs_readback(adapter, item, season, episode, real[0], real[1])
+            raise FloppyCoordinateError(f"FLOPPY episode coordinate not found: tmdb:{target_id} S{mapped_season}E{mapped_episode}")
+        mapped_status = _floppy_coord_status(adapter, target_id, mapped_season, mapped_episode)
+        if mapped_status is True or (mapped_status is None and mapped_episode == absolute):
             return target_id, mapped_season, mapped_episode, _anime_write_needs_readback(adapter, item, season, episode, mapped_season, mapped_episode)
         layout = show_layout(adapter, target_id)
         real = absolute_to_coord(layout, absolute)
@@ -446,6 +478,8 @@ def _write_target_result(adapter: Any, tmdb_id: str, item: Mapping[str, Any], se
         raise FloppyCoordinateError(f"FLOPPY episode coordinate not found: tmdb:{target_id} S{mapped_season}E{mapped_episode}")
     layout = show_layout(adapter, tmdb_id)
     if not layout:
+        if _anime_native_ids(item) and absolute != episode:
+            raise FloppyCoordinateError(f"FLOPPY episode coordinate not found: tmdb:{tmdb_id} S{season}E{episode}")
         return tmdb_id, season, episode, _anime_write_needs_readback(adapter, item, season, episode, season, episode)
     if has_coord(layout, season, episode):
         return tmdb_id, season, episode, _anime_write_needs_readback(adapter, item, season, episode, season, episode)
@@ -522,6 +556,22 @@ def _history_rows_include_write(adapter: Any, item: Mapping[str, Any], rows: Ite
     return False
 
 
+def _history_row_for_item(adapter: Any, item: Mapping[str, Any], rows: Iterable[Mapping[str, Any]], *, exact_time: bool = False) -> Mapping[str, Any] | None:
+    rows_list = [row for row in rows or [] if isinstance(row, Mapping)]
+    if not rows_list:
+        return None
+    if not exact_time and not _rewatches_enabled(adapter):
+        return rows_list[0]
+    target = history_epoch_from_value(_watched_at(item))
+    if target is None:
+        return rows_list[0]
+    for row in rows_list:
+        row_ts = history_epoch_from_value(row.get("end_date") or row.get("progressed_at") or row.get("created_at") or row.get("watched_at"))
+        if row_ts == target:
+            return row
+    return None
+
+
 def _put_latest(out: dict[str, dict[str, Any]], item: dict[str, Any]) -> None:
     key = canonical_item_key(item)
     current = out.get(key)
@@ -566,6 +616,53 @@ def _movie_external_id(adapter: Any, item: Mapping[str, Any], key: str) -> str |
         if value:
             return f"cw:{field}:{value}"[:255]
     return f"cw:{key}"[:255] if key else None
+
+
+def _augment_absolute_episode_history(adapter: Any, out: dict[str, dict[str, Any]]) -> None:
+    shows: dict[str, dict[str, Any]] = _SRC_SNAPSHOT.get("shows") or {}
+    if not shows or not _anime_mapping_enabled(adapter) or _SRC_SNAPSHOT.get("scope") != _pair_scope():
+        return
+    event_mode = _rewatches_enabled(adapter)
+    for show, record in shows.items():
+        items = record.get("items") if isinstance(record, Mapping) else {}
+        if not isinstance(items, Mapping):
+            continue
+        for coord, source_item in items.items():
+            if not isinstance(source_item, Mapping):
+                continue
+            absolute = _explicit_absolute(source_item)
+            if absolute is None or not _anime_native_ids(source_item):
+                continue
+            source_key = _history_key(adapter, source_item)
+            if source_key in out:
+                continue
+            season, episode = _episode_numbers(source_item)
+            if season is None or episode is None:
+                continue
+            try:
+                target_id, real_season, real_episode, _verify = _write_target_result(adapter, show, source_item, season, episode)
+            except Exception:
+                continue
+            if not target_id or (target_id == show and (real_season, real_episode) == (season, episode)):
+                continue
+            rows = _episode_history(adapter, target_id, real_season, real_episode)
+            row = _history_row_for_item(adapter, source_item, rows, exact_time=event_mode)
+            if row is None:
+                continue
+            rekeyed = dict(source_item)
+            rekeyed["watched"] = True
+            rekeyed["watched_at"] = row.get("end_date") or row.get("progressed_at") or row.get("created_at") or source_item.get("watched_at")
+            rekeyed["_floppy_season"] = real_season
+            rekeyed["_floppy_episode"] = real_episode
+            if target_id != show:
+                rekeyed["_floppy_tmdb_id"] = target_id
+            rekeyed["_floppy_consumption_id"] = row.get("consumption_id")
+            if event_mode:
+                key = _history_key(adapter, rekeyed)
+                if key:
+                    out[key] = _history_minimal(adapter, rekeyed)
+            else:
+                out[source_key] = _history_minimal(adapter, rekeyed)
 
 
 def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
@@ -614,6 +711,7 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
                 out[key] = _history_minimal(adapter, item)
         else:
             _put_latest(out, item)
+    _augment_absolute_episode_history(adapter, out)
     return _rekey_to_source_numbering(adapter, out)
 
 
