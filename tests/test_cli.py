@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -906,6 +907,109 @@ def test_config_body_keeps_the_provider_prefix() -> None:
 
     values = {"simkl.client_id": "abc", "simkl.client_secret": "xyz"}
     assert _nest(values, drop_prefix=False) == {"simkl": {"client_id": "abc", "client_secret": "xyz"}}
+
+
+def test_maintenance_cleanup_features_accepts_repeated_and_csv_values() -> None:
+    from cli.commands.maintenance import _split_cleanup_features
+
+    assert _split_cleanup_features(["watchlist,ratings", "history"]) == ["watchlist", "ratings", "history"]
+    assert _split_cleanup_features([], all_features=True) == ["watchlist", "ratings", "history", "progress"]
+    with pytest.raises(CLIError):
+        _split_cleanup_features(["bogus"])
+
+
+def test_maintenance_provider_cleanup_posts_snapshot_tool_clear() -> None:
+    from cli.commands.maintenance import maintenance_provider_cleanup
+
+    http = FakeTransport({("POST", "/api/snapshots/tools/clear"): {"ok": True, "progress_id": "job-1"}})
+    state = _ctx(http)
+
+    maintenance_provider_cleanup(
+        SimpleNamespace(obj=state),
+        provider="plex",
+        instance="kids",
+        feature=["watchlist,history"],
+        all_features=False,
+        targets=False,
+        wait=False,
+        timeout=10,
+        yes=True,
+    )
+
+    assert http.calls == [
+        (
+            "POST",
+            "/api/snapshots/tools/clear",
+            {
+                "provider": "PLEX",
+                "instance": "kids",
+                "features": ["watchlist", "history"],
+                "progress_id": http.calls[0][2]["progress_id"],
+                "background": True,
+            },
+        )
+    ]
+
+
+def test_maintenance_provider_cleanup_lists_manifest_targets() -> None:
+    from cli.commands.maintenance import maintenance_provider_cleanup
+
+    http = FakeTransport(
+        {
+            (
+                "GET",
+                "/api/snapshots/manifest",
+            ): {
+                "providers": [
+                    {
+                        "id": "PLEX",
+                        "label": "Plex",
+                        "configured": True,
+                        "features": {"watchlist": True, "ratings": False, "history": True, "progress": True},
+                        "instances": [{"id": "default", "label": "Default", "configured": True}],
+                    }
+                ]
+            }
+        }
+    )
+    state = _ctx(http)
+
+    maintenance_provider_cleanup(
+        SimpleNamespace(obj=state),
+        provider="",
+        instance="default",
+        feature=[],
+        all_features=False,
+        targets=False,
+        wait=True,
+        timeout=10,
+        yes=False,
+    )
+
+    assert http.param_calls[0][:3] == ("GET", "/api/snapshots/manifest", None)
+
+
+def test_maintenance_factory_reset_requires_typed_confirmation() -> None:
+    from cli.commands.maintenance import maintenance_factory_reset
+
+    http = FakeTransport({("POST", "/api/maintenance/reset-all-default"): {"ok": True}})
+    state = _ctx(http)
+
+    with pytest.raises(CLIError):
+        maintenance_factory_reset(SimpleNamespace(obj=state), confirm="", restart=False)
+
+    assert http.calls == []
+
+
+def test_maintenance_factory_reset_posts_reset_endpoint() -> None:
+    from cli.commands.maintenance import maintenance_factory_reset
+
+    http = FakeTransport({("POST", "/api/maintenance/reset-all-default"): {"ok": True, "backup": "/config/config.json.bak"}})
+    state = _ctx(http)
+
+    maintenance_factory_reset(SimpleNamespace(obj=state), confirm="RESET", restart=True)
+
+    assert http.calls == [("POST", "/api/maintenance/reset-all-default", {"restart": True})]
 
 
 def test_parse_field_args_requires_key_equals_value() -> None:

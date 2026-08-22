@@ -345,15 +345,18 @@ cw activity clear
 ## Maintenance
 
 ```
+cw maintenance tools               show modal-style maintenance actions
 cw maintenance database            runtime db health
 cw maintenance events              archive health, --optimize, --rebuild
 cw maintenance cache <what>        all, metadata, provider-sync, activity-log, scrobbles, state
 cw maintenance provider-cache
+cw maintenance provider-cleanup    clear provider watchlist, ratings, history or progress
 cw maintenance state-file --prune|--compact
 cw maintenance tracker [--clear]
 cw maintenance reset-stats
 cw maintenance reset-watching
 cw maintenance support [--scopes]
+cw maintenance factory-reset       requires --confirm RESET
 cw maintenance restart
 ```
 
