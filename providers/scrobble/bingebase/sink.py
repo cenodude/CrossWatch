@@ -11,6 +11,7 @@ import requests
 
 from cw_platform.config_base import load_config
 from cw_platform.provider_instances import normalize_instance_id, resolve_provider_block
+from providers.scrobble._watched_gate import resolve_stop_action
 from services.activity import record_scrobble_event
 
 try:
@@ -32,6 +33,7 @@ except ImportError:
 
 
 APP_AGENT = "CrossWatch/BingeBaseWebhook/1.0"
+DEFAULT_WATCHED_AT = 90.0
 ACTION_EVENT = {
     "start": "playback.start",
     "pause": "playback.pause",
@@ -162,6 +164,17 @@ def _progress(value: Any) -> float:
         return 0.0
 
 
+def _watched_at(cfg: Mapping[str, Any]) -> float:
+    try:
+        sc = cfg.get("scrobble") if isinstance(cfg, Mapping) else {}
+        value = ((sc or {}).get("bingebase") or {}).get("watched_at")
+        if value is None:
+            value = ((sc or {}).get("trakt") or {}).get("watched_at", DEFAULT_WATCHED_AT)
+        return max(0.0, min(100.0, float(value)))
+    except Exception:
+        return DEFAULT_WATCHED_AT
+
+
 def _ms_to_seconds(value: Any) -> int | None:
     num = _as_int(value)
     if num is None or num <= 0:
@@ -183,6 +196,7 @@ class BingeBaseSink(ScrobbleSink):
         self._cfg_provider = cfg_provider
         self.instance_id = normalize_instance_id(instance_id)
         self.session = requests.Session()
+        self._completed: dict[str, float] = {}
         try:
             self.session.headers.setdefault("Accept", "application/json")
             self.session.headers.setdefault("User-Agent", APP_AGENT)
@@ -206,6 +220,26 @@ class BingeBaseSink(ScrobbleSink):
         except Exception:
             block = cfg.get("bingebase") if isinstance(cfg, Mapping) else None
             return dict(block) if isinstance(block, Mapping) else {}
+
+    def _completion_key(self, event: Any) -> str:
+        ids = getattr(event, "ids", None) or {}
+        if not isinstance(ids, Mapping):
+            ids = {}
+        parts = [
+            str(getattr(event, "server_uuid", "") or "?"),
+            str(getattr(event, "session_key", "") or "?"),
+            str(getattr(event, "media_type", "") or "movie"),
+        ]
+        for key, value in sorted(ids.items()):
+            if value not in (None, ""):
+                parts.append(f"{key}:{value}")
+        if str(getattr(event, "media_type", "") or "").lower() == "episode":
+            parts.append(f"s{_as_int(getattr(event, 'season', None)) or 0}")
+            parts.append(f"e{_as_int(getattr(event, 'number', None)) or 0}")
+        elif len(parts) == 3:
+            parts.append(str(getattr(event, "title", "") or ""))
+            parts.append(str(getattr(event, "year", "") or ""))
+        return "|".join(parts)
 
     def _jellyfin_payload(self, event: Any, action: str, media_type: str, ids: Mapping[str, Any], title: str) -> dict[str, Any] | None:
         provider_ids = _provider_ids(ids, media_type)
@@ -278,8 +312,8 @@ class BingeBaseSink(ScrobbleSink):
 
         return payload
 
-    def _payload(self, event: Any, webhook_url: Any = None) -> dict[str, Any] | None:
-        action = str(getattr(event, "action", "") or "").strip().lower()
+    def _payload(self, event: Any, webhook_url: Any = None, action_override: str | None = None) -> dict[str, Any] | None:
+        action = str(action_override or getattr(event, "action", "") or "").strip().lower()
         if action not in ACTION_EVENT:
             return None
 
@@ -304,10 +338,6 @@ class BingeBaseSink(ScrobbleSink):
             _log("BINGEBASE: skip scrobble, webhook URL not configured", "DEBUG")
             return
 
-        payload = self._payload(event, webhook_url)
-        if payload is None:
-            return
-
         try:
             timeout = float(block.get("timeout") or 20.0)
         except Exception:
@@ -318,7 +348,22 @@ class BingeBaseSink(ScrobbleSink):
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
 
-        action = str(getattr(event, "action", "") or "").strip().lower()
+        raw_action = str(getattr(event, "action", "") or "").strip().lower()
+        progress = _progress(getattr(event, "progress", 0.0))
+        watched_at = _watched_at(cfgd)
+        action = resolve_stop_action(progress, watched_at) if raw_action == "stop" else raw_action
+        if raw_action == "stop" and action == "pause":
+            _log(f"BINGEBASE: hold stop below watched_at ({progress:.0f}% < {watched_at:.0f}%)", "DEBUG")
+
+        complete = raw_action == "stop" and action == "stop" and progress >= watched_at
+        done_key = self._completion_key(event) if complete else ""
+        if complete and self._completed.get(done_key, -1.0) >= watched_at:
+            return
+
+        payload = self._payload(event, webhook_url, action_override=action)
+        if payload is None:
+            return
+
         src, src_inst = _route_source(cfgd)
         try:
             resp = self.session.post(
@@ -338,10 +383,10 @@ class BingeBaseSink(ScrobbleSink):
 
         _log(
             f"BINGEBASE: scrobble {action} user='{mask_account(getattr(event, 'account', None))}' "
-            f"p={_progress(getattr(event, 'progress', 0.0)):.1f}% source={src}:{src_inst}",
+            f"p={progress:.1f}% source={src}:{src_inst}",
             "INFO",
         )
-        if action == "stop":
+        if complete:
             try:
                 record_scrobble_event(
                     event,
@@ -349,10 +394,11 @@ class BingeBaseSink(ScrobbleSink):
                     source_instance=src_inst,
                     target="bingebase",
                     target_instance=self.instance_id,
-                    progress=_progress(getattr(event, "progress", 0.0)),
+                    progress=progress,
                 )
             except Exception:
                 pass
+            self._completed[done_key] = progress
 
 
 __all__ = ["BingeBaseSink", "_redact_url"]
