@@ -73,6 +73,9 @@ def test_issue_and_resolve_round_trip(tokens_env) -> None:
     assert entry["name"] == "cli"
     assert entry["expires_at"] == 0
     assert raw not in json.dumps(load_config())
+    stored = load_config()["app_auth"]["api_tokens"][0]["token_hash"]
+    assert isinstance(stored, dict)
+    assert stored["scheme"] == "pbkdf2_sha256"
 
     identity = mod.resolve_api_token(load_config(), raw)
     assert identity is not None

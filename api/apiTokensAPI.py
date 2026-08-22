@@ -19,14 +19,13 @@ from .appAuthAPI import (
     _audit,
     _cfg_auth,
     _cfg_users,
-    _digest_eq,
-    _is_sha256_hex,
     _normalize_app_user_id,
     _now,
     _origin_allowed,
     _origin_blocked_response,
+    _password_hash,
+    _password_matches,
     _public_user,
-    _sha256_hex,
     _update_config,
     auth_required,
     current_user,
@@ -51,9 +50,23 @@ def _cfg_api_tokens(a: dict[str, Any]) -> list[dict[str, Any]]:
     return [x for x in raw if isinstance(x, dict)]
 
 
+def _valid_token_hash(raw: Any) -> bool:
+    if not isinstance(raw, dict):
+        return False
+    if str(raw.get("scheme") or "") != "pbkdf2_sha256":
+        return False
+    if not str(raw.get("salt") or "").strip():
+        return False
+    if not str(raw.get("hash") or "").strip():
+        return False
+    try:
+        return int(raw.get("iterations") or 0) > 0
+    except Exception:
+        return False
+
+
 def _valid_entry(entry: dict[str, Any]) -> bool:
-    digest = str(entry.get("token_hash") or "").strip()
-    if not digest or not _is_sha256_hex(digest):
+    if not _valid_token_hash(entry.get("token_hash")):
         return False
     if not str(entry.get("id") or "").strip():
         return False
@@ -127,11 +140,11 @@ def resolve_api_token(cfg: dict[str, Any], raw: str) -> dict[str, Any] | None:
     tokens = _cfg_api_tokens(a)
     if not tokens:
         return None
-    digest = _sha256_hex(token)
     for entry in tokens:
         if not _valid_entry(entry):
             continue
-        if not _digest_eq(digest, str(entry.get("token_hash") or "")):
+        token_hash = entry.get("token_hash")
+        if not isinstance(token_hash, dict) or not _password_matches(token_hash, token):
             continue
         identity = _entry_identity(a, entry)
         if identity is None:
@@ -201,7 +214,7 @@ def issue_api_token(
         entry = {
             "id": entry_id,
             "name": label,
-            "token_hash": _sha256_hex(raw),
+            "token_hash": _password_hash(raw),
             "prefix": raw[: len(TOKEN_PREFIX) + 6],
             "user_id": target,
             "username": str(identity.get("username") or ""),
