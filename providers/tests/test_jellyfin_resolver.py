@@ -48,6 +48,7 @@ class FakeHttp:
 class FakeCfg:
     user_id = "U1"
     strict_id_matching = False
+    targeted_lookup = True
     watchlist_guid_priority = None
     history_guid_priority = None
     history_libraries = None
@@ -134,6 +135,63 @@ def test_jellyfin_long_numeric_item_ids_are_valid_backend_ids():
     item = {"type": "movie", "title": "Encanto", "year": 2021, "ids": {"tmdb": "568124"}}
 
     assert common.resolve_item_id(adapter, item, feature="history") == "7214430293560476068"
+
+
+def test_movie_targeted_lookup_resolves_without_full_provider_index():
+    row = jf_row("M1", "Movie", "Encanto", tmdb="568124")
+    adapter = FakeAdapter(FakeHttp([row]))
+
+    item = {"type": "movie", "title": "Encanto", "year": 2021, "ids": {"tmdb": "568124"}}
+
+    assert common.resolve_item_id(adapter, item, feature="history") == "M1"
+    assert any(call["params"].get("SearchTerm") == "Encanto" for call in adapter.client.calls)
+    assert not any("StartIndex" in call["params"] for call in adapter.client.calls)
+
+
+def test_movie_targeted_lookup_disabled_falls_back_to_provider_index():
+    row = jf_row("M1", "Movie", "Encanto", tmdb="568124")
+    adapter = FakeAdapter(FakeHttp([row]))
+    adapter.cfg.targeted_lookup = False
+
+    item = {"type": "movie", "title": "Encanto", "year": 2021, "ids": {"tmdb": "568124"}}
+
+    assert common.resolve_item_id(adapter, item, feature="history") == "M1"
+    assert not any(call["params"].get("SearchTerm") == "Encanto" for call in adapter.client.calls)
+    assert any("StartIndex" in call["params"] for call in adapter.client.calls)
+
+
+def test_strict_targeted_lookup_requires_provider_id_match():
+    wrong = jf_row("M0", "Movie", "Encanto", tmdb="1")
+    right = jf_row("M1", "Movie", "Encanto", tmdb="568124")
+    adapter = FakeAdapter(FakeHttp([wrong, right]))
+    adapter.cfg.strict_id_matching = True
+
+    item = {"type": "movie", "title": "Encanto", "year": 2021, "ids": {"tmdb": "568124"}}
+
+    assert common.resolve_item_id(adapter, item, feature="history") == "M1"
+    assert any(call["params"].get("SearchTerm") == "Encanto" for call in adapter.client.calls)
+    assert not any("StartIndex" in call["params"] for call in adapter.client.calls)
+
+
+def test_episode_targeted_lookup_uses_series_search_and_episode_numbers():
+    series = jf_row("S1", "Series", "Example Show", tmdb="999")
+    episode = jf_row("E2", "Episode", "Second", series_id="S1", season=1, episode=2)
+    adapter = FakeAdapter(FakeHttp([series], episodes={"S1": [episode]}))
+
+    item = {
+        "type": "episode",
+        "title": "Second",
+        "series_title": "Example Show",
+        "season": 1,
+        "episode": 2,
+        "ids": {},
+        "show_ids": {"tmdb": "999"},
+    }
+
+    assert common.resolve_item_id(adapter, item, feature="history") == "E2"
+    assert any(call["path"] == "/Items" and call["params"].get("SearchTerm") == "Example Show" for call in adapter.client.calls)
+    assert any(call["path"] == "/Shows/S1/Episodes" for call in adapter.client.calls)
+    assert not any("StartIndex" in call["params"] for call in adapter.client.calls if call["path"] == "/Items")
 
 
 def test_jellyfin_scoped_provider_index_trusts_rows_without_library_metadata():

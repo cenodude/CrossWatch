@@ -266,6 +266,7 @@ function normalizePairProviders(p){
     if(v&&typeof v==="object"){
       const blk=Object.assign({},v);
       if("strict_id_matching" in blk) blk.strict_id_matching=!!blk.strict_id_matching;
+      if(key==="jellyfin" && "targeted_lookup" in blk) blk.targeted_lookup=!!blk.targeted_lookup;
       if(key==="trakt"){
         if("history_collection" in blk) blk.history_collection=!!blk.history_collection;
         if("history_ignore_dropped_shows" in blk) blk.history_ignore_dropped_shows=!!blk.history_ignore_dropped_shows;
@@ -300,6 +301,14 @@ function getPairProviderStrictValue(state, providerKey){
   const blk=state?.pairProviders?.[key];
   if(blk && typeof blk==="object" && "strict_id_matching" in blk) return !!blk.strict_id_matching;
   return defaultStrictIdForProvider(key);
+}
+
+function getPairProviderTargetedLookupValue(state){
+  const blk=state?.pairProviders?.jellyfin;
+  if(blk && typeof blk==="object" && "targeted_lookup" in blk) return !!blk.targeted_lookup;
+  const jf=state?.cfgRaw?.jellyfin;
+  if(jf && typeof jf==="object" && "targeted_lookup" in jf) return jf.targeted_lookup !== false;
+  return true;
 }
 
 // Data
@@ -907,6 +916,7 @@ function getProviderOverrideCount(state, providerKey){
     if (num("jf-timeout", Number.isFinite(jf.timeout) ? jf.timeout : 15, 1) !== 15) count++;
     if (num("jf-retries", Number.isFinite(jf.max_retries) ? jf.max_retries : 3, 0) !== 3) count++;
     if (checked("jf-strict-ids", getPairProviderStrictValue(state, "jellyfin")) !== strictDefault) count++;
+    if (checked("jf-targeted-lookup", getPairProviderTargetedLookupValue(state)) !== true) count++;
     return count + countProviderLibraries(state, "JELLYFIN");
   }
   if (providerKey === "emby") {
@@ -1027,6 +1037,7 @@ function renderFeaturePanel(state){
             <div class="opt-row"><label for="jf-timeout">Timeout (s)</label><input id="jf-timeout" class="input small" type="number" min="1" max="120" step="1" value="${Number.isFinite(jf.timeout)?jf.timeout:15}"></div>
             <div class="opt-row"><label for="jf-retries">Max retries</label><input id="jf-retries" class="input small" type="number" min="0" max="10" step="1" value="${Number.isFinite(jf.max_retries)?jf.max_retries:3}"></div>
             <div class="opt-row"><label for="jf-strict-ids">Strict ID matching</label><label class="switch"><input id="jf-strict-ids" type="checkbox" ${getPairProviderStrictValue(state, "jellyfin")?"checked":""}><span class="slider"></span></label></div>
+            <div class="opt-row"><label for="jf-targeted-lookup">Targeted library lookup</label><label class="switch"><input id="jf-targeted-lookup" type="checkbox" ${getPairProviderTargetedLookupValue(state)?"checked":""}><span class="slider"></span></label></div>
           </div>
           <div class="prov-box" id="jf-pair-libs">
             <div class="panel-title small">Pair library whitelist</div>
@@ -1962,10 +1973,11 @@ function bindChangeHandlers(state,root){
   root.addEventListener("change",(e)=>{
     const id=e.target.id, el=e.target;
 
-    if(id==="plx-strict-ids"||id==="jf-strict-ids"||id==="em-strict-ids"){
+    if(id==="plx-strict-ids"||id==="jf-strict-ids"||id==="em-strict-ids"||id==="jf-targeted-lookup"){
       state.pairProviders=state.pairProviders||{};
       if(id==="plx-strict-ids") state.pairProviders.plex=Object.assign({},state.pairProviders.plex||{}, {strict_id_matching:!!el.checked});
       if(id==="jf-strict-ids") state.pairProviders.jellyfin=Object.assign({},state.pairProviders.jellyfin||{}, {strict_id_matching:!!el.checked});
+      if(id==="jf-targeted-lookup") state.pairProviders.jellyfin=Object.assign({},state.pairProviders.jellyfin||{}, {targeted_lookup:!!el.checked});
       if(id==="em-strict-ids") state.pairProviders.emby=Object.assign({},state.pairProviders.emby||{}, {strict_id_matching:!!el.checked});
       return;
     }
@@ -2611,7 +2623,7 @@ function buildPayload(state,wrap){
   const useFloppy=(String(src).toUpperCase()==="FLOPPY"||String(dst).toUpperCase()==="FLOPPY");
   const useScrob=(String(src).toUpperCase()==="SCROB"||String(dst).toUpperCase()==="SCROB");
   if(usePlex) prov.plex={strict_id_matching:getPairProviderStrictValue(state, "plex")};
-  if(useJf) prov.jellyfin={strict_id_matching:getPairProviderStrictValue(state, "jellyfin")};
+  if(useJf) prov.jellyfin={strict_id_matching:getPairProviderStrictValue(state, "jellyfin"),targeted_lookup:getPairProviderTargetedLookupValue(state)};
   if(useEm) prov.emby={strict_id_matching:getPairProviderStrictValue(state, "emby")};
   if(usePmdb){
     const pmSrc=pp.publicmetadb||{};

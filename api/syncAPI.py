@@ -211,6 +211,8 @@ def _normalize_pair_providers(p: Any) -> dict[str, Any]:
         blk: dict[str, Any] = {}
         if "strict_id_matching" in v:
             blk["strict_id_matching"] = coerce_bool(v.get("strict_id_matching"))
+        if key == "jellyfin" and "targeted_lookup" in v:
+            blk["targeted_lookup"] = coerce_bool(v.get("targeted_lookup"), True)
         if key == "trakt":
             if "history_ignore_dropped_shows" in v:
                 blk["history_ignore_dropped_shows"] = coerce_bool(v.get("history_ignore_dropped_shows"))
@@ -222,6 +224,8 @@ def _normalize_pair_providers(p: Any) -> dict[str, Any]:
                 blk["history_ignore_dropped_shows"] = coerce_bool(v.get("history_ignore_dropped_shows"))
         for kk, vv in v.items():
             if kk in {"strict_id_matching", "history_ignore_dropped_shows"}:
+                continue
+            if key == "jellyfin" and kk == "targeted_lookup":
                 continue
             blk[str(kk)] = vv
         if blk:

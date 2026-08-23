@@ -107,7 +107,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "2.2"
+__VERSION__ = "2.3"
 _MIN_PROGRESS_WRITE_VERSION = (10, 9)
 _JF_VERSION_CACHE: dict[str, tuple[float, str | None]] = {}
 
@@ -279,6 +279,7 @@ class JFConfig:
     timeout: float = 15.0
     max_retries: int = 3
     strict_id_matching: bool = False
+    targeted_lookup: bool = True
     watchlist_mode: str = "favorites"
     watchlist_playlist_name: str = "Watchlist"
     watchlist_query_limit: int = 25
@@ -440,6 +441,7 @@ class JELLYFINModule:
             timeout=float((cfg or {}).get("timeout", jf.get("timeout", 15.0))),
             max_retries=int((cfg or {}).get("max_retries", jf.get("max_retries", 3))),
             strict_id_matching=coerce_bool(jf.get("strict_id_matching", False)),
+            targeted_lookup=coerce_bool(jf.get("targeted_lookup", True), True),
             watchlist_mode=wl_mode,
             watchlist_playlist_name=wl_pname,
             watchlist_query_limit=wl_qlim,

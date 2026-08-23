@@ -1180,6 +1180,174 @@ def _episode_number_matches(row: Mapping[str, Any], season: Any, episode: Any) -
         return False
 
 
+def _valid_item_id(value: Any) -> str | None:
+    s = str(value or "").strip()
+    return s if s and not looks_like_bad_id(s) else None
+
+
+def _targeted_search(
+    adapter: Any,
+    feature: str,
+    selected_libs: set[str],
+    include_types: str,
+    term: str,
+) -> list[Mapping[str, Any]]:
+    if not str(term or "").strip():
+        return []
+    try:
+        rows = jf_get_scoped_items(
+            adapter.client,
+            adapter.cfg.user_id,
+            {
+                "recursive": True,
+                "includeItemTypes": include_types,
+                "SearchTerm": term,
+                "Fields": (
+                    "ProviderIds,ProductionYear,Type,IndexNumber,ParentIndexNumber,"
+                    "SeriesId,ParentId,CollectionFolderId,AncestorIds,LibraryId,Name"
+                ),
+                "Limit": 50,
+                "EnableUserData": False,
+            },
+            adapter.cfg,
+            feature,
+        )
+        return jf_filter_library_candidates(rows, selected_libs, trust_query_scope=True)
+    except Exception:
+        return []
+
+
+def _row_matches_pair(row: Mapping[str, Any], pairs: Iterable[str]) -> bool:
+    row_ids = _ids_from_provider_ids(row.get("ProviderIds"))
+    if not row_ids:
+        return False
+    for pair in pairs or []:
+        namespace, _, value = str(pair or "").partition(".")
+        namespace = namespace.strip().lower()
+        value = value.strip().lower()
+        have = str(row_ids.get(namespace) or "").strip().lower()
+        if not namespace or not value or not have:
+            continue
+        if have == value:
+            return True
+        if have.isdigit() and value.isdigit() and int(have) == int(value):
+            return True
+    return False
+
+
+def _targeted_year_ok(row: Mapping[str, Any], year: Any, *, missing_ok: bool) -> bool:
+    if year is None:
+        return True
+    row_year = row.get("ProductionYear")
+    if row_year is None:
+        return missing_ok
+    try:
+        return abs(int(row_year) - int(year)) <= 1
+    except (TypeError, ValueError):
+        return False
+
+
+def _pick_targeted_match(
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    jf_type: str,
+    title: str,
+    year: Any,
+    pairs: Iterable[str],
+    strict: bool,
+) -> Mapping[str, Any] | None:
+    pair_list = list(pairs or [])
+    cands = [
+        row for row in rows
+        if (row.get("Type") or "") == jf_type
+        and (row.get("Name") or "").strip().lower() == title.strip().lower()
+        and _valid_item_id(row.get("Id"))
+    ]
+    pair_cands = [
+        row for row in cands
+        if _row_matches_pair(row, pair_list) and _targeted_year_ok(row, year, missing_ok=True)
+    ]
+    if len(pair_cands) == 1:
+        return pair_cands[0]
+    if strict or pair_list:
+        return None
+    plain = [row for row in cands if _targeted_year_ok(row, year, missing_ok=False)]
+    return plain[0] if len(plain) == 1 else None
+
+
+def _targeted_lookup_item_id(
+    adapter: Any,
+    it: Mapping[str, Any],
+    *,
+    feature: str,
+    pairs: list[str],
+    episode_pairs: list[str],
+    series_pairs: list[str],
+    selected_libs: set[str],
+) -> str | None:
+    enabled = getattr(getattr(adapter, "cfg", None), "targeted_lookup", True)
+    if str(enabled).strip().lower() in ("0", "false", "no", "off"):
+        return None
+
+    item_type = _lookup_type(it)
+    title = (it.get("title") or "").strip()
+    year = it.get("year")
+    season = it.get("season")
+    episode = it.get("episode")
+    series_title = (it.get("series_title") or "").strip()
+    strict = bool(getattr(getattr(adapter, "cfg", None), "strict_id_matching", False))
+
+    if item_type in ("movie", "show", "series") and title:
+        jf_type = "Movie" if item_type == "movie" else "Series"
+        row = _pick_targeted_match(
+            _targeted_search(adapter, feature, selected_libs, jf_type, title),
+            jf_type=jf_type,
+            title=title,
+            year=year,
+            pairs=pairs,
+            strict=strict,
+        )
+        iid = _valid_item_id(row.get("Id")) if row else None
+        if iid:
+            kind = "movie" if jf_type == "Movie" else "series"
+            _dbg("resolve_hit", kind=kind, method="targeted_search", title=title, year=year, item_id=iid)
+            return iid
+        return None
+
+    if item_type == "episode" and series_title and season is not None and episode is not None:
+        series_row = _pick_targeted_match(
+            _targeted_search(adapter, feature, selected_libs, "Series", series_title),
+            jf_type="Series",
+            title=series_title,
+            year=None,
+            pairs=series_pairs,
+            strict=strict,
+        )
+        sid = _valid_item_id(series_row.get("Id")) if series_row else None
+        if not sid:
+            return None
+        body = get_series_episodes(adapter.client, adapter.cfg.user_id, sid, start=0, limit=10000)
+        if body is None:
+            return None
+        rows = [
+            row for row in (body.get("Items") or [])
+            if isinstance(row, Mapping)
+            and (row.get("Type") or "") == "Episode"
+            and _episode_number_matches(row, season, episode)
+        ]
+        pair_rows = [row for row in rows if _row_matches_pair(row, episode_pairs)]
+        chosen: Mapping[str, Any] | None = None
+        if len(pair_rows) == 1:
+            chosen = pair_rows[0]
+        elif len(rows) == 1:
+            chosen = rows[0]
+        iid = _valid_item_id(chosen.get("Id")) if chosen else None
+        if iid:
+            _dbg("resolve_hit", kind="episode", method="targeted_series_search", series_title=series_title, season=season, episode=episode, item_id=iid)
+            return iid
+    return None
+
+
 def _path_match_item_id(
     adapter: Any,
     it: Mapping[str, Any],
@@ -1307,6 +1475,18 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any], *, feature: str = "hist
         for p in series_pairs:
             if p not in pairs:
                 pairs.append(p)
+
+    targeted_iid = _targeted_lookup_item_id(
+        adapter,
+        it,
+        feature=feature,
+        pairs=pairs,
+        episode_pairs=episode_pairs,
+        series_pairs=series_pairs,
+        selected_libs=selected_libs,
+    )
+    if targeted_iid:
+        return targeted_iid
 
     # Movies
     if t == "movie":

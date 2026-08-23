@@ -28,6 +28,9 @@ def _deep_merge_provider_overrides(dst: dict[str, Any], src: Mapping[str, Any]) 
         if kk == "strict_id_matching":
             dst["strict_id_matching"] = coerce_bool(v)
             continue
+        if kk == "targeted_lookup":
+            dst["targeted_lookup"] = coerce_bool(v, True)
+            continue
         cur = dst.get(kk)
         if isinstance(cur, dict) and isinstance(v, Mapping):
             _deep_merge_provider_overrides(cur, v)
