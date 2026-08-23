@@ -118,6 +118,8 @@ except Exception as e:
 _PLAYLIST_CAPABILITIES: dict[str, Any] = {
     "read": True,
     "create": True,
+    "create_empty": False,
+    "create_endpoint_types": ["playlist"],
     "add": True,
     "remove": True,
     "reorder": True,

@@ -174,6 +174,7 @@ _FEATURES: dict[str, Any] = {
 _PLAYLIST_CAPABILITIES: dict[str, Any] = {
     "read": True,
     "create": True,
+    "create_endpoint_types": ["playlist", "collection"],
     "add": True,
     "remove": True,
     "reorder": False,
