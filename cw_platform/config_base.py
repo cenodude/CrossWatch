@@ -408,6 +408,27 @@ DEFAULT_CFG: dict[str, Any] = {
         "timeout": 20.0,
     },
 
+    "flicklist": {
+        "auth_method": "device_code",
+        "api_key": "",
+        "access_token": "",
+        "token": "",
+        "credential": "",
+        "client_id": "",                                # Optional override; CrossWatch FlickList app client_id is supplied internally
+        "expires_at": 0,
+        "stored_at": 0,
+        "username": "",
+        "user_id": "",
+        "display_name": "",
+        "avatar_url": "",
+        "timeout": 20.0,
+        "max_retries": 3,
+        "rate_limit": {
+            "get_per_sec": 0.2,
+            "post_per_sec": 0.2,
+        },
+    },
+
     "nuvio": {
         "base_url": "https://api.nuvio.tv",
         "access_token": "",
@@ -757,6 +778,7 @@ DEFAULT_CFG: dict[str, Any] = {
             "plex_simkl_ratings": False,                # Watch mode: forward Plex ratings to SIMKL
             "plex_trakt_ratings": False,                # Watch mode: forward Plex ratings to Trakt
             "plex_mdblist_ratings": False,              # Watch mode: forward Plex ratings to MDblist
+            "plex_flicklist_ratings": False,            # Watch mode: forward Plex ratings to FlickList
             "pause_debounce_seconds": 5,                # Ignore micro-pauses just after start
             "suppress_start_at": 99,                    # Kill near-end "start" flaps (credits)
             "filters": {
@@ -774,6 +796,7 @@ DEFAULT_CFG: dict[str, Any] = {
             "suppress_autoplay_seconds": 15,            # Plex autoplay when set on 10 sec (increase a few sec)
             "probe_session_progress": True,             # Call GET /status/sessions on your Plex server and match the item by ratingKey/sessionKey
             "plex_trakt_ratings": False,                # Watch mode: forward Plex ratings to Trakt
+            "plex_flicklist_ratings": False,            # Watch mode: forward Plex ratings to FlickList
             # Plex-only filters
             "filters_plex": {
                 "username_whitelist": [],               # Restrict accepted Account.title values (empty = allow all)
@@ -874,6 +897,7 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
         "publicmetadb": {"api_key"},
         "punchplay": {"access_token", "refresh_token", "_pending_device"},
         "bingebase": {"access_token", "webhook_url", "api_key", "_pending_device"},
+        "flicklist": {"api_key", "access_token", "token", "_pending_device"},
         "nuvio": {"access_token", "refresh_token", "_pending_tv_login", "_pending_tv_caller"},
         "stremio": {"auth_key", "authKey"},
         "floppy": {"api_token"},
@@ -994,6 +1018,7 @@ CONFIG_TOP_LEVEL_ORDER: tuple[str, ...] = (
     "publicmetadb",
     "punchplay",
     "bingebase",
+    "flicklist",
     "nuvio",
     "stremio",
     "floppy",

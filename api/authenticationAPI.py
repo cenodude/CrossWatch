@@ -2141,6 +2141,123 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             _safe_log(log_fn, "BINGEBASE", f"[BINGEBASE] ERROR disconnect type={type(e).__name__}")
             return {"ok": False, "error": "internal", "instance": inst}
 
+    @app.post("/api/flicklist/save", tags=["auth"])
+    def api_flicklist_save(payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            from providers.auth import _auth_FLICKLIST as flicklist_auth
+
+            raw = payload or {}
+            cfg = load_config()
+            block = ensure_instance_block(cfg, "flicklist", inst)
+            client_id = str(raw.get("client_id") or "").strip()
+            if client_id:
+                block["client_id"] = client_id
+            api_key = str(raw.get("api_key") or raw.get("key") or "").strip()
+            if not api_key:
+                save_config(cfg)
+                return {"ok": True, "instance": inst, "client_id_configured": bool(client_id or block.get("client_id"))}
+            res = flicklist_auth.save_api_key(cfg, instance_id=inst, api_key=api_key)
+            if isinstance(probe_cache, dict):
+                probe_cache["flicklist"] = (0.0, False)
+            return dict(res)
+        except Exception as e:
+            _safe_log(log_fn, "FLICKLIST", f"[FLICKLIST] ERROR save: {e}")
+            return {"ok": False, "error": "internal", "instance": inst}
+
+    @app.post("/api/flicklist/device/start", tags=["auth"])
+    def api_flicklist_device_start(payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            raw = payload or {}
+            cfg = load_config()
+            block = ensure_instance_block(cfg, "flicklist", inst)
+            client_id = str(raw.get("client_id") or "").strip()
+            if client_id:
+                block["client_id"] = client_id
+                save_config(cfg)
+            credential = str(raw.get("credential") or "session").strip().lower()
+            if credential not in {"key", "session"}:
+                credential = "session"
+            res = _provider_auth().start_device_code("flicklist", cfg, instance_id=inst, credential=credential)
+            if isinstance(probe_cache, dict):
+                probe_cache["flicklist"] = (0.0, False)
+            _safe_log(log_fn, "FLICKLIST", f"[FLICKLIST] device start instance={inst} ok={bool(res.get('ok'))}")
+            return res
+        except Exception as e:
+            _safe_log(log_fn, "FLICKLIST", f"[FLICKLIST] ERROR device start: {e}")
+            return {"ok": False, "error": "internal", "instance": inst}
+
+    @app.post("/api/flicklist/device/poll", tags=["auth"])
+    def api_flicklist_device_poll(payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            res = _provider_auth().poll_device_code(
+                "flicklist",
+                cfg,
+                instance_id=inst,
+                device_code=str((payload or {}).get("device_code") or "").strip() or None,
+            )
+            if res.get("ok") and isinstance(probe_cache, dict):
+                probe_cache["flicklist"] = (0.0, False)
+            return res
+        except Exception as e:
+            _safe_log(log_fn, "FLICKLIST", f"[FLICKLIST] ERROR device poll: {e}")
+            return {"ok": False, "status": "internal", "instance": inst}
+
+    @app.post("/api/flicklist/device/cancel", tags=["auth"])
+    def api_flicklist_device_cancel(instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            from providers.auth import _auth_FLICKLIST as flicklist_auth
+
+            return flicklist_auth.cancel_device_code(load_config(), instance_id=inst)
+        except Exception as e:
+            _safe_log(log_fn, "FLICKLIST", f"[FLICKLIST] ERROR device cancel: {e}")
+            return {"ok": False, "error": "internal", "instance": inst}
+
+    @app.post("/api/flicklist/refresh", tags=["auth"])
+    def api_flicklist_refresh(instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            res = _provider_auth().refresh_token("flicklist", cfg, instance_id=inst)
+            if res.get("ok") and isinstance(probe_cache, dict):
+                probe_cache["flicklist"] = (0.0, False)
+            return res
+        except Exception as e:
+            _safe_log(log_fn, "FLICKLIST", f"[FLICKLIST] ERROR refresh: {e}")
+            return {"ok": False, "status": "internal", "instance": inst}
+
+    @app.get("/api/flicklist/status", tags=["auth"])
+    def api_flicklist_status(instance: str | None = Query(None)) -> dict[str, Any]:
+        cfg = load_config()
+        inst = normalize_instance_id(instance)
+        p = ensure_instance_block(cfg, "flicklist", inst)
+        out = _provider_auth().status_for_block("flicklist", p)
+        out["instance"] = inst
+        return out
+
+    @app.post("/api/flicklist/disconnect", tags=["auth"])
+    def api_flicklist_disconnect(instance: str | None = Query(None)) -> Any:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            conflict = usage_conflict_response(cfg, "flicklist", inst)
+            if conflict is not None:
+                return conflict
+            from providers.auth import _auth_FLICKLIST as flicklist_auth
+
+            flicklist_auth.PROVIDER.disconnect(cfg, instance_id=inst)
+            _safe_log(log_fn, "FLICKLIST", f"[FLICKLIST] disconnected instance={inst}")
+            if isinstance(probe_cache, dict):
+                probe_cache["flicklist"] = (0.0, False)
+            return {"ok": True, "instance": inst}
+        except Exception as e:
+            _safe_log(log_fn, "FLICKLIST", f"[FLICKLIST] ERROR disconnect: {e}")
+            return {"ok": False, "error": "internal", "instance": inst}
+
     @app.post("/api/publicmetadb/save", tags=["auth"])
     def api_publicmetadb_save(payload: dict[str, Any] = Body(...), instance: str | None = Query(None)) -> dict[str, Any]:
         try:
