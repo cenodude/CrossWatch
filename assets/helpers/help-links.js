@@ -16,6 +16,7 @@
     anilist: "crosswatch/settings/connections/trackers/anilist",
     punchplay: "crosswatch/settings/connections/trackers/punchplay",
     bingebase: "crosswatch/settings/connections/trackers/bingebase",
+    flicklist: "crosswatch/settings/connections/trackers/flicklist",
     floppy: "crosswatch/settings/connections/trackers/floppy",
     scrob: "crosswatch/settings/connections/trackers/scrob",
     crosswatch: "crosswatch/settings/connections/trackers/crosswatch",

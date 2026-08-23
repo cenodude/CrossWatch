@@ -34,6 +34,7 @@ _PROVIDER_LABELS = {
     "floppy": "Floppy",
     "punchplay": "PunchPlay",
     "bingebase": "BingeBase",
+    "flicklist": "FlickList",
     "scrob": "Scrob",
 }
 

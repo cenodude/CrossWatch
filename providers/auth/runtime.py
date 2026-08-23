@@ -35,6 +35,10 @@ def _backend(provider: Any) -> Any:
         from providers.auth import _auth_BINGEBASE as bingebase_auth
 
         return bingebase_auth
+    if name in {"flicklist", "flick_list", "flick-list"}:
+        from providers.auth import _auth_FLICKLIST as flicklist_auth
+
+        return flicklist_auth
     if name == "scrob":
         from providers.auth import _auth_SCROB as scrob_auth
 

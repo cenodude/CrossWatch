@@ -47,7 +47,7 @@
 
   const AUTH_GROUPS = Object.freeze([
     { id: "sec-auth-media", title: "Media servers", keys: ["PLEX", "JELLYFIN", "EMBY"] },
-    { id: "sec-auth-trackers", title: "Trackers", keys: ["CROSSWATCH", "TRAKT", "SIMKL", "TMDB", "MDBLIST", "PUBLICMETADB", "ANILIST", "PUNCHPLAY", "BINGEBASE", "FLOPPY", "SCROB"] },
+    { id: "sec-auth-trackers", title: "Trackers", keys: ["CROSSWATCH", "TRAKT", "SIMKL", "TMDB", "MDBLIST", "PUBLICMETADB", "ANILIST", "PUNCHPLAY", "BINGEBASE", "FLICKLIST", "FLOPPY", "SCROB"] },
     { id: "sec-auth-clients", title: "Media clients", keys: ["NUVIO", "KODI", "STREMIO"] },
     { id: "sec-auth-others", title: "Others", keys: ["TAUTULLI"] },
   ]);
@@ -227,6 +227,7 @@
     if (p === "mdblist") return hasConfiguredValue(b.api_key) || hasConfiguredValue(b.access_token);
     if (p === "punchplay") return hasConfiguredValue(b.access_token);
     if (p === "bingebase") return hasConfiguredValue(b.access_token) || hasConfiguredValue(b.webhook_url);
+    if (p === "flicklist") return hasConfiguredValue(b.api_key) || hasConfiguredValue(b.access_token) || hasConfiguredValue(b.token);
     if (p === "floppy") return hasConfiguredValue(b.server_url || b.server) && hasConfiguredValue(b.api_token || b.token);
     if (p === "scrob") return hasConfiguredValue(b.server_url) && hasConfiguredValue(b.api_key) && hasConfiguredValue(b.username) && hasConfiguredValue(b.password);
     if (p === "nuvio") return (hasConfiguredValue(b.access_token) || hasConfiguredValue(b.refresh_token)) && hasConfiguredValue(b.profile_id);
@@ -654,6 +655,16 @@
       order: ["#bingebase_realtime_panel", ".bb-actions", "#bingebase_device_panel"],
       code: ["#bingebase_device_panel"],
       actions: [{ row: ".bb-actions", status: "#bingebase_msg", buttons: "#bingebase_device_start, #bingebase_device_cancel, #bingebase_device_restart" }]
+    },
+    FLICKLIST: {
+      provider: "flicklist", logo: "FLICKLIST", help: window.CW.HelpLinks.url("flicklist"), deleteSelector: "#flicklist_disconnect_device, #flicklist_disconnect_api",
+      tabs: { auth: ["lock", "Authentication", "Connect with device code or API key"] },
+      copy: { auth: ["FlickList Authentication", "Connect FlickList with Device Code using CrossWatch's built-in public app id. API key remains available as a fallback."] },
+      journey: ["Connect to FlickList", "Approve CrossWatch at flicklist.tv/link with the built-in public client id. Do not enter the client secret.", "8,80,184", "88,208,248", "FLICKLIST"],
+      steps: [["1", "Choose method", "Use Device Code or API key"], ["2", "Approve access", "Authorize the device code or save the key"], ["3", "Validate account", "CrossWatch confirms FlickList access"]],
+      order: [".fl-method-row", "#flicklist_api_panel", "#flicklist_device_panel", ".cw-connection-method-action-row", ".inline"],
+      code: ["#flicklist_qc_state"],
+      actions: [{ row: ".fl-method-row", status: "#flicklist_msg", buttons: "#flicklist_device_start, #flicklist_device_cancel, #flicklist_save", extract: ".fl-actions", order: "6" }]
     },
     PUBLICMETADB: {
       provider: "publicmetadb", logo: "PUBLICMETADB", help: window.CW.HelpLinks.url("publicmetadb"), deleteSelector: "#publicmetadb_disconnect",

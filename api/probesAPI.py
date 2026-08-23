@@ -67,6 +67,7 @@ PROVIDERS: tuple[str, ...] = (
     "floppy",
     "punchplay",
     "bingebase",
+    "flicklist",
     "scrob",
 )
 
@@ -139,6 +140,7 @@ PROBE_CFG_KEY: dict[str, str] = {
     "FLOPPY": "floppy",
     "PUNCHPLAY": "punchplay",
     "BINGEBASE": "bingebase",
+    "FLICKLIST": "flicklist",
     "SCROB": "scrob",
     "CROSSWATCH": "crosswatch",
     "CW": "crosswatch",
@@ -289,6 +291,13 @@ def _probe_key(provider_id: str, cfg: Mapping[str, Any]) -> str:
         wh = str((bb.get("webhook_url") or "")).strip()
         api_key = str((bb.get("api_key") or "")).strip()
         return f"bingebase|tok:{_secret_cache_tag(tok)}|wh:{_secret_cache_tag(wh)}|api:{_secret_cache_tag(api_key)}" if (tok or wh or api_key) else "bingebase|unconfigured"
+
+    if p == "flicklist":
+        fl = cfg.get("flicklist") or {}
+        tok = str((fl.get("api_key") or fl.get("access_token") or fl.get("token") or "")).strip()
+        exp = str(fl.get("expires_at") or "0")
+        method = str(fl.get("auth_method") or "").strip()
+        return f"flicklist|tok:{_secret_cache_tag(tok)}|exp:{exp}|method:{method}" if tok else "flicklist|unconfigured"
 
     if p == "scrob":
         sc = cfg.get("scrob") or {}
@@ -1388,6 +1397,59 @@ def _probe_bingebase_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -
     return ok, rsn
 
 
+def _probe_flicklist_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
+    key = _probe_key("flicklist", cfg)
+    bust_ts = _consume_bust("flicklist")
+    now = time.time()
+    cached = PROBE_DETAIL_CACHE.get(key)
+    if cached and (now - cached[0]) < max_age_sec and (not bust_ts or cached[0] >= bust_ts):
+        return cached[1], cached[2]
+
+    from providers.auth import _auth_FLICKLIST as flicklist
+
+    p: Mapping[str, Any] = (cfg.get("flicklist") or {}) if isinstance(cfg.get("flicklist"), Mapping) else {}
+    if not flicklist.is_configured(p):
+        rsn = "FlickList: missing authentication"
+        with _CACHE_LOCK:
+            PROBE_DETAIL_CACHE[key] = (now, False, rsn)
+        return False, rsn
+
+    try:
+        sess = requests.Session()
+        hint = cfg.get("_cw_probe") if isinstance(cfg.get("_cw_probe"), Mapping) else {}
+        inst = normalize_instance_id((hint or {}).get("instance"))
+        r = _provider_auth().request_with_auth(
+            "flicklist",
+            sess,
+            "GET",
+            flicklist.ME_URL,
+            cfg=cfg,
+            instance_id=inst,
+            headers=UA,
+            timeout=max(int(HTTP_TIMEOUT), 6),
+            max_retries=1,
+        )
+        code = int(r.status_code)
+        body = r.text or ""
+    except Exception as e:
+        code = 0
+        body = ""
+        _set_http_error(str(e))
+
+    if code != 200:
+        rsn = "FlickList: reconnect required" if code in (401, 403) else _reason_http(code, "FlickList")
+        with _CACHE_LOCK:
+            PROBE_DETAIL_CACHE[key] = (now, False, rsn)
+        return False, rsn
+
+    j = _json_loads(body) or {}
+    ok = bool(isinstance(j, dict) and (j.get("id") or (isinstance(j.get("user"), Mapping) and j.get("user", {}).get("id"))))
+    rsn = "" if ok else "FlickList: invalid response"
+    with _CACHE_LOCK:
+        PROBE_DETAIL_CACHE[key] = (now, ok, rsn)
+    return ok, rsn
+
+
 def _probe_kodi_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
     key = _probe_key("kodi", cfg)
     bust_ts = _consume_bust("kodi")
@@ -1705,6 +1767,62 @@ def bingebase_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) ->
     return out
 
 
+def flicklist_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict[str, Any]:
+    key = _probe_key("flicklist", cfg)
+    bust_ts = _consume_bust("flicklist")
+    now = time.time()
+    cached = _USERINFO_CACHE.get(key)
+    if cached and (now - cached[0]) < max_age_sec and (not bust_ts or cached[0] >= bust_ts) and isinstance(cached[1], dict):
+        return cached[1]
+
+    from providers.auth import _auth_FLICKLIST as flicklist
+
+    fl = (cfg.get("flicklist") or cfg.get("FLICKLIST") or {}) or {}
+    if not isinstance(fl, Mapping) or not flicklist.is_configured(fl):
+        with _CACHE_LOCK:
+            _USERINFO_CACHE[key] = (now, {})
+        return {}
+
+    out: dict[str, Any] = {}
+    for source_key, out_key in (("username", "username"), ("user_id", "user_id"), ("display_name", "display_name"), ("avatar_url", "avatar")):
+        value = str(fl.get(source_key) or "").strip()
+        if value:
+            out[out_key] = value
+    out["api_key_configured"] = bool(str(fl.get("api_key") or "").strip())
+    out["session_configured"] = bool(str(fl.get("access_token") or fl.get("token") or "").strip())
+
+    if not out.get("user_id"):
+        try:
+            sess = requests.Session()
+            hint = cfg.get("_cw_probe") if isinstance(cfg.get("_cw_probe"), Mapping) else {}
+            inst = normalize_instance_id((hint or {}).get("instance"))
+            r = _provider_auth().request_with_auth(
+                "flicklist",
+                sess,
+                "GET",
+                flicklist.ME_URL,
+                cfg=cfg,
+                instance_id=inst,
+                headers=UA,
+                timeout=6,
+                max_retries=1,
+            )
+            if int(r.status_code) == 200:
+                j = _json_loads(r.text or "") or {}
+                user = j.get("user") if isinstance(j.get("user"), Mapping) else j
+                if isinstance(user, Mapping):
+                    out["username"] = user.get("username") or out.get("username")
+                    out["user_id"] = user.get("id") or out.get("user_id")
+                    out["display_name"] = user.get("display_name") or out.get("display_name")
+                    out["avatar"] = user.get("avatar_url") or out.get("avatar")
+        except Exception:
+            pass
+
+    with _CACHE_LOCK:
+        _USERINFO_CACHE[key] = (now, dict(out))
+    return out
+
+
 def simkl_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict[str, Any]:
     key = _probe_key("simkl", cfg)
     bust_ts = _consume_bust("simkl")
@@ -1983,6 +2101,9 @@ def _prov_configured(cfg: dict[str, Any], name: str, instance_id: Any = "default
     if ck == "bingebase":
         return bool(str(blk.get("access_token") or "").strip() or str(blk.get("webhook_url") or "").strip())
 
+    if ck == "flicklist":
+        return _provider_auth().is_configured("flicklist", blk)
+
     if ck == "scrob":
         return bool(
             str(blk.get("server_url") or "").strip()
@@ -2070,6 +2191,7 @@ DETAIL_PROBES: dict[str, Callable[..., tuple[bool, str]]] = {
     "FLOPPY": _probe_floppy_detail,
     "PUNCHPLAY": _probe_punchplay_detail,
     "BINGEBASE": _probe_bingebase_detail,
+    "FLICKLIST": _probe_flicklist_detail,
     "SCROB": _probe_scrob_detail,
 }
 USERINFO_FNS: dict[str, Callable[..., dict[str, Any]]] = {
@@ -2081,6 +2203,7 @@ USERINFO_FNS: dict[str, Callable[..., dict[str, Any]]] = {
     "MDBLIST": mdblist_user_info,
     "PUNCHPLAY": punchplay_user_info,
     "BINGEBASE": bingebase_user_info,
+    "FLICKLIST": flicklist_user_info,
     "SCROB": scrob_user_info,
 }
 
@@ -2373,6 +2496,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
             floppy_ok, floppy_reason, cfg_floppy = _provider_tuple("FLOPPY")
             punchplay_ok, punchplay_reason, cfg_punchplay = _provider_tuple("PUNCHPLAY")
             bingebase_ok, bingebase_reason, cfg_bingebase = _provider_tuple("BINGEBASE")
+            flicklist_ok, flicklist_reason, cfg_flicklist = _provider_tuple("FLICKLIST")
             scrob_ok, scrob_reason, cfg_scrob = _provider_tuple("SCROB")
             taut_ok, taut_reason, cfg_taut = _provider_tuple("TAUTULLI")
             anilist_ok, anilist_reason, cfg_anilist = _provider_tuple("ANILIST")
@@ -2394,6 +2518,8 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 userinfo_jobs["PUNCHPLAY"] = (punchplay_user_info, cfg_punchplay)
             if bingebase_ok:
                 userinfo_jobs["BINGEBASE"] = (bingebase_user_info, cfg_bingebase)
+            if flicklist_ok:
+                userinfo_jobs["FLICKLIST"] = (flicklist_user_info, cfg_flicklist)
             if scrob_ok:
                 userinfo_jobs["SCROB"] = (scrob_user_info, cfg_scrob)
 
@@ -2418,6 +2544,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
             info_emby = userinfo.get("EMBY", {})
             info_mdbl = userinfo.get("MDBLIST", {})
             info_bingebase = userinfo.get("BINGEBASE", {})
+            info_flicklist = userinfo.get("FLICKLIST", {})
 
             trakt_block: dict[str, Any] = {"connected": trakt_ok}
             if not trakt_ok:
@@ -2713,6 +2840,28 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                     "rep_instance": inst_sum.get("rep"),
                 }
 
+            if "FLICKLIST" in active_providers:
+                inst_map, inst_sum = _instances_payload("FLICKLIST")
+                providers_out["FLICKLIST"] = {
+                    "connected": flicklist_ok,
+                    **({} if flicklist_ok else {"reason": flicklist_reason}),
+                    **(
+                        {}
+                        if not info_flicklist
+                        else {
+                            **({"username": info_flicklist.get("username")} if info_flicklist.get("username") else {}),
+                            **({"user_id": info_flicklist.get("user_id")} if info_flicklist.get("user_id") else {}),
+                            **({"display_name": info_flicklist.get("display_name")} if info_flicklist.get("display_name") else {}),
+                            "api_key_configured": bool(info_flicklist.get("api_key_configured")),
+                            "session_configured": bool(info_flicklist.get("session_configured")),
+                        }
+                    ),
+                    "experimental": True,
+                    "instances": inst_map,
+                    "instances_summary": inst_sum,
+                    "rep_instance": inst_sum.get("rep"),
+                }
+
             def _scope_for(prov: str) -> str:
                 ss = prov_sources.get(prov) or set()
                 if "pair" in ss:
@@ -2767,6 +2916,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 "floppy_connected": floppy_ok,
                 "punchplay_connected": punchplay_ok,
                 "bingebase_connected": bingebase_ok,
+                "flicklist_connected": flicklist_ok,
                 "scrob_connected": scrob_ok,
                 "tautulli_connected": taut_ok,
                 "debug": debug,
