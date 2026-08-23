@@ -69,6 +69,10 @@ _PLAYLIST_METHODS = (
 )
 
 
+class PlaylistUserError(RuntimeError):
+    pass
+
+
 def _clean_str(v: Any) -> str:
     return str(v).strip() if v is not None else ""
 

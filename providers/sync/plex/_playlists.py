@@ -12,13 +12,22 @@ from cw_platform.playlists import (
     PlaylistItem,
     PlaylistResource,
     PlaylistSnapshot,
+    PlaylistUserError,
 )
 
 from ._common import (
+    extract_show_ids,
     item_guid_candidates,
     key_of as plex_key_of,
     normalize as plex_normalize,
-    resolve_obj_by_guids,
+    object_type,
+    plex_feature_library_ids,
+    section_allowed,
+    server_find_rating_key_by_guid,
+)
+from ._history import (
+    _build_guid_index as _hist_build_guid_index,
+    _pms_find_in_guid_index as _hist_find_in_guid_index,
 )
 from . import _watchlist as feat_watchlist
 from .._log import log as cw_log
@@ -29,6 +38,20 @@ _VIDEO_TYPES = {"movie", "episode"}
 _COLLECTION_TYPES = {"movie", "show"}
 WATCHLIST_ID = "__watchlist__"
 COLLECTION_PREFIX = "collection:"
+_COLLECTION_MEDIA_TYPES = {"collection", "boxset"}
+_SHOW_LIKE_TYPES = frozenset({"show", "season", "episode", "anime"})
+
+HINT_NO_IDS = "no_ids"
+HINT_NOT_IN_LIBRARY = "not_in_library"
+HINT_TYPE_UNSUPPORTED = "unsupported_type"
+HINT_SECTION_EXCLUDED = "section_excluded"
+
+_HINT_RANK = {
+    HINT_NO_IDS: 0,
+    HINT_NOT_IN_LIBRARY: 1,
+    HINT_SECTION_EXCLUDED: 2,
+    HINT_TYPE_UNSUPPORTED: 3,
+}
 
 
 def _info(event: str, **fields: Any) -> None:
@@ -48,6 +71,14 @@ class SmartPlaylistError(PlaylistError):
 
 
 class PlaylistNotFound(PlaylistError):
+    pass
+
+
+class PlaylistItemsRequired(PlaylistError, PlaylistUserError):
+    pass
+
+
+class PlaylistUnsupported(PlaylistError, PlaylistUserError):
     pass
 
 
@@ -331,14 +362,88 @@ def get_snapshot(adapter: Any, playlist_id: Any) -> PlaylistSnapshot:
     return PlaylistSnapshot(resource=resource, items=items, checkpoint=None)
 
 
-def _resolve_object(srv: Any, item: Mapping[str, Any], *, accept: set[str] | None = None, allow: set[str] | None = None) -> Any | None:
-    guids = item_guid_candidates(item.get("ids") or {}, item.get("show_ids") or {}, item)
-    if not guids:
+def _library_type_for(item: Mapping[str, Any]) -> str:
+    return "show" if str(item.get("type") or "").strip().lower() in _SHOW_LIKE_TYPES else "movie"
+
+
+def _fetch(srv: Any, rating_key: Any) -> Any | None:
+    try:
+        return srv.fetchItem(int(rating_key))
+    except Exception:
         return None
-    return resolve_obj_by_guids(srv, guids, set(allow or set()), set(accept or _VIDEO_TYPES))
 
 
-def _resolve_items(srv: Any, items: Sequence[Mapping[str, Any]], *, accept: set[str] | None = None, allow: set[str] | None = None, missing_hint: str = "not_found") -> tuple[list[Any], list[str], list[dict[str, Any]]]:
+def _resolve_object(
+    adapter: Any,
+    item: Mapping[str, Any],
+    *,
+    accept: set[str],
+    allow: set[str],
+) -> tuple[Any | None, str, str]:
+    srv = getattr(getattr(adapter, "client", None), "server", None)
+    if srv is None:
+        return None, "", HINT_NOT_IN_LIBRARY
+
+    raw_ids = item.get("ids")
+    ids = dict(raw_ids) if isinstance(raw_ids, Mapping) else {}
+    guids = item_guid_candidates(ids, extract_show_ids(item) or {}, item)
+
+    candidates: list[Any] = []
+    plex_rk = ids.get("plex")
+    if plex_rk:
+        obj = _fetch(srv, plex_rk)
+        if obj is not None:
+            candidates.append(obj)
+
+    rk = None
+    if guids:
+        try:
+            rk = server_find_rating_key_by_guid(srv, guids)
+        except Exception:
+            rk = None
+        if rk:
+            obj = _fetch(srv, rk)
+            if obj is not None:
+                candidates.append(obj)
+        rk_idx = None
+        try:
+            _hist_build_guid_index(adapter, allow)
+            rk_idx = _hist_find_in_guid_index(_library_type_for(item), guids)
+        except Exception:
+            rk_idx = None
+        if rk_idx and str(rk_idx) != str(rk or ""):
+            obj = _fetch(srv, rk_idx)
+            if obj is not None:
+                candidates.append(obj)
+
+    if not candidates:
+        return None, "", (HINT_NO_IDS if not (guids or plex_rk) else HINT_NOT_IN_LIBRARY)
+
+    miss = ""
+    for obj in candidates:
+        otype = object_type(obj)
+        if not section_allowed(obj, allow):
+            if _HINT_RANK[HINT_SECTION_EXCLUDED] > _HINT_RANK.get(miss, -1):
+                miss = HINT_SECTION_EXCLUDED
+            continue
+        if accept and otype not in accept:
+            if _HINT_RANK[HINT_TYPE_UNSUPPORTED] > _HINT_RANK.get(miss, -1):
+                miss = HINT_TYPE_UNSUPPORTED
+            continue
+        return obj, otype, ""
+    return None, object_type(candidates[0]), (miss or HINT_NOT_IN_LIBRARY)
+
+
+def _resolve_items(
+    adapter: Any,
+    items: Sequence[Mapping[str, Any]],
+    *,
+    accept: set[str] | None = None,
+    allow: set[str] | None = None,
+) -> tuple[list[Any], list[str], list[dict[str, Any]]]:
+    accepted = set(accept or _VIDEO_TYPES)
+    allowed = set(allow) if allow is not None else plex_feature_library_ids(adapter, _FEATURE)
+    allowed = {str(x).strip() for x in (allowed or set()) if str(x).strip()}
     resolved: list[Any] = []
     confirmed: list[str] = []
     unresolved: list[dict[str, Any]] = []
@@ -351,13 +456,60 @@ def _resolve_items(srv: Any, items: Sequence[Mapping[str, Any]], *, accept: set[
         if key in seen:
             continue
         seen.add(key)
-        obj = _resolve_object(srv, m, accept=accept, allow=allow)
+        obj, matched_type, hint = _resolve_object(adapter, m, accept=accepted, allow=allowed)
         if obj is None:
-            unresolved.append({"item": m, "hint": missing_hint})
+            miss: dict[str, Any] = {"item": m, "hint": hint or HINT_NOT_IN_LIBRARY}
+            if matched_type:
+                miss["matched_type"] = matched_type
+            unresolved.append(miss)
             continue
         resolved.append(obj)
         confirmed.append(key)
     return resolved, confirmed, unresolved
+
+
+def _hint_counts(unresolved: Sequence[Mapping[str, Any]]) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for u in unresolved or []:
+        hint = str((u or {}).get("hint") or "unknown")
+        out[hint] = out.get(hint, 0) + 1
+    return out
+
+
+def _unresolved_sample(unresolved: Sequence[Mapping[str, Any]], limit: int = 3) -> list[str]:
+    out: list[str] = []
+    for u in unresolved or []:
+        item = u.get("item") if isinstance(u, Mapping) else None
+        if not isinstance(item, Mapping):
+            continue
+        title = str(item.get("series_title") or item.get("title") or "").strip()
+        if title:
+            out.append(title)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _write_done(op: str, list_id: Any, applied: int, unresolved: Sequence[Mapping[str, Any]]) -> None:
+    fields: dict[str, Any] = {"op": op, "list_id": str(list_id), "applied": int(applied), "unresolved": len(unresolved)}
+    if unresolved:
+        fields["hints"] = _hint_counts(unresolved)
+        sample = _unresolved_sample(unresolved)
+        if sample:
+            fields["sample"] = sample
+    _info("write_done", **fields)
+
+
+def _resolve_warnings(unresolved: Sequence[Mapping[str, Any]], *, target: str) -> list[str]:
+    hints = _hint_counts(unresolved)
+    out: list[str] = []
+    n = hints.get(HINT_TYPE_UNSUPPORTED) or 0
+    if n:
+        out.append(f"{n} item(s) matched in plex but are the wrong type for this {target}")
+    n = hints.get(HINT_NOT_IN_LIBRARY) or 0
+    if n:
+        out.append(f"{n} item(s) are not in this plex library")
+    return out
 
 
 def create(
@@ -371,6 +523,8 @@ def create(
     nm = str(name or "").strip()
     if not nm:
         raise ValueError("playlist name required")
+    if str(media_type or "").strip().lower() in _COLLECTION_MEDIA_TYPES:
+        raise PlaylistUnsupported("plex collections must be created in plex, they cannot be created from crosswatch")
     if dry_run:
         return PlaylistResource(
             provider=_PROVIDER,
@@ -382,16 +536,20 @@ def create(
             can_reorder=True,
             media_types=("movie", "episode"),
         )
+    lst = list(items or [])
+    if not lst:
+        raise PlaylistItemsRequired("plex cannot create an empty playlist")
     srv = _server(adapter)
-    resolved, _confirmed, _unresolved = _resolve_items(srv, list(items or []))
+    resolved, _confirmed, unresolved = _resolve_items(adapter, lst)
     if not resolved:
-        raise PlaylistError("plex requires at least one resolvable item to create a playlist")
+        _warn("create_unresolved", name=nm, count=len(lst), hints=_hint_counts(unresolved))
+        raise PlaylistItemsRequired("none of the source items exist in this plex library")
     try:
         pl = srv.createPlaylist(nm, items=resolved)
     except Exception as e:
         _warn("create_failed", name=nm, error=str(e))
         raise PlaylistError(f"plex create playlist failed: {e}") from e
-    _info("create_done", name=nm)
+    _info("create_done", name=nm, seeded=len(resolved))
     return _resource_from_playlist(adapter, pl)
 
 
@@ -443,11 +601,10 @@ def add(adapter: Any, playlist_id: Any, items: Sequence[Mapping[str, Any]]) -> d
         section_id = str(resource.extra.get("section_id") or "").strip()
         allow = {section_id} if section_id else None
         resolved, confirmed, unresolved = _resolve_items(
-            srv,
+            adapter,
             list(items or []),
             accept={subtype},
             allow=allow,
-            missing_hint="not_in_library",
         )
         added = 0
         if resolved:
@@ -460,13 +617,19 @@ def add(adapter: Any, playlist_id: Any, items: Sequence[Mapping[str, Any]]) -> d
                     unresolved.append({"item": plex_normalize(obj), "hint": "add_failed"})
                 confirmed = []
                 added = 0
-        _info("write_done", op="add", list_id=resource.id, applied=added, unresolved=len(unresolved))
-        return {"ok": True, "count": added, "unresolved": unresolved, "confirmed_keys": confirmed}
+        _write_done("add", resource.id, added, unresolved)
+        return {
+            "ok": True,
+            "count": added,
+            "unresolved": unresolved,
+            "confirmed_keys": confirmed,
+            "warnings": _resolve_warnings(unresolved, target="collection"),
+        }
 
     pl = _find_playlist(srv, playlist_id)
     _guard_writable(pl)
 
-    resolved, confirmed, unresolved = _resolve_items(srv, list(items or []))
+    resolved, confirmed, unresolved = _resolve_items(adapter, list(items or []))
     added = 0
     if resolved:
         try:
@@ -478,8 +641,14 @@ def add(adapter: Any, playlist_id: Any, items: Sequence[Mapping[str, Any]]) -> d
                 unresolved.append({"item": plex_normalize(obj), "hint": "add_failed"})
             confirmed = []
             added = 0
-    _info("write_done", op="add", list_id=str(playlist_id), applied=added, unresolved=len(unresolved))
-    return {"ok": True, "count": added, "unresolved": unresolved, "confirmed_keys": confirmed}
+    _write_done("add", playlist_id, added, unresolved)
+    return {
+        "ok": True,
+        "count": added,
+        "unresolved": unresolved,
+        "confirmed_keys": confirmed,
+        "warnings": _resolve_warnings(unresolved, target="playlist"),
+    }
 
 
 def remove(adapter: Any, playlist_id: Any, items: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
@@ -527,7 +696,7 @@ def remove(adapter: Any, playlist_id: Any, items: Sequence[Mapping[str, Any]]) -
             except Exception as e:
                 _warn("collection_remove_item_failed", list_id=resource.id, error=str(e))
                 unresolved.append({"item": {"key": key}, "hint": "remove_failed"})
-        _info("write_done", op="remove", list_id=resource.id, applied=removed, unresolved=len(unresolved))
+        _write_done("remove", resource.id, removed, unresolved)
         return {"ok": True, "count": removed, "unresolved": unresolved, "confirmed_keys": confirmed}
 
     pl = _find_playlist(srv, playlist_id)
@@ -568,7 +737,7 @@ def remove(adapter: Any, playlist_id: Any, items: Sequence[Mapping[str, Any]]) -
             _warn("remove_item_failed", list_id=str(playlist_id), error=str(e))
             unresolved.append({"item": {"key": key}, "hint": "remove_failed"})
 
-    _info("write_done", op="remove", list_id=str(playlist_id), applied=removed, unresolved=len(unresolved))
+    _write_done("remove", playlist_id, removed, unresolved)
     return {"ok": True, "count": removed, "unresolved": unresolved, "confirmed_keys": confirmed}
 
 

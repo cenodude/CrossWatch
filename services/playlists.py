@@ -10,7 +10,13 @@ from contextlib import contextmanager
 from typing import Any, Iterator, Mapping
 
 from _logging import log as _cw_log
-from cw_platform.playlists import BUILTIN_RULESETS, playlist_capabilities, supports_playlists, validate_ruleset
+from cw_platform.playlists import (
+    BUILTIN_RULESETS,
+    PlaylistUserError,
+    playlist_capabilities,
+    supports_playlists,
+    validate_ruleset,
+)
 from cw_platform.provider_instances import (
     build_provider_config_view,
     list_instance_ids,
@@ -26,6 +32,7 @@ _SAFE_NAME_CHARS = " _.'-&()"
 
 
 def _internal_playlist_error(action: str, exc: Exception, **extra: Any) -> dict[str, Any]:
+    reason = str(exc or "").strip() if isinstance(exc, PlaylistUserError) else ""
     try:
         _cw_log(
             f"playlist {action} failed",
@@ -34,12 +41,13 @@ def _internal_playlist_error(action: str, exc: Exception, **extra: Any) -> dict[
             extra={
                 "action": action,
                 "error_type": exc.__class__.__name__,
+                "reason": reason,
                 **{k: v for k, v in extra.items() if v not in (None, "", [], {})},
             },
         )
     except Exception:
         pass
-    return {"ok": False, "error": f"{action} failed"}
+    return {"ok": False, "error": f"{action} failed: {reason}" if reason else f"{action} failed"}
 
 
 def _safe_name_error(name: Any, label: str, max_len: int) -> str:
@@ -129,6 +137,7 @@ def list_playlist_providers(cfg: Mapping[str, Any]) -> list[dict[str, Any]]:
                     "label": label,
                     "configured": configured,
                     "capabilities": caps,
+                    "create_endpoint_types": creatable_endpoint_types(ops),
                 }
             )
     return out
@@ -167,7 +176,30 @@ def _clean_endpoint(payload: Mapping[str, Any]) -> dict[str, Any]:
     media_types = payload.get("media_types")
     if isinstance(media_types, list):
         out["media_types"] = [str(x).strip().lower() for x in media_types if str(x).strip()]
+    pending = _clean_pending_create(payload.get("pending_create"))
+    if pending:
+        out["pending_create"] = pending
     return out
+
+
+def _clean_pending_create(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    name = str(value.get("name") or "").strip()
+    if not name:
+        return None
+    return {"name": name, "media_type": str(value.get("media_type") or "playlist").strip().lower()}
+
+
+def creatable_endpoint_types(ops: Any) -> list[str]:
+    caps = playlist_capabilities(ops)
+    raw = caps.get("create_endpoint_types") or caps.get("endpoint_types") or ["playlist"]
+    out: list[str] = []
+    for x in raw if isinstance(raw, (list, tuple)) else [raw]:
+        v = str(x or "").strip().lower()
+        if v and v not in out:
+            out.append(v)
+    return out or ["playlist"]
 
 
 def list_endpoints(cfg: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -356,28 +388,42 @@ def upsert_endpoint(cfg: dict[str, Any], payload: Mapping[str, Any]) -> dict[str
         create_err = _playlist_name_error(create_name)
         if create_err:
             return {"ok": False, "error": create_err}
-        media_type = str(payload.get("media_type") or "movie").strip().lower()
-        try:
-            view = build_provider_config_view(cfg, clean["provider"], clean["instance"])
-            res = ops.create_playlist(view, create_name, media_type=media_type, instance=clean["instance"])
-            clean["playlist_id"] = res.id
-            clean["playlist_name"] = clean["playlist_name"] or res.name
-        except Exception as e:
-            return _internal_playlist_error(
-                "create",
-                e,
-                provider=clean["provider"],
-                instance=clean["instance"],
-                media_type=media_type,
-            )
+        caps = playlist_capabilities(ops)
+        allowed_types = creatable_endpoint_types(ops)
+        media_type = str(payload.get("media_type") or allowed_types[0]).strip().lower()
+        if media_type not in allowed_types:
+            label = " or ".join(allowed_types)
+            return {"ok": False, "error": f"{clean['provider']} can only create a {label}"}
+        clean["playlist_type"] = media_type
+        if caps.get("create_empty", True) is False:
+            clean["playlist_name"] = clean["playlist_name"] or create_name
+            clean["pending_create"] = {"name": create_name, "media_type": media_type}
+        else:
+            try:
+                view = build_provider_config_view(cfg, clean["provider"], clean["instance"])
+                res = ops.create_playlist(view, create_name, media_type=media_type, instance=clean["instance"])
+                clean["playlist_id"] = res.id
+                clean["playlist_name"] = clean["playlist_name"] or res.name
+            except Exception as e:
+                return _internal_playlist_error(
+                    "create",
+                    e,
+                    provider=clean["provider"],
+                    instance=clean["instance"],
+                    media_type=media_type,
+                )
 
-    if not clean["playlist_id"]:
+    if not (clean["playlist_id"] or clean.get("pending_create")):
         return {"ok": False, "error": "playlist required"}
     root = runner.pl_root(cfg, create=True)
     endpoints = root["endpoints"]
     if clean["id"]:
         for i, ep in enumerate(endpoints):
             if isinstance(ep, Mapping) and str(ep.get("id") or "") == clean["id"]:
+                if not clean["playlist_id"] and not clean.get("pending_create"):
+                    carried = _clean_pending_create(ep.get("pending_create"))
+                    if carried:
+                        clean["pending_create"] = carried
                 endpoints[i] = clean
                 out = _refresh_endpoint_meta(cfg, clean["id"]) or clean
                 _refresh_mapping_pairs_for_endpoint(cfg, clean["id"])

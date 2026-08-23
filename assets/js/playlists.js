@@ -175,6 +175,13 @@
     return state.rulesets.find((rs) => rs.id === id) || null;
   }
 
+  function creatableEndpointTypes(provider) {
+    const key = String(provider || "").toUpperCase();
+    const found = state.providers.find((p) => String(p.provider || "").toUpperCase() === key);
+    const types = (found && found.create_endpoint_types) || [];
+    return types.length ? types : ["playlist"];
+  }
+
   function configuredProviders() {
     const seen = new Set();
     return state.providers.filter((p) => {
@@ -657,6 +664,11 @@
           <input id="pl-ep-create-name" maxlength="${PLAYLIST_NAME_MAX}" value="${esc(seed.playlist_name || seed.name || "")}" placeholder="New playlist name" aria-describedby="pl-ep-create-name-error">
           <div class="pl-field-error" id="pl-ep-create-name-error"></div>
         </div>
+        <div class="pl-field full" id="pl-ep-create-type-wrap" style="display:none">
+          <label for="pl-ep-create-type">New list type</label>
+          <select id="pl-ep-create-type"></select>
+          <div class="pl-help" id="pl-ep-create-type-help">Collections group titles in the library, playlists keep their own order.</div>
+        </div>
       </div>
     `;
     openModal({
@@ -690,15 +702,27 @@
       instanceSelect.innerHTML = selectOptions(list.map((x) => ({ value: x, label: x })), list.includes(instanceSelect.value) ? instanceSelect.value : (list[0] || "default"));
     };
     const toggleCreate = () => {
+      const typeWrap = $("#pl-ep-create-type-wrap", root);
       $("#pl-ep-existing-wrap", root).style.display = createCheck.checked ? "none" : "";
       $("#pl-ep-create-wrap", root).style.display = createCheck.checked ? "" : "none";
+      if (typeWrap) typeWrap.style.display = createCheck.checked && typeWrap.dataset.multi ? "" : "none";
       syncModalPrimary(ctx);
+    };
+    const updateCreateTypes = () => {
+      const wrap = $("#pl-ep-create-type-wrap", root);
+      const select = $("#pl-ep-create-type", root);
+      if (!wrap || !select) return;
+      const types = creatableEndpointTypes(providerSelect.value);
+      const current = select.value;
+      select.innerHTML = selectOptions(types.map((t) => ({ value: t, label: titleize(t) })), types.includes(current) ? current : types[0]);
+      wrap.dataset.multi = types.length > 1 ? "1" : "";
     };
     const updateProviderRestrictions = () => {
       const isSimkl = String(providerSelect.value || "").toUpperCase() === "SIMKL";
       if (simklWarning) simklWarning.classList.toggle("hidden", !isSimkl);
       createCheck.disabled = isSimkl;
       if (isSimkl) createCheck.checked = false;
+      updateCreateTypes();
       toggleCreate();
     };
     providerSelect.addEventListener("change", () => {
@@ -755,7 +779,8 @@
       const createName = val("#pl-ep-create-name", root);
       const createNameErr = playlistNameError(createName);
       if (createNameErr) throw new Error(createNameErr);
-      await API.epUpsert({ id: isEdit ? seed.id : "", name: name || createName, provider, instance, create: true, create_name: createName });
+      const createType = val("#pl-ep-create-type", root) || creatableEndpointTypes(provider)[0];
+      await API.epUpsert({ id: isEdit ? seed.id : "", name: name || createName, provider, instance, create: true, create_name: createName, media_type: createType });
     } else {
       const ids = selectedValues("#pl-ep-playlist", root);
       if (!ids.length) throw new Error("Select at least one playlist.");
