@@ -1000,14 +1000,15 @@
     }
   }
 
-  async function hardRefreshMain() {
+  async function hardRefreshMain(opts) {
     if (authSetupPending()) return;
     enforceMainLayout();
     state.lastStatusMs = 0;
     const previewAlreadyRendered = !!(window.wallLoaded || byId("poster-row")?.childElementCount);
+    const skipInsights = !!opts?.skipInsights && !!window.Insights?.bootRefreshFired;
     await Promise.allSettled([
       refreshStatus(false),
-      Promise.resolve(window.refreshInsights?.(true)),
+      skipInsights ? Promise.resolve() : Promise.resolve(window.refreshInsights?.(true)),
       previewAlreadyRendered ? Promise.resolve(window.updatePreviewVisibility?.()) : Promise.resolve(),
     ]);
 
@@ -1276,7 +1277,7 @@
     const tab = String(state.currentTab || document.documentElement?.dataset?.tab || document.body?.dataset?.tab || "main").toLowerCase();
     if (tab !== "main") return;
     queueSafe(() => {
-      hardRefreshMain().catch(() => {});
+      hardRefreshMain({ skipInsights: true }).catch(() => {});
     });
   }, { once: true });
 
@@ -2087,7 +2088,6 @@ CW.checkForUpdate = checkForUpdate;
     try { fixFormLabels(); } catch {}
     try { wireDetailsToStats(); } catch {}
     try { scheduleInsights(); } catch {}
-    try { refreshInsights(); } catch {}
     try { _initStatsTooltip(); } catch {}
     try {
       const route = readRouteHash();

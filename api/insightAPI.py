@@ -84,6 +84,105 @@ def _load_state_features(features: set[str] | list[str] | tuple[str, ...]) -> di
         return {}
 
 
+_DERIVED_LOCK = threading.RLock()
+_DERIVED_CACHE: dict[str, Any] = {"key": None, "value": None}
+_TITLEMAP_CACHE: dict[str, Any] = {"key": None, "value": None}
+_REAL_LOAD_STATE_FEATURES = _load_state_features
+
+
+def _state_fingerprint(features: set[str] | list[str] | tuple[str, ...]) -> Any:
+    if _load_state_features is not _REAL_LOAD_STATE_FEATURES:
+        return None
+    try:
+        from cw_platform.config_base import CONFIG
+        from cw_platform.local_db import state as sqlite_state
+
+        return sqlite_state.fingerprint(CONFIG, features)
+    except Exception:
+        return None
+
+
+def _state_provider_names(features: set[str] | list[str] | tuple[str, ...]) -> list[str]:
+    if _load_state_features is not _REAL_LOAD_STATE_FEATURES:
+        return list((_load_state_features(features) or {}).get("providers") or {})
+    try:
+        from cw_platform.config_base import CONFIG
+        from cw_platform.local_db import state as sqlite_state
+
+        return sqlite_state.provider_names(CONFIG, features)
+    except Exception:
+        return []
+
+
+def _provider_instances(
+    features: set[str] | list[str] | tuple[str, ...],
+    state_getter: Callable[[], dict[str, Any]],
+) -> dict[str, list[str]]:
+    wanted = {str(f or "").strip().lower() for f in features or [] if str(f or "").strip()}
+    out: dict[str, list[str]] = {}
+    if _load_state_features is _REAL_LOAD_STATE_FEATURES:
+        try:
+            from cw_platform.config_base import CONFIG
+            from cw_platform.local_db import state as sqlite_state
+
+            for row in sqlite_state.feature_inventory(CONFIG):
+                if wanted and str(row.get("feature") or "").lower() not in wanted:
+                    continue
+                key = str(row.get("provider") or "").strip().lower()
+                if not key:
+                    continue
+                insts = out.setdefault(key, ["default"])
+                iid = str(row.get("instance") or "").strip()
+                if iid and iid != "default" and iid not in insts:
+                    insts.append(iid)
+            return out
+        except Exception:
+            out = {}
+    for provider, pdata in ((state_getter() or {}).get("providers") or {}).items():
+        key = str(provider or "").strip().lower()
+        if not key:
+            continue
+        insts = ["default"]
+        inst_block = (pdata or {}).get("instances") if isinstance(pdata, dict) else None
+        if isinstance(inst_block, dict):
+            for iid in inst_block.keys():
+                sid = str(iid or "").strip()
+                if sid and sid not in insts:
+                    insts.append(sid)
+        out[key] = insts
+    return out
+
+
+def _derived_cache_get(key: Any) -> Any:
+    if key is None:
+        return None
+    with _DERIVED_LOCK:
+        return _DERIVED_CACHE["value"] if _DERIVED_CACHE["key"] == key else None
+
+
+def _derived_cache_put(key: Any, value: Any) -> None:
+    if key is None:
+        return
+    with _DERIVED_LOCK:
+        _DERIVED_CACHE["key"] = key
+        _DERIVED_CACHE["value"] = value
+
+
+def _titlemap_cache_get(key: Any) -> Any:
+    if key is None:
+        return None
+    with _DERIVED_LOCK:
+        return _TITLEMAP_CACHE["value"] if _TITLEMAP_CACHE["key"] == key else None
+
+
+def _titlemap_cache_put(key: Any, value: Any) -> None:
+    if key is None:
+        return
+    with _DERIVED_LOCK:
+        _TITLEMAP_CACHE["key"] = key
+        _TITLEMAP_CACHE["value"] = value
+
+
 _AUTH_KEYS = {
     "plex": ("account_token", "token", "access_token"),
     "emby": ("access_token", "api_key", "token"),
@@ -1069,7 +1168,6 @@ def register_insights(app: FastAPI) -> None:
         feature_keys = _features_from(getattr(STATS, "data", {}) or {})
         state_features = set(feature_keys)
         state_features.update(base_feats)
-        state: dict[str, Any] | None = _load_state_features(state_features)
         events_raw: list[dict[str, Any]] = []
         _lane_cache: dict[tuple[int, int, int], tuple[dict[str, dict[str, Any]], dict[str, bool]]] = {}
         cfg = load_config() or {}
@@ -1170,7 +1268,29 @@ def register_insights(app: FastAPI) -> None:
                 out["wall"] = [item for item in wall_items if isinstance(item, dict) and _item_matches_scope(item)]
             return out
 
-        state = _scope_state(state)
+        _state_holder: dict[str, Any] = {}
+
+        def _state() -> dict[str, Any]:
+            if "v" not in _state_holder:
+                loaded = _load_state_features(state_features)
+                scoped = _scope_state(loaded if isinstance(loaded, dict) else {})
+                _state_holder["v"] = scoped if isinstance(scoped, dict) else {}
+            value = _state_holder["v"]
+            return value if isinstance(value, dict) else {}
+
+        derived_key = None
+        try:
+            fp = _state_fingerprint(state_features)
+            if fp is not None:
+                derived_key = (
+                    fp,
+                    tuple(feature_keys),
+                    tuple(sorted((p, tuple(sorted(v))) for p, v in wanted_instances.items())),
+                )
+        except Exception:
+            derived_key = None
+
+        derived = _derived_cache_get(derived_key)
 
         def _safe_parse_epoch(v: Any) -> int:
             try:
@@ -1661,12 +1781,17 @@ def register_insights(app: FastAPI) -> None:
                 if wanted_instances:
                     events_raw = [e for e in events_raw if isinstance(e, dict) and _event_matches_scope(e)]
                 if int(include_events):
-                    state_for_maps = state or {}
-                    key_map, id_map = _build_show_title_maps(state_for_maps)
-                    movie_key_map, movie_id_map = _build_movie_title_maps(state_for_maps)
-                    _extend_show_title_maps_from_cw_state(id_map)
-                    _extend_movie_title_maps_from_cw_state(movie_key_map, movie_id_map)
-                    _extend_title_maps_from_db(key_map, id_map, movie_key_map, movie_id_map)
+                    maps = _titlemap_cache_get(derived_key)
+                    if maps is None:
+                        state_for_maps = _state() or {}
+                        key_map, id_map = _build_show_title_maps(state_for_maps)
+                        movie_key_map, movie_id_map = _build_movie_title_maps(state_for_maps)
+                        _extend_show_title_maps_from_cw_state(id_map)
+                        _extend_movie_title_maps_from_cw_state(movie_key_map, movie_id_map)
+                        _extend_title_maps_from_db(key_map, id_map, movie_key_map, movie_id_map)
+                        maps = (key_map, id_map, movie_key_map, movie_id_map)
+                        _titlemap_cache_put(derived_key, maps)
+                    key_map, id_map, movie_key_map, movie_id_map = maps
 
                     events = [
                         _format_event_title(
@@ -1724,8 +1849,9 @@ def register_insights(app: FastAPI) -> None:
         else:
             wall = []
 
-        if not wall and state:
-            wall = list(state.get("wall") or [])
+        if not wall:
+            cached_wall = (derived or {}).get("wall")
+            wall = list(cached_wall) if isinstance(cached_wall, list) else list((_state() or {}).get("wall") or [])
         if wanted_instances:
             wall = [item for item in wall if isinstance(item, dict) and _item_matches_scope(item)]
 
@@ -1869,16 +1995,16 @@ def register_insights(app: FastAPI) -> None:
             "method": "tmdb" if tmdb_hits and not tmdb_misses else ("mixed" if tmdb_hits else "estimate"),
         }
 
-        prov_block: dict[str, Any] = (state or {}).get("providers") or {}
         providers_set: set[str] = {provider.lower() for provider in wanted_instances} if wanted_instances else set(sync_provider_names(upper=False))
-        try:
-            providers_set.update(
-                str(k).strip().lower()
-                for k in prov_block.keys()
-                if isinstance(k, str) and str(k).strip()
-            )
-        except Exception:
-            pass
+        if not wanted_instances:
+            try:
+                providers_set.update(
+                    str(k).strip().lower()
+                    for k in _state_provider_names(state_features)
+                    if isinstance(k, str) and str(k).strip()
+                )
+            except Exception:
+                pass
 
         try:
             raw_pairs = (cfg.get("pairs") or cfg.get("connections") or [])
@@ -2027,18 +2153,8 @@ def register_insights(app: FastAPI) -> None:
 
         instances_by_provider: dict[str, list[str]] = {k: ["default"] for k in providers_set}
         try:
-            for prov_upper, pdata in (prov_block or {}).items():
-                key = str(prov_upper or "").strip().lower()
-                if not key:
-                    continue
-                insts: list[str] = ["default"]
-                inst_block = (pdata or {}).get("instances")
-                if isinstance(inst_block, dict):
-                    for iid in inst_block.keys():
-                        s = str(iid or "").strip()
-                        if s and s not in insts:
-                            insts.append(s)
-                instances_by_provider[key] = insts
+            for key, insts in _provider_instances(state_features, _state).items():
+                instances_by_provider[key] = list(insts)
         except Exception:
             pass
         if wanted_instances:
@@ -2054,15 +2170,51 @@ def register_insights(app: FastAPI) -> None:
             feat: {k: 0 for k in providers_set} for feat in feature_keys
         }
 
+        if derived is None:
+            raw_counts: dict[str, dict[str, dict[str, int]]] = {}
+            raw_mse: dict[str, dict[str, dict[str, dict[str, int]]]] = {}
+            prov_block: dict[str, Any] = (_state() or {}).get("providers") or {}
+            try:
+                for prov_upper, pdata in (prov_block or {}).items():
+                    key = str(prov_upper or "").strip().lower()
+                    if not key:
+                        continue
+                    for feat in feature_keys:
+                        inst_counts: dict[str, int] = {}
+                        inst_mse: dict[str, dict[str, int]] = {}
+                        for inst_id, node in _iter_provider_feature_nodes(pdata, feat):
+                            inst_counts[inst_id] = _count_items(node, feat)
+                            try:
+                                per_counts = _compute_history_breakdown(
+                                    {"providers": {prov_upper: {feat: node}}},
+                                    feat,
+                                ) or {}
+                            except Exception:
+                                per_counts = {}
+                            inst_mse[inst_id] = {
+                                "movies": int(per_counts.get("movies") or 0),
+                                "shows": int(per_counts.get("shows") or 0),
+                                "anime": int(per_counts.get("anime") or 0),
+                                "episodes": int(per_counts.get("episodes") or 0),
+                            }
+                        raw_counts.setdefault(feat, {})[key] = inst_counts
+                        raw_mse.setdefault(feat, {})[key] = inst_mse
+            except Exception:
+                pass
+            derived = {
+                "counts": raw_counts,
+                "mse": raw_mse,
+                "history_counts": _compute_history_breakdown(_state()),
+                "wall": list((_state() or {}).get("wall") or []),
+            }
+            _derived_cache_put(derived_key, derived)
+
         try:
-            for prov_upper, pdata in (prov_block or {}).items():
-                key = str(prov_upper or "").strip().lower()
-                if not key:
+            for feat, provs in (derived.get("counts") or {}).items():
+                if feat not in providers_instances_by_feature:
                     continue
-                for feat in feature_keys:
-                    inst_counts: dict[str, int] = {}
-                    for inst_id, node in _iter_provider_feature_nodes(pdata, feat):
-                        inst_counts[inst_id] = _count_items(node, feat)
+                for key, stored in provs.items():
+                    inst_counts = dict(stored)
                     if "default" not in inst_counts and not wanted_instances:
                         inst_counts["default"] = 0
                     providers_instances_by_feature[feat][key] = inst_counts
@@ -2100,32 +2252,13 @@ def register_insights(app: FastAPI) -> None:
         }
 
         try:
-            for prov_upper, pdata in (prov_block or {}).items():
-                key = str(prov_upper or "").strip().lower()
-                if not key:
+            for feat, provs in (derived.get("mse") or {}).items():
+                if feat not in providers_instances_mse_by_feature:
                     continue
-
-                for feat in feature_keys:
-                    inst_mse: dict[str, dict[str, int]] = {}
-                    for inst_id, node in _iter_provider_feature_nodes(pdata, feat):
-                        try:
-                            per_counts = _compute_history_breakdown(
-                                {"providers": {prov_upper: {feat: node}}},
-                                feat,
-                            ) or {}
-                        except Exception:
-                            per_counts = {}
-
-                        inst_mse[inst_id] = {
-                            "movies": int(per_counts.get("movies") or 0),
-                            "shows": int(per_counts.get("shows") or 0),
-                            "anime": int(per_counts.get("anime") or 0),
-                            "episodes": int(per_counts.get("episodes") or 0),
-                        }
-
+                for key, stored in provs.items():
+                    inst_mse = {inst: dict(vals) for inst, vals in stored.items()}
                     if "default" not in inst_mse and not wanted_instances:
                         inst_mse["default"] = {"movies": 0, "shows": 0, "anime": 0, "episodes": 0}
-
                     providers_instances_mse_by_feature[feat][key] = inst_mse
                     providers_mse_by_feature[feat][key] = _sum_mse(list(inst_mse.values()))
         except Exception:
@@ -2234,7 +2367,7 @@ def register_insights(app: FastAPI) -> None:
             except Exception:
                 return 0
             
-        history_counts = _compute_history_breakdown(state)
+        history_counts = derived.get("history_counts") or {}
 
         feats_out: dict[str, dict[str, Any]] = {}
         for feat in feature_keys:

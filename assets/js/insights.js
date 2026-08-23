@@ -11,6 +11,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
   const FEATS = featureMeta.order || Object.keys(FEAT_LABEL);
   const DEFAULT_RECENT_SYNCS_LIMIT = 3;
   const PREF_KEY = "insights.settings.v1";
+  const TILES_KEY = "insights.tiles.v1";
   const CW_SNAPSHOT_PROFILE_KEY = "insights.crosswatch.snapshotProfile";
   const $ = (s, r = d) => r.querySelector(s), $$ = (s, r = d) => [...r.querySelectorAll(s)], lc = s => String(s || "").toLowerCase();
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
@@ -110,7 +111,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
   let _prefs = loadPrefs(), _visibleFeats = visibleFeatures(_prefs);
   const clampFeature = name => _visibleFeats.includes(String(name)) ? name : (_visibleFeats[0] || "watchlist");
   let _feature = clampFeature(localStorage.getItem("insights.feature"));
-  let _lastStatsFetch = 0, _cwSnapModal = null, _lastInsightsData = null, _fullInsightsTimer = 0, _configuredProvidersCache = null, _tilesFeature = null;
+  let _lastStatsFetch = 0, _cwSnapModal = null, _lastInsightsData = null, _fullInsightsTimer = 0, _configuredProvidersCache = null, _tilesFeature = null, _bootScheduled = false, _bootRefreshFired = false, _tilesPainted = false;
 
   function syncPrefs(instancesByProvider = {}) {
     const next = normalizePrefs(_prefs, instancesByProvider), changed = JSON.stringify(next) !== JSON.stringify(_prefs);
@@ -426,7 +427,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
 
     if (!keys.length) {
       host.hidden = true;
-      return;
+      return keys;
     }
 
     host.hidden = false;
@@ -481,6 +482,28 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
 
     [...host.querySelectorAll(".tile")].forEach(tile => !seen.has(tile.id) && tile.remove());
     placeSwitchBeforeTiles();
+    return keys;
+  }
+
+  function saveTilesCache(feature, keys, totals, active, mse) {
+    if (!Array.isArray(keys) || !keys.length) return;
+    try {
+      const all = readJSON(TILES_KEY, {});
+      all[feature] = { keys, totals: totals || {}, active: active || {}, mse: mse || {} };
+      localStorage.setItem(TILES_KEY, JSON.stringify(all));
+    } catch {}
+  }
+
+  function paintCachedTiles() {
+    if (_tilesPainted) return;
+    if (!$("#stats-card")) return;
+    const cached = readJSON(TILES_KEY, {})[_feature];
+    if (!cached || !Array.isArray(cached.keys) || !cached.keys.length) return;
+    _tilesPainted = true;
+    _tilesFeature = _feature;
+    footWrap();
+    ensureSwitch();
+    renderProviderStats(cached.totals, cached.active, new Set(cached.keys), cached.mse, {}, false);
   }
 
   function crosswatchSnapshotProfiles(cwSnapshots) {
@@ -587,8 +610,10 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     renderCrossWatchSnapshotHint(data?.crosswatch_snapshots || null);
     getConfiguredProviders(forceConfigured)
       .then((configured) => {
-        renderProviderStats(blk.providers, blk.active, configured, blk.raw?.providers_mse || null, data?.instances_by_provider || {}, animateTiles);
+        const painted = renderProviderStats(blk.providers, blk.active, configured, blk.raw?.providers_mse || null, data?.instances_by_provider || {}, animateTiles);
         renderCrossWatchSnapshotHint(data?.crosswatch_snapshots || null);
+        _tilesPainted = true;
+        saveTilesCache(_feature, painted, blk.providers, blk.active, blk.raw?.providers_mse || null);
       })
       .catch((e) => console.error("[Insights] Failed to resolve configured providers", e));
   }
@@ -612,7 +637,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
   async function refreshStats(force = false) {
     if (authSetupPending()) return;
     const now = Date.now();
-    if (!force && now - _lastStatsFetch < 900) return;
+    if (now - _lastStatsFetch < (force ? 250 : 900)) return;
     _lastStatsFetch = now;
     try {
       const profileParam = overviewProfileId() ? `&user_profile=${encodeURIComponent(overviewProfileId())}` : "";
@@ -643,7 +668,8 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
 
   w.Insights = Object.assign(w.Insights || {}, {
     renderSparkline, refreshInsights, refreshStats, fetchJSON, animateNumber, animateChart, titleOf, subtitleOf,
-    switchFeature, refreshInsightsFastThenFull, get feature() { return _feature; }
+    switchFeature, refreshInsightsFastThenFull, get feature() { return _feature; },
+    get bootRefreshFired() { return _bootRefreshFired; }
   });
   w.renderSparkline = renderSparkline;
   w.refreshInsights = refreshInsights;
@@ -654,11 +680,14 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
   w.subtitleOf = subtitleOf;
   w.scheduleInsights = function scheduleInsights(max) {
     if (authSetupPending()) return;
+    if (_bootScheduled) return;
+    _bootScheduled = true;
     let tries = 0, limit = max || 20;
     (function tick() {
-      if (authSetupPending()) return;
-      if ($("#sync-history") || $("#stat-now") || $("#sparkline")) return refreshInsightsFastThenFull();
+      if (authSetupPending()) return void (_bootScheduled = false);
+      if ($("#sync-history") || $("#stat-now") || $("#sparkline")) { _bootRefreshFired = true; paintCachedTiles(); return refreshInsightsFastThenFull(); }
       if (++tries < limit) setTimeout(tick, 250);
+      else _bootScheduled = false;
     })();
   };
 
