@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import threading
 import types
+import json
 from typing import Any
 
 import pytest
@@ -161,7 +162,13 @@ def _run_thread_harness(monkeypatch, tmp_path, run_result: dict[str, Any]) -> tu
             self.config = config
 
         def run_pairs(self, **kwargs: Any) -> dict[str, Any]:
-            return dict(run_result)
+            progress = kwargs.get("progress")
+            for event in run_result.get("_progress_events") or []:
+                if callable(progress):
+                    progress(json.dumps(event) if isinstance(event, dict) else str(event))
+            result = dict(run_result)
+            result.pop("_progress_events", None)
+            return result
 
     monkeypatch.setattr(
         sync.importlib,
@@ -237,6 +244,41 @@ def test_normal_run_is_not_marked_cancelled(monkeypatch, tmp_path) -> None:
     assert sync._summary_snapshot()["cancelled"] is False
     assert events == ["start", "success"]
     assert any("Done. Total added: 1" in line for line in log["SYNC"])
+
+
+def test_final_unresolved_summary_uses_deduped_orchestrator_count(monkeypatch, tmp_path) -> None:
+    item = {
+        "type": "episode",
+        "series_title": "Pray, Obey, Kill",
+        "season": 1,
+        "episode": 1,
+        "ids": {"imdb": "tt13848098"},
+        "show_ids": {"imdb": "tt13848098"},
+    }
+    raw_unresolved = [
+        {"feature": "history", "provider": "SIMKL", "item": item, "reason": "simkl_not_found:shows"},
+        {"feature": "history", "provider": "SIMKL", "item": item, "reason": "simkl_not_found:episodes"},
+    ]
+    sync, _events, log = _run_thread_harness(
+        monkeypatch,
+        tmp_path,
+        {
+            "added": 0,
+            "unresolved": 1,
+            "cancelled": False,
+            "_progress_events": [
+                {"event": "apply:unresolved", "provider": "SIMKL", "feature": "history", "items": raw_unresolved},
+                {"event": "apply:add:done", "dst": "SIMKL", "feature": "history", "unresolved": 2, "added": 0},
+            ],
+        },
+    )
+
+    sync._run_pairs_thread("run-unresolved-1", {"source": "scheduler", "scheduler_mode": "standard"})
+
+    assert any("Total unresolved: 1" in line for line in log["SYNC"])
+    assert not any("Total unresolved: 2" in line for line in log["SYNC"])
+    unresolved_lines = [line for line in log["SYNC"] if "Pray, Obey, Kill - S01E01" in line]
+    assert unresolved_lines == ["[i] Pray, Obey, Kill - S01E01 | SIMKL episode not found"]
 
 
 def test_cancel_endpoint_requires_a_running_sync(monkeypatch, tmp_path) -> None:

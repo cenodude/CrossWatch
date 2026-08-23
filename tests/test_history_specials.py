@@ -8,7 +8,7 @@ import pytest
 
 from cw_platform.id_map import canonical_key, minimal
 from cw_platform.orchestrator import _applier, _unresolved
-from cw_platform.orchestrator._pairs_oneway import compute_effective_add
+from cw_platform.orchestrator._pairs_oneway import compute_effective_add, current_attempt_unresolved_keys
 from providers.sync.mdblist import _history as mdblist_history
 from providers.sync.mdblist._history import _bucketize, _items_for_not_found
 from providers.sync import _mod_MDBLIST as mdblist_mod
@@ -1379,6 +1379,47 @@ def test_applier_prefers_provider_unresolved_keys(monkeypatch) -> None:
     assert norm["skipped"] == 0
 
 
+def test_applier_dedupes_provider_unresolved_rows(monkeypatch) -> None:
+    stored: list[dict[str, object]] = []
+    emitted: list[dict[str, object]] = []
+
+    def record(_dst, _feature, items, **_kwargs):
+        stored.extend(dict(item) for item in items)
+        return {"ok": True}
+
+    def emit(event, **fields):
+        if event == "apply:unresolved":
+            emitted.append(dict(fields))
+
+    monkeypatch.setattr(_applier, "record_unresolved", record)
+    item = {
+        "type": "episode",
+        "series_title": "Pray, Obey, Kill",
+        "season": 1,
+        "episode": 5,
+        "show_ids": {"tmdb": "123"},
+        "ids": {"tmdb": "123"},
+        "watched_at": WATCHED_AT,
+    }
+    res = {
+        "ok": False,
+        "count": 0,
+        "unresolved": [
+            {"item": minimal(item), "hint": "provider_not_found:shows", "reason": "provider_not_found:shows"},
+            {"item": minimal(item), "hint": "provider_not_found:episodes", "reason": "provider_not_found:episodes"},
+        ],
+    }
+
+    norm = _applier._normalize(res, [item], "apply:add", dst="ANY", feature="history", emit=emit)
+
+    assert norm["unresolved"] == 1
+    assert norm["unresolved_keys"] == [canonical_key(item)]
+    assert len(stored) == 1
+    assert stored[0]["_cw_unresolved_hint"] == "provider_not_found:episodes"
+    assert emitted[0]["count"] == 1
+    assert emitted[0]["reason_counts"] == {"provider_not_found:episodes": 1}
+
+
 def test_applier_exact_skipped_adds_do_not_become_unresolved(monkeypatch) -> None:
     monkeypatch.setattr(_applier, "record_unresolved", lambda *a, **k: {"ok": True})
     items = [{"type": "movie", "ids": {"tmdb": str(i)}} for i in range(3)]
@@ -1420,6 +1461,35 @@ def test_exact_skipped_add_keys_count_as_success_without_added_count() -> None:
     assert decision["prov_confirmed"] == 0
     assert decision["success_keys"] == keys
     assert decision["failed_keys"] == []
+
+
+def test_retry_backlog_does_not_make_confirmed_adds_still_unresolved() -> None:
+    attempted = ["tmdb:240605#s03e28", "tmdb:197106#s02e04"]
+    unresolved_before = set(attempted)
+    unresolved_after = set(attempted)
+    provider_unresolved = {"tmdb:197106#s02e04"}
+
+    still_unresolved = current_attempt_unresolved_keys(
+        attempted,
+        unresolved_before,
+        unresolved_after,
+        provider_unresolved,
+    )
+    decision = compute_effective_add(
+        attempted_keys=attempted,
+        prov_confirmed=1,
+        confirmed_keys=["tmdb:240605#s03e28"],
+        still_unresolved=still_unresolved,
+        skipped_keys=set(),
+        have_exact_keys=True,
+        verify_after_write=False,
+        provider_skipped=False,
+    )
+
+    assert still_unresolved == {"tmdb:197106#s02e04"}
+    assert decision["effective"] == 1
+    assert decision["success_keys"] == ["tmdb:240605#s03e28"]
+    assert decision["failed_keys"] == ["tmdb:197106#s02e04"]
 
 
 def test_unresolved_reports_simkl_source_and_cache_gets_trakt_item(monkeypatch) -> None:

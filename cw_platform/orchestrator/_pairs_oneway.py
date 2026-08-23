@@ -127,6 +127,19 @@ def compute_effective_add(
     }
 
 
+def current_attempt_unresolved_keys(
+    attempted_keys,
+    unresolved_before,
+    unresolved_after,
+    provider_unresolved_keys,
+) -> set[str]:
+    attempted = {str(k) for k in (attempted_keys or []) if k}
+    before = {str(k) for k in (unresolved_before or set()) if k}
+    after = {str(k) for k in (unresolved_after or set()) if k}
+    provider = {str(k) for k in (provider_unresolved_keys or set()) if k}
+    return attempted & ((after - before) | provider)
+
+
 def compute_effective_remove(
     *,
     attempted_keys,
@@ -1735,7 +1748,12 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
             prov_unresolved_set: set[str] = set(prov_unresolved_keys)
 
             new_unresolved = (unresolved_after - unresolved_before) | (prov_unresolved_set - unresolved_before)
-            still_unresolved = set(attempted_keys) & (unresolved_after | prov_unresolved_set)
+            still_unresolved = current_attempt_unresolved_keys(
+                attempted_keys,
+                unresolved_before,
+                unresolved_after,
+                prov_unresolved_set,
+            )
                         
             prov_confirmed_keys_raw = (add_res or {}).get("confirmed_keys")
             prov_skipped_keys_raw = (add_res or {}).get("skipped_keys")

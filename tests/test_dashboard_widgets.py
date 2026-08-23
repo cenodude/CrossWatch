@@ -285,6 +285,152 @@ def test_recent_history_widget_includes_latest_state_history(monkeypatch) -> Non
     assert {source["provider"] for source in payload["items"][0]["sources"]} == {"PLEX", "SIMKL"}
 
 
+def test_recent_history_widget_merges_movie_rows_with_cross_provider_ids(monkeypatch) -> None:
+    monkeypatch.setattr(
+        dashboard_widgets,
+        "list_events",
+        lambda **_kwargs: {"ok": True, "total": 0, "items": []},
+    )
+    state = {
+        "providers": {
+            "TRAKT": {
+                "history": {
+                    "baseline": {
+                        "items": {
+                            "tmdb:1662317": {
+                                "type": "movie",
+                                "title": "The Crash",
+                                "year": 2026,
+                                "ids": {"tmdb": "1662317", "imdb": "tt40792117", "trakt": "1362157"},
+                                "watched_at": "2026-08-18T23:07:00Z",
+                            }
+                        }
+                    }
+                }
+            },
+            "STREMIO": {
+                "history": {
+                    "baseline": {
+                        "items": {
+                            "imdb:tt40792117": {
+                                "type": "movie",
+                                "title": "The Crash",
+                                "ids": {"imdb": "tt40792117"},
+                                "watched_at": "2026-08-18T23:07:00Z",
+                            }
+                        }
+                    }
+                }
+            },
+        }
+    }
+
+    payload = dashboard_widgets.recent_history_widget(state, limit=5)
+
+    assert payload["total"] == 1
+    row = payload["items"][0]
+    assert row["title"] == "The Crash"
+    assert row["year"] == 2026
+    assert row["tmdb"] == "1662317"
+    assert row["ids"]["tmdb"] == "1662317"
+    assert row["ids"]["imdb"] == "tt40792117"
+    assert {source["provider"] for source in row["sources"]} == {"TRAKT", "STREMIO"}
+
+
+def test_recent_history_widget_merges_untimed_episode_state_by_show_ids(monkeypatch) -> None:
+    monkeypatch.setattr(
+        dashboard_widgets,
+        "list_events",
+        lambda **_kwargs: {"ok": True, "total": 0, "items": []},
+    )
+    state = {
+        "providers": {
+            "TRAKT": {
+                "history": {
+                    "baseline": {
+                        "items": {
+                            "tmdb:328735#s01e03": {
+                                "type": "episode",
+                                "title": "This Is Forever",
+                                "series_title": "The Idaho Murders: College Nightmare",
+                                "season": 1,
+                                "episode": 3,
+                                "watched_at": "2026-08-02T01:07:00Z",
+                                "ids": {"tmdb": "7535444", "imdb": "tt43681035"},
+                                "show_ids": {"tmdb": "328735", "imdb": "tt43680755"},
+                            }
+                        }
+                    }
+                }
+            },
+            "STREMIO": {
+                "history": {
+                    "baseline": {
+                        "items": {
+                            "imdb:tt43680755#s01e03": {
+                                "type": "episode",
+                                "title": "This Is Forever",
+                                "series_title": "The Idaho Murders: College Nightmare",
+                                "season": 1,
+                                "episode": 3,
+                                "watched_at": "1970-01-01T00:00:01Z",
+                                "_stremio_watched_at_fallback": "unknown_episode_watch_time",
+                                "ids": {"imdb": "tt43680755"},
+                                "show_ids": {"imdb": "tt43680755"},
+                            }
+                        }
+                    }
+                }
+            },
+        }
+    }
+
+    payload = dashboard_widgets.recent_history_widget(state, limit=5)
+
+    assert payload["total"] == 1
+    row = payload["items"][0]
+    assert row["title"] == "The Idaho Murders: College Nightmare"
+    assert row["episode_label"] == "S01E03"
+    assert row["tmdb"] == "328735"
+    assert row["watched_at"] == 1785632820
+    assert {source["provider"] for source in row["sources"]} == {"TRAKT", "STREMIO"}
+
+
+def test_recent_history_widget_hides_stremio_unknown_episode_watch_time(monkeypatch) -> None:
+    monkeypatch.setattr(
+        dashboard_widgets,
+        "list_events",
+        lambda **_kwargs: {"ok": True, "total": 0, "items": []},
+    )
+    state = {
+        "providers": {
+            "STREMIO": {
+                "history": {
+                    "baseline": {
+                        "items": {
+                            "imdb:tt43680755#s01e03": {
+                                "type": "episode",
+                                "series_title": "The Idaho Murders: College Nightmare",
+                                "season": 1,
+                                "episode": 3,
+                                "watched": True,
+                                "watched_at": "1970-01-01T00:00:01Z",
+                                "_stremio_watched_at_fallback": "unknown_episode_watch_time",
+                                "ids": {"imdb": "tt43680755"},
+                                "show_ids": {"imdb": "tt43680755"},
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    payload = dashboard_widgets.recent_history_widget(state, limit=5)
+
+    assert payload["items"] == []
+
+
 def test_recent_history_widget_merges_provider_local_episode_ids_and_inherits_art(monkeypatch) -> None:
     monkeypatch.setattr(
         dashboard_widgets,
@@ -563,6 +709,52 @@ def test_latest_ratings_widget_merges_provider_local_movie_ids_and_inherits_art(
     assert payload["items"][0]["poster"] == "/art/tmdb/movie/949?kind=backdrop&size=w300"
     assert payload["items"][0]["cover"] == "/art/tmdb/movie/949?size=w342"
     assert {source["provider"] for source in payload["items"][0]["sources"]} == {"SIMKL", "TRAKT"}
+
+
+def test_latest_ratings_widget_merges_movie_rows_with_cross_provider_ids() -> None:
+    state = {
+        "providers": {
+            "TRAKT": {
+                "ratings": {
+                    "baseline": {
+                        "items": {
+                            "tmdb:1662317": {
+                                "type": "movie",
+                                "title": "The Crash",
+                                "year": 2026,
+                                "ids": {"tmdb": "1662317", "imdb": "tt40792117"},
+                                "rating": 8,
+                                "rated_at": "2026-08-18T23:07:00Z",
+                            }
+                        }
+                    }
+                }
+            },
+            "STREMIO": {
+                "ratings": {
+                    "baseline": {
+                        "items": {
+                            "imdb:tt40792117": {
+                                "type": "movie",
+                                "title": "The Crash",
+                                "ids": {"imdb": "tt40792117"},
+                                "rating": 8,
+                                "rated_at": "2026-08-18T23:07:00Z",
+                            }
+                        }
+                    }
+                }
+            },
+        }
+    }
+
+    payload = dashboard_widgets.latest_ratings_widget(state, limit=5)
+
+    assert payload["total"] == 1
+    row = payload["items"][0]
+    assert row["ids"]["tmdb"] == "1662317"
+    assert row["ids"]["imdb"] == "tt40792117"
+    assert {source["provider"] for source in row["sources"]} == {"TRAKT", "STREMIO"}
 
 
 def test_latest_ratings_widget_keeps_original_provider_time_over_same_rating_sync_echo() -> None:
@@ -1048,6 +1240,52 @@ def test_recent_progress_widget_uses_sync_state_not_live_provider_endpoints() ->
     assert payload["items"][0]["progress"] == 42.2
     assert payload["items"][1]["progress"] == 50.0
     assert payload["items"][0]["sources"] == [{"provider": "PLEX", "instance": "default"}]
+
+
+def test_recent_progress_widget_merges_movie_rows_with_cross_provider_ids() -> None:
+    state = {
+        "providers": {
+            "TRAKT": {
+                "progress": {
+                    "baseline": {
+                        "items": {
+                            "tmdb:1662317": {
+                                "type": "movie",
+                                "title": "The Crash",
+                                "year": 2026,
+                                "ids": {"tmdb": "1662317", "imdb": "tt40792117"},
+                                "progress_percent": 42.0,
+                                "progress_at": "2026-08-18T23:07:00Z",
+                            }
+                        }
+                    }
+                }
+            },
+            "STREMIO": {
+                "progress": {
+                    "baseline": {
+                        "items": {
+                            "imdb:tt40792117": {
+                                "type": "movie",
+                                "title": "The Crash",
+                                "ids": {"imdb": "tt40792117"},
+                                "progress_percent": 42.0,
+                                "progress_at": "2026-08-18T23:07:00Z",
+                            }
+                        }
+                    }
+                }
+            },
+        }
+    }
+
+    payload = dashboard_widgets.recent_progress_widget(state, limit=5, tracker_items={})
+
+    assert payload["total"] == 1
+    row = payload["items"][0]
+    assert row["ids"]["tmdb"] == "1662317"
+    assert row["ids"]["imdb"] == "tt40792117"
+    assert {source["provider"] for source in row["sources"]} == {"TRAKT", "STREMIO"}
 
 
 def test_recent_playlists_widget_uses_playlist_activity(monkeypatch) -> None:

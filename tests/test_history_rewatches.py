@@ -66,6 +66,24 @@ def test_filter_events_and_collapse_latest_preserve_existing_behavior() -> None:
     assert next(iter(collapsed.values()))["watched_at"] == "2024-01-02T00:00:00Z"
 
 
+def test_state_filter_requires_history_timestamp() -> None:
+    item = {
+        "type": "episode",
+        "series_title": "The Show",
+        "season": 1,
+        "episode": 2,
+        "watched": True,
+        "show_ids": {"tmdb": "42"},
+        "ids": {},
+    }
+
+    state = filter_history_events({"tmdb:42#s01e02": item}, event_mode=False)
+    events = filter_history_events({"tmdb:42#s01e02": item}, event_mode=True)
+
+    assert state == {}
+    assert events == {}
+
+
 def test_event_diff_compares_exact_history_identity() -> None:
     first = _episode("2024-01-01T00:00:00Z")
     second = _episode("2024-01-02T00:00:00Z")

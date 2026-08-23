@@ -1290,6 +1290,39 @@ def register_insights(app: FastAPI) -> None:
                 return True
             return False
 
+        def _norm_identity_text(value: Any) -> str:
+            return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", str(value or "").lower())).strip()
+
+        def _year_identity(value: Any) -> str:
+            try:
+                year = int(value or 0)
+            except Exception:
+                return ""
+            return str(year) if year > 0 else ""
+
+        def _id_map(rec: dict[str, Any], key: str) -> dict[str, Any]:
+            value = rec.get(key)
+            return value if isinstance(value, dict) else {}
+
+        def _pick_identity(
+            *,
+            title: Any,
+            year: Any,
+            ids: dict[str, Any],
+            id_keys: tuple[str, ...],
+            prefix: str,
+            suffix: str = "",
+        ) -> str | None:
+            norm_title = _norm_identity_text(title)
+            norm_year = _year_identity(year)
+            if norm_title:
+                return f"{prefix}:title:{norm_title}|year:{norm_year}{suffix}"
+            for idk in id_keys:
+                value = ids.get(idk)
+                if value:
+                    return f"{prefix}:{idk}:{str(value).strip().lower()}{suffix}"
+            return None
+
         def _compute_history_breakdown(
             state_obj: dict[str, Any] | None,
             feature: str = "history",
@@ -1337,7 +1370,12 @@ def register_insights(app: FastAPI) -> None:
                             if _is_presence_stub(rec):
                                 continue
 
-                            if feature == "history" and not (rec.get("watched_at") or rec.get("last_watched_at")):
+                            if feature == "history" and not (
+                                rec.get("watched_at")
+                                or rec.get("last_watched_at")
+                                or rec.get("last_watched")
+                                or rec.get("watched") is True
+                            ):
                                 continue
                             if feature == "ratings" and not (
                                 rec.get("rated_at") or rec.get("user_rated_at") or rec.get("rating") or rec.get("user_rating")
@@ -1345,8 +1383,8 @@ def register_insights(app: FastAPI) -> None:
                                 continue
 
                             typ = str(rec.get("type") or "").strip().lower()
-                            ids = (rec.get("ids") or {}) or {}
-                            show_ids_field = (rec.get("show_ids") or {}) or {}
+                            ids = _id_map(rec, "ids")
+                            show_ids_field = _id_map(rec, "show_ids")
                             has_show_meta = bool(
                                 show_ids_field
                                 or rec.get("series_title")
@@ -1361,111 +1399,77 @@ def register_insights(app: FastAPI) -> None:
                             if typ == "episode":
                                 s = int(rec.get("season") or 0)
                                 ep = int(rec.get("episode") or 0)
-
-                                ep_sig: str | None = None
-                                for idk in ("tmdb", "imdb", "tvdb", "slug"):
-                                    v = ids.get(idk)
-                                    if v:
-                                        ep_sig = f"{idk}:{str(v).lower()}|s{s}e{ep}"
-                                        break
-                                if ep_sig is None:
-                                    t = str(rec.get("title") or rec.get("name") or "").strip().lower()
-                                    y = str(rec.get("year") or "")
-                                    ep_sig = f"{t}|year:{y}|s{s}e{ep}"
+                                show_title = rec.get("series_title") or rec.get("show_title") or rec.get("title") or rec.get("name")
+                                show_year = rec.get("series_year") or rec.get("year")
+                                ep_sig = _pick_identity(
+                                    title=show_title,
+                                    year=show_year,
+                                    ids=show_ids_field or ids,
+                                    id_keys=("tmdb", "imdb", "tvdb", "anilist", "mal", "slug"),
+                                    prefix="episode",
+                                    suffix=f"|s{s}e{ep}",
+                                )
                                 if ep_sig:
                                     episodes.add(ep_sig)
 
-                                show_ids = show_ids_field or ids
-                                show_sig: str | None = None
-                                for idk in ("tmdb", "imdb", "tvdb", "anilist", "mal", "slug"):
-                                    v = show_ids.get(idk)
-                                    if v:
-                                        show_sig = f"{idk}:{str(v).lower()}"
-                                        break
-                                if show_sig is None:
-                                    title = (
-                                        rec.get("series_title")
-                                        or rec.get("show_title")
-                                        or rec.get("title")
-                                        or rec.get("name")
-                                    )
-                                    if title:
-                                        y = rec.get("series_year") or rec.get("year")
-                                        show_sig = f"{str(title).strip().lower()}|year:{y}"
+                                show_sig = _pick_identity(
+                                    title=show_title,
+                                    year=show_year,
+                                    ids=show_ids_field or ids,
+                                    id_keys=("tmdb", "imdb", "tvdb", "anilist", "mal", "slug"),
+                                    prefix="show",
+                                )
                                 if show_sig:
                                     (anime if is_anime else shows).add(show_sig)
                                 continue
 
                             if is_anime:
-                                sig: str | None = None
                                 ids_anime = show_ids_field if (show_ids_field.get("anilist") or show_ids_field.get("mal")) else ids
-                                for idk in ("anilist", "mal", "slug","tmdb", "imdb", "tvdb"):
-                                    v = ids_anime.get(idk)
-                                    if v:
-                                        sig = f"{idk}:{str(v).lower()}"
-                                        break
-                                if sig is None:
-                                    title = str(rec.get("title") or rec.get("name") or "").strip().lower()
-                                    y = str(rec.get("year") or "")
-                                    sig = f"{title}|year:{y}"
+                                sig = _pick_identity(
+                                    title=rec.get("title") or rec.get("name"),
+                                    year=rec.get("year"),
+                                    ids=ids_anime,
+                                    id_keys=("anilist", "mal", "slug", "tmdb", "imdb", "tvdb"),
+                                    prefix="anime",
+                                )
                                 if sig:
                                     anime.add(sig)
                                 continue
 
                             if typ == "movie" and not has_show_meta:
-                                sig: str | None = None
-                                for idk in ("tmdb", "imdb", "tvdb", "slug"):
-                                    v = ids.get(idk)
-                                    if v:
-                                        sig = f"{idk}:{str(v).lower()}"
-                                        break
-                                if sig is None:
-                                    title = str(rec.get("title") or rec.get("name") or "").strip().lower()
-                                    y = str(rec.get("year") or "")
-                                    sig = f"{title}|year:{y}"
-                                movies.add(sig)
+                                sig = _pick_identity(
+                                    title=rec.get("title") or rec.get("name"),
+                                    year=rec.get("year"),
+                                    ids=ids,
+                                    id_keys=("tmdb", "imdb", "tvdb", "slug"),
+                                    prefix="movie",
+                                )
+                                if sig:
+                                    movies.add(sig)
                                 continue
 
                             if typ == "show" or (typ == "movie" and has_show_meta):
                                 ids_show = show_ids_field or ids
-                                show_sig: str | None = None
-                                for idk in ("tmdb", "imdb", "tvdb", "slug"):
-                                    v = ids_show.get(idk)
-                                    if v:
-                                        show_sig = f"{idk}:{str(v).lower()}"
-                                        break
-                                if show_sig is None:
-                                    title = (
-                                        rec.get("series_title")
-                                        or rec.get("show_title")
-                                        or rec.get("title")
-                                        or rec.get("name")
-                                    )
-                                    if title:
-                                        y = rec.get("series_year") or rec.get("year")
-                                        show_sig = f"{str(title).strip().lower()}|year:{y}"
+                                show_sig = _pick_identity(
+                                    title=rec.get("series_title") or rec.get("show_title") or rec.get("title") or rec.get("name"),
+                                    year=rec.get("series_year") or rec.get("year"),
+                                    ids=ids_show,
+                                    id_keys=("tmdb", "imdb", "tvdb", "slug"),
+                                    prefix="show",
+                                )
                                 if show_sig:
                                     shows.add(show_sig)
                                 continue
 
                             if has_show_meta:
                                 ids_show = show_ids_field or ids
-                                show_sig: str | None = None
-                                for idk in ("tmdb", "imdb", "tvdb", "slug"):
-                                    v = ids_show.get(idk)
-                                    if v:
-                                        show_sig = f"{idk}:{str(v).lower()}"
-                                        break
-                                if show_sig is None:
-                                    title = (
-                                        rec.get("series_title")
-                                        or rec.get("show_title")
-                                        or rec.get("title")
-                                        or rec.get("name")
-                                    )
-                                    if title:
-                                        y = rec.get("series_year") or rec.get("year")
-                                        show_sig = f"{str(title).strip().lower()}|year:{y}"
+                                show_sig = _pick_identity(
+                                    title=rec.get("series_title") or rec.get("show_title") or rec.get("title") or rec.get("name"),
+                                    year=rec.get("series_year") or rec.get("year"),
+                                    ids=ids_show,
+                                    id_keys=("tmdb", "imdb", "tvdb", "slug"),
+                                    prefix="show",
+                                )
                                 if show_sig:
                                     shows.add(show_sig)
             except Exception as exc:
@@ -1480,6 +1484,66 @@ def register_insights(app: FastAPI) -> None:
                 "anime": len(anime),
                 "episodes": len(episodes),
             }
+
+        def _identity_item_count(recs: list[dict[str, Any]]) -> int:
+            identities: set[str] = set()
+            for idx, rec in enumerate(recs):
+                if not isinstance(rec, dict):
+                    continue
+                typ = str(rec.get("type") or "").strip().lower()
+                ids = _id_map(rec, "ids")
+                show_ids_field = _id_map(rec, "show_ids")
+                has_show_meta = bool(
+                    show_ids_field
+                    or rec.get("series_title")
+                    or rec.get("show_title")
+                )
+                is_anime = bool(
+                    typ == "anime"
+                    or ids.get("anilist") or ids.get("mal")
+                    or show_ids_field.get("anilist") or show_ids_field.get("mal")
+                )
+                sig: str | None = None
+
+                if typ == "episode":
+                    s = int(rec.get("season") or 0)
+                    ep = int(rec.get("episode") or 0)
+                    sig = _pick_identity(
+                        title=rec.get("series_title") or rec.get("show_title") or rec.get("title") or rec.get("name"),
+                        year=rec.get("series_year") or rec.get("year"),
+                        ids=show_ids_field or ids,
+                        id_keys=("tmdb", "imdb", "tvdb", "anilist", "mal", "slug"),
+                        prefix="episode",
+                        suffix=f"|s{s}e{ep}",
+                    )
+                elif is_anime:
+                    ids_anime = show_ids_field if (show_ids_field.get("anilist") or show_ids_field.get("mal")) else ids
+                    sig = _pick_identity(
+                        title=rec.get("title") or rec.get("name"),
+                        year=rec.get("year"),
+                        ids=ids_anime,
+                        id_keys=("anilist", "mal", "slug", "tmdb", "imdb", "tvdb"),
+                        prefix="anime",
+                    )
+                elif typ == "movie" and not has_show_meta:
+                    sig = _pick_identity(
+                        title=rec.get("title") or rec.get("name"),
+                        year=rec.get("year"),
+                        ids=ids,
+                        id_keys=("tmdb", "imdb", "tvdb", "slug"),
+                        prefix="movie",
+                    )
+                else:
+                    sig = _pick_identity(
+                        title=rec.get("series_title") or rec.get("show_title") or rec.get("title") or rec.get("name"),
+                        year=rec.get("series_year") or rec.get("year"),
+                        ids=show_ids_field or ids,
+                        id_keys=("tmdb", "imdb", "tvdb", "slug"),
+                        prefix="show",
+                    )
+
+                identities.add(sig or f"raw:{idx}")
+            return len(identities)
 
 
 
@@ -1871,20 +1935,31 @@ def register_insights(app: FastAPI) -> None:
 
         def _count_items(node: Any, feature: str | None = None) -> int:
             try:
-                if feature in ("history", "ratings") and isinstance(node, dict):
+                if feature in ("watchlist", "history", "ratings", "progress") and isinstance(node, dict):
                     recs = _iter_feature_items(node)
                     if feature == "history":
-                        return sum(
-                            1
+                        recs = [
+                            r
                             for r in recs
-                            if (not _is_presence_stub(r)) and (r.get("watched_at") or r.get("last_watched_at"))
-                        )
-                    return sum(
-                        1
-                        for r in recs
-                        if (not _is_presence_stub(r))
-                        and (r.get("rated_at") or r.get("user_rated_at") or r.get("rating") or r.get("user_rating"))
-                    )
+                            if (not _is_presence_stub(r))
+                            and (
+                                r.get("watched_at")
+                                or r.get("last_watched_at")
+                                or r.get("last_watched")
+                                or r.get("watched") is True
+                            )
+                        ]
+                    elif feature == "ratings":
+                        recs = [
+                            r
+                            for r in recs
+                            if (not _is_presence_stub(r))
+                            and (r.get("rated_at") or r.get("user_rated_at") or r.get("rating") or r.get("user_rating"))
+                        ]
+                    else:
+                        recs = [r for r in recs if not _is_presence_stub(r)]
+
+                    return _identity_item_count(recs)
 
                 if isinstance(node, dict):
                     base = node.get("baseline") or {}

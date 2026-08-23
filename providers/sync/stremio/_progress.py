@@ -271,8 +271,8 @@ def _apply_progress(record: dict[str, Any], item: Mapping[str, Any], clear: bool
         return "stremio_duration_missing"
     typ = str(item.get("type") or id_minimal(item).get("type") or "").strip().lower()
     if typ in {"episode", "episodes"}:
-        show_id = imdb_id(record.get("_id"))
-        if not show_id:
+        show_id = str(record.get("_id") or "").strip()
+        if not show_id or not ids_from_stremio_id(show_id, "series"):
             return "stremio_id_missing"
         video_id = video_id_for_episode(item, show_id)
         season = positive_int(item.get("season"))
