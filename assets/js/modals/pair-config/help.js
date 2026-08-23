@@ -53,6 +53,7 @@ export const HELP_TEXT = {
   "plx-marked-watched": "Plex: Marked watched\nInclude items you manually marked as watched in Plex when syncing history.\nDisable if you only want actual play history.",
   "plx-strict-ids": "Plex: Strict ID matching\nWhen enabled, CrossWatch only matches by IDs (Plex IDs + external IDs). Title/year searches are disabled.",
   "jf-strict-ids": "Jellyfin: Strict ID matching\nWhen enabled, CrossWatch only matches by IDs (Jellyfin IDs + external IDs). Title/year searches are disabled.",
+  "jf-targeted-lookup": "Jellyfin: Targeted library lookup\nWhen writing to Jellyfin, search Jellyfin by title first and verify the result before falling back to the full library scan. Disable to use the slower all-items scan behavior.",
   "em-strict-ids": "Emby: Strict ID matching\nWhen enabled, CrossWatch only matches by IDs (Emby IDs + external IDs). Title/year searches are disabled.",
 };
 

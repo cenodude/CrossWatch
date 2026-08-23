@@ -542,6 +542,7 @@ DEFAULT_CFG: dict[str, Any] = {
         "verify_ssl": False,                            # Verify TLS certificates
         "timeout": 15.0,                                # HTTP timeout (seconds)
         "max_retries": 3,                               # Retry budget for API calls
+        "targeted_lookup": True,                        # Use targeted title search before full library scans when resolving writes
 
         "scrobble": {
             "libraries": []                             # whitelist of library GUIDs; empty = all
