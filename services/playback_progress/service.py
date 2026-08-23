@@ -45,6 +45,7 @@ LIVE_MAX_AGE_SECONDS = 10 * 60
 CANONICAL_TMDB_RE = re.compile(r"^tmdb:(\d+)(?:#|$)", re.I)
 EDITABLE_PROGRESS_MIN_PERCENT = 2.0
 EDITABLE_PROGRESS_DEFAULT_MAX_EXCLUSIVE = 100.0
+GROUP_ID_KEYS = ("tmdb", "imdb", "tvdb", "trakt", "simkl", "mdblist")
 
 
 def _parse_iso(value: Any) -> datetime | None:
@@ -77,6 +78,58 @@ def _group_number(value: Any) -> str:
         return str(int(value))
     except Exception:
         return str(value).strip().lower()
+
+
+def _group_id_value(provider: str, value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if provider == "imdb" and text.isdigit():
+        text = f"tt{text}"
+    return text.lower()
+
+
+def _canonical_id_pair(value: Any) -> tuple[str, str] | None:
+    text = str(value or "").strip()
+    if not text or text.lower().startswith("unknown:"):
+        return None
+    base = text.split("#", 1)[0].strip()
+    if ":" not in base:
+        return None
+    provider, ident = base.split(":", 1)
+    provider = provider.strip().lower()
+    ident = _group_id_value(provider, ident)
+    if provider not in GROUP_ID_KEYS or not ident:
+        return None
+    return provider, ident
+
+
+def _record_movie_id_aliases(item: Mapping[str, Any]) -> list[str]:
+    ids = _as_mapping(item.get("ids"))
+    aliases: list[str] = []
+    canonical = _canonical_id_pair(item.get("canonical_key"))
+    if canonical:
+        aliases.append(f"{canonical[0]}:{canonical[1]}")
+    for provider in GROUP_ID_KEYS:
+        value = ids.get(provider) or item.get(provider)
+        ident = _group_id_value(provider, value)
+        if ident:
+            aliases.append(f"{provider}:{ident}")
+    return list(dict.fromkeys(aliases))
+
+
+def _record_show_id_aliases(item: Mapping[str, Any]) -> list[str]:
+    aliases: list[str] = []
+    canonical = _canonical_id_pair(item.get("canonical_key"))
+    if canonical:
+        aliases.append(f"{canonical[0]}:{canonical[1]}")
+    show_ids = _show_ids_for_artwork(item)
+    for provider in GROUP_ID_KEYS:
+        value = show_ids.get(provider)
+        ident = _group_id_value(provider, value)
+        if ident:
+            aliases.append(f"{provider}:{ident}")
+    return list(dict.fromkeys(aliases))
 
 
 def _live_source_provider(value: Any) -> str:
@@ -278,6 +331,14 @@ def _record_group_keys(item: Mapping[str, Any]) -> list[str]:
     if key and not key.startswith("unknown:"):
         keys.append(f"key:{key}:profile:{profile}")
     media_type = _group_text(item.get("media_type"))
+    if media_type == "movie":
+        for alias in _record_movie_id_aliases(item):
+            keys.append(f"id:movie:{alias}:profile:{profile}")
+    elif media_type in {"episode", "anime_episode"}:
+        season = _group_number(item.get("season"))
+        episode = _group_number(item.get("episode"))
+        for alias in _record_show_id_aliases(item):
+            keys.append(f"id:episode:{alias}:{season}:{episode}:profile:{profile}")
     title = _group_text(item.get("title"))
     series = _group_text(item.get("series_title"))
     season = _group_number(item.get("season"))

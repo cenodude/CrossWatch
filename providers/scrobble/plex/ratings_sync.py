@@ -20,7 +20,7 @@ def _as_int(value: Any) -> int | None:
 
 def _clean_ids(ids: Mapping[str, Any] | None) -> dict[str, Any]:
     out: dict[str, Any] = {}
-    for key in ("tmdb", "imdb", "tvdb", "trakt", "simkl", "mdblist", "plex"):
+    for key in ("tmdb", "imdb", "tvdb", "trakt", "simkl", "mdblist", "fldb", "plex"):
         value = (ids or {}).get(key)
         if value in (None, ""):
             continue
@@ -101,10 +101,14 @@ def _ops(provider: str) -> Any | None:
         from providers.sync._mod_PUNCHPLAY import OPS
 
         return OPS
+    if provider == "flicklist":
+        from providers.sync._mod_FLICKLIST import OPS
+
+        return OPS
     return None
 
 
-OPS_RATING_SINKS: tuple[str, ...] = ("crosswatch", "floppy", "punchplay")
+OPS_RATING_SINKS: tuple[str, ...] = ("crosswatch", "floppy", "punchplay", "flicklist")
 RATING_SINKS: tuple[str, ...] = ("trakt", "simkl", "mdblist", *OPS_RATING_SINKS)
 
 

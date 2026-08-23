@@ -9,7 +9,7 @@ from typing import Any
 
 from cw_platform.provider_instances import get_provider_block, normalize_instance_id
 
-_SINKS = {"trakt", "simkl", "mdblist", "crosswatch", "floppy", "punchplay", "bingebase", "scrob"}
+_SINKS = {"trakt", "simkl", "mdblist", "crosswatch", "floppy", "punchplay", "bingebase", "flicklist", "scrob"}
 
 _SINK_CREDENTIALS: dict[str, tuple[str, ...]] = {
     "trakt": ("access_token",),
@@ -18,6 +18,7 @@ _SINK_CREDENTIALS: dict[str, tuple[str, ...]] = {
     "floppy": ("server_url", "api_token"),
     "punchplay": ("access_token",),
     "bingebase": ("webhook_url",),
+    "flicklist": ("api_key", "access_token", "token"),
     "scrob": ("api_key",),
 }
 

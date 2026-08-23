@@ -92,6 +92,10 @@ def _make_sink(name: str, instance_id: str, cfg_provider: Callable[[], dict[str,
         from providers.scrobble.bingebase.sink import BingeBaseSink
 
         cls = BingeBaseSink
+    elif sink == "flicklist":
+        from providers.scrobble.flicklist.sink import FlickListSink
+
+        cls = FlickListSink
     elif sink == "scrob":
         from providers.scrobble.scrob.sink import ScrobSink
 
