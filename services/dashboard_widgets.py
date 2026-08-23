@@ -761,13 +761,13 @@ def _rating_row(raw_key: str, item: Mapping[str, Any], sources: list[dict[str, s
 
 def _rating_aliases(row: Mapping[str, Any]) -> list[str]:
     title = _norm_text(row.get("title"))
-    if not title:
-        return []
     typ = str(row.get("type") or "").strip().lower() or "movie"
     season = _as_int(row.get("season"))
     episode = _as_int(row.get("episode"))
     year = _as_int(row.get("year"))
-    aliases = []
+    aliases = _media_id_aliases("rating", row)
+    if not title:
+        return aliases
     if typ == "episode" and season is not None and episode is not None:
         aliases.append(f"rating|episode|{title}|s{season}|e{episode}")
     elif typ == "season" and season is not None:
@@ -777,7 +777,68 @@ def _rating_aliases(row: Mapping[str, Any]) -> list[str]:
     return aliases
 
 
+def _id_alias_value(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _media_id_aliases(prefix: str, row: Mapping[str, Any], *, bucket: int | None = None) -> list[str]:
+    ids = _ids(row)
+    typ = str(row.get("type") or "").strip().lower() or "movie"
+    season = _as_int(row.get("season"))
+    episode = _as_int(row.get("episode"))
+    source = ids
+    suffix = ""
+    if typ == "episode":
+        show_ids = ids.get("show_ids") if isinstance(ids.get("show_ids"), Mapping) else {}
+        source = show_ids or ids
+        if season is None or episode is None:
+            return []
+        suffix = f"|s{season}|e{episode}"
+    elif typ == "season":
+        show_ids = ids.get("show_ids") if isinstance(ids.get("show_ids"), Mapping) else {}
+        source = show_ids or ids
+        if season is None:
+            return []
+        suffix = f"|s{season}"
+    aliases: list[str] = []
+    if isinstance(source, Mapping):
+        for key in _ID_KEYS:
+            if key == "slug":
+                continue
+            value = _id_alias_value(source.get(key))
+            if not value:
+                continue
+            base = f"{prefix}|id|{typ}|{key}:{value}{suffix}"
+            if bucket is not None:
+                aliases.append(f"{base}|b{bucket}")
+            aliases.append(base)
+    return aliases
+
+
+def _history_id_aliases(row: Mapping[str, Any], *, bucket: int) -> list[str]:
+    return _media_id_aliases("history", row, bucket=bucket)
+
+
+def _progress_aliases(row: Mapping[str, Any]) -> list[str]:
+    return _media_id_aliases("progress", row)
+
+
+def _merged_row_ids(dst: Mapping[str, Any], src: Mapping[str, Any]) -> dict[str, Any]:
+    dst_ids = _as_dict(dst.get("ids"))
+    src_ids = _as_dict(src.get("ids"))
+    merged = _merge_ids(dst_ids, src_ids)
+    dst_show = dst_ids.get("show_ids") if isinstance(dst_ids.get("show_ids"), Mapping) else {}
+    src_show = src_ids.get("show_ids") if isinstance(src_ids.get("show_ids"), Mapping) else {}
+    show_ids = _merge_ids(_as_dict(dst_show), _as_dict(src_show))
+    if show_ids:
+        merged["show_ids"] = show_ids
+    return merged
+
+
 def _copy_richer_media_fields(dst: dict[str, Any], src: Mapping[str, Any]) -> None:
+    merged_ids = _merged_row_ids(dst, src)
+    if merged_ids:
+        dst["ids"] = merged_ids
     for key in ("tmdb", "poster", "cover", "ids"):
         if not dst.get(key) and src.get(key):
             dst[key] = src[key]
@@ -965,9 +1026,8 @@ def _activity_row(event: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _history_state_row(raw_key: str, item: Mapping[str, Any], sources: list[dict[str, str]]) -> dict[str, Any] | None:
-    sort_epoch = _history_sort_epoch(item) or _history_key_epoch(raw_key)
-    if sort_epoch <= 0:
-        return None
+    fallback_watched_at = str(item.get("_stremio_watched_at_fallback") or "").strip()
+    sort_epoch = 0 if fallback_watched_at else (_history_sort_epoch(item) or _history_key_epoch(raw_key))
     return {
         "id": str(raw_key or ""),
         "key": _history_key(raw_key, item),
@@ -1035,8 +1095,6 @@ def _history_alias_representatives() -> dict[str, str]:
 def _history_aliases(row: Mapping[str, Any], alias_map: Mapping[str, str] | None = None) -> list[str]:
     rep = (alias_map or {}).get(str(row.get("id") or "").split("@", 1)[0])
     title = _norm_text(row.get("title"))
-    if not title:
-        return [f"history|xalias|{rep}"] if rep else []
     typ = str(row.get("type") or "").strip().lower() or "movie"
     bucket = _time_bucket(row.get("sort_epoch") or row.get("watched_at"))
     year = _as_int(row.get("year"))
@@ -1045,6 +1103,9 @@ def _history_aliases(row: Mapping[str, Any], alias_map: Mapping[str, str] | None
     aliases: list[str] = []
     if rep:
         aliases.append(f"history|xalias|{rep}")
+    aliases.extend(_history_id_aliases(row, bucket=bucket))
+    if not title:
+        return aliases
     if typ == "episode" and season is not None and episode is not None:
         aliases.append(f"history|episode|{title}|s{season}|e{episode}|b{bucket}")
         aliases.append(f"history|episode|{title}|s{season}|e{episode}")
@@ -1125,7 +1186,8 @@ def _merge_history_rows(
                 aliases[alias] = match_key
             for alias in _history_aliases(row, alias_map):
                 aliases.setdefault(alias, match_key)
-    return sorted(rows.values(), key=lambda x: int(x.get("sort_epoch") or 0), reverse=True)
+    dated_rows = [row for row in rows.values() if int(row.get("sort_epoch") or row.get("watched_at") or 0) > 0]
+    return sorted(dated_rows, key=lambda x: int(x.get("sort_epoch") or 0), reverse=True)
 
 
 def recent_history_widget(
@@ -1263,13 +1325,23 @@ def recent_progress_widget(
     user_filter: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     rows: dict[str, dict[str, Any]] = {}
+    aliases: dict[str, str] = {}
 
     def put(row: dict[str, Any]) -> None:
         key = str(row.get("key") or row.get("id") or "")
         if not key:
             return
-        prev = rows.get(key)
-        rows[key] = _merge_media_row(prev, row, sort_key="sort_epoch") if prev else row
+        match_key = key
+        for alias in _progress_aliases(row):
+            if alias in aliases:
+                match_key = aliases[alias]
+                break
+        prev = rows.get(match_key)
+        rows[match_key] = _merge_media_row(prev, row, sort_key="sort_epoch") if prev else row
+        for alias in _progress_aliases(rows[match_key]):
+            aliases[alias] = match_key
+        for alias in _progress_aliases(row):
+            aliases.setdefault(alias, match_key)
 
     for raw_key, raw_item in (tracker_items or {}).items():
         item = raw_item if isinstance(raw_item, Mapping) else {}

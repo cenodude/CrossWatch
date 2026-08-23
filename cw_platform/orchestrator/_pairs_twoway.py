@@ -9,7 +9,7 @@ import os
 import re
 import datetime as _dt
 
-from ._pairs_oneway import _emit_item_failures, _emit_item_resolutions, compute_effective_add, compute_effective_remove, is_remove_retry_reason, load_feature_state, resolve_baseline_writes, select_baseline_keys
+from ._pairs_oneway import _emit_item_failures, _emit_item_resolutions, compute_effective_add, compute_effective_remove, current_attempt_unresolved_keys, is_remove_retry_reason, load_feature_state, resolve_baseline_writes, select_baseline_keys
 
 try:
     from ._pairs_oneway import (
@@ -2098,7 +2098,12 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             prov_unresolved_set_A: set[str] = set(prov_unresolved_keys_A)
 
             new_unresolved_A = (unresolved_after_A - unresolved_before_A) | (prov_unresolved_set_A - unresolved_before_A)
-            still_unresolved_A = set(attempted_A) & (unresolved_after_A | prov_unresolved_set_A)
+            still_unresolved_A = current_attempt_unresolved_keys(
+                attempted_A,
+                unresolved_before_A,
+                unresolved_after_A,
+                prov_unresolved_set_A,
+            )
             unresolved_new_A_total += len(still_unresolved_A)
    
             prov_confirmed_keys_A_raw = (resA_add or {}).get("confirmed_keys")
@@ -2231,7 +2236,12 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             prov_unresolved_set_B: set[str] = set(prov_unresolved_keys_B)
 
             new_unresolved_B = (unresolved_after_B - unresolved_before_B) | (prov_unresolved_set_B - unresolved_before_B)
-            still_unresolved_B = set(attempted_B) & (unresolved_after_B | prov_unresolved_set_B)
+            still_unresolved_B = current_attempt_unresolved_keys(
+                attempted_B,
+                unresolved_before_B,
+                unresolved_after_B,
+                prov_unresolved_set_B,
+            )
             unresolved_new_B_total += len(still_unresolved_B)
            
             prov_confirmed_keys_B_raw = (resB_add or {}).get("confirmed_keys")

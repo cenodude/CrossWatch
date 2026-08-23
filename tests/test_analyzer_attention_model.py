@@ -161,3 +161,107 @@ def test_blocked_item_distinct_from_failed_write():
     assert len(pending_rows) == 1 and not pending_rows[0]["blocked"]
     assert model["counts"]["blocked"] == 1
     assert model["counts"]["pending_retry"] == 1
+
+
+def test_episode_with_show_fallback_id_does_not_report_missing_tmdb():
+    item = {
+        "type": "episode",
+        "series_title": "Westworld",
+        "season": 1,
+        "episode": 1,
+        "watched": True,
+        "ids": {"imdb": "tt0475784"},
+        "show_ids": {"imdb": "tt0475784"},
+    }
+    state = {
+        "providers": {
+            "STREMIO": {"history": {"baseline": {"items": {"imdb:tt0475784#s01e01": item}}}},
+            "SIMKL": {"history": {"baseline": {"items": {"imdb:tt0475784#s01e01": item}}}},
+        }
+    }
+    cfg = {
+        "pairs": [
+            {
+                "id": "p1",
+                "enabled": True,
+                "source": "STREMIO",
+                "target": "SIMKL",
+                "features": {"history": {"enable": True}},
+            }
+        ]
+    }
+    ctx = A._analysis_context(state, cfg)
+
+    problems = A._problems(state, None, cfg=cfg, ctx=ctx, include_system=False, include_hints=False)
+
+    assert [p for p in problems if p.get("type") == "missing_ids"] == []
+
+
+def test_movie_with_fallback_id_does_not_report_missing_tmdb():
+    item = {
+        "type": "movie",
+        "title": "Example",
+        "watched": True,
+        "ids": {"imdb": "tt1234567"},
+    }
+    state = {
+        "providers": {
+            "STREMIO": {"history": {"baseline": {"items": {"imdb:tt1234567": item}}}},
+            "SIMKL": {"history": {"baseline": {"items": {"imdb:tt1234567": item}}}},
+        }
+    }
+    cfg = {
+        "pairs": [
+            {
+                "id": "p1",
+                "enabled": True,
+                "source": "STREMIO",
+                "target": "SIMKL",
+                "features": {"history": {"enable": True}},
+            }
+        ]
+    }
+    ctx = A._analysis_context(state, cfg)
+
+    problems = A._problems(state, None, cfg=cfg, ctx=ctx, include_system=False, include_hints=False)
+
+    assert [p for p in problems if p.get("type") == "missing_ids"] == []
+
+
+def test_small_history_show_drift_is_not_reported_as_normalization_issue():
+    def episode(title, tmdb):
+        return {
+            "type": "episode",
+            "series_title": title,
+            "season": 1,
+            "episode": 1,
+            "watched_at": "2026-08-22T12:00:00Z",
+            "show_ids": {"tmdb": str(tmdb)},
+            "ids": {},
+        }
+
+    src_items = {f"tmdb:{idx}#s01e01": episode(f"Show {idx}", idx) for idx in range(81)}
+    dst_items = dict(src_items)
+    dst_items.update({f"tmdb:{1000 + idx}#s01e01": episode(f"Extra {idx}", 1000 + idx) for idx in range(7)})
+    state = {
+        "providers": {
+            "STREMIO": {"history": {"baseline": {"items": src_items}}},
+            "SIMKL": {"instances": {"SIMKL-P01": {"history": {"baseline": {"items": dst_items}}}}},
+        }
+    }
+    cfg = {
+        "pairs": [
+            {
+                "id": "p1",
+                "enabled": True,
+                "source": "STREMIO",
+                "target": "SIMKL",
+                "target_instance": "SIMKL-P01",
+                "features": {"history": {"enable": True}},
+            }
+        ]
+    }
+
+    issues = A._history_normalization_issues(state, cfg)
+
+    assert issues == []

@@ -2941,6 +2941,8 @@ def _history_normalization_issues(s: dict[str, Any], cfg: dict[str, Any] | None 
             drift = max(extra_a, extra_b)
             severe = drift >= 10 or ratio >= 1.5
             tracker_to_media = _is_tracker_to_media_server(a, [b])
+            if not severe and not tracker_to_media:
+                continue
             if tracker_to_media:
                 summary = TRACKER_TO_MEDIA_SERVER_MESSAGE
             else:
@@ -3204,6 +3206,7 @@ def _fallback_ids_for_item(item: Mapping[str, Any], ids: Mapping[str, Any] | Non
         if value:
             out[ns] = value
     return out
+
 
 def _iter_unresolved_files(
     allowed_scopes: set[str] | None,
@@ -3841,22 +3844,6 @@ def _problems(
                     }
                 )
         id_view = _id_view_for_item(it, ids)
-        tmdb_id = id_view.get("tmdb") or ids.get("tmdb")
-        fallback_ids = _fallback_ids_for_item(it, ids)
-        if not tmdb_id and fallback_ids:
-            probs.append(
-                {
-                    "severity": "info",
-                    "type": "missing_ids",
-                    "provider": p,
-                    "feature": f,
-                    "key": k,
-                    "item_title": item_label,
-                    "missing": ["tmdb"],
-                    "ids": fallback_ids,
-                    "message": "Item has fallback IDs but no TMDB ID. Sync may still work, but some providers rely on TMDB for stronger matching.",
-                }
-            )
         if ids and not any((id_view.get(ns) or ids.get(ns)) for ns in core):
             probs.append(
                 {

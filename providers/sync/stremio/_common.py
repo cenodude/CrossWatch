@@ -104,13 +104,30 @@ def stremio_id_for_item(item: Mapping[str, Any]) -> str | None:
     direct = imdb_id(item.get("_stremio_id") or item.get("stremio_id") or item.get("content_id"))
     if direct:
         return direct
-    if str(item.get("type") or "").strip().lower() in {"episode", "episodes"}:
+    typ = str(item.get("type") or "").strip().lower()
+    if typ in {"episode", "episodes", "show", "series", "tv"}:
         show_ids = item.get("show_ids")
         if isinstance(show_ids, Mapping):
             direct = imdb_id(show_ids.get("imdb"))
             if direct:
                 return direct
-    return imdb_id(imdb_ids_from_item(item).get("imdb"))
+            tmdb = str(show_ids.get("tmdb") or "").strip()
+            if tmdb:
+                return f"tmdb:{tmdb}"
+            tvdb = str(show_ids.get("tvdb") or "").strip()
+            if tvdb:
+                return f"tvdb:{tvdb}"
+    ids = imdb_ids_from_item(item)
+    direct = imdb_id(ids.get("imdb"))
+    if direct:
+        return direct
+    tmdb = str(ids.get("tmdb") or "").strip()
+    if tmdb and typ in {"movie", "show", "series", "tv"}:
+        return f"tmdb:{tmdb}"
+    tvdb = str(ids.get("tvdb") or "").strip()
+    if tvdb and typ in {"show", "series", "tv"}:
+        return f"tvdb:{tvdb}"
+    return None
 
 
 def stremio_record_id_for_item(item: Mapping[str, Any]) -> str | None:
@@ -247,19 +264,20 @@ def verify_bare_numeric_id(adapter: Any, record: Mapping[str, Any]) -> tuple[boo
     rid = record_id(record)
     if not is_bare_numeric_id(rid):
         return True, None
+    typ = str(record.get("type") or "").strip().lower()
+    entity = "tv" if typ in {"series", "show", "tv"} else "movie"
+    cache_key = f"{entity}:{rid}:{_normalized_title(record.get('name'))}"
     cache = getattr(adapter, "_stremio_bare_id_checks", None)
     if not isinstance(cache, dict):
         cache = {}
         setattr(adapter, "_stremio_bare_id_checks", cache)
-    if rid in cache:
-        return cache[rid]
+    if cache_key in cache:
+        return cache[cache_key]
     provider = tmdb_metadata_provider(adapter)
     if provider is None:
         result: tuple[bool, str | None] = (False, "bare_numeric_id_unverified")
-        cache[rid] = result
+        cache[cache_key] = result
         return result
-    typ = str(record.get("type") or "").strip().lower()
-    entity = "tv" if typ in {"series", "show", "tv"} else "movie"
     try:
         detail = provider.fetch(entity=entity, ids={"tmdb": rid}, need={"ids": True})
     except Exception:
@@ -271,7 +289,7 @@ def verify_bare_numeric_id(adapter: Any, record: Mapping[str, Any]) -> tuple[boo
         result = (True, None)
     else:
         result = (False, "bare_numeric_id_mismatch")
-    cache[rid] = result
+    cache[cache_key] = result
     return result
 
 

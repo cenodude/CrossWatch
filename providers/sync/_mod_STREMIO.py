@@ -84,7 +84,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "upsert": True,
                 "remove": True,
                 "observed_deletes": True,
-                "requires_ids": ["imdb", "tmdb", "tvdb", "mal", "anilist", "kitsu", "anidb"],
+                "requires_ids": ["imdb", "tmdb", "tvdb"],
             },
             "watchlist": {
                 "read": True,
@@ -93,7 +93,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "upsert": True,
                 "remove": True,
                 "observed_deletes": True,
-                "requires_ids": ["imdb", "tmdb", "tvdb", "mal", "anilist", "kitsu", "anidb"],
+                "requires_ids": ["imdb", "tmdb", "tvdb"],
                 "custom_lists": False,
             },
             "ratings": {
@@ -116,7 +116,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "upsert": True,
                 "remove": True,
                 "observed_deletes": True,
-                "requires_ids": ["imdb", "tmdb", "tvdb", "mal", "anilist", "kitsu", "anidb"],
+                "requires_ids": ["imdb", "tmdb", "tvdb"],
                 "requires_duration": True,
                 "completion_policy": {"progress_write": {"mode": "none"}},
             },

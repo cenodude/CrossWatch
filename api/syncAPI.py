@@ -485,6 +485,61 @@ def _format_unresolved_line(it: Mapping[str, Any]) -> str:
         head = f"{head} - {code}"
     return f"{head} | {reason}"
 
+def _unresolved_display_item(row: Mapping[str, Any]) -> Mapping[str, Any]:
+    item = row.get("item")
+    return item if isinstance(item, Mapping) else row
+
+def _unresolved_display_key(row: Mapping[str, Any]) -> str:
+    feature = str(row.get("feature") or "").strip().lower()
+    item = _unresolved_display_item(row)
+    if feature == "history":
+        try:
+            from cw_platform.history_events import history_sync_key
+
+            key = str(history_sync_key(item, row.get("_cw_event_key") or row.get("key"), event_mode=False) or "").strip()
+            if key:
+                return key
+        except Exception:
+            pass
+    try:
+        from cw_platform.id_map import canonical_key
+
+        key = str(canonical_key(item) or "").strip()
+        if key:
+            return key
+    except Exception:
+        pass
+    line = _format_unresolved_line(row).rsplit("|", 1)[0].strip().lower()
+    return line or repr(sorted((str(k), repr(v)) for k, v in item.items()))
+
+def _unresolved_display_score(row: Mapping[str, Any]) -> int:
+    item = _unresolved_display_item(row)
+    typ = str(item.get("type") or "").strip().lower()
+    reason = str(row.get("reason") or row.get("hint") or row.get("error") or "").strip().lower()
+    if typ == "episode" and ("episode" in reason or "episodes" in reason):
+        return 4
+    if typ == "episode" and ("show" in reason or "shows" in reason):
+        return 3
+    if typ and typ in reason:
+        return 3
+    if reason:
+        return 2
+    return 1
+
+def _dedupe_unresolved_for_display(items: Sequence[Any]) -> list[dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    scores: dict[str, int] = {}
+    for raw in items or []:
+        if not isinstance(raw, Mapping):
+            continue
+        row = dict(raw)
+        key = _unresolved_display_key(row)
+        score = _unresolved_display_score(row)
+        if key not in out or score >= scores.get(key, 0):
+            out[key] = row
+            scores[key] = score
+    return list(out.values())
+
 def _emit_unresolved_details(total_unresolved: int | None = None) -> None:
     with SUMMARY_LOCK:
         items = list(SUMMARY.get("unresolved_items") or [])
@@ -496,6 +551,7 @@ def _emit_unresolved_details(total_unresolved: int | None = None) -> None:
             items = []
     if not items:
         return
+    items = _dedupe_unresolved_for_display(items)
     seen: set[str] = set()
     lines: list[str] = []
     for it in items:
@@ -762,11 +818,24 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
             v_log = int(totals.get(key) or 0)
             return max(v_result, v_log)
 
+        def _merge_unresolved_total() -> int:
+            if "unresolved" in result:
+                try:
+                    return int(result.get("unresolved") or 0)
+                except Exception:
+                    return 0
+            with SUMMARY_LOCK:
+                items = list(SUMMARY.get("unresolved_items") or [])
+            deduped = _dedupe_unresolved_for_display(items)
+            if deduped:
+                return len(deduped)
+            return int(totals.get("unresolved") or 0)
+
         added = _merge_total("added")
         removed = _merge_total("removed")
         updated = _merge_total("updated")
         skipped = _merge_total("skipped")
-        unresolved = _merge_total("unresolved")
+        unresolved = _merge_unresolved_total()
         errors = _merge_total("errors")
         blocked = _merge_total("blocked")
         for key, value in (("skipped", skipped), ("unresolved", unresolved), ("errors", errors), ("blocked", blocked)):
@@ -869,6 +938,7 @@ def _parse_sync_line(line: str) -> None:
                                 rec.setdefault("feature", feat_u)
                                 rec.setdefault("provider", prov_u)
                                 bucket.append(rec)
+                        SUMMARY["unresolved_items"] = _dedupe_unresolved_for_display(bucket)
                 return
 
             feat = str(o.get("feature") or "").lower()

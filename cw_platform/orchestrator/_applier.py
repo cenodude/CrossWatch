@@ -117,6 +117,64 @@ def _ui_spotlight_items(
             break
     return out
 
+
+def _dedupe_unresolved_rows(rows: Sequence[Any], *, feature: str) -> list[Mapping[str, Any]]:
+    out: dict[str, Mapping[str, Any]] = {}
+    priority: dict[str, int] = {}
+
+    def _unwrap(row: Mapping[str, Any]) -> Mapping[str, Any]:
+        item = row.get("item")
+        return item if isinstance(item, Mapping) else row
+
+    def _key(row: Mapping[str, Any]) -> str:
+        explicit = str(row.get("key") or "").strip()
+        if explicit:
+            return explicit
+        item = _unwrap(row)
+        if str(feature or "").lower() == "history":
+            try:
+                from ..history_events import history_sync_key as _hkey  # type: ignore
+
+                key = str(_hkey(item, row.get("_cw_event_key"), event_mode=False) or "").strip()
+                if key:
+                    return key
+            except Exception:
+                pass
+        try:
+            from ..id_map import canonical_key as _ckey  # type: ignore
+
+            key = str(_ckey(item) or "").strip()
+            if key:
+                return key
+        except Exception:
+            pass
+        return repr(sorted((str(k), repr(v)) for k, v in item.items()))
+
+    def _score(row: Mapping[str, Any]) -> int:
+        item = _unwrap(row)
+        typ = str(item.get("type") or "").strip().lower()
+        reason = str(row.get("hint") or row.get("reason") or row.get("error") or "").strip().lower()
+        if typ and typ in reason:
+            return 3
+        if typ == "episode" and "episodes" in reason:
+            return 3
+        if typ == "show" and "shows" in reason:
+            return 3
+        if reason:
+            return 2
+        return 1
+
+    for raw in rows or []:
+        if not isinstance(raw, Mapping):
+            continue
+        key = _key(raw)
+        score = _score(raw)
+        if key not in out or score >= priority.get(key, 0):
+            out[key] = raw
+            priority[key] = score
+    return list(out.values())
+
+
 def _normalize(
     res: dict[str, Any] | None,
     items: Sequence[Mapping[str, Any]],
@@ -141,6 +199,8 @@ def _normalize(
             confirmed = 0
 
     unresolved_list = res.get("unresolved") or []
+    if isinstance(unresolved_list, list) and unresolved_list:
+        unresolved_list = _dedupe_unresolved_rows(unresolved_list, feature=feature)
     unresolved_keys: list[str] = []
 
     try:

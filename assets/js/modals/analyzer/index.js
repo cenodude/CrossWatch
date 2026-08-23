@@ -240,8 +240,11 @@ export default {
     wait.className = "wait-overlay hidden";
     wait.innerHTML = `
       <div class="wait-card" role="status" aria-live="assertive">
-        <div class="wait-ring"></div>
-        <div class="wait-text" id="an-wait-text">Loading...</div>
+        <div class="wait-ring" aria-hidden="true"></div>
+        <div class="wait-copy">
+          <div class="wait-text" id="an-wait-text">Loading...</div>
+          <div class="an-wait-progress" aria-hidden="true"><span></span></div>
+        </div>
         <button class="wait-retry hidden" id="an-wait-retry" type="button">Retry</button>
       </div>`;
     root.appendChild(wait);
