@@ -9,6 +9,7 @@ from providers.metadata._meta_TMDB import TmdbProvider
 
 from services.playback_progress.service import (
     _combine_records,
+    _group_records,
     _overlay_live_streams,
     _progress_edit_max_exclusive,
     _profile_has_explicit_identity,
@@ -83,8 +84,9 @@ def test_playback_progress_frontend_includes_kodi_provider_key():
     js = (ROOT / "assets" / "js" / "playback_progress.js").read_text(encoding="utf-8")
 
     keys = js.split("PLAYBACK_PROVIDER_KEYS")[1].split("]")[0]
-    for provider in ("crosswatch", "trakt", "simkl", "mdblist", "publicmetadb", "plex", "emby", "jellyfin", "nuvio", "kodi", "stremio", "floppy"):
+    for provider in ("crosswatch", "trakt", "simkl", "mdblist", "publicmetadb", "punchplay", "plex", "emby", "jellyfin", "nuvio", "kodi", "stremio", "floppy"):
         assert f'"{provider}"' in keys, provider
+    assert '"flicklist"' not in keys
 
 
 def test_playback_progress_frontend_is_readonly_for_managed_users():
@@ -275,6 +277,36 @@ def test_combined_record_uses_stable_artwork_source_instead_of_newest_record():
 
     assert forward["poster_url"] == older["poster_url"]
     assert reverse["poster_url"] == older["poster_url"]
+
+
+def test_playback_progress_groups_cross_provider_id_aliases():
+    trakt = _record(
+        provider="trakt",
+        provider_label="Trakt",
+        remote_id="trakt-1",
+        canonical_key="tmdb:1662317",
+        title="The Crash",
+        year=2026,
+        ids={"tmdb": "1662317", "imdb": "tt40792117"},
+        progress_percent=21.0,
+    )
+    stremio = _record(
+        provider="stremio",
+        provider_label="Stremio",
+        remote_id="stremio-1",
+        canonical_key="imdb:tt40792117",
+        title="The Crash",
+        year=None,
+        ids={"imdb": "tt40792117"},
+        progress_percent=21.5,
+    )
+
+    rows = _group_records([trakt, stremio])
+
+    assert len(rows) == 1
+    assert rows[0]["provider"] == "combined"
+    assert rows[0]["provider_count"] == 2
+    assert rows[0]["ids"] == {"tmdb": "1662317", "imdb": "tt40792117"}
 
 
 def test_same_title_with_different_profile_progress_does_not_group():
@@ -1443,6 +1475,6 @@ def test_late_shown_filters_are_enhanced_like_the_rest() -> None:
     profile = js.split("function userProfileOptions(", 1)[1].split("function providerOptions(", 1)[0]
     rating = js.split("function renderItems(", 1)[1].split("const markup =", 1)[0]
 
-    assert "ProfileSelect?.enhanceProfile?.(select" in profile
+    assert "ProfileSelect?.enhanceUserProfile?.(select" in profile
     assert "IconSelect?.enhance?.(ratingFilter" in rating
     assert "if (showRating)" in rating

@@ -236,3 +236,49 @@ def test_watchlist_aliases_include_simkl_and_mdblist_native_ids(monkeypatch) -> 
     assert "simkl:42" in by_key["simkl:42"]["aliases"]
     assert "mdblist:99" in by_key
     assert "mdblist:99" in by_key["mdblist:99"]["aliases"]
+
+
+def test_build_watchlist_merges_cross_provider_id_aliases(monkeypatch) -> None:
+    import services.watchlist as wl
+
+    monkeypatch.setattr(wl, "_registry_sync_providers", lambda: ["TRAKT", "STREMIO"])
+    monkeypatch.setattr(wl, "_load_hide_set", lambda: set())
+
+    state = {
+        "providers": {
+            "TRAKT": {
+                "watchlist": {
+                    "baseline": {
+                        "items": {
+                            "tmdb:1662317": {
+                                "type": "movie",
+                                "title": "The Crash",
+                                "year": 2026,
+                                "ids": {"tmdb": "1662317", "imdb": "tt40792117"},
+                            }
+                        }
+                    }
+                }
+            },
+            "STREMIO": {
+                "watchlist": {
+                    "baseline": {
+                        "items": {
+                            "imdb:tt40792117": {
+                                "type": "movie",
+                                "title": "The Crash",
+                                "ids": {"imdb": "tt40792117"},
+                            }
+                        }
+                    }
+                }
+            },
+        }
+    }
+
+    rows = wl.build_watchlist(state, tmdb_ok=False)
+
+    assert len(rows) == 1
+    assert rows[0]["key"] == "tmdb:1662317"
+    assert rows[0]["sources"] == ["stremio", "trakt"]
+    assert rows[0]["ids"] == {"tmdb": "1662317", "imdb": "tt40792117"}

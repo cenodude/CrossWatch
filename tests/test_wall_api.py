@@ -126,3 +126,49 @@ def test_wall_endpoint_reads_db_watchlist(monkeypatch, tmp_path):
     assert data["total"] == 1
     assert data["items"][0]["tmdb"] == 550
     assert data["last_sync_epoch"] == 123
+
+
+def test_wall_endpoint_uses_watchlist_id_alias_merge(monkeypatch, tmp_path):
+    app = FastAPI()
+    wallAPI.register_wall(app)
+    wallAPI._WALL_CACHE.clear()
+    wallAPI._WALL_CACHE.update({"key": None, "data": None})
+
+    monkeypatch.setattr(wallAPI, "CONFIG", tmp_path)
+    monkeypatch.setattr(watchlist_service, "CONFIG", tmp_path)
+    monkeypatch.setattr(wallAPI, "load_config", lambda: {"tmdb": {"api_key": "tmdb-key"}})
+    monkeypatch.setattr(wallAPI, "config_path", lambda: tmp_path / "config.json")
+    monkeypatch.setattr(watchlist_service, "_registry_sync_providers", lambda: ["TRAKT", "STREMIO"])
+    StateStore(tmp_path).save_feature_baseline(
+        provider="TRAKT",
+        feature="watchlist",
+        items={
+            "tmdb:1662317": {
+                "type": "movie",
+                "title": "The Crash",
+                "year": 2026,
+                "ids": {"tmdb": "1662317", "imdb": "tt40792117"},
+            }
+        },
+        last_sync_epoch=123,
+    )
+    StateStore(tmp_path).save_feature_baseline(
+        provider="STREMIO",
+        feature="watchlist",
+        items={
+            "imdb:tt40792117": {
+                "type": "movie",
+                "title": "The Crash",
+                "ids": {"imdb": "tt40792117"},
+            }
+        },
+        last_sync_epoch=123,
+    )
+
+    endpoint = next(cast(APIRoute, route).endpoint for route in app.routes if getattr(route, "path", "") == "/api/state/wall")
+    data = endpoint(both_only=False, active_only=False, limit=20)
+
+    assert data["total"] == 1
+    assert data["items"][0]["key"] == "tmdb:1662317"
+    assert data["items"][0]["tmdb"] == 1662317
+    assert data["items"][0]["sources"] == ["stremio", "trakt"]

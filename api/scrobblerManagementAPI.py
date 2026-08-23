@@ -67,6 +67,7 @@ WEBHOOK_SETTING_KEYS = {
     "plex_crosswatch_ratings",
     "plex_floppy_ratings",
     "plex_punchplay_ratings",
+    "plex_flicklist_ratings",
     "pause_debounce_seconds",
     "suppress_start_at",
 }
@@ -293,7 +294,7 @@ def _normalize_webhook_settings(cfg: Mapping[str, Any], provider: str, body: Map
         if key in body:
             out[key] = _normalize_filters(body.get(key), provider, key)
     if provider == "plex":
-        for key in ("plex_trakt_ratings", "plex_simkl_ratings", "plex_mdblist_ratings", "plex_crosswatch_ratings", "plex_floppy_ratings", "plex_punchplay_ratings"):
+        for key in ("plex_trakt_ratings", "plex_simkl_ratings", "plex_mdblist_ratings", "plex_crosswatch_ratings", "plex_floppy_ratings", "plex_punchplay_ratings", "plex_flicklist_ratings"):
             if key in body:
                 out[key] = bool(body.get(key))
     for key in ("pause_debounce_seconds", "suppress_start_at"):
@@ -563,6 +564,7 @@ def build_overview(cfg: dict[str, Any], request: Request) -> dict[str, Any]:
             "crosswatch": bool(watch.get("plex_crosswatch_ratings")),
             "floppy": bool(watch.get("plex_floppy_ratings")),
             "punchplay": bool(watch.get("plex_punchplay_ratings")),
+            "flicklist": bool(watch.get("plex_flicklist_ratings")),
             "endpoint_url": _global_plex_ratings_url(request, cfg),
         },
     }
@@ -931,7 +933,7 @@ def api_scrobbler_settings(request: Request, payload: dict[str, Any] = Body(...)
             watch["autostart"] = bool(payload.get("watch_autostart"))
         ratings_raw = payload.get("global_plex_ratings")
         if isinstance(ratings_raw, Mapping):
-            for sink in ("trakt", "simkl", "mdblist", "crosswatch", "floppy", "punchplay"):
+            for sink in ("trakt", "simkl", "mdblist", "crosswatch", "floppy", "punchplay", "flicklist"):
                 watch[f"plex_{sink}_ratings"] = bool(ratings_raw.get(sink))
         if bool(payload.get("regenerate_global_plex_ratings_webhook")):
             sec = after.setdefault("security", {})
