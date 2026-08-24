@@ -62,9 +62,10 @@ def _rt():
     )
 
 
-FEATURE_KEYS = ["watchlist", "ratings", "history", "playlists", "progress"]
+FEATURE_KEYS = ["watchlist", "ratings", "history", "playlists", "progress", "collection"]
 _ALLOWED_RATING_TYPES: tuple[str, ...] = ("movies", "shows", "seasons", "episodes")
 _ALLOWED_RATING_MODES: tuple[str, ...] = ("only_new", "from_date", "all")
+_ALLOWED_COLLECTION_TYPES: tuple[str, ...] = ("movies", "shows", "seasons", "episodes")
 
 def _normalize_progress_block(v: dict | bool | None) -> dict:
     if isinstance(v, bool):
@@ -159,12 +160,38 @@ def _normalize_ratings_block(v: dict | bool | None) -> dict:
 
     return d
 
+def _normalize_collection_block(v: dict | bool | None) -> dict:
+    if isinstance(v, bool):
+        return {
+            "enable": coerce_bool(v), "add": coerce_bool(v), "remove": False,
+            "types": ["movies"],
+        }
+
+    d = dict(v or {})
+    d["enable"] = coerce_bool(d.get("enable", d.get("enabled", False)))
+    d["add"] = coerce_bool(d.get("add", True), True)
+    d["remove"] = coerce_bool(d.get("remove", False))
+
+    t = d.get("types", [])
+    if isinstance(t, str):
+        t = [t]
+    t_norm = [str(x).strip().lower() for x in t if isinstance(x, str)]
+    if "all" in t_norm:
+        d["types"] = list(_ALLOWED_COLLECTION_TYPES)
+    else:
+        keep = [x for x in _ALLOWED_COLLECTION_TYPES if x in t_norm]
+        d["types"] = keep or ["movies"]
+
+    return d
+
 def _normalize_features(f: dict | None) -> dict:
     f = dict(f or {})
     for k in FEATURE_KEYS:
         v = f.get(k)
         if k == "ratings":
             f[k] = _normalize_ratings_block(v)
+        elif k == "collection":
+            f[k] = _normalize_collection_block(v)
         elif k == "progress":
             if isinstance(v, (bool, dict)):
                 f[k] = _normalize_progress_block(v)
@@ -194,6 +221,11 @@ def _enforce_pair_feature_constraints(pair: dict[str, Any]) -> None:
         feats.pop("progress", None)
     if not sync_provider_supports_feature(src, "ratings") or not sync_provider_supports_feature(dst, "ratings"):
         feats.pop("ratings", None)
+    if "collection" in feats:
+        collection_sources = {"PLEX", "EMBY", "JELLYFIN", "KODI", "TRAKT", "MDBLIST", "CROSSWATCH", "PUNCHPLAY", "FLOPPY", "SCROB"}
+        collection_targets = {"TRAKT", "MDBLIST", "CROSSWATCH", "PUNCHPLAY", "FLOPPY", "SCROB"}
+        if src not in collection_sources or dst not in collection_targets or str(pair.get("mode") or "").strip().lower().startswith("two"):
+            feats.pop("collection", None)
 
 def _normalize_pair_providers(p: Any) -> dict[str, Any]:
     if not isinstance(p, dict):
@@ -893,7 +925,7 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
         RUNNING_PROCS.pop("SYNC", None)
 
 def _lanes_enabled_defaults() -> dict[str, bool]:
-    return {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": True}
+    return {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": True, "collection": True}
 
 def _parse_sync_line(line: str) -> None:
     s = _rt()[7](line).strip()
@@ -942,7 +974,7 @@ def _parse_sync_line(line: str) -> None:
                 return
 
             feat = str(o.get("feature") or "").lower()
-            if feat in ("watchlist", "history", "ratings", "progress", "playlists"):
+            if feat in ("watchlist", "history", "ratings", "progress", "playlists", "collection"):
                 F = SUMMARY.setdefault("features", {})
                 if feat not in F:
                     F[feat] = {
@@ -1276,7 +1308,7 @@ def _show_title_maps_from_state(state: dict[str, Any]) -> tuple[dict[str, str], 
         if not isinstance(pdata, dict):
             continue
 
-        for feat in ("history", "ratings", "watchlist", "playlists"):
+        for feat in ("history", "ratings", "watchlist", "playlists", "collection"):
             for node in _iter_nodes(pdata, feat):
                 baseline = node.get("baseline")
                 base: dict[str, Any] = baseline if isinstance(baseline, dict) else node
@@ -1379,7 +1411,7 @@ def _episode_code_map_from_state(state: dict[str, Any]) -> dict[str, tuple[int, 
     for _, pdata in provs.items():
         if not isinstance(pdata, dict):
             continue
-        for feat in ("history", "ratings", "watchlist", "playlists"):
+        for feat in ("history", "ratings", "watchlist", "playlists", "collection"):
             for node in _iter_nodes(pdata, feat):
                 baseline = node.get("baseline")
                 base: dict[str, Any] = baseline if isinstance(baseline, dict) else node
@@ -1417,7 +1449,7 @@ def _get_episode_code_map() -> dict[str, tuple[int, int]]:
             cm = _EP_META_CACHE.get("code_map")
             if isinstance(cm, dict):
                 return cast(dict[str, tuple[int, int]], cm)
-    state = _load_state_features({"history", "ratings", "watchlist", "playlists"})
+    state = _load_state_features({"history", "ratings", "watchlist", "playlists", "collection"})
     cm2 = _episode_code_map_from_state(state or {})
     with _EP_META_CACHE_LOCK:
         _EP_META_CACHE["key"] = skey
@@ -1432,7 +1464,7 @@ def _get_title_maps() -> tuple[dict[str, str], dict[str, str]]:
             im = _TITLE_MAP_CACHE.get("id_map")
             if isinstance(km, dict) and isinstance(im, dict):
                 return cast(dict[str, str], km), cast(dict[str, str], im)
-    state = _load_state_features({"history", "ratings", "watchlist", "playlists"})
+    state = _load_state_features({"history", "ratings", "watchlist", "playlists", "collection"})
     km2, im2 = _show_title_maps_from_state(state or {})
     with _TITLE_MAP_CACHE_LOCK:
         _TITLE_MAP_CACHE["key"] = skey
@@ -1603,7 +1635,7 @@ def _hydrate_summary_spotlights_from_log(summary_obj: dict[str, Any], *, max_lin
         if ev not in ("apply:add:done", "apply:remove:done", "apply:update:done"):
             continue
         feat = str(obj.get("feature") or "").lower()
-        if feat not in ("watchlist", "history", "ratings", "progress", "playlists"):
+        if feat not in ("watchlist", "history", "ratings", "progress", "playlists", "collection"):
             continue
 
         lane = feats.get(feat)
@@ -1791,7 +1823,7 @@ def _is_sync_running() -> bool:
 @router.get("/sync/providers")
 def api_sync_providers(request: Request = cast(Request, None)) -> JSONResponse:
     HIDDEN = {"BASE"}
-    FEATURE_KEYS = ("watchlist", "ratings", "history", "playlists", "progress")
+    FEATURE_KEYS = ("watchlist", "ratings", "history", "playlists", "progress", "collection")
     try:
         from cw_platform.config_base import load_config
         from cw_platform.provider_instances import build_provider_config_view, list_instance_ids

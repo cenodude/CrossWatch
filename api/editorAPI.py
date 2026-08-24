@@ -1,5 +1,5 @@
 # /api/editorAPI.py
-# CrossWatch - Tracker editor API for history / ratings / watchlist / progress
+# CrossWatch - Tracker editor API for history / ratings / watchlist / progress / collection
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
@@ -373,7 +373,7 @@ def _merge_policy(into: dict[str, Any], src: dict[str, Any], mode: str) -> dict[
         return out
 
     def _merge_feature_block(tgt: dict[str, Any], node: dict[str, Any]) -> None:
-        for kind in ("watchlist", "history", "ratings", "progress"):
+        for kind in ("watchlist", "history", "ratings", "progress", "collection"):
             f = node.get(kind)
             if not isinstance(f, dict):
                 continue
@@ -461,7 +461,7 @@ def _policy_stats(pol: dict[str, Any]) -> dict[str, int]:
         if not isinstance(node, dict):
             continue
         pcount += 1
-        for kind in ("watchlist", "history", "ratings", "progress"):
+        for kind in ("watchlist", "history", "ratings", "progress", "collection"):
             f = node.get(kind)
             if not isinstance(f, dict):
                 continue
@@ -648,7 +648,7 @@ def _save_state_manual(
 
 def _normalize_kind(val: str | None) -> Kind:
     k = (val or "watchlist").strip().lower()
-    if k not in ("watchlist", "history", "ratings", "progress"):
+    if k not in ("watchlist", "history", "ratings", "progress", "collection"):
         raise HTTPException(status_code=400, detail=f"Unsupported kind: {k}")
     return k  # type: ignore[return-value]
 
@@ -1164,11 +1164,13 @@ def _editor_send_targets(cfg: dict[str, Any], feature: str) -> list[dict[str, An
     feat = str(feature or "").strip().lower()
     if feat == "rating":
         feat = "ratings"
-    if feat not in {"watchlist", "history", "ratings", "progress"}:
+    if feat not in {"watchlist", "history", "ratings", "progress", "collection"}:
         return []
 
     targets: list[dict[str, Any]] = []
     for provider in sync_provider_names(upper=True):
+        if feat == "collection" and str(provider or "").strip().upper() in {"PLEX", "EMBY", "JELLYFIN", "KODI"}:
+            continue
         ops = load_sync_ops(provider)
         if not ops:
             continue
@@ -1213,6 +1215,7 @@ def _editor_send_targets(cfg: dict[str, Any], feature: str) -> list[dict[str, An
                     "ratings_enabled": bool(supported.get("ratings")),
                     "watchlist_enabled": bool(supported.get("watchlist")),
                     "progress_enabled": bool(supported.get("progress")),
+                    "collection_enabled": bool(supported.get("collection")),
                 }
             )
 
@@ -1544,6 +1547,7 @@ def api_editor_state_import_providers(request: Request = cast(Request, None)) ->
                     "history": bool(feats.get("history")),
                     "ratings": bool(feats.get("ratings")),
                     "progress": bool(feats.get("progress")),
+                    "collection": bool(feats.get("collection")),
                 },
             }
         )
@@ -1575,9 +1579,9 @@ def api_editor_state_import(payload: dict[str, Any] = Body(...), request: Reques
     if isinstance(feats_in, list):
         features = [str(x).strip().lower() for x in feats_in if str(x).strip()]
     else:
-        features = ["watchlist", "history", "ratings", "progress"]
+        features = ["watchlist", "history", "ratings", "progress", "collection"]
 
-    allowed = {"watchlist", "history", "ratings", "progress"}
+    allowed = {"watchlist", "history", "ratings", "progress", "collection"}
     features = [f for f in features if f in allowed]
     if not features:
         raise HTTPException(status_code=400, detail="No features selected")

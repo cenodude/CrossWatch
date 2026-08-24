@@ -93,7 +93,7 @@ def _cw() -> tuple[Any, Any, Any, Any, Any, Any]:
 
     def _load_statistics_state() -> dict[str, Any]:
         try:
-            return StateStore(CONFIG_DIR).load_state_features({"watchlist", "history", "ratings", "playlists"}) or {}
+            return StateStore(CONFIG_DIR).load_state_features({"watchlist", "history", "ratings", "playlists", "collection"}) or {}
         except Exception:
             return {}
 
@@ -353,7 +353,7 @@ def _sync_state_inventory(config_dir: Path) -> tuple[int, int]:
         return 0, 0
 
     baseline_count = 0
-    feature_names = {"history", "ratings", "watchlist", "playlists", "progress"}
+    feature_names = {"history", "ratings", "watchlist", "playlists", "progress", "collection"}
     for provider in providers.values():
         if not isinstance(provider, dict):
             continue
@@ -371,7 +371,7 @@ def _sync_state_baseline_inventory(config_dir: Path) -> dict[str, Any]:
     if not isinstance(providers, dict):
         return {"providers": 0, "baselines": 0, "items": 0, "largest": None}
 
-    feature_names = {"history", "ratings", "watchlist", "playlists", "progress"}
+    feature_names = {"history", "ratings", "watchlist", "playlists", "progress", "collection"}
     baselines = 0
     items_total = 0
     largest: dict[str, Any] | None = None
@@ -415,7 +415,7 @@ def _sync_state_baseline_inventory(config_dir: Path) -> dict[str, Any]:
     }
 
 
-FEATURE_NAMES = {"history", "ratings", "watchlist", "playlists", "progress"}
+FEATURE_NAMES = {"history", "ratings", "watchlist", "playlists", "progress", "collection"}
 
 
 def _feature_item_count(block: Any) -> int:
@@ -1001,7 +1001,7 @@ def _scan_cw_tracker(root: Path) -> dict[str, Any]:
 
     state_files.sort(key=lambda x: x.get("name") or "")
     snapshots.sort(key=lambda x: x.get("mtime") or "")
-    core_names = {"history.json", "ratings.json", "watchlist.json", "progress.json"}
+    core_names = {"history.json", "ratings.json", "watchlist.json", "progress.json", "collection.json"}
     state_count = sum(
         1 for f in state_files
         if (f.get("name") or "") in core_names

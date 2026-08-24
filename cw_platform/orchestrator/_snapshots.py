@@ -159,7 +159,7 @@ def _pick_key(provider_key: str, computed_key: str) -> str:
 _ID_COALESCE_KEYS = ("tmdb", "imdb", "tvdb", "trakt", "simkl", "mal", "anilist", "kitsu", "anidb")
 
 def _coalesce_by_shared_ids(idx: SnapIndex, *, feature: str) -> SnapIndex:
-    if str(feature or "").lower() != "watchlist" or not idx:
+    if str(feature or "").lower() not in {"watchlist", "collection"} or not idx:
         return dict(idx)
 
     parent: dict[str, str] = {}

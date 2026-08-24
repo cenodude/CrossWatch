@@ -33,7 +33,7 @@ router = APIRouter(prefix="/api/snapshots", tags=["snapshots"])
 _LOG = logging.getLogger("crosswatch.api.snapshots")
 
 RestoreMode = Literal["merge", "clear_restore"]
-Feature = Literal["watchlist", "ratings", "history", "progress", "all"]
+Feature = Literal["watchlist", "ratings", "history", "progress", "collection", "all"]
 _SAFE_ERROR_PREFIXES = (
     "Snapshot path is required",
     "Invalid snapshot path",

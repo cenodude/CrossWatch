@@ -161,6 +161,16 @@ def test_find_pair_matches_exact_prefix_and_label() -> None:
         find_pair(pairs, "nothing")
 
 
+def test_find_pair_matches_one_based_index_after_exact_ids() -> None:
+    pairs = [
+        {"id": "1", "source": "plex", "target": "trakt"},
+        {"id": "def456", "source": "simkl", "target": "trakt"},
+    ]
+
+    assert find_pair(pairs, "1")["id"] == "1"
+    assert find_pair(pairs, "2")["id"] == "def456"
+
+
 def test_find_pair_rejects_ambiguous_prefix() -> None:
     pairs = [{"id": "abc1", "source": "a", "target": "b"}, {"id": "abc2", "source": "c", "target": "d"}]
     with pytest.raises(CLIError) as err:
@@ -522,6 +532,113 @@ def test_dispatch_without_flags_reuses_the_same_context(clean_cli_env) -> None:
 
     assert run_isolated(state, ["config", "path"]) == 0
     assert state._fell_back is True
+
+
+def test_sync_list_prints_pair_order_source_target_and_features(
+    clean_cli_env,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from cli._app import run_isolated
+
+    state = Ctx.build(url="http://cw.test", output="plain")
+    state._http = FakeTransport(
+        {
+            (
+                "GET",
+                "/api/pairs",
+            ): [
+                {
+                    "id": "plex-trakt",
+                    "source": "plex",
+                    "target": "trakt",
+                    "source_instance": "kids",
+                    "mode": "one-way",
+                    "enabled": True,
+                    "features": {"watchlist": {"enable": True}, "ratings": {"enable": False}, "history": True},
+                },
+                {
+                    "id": "simkl-trakt",
+                    "source": "simkl",
+                    "target": "trakt",
+                    "mode": "two-way",
+                    "enabled": False,
+                    "features": {"progress": {"enable": True}},
+                },
+            ],
+        }
+    )
+
+    assert run_isolated(state, ["sync", "list"]) == 0
+    out = capsys.readouterr().out
+
+    assert "1\tplex-trakt\tPLEX:kids\tTRAKT\tone-way" in out
+    assert "history, watchlist" in out
+    assert "2\tsimkl-trakt\tSIMKL\tTRAKT\ttwo-way" in out
+    assert "progress" in out
+
+
+def test_sync_run_without_selector_posts_all_pairs(clean_cli_env) -> None:
+    from cli._app import run_isolated
+
+    state = Ctx.build(url="http://cw.test", output="plain")
+    state._http = FakeTransport({("POST", "/api/run"): {"ok": True, "run_id": "run-1"}})
+
+    assert run_isolated(state, ["sync", "run"]) == 0
+    assert state._http.calls == [("POST", "/api/run", {"source": "cli"})]
+
+
+def test_sync_run_positional_pair_index_posts_pair_id(clean_cli_env) -> None:
+    from cli._app import run_isolated
+
+    state = Ctx.build(url="http://cw.test", output="plain")
+    state._http = FakeTransport(
+        {
+            (
+                "GET",
+                "/api/pairs",
+            ): [
+                {"id": "plex-trakt", "source": "plex", "target": "trakt"},
+                {"id": "simkl-trakt", "source": "simkl", "target": "trakt"},
+            ],
+            ("POST", "/api/run"): {"ok": True, "run_id": "run-2"},
+        }
+    )
+
+    assert run_isolated(state, ["sync", "run", "2"]) == 0
+    assert state._http.calls == [
+        ("GET", "/api/pairs", None),
+        ("POST", "/api/run", {"source": "cli", "pair_id": "simkl-trakt"}),
+    ]
+
+
+def test_shell_sync_group_uses_new_list_and_run_selector(clean_cli_env) -> None:
+    from cli.commands.shell import Shell
+
+    state = Ctx.build(url="http://cw.test", output="plain")
+    state._http = FakeTransport(
+        {
+            (
+                "GET",
+                "/api/pairs",
+            ): [
+                {"id": "plex-trakt", "source": "plex", "target": "trakt", "features": {"watchlist": True}},
+                {"id": "simkl-trakt", "source": "simkl", "target": "trakt", "features": {"history": True}},
+            ],
+            ("POST", "/api/run"): {"ok": True, "run_id": "run-shell"},
+        }
+    )
+    shell = Shell(state)
+
+    assert shell.handle("sync") is True
+    assert shell.group == "sync"
+    assert shell.handle("list") is True
+    assert shell.handle("run 2") is True
+
+    assert state._http.calls == [
+        ("GET", "/api/pairs", None),
+        ("GET", "/api/pairs", None),
+        ("POST", "/api/run", {"source": "cli", "pair_id": "simkl-trakt"}),
+    ]
 
 
 def test_analyzer_problems_prints_titles_for_missing_items(
@@ -967,7 +1084,7 @@ def test_maintenance_cleanup_features_accepts_repeated_and_csv_values() -> None:
     from cli.commands.maintenance import _split_cleanup_features
 
     assert _split_cleanup_features(["watchlist,ratings", "history"]) == ["watchlist", "ratings", "history"]
-    assert _split_cleanup_features([], all_features=True) == ["watchlist", "ratings", "history", "progress"]
+    assert _split_cleanup_features([], all_features=True) == ["watchlist", "ratings", "history", "progress", "collection"]
     with pytest.raises(CLIError):
         _split_cleanup_features(["bogus"])
 

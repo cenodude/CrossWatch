@@ -153,6 +153,84 @@ def test_insights_history_provider_counts_collapse_native_namespace_duplicates(m
     assert history["providers_mse"]["simkl"] == {
         "movies": 1,
         "shows": 1,
+        "seasons": 0,
+        "anime": 0,
+        "episodes": 2,
+    }
+
+
+def test_insights_collection_counts_actual_collection_types(monkeypatch) -> None:
+    state = {
+        "providers": {
+            "PLEX": {
+                "instances": {
+                    "PLEX-P01": {
+                        "collection": {
+                            "baseline": {
+                                "items": {
+                                    "tmdb:100#s01e01": {
+                                        "type": "episode",
+                                        "series_title": "Show",
+                                        "season": 1,
+                                        "episode": 1,
+                                        "show_ids": {"tmdb": "100"},
+                                    },
+                                    "tmdb:100#s01e02": {
+                                        "type": "episode",
+                                        "series_title": "Show",
+                                        "season": 1,
+                                        "episode": 2,
+                                        "show_ids": {"tmdb": "100"},
+                                    },
+                                    "tmdb:100#s01": {
+                                        "type": "season",
+                                        "series_title": "Show",
+                                        "season": 1,
+                                        "show_ids": {"tmdb": "100"},
+                                    },
+                                    "tmdb:200": {
+                                        "type": "show",
+                                        "title": "Other Show",
+                                        "ids": {"tmdb": "200"},
+                                    },
+                                    "tmdb:603": {
+                                        "type": "movie",
+                                        "title": "The Matrix",
+                                        "year": 1999,
+                                        "ids": {"tmdb": "603"},
+                                    },
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    class Stats:
+        data = {"samples": [], "events": []}
+
+    cw = SimpleNamespace(
+        STATS=Stats(),
+        REPORT_DIR=None,
+        CACHE_DIR=None,
+        _load_wall_snapshot=lambda: [],
+        _append_log=lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(insight_api, "_env", lambda: (cw, lambda: {}, lambda _cfg: None, lambda *a, **k: None))
+    monkeypatch.setattr(insight_api, "_load_state_features", lambda _features: state)
+
+    app = FastAPI()
+    insight_api.register_insights(app)
+    data = TestClient(app).get("/api/insights?limit_samples=0&history=0&include_events=0").json()
+
+    collection = data["features"]["collection"]
+    assert collection["providers"]["plex"] == 5
+    assert collection["providers_mse"]["plex"] == {
+        "movies": 1,
+        "shows": 1,
+        "seasons": 1,
         "anime": 0,
         "episodes": 2,
     }

@@ -44,6 +44,43 @@ def test_unresolved_only_one_pending_row():
     assert row["unresolved"] and not row["current_mismatch"]
 
 
+def test_collection_pair_is_analyzed_like_other_features():
+    item = {
+        "type": "movie",
+        "title": "Owned Movie",
+        "ids": {"tmdb": "10"},
+    }
+    state = {
+        "providers": {
+            "PLEX": {"collection": {"baseline": {"items": {"tmdb:10": item}}}},
+            "TRAKT": {"collection": {"baseline": {"items": {}}}},
+        }
+    }
+    cfg = {
+        "pairs": [
+            {
+                "id": "p1",
+                "enabled": True,
+                "source": "PLEX",
+                "target": "TRAKT",
+                "mode": "one-way",
+                "features": {"collection": {"enable": True}},
+            }
+        ]
+    }
+    ctx = A._analysis_context(state, cfg)
+
+    assert A._pair_map(cfg, state) == {("PLEX", "collection"): ["TRAKT"]}
+    assert A._counts(state)["PLEX"]["collection"] == 1
+
+    problems = A._problems(state, None, cfg=cfg, ctx=ctx, include_system=False, include_hints=False)
+    missing = [p for p in problems if p.get("type") == "missing_peer"]
+
+    assert len(missing) == 1
+    assert missing[0]["feature"] == "collection"
+    assert missing[0]["targets"] == ["TRAKT"]
+
+
 def test_same_item_in_both_is_one_row_with_both_states():
     mismatch = [_mismatch("TRAKT", "history", "tmdb:1", ["SIMKL"], ["tmdb:1", "imdb:tt1"])]
     records = [_record("SIMKL", "history", "tmdb:1", ["tmdb:1"])]

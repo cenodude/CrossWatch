@@ -41,7 +41,7 @@ def _canon_feature(name: Any) -> str:
         return "progress"
     if s in ("wl", "watchlist"):
         return "watchlist"
-    return s if s in ("watchlist", "ratings", "history", "progress", "playlists") else "watchlist"
+    return s if s in ("watchlist", "ratings", "history", "progress", "playlists", "collection") else "watchlist"
 
 
 class Stats:

@@ -420,7 +420,7 @@ def register_insights(app: FastAPI) -> None:
 
     @app.post("/api/crosswatch/select-snapshot", tags=["insight"])
     def api_select_snapshot(
-        feature: str = Query(..., pattern="^(watchlist|history|ratings|progress)$"),
+        feature: str = Query(..., pattern="^(watchlist|history|ratings|progress|collection)$"),
         snapshot: str = Query(...),
         provider_instance: str = Query("default"),
     ) -> dict[str, Any]:
@@ -580,8 +580,10 @@ def register_insights(app: FastAPI) -> None:
                     return 1
                 if f == "ratings":
                     return 2
-                if f == "playlists":
+                if f == "collection":
                     return 3
+                if f == "playlists":
+                    return 4
                 return 9
 
             def _rank_source(v: Any) -> int:
@@ -654,7 +656,7 @@ def register_insights(app: FastAPI) -> None:
                 if not isinstance(pdata, dict):
                     continue
 
-                for feat in ("history", "ratings", "watchlist", "playlists"):
+                for feat in ("history", "ratings", "watchlist", "playlists", "collection"):
                     for node in _iter_nodes(pdata, feat):
                         baseline = node.get("baseline")
                         base: dict[str, Any] = baseline if isinstance(baseline, dict) else node
@@ -736,7 +738,7 @@ def register_insights(app: FastAPI) -> None:
             for _, pdata in provs.items():
                 if not isinstance(pdata, dict):
                     continue
-                for feat in ("history", "ratings", "watchlist", "playlists"):
+                for feat in ("history", "ratings", "watchlist", "playlists", "collection"):
                     for node in _iter_nodes(pdata, feat):
                         baseline = node.get("baseline")
                         base: dict[str, Any] = baseline if isinstance(baseline, dict) else node
@@ -1135,7 +1137,7 @@ def register_insights(app: FastAPI) -> None:
 
             return out
 
-        base_feats: tuple[str, ...] = ("watchlist", "ratings", "history", "progress", "playlists")
+        base_feats: tuple[str, ...] = ("watchlist", "ratings", "history", "progress", "playlists", "collection")
 
         def _features_from(obj: Any) -> list[str]:
             keys: list[str] = []
@@ -1449,6 +1451,7 @@ def register_insights(app: FastAPI) -> None:
         ) -> dict[str, int]:
             movies: set[str] = set()
             shows: set[str] = set()
+            seasons: set[str] = set()
             anime: set[str] = set()
             episodes: set[str] = set()
 
@@ -1601,14 +1604,138 @@ def register_insights(app: FastAPI) -> None:
             return {
                 "movies": len(movies),
                 "shows": len(shows),
+                "seasons": len(seasons),
                 "anime": len(anime),
                 "episodes": len(episodes),
             }
 
-        def _identity_item_count(recs: list[dict[str, Any]]) -> int:
+        def _compute_collection_breakdown(state_obj: dict[str, Any] | None) -> dict[str, int]:
+            movies: set[str] = set()
+            shows: set[str] = set()
+            seasons: set[str] = set()
+            anime: set[str] = set()
+            episodes: set[str] = set()
+
+            try:
+                prov_block = (state_obj or {}).get("providers") or {}
+                for _prov_name, prov_data in prov_block.items():
+                    if not isinstance(prov_data, dict):
+                        continue
+
+                    for _inst_id, feat_block in _iter_provider_feature_nodes(prov_data, "collection"):
+                        node = feat_block.get("baseline") or feat_block
+                        items = (node.get("items") if isinstance(node, dict) else None) or {}
+
+                        if isinstance(items, dict):
+                            it = items.values()
+                        elif isinstance(items, list):
+                            it = items
+                        else:
+                            continue
+
+                        for rec in it:
+                            if not isinstance(rec, dict) or _is_presence_stub(rec):
+                                continue
+                            sig = _collection_identity(rec)
+                            if not sig:
+                                continue
+                            typ = str(rec.get("type") or "").strip().lower()
+                            ids = _id_map(rec, "ids")
+                            show_ids_field = _id_map(rec, "show_ids")
+                            is_anime = bool(
+                                typ == "anime"
+                                or ids.get("anilist") or ids.get("mal")
+                                or show_ids_field.get("anilist") or show_ids_field.get("mal")
+                            )
+                            if typ == "episode":
+                                episodes.add(sig)
+                            elif typ == "season":
+                                seasons.add(sig)
+                            elif is_anime:
+                                anime.add(sig)
+                            elif typ == "movie" and not (show_ids_field or rec.get("series_title") or rec.get("show_title")):
+                                movies.add(sig)
+                            else:
+                                shows.add(sig)
+            except Exception as exc:
+                _append_log("INSIGHTS", f"[!] collection breakdown failed: {exc}")
+
+            return {
+                "movies": len(movies),
+                "shows": len(shows),
+                "seasons": len(seasons),
+                "anime": len(anime),
+                "episodes": len(episodes),
+            }
+
+        def _collection_identity(rec: dict[str, Any]) -> str | None:
+            typ = str(rec.get("type") or "").strip().lower()
+            ids = _id_map(rec, "ids")
+            show_ids_field = _id_map(rec, "show_ids")
+            has_show_meta = bool(
+                show_ids_field
+                or rec.get("series_title")
+                or rec.get("show_title")
+            )
+            is_anime = bool(
+                typ == "anime"
+                or ids.get("anilist") or ids.get("mal")
+                or show_ids_field.get("anilist") or show_ids_field.get("mal")
+            )
+            if typ == "episode":
+                s = int(rec.get("season") or 0)
+                ep = int(rec.get("episode") or 0)
+                return _pick_identity(
+                    title=rec.get("series_title") or rec.get("show_title") or rec.get("title") or rec.get("name"),
+                    year=rec.get("series_year") or rec.get("year"),
+                    ids=show_ids_field or ids,
+                    id_keys=("tmdb", "imdb", "tvdb", "anilist", "mal", "slug"),
+                    prefix="episode",
+                    suffix=f"|s{s}e{ep}",
+                )
+            if typ == "season":
+                s = int(rec.get("season") or rec.get("number") or 0)
+                return _pick_identity(
+                    title=rec.get("series_title") or rec.get("show_title") or rec.get("title") or rec.get("name"),
+                    year=rec.get("series_year") or rec.get("year"),
+                    ids=show_ids_field or ids,
+                    id_keys=("tmdb", "imdb", "tvdb", "anilist", "mal", "slug"),
+                    prefix="season",
+                    suffix=f"|s{s}",
+                )
+            if is_anime:
+                ids_anime = show_ids_field if (show_ids_field.get("anilist") or show_ids_field.get("mal")) else ids
+                return _pick_identity(
+                    title=rec.get("title") or rec.get("name"),
+                    year=rec.get("year"),
+                    ids=ids_anime,
+                    id_keys=("anilist", "mal", "slug", "tmdb", "imdb", "tvdb"),
+                    prefix="anime",
+                )
+            if typ == "movie" and not has_show_meta:
+                return _pick_identity(
+                    title=rec.get("title") or rec.get("name"),
+                    year=rec.get("year"),
+                    ids=ids,
+                    id_keys=("tmdb", "imdb", "tvdb", "slug"),
+                    prefix="movie",
+                )
+            return _pick_identity(
+                title=rec.get("series_title") or rec.get("show_title") or rec.get("title") or rec.get("name"),
+                year=rec.get("series_year") or rec.get("year"),
+                ids=show_ids_field or ids,
+                id_keys=("tmdb", "imdb", "tvdb", "slug"),
+                prefix="show",
+            )
+
+        def _identity_item_count(recs: list[dict[str, Any]], feature: str | None = None) -> int:
             identities: set[str] = set()
             for idx, rec in enumerate(recs):
                 if not isinstance(rec, dict):
+                    continue
+                if feature == "collection":
+                    sig = _collection_identity(rec)
+                    identities.add(sig or f"raw:{idx}")
                     continue
                 typ = str(rec.get("type") or "").strip().lower()
                 ids = _id_map(rec, "ids")
@@ -1872,14 +1999,14 @@ def register_insights(app: FastAPI) -> None:
                     snap_dir = Path(root_dir).joinpath("snapshots")
                     selected: dict[str, str] = {
                         feat: str((block or {}).get(f"restore_{feat}") or "latest").strip() or "latest"
-                        for feat in ("watchlist", "history", "ratings", "progress")
+                        for feat in ("watchlist", "history", "ratings", "progress", "collection")
                     }
 
                     files: list[Path] = []
                     if snap_dir.is_dir():
                         files = list(snap_dir.glob("*.json"))
 
-                    by_feat: dict[str, list[str]] = {"watchlist": [], "history": [], "ratings": [], "progress": [], "playlists": []}
+                    by_feat: dict[str, list[str]] = {"watchlist": [], "history": [], "ratings": [], "progress": [], "playlists": [], "collection": []}
                     for p in files:
                         name = p.name
                         for feat in by_feat.keys():
@@ -2061,7 +2188,7 @@ def register_insights(app: FastAPI) -> None:
 
         def _count_items(node: Any, feature: str | None = None) -> int:
             try:
-                if feature in ("watchlist", "history", "ratings", "progress") and isinstance(node, dict):
+                if feature in ("watchlist", "history", "ratings", "progress", "collection") and isinstance(node, dict):
                     recs = _iter_feature_items(node)
                     if feature == "history":
                         recs = [
@@ -2085,7 +2212,7 @@ def register_insights(app: FastAPI) -> None:
                     else:
                         recs = [r for r in recs if not _is_presence_stub(r)]
 
-                    return _identity_item_count(recs)
+                    return _identity_item_count(recs, feature)
 
                 if isinstance(node, dict):
                     base = node.get("baseline") or {}
@@ -2141,12 +2268,13 @@ def register_insights(app: FastAPI) -> None:
             return out
 
         def _sum_mse(parts: list[dict[str, int]]) -> dict[str, int]:
-            out = {"movies": 0, "shows": 0, "anime": 0, "episodes": 0}
+            out = {"movies": 0, "shows": 0, "seasons": 0, "anime": 0, "episodes": 0}
             for p in parts:
                 if not isinstance(p, dict):
                     continue
                 out["movies"] += int(p.get("movies") or 0)
                 out["shows"] += int(p.get("shows") or 0)
+                out["seasons"] += int(p.get("seasons") or 0)
                 out["anime"] += int(p.get("anime") or 0)
                 out["episodes"] += int(p.get("episodes") or 0)
             return out
@@ -2185,15 +2313,19 @@ def register_insights(app: FastAPI) -> None:
                         for inst_id, node in _iter_provider_feature_nodes(pdata, feat):
                             inst_counts[inst_id] = _count_items(node, feat)
                             try:
-                                per_counts = _compute_history_breakdown(
-                                    {"providers": {prov_upper: {feat: node}}},
-                                    feat,
-                                ) or {}
+                                if feat == "collection":
+                                    per_counts = _compute_collection_breakdown({"providers": {prov_upper: {feat: node}}}) or {}
+                                else:
+                                    per_counts = _compute_history_breakdown(
+                                        {"providers": {prov_upper: {feat: node}}},
+                                        feat,
+                                    ) or {}
                             except Exception:
                                 per_counts = {}
                             inst_mse[inst_id] = {
                                 "movies": int(per_counts.get("movies") or 0),
                                 "shows": int(per_counts.get("shows") or 0),
+                                "seasons": int(per_counts.get("seasons") or 0),
                                 "anime": int(per_counts.get("anime") or 0),
                                 "episodes": int(per_counts.get("episodes") or 0),
                             }
@@ -2243,11 +2375,11 @@ def register_insights(app: FastAPI) -> None:
                         existing[inst] = max(int(existing.get(inst) or 0), int(inst_count or 0))
 
         providers_instances_mse_by_feature: dict[str, dict[str, dict[str, dict[str, int]]]] = {
-            feat: {k: {"default": {"movies": 0, "shows": 0, "anime": 0, "episodes": 0}} for k in providers_set}
+            feat: {k: {"default": {"movies": 0, "shows": 0, "seasons": 0, "anime": 0, "episodes": 0}} for k in providers_set}
             for feat in feature_keys
         }
         providers_mse_by_feature: dict[str, dict[str, dict[str, int]]] = {
-            feat: {k: {"movies": 0, "shows": 0, "anime": 0, "episodes": 0} for k in providers_set}
+            feat: {k: {"movies": 0, "shows": 0, "seasons": 0, "anime": 0, "episodes": 0} for k in providers_set}
             for feat in feature_keys
         }
 
@@ -2258,7 +2390,7 @@ def register_insights(app: FastAPI) -> None:
                 for key, stored in provs.items():
                     inst_mse = {inst: dict(vals) for inst, vals in stored.items()}
                     if "default" not in inst_mse and not wanted_instances:
-                        inst_mse["default"] = {"movies": 0, "shows": 0, "anime": 0, "episodes": 0}
+                        inst_mse["default"] = {"movies": 0, "shows": 0, "seasons": 0, "anime": 0, "episodes": 0}
                     providers_instances_mse_by_feature[feat][key] = inst_mse
                     providers_mse_by_feature[feat][key] = _sum_mse(list(inst_mse.values()))
         except Exception:

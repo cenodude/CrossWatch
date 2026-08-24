@@ -364,7 +364,7 @@ def _normalize_capture_job(j: dict[str, Any]) -> dict[str, Any]:
             continue
     days2.sort()
     feature = str(j.get("feature") or "").strip().lower()
-    if feature not in {"watchlist", "ratings", "history", "progress", "all"}:
+    if feature not in {"watchlist", "ratings", "history", "progress", "collection", "all"}:
         feature = ""
     instance = str(j.get("instance") or j.get("instance_id") or j.get("profile") or "default").strip() or "default"
     return {
