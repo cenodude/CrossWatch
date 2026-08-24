@@ -11,13 +11,14 @@ from typing import Any
 from cw_platform.provider_instances import normalize_instance_id
 from providers.auth._auth_FLOPPY import FloppyAuthError, FloppyClient
 from providers.sync._mod_common import SimpleRateLimiter, build_op_result, build_session
+from providers.sync.floppy import _collection as feat_collection
 from providers.sync.floppy import _history as feat_history
 from providers.sync.floppy import _progress as feat_progress
 from providers.sync.floppy import _ratings as feat_ratings
 from providers.sync.floppy import _watchlist as feat_watchlist
 from providers.sync.floppy._common import api_delete, api_get, configured_block, is_configured, media_parts_from_item_id, paged
 
-__VERSION__ = "0.3"
+__VERSION__ = "0.4"
 __all__ = ["get_manifest", "FLOPPYModule", "OPS"]
 
 if "ctx" not in globals():
@@ -28,8 +29,8 @@ if "ctx" not in globals():
     ctx = _NullCtx()  # type: ignore[assignment]
 
 
-_FEATURES = {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": False}
-_FEATURE_MODULES: dict[str, Any] = {"watchlist": feat_watchlist, "ratings": feat_ratings, "history": feat_history, "progress": feat_progress}
+_FEATURES = {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": False, "collection": True}
+_FEATURE_MODULES: dict[str, Any] = {"watchlist": feat_watchlist, "ratings": feat_ratings, "history": feat_history, "progress": feat_progress, "collection": feat_collection}
 
 
 def _index_dict(value: Any) -> dict[str, dict[str, Any]]:
@@ -83,6 +84,7 @@ def get_manifest() -> Mapping[str, Any]:
             "history": {"read": True, "write": True, "types": {"movies": True, "shows": False, "seasons": False, "episodes": True}, "upsert": True, "remove": True, "observed_deletes": True, "requires_ids": ["tmdb"], "event_history": True, "rewatches": {"read": True, "write": True, "account_gate": False}},
             "progress": {"read": True, "write": True, "types": {"movies": True, "shows": False, "seasons": False, "episodes": True}, "upsert": True, "remove": True, "observed_deletes": False, "requires_ids": ["tmdb"], "units": "seconds", "completion_policy": {"progress_write": {"mode": "none"}}},
             "playlists": {"read": False, "write": False},
+            "collection": {"read": True, "write": True, "types": {"movies": True, "shows": True, "seasons": True, "episodes": True}, "upsert": True, "remove": True, "observed_deletes": True, "requires_ids": ["tmdb"], "provides_ids": ["tmdb", "imdb", "tvdb"], "default_format": "digital"},
         },
     }
 

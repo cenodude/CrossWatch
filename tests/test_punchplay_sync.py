@@ -59,7 +59,7 @@ def test_module_is_registered_and_discoverable() -> None:
     assert ops.name() == "PUNCHPLAY"
     assert ops.label() == "PunchPlay"
     assert dict(ops.features()) == {
-        "watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": False,
+        "watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": False, "collection": True,
     }
     assert sync_provider_supports_feature("PUNCHPLAY", "history") is True
     assert sync_provider_supports_feature("PUNCHPLAY", "playlists") is False
@@ -78,7 +78,7 @@ def test_manifest_matches_validated_contract() -> None:
     assert man["experimental"] is True
     assert man["bidirectional"] is True
 
-    for feature in ("watchlist", "ratings", "history", "progress"):
+    for feature in ("watchlist", "ratings", "history", "progress", "collection"):
         assert caps[feature]["observed_deletes"] is True, feature
 
     assert caps["ratings"]["scale"] == "1-10"
@@ -87,6 +87,8 @@ def test_manifest_matches_validated_contract() -> None:
     for feature in ("watchlist", "ratings", "history"):
         assert caps[feature]["batch_size"] == 100
         assert caps[feature]["accepted_ids"] == ["tmdb", "imdb", "tvdb", "mal"]
+    assert caps["collection"]["types"] == {"movies": True, "shows": True, "seasons": True, "episodes": False}
+    assert caps["collection"]["default_format"] == "digital"
 
 
 def test_ui_feature_flags_match_the_sync_manifest() -> None:
@@ -352,6 +354,78 @@ def test_watchlist_index_merges_sync_snapshot_list_items(monkeypatch: pytest.Mon
     assert http.calls[2]["method"] == "GET"
     assert http.calls[2]["url"].endswith("/me/sync/snapshot")
     assert http.calls[2]["params"]["resource"] == "list_item"
+
+
+# --- collection ---------------------------------------------------------------
+
+def test_collection_index_reads_paged_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.punchplay import _collection as co
+
+    http = FakeHTTP([
+        _Resp(200, {"items": [
+            {"id": 11, "kind": "movie", "sourceId": 550, "title": "Fight Club", "year": 1999, "format": "bluray"},
+            {"id": 12, "kind": "show", "sourceId": 1399, "title": "Game of Thrones", "year": 2011, "season": 1, "format": "digital"},
+        ], "nextCursor": "next"}),
+        _Resp(200, {"items": [
+            {"id": 13, "kind": "show", "sourceId": 1402, "title": "The Walking Dead", "year": 2010},
+        ], "nextCursor": None}),
+    ])
+    _patch(monkeypatch, co, http)
+
+    idx = co.build_index(Adapter())
+
+    assert idx["tmdb:550"]["_punchplay_collection_id"] == "11"
+    assert idx["tmdb:550"]["format"] == "bluray"
+    assert idx["tmdb:1399#season:1"]["type"] == "season"
+    assert idx["tmdb:1399#season:1"]["show_ids"] == {"tmdb": "1399"}
+    assert idx["tmdb:1402"]["type"] == "show"
+    assert http.calls[0]["params"] == {"limit": 200}
+    assert http.calls[1]["params"] == {"limit": 200, "cursor": "next"}
+
+
+def test_collection_add_defaults_to_digital(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.punchplay import _collection as co
+
+    http = FakeHTTP([_Resp(200, {"id": 99})])
+    _patch(monkeypatch, co, http)
+
+    res = co.add(Adapter(), [{"type": "movie", "title": "Fight Club", "year": 1999, "ids": {"tmdb": "550"}}])
+
+    assert res["confirmed_keys"] == ["tmdb:550"]
+    assert http.calls[0]["method"] == "POST"
+    assert http.calls[0]["url"].endswith("/collection")
+    assert http.calls[0]["json"] == {"kind": "movie", "sourceId": 550, "format": "digital", "title": "Fight Club", "year": 1999}
+
+
+def test_collection_add_supports_season_and_rejects_episode(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.punchplay import _collection as co
+
+    http = FakeHTTP([_Resp(200, {"id": 99})])
+    _patch(monkeypatch, co, http)
+
+    res = co.add(Adapter(), [
+        {"type": "season", "series_title": "Example", "show_ids": {"tmdb": "100"}, "season": 2},
+        {"type": "episode", "show_ids": {"tmdb": "100"}, "season": 2, "episode": 4},
+    ])
+
+    assert res["confirmed_keys"] == ["tmdb:100#season:2"]
+    assert res["unresolved_keys"] == ["tmdb:100#s02e04"]
+    assert http.calls[0]["json"]["kind"] == "show"
+    assert http.calls[0]["json"]["sourceId"] == 100
+    assert http.calls[0]["json"]["season"] == 2
+
+
+def test_collection_remove_uses_existing_collection_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.punchplay import _collection as co
+
+    http = FakeHTTP([_Resp(204)])
+    _patch(monkeypatch, co, http)
+
+    res = co.remove(Adapter(), [{"type": "movie", "ids": {"tmdb": "550"}, "_punchplay_collection_id": "77"}])
+
+    assert res["confirmed_keys"] == ["tmdb:550"]
+    assert http.calls[0]["method"] == "DELETE"
+    assert http.calls[0]["url"].endswith("/collection/77")
 
 
 # --- ratings ------------------------------------------------------------------

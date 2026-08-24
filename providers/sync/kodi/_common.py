@@ -23,7 +23,7 @@ EPISODE_BASE_PROPERTIES = ["uniqueid", "title", "showtitle", "season", "episode"
 MOVIE_PROPERTIES = [*MOVIE_BASE_PROPERTIES, "playcount", "lastplayed", "userrating", "resume"]
 EPISODE_PROPERTIES = [*EPISODE_BASE_PROPERTIES, "playcount", "lastplayed", "userrating", "resume"]
 SHOW_PROPERTIES = ["uniqueid", "title", "year"]
-WHITELIST_FEATURES = ("history", "ratings", "progress", "scrobble")
+WHITELIST_FEATURES = ("history", "ratings", "progress", "collection", "scrobble")
 
 
 def properties_for_feature(feature: str) -> tuple[list[str], list[str], list[str]]:

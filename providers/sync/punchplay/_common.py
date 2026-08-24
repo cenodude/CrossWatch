@@ -40,6 +40,9 @@ URL_TITLE_HISTORY = f"{PLATFORM_BASE}/title/{{kind}}/{{title_id}}/history"
 URL_RATINGS = f"{PLATFORM_BASE}/me/ratings"
 URL_FAVOURITES = f"{PLATFORM_BASE}/me/favourites"
 URL_WATCH_STATUS = f"{PLATFORM_BASE}/me/watch-status"
+URL_COLLECTION = f"{PLATFORM_BASE}/me/collection"
+URL_COLLECTION_ITEM = f"{PLATFORM_BASE}/collection/{{entry_id}}"
+URL_COLLECTION_WRITE = f"{PLATFORM_BASE}/collection"
 URL_IN_PROGRESS = f"{PLATFORM_BASE}/playback/in-progress"
 URL_IN_PROGRESS_ITEM = f"{PLATFORM_BASE}/playback/in-progress/{{entry_id}}"
 URL_CONTINUE_WATCHING = f"{PLATFORM_BASE}/me/continue-watching"
@@ -90,6 +93,8 @@ def _endpoint_bucket(method: str, url: str) -> str | None:
         return "history_read"
     if "/me/lists" in u or "/lists/" in u:
         return "lists_read"
+    if "/me/collection" in u or "/collection" in u:
+        return "sync_read"
     if "/calendar" in u:
         return "calendar"
     return None

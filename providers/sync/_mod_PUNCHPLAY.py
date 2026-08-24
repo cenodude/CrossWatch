@@ -11,6 +11,7 @@ from typing import Any
 from cw_platform.provider_instances import normalize_instance_id
 from providers.auth._auth_PUNCHPLAY import ME_URL, is_configured as auth_is_configured
 from providers.sync._mod_common import SimpleRateLimiter, build_op_result, build_session, dedup_keys
+from providers.sync.punchplay import _collection as feat_collection
 from providers.sync.punchplay import _history as feat_history
 from providers.sync.punchplay import _progress as feat_progress
 from providers.sync.punchplay import _ratings as feat_ratings
@@ -24,8 +25,8 @@ from providers.sync.punchplay._common import (
     request_id_of,
 )
 
-__VERSION__ = "0.3"
-__all__ = ["get_manifest", "PUNCHPLAYModule", "OPS", "feat_history", "feat_progress", "feat_ratings", "feat_watchlist"]
+__VERSION__ = "0.4"
+__all__ = ["get_manifest", "PUNCHPLAYModule", "OPS", "feat_collection", "feat_history", "feat_progress", "feat_ratings", "feat_watchlist"]
 
 if "ctx" not in globals():
     class _NullCtx:
@@ -35,12 +36,13 @@ if "ctx" not in globals():
     ctx = _NullCtx()  # type: ignore[assignment]
 
 
-_FEATURES = {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": False}
+_FEATURES = {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": False, "collection": True}
 _FEATURE_MODULES = {
     "watchlist": feat_watchlist,
     "ratings": feat_ratings,
     "history": feat_history,
     "progress": feat_progress,
+    "collection": feat_collection,
 }
 
 _ACCEPTED_IDS = ["tmdb", "imdb", "tvdb", "mal"]
@@ -122,6 +124,17 @@ def get_manifest() -> Mapping[str, Any]:
                 "accepted_ids": ["tmdb", "imdb", "tvdb"],
                 "provides_ids": ["tmdb"],
                 "requires_duration": False,
+            },
+            "collection": {
+                "read": True,
+                "write": True,
+                "types": {"movies": True, "shows": True, "seasons": True, "episodes": False},
+                "upsert": True,
+                "remove": True,
+                "observed_deletes": True,
+                "accepted_ids": ["tmdb"],
+                "provides_ids": ["tmdb"],
+                "default_format": "digital",
             },
         },
     }

@@ -80,6 +80,10 @@ try:
 except Exception:
     feat_progress = None
 try:
+    from .trakt import _collection as feat_collection
+except Exception:
+    feat_collection = None
+try:
     from .trakt import _playlists as feat_playlists
 except Exception:
     feat_playlists = None
@@ -99,7 +103,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "1.5"
+__VERSION__ = "1.6"
 __all__ = ["get_manifest", "TRAKTModule", "OPS"]
 
 os.environ.setdefault("CW_TRAKT_UA", f"CrossWatch TRAKT/{__VERSION__}")
@@ -149,6 +153,8 @@ if feat_ratings:
     _FEATURES["ratings"] = feat_ratings
 if feat_progress:
     _FEATURES["progress"] = feat_progress
+if feat_collection:
+    _FEATURES["collection"] = feat_collection
 
 
 def _features_flags() -> dict[str, bool]:
@@ -157,6 +163,7 @@ def _features_flags() -> dict[str, bool]:
         "ratings": "ratings" in _FEATURES,
         "history": "history" in _FEATURES,
         "progress": "progress" in _FEATURES,
+        "collection": "collection" in _FEATURES,
         "playlists": feat_playlists is not None,
     }
 
@@ -197,6 +204,11 @@ def get_manifest() -> Mapping[str, Any]:
                     "stop_scrobble": {"marks_watched_percent": 80, "comparison": "above"},
                 },
             },
+            "collection": {
+                "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
+                "upsert": True,
+                "remove": True,
+            },
             "playlists": _PLAYLIST_CAPABILITIES,
         },
     }
@@ -220,6 +232,9 @@ class TRAKTConfig:
     history_number_fallback: bool = False
     history_collection: bool = False
     history_collection_types: list[str] | None = None
+    collection_batch_size: int = 100
+    collection_use_etag: bool = True
+    collection_shadow_ttl_hours: int = 168
 
 
 class TRAKTClient:
@@ -406,6 +421,9 @@ class TRAKTModule:
             history_number_fallback=bool(t.get("history_number_fallback")),
             history_collection=bool(t.get("history_collection")),
             history_collection_types=types or None,
+            collection_batch_size=int(t.get("collection_batch_size", t.get("watchlist_batch_size", 100)) or 100),
+            collection_use_etag=bool(t.get("collection_use_etag", True)),
+            collection_shadow_ttl_hours=int(t.get("collection_shadow_ttl_hours", 168) or 168),
         )
         if not self.cfg.client_id or not self.cfg.access_token:
             raise TRAKTAuthError("Missing Trakt client_id/access_token")
@@ -436,6 +454,7 @@ class TRAKTModule:
             "ratings": True,
             "history": True,
             "progress": True,
+            "collection": True,
             "playlists": True,
         }
         present = _features_flags()
@@ -536,6 +555,7 @@ class TRAKTModule:
             "ratings": (core_ok if (enabled.get("ratings") and "ratings" in _FEATURES) else False),
             "history": (core_ok if (enabled.get("history") and "history" in _FEATURES) else False),
             "progress": (core_ok if (enabled.get("progress") and "progress" in _FEATURES) else False),
+            "collection": (core_ok if (enabled.get("collection") and "collection" in _FEATURES) else False),
             "playlists": (core_ok if enabled.get("playlists") else False),
         }
 
@@ -766,6 +786,11 @@ class _TraktOPS:
                     "progress_write": {"mode": "none"},
                     "stop_scrobble": {"marks_watched_percent": 80, "comparison": "above"},
                 },
+            },
+            "collection": {
+                "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
+                "upsert": True,
+                "remove": True,
             },
             "playlists": _PLAYLIST_CAPABILITIES,
         }

@@ -81,10 +81,13 @@ def tvshow(**extra):
 def test_kodi_manifest_capabilities_are_scoped():
     manifest = mod.get_manifest()
 
-    assert manifest["features"] == {"watchlist": False, "ratings": True, "history": True, "progress": True, "playlists": False}
+    assert manifest["features"] == {"watchlist": False, "ratings": True, "history": True, "progress": True, "playlists": False, "collection": True}
     assert manifest["capabilities"]["history"]["read"] is True
     assert manifest["capabilities"]["ratings"]["write"] is True
     assert manifest["capabilities"]["progress"]["types"]["episodes"] is True
+    assert manifest["capabilities"]["collection"]["read"] is True
+    assert manifest["capabilities"]["collection"]["write"] is False
+    assert manifest["capabilities"]["collection"]["types"] == {"movies": True, "shows": False, "seasons": False, "episodes": True}
 
 
 def test_kodi_sync_properties_match_jsonrpc_v13_5_contract():
@@ -92,7 +95,7 @@ def test_kodi_sync_properties_match_jsonrpc_v13_5_contract():
     episode_allowed = {"title", "showtitle", "season", "episode", "tvshowid", "uniqueid", "playcount", "lastplayed", "userrating", "resume"}
     show_allowed = {"title", "year", "uniqueid"}
 
-    for feature in ("history", "ratings", "progress", ""):
+    for feature in ("history", "ratings", "progress", "collection", ""):
         movie_props, episode_props, show_props = common.properties_for_feature(feature)
         assert set(movie_props) <= movie_allowed
         assert set(episode_props) <= episode_allowed
@@ -107,7 +110,7 @@ def test_history_index_reads_movies_and_episodes():
 
     assert "tmdb:329865" in index
     assert index["tmdb:329865"]["watched"] is True
-    assert index["tmdb:329865"]["watched_at"] == "2026-01-02T03:04:05Z"
+    assert index["tmdb:329865"]["watched_at"] == common.kodi_lastplayed_to_iso("2026-01-02 03:04:05")
     ep = index["tmdb:63639#s01e01"]
     assert ep["type"] == "episode"
     assert ep["title"] == "The Target"
@@ -199,6 +202,35 @@ def test_kodi_library_rows_uses_v13_5_path_filters_without_extra_properties(monk
         assert "path" not in params["properties"]
 
 
+def test_collection_index_reads_library_inventory():
+    ad = adapter(FakeKodiClient([movie()], [episode()], [tvshow()]))
+
+    index = mod.feat_collection.build_index(ad)
+
+    assert sorted(index) == ["tmdb:329865", "tmdb:63639#s01e01"]
+    assert index["tmdb:329865"]["type"] == "movie"
+    ep = index["tmdb:63639#s01e01"]
+    assert ep["type"] == "episode"
+    assert ep["show_ids"] == {"tmdb": "63639", "tvdb": "280619"}
+    assert ep["season"] == 1 and ep["episode"] == 1
+
+
+def test_collection_writes_are_source_only():
+    client = FakeKodiClient([movie()], [episode()], [tvshow()])
+    module = mod.KODIModule({"kodi": {"server": "http://localhost:8080", "connection_verified": True}})
+    module.client = client
+
+    result = module.add("collection", [{"type": "movie", "ids": {"tmdb": "329865"}}])
+    removed = module.remove("collection", [{"type": "movie", "ids": {"tmdb": "329865"}}])
+
+    assert result["ok"] is True and result["count"] == 0
+    assert result["reason"] == "unsupported"
+    assert result["unresolved"][0]["reason"] == "kodi_collection_write_unsupported"
+    assert removed["reason"] == "unsupported"
+    assert client.movie_writes == []
+    assert client.episode_writes == []
+
+
 def test_kodi_sync_logs_library_scope_filter_when_configured(monkeypatch):
     logs: list[tuple[str, str, str, dict[str, Any]]] = []
     monkeypatch.setattr(common, "log", lambda feature, level, event, **fields: logs.append((feature, level, event, fields)))
@@ -285,7 +317,7 @@ def test_writes_history_ratings_and_progress_to_resolved_library_items():
     assert module.add("ratings", [source_ep])["count"] == 1
     assert module.add("progress", [source_movie])["count"] == 1
 
-    assert client.movie_writes[0] == (10, {"playcount": 1, "lastplayed": "2026-06-01 12:00:00"})
+    assert client.movie_writes[0] == (10, {"playcount": 1, "lastplayed": common.watched_at_to_kodi("2026-06-01T12:00:00Z")})
     assert client.episode_writes[0] == (20, {"userrating": 10})
     assert client.movie_writes[1] == (10, {"resume": {"position": 90.0, "total": 6000.0}})
 

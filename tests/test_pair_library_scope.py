@@ -74,7 +74,7 @@ def test_features_without_library_scope_are_untouched(feature) -> None:
     assert out["plex"]["history"]["libraries"] == ["2", "3", "4", "5", "8", "9"]
 
 
-@pytest.mark.parametrize("feature", ["history", "ratings", "progress"])
+@pytest.mark.parametrize("feature", ["history", "ratings", "progress", "collection"])
 def test_all_library_scoped_features_are_handled(feature) -> None:
     cfg = {"plex": {feature: {"libraries": ["1", "2"]}}}
     fcfg = {"libraries": {"PLEX": ["2"]}}
