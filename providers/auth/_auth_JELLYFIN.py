@@ -491,11 +491,12 @@ def html() -> str:
           </div>
 
           <div class="cw-subpanel" data-sub="whitelist">
-            <div style="max-width:980px">
+            <div style="width:100%;max-width:none">
               <div id="jfy_lib_matrix"></div>
               <select id="jfy_lib_history" name="jfy_lib_history" class="lm-hidden" multiple></select>
               <select id="jfy_lib_ratings" name="jfy_lib_ratings" class="lm-hidden" multiple></select>
               <select id="jfy_lib_progress" name="jfy_lib_progress" class="lm-hidden" multiple></select>
+              <select id="jfy_lib_collection" name="jfy_lib_collection" class="lm-hidden" multiple></select>
               <select id="jfy_lib_scrobble" name="jfy_lib_scrobble" class="lm-hidden" multiple></select>
             </div>
           </div>

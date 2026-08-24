@@ -309,6 +309,120 @@ def emby_scope_any(cfg: CfgLike) -> dict[str, Any]:
     return _emby_scope_from_list(libs)
 
 
+def emby_build_library_roots(http: Any, user_id: str | None = None) -> dict[str, dict[str, Any]]:
+    roots: dict[str, dict[str, Any]] = {}
+    try:
+        r = http.get(f"/Users/{user_id}/Views") if user_id else http.get("/Library/MediaFolders")
+    except Exception:
+        r = None
+    try:
+        if r is not None and getattr(r, "status_code", 0) == 200:
+            data = r.json() or {}
+            for item in data.get("Items") or data.get("ItemsList") or []:
+                if not isinstance(item, Mapping):
+                    continue
+                lid = str(item.get("Id") or item.get("Key") or "").strip()
+                if not lid:
+                    continue
+                ctyp = str(item.get("CollectionType") or item.get("Type") or "").strip().lower()
+                if "movie" in ctyp:
+                    typ = "movie"
+                elif "series" in ctyp or "tv" in ctyp:
+                    typ = "show"
+                else:
+                    typ = ctyp or "lib"
+                roots[lid] = {"id": lid, "type": typ, "raw": item}
+    except Exception:
+        pass
+    if (os.environ.get("CW_DEBUG") or os.environ.get("CW_EMBY_DEBUG")) and roots:
+        cw_log("EMBY", "common", "debug", "index_fetch_counts", source="library_roots", roots=sorted(roots.keys()))
+    return roots
+
+
+def emby_get_library_roots(adapter: Any) -> dict[str, dict[str, Any]]:
+    roots = getattr(adapter, "_emby_library_roots", None)
+    if isinstance(roots, dict) and roots:
+        return roots
+    http = getattr(adapter, "client", None)
+    cfg = getattr(adapter, "cfg", None)
+    user_id = getattr(cfg, "user_id", None) if cfg is not None else None
+    if not http:
+        return {}
+    roots = emby_build_library_roots(http, str(user_id or "") or None)
+    setattr(adapter, "_emby_library_roots", roots)
+    return roots
+
+
+_emby_lib_anc_cache: dict[str, str | None] = {}
+
+
+def _emby_lib_id_via_ancestors(http: Any, user_id: str | None, item_id: str, roots: Mapping[str, Any]) -> str | None:
+    if not item_id:
+        return None
+    if item_id in _emby_lib_anc_cache:
+        return _emby_lib_anc_cache[item_id]
+    try:
+        params = {"Fields": "Id"}
+        if user_id:
+            params["UserId"] = str(user_id)
+        response = http.get(f"/Items/{item_id}/Ancestors", params=params)
+        if getattr(response, "status_code", 0) == 200:
+            root_keys = {str(k) for k in (roots or {}).keys()}
+            for ancestor in response.json() or []:
+                aid = str((ancestor or {}).get("Id") or "").strip()
+                if aid in root_keys:
+                    _emby_lib_anc_cache[item_id] = aid
+                    return aid
+    except Exception:
+        pass
+    _emby_lib_anc_cache[item_id] = None
+    return None
+
+
+def emby_resolve_library_id(
+    row: Mapping[str, Any],
+    roots: Mapping[str, Mapping[str, Any]],
+    scope_libs: list[str] | None = None,
+    http: Any | None = None,
+    user_id: str | None = None,
+    *,
+    allow_deep_lookup: bool = False,
+) -> str | None:
+    if scope_libs and len(scope_libs) == 1:
+        return str(scope_libs[0])
+
+    candidates: list[str] = []
+    for key in ("library_id", "LibraryId", "CollectionFolderId", "ParentId"):
+        value = row.get(key)
+        if value is not None:
+            candidates.append(str(value))
+    ancestors = row.get("AncestorIds") or []
+    if isinstance(ancestors, (list, tuple)):
+        candidates.extend(str(value) for value in ancestors if value is not None)
+
+    root_keys = {str(key) for key in (roots or {}).keys()}
+    for candidate in candidates:
+        if candidate in root_keys:
+            return candidate
+
+    if allow_deep_lookup and http and row.get("Id"):
+        found = _emby_lib_id_via_ancestors(http, user_id, str(row["Id"]), roots)
+        if found:
+            return found
+
+    want: str | None = None
+    typ = str(row.get("Type") or row.get("type") or "").strip().lower()
+    if typ in ("movie", "video"):
+        want = "movie"
+    elif typ in ("episode", "series", "season", "show"):
+        want = "show"
+    if want:
+        for lib_id, meta in roots.items():
+            if str((meta or {}).get("type") or "").lower() == want:
+                return str(lib_id)
+    return None
+
+
 # type & id helpers
 def _norm_type(t: Any) -> str:
     x = str(t or "").strip().lower()

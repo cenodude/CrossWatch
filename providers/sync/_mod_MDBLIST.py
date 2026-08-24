@@ -142,7 +142,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "1.6"
+__VERSION__ = "1.7"
 __all__ = ["get_manifest", "MDBLISTModule", "OPS"]
 
 def _health(status: str, ok: bool, latency_ms: int) -> None:
@@ -197,6 +197,12 @@ except Exception as e:
     feat_progress = None
 
 try:
+    from .mdblist import _collection as feat_collection
+except Exception as e:
+    _warn("feature_import_failed", import_feature="collection", error=f"{type(e).__name__}: {e}")
+    feat_collection = None
+
+try:
     from .mdblist import _playlists as feat_playlists
 except Exception as e:
     _warn("feature_import_failed", import_feature="playlists", error=f"{type(e).__name__}: {e}")
@@ -224,6 +230,8 @@ if feat_history:
     _FEATURES["history"] = feat_history
 if feat_progress:
     _FEATURES["progress"] = feat_progress
+if feat_collection:
+    _FEATURES["collection"] = feat_collection
 
 
 def _features_flags() -> dict[str, bool]:
@@ -232,6 +240,7 @@ def _features_flags() -> dict[str, bool]:
         "ratings": "ratings" in _FEATURES,
         "history": "history" in _FEATURES,
         "progress": "progress" in _FEATURES,
+        "collection": "collection" in _FEATURES,
         "playlists": feat_playlists is not None,
     }
 
@@ -281,6 +290,12 @@ def get_manifest() -> Mapping[str, Any]:
                     "progress_write": {"mode": "none"},
                     "stop_scrobble": {"marks_watched_percent": 80, "comparison": "gte"},
                 },
+            },
+            "collection": {
+                "observed_deletes": True,
+                "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
+                "upsert": True,
+                "remove": True,
             },
             "playlists": _PLAYLIST_CAPABILITIES,
         },
@@ -463,7 +478,7 @@ class MDBLISTModule:
 
     @staticmethod
     def supported_features() -> dict[str, bool]:
-        toggles = {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": True}
+        toggles = {"watchlist": True, "ratings": True, "history": True, "progress": True, "collection": True, "playlists": True}
         present = _features_flags()
         return {k: bool(toggles.get(k, False) and present.get(k, False)) for k in toggles.keys()}
 
@@ -482,7 +497,7 @@ class MDBLISTModule:
                 "status": "ok",
                 "latency_ms": 0,
                 "features": {},
-                "details": {"disabled": ["watchlist", "ratings", "history", "progress"]},
+                "details": {"disabled": ["watchlist", "ratings", "history", "progress", "collection"]},
                 "api": {},
             }
 
@@ -534,6 +549,7 @@ class MDBLISTModule:
             "ratings": bool(enabled.get("ratings") and user_ok),
             "history": bool(enabled.get("history") and user_ok),
             "progress": bool(enabled.get("progress") and user_ok),
+            "collection": bool(enabled.get("collection") and user_ok),
             "playlists": bool(enabled.get("playlists") and user_ok),
         }
 
@@ -851,6 +867,12 @@ class _MDBLISTOPS:
                     "progress_write": {"mode": "none"},
                     "stop_scrobble": {"marks_watched_percent": 80, "comparison": "gte"},
                 },
+            },
+            "collection": {
+                "observed_deletes": True,
+                "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
+                "upsert": True,
+                "remove": True,
             },
             "playlists": _PLAYLIST_CAPABILITIES,
         }

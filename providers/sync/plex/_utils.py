@@ -1088,7 +1088,7 @@ def ensure_whitelist_defaults(
     cfg = load_config() if cfg is None else cfg
     plex = _plex(cfg, instance_id)
     changed = False
-    for sec in ("history", "progress", "ratings", "scrobble"):
+    for sec in ("history", "progress", "ratings", "collection", "scrobble"):
         if not isinstance(plex.get(sec), dict):
             plex[sec] = {}
             changed = True

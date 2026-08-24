@@ -375,11 +375,12 @@ def html() -> str:
           </div>
 
           <div class="cw-subpanel" data-sub="whitelist">
-            <div style="max-width:980px">
+            <div style="width:100%;max-width:none">
               <div id="plex_lib_matrix"></div>
               <select id="plex_lib_history" class="lm-hidden" multiple></select>
               <select id="plex_lib_ratings" class="lm-hidden" multiple></select>
               <select id="plex_lib_progress" class="lm-hidden" multiple></select>
+              <select id="plex_lib_collection" class="lm-hidden" multiple></select>
               <select id="plex_lib_scrobble" class="lm-hidden" multiple></select>
             </div>
           </div>

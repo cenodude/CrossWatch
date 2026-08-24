@@ -22,6 +22,12 @@ from .jellyfin import _history as feat_history
 from .jellyfin import _ratings as feat_ratings
 from .jellyfin import _progress as feat_progress
 try:
+    from .jellyfin import _collection as feat_collection
+except Exception as e:
+    feat_collection = None
+    if os.environ.get("CW_DEBUG") or os.environ.get("CW_JELLYFIN_DEBUG"):
+        cw_log("JELLYFIN", "collection", "warn", "feature_import_failed", error=str(e))
+try:
     from .jellyfin import _playlists as feat_playlists
 except Exception as e:
     feat_playlists = None
@@ -107,7 +113,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "2.3"
+__VERSION__ = "2.4"
 _MIN_PROGRESS_WRITE_VERSION = (10, 9)
 _JF_VERSION_CACHE: dict[str, tuple[float, str | None]] = {}
 
@@ -169,6 +175,7 @@ _FEATURES: dict[str, Any] = {
     "history": feat_history,
     "ratings": feat_ratings,
     "progress": feat_progress,
+    "collection": feat_collection,
 }
 
 _PLAYLIST_CAPABILITIES: dict[str, Any] = {
@@ -199,6 +206,16 @@ _PROGRESS_CAPABILITIES: dict[str, Any] = {
             "setting": "MaxResumePct",
         },
     },
+}
+
+_COLLECTION_CAPABILITIES: dict[str, Any] = {
+    "index_semantics": "present",
+    "observed_deletes": True,
+    "types": {"movies": True, "shows": False, "seasons": False, "episodes": True},
+    "read": True,
+    "add": False,
+    "remove": False,
+    "source_only": True,
 }
 
 _HEALTH_SHADOW_NAME = "jellyfin.health.shadow.json"
@@ -252,6 +269,7 @@ def get_manifest() -> Mapping[str, Any]:
             "ratings": False,
             "playlists": feat_playlists is not None,
             "progress": True,
+            "collection": feat_collection is not None,
         },
         "requires": ["requests"],
         "capabilities": {
@@ -265,6 +283,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "from_date": False,
             },
             "progress": _PROGRESS_CAPABILITIES,
+            "collection": _COLLECTION_CAPABILITIES,
             "playlists": _PLAYLIST_CAPABILITIES,
         },
     }
@@ -292,6 +311,7 @@ class JFConfig:
     history_libraries: list[str] | None = None
     progress_libraries: list[str] | None = None
     ratings_libraries: list[str] | None = None
+    collection_libraries: list[str] | None = None
     progress_replay_enabled: bool = False
     progress_timestamp_tolerance_seconds: int = 30
 
@@ -420,6 +440,7 @@ class JELLYFINModule:
         hi_gprio = hi.get("history_guid_priority") or wl_gprio
         pr = dict(jf.get("progress") or {})
         ra = dict(jf.get("ratings") or {})
+        co = dict(jf.get("collection") or {})
 
         def _list_str(v: Any) -> list[str] | None:
             if not v:
@@ -454,6 +475,7 @@ class JELLYFINModule:
             history_libraries=_list_str(hi.get("libraries")),
             progress_libraries=_list_str(pr.get("libraries")),
             ratings_libraries=_list_str(ra.get("libraries")),
+            collection_libraries=_list_str(co.get("libraries")),
             progress_replay_enabled=coerce_bool(pr.get("replay_enabled", jf.get("progress_replay_enabled", False))),
             progress_timestamp_tolerance_seconds=_int_value(pr.get("timestamp_tolerance_seconds", jf.get("progress_clock_drift_seconds", 30)), 30),
         )
@@ -487,7 +509,7 @@ class JELLYFINModule:
 
     @staticmethod
     def supported_features() -> dict[str, bool]:
-        toggles = {"watchlist": True, "history": True, "ratings": False, "playlists": feat_playlists is not None, "progress": True}
+        toggles = {"watchlist": True, "history": True, "ratings": False, "playlists": feat_playlists is not None, "progress": True, "collection": feat_collection is not None}
         present = _present_flags()
         out = {k: bool(toggles.get(k, False) and present.get(k, False)) for k in toggles.keys()}
         out["playlists"] = bool(feat_playlists is not None)
@@ -509,7 +531,7 @@ class JELLYFINModule:
                 "server": {"product": None, "version": None},
                 "disabled": [k for k, v in enabled.items() if not v],
             }
-            features = {k: False for k in ("watchlist", "history", "ratings", "playlists", "progress")}
+            features = {k: False for k in ("watchlist", "history", "ratings", "playlists", "progress", "collection")}
             api = {
                 "ping": {"status": None},
                 "info": {"status": None},
@@ -563,6 +585,7 @@ class JELLYFINModule:
             "ratings": base_ready if enabled.get("ratings") else False,
             "playlists": base_ready if enabled.get("playlists") else False,
             "progress": bool(base_ready and progress_supported) if enabled.get("progress") else False,
+            "collection": base_ready if enabled.get("collection") else False,
         }
 
         checks: list[bool] = [features[k] for k, on in enabled.items() if on]
@@ -745,6 +768,7 @@ class _JellyfinOPS:
                 "from_date": False,
             },
             "progress": _PROGRESS_CAPABILITIES,
+            "collection": _COLLECTION_CAPABILITIES,
             "playlists": _PLAYLIST_CAPABILITIES,
         }
 

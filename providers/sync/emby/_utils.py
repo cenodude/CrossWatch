@@ -67,6 +67,10 @@ def ensure_whitelist_defaults(cfg: dict[str, Any] | None = None, instance_id: An
         em.setdefault("ratings", {}).setdefault("libraries", [])
         changed = True
 
+    if "collection" not in em or "libraries" not in (em.get("collection") or {}):
+        em.setdefault("collection", {}).setdefault("libraries", [])
+        changed = True
+
     if "scrobble" not in em or "libraries" not in (em.get("scrobble") or {}):
         em.setdefault("scrobble", {}).setdefault("libraries", [])
         changed = True

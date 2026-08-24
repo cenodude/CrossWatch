@@ -407,6 +407,7 @@ def html() -> str:
             <select id="kodi_lib_history" class="lm-hidden" multiple></select>
             <select id="kodi_lib_ratings" class="lm-hidden" multiple></select>
             <select id="kodi_lib_progress" class="lm-hidden" multiple></select>
+            <select id="kodi_lib_collection" class="lm-hidden" multiple></select>
             <select id="kodi_lib_scrobble" class="lm-hidden" multiple></select>
           </div>
         </div>

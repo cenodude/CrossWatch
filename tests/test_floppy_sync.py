@@ -84,11 +84,14 @@ def test_floppy_capabilities_expose_only_requested_features() -> None:
     features = OPS.features()
     caps = OPS.capabilities()
 
-    assert features == {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": False}
+    assert features == {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": False, "collection": True}
     assert caps["watchlist"]["custom_lists"] is True
     assert caps["ratings"]["scale"] == "0-10"
     assert caps["progress"]["read"] is True
     assert caps["progress"]["write"] is True
+    assert caps["collection"]["read"] is True
+    assert caps["collection"]["write"] is True
+    assert caps["collection"]["types"] == {"movies": True, "shows": True, "seasons": True, "episodes": True}
 
 
 def test_floppy_module_uses_shared_rate_limiter() -> None:
@@ -225,6 +228,87 @@ def test_floppy_watchlist_resolves_imdb_to_tmdb_when_metadata_configured(monkeyp
     assert res["confirmed_destinations"]["imdb:tt0137523"]["item"]["ids"] == {"tmdb": "550", "imdb": "tt0137523"}
     assert calls == [{"entity": "movie", "ids": {"imdb": "tt0137523"}, "need": {"poster": False, "backdrop": False, "ids": True}}]
     assert adapter.client.session.calls[1]["path"] == "media/movie/tmdb/550/lists/7"
+
+
+def test_floppy_collection_reads_owned_movies_and_episodes() -> None:
+    from providers.sync.floppy import _collection
+
+    adapter = AdapterStub(
+        {
+            ("GET", "collection"): {
+                "results": [
+                    {
+                        "id": 91,
+                        "media_type": "digital",
+                        "collected_at": "2026-08-01T12:00:00Z",
+                        "item": {"media_type": "movie", "source": "tmdb", "media_id": "11", "title": "Movie", "ids": {"tmdb": "11", "imdb": "tt0000011"}},
+                    },
+                    {
+                        "id": 92,
+                        "item": {"media_type": "episode", "source": "tmdb", "media_id": "22", "season_number": 1, "episode_number": 2, "title": "Episode", "ids": {"tmdb": "22"}},
+                    },
+                ],
+                "count": 2,
+            }
+        }
+    )
+
+    out = _collection.build_index(adapter)
+
+    assert out["tmdb:11"]["format"] == "digital"
+    assert out["tmdb:11"]["_floppy_collection_id"] == "91"
+    assert out["tmdb:22#s01e02"]["_floppy_collection_id"] == "92"
+
+
+def test_floppy_collection_adds_movie_via_item_id() -> None:
+    from providers.sync.floppy import _collection
+
+    adapter = AdapterStub(
+        {
+            ("POST", "media/movie"): {"id": 41, "item_id": "movie/tmdb/11"},
+            ("POST", "collection"): {"id": 91},
+        }
+    )
+
+    res = _collection.add(adapter, [{"type": "movie", "ids": {"tmdb": "11"}}])
+
+    assert res["count"] == 1
+    assert [c["path"] for c in adapter.client.session.calls] == ["media/movie", "collection"]
+    assert adapter.client.session.calls[0]["json"] == {"source": "tmdb", "media_id": "11", "status": 0}
+    assert adapter.client.session.calls[1]["json"] == {"item_id": "41", "media_type": "digital"}
+
+
+def test_floppy_collection_adds_episode_scope() -> None:
+    from providers.sync.floppy import _collection
+
+    adapter = AdapterStub(
+        {
+            ("POST", "media/episode"): {"id": 42, "item_id": "tv/tmdb/22/1/2"},
+            ("POST", "collection"): {"id": 92},
+        }
+    )
+
+    res = _collection.add(adapter, [{"type": "episode", "show_ids": {"tmdb": "22"}, "season": 1, "episode": 2}])
+
+    assert res["count"] == 1
+    assert adapter.client.session.calls[0]["json"] == {"source": "tmdb", "media_id": "22", "status": 0, "season_number": 1, "episode_number": 2}
+    assert adapter.client.session.calls[1]["json"] == {"item_id": "42", "media_type": "digital"}
+
+
+def test_floppy_collection_remove_deletes_all_matching_entries() -> None:
+    from providers.sync.floppy import _collection
+
+    adapter = AdapterStub(
+        {
+            ("DELETE", "collection/91"): ResponseStub(204, {}),
+            ("DELETE", "collection/92"): ResponseStub(204, {}),
+        }
+    )
+
+    res = _collection.remove(adapter, [{"type": "movie", "ids": {"tmdb": "11"}, "_floppy_collection_ids": ["91", "92"]}])
+
+    assert res["count"] == 1
+    assert [c["path"] for c in adapter.client.session.calls] == ["collection/91", "collection/92"]
 
 
 def test_floppy_ratings_read_and_write_native_scale() -> None:

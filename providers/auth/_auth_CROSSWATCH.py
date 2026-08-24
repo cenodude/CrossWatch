@@ -24,7 +24,7 @@ class CrossWatchAuth(AuthProvider):
         )
 
     def capabilities(self) -> dict[str, Any]:
-        return {"watchlist": True, "ratings": True, "history": True, "progress": True}
+        return {"watchlist": True, "ratings": True, "history": True, "progress": True, "collection": True}
 
     def get_status(self, cfg: Mapping[str, Any], *, instance_id: Any = None) -> AuthStatus:
         inst = normalize_instance_id(instance_id)
@@ -76,7 +76,7 @@ def html() -> str:
         <div class="cw-panel-head">
           <div>
             <div class="cw-panel-title">CrossWatch Local Tracker</div>
-            <div class="muted">Local watchlist, ratings, history and progress storage.</div>
+            <div class="muted">Local watchlist, ratings, history, progress and collection storage.</div>
           </div>
         </div>
 
@@ -137,7 +137,7 @@ def html() -> str:
                   <div>
                     <div class="cw-field-label-row">
                       <label for="cw_tracker_max_snapshots">Max snapshots per feature</label>
-                      <button type="button" class="cw-field-help material-symbols-rounded" title="Max snapshots per feature: Maximum snapshots kept for watchlist, history, ratings and progress. Use 0 for unlimited." aria-label="Local tracker max snapshots setting help">help</button>
+                      <button type="button" class="cw-field-help material-symbols-rounded" title="Max snapshots per feature: Maximum snapshots kept for watchlist, history, ratings, progress and collection. Use 0 for unlimited." aria-label="Local tracker max snapshots setting help">help</button>
                     </div>
                     <input id="cw_tracker_max_snapshots" name="cw_tracker_max_snapshots" type="number" min="0" step="1" placeholder="64" autocomplete="off" />
                   </div>
@@ -180,6 +180,13 @@ def html() -> str:
                       <button type="button" class="cw-field-help material-symbols-rounded" title="Progress snapshot: Snapshot used when restoring or reading this local tracker profile's playback progress. Latest follows the newest snapshot." aria-label="Local tracker progress restore help">help</button>
                     </div>
                     <select id="cw_tracker_restore_progress" name="cw_tracker_restore_progress" autocomplete="off"></select>
+                  </div>
+                  <div>
+                    <div class="cw-field-label-row">
+                      <label for="cw_tracker_restore_collection">Collection snapshot</label>
+                      <button type="button" class="cw-field-help material-symbols-rounded" title="Collection snapshot: Snapshot used when restoring or reading this local tracker profile's collection. Latest follows the newest snapshot." aria-label="Local tracker collection restore help">help</button>
+                    </div>
+                    <select id="cw_tracker_restore_collection" name="cw_tracker_restore_collection" autocomplete="off"></select>
                   </div>
                 </div>
               </section>

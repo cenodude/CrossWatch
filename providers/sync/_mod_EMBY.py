@@ -23,6 +23,12 @@ from .emby import _history as feat_history
 from .emby import _ratings as feat_ratings
 from .emby import _progress as feat_progress
 try:
+    from .emby import _collection as feat_collection
+except Exception as e:
+    feat_collection = None
+    if os.environ.get("CW_DEBUG") or os.environ.get("CW_EMBY_DEBUG"):
+        cw_log("EMBY", "collection", "warn", "feature_import_failed", error=str(e))
+try:
     from .emby import _playlists as feat_playlists
 except Exception as e:
     feat_playlists = None
@@ -111,7 +117,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "2.2"
+__VERSION__ = "2.3"
 os.environ.setdefault("CW_EMBY_VERSION", __VERSION__)
 os.environ.setdefault("CW_EMBY_UA", f"CrossWatch/{__VERSION__} (Emby)")
 __all__ = ["get_manifest", "EMBYModule", "OPS"]
@@ -176,6 +182,7 @@ _FEATURES: dict[str, Any] = {
     "history": feat_history,
     "ratings": feat_ratings,
     "progress": feat_progress,
+    "collection": feat_collection,
 }
 
 _PLAYLIST_CAPABILITIES: dict[str, Any] = {
@@ -206,6 +213,16 @@ _PROGRESS_CAPABILITIES: dict[str, Any] = {
             "setting": "LibraryOptions.MaxResumePct",
         },
     },
+}
+
+_COLLECTION_CAPABILITIES: dict[str, Any] = {
+    "index_semantics": "present",
+    "observed_deletes": True,
+    "types": {"movies": True, "shows": False, "seasons": False, "episodes": True},
+    "read": True,
+    "add": False,
+    "remove": False,
+    "source_only": True,
 }
 
 _HEALTH_SHADOW_NAME = "emby.health.shadow.json"
@@ -242,6 +259,7 @@ def get_manifest() -> Mapping[str, Any]:
             "ratings": False,
             "playlists": feat_playlists is not None,
             "progress": True,
+            "collection": feat_collection is not None,
         },
         "requires": ["requests"],
         "capabilities": {
@@ -255,6 +273,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "from_date": False,
             },
             "progress": _PROGRESS_CAPABILITIES,
+            "collection": _COLLECTION_CAPABILITIES,
             "playlists": _PLAYLIST_CAPABILITIES,
         },
     }
@@ -284,6 +303,7 @@ class EMBYConfig:
     history_libraries: list[str] | None = None
     progress_libraries: list[str] | None = None
     ratings_libraries: list[str] | None = None
+    collection_libraries: list[str] | None = None
     progress_replay_enabled: bool = False
     progress_timestamp_tolerance_seconds: int = 30
 
@@ -391,6 +411,7 @@ class EMBYModule:
         hi_gprio = hi.get("history_guid_priority") or wl_gprio
         pr = dict(em.get("progress") or {})
         ra = dict(em.get("ratings") or {})
+        co = dict(em.get("collection") or {})
 
         def _list_str(v: Any) -> list[str] | None:
             if not v:
@@ -440,6 +461,7 @@ class EMBYModule:
             history_libraries=_list_str(hi.get("libraries")),
             progress_libraries=_list_str(pr.get("libraries")),
             ratings_libraries=_list_str(ra.get("libraries")),
+            collection_libraries=_list_str(co.get("libraries")),
             progress_replay_enabled=coerce_bool(pr.get("replay_enabled", em.get("progress_replay_enabled", False))),
             progress_timestamp_tolerance_seconds=_i(pr.get("timestamp_tolerance_seconds", em.get("progress_clock_drift_seconds", 30)), 30),
             history_force_overwrite=force_overwrite,
@@ -476,7 +498,7 @@ class EMBYModule:
 
     @staticmethod
     def supported_features() -> dict[str, bool]:
-        toggles = {"watchlist": True, "history": True, "ratings": False, "playlists": feat_playlists is not None, "progress": True}
+        toggles = {"watchlist": True, "history": True, "ratings": False, "playlists": feat_playlists is not None, "progress": True, "collection": feat_collection is not None}
         present = _present_flags()
         out = {k: bool(toggles.get(k, False) and present.get(k, False)) for k in toggles.keys()}
         out["playlists"] = bool(feat_playlists is not None)
@@ -498,7 +520,7 @@ class EMBYModule:
                 "server": {"product": None, "version": None},
                 "disabled": [k for k, v in enabled.items() if not v],
             }
-            features = {k: False for k in ("watchlist", "history", "ratings", "playlists", "progress")}
+            features = {k: False for k in ("watchlist", "history", "ratings", "playlists", "progress", "collection")}
             api = {
                 "ping": {"status": None},
                 "info": {"status": None},
@@ -546,6 +568,7 @@ class EMBYModule:
             "ratings": base_ready if enabled.get("ratings") else False,
             "playlists": base_ready if enabled.get("playlists") else False,
             "progress": base_ready if enabled.get("progress") else False,
+            "collection": base_ready if enabled.get("collection") else False,
         }
 
         checks: list[bool] = [features[k] for k, on in enabled.items() if on]
@@ -717,6 +740,7 @@ class _EmbyOPS:
                 "from_date": False,
             },
             "progress": _PROGRESS_CAPABILITIES,
+            "collection": _COLLECTION_CAPABILITIES,
             "playlists": _PLAYLIST_CAPABILITIES,
         }
 

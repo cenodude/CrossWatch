@@ -20,12 +20,12 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "0.1"
+__VERSION__ = "0.2"
 os.environ.setdefault("CW_SCROB_VERSION", __VERSION__)
 os.environ.setdefault("CW_SCROB_UA", f"CrossWatch/{__VERSION__} (Scrob)")
 __all__ = ["get_manifest", "SCROBModule", "OPS"]
 
-FEATURES = {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": False}
+FEATURES = {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": False, "collection": True}
 
 CAPABILITIES: dict[str, Any] = {
     "bidirectional": True,
@@ -69,6 +69,14 @@ CAPABILITIES: dict[str, Any] = {
         "write_window_percent": {"min": 5, "max": 90},
         "notes": "Scrob only keeps continue-watching state between 5% and 90%.",
     },
+    "collection": {
+        "types": ["movie", "show", "season", "episode"],
+        "upsert": True,
+        "remove": True,
+        "observed_deletes": True,
+        "required_ids": ["tmdb"],
+        "notes": "Scrob collection source uses the personal export; show and season writes expand server-side.",
+    },
 }
 
 
@@ -91,7 +99,7 @@ def get_manifest() -> Mapping[str, Any]:
         "features": dict(FEATURES),
         "requires": [],
         "capabilities": dict(CAPABILITIES),
-        "description": "Self hosted Scrob tracker (watchlist, ratings, history, progress).",
+        "description": "Self hosted Scrob tracker (watchlist, ratings, history, progress, collection).",
     }
 
 
@@ -160,6 +168,10 @@ class SCROBModule:
             from .scrob import _progress
 
             return _progress
+        if key == "collection":
+            from .scrob import _collection
+
+            return _collection
         return None
 
     def build_index(self, feature: str, **kwargs: Any) -> dict[str, dict[str, Any]]:

@@ -40,7 +40,7 @@ def _error(event: str, **fields: Any) -> None:
 def _log(msg: str) -> None:
     _dbg(msg)
 
-__VERSION__ = "2.3"
+__VERSION__ = "2.4"
 os.environ.setdefault("CW_PLEX_VERSION", __VERSION__)
 os.environ.setdefault("CW_PLEX_UA", f"CrossWatch/{__VERSION__} (Plex)")
 __all__ = ["get_manifest", "PLEXModule", "PLEXClient", "PLEXError", "PLEXAuthError", "PLEXNotFound", "OPS"]
@@ -107,6 +107,13 @@ except Exception as e:
     feat_progress = None
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
         _warn("feature_import_failed", feature="progress", error=str(e))
+
+try:
+    from .plex import _collection as feat_collection
+except Exception as e:
+    feat_collection = None
+    if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
+        _warn("feature_import_failed", feature="collection", error=str(e))
 
 try:
     from .plex import _playlists as feat_playlists
@@ -519,7 +526,7 @@ def get_manifest() -> Mapping[str, Any]:
         "version": __VERSION__,
         "type": "sync",
         "bidirectional": True,
-        "features": {"watchlist": True, "history": True, "ratings": True, "playlists": True, "progress": True},
+        "features": {"watchlist": True, "history": True, "ratings": True, "playlists": True, "progress": True, "collection": True},
         "requires": ["plexapi"],
         "capabilities": {
             "bidirectional": True,
@@ -534,6 +541,14 @@ def get_manifest() -> Mapping[str, Any]:
                 "from_date": False,
             },
             "progress": _PROGRESS_CAPABILITIES,
+            "collection": {
+                "index_semantics": "present",
+                "observed_deletes": True,
+                "types": {"movies": True, "shows": False, "seasons": False, "episodes": True},
+                "read": True,
+                "upsert": False,
+                "remove": False,
+            },
             "playlists": _PLAYLIST_CAPABILITIES,
         },
     }
@@ -1174,6 +1189,7 @@ _FEATURES: dict[str, Any] = {
     "history": feat_history,
     "ratings": feat_ratings,
     "progress": feat_progress,
+    "collection": feat_collection,
 }
 
 
@@ -1183,6 +1199,7 @@ def _features_flags() -> dict[str, bool]:
         "history": "history" in _FEATURES and _FEATURES["history"] is not None,
         "ratings": "ratings" in _FEATURES and _FEATURES["ratings"] is not None,
         "progress": "progress" in _FEATURES and _FEATURES["progress"] is not None,
+        "collection": "collection" in _FEATURES and _FEATURES["collection"] is not None,
         "playlists": feat_playlists is not None,
     }
 
@@ -1239,7 +1256,7 @@ class PLEXModule:
 
     @staticmethod
     def supported_features() -> dict[str, bool]:
-        toggles = {"watchlist": True, "ratings": True, "history": True, "playlists": True, "progress": True}
+        toggles = {"watchlist": True, "ratings": True, "history": True, "playlists": True, "progress": True, "collection": True}
         present = _features_flags()
         return {k: bool(toggles.get(k, False) and present.get(k, False)) for k in toggles.keys()}
 
@@ -1274,7 +1291,7 @@ class PLEXModule:
         started = _t.perf_counter()
 
         wl_needed = bool(enabled.get("watchlist"))
-        lib_needed = any(enabled.get(k) for k in ("history", "ratings", "playlists"))
+        lib_needed = any(enabled.get(k) for k in ("history", "ratings", "playlists", "collection"))
 
         discover_ok = False
         discover_reason: str | None = None
@@ -1349,6 +1366,7 @@ class PLEXModule:
             "ratings": pms_ok if enabled.get("ratings") else False,
             "playlists": pms_ok if enabled.get("playlists") else False,
             "progress": pms_ok if enabled.get("progress") else False,
+            "collection": pms_ok if enabled.get("collection") else False,
         }
 
         checks: list[bool] = []
@@ -1385,7 +1403,7 @@ class PLEXModule:
         if wl_needed and not discover_ok:
             reasons.append(f"watchlist:{discover_reason or 'down'}")
         if lib_needed and not pms_ok:
-            missing = [f for f in ("history", "ratings", "playlists") if enabled.get(f)]
+            missing = [f for f in ("history", "ratings", "playlists", "collection") if enabled.get(f)]
             if missing:
                 reasons.append(f"{'+'.join(missing)}:{pms_reason or 'down'}")
         if reasons:
@@ -1526,6 +1544,14 @@ class _PlexOPS:
                 "from_date": False,
             },
             "progress": _PROGRESS_CAPABILITIES,
+            "collection": {
+                "index_semantics": "present",
+                "observed_deletes": True,
+                "types": {"movies": True, "shows": False, "seasons": False, "episodes": True},
+                "read": True,
+                "upsert": False,
+                "remove": False,
+            },
             "playlists": _PLAYLIST_CAPABILITIES,
         }
 
