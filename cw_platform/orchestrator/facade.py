@@ -420,7 +420,10 @@ class Orchestrator:
             except Exception:
                 snaps = {}
             for prov, idx in (snaps or {}).items():
-                items_min = {k: minimal(v) for k, v in (idx or {}).items()}
+                if str(feat).lower() == "collection":
+                    items_min = {k: dict(v) for k, v in (idx or {}).items() if isinstance(v, Mapping)}
+                else:
+                    items_min = {k: minimal(v) for k, v in (idx or {}).items()}
                 prov_name = str(prov).upper()
                 feat_name = str(feat).lower()
                 touched.add(prov_name)

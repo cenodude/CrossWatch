@@ -605,7 +605,7 @@ def pick_trakt_kind(item: Mapping[str, Any]) -> str:
     return "movies"
 
 
-def build_watchlist_body(items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+def build_watchlist_body(items: Iterable[Mapping[str, Any]], *, date_field: str | None = None) -> dict[str, Any]:
     body: dict[str, Any] = {}
     nested_shows: dict[str, dict[str, Any]] = {}
 
@@ -625,18 +625,34 @@ def build_watchlist_body(items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
             sort_keys=True,
         )
 
+    def with_date(obj: dict[str, Any], it: Mapping[str, Any]) -> dict[str, Any]:
+        if date_field:
+            value = it.get(date_field)
+            if value:
+                obj[date_field] = str(value)
+        return obj
+
+    def nested_show_obj(entry: Mapping[str, Any]) -> dict[str, Any]:
+        obj: dict[str, Any] = {"ids": entry["ids"]}
+        if entry.get("seasons"):
+            obj["seasons"] = list(entry["seasons"].values())
+        if date_field and entry.get(date_field):
+            obj[date_field] = entry[date_field]
+        return obj
+
     for it in items or []:
         kind = pick_trakt_kind(it)
         ids = ids_for_trakt(it)
         if kind == "movies":
             if ids:
-                push("movies", {"ids": ids})
+                push("movies", with_date({"ids": ids}, it))
             continue
 
         if kind == "shows":
             if ids:
                 skey = show_key(ids)
-                nested_shows.setdefault(skey, {"ids": ids, "seasons": {}})
+                entry = nested_shows.setdefault(skey, {"ids": ids, "seasons": {}})
+                with_date(entry, it)
             continue
 
         if kind == "seasons":
@@ -644,7 +660,7 @@ def build_watchlist_body(items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
             if season_no is None:
                 season_no = it.get("number")
             if ids:
-                push("seasons", {"ids": ids})
+                push("seasons", with_date({"ids": ids}, it))
                 continue
             show_ids = show_scope_ids(it)
             if show_ids and season_no is not None:
@@ -654,7 +670,8 @@ def build_watchlist_body(items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
                     season_i = int(str(season_no))
                 except Exception:
                     continue
-                entry["seasons"].setdefault(season_i, {"number": season_i})
+                season_entry = entry["seasons"].setdefault(season_i, {"number": season_i})
+                with_date(season_entry, it)
             continue
 
         if kind == "episodes":
@@ -672,7 +689,7 @@ def build_watchlist_body(items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
 
             # Prefer show-scoped season/episode when weak episode IDs.
             if use_ids:
-                push("episodes", {"ids": ids})
+                push("episodes", with_date({"ids": ids}, it))
                 continue
 
             if show_scope_ok:
@@ -684,10 +701,10 @@ def build_watchlist_body(items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
                 except Exception:
                     continue
                 season_entry = entry["seasons"].setdefault(season_i, {"number": season_i, "episodes": []})
-                season_entry.setdefault("episodes", []).append({"number": episode_i})
+                season_entry.setdefault("episodes", []).append(with_date({"number": episode_i}, it))
     if nested_shows:
         body.setdefault("shows", []).extend(
-            ({"ids": v["ids"], "seasons": list(v["seasons"].values())} if v.get("seasons") else {"ids": v["ids"]})
+            nested_show_obj(v)
             for v in nested_shows.values()
             if v.get("ids")
         )

@@ -795,7 +795,12 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
     def _sync_minimal(it: Mapping[str, Any], fallback_key: str | None = None) -> dict[str, Any]:
         if feature == "history":
             return minimal_history_item(it, fallback_key, event_mode=history_event_mode)
-        return _minimal(it)
+        out = _minimal(it)
+        if feature == "collection":
+            collected_at = it.get("collected_at")
+            if collected_at not in (None, ""):
+                out["collected_at"] = str(collected_at)
+        return out
 
     def _find_history_event_in_idx(idx: Mapping[str, Any], it: Mapping[str, Any], fallback_key: str | None = None) -> Mapping[str, Any] | None:
         if feature != "history" or not history_event_mode:
@@ -2394,7 +2399,20 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             for rk, rv in refreshed.items():
                 if rk not in eff:
                     base_update += 1
-                eff[rk] = rv
+                if feature == "collection" and isinstance(eff.get(rk), Mapping) and isinstance(rv, Mapping):
+                    merged = dict(eff[rk])
+                    for kk, vv in rv.items():
+                        if kk in ("ids", "show_ids") and isinstance(merged.get(kk), Mapping) and isinstance(vv, Mapping):
+                            ids = dict(merged.get(kk) or {})
+                            for idk, idv in vv.items():
+                                if ids.get(idk) in (None, "") and idv not in (None, ""):
+                                    ids[idk] = idv
+                            merged[kk] = ids
+                        elif merged.get(kk) in (None, "") and vv not in (None, ""):
+                            merged[kk] = vv
+                    eff[rk] = merged
+                else:
+                    eff[rk] = rv
         tk = str(os.environ.get("CW_PLEX_TRACE_KEY", "") or "").strip().lower()
         contains_trace = bool(tk) and any(str(k).split("@", 1)[0].lower() == tk for k in (refreshed or {}))
         emit("post_apply_refresh:done", provider=prov, instance=inst, feature=feature,

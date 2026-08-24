@@ -61,6 +61,7 @@ class FakeJellyfinClient:
                             "IndexNumber": 1,
                             "AncestorIds": ["lib-tv", "show-1"],
                             "ProviderIds": {"Tvdb": "111"},
+                            "DateCreated": "2026-01-02T03:04:05Z",
                         }
                     ],
                     "TotalRecordCount": 1,
@@ -84,3 +85,4 @@ def test_collection_resolves_library_id_like_history() -> None:
     assert item["show_ids"] == {"tmdb": "12345", "tvdb": "67890"}
     assert item["season"] == 1
     assert item["episode"] == 1
+    assert item["collected_at"] == "2026-01-02T03:04:05Z"

@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS baseline_items (
 {_id_columns("show_ids")},
     watched                  INTEGER,
     watched_at               TEXT,
+    collected_at             TEXT,
     rating                   REAL,
     rated_at                 TEXT,
     progress_ms              INTEGER,
@@ -597,6 +598,13 @@ _INDEXES = (
 )
 
 
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    existing = {str(row[1]) for row in rows}
+    if column not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
 def apply_schema(conn: sqlite3.Connection) -> int:
     with conn:
         conn.execute(_CREATE_SCHEMA_MIGRATIONS)
@@ -604,6 +612,7 @@ def apply_schema(conn: sqlite3.Connection) -> int:
         conn.execute(_CREATE_LOCAL_META)
         conn.execute(_CREATE_PROVIDER_FEATURE_STATE)
         conn.execute(_CREATE_BASELINE_ITEMS)
+        _ensure_column(conn, "baseline_items", "collected_at", "TEXT")
         conn.execute(_CREATE_LAST_SYNC_SUMMARY)
         conn.execute(_CREATE_LAST_SYNC_FIELDS)
         conn.execute(_CREATE_LAST_SYNC_RESULT_METRICS)

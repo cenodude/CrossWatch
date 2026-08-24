@@ -43,9 +43,11 @@ def test_crosswatch_collection_is_pair_scoped_and_read_write(monkeypatch: Any, t
     state_path = tmp_path / "collection.plex-mdblist.json"
     payload = json.loads(state_path.read_text("utf-8"))
     assert payload["items"]["tmdb:95396#s01e02"]["show_ids"] == {"tmdb": "95396"}
+    assert payload["items"]["tmdb:95396#s01e02"]["collected_at"] == "2026-08-24T20:00:00Z"
 
     index = adapter.build_index("collection")
     assert index["tmdb:95396#s01e02"]["type"] == "episode"
+    assert index["tmdb:95396#s01e02"]["collected_at"] == "2026-08-24T20:00:00Z"
 
     removed = adapter.remove("collection", [episode])
     assert removed["ok"] is True

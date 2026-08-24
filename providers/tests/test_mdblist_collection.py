@@ -99,8 +99,11 @@ def test_collection_index_reads_nested_episode_rows(monkeypatch) -> None:
 
 
 def test_collection_add_confirms_only_items_seen_live(monkeypatch) -> None:
+    posts: list[dict[str, Any]] = []
+
     def fake_request(_adapter, method, url, **kwargs):
         if method == "POST":
+            posts.append(kwargs.get("json") or {})
             return Resp(200, {"added": {"shows": 1}})
         if "last_activities" in url:
             return Resp(200, {})
@@ -130,8 +133,8 @@ def test_collection_add_confirms_only_items_seen_live(monkeypatch) -> None:
     result = collection.add(
         _adapter(),
         [
-            {"type": "episode", "title": "One", "show_ids": {"tmdb": "100"}, "season": 1, "episode": 1},
-            {"type": "episode", "title": "Two", "show_ids": {"tmdb": "100"}, "season": 1, "episode": 2},
+            {"type": "episode", "title": "One", "show_ids": {"tmdb": "100"}, "season": 1, "episode": 1, "collected_at": "2026-08-01T12:00:00Z"},
+            {"type": "episode", "title": "Two", "show_ids": {"tmdb": "100"}, "season": 1, "episode": 2, "collected_at": "2026-08-02T12:00:00Z"},
         ],
     )
 
@@ -140,6 +143,10 @@ def test_collection_add_confirms_only_items_seen_live(monkeypatch) -> None:
     assert result["presence_confirmed_keys"] == ["tmdb:100#s01e01"]
     assert result["accepted_not_seen_live_keys"] == ["tmdb:100#s01e02"]
     assert result["unresolved"][-1]["hint"] == "not_seen_live"
+    assert posts[0]["shows"][0]["seasons"][0]["episodes"] == [
+        {"number": 1, "collected_at": "2026-08-01T12:00:00Z"},
+        {"number": 2, "collected_at": "2026-08-02T12:00:00Z"},
+    ]
 
 
 def test_collection_remove_uses_history_style_bucket_chunks(monkeypatch) -> None:
