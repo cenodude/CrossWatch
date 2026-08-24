@@ -63,7 +63,7 @@
     importProvider: "",
     importProviderInstance: "default",
     importMode: "replace",
-    importFeatures: { watchlist: true, history: true, ratings: true, progress: true },
+    importFeatures: { watchlist: true, history: true, ratings: true, progress: true, collection: true },
     hasChanges: false,
     page: 0,
     pageSize: DEFAULT_PAGE_SIZE,
@@ -141,7 +141,7 @@
 
       if (typeof saved.blockedOnly === "boolean") state.blockedOnly = saved.blockedOnly;
 
-      const kinds = ["watchlist", "history", "ratings", "progress"];
+      const kinds = ["watchlist", "history", "ratings", "progress", "collection"];
       if (saved.kind && kinds.includes(saved.kind)) state.kind = saved.kind;
 
       if (typeof saved.snapshot === "string") state.snapshot = saved.snapshot;
@@ -182,6 +182,23 @@
   editorChrome.prepareSourceOptions(host);
   editorChrome.addTrackerNotice(host);
   editorChrome.ensureFieldNames(host);
+  const initialKindSel = host.querySelector("#cw-kind");
+  if (initialKindSel && !initialKindSel.querySelector('option[value="collection"]')) {
+    initialKindSel.appendChild(new Option("Collections", "collection"));
+  }
+  const initialImportProgressWrap = host.querySelector("#cw-import-progress-wrap");
+  if (initialImportProgressWrap && !host.querySelector("#cw-import-collection-wrap")) {
+    const label = document.createElement("label");
+    label.id = "cw-import-collection-wrap";
+    label.style.cssText = initialImportProgressWrap.getAttribute("style") || "";
+    const input = document.createElement("input");
+    input.id = "cw-import-collection";
+    input.className = "cw-checkbox";
+    input.type = "checkbox";
+    input.checked = true;
+    label.append(input, document.createTextNode("Collections "));
+    initialImportProgressWrap.insertAdjacentElement("afterend", label);
+  }
 
   const $ = id => document.getElementById(id);
   const pickEls = spec => Object.fromEntries(Object.entries(spec).map(([key, id]) => [key, $(id)]));
@@ -194,8 +211,8 @@
     stateBackupCard, stateDownloadBtn, stateUploadBtn, stateUploadInput,
     pillSource, pillKind, pillCount, pillSync,
     importRow, importProviderSel, importInstanceSel, importWatchlistCb, importHistoryCb,
-    importRatingsCb, importProgressCb, importModeSel, importRunBtn, importWatchlistWrap,
-    importHistoryWrap, importRatingsWrap, importProgressFeatWrap, importProgressWrap,
+    importRatingsCb, importProgressCb, importCollectionCb, importModeSel, importRunBtn, importWatchlistWrap,
+    importHistoryWrap, importRatingsWrap, importProgressFeatWrap, importCollectionWrap, importProgressWrap,
     importProgressText,
     selectPage, bulkWrap, bulkCount, bulkRemoveBtn, bulkRestoreBtn, bulkClearBtn,
     stateBulkRow, bulkTypeSel, bulkBlockTypeBtn, bulkUnblockTypeBtn, trackerNotice,
@@ -253,12 +270,14 @@
     importHistoryCb: "cw-import-history",
     importRatingsCb: "cw-import-ratings",
     importProgressCb: "cw-import-progress-cb",
+    importCollectionCb: "cw-import-collection",
     importModeSel: "cw-import-mode",
     importRunBtn: "cw-import-run",
     importWatchlistWrap: "cw-import-watchlist-wrap",
     importHistoryWrap: "cw-import-history-wrap",
     importRatingsWrap: "cw-import-ratings-wrap",
     importProgressFeatWrap: "cw-import-progress-wrap",
+    importCollectionWrap: "cw-import-collection-wrap",
     importProgressWrap: "cw-import-progress",
     importProgressText: "cw-import-progress-text",
     selectPage: "cw-select-page",
@@ -308,6 +327,7 @@
     importHistoryWrap,
     importRatingsWrap,
     importProgressFeatWrap,
+    importCollectionWrap,
     importRunBtn,
     importProgressWrap,
   });
@@ -434,12 +454,14 @@
       importHistoryCb,
       importRatingsCb,
       importProgressCb,
+      importCollectionCb,
       importModeSel,
       importRunBtn,
       importWatchlistWrap,
       importHistoryWrap,
       importRatingsWrap,
       importProgressFeatWrap,
+      importCollectionWrap,
       importProgressWrap,
       importProgressText,
       providerLabel,
@@ -511,7 +533,7 @@
 
   function syncHeaderPills(visible, total) {
     const srcMap = { state: "Current state", manual: "Manual overrides", playlist: "Playlist endpoint" };
-    const kindMap = { watchlist: "Watchlist", history: "History", ratings: "Ratings", progress: "Progress", playlist: "Playlist" };
+    const kindMap = { watchlist: "Watchlist", history: "History", ratings: "Ratings", progress: "Progress", collection: "Collections", playlist: "Playlist" };
     if (pillSource) pillSource.textContent = srcMap[state.source] || "Source";
     if (pillKind) pillKind.textContent = state.source === "playlist" ? "Playlist" : (kindMap[state.kind] || "Kind");
     const all = typeof total === "number" ? total : ((state.rows && state.rows.length) || 0);
@@ -554,11 +576,11 @@
     if (state.filter) filterInput.value = state.filter;
   }
 
-  const KIND_LABELS = { watchlist: "Watchlist", history: "History", ratings: "Ratings", progress: "Progress" };
+  const KIND_LABELS = { watchlist: "Watchlist", history: "History", ratings: "Ratings", progress: "Progress", collection: "Collections" };
 
   function syncKindUI() {
     if (!kindSel) return;
-    let allowed = ["watchlist", "history", "ratings", "progress"];
+    let allowed = ["watchlist", "history", "ratings", "progress", "collection"];
     if (!allowed.includes(state.kind)) state.kind = allowed[0] || "watchlist";
     const current = Array.from(kindSel.options).map(o => o.value);
     if (current.join("|") !== allowed.join("|")) {
@@ -1942,7 +1964,7 @@ if (importProviderSel) {
     });
   }
 
-  [[importWatchlistCb, "watchlist"], [importHistoryCb, "history"], [importRatingsCb, "ratings"], [importProgressCb, "progress"]]
+  [[importWatchlistCb, "watchlist"], [importHistoryCb, "history"], [importRatingsCb, "ratings"], [importProgressCb, "progress"], [importCollectionCb, "collection"]]
     .forEach(([el, key]) => on(el, "change", () => { state.importFeatures[key] = !!el.checked; }));
 
   on(importRunBtn, "click", runStateImport);

@@ -1362,7 +1362,7 @@
   function pairCanRun(pair) {
     if (!pair || pair.enabled === false) return false;
     const features = pair.features || {};
-    const keys = ["watchlist", "ratings", "history", "progress", "playlists"];
+    const keys = ["watchlist", "ratings", "history", "progress", "playlists", "collection"];
     if (!pair.features) return true;
     return keys.some((key) => featureEnabled(features[key]));
   }
@@ -1985,6 +1985,7 @@
         },
         history: basic(features.history),
         playlists: basic(features.playlists),
+        collection: basic(features.collection),
       },
     };
   }
