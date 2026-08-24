@@ -31,6 +31,7 @@ const escHtml = s =>
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 const tagOf = (p, f, k) => `${p}::${f}::${k}`;
+const ANALYZER_FEATURES = ["history", "watchlist", "ratings", "progress", "collection"];
 const chips = ids =>
   Object.entries(ids || {})
     .map(([k, v]) => `<span class="chip mono">${escHtml(k)}:${escHtml(v)}</span>`)
@@ -65,7 +66,7 @@ const renderCounts = c => {
     .map(([p, v]) => {
       const key = meta.keyOf?.(p) || String(p || "").toUpperCase();
       const total =
-        v.total || (v.history || 0) + (v.watchlist || 0) + (v.ratings || 0);
+        v.total || ANALYZER_FEATURES.reduce((sum, feat) => sum + (Number(v[feat]) || 0), 0);
       const label = meta.label?.(key) || key;
       const logo = meta.logLogoPath?.(key) || meta.logoPath?.(key) || "";
       const count = fmtCountNumber(total);
@@ -1589,7 +1590,7 @@ function profileLabel(provider, instance) {
           const srcLabel = p.source_label || src;
           const dstLabel = p.target_label || dst;
           const F = p.features || {};
-          for (const feat of ["history", "watchlist", "ratings", "progress"]) {
+          for (const feat of ANALYZER_FEATURES) {
             if (!on(F[feat])) continue;
             add(src, feat, dst);
             add(src, feat, dstLabel);
@@ -1786,7 +1787,7 @@ function profileLabel(provider, instance) {
 
       const hasPairFilter = pairMap && pairMap.size > 0;
       const seen = new Set();
-      const per = { history: 0, watchlist: 0, ratings: 0 };
+      const per = { history: 0, watchlist: 0, ratings: 0, progress: 0, collection: 0 };
       const keep = [];
 
       for (const p of all) {
@@ -1937,6 +1938,7 @@ function profileLabel(provider, instance) {
       if (per.watchlist) parts.push(`W:${per.watchlist}`);
       if (per.ratings) parts.push(`R:${per.ratings}`);
       if (per.progress) parts.push(`P:${per.progress}`);
+      if (per.collection) parts.push(`C:${per.collection}`);
       setStatusCount(issuesCount, "Current mismatches", keep.length, parts.slice(1).join(" · ") || "Items currently missing at a destination");
       setStatusCount(pendingCount, "Pending retries", pendingRows().length, "Items attempted last sync that remain unresolved");
       setStatusCount(systemCount, "System", systemFindings().length);

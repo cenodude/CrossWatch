@@ -11,6 +11,7 @@ const FEAT_COPY = {
   history: "Show history tiles.",
   progress: "Show in-progress playback tiles.",
   playlists: "Show playlist sync tiles.",
+  collection: "Show collection sync tiles.",
 };
 const FEAT_UI = {
   watchlist: "movie",
@@ -18,8 +19,9 @@ const FEAT_UI = {
   history: "play_arrow",
   progress: "timelapse",
   playlists: "queue_music",
+  collection: "inventory_2",
 };
-const FEATS = FeatureMeta().order || ["watchlist", "ratings", "history", "progress", "playlists"];
+const FEATS = FeatureMeta().order || ["watchlist", "ratings", "history", "progress", "playlists", "collection"];
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => window.CSS?.escape ? window.CSS.escape(String(s ?? "")) : String(s ?? "").replace(/[^\w-]/g, "\\$&");
@@ -100,7 +102,7 @@ const parseInstanceList = (raw) => {
 const normalizePrefs = (prefs, byProvider = {}) => {
   const out = prefs && typeof prefs === "object" ? JSON.parse(JSON.stringify(prefs)) : {};
   const f = out.features && typeof out.features === "object" ? out.features : {};
-  out.features = { watchlist: f.watchlist !== false, ratings: f.ratings !== false, history: f.history !== false, progress: f.progress !== false, playlists: f.playlists !== false };
+  out.features = { watchlist: f.watchlist !== false, ratings: f.ratings !== false, history: f.history !== false, progress: f.progress !== false, playlists: f.playlists !== false, collection: f.collection !== false };
   out.instances = out.instances && typeof out.instances === "object" ? out.instances : {};
   out.known_instances = out.known_instances && typeof out.known_instances === "object" ? out.known_instances : {};
   for (const [prov, list] of Object.entries(byProvider || {})) {

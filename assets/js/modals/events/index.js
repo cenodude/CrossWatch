@@ -58,7 +58,7 @@ const detailOf = (e) => {
 const PAGE_SIZE = 25;
 const RUN_ITEMS_PAGE_SIZE = 100;
 
-const FEATURE_LABEL = { history: "History", ratings: "Ratings", watchlist: "Watchlist", progress: "Progress" };
+const FEATURE_LABEL = { history: "History", ratings: "Ratings", watchlist: "Watchlist", progress: "Progress", collection: "Collections" };
 const reasonLabel = (reason, label = "") => String(label || reason || "");
 
 const provShort = (src, dst) => {
@@ -598,7 +598,7 @@ export default {
     const ddType = createDropdown({ label: "All types", items: typeItems(domain), onChange: () => load(0) });
     const ddProvider = createDropdown({ label: "Any provider", items: [{ value: "", label: "Any provider" }], onChange: () => load(0) });
     const ddOrigin = createDropdown({ label: "Any origin", items: [{ value: "", label: "Any origin" }], onChange: () => load(0) });
-    const ddFeature = createDropdown({ label: "Any feature", items: [{ value: "", label: "Any feature" }, ...["history", "ratings", "watchlist", "progress"].map((f) => ({ value: f, label: FEATURE_LABEL[f] }))], onChange: () => load(0) });
+    const ddFeature = createDropdown({ label: "Any feature", items: [{ value: "", label: "Any feature" }, ...["history", "ratings", "watchlist", "progress", "collection"].map((f) => ({ value: f, label: FEATURE_LABEL[f] }))], onChange: () => load(0) });
     const ddPair = createDropdown({ label: "Any pair", items: [{ value: "", label: "Any pair" }], onChange: () => load(0) });
     const ddProfile = createDropdown({
       label: "All profiles",

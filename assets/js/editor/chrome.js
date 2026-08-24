@@ -121,7 +121,7 @@
 
     const featureWrap = document.createElement("div");
     featureWrap.className = "cw-import-features";
-    [ctx.importWatchlistWrap, ctx.importHistoryWrap, ctx.importRatingsWrap, ctx.importProgressFeatWrap].forEach(wrap => {
+    [ctx.importWatchlistWrap, ctx.importHistoryWrap, ctx.importRatingsWrap, ctx.importProgressFeatWrap, ctx.importCollectionWrap].forEach(wrap => {
       if (!(wrap instanceof HTMLElement)) return;
       wrap.classList.add("cw-import-feature");
       wrap.style.cssText = "";

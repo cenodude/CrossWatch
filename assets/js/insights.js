@@ -1,13 +1,13 @@
 /* assets/js/insights.js */
-/* CrossWatch - Insight Module for watchlist, ratings, history, progress, playlists */
+/* CrossWatch - Insight Module for watchlist, ratings, history, progress, playlists, collections */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 (function (w, d) {
   const authSetupPending = () => w.cwIsAuthSetupPending?.() === true;
   const featureMeta = w.CW?.FeatureMeta || {};
   const providerMeta = w.CW?.ProviderMeta || {};
-  const FEAT_LABEL = featureMeta.labels || { watchlist:"Watchlist", ratings:"Ratings", history:"History", progress:"Progress", playlists:"Playlists" };
-const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", progress:"timelapse", playlists:"queue_music" };
+  const FEAT_LABEL = featureMeta.labels || { watchlist:"Watchlist", ratings:"Ratings", history:"History", progress:"Progress", playlists:"Playlists", collection:"Collections" };
+const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", progress:"timelapse", playlists:"queue_music", collection:"inventory_2" };
   const FEATS = featureMeta.order || Object.keys(FEAT_LABEL);
   const DEFAULT_RECENT_SYNCS_LIMIT = 3;
   const PREF_KEY = "insights.settings.v1";
@@ -57,7 +57,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
 
   function normalizePrefs(p, instancesByProvider = {}) {
     const out = clone(p), f = out.features && typeof out.features === "object" ? out.features : {};
-    out.features = { watchlist: f.watchlist !== false, ratings: f.ratings !== false, history: f.history !== false, progress: f.progress !== false, playlists: f.playlists !== false };
+    out.features = { watchlist: f.watchlist !== false, ratings: f.ratings !== false, history: f.history !== false, progress: f.progress !== false, playlists: f.playlists !== false, collection: f.collection !== false };
     out.instances = out.instances && typeof out.instances === "object" ? out.instances : {};
     out.known_instances = out.known_instances && typeof out.known_instances === "object" ? out.known_instances : {};
     for (const [prov, list] of Object.entries(instancesByProvider || {})) {
@@ -186,7 +186,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     if (!hasOverviewFilter && (!selectionDiffers(_prefs, instancesByProvider) || !instCounts || typeof instCounts !== "object")) {
       return { providers: block.providers || {}, mse: raw.providers_mse || null, now: block.now };
     }
-    const out = {}, outMse = {}, selected = _prefs?.instances || {}, zero = () => ({ movies:0, shows:0, anime:0, episodes:0 });
+    const out = {}, outMse = {}, selected = _prefs?.instances || {}, zero = () => ({ movies:0, shows:0, seasons:0, anime:0, episodes:0 });
     for (const [prov, byInst] of Object.entries(instCounts || {})) {
       const key = lc(prov), map = byInst && typeof byInst === "object" ? byInst : {}, keys = Object.keys(map), want = Array.isArray(selected[key]) ? selected[key].map(String) : selected[key] === undefined ? keys : [];
       const overviewWant = activeOverviewFilter[String(prov || "").toUpperCase()] || activeOverviewFilter[String(prov || "").toLowerCase()];
@@ -196,7 +196,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
       for (const id of finalWant) {
         const part = mseMap[id];
         if (!part || typeof part !== "object") continue;
-        agg.movies += part.movies | 0; agg.shows += part.shows | 0; agg.anime += part.anime | 0; agg.episodes += part.episodes | 0;
+        agg.movies += part.movies | 0; agg.shows += part.shows | 0; agg.seasons += part.seasons | 0; agg.anime += part.anime | 0; agg.episodes += part.episodes | 0;
       }
       outMse[key] = agg;
     }
@@ -457,7 +457,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
       animateNumber($(".n", tile), total, 650, animate);
 
       const info = $(".mse", tile);
-      if (!per || prov === "crosswatch" || _feature === "playlists") {
+      if (!per || prov === "crosswatch" || _feature === "playlists" || _feature === "collection") {
         info.textContent = "";
         info.style.display = "none";
         tile.title = prov === "crosswatch" ? `${label} • ${total} • Click to switch snapshot` : `${label} • ${total}`;

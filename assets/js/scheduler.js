@@ -797,7 +797,7 @@ const ensureStdEnabledToggle = () => {
       const rows = Array.isArray(data?.providers) ? data.providers : [];
       _captureProviders = rows.map((row) => {
         const features = row && typeof row.features === "object" ? row.features : {};
-        const supported = ["watchlist", "ratings", "history", "progress"].filter((feature) => !!features?.[feature]);
+        const supported = ["watchlist", "ratings", "history", "progress", "collection"].filter((feature) => !!features?.[feature]);
         return {
           id: String(row?.id || "").trim().toUpperCase(),
           label: String(row?.label || row?.id || "").trim() || String(row?.id || "").trim().toUpperCase(),

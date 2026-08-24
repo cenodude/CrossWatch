@@ -19,18 +19,28 @@
     ["ratings", "star"],
     ["history", "play_arrow"],
     ["progress", "timelapse"],
-    ["playlists", "queue_music"]
+    ["playlists", "queue_music"],
+    ["collection", "inventory_2"]
   ].map(([key, icon]) => ({ key, icon, label: featureLabel(key) }));
   const FEAT_KEYS = FEATS.map((f) => f.key);
   const LAYOUT_KEY = "cw.syncHub.layout.v1";
   const DEFAULT_LAYOUT = {
+    watchlist: { order: 0, size: "small", hidden: false },
+    ratings: { order: 1, size: "small", hidden: false },
+    history: { order: 2, size: "small", hidden: false },
+    progress: { order: 3, size: "small", hidden: false },
+    playlists: { order: 4, size: "small", hidden: false },
+    collection: { order: 5, size: "small", hidden: false }
+  };
+  const LEGACY_DEFAULT_LAYOUT = {
     watchlist: { order: 0, size: "large", hidden: false },
     ratings: { order: 1, size: "large", hidden: false },
     history: { order: 2, size: "small", hidden: false },
     progress: { order: 3, size: "small", hidden: false },
-    playlists: { order: 4, size: "small", hidden: false }
+    playlists: { order: 4, size: "small", hidden: false },
+    collection: { order: 5, size: "small", hidden: false }
   };
-  const DEFAULT_ENABLED = { watchlist: true, ratings: true, history: true, progress: true, playlists: true };
+  const DEFAULT_ENABLED = { watchlist: true, ratings: true, history: true, progress: true, playlists: true, collection: true };
   const EMPTY_ENABLED = () => Object.fromEntries(FEAT_KEYS.map((k) => [k, false]));
   const mkLane = () => ({ added: 0, removed: 0, updated: 0, spotAdd: [], spotRem: [], spotUpd: [] });
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -94,8 +104,29 @@
     })
     .sort((a, b) => a[1].order - b[1].order || a[1]._idx - b[1]._idx)
     .map(([key, row], order) => [key, { order, size: row.size, hidden: row.hidden }]));
+  const isLegacyDefaultLayout = (raw) => {
+    if (!raw || typeof raw !== "object") return false;
+    const legacyKeys = ["watchlist", "ratings", "history", "progress", "playlists"];
+    const legacyMatch = legacyKeys.every((key) => {
+      const row = raw[key];
+      const legacy = LEGACY_DEFAULT_LAYOUT[key];
+      return row && typeof row === "object" && Number(row.order) === legacy.order && row.size === legacy.size && row.hidden === legacy.hidden;
+    });
+    if (!legacyMatch) return false;
+    const collection = raw.collection;
+    if (collection == null) return true;
+    const legacy = LEGACY_DEFAULT_LAYOUT.collection;
+    return typeof collection === "object" && Number(collection.order) === legacy.order && collection.size === legacy.size && collection.hidden === legacy.hidden;
+  };
   const readLayout = () => {
-    try { return normalizeLayout(JSON.parse(localStorage.getItem(LAYOUT_KEY) || "null")); }
+    try {
+      const raw = JSON.parse(localStorage.getItem(LAYOUT_KEY) || "null");
+      if (isLegacyDefaultLayout(raw)) {
+        try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(DEFAULT_LAYOUT)); } catch {}
+        return normalizeLayout(DEFAULT_LAYOUT);
+      }
+      return normalizeLayout(raw);
+    }
     catch { return normalizeLayout(null); }
   };
   let hubLayout = readLayout();

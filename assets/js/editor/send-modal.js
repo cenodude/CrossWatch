@@ -46,12 +46,12 @@
 
   function sendKindLabel(kind) {
     const k = String(kind || "").toLowerCase();
-    return ({ watchlist: "Watchlist", history: "History", ratings: "Ratings", progress: "Progress" }[k] || (k ? k[0].toUpperCase() + k.slice(1) : "Data"));
+    return ({ watchlist: "Watchlist", history: "History", ratings: "Ratings", progress: "Progress", collection: "Collections" }[k] || (k ? k[0].toUpperCase() + k.slice(1) : "Data"));
   }
 
   function sendKindIcon(kind) {
     const k = String(kind || "").toLowerCase();
-    return ({ watchlist: "bookmark_add", history: "history", ratings: "star", progress: "resume" }[k] || "send");
+    return ({ watchlist: "bookmark_add", history: "history", ratings: "star", progress: "resume", collection: "inventory_2" }[k] || "send");
   }
 
   function formatSendResult(data, esc) {

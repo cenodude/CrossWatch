@@ -19,6 +19,7 @@
     if (ctx.importHistoryCb) ctx.importHistoryCb.disabled = disabled || ctx.importHistoryCb.disabled;
     if (ctx.importRatingsCb) ctx.importRatingsCb.disabled = disabled || ctx.importRatingsCb.disabled;
     if (ctx.importProgressCb) ctx.importProgressCb.disabled = disabled || ctx.importProgressCb.disabled;
+    if (ctx.importCollectionCb) ctx.importCollectionCb.disabled = disabled || ctx.importCollectionCb.disabled;
   }
 
   function syncImportUI(ctx = {}) {
@@ -97,6 +98,7 @@
     setCb(ctx.importHistoryWrap, ctx.importHistoryCb, "history");
     setCb(ctx.importRatingsWrap, ctx.importRatingsCb, "ratings");
     setCb(ctx.importProgressFeatWrap, ctx.importProgressCb, "progress");
+    setCb(ctx.importCollectionWrap, ctx.importCollectionCb, "collection");
 
     if (ctx.importRunBtn) ctx.importRunBtn.disabled = !state.importProvider;
   }
@@ -123,6 +125,7 @@
     if (ctx.importHistoryCb && ctx.importHistoryCb.checked && !ctx.importHistoryCb.disabled) feats.push("history");
     if (ctx.importRatingsCb && ctx.importRatingsCb.checked && !ctx.importRatingsCb.disabled) feats.push("ratings");
     if (ctx.importProgressCb && ctx.importProgressCb.checked && !ctx.importProgressCb.disabled) feats.push("progress");
+    if (ctx.importCollectionCb && ctx.importCollectionCb.checked && !ctx.importCollectionCb.disabled) feats.push("collection");
     return feats;
   }
 
@@ -149,6 +152,7 @@
       history: features.includes("history"),
       ratings: features.includes("ratings"),
       progress: features.includes("progress"),
+      collection: features.includes("collection"),
     };
 
     try {

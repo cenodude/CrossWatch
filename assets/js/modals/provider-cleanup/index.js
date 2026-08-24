@@ -7,6 +7,7 @@ const FEATURES = [
   { key: "ratings", icon: "star", title: "Ratings", desc: "Remove ratings from the selected profile." },
   { key: "history", icon: "history", title: "History", desc: "Remove watched history from the selected profile." },
   { key: "progress", icon: "resume", title: "Progress", desc: "Remove playback progress from the selected profile." },
+  { key: "collection", icon: "inventory_2", title: "Collections", desc: "Remove collection items from the selected profile." },
 ];
 
 const $ = (sel, root = document) => root.querySelector(sel);

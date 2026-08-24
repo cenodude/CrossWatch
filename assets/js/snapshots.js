@@ -1,4 +1,4 @@
-/* captures.js - Provider captures (watchlist/ratings/history/progress) */
+/* captures.js - Provider captures (watchlist/ratings/history/progress/collection) */
 /* CrossWatch - Captures/Snapshots page UI logic */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function () {
@@ -1290,7 +1290,7 @@ repopDiffSelects();
     const feats = (p && p.features) ? p.features : {};
     const fSel = $("#ss-feature", page);
 
-    const featureOptions = ["all", "watchlist", "ratings", "history", "progress"];
+    const featureOptions = ["all", "watchlist", "ratings", "history", "progress", "collection"];
 
     if (fSel) {
       const cur = String(fSel.value || "");
