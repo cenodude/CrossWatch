@@ -85,6 +85,7 @@ export function createFlowController({ ID, Q, byName, renderWarnings }) {
       ["history", "hi"],
       ["progress", "pr"],
       ["playlists", "pl"],
+      ["collection", "co"],
     ];
     host.innerHTML = items
       .map(([key, cls]) => {

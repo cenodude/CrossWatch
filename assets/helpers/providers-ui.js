@@ -567,7 +567,7 @@
     PLEX: {
       provider: "plex", logo: "PLEX", size: "wide", help: window.CW.HelpLinks.url("plex"), deleteSelector: "#btn-delete-plex",
       tabs: { auth: ["lock", "Authentication", "Connect your Plex account using a secure link code"], settings: ["tune", "Settings", "Configure server and sync preferences"], whitelist: ["verified_user", "Whitelisting", "Choose libraries and content to sync"] },
-      copy: { auth: ["Plex Authentication", "Connect your Plex account to CrossWatch using a secure link code."], settings: ["Plex Settings", "Configure your server URL, selected profile and sync preferences."], whitelist: ["Plex Whitelisting", "Choose which libraries CrossWatch can use for history, ratings, progress and scrobbling."] },
+      copy: { auth: ["Plex Authentication", "Connect your Plex account to CrossWatch using a secure link code."], settings: ["Plex Settings", "Configure your server URL, selected profile and sync preferences."], whitelist: ["Plex Whitelisting", "Choose which libraries CrossWatch can use for history, ratings, progress, collections and scrobbling."] },
       journey: ["Link Plex, then tune the server", "Click Connect Plex to get a link code. CrossWatch shows the code, then opens plex.tv/link so you can enter it and approve access. Next, validate the server URL and optionally whitelist libraries.", "229,160,13", "229,160,13", "PLEX"],
       steps: [["1", "Get link code", "Generate a code in CrossWatch"], ["2", "Approve on Plex", "Open plex.tv/link and approve the connection"], ["3", "Validate server", "Confirm your server URL and complete setup"]],
       order: ["#plex_qc_state", ".cw-subpanel[data-sub=auth]>.inline"]
@@ -697,7 +697,7 @@
     KODI: {
       provider: "kodi", logo: "KODI", help: window.CW.HelpLinks.url("kodi"), deleteSelector: "#kodi_disconnect",
       tabs: { auth: ["lock", "Authentication", "Connect over HTTP JSON-RPC"], whitelist: ["verified_user", "Whitelisting", "Choose libraries and content to sync"] },
-      copy: { auth: ["Kodi Authentication", "Connect a Kodi media client over HTTP JSON-RPC."], whitelist: ["Kodi Whitelisting", "Choose which Kodi video sources CrossWatch can use for history, ratings, progress and scrobbling."] },
+      copy: { auth: ["Kodi Authentication", "Connect a Kodi media client over HTTP JSON-RPC."], whitelist: ["Kodi Whitelisting", "Choose which Kodi video sources CrossWatch can use for history, ratings, progress, collections and scrobbling."] },
       journey: ["Connect to Kodi", "Enter your Kodi server URL and optional HTTP Basic Auth credentials. Make sure Kodi's web server and JSON RPC access are enabled before connecting.", "23,181,209", "20,150,200", "KODI"],
       steps: [["1", "Enable JSON-RPC", "Allow control of Kodi via HTTP"], ["2", "Enter server", "Add the Kodi web server URL"], ["3", "Verify", "CrossWatch checks Kodi and JSON-RPC versions"]],
       order: [".grid2", ".inline"],
@@ -734,7 +734,7 @@
       provider: "crosswatch", logo: "CROSSWATCH", help: window.CW.HelpLinks.url("crosswatch"), deleteSelector: "#cw_crosswatch_disconnect",
       tabs: { auth: ["lock", "Authentication", "Connect local tracker"], settings: ["database", "Settings", "Storage and restore"] },
       copy: { auth: ["CrossWatch Authentication", "Connect this local tracker profile."], settings: ["CrossWatch Local Tracker", "Configure storage and restore snapshots for this tracker profile."] },
-      journey: ["Connect Local Tracker", "Enable the built-in CrossWatch tracker as a normal connection. Use profiles when you want separate local watchlist, ratings, history or progress data.", "124,92,255", "98,194,255", "CROSSWATCH"],
+      journey: ["Connect Local Tracker", "Enable the built-in CrossWatch tracker as a normal connection. Use profiles when you want separate local watchlist, ratings, history, progress or collection data.", "124,92,255", "98,194,255", "CROSSWATCH"],
       steps: [["1", "Choose profile", "Use Default or create CW-P profiles"], ["2", "Connect locally", "Enable the selected profile as a connection"], ["3", "Sync locally", "Use the profile in normal sync pairs"]],
       introSubs: ["auth"],
       order: [".cw-tracker-auth-card", ".cw-tracker-settings-stack"],
@@ -1222,7 +1222,7 @@
   }
 
   function connectionWhitelistSelect(prefix, feature) {
-    const suffix = { hist: "history", rate: "ratings", prog: "progress", scr: "scrobble" }[feature] || feature;
+    const suffix = { hist: "history", rate: "ratings", prog: "progress", coll: "collection", scr: "scrobble" }[feature] || feature;
     return document.getElementById(`${prefix}_lib_${suffix}`);
   }
 
@@ -1274,6 +1274,7 @@
       hist: connectionWhitelistRead(cfg.prefix, "hist"),
       rate: connectionWhitelistRead(cfg.prefix, "rate"),
       prog: connectionWhitelistRead(cfg.prefix, "prog"),
+      coll: connectionWhitelistRead(cfg.prefix, "coll"),
       scr: connectionWhitelistRead(cfg.prefix, "scr"),
     };
     host.__cwConnectionWhitelistSets = sets;
@@ -1297,6 +1298,7 @@
           { key: "hist", label: "History" },
           { key: "rate", label: "Ratings" },
           { key: "prog", label: "Progress" },
+          { key: "coll", label: "Collections" },
           { key: "scr", label: "Scrobble" },
         ],
         getLibs: () => host.__cwConnectionWhitelistLibs || [],

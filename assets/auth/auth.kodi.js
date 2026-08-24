@@ -21,6 +21,7 @@
   let H = new Set();
   let R = new Set();
   let P = new Set();
+  let C = new Set();
   let S = new Set();
   let lastLibraries = [];
   let wlHandle = null;
@@ -60,7 +61,7 @@
     return Shared.setStatus("kodi_msg", ok, msg || (ok ? "Connected" : "Not connected"));
   }
 
-  const setFor = (fk) => ({ hist: H, rate: R, prog: P, scr: S }[fk]);
+  const setFor = (fk) => ({ hist: H, rate: R, prog: P, coll: C, scr: S }[fk]);
 
   function syncHidden() {
     const esc = (value) => String(value).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
@@ -71,6 +72,7 @@
     write("kodi_lib_history", H);
     write("kodi_lib_ratings", R);
     write("kodi_lib_progress", P);
+    write("kodi_lib_collection", C);
     write("kodi_lib_scrobble", S);
     window.__kodiHydrated = true;
   }
@@ -115,6 +117,7 @@
         { key: "hist", label: "History" },
         { key: "rate", label: "Ratings" },
         { key: "prog", label: "Progress" },
+        { key: "coll", label: "Collections" },
         { key: "scr", label: "Scrobble" },
       ],
       getLibs: () => lastLibraries,
@@ -175,6 +178,7 @@
     H = new Set((k?.history?.libraries || []).map(String));
     R = new Set((k?.ratings?.libraries || []).map(String));
     P = new Set((k?.progress?.libraries || []).map(String));
+    C = new Set((k?.collection?.libraries || []).map(String));
     S = new Set((k?.scrobble?.libraries || []).map(String));
     syncHidden();
     renderLibraries(lastLibraries);
@@ -294,7 +298,7 @@
     const username = txt(el("kodi_username")?.value || "");
     const passInfo = Shared.readSecretField(el("kodi_password"));
     const verify_ssl = !!el("kodi_verify_ssl")?.checked;
-    const hasWhitelist = H.size || R.size || P.size || S.size;
+    const hasWhitelist = H.size || R.size || P.size || C.size || S.size;
     if (!server && !username && !passInfo.hasValue && !verify_ssl && !hasWhitelist) return;
 
     cfg.kodi = cfg.kodi || {};
@@ -313,11 +317,13 @@
     k.history = k.history || {};
     k.ratings = k.ratings || {};
     k.progress = k.progress || {};
+    k.collection = k.collection || {};
     k.scrobble = k.scrobble || {};
     syncHidden();
     k.history.libraries = Array.from(H);
     k.ratings.libraries = Array.from(R);
     k.progress.libraries = Array.from(P);
+    k.collection.libraries = Array.from(C);
     k.scrobble.libraries = Array.from(S);
   });
 

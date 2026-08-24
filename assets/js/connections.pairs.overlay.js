@@ -237,6 +237,7 @@
                 ${bead("hi", "History", f.history)}
                 ${bead("pr", "Progress", f.progress)}
                 ${bead("pl", "Playlists", f.playlists)}
+                ${bead("co", "Collections", f.collection)}
               </div>
 
               ${showPlaylistMappingButton && hasPlaylistMappings(f.playlists) ? `<button type="button" class="icon-btn" data-tip="Manage playlist mappings" onclick="window.cxOpenPlaylistMappingsForPair && window.cxOpenPlaylistMappingsForPair(this.closest('.pair-card')?.dataset?.id, this)" aria-label="Manage playlist mappings">

@@ -12,6 +12,7 @@
   let H = new Set();
   let R = new Set();
   let P = new Set();
+  let C = new Set();
   let S = new Set();
   let lastLibraries = [];
   let hydrated = false;
@@ -189,15 +190,17 @@
     const selH = Q("#jfy_lib_history");
     const selR = Q("#jfy_lib_ratings");
     const selP = Q("#jfy_lib_progress");
+    const selC = Q("#jfy_lib_collection");
     const selS = Q("#jfy_lib_scrobble");
     if (selH) selH.innerHTML = [...H].map(id => `<option selected value="${id}">${id}</option>`).join("");
     if (selR) selR.innerHTML = [...R].map(id => `<option selected value="${id}">${id}</option>`).join("");
     if (selP) selP.innerHTML = [...P].map(id => `<option selected value="${id}">${id}</option>`).join("");
+    if (selC) selC.innerHTML = [...C].map(id => `<option selected value="${id}">${id}</option>`).join("");
     if (selS) selS.innerHTML = [...S].map(id => `<option selected value="${id}">${id}</option>`).join("");
   }
 
   let wlHandle = null;
-  const setFor = (fk) => ({ hist: H, rate: R, prog: P, scr: S }[fk]);
+  const setFor = (fk) => ({ hist: H, rate: R, prog: P, coll: C, scr: S }[fk]);
 
   function renderLibraries(libs) {
     if (Array.isArray(libs)) lastLibraries = libs;
@@ -207,7 +210,7 @@
     if (wlHandle) { wlHandle.render(); return; }
     wlHandle = window.cwWhitelistTable.mount({
       host,
-      features: [ { key: "hist", label: "History" }, { key: "rate", label: "Ratings" }, { key: "prog", label: "Progress" }, { key: "scr", label: "Scrobble" } ],
+      features: [ { key: "hist", label: "History" }, { key: "rate", label: "Ratings" }, { key: "prog", label: "Progress" }, { key: "coll", label: "Collections" }, { key: "scr", label: "Scrobble" } ],
       getLibs: () => lastLibraries,
       isOn: (fk, id) => setFor(fk).has(String(id)),
       setOn: (fk, id, on) => { const s = setFor(fk); if (on) s.add(String(id)); else s.delete(String(id)); },
@@ -269,6 +272,7 @@
       H = new Set((jf.history?.libraries || []).map(String));
       R = new Set((jf.ratings?.libraries || []).map(String));
       P = new Set((jf.progress?.libraries || []).map(String));
+      C = new Set((jf.collection?.libraries || []).map(String));
       S = new Set((jf.scrobble?.libraries || []).map(String));
 
       hydrated = true;
@@ -389,6 +393,7 @@
       jf.history = Object.assign({}, jf.history || {}, { libraries: Array.from(H) });
       jf.ratings = Object.assign({}, jf.ratings || {}, { libraries: Array.from(R) });
       jf.progress = Object.assign({}, jf.progress || {}, { libraries: Array.from(P) });
+      jf.collection = Object.assign({}, jf.collection || {}, { libraries: Array.from(C) });
       jf.scrobble = Object.assign({}, jf.scrobble || {}, { libraries: Array.from(S) });
     }
     return cfg;

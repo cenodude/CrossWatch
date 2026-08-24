@@ -83,8 +83,9 @@
       history: txt($("cw_tracker_restore_history")?.dataset?.wanted) || "latest",
       ratings: txt($("cw_tracker_restore_ratings")?.dataset?.wanted) || "latest",
       progress: txt($("cw_tracker_restore_progress")?.dataset?.wanted) || "latest",
+      collection: txt($("cw_tracker_restore_collection")?.dataset?.wanted) || "latest",
     };
-    const groups = { watchlist: [], history: [], ratings: [], progress: [] };
+    const groups = { watchlist: [], history: [], ratings: [], progress: [], collection: [] };
     try {
       const res = await fetch(`/api/files?path=${encodeURIComponent(`${root.replace(/[\\/]+$/, "")}/snapshots`)}`, { cache: "no-store" });
       const files = res.ok ? await res.json().catch(() => []) : [];
@@ -102,6 +103,7 @@
       history: "cw_tracker_restore_history",
       ratings: "cw_tracker_restore_ratings",
       progress: "cw_tracker_restore_progress",
+      collection: "cw_tracker_restore_collection",
     };
     Object.entries(ids).forEach(([feature, id]) => {
       const sel = $(id);
@@ -141,7 +143,7 @@
     setVal("cw_tracker_retention_days", intOr(merged.retention_days, 30));
     setSelect("cw_tracker_auto_snapshot", truth(merged.auto_snapshot, true) ? "true" : "false");
     setVal("cw_tracker_max_snapshots", intOr(merged.max_snapshots, 64));
-    ["watchlist", "history", "ratings", "progress"].forEach((feature) => {
+    ["watchlist", "history", "ratings", "progress", "collection"].forEach((feature) => {
       const sel = $(`cw_tracker_restore_${feature}`);
       if (sel) sel.dataset.wanted = txt(merged[`restore_${feature}`]) || "latest";
     });
@@ -154,7 +156,7 @@
   function wireFields() {
     [
       "cw_tracker_retention_days", "cw_tracker_auto_snapshot", "cw_tracker_max_snapshots", "cw_tracker_label",
-      "cw_tracker_restore_watchlist", "cw_tracker_restore_history", "cw_tracker_restore_ratings", "cw_tracker_restore_progress"
+      "cw_tracker_restore_watchlist", "cw_tracker_restore_history", "cw_tracker_restore_ratings", "cw_tracker_restore_progress", "cw_tracker_restore_collection"
     ].forEach((id) => {
       const el = $(id);
       if (!el || el.__cwTrackerWired) return;

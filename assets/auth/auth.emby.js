@@ -13,6 +13,7 @@
   let H = new Set(); // history lib ids
   let R = new Set(); // ratings lib ids
   let P = new Set(); // progress lib ids
+  let C = new Set(); // collection lib ids
   let S = new Set(); // scrobble lib ids
   let lastLibraries = [];
   let hydrated = false;
@@ -177,15 +178,17 @@
     const selH = Q("#emby_lib_history");
     const selR = Q("#emby_lib_ratings");
     const selP = Q("#emby_lib_progress");
+    const selC = Q("#emby_lib_collection");
     const selS = Q("#emby_lib_scrobble");
     if (selH) selH.innerHTML = [...H].map(id => `<option selected value="${id}">${id}</option>`).join("");
     if (selR) selR.innerHTML = [...R].map(id => `<option selected value="${id}">${id}</option>`).join("");
     if (selP) selP.innerHTML = [...P].map(id => `<option selected value="${id}">${id}</option>`).join("");
+    if (selC) selC.innerHTML = [...C].map(id => `<option selected value="${id}">${id}</option>`).join("");
     if (selS) selS.innerHTML = [...S].map(id => `<option selected value="${id}">${id}</option>`).join("");
   }
 
   let wlHandle = null;
-  const setFor = (fk) => ({ hist: H, rate: R, prog: P, scr: S }[fk]);
+  const setFor = (fk) => ({ hist: H, rate: R, prog: P, coll: C, scr: S }[fk]);
 
   function renderLibraries(libs) {
     if (Array.isArray(libs)) lastLibraries = libs;
@@ -195,7 +198,7 @@
     if (wlHandle) { wlHandle.render(); return; }
     wlHandle = window.cwWhitelistTable.mount({
       host,
-      features: [ { key: "hist", label: "History" }, { key: "rate", label: "Ratings" }, { key: "prog", label: "Progress" }, { key: "scr", label: "Scrobble" } ],
+      features: [ { key: "hist", label: "History" }, { key: "rate", label: "Ratings" }, { key: "prog", label: "Progress" }, { key: "coll", label: "Collections" }, { key: "scr", label: "Scrobble" } ],
       getLibs: () => lastLibraries,
       isOn: (fk, id) => setFor(fk).has(String(id)),
       setOn: (fk, id, on) => { const s = setFor(fk); if (on) s.add(String(id)); else s.delete(String(id)); },
@@ -257,6 +260,7 @@
       H = new Set((em.history?.libraries || []).map(String));
       R = new Set((em.ratings?.libraries || []).map(String));
       P = new Set((em.progress?.libraries || []).map(String));
+      C = new Set((em.collection?.libraries || []).map(String));
       S = new Set((em.scrobble?.libraries || []).map(String));
 
       hydrated = true;
@@ -386,11 +390,13 @@
     em.history = em.history || {};
     em.ratings = em.ratings || {};
     em.progress = em.progress || {};
+    em.collection = em.collection || {};
     em.scrobble = em.scrobble || {};
 
     em.history.libraries = [...H];
     em.ratings.libraries = [...R];
     em.progress.libraries = [...P];
+    em.collection.libraries = [...C];
     em.scrobble.libraries = [...S];
 
     return cfg;

@@ -10,13 +10,14 @@ export const FLOW_FEATURE_COLORS = {
   history: "45,226,255",
   progress: "167,139,250",
   playlists: "255,0,229",
+  collection: "255,122,26",
 };
 
 export const providerMeta = () => window.CW?.ProviderMeta || null;
 export const featureMeta = () => window.CW?.FeatureMeta || null;
 
 export const sharedFeatureOrder = () =>
-  featureMeta()?.order || ["watchlist", "ratings", "history", "progress", "playlists"];
+  featureMeta()?.order || ["watchlist", "ratings", "history", "progress", "playlists", "collection"];
 
 export const sharedFeatureLabel = (key) => {
   const k = String(key || "").trim().toLowerCase();
