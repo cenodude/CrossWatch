@@ -36,7 +36,7 @@ from cw_platform.reason_labels import TRACKER_TO_MEDIA_SERVER_MESSAGE, reason_me
 router = APIRouter(prefix="/api", tags=["analyzer"])
 CWS_DIR = CONFIG_DIR / ".cw_state"
 _MANUAL_POLICY_REF = "manual policy"
-_ANALYZER_FEATURES = ("history", "watchlist", "ratings", "progress")
+_ANALYZER_FEATURES = ("history", "watchlist", "ratings", "progress", "collection")
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROVIDERS_SYNC_DIR = REPO_ROOT / "providers" / "sync"
 ORCH_ROOT_DIR = REPO_ROOT / "cw_platform"
@@ -646,7 +646,7 @@ def _iter_items(s: dict[str, Any]) -> Iterable[tuple[str, str, str, dict[str, An
         if not isinstance(pv, dict):
             continue
 
-        for feat in ("history", "watchlist", "ratings", "progress"):
+        for feat in _ANALYZER_FEATURES:
             items = (((pv.get(feat) or {}).get("baseline") or {}).get("items") or {})
             if isinstance(items, dict):
                 for k, it in items.items():
@@ -659,7 +659,7 @@ def _iter_items(s: dict[str, Any]) -> Iterable[tuple[str, str, str, dict[str, An
             if not isinstance(blk, dict):
                 continue
             tok = _prov_token(str(prov), inst_id)
-            for feat in ("history", "watchlist", "ratings", "progress"):
+            for feat in _ANALYZER_FEATURES:
                 items = (((blk.get(feat) or {}).get("baseline") or {}).get("items") or {})
                 if not isinstance(items, dict):
                     continue
@@ -759,8 +759,8 @@ def _find_item(
 def _counts(s: dict[str, Any]) -> dict[str, dict[str, int]]:
     out: dict[str, dict[str, int]] = {}
     for prov, feat, _, _ in _iter_items(s):
-        cur = out.setdefault(prov, {"history": 0, "watchlist": 0, "ratings": 0, "progress": 0, "total": 0})
-        if feat in ("history", "watchlist", "ratings", "progress"):
+        cur = out.setdefault(prov, {**{name: 0 for name in _ANALYZER_FEATURES}, "total": 0})
+        if feat in _ANALYZER_FEATURES:
             cur[feat] = int(cur.get(feat, 0)) + 1
             cur["total"] = int(cur.get("total", 0)) + 1
     return out
@@ -823,8 +823,8 @@ def _counts_from_rows(rows: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, 
     for row in rows:
         prov = str(row.get("provider") or "")
         feat = str(row.get("feature") or "").lower()
-        cur = out.setdefault(prov, {"history": 0, "watchlist": 0, "ratings": 0, "progress": 0, "total": 0})
-        if feat in ("history", "watchlist", "ratings", "progress"):
+        cur = out.setdefault(prov, {**{name: 0 for name in _ANALYZER_FEATURES}, "total": 0})
+        if feat in _ANALYZER_FEATURES:
             cur[feat] += 1
             cur["total"] += 1
     return out
@@ -1829,7 +1829,7 @@ def _pair_map(cfg: dict[str, Any], _state: dict[str, Any]) -> dict[tuple[str, st
         if isinstance(feats, (list, tuple)):
             feats_list = [str(f).lower() for f in feats]
         elif isinstance(feats, dict):
-            for name in ("history", "watchlist", "ratings", "progress"):
+            for name in _ANALYZER_FEATURES:
                 f = feats.get(name)
                 if isinstance(f, bool):
                     if f:
@@ -1952,7 +1952,7 @@ def _pair_type_filters(cfg: dict[str, Any]) -> dict[tuple[str, str, str], set[st
         if not isinstance(feats, dict):
             continue
 
-        for feat in ("history", "watchlist", "ratings", "progress"):
+        for feat in _ANALYZER_FEATURES:
             fcfg = feats.get(feat)
             if not is_on(fcfg):
                 continue
@@ -2066,7 +2066,7 @@ def _pair_lib_filters(cfg: dict[str, Any]) -> dict[tuple[str, str, str], set[str
         if not isinstance(feats, dict):
             continue
 
-        for feat in ("history", "watchlist", "ratings", "progress"):
+        for feat in _ANALYZER_FEATURES:
             fcfg = feats.get(feat) or {}
             if not (isinstance(fcfg, dict) and (fcfg.get("enable") or fcfg.get("enabled"))):
                 continue
@@ -2585,7 +2585,7 @@ def _has_peer_by_pairs(
     pair_types: dict[tuple[str, str, str], set[str]] | None = None,
     cfg: dict[str, Any] | None = None,
 ) -> bool:
-    if feat not in ("history", "watchlist", "ratings", "progress"):
+    if feat not in _ANALYZER_FEATURES:
         return True
 
     prov_key = _norm_prov_token(prov)

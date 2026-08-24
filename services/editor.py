@@ -1,5 +1,5 @@
 # services/editor.py
-# CrossWatch - Tracker state helpers for history / ratings / watchlist
+# CrossWatch - Tracker state helpers for history / ratings / watchlist / progress / collection
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ import zipfile
 from cw_platform.config_base import CONFIG, load_config
 from cw_platform.provider_instances import get_provider_block, normalize_instance_id
 
-Kind = Literal["watchlist", "history", "ratings", "progress"]
+Kind = Literal["watchlist", "history", "ratings", "progress", "collection"]
 
 _JSON_FILE_SUFFIX = ".json"
 
@@ -254,7 +254,7 @@ def _enforce_snapshot_retention(kind: Kind, provider_instance: Any = None) -> No
 def load_state(kind: Kind | None = None, snapshot: str | None = None, provider_instance: Any = None) -> dict[str, Any]:
     if kind is None:
         kind_val: Kind = "watchlist"
-    elif kind in ("watchlist", "history", "ratings", "progress"):
+    elif kind in ("watchlist", "history", "ratings", "progress", "collection"):
         kind_val = kind
     else:
         raise ValueError(f"Unsupported kind: {kind!r}")
@@ -278,7 +278,7 @@ def load_state(kind: Kind | None = None, snapshot: str | None = None, provider_i
 def save_state(kind: Kind | None, items: dict[str, Any], provider_instance: Any = None) -> dict[str, Any]:
     if kind is None:
         kind_val: Kind = "watchlist"
-    elif kind in ("watchlist", "history", "ratings", "progress"):
+    elif kind in ("watchlist", "history", "ratings", "progress", "collection"):
         kind_val = kind
     else:
         raise ValueError(f"Unsupported kind: {kind!r}")
@@ -400,13 +400,13 @@ def import_tracker_json(payload: bytes, filename: str, provider_instance: Any = 
     target: str
     kind: Kind | None = None
 
-    if lower in ("watchlist.json", "history.json", "ratings.json", "progress.json"):
+    if lower in ("watchlist.json", "history.json", "ratings.json", "progress.json", "collection.json"):
         base = lower.split(".")[0]  # "watchlist" / "history" / "ratings"
         kind = cast(Kind, base)
         dest = _state_path(kind, provider_instance)
         target = "state"
     else:
-        for candidate in ("watchlist", "history", "ratings", "progress"):
+        for candidate in ("watchlist", "history", "ratings", "progress", "collection"):
             if lower.endswith(f"-{candidate}.json"):
                 kind = cast(Kind, candidate)
                 break
@@ -468,7 +468,7 @@ def import_tracker_upload(
 
 _PAIR_SCOPE_RE = re.compile(r"^(?P<mode>[^_]+)_(?P<link>[^_]+)_pair_(?P<pid>.+)$")
 _PAIR_DATASET_RE = re.compile(
-    r"^(?P<prefix>.+)[._-](?P<kind>watchlist|history|ratings|progress)\.(?P<variant>index|shadow)\.(?P<scope>.+)\.json$",
+    r"^(?P<prefix>.+)[._-](?P<kind>watchlist|history|ratings|progress|collection)\.(?P<variant>index|shadow)\.(?P<scope>.+)\.json$",
     re.IGNORECASE,
 )
 

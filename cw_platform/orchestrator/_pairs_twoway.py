@@ -70,8 +70,12 @@ from ..provider_instances import normalize_instance_id
 from ._planner import diff_ratings, diff_progress, _pick_rating
 from ._progress_completion import fcfg_for_progress_target
 try:
+    from ._pairs_oneway import _media_type_filter_index as _media_filter
     from ._pairs_oneway import _ratings_filter_index as _rate_filter
 except Exception:
+    def _media_filter(idx: dict[str, Any], fcfg: Mapping[str, Any]) -> dict[str, Any]:
+        return idx
+
     def _rate_filter(idx: dict[str, Any], fcfg: Mapping[str, Any]) -> dict[str, Any]:
         return idx
 
@@ -235,7 +239,7 @@ def _effective_library_whitelist(
     feature: str,
     fcfg: Mapping[str, Any],
 ) -> list[str]:
-    if feature not in ("history", "ratings", "progress"):
+    if feature not in ("history", "ratings", "progress", "collection"):
         return []
 
     libs: list[str] = []
@@ -497,14 +501,31 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
 
     def _prev_items(pmap: Mapping[str, Any], prov: str, inst: str, feat: str) -> dict[str, Any]:
         try:
-            pblk = pmap.get(prov) or {}
+            pkey = str(prov or "").upper()
+            pblk = pmap.get(pkey) or pmap.get(str(prov or "")) or {}
+            if not isinstance(pblk, Mapping):
+                for pk, pv in (pmap or {}).items():
+                    if str(pk or "").upper() == pkey and isinstance(pv, Mapping):
+                        pblk = pv
+                        break
             if not isinstance(pblk, Mapping):
                 return {}
             if inst != "default":
                 insts = pblk.get("instances") or {}
-                if not isinstance(insts, Mapping):
+                if isinstance(insts, Mapping):
+                    pblk2 = insts.get(inst) or {}
+                    if not isinstance(pblk2, Mapping):
+                        want_inst = normalize_instance_id(inst)
+                        for ik, iv in insts.items():
+                            if normalize_instance_id(ik) == want_inst and isinstance(iv, Mapping):
+                                pblk2 = iv
+                                break
+                    if isinstance(pblk2, Mapping) and pblk2:
+                        pblk = pblk2
+                    elif feat not in pblk:
+                        return {}
+                elif feat not in pblk:
                     return {}
-                pblk = insts.get(inst) or {}
                 if not isinstance(pblk, Mapping):
                     return {}
             fblk = pblk.get(feat) or {}
@@ -563,16 +584,28 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
 
     allow_unknown_A = (str(a).upper() == "PLEX" and feature == "history") or str(a).upper() == "KODI"
     allow_unknown_B = (str(b).upper() == "PLEX" and feature == "history") or str(b).upper() == "KODI"
+    allow_unknown_prev_A = allow_unknown_A or feature == "collection"
+    allow_unknown_prev_B = allow_unknown_B or feature == "collection"
+    allow_unknown_eff_A = allow_unknown_A or feature == "collection"
+    allow_unknown_eff_B = allow_unknown_B or feature == "collection"
 
     if libs_A:
-        prevA = _filter_index_by_libraries(prevA, libs_A, allow_unknown=allow_unknown_A)
+        prevA = _filter_index_by_libraries(prevA, libs_A, allow_unknown=allow_unknown_prev_A)
         A_cur = _filter_index_by_libraries(A_cur, libs_A, allow_unknown=allow_unknown_A)
-        A_eff = _filter_index_by_libraries(A_eff, libs_A, allow_unknown=allow_unknown_A)
+        A_eff = _filter_index_by_libraries(A_eff, libs_A, allow_unknown=allow_unknown_eff_A)
 
     if libs_B:
-        prevB = _filter_index_by_libraries(prevB, libs_B, allow_unknown=allow_unknown_B)
+        prevB = _filter_index_by_libraries(prevB, libs_B, allow_unknown=allow_unknown_prev_B)
         B_cur = _filter_index_by_libraries(B_cur, libs_B, allow_unknown=allow_unknown_B)
-        B_eff = _filter_index_by_libraries(B_eff, libs_B, allow_unknown=allow_unknown_B)
+        B_eff = _filter_index_by_libraries(B_eff, libs_B, allow_unknown=allow_unknown_eff_B)
+
+    if feature == "collection":
+        prevA = _media_filter(prevA, fcfg)
+        A_cur = _media_filter(A_cur, fcfg)
+        A_eff = _media_filter(A_eff, fcfg)
+        prevB = _media_filter(prevB, fcfg)
+        B_cur = _media_filter(B_cur, fcfg)
+        B_eff = _media_filter(B_eff, fcfg)
 
     dropped_A: set[str] = set()
     dropped_B: set[str] = set()

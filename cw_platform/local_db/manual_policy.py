@@ -13,7 +13,7 @@ from .db import crosswatch_db_path, get_conn
 from .schema import ID_KEYS
 
 _LOCK = threading.RLock()
-_FEATURES = ("watchlist", "history", "ratings", "progress", "playlists")
+_FEATURES = ("watchlist", "history", "ratings", "progress", "playlists", "collection")
 
 
 def _now() -> int:

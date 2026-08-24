@@ -373,7 +373,7 @@ class Orchestrator:
                 continue
             fmap = p.get("features") or {}
             
-            for name in ("watchlist", "ratings", "history", "progress", "playlists"):
+            for name in ("watchlist", "ratings", "history", "progress", "playlists", "collection"):
                 v = fmap.get(name)
                 if isinstance(v, bool):
                     if v:

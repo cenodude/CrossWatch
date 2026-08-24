@@ -1,5 +1,5 @@
 # services/snapshots.py
-# CrossWatch - Provider captures (watchlist/ratings/history/progress)
+# CrossWatch - Provider captures (watchlist/ratings/history/progress/collection)
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
@@ -20,13 +20,13 @@ from cw_platform.config_base import CONFIG, load_config
 from cw_platform.modules_registry import load_sync_ops, state_read_features, sync_provider_names
 from cw_platform.provider_instances import build_provider_config_view, list_instance_ids, normalize_instance_id
 
-Feature = Literal["watchlist", "ratings", "history", "progress"]
-CreateFeature = Literal["watchlist", "ratings", "history", "progress", "all"]
+Feature = Literal["watchlist", "ratings", "history", "progress", "collection"]
+CreateFeature = Literal["watchlist", "ratings", "history", "progress", "collection", "all"]
 RestoreMode = Literal["merge", "clear_restore"]
 
 SNAPSHOT_KIND = "snapshot"
 SNAPSHOT_BUNDLE_KIND = "snapshot_bundle"
-SNAPSHOT_FEATURES: tuple[Feature, ...] = ("watchlist", "ratings", "history", "progress")
+SNAPSHOT_FEATURES: tuple[Feature, ...] = ("watchlist", "ratings", "history", "progress", "collection")
 _CAPTURE_PROGRESS: dict[str, dict[str, Any]] = {}
 _CAPTURE_PROGRESS_LOCK = Lock()
 _CAPTURE_PROGRESS_TTL_SECONDS = 6 * 60 * 60
@@ -481,7 +481,7 @@ def _resolve_snapshot_file(path: str, *, must_exist: bool = True) -> tuple[str, 
 
 def _norm_feature(x: str) -> Feature:
     v = str(x or "").strip().lower()
-    if v not in ("watchlist", "ratings", "history", "progress"):
+    if v not in ("watchlist", "ratings", "history", "progress", "collection"):
         raise ValueError(f"Unsupported feature: {x}")
     return cast(Feature, v)
 
@@ -1641,8 +1641,9 @@ def clear_provider_features(
             unresolved: list[Any] = []
             errors: list[str] = []
             passes = 0
-            max_passes = 6 if feat == "history" else 1
+            max_passes = 6 if feat in {"history", "collection"} else 1
             prev_count: int | None = None
+            seen_count = initial_count
 
             while cur and passes < max_passes:
                 passes += 1
@@ -1699,22 +1700,23 @@ def clear_provider_features(
                 if remaining_count <= 0:
                     cur = []
                     break
-                if feat != "history":
+                if feat not in {"history", "collection"}:
                     cur = remaining
                     break
                 if prev_count is not None and remaining_count >= prev_count:
                     cur = remaining
                     break
                 prev_count = remaining_count
+                seen_count += remaining_count
                 cur = remaining
 
             total_removed += removed
-            ok = len(errors) == 0
+            ok = len(errors) == 0 and len(cur) == 0
             done["ok"] = done["ok"] and ok
             done["results"][feat] = {
                 "ok": ok,
                 "removed": removed,
-                "count": initial_count,
+                "count": max(seen_count, removed),
                 "remaining": len(cur),
                 "passes": passes,
                 "unresolved": unresolved,
@@ -2006,7 +2008,7 @@ def _bundle_compare_setup(a: Mapping[str, Any], b: Mapping[str, Any], feature: s
                 out[feat] = path
         return out
 
-    order = ("watchlist", "history", "ratings", "progress")
+    order = ("watchlist", "collection", "history", "ratings", "progress")
     a_children = _child_paths(a)
     b_children = _child_paths(b)
     features = [feat for feat in order if feat in a_children and feat in b_children]

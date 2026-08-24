@@ -1341,6 +1341,7 @@ def apply_migration_overrides(cfg: dict[str, Any]) -> tuple[dict[str, Any], list
 # Feature normalization
 _ALLOWED_RATING_TYPES: list[str] = ["movies", "shows", "seasons", "episodes"]
 _ALLOWED_RATING_MODES: list[str] = ["only_new", "from_date", "all"]
+_ALLOWED_COLLECTION_TYPES: list[str] = ["movies", "shows", "seasons", "episodes"]
 _ALLOWED_UI_PROTOCOLS: list[str] = ["http", "https"]
 
 
@@ -1384,6 +1385,25 @@ def _normalize_ratings_feature(val: dict[str, Any]) -> dict[str, Any]:
     return v
 
 
+def _normalize_collection_feature(val: dict[str, Any]) -> dict[str, Any]:
+    v: dict[str, Any] = dict(val or {})
+    v["enable"] = bool(v.get("enable", False))
+    v["add"] = bool(v.get("add", False))
+    v["remove"] = bool(v.get("remove", False))
+
+    raw_types = _as_list(v.get("types"))
+    types = [str(t).strip().lower() for t in raw_types]
+    if "all" in types:
+        types = list(_ALLOWED_COLLECTION_TYPES)
+    else:
+        types = [t for t in _ALLOWED_COLLECTION_TYPES if t in types]
+        if not types:
+            types = ["movies"]
+    v["types"] = types
+
+    return v
+
+
 def _normalize_features_map(features: dict[str, Any] | None) -> dict[str, Any]:
     f: dict[str, Any] = dict(features or {})
     for name, val in list(f.items()):
@@ -1396,6 +1416,8 @@ def _normalize_features_map(features: dict[str, Any] | None) -> dict[str, Any]:
             # Ratings has extra fields
             if name == "ratings":
                 v = _normalize_ratings_feature(v)
+            elif name == "collection":
+                v = _normalize_collection_feature(v)
             f[name] = v
             continue
 

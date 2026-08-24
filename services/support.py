@@ -24,7 +24,7 @@ from cw_platform.local_db.sync_reports import list_reports
 from cw_platform.orchestrator._state_store import StateStore
 from cw_platform.provider_instances import normalize_instance_id, sanitize_instance_label
 
-FEATURE_NAMES = ("watchlist", "ratings", "history", "playlists", "progress")
+FEATURE_NAMES = ("watchlist", "ratings", "history", "playlists", "progress", "collection")
 BUNDLE_SECTIONS = ("config", "diagnostics", "reports", "logs")
 DEFAULT_SECTIONS = frozenset(BUNDLE_SECTIONS)
 

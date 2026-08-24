@@ -15,6 +15,7 @@ from . import query as _query
 from ..local_db.legacy_files import STATE_MANUAL_JSON
 
 _RELATED_LIMIT = 50
+_CONTEXT_FEATURES = ("history", "watchlist", "ratings", "progress", "collection")
 
 
 def _safe(fn: Callable[[], Any]) -> Any:
@@ -502,7 +503,7 @@ def _baseline_states() -> list[Mapping[str, Any]]:
     if not out:
         try:
             from services.analyzer import _load_state
-            gs = _load_state(None, {"history", "watchlist", "ratings", "progress"})
+            gs = _load_state(None, set(_CONTEXT_FEATURES))
             if isinstance(gs, Mapping):
                 out.append(gs)
         except Exception:
@@ -554,7 +555,7 @@ def _title_index() -> dict[str, dict[str, Any]]:
     def _ingest_provblk(blk: Any) -> None:
         if not isinstance(blk, Mapping):
             return
-        for feat in ("history", "watchlist", "ratings", "progress"):
+        for feat in _CONTEXT_FEATURES:
             fblk = blk.get(feat)
             items = ((fblk or {}).get("baseline") or {}).get("items") if isinstance(fblk, Mapping) else None
             _ingest_items(items)

@@ -611,7 +611,7 @@ def _effective_library_whitelist(
     feature: str,
     fcfg: Mapping[str, Any],
 ) -> list[str]:
-    if feature not in ("history", "ratings", "progress"):
+    if feature not in ("history", "ratings", "progress", "collection"):
         return []
 
     libs: list[str] = []
@@ -715,6 +715,48 @@ def _ratings_filter_index(idx: dict[str, Any], fcfg: Mapping[str, Any]) -> dict[
         return True
 
     return {k: v for k, v in idx.items() if _keep(v)}
+
+
+def _media_type_filter_index(idx: dict[str, Any], fcfg: Mapping[str, Any]) -> dict[str, Any]:
+    alias = {
+        "movies": "movie",
+        "movie": "movie",
+        "shows": "show",
+        "show": "show",
+        "series": "show",
+        "tv": "show",
+        "anime": "show",
+        "animes": "show",
+        "seasons": "season",
+        "season": "season",
+        "episodes": "episode",
+        "episode": "episode",
+        "ep": "episode",
+        "eps": "episode",
+    }
+    raw = fcfg.get("types")
+    if isinstance(raw, (str, bytes)):
+        raw_values = [raw]
+    elif isinstance(raw, (list, tuple, set)):
+        raw_values = list(raw)
+    else:
+        raw_values = ["movies"]
+    types_raw = [str(t).strip().lower() for t in raw_values if isinstance(t, (str, bytes))]
+    if "all" in types_raw:
+        types = {"movie", "show", "season", "episode"}
+    else:
+        types = {alias.get(t, t.rstrip("s")) for t in types_raw if t}
+    if not types:
+        types = {"movie"}
+
+    def _keep(v: Any) -> bool:
+        if not isinstance(v, Mapping):
+            return False
+        raw = str(v.get("type", "")).strip().lower()
+        vt = alias.get(raw, raw.rstrip("s"))
+        return vt in types
+
+    return {k: v for k, v in (idx or {}).items() if _keep(v)}
 
 # One-way sync core
 def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
@@ -1074,14 +1116,31 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
 
     def _prev_items(pmap: Mapping[str, Any], prov: str, inst: str, feat: str) -> dict[str, Any]:
         try:
-            pblk = pmap.get(prov) or {}
+            pkey = str(prov or "").upper()
+            pblk = pmap.get(pkey) or pmap.get(str(prov or "")) or {}
+            if not isinstance(pblk, Mapping):
+                for pk, pv in (pmap or {}).items():
+                    if str(pk or "").upper() == pkey and isinstance(pv, Mapping):
+                        pblk = pv
+                        break
             if not isinstance(pblk, Mapping):
                 return {}
             if inst != "default":
                 insts = pblk.get("instances") or {}
-                if not isinstance(insts, Mapping):
+                if isinstance(insts, Mapping):
+                    pblk2 = insts.get(inst) or {}
+                    if not isinstance(pblk2, Mapping):
+                        want_inst = normalize_instance_id(inst)
+                        for ik, iv in insts.items():
+                            if normalize_instance_id(ik) == want_inst and isinstance(iv, Mapping):
+                                pblk2 = iv
+                                break
+                    if isinstance(pblk2, Mapping) and pblk2:
+                        pblk = pblk2
+                    elif feat not in pblk:
+                        return {}
+                elif feat not in pblk:
                     return {}
-                pblk = insts.get(inst) or {}
                 if not isinstance(pblk, Mapping):
                     return {}
             fblk = pblk.get(feat) or {}
@@ -1141,16 +1200,28 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
 
     allow_unknown_src = (str(src).upper() == "PLEX" and feature == "history") or str(src).upper() == "KODI"
     allow_unknown_dst = (str(dst).upper() == "PLEX" and feature == "history") or str(dst).upper() == "KODI"
+    allow_unknown_prev_src = allow_unknown_src or feature == "collection"
+    allow_unknown_prev_dst = allow_unknown_dst or feature == "collection"
+    allow_unknown_eff_src = allow_unknown_src or feature == "collection"
+    allow_unknown_eff_dst = allow_unknown_dst or feature == "collection"
 
     if libs_src:
-        prev_src = _filter_index_by_libraries(prev_src, libs_src, allow_unknown=allow_unknown_src)
+        prev_src = _filter_index_by_libraries(prev_src, libs_src, allow_unknown=allow_unknown_prev_src)
         src_cur  = _filter_index_by_libraries(src_cur,  libs_src, allow_unknown=allow_unknown_src)
-        eff_src  = _filter_index_by_libraries(eff_src,  libs_src, allow_unknown=allow_unknown_src)
+        eff_src  = _filter_index_by_libraries(eff_src,  libs_src, allow_unknown=allow_unknown_eff_src)
 
     if libs_dst:
-        prev_dst = _filter_index_by_libraries(prev_dst, libs_dst, allow_unknown=allow_unknown_dst)
+        prev_dst = _filter_index_by_libraries(prev_dst, libs_dst, allow_unknown=allow_unknown_prev_dst)
         dst_cur  = _filter_index_by_libraries(dst_cur,  libs_dst, allow_unknown=allow_unknown_dst)
-        eff_dst  = _filter_index_by_libraries(eff_dst,  libs_dst, allow_unknown=allow_unknown_dst)
+        eff_dst  = _filter_index_by_libraries(eff_dst,  libs_dst, allow_unknown=allow_unknown_eff_dst)
+
+    if feature == "collection":
+        prev_src = _media_type_filter_index(prev_src, fcfg)
+        src_cur = _media_type_filter_index(src_cur, fcfg)
+        eff_src = _media_type_filter_index(eff_src, fcfg)
+        prev_dst = _media_type_filter_index(prev_dst, fcfg)
+        dst_cur = _media_type_filter_index(dst_cur, fcfg)
+        eff_dst = _media_type_filter_index(eff_dst, fcfg)
 
     src_dropped_tokens: set[str] = set()
     dst_dropped_tokens: set[str] = set()
