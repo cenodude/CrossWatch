@@ -116,8 +116,11 @@ Any unique id prefix works, so `cw pair show pair_07c3` is enough. The route nam
 ## Sync
 
 ```
+cw sync list [--enabled]           run order, endpoints and enabled features
 cw sync run                        every enabled pair
-cw sync run --pair pair_07c3       just the one
+cw sync run 1                      just pair #1 from cw sync list
+cw sync run pair_07c3              just the one by id or unique prefix
+cw sync run --pair pair_07c3       same selector, option form
 cw sync run --follow               run it and stream the log until it finishes
 cw sync status                     current or last run, with counts
 cw sync follow                     attach to a run already going
@@ -360,7 +363,7 @@ cw maintenance database            runtime db health
 cw maintenance events              archive health, --optimize, --rebuild
 cw maintenance cache <what>        all, metadata, provider-sync, activity-log, scrobbles, state
 cw maintenance provider-cache
-cw maintenance provider-cleanup    clear provider watchlist, ratings, history or progress
+cw maintenance provider-cleanup    clear provider watchlist, ratings, history, progress or collection
 cw maintenance state-file --prune|--compact
 cw maintenance tracker [--clear]
 cw maintenance reset-stats
@@ -449,7 +452,7 @@ Read only and repair commands keep going by reading the install. You get a note 
 ! Cannot reach CrossWatch at http://127.0.0.1:8787 - answering from the local install instead
 ```
 
-Works without the service: `status`, `health`, `version`, all of `config`, `pair list/show/enable/disable/delete`, `scheduler status/next/show`, and every `auth token` command.
+Works without the service: `status`, `health`, `version`, all of `config`, `pair list/show/enable/disable/delete`, `sync list`, `scheduler status/next/show`, and every `auth token` command.
 
 Anything that needs the engine running, so starting a sync, poking the watcher, streaming logs, fails with exit 3 instead of doing something the UI cannot see. `--local` forces that mode and turns those into an error straight away.
 

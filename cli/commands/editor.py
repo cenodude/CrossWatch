@@ -37,7 +37,7 @@ def _rows(payload: Any, *keys: str) -> list[dict[str, Any]]:
 @editor_app.command("list")
 def editor_list(
     ctx: typer.Context,
-    kind: str = typer.Option("watchlist", "--kind", "-k", help="watchlist, ratings, history or playlists."),
+    kind: str = typer.Option("watchlist", "--kind", "-k", help="watchlist, ratings, history, progress, playlists or collection."),
     provider: str = typer.Option("", "--provider", "-p", help="Limit to one provider."),
     instance: str = typer.Option("", "--instance", "-i", "--profile", help="Provider instance/profile id."),
     source: str = typer.Option("state", "--source", help="state/current, manual or playlist."),

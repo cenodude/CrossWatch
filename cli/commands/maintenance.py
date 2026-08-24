@@ -24,7 +24,7 @@ CACHES = {
     "state": "/api/maintenance/clear-state",
 }
 
-PROVIDER_CLEANUP_FEATURES = ("watchlist", "ratings", "history", "progress")
+PROVIDER_CLEANUP_FEATURES = ("watchlist", "ratings", "history", "progress", "collection")
 
 MAINTENANCE_TOOLS = [
     ("Sync", "Rebuild sync state", "cw maintenance cache state --yes"),
@@ -269,13 +269,13 @@ def maintenance_provider_cleanup(
     provider: str = typer.Option("", "--provider", "-p", help="Provider to clear, for example PLEX."),
     instance: str = typer.Option("default", "--instance", "-i", help="Provider profile/instance id."),
     feature: list[str] = typer.Option([], "--feature", "-F", help="Data to clear. Repeat or comma-separate."),
-    all_features: bool = typer.Option(False, "--all", help="Clear watchlist, ratings, history and progress."),
+    all_features: bool = typer.Option(False, "--all", help="Clear watchlist, ratings, history, progress and collection."),
     targets: bool = typer.Option(False, "--targets", help="Show provider cleanup targets."),
     wait: bool = typer.Option(True, "--wait/--no-wait", help="Wait for cleanup to finish."),
     timeout: float = typer.Option(900.0, "--timeout", help="How long to wait, in seconds."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Do not ask for confirmation."),
 ) -> None:
-    """Clear provider watchlist, ratings, history or progress by profile."""
+    """Clear provider watchlist, ratings, history, progress or collection by profile."""
     state: Ctx = ctx.obj
     if targets or not provider.strip():
         payload = state.get("/api/snapshots/manifest")
@@ -301,7 +301,7 @@ def maintenance_provider_cleanup(
     if not features:
         raise CLIError(
             "Pick at least one cleanup feature",
-            hint="Use --feature watchlist, --feature ratings, --feature history, --feature progress or --all.",
+            hint="Use --feature watchlist, --feature ratings, --feature history, --feature progress, --feature collection or --all.",
             exit_code=EXIT_USAGE,
         )
     pid = provider.strip().upper()

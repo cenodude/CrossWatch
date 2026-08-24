@@ -12,7 +12,7 @@ from .._context import Ctx
 from .._errors import CLIError
 from .._util import as_dict, error_text, fmt_ts, rows_from_payload
 
-capture_app = typer.Typer(help="Captures, the rollback tool for watchlist, ratings and history.", no_args_is_help=True)
+capture_app = typer.Typer(help="Captures, the rollback tool for watchlist, ratings, history, progress and collections.", no_args_is_help=True)
 
 
 def _rows(payload: Any, *keys: str) -> list[dict[str, Any]]:

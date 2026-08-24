@@ -14,12 +14,14 @@ import typer
 from .._context import Ctx
 from .._errors import EXIT_BUSY, CLIError
 from .._render import state_text
-from .._util import as_dict, coerce_bool, error_text, find_pair, fmt_duration, fmt_ts, is_log_control, pair_label, parse_iso, strip_ansi
+from .._util import as_dict, coerce_bool, error_text, find_pair, fmt_duration, fmt_ts, is_log_control, pair_features, pair_label, parse_iso, strip_ansi
 
 sync_app = typer.Typer(help="Trigger, watch and inspect sync runs.", no_args_is_help=True)
 
 EXIT_LINE = re.compile(r"\[SYNC\]\s*exit code:\s*(-?\d+)")
 LOG_TAG = "SYNC"
+COUNT_FEATURES = ("watchlist", "ratings", "history", "progress", "playlists", "collection")
+COUNT_HEADERS = ("WATCHLIST", "RATINGS", "HISTORY", "PROGRESS", "PLAYLISTS", "COLLECTION")
 
 
 def _summary(state: Ctx) -> dict[str, Any]:
@@ -30,6 +32,27 @@ def _summary(state: Ctx) -> dict[str, Any]:
 def _run_state(state: Ctx) -> dict[str, Any]:
     payload = state.get("/api/run/cancel")
     return as_dict(payload)
+
+
+def _pairs(state: Ctx) -> list[dict[str, Any]]:
+    payload = state.get("/api/pairs")
+    if isinstance(payload, dict) and payload.get("ok") is False:
+        raise CLIError(error_text(payload, "Cannot read pairs"))
+    if not isinstance(payload, list):
+        return []
+    return [p for p in payload if isinstance(p, dict)]
+
+
+def _provider_ref(pair: dict[str, Any], side: str) -> str:
+    provider = str(pair.get(side) or "?").strip().upper()
+    instance = str(pair.get(f"{side}_instance") or "default").strip()
+    if not instance or instance.lower() == "default":
+        return provider
+    return f"{provider}:{instance}"
+
+
+def _feature_summary(pair: dict[str, Any]) -> str:
+    return ", ".join(pair_features(pair)) or "-"
 
 
 class _Follower:
@@ -107,7 +130,8 @@ class _Follower:
 @sync_app.command("run")
 def sync_run(
     ctx: typer.Context,
-    pair: str = typer.Option("", "--pair", "-p", help="Run one pair only (id or prefix). Default runs every enabled pair."),
+    target: str = typer.Argument("", help="Optional pair number, id, prefix or label. Default runs every enabled pair."),
+    pair: str = typer.Option("", "--pair", "-p", help="Run one pair only (number, id, prefix or label)."),
     follow: bool = typer.Option(False, "--follow", "-f", help="Stream the sync log until the run finishes."),
     timeout: float = typer.Option(0.0, "--timeout", help="Give up following after this many seconds (0 = no limit)."),
 ) -> None:
@@ -116,13 +140,14 @@ def sync_run(
     state.require_service("Starting a sync")
     payload: dict[str, Any] = {"source": "cli"}
     label = "all enabled pairs"
-    if pair.strip():
-        target = find_pair(
-            [p for p in (state.get("/api/pairs") or []) if isinstance(p, dict)],
-            pair,
+    selector = (target or "").strip() or (pair or "").strip()
+    if selector:
+        selected_pair = find_pair(
+            _pairs(state),
+            selector,
         )
-        payload["pair_id"] = str(target.get("id") or "")
-        label = f"{pair_label(target)} ({target.get('id')})"
+        payload["pair_id"] = str(selected_pair.get("id") or "")
+        label = f"{pair_label(selected_pair)} ({selected_pair.get('id')})"
 
     if follow:
         code = _start_and_follow(state, payload, label, timeout)
@@ -141,6 +166,38 @@ def sync_run(
     run_id = str((result or {}).get("run_id") or "")
     state.out.success(f"Sync started for {label}" + (f" (run {run_id})" if run_id else ""))
     state.out.info("Follow it with 'cw logs tail -f' or 'cw sync status'.")
+
+
+@sync_app.command("list")
+def sync_list(
+    ctx: typer.Context,
+    enabled_only: bool = typer.Option(False, "--enabled", help="Only show enabled pairs."),
+) -> None:
+    """List configured sync pairs."""
+    state: Ctx = ctx.obj
+    pairs = _pairs(state)
+    if enabled_only:
+        pairs = [p for p in pairs if p.get("enabled", True) is not False]
+    if state.out.json_mode:
+        state.out.data(pairs)
+        return
+    state.out.table(
+        ["#", "ID", "SOURCE", "TARGET", "MODE", "STATE", "FEATURES"],
+        [
+            [
+                str(index),
+                str(p.get("id") or ""),
+                _provider_ref(p, "source"),
+                _provider_ref(p, "target"),
+                str(p.get("mode") or "one-way"),
+                state_text(p.get("enabled", True) is not False, on="enabled", off="disabled"),
+                _feature_summary(p),
+            ]
+            for index, p in enumerate(pairs, start=1)
+        ],
+        title="Sync pairs",
+        empty="No pairs configured yet.",
+    )
 
 
 def _start_and_follow(state: Ctx, payload: dict[str, Any], label: str, timeout: float) -> int:
@@ -199,10 +256,10 @@ def sync_status(ctx: typer.Context) -> None:
         rows = []
         for name, block in sorted(counts.items()):
             if isinstance(block, dict):
-                rows.append([name, *[str(block.get(k, "-")) for k in ("watchlist", "ratings", "history", "playlists")]])
+                rows.append([name, *[str(block.get(k, "-")) for k in COUNT_FEATURES]])
         if rows:
             state.out.print()
-            state.out.table(["PROVIDER", "WATCHLIST", "RATINGS", "HISTORY", "PLAYLISTS"], rows, title="Provider counts")
+            state.out.table(["PROVIDER", *COUNT_HEADERS], rows, title="Provider counts")
 
 
 @sync_app.command("follow")
@@ -280,8 +337,8 @@ def sync_providers(
         if isinstance(source, dict):
             for name, block in sorted(source.items()):
                 if isinstance(block, dict):
-                    rows.append([name, *[str(block.get(k, "-")) for k in ("watchlist", "ratings", "history", "playlists")]])
-        state.out.table(["PROVIDER", "WATCHLIST", "RATINGS", "HISTORY", "PLAYLISTS"], rows, title="Provider counts")
+                    rows.append([name, *[str(block.get(k, "-")) for k in COUNT_FEATURES]])
+        state.out.table(["PROVIDER", *COUNT_HEADERS], rows, title="Provider counts")
         return
     source = payload.get("providers") if isinstance(payload, dict) else payload
     rows = []

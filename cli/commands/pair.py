@@ -203,7 +203,7 @@ def pair_disable(ctx: typer.Context, pair_id: str = typer.Argument(..., help="Pa
 def pair_feature(
     ctx: typer.Context,
     pair_id: str = typer.Argument(..., help="Pair id or prefix."),
-    feature: str = typer.Argument(..., help="Feature name, for example watchlist, ratings, history, playlists."),
+    feature: str = typer.Argument(..., help="Feature name, for example watchlist, ratings, history, playlists, collection."),
     value: str = typer.Argument(..., help="on or off."),
 ) -> None:
     """Turn one feature of a pair on or off."""
