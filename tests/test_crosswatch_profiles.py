@@ -1151,7 +1151,7 @@ def test_crosswatch_tracker_settings_live_only_in_connection_modal() -> None:
     assert 'restore: ["restore_page"' not in providers_ui
     assert "Local Tracker Restore" not in providers_ui
     assert "Storage and restore" in providers_ui
-    assert "Use profiles when you want separate local watchlist, ratings, history or progress data." in providers_ui
+    assert "Use profiles when you want separate local watchlist, ratings, history, progress or collection data." in providers_ui
     assert 'introSubs: ["auth"]' in providers_ui
     assert 'introSubs: ["auth", "settings"]' not in providers_ui
     assert "cw_crosswatch_disconnect" in auth_html

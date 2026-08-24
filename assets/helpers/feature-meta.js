@@ -8,8 +8,9 @@
     history: "History",
     progress: "Progress",
     playlists: "Playlists",
+    collection: "Collections",
   };
-  const order = ["watchlist", "ratings", "history", "progress", "playlists"];
+  const order = ["watchlist", "ratings", "history", "progress", "playlists", "collection"];
   const keyOf = (v) => String(v || "").trim().toLowerCase();
   const label = (v) => {
     const key = keyOf(v);

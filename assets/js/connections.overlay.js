@@ -23,6 +23,7 @@
     ["history", "hi", "History"],
     ["progress", "pr", "Progress"],
     ["playlists", "pl", "Playlists"],
+    ["collection", "co", "Collections"],
   ];
 
 

@@ -15,7 +15,7 @@ const _cwTouchedIds = [
   "floppy_server", "floppy_verify_ssl",
   "scrob_server", "scrob_username", "scrob_verify_ssl", "scrob_totp",
   "cw_tracker_label", "cw_tracker_retention_days", "cw_tracker_auto_snapshot", "cw_tracker_max_snapshots",
-  "cw_tracker_restore_watchlist", "cw_tracker_restore_history", "cw_tracker_restore_ratings", "cw_tracker_restore_progress"
+  "cw_tracker_restore_watchlist", "cw_tracker_restore_history", "cw_tracker_restore_ratings", "cw_tracker_restore_progress", "cw_tracker_restore_collection"
 ];
 
 function _cwEl(id) { return document.getElementById(id); }
@@ -729,7 +729,7 @@ async function saveSettings() {
       const trackerLabelEl = _cwEl("cw_tracker_label");
       const trackerFieldIds = [
         "cw_tracker_label", "cw_tracker_retention_days", "cw_tracker_auto_snapshot", "cw_tracker_max_snapshots",
-        "cw_tracker_restore_watchlist", "cw_tracker_restore_history", "cw_tracker_restore_ratings", "cw_tracker_restore_progress"
+        "cw_tracker_restore_watchlist", "cw_tracker_restore_history", "cw_tracker_restore_ratings", "cw_tracker_restore_progress", "cw_tracker_restore_collection"
       ];
       const trackerTouched = trackerFieldIds.some((id) => _cwTouched(id));
       if (trackerLabelEl && trackerTouched) {
@@ -757,7 +757,7 @@ async function saveSettings() {
         if (_cwTouched("cw_tracker_retention_days")) set("retention_days", intOr("cw_tracker_retention_days", Number(prevBlock?.retention_days), 30), Number.isFinite(prevBlock?.retention_days) ? Number(prevBlock.retention_days) : 30);
         if (_cwTouched("cw_tracker_auto_snapshot")) set("auto_snapshot", _cwTruthy(_cwEl("cw_tracker_auto_snapshot")?.value), prevBlock?.auto_snapshot !== false);
         if (_cwTouched("cw_tracker_max_snapshots")) set("max_snapshots", intOr("cw_tracker_max_snapshots", Number(prevBlock?.max_snapshots), 64), Number.isFinite(prevBlock?.max_snapshots) ? Number(prevBlock.max_snapshots) : 64);
-        ["watchlist", "history", "ratings", "progress"].forEach((key) => {
+        ["watchlist", "history", "ratings", "progress", "collection"].forEach((key) => {
           const el = _cwEl(`cw_tracker_restore_${key}`);
           if (!el || !_cwTouched(`cw_tracker_restore_${key}`)) return;
           const next = _cwNorm(el.value) || "latest";

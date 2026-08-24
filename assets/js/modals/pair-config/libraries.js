@@ -108,15 +108,19 @@ export function createLibraryController({
     if (kind === "PLEX" && feature === "history") hostId = "plx-hist-libs";
     else if (kind === "PLEX" && feature === "ratings") hostId = "plx-rate-libs";
     else if (kind === "PLEX" && feature === "progress") hostId = "plx-prog-libs";
+    else if (kind === "PLEX" && feature === "collection") hostId = "plx-coll-libs";
     else if (kind === "JELLYFIN" && feature === "history") hostId = "jf-hist-libs";
     else if (kind === "JELLYFIN" && feature === "ratings") hostId = "jf-rate-libs";
     else if (kind === "JELLYFIN" && feature === "progress") hostId = "jf-prog-libs";
+    else if (kind === "JELLYFIN" && feature === "collection") hostId = "jf-coll-libs";
     else if (kind === "EMBY" && feature === "history") hostId = "em-hist-libs";
     else if (kind === "EMBY" && feature === "ratings") hostId = "em-rate-libs";
     else if (kind === "EMBY" && feature === "progress") hostId = "em-prog-libs";
+    else if (kind === "EMBY" && feature === "collection") hostId = "em-coll-libs";
     else if (kind === "KODI" && feature === "history") hostId = "kodi-hist-libs";
     else if (kind === "KODI" && feature === "ratings") hostId = "kodi-rate-libs";
     else if (kind === "KODI" && feature === "progress") hostId = "kodi-prog-libs";
+    else if (kind === "KODI" && feature === "collection") hostId = "kodi-coll-libs";
     const host = ID(hostId);
     if (!host) return;
     const info = getFeatureLibraries(state, feature, kind);
@@ -171,6 +175,9 @@ export function createLibraryController({
         }),
         fetchPairLibraries(state, kind, "progress").then((libs) => {
           renderPairLibChips(state, kind, "progress", libs);
+        }),
+        fetchPairLibraries(state, kind, "collection").then((libs) => {
+          renderPairLibChips(state, kind, "collection", libs);
         }),
       ]).finally(() => {
         if (btn) {

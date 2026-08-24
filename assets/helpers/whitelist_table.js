@@ -18,7 +18,7 @@
   }
 
   const LIB_ICON = `<span class="material-symbols-rounded" aria-hidden="true">movie</span>`;
-  const FEATURE_ICON = { hist: "history", rate: "star", prog: "progress_activity", scr: "graphic_eq" };
+  const FEATURE_ICON = { hist: "history", rate: "star", prog: "progress_activity", coll: "inventory_2", scr: "graphic_eq" };
 
   function mount(opts) {
     const host = opts && opts.host;
@@ -33,6 +33,7 @@
 
     const libId = (l) => String(l.id != null ? l.id : l.key);
     const libTitle = (l) => String(l.title || l.name || libId(l));
+    const featureCount = Math.max(1, features.length);
 
     if (host.__cwWlTimer) { clearInterval(host.__cwWlTimer); host.__cwWlTimer = 0; }
 
@@ -74,7 +75,7 @@
     function render() {
       const libs = getLibs();
       host.innerHTML = `
-        <div class="cw-wl">
+        <div class="cw-wl" style="--wl-feature-count:${featureCount}">
           <div class="cw-wl-scroll">
             <div class="cw-wl-colrow">
               <div class="cw-wl-collib">Library</div>
@@ -123,24 +124,25 @@
       }
     }
 
-    if (!host.__cwWlBound) {
-      host.__cwWlBound = true;
-      host.addEventListener("click", (ev) => {
-        const act = ev.target.closest?.("[data-act]");
-        if (act && act.dataset.act === "load") return void doLoad(true, true);
-        const col = ev.target.closest?.(".cw-wl-colhead[data-col]");
-        if (col) return toggleColumn(col.dataset.col);
-      });
-      host.addEventListener("change", (ev) => {
-        const cb = ev.target.closest?.('input[type="checkbox"][data-feat]');
-        if (!cb) return;
-        const row = ev.target.closest?.(".cw-wl-row");
-        const id = row && row.dataset.id;
-        if (!id) return;
-        setOn(cb.dataset.feat, id, cb.checked);
-        commit();
-      });
-    }
+    if (host.__cwWlClickHandler) host.removeEventListener("click", host.__cwWlClickHandler);
+    if (host.__cwWlChangeHandler) host.removeEventListener("change", host.__cwWlChangeHandler);
+    host.__cwWlClickHandler = (ev) => {
+      const act = ev.target.closest?.("[data-act]");
+      if (act && act.dataset.act === "load") return void doLoad(true, true);
+      const col = ev.target.closest?.(".cw-wl-colhead[data-col]");
+      if (col) return toggleColumn(col.dataset.col);
+    };
+    host.__cwWlChangeHandler = (ev) => {
+      const cb = ev.target.closest?.('input[type="checkbox"][data-feat]');
+      if (!cb) return;
+      const row = ev.target.closest?.(".cw-wl-row");
+      const id = row && row.dataset.id;
+      if (!id) return;
+      setOn(cb.dataset.feat, id, cb.checked);
+      commit();
+    };
+    host.addEventListener("click", host.__cwWlClickHandler);
+    host.addEventListener("change", host.__cwWlChangeHandler);
 
     render();
     (async () => {
