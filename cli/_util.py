@@ -256,6 +256,10 @@ def find_pair(pairs: list[dict[str, Any]], needle: str) -> dict[str, Any]:
     for pair in pairs:
         if str(pair.get("id") or "") == want:
             return pair
+    if re.fullmatch(r"\d+", want):
+        index = int(want)
+        if 1 <= index <= len(pairs):
+            return pairs[index - 1]
     lowered = want.lower()
     partial = [p for p in pairs if str(p.get("id") or "").lower().startswith(lowered)]
     if len(partial) == 1:
@@ -266,7 +270,7 @@ def find_pair(pairs: list[dict[str, Any]], needle: str) -> dict[str, Any]:
     labelled = [p for p in pairs if pair_label(p).lower().replace(" ", "") == lowered.replace(" ", "")]
     if len(labelled) == 1:
         return labelled[0]
-    raise CLIError(f"No pair matches '{want}'", hint="Run 'cw pair list' to see the configured pairs.", exit_code=5)
+    raise CLIError(f"No pair matches '{want}'", hint="Run 'cw sync list' to see the configured pairs.", exit_code=5)
 
 
 LOG_CONTROL_LINES = {"::CLEAR::"}

@@ -46,7 +46,7 @@ def export_options(ctx: typer.Context) -> None:
 def export_preview(
     ctx: typer.Context,
     provider: str = typer.Option(..., "--provider", "-p", help="Provider to export from."),
-    feature: str = typer.Option("watchlist", "--feature", "-F", help="watchlist, ratings or history."),
+    feature: str = typer.Option("watchlist", "--feature", "-F", help="watchlist, ratings, history or collection."),
     export_format: str = typer.Option("letterboxd", "--format", help="Output format."),
     media_types: str = typer.Option("movie", "--types", help="Comma separated media types."),
     instance: str = typer.Option("all", "--instance", "-i", help="Provider instance id."),
@@ -82,7 +82,7 @@ def export_file(
     ctx: typer.Context,
     output: Path = typer.Argument(..., help="Where to write the export."),
     provider: str = typer.Option(..., "--provider", "-p", help="Provider to export from."),
-    feature: str = typer.Option("watchlist", "--feature", "-F", help="watchlist, ratings or history."),
+    feature: str = typer.Option("watchlist", "--feature", "-F", help="watchlist, ratings, history or collection."),
     export_format: str = typer.Option("letterboxd", "--format", help="Output format."),
     media_types: str = typer.Option("movie", "--types", help="Comma separated media types."),
     instance: str = typer.Option("all", "--instance", "-i", help="Provider instance id."),
