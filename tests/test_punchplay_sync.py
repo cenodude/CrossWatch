@@ -1020,6 +1020,37 @@ def test_governor_ignores_healthy_remaining_header() -> None:
     assert gov.acquire("GET", url) == 0.0
 
 
+def test_session_rate_limit_activity_logs_periodic_summaries(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync import _mod_common as common
+
+    events: list[dict[str, Any]] = []
+    clock = {"t": 1000.0}
+    session = common.HitSession("PUNCHPLAY", lambda *_args: None)
+    session._rate_limiter_meta = {"get_per_sec": 2.0, "post_per_sec": 0.5}
+    session._rl_log_every_s = 60.0
+    session._rl_log_min_sleep_s = 0.5
+
+    def fake_log(provider: str, feature: str, level: str, msg: str, **fields: Any) -> None:
+        events.append({"provider": provider, "feature": feature, "level": level, "msg": msg, **fields})
+
+    monkeypatch.setattr(common.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(common, "cw_log", fake_log)
+
+    session._log_rate_limit_summary("POST", 1.7)
+    clock["t"] += 30.0
+    session._log_rate_limit_summary("POST", 1.7)
+    assert events == []
+
+    clock["t"] += 31.0
+    session._log_rate_limit_summary("POST", 1.7)
+
+    assert len(events) == 1
+    assert events[0]["msg"] == "client throttle activity"
+    assert events[0]["bucket"] == "POST"
+    assert events[0]["events"] == 3
+    assert events[0]["configured_rps"] == 0.5
+
+
 def test_budgets_are_configurable() -> None:
     from providers.sync.punchplay._common import budgets_from_cfg
 
