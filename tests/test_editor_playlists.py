@@ -348,6 +348,57 @@ def test_editor_send_failure_does_not_expose_exception_detail(monkeypatch) -> No
     assert "super-secret" not in str(res)
 
 
+def test_editor_send_collection_preserves_collected_at(monkeypatch) -> None:
+    class Ops:
+        pass
+
+    sent: dict[str, Any] = {}
+    merged: dict[str, Any] = {}
+
+    monkeypatch.setattr(api, "load_config", lambda: {})
+    monkeypatch.setattr(
+        api,
+        "_editor_send_targets",
+        lambda cfg, feature: [
+            {
+                "provider": "MDBLIST",
+                "instance": "default",
+                "collection_enabled": True,
+            }
+        ],
+    )
+    monkeypatch.setattr(api, "load_sync_ops", lambda provider: Ops())
+    monkeypatch.setattr(api, "build_provider_config_view", lambda cfg, provider, instance: {})
+
+    def fake_apply_add(**kwargs):
+        sent.update(kwargs)
+        return {"ok": True, "confirmed": 1, "confirmed_keys": ["tmdb:949"]}
+
+    def fake_merge(provider, instance, feature, items):
+        merged.update(provider=provider, instance=instance, feature=feature, items=items)
+
+    monkeypatch.setattr(api, "apply_add", fake_apply_add)
+    monkeypatch.setattr(api, "_merge_sent_items_into_state", fake_merge)
+
+    item = {
+        "type": "movie",
+        "title": "Heat",
+        "ids": {"tmdb": "949"},
+        "collected_at": "2026-01-01T00:00:00Z",
+    }
+    res = api.api_editor_send(
+        {
+            "kind": "collection",
+            "providers": [{"provider": "MDBLIST", "instance": "default"}],
+            "items": [item],
+        }
+    )
+
+    assert res["ok"] is True
+    assert sent["items"][0]["collected_at"] == "2026-01-01T00:00:00Z"
+    assert merged["items"][0]["collected_at"] == "2026-01-01T00:00:00Z"
+
+
 def test_editor_bulk_action_buttons_use_playback_action_colors() -> None:
     from pathlib import Path
 

@@ -263,6 +263,8 @@
       extraBtn.onclick = () => call(ctx, "openRatingEditor", row, extraBtn, extraBtn);
     } else if (state.kind === "history") {
       extraBtn.onclick = () => call(ctx, "openHistoryEditor", row, extraBtn, extraBtn);
+    } else if (state.kind === "collection") {
+      extraBtn.onclick = () => call(ctx, "openCollectionEditor", row, extraBtn, extraBtn);
     } else if (state.kind === "progress") {
       extraBtn.onclick = () => call(ctx, "openProgressEditor", row, extraBtn, extraBtn);
     }
