@@ -99,6 +99,12 @@
     <span>Tracker</span>
     <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
   </article>
+  <article class="cw-provider-card is-flicklist">
+    <img class="cw-provider-mark" src="images/providers/FLICKLIST.png" alt="" aria-hidden="true">
+    <strong>FlickList</strong>
+    <span>Tracker</span>
+    <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
+  </article>
   <article class="cw-provider-card is-punchplay">
     <img class="cw-provider-mark" src="images/providers/PUNCHPLAY.png" alt="" aria-hidden="true">
     <strong>PunchPlay</strong>
@@ -199,7 +205,7 @@
   <article>
     <span class="cw-token">LIVE</span>
     <h3>Watcher and webhooks</h3>
-    <p>Route Watcher play events from Plex, Emby, Jellyfin and Kodi to Trakt, SIMKL, MDBList, BingeBase, Floppy or the CW local tracker. Webhooks support Plex, Emby and Jellyfin to Trakt, SIMKL, MDBList or BingeBase, without needing Plex Pass or Emby Premiere.</p>
+    <p>Route Watcher play events from Plex, Emby, Jellyfin and Kodi to Trakt, SIMKL, MDBList, BingeBase, FlickList, Floppy or the CW local tracker. Webhooks support Plex, Emby and Jellyfin to Trakt, SIMKL, MDBList, BingeBase or FlickList, without needing Plex Pass or Emby Premiere.</p>
   </article>
   <article>
     <span class="cw-token">SAFE</span>
