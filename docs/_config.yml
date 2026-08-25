@@ -1,5 +1,5 @@
 title: CrossWatch
-description: Sync engine for Plex, Jellyfin, Emby, Kodi, PublicMetaDB, SIMKL, Trakt, AniList, TMDb, MDBList, Tautulli, Nuvio, Stremio, Floppy and the CW local tracker
+description: Sync engine for Plex, Jellyfin, Emby, Kodi, PublicMetaDB, SIMKL, Trakt, AniList, TMDb, MDBList, Tautulli, Nuvio, Stremio, FlickList, Floppy and the CW local tracker
 url: https://www.crosswatch.app
 logo: /images/CrossWatch.png
 image: /images/screenshots/cw8.png

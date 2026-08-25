@@ -56,6 +56,7 @@ body:
         - label: BingeBase
         - label: CrossWatch
         - label: Emby
+        - label: FlickList
         - label: Floppy
         - label: Jellyfin
         - label: Kodi
@@ -76,17 +77,17 @@ body:
     attributes:
       label: Affected area
       options:
-        - label: Watchlist or favorites
-        - label: History or watched state
-        - label: Playback progress or resume position
+        - label: Watchlist
+        - label: History
+        - label: Progress or Playback progress
         - label: Ratings
+        - label: Collections
         - label: Scrobble (watcher/webhook)
         - label: Scheduler
-        - label: Analyzer or item matching
+        - label: Analyzer
         - label: Events
-        - label: Exporter
+        - label: Import/Export
         - label: Metadata or IDs
-        - label: Library selection or duplicate items
         - label: Web UI
         - label: Command line interface
         - label: Configuration or API
