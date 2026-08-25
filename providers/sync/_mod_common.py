@@ -500,7 +500,9 @@ class HitSession(requests.Session):
         state["total_sleep_s"] = float(state["total_sleep_s"]) + float(slept)
 
         window_age = now - float(state["window_start"])
-        if slept < self._rl_log_min_sleep_s and window_age < self._rl_log_every_s:
+        if window_age < self._rl_log_every_s:
+            return
+        if float(state["total_sleep_s"]) < self._rl_log_min_sleep_s:
             return
 
         try:
