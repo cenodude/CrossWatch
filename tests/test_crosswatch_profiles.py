@@ -1707,14 +1707,14 @@ def test_profile_nav_keeps_read_only_managed_links() -> None:
         user={"is_admin": False, "profile_id": ALICE_PROFILE_ID, "username": "pascal", "permissions": {"dashboard": True, "watchlist": True, "playback": True, "write": False}},
     )
 
-    assert 'class="tab active" href="/profile">Main</a>' in html
-    assert 'class="tab" href="/?view=watchlist#watchlist">Watchlist</a>' in html
-    assert 'class="tab" href="/?view=playback_progress#playback_progress">Playback</a>' in html
+    assert """<button class="tab active" type="button" onclick="location.href='/profile'">Main</button>""" in html
+    assert """<button class="tab" type="button" onclick="location.href='/?view=watchlist#watchlist'">Watchlist</button>""" in html
+    assert """<button class="tab" type="button" onclick="location.href='/?view=playback_progress#playback_progress'">Playback</button>""" in html
     assert 'href="/?view=watchlist#watchlist">View all</a>' in html
     assert 'href="/?view=playback_progress#playback_progress">View all</a>' in html
     assert 'id="cw-profile-logout"' in html
-    assert 'href="/?main=1#main">Main</a>' not in html
-    assert 'href="/?main=1#snapshots">Captures</a>' not in html
+    assert "location.href='/?main=1#main'" not in html
+    assert "location.href='/?main=1#snapshots'" not in html
 
 
 def test_profile_nav_uses_full_user_links_for_write_managed_user() -> None:
@@ -1724,12 +1724,12 @@ def test_profile_nav_uses_full_user_links_for_write_managed_user() -> None:
         user={"is_admin": False, "profile_id": ALICE_PROFILE_ID, "username": "pascal", "permissions": {"dashboard": True, "watchlist": True, "playback": True, "write": True}},
     )
 
-    assert 'class="tab active" href="/?main=1#main">Main</a>' in html
-    assert 'href="/?main=1#watchlist">Watchlist</a>' in html
-    assert 'href="/?main=1#playback_progress">Playback</a>' in html
-    assert 'href="/?main=1#snapshots">Captures</a>' in html
-    assert 'href="/?main=1#playlists">Playlists</a>' in html
-    assert 'href="/?main=1#editor">Editor</a>' in html
+    assert """<button class="tab active" type="button" onclick="location.href='/?main=1#main'">Main</button>""" in html
+    assert """<button class="tab" type="button" onclick="location.href='/?main=1#watchlist'">Watchlist</button>""" in html
+    assert """<button class="tab" type="button" onclick="location.href='/?main=1#playback_progress'">Playback</button>""" in html
+    assert """<button class="tab" type="button" onclick="location.href='/?main=1#snapshots'">Captures</button>""" in html
+    assert """<button class="tab" type="button" onclick="location.href='/?main=1#playlists'">Playlists</button>""" in html
+    assert """<button class="tab" type="button" onclick="location.href='/?main=1#editor'">Editor</button>""" in html
     assert 'href="/?main=1#watchlist">View all</a>' in html
     assert 'href="/?main=1#playback_progress">View all</a>' in html
     assert 'href="/?main=1#settings">Settings</a>' not in html
@@ -1755,12 +1755,12 @@ def test_profile_page_supports_admin_account() -> None:
     assert 'data-cw-role="admin"' in html
     assert 'data-cw-profile-id=""' in html
     assert 'id="profile-role" class="cw-profile-role">Administrator</span>' in html
-    assert 'class="tab active" href="/">Main</a>' in html
-    assert 'href="/#watchlist">Watchlist</a>' in html
-    assert 'href="/#playback_progress">Playback</a>' in html
-    assert 'href="/#snapshots">Captures</a>' in html
-    assert 'href="/#playlists">Playlists</a>' in html
-    assert 'href="/#editor">Editor</a>' in html
+    assert """<button class="tab active" type="button" onclick="location.href='/'">Main</button>""" in html
+    assert """<button class="tab" type="button" onclick="location.href='/#watchlist'">Watchlist</button>""" in html
+    assert """<button class="tab" type="button" onclick="location.href='/#playback_progress'">Playback</button>""" in html
+    assert """<button class="tab" type="button" onclick="location.href='/#snapshots'">Captures</button>""" in html
+    assert """<button class="tab" type="button" onclick="location.href='/#playlists'">Playlists</button>""" in html
+    assert """<button class="tab" type="button" onclick="location.href='/#editor'">Editor</button>""" in html
     assert 'id="tab-settings" class="tab"' in html
     assert '<span>Settings</span><span class="tab-caret"' in html
     assert 'id="tab-about" class="tab"' in html
@@ -1917,7 +1917,8 @@ def test_quick_stats_counts_movies_and_shows_from_history_breakdown() -> None:
     assert "const movies = Number(breakdown.movies ?? watchtime.movies ?? sampleStats.movies) || 0;" in stats
     assert "const shows = Number(breakdown.shows ?? watchtime.shows ?? sampleStats.shows) || 0;" in stats
     assert "const anime = Number(breakdown.anime) || 0;" in stats
-    assert "const episodes = Number(breakdown.episodes ?? sampleStats.episodes) || 0;" in stats
+    assert "const owned = (Number(collectionCounts.movie) || 0) + (Number(collectionCounts.show) || 0);" in stats
+    assert '["collections", "inventory_2", "video_library", "Collections", numberFmt.format(owned), "Movies and shows you own"],' in stats
     assert 'const breakdown = insights?.features?.history?.breakdown || {};' in stats
     assert '["anime", "animation", "auto_awesome", "Anime", numberFmt.format(anime), "Total anime in your syncs"],' in stats
     assert "cw-profile-stat--anime" in Path("assets/css/profile-page.css").read_text("utf-8")
@@ -1928,7 +1929,7 @@ def test_profile_overview_paints_shimmer_skeletons_before_data_lands() -> None:
     css = Path("assets/css/profile-page.css").read_text("utf-8")
 
     assert "async function init() {\n    paintOverviewSkeletons();" in js
-    assert "posterItems.clear();\n    paintOverviewSkeletons();" in js
+    assert "prunePosterItems();" in js
     for host in ("#profile-progress", "#profile-watchlist", "#profile-quick-stats"):
         assert host in js[js.index("function paintOverviewSkeletons()"):js.index("function setAvatar(url)")]
     for primitive in ("cw-dash-skeleton", "cw-dash-skeleton-row", "cw-skel-block", "cw-skel-line--title", "cw-skel-line--meta", "cw-skel-dot"):

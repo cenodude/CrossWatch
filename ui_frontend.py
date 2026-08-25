@@ -223,6 +223,11 @@ def _assert_admin_shell_stripped(html: str) -> None:
     raise RuntimeError("managed_user_shell_strip_failed:" + ",".join(sorted(leaked)))
 
 
+def _profile_nav_tab(label: str, href: str, active: bool = False) -> str:
+    cls = "tab active" if active else "tab"
+    return f"<button class=\"{cls}\" type=\"button\" onclick=\"location.href='{href}'\">{label}</button>"
+
+
 def _nav_profile_link() -> str:
     return '    <a id="cw-nav-profile-link" class="cw-nav-profile-link" href="/profile" title="Open profile" aria-label="Open profile"><span id="cw-nav-profile-avatar" class="cw-nav-profile-avatar material-symbols-rounded" aria-hidden="true">person</span></a>'
 
@@ -1866,31 +1871,31 @@ def get_profile_html(user: dict | None = None) -> str:
     nav_items: list[str] = []
     if is_admin:
         nav_items.extend([
-            '<a class="tab active" href="/">Main</a>',
-            '<a class="tab" href="/#watchlist">Watchlist</a>',
-            '<a class="tab" href="/#playback_progress">Playback</a>',
-            '<a class="tab" href="/#snapshots">Captures</a>',
-            '<a class="tab" href="/#playlists">Playlists</a>',
-            '<a class="tab" href="/#editor">Editor</a>',
+            _profile_nav_tab("Main", "/", active=True),
+            _profile_nav_tab("Watchlist", "/#watchlist"),
+            _profile_nav_tab("Playback", "/#playback_progress"),
+            _profile_nav_tab("Captures", "/#snapshots"),
+            _profile_nav_tab("Playlists", "/#playlists"),
+            _profile_nav_tab("Editor", "/#editor"),
             settings_nav,
             about_nav,
         ])
     elif write_nav:
         nav_items.extend([
-            '<a class="tab active" href="/?main=1#main">Main</a>',
-            '<a class="tab" href="/?main=1#watchlist">Watchlist</a>',
-            '<a class="tab" href="/?main=1#playback_progress">Playback</a>',
-            '<a class="tab" href="/?main=1#snapshots">Captures</a>',
-            '<a class="tab" href="/?main=1#playlists">Playlists</a>',
-            '<a class="tab" href="/?main=1#editor">Editor</a>',
+            _profile_nav_tab("Main", "/?main=1#main", active=True),
+            _profile_nav_tab("Watchlist", "/?main=1#watchlist"),
+            _profile_nav_tab("Playback", "/?main=1#playback_progress"),
+            _profile_nav_tab("Captures", "/?main=1#snapshots"),
+            _profile_nav_tab("Playlists", "/?main=1#playlists"),
+            _profile_nav_tab("Editor", "/?main=1#editor"),
             '<button id="cw-profile-logout" class="tab" type="button">Logout</button>',
         ])
     else:
-        nav_items.append('<a class="tab active" href="/profile">Main</a>')
+        nav_items.append(_profile_nav_tab("Main", "/profile", active=True))
         if perms.get("watchlist"):
-            nav_items.append(f'<a class="tab" href="{watchlist_href}">Watchlist</a>')
+            nav_items.append(_profile_nav_tab("Watchlist", watchlist_href))
         if perms.get("playback"):
-            nav_items.append(f'<a class="tab" href="{playback_href}">Playback</a>')
+            nav_items.append(_profile_nav_tab("Playback", playback_href))
         nav_items.append('<button id="cw-profile-logout" class="tab" type="button">Logout</button>')
     nav_items.append(_nav_profile_link().strip())
     profile_nav = "\n    ".join(nav_items)
@@ -1943,11 +1948,14 @@ def get_profile_html(user: dict | None = None) -> str:
 </script>
 </head>
 <body class="cw-profile-page">
-<header class="cw-profile-topbar">
-  <a class="brand" href="/profile" title="Go to profile">
+<header>
+  <div class="brand" role="button" tabindex="0" title="Go to Profile" onclick="location.href='/profile'" onkeypress="if(event.key==='Enter'||event.key===' ')location.href='/profile'">
     <img class="logo" src="/assets/pwa/favicon-64.png?v=__CW_VERSION__" alt="CrossWatch">
-    <span class="brand-text"><span class="name">CrossWatch</span><span class="version">__CW_CURRENT_VERSION__</span></span>
-  </a>
+    <span class="brand-text">
+      <span class="name">CrossWatch</span>
+      <span class="version">__CW_CURRENT_VERSION__</span>
+    </span>
+  </div>
   <nav class="tabs" aria-label="Primary navigation">
     {profile_nav}
   </nav>
@@ -1999,6 +2007,7 @@ def get_profile_html(user: dict | None = None) -> str:
   </section>
   <div class="cw-profile-tabs" role="tablist" aria-label="Profile tabs">
     <button id="profile-tab-overview" class="active" type="button" data-profile-tab="overview">Overview</button>
+    <button id="profile-tab-collection" type="button" data-profile-tab="collection">Collections</button>
     <button id="profile-tab-security" type="button" data-profile-tab="security">Security</button>
 {preferences_tab}
   </div>
@@ -2096,6 +2105,51 @@ def get_profile_html(user: dict | None = None) -> str:
       <div id="recent-playlists-list" class="cw-history-widget-list cw-widget-scrollbar" aria-live="polite"></div>
     </article>
   </section>
+  </section>
+  <section id="profile-panel-collection" class="cw-profile-panel">
+    <header class="cw-collection-head">
+      <div class="cw-collection-headline">
+        <span class="cw-collection-kicker">Owned Media</span>
+        <h2>Collections</h2>
+        <p>Your unified library across all providers</p>
+      </div>
+      <div class="cw-collection-tiles" id="profile-collection-metrics"></div>
+    </header>
+    <div class="cw-collection-toolbar">
+      <label class="cw-collection-search">
+        <span class="material-symbols-rounded" aria-hidden="true">search</span>
+        <input id="profile-collection-search" type="search" placeholder="Search collections...">
+      </label>
+      <div class="cw-collection-chips" id="profile-collection-types" aria-label="Collection type filters"></div>
+      <div class="cw-collection-controls">
+        <select id="profile-collection-provider" aria-label="Provider filter"><option value="">All providers</option></select>
+        <select id="profile-collection-sort" aria-label="Collection sort">
+          <option value="collected_at">Recently added</option>
+          <option value="collected_at_asc">Oldest added</option>
+          <option value="title">Title A-Z</option>
+          <option value="title_desc">Title Z-A</option>
+          <option value="year_desc">Year: newest</option>
+          <option value="year_asc">Year: oldest</option>
+        </select>
+        <div class="cw-collection-views" role="group" aria-label="View mode">
+          <button class="active" type="button" data-collection-view="grid" title="Grid view" aria-label="Grid view" aria-pressed="true"><span class="material-symbols-rounded" aria-hidden="true">grid_view</span></button>
+          <button type="button" data-collection-view="list" title="List view" aria-label="List view" aria-pressed="false"><span class="material-symbols-rounded" aria-hidden="true">view_list</span></button>
+        </div>
+      </div>
+    </div>
+    <div id="profile-collection-grid" class="cw-collection-grid" data-view="grid" aria-live="polite"></div>
+    <div id="profile-collection-footer" class="cw-collection-footer" hidden>
+      <nav id="profile-collection-pages" class="cw-collection-pages" aria-label="Collection pages"></nav>
+      <div class="cw-collection-summary">
+        <span id="profile-collection-page-label"></span>
+        <select id="profile-collection-page-size" aria-label="Items per page">
+          <option value="24">24</option>
+          <option value="48">48</option>
+          <option value="72">72</option>
+          <option value="96">96</option>
+        </select>
+      </div>
+    </div>
   </section>
   <section id="profile-panel-security" class="cw-profile-panel">
     <div class="cw-profile-security-grid">
@@ -2255,6 +2309,7 @@ def get_profile_html(user: dict | None = None) -> str:
 </script>
 <script type="module" src="/assets/js/modals.js?v=__CW_VERSION__"></script>
 <script src="/assets/helpers/provider-meta.js?v=__CW_VERSION__"></script>
+<script src="/assets/helpers/icon-select.js?v=__CW_VERSION__"></script>
 <script src="/assets/helpers/api.js?v=__CW_VERSION__"></script>
 <script src="/assets/helpers/media-meta.js?v=__CW_VERSION__"></script>
 <script src="/assets/helpers/trailer.js?v=__CW_VERSION__"></script>

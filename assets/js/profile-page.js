@@ -69,6 +69,7 @@
   const providerLabel = (provider) => window.CW?.ProviderMeta?.label?.(provider) || String(provider || "").toUpperCase();
   const providerKey = (provider) => window.CW?.ProviderMeta?.keyOf?.(provider) || String(provider || "").trim().toUpperCase();
   const providerLogo = (provider) => window.CW?.ProviderMeta?.logoPath?.(provider) || "";
+  const providerLogLogo = (provider) => window.CW?.ProviderMeta?.logLogoPath?.(provider) || providerLogo(provider);
   const visibleProviderLabel = (provider) => {
     const raw = String(provider || "").trim();
     if (!raw || raw === "?" || /^unknown$/i.test(raw) || /^none$/i.test(raw)) return "";
@@ -128,6 +129,18 @@
     if (mediaValue(item) === "movie") return item?.tmdb || item?.tmdb_id || ids.tmdb || ids.id || "";
     return showIds.tmdb || nestedShowIds.tmdb || show.tmdb || show.tmdb_id || ids.tmdb_show || item?.tmdb_show || ids.show_tmdb || item?.show_tmdb || item?.tmdb || item?.tmdb_id || ids.tmdb || "";
   };
+  const showTmdbId = (item) => {
+    const ids = objectOf(item?.ids);
+    const meta = objectOf(item?.provider_metadata);
+    const show = objectOf(item?.show || item?.series || item?.anime);
+    const showIds = objectOf(meta.show_ids);
+    const nestedShowIds = objectOf(show.ids);
+    const directShowIds = objectOf(item?.show_ids);
+    return String(
+      showIds.tmdb || nestedShowIds.tmdb || directShowIds.tmdb || show.tmdb || show.tmdb_id
+      || ids.tmdb_show || item?.tmdb_show || ids.show_tmdb || item?.show_tmdb || ""
+    ).trim();
+  };
   const titleOf = (item) => String(item?.series_title || item?.title || item?.name || item?.show_title || item?.label || "Untitled");
   const yearOf = (item) => String(item?.year || item?.release_year || item?.aired_year || "").trim();
   const episodeOf = (item) => {
@@ -143,7 +156,8 @@
       ? (item?.show_cover_url || item?.show_cover || item?.show_poster_url || item?.show_poster || item?.series_poster || item?.series_cover || item?.grandparentThumb || show.poster_url || show.poster || show.cover || show.poster_cover || item?.poster_cover || "")
       : (item?.poster_url || item?.poster || item?.cover || item?.poster_cover || ""));
     if (src) return src;
-    const id = tmdbId(item);
+    const episode = isEpisodeItem(item);
+    const id = episode ? showTmdbId(item) : tmdbId(item);
     if (!id) return "/assets/img/placeholder_poster.svg";
     const kind = mediaType(item) ? "tv" : "movie";
     const title = !isEpisodeItem(item) && (item?.series_title || item?.title) ? `&title=${encodeURIComponent(String(item?.series_title || item?.title))}` : "";
@@ -208,6 +222,8 @@
     progress: `<div class="cw-cw-card cw-dash-skeleton cw-dash-skeleton-row cw-profile-skel" aria-hidden="true"><span class="cw-cw-art cw-skel-block"></span>${skelLines}</div>`,
     watchlist: `<div class="cw-profile-row cw-dash-skeleton cw-dash-skeleton-row cw-profile-skel" aria-hidden="true"><span class="cw-skel-block"></span>${skelLines}<span class="cw-profile-skel-pill cw-skel-dot"></span></div>`,
     stats: `<div class="cw-profile-stat cw-dash-skeleton cw-dash-skeleton-row cw-profile-skel" aria-hidden="true"><span class="cw-profile-skel-icon cw-skel-block"></span>${skelLines}</div>`,
+    collection: `<div class="cw-collection-skel cw-dash-skeleton cw-profile-skel" aria-hidden="true"><span class="cw-collection-skel-art cw-skel-block"></span>${skelLines}</div>`,
+    collectionRow: `<div class="cw-collection-skel cw-collection-skel--row cw-dash-skeleton cw-profile-skel" aria-hidden="true"><span class="cw-collection-skel-art cw-skel-block"></span>${skelLines}</div>`,
   };
   const skeleton = (kind, count) => Array.from({ length: count }, () => skelShapes[kind]).join("");
 
@@ -426,6 +442,18 @@
     const key = `profile-${++posterSeq}`;
     posterItems.set(key, overlayItem(item || {}));
     return key;
+  }
+
+  function prunePosterItems() {
+    if (posterItems.size <= 600) return;
+    const live = new Set();
+    document.querySelectorAll("[data-profile-poster-key]").forEach((node) => {
+      const key = node.dataset.profilePosterKey;
+      if (key) live.add(key);
+    });
+    for (const key of [...posterItems.keys()]) {
+      if (!live.has(key)) posterItems.delete(key);
+    }
   }
 
   function progressPct(item) {
@@ -700,7 +728,7 @@
     return raw;
   }
 
-  function renderQuickStats({ wall, widgets, progressItems, insights }) {
+  function renderQuickStats({ wall, widgets, progressItems, insights, collection }) {
     const history = widgets?.recent_history?.items || [];
     const ratings = widgets?.latest_ratings?.items || [];
     const scrobble = widgets?.recent_scrobble?.items || [];
@@ -711,7 +739,8 @@
     const movies = Number(breakdown.movies ?? watchtime.movies ?? sampleStats.movies) || 0;
     const shows = Number(breakdown.shows ?? watchtime.shows ?? sampleStats.shows) || 0;
     const anime = Number(breakdown.anime) || 0;
-    const episodes = Number(breakdown.episodes ?? sampleStats.episodes) || 0;
+    const collectionCounts = collection?.counts || {};
+    const owned = (Number(collectionCounts.movie) || 0) + (Number(collectionCounts.show) || 0);
     const watchlist = Number(wall?.total ?? (wall?.items || []).length) || 0;
     const fallbackHours = scrobble.reduce((sum, item) => sum + durationMinutes(item), 0) / 60;
     const hours = Number(widgets?.recent_scrobble?.scrobble_hours ?? fallbackHours) || 0;
@@ -719,7 +748,7 @@
       ["movies", "movie", "theaters", "Movies", numberFmt.format(movies), "Total movies in your syncs"],
       ["tv", "tv", "live_tv", "TV Shows", numberFmt.format(shows), "Total TV shows in your syncs"],
       ["anime", "animation", "auto_awesome", "Anime", numberFmt.format(anime), "Total anime in your syncs"],
-      ["episodes", "subscriptions", "stacked_bar_chart", "Episodes", numberFmt.format(episodes), "Total episodes in your syncs"],
+      ["collections", "inventory_2", "video_library", "Collections", numberFmt.format(owned), "Movies and shows you own"],
       ["watchlist", "bookmark", "format_list_bulleted", "Watchlist Items", numberFmt.format(watchlist), "Items on your watchlist"],
       ["hours", "schedule", "show_chart", "Hours Watched", hours ? `${numberFmt.format(Math.round(hours * 10) / 10)} h` : "0 h", "Total time spent watching"],
     ];
@@ -735,13 +764,13 @@
   }
 
   function renderOverview(payload = {}) {
-    posterSeq = 0;
-    posterItems.clear();
+    prunePosterItems();
     const widgets = payload.widgets || {};
     const wall = payload.wall || { items: [] };
     const progress = payload.progress || { items: [] };
     const insights = payload.insights || null;
     const status = payload.status || null;
+    const collection = payload.collection || null;
     const history = widgets?.recent_history?.items || [];
     const ratings = widgets?.latest_ratings?.items || [];
     const scrobble = widgets?.recent_scrobble?.items || [];
@@ -749,7 +778,7 @@
     const progressItems = progress?.items?.length ? progress.items : widgetProgress;
     const scrobbleTotal = Number(widgets?.recent_scrobble?.scrobble_total ?? widgets?.recent_scrobble?.total ?? scrobble.length) || 0;
     renderHero(scrobble, history);
-    renderQuickStats({ wall, widgets, progressItems, insights });
+    renderQuickStats({ wall, widgets, progressItems, insights, collection });
     const watchlistItems = Array.isArray(wall?.items) ? wall.items : [];
     renderHeroChips({
       itemsWatched: scrobbleTotal,
@@ -765,11 +794,12 @@
     if (cached) renderOverview(cached);
     else paintOverviewSkeletons();
 
-    const [widgetsRes, wallRes, insightsRes, statusRes] = await Promise.allSettled([
+    const [widgetsRes, wallRes, insightsRes, statusRes, collectionRes] = await Promise.allSettled([
       api("/api/dashboard/widgets?include=history,ratings,scrobble,progress&history_limit=8&ratings_limit=9&scrobble_limit=8&progress_limit=8"),
       api("/api/state/wall?limit=8"),
       api("/api/insights?limit_samples=0&history=0&runtime=0&include_events=0"),
       api("/api/status"),
+      api("/api/profile/collection?page=1&page_size=1"),
     ]);
     const next = {
       widgets: widgetsRes.status === "fulfilled" ? widgetsRes.value : (cached?.widgets || {}),
@@ -777,6 +807,9 @@
       progress: cached?.progress || { items: [] },
       insights: insightsRes.status === "fulfilled" ? insightsRes.value : (cached?.insights || null),
       status: statusRes.status === "fulfilled" ? statusRes.value : (cached?.status || null),
+      collection: collectionRes.status === "fulfilled"
+        ? { counts: collectionRes.value?.counts || {}, total: Number(collectionRes.value?.total) || 0 }
+        : (cached?.collection || null),
     };
     if (!next.progress?.items?.length && next.widgets?.recent_progress?.items?.length) {
       next.progress = { items: next.widgets.recent_progress.items };
@@ -788,10 +821,607 @@
       const fresh = { ...next, progress: progress || { items: [] } };
       const progressItems = fresh.progress?.items?.length ? fresh.progress.items : (fresh.widgets?.recent_progress?.items || []);
       renderProgressItems(progressItems);
-      renderQuickStats({ wall: fresh.wall, widgets: fresh.widgets, progressItems, insights: fresh.insights });
+      renderQuickStats({ wall: fresh.wall, widgets: fresh.widgets, progressItems, insights: fresh.insights, collection: fresh.collection });
       writeCache(cacheKey, fresh);
     }).catch(() => {});
     refreshNowPlaying();
+  }
+
+  const COLLECTION_PREFS_KEY = "cw.profile.collection";
+  const COLLECTION_PAGE_SIZES = [24, 48, 72, 96];
+
+  function readCollectionPrefs() {
+    try {
+      const raw = JSON.parse(window.localStorage?.getItem(COLLECTION_PREFS_KEY) || "{}");
+      return raw && typeof raw === "object" ? raw : {};
+    } catch {
+      return {};
+    }
+  }
+
+  const collectionPrefs = readCollectionPrefs();
+
+  const collectionState = {
+    loaded: false,
+    loading: false,
+    page: 1,
+    pageSize: COLLECTION_PAGE_SIZES.includes(Number(collectionPrefs.pageSize)) ? Number(collectionPrefs.pageSize) : 24,
+    view: collectionPrefs.view === "list" ? "list" : "grid",
+    type: "all",
+    provider: "",
+    search: "",
+    sort: "collected_at",
+    items: [],
+    total: 0,
+    pageCount: 1,
+    cols: (collectionPrefs.cols && typeof collectionPrefs.cols === "object") ? { ...collectionPrefs.cols } : {},
+  };
+
+  function saveCollectionPrefs() {
+    try {
+      window.localStorage?.setItem(COLLECTION_PREFS_KEY, JSON.stringify({ view: collectionState.view, pageSize: collectionState.pageSize, cols: collectionState.cols }));
+    } catch {}
+  }
+
+  function lockCollectionPager() {
+    $("#profile-collection-pages")?.querySelectorAll("button").forEach((btn) => { btn.disabled = true; });
+  }
+
+  function epochOf(value) {
+    const numeric = Number(value || 0);
+    if (Number.isFinite(numeric) && numeric > 0) return numeric > 1e12 ? Math.floor(numeric / 1000) : numeric;
+    const parsed = Date.parse(String(value || "").trim());
+    return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : 0;
+  }
+
+  function collectionKind(item) {
+    const raw = String(item?.type || item?.media_type || "").toLowerCase();
+    if (raw === "season") return ["stacks", "Season"];
+    if (/episode/.test(raw) || item?.episode || item?.episode_number) return ["play_circle", "Episode"];
+    if (/show|tv|series|anime/.test(raw)) return ["tv", "Show"];
+    return ["movie", "Movie"];
+  }
+
+  function collectionSourceProviders(item) {
+    const out = [];
+    const push = (value) => {
+      const name = providerName(value);
+      if (name && !out.some((existing) => String(existing).toLowerCase() === name.toLowerCase())) out.push(name);
+    };
+    for (const row of Array.isArray(item?.providers) ? item.providers : []) push(row);
+    for (const row of Array.isArray(item?.sources) ? item.sources : []) push(row);
+    const byProvider = item?.sources_by_provider || item?.sourcesByProvider;
+    if (byProvider && typeof byProvider === "object") Object.keys(byProvider).forEach(push);
+    return out;
+  }
+
+  function collectionLibrarySummary(item) {
+    const libraries = Array.isArray(item?.libraries) ? item.libraries.filter(Boolean) : [];
+    if (!libraries.length) return "";
+    if (libraries.length === 1) return libraries[0];
+    return `${libraries[0]} +${libraries.length - 1}`;
+  }
+
+  function collectionCard(item) {
+    const key = storePosterItem(item);
+    const [icon, kind] = collectionKind(item);
+    const title = titleOf(item);
+    const year = yearOf(item);
+    const episode = episodeOf(item);
+    const added = epochOf(item?.last_collected_at || item?.collected_at || item?.first_collected_at);
+    const when = added ? relTime(added) : "";
+    const art = poster(item, "w342");
+    const providerStrip = collectionSourceProviders(item).map(providerIconHtml).filter(Boolean).join("");
+    const meta = [kind, episode || year, when, collectionLibrarySummary(item)].filter(Boolean).join(" · ");
+    return `<button class="cw-collection-card" type="button" data-profile-poster-key="${esc(key)}" aria-label="Show details for ${esc(title)}">
+      <span class="cw-collection-poster">
+        <img src="${esc(art)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'">
+        <span class="cw-collection-badge"><span class="material-symbols-rounded" aria-hidden="true">${esc(icon)}</span>${esc(kind)}</span>
+      </span>
+      <span class="cw-collection-info">
+        <strong class="cw-collection-name">${esc(title)}</strong>
+        <span class="cw-collection-meta">${esc(meta)}</span>
+        ${providerStrip ? `<span class="cw-collection-sources">${providerStrip}</span>` : ""}
+      </span>
+    </button>`;
+  }
+
+  const collectionDateFmt = (epoch) => {
+    if (!epoch) return "";
+    try {
+      return new Intl.DateTimeFormat(window.__CW_LOCALE || navigator.language || undefined, { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(epoch * 1000));
+    } catch {
+      return "";
+    }
+  };
+
+  const collectionIsoFmt = (iso) => {
+    const raw = String(iso || "").trim();
+    if (!raw) return "";
+    const parsed = Date.parse(raw.length <= 10 ? raw + "T00:00:00Z" : raw);
+    if (!Number.isFinite(parsed)) return "";
+    try {
+      return new Intl.DateTimeFormat(window.__CW_LOCALE || navigator.language || undefined, { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "UTC" }).format(new Date(parsed));
+    } catch {
+      return "";
+    }
+  };
+
+  const COLLECTION_COLUMNS = [
+    { key: "poster", label: "Poster", width: 78, min: 62, max: 130 },
+    { key: "title", label: "Title", width: 300, min: 170, max: 900, flex: 1.7 },
+    { key: "rel", label: "Release", width: 130, min: 96, max: 240 },
+    { key: "genre", label: "Genre", width: 180, min: 110, max: 420, flex: 1 },
+    { key: "added", label: "Added", width: 140, min: 108, max: 260 },
+    { key: "type", label: "Type", width: 112, min: 84, max: 200 },
+    { key: "providers", label: "Providers", width: 130, min: 84, max: 280 },
+  ];
+
+  const collectionColumnWidth = (col) => {
+    const stored = Number(collectionState.cols?.[col.key]);
+    const value = Number.isFinite(stored) && stored > 0 ? stored : col.width;
+    return Math.max(col.min, Math.min(col.max, Math.round(value)));
+  };
+
+  function applyCollectionColumns() {
+    const grid = $("#profile-collection-grid");
+    if (!grid) return;
+    grid.style.setProperty("--cch-cols", COLLECTION_COLUMNS.map((col) => {
+      const width = collectionColumnWidth(col);
+      return col.flex ? `minmax(${width}px,${col.flex}fr)` : `${width}px`;
+    }).join(" "));
+  }
+
+  function collectionListHead() {
+    const cells = COLLECTION_COLUMNS.map((col, index) => {
+      const handle = index < COLLECTION_COLUMNS.length - 1
+        ? `<span class="cw-collection-resize" role="separator" aria-orientation="vertical" title="Drag to resize, double-click to reset" data-collection-resize="${esc(col.key)}"></span>`
+        : "";
+      return `<span class="cw-collection-cell cw-collection-cell--${esc(col.key)}">${esc(col.label)}${handle}</span>`;
+    }).join("");
+    return `<div class="cw-collection-row cw-collection-row--head" role="presentation">${cells}</div>`;
+  }
+
+  const collectionReleaseIso = (item, meta) => {
+    const movie = /^movie$/i.test(String(item?.type || item?.media_type || ""));
+    const fromMeta = meta ? (movie ? (meta.detail?.release_date || meta.release?.date || "") : (meta.detail?.first_air_date || meta.release?.date || "")) : "";
+    return String(fromMeta || item?.release_date || item?.first_air_date || item?.released || item?.premiered || "").trim();
+  };
+
+  const collectionGenreText = (item, meta) => {
+    const raw = (meta && (meta.genres || meta.detail?.genres)) || item?.genres || item?.genre || [];
+    const list = Array.isArray(raw) ? raw : String(raw || "").split(",");
+    return list.map((g) => (typeof g === "string" ? g : (g?.name || g?.title || ""))).map((g) => String(g).trim()).filter(Boolean).slice(0, 3).join(", ");
+  };
+
+  function collectionListRow(item, index) {
+    const key = storePosterItem(item);
+    const [icon, kind] = collectionKind(item);
+    const title = titleOf(item);
+    const year = yearOf(item);
+    const episode = episodeOf(item);
+    const added = epochOf(item?.last_collected_at || item?.collected_at || item?.first_collected_at);
+    const art = poster(item, "w342");
+    const providerStrip = collectionSourceProviders(item).map(providerIconHtml).filter(Boolean).join("");
+    const stamp = episode || year;
+    const stored = recallCollectionMeta(item);
+    const release = collectionIsoFmt(collectionReleaseIso(item, null)) || stored?.r || "";
+    const genres = collectionGenreText(item, null) || stored?.g || "";
+    return `<button class="cw-collection-row" type="button" data-collection-index="${index}" data-profile-poster-key="${esc(key)}" aria-label="Show details for ${esc(title)}">
+      <span class="cw-collection-cell cw-collection-cell--poster"><img src="${esc(art)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'"></span>
+      <span class="cw-collection-cell cw-collection-cell--title">
+        <strong>${esc(title)}</strong>
+        ${stamp ? `<span class="cw-collection-pill">${esc(stamp)}</span>` : ""}
+      </span>
+      <span class="cw-collection-cell cw-collection-cell--rel">${esc(release || "—")}</span>
+      <span class="cw-collection-cell cw-collection-cell--genre">${esc(genres || "—")}</span>
+      <span class="cw-collection-cell cw-collection-cell--added">
+        <strong>${esc(collectionDateFmt(added) || "—")}</strong>
+        ${added ? `<small>${esc(relTime(added))}</small>` : ""}
+      </span>
+      <span class="cw-collection-cell cw-collection-cell--type"><span class="cw-collection-pill cw-collection-pill--type"><span class="material-symbols-rounded" aria-hidden="true">${esc(icon)}</span>${esc(kind)}</span></span>
+      <span class="cw-collection-cell cw-collection-cell--providers">${providerStrip}</span>
+    </button>`;
+  }
+
+  function applyCollectionMeta() {
+    const grid = $("#profile-collection-grid");
+    if (!grid || collectionState.view !== "list") return;
+    grid.querySelectorAll("[data-collection-index]").forEach((row) => {
+      const item = collectionState.items[Number(row.dataset.collectionIndex)];
+      if (!item) return;
+      const meta = window.CW?.Meta?.peek?.(item) || null;
+      const relCell = row.querySelector(".cw-collection-cell--rel");
+      const genreCell = row.querySelector(".cw-collection-cell--genre");
+      const stored = meta ? null : recallCollectionMeta(item);
+      const release = meta ? collectionIsoFmt(collectionReleaseIso(item, meta)) : (stored?.r || "");
+      const genres = meta ? collectionGenreText(item, meta) : (stored?.g || "");
+      if (meta) rememberCollectionMeta(item, release, genres);
+      if (relCell) relCell.textContent = release || "—";
+      if (genreCell) {
+        genreCell.textContent = genres || "—";
+        genreCell.title = genres;
+      }
+    });
+    saveCollectionMetaCache();
+  }
+
+  let collectionMetaSeq = 0;
+  const COLLECTION_META_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+  const COLLECTION_META_MAX = 4000;
+  let collectionMetaStore = null;
+  let collectionMetaDirty = false;
+
+  const collectionMetaKey = (item) => {
+    try {
+      return String(window.CW?.Meta?.key?.(item) || "");
+    } catch {
+      return "";
+    }
+  };
+
+  function collectionMetaCache() {
+    if (collectionMetaStore) return collectionMetaStore;
+    const stored = readCache(profileCacheKey("collection_meta"), COLLECTION_META_TTL_MS);
+    collectionMetaStore = new Map(Object.entries(stored && typeof stored === "object" ? stored : {}));
+    return collectionMetaStore;
+  }
+
+  function saveCollectionMetaCache() {
+    if (!collectionMetaDirty || !collectionMetaStore) return;
+    collectionMetaDirty = false;
+    let entries = [...collectionMetaStore.entries()];
+    if (entries.length > COLLECTION_META_MAX) entries = entries.slice(-COLLECTION_META_MAX);
+    writeCache(profileCacheKey("collection_meta"), Object.fromEntries(entries));
+  }
+
+  function rememberCollectionMeta(item, release, genres) {
+    const key = collectionMetaKey(item);
+    if (!key || (!release && !genres)) return;
+    const cache = collectionMetaCache();
+    const prev = cache.get(key);
+    if (prev && prev.r === release && prev.g === genres) return;
+    cache.delete(key);
+    cache.set(key, { r: release, g: genres });
+    collectionMetaDirty = true;
+  }
+
+  function recallCollectionMeta(item) {
+    const key = collectionMetaKey(item);
+    return key ? collectionMetaCache().get(key) || null : null;
+  }
+
+  async function hydrateCollectionMeta() {
+    if (collectionState.view !== "list" || !collectionState.items.length) return;
+    const meta = window.CW?.Meta;
+    if (typeof meta?.batch !== "function") return;
+    const token = ++collectionMetaSeq;
+    try {
+      await meta.batch(collectionState.items, "row");
+    } catch {
+      return;
+    }
+    if (token === collectionMetaSeq) applyCollectionMeta();
+  }
+
+  function startCollectionResize(event, key) {
+    const col = COLLECTION_COLUMNS.find((entry) => entry.key === key);
+    if (!col || (event.button != null && event.button !== 0)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.clientX;
+    const startWidth = collectionColumnWidth(col);
+    document.body.classList.add("cw-column-resizing");
+    const onMove = (moveEvent) => {
+      collectionState.cols[col.key] = Math.max(col.min, Math.min(col.max, startWidth + moveEvent.clientX - startX));
+      applyCollectionColumns();
+    };
+    const finish = () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", finish);
+      document.removeEventListener("pointercancel", finish);
+      document.body.classList.remove("cw-column-resizing");
+      saveCollectionPrefs();
+    };
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", finish);
+    document.addEventListener("pointercancel", finish);
+  }
+
+  function renderCollectionTypeChips(counts = {}) {
+    const host = $("#profile-collection-types");
+    if (!host) return;
+    const rows = [
+      ["all", "apps", "All"],
+      ["movie", "movie", "Movies"],
+      ["show", "tv", "Shows"],
+      ["season", "stacks", "Seasons"],
+      ["episode", "play_circle", "Episodes"],
+    ];
+    host.innerHTML = rows.map(([key, icon, label]) => {
+      const count = Number(counts[key] || 0);
+      return `<button class="${collectionState.type === key ? "active" : ""}" type="button" data-collection-type="${esc(key)}" aria-pressed="${collectionState.type === key}">
+        <span class="material-symbols-rounded" aria-hidden="true">${esc(icon)}</span>
+        <span>${esc(label)}</span>
+        <strong>${esc(numberFmt.format(count))}</strong>
+      </button>`;
+    }).join("");
+  }
+
+  function renderCollectionProviders(providers = []) {
+    const select = $("#profile-collection-provider");
+    if (!select) return;
+    const current = collectionState.provider;
+    const options = [`<option value="">All providers</option>`].concat((providers || []).map((row) => {
+      const key = String(row?.provider || "").toLowerCase();
+      const label = visibleProviderLabel(key) || key.toUpperCase();
+      const count = Number(row?.count || 0);
+      return `<option value="${esc(key)}" data-provider="${esc(key)}" data-label="${esc(label)}">${esc(label)} (${esc(numberFmt.format(count))})</option>`;
+    }));
+    select.innerHTML = options.join("");
+    select.value = current;
+    enhanceCollectionProviderSelect(select);
+  }
+
+  function enhanceCollectionProviderSelect(select = $("#profile-collection-provider")) {
+    if (!select || typeof window.CW?.IconSelect?.enhance !== "function") return;
+    window.CW.IconSelect.enhance(select, {
+      className: "cw-profile-collection-select",
+      menuClassName: "cw-profile-collection-menu",
+      menuMinWidth: 260,
+      getOptionData: (value, option) => {
+        if (!value) return { label: "All providers", icons: [{ symbol: "hub" }] };
+        const provider = option?.dataset?.provider || value;
+        const label = option?.dataset?.label || visibleProviderLabel(provider) || String(provider || "").toUpperCase();
+        const logo = providerLogLogo(provider);
+        return {
+          label: option?.textContent?.trim() || label,
+          icons: logo ? [{ src: logo, alt: label }] : [{ text: label.slice(0, 2) || "?" }],
+        };
+      },
+    });
+  }
+
+  function enhanceCollectionSortSelect(select = $("#profile-collection-sort")) {
+    if (!select || typeof window.CW?.IconSelect?.enhance !== "function") return;
+    const sortIcons = {
+      collected_at: "schedule",
+      collected_at_asc: "history",
+      title: "sort_by_alpha",
+      title_desc: "sort_by_alpha",
+      year_desc: "calendar_month",
+      year_asc: "calendar_month",
+    };
+    window.CW.IconSelect.enhance(select, {
+      className: "cw-profile-collection-select",
+      menuClassName: "cw-profile-collection-menu",
+      menuMinWidth: 230,
+      getOptionData: (value, option) => ({
+        label: option?.textContent?.trim() || "Sort",
+        icons: [{ symbol: sortIcons[value] || "sort" }],
+      }),
+    });
+  }
+
+  function renderCollectionMetrics(data = {}) {
+    const host = $("#profile-collection-metrics");
+    if (!host) return;
+    const counts = data.counts || {};
+    const providers = Array.isArray(data.providers) ? data.providers.length : 0;
+    const values = [
+      ["violet", "movie", "Movies", "Owned", counts.movie || 0],
+      ["blue", "tv", "Shows", "Owned", counts.show || 0],
+      ["green", "hub", "Providers", "Connected", providers],
+      ["amber", "inventory_2", "Items", "Total", counts.all ?? data.total ?? 0],
+    ];
+    host.innerHTML = values.map(([tone, icon, label, note, value]) => `<span class="cw-collection-tile" data-tone="${esc(tone)}">
+      <span class="material-symbols-rounded" aria-hidden="true">${esc(icon)}</span>
+      <span class="cw-collection-tile-body">
+        <strong>${esc(numberFmt.format(Number(value) || 0))}</strong>
+        <span>${esc(label)}</span>
+        <small>${esc(note)}</small>
+      </span>
+    </span>`).join("");
+  }
+
+  function paintCollectionItems() {
+    const grid = $("#profile-collection-grid");
+    if (!grid) return;
+    const list = collectionState.view === "list";
+    grid.dataset.view = list ? "list" : "grid";
+    if (!collectionState.items.length) {
+      grid.innerHTML = empty("No collection items match this view.");
+      return;
+    }
+    if (list) {
+      grid.innerHTML = collectionListHead() + collectionState.items.map(collectionListRow).join("");
+      applyCollectionColumns();
+      applyCollectionMeta();
+      void hydrateCollectionMeta();
+      return;
+    }
+    grid.innerHTML = collectionState.items.map(collectionCard).join("");
+  }
+
+  function setCollectionView(view) {
+    const next = view === "list" ? "list" : "grid";
+    if (next === collectionState.view) return;
+    collectionState.view = next;
+    saveCollectionPrefs();
+    syncCollectionViewButtons();
+    paintCollectionItems();
+  }
+
+  function syncCollectionViewButtons() {
+    document.querySelectorAll("[data-collection-view]").forEach((btn) => {
+      const active = btn.dataset.collectionView === collectionState.view;
+      btn.classList.toggle("active", active);
+      btn.setAttribute("aria-pressed", String(active));
+    });
+  }
+
+  function renderCollection(data = {}) {
+    const grid = $("#profile-collection-grid");
+    if (!grid) return;
+    collectionState.total = Number(data.total || 0);
+    renderCollectionMetrics(data);
+    renderCollectionTypeChips(data.counts || {});
+    renderCollectionProviders(data.providers || []);
+    paintCollectionItems();
+    renderCollectionPager(data);
+  }
+
+  function collectionPageNumbers(page, pageCount) {
+    if (pageCount <= 7) return Array.from({ length: pageCount }, (_, i) => i + 1);
+    let from = Math.max(2, page - 1);
+    let to = Math.min(pageCount - 1, page + 1);
+    if (page <= 3) { from = 2; to = 3; }
+    else if (page >= pageCount - 2) { from = pageCount - 2; to = pageCount - 1; }
+    const out = [1];
+    if (from > 2) out.push("gap");
+    for (let i = from; i <= to; i += 1) out.push(i);
+    if (to < pageCount - 1) out.push("gap");
+    out.push(pageCount);
+    return out;
+  }
+
+  function renderCollectionPager(data = {}) {
+    const footer = $("#profile-collection-footer");
+    if (!footer) return;
+    const total = Number(data.total || 0);
+    const pageSize = Number(data.page_size || collectionState.pageSize) || collectionState.pageSize;
+    const pageCount = total ? Math.ceil(total / pageSize) : 1;
+    const page = Math.min(Math.max(1, Number(data.page || collectionState.page) || 1), pageCount);
+    collectionState.page = page;
+    collectionState.pageCount = pageCount;
+    footer.hidden = !total;
+    const start = total ? (page - 1) * pageSize : 0;
+    const end = total ? Math.min(start + pageSize, total) : 0;
+    const label = $("#profile-collection-page-label");
+    if (label) label.textContent = total ? `Showing ${numberFmt.format(start + 1)}–${numberFmt.format(end)} of ${numberFmt.format(total)}` : "";
+    const pages = $("#profile-collection-pages");
+    if (pages) {
+      const step = (target, icon, title, disabled) => `<button type="button" data-collection-page="${target}" title="${title}" aria-label="${title}"${disabled ? " disabled" : ""}><span class="material-symbols-rounded" aria-hidden="true">${icon}</span></button>`;
+      const numbers = collectionPageNumbers(page, pageCount).map((entry) => {
+        if (entry === "gap") return `<span class="cw-collection-gap" aria-hidden="true">…</span>`;
+        const active = entry === page;
+        return `<button type="button" class="${active ? "active" : ""}" data-collection-page="${entry}"${active ? ' aria-current="page" disabled' : ""}>${numberFmt.format(entry)}</button>`;
+      }).join("");
+      pages.innerHTML = step(page - 1, "chevron_left", "Previous page", page <= 1) + numbers + step(page + 1, "chevron_right", "Next page", page >= pageCount);
+    }
+  }
+
+  function goToCollectionPage(page) {
+    const target = Math.max(1, Number(page) || 1);
+    if (collectionState.loading || target === collectionState.page) return;
+    if (collectionState.pageCount && target > collectionState.pageCount) return;
+    collectionState.page = target;
+    void loadCollection();
+    $("#profile-panel-collection")?.scrollIntoView({ block: "start", behavior: "smooth" });
+  }
+
+  async function loadCollection({ reset = false } = {}) {
+    if (collectionState.loading) return;
+    if (reset) collectionState.page = 1;
+    collectionState.items = [];
+    const skeletonGrid = $("#profile-collection-grid");
+    if (skeletonGrid) {
+      skeletonGrid.dataset.view = collectionState.view === "list" ? "list" : "grid";
+      skeletonGrid.innerHTML = collectionState.view === "list" ? skeleton("collectionRow", 6) : skeleton("collection", 7);
+    }
+    collectionState.loading = true;
+    lockCollectionPager();
+    const params = new URLSearchParams({
+      type: collectionState.type,
+      provider: collectionState.provider,
+      search: collectionState.search,
+      sort: collectionState.sort,
+      page: String(collectionState.page),
+      page_size: String(collectionState.pageSize),
+    });
+    try {
+      const data = await api(`/api/profile/collection?${params.toString()}`);
+      collectionState.items = Array.isArray(data.items) ? data.items : [];
+      collectionState.loaded = true;
+      renderCollection(data);
+    } catch (e) {
+      const grid = $("#profile-collection-grid");
+      if (grid) grid.innerHTML = empty("Collections could not be loaded.");
+      renderCollectionPager({ total: collectionState.total, page: collectionState.page, page_size: collectionState.pageSize });
+      toast(e.message || "Collections could not be loaded", true);
+    } finally {
+      collectionState.loading = false;
+    }
+  }
+
+  function wireCollection() {
+    let searchTimer = null;
+    document.addEventListener("click", (event) => {
+      const btn = event.target?.closest?.("[data-collection-view]");
+      if (!btn) return;
+      setCollectionView(btn.dataset.collectionView);
+    });
+    syncCollectionViewButtons();
+    document.addEventListener("pointerdown", (event) => {
+      const handle = event.target?.closest?.("[data-collection-resize]");
+      if (!handle) return;
+      startCollectionResize(event, handle.dataset.collectionResize);
+    });
+    document.addEventListener("dblclick", (event) => {
+      const handle = event.target?.closest?.("[data-collection-resize]");
+      if (!handle) return;
+      event.preventDefault();
+      delete collectionState.cols[handle.dataset.collectionResize];
+      applyCollectionColumns();
+      saveCollectionPrefs();
+    });
+    enhanceCollectionProviderSelect();
+    enhanceCollectionSortSelect();
+    $("#profile-collection-types")?.addEventListener("click", (event) => {
+      const btn = event.target?.closest?.("[data-collection-type]");
+      if (!btn) return;
+      collectionState.type = btn.dataset.collectionType || "all";
+      void loadCollection({ reset: true });
+    });
+    $("#profile-collection-provider")?.addEventListener("change", (event) => {
+      collectionState.provider = event.target?.value || "";
+      void loadCollection({ reset: true });
+    });
+    $("#profile-collection-sort")?.addEventListener("change", (event) => {
+      collectionState.sort = event.target?.value || "collected_at";
+      void loadCollection({ reset: true });
+    });
+    $("#profile-collection-search")?.addEventListener("input", (event) => {
+      collectionState.search = event.target?.value || "";
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => loadCollection({ reset: true }), 220);
+    });
+    document.addEventListener("keydown", (event) => {
+      if (!(event.ctrlKey || event.metaKey) || String(event.key || "").toLowerCase() !== "k") return;
+      if (!$("#profile-panel-collection")?.classList?.contains("active")) return;
+      const input = $("#profile-collection-search");
+      if (!input) return;
+      event.preventDefault();
+      input.focus();
+      input.select?.();
+    });
+    $("#profile-collection-pages")?.addEventListener("click", (event) => {
+      const btn = event.target?.closest?.("[data-collection-page]");
+      if (!btn || btn.disabled) return;
+      goToCollectionPage(Number(btn.dataset.collectionPage));
+    });
+    const pageSizeSelect = $("#profile-collection-page-size");
+    if (pageSizeSelect) {
+      pageSizeSelect.value = String(collectionState.pageSize);
+      pageSizeSelect.addEventListener("change", (event) => {
+        const next = Number(event.target?.value) || 24;
+        if (next === collectionState.pageSize) return;
+        collectionState.pageSize = next;
+        saveCollectionPrefs();
+        void loadCollection({ reset: true });
+      });
+    }
+    syncCollectionViewButtons();
   }
 
   function connectedServices(status) {
@@ -822,6 +1452,7 @@
         const key = btn.dataset.profileTab;
         document.querySelectorAll("[data-profile-tab]").forEach((tab) => tab.classList.toggle("active", tab === btn));
         document.querySelectorAll(".cw-profile-panel").forEach((panel) => panel.classList.toggle("active", panel.id === `profile-panel-${key}`));
+        if (key === "collection" && !collectionState.loaded) void loadCollection({ reset: true });
       });
     });
   }
@@ -1152,6 +1783,7 @@
 
   function wirePosterOverlay() {
     const openFromTarget = (target, event) => {
+      if (target?.closest?.("[data-collection-resize]")) return false;
       const btn = target?.closest?.("[data-profile-poster-key]");
       if (!btn) return false;
       const item = posterItems.get(btn.dataset.profilePosterKey || "");
@@ -1202,6 +1834,7 @@
 
   async function init() {
     wireTabs();
+    wireCollection();
     wirePreferences();
     wireAvatar();
     wireForms();

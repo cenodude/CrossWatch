@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude
 from __future__ import annotations
 
+from collections import OrderedDict
 from typing import Any
 
 import base64
@@ -11,9 +12,10 @@ import secrets
 import time
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Body, Request
+from fastapi import APIRouter, Body, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 
 from api.appAuthAPI import (
@@ -45,9 +47,12 @@ from api.appAuthAPI import (
     _totp_verify,
     clean_user_preferences,
     current_user,
+    effective_user_profile_id,
 )
 from cw_platform.config_base import CONFIG as CONFIG_DIR, load_config, update_config
-from cw_platform.provider_instances import list_user_profiles
+from cw_platform.id_map import canonical_key
+from cw_platform.orchestrator._state_store import StateStore
+from cw_platform.provider_instances import instances_for_user_profile, list_user_profiles, normalize_instance_id, provider_display_key
 
 router = APIRouter(prefix="/api/profile", tags=["profile"])
 
@@ -265,6 +270,401 @@ def _generate_recovery_codes(raw: dict[str, Any]) -> list[str]:
     codes = [f"{secrets.token_hex(5).upper()}-{secrets.token_hex(5).upper()}" for _ in range(10)]
     raw["recovery_codes"] = [_password_hash(code) for code in codes]
     return codes
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _collection_state() -> dict[str, Any]:
+    try:
+        state = StateStore(CONFIG_DIR).load_state_features({"collection"}) or {}
+        return state if isinstance(state, dict) else {}
+    except Exception:
+        return {}
+
+
+def _collection_baseline_items(node: Any) -> dict[str, Any]:
+    baseline = _as_dict(_as_dict(_as_dict(node).get("collection")).get("baseline"))
+    items = baseline.get("items")
+    return items if isinstance(items, dict) else {}
+
+
+def _iter_collection_baselines(state: dict[str, Any]):
+    providers = _as_dict(state.get("providers"))
+    for provider, pnode in providers.items():
+        prov = provider_display_key(provider)
+        items = _collection_baseline_items(pnode)
+        if items:
+            yield prov, "default", items
+        for instance, inode in _as_dict(_as_dict(pnode).get("instances")).items():
+            items = _collection_baseline_items(inode)
+            if items:
+                yield prov, normalize_instance_id(instance), items
+
+
+def _collection_user_filter(cfg: dict[str, Any], profile_id: str) -> dict[str, set[str]]:
+    raw = instances_for_user_profile(cfg, profile_id) if profile_id else {}
+    return {
+        provider_display_key(provider): {normalize_instance_id(inst) for inst in (instances or [])}
+        for provider, instances in raw.items()
+    }
+
+
+def _collection_source_allowed(user_filter: dict[str, set[str]], provider: str, instance: str) -> bool:
+    if not user_filter:
+        return True
+    return normalize_instance_id(instance) in user_filter.get(provider_display_key(provider), set())
+
+
+def _collection_media_type(item: dict[str, Any]) -> str:
+    raw = str(item.get("type") or item.get("media_type") or item.get("art_type") or "").strip().lower()
+    if raw in {"movie", "movies"}:
+        return "movie"
+    if raw in {"season", "seasons"}:
+        return "season"
+    if raw in {"episode", "episodes", "anime_episode"}:
+        return "episode"
+    if raw in {"show", "shows", "tv", "series", "anime"}:
+        return "show"
+    if item.get("episode") is not None or item.get("episode_number") is not None:
+        return "episode"
+    if item.get("season") is not None or item.get("season_number") is not None:
+        return "season"
+    return raw or "movie"
+
+
+def _collection_date_sort(value: Any) -> float:
+    if value is None:
+        return 0.0
+    try:
+        ts = float(value)
+        if ts > 100000000000:
+            ts = ts / 1000
+        if ts > 0:
+            return ts
+    except Exception:
+        pass
+    raw = str(value or "").strip()
+    if not raw:
+        return 0.0
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.timestamp()
+    except Exception:
+        return 0.0
+
+
+def _collection_first_text(item: dict[str, Any], keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = item.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+def _collection_ids(item: dict[str, Any]) -> dict[str, Any]:
+    ids = item.get("ids")
+    out = dict(ids) if isinstance(ids, dict) else {}
+    for key in ("tmdb", "imdb", "tvdb", "trakt", "simkl", "mdblist"):
+        for raw_key in (key, f"{key}_id"):
+            if raw_key in item and item.get(raw_key) not in (None, ""):
+                out.setdefault(key, item.get(raw_key))
+    return out
+
+
+def _collection_item_key(raw_key: Any, item: dict[str, Any]) -> str:
+    try:
+        key = canonical_key(item)
+    except Exception:
+        key = ""
+    key = str(key or "").strip().lower()
+    if key and key != "unknown:":
+        return key
+    return str(raw_key or "").strip().lower() or "unknown:"
+
+
+def _collection_add_unique(target: list[Any], value: Any) -> None:
+    if value in (None, ""):
+        return
+    if value not in target:
+        target.append(value)
+
+
+def _collection_merge_group(group: dict[str, Any], item: dict[str, Any], *, raw_key: str, provider: str, instance: str) -> None:
+    ids = _collection_ids(item)
+    base = group.setdefault("ids", {})
+    if isinstance(base, dict):
+        for key, value in ids.items():
+            if value not in (None, ""):
+                base.setdefault(key, value)
+    for key in ("title", "series_title", "show_title", "name", "year", "release_year", "season", "season_number", "episode", "episode_number", "overview"):
+        if group.get(key) in (None, "") and item.get(key) not in (None, ""):
+            group[key] = item.get(key)
+    raw_show_ids = item.get("show_ids")
+    if isinstance(raw_show_ids, dict) and raw_show_ids:
+        show_ids = group.setdefault("show_ids", {})
+        if isinstance(show_ids, dict):
+            for key, value in raw_show_ids.items():
+                if value not in (None, ""):
+                    show_ids.setdefault(str(key), value)
+    for key in ("poster", "poster_url", "cover", "poster_cover", "backdrop_url", "background_url", "fanart"):
+        if group.get(key) in (None, "") and item.get(key):
+            group[key] = item.get(key)
+    media_type = _collection_media_type(item)
+    if group.get("type") in (None, ""):
+        group["type"] = media_type
+    collected_at = _collection_first_text(item, ("collected_at", "added_at", "date_added", "created_at", "datecreated", "date"))
+    library = _collection_first_text(item, ("library_title", "library_name", "section_title", "section_name", "collection_name"))
+    source = {
+        "provider": provider,
+        "instance": normalize_instance_id(instance),
+        "key": raw_key,
+        "collected_at": collected_at,
+    }
+    if library:
+        source["library"] = library
+    sources = group.setdefault("collection_sources", [])
+    if isinstance(sources, list):
+        sources.append(source)
+    by_provider = group.setdefault("sources_by_provider", {})
+    if isinstance(by_provider, dict):
+        insts = by_provider.setdefault(provider.lower(), [])
+        if isinstance(insts, list):
+            _collection_add_unique(insts, normalize_instance_id(instance))
+    libraries = group.setdefault("libraries", [])
+    if isinstance(libraries, list):
+        _collection_add_unique(libraries, library)
+    dates = group.setdefault("_collection_dates", [])
+    if isinstance(dates, list):
+        _collection_add_unique(dates, collected_at)
+
+
+def _collection_finalize_group(key: str, group: dict[str, Any]) -> dict[str, Any]:
+    dates = [d for d in group.pop("_collection_dates", []) if d]
+    dates_sorted = sorted(dates, key=_collection_date_sort)
+    sources = group.get("collection_sources") if isinstance(group.get("collection_sources"), list) else []
+    providers = sorted({str(src.get("provider") or "").lower() for src in sources if isinstance(src, dict) and src.get("provider")})
+    instances = sorted({
+        f"{str(src.get('provider') or '').lower()}:{normalize_instance_id(src.get('instance'))}"
+        for src in sources if isinstance(src, dict) and src.get("provider")
+    })
+    out = dict(group)
+    out["key"] = key
+    out["collection_key"] = key
+    out["type"] = _collection_media_type(out)
+    out["title"] = _collection_first_text(out, ("title", "series_title", "show_title", "name")) or "Untitled"
+    out["providers"] = providers
+    out["owned_provider_count"] = len(providers)
+    out["owned_instance_count"] = len(instances)
+    out["owned_count"] = len(sources)
+    show_ids = out.get("show_ids")
+    if isinstance(show_ids, dict) and show_ids and out["type"] in {"episode", "season"}:
+        ids = out.get("ids")
+        if not isinstance(ids, dict):
+            ids = {}
+        else:
+            ids = dict(ids)
+        for src, dst in (("tmdb", "tmdb_show"), ("imdb", "imdb_show"), ("tvdb", "tvdb_show")):
+            value = show_ids.get(src)
+            if value not in (None, "") and not ids.get(dst):
+                ids[dst] = value
+        out["ids"] = ids
+    out["first_collected_at"] = dates_sorted[0] if dates_sorted else ""
+    out["last_collected_at"] = dates_sorted[-1] if dates_sorted else ""
+    out["collected_at"] = out["last_collected_at"]
+    out["sources"] = providers
+    return out
+
+
+_COLLECTION_INDEX_CACHE: "OrderedDict[tuple, tuple[list[dict[str, Any]], dict[str, int], dict[str, int]]]" = OrderedDict()
+_COLLECTION_INDEX_CACHE_MAX = 8
+
+
+def _build_collection_index(
+    state: dict[str, Any],
+    cfg: dict[str, Any],
+    profile_id: str,
+) -> tuple[list[dict[str, Any]], dict[str, int], dict[str, int]]:
+    user_filter = _collection_user_filter(cfg, profile_id)
+    if profile_id and not user_filter:
+        user_filter = {"__NONE__": {"__NONE__"}}
+    groups: dict[str, dict[str, Any]] = {}
+    for prov, inst, items in _iter_collection_baselines(state):
+        if not _collection_source_allowed(user_filter, prov, inst):
+            continue
+        for raw_key, raw_item in items.items():
+            if not isinstance(raw_item, dict):
+                continue
+            item = dict(raw_item)
+            key = _collection_item_key(raw_key, item)
+            _collection_merge_group(groups.setdefault(key, {}), item, raw_key=str(raw_key), provider=prov, instance=inst)
+    items = [_collection_finalize_group(key, group) for key, group in groups.items()]
+    counts: dict[str, int] = {"all": len(items), "movie": 0, "show": 0, "season": 0, "episode": 0}
+    provider_counts: dict[str, int] = {}
+    for item in items:
+        typ = _collection_media_type(item)
+        counts[typ] = counts.get(typ, 0) + 1
+        for prov in item.get("providers") or []:
+            provider_counts[str(prov).lower()] = provider_counts.get(str(prov).lower(), 0) + 1
+    return items, counts, provider_counts
+
+
+def _collection_index(
+    state: dict[str, Any] | Any,
+    cfg: dict[str, Any],
+    profile_id: str,
+    cache_key: tuple | None,
+) -> tuple[list[dict[str, Any]], dict[str, int], dict[str, int]]:
+    if cache_key is None:
+        return _build_collection_index(state() if callable(state) else state, cfg, profile_id)
+    key = (profile_id, *cache_key)
+    hit = _COLLECTION_INDEX_CACHE.get(key)
+    if hit is None:
+        hit = _build_collection_index(state() if callable(state) else state, cfg, profile_id)
+        _COLLECTION_INDEX_CACHE[key] = hit
+        while len(_COLLECTION_INDEX_CACHE) > _COLLECTION_INDEX_CACHE_MAX:
+            _COLLECTION_INDEX_CACHE.popitem(last=False)
+    else:
+        _COLLECTION_INDEX_CACHE.move_to_end(key)
+    items, counts, provider_counts = hit
+    return list(items), dict(counts), dict(provider_counts)
+
+
+def collection_cache_fingerprint() -> tuple:
+    """Cheap signature of the collection inputs: sync epoch, db writes, config."""
+    epoch = None
+    try:
+        epoch = StateStore(CONFIG_DIR).last_sync_epoch()
+    except Exception:
+        epoch = None
+    stamp = 0.0
+    try:
+        from cw_platform.local_db.db import crosswatch_db_path
+
+        db = Path(str(crosswatch_db_path(CONFIG_DIR)))
+        for candidate in (db, db.with_name(db.name + "-wal")):
+            try:
+                stamp = max(stamp, candidate.stat().st_mtime)
+            except OSError:
+                continue
+    except Exception:
+        stamp = 0.0
+    cfg_stamp = 0.0
+    try:
+        cfg_stamp = (Path(CONFIG_DIR) / "config.json").stat().st_mtime
+    except OSError:
+        cfg_stamp = 0.0
+    return (epoch, round(stamp, 3), round(cfg_stamp, 3))
+
+
+def build_profile_collection_payload(
+    state: dict[str, Any] | Any,
+    cfg: dict[str, Any],
+    *,
+    profile_id: str = "",
+    media_type: str = "all",
+    provider: str = "",
+    search: str = "",
+    sort: str = "collected_at",
+    page: int = 1,
+    page_size: int = 48,
+    cache_key: tuple | None = None,
+) -> dict[str, Any]:
+    items, counts, provider_counts = _collection_index(state, cfg, profile_id, cache_key)
+    wanted_type = str(media_type or "all").strip().lower()
+    if wanted_type not in {"", "all"}:
+        items = [item for item in items if _collection_media_type(item) == wanted_type]
+    wanted_provider = str(provider or "").strip().lower()
+    if wanted_provider:
+        items = [item for item in items if wanted_provider in {str(prov).lower() for prov in item.get("providers") or []}]
+    needle = str(search or "").strip().lower()
+    if needle:
+        def _match(item: dict[str, Any]) -> bool:
+            hay = " ".join(
+                str(value or "")
+                for value in (
+                    item.get("title"),
+                    item.get("series_title"),
+                    item.get("show_title"),
+                    item.get("year"),
+                    item.get("key"),
+                    " ".join(str(p) for p in item.get("providers") or []),
+                    " ".join(str(lib) for lib in item.get("libraries") or []),
+                )
+            ).lower()
+            return needle in hay
+        items = [item for item in items if _match(item)]
+    def _title_key(item: dict[str, Any]) -> str:
+        return str(item.get("title") or "").lower()
+
+    def _year_key(item: dict[str, Any]) -> int:
+        try:
+            return int(str(item.get("year") or 0)[:4])
+        except (TypeError, ValueError):
+            return 0
+
+    wanted_sort = str(sort or "collected_at").strip().lower()
+    if wanted_sort == "title":
+        items.sort(key=lambda item: (_title_key(item), _year_key(item)))
+    elif wanted_sort == "title_desc":
+        items.sort(key=lambda item: (_title_key(item), _year_key(item)), reverse=True)
+    elif wanted_sort == "collected_at_asc":
+        items.sort(key=lambda item: (_collection_date_sort(item.get("last_collected_at")), _title_key(item)))
+    elif wanted_sort == "year_desc":
+        items.sort(key=lambda item: (_year_key(item), _collection_date_sort(item.get("last_collected_at"))), reverse=True)
+    elif wanted_sort == "year_asc":
+        items.sort(key=lambda item: (_year_key(item) or 9999, _title_key(item)))
+    else:
+        items.sort(key=lambda item: (_collection_date_sort(item.get("last_collected_at")), _title_key(item)), reverse=True)
+    page = max(1, int(page or 1))
+    page_size = min(120, max(1, int(page_size or 48)))
+    total = len(items)
+    start = (page - 1) * page_size
+    end = start + page_size
+    return {
+        "ok": True,
+        "items": items[start:end],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "has_more": end < total,
+        "counts": counts,
+        "providers": [{"provider": key, "count": count} for key, count in sorted(provider_counts.items())],
+    }
+
+
+@router.get("/collection")
+def api_profile_collection(
+    request: Request,
+    media_type: str = Query("all", alias="type"),
+    provider: str = Query(""),
+    search: str = Query(""),
+    sort: str = Query("collected_at"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(48, ge=1, le=120),
+    user_profile: str = Query(""),
+) -> JSONResponse:
+    ctx = _profile_context(request)
+    if isinstance(ctx, JSONResponse):
+        return ctx
+    cfg, _a, _uid, _raw, _user, token = ctx
+    profile_id = effective_user_profile_id(cfg, token, user_profile)
+    payload = build_profile_collection_payload(
+        _collection_state,
+        cfg,
+        profile_id=profile_id,
+        media_type=media_type,
+        provider=provider,
+        search=search,
+        sort=sort,
+        page=page,
+        page_size=page_size,
+        cache_key=collection_cache_fingerprint(),
+    )
+    return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 
 
 @router.get("")
