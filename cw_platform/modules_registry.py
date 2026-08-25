@@ -47,6 +47,7 @@ MODULES: dict[str, dict[str, str]] = {
         "_mod_ANILIST":    "providers.sync._mod_ANILIST",
         "_mod_TMDB":       "providers.sync._mod_TMDB",
         "_mod_PUNCHPLAY":  "providers.sync._mod_PUNCHPLAY",
+        "_mod_FLICKLIST":  "providers.sync._mod_FLICKLIST",
         "_mod_SCROB":      "providers.sync._mod_SCROB",
     },
 }
