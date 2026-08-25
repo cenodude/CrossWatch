@@ -40,7 +40,26 @@ def _normalize_row(row: Mapping[str, Any], *, library_id: str, fallback_type: st
     if not item:
         return None
     item = dict(item)
-    item["type"] = "episode" if _row_type(raw, fallback_type) == "episode" else "movie"
+    raw_type = _row_type(raw, fallback_type)
+    item["type"] = "episode" if raw_type == "episode" else ("season" if raw_type == "season" else ("show" if raw_type == "show" else "movie"))
+    if item["type"] == "season" and item.get("season") is None:
+        _dbg(
+            "season_row_without_scope",
+            library_id=str(library_id),
+            provider_item_id=str(raw.get("ratingKey") or raw.get("key") or ""),
+            item_title=str(raw.get("title") or ""),
+            series_title=str(raw.get("parentTitle") or raw.get("grandparentTitle") or item.get("series_title") or ""),
+        )
+        return None
+    if item["type"] == "episode" and (item.get("season") is None or item.get("episode") is None):
+        _dbg(
+            "episode_row_without_scope",
+            library_id=str(library_id),
+            provider_item_id=str(raw.get("ratingKey") or raw.get("key") or ""),
+            item_title=str(raw.get("title") or ""),
+            series_title=str(raw.get("grandparentTitle") or item.get("series_title") or ""),
+        )
+        return None
     item["library_id"] = str(library_id)
     collected_at = _collected_at_from_row(raw)
     if collected_at:
@@ -69,7 +88,12 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
         found.add(sid)
         if allowed and sid not in allowed:
             continue
-        sections.append((sid, typ, 1 if typ == "movie" else 4))
+        if typ == "movie":
+            sections.append((sid, "movie", 1))
+        else:
+            sections.append((sid, "show", 2))
+            sections.append((sid, "season", 3))
+            sections.append((sid, "episode", 4))
 
     missing = sorted(allowed - found)
     if missing:
@@ -82,7 +106,7 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
     for index, (sid, lib_type, plex_type) in enumerate(sections, start=1):
         rows, requests_made = _fetch_section_guid_rows(srv, sid, plex_type)
         scanned += len(rows)
-        fallback_type = "movie" if lib_type == "movie" else "episode"
+        fallback_type = lib_type
         for row in rows:
             if not isinstance(row, Mapping):
                 continue

@@ -30,12 +30,14 @@ from .._mod_common import request_with_retries
 
 BASE = "https://api.trakt.tv"
 URL_ADD = f"{BASE}/sync/collection"
+URL_MEDIA = f"{BASE}/sync/collection/media"
 URL_MOVIES = f"{BASE}/sync/collection/movies"
 URL_SHOWS = f"{BASE}/sync/collection/shows"
 URL_REMOVE = f"{BASE}/sync/collection/remove"
 
 _PROVIDER = "TRAKT"
 _FEATURE = "collection"
+_SHADOW_SCHEMA = 3
 
 
 def _dbg(event: str, **fields: Any) -> None:
@@ -84,7 +86,10 @@ def _shadow_load() -> dict[str, Any]:
     if _is_capture_mode() or _pair_scope() is None:
         return {"etag": None, "ts": 0, "items": {}}
     try:
-        return json.loads(_shadow_path().read_text("utf-8"))
+        raw = json.loads(_shadow_path().read_text("utf-8"))
+        if not isinstance(raw, Mapping) or int(raw.get("schema") or 0) != _SHADOW_SCHEMA:
+            return {"etag": None, "ts": 0, "items": {}}
+        return dict(raw)
     except Exception:
         return {"etag": None, "ts": 0, "items": {}}
 
@@ -99,6 +104,7 @@ def _shadow_save(etags: Mapping[str, str | None], items: Mapping[str, Any], buck
         tmp.write_text(
             json.dumps(
                 {
+                    "schema": _SHADOW_SCHEMA,
                     "etag": None,
                     "etags": dict(etags or {}),
                     "ts": int(time.time()),
@@ -141,6 +147,16 @@ def _item_key(item: Mapping[str, Any]) -> str:
     return canonical_key(item) or key_of(item) or ""
 
 
+def _hdr_int(headers: Mapping[str, Any], name: str) -> int | None:
+    try:
+        for k, v in (headers or {}).items():
+            if str(k).lower() == name.lower():
+                return int(str(v).strip())
+    except Exception:
+        return None
+    return None
+
+
 def _movie_from_row(row: Mapping[str, Any]) -> dict[str, Any] | None:
     movie = row.get("movie") if isinstance(row.get("movie"), Mapping) else row
     if not isinstance(movie, Mapping):
@@ -165,9 +181,33 @@ def _show_base(row: Mapping[str, Any]) -> dict[str, Any] | None:
 
 def _items_from_collection_row(row: Mapping[str, Any]) -> list[dict[str, Any]]:
     typ = str(row.get("type") or "").strip().lower()
+    if typ == "movie":
+        movie = _movie_from_row(row)
+        return [movie] if movie else []
+    if typ == "episode" and isinstance(row.get("episode"), Mapping):
+        ep = row["episode"]
+        show_raw = row.get("show")
+        show: Mapping[str, Any] = show_raw if isinstance(show_raw, Mapping) else {}
+        item = id_minimal(
+            {
+                "type": "episode",
+                "title": ep.get("title"),
+                "series_title": show.get("title"),
+                "year": show.get("year"),
+                "show_ids": _ids_clean(show.get("ids")),
+                "season": ep.get("season"),
+                "episode": ep.get("number"),
+                "ids": _ids_clean(ep.get("ids")),
+            }
+        )
+        collected_at = row.get("collected_at") or ep.get("collected_at")
+        if collected_at:
+            item["collected_at"] = str(collected_at)
+        return [item]
     seasons = row.get("seasons")
     if not isinstance(seasons, list):
-        show = row.get("show") if isinstance(row.get("show"), Mapping) else row
+        show_raw = row.get("show")
+        show: Mapping[str, Any] = show_raw if isinstance(show_raw, Mapping) else row
         seasons = show.get("seasons") if isinstance(show, Mapping) else None
     if typ and not (typ == "show" and isinstance(seasons, list) and seasons):
         return [normalize_watchlist_row(row)]
@@ -175,7 +215,8 @@ def _items_from_collection_row(row: Mapping[str, Any]) -> list[dict[str, Any]]:
         movie = _movie_from_row(row)
         return [movie] if movie else []
     show_item = _show_base(row)
-    show = row.get("show") if isinstance(row.get("show"), Mapping) else row
+    show_raw = row.get("show")
+    show = show_raw if isinstance(show_raw, Mapping) else row
     if not isinstance(seasons, list) or not seasons:
         return [show_item] if show_item else []
     show_ids = dict((show_item or {}).get("ids") or {})
@@ -222,6 +263,10 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     cfg = _cfg(adapter)
     use_etag = _cfg_bool(cfg, "collection_use_etag", True)
     ttl_h = _cfg_int(cfg, "collection_shadow_ttl_hours", 168)
+    per_page = max(1, min(100, _cfg_int(cfg, "collection_per_page", _cfg_int(cfg, "history_per_page", 100))))
+    max_pages = _cfg_int(cfg, "collection_max_pages", _cfg_int(cfg, "history_max_pages", 10000))
+    if max_pages <= 0:
+        max_pages = 10000
     prog_mk = getattr(adapter, "progress_factory", None)
     prog: Any = prog_mk("collection") if callable(prog_mk) else None
 
@@ -247,11 +292,19 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         if use_etag and fresh and etag and isinstance(cached, Mapping):
             req_headers["If-None-Match"] = str(etag)
 
+        idx: dict[str, dict[str, Any]] = {}
+        page = 1
+        total_pages: int | None = None
+        etag_out: str | None = None
+        total_hint: int | None = None
+        rows_seen = 0
+
         r = request_with_retries(
             sess,
             "GET",
             url,
             headers=req_headers,
+            params={"page": page, "limit": per_page},
             timeout=adapter.cfg.timeout,
             max_retries=adapter.cfg.max_retries,
         )
@@ -261,25 +314,65 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
             _warn("http_failed", op="index", bucket=name, status=r.status_code)
             return (dict(cached) if isinstance(cached, Mapping) else {}), (str(etag) if etag else None), True
 
-        data = r.json() if (r.text or "").strip() else []
-        rows: list[Mapping[str, Any]] = []
-        if isinstance(data, list):
-            rows = [x for x in data if isinstance(x, Mapping)]
-        elif isinstance(data, Mapping):
-            raw = data.get(name)
-            if isinstance(raw, list):
-                rows = [x for x in raw if isinstance(x, Mapping)]
+        while True:
+            if page > 1:
+                r = request_with_retries(
+                    sess,
+                    "GET",
+                    url,
+                    headers=headers,
+                    params={"page": page, "limit": per_page},
+                    timeout=adapter.cfg.timeout,
+                    max_retries=adapter.cfg.max_retries,
+                )
+                if r.status_code != 200:
+                    _warn("http_failed", op="index", bucket=name, page=page, status=r.status_code)
+                    break
 
-        idx: dict[str, dict[str, Any]] = {}
-        total = max(1, len(rows))
-        for i, row in enumerate(rows, start=1):
-            for item in _items_from_collection_row(row):
-                key = _item_key(item)
-                if key:
-                    idx[key] = item
+            if page == 1:
+                etag_out = r.headers.get("ETag")
+                total_pages = _hdr_int(r.headers, "X-Pagination-Page-Count")
+                total_hint = _hdr_int(r.headers, "X-Pagination-Item-Count")
+
+            data = r.json() if (r.text or "").strip() else []
+            rows: list[Mapping[str, Any]] = []
+            if isinstance(data, list):
+                rows = [x for x in data if isinstance(x, Mapping)]
+            elif isinstance(data, Mapping):
+                raw = data.get(name)
+                if isinstance(raw, list):
+                    rows = [x for x in raw if isinstance(x, Mapping)]
+            if not rows:
+                break
+
+            for row in rows:
+                for item in _items_from_collection_row(row):
+                    key = _item_key(item)
+                    if key:
+                        idx[key] = item
+            rows_seen += len(rows)
             if prog:
-                prog.tick(i, total=total)
-        return idx, r.headers.get("ETag"), False
+                prog.tick(rows_seen, total=total_hint or max(rows_seen, len(rows)))
+
+            page += 1
+            if total_pages is not None and page > total_pages:
+                break
+            if total_pages is None and len(rows) < per_page:
+                break
+            if max_pages and page > max_pages:
+                _warn("index_reconcile", reason="safety_cap_hit", strategy="paged_fetch", bucket=name, max_pages=max_pages)
+                break
+
+        _dbg("index_fetch_bucket", bucket=name, rows=rows_seen, items=len(idx), per_page=per_page, max_pages=max_pages, pages=(page - 1))
+        return idx, etag_out, False
+
+    media_idx, media_etag, media_cached = _fetch_bucket("media", URL_MEDIA)
+    if media_idx or not media_cached:
+        if use_etag:
+            _shadow_save({"media": media_etag}, media_idx, {"media": media_idx})
+        source = "shadow" if media_cached else "live"
+        _info("index_done", count=len(media_idx), source=source, endpoint="media", per_page=per_page, max_pages=max_pages)
+        return media_idx
 
     movie_idx, movie_etag, movie_cached = _fetch_bucket("movies", URL_MOVIES)
     show_idx, show_etag, show_cached = _fetch_bucket("shows", URL_SHOWS)
@@ -291,7 +384,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     if use_etag:
         _shadow_save({"movies": movie_etag, "shows": show_etag}, idx, {"movies": movie_idx, "shows": show_idx})
     source = "shadow" if movie_cached and show_cached else ("mixed" if movie_cached or show_cached else "live")
-    _info("index_done", count=len(idx), source=source)
+    _info("index_done", count=len(idx), source=source, per_page=per_page, max_pages=max_pages)
     return idx
 
 
@@ -303,6 +396,7 @@ def _batch_payload(items: Iterable[Mapping[str, Any]]) -> tuple[list[dict[str, A
         collected_at = it.get("collected_at")
         if collected_at:
             m["collected_at"] = str(collected_at)
+            m["watched_at"] = str(collected_at)
         kind = pick_trakt_kind(m)
         ids = ids_for_trakt(m)
         show_ids = dict(m.get("show_ids") or {})
@@ -319,9 +413,10 @@ def _batch_payload(items: Iterable[Mapping[str, Any]]) -> tuple[list[dict[str, A
     return accepted, rejected
 
 
-def _record_not_found(not_found: Mapping[str, Any], unresolved: list[dict[str, Any]]) -> None:
+def _record_not_found(not_found: Mapping[str, Any], unresolved: list[dict[str, Any]]) -> list[str]:
+    keys: list[str] = []
     if not isinstance(not_found, Mapping):
-        return
+        return keys
     for bucket in ("movies", "shows", "seasons", "episodes"):
         raw = not_found.get(bucket)
         if not isinstance(raw, list):
@@ -329,21 +424,34 @@ def _record_not_found(not_found: Mapping[str, Any], unresolved: list[dict[str, A
         for obj in raw:
             if isinstance(obj, Mapping):
                 typ = bucket[:-1] if bucket.endswith("s") else bucket
-                unresolved.append({"item": id_minimal({"type": typ, "ids": dict(obj.get("ids") or obj)}), "hint": "not_found"})
+                item = id_minimal({"type": typ, "ids": dict(obj.get("ids") or obj)})
+                key = _item_key(item)
+                if key:
+                    keys.append(key)
+                unresolved.append({"item": item, "hint": "not_found", "key": key})
+    return keys
 
 
-def _write(adapter: Any, op: str, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
+def _write(adapter: Any, op: str, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     cfg = _cfg(adapter)
     batch = _cfg_int(cfg, "collection_batch_size", _cfg_int(cfg, "watchlist_batch_size", 100))
     accepted, unresolved = _batch_payload(items)
     if not accepted:
         _info("write_skipped", op=op, reason="empty_payload", unresolved=len(unresolved))
-        return 0, unresolved
+        return {"ok": len(unresolved) == 0, "count": 0, "confirmed": 0, "unresolved": unresolved, "confirmed_keys": [], "skipped_keys": []}
 
     url = URL_ADD if op == "add" else URL_REMOVE
     ok = 0
-    for sl in _chunk(accepted, batch):
-        payload = build_watchlist_body(sl, date_field="collected_at" if op == "add" else None)
+    skipped = 0
+    confirmed_keys: list[str] = []
+    skipped_keys: list[str] = []
+    chunks: Iterable[list[dict[str, Any]]]
+    if op == "add" and len(accepted) <= max(1, batch):
+        chunks = ([x] for x in accepted)
+    else:
+        chunks = _chunk(accepted, batch)
+    for sl in chunks:
+        payload = build_watchlist_body(sl, date_field="watched_at" if op == "add" else None)
         if not payload:
             continue
         r = request_with_retries(adapter.client.session, "POST", url, headers=headers_for_adapter(adapter), json=payload, timeout=adapter.cfg.timeout, max_retries=adapter.cfg.max_retries)
@@ -353,22 +461,38 @@ def _write(adapter: Any, op: str, items: Iterable[Mapping[str, Any]]) -> tuple[i
             existing = body.get("existing") if op == "add" else {}
             result = result if isinstance(result, Mapping) else {}
             existing = existing if isinstance(existing, Mapping) else {}
-            ok += sum(int(result.get(k) or 0) for k in ("movies", "shows", "seasons", "episodes"))
-            ok += sum(int(existing.get(k) or 0) for k in ("movies", "shows", "seasons", "episodes"))
-            _record_not_found(body.get("not_found") or {}, unresolved)
+            added_count = sum(int(result.get(k) or 0) for k in ("movies", "shows", "seasons", "episodes"))
+            existing_count = sum(int(existing.get(k) or 0) for k in ("movies", "shows", "seasons", "episodes"))
+            ok += added_count
+            skipped += existing_count
+            not_found_keys = set(_record_not_found(body.get("not_found") or {}, unresolved))
+            slice_keys = [_item_key(x) for x in sl]
+            slice_keys = [k for k in slice_keys if k and k not in not_found_keys]
+            if added_count and not existing_count:
+                confirmed_keys.extend(slice_keys)
+            elif existing_count and not added_count:
+                skipped_keys.extend(slice_keys)
         else:
             _warn("write_failed", op=op, status=r.status_code, body=(r.text or "")[:180])
             for x in sl:
                 unresolved.append({"item": x, "hint": f"http:{r.status_code}"})
     if ok:
         _shadow_bust()
-    _info("write_done", op=op, ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
-    return ok, unresolved
+    _info("write_done", op=op, ok=len(unresolved) == 0, applied=ok, existing=skipped, unresolved=len(unresolved))
+    return {
+        "ok": len(unresolved) == 0,
+        "count": ok,
+        "confirmed": ok,
+        "confirmed_keys": list(dict.fromkeys(confirmed_keys)),
+        "skipped": skipped,
+        "skipped_keys": list(dict.fromkeys(skipped_keys)),
+        "unresolved": unresolved,
+    }
 
 
-def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
+def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     return _write(adapter, "add", items)
 
 
-def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
+def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     return _write(adapter, "remove", items)

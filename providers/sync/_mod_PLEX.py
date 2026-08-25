@@ -544,7 +544,7 @@ def get_manifest() -> Mapping[str, Any]:
             "collection": {
                 "index_semantics": "present",
                 "observed_deletes": True,
-                "types": {"movies": True, "shows": False, "seasons": False, "episodes": True},
+                "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
                 "read": True,
                 "upsert": False,
                 "remove": False,
@@ -1547,7 +1547,7 @@ class _PlexOPS:
             "collection": {
                 "index_semantics": "present",
                 "observed_deletes": True,
-                "types": {"movies": True, "shows": False, "seasons": False, "episodes": True},
+                "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
                 "read": True,
                 "upsert": False,
                 "remove": False,
