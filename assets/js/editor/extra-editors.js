@@ -26,6 +26,11 @@
       const w = row.raw && row.raw.watched_at;
       if (!w) placeholder = "Set time";
       else label = dt.formatHistoryLabel ? dt.formatHistoryLabel(w) : String(w || "");
+    } else if (state.kind === "collection") {
+      icon = "inventory_2";
+      const c = row.raw && row.raw.collected_at;
+      if (!c) placeholder = "Set date";
+      else label = dt.formatHistoryLabel ? dt.formatHistoryLabel(c) : String(c || "");
     } else if (state.kind === "progress") {
       icon = "play_circle";
       const p = row.raw && row.raw.progress_ms;
@@ -95,6 +100,40 @@
         { label: "Clear", kind: "ghost", onClick: () => { row.raw.watched_at = null; ctx.finishExtraChange(row, displayEl, close); } },
         { label: "Close", kind: "ghost", onClick: close },
         { label: "Save", kind: "primary", onClick: () => { row.raw.watched_at = dt.dateTimeInputsToIso?.(dateInput.value, timeInput.value) || null; ctx.finishExtraChange(row, displayEl, close); } },
+      ]);
+
+      dateInput.focus();
+    });
+  }
+
+  function openCollectionEditor(row, anchor, displayEl, ctx = {}) {
+    const dt = DT();
+    ctx.openPopup(anchor, (pop, close) => {
+      ctx.appendPopupTitle(pop, "Collected at");
+      const grid = document.createElement("div");
+      grid.className = "cw-datetime-grid";
+
+      const dateInput = document.createElement("input");
+      dateInput.type = "date";
+      dateInput.id = "cw_collection_date";
+      dateInput.name = dateInput.id;
+      const timeInput = document.createElement("input");
+      timeInput.type = "time";
+      timeInput.id = "cw_collection_time";
+      timeInput.name = timeInput.id;
+      timeInput.step = 60;
+
+      dt.fillDateTimeInputs?.(row.raw && row.raw.collected_at, dateInput, timeInput);
+
+      grid.appendChild(dateInput);
+      grid.appendChild(timeInput);
+      pop.appendChild(grid);
+      dt.appendUtcHint?.(pop);
+
+      ctx.appendPopupActions(pop, [
+        { label: "Clear", kind: "ghost", onClick: () => { row.raw.collected_at = null; ctx.finishExtraChange(row, displayEl, close); } },
+        { label: "Close", kind: "ghost", onClick: close },
+        { label: "Save", kind: "primary", onClick: () => { row.raw.collected_at = dt.dateTimeInputsToIso?.(dateInput.value, timeInput.value) || null; ctx.finishExtraChange(row, displayEl, close); } },
       ]);
 
       dateInput.focus();
@@ -219,6 +258,7 @@
   Editor.ExtraEditors = {
     updateExtraDisplay,
     openHistoryEditor,
+    openCollectionEditor,
     openProgressEditor,
     openRatingEditor,
   };

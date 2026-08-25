@@ -1399,7 +1399,7 @@
   }
 
   function isExtraKindEditable() {
-    return state.kind === "ratings" || state.kind === "history" || state.kind === "progress";
+    return state.kind === "ratings" || state.kind === "history" || state.kind === "progress" || state.kind === "collection";
   }
 
   function manualCorrectionKindLabel(kind = state.kind) {
@@ -1407,6 +1407,7 @@
     if (k === "history") return "history date";
     if (k === "ratings") return "rating";
     if (k === "progress") return "progress";
+    if (k === "collection") return "collection date";
     return "extra field";
   }
 
@@ -1632,6 +1633,7 @@
       openRawFieldsModal,
       openRatingEditor,
       openHistoryEditor,
+      openCollectionEditor,
       openProgressEditor,
       setStatus,
       setRowsStatus,
@@ -1646,6 +1648,9 @@
     return editorExtraEditors.openHistoryEditor(row, anchor, displayEl, extraEditorContext());
   }
 
+  function openCollectionEditor(row, anchor, displayEl) {
+    return editorExtraEditors.openCollectionEditor(row, anchor, displayEl, extraEditorContext());
+  }
 
   function openProgressEditor(row, anchor, displayEl) {
     return editorExtraEditors.openProgressEditor(row, anchor, displayEl, extraEditorContext());

@@ -91,6 +91,11 @@
           const bw = b.raw && b.raw.watched_at;
           av = aw ? Date.parse(aw) || 0 : 0;
           bv = bw ? Date.parse(bw) || 0 : 0;
+        } else if (state.kind === "collection") {
+          const ac = a.raw && a.raw.collected_at;
+          const bc = b.raw && b.raw.collected_at;
+          av = ac ? Date.parse(ac) || 0 : 0;
+          bv = bc ? Date.parse(bc) || 0 : 0;
         } else {
           av = "";
           bv = "";
@@ -138,6 +143,7 @@
       openRawFieldsModal: ctx.openRawFieldsModal,
       openRatingEditor: ctx.openRatingEditor,
       openHistoryEditor: ctx.openHistoryEditor,
+      openCollectionEditor: ctx.openCollectionEditor,
       openProgressEditor: ctx.openProgressEditor,
     };
   }
