@@ -45,7 +45,7 @@ def test_collection_state_store_round_trips_non_default_instance(tmp_path) -> No
     store.save_feature_blocks(
         {
             ("PLEX", "PLEX-P01", "collection"): {
-                "baseline": {"items": {"tmdb:1": {"type": "movie", "ids": {"tmdb": "1"}}}},
+                "baseline": {"items": {"tmdb:1": {"type": "movie", "ids": {"tmdb": "1"}, "collected_at": "2026-05-14T08:50:05Z"}}},
                 "checkpoint": None,
             }
         }
@@ -55,6 +55,7 @@ def test_collection_state_store_round_trips_non_default_instance(tmp_path) -> No
 
     items = state["providers"]["PLEX"]["instances"]["PLEX-P01"]["collection"]["baseline"]["items"]
     assert set(items) == {"tmdb:1"}
+    assert items["tmdb:1"]["collected_at"] == "2026-05-14T08:50:05Z"
 
 
 def test_api_normalizes_collection_types_to_movies_by_default() -> None:

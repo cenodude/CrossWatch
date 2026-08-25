@@ -219,6 +219,29 @@ def test_same_key_history_pair_converges_and_stays_native(
     assert len(dst.add_calls) == 1
 
 
+def test_collection_baselines_preserve_collected_at(
+    config_base: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    item = {
+        "type": "movie",
+        "title": "Collected Movie",
+        "year": 2026,
+        "ids": {"tmdb": "101"},
+        "collected_at": "2026-05-14T08:50:05Z",
+    }
+    key = _event_key(item)
+    src = HistoryOps("SRC", {key: dict(item)}, feature="collection")
+    dst = HistoryOps("DST", {}, feature="collection")
+
+    orch = _run(monkeypatch, src, dst, "collection")
+
+    assert len(dst.add_calls) == 1
+    src_baseline = _baseline(orch, "SRC", "collection")
+    dst_baseline = _baseline(orch, "DST", "collection")
+    assert src_baseline[key]["collected_at"] == "2026-05-14T08:50:05Z"
+    assert dst_baseline[key]["collected_at"] == "2026-05-14T08:50:05Z"
+
+
 def test_translated_history_pair_keeps_each_baseline_provider_native(
     config_base: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:

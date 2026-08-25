@@ -22,7 +22,7 @@ _dbg, _info, _warn, _error = make_logger("collection")
 
 _ITEM_FIELDS = (
     "ProviderIds,ProductionYear,Type,IndexNumber,ParentIndexNumber,SeriesId,"
-    "SeriesName,ParentId,CollectionFolderId,AncestorIds,LibraryId,Name"
+    "SeriesName,ParentId,CollectionFolderId,AncestorIds,LibraryId,Name,DateCreated"
 )
 
 
@@ -42,6 +42,12 @@ def _progress(adapter: Any) -> Any:
             pass
 
     return _Noop()
+
+
+def _collected_at_from_raw(raw: Mapping[str, Any]) -> str | None:
+    value = raw.get("DateCreated") or raw.get("date_created") or raw.get("added_at")
+    text = str(value or "").strip()
+    return text or None
 
 
 def _series_ids_by_item_id(
@@ -169,6 +175,9 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
                 continue
         try:
             item = emby_normalize(raw)
+            collected_at = _collected_at_from_raw(raw)
+            if collected_at:
+                item["collected_at"] = collected_at
             lib_id = emby_resolve_library_id(
                 raw,
                 roots,

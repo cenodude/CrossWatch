@@ -28,6 +28,12 @@ WHITELIST_FEATURES = ("history", "ratings", "progress", "collection", "scrobble"
 
 def properties_for_feature(feature: str) -> tuple[list[str], list[str], list[str]]:
     name = str(feature or "").strip().lower()
+    if name == "collection":
+        return (
+            [*MOVIE_BASE_PROPERTIES, "dateadded"],
+            [*EPISODE_BASE_PROPERTIES, "dateadded"],
+            list(SHOW_PROPERTIES),
+        )
     if name == "history":
         return (
             [*MOVIE_BASE_PROPERTIES, "playcount", "lastplayed"],
@@ -276,12 +282,25 @@ def resume_ms(row: Mapping[str, Any]) -> tuple[int | None, int | None, float | N
     return pos_ms, total_ms, pct
 
 
+def kodi_datetime_to_iso(value: Any) -> str | None:
+    text = str(value or "").strip()
+    if not text or text.startswith("0000-00-00"):
+        return None
+    try:
+        return _local_datetime(text).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except Exception:
+        return text if "T" in text else None
+
+
 def movie_item(row: Mapping[str, Any]) -> dict[str, Any] | None:
     kid = kodi_item_id(row, "movie")
     if kid is None:
         return None
     ids = normalize_uniqueids(row.get("uniqueid"))
     item: dict[str, Any] = {"type": "movie", "ids": ids, "title": row.get("title"), "year": to_int(row.get("year")), "_kodi_id": kid, "_kodi_type": "movie"}
+    collected_at = kodi_datetime_to_iso(row.get("dateadded"))
+    if collected_at:
+        item["collected_at"] = collected_at
     item["_kodi_keys"] = sorted(keys_for_item(item))
     return item
 
@@ -305,6 +324,9 @@ def episode_item(row: Mapping[str, Any], show_ids_by_id: Mapping[int, Mapping[st
         "_kodi_id": kid,
         "_kodi_type": "episode",
     }
+    collected_at = kodi_datetime_to_iso(row.get("dateadded"))
+    if collected_at:
+        item["collected_at"] = collected_at
     item["_kodi_keys"] = sorted(keys_for_item(item))
     return item
 

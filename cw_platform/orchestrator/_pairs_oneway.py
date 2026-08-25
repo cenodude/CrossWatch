@@ -945,7 +945,12 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
     def _sync_minimal(it: Mapping[str, Any], fallback_key: str | None = None) -> dict[str, Any]:
         if feature == "history":
             return minimal_history_item(it, fallback_key, event_mode=history_event_mode)
-        return _minimal(it)
+        out = _minimal(it)
+        if feature == "collection":
+            collected_at = it.get("collected_at")
+            if collected_at not in (None, ""):
+                out["collected_at"] = str(collected_at)
+        return out
 
     def _find_history_event_in_idx(idx: Mapping[str, Any], it: Mapping[str, Any], fallback_key: str | None = None) -> Mapping[str, Any] | None:
         if feature != "history" or not history_event_mode:
@@ -1464,6 +1469,11 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                 mirror_removes.append(_minimal(dv))
         elif not (feature == "history" and history_event_mode):
             adds, mirror_removes = diff(src_idx, dst_full)
+            if feature == "collection":
+                src_alias_tmp = _alias_index(src_idx)
+                dst_alias_tmp = _alias_index(dst_full)
+                adds = [_sync_minimal(_find_in_idx(src_idx, src_alias_tmp, it) or it) for it in adds]
+                mirror_removes = [_sync_minimal(_find_in_idx(dst_full, dst_alias_tmp, it) or it) for it in mirror_removes]
 
     src_alias = _alias_index(src_idx)
     dst_alias = _alias_index(dst_full)
@@ -2063,6 +2073,26 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                 except Exception:
                     pass
 
+    def _merge_collection_payload(base: Mapping[str, Any], extra: Mapping[str, Any]) -> dict[str, Any]:
+        out = dict(base or {})
+        for k, v in (extra or {}).items():
+            if k in ("ids", "show_ids"):
+                continue
+            if out.get(k) in (None, "") and v not in (None, ""):
+                out[k] = v
+
+        for fld in ("ids", "show_ids"):
+            b = out.get(fld) if isinstance(out.get(fld), Mapping) else {}
+            e = extra.get(fld) if isinstance(extra.get(fld), Mapping) else {}
+            if b or e:
+                merged: dict[str, Any] = dict(b or {})
+                for kk, vv in (e or {}).items():
+                    if merged.get(kk) in (None, "") and vv not in (None, ""):
+                        merged[kk] = vv
+                if merged:
+                    out[fld] = merged
+        return out
+
     if (not dry_run_flag) and (not dst_down) and needs_post_apply_refresh(post_apply_add_res):
         _r = post_apply_add_res or {}
         emit("post_apply_refresh:start", provider=dst, instance=dst_inst, feature=feature,
@@ -2081,7 +2111,10 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
             for rk, rv in refreshed.items():
                 if rk not in dst_full:
                     base_update += 1
-                dst_full[rk] = rv
+                if feature == "collection" and isinstance(dst_full.get(rk), Mapping) and isinstance(rv, Mapping):
+                    dst_full[rk] = _merge_collection_payload(dst_full[rk], rv)
+                else:
+                    dst_full[rk] = rv
                 if feature == "history" and not history_event_mode:
                     dst_canonical[rk] = rv
         tk = str(os.environ.get("CW_PLEX_TRACE_KEY", "") or "").strip().lower()

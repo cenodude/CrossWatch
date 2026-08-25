@@ -546,6 +546,9 @@ def _batch_payload(items: Iterable[Mapping[str, Any]]) -> tuple[list[dict[str, A
     rejected: list[dict[str, Any]] = []
     for item in items or []:
         m = id_minimal(item)
+        collected_at = item.get("collected_at")
+        if collected_at:
+            m["collected_at"] = str(collected_at)
         typ = _item_media_type(m)
         ids = _ids_for_mdblist(m, show_scope=typ in ("season", "episode"))
         if typ in ("season", "episode") and not ids:

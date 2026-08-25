@@ -79,6 +79,7 @@ def test_collection_index_reads_trakt_movie_and_show_endpoints(monkeypatch: Any)
     assert "GET https://api.trakt.tv/sync/collection/movies" in calls
     assert "GET https://api.trakt.tv/sync/collection/shows" in calls
     assert idx["tmdb:438631"]["type"] == "movie"
+    assert idx["tmdb:438631"]["collected_at"] == "2026-08-24T20:00:00.000Z"
     assert idx["tmdb:95396#s01e01"]["type"] == "episode"
     assert idx["tmdb:95396#s01e02"]["type"] == "episode"
 
@@ -103,6 +104,7 @@ def test_collection_write_uses_collection_endpoint_and_shared_nested_body(monkey
                 "season": 1,
                 "episode": 2,
                 "ids": {},
+                "collected_at": "2026-01-02T03:04:05Z",
             }
         ],
     )
@@ -110,4 +112,16 @@ def test_collection_write_uses_collection_endpoint_and_shared_nested_body(monkey
     assert added == 1
     assert unresolved == []
     assert calls[0]["url"] == "https://api.trakt.tv/sync/collection"
-    assert calls[0]["json"] == {"shows": [{"ids": {"tmdb": "95396"}, "seasons": [{"number": 1, "episodes": [{"number": 2}]}]}]}
+    assert calls[0]["json"] == {
+        "shows": [
+            {
+                "ids": {"tmdb": "95396"},
+                "seasons": [
+                    {
+                        "number": 1,
+                        "episodes": [{"number": 2, "collected_at": "2026-01-02T03:04:05Z"}],
+                    }
+                ],
+            }
+        ]
+    }

@@ -3,8 +3,12 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import sqlite3
+
 from cw_platform.local_db import get_conn
 from cw_platform.local_db import state as sqlite_state
+from cw_platform.local_db import schema as sqlite_schema
+from cw_platform.local_db.db import connect
 from cw_platform.orchestrator._state_store import StateStore
 
 
@@ -84,6 +88,25 @@ def test_state_database_preserves_current_sync_item_fields(tmp_path) -> None:
     assert loaded_item == item
     assert loaded["providers"]["TRAKT"]["history"]["checkpoint"] == "checkpoint-1"
     assert loaded["last_sync_epoch"] == 123
+
+
+def test_schema_upgrade_adds_collected_at_to_existing_baseline_items(tmp_path) -> None:
+    db_path = tmp_path / "old-crosswatch.sqlite3"
+    old_schema = sqlite_schema._CREATE_BASELINE_ITEMS.replace("    collected_at             TEXT,\n", "")
+    raw = sqlite3.connect(db_path)
+    try:
+        raw.execute(old_schema)
+        raw.commit()
+    finally:
+        raw.close()
+
+    conn = connect(db_path, base_path=tmp_path)
+    try:
+        columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(baseline_items)").fetchall()}
+    finally:
+        conn.close()
+
+    assert "collected_at" in columns
 
 
 def _feature_row_ids(base_path) -> dict[tuple[str, str, str], int]:

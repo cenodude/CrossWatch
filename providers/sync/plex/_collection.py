@@ -9,6 +9,8 @@ from cw_platform.id_map import canonical_key
 
 from ._common import (
     active_pms_token,
+    as_epoch,
+    iso_from_epoch,
     make_logger,
     minimal_from_history_row,
     plex_feature_library_ids,
@@ -25,6 +27,11 @@ def _row_type(row: Mapping[str, Any], fallback: str) -> str:
     return fallback
 
 
+def _collected_at_from_row(row: Mapping[str, Any]) -> str | None:
+    ts = as_epoch(row.get("addedAt") or row.get("added_at"))
+    return iso_from_epoch(ts) if ts else None
+
+
 def _normalize_row(row: Mapping[str, Any], *, library_id: str, fallback_type: str, token: str | None) -> dict[str, Any] | None:
     raw = dict(row)
     raw["librarySectionID"] = str(library_id)
@@ -35,6 +42,9 @@ def _normalize_row(row: Mapping[str, Any], *, library_id: str, fallback_type: st
     item = dict(item)
     item["type"] = "episode" if _row_type(raw, fallback_type) == "episode" else "movie"
     item["library_id"] = str(library_id)
+    collected_at = _collected_at_from_row(raw)
+    if collected_at:
+        item["collected_at"] = collected_at
     return item
 
 

@@ -257,6 +257,7 @@ def test_floppy_collection_reads_owned_movies_and_episodes() -> None:
 
     assert out["tmdb:11"]["format"] == "digital"
     assert out["tmdb:11"]["_floppy_collection_id"] == "91"
+    assert out["tmdb:11"]["collected_at"] == "2026-08-01T12:00:00Z"
     assert out["tmdb:22#s01e02"]["_floppy_collection_id"] == "92"
 
 
@@ -270,12 +271,12 @@ def test_floppy_collection_adds_movie_via_item_id() -> None:
         }
     )
 
-    res = _collection.add(adapter, [{"type": "movie", "ids": {"tmdb": "11"}}])
+    res = _collection.add(adapter, [{"type": "movie", "ids": {"tmdb": "11"}, "collected_at": "2026-08-01T12:00:00Z"}])
 
     assert res["count"] == 1
     assert [c["path"] for c in adapter.client.session.calls] == ["media/movie", "collection"]
     assert adapter.client.session.calls[0]["json"] == {"source": "tmdb", "media_id": "11", "status": 0}
-    assert adapter.client.session.calls[1]["json"] == {"item_id": "41", "media_type": "digital"}
+    assert adapter.client.session.calls[1]["json"] == {"item_id": "41", "media_type": "digital", "collected_at": "2026-08-01T12:00:00Z"}
 
 
 def test_floppy_collection_adds_episode_scope() -> None:

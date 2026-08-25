@@ -97,8 +97,9 @@ def test_kodi_sync_properties_match_jsonrpc_v13_5_contract():
 
     for feature in ("history", "ratings", "progress", "collection", ""):
         movie_props, episode_props, show_props = common.properties_for_feature(feature)
-        assert set(movie_props) <= movie_allowed
-        assert set(episode_props) <= episode_allowed
+        extra = {"dateadded"} if feature == "collection" else set()
+        assert set(movie_props) <= (movie_allowed | extra)
+        assert set(episode_props) <= (episode_allowed | extra)
         assert set(show_props) <= show_allowed
         assert "year" not in episode_props
 
@@ -203,16 +204,24 @@ def test_kodi_library_rows_uses_v13_5_path_filters_without_extra_properties(monk
 
 
 def test_collection_index_reads_library_inventory():
-    ad = adapter(FakeKodiClient([movie()], [episode()], [tvshow()]))
+    ad = adapter(
+        FakeKodiClient(
+            [movie(dateadded="2026-01-02T03:04:05Z")],
+            [episode(dateadded="2026-02-03T04:05:06Z")],
+            [tvshow()],
+        )
+    )
 
     index = mod.feat_collection.build_index(ad)
 
     assert sorted(index) == ["tmdb:329865", "tmdb:63639#s01e01"]
     assert index["tmdb:329865"]["type"] == "movie"
+    assert index["tmdb:329865"]["collected_at"] == "2026-01-02T03:04:05Z"
     ep = index["tmdb:63639#s01e01"]
     assert ep["type"] == "episode"
     assert ep["show_ids"] == {"tmdb": "63639", "tvdb": "280619"}
     assert ep["season"] == 1 and ep["episode"] == 1
+    assert ep["collected_at"] == "2026-02-03T04:05:06Z"
 
 
 def test_collection_writes_are_source_only():
