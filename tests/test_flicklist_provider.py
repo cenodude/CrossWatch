@@ -42,7 +42,7 @@ CFG = {
 }
 
 
-def test_sync_manifest_is_dormant_while_scrobble_remains_available() -> None:
+def test_sync_manifest_declares_full_provider_features() -> None:
     from providers.sync._mod_FLICKLIST import OPS, get_manifest
 
     manifest = dict(get_manifest())
@@ -51,24 +51,21 @@ def test_sync_manifest_is_dormant_while_scrobble_remains_available() -> None:
 
     assert manifest["name"] == "FLICKLIST"
     assert manifest["version"] == "0.1"
-    assert manifest["disabled"] is True
-    assert features == {"watchlist": False, "ratings": False, "history": False, "progress": False, "playlists": False}
+    assert features == {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": True}
     assert OPS.features() == features
-    assert caps["watchlist"]["write"] is False
-    assert caps["ratings"]["write"] is False
-    assert caps["ratings"]["remove"] is False
-    assert caps["history"]["write"] is False
-    assert caps["history"]["remove"] is False
-    assert caps["progress"]["read"] is False
-    assert caps["progress"]["upsert"] is False
-    assert caps["playlists"]["create"] is False
+    assert caps["watchlist"]["write"] is True
+    assert caps["ratings"]["remove"] is True
+    assert caps["history"]["write"] is True
+    assert caps["progress"]["read"] is True
+    assert caps["playlists"]["create"] is True
+    assert caps["playlists"]["reorder"] is False
     assert caps["scrobble"]["write"] is True
 
 
-def test_flicklist_is_not_registered_as_sync_provider() -> None:
+def test_flicklist_is_registered_as_sync_provider() -> None:
     from cw_platform.modules_registry import MODULES
 
-    assert "_mod_FLICKLIST" not in MODULES["SYNC"]
+    assert MODULES["SYNC"]["_mod_FLICKLIST"] == "providers.sync._mod_FLICKLIST"
 
 
 def test_device_code_uses_built_in_public_client_id() -> None:
@@ -560,7 +557,7 @@ def test_history_index_supplements_empty_history_from_watched_show_snapshot(monk
     assert out["tmdb:95396#s01e02"]["show_ids"]["tmdb"] == "95396"
 
 
-def test_playback_progress_service_does_not_register_flicklist() -> None:
+def test_playback_progress_service_registers_flicklist() -> None:
     from services.playback_progress.service import PHASE1_PROVIDERS, PlaybackProgressService
 
     cfg = {
@@ -574,9 +571,9 @@ def test_playback_progress_service_does_not_register_flicklist() -> None:
     service = PlaybackProgressService()
     specs = [spec for spec in service.provider_instances(cfg) if spec["provider"] == "flicklist"]
 
-    assert "flicklist" not in PHASE1_PROVIDERS
-    assert service._adapter("flicklist") is None
-    assert specs == []
+    assert "flicklist" in PHASE1_PROVIDERS
+    assert service._adapter("flicklist") is not None
+    assert specs == [{"provider": "flicklist", "instance_id": "kid", "instance_label": "flicklist kid"}]
 
 
 class _FakeFlickListOps:

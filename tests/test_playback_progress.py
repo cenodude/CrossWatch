@@ -84,9 +84,8 @@ def test_playback_progress_frontend_includes_kodi_provider_key():
     js = (ROOT / "assets" / "js" / "playback_progress.js").read_text(encoding="utf-8")
 
     keys = js.split("PLAYBACK_PROVIDER_KEYS")[1].split("]")[0]
-    for provider in ("crosswatch", "trakt", "simkl", "mdblist", "publicmetadb", "punchplay", "plex", "emby", "jellyfin", "nuvio", "kodi", "stremio", "floppy"):
+    for provider in ("crosswatch", "trakt", "simkl", "mdblist", "publicmetadb", "punchplay", "flicklist", "plex", "emby", "jellyfin", "nuvio", "kodi", "stremio", "floppy"):
         assert f'"{provider}"' in keys, provider
-    assert '"flicklist"' not in keys
 
 
 def test_playback_progress_frontend_is_readonly_for_managed_users():
