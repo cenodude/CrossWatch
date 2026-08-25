@@ -558,6 +558,10 @@ def _entity_from_kind(kind: Any) -> str:
 _RESOLVED_ENTITY_MEMO: dict[str, str] = {}
 
 
+class _NoMetadataResult(RuntimeError):
+    pass
+
+
 def _resolve_entity(
     entity: str,
     tmdb_id: str | int,
@@ -663,20 +667,20 @@ def _resolve_tmdb_cached(
 ) -> dict[str, Any]:
     _METADATA, _, _ = _env()
     if _METADATA is None:
-        return {}
+        raise _NoMetadataResult("MetadataManager not available")
     need = {k: True for k in need_key} if need_key else None
-    try:
-        return (
-            _METADATA.resolve(
-                entity=entity,
-                ids={"tmdb": tmdb_id},
-                locale=locale,
-                need=need,
-            )
-            or {}
+    result = (
+        _METADATA.resolve(
+            entity=entity,
+            ids={"tmdb": tmdb_id},
+            locale=locale,
+            need=need,
         )
-    except Exception:
-        return {}
+        or {}
+    )
+    if not isinstance(result, dict) or not result:
+        raise _NoMetadataResult("empty metadata result")
+    return result
 
 
 def get_meta(
@@ -725,9 +729,21 @@ def get_meta(
         )
 
     ttl_key = _ttl_bucket(_cfg_meta_ttl_secs())
-    res = _resolve_tmdb_cached(
-        ttl_key, entity, str(tmdb_id), eff_locale, need_key
-    ) or {}
+    try:
+        res = _resolve_tmdb_cached(
+            ttl_key, entity, str(tmdb_id), eff_locale, need_key
+        ) or {}
+    except _NoMetadataResult:
+        res = {}
+    except Exception as e:
+        _meta_debug(
+            "metadata_resolve_failed",
+            type=entity,
+            tmdb_id=tmdb_id,
+            locale=eff_locale or "en-US",
+            error=e.__class__.__name__,
+        )
+        res = {}
 
     if res and _meta_cache_enabled():
         try:

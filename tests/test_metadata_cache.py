@@ -70,3 +70,27 @@ def test_meta_api_reuses_shared_disk_cache_after_memory_cache_reset(tmp_path, mo
     assert first["title"] == "Cached title"
     assert second["title"] == "Cached title"
     assert calls == [("movie", "321")]
+
+
+def test_empty_tmdb_result_is_not_cached_after_transient_failure(tmp_path, monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+
+    class Metadata:
+        def resolve(self, *, entity, ids, locale=None, need=None):
+            calls.append((entity, ids["tmdb"]))
+            if len(calls) == 1:
+                return {}
+            return {"type": entity, "title": "Recovered title", "ids": dict(ids)}
+
+    monkeypatch.setattr(metaAPI, "_env", lambda: (Metadata(), tmp_path.parent, lambda: {}))
+    monkeypatch.setattr(metaAPI, "_meta_cache_dir", lambda: tmp_path)
+    monkeypatch.setattr(metaAPI, "_meta_cache_enabled", lambda: False)
+    monkeypatch.setattr(metaAPI, "_cfg_meta_ttl_secs", lambda: 720 * 3600)
+    metaAPI._resolve_tmdb_cached.cache_clear()
+
+    first = metaAPI.get_meta("unused", "movie", "654", tmp_path, need={"title": True}, locale="en-US")
+    second = metaAPI.get_meta("unused", "movie", "654", tmp_path, need={"title": True}, locale="en-US")
+
+    assert first == {}
+    assert second["title"] == "Recovered title"
+    assert calls == [("movie", "654"), ("movie", "654")]
