@@ -14,9 +14,9 @@ const RATINGS_TYPE_RULES = {
 };
 
 const COLLECTION_TYPES = {
-  PLEX: ["movies", "episodes"],
-  EMBY: ["movies", "episodes"],
-  JELLYFIN: ["movies", "episodes"],
+  PLEX: ["movies", "shows", "seasons", "episodes"],
+  EMBY: ["movies", "shows", "seasons", "episodes"],
+  JELLYFIN: ["movies", "shows", "seasons", "episodes"],
   KODI: ["movies", "episodes"],
   TRAKT: ["movies", "shows", "seasons", "episodes"],
   MDBLIST: ["movies", "shows", "seasons", "episodes"],

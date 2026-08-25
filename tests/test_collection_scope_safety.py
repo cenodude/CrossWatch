@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from cw_platform.orchestrator import _pairs_oneway as oneway
 
 
@@ -72,3 +74,12 @@ def test_config_loader_normalizes_collection_types_to_movies_by_default() -> Non
     out = _normalize_features_map({"collection": {"enable": True, "add": True, "remove": True}})
 
     assert out["collection"]["types"] == ["movies"]
+
+
+def test_pair_config_allows_server_collection_show_and_season_scope() -> None:
+    js = (Path(__file__).resolve().parents[1] / "assets" / "js" / "modals" / "pair-config" / "custom-rules.js").read_text(encoding="utf-8")
+
+    assert 'PLEX: ["movies", "shows", "seasons", "episodes"]' in js
+    assert 'EMBY: ["movies", "shows", "seasons", "episodes"]' in js
+    assert 'JELLYFIN: ["movies", "shows", "seasons", "episodes"]' in js
+    assert 'PUNCHPLAY: ["movies", "shows", "seasons"]' in js

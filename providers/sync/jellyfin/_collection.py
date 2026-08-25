@@ -103,7 +103,7 @@ def _fetch_rows(adapter: Any) -> tuple[list[tuple[Mapping[str, Any], str | None]
     page_size = 500
     base_params: dict[str, Any] = {
         "Recursive": True,
-        "IncludeItemTypes": "Movie,Episode",
+        "IncludeItemTypes": "Movie,Series,Season,Episode",
         "Fields": _ITEM_FIELDS,
         "EnableUserData": False,
     }
@@ -166,7 +166,7 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
 
     for idx, (raw, source_library_id) in enumerate(rows, start=1):
         raw_type = str(raw.get("Type") or "").strip()
-        if raw_type not in {"Movie", "Episode"}:
+        if raw_type not in {"Movie", "Series", "Season", "Episode"}:
             _warn("unsupported_collection_row_type", provider_item_id=str(raw.get("Id") or ""), media_type=raw_type)
             continue
         if allowed:
@@ -176,6 +176,14 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
                 continue
         try:
             item = jelly_normalize(raw)
+            if raw_type == "Series":
+                item["type"] = "show"
+            elif raw_type == "Season":
+                item["type"] = "season"
+            elif raw_type == "Episode":
+                item["type"] = "episode"
+            elif raw_type == "Movie":
+                item["type"] = "movie"
             collected_at = _collected_at_from_raw(raw)
             if collected_at:
                 item["collected_at"] = collected_at
@@ -190,8 +198,15 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
                 item["library_id"] = lib_id
             series_id = str(raw.get("SeriesId") or "").strip()
             show_ids = series_ids_by_item_id.get(series_id)
-            if raw_type == "Episode" and show_ids:
+            if raw_type in {"Season", "Episode"} and show_ids:
                 item["show_ids"] = show_ids
+            if raw_type == "Season" and item.get("season") is None:
+                season_no = raw.get("IndexNumber")
+                try:
+                    if season_no is not None:
+                        item["season"] = int(season_no)
+                except Exception:
+                    pass
             key = canonical_key(item)
             if not key:
                 _warn("collection_item_without_key", provider_item_id=str(raw.get("Id") or ""), item_title=str(raw.get("Name") or ""), media_type=raw_type, provider_ids=dict(raw.get("ProviderIds") or {}))

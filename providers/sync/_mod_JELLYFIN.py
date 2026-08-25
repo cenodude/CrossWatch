@@ -211,7 +211,7 @@ _PROGRESS_CAPABILITIES: dict[str, Any] = {
 _COLLECTION_CAPABILITIES: dict[str, Any] = {
     "index_semantics": "present",
     "observed_deletes": True,
-    "types": {"movies": True, "shows": False, "seasons": False, "episodes": True},
+    "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
     "read": True,
     "add": False,
     "remove": False,

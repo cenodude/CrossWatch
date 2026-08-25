@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from providers.sync.trakt import _collection as collection
+from providers.sync.trakt import _history as history
 
 
 class FakeResp:
@@ -29,23 +30,25 @@ def _adapter() -> SimpleNamespace:
     )
 
 
-def test_collection_index_reads_trakt_movie_and_show_endpoints(monkeypatch: Any) -> None:
+def test_collection_index_reads_trakt_media_endpoint(monkeypatch: Any) -> None:
     calls: list[str] = []
 
-    def fake_request(_sess: Any, method: str, url: str, **_kwargs: Any) -> FakeResp:
+    def fake_request(_sess: Any, method: str, url: str, **kwargs: Any) -> FakeResp:
         calls.append(f"{method} {url}")
-        if url.endswith("/sync/collection/movies"):
+        page = int((kwargs.get("params") or {}).get("page") or 1)
+        if url.endswith("/sync/collection/media") and page == 1:
             return FakeResp(
                 200,
                 [
                     {
+                        "type": "movie",
                         "collected_at": "2026-08-24T20:00:00.000Z",
                         "movie": {"title": "Dune", "year": 2021, "ids": {"tmdb": 438631, "trakt": 1}},
                     }
                 ],
-                {"ETag": "m1"},
+                {"ETag": "m1", "X-Pagination-Page-Count": "2", "X-Pagination-Item-Count": "2"},
             )
-        if url.endswith("/sync/collection/shows"):
+        if url.endswith("/sync/collection/media") and page == 2:
             return FakeResp(
                 200,
                 [
@@ -63,7 +66,7 @@ def test_collection_index_reads_trakt_movie_and_show_endpoints(monkeypatch: Any)
                         ],
                     }
                 ],
-                {"ETag": "s1"},
+                {"ETag": "m1", "X-Pagination-Page-Count": "2", "X-Pagination-Item-Count": "2"},
             )
         return FakeResp(404, {})
 
@@ -75,9 +78,10 @@ def test_collection_index_reads_trakt_movie_and_show_endpoints(monkeypatch: Any)
 
     idx = collection.build_index(_adapter())
 
-    assert "GET https://api.trakt.tv/sync/collection" not in calls
-    assert "GET https://api.trakt.tv/sync/collection/movies" in calls
-    assert "GET https://api.trakt.tv/sync/collection/shows" in calls
+    assert calls == [
+        "GET https://api.trakt.tv/sync/collection/media",
+        "GET https://api.trakt.tv/sync/collection/media",
+    ]
     assert idx["tmdb:438631"]["type"] == "movie"
     assert idx["tmdb:438631"]["collected_at"] == "2026-08-24T20:00:00.000Z"
     assert idx["tmdb:95396#s01e01"]["type"] == "episode"
@@ -94,7 +98,7 @@ def test_collection_write_uses_collection_endpoint_and_shared_nested_body(monkey
     monkeypatch.setattr(collection, "request_with_retries", fake_request)
     monkeypatch.setattr(collection, "_shadow_bust", lambda: None)
 
-    added, unresolved = collection.add(
+    res = collection.add(
         _adapter(),
         [
             {
@@ -109,8 +113,9 @@ def test_collection_write_uses_collection_endpoint_and_shared_nested_body(monkey
         ],
     )
 
-    assert added == 1
-    assert unresolved == []
+    assert res["count"] == 1
+    assert res["confirmed"] == 1
+    assert res["unresolved"] == []
     assert calls[0]["url"] == "https://api.trakt.tv/sync/collection"
     assert calls[0]["json"] == {
         "shows": [
@@ -119,9 +124,95 @@ def test_collection_write_uses_collection_endpoint_and_shared_nested_body(monkey
                 "seasons": [
                     {
                         "number": 1,
-                        "episodes": [{"number": 2, "collected_at": "2026-01-02T03:04:05Z"}],
+                        "episodes": [{"number": 2, "watched_at": "2026-01-02T03:04:05Z"}],
                     }
                 ],
             }
         ]
     }
+
+
+def test_collection_write_reports_existing_as_skipped_not_added(monkeypatch: Any) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def fake_request(_sess: Any, method: str, url: str, **kwargs: Any) -> FakeResp:
+        calls.append({"method": method, "url": url, "json": kwargs.get("json")})
+        return FakeResp(201, {"added": {}, "existing": {"movies": 1}, "not_found": {}})
+
+    monkeypatch.setattr(collection, "request_with_retries", fake_request)
+    monkeypatch.setattr(collection, "_shadow_bust", lambda: None)
+
+    res = collection.add(
+        _adapter(),
+        [
+            {
+                "type": "movie",
+                "title": "Dune",
+                "ids": {"tmdb": "438631"},
+                "collected_at": "2026-01-02T03:04:05Z",
+            }
+        ],
+    )
+
+    assert res["count"] == 0
+    assert res["confirmed"] == 0
+    assert res["skipped"] == 1
+    assert res["skipped_keys"] == ["tmdb:438631"]
+    assert res["unresolved"] == []
+
+
+def test_collection_write_small_delta_maps_existing_and_not_found_exactly(monkeypatch: Any) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def fake_request(_sess: Any, method: str, url: str, **kwargs: Any) -> FakeResp:
+        payload = kwargs.get("json") or {}
+        calls.append({"method": method, "url": url, "json": payload})
+        movies = payload.get("movies") or []
+        tmdb = str((((movies[0] if movies else {}).get("ids") or {}).get("tmdb") or ""))
+        if tmdb == "438631":
+            return FakeResp(201, {"added": {}, "existing": {"movies": 1}, "not_found": {}})
+        return FakeResp(201, {"added": {}, "existing": {}, "not_found": {"movies": [{"tmdb": int(tmdb)}]}})
+
+    monkeypatch.setattr(collection, "request_with_retries", fake_request)
+    monkeypatch.setattr(collection, "_shadow_bust", lambda: None)
+
+    res = collection.add(
+        _adapter(),
+        [
+            {"type": "movie", "title": "Dune", "ids": {"tmdb": "438631"}},
+            {"type": "movie", "title": "Missing", "ids": {"tmdb": "999999"}},
+        ],
+    )
+
+    assert len(calls) == 2
+    assert res["count"] == 0
+    assert res["confirmed"] == 0
+    assert res["skipped"] == 1
+    assert res["skipped_keys"] == ["tmdb:438631"]
+    assert res["unresolved"][0]["key"] == "tmdb:999999"
+
+
+def test_history_add_to_library_uses_trakt_collection_write_date_field() -> None:
+    body = {
+        "movies": [
+            {"ids": {"tmdb": "438631"}, "watched_at": "2026-01-02T03:04:05Z"},
+        ],
+        "shows": [
+            {
+                "ids": {"tmdb": "95396"},
+                "seasons": [
+                    {
+                        "number": 1,
+                        "episodes": [{"number": 2, "watched_at": "2026-01-03T03:04:05Z"}],
+                    }
+                ],
+            }
+        ],
+    }
+
+    out = history._history_body_to_collection(body, {"movies", "shows"})
+
+    assert out["movies"][0]["watched_at"] == "2026-01-02T03:04:05Z"
+    assert "collected_at" not in out["movies"][0]
+    assert out["shows"][0]["seasons"][0]["episodes"][0]["watched_at"] == "2026-01-03T03:04:05Z"
+    assert "collected_at" not in out["shows"][0]["seasons"][0]["episodes"][0]
