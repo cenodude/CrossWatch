@@ -110,6 +110,8 @@ def get_manifest() -> Mapping[str, Any]:
                 "accepted_ids": list(_ACCEPTED_IDS),
                 "provides_ids": ["tmdb"],
                 "rewatch": True,
+                "event_history": True,
+                "rewatches": {"read": True, "write": True, "account_gate": False},
                 "requires_watched_at": True,
                 "batch_size": 100,
             },

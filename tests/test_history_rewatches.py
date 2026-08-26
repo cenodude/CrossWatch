@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any, Mapping
 
 from cw_platform.history_events import history_sync_key, minimal_history_item
@@ -42,6 +43,82 @@ class _Ops:
 
     def capabilities(self) -> dict[str, Any]:
         return {"history": {"rewatches": {"read": self._read, "write": self._write}}}
+
+
+def test_plex_can_source_rewatches_but_not_bidirectional() -> None:
+    from providers.sync import _mod_PLEX
+
+    plex = _mod_PLEX.OPS
+    target = _Ops(True, True)
+
+    assert history_rewatch_pair_enabled("history", {"rewatches": True}, "PLEX", plex, "TARGET", target)
+    assert not history_rewatch_pair_enabled("history", {"rewatches": True}, "PLEX", plex, "TARGET", target, bidirectional=True)
+
+
+def test_emby_and_jellyfin_do_not_source_rewatches() -> None:
+    from providers.sync import _mod_EMBY, _mod_JELLYFIN
+
+    target = _Ops(True, True)
+
+    assert not history_rewatch_pair_enabled("history", {"rewatches": True}, "EMBY", _mod_EMBY.OPS, "TARGET", target)
+    assert not history_rewatch_pair_enabled("history", {"rewatches": True}, "JELLYFIN", _mod_JELLYFIN.OPS, "TARGET", target)
+
+
+def test_event_history_providers_can_source_rewatches() -> None:
+    from providers.sync import _mod_FLICKLIST, _mod_PUNCHPLAY, _mod_TAUTULLI
+
+    target = _Ops(True, True)
+
+    for name, ops in (
+        ("FLICKLIST", _mod_FLICKLIST.OPS),
+        ("PUNCHPLAY", _mod_PUNCHPLAY.OPS),
+        ("TAUTULLI", _mod_TAUTULLI.OPS),
+    ):
+        assert history_rewatch_pair_enabled("history", {"rewatches": True}, name, ops, "TARGET", target)
+
+    assert not history_rewatch_pair_enabled(
+        "history",
+        {"rewatches": True},
+        "TAUTULLI",
+        _mod_TAUTULLI.OPS,
+        "TARGET",
+        target,
+        bidirectional=True,
+    )
+
+
+def test_tautulli_rewatch_mode_keeps_each_play_row() -> None:
+    from providers.sync.tautulli import _history
+
+    class Client:
+        def call(self, cmd: str, **_params: Any) -> Mapping[str, Any]:
+            assert cmd == "get_history"
+            return {
+                "data": [
+                    {
+                        "row_id": 7,
+                        "media_type": "movie",
+                        "date": 1704153600,
+                        "title": "Fight Club",
+                        "year": 1999,
+                        "guid": "com.plexapp.agents.themoviedb://550",
+                    },
+                    {
+                        "row_id": 9,
+                        "media_type": "movie",
+                        "date": 1704067200,
+                        "title": "Fight Club",
+                        "year": 1999,
+                        "guid": "com.plexapp.agents.themoviedb://550",
+                    },
+                ],
+                "recordsTotal": 2,
+            }
+
+    idx = _history.build_index(SimpleNamespace(cfg={"_cw_history_rewatches": True}, client=Client()))
+
+    assert sorted(idx) == ["tmdb:550@1704067200", "tmdb:550@1704153600"]
+    assert all(item.get("_cw_rewatch_sync") is True for item in idx.values())
 
 
 def test_history_event_keys_keep_rewatches_separate() -> None:

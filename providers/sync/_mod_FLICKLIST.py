@@ -105,6 +105,8 @@ def get_manifest() -> Mapping[str, Any]:
                 "accepted_ids": list(_ACCEPTED_IDS),
                 "provides_ids": ["fldb", "tmdb", "imdb", "tvdb", "anilist"],
                 "rewatch": True,
+                "event_history": True,
+                "rewatches": {"read": True, "write": True, "account_gate": False},
                 "requires_watched_at": False,
                 "batch_size": 1000,
             },

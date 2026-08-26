@@ -83,6 +83,9 @@ def test_kodi_manifest_capabilities_are_scoped():
 
     assert manifest["features"] == {"watchlist": False, "ratings": True, "history": True, "progress": True, "playlists": False, "collection": True}
     assert manifest["capabilities"]["history"]["read"] is True
+    assert manifest["capabilities"]["history"]["aggregated"] is True
+    assert manifest["capabilities"]["history"]["event_history"] is False
+    assert manifest["capabilities"]["history"]["rewatches"] == {"read": False, "write": False}
     assert manifest["capabilities"]["ratings"]["write"] is True
     assert manifest["capabilities"]["progress"]["types"]["episodes"] is True
     assert manifest["capabilities"]["collection"]["read"] is True

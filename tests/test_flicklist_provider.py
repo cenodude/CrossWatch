@@ -56,6 +56,8 @@ def test_sync_manifest_declares_full_provider_features() -> None:
     assert caps["watchlist"]["write"] is True
     assert caps["ratings"]["remove"] is True
     assert caps["history"]["write"] is True
+    assert caps["history"]["event_history"] is True
+    assert caps["history"]["rewatches"] == {"read": True, "write": True, "account_gate": False}
     assert caps["progress"]["read"] is True
     assert caps["playlists"]["create"] is True
     assert caps["playlists"]["reorder"] is False

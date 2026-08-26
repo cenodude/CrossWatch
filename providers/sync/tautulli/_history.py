@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import re
 from typing import Any
 
+from cw_platform.history_events import history_sync_key, minimal_history_item
 from cw_platform.id_map import canonical_key, ids_from_guid
 
 from ._common import make_logger
@@ -25,6 +26,11 @@ def _cfg_get(adapter: Any, key: str, default: Any = None) -> Any:
         if cur is None:
             return default
     return cur
+
+
+def _rewatches_enabled(adapter: Any) -> bool:
+    cfg = getattr(adapter, "cfg", None)
+    return bool(isinstance(cfg, Mapping) and cfg.get("_cw_history_rewatches"))
 
 
 def _to_int(v: Any) -> int | None:
@@ -244,6 +250,7 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
     skipped_type = 0
     skipped_no_time = 0
     skipped_no_ids = 0
+    event_mode = _rewatches_enabled(adapter)
 
     def _page_sig(rows: list[dict[str, Any]]) -> str:
         if not rows:
@@ -375,6 +382,16 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
                     item["series_title"] = st
                 if _has_ext_ids(show_ids):
                     item["show_ids"] = show_ids
+
+            if event_mode:
+                key = history_sync_key(item, event_mode=True)
+                if key and key in out:
+                    event_id = str(row.get("row_id") or row.get("reference_id") or row.get("id") or rows_seen).strip()
+                    key = f"{key}~tt{event_id or rows_seen}"
+                if key:
+                    out[key] = minimal_history_item(item, key, event_mode=True)
+                    rows_kept += 1
+                continue
 
             ck = canonical_key(item)
             if ck and ck not in out:

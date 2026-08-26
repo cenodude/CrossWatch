@@ -931,6 +931,22 @@ function applySubDisable(feature){
     only.closest?.(".opt-row")?.classList.toggle("muted",only.disabled);
   }
 }
+function applyHistoryRewatchGuard(state){
+  const rw=ID("cx-hs-rewatches");
+  if(!rw) return;
+  const row=rw.closest?.(".opt-row");
+  const supported=pairSupportsHistoryRewatches(state);
+  const enabled=!!ID("cx-hs-enable")?.checked;
+  if(!supported){
+    rw.checked=false;
+    rw.disabled=true;
+    row?.classList.add("disabled","muted");
+    return;
+  }
+  rw.disabled=!enabled;
+  row?.classList.remove("disabled");
+  row?.classList.toggle("muted",!enabled);
+}
 
 function countProviderLibraries(state, providerName){
   const historyLibs = state.options?.history?.libraries?.[providerName];
@@ -1896,12 +1912,7 @@ left.innerHTML = `
 
     right.innerHTML = parts.join("");
     applySubDisable("history");
-    const rw = ID("cx-hs-rewatches");
-    if(rw && !rwSupported){
-      rw.checked = false;
-      rw.disabled = true;
-      rw.closest(".opt-row")?.classList.add("disabled");
-    }
+    applyHistoryRewatchGuard(state);
     return;
   }
 
@@ -2208,6 +2219,7 @@ function bindChangeHandlers(state,root){
         if (add) add.checked = true;
       }
       applySubDisable("history");
+      applyHistoryRewatchGuard(state);
     }
 
     if (id === "cx-pl-enable") {
