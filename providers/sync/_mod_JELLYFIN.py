@@ -178,6 +178,14 @@ _FEATURES: dict[str, Any] = {
     "collection": feat_collection,
 }
 
+_HISTORY_CAPABILITIES: dict[str, Any] = {
+    "index_semantics": "present",
+    "observed_deletes": True,
+    "aggregated": True,
+    "event_history": False,
+    "rewatches": {"read": False, "write": False, "account_gate": False},
+}
+
 _PLAYLIST_CAPABILITIES: dict[str, Any] = {
     "read": True,
     "create": True,
@@ -276,6 +284,7 @@ def get_manifest() -> Mapping[str, Any]:
             "bidirectional": True,
             "provides_ids": False,
             "index_semantics": "present",
+            "history": _HISTORY_CAPABILITIES,
             "ratings": {
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
                 "upsert": True,
@@ -761,6 +770,7 @@ class _JellyfinOPS:
             "bidirectional": True,
             "provides_ids": False,
             "index_semantics": "present",
+            "history": _HISTORY_CAPABILITIES,
             "ratings": {
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
                 "upsert": True,

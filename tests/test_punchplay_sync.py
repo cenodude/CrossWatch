@@ -83,6 +83,8 @@ def test_manifest_matches_validated_contract() -> None:
 
     assert caps["ratings"]["scale"] == "1-10"
     assert caps["history"]["rewatch"] is True
+    assert caps["history"]["event_history"] is True
+    assert caps["history"]["rewatches"] == {"read": True, "write": True, "account_gate": False}
     assert caps["history"]["requires_watched_at"] is True
     for feature in ("watchlist", "ratings", "history"):
         assert caps[feature]["batch_size"] == 100
@@ -603,6 +605,24 @@ def test_history_index_collects_entry_ids_for_rewatches(monkeypatch: pytest.Monk
     entry = idx["tmdb:550"]
     assert sorted(entry["_punchplay_history_ids"]) == ["7", "9"]
     assert entry["watched_at"] == "2026-06-01T20:00:00.000Z"
+
+
+def test_history_rewatch_mode_indexes_each_play_event(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.punchplay import _history as hi
+
+    http = FakeHTTP([_Resp(200, {"items": [
+        {"id": 7, "kind": "movie", "tmdb_id": 550, "title": "Fight Club", "year": 1999, "watched_at": "2026-01-01T20:00:00.000Z"},
+        {"id": 9, "kind": "movie", "tmdb_id": 550, "title": "Fight Club", "year": 1999, "watched_at": "2026-06-01T20:00:00.000Z"},
+    ], "hasMore": False, "nextAfter": None})])
+    _patch(monkeypatch, hi, http)
+    adapter = Adapter()
+    adapter.config["_cw_history_rewatches"] = True
+
+    idx = hi.build_index(adapter)
+
+    assert len(idx) == 2
+    assert all(key.startswith("tmdb:550@") for key in idx)
+    assert all(entry["_cw_rewatch_sync"] is True for entry in idx.values())
 
 
 def test_history_remove_deletes_each_entry_id(monkeypatch: pytest.MonkeyPatch) -> None:

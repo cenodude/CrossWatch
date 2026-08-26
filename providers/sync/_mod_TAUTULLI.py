@@ -22,6 +22,16 @@ os.environ.setdefault("CW_TAUTULLI_VERSION", __VERSION__)
 os.environ.setdefault("CW_TAUTULLI_UA", f"CrossWatch/{__VERSION__} (Tautulli)")
 __all__ = ["get_manifest", "OPS"]
 
+_HISTORY_CAPABILITIES: dict[str, Any] = {
+    "read": True,
+    "write": False,
+    "types": {"movies": True, "shows": False, "seasons": False, "episodes": True},
+    "index_semantics": "event",
+    "observed_deletes": False,
+    "event_history": True,
+    "rewatches": {"read": True, "write": False, "account_gate": False},
+}
+
 def _health(status: str, ok: bool, latency_ms: int) -> None:
     cw_log("TAUTULLI", "health", "info", "health", latency_ms=latency_ms, ok=ok, status=status)
 
@@ -63,6 +73,7 @@ def get_manifest() -> Mapping[str, Any]:
             "can_source": True,
             "can_target": False,
             "read_only": True,
+            "history": _HISTORY_CAPABILITIES,
         },
         "description": "Plex monitoring (history only).",
     }
@@ -238,6 +249,7 @@ class _TAUTULLIOPS:
             "can_source": True,
             "can_target": False,
             "read_only": True,
+            "history": _HISTORY_CAPABILITIES,
         }
 
     def is_configured(self, cfg: Mapping[str, Any]) -> bool:

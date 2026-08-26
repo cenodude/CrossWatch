@@ -39,6 +39,8 @@ def get_manifest() -> Mapping[str, Any]:
             "remove": True,
             "observed_deletes": True,
             "aggregated": True,
+            "event_history": False,
+            "rewatches": {"read": False, "write": False},
         },
         "ratings": {
             "read": True,

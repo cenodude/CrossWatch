@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Mapping
 
+from cw_platform.history_events import history_sync_key, minimal_history_item
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 from ._common import (
@@ -42,6 +43,17 @@ def _key_of(obj: Mapping[str, Any]) -> str:
         return str(canonical_key(id_minimal(obj)) or "").strip()
     except Exception:
         return ""
+
+
+def _rewatches_enabled(adapter: Any) -> bool:
+    cfg = getattr(adapter, "config", None)
+    return bool(isinstance(cfg, Mapping) and cfg.get("_cw_history_rewatches"))
+
+
+def _history_key(adapter: Any, item: Mapping[str, Any]) -> str:
+    if _rewatches_enabled(adapter):
+        return history_sync_key(item, event_mode=True)
+    return _key_of(item)
 
 
 def _as_int(value: Any) -> int | None:
@@ -129,14 +141,21 @@ def _row_to_minimal(row: Mapping[str, Any]) -> dict[str, Any] | None:
     return out
 
 
-def _collect_history_rows(rows: Any, collected: dict[str, dict[str, Any]]) -> int:
+def _collect_history_rows(adapter: Any, rows: Any, collected: dict[str, dict[str, Any]]) -> int:
     row_list = [r for r in rows if isinstance(r, Mapping)] if isinstance(rows, list) else []
+    event_mode = _rewatches_enabled(adapter)
     for row in row_list:
         minimal = _row_to_minimal(row)
         if not minimal:
             continue
-        key = _key_of(minimal)
+        key = _history_key(adapter, minimal)
         if not key:
+            continue
+        if event_mode:
+            if key in collected:
+                suffix = str(minimal.get(HISTORY_EVENT_ID_FIELD) or len(collected))
+                key = f"{key}~pp{suffix}"
+            collected[key] = minimal_history_item(minimal, key, event_mode=True)
             continue
         existing = collected.get(key)
         if existing is None:
@@ -160,7 +179,7 @@ def _index_from_snapshot(adapter: Any, *, per_page: int) -> dict[str, dict[str, 
     rows = 0
     for page in snapshot_pages(adapter, "history", feature=FEATURE, limit=per_page):
         pages += 1
-        rows += _collect_history_rows(page, collected)
+        rows += _collect_history_rows(adapter, page, collected)
     _dbg(FEATURE, "snapshot_scanned", rows=rows, indexed=len(collected), pages=pages)
     return collected
 
@@ -186,7 +205,7 @@ def _index_from_history_endpoint(adapter: Any, *, per_page: int, max_pages: int)
         if not isinstance(data, Mapping):
             break
         rows = data.get("items")
-        row_count = _collect_history_rows(rows, collected)
+        row_count = _collect_history_rows(adapter, rows, collected)
 
         cursor = data.get("nextCursor") or None
         if not cursor or row_count <= 0:
@@ -211,8 +230,8 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     return collected
 
 
-def _payload_for(item: Mapping[str, Any]) -> tuple[dict[str, Any], str] | None:
-    key = _key_of(item)
+def _payload_for(adapter: Any, item: Mapping[str, Any]) -> tuple[dict[str, Any], str] | None:
+    key = _history_key(adapter, item)
     if not key:
         return None
 
@@ -268,9 +287,9 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     unresolved_keys: list[str] = []
 
     for item in items or []:
-        built = _payload_for(item)
+        built = _payload_for(adapter, item)
         if built is None:
-            key = _key_of(item)
+            key = _history_key(adapter, item)
             if key:
                 unresolved_keys.append(key)
                 unresolved.append({"key": key, "status": "missing_supported_id_or_watched_at"})
@@ -310,7 +329,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     ok = True
 
     for item in items or []:
-        key = _key_of(item)
+        key = _history_key(adapter, item)
         if not key:
             continue
 
@@ -339,6 +358,11 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
             unresolved_keys.append(key)
             unresolved.append({"key": key, "status": "missing_history_entry_id"})
             _dbg(FEATURE, "item_unresolved_before_write", key=key, reason="episode_delete_needs_entry_id")
+            continue
+        if _rewatches_enabled(adapter):
+            unresolved_keys.append(key)
+            unresolved.append({"key": key, "status": "missing_history_entry_id"})
+            _dbg(FEATURE, "item_unresolved_before_write", key=key, reason="event_delete_needs_entry_id")
             continue
 
         payload = ids_for_punchplay(item)
