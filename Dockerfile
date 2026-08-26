@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 # --- app source: cleanup + normalize ownership/permissions ---
-FROM python:3.11-slim AS appsrc
+FROM python:3.13-slim AS appsrc
 WORKDIR /src
 COPY . /src
 RUN rm -rf /src/.venv /src/.vscode /src/.idea || true \
@@ -14,7 +14,7 @@ RUN rm -rf /src/.venv /src/.vscode /src/.idea || true \
  && find /src -type d -exec chmod 0755 {} + \
  && find /src -type f -exec chmod 0644 {} +
 
-FROM python:3.11-slim
+FROM python:3.13-slim
 
 LABEL org.opencontainers.image.description="One brain for all your media syncs A single place to configure everything."
 
