@@ -105,10 +105,14 @@ def _ops(provider: str) -> Any | None:
         from providers.sync._mod_FLICKLIST import OPS
 
         return OPS
+    if provider == "scrob":
+        from providers.sync._mod_SCROB import OPS
+
+        return OPS
     return None
 
 
-OPS_RATING_SINKS: tuple[str, ...] = ("crosswatch", "floppy", "punchplay", "flicklist")
+OPS_RATING_SINKS: tuple[str, ...] = ("crosswatch", "floppy", "punchplay", "flicklist", "scrob")
 RATING_SINKS: tuple[str, ...] = ("trakt", "simkl", "mdblist", *OPS_RATING_SINKS)
 
 

@@ -782,6 +782,7 @@ DEFAULT_CFG: dict[str, Any] = {
             "plex_trakt_ratings": False,                # Watch mode: forward Plex ratings to Trakt
             "plex_mdblist_ratings": False,              # Watch mode: forward Plex ratings to MDblist
             "plex_flicklist_ratings": False,            # Watch mode: forward Plex ratings to FlickList
+            "plex_scrob_ratings": False,                # Watch mode: forward Plex ratings to Scrob
             "pause_debounce_seconds": 5,                # Ignore micro-pauses just after start
             "suppress_start_at": 99,                    # Kill near-end "start" flaps (credits)
             "filters": {
@@ -800,6 +801,7 @@ DEFAULT_CFG: dict[str, Any] = {
             "probe_session_progress": True,             # Call GET /status/sessions on your Plex server and match the item by ratingKey/sessionKey
             "plex_trakt_ratings": False,                # Watch mode: forward Plex ratings to Trakt
             "plex_flicklist_ratings": False,            # Watch mode: forward Plex ratings to FlickList
+            "plex_scrob_ratings": False,                # Watch mode: forward Plex ratings to Scrob
             # Plex-only filters
             "filters_plex": {
                 "username_whitelist": [],               # Restrict accepted Account.title values (empty = allow all)

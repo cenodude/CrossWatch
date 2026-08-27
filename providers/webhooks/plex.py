@@ -62,6 +62,7 @@ _DEF_WEBHOOK: dict[str, Any] = {
     "plex_floppy_ratings": False,
     "plex_punchplay_ratings": False,
     "plex_flicklist_ratings": False,
+    "plex_scrob_ratings": False,
 }
 
 _DEF_TRAKT: dict[str, Any] = {
@@ -216,6 +217,7 @@ def _ensure_scrobble(cfg: dict[str, Any]) -> dict[str, Any]:
         "plex_floppy_ratings",
         "plex_punchplay_ratings",
         "plex_flicklist_ratings",
+        "plex_scrob_ratings",
     ):
         if key not in wh:
             wh[key] = _DEF_WEBHOOK.get(key, False)
@@ -1147,6 +1149,7 @@ def process_webhook(
     enable_floppy_ratings = bool(wh.get("plex_floppy_ratings", False)) and "floppy" in selected_rating_sinks
     enable_punchplay_ratings = bool(wh.get("plex_punchplay_ratings", False)) and "punchplay" in selected_rating_sinks
     enable_flicklist_ratings = bool(wh.get("plex_flicklist_ratings", False)) and "flicklist" in selected_rating_sinks
+    enable_scrob_ratings = bool(wh.get("plex_scrob_ratings", False)) and "scrob" in selected_rating_sinks
     flt = (wh.get("filters_plex") or {})
     allow_users = {str(x).strip() for x in (flt.get("username_whitelist") or []) if str(x).strip()}
     srv_uuid_allow = _as_filter_set(flt.get("server_uuid_whitelist"))
@@ -1228,7 +1231,7 @@ def process_webhook(
     _emit(logger, f"ids resolved: {media_name_dbg} -> {_describe_ids((show_ids or epi_ids) or all_ids)}", "DEBUG")
 
     if event == "media.rate":
-        if not (enable_trakt_ratings or enable_simkl_ratings or enable_mdblist_ratings or enable_crosswatch_ratings or enable_floppy_ratings or enable_punchplay_ratings or enable_flicklist_ratings):
+        if not (enable_trakt_ratings or enable_simkl_ratings or enable_mdblist_ratings or enable_crosswatch_ratings or enable_floppy_ratings or enable_punchplay_ratings or enable_flicklist_ratings or enable_scrob_ratings):
             _emit(logger, "rating forwarding disabled", "DEBUG")
             return {"ok": True, "ignored": True}
 
@@ -1300,6 +1303,7 @@ def process_webhook(
                 ("floppy", enable_floppy_ratings),
                 ("punchplay", enable_punchplay_ratings),
                 ("flicklist", enable_flicklist_ratings),
+                ("scrob", enable_scrob_ratings),
             )
             if on
         ]

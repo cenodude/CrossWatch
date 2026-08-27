@@ -6,7 +6,7 @@
   const providerMeta = () => w.CW?.ProviderMeta || {};
   const label = (v) => providerMeta().label?.(v) || String(v || "").toUpperCase();
   const logo = (v) => providerMeta().logoPath?.(v) || "";
-  const plexRatingSinks = ["crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay"];
+  const plexRatingSinks = ["crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "flicklist", "scrob"];
   const state = { root: null, overview: null, busy: false, panels: { watcherDefaults: false, ratings: false, webhookDefaults: false }, delBtn: null, delTimer: 0, regenBtn: null, regenTimer: 0, legacyConfirm: false, legacyTimer: 0, hybridDismissed: false };
 
   async function j(url, options = {}) {
