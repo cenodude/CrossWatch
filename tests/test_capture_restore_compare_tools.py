@@ -68,6 +68,17 @@ class RevealingCollectionCleanupOps(MutableSyncOps):
         return result
 
 
+class CleanupCapabilityOps(MutableSyncOps):
+    def capabilities(self) -> dict[str, dict]:
+        return {
+            "watchlist": {"read": True, "remove": True},
+            "ratings": {"read": True, "unrate": False},
+            "history": {"read": True, "write": False},
+            "progress": {"read": True, "remove": True},
+            "collection": {"read": True, "remove": False, "source_only": True},
+        }
+
+
 def _snapshot_path(tmp_path: Path, stamp: str, feature: str, payload: dict) -> str:
     day = stamp[:8]
     rel = f"{day[:4]}-{day[4:6]}-{day[6:8]}/{stamp}__PLEX__default__{feature}__capture.json"
@@ -569,6 +580,49 @@ def test_provider_cleanup_background_job_tracks_progress(tmp_path: Path, monkeyp
     assert progress["done"] is True
     assert progress["total_items"] == 2
     assert progress["cleanup_results"]["watchlist"]["removed"] == 2
+    assert ops.current_by_feature["watchlist"] == {}
+
+
+def test_snapshot_manifest_reports_cleanup_features_separately(tmp_path: Path, monkeypatch) -> None:
+    import services.snapshots as snapshots
+
+    ops = CleanupCapabilityOps({})
+    _patch_ops(monkeypatch, snapshots, tmp_path, ops)
+    monkeypatch.setattr(snapshots, "_registry_sync_providers", lambda: ["PLEX"])
+    monkeypatch.setattr(snapshots, "list_instance_ids", lambda _cfg, _pid: ["default"])
+
+    row = snapshots.snapshot_manifest({})[0]
+
+    assert row["features"]["collection"] is True
+    assert row["cleanup_features"] == {
+        "watchlist": True,
+        "ratings": False,
+        "history": False,
+        "progress": True,
+        "collection": False,
+    }
+
+
+def test_provider_cleanup_skips_source_only_features(tmp_path: Path, monkeypatch) -> None:
+    import services.snapshots as snapshots
+
+    ops = CleanupCapabilityOps(
+        {
+            "collection": {"one": {"id": "one", "type": "movie", "title": "Heat"}},
+            "watchlist": {"two": {"id": "two", "type": "movie", "title": "Alien"}},
+        }
+    )
+    _patch_ops(monkeypatch, snapshots, tmp_path, ops)
+
+    result = snapshots.clear_provider_features("PLEX", ["collection", "watchlist"], cfg={})
+
+    assert result["ok"] is True
+    assert result["results"]["collection"] == {
+        "ok": True,
+        "skipped": True,
+        "reason": "cleanup_not_supported",
+    }
+    assert ops.current_by_feature["collection"] == {"one": {"id": "one", "type": "movie", "title": "Heat"}}
     assert ops.current_by_feature["watchlist"] == {}
 
 

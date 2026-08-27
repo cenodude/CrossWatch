@@ -613,6 +613,68 @@ def _state_read_feature_enabled(ops: Any, feature: Feature) -> bool:
     return bool(state_read_features(ops).get(feature))
 
 
+def _provider_capabilities(ops: Any) -> Mapping[str, Any]:
+    fn = getattr(ops, "capabilities", None)
+    if not callable(fn):
+        return {}
+    try:
+        caps = fn() or {}
+    except Exception:
+        return {}
+    return caps if isinstance(caps, Mapping) else {}
+
+
+def _first_cap_bool(cap: Mapping[str, Any], names: Sequence[str]) -> bool | None:
+    for name in names:
+        if name not in cap:
+            continue
+        value = cap.get(name)
+        if isinstance(value, bool):
+            return value
+        if value is not None and name in {"writes"}:
+            return bool(value)
+    return None
+
+
+def _cleanup_feature_enabled(ops: Any, feature: Feature) -> bool:
+    if not _state_read_feature_enabled(ops, feature):
+        return False
+
+    caps = _provider_capabilities(ops)
+    cap_raw = caps.get(feature)
+    if not isinstance(cap_raw, Mapping):
+        return not bool(caps.get("read_only"))
+
+    cap: Mapping[str, Any] = cap_raw
+    if bool(cap.get("source_only")):
+        return False
+
+    cleanup_raw = cap.get("cleanup") if "cleanup" in cap else cap.get("clear")
+    if isinstance(cleanup_raw, bool):
+        return cleanup_raw
+    if isinstance(cleanup_raw, Mapping):
+        cleanup: Mapping[str, Any] = cleanup_raw
+        enabled = cleanup.get("enabled")
+        if isinstance(enabled, bool):
+            return enabled
+        remove = _first_cap_bool(cleanup, ("remove", "delete", "write", "writes", "unrate", "upsert"))
+        if remove is not None:
+            return remove
+
+    names: tuple[str, ...]
+    if feature == "ratings":
+        names = ("remove", "unrate", "write", "upsert")
+    else:
+        names = ("remove", "delete", "write", "writes", "upsert")
+
+    remove = _first_cap_bool(cap, names)
+    if remove is not None:
+        return remove
+    if bool(cap.get("read_only")) or bool(caps.get("read_only")):
+        return False
+    return True
+
+
 def _configured(ops: Any, cfg: Mapping[str, Any]) -> bool:
     fn = getattr(ops, "is_configured", None)
     if not callable(fn):
@@ -659,6 +721,7 @@ def snapshot_manifest(cfg: Mapping[str, Any] | None = None) -> list[dict[str, An
             continue
         raw = state_read_features(ops)
         feats = {k: bool(raw.get(k)) for k in SNAPSHOT_FEATURES}
+        cleanup_feats = {k: _cleanup_feature_enabled(ops, k) for k in SNAPSHOT_FEATURES}
 
         insts = list_instance_ids(cfg, pid)
         inst_meta: list[dict[str, Any]] = []
@@ -675,6 +738,7 @@ def snapshot_manifest(cfg: Mapping[str, Any] | None = None) -> list[dict[str, An
                 "label": getattr(ops, "label", lambda: pid)() if callable(getattr(ops, "label", None)) else pid,
                 "configured": configured_any,
                 "features": feats,
+                "cleanup_features": cleanup_feats,
                 "instances": inst_meta,
             }
         )
@@ -1624,8 +1688,9 @@ def clear_provider_features(
                 feature_items=0,
                 percent=_progress_percent(index, len(feature_list) or 1, 0.12),
             )
-            if not _state_read_feature_enabled(ops, feat):
-                done["results"][feat] = {"ok": True, "skipped": True, "reason": "feature_disabled"}
+            if not _cleanup_feature_enabled(ops, feat):
+                reason = "feature_disabled" if not _state_read_feature_enabled(ops, feat) else "cleanup_not_supported"
+                done["results"][feat] = {"ok": True, "skipped": True, "reason": reason}
                 continue
             cur = _load_current_items(feat)
             initial_count = len(cur)

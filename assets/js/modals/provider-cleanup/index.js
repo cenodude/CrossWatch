@@ -69,7 +69,7 @@ function configuredProviders(providers) {
 }
 
 function providerFeatures(provider) {
-  const features = provider?.features || {};
+  const features = provider?.cleanup_features || provider?.features || {};
   return FEATURES.filter((feature) => !!features[feature.key]);
 }
 
@@ -187,6 +187,9 @@ export default {
                   </span>
                 </button>
               `).join("")}
+            </div>
+            <div class="cc-feature-empty hidden" id="ccc-features-empty">
+              No clearable data types are available for this provider profile.
             </div>
           </section>
 
@@ -400,11 +403,13 @@ export default {
         const key = String(row.dataset.feature || "");
         const enabled = !!provider && instanceOk && available.has(key);
         row.classList.toggle("disabled", !enabled);
+        row.hidden = !enabled;
         row.disabled = busy || !enabled;
         row.dataset.disabledByFeature = enabled ? "" : "1";
         if (!enabled) row.classList.remove("selected");
         row.setAttribute("aria-pressed", row.classList.contains("selected") ? "true" : "false");
       });
+      $("#ccc-features-empty", root)?.classList.toggle("hidden", !provider || !instanceOk || available.size > 0);
       const anySelected = selectedFeatures().length > 0;
       const clearBtn = $("#ccc-clear-selected", root);
       if (clearBtn) clearBtn.disabled = busy || !provider || !instanceOk || !anySelected;
