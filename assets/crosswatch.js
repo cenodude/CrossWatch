@@ -13,6 +13,7 @@
   // Tabs
   function showTab(id) {
     try {
+      if (D.documentElement.classList.contains("cw-compact") && id !== "main") id = "main";
       D.querySelectorAll("#page-main, #page-watchlist, #page-playback_progress, #page-settings, .tab-page")
         .forEach(el => el.classList.add("hidden"));
 
@@ -112,10 +113,10 @@
       if (ui === "compact" || q.get("compact") === "1") return "compact";
       if (ui === "full" || q.get("full") === "1") return "full";
 
+      if (_cwShouldAutoCompact()) return "compact";
+
       const saved = String(localStorage.getItem("cw_ui_mode") || "").toLowerCase();
       if (saved === "compact" || saved === "full") return saved;
-
-      if (_cwShouldAutoCompact()) return "compact";
     } catch {}
     return "full";
   };
@@ -130,6 +131,7 @@
     window.cwSetUiMode = (mode) => {
       try {
         const m = mode === "compact" ? "compact" : "full";
+        if (m === "full" && Date.now() < Number(window.__cwSuppressUiModeUntil || 0)) return;
         try { localStorage.setItem("cw_ui_mode", m); } catch {}
 
         const url = new URL(window.location.href);

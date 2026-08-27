@@ -29,6 +29,45 @@ const mediaLabel = (type) => String(type || "").toLowerCase() === "show" ? "Show
 const artType = (type) => String(type || "").toLowerCase() === "show" ? "tv" : "movie";
 const todayLocal = () => new Date().toISOString().slice(0, 10);
 const closeModal = () => window.cxCloseModal?.();
+let activeCleanup = null;
+let closeShieldCleanup = null;
+
+const installCloseShield = () => {
+  closeShieldCleanup?.();
+  const shield = document.createElement("div");
+  const until = Date.now() + 900;
+  window.__cwSuppressUiModeUntil = Math.max(Number(window.__cwSuppressUiModeUntil || 0), until);
+  const swallow = (e) => {
+    if (Date.now() > until) return cleanup();
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation?.();
+  };
+  const cleanup = () => {
+    events.forEach((name) => document.removeEventListener(name, swallow, true));
+    shield.remove();
+    if (closeShieldCleanup === cleanup) closeShieldCleanup = null;
+  };
+  const events = ["pointerdown", "pointerup", "mousedown", "mouseup", "touchstart", "touchend", "click"];
+  Object.assign(shield.style, {
+    position: "fixed",
+    inset: "0",
+    zIndex: "2147483647",
+    background: "transparent",
+    pointerEvents: "auto",
+    touchAction: "none",
+  });
+  shield.setAttribute("aria-hidden", "true");
+  document.body?.appendChild(shield);
+  events.forEach((name) => document.addEventListener(name, swallow, true));
+  window.setTimeout(cleanup, 900);
+  closeShieldCleanup = cleanup;
+};
+
+const closeModalAfterTap = () => {
+  installCloseShield();
+  window.setTimeout(closeModal, 80);
+};
 
 export default {
   async mount(root) {
@@ -36,6 +75,25 @@ export default {
     shell?.classList.add("cw-manual-watched-modal");
     root.style.setProperty("--cxModalMaxW", "1360px");
     root.style.setProperty("--cxModalMaxH", "88vh");
+    activeCleanup?.();
+
+    const updateVisualViewport = () => {
+      const height = Math.max(
+        320,
+        Math.round(window.visualViewport?.height || window.innerHeight || document.documentElement.clientHeight || 0)
+      );
+      if (height) root.style.setProperty("--mwVisualViewportH", `${height}px`);
+    };
+    updateVisualViewport();
+    window.visualViewport?.addEventListener("resize", updateVisualViewport, { passive: true });
+    window.visualViewport?.addEventListener("scroll", updateVisualViewport, { passive: true });
+    window.addEventListener("resize", updateVisualViewport, { passive: true });
+    activeCleanup = () => {
+      window.visualViewport?.removeEventListener("resize", updateVisualViewport);
+      window.visualViewport?.removeEventListener("scroll", updateVisualViewport);
+      window.removeEventListener("resize", updateVisualViewport);
+      root.style.removeProperty("--mwVisualViewportH");
+    };
 
     const state = {
       step: 0,
@@ -150,7 +208,7 @@ export default {
           <button type="button" class="cw-mw-chip ${state.type === "show" ? "active" : ""}" data-type="show">Shows</button>
         </div>
         <div class="cw-mw-search">
-          <input class="cw-mw-input" data-role="query" placeholder="Search title..." autocomplete="off" value="${esc(state.query)}">
+          <input class="cw-mw-input" data-role="query" type="search" placeholder="Search title..." autocomplete="off" autocapitalize="none" spellcheck="false" inputmode="search" enterkeyhint="search" value="${esc(state.query)}">
           <button type="button" class="cw-mw-btn primary" data-role="search"><span class="material-symbols-rounded">search</span><span>Search</span></button>
         </div>
         <div class="cw-mw-results">${resultsHtml()}</div>
@@ -296,34 +354,72 @@ export default {
       </div>`;
       if (focusQuery) {
         const q = root.querySelector("[data-role=query]");
-        q?.focus?.();
+        q?.focus?.({ preventScroll: true });
         try { q?.setSelectionRange?.(q.value.length, q.value.length); } catch {}
       }
     };
 
+    const syncFooter = () => {
+      const err = validation();
+      const status = root.querySelector(".cw-mw-status");
+      if (status) {
+        status.className = `cw-mw-status ${state.statusTone || (err && state.step === 4 ? "error" : "")}`.trim();
+        status.textContent = state.status || (state.step === 4 ? err : "");
+      }
+      const prev = root.querySelector("[data-role=prev]");
+      const next = root.querySelector("[data-role=next]");
+      const send = root.querySelector("[data-role=send]");
+      if (prev) prev.disabled = state.step === 0 || state.saving;
+      if (next) next.disabled = state.step >= 4 || !stepReady(state.step + 1) || state.saving;
+      if (send) send.disabled = state.step !== 4 || !!err || state.saving;
+    };
+
+    const syncSearchDom = (focusQuery = false) => {
+      if (state.step !== 0 || !root.querySelector(".cw-mw-results")) return render(focusQuery);
+      const results = root.querySelector(".cw-mw-results");
+      const searchBtn = root.querySelector("[data-role=search]");
+      if (results) results.innerHTML = resultsHtml();
+      if (searchBtn) {
+        searchBtn.disabled = !!state.searching;
+        searchBtn.setAttribute("aria-busy", state.searching ? "true" : "false");
+      }
+      syncFooter();
+      if (focusQuery) {
+        const q = root.querySelector("[data-role=query]");
+        q?.focus?.({ preventScroll: true });
+        try { q?.setSelectionRange?.(q.value.length, q.value.length); } catch {}
+      }
+    };
+
+    let searchSeq = 0;
     const search = async () => {
       const q = state.query.trim();
       if (q.length < 2) {
+        searchSeq += 1;
         state.results = [];
         state.searching = false;
-        render(true);
+        syncSearchDom(true);
         return;
       }
+      const seq = ++searchSeq;
       state.searching = true;
-      render(true);
+      syncSearchDom(root.querySelector("[data-role=query]") === document.activeElement);
       try {
         const data = await fjson(`/api/metadata/search?q=${encodeURIComponent(q)}&typ=${encodeURIComponent(state.type)}&limit=12`);
+        if (seq !== searchSeq || q !== state.query.trim()) return;
         if (data?.ok === false) throw new Error(data.error || "Search failed");
         state.results = Array.isArray(data.results) ? data.results : [];
         state.status = "";
         state.statusTone = "";
       } catch (err) {
+        if (seq !== searchSeq) return;
         state.results = [];
         state.status = String(err?.message || "Search failed");
         state.statusTone = "error";
       } finally {
+        if (seq !== searchSeq) return;
         state.searching = false;
-        render(true);
+        syncSearchDom(false);
       }
     };
 
@@ -347,7 +443,11 @@ export default {
         state.status = String(err?.message || "Failed to load providers");
         state.statusTone = "error";
       }
-      render();
+      if (state.step === 0 && root.querySelector(".cw-mw-results")) {
+        syncSearchDom(root.querySelector("[data-role=query]") === document.activeElement);
+      } else {
+        render();
+      }
     };
 
     const submit = async () => {
@@ -404,18 +504,47 @@ export default {
       }
     });
 
-    root.addEventListener("click", (e) => {
-      const target = e.target;
-      if (target.closest("[data-role=close],[data-role=cancel]")) return closeModal();
-      if (target.closest("[data-role=prev]")) return setStep(state.step - 1);
-      if (target.closest("[data-role=next]")) return stepReady(state.step + 1) && setStep(state.step + 1);
-      if (target.closest("[data-role=send]")) return submit();
-      if (target.closest("[data-role=search]")) return search();
-      const stepBtn = target.closest("[data-step]");
+    const selectResult = (resultBtn) => {
+      const tmdb = String(resultBtn.getAttribute("data-result-tmdb") || "");
+      state.selectedItem = state.results.find((item) => String(item.tmdb) === tmdb) || null;
+      if (state.selectedItem) state.step = 1;
+      render();
+    };
+
+    const tapTargetSelector = [
+      "[data-role=close]",
+      "[data-role=cancel]",
+      "[data-role=prev]",
+      "[data-role=next]",
+      "[data-role=send]",
+      "[data-role=search]",
+      ".cw-mw-step[data-step]",
+      "[data-type]",
+      "[data-result-tmdb]",
+      "[data-action]",
+      "[data-date-mode]",
+      "[data-provider-key]",
+      "[data-role=use-last]",
+      "[data-role=select-all]",
+      "[data-role=clear-providers]",
+    ].join(",");
+    const tapTarget = (target) => target?.closest?.(tapTargetSelector);
+    let pointerTap = null;
+    let suppressClickUntil = 0;
+
+    const activate = (target) => {
+      if (!target) return false;
+      if (target.closest("button:disabled")) return true;
+      if (target.closest("[data-role=close],[data-role=cancel]")) { closeModalAfterTap(); return true; }
+      if (target.closest("[data-role=prev]")) { setStep(state.step - 1); return true; }
+      if (target.closest("[data-role=next]")) { if (stepReady(state.step + 1)) setStep(state.step + 1); return true; }
+      if (target.closest("[data-role=send]")) { submit(); return true; }
+      if (target.closest("[data-role=search]")) { search(); return true; }
+      const stepBtn = target.closest(".cw-mw-step[data-step]");
       if (stepBtn) {
         const idx = Number(stepBtn.getAttribute("data-step") || 0);
         if (!stepBtn.disabled) setStep(idx);
-        return;
+        return true;
       }
       const typeBtn = target.closest("[data-type]");
       if (typeBtn) {
@@ -424,16 +553,10 @@ export default {
         state.results = [];
         if (state.query.trim().length >= 2) queueSearch();
         render(true);
-        return;
+        return true;
       }
       const resultBtn = target.closest("[data-result-tmdb]");
-      if (resultBtn) {
-        const tmdb = String(resultBtn.getAttribute("data-result-tmdb") || "");
-        state.selectedItem = state.results.find((item) => String(item.tmdb) === tmdb) || null;
-        if (state.selectedItem) state.step = 1;
-        render();
-        return;
-      }
+      if (resultBtn) { selectResult(resultBtn); return true; }
       const actionBtn = target.closest("[data-action]");
       if (actionBtn) {
         const key = actionBtn.getAttribute("data-action") || "";
@@ -441,13 +564,13 @@ export default {
         if (key === "rating" && state.actions[key] && !state.rating) state.rating = 8;
         normalizeActions();
         render();
-        return;
+        return true;
       }
       const modeBtn = target.closest("[data-date-mode]");
       if (modeBtn) {
         state.dateMode = modeBtn.getAttribute("data-date-mode") || "today";
         render();
-        return;
+        return true;
       }
       const providerBtn = target.closest("[data-provider-key]");
       if (providerBtn) {
@@ -456,27 +579,74 @@ export default {
         else state.selectedProviders.add(key);
         normalizeActions();
         render();
-        return;
+        return true;
       }
       if (target.closest("[data-role=use-last]")) {
         const allowed = new Set(compatibleProviders().map(providerKey));
         state.selectedProviders = new Set(state.remembered.filter((key) => allowed.has(key)));
         render();
-        return;
+        return true;
       }
       if (target.closest("[data-role=select-all]")) {
         state.selectedProviders = new Set(compatibleProviders().map(providerKey));
         render();
-        return;
+        return true;
       }
       if (target.closest("[data-role=clear-providers]")) {
         state.selectedProviders = new Set();
         render();
+        return true;
       }
+      return false;
+    };
+
+    root.addEventListener("pointerdown", (e) => {
+      const target = e.target;
+      const query = target.closest?.("[data-role=query]");
+      if (query) {
+        query.focus?.({ preventScroll: true });
+        return;
+      }
+      const activator = tapTarget(target);
+      pointerTap = activator ? { target: activator, x: e.clientX, y: e.clientY, id: e.pointerId } : null;
+      const searchBtn = target.closest?.("[data-role=search]");
+      if (searchBtn) {
+        e.preventDefault();
+        const q = root.querySelector("[data-role=query]");
+        q?.focus?.({ preventScroll: true });
+        try { q?.setSelectionRange?.(q.value.length, q.value.length); } catch {}
+        return;
+      }
+    }, true);
+
+    root.addEventListener("pointerup", (e) => {
+      if (!pointerTap || (pointerTap.id != null && e.pointerId !== pointerTap.id)) return;
+      const dx = Math.abs(e.clientX - pointerTap.x);
+      const dy = Math.abs(e.clientY - pointerTap.y);
+      const activator = tapTarget(e.target) || pointerTap.target;
+      pointerTap = null;
+      if (dx > 12 || dy > 12 || !activator) return;
+      if (e.pointerType === "touch" || e.pointerType === "pen" || window.matchMedia?.("(pointer: coarse)")?.matches) {
+        e.preventDefault();
+        suppressClickUntil = Date.now() + 700;
+        activate(activator);
+      }
+    }, true);
+
+    root.addEventListener("click", (e) => {
+      const target = e.target;
+      if (Date.now() < suppressClickUntil) {
+        e.preventDefault();
+        return;
+      }
+      if (activate(target)) e.preventDefault();
     });
 
     render();
     await loadProviders();
   },
-  unmount() {},
+  unmount() {
+    activeCleanup?.();
+    activeCleanup = null;
+  },
 };
