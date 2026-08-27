@@ -339,6 +339,145 @@ def _summary_snapshot() -> dict[str, Any]:
     with SUMMARY_LOCK:
         return dict(SUMMARY)
 
+def _epoch_seconds(v: Any) -> int | None:
+    if v in (None, ""):
+        return None
+    try:
+        n = float(v)
+        if n > 0:
+            return int(n / 1000) if n > 1e12 else int(n)
+    except Exception:
+        pass
+    try:
+        s = str(v).strip()
+        if not s:
+            return None
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return int(dt.timestamp())
+    except Exception:
+        return None
+
+def _summary_has_run(snap: Mapping[str, Any]) -> bool:
+    if snap.get("running") or snap.get("run_id") or snap.get("raw_started_ts"):
+        return True
+    if snap.get("started_at") or snap.get("finished_at") or snap.get("exit_code") is not None:
+        return True
+    tl = snap.get("timeline")
+    return isinstance(tl, Mapping) and any(bool(v) for v in tl.values())
+
+def _final_timeline(timeline: Any, *, finished: bool) -> dict[str, bool]:
+    raw = timeline if isinstance(timeline, Mapping) else {}
+    out = {
+        "start": bool(raw.get("start") or raw.get("started")),
+        "pre": bool(raw.get("pre") or raw.get("discovery") or raw.get("discovering")),
+        "post": bool(raw.get("post") or raw.get("syncing") or raw.get("apply")),
+        "done": bool(raw.get("done") or raw.get("finished") or raw.get("complete")),
+    }
+    if finished or out["done"]:
+        out.update({"start": True, "pre": True, "post": True, "done": True})
+    return out
+
+def _final_phase(features: Any) -> dict[str, dict[str, Any]]:
+    total = 0
+    if isinstance(features, Mapping):
+        for lane in features.values():
+            if not isinstance(lane, Mapping):
+                continue
+            try:
+                total += int(lane.get("added") or 0) + int(lane.get("removed") or 0) + int(lane.get("updated") or 0)
+            except Exception:
+                pass
+    return {
+        "snapshot": {"total": 1, "done": 1, "final": True},
+        "apply": {"total": total, "done": total, "final": True},
+    }
+
+def _latest_report_summary() -> dict[str, Any] | None:
+    try:
+        from cw_platform.config_base import CONFIG
+        from cw_platform.local_db.sync_reports import list_reports
+
+        rows = list_reports(CONFIG, limit=1, feature_keys=FEATURE_KEYS)
+    except Exception:
+        rows = []
+    if not rows:
+        return None
+    row = dict(rows[0])
+    finished = bool(row.get("finished_at") or row.get("exit_code") is not None)
+    row["running"] = False
+    if finished and row.get("exit_code") is None:
+        row["exit_code"] = 0
+    row["timeline"] = _final_timeline(row.get("timeline"), finished=finished)
+    row["_phase"] = _final_phase(row.get("features"))
+    return row
+
+def _last_sync_summary() -> dict[str, Any] | None:
+    try:
+        from cw_platform.config_base import CONFIG
+        from cw_platform.local_db import last_sync as sqlite_last_sync
+
+        last = sqlite_last_sync.load_last_sync(CONFIG)
+    except Exception:
+        last = {}
+    if not isinstance(last, Mapping) or not last:
+        return None
+
+    started = _epoch_seconds(last.get("started_at"))
+    finished = _epoch_seconds(last.get("finished_at"))
+    if not (started or finished):
+        return None
+    raw_result = last.get("result")
+    result: Mapping[str, Any] = raw_result if isinstance(raw_result, Mapping) else {}
+    exit_code = last.get("exit_code")
+    if exit_code is None and finished:
+        exit_code = 0
+    out: dict[str, Any] = {
+        "running": False,
+        "run_id": str(last.get("run_id") or f"last-sync-{finished or started}"),
+        "raw_started_ts": started,
+        "started_at": started,
+        "finished_at": finished,
+        "duration_sec": last.get("duration_sec"),
+        "result": raw_result or "",
+        "exit_code": exit_code,
+        "timeline": _final_timeline(last.get("timeline"), finished=bool(finished)),
+        "features": {},
+        "enabled": _lanes_enabled_defaults(),
+        "_phase": _final_phase({}),
+    }
+    for key in ("added", "removed", "updated", "skipped", "unresolved", "errors", "blocked"):
+        if key in result:
+            out[f"{key}_last" if key in {"added", "removed", "updated"} else key] = result.get(key)
+    return out
+
+def _load_persisted_summary() -> dict[str, Any] | None:
+    return _latest_report_summary() or _last_sync_summary()
+
+def _summary_snapshot_for_response() -> dict[str, Any]:
+    snap = _summary_snapshot()
+    if _summary_has_run(snap):
+        return snap
+    persisted = _load_persisted_summary()
+    if not persisted:
+        return snap
+    with SUMMARY_LOCK:
+        if not _summary_has_run(SUMMARY):
+            SUMMARY.clear()
+            SUMMARY.update(persisted)
+        return dict(SUMMARY)
+
+def _summary_stream_replay_start_index(buf: Sequence[Any], snap: Mapping[str, Any], *, log_visible: bool = True) -> int:
+    if not log_visible:
+        return len(buf or [])
+    tl = snap.get("timeline") if isinstance(snap, Mapping) else {}
+    running = bool(snap.get("running")) or str(snap.get("state") or "").lower() == "running"
+    finished = bool(snap.get("exit_code") is not None or (isinstance(tl, Mapping) and tl.get("done")))
+    return 0 if running and not finished else len(buf or [])
+
 # Provider counts (pre/post) seeding for UI/report parity
 def _seed_summary_provider_counts(phase: str) -> None:
     ph = str(phase or "").strip().lower()
@@ -2656,7 +2795,7 @@ def api_run_summary(request: Request = cast(Request, None)) -> JSONResponse:
     except Exception:
         cfg = {}
     user = _request_user(request)
-    snap0 = _summary_snapshot()
+    snap0 = _summary_snapshot_for_response()
     snap = dict(snap0 or {})
     snap.setdefault("features", {})
     snap.setdefault("enabled", _lanes_enabled_defaults())
@@ -2733,7 +2872,7 @@ def api_run_summary_file(request: Request = cast(Request, None)) -> Response:
     except Exception:
         cfg = {}
     user = _request_user(request)
-    snap0 = _summary_snapshot()
+    snap0 = _summary_snapshot_for_response()
     snap = dict(snap0 or {})
     snap.setdefault("features", {})
     snap.setdefault("enabled", _lanes_enabled_defaults())
@@ -2812,10 +2951,19 @@ async def api_run_summary_stream(request: Request) -> StreamingResponse:
             return ()
     async def agen():
         last_key = None
-        last_idx = 0
         last_hydrate_sig = None
         last_emit = time.monotonic()
         LOG_BUFFERS = _rt()[0]
+        try:
+            initial_buf = LOG_BUFFERS.get("SYNC") or []
+            initial_log_visible = (not managed_scope) or run_log_visible_to_user(cfg_for_scope, user_for_scope)
+            last_idx = _summary_stream_replay_start_index(
+                initial_buf,
+                _summary_snapshot_for_response(),
+                log_visible=initial_log_visible,
+            )
+        except Exception:
+            last_idx = 0
 
         while True:
             if await request.is_disconnected():
@@ -2845,7 +2993,7 @@ async def api_run_summary_stream(request: Request) -> StreamingResponse:
             except Exception:
                 pass
 
-            snap = dict(_summary_snapshot() or {})
+            snap = dict(_summary_snapshot_for_response() or {})
             snap.setdefault("features", {})
             snap.setdefault("enabled", _lanes_enabled_defaults())
             hydrate_sig = (buf_len, (snap.get("timeline", {}) or {}).get("done"))
