@@ -92,7 +92,7 @@ def _provider_targets(payload: Any) -> list[dict[str, str]]:
             continue
         pid = str(provider.get("id") or "").strip().upper()
         label = str(provider.get("label") or pid or "-")
-        raw_features = provider.get("features")
+        raw_features = provider.get("cleanup_features") or provider.get("features")
         features: dict[str, Any] = raw_features if isinstance(raw_features, dict) else {}
         cleanup_features = [feature for feature in PROVIDER_CLEANUP_FEATURES if features.get(feature)]
         instances = provider.get("instances") if isinstance(provider.get("instances"), list) else []
