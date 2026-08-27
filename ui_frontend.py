@@ -312,19 +312,19 @@ def _asset_block(include_admin: bool = True, user: dict | None = None) -> str:
     full_user = not include_admin and bool(_managed_user_permissions(user).get("write"))
     helper_scripts = _HELPER_SCRIPTS if include_admin else (_FULL_USER_HELPER_SCRIPTS if full_user else _USER_HELPER_SCRIPTS)
     app_scripts = _APP_SCRIPTS if include_admin else (_FULL_USER_APP_SCRIPTS if full_user else _USER_APP_SCRIPTS)
-    helper_tags = "\n".join(f'<script src="/assets/helpers/{name}?v=__CW_VERSION__"></script>' for name in helper_scripts)
+    helper_tags = "\n".join(f'<script src="/assets/helpers/{name}?v=__CW_VERSION__" defer></script>' for name in helper_scripts)
     app_tags = "\n".join(f'<script src="/assets/js/{name}?v=__CW_VERSION__" defer></script>' for name in app_scripts)
     admin_only_tags = (
         '<script src="/assets/helpers/media_user_picker.js?v=__CW_VERSION__" defer></script>',
         '<script src="/assets/helpers/whitelist_table.js?v=__CW_VERSION__" defer></script>',
-        '<script src="/assets/auth/auth.shared.js?v=__CW_VERSION__"></script>',
+        '<script src="/assets/auth/auth.shared.js?v=__CW_VERSION__" defer></script>',
         '<script src="/assets/auth/auth_loader.js?v=__CW_VERSION__" defer></script>',
         '<script src="/assets/auth/auth.tmdb.js?v=__CW_VERSION__" defer></script>',
         '<script type="module" src="/assets/js/modals.js?v=__CW_VERSION__"></script>',
     ) if include_admin else (('<script type="module" src="/assets/js/modals.js?v=__CW_VERSION__"></script>',) if full_user else ())
     return "\n".join((
         helper_tags,
-        '<script src="/assets/crosswatch.js?v=__CW_VERSION__"></script>',
+        '<script src="/assets/crosswatch.js?v=__CW_VERSION__" defer></script>',
         app_tags,
         *admin_only_tags,
         '<script src="/assets/js/theme-flat-runtime.js?v=__CW_VERSION__" defer></script>',
@@ -2309,13 +2309,13 @@ def get_profile_html(user: dict | None = None) -> str:
 }})();
 </script>
 <script type="module" src="/assets/js/modals.js?v=__CW_VERSION__"></script>
-<script src="/assets/helpers/provider-meta.js?v=__CW_VERSION__"></script>
-<script src="/assets/helpers/icon-select.js?v=__CW_VERSION__"></script>
-<script src="/assets/helpers/api.js?v=__CW_VERSION__"></script>
-<script src="/assets/helpers/media-meta.js?v=__CW_VERSION__"></script>
-<script src="/assets/helpers/trailer.js?v=__CW_VERSION__"></script>
-<script src="/assets/helpers/playing-card.js?v=__CW_VERSION__"></script>
-<script src="/assets/helpers/watchlist-preview.js?v=__CW_VERSION__"></script>
+<script src="/assets/helpers/provider-meta.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/helpers/icon-select.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/helpers/api.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/helpers/media-meta.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/helpers/trailer.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/helpers/playing-card.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/helpers/watchlist-preview.js?v=__CW_VERSION__" defer></script>
 <script>window.cwIsAuthSetupPending = window.cwIsAuthSetupPending || (() => window.__cwAuthSetupPending === true);</script>
 <script src="/assets/js/dashboard-widgets.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/js/activity.js?v=__CW_VERSION__" defer></script>
