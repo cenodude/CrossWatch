@@ -73,6 +73,16 @@ export class ModalHost {
     window.cxSetModalDismissible = (flag) => this.setOptions({ dismissible: flag !== false });
   }
 
+  _resetClasses(props = {}) {
+    if (this.backdrop) this.backdrop.className = 'cx-backdrop';
+    if (this.shell) this.shell.className = 'cx-modal-shell';
+
+    const backdropClasses = String(props?.backdropClassName || props?.backdropClass || '')
+      .split(/\s+/)
+      .filter(Boolean);
+    if (backdropClasses.length) this.backdrop?.classList.add(...backdropClasses);
+  }
+
   _hideForeign() {
     if (this._foreign) return;
     const kills = [];
@@ -105,6 +115,7 @@ export class ModalHost {
   async mount(api, props = {}) {
     this.setOptions({ dismissible: props?.dismissible !== false });
     this._ensure();
+    this._resetClasses(props);
     this.api = api;
     this.shell.innerHTML = '';
 
