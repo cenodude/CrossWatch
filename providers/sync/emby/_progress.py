@@ -305,7 +305,7 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
             chosen_viewOffset=int(selected.get("progress_ms") or 0),
             duration_ms=selected.get("duration_ms"),
             ids=dict(selected.get("ids") or {}),
-            emby_item_id=str((selected.get("ids") or {}).get("emby") or ""),
+            emby_item_id=str(selected.get("emby_item_id") or ""),
             action=action,
         )
 

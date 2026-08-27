@@ -797,7 +797,7 @@ def _prepare_want(
 
         ids = dict(nm.get("ids") or {})
         for k_id, v_id in base_ids.items():
-            if v_id not in (None, "", 0):
+            if str(k_id).strip().lower() != "jellyfin" and v_id not in (None, "", 0):
                 ids[k_id] = v_id
         if ids:
             m["ids"] = ids
@@ -854,7 +854,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         results.append(_result_row(str(u.get("key") or ""), _ST_RESOLVE_FAILED, action="resolve", reason=reason))
 
     for k, m in wants.items():
-        iid = m.get("jellyfin_item_id") or _try_resolve_iid(adapter, m)
+        iid = _try_resolve_iid(adapter, m)
         if iid:
             mids.append((k, str(iid)))
         else:
@@ -1013,10 +1013,13 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
 
     for k, m in wants.items():
         ent = shadow.get(k) or {}
-        iid = (m.get("jellyfin_item_id") or (ent.get("iid") if isinstance(ent, Mapping) else None))
-
+        iid = _try_resolve_iid(adapter, m)
         if not iid:
-            iid = _try_resolve_iid(adapter, m)
+            ent_iid = ent.get("iid") if isinstance(ent, Mapping) else None
+            if ent_iid:
+                hinted = dict(m)
+                hinted["jellyfin_item_id"] = str(ent_iid)
+                iid = _try_resolve_iid(adapter, hinted)
 
         if iid:
             mids.append((k, str(iid)))

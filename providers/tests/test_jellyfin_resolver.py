@@ -11,6 +11,7 @@ if str(REPO_ROOT) not in sys.path:
 
 common = importlib.import_module("providers.sync.jellyfin._common")
 history = importlib.import_module("providers.sync.jellyfin._history")
+progress = importlib.import_module("providers.sync.jellyfin._progress")
 
 
 class FakeResp:
@@ -32,6 +33,14 @@ class FakeHttp:
         params = dict(params or {})
         self.calls.append({"method": "GET", "path": path, "params": params})
         assert "AnyProviderIdEquals" not in params
+        if path == "/Sessions":
+            return FakeResp(200, [])
+        if path.startswith("/Items/"):
+            item_id = path.removeprefix("/Items/")
+            for item in self.items:
+                if str(item.get("Id") or "") == item_id:
+                    return FakeResp(200, item)
+            return FakeResp(404, {})
         if path == "/Items":
             return FakeResp(200, {"Items": self.items, "TotalRecordCount": len(self.items)})
         if path.startswith("/Shows/") and path.endswith("/Episodes"):
@@ -52,6 +61,7 @@ class FakeCfg:
     watchlist_guid_priority = None
     history_guid_priority = None
     history_libraries = None
+    progress_libraries = None
 
 
 class FakeAdapter:
@@ -135,6 +145,66 @@ def test_jellyfin_long_numeric_item_ids_are_valid_backend_ids():
     item = {"type": "movie", "title": "Encanto", "year": 2021, "ids": {"tmdb": "568124"}}
 
     assert common.resolve_item_id(adapter, item, feature="history") == "7214430293560476068"
+
+
+def test_normalize_does_not_export_native_jellyfin_id():
+    row = jf_row("M1", "Movie", "Encanto", tmdb="568124")
+
+    item = common.normalize(row)
+
+    assert item["ids"] == {"tmdb": "568124"}
+    assert item["jellyfin_item_id"] == "M1"
+    assert "jellyfin" not in item["ids"]
+
+
+def test_resolve_rejects_stale_native_jellyfin_id_when_public_id_disagrees():
+    wrong = jf_row("M0", "Movie", "Wrong Movie", tmdb="1")
+    right = jf_row("M1", "Movie", "Encanto", tmdb="568124")
+    adapter = FakeAdapter(FakeHttp([wrong, right]))
+
+    item = {"type": "movie", "title": "Encanto", "year": 2021, "ids": {"jellyfin": "M0", "tmdb": "568124"}}
+
+    assert common.resolve_item_id(adapter, item, feature="history") == "M1"
+    assert any(call["path"] == "/Items/M0" for call in adapter.client.calls)
+    assert any(call["params"].get("SearchTerm") == "Encanto" for call in adapter.client.calls)
+
+
+def test_resolve_rejects_stale_jellyfin_item_id_when_public_id_disagrees():
+    wrong = jf_row("M0", "Movie", "Wrong Movie", tmdb="1")
+    right = jf_row("M1", "Movie", "Encanto", tmdb="568124")
+    adapter = FakeAdapter(FakeHttp([wrong, right]))
+
+    item = {"type": "movie", "title": "Encanto", "year": 2021, "ids": {"tmdb": "568124"}, "jellyfin_item_id": "M0"}
+
+    assert common.resolve_item_id(adapter, item, feature="history") == "M1"
+    assert any(call["path"] == "/Items/M0" for call in adapter.client.calls)
+    assert any(call["params"].get("SearchTerm") == "Encanto" for call in adapter.client.calls)
+
+
+def test_progress_write_does_not_trust_stale_jellyfin_item_id():
+    wrong = jf_row("M0", "Movie", "Wrong Movie", tmdb="1")
+    current = jf_row("M1", "Movie", "Encanto", tmdb="568124")
+    current["RunTimeTicks"] = 6_000_000_000
+    current["UserData"] = {"PlaybackPositionTicks": 0}
+    adapter = FakeAdapter(FakeHttp([wrong, current]))
+
+    item = {
+        "type": "movie",
+        "title": "Encanto",
+        "year": 2021,
+        "ids": {"tmdb": "568124"},
+        "jellyfin_item_id": "M0",
+        "progress_ms": 120_000,
+        "duration_ms": 600_000,
+        "progress_at": "2026-08-01T00:00:00Z",
+    }
+
+    applied, unresolved = progress.add(adapter, [item])
+
+    assert applied == 1
+    assert unresolved == []
+    assert not any(call["path"] == "/UserItems/M0/UserData" for call in adapter.client.calls)
+    assert any(call["path"] == "/UserItems/M1/UserData" for call in adapter.client.calls)
 
 
 def test_movie_targeted_lookup_resolves_without_full_provider_index():

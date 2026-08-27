@@ -386,6 +386,24 @@ def _pids_to_ids(pids: Any) -> dict[str, str]:
                 pass
     return out
 
+
+def _public_ids_only(ids: Mapping[str, Any] | None) -> dict[str, str]:
+    out: dict[str, str] = {}
+    src = ids if isinstance(ids, Mapping) else {}
+    for key in ("tmdb", "imdb", "tvdb"):
+        value = str(src.get(key) or "").strip()
+        if not value:
+            continue
+        if key == "imdb":
+            out["imdb"] = value if value.startswith("tt") else f"tt{value}"
+            continue
+        try:
+            out[key] = str(int(value))
+        except Exception:
+            pass
+    return out
+
+
 def _series_ids_for(http: Any, series_id: str | None) -> dict[str, str]:
     body = _item_meta(http, series_id)
     if not body:
@@ -838,7 +856,7 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
                 typ = (row.get("Type") or "").strip()
 
                 if _is_movieish(row):
-                    ids = dict(m.get("ids") or {})
+                    ids = _public_ids_only(m.get("ids"))
                     if not ids:
                         ids = _item_ids_for(http, row.get("Id"))
                     movie_title = (m.get("title") or row.get("Name") or "").strip()
