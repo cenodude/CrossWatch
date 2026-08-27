@@ -25,7 +25,6 @@
   const WIDE_UNITS = 3;
   const WIDGET_REFRESH_TTL_MS = 60 * 1000;
   const WIDGET_FETCH_RETRY_DELAYS = [350, 900, 1800];
-  const IMAGE_PREWARM_MAX = 12;
   const visibleCounts = { history: GRID_PAGE_STEP, ratings: RATING_PAGE_STEP, scrobble: GRID_PAGE_STEP, progress: GRID_PAGE_STEP, playlists: GRID_PAGE_STEP };
   const latestItems = { history: [], ratings: [], scrobble: [], progress: [], playlists: [] };
   const EMPTY_META = {
@@ -966,49 +965,6 @@
     return `/art/tmdb/${kind}/${encodeURIComponent(String(tmdb))}?kind=backdrop&size=${encodeURIComponent(size)}&locale=${encodeURIComponent(window.__CW_LOCALE || navigator.language || "en-US")}${title}${year}`;
   }
 
-  function prewarmImageUrls(urls) {
-    const list = [...new Set((urls || []).filter(Boolean))].slice(0, IMAGE_PREWARM_MAX);
-    if (!list.length) return;
-    if (navigator.connection?.saveData) return;
-    const run = () => {
-      let index = 0;
-      const next = () => {
-        const url = list[index++];
-        if (!url) return;
-        let settled = false;
-        const img = new Image();
-        const done = () => {
-          if (settled) return;
-          settled = true;
-          window.setTimeout(next, 160);
-        };
-        img.onload = done;
-        img.onerror = done;
-        img.decoding = "async";
-        img.src = url;
-        window.setTimeout(done, 3500);
-      };
-      next();
-    };
-    const start = () => {
-      if ("requestIdleCallback" in window) window.requestIdleCallback(run, { timeout: 4000 });
-      else window.setTimeout(run, 800);
-    };
-    window.setTimeout(start, 900);
-  }
-
-  function prewarmWidgetImages(active) {
-    const urls = [];
-    for (const kind of ["history", "ratings", "scrobble", "progress"]) {
-      if (!active?.[kind]) continue;
-      const limit = Math.min(latestItems[kind]?.length || 0, visibleCounts[kind] || PAGE_STEP);
-      for (const item of (latestItems[kind] || []).slice(0, limit)) {
-        urls.push(poster(item), coverPoster(item, "w342"), backdropPoster(item, null, "w780"));
-      }
-    }
-    prewarmImageUrls(urls);
-  }
-
   function tmdbLink(item) {
     const tmdb = item?.tmdb;
     if (!tmdb) return "";
@@ -1630,7 +1586,6 @@
       for (const kind of ["history", "ratings", "scrobble", "progress", "playlists"]) {
         if (active[kind]) renderWidget(kind);
       }
-      prewarmWidgetImages(active);
     } catch (e) {
       if (authPendingError(e)) {
         scheduleAuthReadyRefresh();
@@ -1789,7 +1744,11 @@
     });
     window.addEventListener("resize", scheduleMasonry);
     if (authSetupPending()) scheduleAuthReadyRefresh();
-    window.addEventListener("load", () => setTimeout(() => refreshDashboardWidgets({ forceConfig: true }), 100), { once: true });
+    window.addEventListener("load", () => {
+      setTimeout(() => {
+        if (!hasLoaded) refreshDashboardWidgets({ forceConfig: true });
+      }, 100);
+    }, { once: true });
     refreshDashboardWidgets();
   }
 
