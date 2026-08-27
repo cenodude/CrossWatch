@@ -1966,6 +1966,19 @@ def test_quick_add_uses_authenticated_write_gate() -> None:
     assert "renderAll();\n  queuePairsRefresh();" in js
 
 
+def test_setup_wizard_uses_privacy_backdrop() -> None:
+    modals = Path("assets/js/modals.js").read_text("utf-8")
+    host = Path("assets/js/modals/core/host.js").read_text("utf-8")
+    css = Path("assets/js/modals/core/styles.css").read_text("utf-8")
+
+    assert "'cw-setup-privacy-backdrop'" in modals
+    assert "props?.backdropClassName || props?.backdropClass" in host
+    assert "this.backdrop.className = 'cx-backdrop';" in host
+    assert ".cx-backdrop.cw-setup-privacy-backdrop" in css
+    assert "blur(20px)" in css
+    assert "brightness(.24)" in css
+
+
 def test_managed_pair_policy_filters_to_profile_instances() -> None:
     from cw_platform.access_policy import filter_pairs_for_user, user_can_access_pair
 

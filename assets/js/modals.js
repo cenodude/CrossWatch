@@ -56,7 +56,10 @@ window.openMaintenanceModal = (props = {}) => ModalRegistry.open('maintenance', 
 window.openManualWatchedModal = (props = {}) => ModalRegistry.open('manual-watched', props);
 window.openTlsCertModal = (props = {}) => ModalRegistry.open('tls-cert', props);
 
-window.openSetupWizard = (props = {}) => ModalRegistry.open('setup-wizard', props);
+window.openSetupWizard = (props = {}) => ModalRegistry.open('setup-wizard', {
+  ...props,
+  backdropClassName: [props?.backdropClassName, 'cw-setup-privacy-backdrop'].filter(Boolean).join(' '),
+});
 window.openUpgradeWarning = (props = {}) => ModalRegistry.open('upgrade-warning', props);
 
 window.cxEnsureCfgModal = async (pairOrId = null) => {
