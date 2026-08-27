@@ -521,6 +521,9 @@ def _ids_from_provider_ids(pids: Mapping[str, Any] | None) -> dict[str, str]:
 def normalize(obj: Mapping[str, Any]) -> dict[str, Any]:
     if isinstance(obj, Mapping) and "ids" in obj and "type" in obj:
         out = id_minimal(obj)
+        out_ids = out.get("ids")
+        if isinstance(out_ids, dict):
+            out_ids.pop("jellyfin", None)
         raw = obj.get("jellyfin_item_id") or obj.get("_jellyfin_item_id") or obj.get("Id")
         if raw:
             out["jellyfin_item_id"] = str(raw)
@@ -531,8 +534,7 @@ def normalize(obj: Mapping[str, Any]) -> dict[str, Any]:
     pids = obj.get("ProviderIds") if isinstance(obj.get("ProviderIds"), Mapping) else (obj.get("ids") or {})
     ids = {k: v for k, v in _ids_from_provider_ids(pids).items() if v}
     jf_id = obj.get("Id") or (pids.get("jellyfin") if isinstance(pids, Mapping) else None)
-    if jf_id:
-        ids["jellyfin"] = str(jf_id)
+    ids.pop("jellyfin", None)
     row: dict[str, Any] = {"type": t, "title": title, "year": year, "ids": ids}
     
     if jf_id:
@@ -1101,6 +1103,104 @@ def _pick_from_candidates(
     return str(iid) if iid and not looks_like_bad_id(iid) else None
 
 
+def _public_ids(ids: Mapping[str, Any]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for key in ("tmdb", "imdb", "tvdb"):
+        pair = format_provider_pair(key, ids.get(key))
+        if pair:
+            out[key] = pair.partition(".")[2]
+    return out
+
+
+def _row_matches_type(row: Mapping[str, Any], want_type: str | None) -> bool:
+    if not want_type:
+        return True
+    row_type = str(row.get("Type") or "").strip().lower()
+    if want_type == "movie":
+        return row_type in ("movie", "video")
+    if want_type in ("show", "series"):
+        return row_type == "series"
+    if want_type == "episode":
+        return row_type == "episode"
+    return True
+
+
+def _row_matches_title_year(row: Mapping[str, Any], title: str, year: Any) -> bool:
+    if not title:
+        return False
+    row_title = str(row.get("Name") or "").strip().lower()
+    if row_title != title.lower():
+        return False
+    if year is None:
+        return True
+    try:
+        return isinstance(row.get("ProductionYear"), int) and abs(int(row["ProductionYear"]) - int(year)) <= 1
+    except Exception:
+        return False
+
+
+def _native_row_matches_request(
+    row: Mapping[str, Any],
+    ids: Mapping[str, Any],
+    *,
+    want_type: str | None,
+    title: str,
+    year: Any,
+) -> bool:
+    if not row or not _row_matches_type(row, want_type):
+        return False
+
+    requested_public = _public_ids(ids)
+    if requested_public:
+        row_public = _ids_from_provider_ids(row.get("ProviderIds"))
+        if any(row_public.get(key) == value for key, value in requested_public.items()):
+            return True
+        if row_public:
+            return False
+        return _row_matches_title_year(row, title, year)
+
+    if title:
+        return _row_matches_title_year(row, title, year)
+    return True
+
+
+def _validate_native_item_id(
+    adapter: Any,
+    iid: Any,
+    ids: Mapping[str, Any],
+    *,
+    selected_libs: set[str],
+    want_type: str | None,
+    title: str,
+    year: Any,
+) -> str | None:
+    s = str(iid or "").strip()
+    if not s or looks_like_bad_id(s):
+        return None
+    needs_validation = bool(selected_libs or _public_ids(ids) or title)
+    if not needs_validation:
+        _dbg("resolve_hit", kind="direct", method="provider_id", item_id=s)
+        return s
+    http = adapter.client
+    uid = adapter.cfg.user_id
+    try:
+        response = http.get(
+            f"/Items/{s}",
+            params={"userId": uid, "Fields": "ProviderIds,ProductionYear,LibraryId,CollectionFolderId,AncestorIds,ParentId,Type,Name"},
+        )
+        row = response.json() or {} if getattr(response, "status_code", 0) == 200 else {}
+    except Exception:
+        row = {}
+    if selected_libs and not jf_filter_library_candidates([row] if row else [], selected_libs):
+        setattr(adapter, "_jellyfin_last_resolve_hint", "outside_library_scope")
+        _dbg("target_candidate_outside_library_scope", item_id=s, allowed_library_ids=sorted(selected_libs), resolution_method="provider_id")
+        return None
+    if row and _native_row_matches_request(row, ids, want_type=want_type, title=title, year=year):
+        return s
+    _dbg("native_id_rejected", item_id=s, kind=want_type, title=title, year=year)
+    return None
+
+
 def _direct_query_by_pairs(
     adapter: Any,
     http: Any,
@@ -1411,45 +1511,44 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any], *, feature: str = "hist
     selected_libs = jf_selected_library_ids(adapter.cfg, feature)
     setattr(adapter, "_jellyfin_last_resolve_hint", None)
     outside_scope_seen = False
-
-    # Prefer native Jellyfin item id when present.
-    raw_iid = it.get("jellyfin_item_id") or it.get("_jellyfin_item_id")
-    if raw_iid:
-        s = str(raw_iid).strip()
-        if s and not looks_like_bad_id(s):
-            _dbg('resolve_hit', kind='direct', method='item_field', item_id=s)
-            return s
-
     ids = dict(it.get("ids") or {})
     show_ids = it.get("show_ids") if isinstance(it.get("show_ids"), Mapping) else None
-
-    jf = ids.get("jellyfin")
-    if jf and not looks_like_bad_id(jf):
-        if selected_libs:
-            try:
-                response = http.get(
-                    f"/Items/{jf}",
-                    params={"userId": uid, "Fields": "LibraryId,CollectionFolderId,AncestorIds,ParentId,Type"},
-                )
-                row = response.json() or {} if getattr(response, "status_code", 0) == 200 else {}
-            except Exception:
-                row = {}
-            if not jf_filter_library_candidates([row] if row else [], selected_libs):
-                outside_scope_seen = True
-                setattr(adapter, "_jellyfin_last_resolve_hint", "outside_library_scope")
-                _dbg('target_candidate_outside_library_scope', item_id=str(jf), allowed_library_ids=sorted(selected_libs), resolution_method='provider_id')
-            else:
-                return str(jf)
-        else:
-            _dbg('resolve_hit', kind='direct', method='provider_id', item_id=str(jf))
-            return str(jf)
-
     t = _lookup_type(it)
     title = (it.get("title") or "").strip()
     year = it.get("year")
     season = it.get("season")
     episode = it.get("episode")
     series_title = (it.get("series_title") or "").strip()
+
+    raw_iid = it.get("jellyfin_item_id") or it.get("_jellyfin_item_id")
+    native_iid = _validate_native_item_id(
+        adapter,
+        raw_iid,
+        ids,
+        selected_libs=selected_libs,
+        want_type=t,
+        title=title,
+        year=year,
+    )
+    if native_iid:
+        _dbg("resolve_hit", kind="direct", method="item_field", item_id=native_iid)
+        return native_iid
+
+    jf = ids.get("jellyfin")
+    native_iid = _validate_native_item_id(
+        adapter,
+        jf,
+        ids,
+        selected_libs=selected_libs,
+        want_type=t,
+        title=title,
+        year=year,
+    )
+    if native_iid:
+        _dbg("resolve_hit", kind="direct", method="provider_id", item_id=native_iid)
+        return native_iid
+    if jf and selected_libs and getattr(adapter, "_jellyfin_last_resolve_hint", None) == "outside_library_scope":
+        outside_scope_seen = True
 
     strict = bool(getattr(getattr(adapter, "cfg", None), "strict_id_matching", False))
 
@@ -1719,13 +1818,6 @@ def resolve_item_ids(adapter: Any, it: Mapping[str, Any], *, feature: str = "his
     uid = getattr(getattr(adapter, "cfg", None), "user_id", None)
     if not http or not uid:
         return []
-
-    # Prefer native Jellyfin item id when present
-    raw_iid = it.get("jellyfin_item_id") or it.get("_jellyfin_item_id")
-    if raw_iid:
-        s = str(raw_iid).strip()
-        if s and not looks_like_bad_id(s):
-            return [s]
 
     one = resolve_item_id(adapter, it, feature=feature)
     selected_libs = jf_selected_library_ids(adapter.cfg, feature)

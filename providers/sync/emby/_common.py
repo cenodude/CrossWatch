@@ -495,6 +495,9 @@ def normalize(obj: Mapping[str, Any]) -> dict[str, Any]:
         base = dict(obj)
         res = id_minimal(base)
         raw = base.get("emby_item_id") or base.get("_emby_item_id") or (base.get("ids") or {}).get("emby")
+        res_ids = res.get("ids")
+        if isinstance(res_ids, dict):
+            res_ids.pop("emby", None)
         if raw:
             res["emby_item_id"] = str(raw)
         if "library_id" in base:
@@ -506,8 +509,7 @@ def normalize(obj: Mapping[str, Any]) -> dict[str, Any]:
     pids = obj.get("ProviderIds") if isinstance(pids := obj.get("ProviderIds"), Mapping) else obj.get("ids") or {}
     ids = {k: v for k, v in _ids_from_provider_ids(pids).items() if v}
     em_id = obj.get("Id") or (pids.get("emby") if isinstance(pids, Mapping) else None)
-    if em_id:
-        ids["emby"] = str(em_id)
+    ids.pop("emby", None)
     row: dict[str, Any] = {"type": t, "title": title, "year": year, "ids": ids}
     if em_id:
         row["emby_item_id"] = str(em_id)
@@ -1404,6 +1406,67 @@ def _pick_from_candidates(
     return str(iid) if iid and not looks_like_bad_id(iid) else None
 
 
+def _public_ids(ids: Mapping[str, Any]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for key in ("tmdb", "imdb", "tvdb"):
+        pair = format_provider_pair(key, ids.get(key))
+        if pair:
+            out[key] = pair.partition(".")[2]
+    return out
+
+
+def _row_matches_type(row: Mapping[str, Any], want_type: str | None) -> bool:
+    if not want_type:
+        return True
+    row_type = str(row.get("Type") or "").strip().lower()
+    if want_type == "movie":
+        return row_type in ("movie", "video")
+    if want_type in ("show", "series"):
+        return row_type == "series"
+    if want_type == "episode":
+        return row_type == "episode"
+    return True
+
+
+def _row_matches_title_year(row: Mapping[str, Any], title: str, year: Any) -> bool:
+    if not title:
+        return False
+    row_title = str(row.get("Name") or "").strip().lower()
+    if row_title != title.lower():
+        return False
+    if year is None:
+        return True
+    try:
+        return isinstance(row.get("ProductionYear"), int) and abs(int(row["ProductionYear"]) - int(year)) <= 1
+    except Exception:
+        return False
+
+
+def _native_row_matches_request(
+    row: Mapping[str, Any],
+    ids: Mapping[str, Any],
+    *,
+    want_type: str | None,
+    title: str,
+    year: Any,
+) -> bool:
+    if not row or not _row_matches_type(row, want_type):
+        return False
+
+    requested_public = _public_ids(ids)
+    if requested_public:
+        row_public = _ids_from_provider_ids(row.get("ProviderIds"))
+        if any(row_public.get(key) == value for key, value in requested_public.items()):
+            return True
+        if row_public:
+            return False
+        return _row_matches_title_year(row, title, year)
+
+    if title:
+        return _row_matches_title_year(row, title, year)
+    return True
+
+
 def _direct_query_by_pairs(
     http: Any,
     uid: str,
@@ -1488,33 +1551,36 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any], *, feature: str = "hist
         )
     if mk in memo and memo[mk]:
         return memo[mk]
-    em = ids.get("emby")
-    if em and not looks_like_bad_id(em):
-        if selected_libs:
-            try:
-                response = http.get(
-                    f"/Users/{uid}/Items/{em}",
-                    params={"Fields": "LibraryId,CollectionFolderId,AncestorIds,ParentId,Type"},
-                )
-                row = response.json() or {} if getattr(response, "status_code", 0) == 200 else {}
-            except Exception:
-                row = {}
-            if not emby_filter_library_candidates([row] if row else [], selected_libs):
-                setattr(adapter, "_emby_last_resolve_hint", "outside_library_scope")
-                cw_log("EMBY", "common", "debug", "target_candidate_outside_library_scope", item_id=str(em), allowed_library_ids=sorted(selected_libs), resolution_method="provider_id")
-            else:
-                memo[mk] = str(em)
-                return str(em)
-        else:
-            cw_log("EMBY", "common", "debug", "resolve_hit", kind="direct", method="provider_id", item_id=str(em))
-            memo[mk] = str(em)
-            return str(em)
     t = _lookup_type(it)
     title = (it.get("title") or "").strip()
     year = it.get("year")
     season = it.get("season")
     episode = it.get("episode")
     series_title = (it.get("series_title") or "").strip()
+    em = ids.get("emby")
+    if em and not looks_like_bad_id(em):
+        needs_validation = bool(selected_libs or _public_ids(ids) or title)
+        if needs_validation:
+            try:
+                response = http.get(
+                    f"/Users/{uid}/Items/{em}",
+                    params={"Fields": "ProviderIds,ProductionYear,LibraryId,CollectionFolderId,AncestorIds,ParentId,Type,Name"},
+                )
+                row = response.json() or {} if getattr(response, "status_code", 0) == 200 else {}
+            except Exception:
+                row = {}
+            if selected_libs and not emby_filter_library_candidates([row] if row else [], selected_libs):
+                setattr(adapter, "_emby_last_resolve_hint", "outside_library_scope")
+                cw_log("EMBY", "common", "debug", "target_candidate_outside_library_scope", item_id=str(em), allowed_library_ids=sorted(selected_libs), resolution_method="provider_id")
+            elif row and _native_row_matches_request(row, ids, want_type=t, title=title, year=year):
+                memo[mk] = str(em)
+                return str(em)
+            else:
+                cw_log("EMBY", "common", "debug", "native_id_rejected", item_id=str(em), kind=t, title=title, year=year)
+        else:
+            cw_log("EMBY", "common", "debug", "resolve_hit", kind="direct", method="provider_id", item_id=str(em))
+            memo[mk] = str(em)
+            return str(em)
 
     strict = bool(getattr(getattr(adapter, "cfg", None), "strict_id_matching", False))
     series_ids = dict(it.get("show_ids") or {})
@@ -1933,12 +1999,6 @@ def resolve_item_ids(adapter: Any, it: Mapping[str, Any], *, feature: str = "his
     uid = getattr(getattr(adapter, "cfg", None), "user_id", None)
     if not http or not uid:
         return []
-
-    raw_iid = it.get("emby_item_id") or it.get("_emby_item_id")
-    if raw_iid:
-        s = str(raw_iid).strip()
-        if s and not looks_like_bad_id(s):
-            return [s]
 
     one = resolve_item_id(adapter, it, feature=feature)
     selected_libs = emby_selected_library_ids(adapter.cfg, feature)
