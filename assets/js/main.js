@@ -874,9 +874,12 @@
 
   const showTab = window.showTab;
   window.showTab = function (name) {
-    const ret = typeof showTab === "function" ? showTab.apply(this, arguments) : undefined;
+    const requested = name || "main";
+    const effective = DOC.classList.contains("cw-compact") && requested !== "main" ? "main" : requested;
+    const args = [effective, ...Array.prototype.slice.call(arguments, 1)];
+    const ret = typeof showTab === "function" ? showTab.apply(this, args) : undefined;
     try {
-      DOC.dataset.tab = name || "main";
+      DOC.dataset.tab = effective;
     } catch {}
     return ret;
   };

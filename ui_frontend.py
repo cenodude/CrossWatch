@@ -469,7 +469,8 @@ def _get_index_html_static() -> str:
   try {
     const route = String(window.location.hash || "").replace(/^#\/?/, "").split("?")[0].split("/")[0].trim().toLowerCase().replace(/-/g, "_");
     const tabs = new Set(["watchlist", "playback_progress", "snapshots", "playlists", "editor", "settings"]);
-    const tab = tabs.has(route) ? route : "main";
+    let tab = tabs.has(route) ? route : "main";
+    if (document.documentElement.classList.contains("cw-compact") && tab !== "main") tab = "main";
     document.documentElement.dataset.cwInitialTab = tab;
     document.documentElement.dataset.tab = tab;
   } catch {
