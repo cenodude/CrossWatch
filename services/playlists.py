@@ -12,7 +12,6 @@ from typing import Any, Iterator, Mapping
 from _logging import log as _cw_log
 from cw_platform.playlists import (
     BUILTIN_RULESETS,
-    PlaylistUserError,
     playlist_capabilities,
     supports_playlists,
     validate_ruleset,
@@ -32,7 +31,6 @@ _SAFE_NAME_CHARS = " _.'-&()"
 
 
 def _internal_playlist_error(action: str, exc: Exception, **extra: Any) -> dict[str, Any]:
-    reason = str(exc or "").strip() if isinstance(exc, PlaylistUserError) else ""
     try:
         _cw_log(
             f"playlist {action} failed",
@@ -41,13 +39,12 @@ def _internal_playlist_error(action: str, exc: Exception, **extra: Any) -> dict[
             extra={
                 "action": action,
                 "error_type": exc.__class__.__name__,
-                "reason": reason,
                 **{k: v for k, v in extra.items() if v not in (None, "", [], {})},
             },
         )
     except Exception:
         pass
-    return {"ok": False, "error": f"{action} failed: {reason}" if reason else f"{action} failed"}
+    return {"ok": False, "error": f"{action} failed"}
 
 
 def _safe_name_error(name: Any, label: str, max_len: int) -> str:

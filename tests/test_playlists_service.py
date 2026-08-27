@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 
 from cw_platform.id_map import canonical_key
-from cw_platform.playlists import PlaylistItem, PlaylistResource, PlaylistSnapshot
+from cw_platform.playlists import PlaylistItem, PlaylistResource, PlaylistSnapshot, PlaylistUserError
 from cw_platform import playlists_runner as runner
 from services import playlists as svc
 
@@ -158,6 +158,19 @@ def test_playlist_resource_errors_do_not_expose_exception_text(config_base, fake
 def test_playlist_create_errors_do_not_expose_exception_text(config_base, fake_providers):
     def fail(*_args, **_kwargs):
         raise RuntimeError("password=secret-from-provider /srv/crosswatch/internal.py")
+
+    fake_providers["TRAKT"].create_playlist = fail
+    res = svc.upsert_endpoint(
+        _cfg(),
+        {"name": "NewList", "provider": "TRAKT", "instance": "default", "create": True, "create_name": "Weekend Movies"},
+    )
+
+    assert res == {"ok": False, "error": "create failed"}
+
+
+def test_playlist_user_errors_do_not_expose_exception_text(config_base, fake_providers):
+    def fail(*_args, **_kwargs):
+        raise PlaylistUserError("token=secret-from-provider /srv/crosswatch/internal.py")
 
     fake_providers["TRAKT"].create_playlist = fail
     res = svc.upsert_endpoint(
