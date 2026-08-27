@@ -169,6 +169,16 @@ def _pair_key(a: str, b: str) -> str:
     return "-".join(sorted([_norm_prov(a), _norm_prov(b)]))
 
 
+def _norm_pair_key(v: Any, fallback: Any = None) -> str | None:
+    raw = str(v or fallback or "").strip()
+    if not raw:
+        return None
+    parts = [p for p in (_norm_prov(x) for x in raw.split("-")) if p]
+    if len(parts) == 2:
+        return "-".join(sorted(parts))
+    return raw.upper()
+
+
 class RunRecorder:
 
     def __init__(self, inner_emit, *, run_id: str, conn: sqlite3.Connection | None = None):
@@ -215,6 +225,30 @@ class RunRecorder:
         kw.setdefault("pair_key", self._pair or None)
         kw.setdefault("source_kind", "runtime")
         self._buf.append(make_event(hash_extra=len(self._buf), **kw))
+
+    def _seen_blackbox_item(self, *, feature: Any, pair_key: Any, dst: Any, src_instance: Any, dst_instance: Any, item_key: Any) -> bool:
+        key = tuple(str(v or "") for v in (feature, pair_key, dst, src_instance, dst_instance, item_key))
+        for row in self._buf:
+            if row.get("event_type") != "blackbox_blocked" or row.get("operation") != "add":
+                continue
+            row_key = tuple(str(row.get(k) or "") for k in (
+                "feature", "pair_key", "destination_provider", "source_instance", "destination_instance", "item_key"
+            ))
+            if row_key == key:
+                return True
+        c = self._conn or get_conn()
+        if c is None:
+            return False
+        try:
+            return c.execute(
+                "SELECT 1 FROM events WHERE event_type='blackbox_blocked' AND operation='add' "
+                "AND COALESCE(feature,'')=? AND COALESCE(pair_key,'')=? "
+                "AND COALESCE(destination_provider,'')=? AND COALESCE(source_instance,'')=? "
+                "AND COALESCE(destination_instance,'')=? AND COALESCE(item_key,'')=? LIMIT 1",
+                key,
+            ).fetchone() is not None
+        except Exception:
+            return False
 
     def _observe(self, event: str, f: Mapping[str, Any]) -> None:
         if event == "run:start":
@@ -397,7 +431,7 @@ class RunRecorder:
         if event == "debug" and str(f.get("msg") or "") == "blocked.counts":
             bb = int(f.get("blocked_blackbox") or 0)
             dst_p = _norm_prov(f.get("dst")) or None
-            pair_k = str(f.get("pair") or self._pair) or None
+            pair_k = _norm_pair_key(f.get("pair"), self._pair)
             rows = f.get("blackbox_items") or []
             if bb > 0:
                 self._add(
@@ -415,6 +449,15 @@ class RunRecorder:
                     continue
                 k = str(row.get("key") or "")
                 if not k:
+                    continue
+                if self._seen_blackbox_item(
+                    feature=f.get("feature") or self._feature,
+                    pair_key=pair_k,
+                    dst=dst_p,
+                    src_instance=self._si,
+                    dst_instance=self._di,
+                    item_key=k,
+                ):
                     continue
                 raw_it = row.get("item")
                 it: Mapping[str, Any] = raw_it if isinstance(raw_it, Mapping) else {}
