@@ -215,6 +215,7 @@ def test_endpoint_and_mapping_tables_use_compact_icon_actions():
     assert "function mappingIsRunning" in js
     assert "API.runSummary()" in js
     assert "Synchronization is already running" in js
+    assert 'if (wasBusy && !sharedSyncBusy()) await refreshOverview(["endpoints", "mappings", "activity"]);' in js
     assert 'state.syncSummary = { ...(state.syncSummary || {}), running: true, pair_scope_ids: [String(mapping.assigned_pair || "")] };' in js
     assert "async function syncEndpoint" in js
     assert '"endpoint-sync"' in js
@@ -265,6 +266,8 @@ def test_playlists_overview_uses_dashboard_table_body():
     assert 'warningBits.push(`${unresolved} unresolved`)' in js
     assert "function openActivityClear" in js
     assert "activityClear: ()" in js
+    assert "state.activity = Array.isArray(cleared.activity) ? cleared.activity : [];" in js
+    assert "if (cleared.overview) state.overview = cleared.overview;" in js
     assert 'data-action="activity-clear"' in js
     assert '<table class="pl-activity-table">' in js
     assert '<th>Time</th><th>Mapping</th><th>Result</th><th>Changes</th><th>Status</th>' in js
