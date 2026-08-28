@@ -85,6 +85,59 @@ def api_playlist_resources(
     return JSONResponse(res, status_code=(200 if res.get("ok") else 400))
 
 
+@router.post("/resources")
+def api_playlist_resource_create(payload: dict[str, Any] = Body(...), request: Request = cast(Request, None)) -> JSONResponse:
+    cfg = load_config() or {}
+    provider = payload.get("provider")
+    instance = payload.get("instance") or "default"
+    if not user_can_access_instance(cfg, request_user(request), provider, instance):
+        return _scope_denied()
+    res = svc.create_provider_playlist(
+        cfg,
+        str(provider or ""),
+        str(instance or "default"),
+        payload.get("name") or payload.get("create_name"),
+        payload.get("media_type"),
+    )
+    return JSONResponse(res, status_code=(200 if res.get("ok") else 400))
+
+
+@router.patch("/resources/{playlist_id}")
+def api_playlist_resource_rename(
+    playlist_id: str,
+    payload: dict[str, Any] = Body(...),
+    request: Request = cast(Request, None),
+) -> JSONResponse:
+    cfg = load_config() or {}
+    provider = payload.get("provider")
+    instance = payload.get("instance") or "default"
+    if not user_can_access_instance(cfg, request_user(request), provider, instance):
+        return _scope_denied()
+    res = svc.rename_provider_playlist(
+        cfg,
+        str(provider or ""),
+        str(instance or "default"),
+        playlist_id,
+        payload.get("name"),
+    )
+    return JSONResponse(res, status_code=(200 if res.get("ok") else 400))
+
+
+@router.delete("/resources/{playlist_id}")
+def api_playlist_resource_delete(
+    playlist_id: str,
+    provider: str = Query(...),
+    instance: str | None = Query(None),
+    request: Request = cast(Request, None),
+) -> JSONResponse:
+    cfg = load_config() or {}
+    inst = instance or "default"
+    if not user_can_access_instance(cfg, request_user(request), provider, inst):
+        return _scope_denied()
+    res = svc.delete_provider_playlist(cfg, provider, inst, playlist_id)
+    return JSONResponse(res, status_code=(200 if res.get("ok") else 400))
+
+
 @router.get("/overview")
 def api_playlist_overview(request: Request = cast(Request, None)) -> JSONResponse:
     cfg = load_config() or {}
@@ -168,6 +221,15 @@ def api_playlist_activity(request: Request = cast(Request, None)) -> JSONRespons
         ]
         return JSONResponse({"ok": True, "activity": activity})
     return JSONResponse({"ok": True, "activity": svc.activity(cfg)})
+
+
+@router.delete("/activity")
+def api_playlist_activity_clear(request: Request = cast(Request, None)) -> JSONResponse:
+    if not _is_admin_request(request):
+        return _scope_denied()
+    cfg = load_config() or {}
+    res = svc.clear_activity(cfg)
+    return JSONResponse(res, status_code=(200 if res.get("ok") else 400), headers={"Cache-Control": "no-store"})
 
 
 @router.get("/rulesets")

@@ -711,6 +711,8 @@ def non_admin_api_allowed(path: Any, method: Any) -> bool:
         return m == "GET"
     if p.startswith("/api/playback_progress/actions/"):
         return m == "POST"
+    if p == "/api/playlists/activity" and m == "DELETE":
+        return False
     for prefix in (
         "/api/analyzer",
         "/api/events",

@@ -12,6 +12,7 @@ from typing import Any, Iterator, Mapping
 from _logging import log as _cw_log
 from cw_platform.playlists import (
     BUILTIN_RULESETS,
+    PlaylistResource,
     playlist_capabilities,
     supports_playlists,
     validate_ruleset,
@@ -153,7 +154,155 @@ def list_resources(cfg: Mapping[str, Any], provider: str, instance: str | None =
         res = _internal_playlist_error("resource listing", e, provider=name, instance=inst)
         res["resources"] = []
         return res
-    return {"ok": True, "provider": name, "instance": inst, "resources": [r.to_dict() for r in resources]}
+    return {"ok": True, "provider": name, "instance": inst, "resources": [_resource_with_manage_flags(r, ops) for r in resources]}
+
+
+def create_provider_playlist(
+    cfg: Mapping[str, Any],
+    provider: str,
+    instance: str | None,
+    playlist_name: Any,
+    media_type: Any = None,
+) -> dict[str, Any]:
+    name = str(provider or "").strip().upper()
+    inst = normalize_instance_id(instance)
+    ops = _providers().get(name)
+    if not ops or not supports_playlists(ops):
+        return {"ok": False, "error": "provider not playlist-capable"}
+    create_name = str(playlist_name or "").strip()
+    create_err = _playlist_name_error(create_name)
+    if create_err:
+        return {"ok": False, "error": create_err}
+    allowed_types = creatable_endpoint_types(ops)
+    endpoint_type = str(media_type or allowed_types[0]).strip().lower()
+    if endpoint_type not in allowed_types:
+        label = " or ".join(allowed_types)
+        return {"ok": False, "error": f"{name} can only create a {label}"}
+    try:
+        view = build_provider_config_view(cfg, name, inst)
+        resource = ops.create_playlist(view, create_name, media_type=endpoint_type, instance=inst)
+    except Exception as e:
+        return _internal_playlist_error("create", e, provider=name, instance=inst, media_type=endpoint_type)
+    if isinstance(resource, PlaylistResource):
+        resource_data = resource.to_dict()
+    elif isinstance(resource, Mapping):
+        resource_data = dict(resource)
+    else:
+        resource_data = {"id": str(getattr(resource, "id", "") or ""), "name": str(getattr(resource, "name", create_name) or create_name)}
+    resource_data.setdefault("provider", name)
+    resource_data.setdefault("instance", inst)
+    if isinstance(resource, (PlaylistResource, Mapping)):
+        try:
+            resource_data = _resource_with_manage_flags(PlaylistResource.from_dict(resource_data), ops)
+        except Exception:
+            resource_data = dict(resource_data)
+    return {"ok": True, "provider": name, "instance": inst, "resource": resource_data}
+
+
+def rename_provider_playlist(
+    cfg: Mapping[str, Any],
+    provider: str,
+    instance: str | None,
+    playlist_id: Any,
+    playlist_name: Any,
+) -> dict[str, Any]:
+    name = str(provider or "").strip().upper()
+    inst = normalize_instance_id(instance)
+    ops = _providers().get(name)
+    rename = getattr(ops, "rename_playlist", None) if ops else None
+    if not ops or not supports_playlists(ops) or not callable(rename):
+        return {"ok": False, "error": "provider playlist rename is not supported"}
+    pid = str(playlist_id or "").strip()
+    if not pid:
+        return {"ok": False, "error": "playlist id required"}
+    rename_name = str(playlist_name or "").strip()
+    rename_err = _playlist_name_error(rename_name)
+    if rename_err:
+        return {"ok": False, "error": rename_err}
+    try:
+        view = build_provider_config_view(cfg, name, inst)
+        current = _find_resource_data(ops, view, inst, pid)
+        if not current:
+            return {"ok": False, "error": "playlist not found"}
+        if not current.get("can_rename"):
+            return {"ok": False, "error": "selected playlist cannot be renamed"}
+        resource = rename(view, pid, rename_name, instance=inst)
+        if isinstance(resource, PlaylistResource):
+            resource_data = _resource_with_manage_flags(resource, ops)
+        elif isinstance(resource, Mapping):
+            resource_data = _resource_with_manage_flags(PlaylistResource.from_dict(resource), ops)
+        else:
+            resource_data = _find_resource_data(ops, view, inst, pid) or dict(current)
+            resource_data["name"] = rename_name
+    except Exception as e:
+        return _internal_playlist_error("rename", e, provider=name, instance=inst)
+    return {"ok": True, "provider": name, "instance": inst, "resource": resource_data}
+
+
+def delete_provider_playlist(
+    cfg: Mapping[str, Any],
+    provider: str,
+    instance: str | None,
+    playlist_id: Any,
+) -> dict[str, Any]:
+    name = str(provider or "").strip().upper()
+    inst = normalize_instance_id(instance)
+    ops = _providers().get(name)
+    delete = getattr(ops, "delete_playlist", None) if ops else None
+    if not ops or not supports_playlists(ops) or not callable(delete):
+        return {"ok": False, "error": "provider playlist delete is not supported"}
+    pid = str(playlist_id or "").strip()
+    if not pid:
+        return {"ok": False, "error": "playlist id required"}
+    try:
+        view = build_provider_config_view(cfg, name, inst)
+        current = _find_resource_data(ops, view, inst, pid)
+        if not current:
+            return {"ok": False, "error": "playlist not found"}
+        if not current.get("can_delete"):
+            return {"ok": False, "error": "selected playlist cannot be deleted"}
+        res = delete(view, pid, instance=inst)
+    except Exception as e:
+        return _internal_playlist_error("delete", e, provider=name, instance=inst)
+    if isinstance(res, Mapping) and res.get("ok") is False:
+        return {"ok": False, "error": str(res.get("error") or "delete failed")}
+    return {"ok": True, "provider": name, "instance": inst, "playlist_id": pid}
+
+
+def _resource_with_manage_flags(resource: PlaylistResource, ops: Any) -> dict[str, Any]:
+    data = resource.to_dict()
+    caps = playlist_capabilities(ops)
+    can_manage = _resource_can_be_managed(data)
+    raw_extra = data.get("extra")
+    extra: Mapping[str, Any] = raw_extra if isinstance(raw_extra, Mapping) else {}
+    endpoint_type = str(data.get("endpoint_type") or extra.get("endpoint_type") or "").strip().lower()
+    delete_default = endpoint_type != "collection"
+    data["can_rename"] = bool(can_manage and bool(extra.get("can_rename", True)) and callable(getattr(ops, "rename_playlist", None)) and caps.get("rename", True))
+    data["can_delete"] = bool(can_manage and bool(extra.get("can_delete", delete_default)) and callable(getattr(ops, "delete_playlist", None)) and caps.get("delete", True))
+    return data
+
+
+def _resource_can_be_managed(resource: Mapping[str, Any]) -> bool:
+    raw_extra = resource.get("extra")
+    extra: Mapping[str, Any] = raw_extra if isinstance(raw_extra, Mapping) else {}
+    kind = str(resource.get("kind") or "").strip().lower()
+    endpoint_type = str(resource.get("endpoint_type") or extra.get("endpoint_type") or "").strip().lower()
+    source_kind = str(resource.get("source_kind") or extra.get("source_kind") or endpoint_type).strip().lower()
+    if not str(resource.get("id") or "").strip():
+        return False
+    if bool(resource.get("smart")) or bool(resource.get("discovery")) or bool(resource.get("virtual")):
+        return False
+    if bool(extra.get("builtin")) or bool(extra.get("virtual")) or bool(extra.get("discovery")):
+        return False
+    return kind != "smart" and endpoint_type not in {"discovery", "watchlist"} and source_kind not in {"discovery", "watchlist"}
+
+
+def _find_resource_data(ops: Any, view: Mapping[str, Any], instance: str, playlist_id: str) -> dict[str, Any] | None:
+    for res in ops.list_playlist_resources(view, instance=instance) or []:
+        raw_id = str((res.extra or {}).get("raw_id") or "").strip()
+        if res.id == playlist_id or raw_id == playlist_id:
+            return _resource_with_manage_flags(res, ops)
+    return None
 
 
 # Endpoints
@@ -309,6 +458,13 @@ def _resource_meta(cfg: Mapping[str, Any], provider: str, instance: str, playlis
                 out: dict[str, Any] = {
                     "playlist_type": str(extra.get("endpoint_type") or res.kind or "").strip().lower(),
                     "media_types": list(res.media_types or []),
+                    "source_kind": str(extra.get("source_kind") or extra.get("endpoint_type") or res.kind or "").strip().lower(),
+                    "smart": bool(res.is_smart),
+                    "discovery": bool(getattr(res, "is_discovery", False)),
+                    "virtual": bool(extra.get("virtual")),
+                    "can_read": bool(res.can_read),
+                    "can_add": bool(res.can_add),
+                    "can_remove": bool(res.can_remove),
                     "can_reorder": bool(res.can_reorder),
                     "destructive_remove": bool(extra.get("destructive_remove")),
                     "remove_warning": str(extra.get("remove_warning") or "").strip(),
@@ -359,13 +515,43 @@ def activity(cfg: Mapping[str, Any], *, limit: int = 25) -> list[dict[str, Any]]
         if isinstance(r, Mapping) and r.get("finished_at"):
             finished_at = int(r.get("finished_at") or 0)
             src = (m.get("source") or {}).get("label"); dst = (m.get("target") or {}).get("label")
+            ruleset_name = (m.get("ruleset") or {}).get("name") or r.get("ruleset_id") or "direct"
+            target_count = len(m.get("targets") or [])
             rows.append({
                 "ts": finished_at, "type": "Run", "status": "completed" if r.get("ok", True) else "error",
+                "ruleset": ruleset_name,
+                "target_count": target_count,
+                "added": int(r.get("added", 0)),
+                "updated": int(r.get("updated", 0)),
+                "removed": int(r.get("removed", 0)),
+                "skipped": int(r.get("skipped", 0)),
                 "label": f"{m.get('id')} · {src} → {dst}",
                 "details": f"{(m.get('ruleset') or {}).get('name') or r.get('ruleset_id') or 'direct'}, {len(m.get('targets') or [])} target(s), +{int(r.get('added', 0))}/-{int(r.get('removed', 0))}" + (", capacity error" if r.get("capacity_error") else ""),
             })
     rows.sort(key=lambda x: x["ts"], reverse=True)
     return rows[: max(1, int(limit))]
+
+
+def clear_activity(cfg: dict[str, Any]) -> dict[str, Any]:
+    root = runner.pl_root(cfg, create=True)
+    removed = 0
+    for ep in root.get("endpoints", []):
+        if isinstance(ep, dict) and "last_synced" in ep:
+            ep.pop("last_synced", None)
+            removed += 1
+    for mapping in root.get("mappings", []):
+        if isinstance(mapping, dict):
+            had_result = "last_result" in mapping
+            if had_result:
+                mapping.pop("last_result", None)
+            resolved = runner.resolve_mapping(cfg, mapping)
+            if resolved:
+                had_result = runner.clear_result(resolved) or had_result
+            if had_result:
+                removed += 1
+    if removed:
+        _save(cfg)
+    return {"ok": True, "removed": removed}
 
 
 def upsert_endpoint(cfg: dict[str, Any], payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -385,30 +571,25 @@ def upsert_endpoint(cfg: dict[str, Any], payload: Mapping[str, Any]) -> dict[str
         create_err = _playlist_name_error(create_name)
         if create_err:
             return {"ok": False, "error": create_err}
-        caps = playlist_capabilities(ops)
         allowed_types = creatable_endpoint_types(ops)
         media_type = str(payload.get("media_type") or allowed_types[0]).strip().lower()
         if media_type not in allowed_types:
             label = " or ".join(allowed_types)
             return {"ok": False, "error": f"{clean['provider']} can only create a {label}"}
         clean["playlist_type"] = media_type
-        if caps.get("create_empty", True) is False:
-            clean["playlist_name"] = clean["playlist_name"] or create_name
-            clean["pending_create"] = {"name": create_name, "media_type": media_type}
-        else:
-            try:
-                view = build_provider_config_view(cfg, clean["provider"], clean["instance"])
-                res = ops.create_playlist(view, create_name, media_type=media_type, instance=clean["instance"])
-                clean["playlist_id"] = res.id
-                clean["playlist_name"] = clean["playlist_name"] or res.name
-            except Exception as e:
-                return _internal_playlist_error(
-                    "create",
-                    e,
-                    provider=clean["provider"],
-                    instance=clean["instance"],
-                    media_type=media_type,
-                )
+        try:
+            view = build_provider_config_view(cfg, clean["provider"], clean["instance"])
+            res = ops.create_playlist(view, create_name, media_type=media_type, instance=clean["instance"])
+            clean["playlist_id"] = res.id
+            clean["playlist_name"] = clean["playlist_name"] or res.name
+        except Exception as e:
+            return _internal_playlist_error(
+                "create",
+                e,
+                provider=clean["provider"],
+                instance=clean["instance"],
+                media_type=media_type,
+            )
 
     if not (clean["playlist_id"] or clean.get("pending_create")):
         return {"ok": False, "error": "playlist required"}
@@ -488,6 +669,41 @@ def _endpoint_reorderable(cfg: Mapping[str, Any], endpoint_id: str) -> bool:
     return bool(playlist_capabilities(ops).get("reorder", True))
 
 
+def _endpoint_resource_flags(cfg: Mapping[str, Any], endpoint_id: str) -> dict[str, Any]:
+    ep = runner.get_endpoint(cfg, endpoint_id) or {}
+    out = dict(ep)
+    if "can_add" in out or "can_remove" in out or "smart" in out or "discovery" in out:
+        return out
+    meta = _resource_meta(
+        cfg,
+        str(ep.get("provider") or "").strip().upper(),
+        normalize_instance_id(ep.get("instance")),
+        str(ep.get("playlist_id") or "").strip(),
+    )
+    out.update(meta)
+    return out
+
+
+def _endpoint_is_discovery(cfg: Mapping[str, Any], endpoint_id: str) -> bool:
+    ep = _endpoint_resource_flags(cfg, endpoint_id)
+    typ = str(ep.get("playlist_type") or ep.get("source_kind") or "").strip().lower()
+    return bool(ep.get("discovery")) or typ == "discovery"
+
+
+def _endpoint_writable(cfg: Mapping[str, Any], endpoint_id: str) -> bool:
+    ep = _endpoint_resource_flags(cfg, endpoint_id)
+    typ = str(ep.get("playlist_type") or ep.get("source_kind") or "").strip().lower()
+    if bool(ep.get("smart")) or bool(ep.get("discovery")) or typ == "discovery":
+        return False
+    if "can_add" in ep or "can_remove" in ep:
+        return bool(ep.get("can_add") or ep.get("can_remove"))
+    ops = _providers().get(str(ep.get("provider") or "").upper())
+    if not ops:
+        return False
+    caps = playlist_capabilities(ops)
+    return bool(caps.get("add", True) or caps.get("remove", True))
+
+
 def validate_mapping(cfg: Mapping[str, Any], payload: Mapping[str, Any]) -> tuple[bool, str]:
     clean = _clean_mapping(payload)
     name_err = _name_error(clean["name"], "mapping name")
@@ -504,6 +720,8 @@ def validate_mapping(cfg: Mapping[str, Any], payload: Mapping[str, Any]) -> tupl
     for tid in clean["target_endpoints"]:
         if not runner.get_endpoint(cfg, tid):
             return False, "target endpoint not found"
+        if not _endpoint_writable(cfg, tid):
+            return False, "destination endpoint is read only"
     target_pairs: set[tuple[str, str]] = set()
     for tid in clean["target_endpoints"]:
         ep = runner.get_endpoint(cfg, tid) or {}
@@ -516,8 +734,14 @@ def validate_mapping(cfg: Mapping[str, Any], payload: Mapping[str, Any]) -> tupl
             return False, "ruleset not found"
         if len(clean["target_endpoints"]) > int(rs.get("maximum_targets") or 1):
             return False, "too many target endpoints for ruleset"
+        if _endpoint_is_discovery(cfg, clean["source_endpoint"]):
+            return False, "discovery sources use direct mirror mappings"
+        if str(rs.get("direction") or "") == "bidirectional" and not _endpoint_writable(cfg, clean["source_endpoint"]):
+            return False, "bidirectional mappings require a writable source endpoint"
     elif len(clean["target_endpoints"]) != 1:
         return False, "direct mappings require exactly one target endpoint"
+    if _endpoint_is_discovery(cfg, clean["source_endpoint"]) and clean["membership"] != "mirror":
+        return False, "discovery sources must use mirror sync mode"
     first_target = clean["target_endpoints"][0]
     if clean["order"] == "preserve" and not _endpoint_reorderable(cfg, first_target):
         return False, "target provider does not support ordering; use order 'ignore'"

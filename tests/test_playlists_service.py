@@ -11,10 +11,12 @@ from services import playlists as svc
 
 
 class FakeOps:
-    def __init__(self, name: str, playlists: dict[str, dict[str, Any]], reorder: bool = True):
+    def __init__(self, name: str, playlists: dict[str, dict[str, Any]], reorder: bool = True, rename: bool = True, delete: bool = True):
         self._name = name
         self.pl = playlists
         self.reorder = reorder
+        self.rename = rename
+        self.delete = delete
         self.calls: list[Any] = []
 
     def name(self) -> str:
@@ -24,14 +26,23 @@ class FakeOps:
         return self._name.title()
 
     def capabilities(self) -> dict[str, Any]:
-        return {"playlists": {"reorder": self.reorder}}
+        return {"playlists": {"reorder": self.reorder, "rename": self.rename, "delete": self.delete}}
 
     def is_configured(self, cfg) -> bool:
         return True
 
     def _res(self, pid: str) -> PlaylistResource:
-        return PlaylistResource(provider=self._name, id=pid, name=self.pl[pid].get("name") or pid,
-                                can_add=True, can_remove=True, can_reorder=self.reorder)
+        data = self.pl[pid]
+        return PlaylistResource(
+            provider=self._name,
+            id=pid,
+            name=data.get("name") or pid,
+            kind=data.get("kind") or ("smart" if data.get("smart") else "regular"),
+            can_add=bool(data.get("can_add", True)),
+            can_remove=bool(data.get("can_remove", True)),
+            can_reorder=bool(data.get("can_reorder", self.reorder)),
+            extra=dict(data.get("extra") or {}),
+        )
 
     def list_playlist_resources(self, cfg, *, instance=None):
         return [self._res(p) for p in self.pl]
@@ -43,6 +54,16 @@ class FakeOps:
 
     def create_playlist(self, cfg, name, *, media_type=None, items=None, instance=None, dry_run=False):
         return PlaylistResource(provider=self._name, id="new", name=name)
+
+    def rename_playlist(self, cfg, playlist_id, name, *, instance=None, dry_run=False):
+        self.calls.append(("rename", playlist_id, name))
+        self.pl[playlist_id]["name"] = name
+        return self._res(playlist_id)
+
+    def delete_playlist(self, cfg, playlist_id, *, instance=None, dry_run=False):
+        self.calls.append(("delete", playlist_id))
+        self.pl.pop(playlist_id, None)
+        return {"ok": True, "count": 1}
 
     def add_playlist_items(self, cfg, playlist_id, items, *, instance=None, dry_run=False):
         self.calls.append(("add", playlist_id))
@@ -145,6 +166,58 @@ def test_created_playlist_name_is_limited_and_safe(config_base, fake_providers):
     assert ok["ok"] is True
 
 
+def test_provider_playlist_create_is_separate_from_endpoint_create(config_base, fake_providers):
+    res = svc.create_provider_playlist(_cfg(), "TRAKT", "default", "Weekend Movies", "playlist")
+    assert res["ok"] is True
+    assert res["resource"]["id"] == "new"
+    assert res["resource"]["name"] == "Weekend Movies"
+
+    bad = svc.create_provider_playlist(_cfg(), "TRAKT", "default", "Bad/List", "playlist")
+    assert bad["ok"] is False and "unsupported" in bad["error"]
+
+
+def test_provider_playlist_manage_flags_and_actions(config_base, fake_providers):
+    cfg = _cfg()
+    fake_providers["TRAKT"].pl["D1"] = {
+        "name": "Trending",
+        "items": [],
+        "kind": "smart",
+        "can_add": False,
+        "can_remove": False,
+        "extra": {"endpoint_type": "discovery", "source_kind": "discovery", "discovery": True, "virtual": True},
+    }
+    fake_providers["TRAKT"].pl["W1"] = {
+        "name": "Watchlist",
+        "items": [],
+        "extra": {"builtin": "watchlist"},
+    }
+    fake_providers["TRAKT"].pl["C1"] = {
+        "name": "Collection",
+        "items": [],
+        "extra": {"endpoint_type": "collection"},
+    }
+
+    resources = svc.list_resources(cfg, "TRAKT", "default")["resources"]
+    by_id = {r["id"]: r for r in resources}
+    assert by_id["L1"]["can_rename"] is True
+    assert by_id["L1"]["can_delete"] is True
+    assert by_id["D1"]["can_rename"] is False
+    assert by_id["W1"]["can_delete"] is False
+    assert by_id["C1"]["can_rename"] is True
+    assert by_id["C1"]["can_delete"] is False
+
+    renamed = svc.rename_provider_playlist(cfg, "TRAKT", "default", "L1", "Renamed")
+    assert renamed["ok"] is True
+    assert renamed["resource"]["name"] == "Renamed"
+
+    deleted = svc.delete_provider_playlist(cfg, "TRAKT", "default", "L2")
+    assert deleted["ok"] is True
+    assert "L2" not in fake_providers["TRAKT"].pl
+
+    blocked = svc.delete_provider_playlist(cfg, "TRAKT", "default", "D1")
+    assert blocked["ok"] is False and "cannot be deleted" in blocked["error"]
+
+
 def test_playlist_resource_errors_do_not_expose_exception_text(config_base, fake_providers):
     def fail(*_args, **_kwargs):
         raise RuntimeError("token=secret-from-provider /srv/crosswatch/internal.py")
@@ -196,6 +269,41 @@ def test_mapping_validation(config_base, fake_providers):
     assert not bad4 and "10 characters" in why4
     bad5, why5 = svc.validate_mapping(cfg, {"name": "Bad/Map", "source_endpoint": e1, "target_endpoints": [e2]})
     assert not bad5 and "unsupported" in why5
+
+
+def test_discovery_source_requires_direct_mirror_and_writable_target(config_base, fake_providers):
+    cfg = _cfg()
+    fake_providers["TRAKT"].pl["D1"] = {
+        "name": "Trending Movies",
+        "items": [_movie(1)],
+        "kind": "smart",
+        "can_add": False,
+        "can_remove": False,
+        "can_reorder": False,
+        "extra": {"endpoint_type": "discovery", "source_kind": "discovery", "discovery": True, "virtual": True},
+    }
+    fake_providers["PLEX"].pl["R1"] = {
+        "name": "ReadOnly",
+        "items": [],
+        "kind": "smart",
+        "can_add": False,
+        "can_remove": False,
+        "can_reorder": False,
+    }
+    src = svc.upsert_endpoint(cfg, {"name": "Trend", "provider": "TRAKT", "instance": "default", "playlist_id": "D1"})
+    dst = svc.upsert_endpoint(cfg, {"name": "PlexDst", "provider": "PLEX", "instance": "default", "playlist_id": "T1"})
+    ro = svc.upsert_endpoint(cfg, {"name": "ReadOnly", "provider": "PLEX", "instance": "default", "playlist_id": "R1"})
+
+    assert src["endpoint"]["playlist_type"] == "discovery"
+    assert src["endpoint"]["discovery"] is True
+    bad = svc.upsert_mapping(cfg, {"name": "Map1", "source_endpoint": src["endpoint"]["id"], "target_endpoints": [dst["endpoint"]["id"]]})
+    assert bad["ok"] is False and "mirror" in bad["error"]
+    bad_target = svc.upsert_mapping(cfg, {"name": "Map1", "source_endpoint": dst["endpoint"]["id"], "target_endpoints": [src["endpoint"]["id"]]})
+    assert bad_target["ok"] is False and "read only" in bad_target["error"]
+    bad_ro = svc.upsert_mapping(cfg, {"name": "Map1", "source_endpoint": src["endpoint"]["id"], "target_endpoints": [ro["endpoint"]["id"]], "membership": "mirror"})
+    assert bad_ro["ok"] is False and "read only" in bad_ro["error"]
+    ok = svc.upsert_mapping(cfg, {"name": "Map1", "source_endpoint": src["endpoint"]["id"], "target_endpoints": [dst["endpoint"]["id"]], "membership": "mirror"})
+    assert ok["ok"] is True
 
 
 def test_preserve_order_rejected_when_target_not_reorderable(config_base, monkeypatch):
@@ -289,6 +397,30 @@ def test_provider_count_summary_merges_endpoint_and_mapping_counts(config_base, 
     assert after["providers"]["trakt"] == 2
     assert after["providers"]["plex"] == 2
     assert after["providers_instances"]["plex"]["default"] == 2
+
+
+def test_clear_activity_resets_playlist_run_metadata(config_base, fake_providers):
+    cfg = _cfg()
+    e1, e2 = _seed_endpoints(cfg)
+    mid = svc.upsert_mapping(cfg, {"name": "Map1", "source_endpoint": e1, "target_endpoints": [e2]})["mapping"]["id"]
+    cfg["playlists"]["endpoints"][0]["last_synced"] = 123
+    mapping = next(m for m in cfg["playlists"]["mappings"] if m["id"] == mid)
+    mapping["last_result"] = {"ok": True, "finished_at": 456, "added": 2, "removed": 1}
+    resolved = runner.resolve_mapping_by_id(cfg, mid)
+    assert resolved is not None
+    runner.save_baseline(resolved, {"tmdb:1"})
+    runner.store_result(resolved, {"ok": True, "finished_at": 456, "added": 2, "removed": 1})
+
+    assert len(svc.activity(cfg)) == 3
+
+    cleared = svc.clear_activity(cfg)
+
+    assert cleared == {"ok": True, "removed": 3}
+    assert "last_synced" not in cfg["playlists"]["endpoints"][0]
+    assert "last_result" not in mapping
+    assert runner.load_result(resolved) is None
+    assert runner.load_baseline(resolved) == {"tmdb:1"}
+    assert svc.activity(cfg) == []
 
 
 def test_mappings_for_pair_compat_and_one_pair(config_base, fake_providers):
