@@ -104,6 +104,7 @@
     mapDelete: (id) => request(`${BASE}/mappings/${encodeURIComponent(id)}`, { method: "DELETE" }),
     run: (id) => request(`${BASE}/mappings/${encodeURIComponent(id)}/run`, { method: "POST" }),
     runPair: (id) => request("/api/run", { method: "POST", body: JSON.stringify({ pair_id: id }) }),
+    runSummary: () => request("/api/run/summary"),
     pairMappings: (id) => request(`${BASE}/pairs/${encodeURIComponent(id)}/mappings`),
     rulesets: () => request(`${BASE}/rulesets`),
     rulesetUpsert: (body) => request(`${BASE}/rulesets`, { method: "POST", body: JSON.stringify(body) }),
@@ -143,6 +144,11 @@
     activity: [],
     runningEndpoints: new Set(),
     runningMappings: new Set(),
+    syncSummary: null,
+    syncPollTimer: 0,
+    syncPollBusy: false,
+    localSyncStartedAt: 0,
+    syncObservedRunning: false,
     modal: null,
     loaded: false,
     loading: false,
@@ -271,11 +277,89 @@
     return rs ? ruleLabel(rs.direction) : "One way";
   }
 
+  function syncSummaryRunning(summary = state.syncSummary) {
+    const s = summary || {};
+    const timeline = s.timeline && typeof s.timeline === "object" ? s.timeline : {};
+    if (s.running === true || String(s.state || "").toLowerCase() === "running") return true;
+    if ((timeline.start || timeline.started || s.started_at || s.raw_started_ts) && !(timeline.done || timeline.finished || timeline.complete || s.finished_at || s.exit_code != null)) return true;
+    try { if (window.CW?.syncBar?.isRunning?.() || window.syncBar?.isRunning?.()) return true; } catch {}
+    return false;
+  }
+
+  function syncSummaryPairScopeIds(summary = state.syncSummary) {
+    const raw = summary && Array.isArray(summary.pair_scope_ids) ? summary.pair_scope_ids : [];
+    return new Set(raw.map((value) => String(value || "").trim()).filter(Boolean));
+  }
+
+  function sharedSyncBusy() {
+    return state.runningMappings.size > 0 || syncSummaryRunning();
+  }
+
+  function mappingIsRunning(mapping) {
+    const id = String((mapping && mapping.id) || "");
+    if (id && state.runningMappings.has(id)) return true;
+    if (!syncSummaryRunning()) return false;
+    const pair = String((mapping && mapping.assigned_pair) || "").trim();
+    if (!pair) return false;
+    const scope = syncSummaryPairScopeIds();
+    return scope.size > 0 && scope.has(pair);
+  }
+
+  function reconcileSyncSummary() {
+    if (syncSummaryRunning()) {
+      state.syncObservedRunning = true;
+      return;
+    }
+    if (!state.runningMappings.size) return;
+    if (state.syncObservedRunning || Date.now() - state.localSyncStartedAt > 4000) {
+      state.runningMappings.clear();
+      state.syncObservedRunning = false;
+      state.localSyncStartedAt = 0;
+    }
+  }
+
+  function scheduleSyncSummaryPoll(delayMs) {
+    if (state.syncPollTimer) clearTimeout(state.syncPollTimer);
+    const root = $("#page-playlists");
+    if (!root || !root.querySelector(".pl-page")) return;
+    state.syncPollTimer = setTimeout(() => {
+      state.syncPollTimer = 0;
+      refreshSyncSummary().catch(() => scheduleSyncSummaryPoll(6000));
+    }, delayMs);
+  }
+
+  async function refreshSyncSummary(renderOnly = true) {
+    if (state.syncPollBusy) return state.syncSummary;
+    state.syncPollBusy = true;
+    const wasBusy = sharedSyncBusy();
+    try {
+      state.syncSummary = await API.runSummary();
+      reconcileSyncSummary();
+      const root = $("#page-playlists");
+      if (root && root.querySelector(".pl-page")) {
+        if (wasBusy && !sharedSyncBusy()) await refreshOverview(["mappings", "activity"]);
+        else {
+          updateMappingActions(root);
+          refreshSection(root, "mappings");
+        }
+      }
+      return state.syncSummary;
+    } finally {
+      state.syncPollBusy = false;
+      if (renderOnly) scheduleSyncSummaryPoll(syncSummaryRunning() || state.runningMappings.size ? 1500 : 6000);
+    }
+  }
+
   function statusForResult(result) {
     if (!result) return `<span class="pl-pill off">No runs</span>`;
-    if (result.ok === false || result.capacity_error) return `<span class="pl-pill err">Failed</span>`;
+    const unresolved = Number(result.unresolved_count || result.unresolved || 0);
+    const errors = Number(result.errors || result.error_count || 0);
+    const warningBits = [];
+    if (unresolved > 0) warningBits.push(`${unresolved} unresolved`);
     const warnings = Array.isArray(result.warnings) ? result.warnings.length : 0;
-    if (warnings) return `<span class="pl-pill warn">Warning</span>`;
+    if (warnings) warningBits.push(`${warnings} warning${warnings === 1 ? "" : "s"}`);
+    if (result.capacity_error || errors > 0 || (result.ok === false && !warningBits.length)) return `<span class="pl-pill err">Failed</span>`;
+    if (warningBits.length) return `<span class="pl-pill warn" title="${esc(warningBits.join(", "))}"><span class="material-symbols-rounded" aria-hidden="true">warning</span>${esc(warningBits[0])}</span>`;
     return `<span class="pl-pill ok">Success</span>`;
   }
 
@@ -284,20 +368,12 @@
     return `<span class="pl-state ok"><span class="material-symbols-rounded" aria-hidden="true">check_circle</span>Connected</span>`;
   }
 
-  function endpointTypeIcon(endpoint) {
-    if (endpointIsDiscovery(endpoint)) return "travel_explore";
-    const typ = String(endpoint.playlist_type || endpoint.endpoint_type || endpoint.kind || endpoint.media_type || "").toLowerCase();
-    if (typ.includes("watchlist")) return "bookmark";
-    if (typ.includes("collection")) return "collections_bookmark";
-    return "queue_music";
-  }
-
   function endpointIdentity(endpoint, sub) {
     const ep = endpoint || {};
     const tone = providerTone(ep.provider);
     return `
       <div class="pl-entity">
-        <span class="pl-entity-icon" style="--rgb:${esc(tone.rgb)}"><span class="material-symbols-rounded" aria-hidden="true">${esc(endpointTypeIcon(ep))}</span></span>
+        <span class="pl-entity-icon" style="--rgb:${esc(tone.rgb)}"><span class="material-symbols-rounded" aria-hidden="true">share</span></span>
         <div><div class="pl-main-text">${esc(ep.name || ep.playlist_name || ep.id || "-")}</div><div class="pl-muted">${esc(sub || ep.id || "")}</div></div>
       </div>
     `;
@@ -326,14 +402,20 @@
 
   function activityChangeSummary(row) {
     const counts = parseActivityCounts(row);
-    return `
-      <div class="pl-change-set">
-        ${activityChangeChip("Added", counts.added, "add_circle", "added")}
-        ${activityChangeChip("Updated", counts.updated, "sync", "updated")}
-        ${activityChangeChip("Removed", counts.removed, "remove_circle", "removed")}
-        ${activityChangeChip("Skipped", counts.skipped, "skip_next", "skipped")}
-      </div>
-    `;
+    const chips = [];
+    if (counts.unresolved) chips.push(activityChangeChip("Unresolved", counts.unresolved, "help", "unresolved"));
+    if (counts.added) chips.push(activityChangeChip("Added", counts.added, "add_circle", "added"));
+    if (counts.updated) chips.push(activityChangeChip("Updated", counts.updated, "sync", "updated"));
+    if (counts.removed) chips.push(activityChangeChip("Removed", counts.removed, "remove_circle", "removed"));
+    if (counts.skipped) chips.push(activityChangeChip("Skipped", counts.skipped, "skip_next", "skipped"));
+    return `<div class="pl-change-set">${chips.length ? chips.join("") : `<span class="pl-muted">No changes</span>`}</div>`;
+  }
+
+  function activityStatus(row) {
+    const status = String(row.status || "").toLowerCase();
+    if (status === "error" || status === "failed") return statusPill("err", titleize(status || "error"), "cancel");
+    if (status === "warning" || parseActivityCounts(row).unresolved > 0) return statusPill("warn", "Warning", "warning");
+    return statusPill("ok", titleize(row.status || "completed"), "check_circle");
   }
 
   function activityResultSummary(row) {
@@ -378,7 +460,7 @@
           </section>
           <section class="pl-section" id="pl-activity-overview">
             <div class="pl-section-head">
-              <div><div class="pl-section-title">Activity overview</div><div class="pl-section-sub">Recent playlist sync and validation activity.</div></div>
+              <div><div class="pl-section-title">Activity overview</div></div>
               <div class="pl-section-actions">
                 <button class="pl-btn small" data-action="activity-all">View all activity</button>
                 <button class="pl-btn small danger" data-action="activity-clear" title="Clear playlist activity"><span class="material-symbols-rounded" aria-hidden="true">delete_sweep</span>Clear</button>
@@ -395,7 +477,7 @@
   function renderEndpoints() {
     if (state.loading && !state.loaded) return renderSkeleton("Loading playlist endpoints");
     if (!state.endpoints.length) {
-      return `<div class="pl-empty"><strong>No playlist endpoints yet</strong><span>Add the first provider playlist before creating mappings.</span><button class="pl-btn primary small" data-action="endpoint-new">+ New endpoint</button></div>`;
+      return `<div class="pl-empty"><strong>No playlist endpoints yet</strong><span>Add the first provider playlist before creating mappings.</span></div>`;
     }
     const rows = state.endpoints.map((ep) => {
       const playlistType = endpointIsDiscovery(ep) ? "discovery" : (ep.playlist_type || ep.endpoint_type || ep.kind || ep.media_type || "playlist");
@@ -434,28 +516,28 @@
     if (state.loading && !state.loaded) return renderSkeleton("Loading playlist mappings");
     if (!state.mappings.length) {
       const need = state.endpoints.length < 2;
-      return `<div class="pl-empty"><strong>No mappings yet</strong><span>${need ? "At least two endpoints are required before a mapping can be created." : "Create a mapping to sync playlists between endpoints."}</span><button class="pl-btn primary small" data-action="mapping-new" ${need ? "disabled" : ""} title="${need ? "Create at least two endpoints first." : "Create playlist mapping"}">+ New mapping</button></div>`;
+      return `<div class="pl-empty"><strong>No mappings yet</strong><span>${need ? "At least two endpoints are required before a mapping can be created." : "Create a mapping to sync playlists between endpoints."}</span></div>`;
     }
     const rows = state.mappings.map((m) => {
       const src = endpointById(m.source_endpoint) || m.source || {};
       const rule = m.ruleset || rulesetById(m.ruleset_id || "");
       const res = m.last_result || null;
-      const running = state.runningMappings.has(String(m.id || ""));
+      const busy = sharedSyncBusy();
+      const running = mappingIsRunning(m);
+      const syncTitle = running ? "Sync running" : (busy ? "Synchronization is already running" : "Sync now");
       return `
         <tr class="${running ? "is-running" : ""}">
           <td>${endpointIdentity({ name: m.name || m.id, id: m.id, provider: (src && src.provider) || "" }, m.id)}</td>
           <td>${endpointRef(src, m.source_endpoint)}</td>
           <td><span class="pl-pill dir">${esc(directionFor(m))}<span class="material-symbols-rounded" aria-hidden="true">east</span></span></td>
           <td>${mappingTargetRefs(m)}</td>
-          <td><span class="pl-pill ${rule && rule.direction === "bidirectional" ? "warn" : ""}">${esc(rule ? ruleLabel(rule.direction) : "One way")}</span></td>
-          <td>${syncPairIndicator(m.assigned_pair)}</td>
           <td><span class="pl-pill">${esc(rule ? rule.name : "Direct")}</span></td>
+          <td>${syncPairIndicator(m.assigned_pair)}</td>
           <td>${m.enabled ? statusPill("ok", "Enabled") : statusPill("off", "Disabled", "radio_button_unchecked")}</td>
-          <td>${running ? statusPill("run", "Running", "sync") : statusForResult(res)}</td>
-          <td><div class="pl-muted">${running ? "Running now..." : compactTime(res && res.finished_at)}</div></td>
+          <td><div class="pl-result-cell">${running ? statusPill("run", "Running", "sync") : statusForResult(res)}<div class="pl-muted">${running ? "Running now..." : compactTime(res && res.finished_at)}</div></div></td>
           <td>
             <div class="pl-actions">
-              ${actionButton("mapping-sync", m.id, running ? "Sync running" : "Sync now", "sync", "sync", running ? "running" : "", running)}
+              ${actionButton("mapping-sync", m.id, syncTitle, "sync", "sync", running ? "running" : "", busy)}
               ${actionButton("mapping-edit", m.id, "Edit mapping", "edit", "edit")}
               ${actionButton("mapping-toggle", m.id, m.enabled ? "Disable mapping" : "Enable mapping", m.enabled ? "pause" : "play_arrow", "toggle", m.enabled ? "on" : "")}
               ${actionButton("mapping-delete", m.id, "Delete mapping", "delete", "delete")}
@@ -467,7 +549,7 @@
     return `
       <div class="pl-table-wrap">
         <table class="pl-mappings-table">
-          <thead><tr><th>Mapping</th><th>Source</th><th>Direction</th><th>Destination</th><th>Mode</th><th>Sync pair</th><th>Ruleset</th><th>Status</th><th>Last result</th><th>Last sync</th><th aria-label="Actions">Actions</th></tr></thead>
+          <thead><tr><th>Mapping</th><th>Source</th><th>Direction</th><th>Destination</th><th>Ruleset</th><th>Sync pair</th><th>Status</th><th>Result</th><th aria-label="Actions">Actions</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>
@@ -482,9 +564,9 @@
     const table = latest.length ? `
       <div class="pl-table-wrap">
         <table class="pl-activity-table">
-          <thead><tr><th>Time</th><th>Mapping</th><th>Direction</th><th>Result</th><th>Changes</th><th>Status</th></tr></thead>
+          <thead><tr><th>Time</th><th>Mapping</th><th>Result</th><th>Changes</th><th>Status</th></tr></thead>
           <tbody>${latest.map((row) => {
-            return `<tr><td>${esc(compactTime(row.ts))}</td><td><div class="pl-main-text">${esc(row.label || "-")}</div></td><td>${esc(row.type || "-")}</td><td>${activityResultSummary(row)}</td><td>${activityChangeSummary(row)}</td><td>${row.status === "error" ? statusPill("err", titleize(row.status || "error"), "cancel") : statusPill("ok", titleize(row.status || "completed"), "check_circle")}</td></tr>`;
+            return `<tr><td>${esc(compactTime(row.ts))}</td><td><div class="pl-main-text">${esc(row.label || "-")}</div></td><td>${activityResultSummary(row)}</td><td>${activityChangeSummary(row)}</td><td>${activityStatus(row)}</td></tr>`;
           }).join("")}</tbody>
         </table>
       </div>
@@ -512,6 +594,7 @@
       if (status === "error" || status === "failed") stats.failed += 1;
       else if (status === "queued" || status === "running") stats.running += 1;
       else if (status === "skipped") stats.skipped += 1;
+      else if (status === "warning") stats.warning += 1;
       else if (String(row.details || "").toLowerCase().includes("warning")) stats.warning += 1;
       else stats.success += 1;
     });
@@ -522,11 +605,13 @@
     const details = String(row.details || "");
     const add = details.match(/\+(\d+)/);
     const rem = details.match(/-(\d+)/);
+    const unresolved = details.match(/(\d+)\s+unresolved/i);
     return {
       added: row.added != null ? Number(row.added) : (add ? Number(add[1]) : 0),
       updated: row.updated != null ? Number(row.updated) : 0,
       removed: row.removed != null ? Number(row.removed) : (rem ? Number(rem[1]) : 0),
       skipped: row.skipped != null ? Number(row.skipped) : 0,
+      unresolved: row.unresolved != null ? Number(row.unresolved) : (unresolved ? Number(unresolved[1]) : 0),
     };
   }
 
@@ -908,6 +993,7 @@
     const select = $("#pl-ep-playlist", root);
     const search = val("#pl-ep-playlist-search", root).toLowerCase();
     if (!list || !select) return;
+    const singleSelect = root.dataset.epSingleSelect === "1";
     const resources = root.__plEndpointResources || [];
     const selected = new Set(selectedValues("#pl-ep-playlist", root));
     const visible = resources.filter((r) => {
@@ -925,9 +1011,10 @@
     list.innerHTML = visible.map((r) => {
       const badges = resourceBadgeMeta(r);
       const active = selected.has(String(r.id || ""));
+      const controlIcon = active ? (singleSelect ? "radio_button_checked" : "check_box") : (singleSelect ? "radio_button_unchecked" : "check_box_outline_blank");
       return `
         <button type="button" class="pl-resource-row ${active ? "selected" : ""}" data-playlist-id="${esc(r.id || "")}" aria-pressed="${active ? "true" : "false"}">
-          <span class="pl-resource-check material-symbols-rounded" aria-hidden="true">${active ? "check_box" : "check_box_outline_blank"}</span>
+          <span class="pl-resource-check material-symbols-rounded" aria-hidden="true">${controlIcon}</span>
           <span class="pl-resource-type material-symbols-rounded" aria-hidden="true">${esc(resourceIconName(r))}</span>
           <span class="pl-resource-main">
             <span class="pl-resource-name">${esc(r.name || r.id || "-")}</span>
@@ -1283,6 +1370,7 @@
     const root = ctx.modal;
     root.__plEndpointCtx = ctx;
     root.dataset.epEditId = isEdit ? (seed.id || "") : "";
+    root.dataset.epSingleSelect = isEdit ? "1" : "";
     root.dataset.epNameDirty = isEdit ? "1" : "";
     bindNameValidation(ctx, "#pl-ep-name", "Endpoint name");
     const providerSelect = $("#pl-ep-provider", root);
@@ -1694,6 +1782,11 @@
 
   async function syncMapping(mapping, btn) {
     if (!mapping) return;
+    await refreshSyncSummary(false).catch(() => null);
+    if (sharedSyncBusy()) {
+      openNotice("Sync already running", "A synchronization is already running. Wait for it to finish before starting another mapping.", btn);
+      return;
+    }
     if (!mapping.assigned_pair) {
       openNotice("Sync pair missing", "Save the mapping once so CrossWatch can create its playlist sync pair.", btn);
       return;
@@ -1701,14 +1794,19 @@
     const id = String(mapping.id || "");
     const root = $("#page-playlists");
     state.runningMappings.add(id);
+    state.localSyncStartedAt = Date.now();
+    state.syncObservedRunning = false;
+    state.syncSummary = { ...(state.syncSummary || {}), running: true, pair_scope_ids: [String(mapping.assigned_pair || "")] };
     if (root) refreshSection(root, "mappings");
     try {
-      await API.runPair(mapping.assigned_pair);
-      await refreshOverview(["mappings", "activity"]);
+      const res = await API.runPair(mapping.assigned_pair);
+      if (res && res.run_id) state.syncSummary = { ...(state.syncSummary || {}), running: true, run_id: res.run_id, pair_scope_ids: [String(mapping.assigned_pair || "")] };
+      scheduleSyncSummaryPoll(800);
     } catch (err) {
-      openNotice("Sync failed", err && err.message ? err.message : "Could not run this mapping.", btn);
-    } finally {
       state.runningMappings.delete(id);
+      state.localSyncStartedAt = 0;
+      state.syncObservedRunning = false;
+      openNotice("Sync failed", err && err.message ? err.message : "Could not run this mapping.", btn);
       const freshRoot = $("#page-playlists");
       if (freshRoot) refreshSection(freshRoot, "mappings");
     }
@@ -2239,15 +2337,16 @@
   }
 
   async function loadPlaylistDataAttempt() {
-    const [providers, endpoints, mappings, rulesets, overview, activity] = await Promise.all([
+    const [providers, endpoints, mappings, rulesets, overview, activity, runSummary] = await Promise.all([
       API.providers(),
       API.endpoints(),
       API.mappings(),
       API.rulesets(),
       API.overview(),
       API.activity(),
+      API.runSummary().catch(() => null),
     ]);
-    return { providers, endpoints, mappings, rulesets, overview, activity };
+    return { providers, endpoints, mappings, rulesets, overview, activity, runSummary };
   }
 
   async function reloadData() {
@@ -2258,13 +2357,15 @@
       if ((data.providers.providers || []).length || attempt >= EMPTY_PROVIDER_RETRIES) break;
       await delay(EMPTY_PROVIDER_RETRY_MS * (attempt + 1));
     }
-    const { providers, endpoints, mappings, rulesets, overview, activity } = data;
+    const { providers, endpoints, mappings, rulesets, overview, activity, runSummary } = data;
     state.providers = providers.providers || [];
     state.endpoints = endpoints.endpoints || [];
     state.mappings = mappings.mappings || [];
     state.rulesets = rulesets.rulesets || [];
     state.overview = overview || {};
     state.activity = activity.activity || [];
+    state.syncSummary = runSummary || null;
+    reconcileSyncSummary();
     state.loaded = true;
   }
 
@@ -2306,6 +2407,7 @@
     if (banners) banners.outerHTML = renderBanners();
     updateMappingActions(root);
     sections.forEach((key) => refreshSection(root, key));
+    scheduleSyncSummaryPoll(syncSummaryRunning() || state.runningMappings.size ? 1500 : 6000);
     window.scrollTo(scrollX, scrollY);
   }
 
@@ -2321,6 +2423,7 @@
     } finally {
       state.loading = false;
       render(root);
+      scheduleSyncSummaryPoll(syncSummaryRunning() || state.runningMappings.size ? 1500 : 6000);
     }
   }
 
