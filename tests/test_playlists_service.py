@@ -405,13 +405,18 @@ def test_clear_activity_resets_playlist_run_metadata(config_base, fake_providers
     mid = svc.upsert_mapping(cfg, {"name": "Map1", "source_endpoint": e1, "target_endpoints": [e2]})["mapping"]["id"]
     cfg["playlists"]["endpoints"][0]["last_synced"] = 123
     mapping = next(m for m in cfg["playlists"]["mappings"] if m["id"] == mid)
-    mapping["last_result"] = {"ok": True, "finished_at": 456, "added": 2, "removed": 1}
+    mapping["last_result"] = {"ok": False, "finished_at": 456, "added": 2, "removed": 1, "unresolved_count": 7}
     resolved = runner.resolve_mapping_by_id(cfg, mid)
     assert resolved is not None
     runner.save_baseline(resolved, {"tmdb:1"})
-    runner.store_result(resolved, {"ok": True, "finished_at": 456, "added": 2, "removed": 1})
+    runner.store_result(resolved, {"ok": False, "finished_at": 456, "added": 2, "removed": 1, "unresolved_count": 7})
 
-    assert len(svc.activity(cfg)) == 3
+    rows = svc.activity(cfg)
+    run_row = next(row for row in rows if row["type"] == "Run")
+    assert run_row["status"] == "warning"
+    assert run_row["unresolved"] == 7
+    assert "7 unresolved" in run_row["details"]
+    assert len(rows) == 3
 
     cleared = svc.clear_activity(cfg)
 
