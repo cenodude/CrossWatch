@@ -11,10 +11,12 @@ import {
 } from "./meta.js";
 
 export function createFlowController({ ID, Q, byName, renderWarnings }) {
+  const editableFeatureOrder = () => sharedFeatureOrder().filter((key) => String(key || "").toLowerCase() !== "playlists");
+
   function renderFlowRailDots(state) {
     const arrow = ID("cx-flow-rail")?.querySelector(".arrow");
     if (!arrow) return;
-    const enabled = sharedFeatureOrder().filter((key) => !!state?.options?.[key]?.enable);
+    const enabled = editableFeatureOrder().filter((key) => !!state?.options?.[key]?.enable);
     const keys = enabled.length ? enabled : [getFlowFeatureKey(state)];
     arrow.innerHTML = keys
       .map((key, index) => {
@@ -66,7 +68,7 @@ export function createFlowController({ ID, Q, byName, renderWarnings }) {
     ) {
       return current;
     }
-    const order = sharedFeatureOrder();
+    const order = editableFeatureOrder();
     return order.find((key) => !!state?.options?.[key]?.enable) || "watchlist";
   }
 
@@ -84,7 +86,6 @@ export function createFlowController({ ID, Q, byName, renderWarnings }) {
       ["ratings", "rt"],
       ["history", "hi"],
       ["progress", "pr"],
-      ["playlists", "pl"],
       ["collection", "co"],
     ];
     host.innerHTML = items

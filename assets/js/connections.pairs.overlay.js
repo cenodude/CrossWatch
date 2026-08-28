@@ -21,7 +21,11 @@
     return v === true || v === 1 || v === "1" || v === "true" || v === "on" || v === "yes";
   };
   const playlistMappingIds = (v) => Array.isArray(v?.mappings) ? v.mappings.map((x) => String(x || "").trim()).filter(Boolean) : [];
-  const hasPlaylistMappings = (v) => truthy(v) && playlistMappingIds(v).length > 0;
+  const playlistBlock = (pair) => {
+    const block = pair?.features?.playlists;
+    return block && typeof block === "object" ? block : {};
+  };
+  const isPlaylistManagedPair = (pair) => String(playlistBlock(pair).managed_by || "").trim().toLowerCase() === "playlists";
 
 
   function scheduleViewportLimit(delay = 0) {
@@ -130,9 +134,10 @@
   window.cxPairsEditClick = function (btn) {
     try {
       const id = btn.closest(".pair-card")?.dataset?.id; if (!id) return;
-      if (typeof window.cxEditPair === "function") return window.cxEditPair(id);
       const pairs = Array.isArray(window.cx?.pairs) ? window.cx.pairs : [];
       const pair = pairs.find((p) => String(p.id) === String(id));
+      if (isPlaylistManagedPair(pair)) return openPlaylistMappingsForPair(id, btn);
+      if (typeof window.cxEditPair === "function") return window.cxEditPair(id);
       if (pair) {
         if (typeof window.openPairModal === "function") return window.openPairModal(pair);
         if (typeof window.cxOpenModalFor === "function") return window.cxOpenModalFor(pair);
@@ -143,23 +148,108 @@
 
   if (typeof window.cxToggleEnable !== "function") {
     window.cxToggleEnable = async function (id, on, inputEl) {
+      const card = (inputEl && inputEl.closest(".pair-card")) || document.querySelector(`#pairs_list .pair-card[data-id="${id}"]`);
+      const btn = card?.querySelector(".icon-btn.power");
+      const list = Array.isArray(window.cx?.pairs) ? window.cx.pairs : [];
+      const it = list.find((p) => String(p.id) === String(id));
+      const prev = it ? it.enabled !== false : !on;
       try {
-        const card = (inputEl && inputEl.closest(".pair-card")) || document.querySelector(`#pairs_list .pair-card[data-id="${id}"]`);
-        const btn = card?.querySelector(".icon-btn.power");
         if (btn) btn.classList.toggle("off", !on);
+        if (btn) btn.setAttribute("aria-checked", on ? "true" : "false");
         if (card) card.classList.toggle("pair-disabled", !on);
-        const list = Array.isArray(window.cx?.pairs) ? window.cx.pairs : [];
-        const it = list.find((p) => String(p.id) === String(id)); if (it) it.enabled = !!on;
-        await fetch(`/api/pairs/${id}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ enabled: !!on })
-        }).then(() => { try { document.dispatchEvent(new Event("cx-state-change")); } catch {} });
-      } catch (e) { console.warn("[cxToggleEnable] failed", e); }
+        if (inputEl) inputEl.disabled = true;
+        if (isPlaylistManagedPair(it)) {
+          await setPlaylistManagedPairEnabled(id, on, it);
+        } else {
+          await fetch(`/api/pairs/${id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ enabled: !!on })
+          }).then((r) => r.ok ? r.json() : Promise.reject(new Error("pair update failed")));
+        }
+        if (it) it.enabled = !!on;
+        try { document.dispatchEvent(new Event("cx-state-change")); } catch {}
+      } catch (e) {
+        if (btn) btn.classList.toggle("off", !prev);
+        if (btn) btn.setAttribute("aria-checked", prev ? "true" : "false");
+        if (card) card.classList.toggle("pair-disabled", !prev);
+        if (inputEl) inputEl.checked = !!prev;
+        console.warn("[cxToggleEnable] failed", e);
+      } finally {
+        if (inputEl) inputEl.disabled = false;
+      }
     };
   }
 
+  async function playlistMappingsForPair(pairId, pair) {
+    const id = String(pairId || "").trim();
+    if (!id) return [];
+    try {
+      const data = await fetch(`/api/playlists/pairs/${encodeURIComponent(id)}/mappings`, { cache: "no-store" }).then((r) => r.ok ? r.json() : null);
+      if (Array.isArray(data?.mappings) && data.mappings.length) return data.mappings;
+    } catch {}
+    const ids = new Set(playlistMappingIds(playlistBlock(pair)));
+    if (!ids.size) return [];
+    try {
+      const data = await fetch("/api/playlists/mappings", { cache: "no-store" }).then((r) => r.ok ? r.json() : null);
+      const mappings = Array.isArray(data?.mappings) ? data.mappings : [];
+      return mappings.filter((m) => ids.has(String(m.id || "")));
+    } catch {
+      return [];
+    }
+  }
+
+  function playlistMappingPayload(mapping, enabled) {
+    return {
+      id: mapping.id,
+      name: mapping.name,
+      source_endpoint: mapping.source_endpoint,
+      target_endpoints: mapping.target_endpoints || [],
+      ruleset_id: mapping.ruleset_id || "",
+      membership: mapping.membership || "managed_only",
+      order: mapping.order || "ignore",
+      enabled: !!enabled,
+    };
+  }
+
+  async function setPlaylistManagedPairEnabled(pairId, enabled, pair) {
+    const mappings = await playlistMappingsForPair(pairId, pair);
+    if (!mappings.length) throw new Error("playlist mapping not found");
+    await Promise.all(mappings.map((mapping) => fetch("/api/playlists/mappings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(playlistMappingPayload(mapping, enabled)),
+    }).then((r) => r.ok ? r.json() : Promise.reject(new Error("playlist mapping update failed")))));
+  }
+
+  async function deletePlaylistManagedPair(pairId, pair) {
+    const mappings = await playlistMappingsForPair(pairId, pair);
+    if (!mappings.length) {
+      await openPlaylistMappingsForPair(pairId, null);
+      return false;
+    }
+    await Promise.all(mappings.map((mapping) => fetch(`/api/playlists/mappings/${encodeURIComponent(mapping.id)}`, {
+      method: "DELETE",
+    }).then((r) => r.ok ? r.json() : Promise.reject(new Error("playlist mapping delete failed")))));
+    return true;
+  }
+
   async function deletePairCard(id) {
+    const pairs = Array.isArray(window.cx?.pairs) ? window.cx.pairs : [];
+    const pair = pairs.find((p) => String(p.id) === String(id));
+    if (isPlaylistManagedPair(pair)) {
+      try {
+        const deleted = await deletePlaylistManagedPair(id, pair);
+        if (!deleted) return;
+      } catch (e) {
+        console.warn("delete playlist mapping failed", e);
+        await openPlaylistMappingsForPair(id, null);
+        return;
+      }
+      if (Array.isArray(window.cx?.pairs)) window.cx.pairs = window.cx.pairs.filter((p) => String(p.id) !== String(id));
+      try { window.dispatchEvent(new CustomEvent("cx:pairs:changed", { detail: { action: "delete", id } })); } catch {}
+      return;
+    }
     const board = document.querySelector("#pairs_list .pairs-board");
     const el = board?.querySelector(`.pair-card[data-id="${id}"]`); if (!el) return;
     el.classList.add("removing"); setTimeout(() => el.remove(), 200);
@@ -198,14 +288,12 @@
 
     const bead = (cls, tip, val) => `<span class="bead ${cls} ${truthy(val) ? "on" : ""}" data-tip="${tip}"></span>`;
     const inst = (v) => (String(v || "default").trim() || "default");
-    // TEMP Disabled due to playlists validation
-    const showPlaylistMappingButton = false;
     const pill = (provider, instance, role) => {
       const name = providerLabel(provider), full = String(instance || "default").toLowerCase() !== "default" ? `${name}:${instance}` : name, logo = providerLogo(provider), tip = `${role === "src" ? "Source" : "Target"}: ${full}`;
       return `<span class="pair-pill ${role}" data-tip="${esc(tip)}"><span class="pair-pill-text">${esc(full)}</span><span class="prov-watermark" aria-hidden="true" style="--wm:url('${esc(logo)}')"></span></span>`;
     };
 
-    const html = pairs.map((pr, i) => {
+    const renderPairCard = (pr, displayIndex) => {
       const src = key(pr.source);
       const dst = key(pr.target);
       const srcInst = inst(pr.source_instance);
@@ -223,7 +311,7 @@
         <div class="pair-card brand-${brandKey(src)} dst-${brandKey(dst)} ${enabled ? "" : "pair-disabled"}" data-id="${pr.id || ""}" data-source="${src}" data-target="${dst}" data-mode="${modeLabel}" style="--src-solid:${srcTone.solid};--src-rgb:${srcTone.rgb};--dst-solid:${dstTone.solid};--dst-rgb:${dstTone.rgb};--accent:${srcTone.solid};--accent-rgb:${srcTone.rgb}">
           <div class="pair-row">
             <div class="pair-left">
-              <span class="ord-badge" data-tip="Order position">${i + 1}</span>
+              <span class="ord-badge" data-tip="Sync order">${displayIndex}</span>
               ${pill(src, srcInst, "src")}
               <span class="arrow" data-tip="${modeLabel}">${arrow}</span>
               ${pill(dst, dstInst, "dst")}
@@ -239,10 +327,6 @@
                 ${bead("pl", "Playlists", f.playlists)}
                 ${bead("co", "Collections", f.collection)}
               </div>
-
-              ${showPlaylistMappingButton && hasPlaylistMappings(f.playlists) ? `<button type="button" class="icon-btn" data-tip="Manage playlist mappings" onclick="window.cxOpenPlaylistMappingsForPair && window.cxOpenPlaylistMappingsForPair(this.closest('.pair-card')?.dataset?.id, this)" aria-label="Manage playlist mappings">
-                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 6h11"></path><path d="M4 12h11"></path><path d="M4 18h7"></path><path d="M17 15l4 3-4 3"></path></svg>
-              </button>` : ""}
 
               <label class="icon-btn power ${enabled ? "" : "off"}" data-tip="Enable / disable" role="switch" aria-checked="${enabled}">
                 <input class="sr-only" type="checkbox" name="pair-enabled" ${enabled ? "checked" : ""}
@@ -265,9 +349,9 @@
             </div>
           </div>
         </div>`;
-    }).join("");
+    };
 
-    board.innerHTML = html;
+    board.innerHTML = pairs.map((pair, index) => renderPairCard(pair, index + 1)).join("");
     scheduleViewportLimit(0);
     installTooltip(host);
     refreshBadges(board);
