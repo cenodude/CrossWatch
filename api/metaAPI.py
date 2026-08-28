@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import random
 import re
 import time
@@ -367,6 +368,37 @@ def _ensure_under_root(root: Path, p: Path) -> Path:
     except Exception:
         raise ValueError("Invalid path")
     return p_r
+
+
+def _safe_tmdb_art_response_path(cache_dir: Path | str, path: Path | str) -> str:
+    cache_root = os.path.realpath(os.fspath(_cache_subdir(cache_dir, "art")))
+    candidate = os.path.realpath(os.fspath(path))
+    placeholder = os.path.realpath(os.fspath(_placeholder_poster()))
+
+    root_prefix = cache_root.rstrip(os.sep) + os.sep
+    allowed = candidate == placeholder
+    if not allowed and candidate.startswith(root_prefix):
+        try:
+            allowed = os.path.commonpath([cache_root, candidate]) == cache_root
+        except ValueError:
+            allowed = False
+
+    root_cmp = os.path.normcase(cache_root)
+    candidate_cmp = os.path.normcase(candidate)
+    placeholder_cmp = os.path.normcase(placeholder)
+    root_prefix_cmp = root_cmp.rstrip(os.sep) + os.sep
+    if not allowed and (
+        candidate_cmp == placeholder_cmp or candidate_cmp.startswith(root_prefix_cmp)
+    ):
+        try:
+            allowed = candidate_cmp == placeholder_cmp or os.path.commonpath(
+                [root_cmp, candidate_cmp]
+            ) == root_cmp
+        except ValueError:
+            allowed = False
+    if not allowed:
+        raise ValueError("Invalid art path")
+    return candidate
 
 
 def _cache_subdir(cache_dir: Path | str, name: str) -> Path:
@@ -867,12 +899,13 @@ def get_art_file(
     safe_tmdb_id = _safe_cache_part(tmdb_id)
     safe_kind = _safe_cache_part(art_kind, default="poster")
     safe_size = _safe_cache_part(_sanitize_tmdb_size(size), default="w342")
-    base = cache_root / f"{safe_typ}_{safe_tmdb_id}_{safe_kind}_{loc_tag}_{safe_size}"
+    cache_stem = _safe_cache_digest_stem("tmdb_art", safe_typ, safe_tmdb_id, safe_kind, loc_tag, safe_size)
+    base = _cache_base_path(cache_root, cache_stem)
     meta_path = base.with_suffix(".json")
 
     cached_art = None
     if meta_path.exists() and _read_json(meta_path).get("url"):
-        for f in cache_root.glob(base.name + ".*"):
+        for f in _cache_matches(cache_root, cache_stem):
             if f.suffix.lower() != ".json" and f.exists():
                 cached_art = f
                 break
@@ -918,7 +951,7 @@ def get_art_file(
     if not src_url:
         return str(_placeholder_poster()), "image/svg+xml"
 
-    base = cache_root / f"{safe_typ}_{safe_tmdb_id}_{safe_kind}_{loc_tag}_{safe_size}"
+    base = _cache_base_path(cache_root, cache_stem)
     meta_path = base.with_suffix(".json")
 
     ext = Path(src_url.split("?", 1)[0]).suffix.lower() or ".jpg"
@@ -932,7 +965,7 @@ def get_art_file(
 
     prev_url = _read_json(meta_path).get("url") if meta_path.exists() else None
     if (prev_url and prev_url != src_url) or (not meta_path.exists()):
-        for f in cache_root.glob(base.name + ".*"):
+        for f in _cache_matches(cache_root, cache_stem):
             if f.name != meta_path.name:
                 try:
                     f.unlink()
@@ -1161,8 +1194,9 @@ def api_tmdb_art(
                 title=title,
                 year=year,
             )
+        safe_path = _safe_tmdb_art_response_path(base, local_path)
         return FileResponse(
-            str(local_path),
+            safe_path,
             media_type=mime,
             headers={
                 "Cache-Control": "public, max-age=31536000, immutable"
