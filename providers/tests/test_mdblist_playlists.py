@@ -91,6 +91,9 @@ def test_dynamic_list_is_read_only_static_is_writable(monkeypatch):
     assert dynamic.media_types == ("show",)
     assert static.extra["item_count"] == 2 and static.extra["private"] is True
     assert dynamic.extra["dynamic"] is True
+    assert dynamic.extra["endpoint_type"] == "discovery"
+    assert dynamic.extra["source_kind"] == "discovery"
+    assert dynamic.is_discovery is True
 
 
 def test_watchlist_snapshot_and_writes_delegate(monkeypatch):
@@ -208,6 +211,52 @@ def test_create_static_list_uses_current_user_add_route(monkeypatch):
     assert res.id == "303"
     call = next(c for c in captured if c["url"].endswith("/lists/user/add"))
     assert call["json"] == {"name": "Short"}
+
+
+def test_rename_static_list_uses_update_route(monkeypatch):
+    captured = _router(
+        monkeypatch,
+        {
+            ("GET", "/lists/user"): FakeResp(200, USER_LISTS),
+            ("POST", "/lists/101/update"): FakeResp(200, {"ok": True}),
+        },
+    )
+
+    renamed = pl.rename(FakeAdapter(), "101", "Renamed")
+
+    assert renamed.id == "101"
+    assert renamed.name == "Renamed"
+    update_call = next(c for c in captured if c["url"].endswith("/lists/101/update"))
+    assert update_call["json"] == {"name": "Renamed"}
+
+
+def test_delete_static_list_uses_delete_route(monkeypatch):
+    captured = _router(
+        monkeypatch,
+        {
+            ("GET", "/lists/user"): FakeResp(200, USER_LISTS),
+            ("DELETE", "/lists/101"): FakeResp(204, None),
+        },
+    )
+
+    deleted = pl.delete(FakeAdapter(), "101")
+
+    assert deleted["ok"] is True
+    delete_call = next(c for c in captured if c["url"].endswith("/lists/101"))
+    assert delete_call["method"] == "DELETE"
+    assert delete_call["params"] == {"apikey": "k"}
+
+
+def test_dynamic_list_cannot_be_renamed(monkeypatch):
+    _router(monkeypatch, {("GET", "/lists/user"): FakeResp(200, USER_LISTS)})
+    with pytest.raises(pl.MDBListDynamicListError):
+        pl.rename(FakeAdapter(), "202", "Nope")
+
+
+def test_dynamic_list_cannot_be_deleted(monkeypatch):
+    _router(monkeypatch, {("GET", "/lists/user"): FakeResp(200, USER_LISTS)})
+    with pytest.raises(pl.MDBListDynamicListError):
+        pl.delete(FakeAdapter(), "202")
 
 
 def test_seasons_and_episodes_use_tmdb_buckets(monkeypatch):

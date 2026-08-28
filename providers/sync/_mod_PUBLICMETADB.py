@@ -25,7 +25,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "1.1"
+__VERSION__ = "1.2"
 __all__ = ["get_manifest", "PUBLICMETADBModule", "OPS"]
 
 
@@ -67,6 +67,7 @@ _PLAYLIST_CAPABILITIES: dict[str, Any] = {
     "create": True,
     "add": True,
     "remove": True,
+    "delete": True,
     "reorder": False,
     "smart": False,
     "smart_writable": False,
@@ -508,6 +509,18 @@ class _PUBLICMETADBOPS:
         if dry_run:
             return {"ok": True, "count": len(lst), "dry_run": True, "unresolved": [], "confirmed_keys": []}
         return self._pl().remove(self._playlist_adapter(cfg, instance), playlist_id, lst)
+
+    def delete_playlist(
+        self,
+        cfg: Mapping[str, Any],
+        playlist_id: str,
+        *,
+        instance: str | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        if dry_run:
+            return {"ok": True, "dry_run": True, "playlist_id": playlist_id}
+        return self._pl().delete(self._playlist_adapter(cfg, instance), playlist_id)
 
     def reorder_playlist_items(
         self,

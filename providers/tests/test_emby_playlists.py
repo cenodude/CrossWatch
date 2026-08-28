@@ -33,6 +33,10 @@ class FakeHttp:
             return FakeResp(200, {"Items": [{"Id": "P1", "Name": "Weekend", "Type": "Playlist", "ChildCount": 2}], "TotalRecordCount": 1})
         if path == "/Users/U1/Items" and params.get("IncludeItemTypes") == "BoxSet":
             return FakeResp(200, {"Items": [{"Id": "C1", "Name": "Favorites", "Type": "BoxSet", "ChildCount": 1}], "TotalRecordCount": 1})
+        if path == "/Items/P1":
+            return FakeResp(200, {"Id": "P1", "Name": "Weekend", "Type": "Playlist"})
+        if path == "/Items/C1":
+            return FakeResp(200, {"Id": "C1", "Name": "Favorites", "Type": "BoxSet"})
         if path == "/Playlists/P1/Items":
             return FakeResp(200, {"Items": [
                 row("I1", "Movie", "Dune", tmdb="438631", playlist_item_id="E1"),
@@ -43,6 +47,8 @@ class FakeHttp:
     def post(self, path: str, *, params: dict[str, Any] | None = None, json: Any = None) -> FakeResp:
         self.calls.append({"method": "POST", "path": path, "params": dict(params or {}), "json": json})
         if path in ("/Playlists/P1/Items", "/Collections/C1/Items"):
+            return FakeResp(204, {})
+        if path in ("/Items/P1", "/Items/C1"):
             return FakeResp(204, {})
         if path.startswith("/Playlists/P1/Items/") and "/Move/" in path:
             return FakeResp(204, {})
@@ -55,6 +61,8 @@ class FakeHttp:
     def delete(self, path: str, *, params: dict[str, Any] | None = None) -> FakeResp:
         self.calls.append({"method": "DELETE", "path": path, "params": dict(params or {})})
         if path in ("/Playlists/P1/Items", "/Collections/C1/Items"):
+            return FakeResp(204, {})
+        if path == "/Items/P1":
             return FakeResp(204, {})
         return FakeResp(404, {})
 
@@ -186,3 +194,29 @@ def test_create_can_make_playlist_or_collection():
     assert collection.id == "collection:C2"
     assert any(c["path"] == "/Playlists" and c["params"]["Name"] == "NewList" for c in ad.client.calls)
     assert any(c["path"] == "/Collections" and c["params"]["Name"] == "NewBox" for c in ad.client.calls)
+
+
+def test_rename_and_delete_playlist_resources():
+    ad = FakeAdapter()
+    renamed_playlist = pl.rename(ad, "playlist:P1", "Renamed")
+    renamed_collection = pl.rename(ad, "collection:C1", "BoxRenamed")
+    deleted = pl.delete(ad, "playlist:P1")
+
+    assert renamed_playlist.id == "playlist:P1"
+    assert renamed_playlist.name == "Renamed"
+    assert renamed_collection.id == "collection:C1"
+    assert renamed_collection.name == "BoxRenamed"
+    assert deleted["ok"] is True
+    assert any(c["method"] == "POST" and c["path"] == "/Items/P1" and c["json"]["Name"] == "Renamed" for c in ad.client.calls)
+    assert any(c["method"] == "POST" and c["path"] == "/Items/C1" and c["json"]["Name"] == "BoxRenamed" for c in ad.client.calls)
+    assert any(c["method"] == "DELETE" and c["path"] == "/Items/P1" for c in ad.client.calls)
+
+
+def test_delete_collection_is_blocked():
+    ad = FakeAdapter()
+    try:
+        pl.delete(ad, "collection:C1")
+    except pl.EmbyPlaylistUnsupported:
+        pass
+    else:
+        raise AssertionError("collection delete should be blocked")

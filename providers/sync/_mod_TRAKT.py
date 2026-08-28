@@ -103,7 +103,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "1.6"
+__VERSION__ = "1.7"
 __all__ = ["get_manifest", "TRAKTModule", "OPS"]
 
 os.environ.setdefault("CW_TRAKT_UA", f"CrossWatch TRAKT/{__VERSION__}")
@@ -122,10 +122,13 @@ _PROVIDER = "TRAKT"
 _PLAYLIST_CAPABILITIES: dict[str, Any] = {
     "read": True,
     "create": True,
+    "rename": True,
+    "delete": True,
     "add": True,
     "remove": True,
     "reorder": True,
     "smart": False,
+    "discovery": True,
     "media_types": ["movies", "shows", "seasons", "episodes"],
 }
 
@@ -915,6 +918,27 @@ class _TraktOPS:
         dry_run: bool = False,
     ):
         return self._pl().create(self._playlist_adapter(cfg, instance), name, media_type=media_type, dry_run=dry_run)
+
+    def rename_playlist(
+        self,
+        cfg: Mapping[str, Any],
+        playlist_id: str,
+        name: str,
+        *,
+        instance: str | None = None,
+        dry_run: bool = False,
+    ):
+        return self._pl().rename(self._playlist_adapter(cfg, instance), playlist_id, name, dry_run=dry_run)
+
+    def delete_playlist(
+        self,
+        cfg: Mapping[str, Any],
+        playlist_id: str,
+        *,
+        instance: str | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        return self._pl().delete(self._playlist_adapter(cfg, instance), playlist_id, dry_run=dry_run)
 
     def add_playlist_items(
         self,

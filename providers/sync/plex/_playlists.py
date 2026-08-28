@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from collections.abc import Iterable as IterableABC, Mapping as MappingABC
 from typing import Any, Iterable, Mapping, Sequence
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal
@@ -249,6 +250,54 @@ def _iter_collections(srv: Any) -> list[tuple[Any, Any]]:
             if _collection_subtype(sec, coll) in _COLLECTION_TYPES:
                 out.append((sec, coll))
     return out
+
+
+def _first_from_call(obj: Any, name: str, **kwargs: Any) -> Any | None:
+    fn = getattr(obj, name, None)
+    if not callable(fn):
+        return None
+    def _first_value(value: Any) -> Any | None:
+        if value is None:
+            return None
+        if isinstance(value, IterableABC) and not isinstance(value, (str, bytes, MappingABC)):
+            values = list(value)
+            return values[0] if values else None
+        return value
+
+    try:
+        value = fn(**kwargs)
+    except TypeError:
+        try:
+            value = fn()
+        except Exception:
+            return None
+    except Exception:
+        return None
+    return _first_value(value)
+
+
+def _first_empty_playlist_seed(adapter: Any) -> Any | None:
+    try:
+        sections = list(adapter.libraries(types=("movie",)) or [])
+    except Exception:
+        sections = []
+    for section in sections:
+        item = _first_from_call(section, "search", maxresults=1)
+        if item is None:
+            item = _first_from_call(section, "all")
+        if item is not None:
+            return item
+
+    try:
+        sections = list(adapter.libraries(types=("show",)) or [])
+    except Exception:
+        sections = []
+    for section in sections:
+        item = _first_from_call(section, "searchEpisodes", maxresults=1)
+        if item is not None:
+            return item
+
+    return None
 
 
 def list_resources(adapter: Any) -> list[PlaylistResource]:
@@ -538,7 +587,29 @@ def create(
         )
     lst = list(items or [])
     if not lst:
-        raise PlaylistItemsRequired("plex cannot create an empty playlist")
+        srv = _server(adapter)
+        seed = _first_empty_playlist_seed(adapter)
+        if seed is None:
+            raise PlaylistItemsRequired("plex cannot create an empty playlist without at least one library item")
+        try:
+            pl = srv.createPlaylist(nm, items=[seed])
+            try:
+                pl.removeItems([seed])
+            except Exception:
+                try:
+                    pl = pl.reload()
+                    pl.removeItems([seed])
+                except Exception as e:
+                    _warn("create_seed_remove_failed", name=nm, error=str(e))
+                    raise PlaylistError(f"plex created playlist '{nm}' but could not remove the seed item: {e}") from e
+        except PlaylistError:
+            raise
+        except Exception as e:
+            _warn("create_empty_failed", name=nm, error=str(e))
+            raise PlaylistError(f"plex create empty playlist failed: {e}") from e
+        _info("create_empty_done", name=nm)
+        return _resource_from_playlist(adapter, pl)
+
     srv = _server(adapter)
     resolved, _confirmed, unresolved = _resolve_items(adapter, lst)
     if not resolved:
@@ -551,6 +622,74 @@ def create(
         raise PlaylistError(f"plex create playlist failed: {e}") from e
     _info("create_done", name=nm, seeded=len(resolved))
     return _resource_from_playlist(adapter, pl)
+
+
+def rename(adapter: Any, playlist_id: Any, name: str, *, dry_run: bool = False) -> PlaylistResource:
+    if _is_watchlist_id(playlist_id):
+        raise PlaylistUnsupported("plex watchlist cannot be renamed as a playlist")
+    if _is_collection_id(playlist_id):
+        raise PlaylistUnsupported("plex collections must be renamed in plex")
+    nm = str(name or "").strip()
+    if not nm:
+        raise ValueError("playlist name required")
+    srv = _server(adapter)
+    pl = _find_playlist(srv, playlist_id)
+    _guard_writable(pl)
+    if dry_run:
+        return PlaylistResource(
+            provider=_PROVIDER,
+            id=str(getattr(pl, "ratingKey", None) or playlist_id),
+            name=nm,
+            instance=_instance_id(adapter),
+            can_add=True,
+            can_remove=True,
+            can_reorder=True,
+            media_types=("movie", "episode"),
+        )
+    try:
+        edit_title = getattr(pl, "editTitle", None)
+        if callable(edit_title):
+            edit_title(nm)
+        else:
+            edit = getattr(pl, "edit", None)
+            if not callable(edit):
+                raise PlaylistUnsupported("plex playlist rename is not supported by this plexapi version")
+            edit(title=nm)
+        try:
+            pl = pl.reload()
+        except Exception:
+            setattr(pl, "title", nm)
+    except PlaylistError:
+        raise
+    except Exception as e:
+        _warn("rename_failed", list_id=str(playlist_id), error=str(e))
+        raise PlaylistError(f"plex rename playlist failed: {e}") from e
+    _info("rename_done", list_id=str(playlist_id), name=nm)
+    return _resource_from_playlist(adapter, pl)
+
+
+def delete(adapter: Any, playlist_id: Any, *, dry_run: bool = False) -> dict[str, Any]:
+    if _is_watchlist_id(playlist_id):
+        raise PlaylistUnsupported("plex watchlist cannot be deleted as a playlist")
+    if _is_collection_id(playlist_id):
+        raise PlaylistUnsupported("plex collections must be deleted in plex")
+    srv = _server(adapter)
+    pl = _find_playlist(srv, playlist_id)
+    _guard_writable(pl)
+    if dry_run:
+        return {"ok": True, "dry_run": True}
+    try:
+        delete_playlist = getattr(pl, "delete", None)
+        if not callable(delete_playlist):
+            raise PlaylistUnsupported("plex playlist delete is not supported by this plexapi version")
+        delete_playlist()
+    except PlaylistError:
+        raise
+    except Exception as e:
+        _warn("delete_failed", list_id=str(playlist_id), error=str(e))
+        raise PlaylistError(f"plex delete playlist failed: {e}") from e
+    _info("delete_done", list_id=str(playlist_id))
+    return {"ok": True, "count": 1}
 
 
 def _confirmed_keys(items: Sequence[Mapping[str, Any]], unresolved: Sequence[Mapping[str, Any]]) -> list[str]:

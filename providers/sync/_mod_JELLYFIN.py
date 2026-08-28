@@ -113,7 +113,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "2.4"
+__VERSION__ = "2.5"
 _MIN_PROGRESS_WRITE_VERSION = (10, 9)
 _JF_VERSION_CACHE: dict[str, tuple[float, str | None]] = {}
 
@@ -190,6 +190,8 @@ _PLAYLIST_CAPABILITIES: dict[str, Any] = {
     "read": True,
     "create": True,
     "create_endpoint_types": ["playlist", "collection"],
+    "rename": True,
+    "delete": True,
     "add": True,
     "remove": True,
     "reorder": False,
@@ -872,6 +874,27 @@ class _JellyfinOPS:
             items=list(items or []),
             dry_run=dry_run,
         )
+
+    def rename_playlist(
+        self,
+        cfg: Mapping[str, Any],
+        playlist_id: str,
+        name: str,
+        *,
+        instance: str | None = None,
+        dry_run: bool = False,
+    ):
+        return self._pl().rename(self._playlist_adapter(cfg, instance), playlist_id, name, dry_run=dry_run)
+
+    def delete_playlist(
+        self,
+        cfg: Mapping[str, Any],
+        playlist_id: str,
+        *,
+        instance: str | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        return self._pl().delete(self._playlist_adapter(cfg, instance), playlist_id, dry_run=dry_run)
 
     def add_playlist_items(
         self,
