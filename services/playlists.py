@@ -500,6 +500,21 @@ def sync_endpoint(cfg: dict[str, Any], endpoint_id: str) -> dict[str, Any]:
     return {"ok": True, "endpoint": ep}
 
 
+def refresh_mapping_endpoints(cfg: dict[str, Any], mapping: Mapping[str, Any], *, save: bool = True) -> dict[str, Any]:
+    ids: list[str] = []
+    source_id = str(mapping.get("source_endpoint") or "").strip()
+    if source_id:
+        ids.append(source_id)
+    for target_id in _clean_target_ids(mapping):
+        if target_id and target_id not in ids:
+            ids.append(target_id)
+    refreshed = [_refresh_endpoint_meta(cfg, endpoint_id) for endpoint_id in ids]
+    endpoints = [ep for ep in refreshed if ep]
+    if save and endpoints:
+        _save(cfg)
+    return {"ok": True, "endpoints": endpoints}
+
+
 def activity(cfg: Mapping[str, Any], *, limit: int = 25) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for ep in list_endpoints(cfg):
@@ -1180,6 +1195,8 @@ def run_mapping(cfg: Mapping[str, Any], mapping_id: str, *, dry_run: bool = Fals
     try:
         with _mapping_env(resolved):
             result = runner.run_mapping(cfg, resolved, dry_run=dry_run)
+        if not dry_run and isinstance(cfg, dict):
+            refresh_mapping_endpoints(cfg, resolved)
     except runner.PlaylistRunError as e:
         return _internal_playlist_error("run", e, mapping_id=mapping_id, dry_run=dry_run)
     except Exception as e:

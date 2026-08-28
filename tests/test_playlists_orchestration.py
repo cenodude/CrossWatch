@@ -208,6 +208,30 @@ def test_playlist_pair_records_feature_totals(config_base, monkeypatch):
     ]
 
 
+def test_playlist_pair_refreshes_mapping_endpoints_after_run(config_base, monkeypatch):
+    from services import playlists as svc
+
+    calls: list[str] = []
+    cfg = _pair_cfg("one-way")
+    ctx = _ctx(cfg)
+    monkeypatch.setattr(glue, "resolve_pair_mappings", lambda _cfg, _pair: [playlists_runner.resolve_mapping(cfg, cfg["playlists"]["mappings"][0])])
+    monkeypatch.setattr(glue, "run_mapping", lambda *a, **k: {"ok": True, "added": 1, "removed": 0, "reordered": 0, "unresolved_count": 0})
+    monkeypatch.setattr(svc, "refresh_mapping_endpoints", lambda _cfg, mapping: calls.append(str(mapping.get("id") or "")) or {"ok": True, "endpoints": []})
+
+    result = glue.run_playlist_mappings(
+        ctx,
+        "FAKESRC",
+        "FAKEDST",
+        fcfg={"mappings": ["MAP-01"]},
+        health_map={},
+        full_cfg=cfg,
+        pair=cfg["pairs"][0],
+    )
+
+    assert result["added"] == 1
+    assert calls == ["MAP-01"]
+
+
 def test_manual_and_scheduled_share_core_runner():
     from services import playlists as svc
 

@@ -81,6 +81,13 @@ def run_playlist_mappings(
                 providers=providers,
                 emit=ctx.emit,
             )
+            if not dry_run and isinstance(full_cfg, dict):
+                try:
+                    from services import playlists as playlists_svc
+
+                    playlists_svc.refresh_mapping_endpoints(full_cfg, mapping)
+                except Exception:
+                    pass
         except PlaylistRunError as e:
             totals["errors"] += 1
             _emit(ctx, "playlist:mapping:error", src=src, dst=dst, mapping=mapping_id, error=str(e))
