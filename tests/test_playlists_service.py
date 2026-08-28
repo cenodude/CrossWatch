@@ -383,6 +383,25 @@ def test_run_only_selected_mapping(config_base, fake_providers):
     assert ("add", "T2") not in fake_providers["PLEX"].calls
 
 
+def test_mapping_run_refreshes_source_and_destination_endpoints(config_base, fake_providers, monkeypatch):
+    cfg = _cfg()
+    e1, e2 = _seed_endpoints(cfg)
+    mid = svc.upsert_mapping(cfg, {"name": "Map1", "source_endpoint": e1, "target_endpoints": [e2]})["mapping"]["id"]
+    for endpoint in cfg["playlists"]["endpoints"]:
+        endpoint.pop("last_synced", None)
+        endpoint["item_count"] = 999
+    monkeypatch.setattr(svc.time, "time", lambda: 1234)
+
+    out = svc.run_mapping(cfg, mid)
+
+    assert out["ok"] and out["result"]["added"] == 2
+    endpoints = {ep["id"]: ep for ep in cfg["playlists"]["endpoints"]}
+    assert endpoints[e1]["last_synced"] == 1234
+    assert endpoints[e1]["item_count"] == 2
+    assert endpoints[e2]["last_synced"] == 1234
+    assert endpoints[e2]["item_count"] == 2
+
+
 def test_provider_count_summary_merges_endpoint_and_mapping_counts(config_base, fake_providers):
     cfg = _cfg()
     e1, e2 = _seed_endpoints(cfg)
