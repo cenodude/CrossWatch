@@ -122,6 +122,10 @@ cw sync run 1                      just pair #1 from cw sync list
 cw sync run pair_07c3              just the one by id or unique prefix
 cw sync run --pair pair_07c3       same selector, option form
 cw sync run --follow               run it and stream the log until it finishes
+cw sync once                       local run, wait, return exit code
+cw sync once --pair pair_07c3      local one-shot pair run
+cw sync once --pair a --pair b     local one-shot selected pair run
+cw sync once --feature watchlist   local one-shot feature-only run
 cw sync status                     current or last run, with counts
 cw sync follow                     attach to a run already going
 cw sync cancel                     stop after the current step
@@ -129,7 +133,7 @@ cw sync unresolved                 what the last run could not match
 cw sync providers [--counts]
 ```
 
-`--follow` passes through the exit code from the sync, handy in cron or a health check.
+`cw sync run` starts work through the running service. `cw sync once` runs in the current process, waits for completion, and exits with the sync result code, which is useful for `docker run --rm`, cron, Kubernetes CronJobs and other external schedulers. By default unresolved items do not fail the command; add `--fail-on-unresolved` for a stricter run.
 
 ## Config
 
@@ -278,10 +282,35 @@ cw playlist overview
 cw playlist providers
 cw playlist resources PLEX
 cw playlist activity
+cw playlist setup --source-provider TRAKT --source-playlist LIST_ID --target-provider PLEX --create-target "Weekend"
 
-cw playlist endpoint list|add|sync|delete
-cw playlist mapping list|add|run|preview|result|delete
-cw playlist ruleset list|show|delete
+cw playlist resource list PLEX
+cw playlist resource create PLEX --name Weekend
+cw playlist resource rename PLEX LIST_ID --name NewName
+cw playlist resource delete PLEX LIST_ID
+
+cw playlist endpoint list
+cw playlist endpoint add PLEX LIST_ID --name PlexFavs
+cw playlist endpoint edit EP-01 --playlist LIST_ID
+cw playlist endpoint sync EP-01
+cw playlist endpoint delete EP-01
+
+cw playlist mapping list
+cw playlist mapping add --source EP-01 --target EP-02 --name Movies
+cw playlist mapping edit MAP-01 --membership mirror --order preserve
+cw playlist mapping enable MAP-01
+cw playlist mapping disable MAP-01
+cw playlist mapping run MAP-01
+cw playlist mapping preview MAP-01
+cw playlist mapping result MAP-01
+cw playlist mapping delete MAP-01
+
+cw playlist ruleset list
+cw playlist ruleset show trakt_free_account
+cw playlist ruleset clone trakt_free_account --name MyRules
+cw playlist ruleset add ruleset.json
+cw playlist ruleset validate ruleset.json
+cw playlist ruleset delete RULESET_ID
 ```
 
 `cw playlist mapping run <id> --dry-run` first, always.
@@ -391,6 +420,17 @@ cw scheduler status
 cw scheduler next
 cw scheduler enable
 cw scheduler disable
+cw scheduler list                  advanced jobs
+cw scheduler set hourly
+cw scheduler set every 6h
+cw scheduler set daily 03:30
+cw scheduler set interval 45m
+cw scheduler add PAIR_ID --at 00:00 --at 12:00
+cw scheduler edit JOB_ID --at 03:30
+cw scheduler pause JOB_ID
+cw scheduler resume JOB_ID
+cw scheduler delete JOB_ID
+cw scheduler setup                 guided setup
 cw scheduler run-now               fire it now
 cw scheduler replan                recompute the next run time
 cw scheduler stop                  stop the worker, keep the config

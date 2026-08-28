@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import copy
 import queue
 import re
 import threading
@@ -12,7 +13,7 @@ from typing import Any
 import typer
 
 from .._context import Ctx
-from .._errors import EXIT_BUSY, CLIError
+from .._errors import EXIT_BUSY, EXIT_USAGE, CLIError
 from .._render import state_text
 from .._util import as_dict, coerce_bool, error_text, find_pair, fmt_duration, fmt_ts, is_log_control, pair_features, pair_label, parse_iso, strip_ansi
 
@@ -53,6 +54,45 @@ def _provider_ref(pair: dict[str, Any], side: str) -> str:
 
 def _feature_summary(pair: dict[str, Any]) -> str:
     return ", ".join(pair_features(pair)) or "-"
+
+
+def _once_exit_code(result: dict[str, Any], *, fail_on_unresolved: bool = False, fail_on_skipped: bool = False) -> int:
+    if not isinstance(result, dict):
+        return 1
+    try:
+        if int(result.get("errors") or 0) > 0:
+            return 1
+        if int(result.get("cancelled") or 0) > 0:
+            return 1
+        if fail_on_unresolved and int(result.get("unresolved") or 0) > 0:
+            return 1
+        if fail_on_skipped and int(result.get("skipped") or 0) > 0:
+            return 1
+    except Exception:
+        return 1
+    return 0
+
+
+def _copy_with_selected_pairs(cfg: dict[str, Any], selectors: list[str], features: list[str]) -> dict[str, Any]:
+    out = copy.deepcopy(cfg)
+    pairs = [p for p in (out.get("pairs") or []) if isinstance(p, dict)]
+    if selectors:
+        selected = [find_pair(pairs, selector) for selector in selectors]
+    else:
+        selected = [p for p in pairs if p.get("enabled", True) is not False]
+
+    wanted_features = [str(f or "").strip().lower() for f in features if str(f or "").strip()]
+    if wanted_features:
+        for pair in selected:
+            fmap = pair.get("features")
+            if isinstance(fmap, dict) and fmap:
+                pair["features"] = {name: value for name, value in fmap.items() if str(name).strip().lower() in wanted_features}
+            else:
+                pair["features"] = {name: {"enable": True} for name in wanted_features}
+            pair["feature"] = "multi"
+
+    out["pairs"] = selected
+    return out
 
 
 class _Follower:
@@ -288,6 +328,74 @@ def sync_cancel(ctx: typer.Context) -> None:
         state.out.warn(error_text(result, "Nothing to cancel"))
         return
     state.out.success("Cancel requested; the run stops after the current step.")
+
+
+@sync_app.command("once")
+def sync_once(
+    ctx: typer.Context,
+    target: str = typer.Argument("", help="Optional pair number, id, prefix or label. Default runs every enabled pair."),
+    pair: list[str] = typer.Option([], "--pair", "-p", help="Run a selected pair. Repeat for multiple pairs."),
+    feature: list[str] = typer.Option([], "--feature", "-F", help="Run only this feature. Repeat for multiple features."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Plan the run without writing provider changes."),
+    no_state_json: bool = typer.Option(False, "--no-state-json", help="Do not update the last-sync state marker."),
+    fail_on_unresolved: bool = typer.Option(False, "--fail-on-unresolved", help="Exit 1 when unresolved items are found."),
+    fail_on_skipped: bool = typer.Option(False, "--fail-on-skipped", help="Exit 1 when skipped items are reported."),
+    json_output: bool = typer.Option(False, "--json", help="Print the final summary as JSON."),
+) -> None:
+    """Run sync locally, wait for completion, and exit with the sync result code."""
+    state: Ctx = ctx.obj
+    selectors = [s for s in [target.strip(), *[str(p or "").strip() for p in pair]] if s]
+    if target.strip() and pair:
+        raise CLIError("Use either the positional pair selector or --pair, not both.", exit_code=EXIT_USAGE)
+
+    from cw_platform.config_base import load_config
+    from cw_platform.orchestrator import Orchestrator
+
+    cfg = _copy_with_selected_pairs(dict(load_config() or {}), selectors, feature)
+    selected_pairs = [p for p in (cfg.get("pairs") or []) if isinstance(p, dict)]
+    if not selected_pairs:
+        result = {"ok": True, "pairs": 0, "updated": 0, "added": 0, "removed": 0, "skipped": 0, "unresolved": 0, "errors": 0, "cancelled": False}
+        if json_output or state.out.json_mode:
+            state.out.data({**result, "exit_code": 0})
+        else:
+            state.out.warn("No enabled sync pairs matched; nothing to run.")
+        raise typer.Exit(0)
+
+    runtime_raw = cfg.get("runtime")
+    sync_raw = cfg.get("sync")
+    runtime_cfg: dict[str, Any] = runtime_raw if isinstance(runtime_raw, dict) else {}
+    sync_cfg: dict[str, Any] = sync_raw if isinstance(sync_raw, dict) else {}
+    write_state_json = not no_state_json and coerce_bool(
+        sync_cfg.get("write_state_json", runtime_cfg.get("write_state_json", True)),
+        True,
+    )
+
+    label = "all enabled pairs" if not selectors else ", ".join(str(p.get("id") or pair_label(p)) for p in selected_pairs)
+    if not (json_output or state.out.json_mode):
+        state.out.info(f"Running {label} locally; the process will exit when sync finishes.")
+
+    try:
+        result = Orchestrator(cfg).run(
+            dry_run=dry_run,
+            write_state_json=write_state_json,
+            progress=(None if (json_output or state.out.json_mode) else True),
+        )
+    except Exception as exc:
+        if json_output or state.out.json_mode:
+            state.out.data({"ok": False, "error": str(exc), "exit_code": 1})
+        else:
+            state.out.error(f"Sync failed: {exc}")
+        raise typer.Exit(1) from exc
+
+    code = _once_exit_code(result, fail_on_unresolved=fail_on_unresolved, fail_on_skipped=fail_on_skipped)
+    result = {**result, "exit_code": code}
+    if json_output or state.out.json_mode:
+        state.out.data(result)
+    elif code == 0:
+        state.out.success("Sync completed.")
+    else:
+        state.out.warn(f"Sync completed with exit code {code}.")
+    raise typer.Exit(code)
 
 
 @sync_app.command("unresolved")

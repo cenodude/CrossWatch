@@ -184,6 +184,10 @@ main() {
   echo "[ENTRYPOINT] CrossWatch on ${WEB_HOST}:${WEB_PORT} (reload=${RELOAD:-no}) as $(run_identity)"
 
   if [[ "$#" -gt 0 ]]; then
+    if [[ "$1" == "run-once" ]]; then
+      shift
+      run_as /usr/local/bin/cw sync once "$@"
+    fi
     # Run a custom command
     run_as "$@"
   else

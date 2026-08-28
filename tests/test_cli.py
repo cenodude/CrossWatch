@@ -47,6 +47,8 @@ class FakeTransport(Transport):
         value = self.routes[key]
         if isinstance(value, Exception):
             raise value
+        if callable(value):
+            return value(method.upper(), path, params, json_body)
         return value
 
 
@@ -1238,6 +1240,415 @@ def test_collect_fields_skips_optional_fields_when_not_prompting() -> None:
 
     manifest = _manifest("MDBLIST", "device_code", [{"key": "mdblist.api_key", "label": "Key"}])
     assert _collect_fields(manifest, {}, interactive=False) == {}
+
+
+def test_scheduler_set_every_configures_standard_scheduler() -> None:
+    from cli.commands.scheduler import scheduler_set
+
+    http = FakeTransport(
+        {
+            ("GET", "/api/scheduling"): {"enabled": False, "advanced": {"enabled": True, "jobs": []}},
+            ("POST", "/api/scheduling"): {"ok": True, "next_run_at": 123},
+        }
+    )
+    state = _ctx(http=http)
+
+    scheduler_set(SimpleNamespace(obj=state), "every", "6h", dry_run=False)
+
+    assert http.calls[-1] == (
+        "POST",
+        "/api/scheduling",
+        {
+            "enabled": True,
+            "advanced": {"enabled": False, "jobs": []},
+            "mode": "every_n_hours",
+            "every_n_hours": 6,
+        },
+    )
+
+
+def test_scheduler_add_repeated_times_creates_multiple_advanced_jobs() -> None:
+    from cli.commands.scheduler import scheduler_add
+
+    http = FakeTransport(
+        {
+            ("GET", "/api/pairs"): [{"id": "simkl-plex", "source": "SIMKL", "target": "PLEX"}],
+            ("GET", "/api/scheduling"): {"enabled": False, "advanced": {"enabled": False, "jobs": []}},
+            ("POST", "/api/scheduling"): {"ok": True, "next_run_at": 123},
+        }
+    )
+    state = _ctx(http=http)
+
+    scheduler_add(SimpleNamespace(obj=state), "simkl", at=["00:00", "06:00"], days="weekdays", job_id="", after="", paused=False, dry_run=False)
+
+    posted = http.calls[-1][2]
+    jobs = posted["advanced"]["jobs"]
+    assert posted["advanced"]["enabled"] is True
+    assert [j["id"] for j in jobs] == ["simkl_plex_0000", "simkl_plex_0600"]
+    assert [j["at"] for j in jobs] == ["00:00", "06:00"]
+    assert jobs[0]["days"] == [1, 2, 3, 4, 5]
+    assert jobs[0]["pair_id"] == "simkl-plex"
+
+
+def test_scheduler_edit_updates_existing_job() -> None:
+    from cli.commands.scheduler import scheduler_edit
+
+    http = FakeTransport(
+        {
+            ("GET", "/api/scheduling"): {
+                "enabled": False,
+                "advanced": {
+                    "enabled": True,
+                    "jobs": [{"id": "night", "pair_id": "a", "at": "00:00", "days": [], "after": None, "active": True}],
+                },
+            },
+            ("POST", "/api/scheduling"): {"ok": True, "next_run_at": 123},
+        }
+    )
+    state = _ctx(http=http)
+
+    scheduler_edit(SimpleNamespace(obj=state), "night", pair_id="", at="03:30", days="weekends", after="", dry_run=False)
+
+    job = http.calls[-1][2]["advanced"]["jobs"][0]
+    assert job["at"] == "03:30"
+    assert job["days"] == [6, 7]
+    assert job["after"] is None
+
+
+def test_scheduler_pause_resume_and_delete_mutate_jobs() -> None:
+    from cli.commands.scheduler import scheduler_delete, scheduler_pause, scheduler_resume
+
+    base = {
+        "enabled": False,
+        "advanced": {
+            "enabled": True,
+            "jobs": [
+                {"id": "first", "pair_id": "a", "at": "00:00", "days": [], "active": True},
+                {"id": "second", "pair_id": "b", "at": "06:00", "days": [], "active": True},
+            ],
+        },
+    }
+    http = FakeTransport({("GET", "/api/scheduling"): base, ("POST", "/api/scheduling"): {"ok": True}})
+    state = _ctx(http=http)
+
+    scheduler_pause(SimpleNamespace(obj=state), "first", dry_run=False)
+    assert http.calls[-1][2]["advanced"]["jobs"][0]["active"] is False
+
+    http.routes[("GET", "/api/scheduling")] = http.calls[-1][2]
+    scheduler_resume(SimpleNamespace(obj=state), "first", dry_run=False)
+    assert http.calls[-1][2]["advanced"]["jobs"][0]["active"] is True
+
+    http.routes[("GET", "/api/scheduling")] = http.calls[-1][2]
+    scheduler_delete(SimpleNamespace(obj=state), "second", yes=True, dry_run=False)
+    assert [j["id"] for j in http.calls[-1][2]["advanced"]["jobs"]] == ["first"]
+
+
+def test_sync_once_filters_selected_pairs_and_returns_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    import typer
+    import cw_platform.config_base as config_base
+    import cw_platform.orchestrator as orchestrator
+    from cli.commands.sync import sync_once
+
+    seen: dict[str, Any] = {}
+
+    class FakeOrchestrator:
+        def __init__(self, cfg: dict[str, Any]) -> None:
+            seen["pairs"] = cfg.get("pairs")
+
+        def run(self, **kwargs: Any) -> dict[str, Any]:
+            seen["kwargs"] = kwargs
+            return {"ok": True, "pairs": 2, "updated": 0, "added": 0, "removed": 0, "skipped": 0, "unresolved": 0, "errors": 0}
+
+    monkeypatch.setattr(config_base, "load_config", lambda: {
+        "pairs": [
+            {"id": "a", "source": "PLEX", "target": "TRAKT", "enabled": True},
+            {"id": "b", "source": "SIMKL", "target": "PLEX", "enabled": True},
+            {"id": "c", "source": "MDBLIST", "target": "TRAKT", "enabled": True},
+        ],
+    })
+    monkeypatch.setattr(orchestrator, "Orchestrator", FakeOrchestrator)
+    state = _ctx(http=FakeTransport())
+
+    with pytest.raises(typer.Exit) as err:
+        sync_once(
+            SimpleNamespace(obj=state),
+            target="",
+            pair=["a", "b"],
+            feature=[],
+            dry_run=False,
+            no_state_json=False,
+            fail_on_unresolved=False,
+            fail_on_skipped=False,
+            json_output=True,
+        )
+
+    assert err.value.exit_code == 0
+    assert [p["id"] for p in seen["pairs"]] == ["a", "b"]
+    assert seen["kwargs"]["write_state_json"] is True
+
+
+def test_sync_once_feature_filter_and_strict_unresolved(monkeypatch: pytest.MonkeyPatch) -> None:
+    import typer
+    import cw_platform.config_base as config_base
+    import cw_platform.orchestrator as orchestrator
+    from cli.commands.sync import sync_once
+
+    seen: dict[str, Any] = {}
+
+    class FakeOrchestrator:
+        def __init__(self, cfg: dict[str, Any]) -> None:
+            seen["pairs"] = cfg.get("pairs")
+
+        def run(self, **_: Any) -> dict[str, Any]:
+            return {"ok": True, "pairs": 1, "updated": 0, "added": 0, "removed": 0, "skipped": 0, "unresolved": 1, "errors": 0}
+
+    monkeypatch.setattr(config_base, "load_config", lambda: {
+        "pairs": [
+            {
+                "id": "a",
+                "source": "PLEX",
+                "target": "TRAKT",
+                "enabled": True,
+                "features": {"watchlist": {"enable": True}, "ratings": {"enable": True}},
+            },
+        ],
+    })
+    monkeypatch.setattr(orchestrator, "Orchestrator", FakeOrchestrator)
+    state = _ctx(http=FakeTransport())
+
+    with pytest.raises(typer.Exit) as err:
+        sync_once(
+            SimpleNamespace(obj=state),
+            target="a",
+            pair=[],
+            feature=["watchlist"],
+            dry_run=False,
+            no_state_json=True,
+            fail_on_unresolved=True,
+            fail_on_skipped=False,
+            json_output=True,
+        )
+
+    assert err.value.exit_code == 1
+    assert seen["pairs"][0]["features"] == {"watchlist": {"enable": True}}
+
+
+def test_sync_once_no_enabled_pairs_exits_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+    import typer
+    import cw_platform.config_base as config_base
+    from cli.commands.sync import sync_once
+
+    monkeypatch.setattr(config_base, "load_config", lambda: {"pairs": [{"id": "a", "enabled": False}]})
+    state = _ctx(http=FakeTransport())
+
+    with pytest.raises(typer.Exit) as err:
+        sync_once(
+            SimpleNamespace(obj=state),
+            target="",
+            pair=[],
+            feature=[],
+            dry_run=False,
+            no_state_json=False,
+            fail_on_unresolved=False,
+            fail_on_skipped=False,
+            json_output=True,
+        )
+
+    assert err.value.exit_code == 0
+
+
+def test_playlist_resource_commands_use_provider_resource_api() -> None:
+    from cli.commands.playlist import resource_create, resource_delete, resource_rename
+
+    http = FakeTransport(
+        {
+            ("POST", "/api/playlists/resources"): {"ok": True, "resource": {"id": "new", "provider": "PLEX", "instance": "default", "name": "Weekend"}},
+            ("PATCH", "/api/playlists/resources/pl1"): {"ok": True, "resource": {"id": "pl1", "name": "Renamed"}},
+            ("DELETE", "/api/playlists/resources/pl1"): {"ok": True},
+        }
+    )
+    state = _ctx(http=http)
+
+    resource_create(SimpleNamespace(obj=state), "PLEX", name="Weekend", media_type="playlist", instance="default")
+    resource_rename(SimpleNamespace(obj=state), "PLEX", "pl1", name="Renamed", instance="default")
+    resource_delete(SimpleNamespace(obj=state), "PLEX", "pl1", instance="default", yes=True)
+
+    assert http.calls[0] == ("POST", "/api/playlists/resources", {"provider": "PLEX", "instance": "default", "name": "Weekend", "media_type": "playlist"})
+    assert http.calls[1] == ("PATCH", "/api/playlists/resources/pl1", {"provider": "PLEX", "instance": "default", "name": "Renamed"})
+    assert http.param_calls[2] == ("DELETE", "/api/playlists/resources/pl1", {"provider": "PLEX", "instance": "default"}, None)
+
+
+def test_playlist_endpoint_add_and_edit_have_friendly_arguments() -> None:
+    from cli.commands.playlist import endpoint_add, endpoint_edit
+
+    http = FakeTransport(
+        {
+            ("POST", "/api/playlists/endpoints"): {"ok": True, "created": True, "endpoint": {"id": "EP-01"}},
+            ("GET", "/api/playlists/endpoints"): {
+                "ok": True,
+                "endpoints": [{"id": "EP-01", "name": "Old", "provider": "PLEX", "instance": "default", "playlist_id": "pl1"}],
+            },
+        }
+    )
+    state = _ctx(http=http)
+
+    endpoint_add(SimpleNamespace(obj=state), "PLEX", "pl1", name="PlexFavs", instance="default", create="", media_type="", field=[])
+    endpoint_edit(SimpleNamespace(obj=state), "EP", name="New", provider="", playlist_id="pl2", playlist_name="", instance="", media_type="", field=[])
+
+    assert http.calls[0] == ("POST", "/api/playlists/endpoints", {"provider": "PLEX", "playlist_id": "pl1", "name": "PlexFavs", "instance": "default"})
+    assert http.calls[-1] == (
+        "POST",
+        "/api/playlists/endpoints",
+        {"id": "EP-01", "name": "New", "provider": "PLEX", "instance": "default", "playlist_id": "pl2"},
+    )
+
+
+def test_playlist_mapping_add_edit_enable_disable_are_friendly() -> None:
+    from cli.commands.playlist import mapping_add, mapping_disable, mapping_edit, mapping_enable
+
+    mapping = {
+        "id": "MAP-01",
+        "name": "Movies",
+        "source_endpoint": "EP-01",
+        "target_endpoints": ["EP-02"],
+        "ruleset_id": "",
+        "membership": "managed_only",
+        "order": "ignore",
+        "enabled": True,
+    }
+    http = FakeTransport(
+        {
+            ("POST", "/api/playlists/mappings"): {"ok": True, "created": True, "pair_id": "pair_playlist_1", "mapping": mapping},
+            ("GET", "/api/playlists/mappings"): {"ok": True, "mappings": [mapping]},
+        }
+    )
+    state = _ctx(http=http)
+
+    mapping_add(
+        SimpleNamespace(obj=state),
+        source="EP-01",
+        target=["EP-02", "EP-03"],
+        name="Movies",
+        ruleset="trakt_free_account",
+        membership="managed_only",
+        order="ignore",
+        disabled=False,
+        allow_mass_delete=False,
+        field=[],
+    )
+    mapping_edit(
+        SimpleNamespace(obj=state),
+        "MAP",
+        source="",
+        target=["EP-04"],
+        name="NewName",
+        ruleset="",
+        membership="mirror",
+        order="preserve",
+        allow_mass_delete=True,
+        field=[],
+    )
+    mapping_disable(SimpleNamespace(obj=state), "MAP")
+    mapping_enable(SimpleNamespace(obj=state), "MAP")
+
+    assert http.calls[0][2]["target_endpoints"] == ["EP-02", "EP-03"]
+    assert http.calls[0][2]["ruleset_id"] == "trakt_free_account"
+    assert http.calls[2][2]["target_endpoints"] == ["EP-04"]
+    assert http.calls[2][2]["membership"] == "mirror"
+    assert http.calls[4][2]["enabled"] is False
+    assert http.calls[6][2]["enabled"] is True
+
+
+def test_playlist_mapping_run_accepts_wrapped_result() -> None:
+    from cli.commands.playlist import mapping_run
+
+    http = FakeTransport({("POST", "/api/playlists/mappings/MAP-01/run"): {"ok": True, "result": {"added": 2, "removed": 1, "errors": 0}}})
+    state = _ctx(http=http)
+
+    mapping_run(SimpleNamespace(obj=state), "MAP-01", dry_run=False)
+
+    assert http.param_calls[-1] == ("POST", "/api/playlists/mappings/MAP-01/run", {"dry_run": False}, None)
+
+
+def test_playlist_ruleset_add_validate_and_clone() -> None:
+    from cli.commands.playlist import ruleset_add, ruleset_clone, ruleset_validate
+
+    http = FakeTransport(
+        {
+            ("POST", "/api/playlists/rulesets"): {"ok": True, "created": True, "ruleset": {"id": "RS-01"}},
+            ("POST", "/api/playlists/rulesets/validate"): {"ok": True, "ruleset": {"id": "RS-01"}},
+            ("POST", "/api/playlists/rulesets/trakt_free_account/clone"): {"ok": True, "ruleset": {"id": "RS-02"}},
+        }
+    )
+    state = _ctx(http=http)
+    path = Path("ruleset-test.json")
+    path.write_text('{"id":"RS-01","name":"Rules"}', encoding="utf-8")
+    try:
+        ruleset_add(SimpleNamespace(obj=state), str(path))
+        ruleset_validate(SimpleNamespace(obj=state), str(path))
+        ruleset_clone(SimpleNamespace(obj=state), "trakt_free_account", name="Custom")
+    finally:
+        path.unlink(missing_ok=True)
+
+    assert http.calls[0] == ("POST", "/api/playlists/rulesets", {"id": "RS-01", "name": "Rules"})
+    assert http.calls[1] == ("POST", "/api/playlists/rulesets/validate", {"id": "RS-01", "name": "Rules"})
+    assert http.calls[2] == ("POST", "/api/playlists/rulesets/trakt_free_account/clone", {"name": "Custom"})
+
+
+def test_playlist_setup_creates_endpoints_and_mapping_non_interactively() -> None:
+    from cli.commands.playlist import playlist_setup
+
+    endpoint_ids = iter(["EP-01", "EP-02"])
+
+    def post_endpoint(_method: str, _path: str, _params: Any, body: Any) -> dict[str, Any]:
+        return {"ok": True, "created": True, "endpoint": {**body, "id": next(endpoint_ids)}}
+
+    def post_mapping(_method: str, _path: str, _params: Any, body: Any) -> dict[str, Any]:
+        return {"ok": True, "created": True, "pair_id": "pair_playlist_1", "mapping": {**body, "id": "MAP-01"}}
+
+    http = FakeTransport(
+        {
+            ("POST", "/api/playlists/endpoints"): post_endpoint,
+            ("POST", "/api/playlists/mappings"): post_mapping,
+        }
+    )
+    state = _ctx(http=http)
+
+    playlist_setup(
+        SimpleNamespace(obj=state),
+        source_provider="TRAKT",
+        source_instance="default",
+        source_playlist="src1",
+        target_provider="PLEX",
+        target_instance="default",
+        target_playlist=[],
+        create_target="Weekend Movies",
+        name="Weekend",
+        ruleset="",
+        membership="managed_only",
+        order="ignore",
+        run_now=False,
+        dry_run=False,
+        yes=True,
+    )
+
+    assert http.calls[0][2]["playlist_id"] == "src1"
+    assert http.calls[1][2]["pending_create"] == {"name": "Weekend Movies", "media_type": "playlist"}
+    assert http.calls[2][2]["source_endpoint"] == "EP-01"
+    assert http.calls[2][2]["target_endpoints"] == ["EP-02"]
+
+
+def test_run_sync_wrapper_delegates_to_sync_once() -> None:
+    wrapper = (Path(__file__).resolve().parents[1] / "docker" / "run-sync.sh").read_text(encoding="utf-8")
+
+    assert "cw sync once" in wrapper
+
+
+def test_entrypoint_supports_run_once_alias() -> None:
+    entrypoint = (Path(__file__).resolve().parents[1] / "docker" / "entrypoint.sh").read_text(encoding="utf-8")
+
+    assert '"$1" == "run-once"' in entrypoint
+    assert "/usr/local/bin/cw sync once" in entrypoint
 
 
 def test_every_command_group_is_registered() -> None:
