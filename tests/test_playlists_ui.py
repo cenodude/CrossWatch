@@ -328,6 +328,7 @@ def test_pair_overlay_playlist_managed_pairs_open_playlist_mapping():
     assert 'fetch("/api/playlists/mappings", {' in js
     assert "async function deletePlaylistManagedPair" in js
     assert 'fetch(`/api/playlists/mappings/${encodeURIComponent(mapping.id)}`' in js
+    assert 'if (!res.ok || data?.ok === false || Number(data?.deleted || 0) < 1) throw new Error(data?.error || "pair delete failed");' in js
     assert "isPlaylistManagedPair(pair)) return openPlaylistMappingsForPair(id, btn)" in js
     assert 'pair-pill mode playlist-managed' not in js
     assert 'data-tip="Managed by Playlists"' not in js
