@@ -339,7 +339,7 @@ def test_artwork_uses_resolved_namespace_and_distinct_cache_file(tmp_path, monke
     metaAPI.get_art_file("k", "tv", "8392", "w342", tmp_path / "cache", locale="en-US")
 
     assert seen == ["movie"]
-    assert downloaded and downloaded[0].startswith("movie_8392_poster_")
+    assert downloaded and downloaded[0].startswith("tmdb_art_")
 
 
 def test_artwork_resolves_on_first_request_with_no_prior_index(tmp_path, monkeypatch) -> None:
@@ -369,7 +369,7 @@ def test_artwork_resolves_on_first_request_with_no_prior_index(tmp_path, monkeyp
     )
 
     assert seen == ["movie"]
-    assert downloaded and downloaded[0].startswith("movie_8392_poster_")
+    assert downloaded and downloaded[0].startswith("tmdb_art_")
     assert read_resolution_index(tmp_path, "show", "8392") == "movie"
 
 
