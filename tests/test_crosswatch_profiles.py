@@ -2034,6 +2034,41 @@ def test_managed_pair_endpoints_are_profile_scoped(monkeypatch) -> None:
     assert denied_delete == {"ok": False, "error": "profile_scope_denied"}
 
 
+def test_playlist_managed_pairs_use_playlist_api(monkeypatch) -> None:
+    import api.syncAPI as sync_api
+
+    cfg = {
+        "pairs": [
+            {
+                "id": "pair_playlist_abc123",
+                "source": "TRAKT",
+                "source_instance": "default",
+                "target": "PLEX",
+                "target_instance": "default",
+                "enabled": True,
+                "features": {
+                    "playlists": {
+                        "enable": True,
+                        "mappings": ["MAP-01"],
+                        "managed_by": "playlists",
+                        "mapping_id": "MAP-01",
+                    }
+                },
+            }
+        ],
+    }
+    saves: list[dict[str, Any]] = []
+    monkeypatch.setattr(sync_api, "_env", lambda: (lambda: cfg, lambda next_cfg: saves.append(next_cfg)))
+
+    blocked_update = sync_api.api_pairs_update("pair_playlist_abc123", sync_api.PairPatch(enabled=False), request=cast(Any, None))
+    blocked_delete = sync_api.api_pairs_delete("pair_playlist_abc123", request=cast(Any, None))
+
+    assert blocked_update == {"ok": False, "error": "playlist_managed_pair"}
+    assert blocked_delete == {"ok": False, "error": "playlist_managed_pair"}
+    assert cfg["pairs"][0]["enabled"] is True
+    assert saves == []
+
+
 def test_managed_events_are_profile_scoped_to_assigned_pairs() -> None:
     cfg = {
         "user_profiles": {

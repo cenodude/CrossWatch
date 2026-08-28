@@ -517,16 +517,20 @@ def activity(cfg: Mapping[str, Any], *, limit: int = 25) -> list[dict[str, Any]]
             src = (m.get("source") or {}).get("label"); dst = (m.get("target") or {}).get("label")
             ruleset_name = (m.get("ruleset") or {}).get("name") or r.get("ruleset_id") or "direct"
             target_count = len(m.get("targets") or [])
+            unresolved = int(r.get("unresolved_count") or 0)
+            has_warning = unresolved > 0 or bool(r.get("warnings"))
+            has_error = bool(r.get("capacity_error")) or bool(r.get("errors")) or (r.get("ok") is False and not has_warning)
             rows.append({
-                "ts": finished_at, "type": "Run", "status": "completed" if r.get("ok", True) else "error",
+                "ts": finished_at, "type": "Run", "status": "error" if has_error else "warning" if has_warning else "completed",
                 "ruleset": ruleset_name,
                 "target_count": target_count,
                 "added": int(r.get("added", 0)),
                 "updated": int(r.get("updated", 0)),
                 "removed": int(r.get("removed", 0)),
                 "skipped": int(r.get("skipped", 0)),
+                "unresolved": unresolved,
                 "label": f"{m.get('id')} · {src} → {dst}",
-                "details": f"{(m.get('ruleset') or {}).get('name') or r.get('ruleset_id') or 'direct'}, {len(m.get('targets') or [])} target(s), +{int(r.get('added', 0))}/-{int(r.get('removed', 0))}" + (", capacity error" if r.get("capacity_error") else ""),
+                "details": f"{(m.get('ruleset') or {}).get('name') or r.get('ruleset_id') or 'direct'}, {len(m.get('targets') or [])} target(s), +{int(r.get('added', 0))}/-{int(r.get('removed', 0))}" + (f", {unresolved} unresolved" if unresolved else "") + (", capacity error" if r.get("capacity_error") else ""),
             })
     rows.sort(key=lambda x: x["ts"], reverse=True)
     return rows[: max(1, int(limit))]

@@ -209,6 +209,11 @@ def _normalize_features(f: dict | None) -> dict:
             f[k]["anime_only_sync"] = coerce_bool(f[k].get("anime_only_sync", False)) if use_map else False
     return f
 
+def _playlist_managed_pair(pair: Mapping[str, Any] | None) -> bool:
+    feats = pair.get("features") if isinstance(pair, Mapping) else None
+    pl = feats.get("playlists") if isinstance(feats, Mapping) else None
+    return str(pl.get("managed_by") if isinstance(pl, Mapping) else "").strip().lower() == "playlists"
+
 def _enforce_pair_feature_constraints(pair: dict[str, Any]) -> None:
     src = str(pair.get("source") or "").strip().upper()
     dst = str(pair.get("target") or "").strip().upper()
@@ -2354,6 +2359,8 @@ def api_pairs_update(pair_id: str, payload: PairPatch = Body(...), request: Requ
             if str(it.get("id")) == str(pair_id):
                 if _managed_pair_blocked(cfg, request, it):
                     return {"ok": False, "error": "profile_scope_denied"}
+                if _playlist_managed_pair(it):
+                    return {"ok": False, "error": "playlist_managed_pair"}
                 if "features" in upd:
                     it["features"] = _normalize_features(upd.pop("features"))
                 if "providers" in upd:
@@ -2438,6 +2445,8 @@ def api_pairs_delete(pair_id: str, purge_state: bool = True, request: Request = 
         pair = next((it for it in arr if str(it.get("id")) == str(pair_id)), None)
         if pair is not None and _managed_pair_blocked(cfg, request, pair):
             return {"ok": False, "error": "profile_scope_denied"}
+        if pair is not None and _playlist_managed_pair(pair):
+            return {"ok": False, "error": "playlist_managed_pair"}
         before = len(arr)
         arr[:] = [it for it in arr if str(it.get("id")) != str(pair_id)]
         deleted = before - len(arr)
