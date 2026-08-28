@@ -1165,7 +1165,7 @@ def api_tmdb_art(
             str(local_path),
             media_type=mime,
             headers={
-                "Cache-Control": "public, max-age=86400, stale-while-revalidate=86400"
+                "Cache-Control": "public, max-age=31536000, immutable"
             },
         )
     except Exception as e:
