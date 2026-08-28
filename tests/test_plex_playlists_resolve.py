@@ -46,6 +46,7 @@ class _Obj:
     def __init__(self, rating_key: str, type_: str, section_id: str, title: str) -> None:
         self.ratingKey = rating_key
         self.type = type_
+        self.listType = "video"
         self.librarySectionID = section_id
         self.title = title
         self.year = 1974
@@ -59,6 +60,7 @@ class _Playlist:
         self.playlistType = "video"
         self.smart = False
         self.added: list[Any] = []
+        self.removed: list[Any] = []
 
     def items(self):
         return []
@@ -66,11 +68,25 @@ class _Playlist:
     def addItems(self, objs):
         self.added.extend(objs)
 
+    def removeItems(self, objs):
+        self.removed.extend(objs)
+        return self
+
 
 class _Section:
     def __init__(self, key: str, type_: str) -> None:
         self.key = key
         self.type = type_
+
+    def search(self, **_kwargs):
+        if self.type == "movie":
+            return [_Obj("11", "movie", self.key, "The Godfather Part II")]
+        return []
+
+    def searchEpisodes(self, **_kwargs):
+        if self.type == "show":
+            return [_Obj("22", "episode", self.key, "Winter Is Coming")]
+        return []
 
 
 class _Server:
@@ -158,8 +174,30 @@ def test_item_that_is_not_in_the_library_is_reported_as_such(plex) -> None:
     assert [u["hint"] for u in res["unresolved"]] == ["not_in_library"]
 
 
-def test_create_without_items_is_refused_with_a_typed_error(plex) -> None:
+def test_create_without_items_creates_then_removes_a_seed_item(plex, monkeypatch) -> None:
     pl, adapter, _playlist = plex
+    created: dict[str, Any] = {}
+
+    def _create(title, items=None):
+        playlist = _Playlist()
+        created["title"] = title
+        created["items"] = list(items or [])
+        created["playlist"] = playlist
+        return playlist
+
+    monkeypatch.setattr(adapter.client.server, "createPlaylist", _create, raising=False)
+
+    res = pl.create(adapter, "Weekend", items=[])
+
+    assert created["title"] == "Weekend"
+    assert [o.ratingKey for o in created["items"]] == ["11"]
+    assert [o.ratingKey for o in created["playlist"].removed] == ["11"]
+    assert res.id == "10234"
+
+
+def test_create_without_items_is_refused_when_no_seed_item_exists(plex) -> None:
+    pl, adapter, _playlist = plex
+    adapter.libraries = lambda types=(): []
 
     with pytest.raises(pl.PlaylistItemsRequired):
         pl.create(adapter, "Weekend", items=[])

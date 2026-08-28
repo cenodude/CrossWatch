@@ -1,3 +1,6 @@
+# /providers/sync/publicmetadb/_playlists.py
+# PublicMetaDB Module for playlist sync functions
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
@@ -87,6 +90,8 @@ def _resource_from_row(adapter: Any, row: Mapping[str, Any]) -> PlaylistResource
     public_raw = row.get("is_public")
     if public_raw is None:
         public_raw = row.get("public")
+    list_type = str(row.get("type") or "").strip().lower()
+    is_watchlist = list_type == "watchlist"
     return PlaylistResource(
         provider=_PROVIDER,
         id=raw_id,
@@ -103,8 +108,11 @@ def _resource_from_row(adapter: Any, row: Mapping[str, Any]) -> PlaylistResource
             "raw_id": raw_id,
             "item_count": count,
             "private": not bool(public_raw),
-            "type": str(row.get("type") or "").strip().lower(),
+            "type": list_type,
             "description": str(row.get("description") or "").strip(),
+            "builtin": is_watchlist,
+            "can_rename": False,
+            "can_delete": not is_watchlist,
         },
     )
 
@@ -337,6 +345,22 @@ def remove(adapter: Any, playlist_id: Any, items: Sequence[Mapping[str, Any]]) -
             unresolved.append({"item": media, "hint": f"http:{r.status_code}"})
     _info("write_done", op="remove", list_id=lid, applied=ok, unresolved=len(unresolved))
     return {"ok": True, "count": ok, "unresolved": unresolved, "confirmed_keys": confirmed}
+
+
+def delete(adapter: Any, playlist_id: Any) -> dict[str, Any]:
+    lid = str(playlist_id or "").strip()
+    if not lid:
+        raise PublicMetaDBPlaylistNotFound("missing publicmetadb list id")
+    resource = _find_resource(adapter, lid)
+    if resource is None:
+        raise PublicMetaDBPlaylistNotFound("publicmetadb list not found")
+    if (resource.extra or {}).get("type") == "watchlist":
+        raise PublicMetaDBPlaylistError("publicmetadb watchlist cannot be deleted")
+    r = adapter.client.delete(f"/api/external/lists/{lid}")
+    if not (200 <= r.status_code < 300):
+        raise PublicMetaDBPlaylistError(f"publicmetadb delete failed: HTTP {r.status_code}")
+    _info("delete_done", list_id=lid)
+    return {"ok": True, "playlist_id": lid}
 
 
 def reorder(adapter: Any, playlist_id: Any, ordered_keys: Sequence[str]) -> dict[str, Any]:

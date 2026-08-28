@@ -1,3 +1,7 @@
+# /providers/sync/jellyfin/_playlists.py
+# Jellyfin Module for playlist sync functions
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
+
 from __future__ import annotations
 
 from typing import Any, Iterable, Mapping, Sequence
@@ -12,6 +16,7 @@ from ._common import (
     collection_remove_items,
     create_collection,
     create_playlist,
+    delete_item,
     key_of as jelly_key_of,
     make_logger,
     normalize as jelly_normalize,
@@ -20,6 +25,7 @@ from ._common import (
     playlist_remove_entries,
     resolve_item_id,
     sleep_ms,
+    update_item_name,
 )
 
 _PROVIDER = "JELLYFIN"
@@ -33,6 +39,10 @@ class JellyfinPlaylistError(RuntimeError):
 
 
 class JellyfinPlaylistNotFound(JellyfinPlaylistError):
+    pass
+
+
+class JellyfinPlaylistUnsupported(JellyfinPlaylistError):
     pass
 
 
@@ -239,6 +249,46 @@ def create(
         raise JellyfinPlaylistError(f"jellyfin create {endpoint_type} returned no id")
     _info("create_done", list_id=res.id, endpoint_type=endpoint_type, name=res.name)
     return res
+
+
+def rename(adapter: Any, playlist_id: Any, name: str, *, dry_run: bool = False) -> PlaylistResource:
+    nm = str(name or "").strip()
+    if not nm:
+        raise ValueError("playlist name required")
+    endpoint_type, raw_id, resource = _resolved_resource(adapter, playlist_id)
+    if dry_run:
+        return PlaylistResource(
+            provider=_PROVIDER,
+            id=resource.id,
+            name=nm,
+            instance=resource.instance,
+            kind=resource.kind,
+            can_read=resource.can_read,
+            can_add=resource.can_add,
+            can_remove=resource.can_remove,
+            can_reorder=resource.can_reorder,
+            media_types=resource.media_types,
+            extra=dict(resource.extra or {}),
+        )
+    if not update_item_name(adapter.client, raw_id, nm):
+        raise JellyfinPlaylistError(f"jellyfin rename {endpoint_type} failed")
+    res = _resource_from_row(adapter, {"Id": raw_id, "Name": nm, "Type": "BoxSet" if endpoint_type == "collection" else "Playlist"}, endpoint_type)
+    if res is None:
+        raise JellyfinPlaylistError(f"jellyfin rename {endpoint_type} returned no id")
+    _info("rename_done", list_id=res.id, endpoint_type=endpoint_type, name=res.name)
+    return res
+
+
+def delete(adapter: Any, playlist_id: Any, *, dry_run: bool = False) -> dict[str, Any]:
+    endpoint_type, raw_id, resource = _resolved_resource(adapter, playlist_id)
+    if endpoint_type != "playlist":
+        raise JellyfinPlaylistUnsupported("jellyfin collections must be deleted in jellyfin")
+    if dry_run:
+        return {"ok": True, "dry_run": True}
+    if not delete_item(adapter.client, raw_id):
+        raise JellyfinPlaylistError("jellyfin delete playlist failed")
+    _info("delete_done", list_id=resource.id)
+    return {"ok": True, "count": 1}
 
 
 def _accepted_items(adapter: Any, items: Sequence[Mapping[str, Any]]) -> tuple[list[tuple[str, str]], list[dict[str, Any]]]:

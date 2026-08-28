@@ -13,6 +13,7 @@ from ._common import (
     collection_remove_items,
     create_collection,
     create_playlist,
+    delete_item,
     key_of as emby_key_of,
     make_logger,
     normalize as emby_normalize,
@@ -21,6 +22,7 @@ from ._common import (
     playlist_remove_entries,
     resolve_item_id,
     sleep_ms,
+    update_item_name,
 )
 
 _PROVIDER = "EMBY"
@@ -35,6 +37,10 @@ class EmbyPlaylistError(RuntimeError):
 
 
 class EmbyPlaylistNotFound(EmbyPlaylistError):
+    pass
+
+
+class EmbyPlaylistUnsupported(EmbyPlaylistError):
     pass
 
 
@@ -247,6 +253,46 @@ def create(
         raise EmbyPlaylistError(f"emby create {endpoint_type} returned no id")
     _info("create_done", list_id=res.id, endpoint_type=endpoint_type, name=res.name)
     return res
+
+
+def rename(adapter: Any, playlist_id: Any, name: str, *, dry_run: bool = False) -> PlaylistResource:
+    nm = str(name or "").strip()
+    if not nm:
+        raise ValueError("playlist name required")
+    endpoint_type, raw_id, resource = _resolved_resource(adapter, playlist_id)
+    if dry_run:
+        return PlaylistResource(
+            provider=_PROVIDER,
+            id=resource.id,
+            name=nm,
+            instance=resource.instance,
+            kind=resource.kind,
+            can_read=resource.can_read,
+            can_add=resource.can_add,
+            can_remove=resource.can_remove,
+            can_reorder=resource.can_reorder,
+            media_types=resource.media_types,
+            extra=dict(resource.extra or {}),
+        )
+    if not update_item_name(adapter.client, raw_id, nm):
+        raise EmbyPlaylistError(f"emby rename {endpoint_type} failed")
+    res = _resource_from_row(adapter, {"Id": raw_id, "Name": nm, "Type": "BoxSet" if endpoint_type == "collection" else "Playlist"}, endpoint_type)
+    if res is None:
+        raise EmbyPlaylistError(f"emby rename {endpoint_type} returned no id")
+    _info("rename_done", list_id=res.id, endpoint_type=endpoint_type, name=res.name)
+    return res
+
+
+def delete(adapter: Any, playlist_id: Any, *, dry_run: bool = False) -> dict[str, Any]:
+    endpoint_type, raw_id, resource = _resolved_resource(adapter, playlist_id)
+    if endpoint_type != "playlist":
+        raise EmbyPlaylistUnsupported("emby collections must be deleted in emby")
+    if dry_run:
+        return {"ok": True, "dry_run": True}
+    if not delete_item(adapter.client, raw_id):
+        raise EmbyPlaylistError("emby delete playlist failed")
+    _info("delete_done", list_id=resource.id)
+    return {"ok": True, "count": 1}
 
 
 def _accepted_items(adapter: Any, endpoint_type: str, items: Sequence[Mapping[str, Any]]) -> tuple[list[tuple[str, str]], list[dict[str, Any]]]:

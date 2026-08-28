@@ -25,6 +25,7 @@ URL_LIST_ITEMS = f"{BASE}/lists/{{id}}/items"
 URL_LIST_ADD = f"{BASE}/lists/{{id}}/items/add"
 URL_LIST_REMOVE = f"{BASE}/lists/{{id}}/items/remove"
 URL_CREATE_LIST = f"{BASE}/lists/user/add"
+URL_DELETE_LIST = f"{BASE}/lists/{{id}}"
 URL_UPDATE_LIST = f"{BASE}/lists/{{id}}/update"
 URL_USER = f"{BASE}/user"
 
@@ -159,6 +160,10 @@ def _resource_from_list(adapter: Any, row: Mapping[str, Any]) -> PlaylistResourc
         can_reorder=False,
         media_types=media_types,
         extra={
+            "endpoint_type": "discovery" if dynamic else "playlist",
+            "source_kind": "discovery" if dynamic else "playlist",
+            "discovery": dynamic,
+            "virtual": dynamic,
             "dynamic": dynamic,
             "static": not dynamic,
             "mediatype": mediatype,
@@ -350,6 +355,55 @@ def update_metadata(adapter: Any, playlist_id: Any, *, name: str | None = None, 
         _warn("update_failed", status=r.status_code, list_id=resource.id)
         raise MDBListPlaylistError(f"mdblist update list failed: http {r.status_code}")
     return {"ok": True, "updated": True}
+
+
+def rename(adapter: Any, playlist_id: Any, name: str, *, dry_run: bool = False) -> PlaylistResource:
+    nm = str(name or "").strip()
+    if not nm:
+        raise ValueError("playlist name required")
+    resource = _find_owned_resource(adapter, playlist_id)
+    if resource is None:
+        raise MDBListNotOwnedError("mdblist list is not owned by the authenticated user")
+    if resource.is_smart:
+        raise MDBListDynamicListError("cannot rename a dynamic mdblist list")
+    if not dry_run:
+        update_metadata(adapter, resource.id, name=nm)
+    return PlaylistResource(
+        provider=_PROVIDER,
+        id=resource.id,
+        name=nm,
+        instance=resource.instance,
+        kind=resource.kind,
+        can_read=resource.can_read,
+        can_add=resource.can_add,
+        can_remove=resource.can_remove,
+        can_reorder=resource.can_reorder,
+        media_types=resource.media_types,
+        extra=dict(resource.extra or {}),
+    )
+
+
+def delete(adapter: Any, playlist_id: Any, *, dry_run: bool = False) -> dict[str, Any]:
+    resource = _find_owned_resource(adapter, playlist_id)
+    if resource is None:
+        raise MDBListNotOwnedError("mdblist list is not owned by the authenticated user")
+    if resource.is_smart:
+        raise MDBListDynamicListError("cannot delete a dynamic mdblist list")
+    if dry_run:
+        return {"ok": True, "dry_run": True}
+    r = mdblist_request(
+        adapter,
+        "DELETE",
+        URL_DELETE_LIST.format(id=resource.id),
+        params={"apikey": _apikey(adapter)},
+    )
+    if r.status_code in (401, 403):
+        raise MDBListPlaylistError("mdblist delete list unauthorized")
+    if not (200 <= r.status_code < 300):
+        _warn("delete_failed", status=r.status_code, list_id=resource.id)
+        raise MDBListPlaylistError(f"mdblist delete list failed: http {r.status_code}")
+    _info("delete_done", list_id=resource.id)
+    return {"ok": True, "count": 1}
 
 
 def _guard_writable(resource: PlaylistResource | None) -> PlaylistResource:

@@ -160,12 +160,37 @@ def test_remove_fetches_selected_list_item_ids():
     assert "/api/external/lists/list-b/items/b-item" in deletes
 
 
+def test_delete_custom_list_and_protect_watchlist():
+    client = FakeClient(
+        {
+            ("GET", "/api/external/lists", 1): {
+                "items": [
+                    {"id": "list-a", "name": "Weekend", "type": "custom"},
+                    {"id": "watch-1", "name": "Watchlist", "type": "watchlist"},
+                ],
+            },
+        }
+    )
+    ad = FakeAdapter(client)
+
+    assert pl.delete(ad, "list-a") == {"ok": True, "playlist_id": "list-a"}
+    delete_calls = [c for c in client.calls if c["method"] == "DELETE"]
+    assert delete_calls[-1]["path"] == "/api/external/lists/list-a"
+
+    try:
+        pl.delete(ad, "watch-1")
+    except pl.PublicMetaDBPlaylistError as exc:
+        assert "watchlist" in str(exc)
+    else:
+        raise AssertionError("expected PublicMetaDBPlaylistError")
+
+
 def test_reorder_is_unsupported():
     assert pl.reorder(FakeAdapter(FakeClient()), "list-a", ["tmdb:1"])["unsupported"] is True
 
 
 def test_publicmetadb_manifest_and_auth_capabilities_cover_supported_features():
-    assert pmdb.__VERSION__ == "1.1"
+    assert pmdb.__VERSION__ == "1.2"
     assert pmdb_auth.__VERSION__ == "1.0"
 
     features = pmdb.get_manifest()["features"]

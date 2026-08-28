@@ -1139,6 +1139,34 @@ def playlist_move_item(http: Any, playlist_id: str, item_id: str, new_index: int
     return getattr(r, "status_code", 0) in (200, 204)
 
 
+def update_item_name(http: Any, item_id: str, name: str) -> bool:
+    iid = str(item_id or "").strip()
+    nm = str(name or "").strip()
+    if not iid or not nm:
+        return False
+    r = http.get(f"/Items/{iid}")
+    body: dict[str, Any] = {}
+    if getattr(r, "status_code", 0) == 200:
+        try:
+            data = r.json() or {}
+        except Exception:
+            data = {}
+        if isinstance(data, Mapping):
+            body.update(data)
+    body["Id"] = iid
+    body["Name"] = nm
+    r2 = http.post(f"/Items/{iid}", json=body)
+    return getattr(r2, "status_code", 0) in (200, 204)
+
+
+def delete_item(http: Any, item_id: str) -> bool:
+    iid = str(item_id or "").strip()
+    if not iid:
+        return False
+    r = http.delete(f"/Items/{iid}")
+    return getattr(r, "status_code", 0) in (200, 204)
+
+
 # collections (BoxSets)
 def find_seed_item_id(http: Any, user_id: str) -> str | None:
     for t in ("Movie", "Series"):
