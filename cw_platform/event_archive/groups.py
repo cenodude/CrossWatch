@@ -67,7 +67,7 @@ _PROBLEM_TYPES_SQL = "('write_failed','unresolved_recorded','blackbox_promoted',
 _UNRESOLVED_TYPES_SQL = "('write_failed','unresolved_recorded')"
 
 # DO NOT FORGET to update the version when the correlation key/status/summary logic
-CORRELATION_VERSION = 14
+CORRELATION_VERSION = 15
 
 
 def _with_reason_labels(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -121,6 +121,13 @@ def _g(r: Any, key: str) -> Any:
         return None
 
 
+def _is_playlist_batch_event(r: Any) -> bool:
+    if str(_g(r, "feature") or "").strip().lower() != "playlists":
+        return False
+    event_type = str(_g(r, "event_type") or "").strip().lower()
+    return event_type in {"playlist_add", "playlist_remove", "playlist_update"}
+
+
 def group_hash(r: Any) -> str:
     if str(_g(r, "domain") or "").strip().lower() == "audit":
         ident = str(_g(r, "event_hash") or _g(r, "id") or _g(r, "created_at") or "").strip()
@@ -141,6 +148,17 @@ def group_hash(r: Any) -> str:
             token,
         ]
         return hashlib.sha256("\x1f".join(parts).encode("utf-8", "replace")).hexdigest()
+    if _is_playlist_batch_event(r):
+        run_or_batch = str(_g(r, "run_id") or _g(r, "created_at") or "").strip()
+        parts = [
+            "\x00playlist_batch",
+            run_or_batch,
+            _norm_op(_g(r, "operation")),
+            str(_g(r, "pair_key") or "").strip(),
+            _route_anchor(r),
+        ]
+        return hashlib.sha256("\x1f".join(parts).encode("utf-8", "replace")).hexdigest()
+
     item_key = str(_g(r, "item_key") or "").strip()
     if item_key:
         parts = [
@@ -189,6 +207,9 @@ def _derive_status(events: list[dict[str, Any]], extra_problems: int = 0) -> str
             if ts >= best_ts:
                 best_ts, best = ts, st
         return best or "informational"
+
+    if any(_is_playlist_batch_event(e) for e in events):
+        return "completed"
 
     # status reflects the run's completion
     if "sync_run_finished" in types:
@@ -266,6 +287,17 @@ def _summarize(status: str, events: list[dict[str, Any]], feature: str, dst: str
 
     if types & set(_SCROBBLE_STATUS):
         return _summarize_scrobble(status, events, dst)
+
+    if str(feature or "").strip().lower() == "playlists" and any(_is_playlist_batch_event(e) for e in events):
+        src = _P(_pick(events, "source_provider"))
+        route = f"{src} -> {dst}" if (src and dst) else (dst or src or "")
+        op = _norm_op(_pick(events, "operation"))
+        noun = "item" if len(events) == 1 else "items"
+        action = {"add": "added", "remove": "removed", "update": "updated"}.get(op, "updated")
+        head = f"Playlist {action}"
+        if route:
+            head = f"{route} {head[:1].lower()}{head[1:]}"
+        return f"{head}, {len(events)} {noun}"
 
     # one sync run with its pair/feature jobs and health checks
     if types & {"sync_run_started", "sync_run_finished"}:
@@ -460,12 +492,24 @@ def _recompute(conn: sqlite3.Connection, group_id: int, now: int) -> None:
     reason = str((fail_evt or {}).get("reason") or _pick(events, "reason") or "")
     summary = _summarize(status, events, feature, dst, norm_op, reason_code, feat_issues)
     domain = str(_pick(events, "domain") or "sync")
+    is_playlist_batch = feature.strip().lower() == "playlists" and any(_is_playlist_batch_event(e) for e in events)
 
     if is_run:
         vals = (
             domain, now, min(ts), max(ts), len(events), status, severity,
             None, "run", None, None, None, None, None, None, None, None,
             None, None, None, None, None, None, None, None, summary, group_id,
+        )
+    elif is_playlist_batch:
+        vals = (
+            domain, now, min(ts), max(ts), len(events), status, severity,
+            feature or None, norm_op or None,
+            _pick(events, "source_provider"), _pick(events, "source_instance"),
+            _pick(events, "destination_provider"), _pick(events, "destination_instance"),
+            _pick(events, "origin_provider"), _pick(events, "origin_instance"),
+            _pick(events, "pair_key"), _pick(events, "direction"),
+            None, None, None, None, None, None,
+            reason_code or None, reason or None, summary, group_id,
         )
     else:
         vals = (
@@ -545,7 +589,7 @@ def correlate(*, conn: sqlite3.Connection | None = None, reset: bool = False) ->
             _LOG.warning("event correlation reset failed: %s", exc)
     try:
         rows = c.execute(
-            "SELECT id, event_hash, domain, feature, operation, item_key, title, season, episode, created_at, "
+            "SELECT id, event_hash, domain, event_type, feature, operation, item_key, title, season, episode, created_at, "
             "source_kind, session_key, source_provider, source_instance, destination_provider, destination_instance, "
             "pair_key, run_id FROM events WHERE group_id IS NULL"
         ).fetchall()

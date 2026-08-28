@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1138,6 +1139,7 @@ def _event_rows(
     from .id_map import canonical_key
 
     now = int(time.time())
+    run_id = str(ctx.get("run_id") or os.environ.get("CW_RUN_ID") or "").strip() or None
     rows: list[dict[str, Any]] = []
     for it in items or []:
         mt = str(it.get("type") or "").lower()
@@ -1146,6 +1148,7 @@ def _event_rows(
             {
                 "domain": "sync",
                 "created_at": now,
+                "run_id": run_id,
                 "event_type": f"playlist_{operation}",
                 "severity": "info",
                 "feature": "playlists",
