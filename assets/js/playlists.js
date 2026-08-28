@@ -24,8 +24,10 @@
   };
   const NAME_MAX = 10;
   const PLAYLIST_NAME_MAX = 20;
+  const EMPTY_PROVIDER_RETRIES = 2;
+  const EMPTY_PROVIDER_RETRY_MS = 300;
   const SAFE_NAME_CHARS = " _.'-&()";
-  const PLAYLIST_COMPATIBLE_PROVIDERS = new Set(["PLEX", "TRAKT", "MDBLIST", "JELLYFIN", "EMBY", "PUBLICMETADB", "SIMKL"]);
+  const PLAYLIST_COMPATIBLE_PROVIDERS = new Set(["PLEX", "TRAKT", "MDBLIST", "JELLYFIN", "EMBY", "PUBLICMETADB", "SIMKL", "CROSSWATCH"]);
   const SIMKL_PLAYLIST_WARNING = "SIMKL Custom Lists are not supported. These endpoints use SIMKL's built in status buckets, which are not true playlists. Changes may move or remove items from your SIMKL library. Use with caution.";
   const RULESET_PRESETS = {
     direct: {
@@ -87,8 +89,12 @@
   const API = {
     providers: () => request(`${BASE}/providers`),
     resources: (provider, instance) => request(`${BASE}/resources?provider=${encodeURIComponent(provider)}&instance=${encodeURIComponent(instance || "default")}`),
+    resourceCreate: (body) => request(`${BASE}/resources`, { method: "POST", body: JSON.stringify(body) }),
+    resourceRename: (provider, instance, id, name) => request(`${BASE}/resources/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ provider, instance: instance || "default", name }) }),
+    resourceDelete: (provider, instance, id) => request(`${BASE}/resources/${encodeURIComponent(id)}?provider=${encodeURIComponent(provider)}&instance=${encodeURIComponent(instance || "default")}`, { method: "DELETE" }),
     overview: () => request(`${BASE}/overview`),
     activity: () => request(`${BASE}/activity`),
+    activityClear: () => request(`${BASE}/activity`, { method: "DELETE" }),
     endpoints: () => request(`${BASE}/endpoints`),
     epUpsert: (body) => request(`${BASE}/endpoints`, { method: "POST", body: JSON.stringify(body) }),
     epDelete: (id) => request(`${BASE}/endpoints/${encodeURIComponent(id)}`, { method: "DELETE" }),
@@ -125,6 +131,7 @@
   const titleize = (v) => String(v || "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
   const timeText = (ts) => ts ? new Date(Number(ts) * 1000).toLocaleString() : "Never";
   const compactTime = (ts) => ts ? new Date(Number(ts) * 1000).toLocaleString() : "-";
+  const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 
   const state = {
@@ -134,6 +141,8 @@
     rulesets: [],
     overview: {},
     activity: [],
+    runningEndpoints: new Set(),
+    runningMappings: new Set(),
     modal: null,
     loaded: false,
     loading: false,
@@ -163,12 +172,31 @@
     return `<div class="pl-endpoint-stack">${targets.map((t, i) => endpointRef(t, ids[i] || "")).join("")}</div>`;
   }
 
-  function actionButton(action, id, label, iconName, tone, extraClass) {
-    return `<button class="pl-action-btn ${esc(tone || "")} ${esc(extraClass || "")}" data-action="${esc(action)}" data-id="${esc(id || "")}" title="${esc(label)}" aria-label="${esc(label)}"><span class="material-symbols-rounded" aria-hidden="true">${esc(iconName)}</span></button>`;
+  function actionButton(action, id, label, iconName, tone, extraClass, disabled = false) {
+    return `<button class="pl-action-btn ${esc(tone || "")} ${esc(extraClass || "")}" data-action="${esc(action)}" data-id="${esc(id || "")}" title="${esc(label)}" aria-label="${esc(label)}" ${disabled ? "disabled" : ""}><span class="material-symbols-rounded" aria-hidden="true">${esc(iconName)}</span></button>`;
+  }
+
+  function rulesetActionButton(action, id, label, iconName, tone = "", disabled = false) {
+    return `<button class="pl-action-btn ${esc(tone)}" data-ruleset-action="${esc(action)}" data-id="${esc(id || "")}" title="${esc(label)}" aria-label="${esc(label)}" ${disabled ? "disabled" : ""}><span class="material-symbols-rounded" aria-hidden="true">${esc(iconName)}</span></button>`;
   }
 
   function endpointById(id) {
     return state.endpoints.find((ep) => ep.id === id) || null;
+  }
+
+  function endpointIsDiscovery(endpoint) {
+    const ep = endpoint || {};
+    const typ = String(ep.playlist_type || ep.source_kind || ep.endpoint_type || "").toLowerCase();
+    return !!ep.discovery || typ === "discovery";
+  }
+
+  function endpointWritable(endpoint) {
+    const ep = endpoint || {};
+    if (endpointIsDiscovery(ep) || ep.smart) return false;
+    if (!ep.playlist_id && ep.pending_create) return true;
+    if (!ep.playlist_id) return false;
+    if ("can_add" in ep || "can_remove" in ep) return !!(ep.can_add || ep.can_remove);
+    return true;
   }
 
   function rulesetById(id) {
@@ -205,18 +233,15 @@
     const providerGate = state.loaded && !hasCompatiblePlaylistProvider() ? `
       <div class="pl-banner warn">
         <span class="material-symbols-rounded" aria-hidden="true">warning</span>
-        <span>Playlists need at least one compatible provider (Plex, Trakt, MDBList, Jellyfin, Emby, PublicMetaDB or SIMKL). Configure one in Connections to enable playlist endpoints and mappings.</span>
+        <span>Playlists need at least one compatible provider (Plex, Trakt, MDBList, Jellyfin, Emby, PublicMetaDB, SIMKL or CrossWatch). Configure one in Connections to enable playlist endpoints and mappings.</span>
         <button type="button" class="pl-btn small" data-action="open-connections">Open Connections</button>
       </div>
     ` : "";
+    if (!errorGate && !providerGate) return "";
     return `
       <div class="pl-banners">
         ${errorGate}
         ${providerGate}
-        <div class="pl-banner info">
-          <span class="material-symbols-rounded" aria-hidden="true">info</span>
-          <span>Playlists are highly experimental and cause issues. At this stage, the feature is intended for testing only. Do NOT use in production. You have been warned</span>
-        </div>
       </div>
     `;
   }
@@ -255,8 +280,68 @@
   }
 
   function endpointStatus(endpoint) {
-    if (!endpoint.playlist_id) return `<span class="pl-pill warn">Incomplete</span>`;
-    return `<span class="pl-pill ok">Connected</span>`;
+    if (!endpoint.playlist_id) return `<span class="pl-state warn"><span class="material-symbols-rounded" aria-hidden="true">warning</span>Incomplete</span>`;
+    return `<span class="pl-state ok"><span class="material-symbols-rounded" aria-hidden="true">check_circle</span>Connected</span>`;
+  }
+
+  function endpointTypeIcon(endpoint) {
+    if (endpointIsDiscovery(endpoint)) return "travel_explore";
+    const typ = String(endpoint.playlist_type || endpoint.endpoint_type || endpoint.kind || endpoint.media_type || "").toLowerCase();
+    if (typ.includes("watchlist")) return "bookmark";
+    if (typ.includes("collection")) return "collections_bookmark";
+    return "queue_music";
+  }
+
+  function endpointIdentity(endpoint, sub) {
+    const ep = endpoint || {};
+    const tone = providerTone(ep.provider);
+    return `
+      <div class="pl-entity">
+        <span class="pl-entity-icon" style="--rgb:${esc(tone.rgb)}"><span class="material-symbols-rounded" aria-hidden="true">${esc(endpointTypeIcon(ep))}</span></span>
+        <div><div class="pl-main-text">${esc(ep.name || ep.playlist_name || ep.id || "-")}</div><div class="pl-muted">${esc(sub || ep.id || "")}</div></div>
+      </div>
+    `;
+  }
+
+  function statusPill(kind, label, iconName = "radio_button_checked") {
+    return `<span class="pl-pill ${esc(kind || "")}"><span class="material-symbols-rounded" aria-hidden="true">${esc(iconName)}</span>${esc(label)}</span>`;
+  }
+
+  function syncPairIndicator(pairId) {
+    const id = String(pairId || "").trim();
+    if (!id) {
+      return `<span class="pl-icon-status warn" title="No sync pair assigned" aria-label="No sync pair assigned"><span class="material-symbols-rounded" aria-hidden="true">warning</span></span>`;
+    }
+    return `<span class="pl-icon-status ok" title="${esc(id)}" aria-label="Sync pair: ${esc(id)}"><span class="material-symbols-rounded" aria-hidden="true">check_circle</span></span>`;
+  }
+
+  function statCard(value, label, iconName, tone) {
+    return `<div class="pl-stat ${esc(tone || "")}"><span class="pl-stat-icon material-symbols-rounded" aria-hidden="true">${esc(iconName)}</span><b>${esc(value)}</b><span>${esc(label)}</span></div>`;
+  }
+
+  function activityChangeChip(label, value, iconName, kind) {
+    const count = Number(value || 0);
+    return `<span class="pl-change-chip ${esc(kind || "")}" title="${esc(label)}: ${esc(count)}" aria-label="${esc(label)}: ${esc(count)}"><span class="material-symbols-rounded" aria-hidden="true">${esc(iconName)}</span>${esc(count)}</span>`;
+  }
+
+  function activityChangeSummary(row) {
+    const counts = parseActivityCounts(row);
+    return `
+      <div class="pl-change-set">
+        ${activityChangeChip("Added", counts.added, "add_circle", "added")}
+        ${activityChangeChip("Updated", counts.updated, "sync", "updated")}
+        ${activityChangeChip("Removed", counts.removed, "remove_circle", "removed")}
+        ${activityChangeChip("Skipped", counts.skipped, "skip_next", "skipped")}
+      </div>
+    `;
+  }
+
+  function activityResultSummary(row) {
+    const details = String(row.details || "");
+    const rule = row.ruleset || (details.split(",")[0] || "direct");
+    const rawTargets = row.target_count != null ? Number(row.target_count) : Number((details.match(/(\d+)\s+target/i) || [])[1] || 0);
+    const targetText = rawTargets === 1 ? "1 target" : `${rawTargets} targets`;
+    return `<div class="pl-main-text">${esc(titleize(rule || "direct"))}</div><div class="pl-muted">${esc(targetText)}</div>`;
   }
 
   function render(root) {
@@ -279,22 +364,25 @@
         <main class="pl-grid">
           <section class="pl-section" id="pl-playlist-endpoints">
             <div class="pl-section-head">
-              <div><div class="pl-section-title">Playlist endpoints</div><div class="pl-section-sub">Connected provider playlists available for mappings.</div></div>
-              <button class="pl-btn small" data-action="endpoint-new">+ Add endpoint</button>
+              <div><div class="pl-section-title">Playlist endpoints</div><div class="pl-section-sub">Connect provider playlists to use in CrossWatch.</div></div>
+              <button class="pl-btn small accent" data-action="endpoint-new"><span class="material-symbols-rounded" aria-hidden="true">add</span>Add endpoint</button>
             </div>
             <div class="pl-section-body">${renderEndpoints()}</div>
           </section>
           <section class="pl-section" id="pl-mappings-overview">
             <div class="pl-section-head">
               <div><div class="pl-section-title">Mappings</div><div class="pl-section-sub">Sync relationships between playlist endpoints.</div></div>
-              <button class="pl-btn small" data-action="mapping-new" ${mappingDisabled ? "disabled" : ""} title="${esc(mappingTitle)}">+ New mapping</button>
+              <button class="pl-btn small accent" data-action="mapping-new" ${mappingDisabled ? "disabled" : ""} title="${esc(mappingTitle)}"><span class="material-symbols-rounded" aria-hidden="true">add</span>New mapping</button>
             </div>
             <div class="pl-section-body">${renderMappings()}</div>
           </section>
           <section class="pl-section" id="pl-activity-overview">
             <div class="pl-section-head">
               <div><div class="pl-section-title">Activity overview</div><div class="pl-section-sub">Recent playlist sync and validation activity.</div></div>
-              <button class="pl-btn small" data-action="activity-all">View all activity</button>
+              <div class="pl-section-actions">
+                <button class="pl-btn small" data-action="activity-all">View all activity</button>
+                <button class="pl-btn small danger" data-action="activity-clear" title="Clear playlist activity"><span class="material-symbols-rounded" aria-hidden="true">delete_sweep</span>Clear</button>
+              </div>
             </div>
             <div class="pl-section-body">${renderActivity()}</div>
           </section>
@@ -310,19 +398,21 @@
       return `<div class="pl-empty"><strong>No playlist endpoints yet</strong><span>Add the first provider playlist before creating mappings.</span><button class="pl-btn primary small" data-action="endpoint-new">+ New endpoint</button></div>`;
     }
     const rows = state.endpoints.map((ep) => {
-      const playlistType = ep.playlist_type || ep.endpoint_type || ep.kind || ep.media_type || "playlist";
+      const playlistType = endpointIsDiscovery(ep) ? "discovery" : (ep.playlist_type || ep.endpoint_type || ep.kind || ep.media_type || "playlist");
       const usedBy = state.mappings.filter((m) => mappingUsesEndpoint(m, ep.id)).length;
+      const refreshing = state.runningEndpoints.has(String(ep.id || ""));
       return `
         <tr>
-          <td><div class="pl-main-text">${esc(ep.name || ep.playlist_name || ep.id)}</div><div class="pl-muted">${esc(ep.id)}</div></td>
+          <td>${endpointIdentity(ep)}</td>
           <td><div class="pl-provider">${icon(ep.provider)}<div><div class="pl-main-text">${esc(ep.provider_label || providerLabel(ep.provider))}</div><div class="pl-muted">${esc(ep.provider || "")}</div></div></div></td>
           <td>${esc(ep.instance || "default")}</td>
           <td><div class="pl-main-text">${esc(ep.playlist_name || ep.playlist_id || "-")}</div></td>
-          <td><span class="pl-pill">${esc(titleize(playlistType))}</span></td>
+          <td><span class="pl-pill ${endpointIsDiscovery(ep) ? "run" : "type"}">${esc(titleize(playlistType))}</span></td>
           <td>${endpointStatus(ep)}</td>
-          <td><div class="pl-muted">${ep.last_synced ? `Refreshed ${esc(timeText(ep.last_synced))}` : "Not refreshed yet"}${ep.item_count != null ? `<br>${esc(ep.item_count)} items` : ""}</div></td>
+          <td><div class="pl-muted">${refreshing ? "Refreshing..." : ep.last_synced ? `Refreshed ${esc(timeText(ep.last_synced))}` : "Not refreshed yet"}${ep.item_count != null ? `<br>${esc(ep.item_count)} items` : ""}</div></td>
           <td>
             <div class="pl-actions">
+              ${actionButton("endpoint-sync", ep.id, refreshing ? "Refresh running" : "Refresh endpoint", "refresh", "refresh", refreshing ? "running" : "", refreshing)}
               ${actionButton("endpoint-edit", ep.id, "Edit endpoint", "edit", "edit")}
               ${actionButton("endpoint-delete", ep.id, usedBy ? `Delete endpoint. ${usedBy} mapping(s) use this endpoint` : "Delete endpoint", "delete", "delete")}
             </div>
@@ -332,8 +422,8 @@
     }).join("");
     return `
       <div class="pl-table-wrap">
-        <table>
-          <thead><tr><th>Endpoint name</th><th>Provider</th><th>Profile</th><th>Selected playlist</th><th>Type</th><th>Status</th><th>Last refresh</th><th aria-label="Actions"></th></tr></thead>
+        <table class="pl-endpoints-table">
+          <thead><tr><th>Endpoint</th><th>Provider</th><th>Profile</th><th>Selected playlist</th><th>Type</th><th>Status</th><th>Last refresh</th><th aria-label="Actions">Actions</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>
@@ -350,21 +440,22 @@
       const src = endpointById(m.source_endpoint) || m.source || {};
       const rule = m.ruleset || rulesetById(m.ruleset_id || "");
       const res = m.last_result || null;
+      const running = state.runningMappings.has(String(m.id || ""));
       return `
-        <tr>
-          <td><div class="pl-main-text">${esc(m.name || m.id)}</div><div class="pl-muted">${esc(m.id)}</div></td>
+        <tr class="${running ? "is-running" : ""}">
+          <td>${endpointIdentity({ name: m.name || m.id, id: m.id, provider: (src && src.provider) || "" }, m.id)}</td>
           <td>${endpointRef(src, m.source_endpoint)}</td>
-          <td><span class="pl-pill">${esc(directionFor(m))}</span></td>
+          <td><span class="pl-pill dir">${esc(directionFor(m))}<span class="material-symbols-rounded" aria-hidden="true">east</span></span></td>
           <td>${mappingTargetRefs(m)}</td>
           <td><span class="pl-pill ${rule && rule.direction === "bidirectional" ? "warn" : ""}">${esc(rule ? ruleLabel(rule.direction) : "One way")}</span></td>
-          <td><span class="pl-pill ${m.assigned_pair ? "ok" : "warn"}">${esc(m.assigned_pair || "No pair")}</span></td>
+          <td>${syncPairIndicator(m.assigned_pair)}</td>
           <td><span class="pl-pill">${esc(rule ? rule.name : "Direct")}</span></td>
-          <td><span class="pl-pill ${m.enabled ? "ok" : "off"}">${m.enabled ? "Enabled" : "Disabled"}</span></td>
-          <td>${statusForResult(res)}</td>
-          <td><div class="pl-muted">${compactTime(res && res.finished_at)}</div></td>
+          <td>${m.enabled ? statusPill("ok", "Enabled") : statusPill("off", "Disabled", "radio_button_unchecked")}</td>
+          <td>${running ? statusPill("run", "Running", "sync") : statusForResult(res)}</td>
+          <td><div class="pl-muted">${running ? "Running now..." : compactTime(res && res.finished_at)}</div></td>
           <td>
             <div class="pl-actions">
-              ${actionButton("mapping-sync", m.id, "Sync now", "sync", "sync")}
+              ${actionButton("mapping-sync", m.id, running ? "Sync running" : "Sync now", "sync", "sync", running ? "running" : "", running)}
               ${actionButton("mapping-edit", m.id, "Edit mapping", "edit", "edit")}
               ${actionButton("mapping-toggle", m.id, m.enabled ? "Disable mapping" : "Enable mapping", m.enabled ? "pause" : "play_arrow", "toggle", m.enabled ? "on" : "")}
               ${actionButton("mapping-delete", m.id, "Delete mapping", "delete", "delete")}
@@ -375,8 +466,8 @@
     }).join("");
     return `
       <div class="pl-table-wrap">
-        <table>
-          <thead><tr><th>Mapping name</th><th>Source endpoint</th><th>Direction</th><th>Destination endpoint</th><th>Mode</th><th>Sync pair</th><th>Ruleset</th><th>Status</th><th>Last result</th><th>Last sync</th><th aria-label="Actions"></th></tr></thead>
+        <table class="pl-mappings-table">
+          <thead><tr><th>Mapping</th><th>Source</th><th>Direction</th><th>Destination</th><th>Mode</th><th>Sync pair</th><th>Ruleset</th><th>Status</th><th>Last result</th><th>Last sync</th><th aria-label="Actions">Actions</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>
@@ -387,27 +478,26 @@
     if (state.loading && !state.loaded) return renderSkeleton("Loading playlist activity");
     const entries = state.activity || [];
     const stats = activityStats(entries);
-    const latest = entries.slice(0, 8);
+    const latest = entries.filter((row) => String(row.type || "").toLowerCase() === "run").slice(0, 8);
     const table = latest.length ? `
       <div class="pl-table-wrap">
-        <table>
-          <thead><tr><th>Time</th><th>Mapping</th><th>Direction</th><th>Result</th><th>Added</th><th>Updated</th><th>Removed</th><th>Skipped</th><th>Status</th></tr></thead>
+        <table class="pl-activity-table">
+          <thead><tr><th>Time</th><th>Mapping</th><th>Direction</th><th>Result</th><th>Changes</th><th>Status</th></tr></thead>
           <tbody>${latest.map((row) => {
-            const counts = parseActivityCounts(row);
-            return `<tr><td>${esc(compactTime(row.ts))}</td><td>${esc(row.label || "-")}</td><td>${esc(row.type || "-")}</td><td>${esc(row.details || "-")}</td><td>${counts.added}</td><td>${counts.updated}</td><td>${counts.removed}</td><td>${counts.skipped}</td><td><span class="pl-pill ${row.status === "error" ? "err" : "ok"}">${esc(titleize(row.status || "completed"))}</span></td></tr>`;
+            return `<tr><td>${esc(compactTime(row.ts))}</td><td><div class="pl-main-text">${esc(row.label || "-")}</div></td><td>${esc(row.type || "-")}</td><td>${activityResultSummary(row)}</td><td>${activityChangeSummary(row)}</td><td>${row.status === "error" ? statusPill("err", titleize(row.status || "error"), "cancel") : statusPill("ok", titleize(row.status || "completed"), "check_circle")}</td></tr>`;
           }).join("")}</tbody>
         </table>
       </div>
-    ` : `<div class="pl-empty"><strong>No playlist activity yet</strong><span>Runs and endpoint refreshes will appear here.</span></div>`;
+    ` : `<div class="pl-empty"><strong>No playlist runs yet</strong><span>Run a mapping to see sync results here.</span></div>`;
     return `
       <div class="pl-activity">
         <div class="pl-stats">
-          <div class="pl-stat"><b>${stats.total}</b><span>Total runs</span></div>
-          <div class="pl-stat"><b>${stats.success}</b><span>Successful</span></div>
-          <div class="pl-stat"><b>${stats.warning}</b><span>Warnings</span></div>
-          <div class="pl-stat"><b>${stats.failed}</b><span>Failed</span></div>
-          <div class="pl-stat"><b>${stats.running}</b><span>Queued or running</span></div>
-          <div class="pl-stat"><b>${stats.skipped}</b><span>Skipped</span></div>
+          ${statCard(stats.total, "Total runs", "trending_up", "total")}
+          ${statCard(stats.success, "Successful", "check_circle", "success")}
+          ${statCard(stats.warning, "Warnings", "warning", "warning")}
+          ${statCard(stats.failed, "Failed", "cancel", "failed")}
+          ${statCard(stats.running, "Queued or running", "speed", "running")}
+          ${statCard(stats.skipped, "Skipped", "sync_disabled", "skipped")}
         </div>
         ${table}
       </div>
@@ -415,8 +505,9 @@
   }
 
   function activityStats(rows) {
-    const stats = { total: rows.length, success: 0, warning: 0, failed: 0, running: 0, skipped: 0 };
-    rows.forEach((row) => {
+    const runRows = rows.filter((row) => String(row.type || "").toLowerCase() === "run");
+    const stats = { total: runRows.length, success: 0, warning: 0, failed: 0, running: 0, skipped: 0 };
+    runRows.forEach((row) => {
       const status = String(row.status || "").toLowerCase();
       if (status === "error" || status === "failed") stats.failed += 1;
       else if (status === "queued" || status === "running") stats.running += 1;
@@ -431,7 +522,12 @@
     const details = String(row.details || "");
     const add = details.match(/\+(\d+)/);
     const rem = details.match(/-(\d+)/);
-    return { added: add ? Number(add[1]) : 0, updated: 0, removed: rem ? Number(rem[1]) : 0, skipped: 0 };
+    return {
+      added: row.added != null ? Number(row.added) : (add ? Number(add[1]) : 0),
+      updated: row.updated != null ? Number(row.updated) : 0,
+      removed: row.removed != null ? Number(row.removed) : (rem ? Number(rem[1]) : 0),
+      skipped: row.skipped != null ? Number(row.skipped) : 0,
+    };
   }
 
   function renderSkeleton(label) {
@@ -455,12 +551,14 @@
     if (action === "endpoint-new") openEndpointModal({ trigger: btn });
     if (action === "endpoint-edit") openEndpointModal({ endpoint: endpointById(id), trigger: btn });
     if (action === "endpoint-delete") openEndpointDelete(endpointById(id), btn);
+    if (action === "endpoint-sync") syncEndpoint(endpointById(id), btn);
     if (action === "mapping-new") openMappingModal({ trigger: btn });
     if (action === "mapping-edit") openMappingModal({ mapping: state.mappings.find((m) => m.id === id), trigger: btn });
     if (action === "mapping-toggle") toggleMapping(state.mappings.find((m) => m.id === id), btn);
     if (action === "mapping-delete") openMappingDelete(state.mappings.find((m) => m.id === id), btn);
     if (action === "mapping-sync") syncMapping(state.mappings.find((m) => m.id === id), btn);
     if (action === "activity-all") openActivityModal(btn);
+    if (action === "activity-clear") openActivityClear(btn);
     if (action === "open-connections") openConnections();
   }
 
@@ -568,6 +666,47 @@
     return String(v || "").trim().slice(0, NAME_MAX);
   }
 
+  function sequenceNumber(value, prefix) {
+    const head = `${String(prefix || "").toUpperCase()}-`;
+    const text = String(value || "").trim().toUpperCase();
+    if (!head || !text.startsWith(head)) return 0;
+    const tail = text.slice(head.length);
+    if (!/^\d+$/.test(tail)) return 0;
+    const number = Number(tail);
+    return Number.isFinite(number) && number > 0 ? number : 0;
+  }
+
+  function nextSequenceName(items, prefix, offset = 0, ignoreId = "") {
+    const used = new Set();
+    const skippedId = String(ignoreId || "");
+    (items || []).forEach((item) => {
+      if (!item) return;
+      if (skippedId && String(item.id || "") === skippedId) return;
+      [item.id, item.name].forEach((value) => {
+        const number = sequenceNumber(value, prefix);
+        if (number) used.add(number);
+      });
+    });
+    let remaining = Math.max(0, Number(offset || 0));
+    let number = 1;
+    while (number < 10000) {
+      if (!used.has(number)) {
+        if (remaining === 0) return `${String(prefix || "").toUpperCase()}-${String(number).padStart(2, "0")}`;
+        remaining -= 1;
+      }
+      number += 1;
+    }
+    return `${String(prefix || "").toUpperCase()}-${Date.now().toString().slice(-4)}`;
+  }
+
+  function nextEndpointName(offset = 0, ignoreId = "") {
+    return nextSequenceName(state.endpoints, "EP", offset, ignoreId);
+  }
+
+  function nextMappingName(offset = 0, ignoreId = "") {
+    return nextSequenceName(state.mappings, "MAP", offset, ignoreId);
+  }
+
   function isSafeNameChar(ch) {
     return /^[\p{L}\p{N}]$/u.test(ch) || SAFE_NAME_CHARS.includes(ch);
   }
@@ -628,6 +767,409 @@
     return update;
   }
 
+  function generatedEndpointName(value, fallback) {
+    const raw = String(value || fallback || "Endpoint").replace(/\s*\([^)]*\)\s*$/g, "").trim() || "Endpoint";
+    let clean = Array.from(raw).filter(isSafeNameChar).join("").replace(/\s+/g, " ").trim();
+    if (!clean) clean = "Endpoint";
+    if (!/^[\p{L}\p{N}]$/u.test(Array.from(clean)[0] || "")) clean = `List ${clean}`;
+    return shortName(clean);
+  }
+
+  function selectedPlaylistOptions(root) {
+    const select = $("#pl-ep-playlist", root);
+    return select ? Array.from(select.selectedOptions || []).filter((o) => o.value) : [];
+  }
+
+  function selectedPlaylistName(root) {
+    const opt = selectedPlaylistOptions(root)[0];
+    return opt ? opt.dataset.name || opt.textContent || opt.value : "";
+  }
+
+  function selectedEndpointResources(root) {
+    const selected = new Set(selectedValues("#pl-ep-playlist", root));
+    return (root.__plEndpointResources || []).filter((r) => selected.has(String(r.id || "")));
+  }
+
+  function endpointCreateMode(root) {
+    return checked("#pl-ep-create", root);
+  }
+
+  function endpointManageMode(root) {
+    return String(root.dataset.epManageMode || "");
+  }
+
+  function setEndpointCreateMode(root, enabled) {
+    const createCheck = $("#pl-ep-create", root);
+    const panel = $("#pl-ep-create-panel", root);
+    const resourceWrap = $("#pl-ep-resource-wrap", root);
+    if (enabled) setEndpointManageMode(root, "");
+    if (createCheck) createCheck.checked = !!enabled;
+    if (panel) panel.classList.toggle("hidden", !enabled);
+    if (resourceWrap) resourceWrap.classList.toggle("is-create-mode", !!enabled);
+    updateEndpointGeneratedName(root);
+  }
+
+  function setEndpointManageMode(root, mode, resources = []) {
+    const next = String(mode || "");
+    root.dataset.epManageMode = next;
+    const editPanel = $("#pl-ep-edit-panel", root);
+    const deletePanel = $("#pl-ep-delete-panel", root);
+    const editName = $("#pl-ep-edit-name", root);
+    const deleteList = $("#pl-ep-delete-list", root);
+    if (next) {
+      const createCheck = $("#pl-ep-create", root);
+      const createPanel = $("#pl-ep-create-panel", root);
+      if (createCheck) createCheck.checked = false;
+      if (createPanel) createPanel.classList.add("hidden");
+    }
+    if (editPanel) editPanel.classList.toggle("hidden", next !== "edit");
+    if (deletePanel) deletePanel.classList.toggle("hidden", next !== "delete");
+    if (next === "edit" && resources[0]) {
+      root.dataset.epEditResourceId = String(resources[0].id || "");
+      if (editName) {
+        editName.value = resources[0].name || resources[0].id || "";
+        applyFieldError(editName, "", `${String(editName.value || "").trim().length}/${PLAYLIST_NAME_MAX} characters`);
+      }
+    } else {
+      root.dataset.epEditResourceId = "";
+    }
+    if (next === "delete") {
+      root.__plDeleteResourceIds = resources.map((r) => String(r.id || "")).filter(Boolean);
+      if (deleteList) {
+        deleteList.innerHTML = resources.map((r) => `<span>${esc(r.name || r.id || "-")}</span>`).join("");
+      }
+    } else {
+      root.__plDeleteResourceIds = [];
+    }
+    updateEndpointPlaylistActions(root);
+    syncEndpointCreatePanel(root);
+    syncEndpointManagePanel(root);
+    syncModalPrimary(root.__plEndpointCtx || state.modal);
+  }
+
+  function updateEndpointGeneratedName(root, force = false) {
+    const input = $("#pl-ep-name", root);
+    if (!input) return;
+    if (!force && root.dataset.epNameDirty === "1") return;
+    input.value = nextEndpointName(0, root.dataset.epEditId || "");
+  }
+
+  function resourceCaps(resource) {
+    const caps = [];
+    const endpointType = resource.discovery ? "discovery" : ((resource.extra && resource.extra.endpoint_type) || resource.endpoint_type || resource.playlist_type || resource.kind || "");
+    if (endpointType) caps.push(endpointType);
+    if (resource.media_types && resource.media_types.length) caps.push(resource.media_types.join("/"));
+    if (resource.discovery || !resource.writable) caps.push("read-only");
+    if (resource.smart) caps.push("smart");
+    return caps;
+  }
+
+  function resourceBadgeMeta(resource) {
+    const endpointType = String(resource.discovery ? "discovery" : ((resource.extra && resource.extra.endpoint_type) || resource.endpoint_type || resource.playlist_type || resource.kind || "playlist")).toLowerCase();
+    const kind = String(resource.kind || "").toLowerCase();
+    const mediaTypes = Array.isArray(resource.media_types) ? resource.media_types : [];
+    const raw = [kind || endpointType, endpointType, ...mediaTypes, resource.discovery || !resource.writable ? "read-only" : "", resource.smart ? "smart" : ""].filter(Boolean);
+    const seen = new Set();
+    const map = {
+      playlist: ["queue_music", "Playlist"],
+      regular: ["list_alt", "Regular list"],
+      watchlist: ["bookmark", "Watchlist"],
+      discovery: ["travel_explore", "Discovery source"],
+      collection: ["collections_bookmark", "Collection"],
+      movie: ["movie", "Movies"],
+      movies: ["movie", "Movies"],
+      show: ["tv", "Shows"],
+      shows: ["tv", "Shows"],
+      season: ["video_library", "Seasons"],
+      seasons: ["video_library", "Seasons"],
+      episode: ["live_tv", "Episodes"],
+      episodes: ["live_tv", "Episodes"],
+      "read-only": ["lock", "Read only"],
+      smart: ["auto_awesome", "Smart list"],
+    };
+    return raw.map((value) => {
+      const key = String(value || "").toLowerCase();
+      if (seen.has(key)) return null;
+      seen.add(key);
+      const meta = map[key] || ["label", titleize(key)];
+      return { key, icon: meta[0], title: meta[1] };
+    }).filter(Boolean);
+  }
+
+  function resourceIconName(resource) {
+    if (resource.discovery) return "travel_explore";
+    if (resource.smart) return "auto_awesome";
+    if (String(resource.kind || "").toLowerCase() === "watchlist") return "bookmark";
+    return "queue_music";
+  }
+
+  function renderEndpointResourceList(root) {
+    const list = $("#pl-ep-resource-list", root);
+    const select = $("#pl-ep-playlist", root);
+    const search = val("#pl-ep-playlist-search", root).toLowerCase();
+    if (!list || !select) return;
+    const resources = root.__plEndpointResources || [];
+    const selected = new Set(selectedValues("#pl-ep-playlist", root));
+    const visible = resources.filter((r) => {
+      const text = `${r.name || ""} ${r.id || ""} ${resourceCaps(r).join(" ")}`.toLowerCase();
+      return !search || text.includes(search);
+    });
+    if (!resources.length) {
+      list.innerHTML = `<div class="pl-resource-empty">No playlists found.</div>`;
+      return;
+    }
+    if (!visible.length) {
+      list.innerHTML = `<div class="pl-resource-empty">No playlists match this search.</div>`;
+      return;
+    }
+    list.innerHTML = visible.map((r) => {
+      const badges = resourceBadgeMeta(r);
+      const active = selected.has(String(r.id || ""));
+      return `
+        <button type="button" class="pl-resource-row ${active ? "selected" : ""}" data-playlist-id="${esc(r.id || "")}" aria-pressed="${active ? "true" : "false"}">
+          <span class="pl-resource-check material-symbols-rounded" aria-hidden="true">${active ? "check_box" : "check_box_outline_blank"}</span>
+          <span class="pl-resource-type material-symbols-rounded" aria-hidden="true">${esc(resourceIconName(r))}</span>
+          <span class="pl-resource-main">
+            <span class="pl-resource-name">${esc(r.name || r.id || "-")}</span>
+          </span>
+          <span class="pl-resource-badges" aria-label="Playlist properties">
+            ${badges.map((badge) => `<span class="pl-resource-badge material-symbols-rounded" title="${esc(badge.title)}" aria-label="${esc(badge.title)}" data-kind="${esc(badge.key)}">${esc(badge.icon)}</span>`).join("")}
+          </span>
+        </button>
+      `;
+    }).join("");
+  }
+
+  function updateEndpointPlaylistActions(root) {
+    const provider = val("#pl-ep-provider", root);
+    const isSimkl = String(provider || "").toUpperCase() === "SIMKL";
+    const canCreate = !isSimkl && creatableEndpointTypes(provider).length > 0;
+    const createBtn = $("#pl-ep-list-create", root);
+    const editBtn = $("#pl-ep-list-edit", root);
+    const deleteBtn = $("#pl-ep-list-delete", root);
+    const managing = !!endpointManageMode(root);
+    const creating = endpointCreateMode(root);
+    const selected = selectedEndpointResources(root);
+    const editOk = !creating && !managing && selected.length === 1 && !!selected[0].can_rename;
+    const deleteOk = !creating && !managing && selected.length > 0 && selected.every((r) => !!r.can_delete);
+    if (createBtn) {
+      createBtn.disabled = !canCreate || managing;
+      createBtn.classList.toggle("active", creating);
+      createBtn.title = managing ? "Finish or cancel the current provider playlist action first" : (canCreate ? "Create provider playlist" : "Creating provider playlists is not supported for this provider");
+    }
+    if (editBtn) {
+      editBtn.disabled = !editOk;
+      editBtn.title = creating || managing ? "Finish or cancel the current provider playlist action first"
+        : (!selected.length ? "Select one provider playlist to rename"
+          : (selected.length > 1 ? "Select exactly one playlist to rename" : (selected[0].can_rename ? "Rename selected provider playlist" : "Selected playlist cannot be renamed")));
+    }
+    if (deleteBtn) {
+      deleteBtn.disabled = !deleteOk;
+      deleteBtn.title = creating || managing ? "Finish or cancel the current provider playlist action first"
+        : (!selected.length ? "Select one or more provider playlists to delete"
+          : (deleteOk ? "Delete selected provider playlist(s)" : "One or more selected playlists cannot be deleted"));
+    }
+  }
+
+  function refreshEndpointResourceSelection(root, ctx) {
+    renderEndpointResourceList(root);
+    updateEndpointPlaylistActions(root);
+    syncEndpointCreatePanel(root);
+    updateEndpointGeneratedName(root);
+    if (ctx) syncModalPrimary(ctx);
+  }
+
+  function syncEndpointCreatePanel(root) {
+    const submit = $("#pl-ep-create-submit", root);
+    if (!submit) return;
+    const err = endpointCreateMode(root) ? playlistNameError(val("#pl-ep-create-name", root)) : "";
+    submit.disabled = !!err;
+    submit.title = err || "Create this playlist with the selected provider";
+  }
+
+  function syncEndpointManagePanel(root) {
+    const mode = endpointManageMode(root);
+    const editName = $("#pl-ep-edit-name", root);
+    const editSubmit = $("#pl-ep-edit-submit", root);
+    const deleteSubmit = $("#pl-ep-delete-submit", root);
+    if (editSubmit && editName) {
+      const editValue = val("#pl-ep-edit-name", root);
+      const err = mode === "edit" ? playlistNameError(editValue) : "";
+      applyFieldError(editName, err, `${String(editValue || "").trim().length}/${PLAYLIST_NAME_MAX} characters`);
+      editSubmit.disabled = !!err;
+      editSubmit.title = err || "Rename this provider playlist";
+    }
+    if (deleteSubmit) {
+      const ids = root.__plDeleteResourceIds || [];
+      deleteSubmit.disabled = mode !== "delete" || !ids.length;
+      deleteSubmit.title = ids.length ? "Delete selected provider playlist(s)" : "No playlists selected";
+    }
+  }
+
+  async function createProviderPlaylistFromPanel(root, ctx, isEdit) {
+    const submit = $("#pl-ep-create-submit", root);
+    const nameInput = $("#pl-ep-create-name", root);
+    const createName = val("#pl-ep-create-name", root);
+    const err = playlistNameError(createName);
+    applyFieldError(nameInput, err, `${String(createName || "").trim().length}/${PLAYLIST_NAME_MAX} characters`);
+    if (err) {
+      syncModalPrimary(ctx);
+      return;
+    }
+    const provider = val("#pl-ep-provider", root);
+    const instance = val("#pl-ep-instance", root) || "default";
+    const mediaType = val("#pl-ep-create-type", root) || creatableEndpointTypes(provider)[0];
+    if (submit) {
+      submit.disabled = true;
+      submit.dataset.originalText = submit.innerHTML;
+      submit.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">sync</span>Creating...`;
+    }
+    try {
+      const res = await API.resourceCreate({ provider, instance, name: createName, media_type: mediaType });
+      const resource = res.resource || {};
+      const search = $("#pl-ep-playlist-search", root);
+      if (search) search.value = "";
+      setEndpointCreateMode(root, false);
+      await loadEndpointResources(root, resource.id || "", isEdit);
+    } catch (error) {
+      setModalError(error && error.message ? error.message : "Could not create provider playlist.");
+    } finally {
+      if (submit) {
+        submit.innerHTML = submit.dataset.originalText || `<span class="material-symbols-rounded" aria-hidden="true">add</span>Create playlist`;
+        delete submit.dataset.originalText;
+      }
+      syncEndpointCreatePanel(root);
+      syncModalPrimary(ctx);
+    }
+  }
+
+  function openEndpointResourceEdit(root, ctx) {
+    const selected = selectedEndpointResources(root);
+    if (selected.length !== 1 || !selected[0].can_rename) return;
+    setEndpointManageMode(root, "edit", selected);
+    $("#pl-ep-edit-name", root)?.focus();
+    syncModalPrimary(ctx);
+  }
+
+  async function renameProviderPlaylistFromPanel(root, ctx, isEdit) {
+    const submit = $("#pl-ep-edit-submit", root);
+    const nameInput = $("#pl-ep-edit-name", root);
+    const renameName = val("#pl-ep-edit-name", root);
+    const err = playlistNameError(renameName);
+    applyFieldError(nameInput, err, `${String(renameName || "").trim().length}/${PLAYLIST_NAME_MAX} characters`);
+    if (err) {
+      syncModalPrimary(ctx);
+      return;
+    }
+    const playlistId = root.dataset.epEditResourceId || "";
+    const provider = val("#pl-ep-provider", root);
+    const instance = val("#pl-ep-instance", root) || "default";
+    if (!playlistId) return;
+    if (submit) {
+      submit.disabled = true;
+      submit.dataset.originalText = submit.innerHTML;
+      submit.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">sync</span>Saving...`;
+    }
+    try {
+      const res = await API.resourceRename(provider, instance, playlistId, renameName);
+      const resource = res.resource || {};
+      setEndpointManageMode(root, "");
+      await loadEndpointResources(root, resource.id || playlistId, isEdit);
+    } catch (error) {
+      setModalError(error && error.message ? error.message : "Could not rename provider playlist.");
+    } finally {
+      if (submit) {
+        submit.innerHTML = submit.dataset.originalText || `<span class="material-symbols-rounded" aria-hidden="true">check</span>Save rename`;
+        delete submit.dataset.originalText;
+      }
+      syncEndpointManagePanel(root);
+      syncModalPrimary(ctx);
+    }
+  }
+
+  function openEndpointResourceDelete(root, ctx) {
+    const selected = selectedEndpointResources(root);
+    if (!selected.length || !selected.every((r) => !!r.can_delete)) return;
+    setEndpointManageMode(root, "delete", selected);
+    syncModalPrimary(ctx);
+  }
+
+  async function deleteProviderPlaylistsFromPanel(root, ctx, isEdit) {
+    const submit = $("#pl-ep-delete-submit", root);
+    const ids = Array.from(root.__plDeleteResourceIds || []).filter(Boolean);
+    const provider = val("#pl-ep-provider", root);
+    const instance = val("#pl-ep-instance", root) || "default";
+    if (!ids.length) return;
+    if (submit) {
+      submit.disabled = true;
+      submit.dataset.originalText = submit.innerHTML;
+      submit.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">sync</span>Deleting...`;
+    }
+    try {
+      for (const id of ids) await API.resourceDelete(provider, instance, id);
+      setEndpointManageMode(root, "");
+      await loadEndpointResources(root, "", isEdit);
+    } catch (error) {
+      setModalError(error && error.message ? error.message : "Could not delete provider playlist.");
+    } finally {
+      if (submit) {
+        submit.innerHTML = submit.dataset.originalText || `<span class="material-symbols-rounded" aria-hidden="true">delete</span>Delete`;
+        delete submit.dataset.originalText;
+      }
+      syncEndpointManagePanel(root);
+      syncModalPrimary(ctx);
+    }
+  }
+
+  function endpointOptionData(value, option) {
+    const ep = endpointById(value) || {};
+    const provider = ep.provider || option?.dataset?.provider || "";
+    const label = ep.name || option?.dataset?.name || option?.textContent || value || "-";
+    const playlist = ep.playlist_name || ep.playlist_id || "";
+    const logo = providerLogo(provider);
+    const rawType = String(ep.playlist_type || ep.endpoint_type || ep.kind || ep.source_kind || option?.dataset?.type || "").toLowerCase();
+    const isWatchlist = rawType.includes("watchlist") || String(playlist || "").toLowerCase() === "watchlist";
+    const typeBadge = endpointIsDiscovery(ep) ? "Discovery" : isWatchlist ? "Watchlist" : (!["", "regular", "playlist"].includes(rawType) ? titleize(rawType) : "");
+    const note = playlist && playlist !== label && !isWatchlist ? playlist : "";
+    return {
+      label,
+      selectedLabel: label,
+      selectedShowNote: false,
+      note,
+      icons: [logo ? { src: logo, alt: "" } : { text: String(provider || "?").slice(0, 2) }],
+      badges: [typeBadge].filter(Boolean),
+    };
+  }
+
+  function mappingEndpointName(id) {
+    const ep = endpointById(id) || {};
+    return ep.name || ep.playlist_name || ep.playlist_id || id || "Endpoint";
+  }
+
+  function generatedMappingName(sourceId, targetId) {
+    void sourceId;
+    void targetId;
+    return nextMappingName();
+  }
+
+  function updateMappingGeneratedName(root, force = false) {
+    const input = $("#pl-map-name", root);
+    if (!input) return;
+    if (!force && root.dataset.mapNameDirty === "1") return;
+    input.value = nextMappingName(0, root.dataset.mapEditId || "");
+  }
+
+  function enhanceMappingSelects(root) {
+    ["#pl-map-source", "#pl-map-targets"].forEach((sel) => {
+      const select = $(sel, root);
+      if (select) window.CW?.IconSelect?.enhance?.(select, { className: "pl-endpoint-select", menuClassName: "pl-endpoint-select-menu", getOptionData: endpointOptionData });
+    });
+    ["#pl-map-direction", "#pl-map-ruleset", "#pl-map-membership", "#pl-map-order"].forEach((sel) => {
+      const select = $(sel, root);
+      if (select) window.CW?.IconSelect?.enhance?.(select, { className: "cw-plain-select" });
+    });
+  }
+
   function openEndpointModal({ endpoint = null, clone = false, trigger = null } = {}) {
     const isEdit = !!endpoint && !clone;
     const seed = endpoint || {};
@@ -637,38 +1179,91 @@
     const instance = seed.instance || instances[0] || "default";
     const title = isEdit ? "Edit playlist endpoint" : "Create playlist endpoint";
     const description = isEdit ? "Update the provider playlist used by this endpoint." : "Connect one or more provider playlists as reusable endpoints.";
+    const endpointName = isEdit ? (seed.name || seed.id || "") : nextEndpointName();
     const body = `
-      <div class="pl-form">
-        <div class="pl-field">
-          <label for="pl-ep-name">Endpoint name</label>
-          <input id="pl-ep-name" maxlength="${NAME_MAX}" value="${esc(clone ? shortName(`${seed.name || seed.playlist_name || "Endpoint"} copy`) : seed.name || "")}" placeholder="Endpoint name" aria-describedby="pl-ep-name-error">
-          <div class="pl-field-error" id="pl-ep-name-error"></div>
-        </div>
-        <div class="pl-field">
-          <label for="pl-ep-provider">Provider</label>
-          <select id="pl-ep-provider">${selectOptions(providers, provider, providers.length ? "" : "No providers configured")}</select>
-        </div>
-        <div class="pl-field">
-          <label for="pl-ep-instance">Provider profile</label>
-          <select id="pl-ep-instance">${selectOptions(instances.map((x) => ({ value: x, label: x })), instance)}</select>
-        </div>
-        <label class="pl-check full"><input type="checkbox" id="pl-ep-create"> Create a new list instead</label>
-        <div class="pl-warning full hidden" id="pl-ep-simkl-warning">${esc(SIMKL_PLAYLIST_WARNING)}</div>
-        <div class="pl-field full" id="pl-ep-existing-wrap">
-          <label for="pl-ep-playlist">Existing playlist selector</label>
-          <select id="pl-ep-playlist" ${isEdit ? "" : "multiple"} size="${isEdit ? "1" : "7"}"><option value="">Loading...</option></select>
+      <div class="pl-endpoint-wizard">
+        <section class="pl-endpoint-step">
+          <div class="pl-step-head"><span class="pl-step-index">1</span><div><b>Endpoint details</b><span>Name uses the next available endpoint number and can be edited.</span></div></div>
+          <div class="pl-form">
+            <div class="pl-field full">
+              <label for="pl-ep-name">Endpoint name <span aria-hidden="true">*</span></label>
+              <input id="pl-ep-name" maxlength="${NAME_MAX}" value="${esc(endpointName)}" placeholder="Enter endpoint name" aria-describedby="pl-ep-name-error">
+              <div class="pl-field-error" id="pl-ep-name-error"></div>
+            </div>
+            <div class="pl-field full">
+              <label for="pl-ep-provider">Provider <span aria-hidden="true">*</span></label>
+              <select id="pl-ep-provider">${selectOptions(providers, provider, providers.length ? "" : "No providers configured")}</select>
+            </div>
+          </div>
+        </section>
+        <section class="pl-endpoint-step">
+          <div class="pl-step-head"><span class="pl-step-index">2</span><div><b>Provider profile</b><span>Use the profile that owns the provider playlists.</span></div></div>
+          <div class="pl-form">
+            <div class="pl-field full">
+              <label for="pl-ep-instance">Provider profile <span aria-hidden="true">*</span></label>
+              <select id="pl-ep-instance">${selectOptions(instances.map((x) => ({ value: x, label: x })), instance)}</select>
+            </div>
+          </div>
+        </section>
+        <section class="pl-endpoint-step" id="pl-ep-resource-wrap">
+          <div class="pl-step-head with-actions">
+            <span class="pl-step-index">3</span>
+            <div><b>Select provider playlists</b><span>${isEdit ? "Choose one playlist for this endpoint." : "Choose one or more playlists to create endpoints."}</span></div>
+            <div class="pl-playlist-tools" aria-label="Provider playlist actions">
+              <button type="button" class="pl-icon-tool" id="pl-ep-list-create" title="Create provider playlist" aria-label="Create provider playlist"><span class="material-symbols-rounded" aria-hidden="true">add</span></button>
+              <button type="button" class="pl-icon-tool" id="pl-ep-list-edit" title="Edit provider playlist" aria-label="Edit provider playlist"><span class="material-symbols-rounded" aria-hidden="true">edit</span></button>
+              <button type="button" class="pl-icon-tool danger" id="pl-ep-list-delete" title="Delete provider playlist" aria-label="Delete provider playlist"><span class="material-symbols-rounded" aria-hidden="true">delete</span></button>
+            </div>
+          </div>
+          <input type="checkbox" id="pl-ep-create" hidden>
+          <div class="pl-warning hidden" id="pl-ep-simkl-warning">${esc(SIMKL_PLAYLIST_WARNING)}</div>
+          <div class="pl-create-panel hidden" id="pl-ep-create-panel">
+            <div class="pl-field">
+              <label for="pl-ep-create-name">New playlist name</label>
+              <input id="pl-ep-create-name" maxlength="${PLAYLIST_NAME_MAX}" value="${esc(seed.playlist_name || seed.name || "")}" placeholder="New playlist name" aria-describedby="pl-ep-create-name-error">
+              <div class="pl-field-error" id="pl-ep-create-name-error"></div>
+            </div>
+            <div class="pl-field" id="pl-ep-create-type-wrap">
+              <label for="pl-ep-create-type">New list type</label>
+              <select id="pl-ep-create-type"></select>
+              <div class="pl-help" id="pl-ep-create-type-help">Collections group titles in the library, playlists keep their own order.</div>
+            </div>
+            <div class="pl-create-actions">
+              <button type="button" class="pl-btn small" id="pl-ep-create-cancel">Cancel</button>
+              <button type="button" class="pl-btn small primary" id="pl-ep-create-submit"><span class="material-symbols-rounded" aria-hidden="true">add</span>Create playlist</button>
+            </div>
+          </div>
+          <div class="pl-create-panel pl-resource-manage-panel hidden" id="pl-ep-edit-panel">
+            <div class="pl-field full">
+              <label for="pl-ep-edit-name">Playlist name</label>
+              <input id="pl-ep-edit-name" maxlength="${PLAYLIST_NAME_MAX}" value="" placeholder="Playlist name" aria-describedby="pl-ep-edit-name-error">
+              <div class="pl-field-error" id="pl-ep-edit-name-error"></div>
+            </div>
+            <div class="pl-create-actions">
+              <button type="button" class="pl-btn small" id="pl-ep-edit-cancel">Cancel</button>
+              <button type="button" class="pl-btn small primary" id="pl-ep-edit-submit"><span class="material-symbols-rounded" aria-hidden="true">check</span>Save rename</button>
+            </div>
+          </div>
+          <div class="pl-create-panel pl-resource-manage-panel danger hidden" id="pl-ep-delete-panel">
+            <div class="pl-resource-delete-copy">
+              <b>Delete provider playlist?</b>
+              <span>This removes the playlist from the provider account. CrossWatch endpoints are not deleted.</span>
+              <div class="pl-resource-delete-list" id="pl-ep-delete-list"></div>
+            </div>
+            <div class="pl-create-actions">
+              <button type="button" class="pl-btn small" id="pl-ep-delete-cancel">Cancel</button>
+              <button type="button" class="pl-btn small danger" id="pl-ep-delete-submit"><span class="material-symbols-rounded" aria-hidden="true">delete</span>Delete</button>
+            </div>
+          </div>
+          <div class="pl-playlist-search">
+            <span class="material-symbols-rounded" aria-hidden="true">search</span>
+            <input id="pl-ep-playlist-search" type="search" placeholder="Search playlists..." autocomplete="off">
+          </div>
+          <select id="pl-ep-playlist" class="pl-native-playlist-select" ${isEdit ? "" : "multiple"} hidden><option value="">Loading...</option></select>
+          <div class="pl-resource-list" id="pl-ep-resource-list" role="listbox" aria-multiselectable="${isEdit ? "false" : "true"}"><div class="pl-resource-empty">Loading playlists...</div></div>
           <div class="pl-help" id="pl-ep-playlist-help">${isEdit ? "Select one provider playlist." : "Select one or more provider playlists to create endpoints."}</div>
-        </div>
-        <div class="pl-field full" id="pl-ep-create-wrap" style="display:none">
-          <label for="pl-ep-create-name">New playlist name</label>
-          <input id="pl-ep-create-name" maxlength="${PLAYLIST_NAME_MAX}" value="${esc(seed.playlist_name || seed.name || "")}" placeholder="New playlist name" aria-describedby="pl-ep-create-name-error">
-          <div class="pl-field-error" id="pl-ep-create-name-error"></div>
-        </div>
-        <div class="pl-field full" id="pl-ep-create-type-wrap" style="display:none">
-          <label for="pl-ep-create-type">New list type</label>
-          <select id="pl-ep-create-type"></select>
-          <div class="pl-help" id="pl-ep-create-type-help">Collections group titles in the library, playlists keep their own order.</div>
-        </div>
+          <div class="pl-field-error" id="pl-ep-playlist-error"></div>
+        </section>
       </div>
     `;
     openModal({
@@ -676,6 +1271,7 @@
       description,
       body,
       trigger,
+      width: "760px",
       primaryText: isEdit ? "Save endpoint" : "Create endpoint",
       savingText: "Saving endpoint...",
       onOpen: (ctx) => hydrateEndpointModal(ctx, seed, isEdit, provider, instance),
@@ -685,11 +1281,15 @@
 
   function hydrateEndpointModal(ctx, seed, isEdit, provider, instance) {
     const root = ctx.modal;
+    root.__plEndpointCtx = ctx;
+    root.dataset.epEditId = isEdit ? (seed.id || "") : "";
+    root.dataset.epNameDirty = isEdit ? "1" : "";
     bindNameValidation(ctx, "#pl-ep-name", "Endpoint name");
     const providerSelect = $("#pl-ep-provider", root);
     const instanceSelect = $("#pl-ep-instance", root);
     const createCheck = $("#pl-ep-create", root);
     const createName = $("#pl-ep-create-name", root);
+    const search = $("#pl-ep-playlist-search", root);
     const simklWarning = $("#pl-ep-simkl-warning", root);
     const validateCreateName = () => {
       const err = createCheck.checked ? playlistNameError(createName.value) : "";
@@ -697,16 +1297,20 @@
       return err;
     };
     addModalValidator(ctx, validateCreateName);
+    addModalValidator(ctx, () => {
+      const err = endpointCreateMode(root) || selectedValues("#pl-ep-playlist", root).length ? "" : "Select at least one provider playlist.";
+      const list = $("#pl-ep-resource-list", root);
+      const feedback = $("#pl-ep-playlist-error", root);
+      if (list) list.classList.toggle("invalid", !!err);
+      if (feedback) feedback.textContent = err;
+      return err;
+    });
+    addModalValidator(ctx, () => endpointCreateMode(root) ? "Create or cancel the provider playlist before creating the endpoint." : "");
+    addModalValidator(ctx, () => endpointManageMode(root) ? "Save or cancel the provider playlist action before creating the endpoint." : "");
     const updateInstances = () => {
       const list = instancesFor(providerSelect.value);
       instanceSelect.innerHTML = selectOptions(list.map((x) => ({ value: x, label: x })), list.includes(instanceSelect.value) ? instanceSelect.value : (list[0] || "default"));
-    };
-    const toggleCreate = () => {
-      const typeWrap = $("#pl-ep-create-type-wrap", root);
-      $("#pl-ep-existing-wrap", root).style.display = createCheck.checked ? "none" : "";
-      $("#pl-ep-create-wrap", root).style.display = createCheck.checked ? "" : "none";
-      if (typeWrap) typeWrap.style.display = createCheck.checked && typeWrap.dataset.multi ? "" : "none";
-      syncModalPrimary(ctx);
+      window.CW?.ProfileSelect?.enhanceProfile?.(instanceSelect);
     };
     const updateCreateTypes = () => {
       const wrap = $("#pl-ep-create-type-wrap", root);
@@ -715,25 +1319,74 @@
       const types = creatableEndpointTypes(providerSelect.value);
       const current = select.value;
       select.innerHTML = selectOptions(types.map((t) => ({ value: t, label: titleize(t) })), types.includes(current) ? current : types[0]);
-      wrap.dataset.multi = types.length > 1 ? "1" : "";
+      wrap.classList.toggle("hidden", types.length <= 1);
+      window.CW?.IconSelect?.enhance?.(select, { className: "cw-plain-select" });
     };
     const updateProviderRestrictions = () => {
       const isSimkl = String(providerSelect.value || "").toUpperCase() === "SIMKL";
       if (simklWarning) simklWarning.classList.toggle("hidden", !isSimkl);
-      createCheck.disabled = isSimkl;
-      if (isSimkl) createCheck.checked = false;
+      if (createCheck) createCheck.disabled = isSimkl;
+      if (isSimkl) setEndpointCreateMode(root, false);
       updateCreateTypes();
-      toggleCreate();
+      updateEndpointPlaylistActions(root);
+      syncModalPrimary(ctx);
     };
+    $("#pl-ep-name", root)?.addEventListener("input", () => { root.dataset.epNameDirty = "1"; });
+    window.CW?.ProfileSelect?.enhanceProvider?.(providerSelect);
+    window.CW?.ProfileSelect?.enhanceProfile?.(instanceSelect);
     providerSelect.addEventListener("change", () => {
+      setEndpointManageMode(root, "");
       updateInstances();
       updateProviderRestrictions();
       loadEndpointResources(root, "", isEdit);
     });
-    instanceSelect.addEventListener("change", () => loadEndpointResources(root, "", isEdit));
-    createCheck.addEventListener("change", toggleCreate);
-    createName.addEventListener("input", () => syncModalPrimary(ctx));
-    createName.addEventListener("change", () => syncModalPrimary(ctx));
+    instanceSelect.addEventListener("change", () => {
+      setEndpointManageMode(root, "");
+      loadEndpointResources(root, "", isEdit);
+    });
+    $("#pl-ep-list-create", root)?.addEventListener("click", () => {
+      if ($("#pl-ep-list-create", root).disabled) return;
+      setEndpointCreateMode(root, !endpointCreateMode(root));
+      updateEndpointPlaylistActions(root);
+      syncModalPrimary(ctx);
+    });
+    $("#pl-ep-list-edit", root)?.addEventListener("click", () => {
+      if ($("#pl-ep-list-edit", root).disabled) return;
+      openEndpointResourceEdit(root, ctx);
+    });
+    $("#pl-ep-list-delete", root)?.addEventListener("click", () => {
+      if ($("#pl-ep-list-delete", root).disabled) return;
+      openEndpointResourceDelete(root, ctx);
+    });
+    $("#pl-ep-create-cancel", root)?.addEventListener("click", () => {
+      setEndpointCreateMode(root, false);
+      updateEndpointPlaylistActions(root);
+      syncModalPrimary(ctx);
+    });
+    $("#pl-ep-create-submit", root)?.addEventListener("click", () => createProviderPlaylistFromPanel(root, ctx, isEdit));
+    $("#pl-ep-edit-cancel", root)?.addEventListener("click", () => setEndpointManageMode(root, ""));
+    $("#pl-ep-edit-submit", root)?.addEventListener("click", () => renameProviderPlaylistFromPanel(root, ctx, isEdit));
+    $("#pl-ep-delete-cancel", root)?.addEventListener("click", () => setEndpointManageMode(root, ""));
+    $("#pl-ep-delete-submit", root)?.addEventListener("click", () => deleteProviderPlaylistsFromPanel(root, ctx, isEdit));
+    search?.addEventListener("input", () => renderEndpointResourceList(root));
+    createName.addEventListener("input", () => { updateEndpointGeneratedName(root); syncEndpointCreatePanel(root); syncModalPrimary(ctx); });
+    createName.addEventListener("change", () => { updateEndpointGeneratedName(root); syncEndpointCreatePanel(root); syncModalPrimary(ctx); });
+    $("#pl-ep-edit-name", root)?.addEventListener("input", () => { syncEndpointManagePanel(root); syncModalPrimary(ctx); });
+    $("#pl-ep-edit-name", root)?.addEventListener("change", () => { syncEndpointManagePanel(root); syncModalPrimary(ctx); });
+    $("#pl-ep-resource-list", root)?.addEventListener("click", (ev) => {
+      const btn = ev.target.closest("[data-playlist-id]");
+      const select = $("#pl-ep-playlist", root);
+      if (!btn || !select) return;
+      setEndpointCreateMode(root, false);
+      setEndpointManageMode(root, "");
+      const opt = Array.from(select.options || []).find((o) => o.value === btn.dataset.playlistId);
+      if (!opt) return;
+      if (isEdit) Array.from(select.options || []).forEach((o) => { o.selected = o === opt; });
+      else opt.selected = !opt.selected;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      refreshEndpointResourceSelection(root, ctx);
+    });
+    $("#pl-ep-playlist", root)?.addEventListener("change", () => refreshEndpointResourceSelection(root, ctx));
     updateInstances();
     updateProviderRestrictions();
     loadEndpointResources(root, seed.playlist_id || "", isEdit);
@@ -743,27 +1396,32 @@
     const select = $("#pl-ep-playlist", root);
     const help = $("#pl-ep-playlist-help", root);
     select.innerHTML = `<option value="">Loading...</option>`;
+    root.__plEndpointResources = [];
+    renderEndpointResourceList(root);
     try {
       const data = await API.resources(val("#pl-ep-provider", root), val("#pl-ep-instance", root));
       const resources = data.resources || [];
+      root.__plEndpointResources = resources;
       if (!resources.length) {
         select.innerHTML = `<option value="">No playlists found</option>`;
         help.textContent = "No readable provider playlists were returned for this profile.";
+        refreshEndpointResourceSelection(root, root.__plEndpointCtx);
         return;
       }
       select.innerHTML = resources.map((r) => {
-        const caps = [];
-        const endpointType = (r.extra && r.extra.endpoint_type) || r.endpoint_type || r.playlist_type || r.kind || "";
-        if (endpointType) caps.push(endpointType);
-        if (r.media_types && r.media_types.length) caps.push(r.media_types.join("/"));
-        if (r.smart) caps.push("smart");
-        return `<option value="${esc(r.id)}" data-name="${esc(r.name || r.id)}" data-type="${esc(endpointType || "playlist")}" data-media-types="${esc((r.media_types || []).join(","))}" data-kind="${esc(r.kind || "regular")}" ${r.id === selected ? "selected" : ""}>${esc(r.name || r.id)}${caps.length ? ` (${esc(caps.join("/"))})` : ""}</option>`;
+        const caps = resourceCaps(r);
+        const endpointType = r.discovery ? "discovery" : ((r.extra && r.extra.endpoint_type) || r.endpoint_type || r.playlist_type || r.kind || "");
+        const shouldSelect = selected ? r.id === selected : (!isEdit && resources[0] && r.id === resources[0].id);
+        return `<option value="${esc(r.id)}" data-name="${esc(r.name || r.id)}" data-type="${esc(endpointType || "playlist")}" data-media-types="${esc((r.media_types || []).join(","))}" data-kind="${esc(r.kind || "regular")}" ${shouldSelect ? "selected" : ""}>${esc(r.name || r.id)}${caps.length ? ` (${esc(caps.join("/"))})` : ""}</option>`;
       }).join("");
       help.textContent = isEdit ? "Select one provider playlist." : "Select one or more provider playlists to create endpoints.";
     } catch (err) {
       select.innerHTML = `<option value="">Could not load playlists</option>`;
       help.textContent = err && err.message ? err.message : "Provider playlist loading failed.";
+      root.__plEndpointResources = [];
     }
+    root.__plEndpointCtx = root.__plEndpointCtx || state.modal;
+    refreshEndpointResourceSelection(root, root.__plEndpointCtx);
   }
 
   async function saveEndpointFromModal(ctx, seed, isEdit) {
@@ -780,21 +1438,40 @@
       const createNameErr = playlistNameError(createName);
       if (createNameErr) throw new Error(createNameErr);
       const createType = val("#pl-ep-create-type", root) || creatableEndpointTypes(provider)[0];
-      await API.epUpsert({ id: isEdit ? seed.id : "", name: name || createName, provider, instance, create: true, create_name: createName, media_type: createType });
+      await API.epUpsert({ id: isEdit ? seed.id : "", name: name || nextEndpointName(0, isEdit ? seed.id : ""), provider, instance, create: true, create_name: createName, media_type: createType });
     } else {
       const ids = selectedValues("#pl-ep-playlist", root);
       if (!ids.length) throw new Error("Select at least one playlist.");
       if (isEdit && ids.length !== 1) throw new Error("Edit mode can only save one selected playlist.");
-      for (const playlistId of ids) {
+      for (const [index, playlistId] of ids.entries()) {
         const opt = Array.from($("#pl-ep-playlist", root).options || []).find((o) => o.value === playlistId);
         const playlistName = opt ? opt.dataset.name || opt.textContent : playlistId;
         const playlistType = opt ? opt.dataset.type || "" : "";
         const mediaTypes = opt && opt.dataset.mediaTypes ? opt.dataset.mediaTypes.split(",").filter(Boolean) : [];
-        await API.epUpsert({ id: isEdit ? seed.id : "", name: name || playlistName, provider, instance, playlist_id: playlistId, playlist_name: playlistName, playlist_type: playlistType, media_types: mediaTypes });
+        const endpointName = root.dataset.epNameDirty === "1" || isEdit ? name : nextEndpointName(index, isEdit ? seed.id : "");
+        await API.epUpsert({ id: isEdit ? seed.id : "", name: endpointName, provider, instance, playlist_id: playlistId, playlist_name: playlistName, playlist_type: playlistType, media_types: mediaTypes });
       }
     }
     closeModal(true);
     await refreshOverview();
+  }
+
+  async function syncEndpoint(endpoint, btn) {
+    if (!endpoint) return;
+    const id = String(endpoint.id || "");
+    const root = $("#page-playlists");
+    state.runningEndpoints.add(id);
+    if (root) refreshSection(root, "endpoints");
+    try {
+      await API.epSync(id);
+      await refreshOverview(["endpoints", "activity"]);
+    } catch (err) {
+      openNotice("Refresh failed", err && err.message ? err.message : "Could not refresh this endpoint.", btn);
+    } finally {
+      state.runningEndpoints.delete(id);
+      const freshRoot = $("#page-playlists");
+      if (freshRoot) refreshSection(freshRoot, "endpoints");
+    }
   }
 
   function openEndpointDelete(endpoint, trigger) {
@@ -835,45 +1512,60 @@
     const targets = seed.target_endpoints || (state.endpoints.find((e) => e.id !== source) ? [state.endpoints.find((e) => e.id !== source).id] : []);
     const target = targets.find((id) => id !== source) || targets[0] || "";
     const title = isEdit ? "Edit playlist mapping" : "Create playlist mapping";
-    const endpointOpts = state.endpoints.map((ep) => ({ value: ep.id, label: `${ep.name || ep.id} (${ep.provider})` }));
+    const endpointOpts = state.endpoints.map((ep) => ({ value: ep.id, label: `${ep.name || ep.id} (${ep.provider}${endpointIsDiscovery(ep) ? " discovery" : ""})` }));
     const rulesetOpts = [{ value: "", label: "Direct one way" }].concat(state.rulesets.map((rs) => ({ value: rs.id, label: `${rs.name}${rs.built_in ? " (built in)" : ""}` })));
+    const keepSeedName = isEdit || !!draft;
+    const mappingName = keepSeedName ? (seed.name || seed.id || "") : nextMappingName();
     const body = `
-      <div class="pl-form">
-        <div class="pl-field full">
-          <label for="pl-map-name">Mapping name</label>
-          <input id="pl-map-name" maxlength="${NAME_MAX}" value="${esc(clone ? "" : seed.name || "")}" placeholder="Mapping name" aria-describedby="pl-map-name-error">
-          <div class="pl-field-error" id="pl-map-name-error"></div>
-        </div>
-        <div class="pl-field">
-          <label for="pl-map-source">Source endpoint</label>
-          <select id="pl-map-source">${selectOptions(endpointOpts, source)}</select>
-        </div>
-        <div class="pl-field">
-          <label for="pl-map-targets">Destination endpoint</label>
-          <select id="pl-map-targets">${selectOptions(endpointOpts, target)}</select>
-        </div>
-        <div class="pl-field">
-          <label for="pl-map-direction">Direction</label>
-          <select id="pl-map-direction">${selectOptions(ENUMS.direction.map(([value, label]) => ({ value, label })), (rulesetById(seed.ruleset_id || "") || {}).direction || "one_way")}</select>
-        </div>
-        <div class="pl-field">
-          <label for="pl-map-ruleset">Ruleset</label>
-          <select id="pl-map-ruleset">${selectOptions(rulesetOpts, seed.ruleset_id || "")}</select>
-        </div>
-        <div class="pl-field">
-          <label for="pl-map-membership">Sync mode</label>
-          <select id="pl-map-membership">${selectOptions(ENUMS.membership.map(([value, label]) => ({ value, label })), seed.membership || "managed_only")}</select>
-        </div>
-        <div class="pl-field">
-          <label for="pl-map-order">Ordering</label>
-          <select id="pl-map-order">${selectOptions(ENUMS.order.map(([value, label]) => ({ value, label })), seed.order || "ignore")}</select>
-        </div>
-        <label class="pl-check"><input type="checkbox" id="pl-map-enabled" ${seed.enabled === false ? "" : "checked"}> Enabled</label>
-        <div class="pl-warning full hidden" id="pl-map-simkl-warning">${esc(SIMKL_PLAYLIST_WARNING)}</div>
-        <div class="pl-field full">
-          <button type="button" class="pl-btn small" id="pl-map-manage-rulesets">Manage rulesets</button>
-          <div class="pl-help" id="pl-map-rule-help"></div>
-        </div>
+      <div class="pl-mapping-wizard">
+        <section class="pl-mapping-step">
+          <div class="pl-step-head"><span class="pl-step-index">1</span><div><b>Mapping details</b><span>Name uses the next available mapping number and can be edited.</span></div></div>
+          <div class="pl-form">
+            <div class="pl-field full">
+              <label for="pl-map-name">Mapping name <span aria-hidden="true">*</span></label>
+              <input id="pl-map-name" maxlength="${NAME_MAX}" value="${esc(mappingName)}" placeholder="Enter mapping name" aria-describedby="pl-map-name-error">
+              <div class="pl-field-error" id="pl-map-name-error"></div>
+            </div>
+          </div>
+        </section>
+        <section class="pl-mapping-step">
+          <div class="pl-step-head"><span class="pl-step-index">2</span><div><b>Mapping configuration</b><span>Choose a source endpoint and the destination that should receive updates.</span></div></div>
+          <div class="pl-map-grid">
+            <div class="pl-field">
+              <label for="pl-map-source">Source endpoint <span aria-hidden="true">*</span></label>
+              <select id="pl-map-source">${selectOptions(endpointOpts, source)}</select>
+            </div>
+            <div class="pl-field">
+              <label for="pl-map-targets">Destination endpoint <span aria-hidden="true">*</span></label>
+              <select id="pl-map-targets">${selectOptions(endpointOpts, target)}</select>
+            </div>
+            <div class="pl-field pl-map-advanced" id="pl-map-direction-field">
+              <label for="pl-map-direction">Direction</label>
+              <select id="pl-map-direction">${selectOptions(ENUMS.direction.map(([value, label]) => ({ value, label })), (rulesetById(seed.ruleset_id || "") || {}).direction || "one_way")}</select>
+            </div>
+            <div class="pl-field pl-map-advanced" id="pl-map-ruleset-field">
+              <label for="pl-map-ruleset">Ruleset</label>
+              <select id="pl-map-ruleset">${selectOptions(rulesetOpts, seed.ruleset_id || "")}</select>
+            </div>
+            <div class="pl-field pl-map-advanced" id="pl-map-membership-field">
+              <label for="pl-map-membership">Sync mode</label>
+              <select id="pl-map-membership">${selectOptions(ENUMS.membership.map(([value, label]) => ({ value, label })), seed.membership || "managed_only")}</select>
+            </div>
+            <div class="pl-field pl-map-advanced" id="pl-map-order-field">
+              <label for="pl-map-order">Ordering</label>
+              <select id="pl-map-order">${selectOptions(ENUMS.order.map(([value, label]) => ({ value, label })), seed.order || "ignore")}</select>
+            </div>
+          </div>
+          <label class="pl-map-toggle"><input type="checkbox" id="pl-map-enabled" ${seed.enabled === false ? "" : "checked"}><span class="pl-map-toggle-box"><span class="material-symbols-rounded" aria-hidden="true">check</span></span><span><b>Enabled</b><small>This mapping is active and will be synchronized.</small></span></label>
+          <div class="pl-warning hidden" id="pl-map-simkl-warning">${esc(SIMKL_PLAYLIST_WARNING)}</div>
+          <div class="pl-map-ruleset-card pl-map-advanced" id="pl-map-ruleset-actions">
+            <span class="material-symbols-rounded" aria-hidden="true">shield</span>
+            <div><b>Rulesets</b><span>Rulesets define how items are matched and synchronized.</span></div>
+            <button type="button" class="pl-btn small" id="pl-map-manage-rulesets">Manage rulesets <span class="material-symbols-rounded" aria-hidden="true">chevron_right</span></button>
+          </div>
+          <div class="pl-map-info"><span class="material-symbols-rounded" aria-hidden="true">info</span><div class="pl-help" id="pl-map-rule-help"></div></div>
+          <div class="pl-map-info hidden" id="pl-map-discovery-help"><span class="material-symbols-rounded" aria-hidden="true">travel_explore</span><div class="pl-help">Discovery sources use direct mirror mappings so the destination matches the feed after each successful sync.</div></div>
+        </section>
       </div>
     `;
     openModal({
@@ -881,10 +1573,11 @@
       description: isEdit ? "Update the endpoints, ruleset and sync behavior for this mapping." : "Connect a source playlist endpoint to one or more destination endpoints.",
       body,
       trigger,
+      width: "760px",
       primaryText: isEdit ? "Save mapping" : "Create mapping",
       savingText: "Saving mapping...",
       onCancel: () => { if (typeof onDone === "function") onDone("cancel"); },
-      onOpen: (ctx) => hydrateMappingModal(ctx),
+      onOpen: (ctx) => hydrateMappingModal(ctx, seed, isEdit, keepSeedName),
       onPrimary: async (ctx) => {
         await saveMappingFromModal(ctx, isEdit ? mapping.id : "");
         if (typeof onDone === "function") onDone("save");
@@ -892,37 +1585,65 @@
     });
   }
 
-  function hydrateMappingModal(ctx) {
+  function hydrateMappingModal(ctx, seed = {}, isEdit = false, keepSeedName = false) {
     const root = ctx.modal;
+    root.dataset.mapEditId = isEdit ? (seed.id || "") : "";
+    root.dataset.mapNameDirty = keepSeedName && seed.name ? "1" : "";
     bindNameValidation(ctx, "#pl-map-name", "Mapping name");
     const refresh = () => {
       const source = val("#pl-map-source", root);
       $$("#pl-map-targets option", root).forEach((opt) => { opt.disabled = opt.value === source; });
       const targetSelect = $("#pl-map-targets", root);
-      if (targetSelect.value === source) {
+      $$("#pl-map-targets option", root).forEach((opt) => {
+        const ep = endpointById(opt.value);
+        opt.disabled = opt.value === source || !endpointWritable(ep);
+      });
+      if (targetSelect.value === source || (targetSelect.selectedOptions[0] && targetSelect.selectedOptions[0].disabled)) {
         const next = Array.from(targetSelect.options || []).find((opt) => !opt.disabled);
         targetSelect.value = next ? next.value : "";
       }
-      const rule = rulesetById(val("#pl-map-ruleset", root));
-      const direction = val("#pl-map-direction", root);
+      updateMappingGeneratedName(root);
+      let rule = rulesetById(val("#pl-map-ruleset", root));
+      let direction = val("#pl-map-direction", root);
       const help = $("#pl-map-rule-help", root);
       const sourceEp = endpointById(source);
       const targetEp = endpointById(targetSelect.value);
+      const sourceDiscovery = endpointIsDiscovery(sourceEp);
       const simklWarning = $("#pl-map-simkl-warning", root);
       const usesSimkl = [sourceEp, targetEp].some((ep) => String((ep && ep.provider) || "").toUpperCase() === "SIMKL");
       if (simklWarning) simklWarning.classList.toggle("hidden", !usesSimkl);
+      $$("#pl-map-direction-field,#pl-map-ruleset-field,#pl-map-membership-field,#pl-map-order-field,#pl-map-ruleset-actions", root).forEach((el) => el.classList.toggle("hidden", sourceDiscovery));
+      const discoveryHelp = $("#pl-map-discovery-help", root);
+      if (discoveryHelp) discoveryHelp.classList.toggle("hidden", !sourceDiscovery);
+      ["#pl-map-direction", "#pl-map-ruleset", "#pl-map-membership", "#pl-map-order"].forEach((sel) => {
+        const el = $(sel, root);
+        if (el) el.disabled = sourceDiscovery;
+      });
+      if (sourceDiscovery) {
+        $("#pl-map-direction", root).value = "one_way";
+        $("#pl-map-ruleset", root).value = "";
+        $("#pl-map-membership", root).value = "mirror";
+        $("#pl-map-order", root).value = targetEp && targetEp.can_reorder === false ? "ignore" : "preserve";
+        rule = null;
+        direction = "one_way";
+      }
       if (!rule) help.textContent = "Direct mappings run one way and require exactly one destination endpoint.";
       else help.textContent = `${rule.name} supports ${ruleLabel(rule.direction)} mappings, ${rule.write_mode} writes, and up to ${rule.maximum_targets} destination endpoint(s).`;
+      if (targetEp && !endpointWritable(targetEp)) help.textContent = "Choose a writable destination endpoint.";
       if (rule && rule.direction !== direction) help.textContent += " Change the direction or choose another ruleset before saving.";
+      enhanceMappingSelects(root);
+      syncModalPrimary(ctx);
     };
-    $("#pl-map-source", root).addEventListener("change", refresh);
-    $("#pl-map-targets", root).addEventListener("change", refresh);
+    $("#pl-map-name", root)?.addEventListener("input", () => { root.dataset.mapNameDirty = "1"; });
+    $("#pl-map-source", root).addEventListener("change", () => { refresh(); });
+    $("#pl-map-targets", root).addEventListener("change", () => { refresh(); });
     $("#pl-map-ruleset", root).addEventListener("change", refresh);
     $("#pl-map-direction", root).addEventListener("change", refresh);
     $("#pl-map-manage-rulesets", root).addEventListener("click", (e) => {
       const draft = readMappingDraft(root);
       openRulesetManager({ trigger: e.currentTarget, fromMapping: true, mappingDraft: draft, mappingDone: ctx.opts.onDone });
     });
+    enhanceMappingSelects(root);
     refresh();
   }
 
@@ -941,6 +1662,7 @@
   async function saveMappingFromModal(ctx, id) {
     const root = ctx.modal;
     const draft = readMappingDraft(root);
+    if (!draft.name) draft.name = nextMappingName(0, id);
     const direction = val("#pl-map-direction", root);
     const rule = rulesetById(draft.ruleset_id);
     const nameErr = nameFieldError(draft.name, "Mapping name");
@@ -950,6 +1672,8 @@
     if (!draft.ruleset_id && draft.target_endpoints.length !== 1) throw new Error("Direct mappings require exactly one destination endpoint.");
     if (rule && rule.direction !== direction) throw new Error(`The selected ruleset supports ${ruleLabel(rule.direction)}, not ${ruleLabel(direction)}.`);
     if (rule && draft.target_endpoints.length > Number(rule.maximum_targets || 1)) throw new Error("Too many destination endpoints for the selected ruleset.");
+    if (endpointIsDiscovery(endpointById(draft.source_endpoint)) && (draft.ruleset_id || draft.membership !== "mirror")) throw new Error("Discovery sources use direct mirror mappings.");
+    if (draft.target_endpoints.some((id) => !endpointWritable(endpointById(id)))) throw new Error("Destination endpoint must be writable.");
     const res = await API.mapUpsert({ id, ...draft });
     notifyPairsChanged({ source: "playlists", mapping_id: (res.mapping && res.mapping.id) || id, pair_id: res.pair_id || (res.mapping && res.mapping.assigned_pair) || "" });
     closeModal(true);
@@ -974,16 +1698,19 @@
       openNotice("Sync pair missing", "Save the mapping once so CrossWatch can create its playlist sync pair.", btn);
       return;
     }
-    btn.disabled = true;
-    btn.textContent = "Syncing...";
+    const id = String(mapping.id || "");
+    const root = $("#page-playlists");
+    state.runningMappings.add(id);
+    if (root) refreshSection(root, "mappings");
     try {
       await API.runPair(mapping.assigned_pair);
       await refreshOverview(["mappings", "activity"]);
     } catch (err) {
       openNotice("Sync failed", err && err.message ? err.message : "Could not run this mapping.", btn);
     } finally {
-      btn.disabled = false;
-      btn.textContent = "Sync now";
+      state.runningMappings.delete(id);
+      const freshRoot = $("#page-playlists");
+      if (freshRoot) refreshSection(freshRoot, "mappings");
     }
   }
 
@@ -1030,10 +1757,10 @@
           <td>${esc(used.length)}</td>
           <td>
             <div class="pl-actions">
-              <button class="pl-btn small" data-ruleset-action="view" data-id="${esc(rs.id)}">View</button>
-              <button class="pl-btn small" data-ruleset-action="clone" data-id="${esc(rs.id)}">Clone</button>
-              <button class="pl-btn small" data-ruleset-action="edit" data-id="${esc(rs.id)}" ${rs.built_in ? "disabled title='Built in rulesets cannot be edited.'" : ""}>Edit</button>
-              <button class="pl-btn small danger" data-ruleset-action="delete" data-id="${esc(rs.id)}" ${rs.built_in ? "disabled title='Built in rulesets cannot be deleted.'" : ""}>Delete</button>
+              ${rulesetActionButton("view", rs.id, "View ruleset", "visibility")}
+              ${rulesetActionButton("clone", rs.id, "Clone ruleset", "content_copy", "sync")}
+              ${rulesetActionButton("edit", rs.id, rs.built_in ? "Built in rulesets cannot be edited." : "Edit ruleset", "edit", "edit", !!rs.built_in)}
+              ${rulesetActionButton("delete", rs.id, rs.built_in ? "Built in rulesets cannot be deleted." : "Delete ruleset", "delete", "delete", !!rs.built_in)}
             </div>
           </td>
         </tr>
@@ -1041,8 +1768,8 @@
     }).join("");
     const body = `
       <div class="pl-table-wrap">
-        <table>
-          <thead><tr><th>Ruleset name</th><th>Type</th><th>Direction support</th><th>Strategy</th><th>Capacity behaviour</th><th>Mappings using it</th><th>Actions</th></tr></thead>
+        <table class="pl-ruleset-table">
+          <thead><tr><th>Ruleset name</th><th>Type</th><th>Direction</th><th>Strategy</th><th>Capacity behaviour</th><th>Mappings</th><th>Actions</th></tr></thead>
           <tbody>${rows || `<tr><td colspan="7"><div class="pl-empty"><strong>No rulesets</strong><span>Create a custom ruleset for advanced mapping behavior.</span></div></td></tr>`}</tbody>
         </table>
       </div>
@@ -1443,7 +2170,7 @@
     const body = `
       <div class="pl-confirm-lines">
         <div><b>Ruleset:</b> ${esc(ruleset.name)}</div>
-        <div><b>Mappings using it:</b> ${esc(used.length)}</div>
+        <div><b>Mappings:</b> ${esc(used.length)}</div>
         ${used.length ? `<div class="pl-warning">Deletion is blocked while mappings reference this ruleset: ${esc(used.map((m) => m.name || m.id).join(", "))}. Change those mappings first.</div>` : `<div>Deleting this custom ruleset will not delete endpoints or mappings.</div>`}
       </div>
     `;
@@ -1462,6 +2189,29 @@
         await reloadData();
         render($("#page-playlists"));
         openRulesetManager({ trigger: context.trigger, fromMapping: context.fromMapping, mappingDraft: context.mappingDraft, mappingDone: context.mappingDone });
+      },
+    });
+  }
+
+  function openActivityClear(trigger) {
+    const runCount = activityStats(state.activity || []).total;
+    const body = `
+      <div class="pl-confirm-lines">
+        <div><b>Playlist runs:</b> ${esc(runCount)}</div>
+        <div>This clears playlist activity timestamps and mapping results. Endpoints, mappings and provider playlists are not deleted.</div>
+      </div>
+    `;
+    openModal({
+      title: "Clear playlist activity",
+      description: "Reset the playlist activity overview and counters.",
+      body,
+      trigger,
+      primaryText: "Clear activity",
+      savingText: "Clearing...",
+      onPrimary: async () => {
+        await API.activityClear();
+        closeModal(true);
+        await refreshOverview(["endpoints", "mappings", "activity"]);
       },
     });
   }
@@ -1488,8 +2238,7 @@
     } catch {}
   }
 
-  async function reloadData() {
-    state.error = "";
+  async function loadPlaylistDataAttempt() {
     const [providers, endpoints, mappings, rulesets, overview, activity] = await Promise.all([
       API.providers(),
       API.endpoints(),
@@ -1498,6 +2247,18 @@
       API.overview(),
       API.activity(),
     ]);
+    return { providers, endpoints, mappings, rulesets, overview, activity };
+  }
+
+  async function reloadData() {
+    state.error = "";
+    let data = null;
+    for (let attempt = 0; attempt <= EMPTY_PROVIDER_RETRIES; attempt += 1) {
+      data = await loadPlaylistDataAttempt();
+      if ((data.providers.providers || []).length || attempt >= EMPTY_PROVIDER_RETRIES) break;
+      await delay(EMPTY_PROVIDER_RETRY_MS * (attempt + 1));
+    }
+    const { providers, endpoints, mappings, rulesets, overview, activity } = data;
     state.providers = providers.providers || [];
     state.endpoints = endpoints.endpoints || [];
     state.mappings = mappings.mappings || [];

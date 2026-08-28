@@ -188,6 +188,9 @@
     const selectedData = Object.prototype.hasOwnProperty.call(data, "selectedLabel")
       ? { ...data, label: String(data.selectedLabel || "") }
       : data;
+    if (Object.prototype.hasOwnProperty.call(data, "selectedShowNote")) {
+      selectedData.showNote = data.selectedShowNote;
+    }
     labelHost.replaceWith(rowMain(selectedData));
     btn.insertBefore(btn.querySelector(".cw-icon-select-main"), btn.querySelector(".cw-icon-select-caret"));
 
