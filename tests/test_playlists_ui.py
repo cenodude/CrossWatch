@@ -26,6 +26,7 @@ def test_playlists_assets_exist():
 
 def test_playlists_page_is_modal_first_overview():
     js = (REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8")
+    css = (REPO / "assets" / "css" / "pages.css").read_text(encoding="utf-8")
     assert "Playlist endpoints" in js
     assert "Mappings" in js
     assert "Activity overview" in js
@@ -41,17 +42,17 @@ def test_playlists_page_is_modal_first_overview():
     assert "pl-ep-editor" not in js
     assert "pl-map-editor" not in js
     assert '<header class="pl-header">' not in js
-    assert "#page-playlists .pl-header{position:static;" in js
-    assert "padding:18px 20px" in js
-    assert "#page-playlists .pl-title{margin:0;font-size:28px;line-height:1.1;font-weight:850" in js
-    assert "#page-playlists .pl-sub{margin-top:6px;color:var(--pl-soft);font-size:16px" in js
-    assert "#page-playlists .pl-header .pl-btn{min-height:0;padding:10px 14px;border-radius:10px;font-size:14px;font-weight:850;gap:8px}" in js
+    assert "#page-playlists .pl-header{display:flex;" in css
+    assert "padding:18px 20px" in css
+    assert "#page-playlists .pl-title{margin:0;font-size:28px;line-height:1.1;font-weight:850" in css
+    assert "#page-playlists .pl-sub{margin-top:6px;color:var(--pl-soft);font-size:16px" in css
+    assert "#page-playlists .pl-header .pl-btn{min-height:0;padding:10px 14px;border-radius:10px;font-size:14px;font-weight:850;gap:8px" in css
     assert '<button class="pl-btn" id="pl-new-endpoint"><span class="material-symbols-rounded" aria-hidden="true">add</span>New endpoint</button>' in js
     assert '<button class="pl-btn" id="pl-new-mapping"' in js
-    assert "--pl-shell-bg" in js
-    assert "--pl-shell-bg:#171d26" in js
-    assert 'html[data-cw-theme="flat-dark"] #page-playlists' in js
-    assert 'html[data-cw-theme="flat-light"] #page-playlists' in js
+    assert "--pl-shell-bg" in css
+    assert "--pl-shell-bg:#171d26" in css
+    assert 'html[data-cw-theme="flat-dark"] #page-playlists' in css
+    assert 'html[data-cw-theme="flat-light"] #page-playlists' in css
 
 
 def test_playlists_modals_cover_create_edit_delete_flows():
@@ -82,15 +83,80 @@ def test_playlists_modals_cover_create_edit_delete_flows():
     assert "can only use letters, numbers, spaces" in js
     assert "maxlength=\"${PLAYLIST_NAME_MAX}\"" in js
     assert 'id="pl-ep-type"' not in js
-    assert "media_type: mediaType" not in js
-    assert 'placeholder="Endpoint name"' in js
-    assert 'placeholder="Mapping name"' in js
+    assert "await API.resourceCreate({ provider, instance, name: createName, media_type: mediaType })" in js
+    assert "create: true, create_name: createName, media_type: createType" in js
+    assert 'placeholder="Enter endpoint name"' in js
+    assert 'placeholder="Enter mapping name"' in js
     assert 'placeholder="Weekend"' not in js
     assert 'placeholder="Weekend movies"' not in js
     assert "pl-ep-name-error" in js
     assert "pl-ep-create-name-error" in js
     assert "pl-map-name-error" in js
     assert "pl-rs-name-error" in js
+
+
+def test_endpoint_modal_uses_guided_playlist_picker():
+    js = (REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8")
+    css = (REPO / "assets" / "css" / "pages.css").read_text(encoding="utf-8")
+    assert "function nextSequenceName" in js
+    assert "function nextEndpointName" in js
+    assert 'nextSequenceName(state.endpoints, "EP"' in js
+    assert "root.dataset.epNameDirty" in js
+    assert "Name uses the next available endpoint number" in js
+    assert "window.CW?.ProfileSelect?.enhanceProvider?.(providerSelect)" in js
+    assert "window.CW?.ProfileSelect?.enhanceProfile?.(instanceSelect)" in js
+    assert 'id="pl-ep-playlist-search"' in js
+    assert 'id="pl-ep-resource-list"' in js
+    assert 'id="pl-ep-list-create"' in js
+    assert 'id="pl-ep-list-edit"' in js
+    assert 'id="pl-ep-list-delete"' in js
+    assert "resourceCreate: (body)" in js
+    assert "resourceRename: (provider, instance, id, name)" in js
+    assert "resourceDelete: (provider, instance, id)" in js
+    assert 'id="pl-ep-create-submit"' in js
+    assert 'id="pl-ep-create-cancel"' in js
+    assert 'id="pl-ep-edit-submit"' in js
+    assert 'id="pl-ep-delete-submit"' in js
+    assert "Create or cancel the provider playlist before creating the endpoint." in js
+    assert "Save or cancel the provider playlist action before creating the endpoint." in js
+    assert "createProviderPlaylistFromPanel(root, ctx, isEdit)" in js
+    assert "renameProviderPlaylistFromPanel(root, ctx, isEdit)" in js
+    assert "deleteProviderPlaylistsFromPanel(root, ctx, isEdit)" in js
+    assert "await loadEndpointResources(root, resource.id || \"\", isEdit)" in js
+    assert "function resourceBadgeMeta" in js
+    assert 'class="pl-resource-badges"' in js
+    assert 'class="pl-resource-badge material-symbols-rounded"' in js
+    assert "Create a new list instead" not in js
+    assert ".pl-endpoint-wizard" in css
+    assert ".pl-resource-list" in css
+    assert ".pl-resource-badges" in css
+
+
+def test_mapping_modal_uses_guided_endpoint_picker():
+    js = (REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8")
+    css = (REPO / "assets" / "css" / "pages.css").read_text(encoding="utf-8")
+    assert "function generatedMappingName" in js
+    assert "function nextMappingName" in js
+    assert 'nextSequenceName(state.mappings, "MAP"' in js
+    assert "function endpointOptionData" in js
+    assert "root.dataset.mapNameDirty" in js
+    assert "Name uses the next available mapping number" in js
+    assert "updateMappingGeneratedName(root)" in js
+    assert 'className: "pl-endpoint-select"' in js
+    assert 'menuClassName: "pl-endpoint-select-menu"' in js
+    assert 'getOptionData: endpointOptionData' in js
+    assert 'const isWatchlist = rawType.includes("watchlist")' in js
+    assert 'isWatchlist ? "Watchlist"' in js
+    assert "selectedShowNote: false" in js
+    assert "selectedData.showNote = data.selectedShowNote" in (REPO / "assets" / "helpers" / "icon-select.js").read_text(encoding="utf-8")
+    assert 'class="pl-mapping-wizard"' in js
+    assert 'class="pl-map-ruleset-card pl-map-advanced"' in js
+    assert 'class="pl-map-toggle"' in js
+    assert ".pl-mapping-wizard" in css
+    assert ".pl-map-grid" in css
+    assert ".pl-map-ruleset-card" in css
+    assert ".pl-endpoint-select-menu" in css
+    assert ".pl-endpoint-select .cw-icon-select-text" in css
 
 
 def test_playlist_actions_use_partial_overview_refresh():
@@ -106,19 +172,22 @@ def test_playlists_initial_load_uses_page_shell_and_section_skeletons():
     js = (REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8")
     assert "loaded: false" in js
     assert "loading: false" in js
+    assert "const EMPTY_PROVIDER_RETRIES = 2" in js
+    assert "function loadPlaylistDataAttempt" in js
+    assert "if ((data.providers.providers || []).length || attempt >= EMPTY_PROVIDER_RETRIES) break;" in js
     assert "function renderSkeleton" in js
     assert "state.loading && !state.loaded" in js
     assert "state.loading = true" in js
     assert "Fetching endpoints, mappings, rulesets and activity" not in js
 
 
-def test_playlists_provider_and_experimental_banners():
+def test_playlists_provider_banner():
     js = (REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8")
     assert "PLAYLIST_COMPATIBLE_PROVIDERS" in js
-    assert '["PLEX", "TRAKT", "MDBLIST", "JELLYFIN", "EMBY", "PUBLICMETADB", "SIMKL"]' in js
+    assert '["PLEX", "TRAKT", "MDBLIST", "JELLYFIN", "EMBY", "PUBLICMETADB", "SIMKL", "CROSSWATCH"]' in js
     assert "Playlists need at least one compatible provider" in js
-    assert "Plex, Trakt, MDBList, Jellyfin, Emby, PublicMetaDB or SIMKL" in js
-    assert "Playlists are highly experimental and cause issues" in js
+    assert "Plex, Trakt, MDBList, Jellyfin, Emby, PublicMetaDB, SIMKL or CrossWatch" in js
+    assert "Playlists are highly experimental and cause issues" not in js
     assert "SIMKL Custom Lists are not supported" in js
     assert "pl-ep-simkl-warning" in js
     assert "pl-map-simkl-warning" in js
@@ -128,33 +197,91 @@ def test_playlists_provider_and_experimental_banners():
 
 def test_endpoint_and_mapping_tables_use_compact_icon_actions():
     js = (REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8")
+    css = (REPO / "assets" / "css" / "pages.css").read_text(encoding="utf-8")
     assert "function endpointRef" in js
     assert "function mappingTargetRefs" in js
     assert "function actionButton" in js
-    assert ".pl-action-btn.sync" in js
-    assert ".pl-action-btn.edit" in js
-    assert ".pl-action-btn.delete" in js
+    assert "function syncPairIndicator" in js
+    assert "Sync pair: ${esc(id)}" in js
+    assert "runningEndpoints: new Set()" in js
+    assert "async function syncEndpoint" in js
+    assert '"endpoint-sync"' in js
+    assert "await API.epSync(id)" in js
+    assert ".pl-action-btn.sync" in css
+    assert ".pl-action-btn.refresh" in css
+    assert ".pl-action-btn.edit" in css
+    assert ".pl-action-btn.delete" in css
+    assert ".pl-icon-status.ok" in css
+    assert ".pl-state.ok" in css
     assert '<select id="pl-map-targets">${selectOptions(endpointOpts, target)}</select>' in js
     assert '<select id="pl-map-targets" multiple' not in js
     assert 'target_endpoints: val("#pl-map-targets", root) ? [val("#pl-map-targets", root)] : []' in js
     assert 'data-action="endpoint-clone"' not in js
     assert 'data-action="mapping-clone"' not in js
     assert "assigned_pair_label" not in js
-    assert '<th aria-label="Actions"></th>' in js
+    assert '<table class="pl-endpoints-table">' in js
+    assert '<table class="pl-mappings-table">' in js
+    assert '<th>Mapping</th><th>Source</th><th>Direction</th><th>Destination</th>' in js
+    assert "<td>${syncPairIndicator(m.assigned_pair)}</td>" in js
+    assert '<th aria-label="Actions">Actions</th>' in js
     assert '<th>Actions</th></tr></thead>' in js
+    assert "#page-playlists .pl-endpoints-table{table-layout:fixed;min-width:0}" in css
+    assert "#page-playlists .pl-endpoints-table td:nth-child(8) .pl-actions{justify-content:flex-start}" in css
+    assert "#page-playlists .pl-mappings-table{min-width:0}" in css
+    assert "#page-playlists .pl-mappings-table th:nth-child(6),#page-playlists .pl-mappings-table td:nth-child(6){width:6%}" in css
+    assert "#page-playlists .pl-mappings-table th:nth-child(11),#page-playlists .pl-mappings-table td:nth-child(11){width:12%}" in css
+    assert "#page-playlists .pl-mappings-table td:nth-child(11) .pl-actions{justify-content:flex-start}" in css
+    assert "#page-playlists .pl-mappings-table td:nth-child(11) .pl-action-btn{width:34px;height:34px}" in css
+    assert "#page-playlists .pl-mappings-table .pl-muted{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" in css
+
+
+def test_playlists_overview_uses_dashboard_table_body():
+    js = (REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8")
+    css = (REPO / "assets" / "css" / "pages.css").read_text(encoding="utf-8")
+    assert "function endpointIdentity" in js
+    assert "function statCard" in js
+    assert "function activityChangeSummary" in js
+    assert "function openActivityClear" in js
+    assert "activityClear: ()" in js
+    assert 'data-action="activity-clear"' in js
+    assert '<table class="pl-activity-table">' in js
+    assert "<th>Changes</th>" in js
+    assert 'class="pl-change-chip' in js
+    assert "pl-entity-icon" in js
+    assert 'class="pl-state ok"' in js
+    assert 'class="pl-btn small accent"' in js
+    assert "#page-playlists .pl-grid>.pl-section" in css
+    assert "#page-playlists .pl-entity" in css
+    assert "#page-playlists .pl-state" in css
+    assert "#page-playlists .pl-stat-icon" in css
+    assert "#page-playlists .pl-activity-table{table-layout:fixed;min-width:760px}" in css
+    assert "#page-playlists .pl-change-set" in css
+    assert "#page-playlists .pl-change-chip" in css
+
+
+def test_discovery_mapping_modal_collapses_advanced_options():
+    js = (REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8")
+    assert "function endpointIsDiscovery" in js
+    assert 'id="pl-map-discovery-help"' in js
+    assert '["#pl-map-direction", "#pl-map-ruleset", "#pl-map-membership", "#pl-map-order"]' in js
+    assert 'el.classList.toggle("hidden", sourceDiscovery)' in js
+    assert '$("#pl-map-ruleset", root).value = ""' in js
+    assert '$("#pl-map-membership", root).value = "mirror"' in js
+    assert "Discovery sources use direct mirror mappings." in js
 
 
 def test_playlist_modals_use_styled_scrollbars_and_muted_selection():
-    js = (REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8")
-    assert "--pl-scroll-track" in js
-    assert "--pl-scroll-thumb" in js
-    assert "--pl-select-active-bg" in js
-    assert ".pl-dialog-body::-webkit-scrollbar" in js
-    assert ".pl-dialog .pl-table-wrap::-webkit-scrollbar" in js
-    assert ".pl-field select[multiple]::-webkit-scrollbar" in js
-    assert "max-height:min(34vh,260px)" in js
-    assert "box-shadow:inset 3px 0 0 var(--pl-green)" in js
-    assert "#4167b7" not in js
+    css = (REPO / "assets" / "css" / "pages.css").read_text(encoding="utf-8")
+    assert "--pl-scroll-track" in css
+    assert "--pl-scroll-thumb" in css
+    assert "--pl-select-active-bg" in css
+    assert ".pl-dialog-body::-webkit-scrollbar" in css
+    assert ".pl-dialog .pl-table-wrap::-webkit-scrollbar" in css
+    assert ".pl-field select[multiple]::-webkit-scrollbar" in css
+    assert "max-height:min(34vh,260px)" in css
+    assert "box-shadow:inset 3px 0 0 var(--pl-green)" not in css
+    assert "box-shadow:inset 3px 0 0 #8d72ff" not in css
+    assert "#4167b7" not in css
 
 
 def test_pair_overlay_playlist_manage_button_requires_enabled_playlist_feature():
@@ -246,6 +373,7 @@ def test_playlist_runner_emits_live_summary_events():
 
 def test_ruleset_modal_uses_guided_visual_builder():
     js = (REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8")
+    css = (REPO / "assets" / "css" / "pages.css").read_text(encoding="utf-8")
     assert "RULESET_PRESETS" in js
     assert "Direct sync" in js
     assert "Mirror source" in js
@@ -261,6 +389,24 @@ def test_ruleset_modal_uses_guided_visual_builder():
     assert "Source item count" in js
     assert "Split into target lists" in js
     assert "data-rs-field" in js
+    assert ".pl-builder-grid .pl-field{align-content:start}" in css
+    assert ".pl-builder-grid :is(input,select,.cw-icon-select-btn){height:44px;min-height:44px}" in css
+    assert "function rulesetActionButton" in js
+    assert 'rulesetActionButton("view", rs.id, "View ruleset", "visibility")' in js
+    assert 'rulesetActionButton("clone", rs.id, "Clone ruleset", "content_copy", "sync")' in js
+    assert '<table class="pl-ruleset-table">' in js
+    assert "<th>Direction</th>" in js
+    assert "Direction support" not in js
+    assert "<th>Mappings</th>" in js
+    assert "Mappings using it" not in js
+    assert ".pl-ruleset-table{table-layout:fixed;min-width:0}" in css
+    assert ".pl-ruleset-table{width:100%;min-width:0!important}" in css
+    assert ".pl-ruleset-table th,#page-playlists .pl-ruleset-table td{box-sizing:border-box" in css
+    assert "td:nth-child(1){width:17%}" in css
+    assert "td:nth-child(4){width:17%}" in css
+    assert "td:nth-child(5){width:17%}" in css
+    assert "td:nth-child(2){width:10%;overflow:visible;text-overflow:clip}" in css
+    assert "td:nth-child(7) .pl-action-btn{width:34px;height:34px}" in css
 
 
 def test_ruleset_builder_preserves_payload_shape():
@@ -293,9 +439,13 @@ def test_playlists_api_routes_registered():
     paths = {r.path for r in router.routes}
     assert "/api/playlists/providers" in paths
     assert "/api/playlists/resources" in paths
+    assert any(r.path == "/api/playlists/resources" and "POST" in (r.methods or set()) for r in router.routes)
+    assert any(r.path == "/api/playlists/resources/{playlist_id}" and "PATCH" in (r.methods or set()) for r in router.routes)
+    assert any(r.path == "/api/playlists/resources/{playlist_id}" and "DELETE" in (r.methods or set()) for r in router.routes)
     assert "/api/playlists/endpoints" in paths
     assert "/api/playlists/mappings" in paths
     assert "/api/playlists/overview" in paths
+    assert any(r.path == "/api/playlists/activity" and "DELETE" in (r.methods or set()) for r in router.routes)
     assert "/api/playlists/rulesets" in paths
     assert "/api/playlists/rulesets/{ruleset_id}" in paths
     assert "/api/playlists/rulesets/{ruleset_id}/clone" in paths
