@@ -157,6 +157,22 @@ def test_editor_ui_exposes_playlist_source() -> None:
     assert "state.source = ctx.normalizeSource(state.source);" in load_js
 
 
+def test_editor_playlist_endpoint_picker_uses_styled_single_select() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    js = (root / "assets" / "js" / "editor.js").read_text(encoding="utf-8")
+    sources_js = (root / "assets" / "js" / "editor" / "sources.js").read_text(encoding="utf-8")
+    css = (root / "assets" / "css" / "pages.css").read_text(encoding="utf-8")
+    assert "function syncPlaylistEndpointIconSelect(selectEl, show)" in js
+    assert 'className: "cw-editor-icon-select cw-editor-endpoint-select"' in js
+    assert 'menuClassName: "pl-endpoint-select-menu cw-editor-endpoint-select-menu"' in js
+    assert "ctx.syncPlaylistEndpointIconSelect?.(snapSel, true);" in sources_js
+    assert "ctx.syncProviderIconSelect?.(snapSel, false);" not in sources_js
+    assert "#page-editor .cw-editor-endpoint-select .cw-icon-select-btn" in css
+    assert ".cw-editor-endpoint-select-menu .cw-icon-select-text" in css
+
+
 def test_editor_ui_allows_extra_policy_corrections() -> None:
     from pathlib import Path
 

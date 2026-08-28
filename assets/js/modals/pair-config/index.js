@@ -21,6 +21,9 @@ const G=typeof window!=="undefined"?window:globalThis;
 const jclone=(o)=>JSON.parse(JSON.stringify(o||{}));
 const escHTML=(s)=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const PROGRESS_LEGACY_MAX_PERCENT = 95;
+const playlistBlockOf=(pair)=>{const block=pair?.features?.playlists;return block&&typeof block==="object"?block:{}};
+const playlistMappingIds=(pair)=>{const ids=playlistBlockOf(pair).mappings;return Array.isArray(ids)?ids.map(x=>String(x||"").trim()).filter(Boolean):[]};
+const isManagedPlaylistPair=(pair)=>String(playlistBlockOf(pair).managed_by||"").trim().toLowerCase()==="playlists";
 
 const isEmby = v => same(v, "emby");
 function hasEmby(state){ return isEmby(state?.src) || isEmby(state?.dst) }
@@ -189,6 +192,40 @@ function applyCollectionTypeRules(state){
 
 // Inline footer
 function closePairConfigModal(modal){try{G.cxCloseModal?.()}catch{}if(modal?.isConnected)modal.dispatchEvent(new CustomEvent("cw-modal-close",{bubbles:true}))}
+function renderManagedPlaylistPairModal(hostEl,pair){
+  hostEl.__doSave=null;
+  const pairId=String(pair?.id||"").trim();
+  const ids=playlistMappingIds(pair);
+  const label=ids.length?ids.join(", "):"playlist mapping";
+  hostEl.innerHTML=`
+    <div id="cx-modal" class="cx-card">
+      <div class="cx-head">
+        <div class="title-wrap">
+          <span class="material-symbols-rounded app-logo" aria-hidden="true">queue_music</span>
+          <div><div class="app-name">Managed by Playlists</div><div class="app-sub">Edit this pair from the Playlists page.</div></div>
+        </div>
+      </div>
+      <div class="cx-body">
+        <div class="panel">
+          <div class="panel-title">Playlist mapping</div>
+          <div class="muted">This sync pair is owned by ${escHTML(label)}. Normal pair editing is disabled so the playlist mapping stays connected.</div>
+        </div>
+      </div>
+      <div class="cx-actions">
+        <button type="button" class="cx-btn" id="cx-managed-close">Cancel</button>
+        <button type="button" class="cx-btn primary" id="cx-managed-open"><span class="material-symbols-rounded" aria-hidden="true">queue_music</span> Open playlist mapping</button>
+      </div>
+    </div>`;
+  ID("cx-managed-close",hostEl)?.addEventListener("click",(e)=>{e.preventDefault();closePairConfigModal(hostEl)});
+  ID("cx-managed-open",hostEl)?.addEventListener("click",async(e)=>{
+    e.preventDefault();
+    closePairConfigModal(hostEl);
+    try{
+      if(typeof G.showTab==="function") await G.showTab("playlists");
+      await G.Playlists?.openMappingForPair?.(pairId,e.currentTarget,{returnToSyncPairs:true});
+    }catch(err){console.warn("[pair-config] playlist mapping open failed",err)}
+  });
+}
 function ensureInlineFoot(modal){if(!modal)return;const card=Q(".cx-card",modal)||modal;let bar=card.querySelector(":scope > .cx-actions");if(!bar){bar=document.createElement("div");bar.className="cx-actions";const cancel=document.createElement("button");cancel.type="button";cancel.className="cx-btn";cancel.textContent="Cancel";cancel.addEventListener("click",(e)=>{e.preventDefault();closePairConfigModal(modal)});const save=document.createElement("button");save.type="button";save.className="cx-btn primary";save.id="cx-inline-save";save.textContent="Save";save.addEventListener("click",async(e)=>{e.preventDefault();const run=modal.__doSave;if(typeof run!=="function")return;const b=ID("cx-inline-save");if(!b)return;const old=b.textContent;b.disabled=true;b.textContent="Saving...";try{await run()}finally{b.disabled=false;b.textContent=old}});bar.append(cancel,save);card.appendChild(bar)}}
 
 // Ratings summary
@@ -2868,6 +2905,11 @@ export default{
     let pair=null;
     if(props?.pairOrId && typeof props.pairOrId==="object") pair=props.pairOrId;
     else if(props?.pairOrId) pair=await loadPairById(String(props.pairOrId));
+
+    if(isManagedPlaylistPair(pair)){
+      renderManagedPlaylistPairModal(hostEl,pair);
+      return;
+    }
 
     if(pair && typeof pair==="object"){
       const up=x=>String(x||"").toUpperCase();

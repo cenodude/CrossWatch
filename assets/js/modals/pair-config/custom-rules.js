@@ -93,7 +93,7 @@ export function commonFeaturesForPair(state, providerFeatures, isProgressPair) {
   if (!state?.src || !state?.dst) return [];
   const a = providerFeatures(state.src);
   const b = providerFeatures(state.dst);
-  const keys = ["watchlist", "ratings", "history", "progress", "playlists", "collection"];
+  const keys = ["watchlist", "ratings", "history", "progress", "collection"];
   return keys.filter(k => {
     if (!featureAllowedForPair(state, k)) return false;
     if (k === "progress") return isProgressPair(state) && !!a.progress && !!b.progress;

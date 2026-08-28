@@ -406,6 +406,54 @@
     if (nextWrap) nextWrap.style.display = "";
   }
 
+  function playlistEndpointType(ep, playlist) {
+    const raw = String(ep?.playlist_type || ep?.endpoint_type || ep?.resource_kind || ep?.source_kind || ep?.kind || "").toLowerCase();
+    if (raw.includes("discover")) return "Discovery";
+    if (raw.includes("watchlist") || String(playlist || "").toLowerCase() === "watchlist") return "Watchlist";
+    if (!raw || raw === "regular" || raw === "playlist") return "";
+    return raw.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+  }
+
+  function syncPlaylistEndpointIconSelect(selectEl, show) {
+    if (!selectEl) return;
+    const helper = window.CW?.IconSelect?.enhance;
+    const wrap = selectEl.nextElementSibling && selectEl.nextElementSibling.classList?.contains("cw-icon-select")
+      ? selectEl.nextElementSibling
+      : null;
+    if (!show || typeof helper !== "function") {
+      selectEl.classList.remove("cw-icon-select-native");
+      if (wrap) wrap.style.display = "none";
+      return;
+    }
+    helper(selectEl, {
+      className: "cw-editor-icon-select cw-editor-endpoint-select",
+      menuClassName: "pl-endpoint-select-menu cw-editor-endpoint-select-menu",
+      getOptionData: (value, option) => {
+        const ep = (state.playlistEndpoints || []).find(x => String(x?.id || "") === String(value || "")) || {};
+        const provider = ep.provider || option?.dataset?.provider || "";
+        const providerText = providerLabel(provider, provider || "");
+        const playlist = ep.playlist_name || ep.playlist_id || "";
+        const label = ep.name || ep.id || option?.textContent || value || "Endpoint";
+        const note = [providerText, playlist && playlist !== label ? playlist : ""].filter(Boolean).join(" - ");
+        const type = playlistEndpointType(ep, playlist);
+        const icon = providerMeta.logLogoPath?.(provider) || providerMeta.logoPath?.(provider) || "";
+        return {
+          label,
+          note,
+          selectedLabel: label,
+          selectedShowNote: true,
+          icons: [icon ? { src: icon, alt: providerText } : { text: String(provider || "?").slice(0, 2) }],
+          badges: [type].filter(Boolean),
+          disabled: !!option?.disabled,
+        };
+      },
+    });
+    const nextWrap = selectEl.nextElementSibling && selectEl.nextElementSibling.classList?.contains("cw-icon-select")
+      ? selectEl.nextElementSibling
+      : null;
+    if (nextWrap) nextWrap.style.display = "";
+  }
+
   function syncSnapshotControlVisibility() {
     return editorSources.syncSnapshotControlVisibility(sourceContext());
   }
@@ -432,6 +480,7 @@
       fetchJSON,
       syncProviderIconSelect,
       syncProfileIconSelect,
+      syncPlaylistEndpointIconSelect,
       renderInstanceOptions,
       loadInstanceOptions,
       persistUIState,
@@ -1927,6 +1976,7 @@ function bindFileImport(btn, input, url, done) {
     snapSel.addEventListener("change", async () => {
       state.snapshot = snapSel.value || "";
       if (isProviderPickerSource()) syncProviderIconSelect(snapSel, true);
+      else if (state.source === "playlist") syncPlaylistEndpointIconSelect(snapSel, true);
       if (isProviderPickerSource()) {
         state.instance = await loadInstanceOptions(state.snapshot, instanceSel, state.instance);
         persistUIState();

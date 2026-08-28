@@ -123,6 +123,7 @@
     if (ctx.instanceLabel) ctx.instanceLabel.style.display = providerPicker ? "" : "none";
     if (ctx.instanceSel) ctx.instanceSel.style.display = providerPicker ? "" : "none";
     ctx.syncProfileIconSelect?.(ctx.instanceSel, providerPicker);
+    ctx.syncPlaylistEndpointIconSelect?.(snapSel, isPlaylist);
 
     if (isPlaylist) {
       const list = Array.isArray(state.playlistEndpoints) ? state.playlistEndpoints : [];
@@ -134,7 +135,7 @@
       const next = opts.includes(state.snapshot) ? state.snapshot : opts[0] || "";
       if (next !== state.snapshot) state.snapshot = next;
       snapSel.value = state.snapshot || "";
-      ctx.syncProviderIconSelect?.(snapSel, false);
+      ctx.syncPlaylistEndpointIconSelect?.(snapSel, true);
       syncSnapshotControlVisibility(ctx);
       return;
     }
