@@ -2,10 +2,11 @@
 /* Shared Playing Card renderer: one card, per-variant regions */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function () {
+  const PLACEHOLDER_POSTER = "/assets/img/placeholder_poster.svg";
   const TEMPLATE = `
     <div class="pc-inner">
       <a class="pc-poster-link" target="_blank" rel="noopener noreferrer">
-        <img class="pc-poster" src="/assets/img/placeholder_poster.svg" alt="">
+        <img class="pc-poster" src="${PLACEHOLDER_POSTER}" alt="">
       </a>
       <div class="pc-body">
         <div class="pc-title-row">
@@ -201,9 +202,30 @@
       links: q(".pc-links"),
     };
 
-    els.poster.onerror = () => {
-      els.poster.onerror = null;
-      els.poster.src = "/assets/img/placeholder_poster.svg";
+    const failedPosterSrcs = new Set();
+    let currentPosterSrc = PLACEHOLDER_POSTER;
+    let currentBackdropValue = "";
+
+    const setPosterSrc = (value) => {
+      const raw = String(value || PLACEHOLDER_POSTER).trim() || PLACEHOLDER_POSTER;
+      const next = failedPosterSrcs.has(raw) ? PLACEHOLDER_POSTER : raw;
+      if (currentPosterSrc === next) return;
+      currentPosterSrc = next;
+      els.poster.onerror = () => {
+        if (currentPosterSrc !== PLACEHOLDER_POSTER) failedPosterSrcs.add(currentPosterSrc);
+        currentPosterSrc = PLACEHOLDER_POSTER;
+        els.poster.onerror = null;
+        els.poster.src = PLACEHOLDER_POSTER;
+      };
+      els.poster.src = next;
+    };
+
+    const setBackdrop = (value) => {
+      const raw = String(value || "").trim();
+      const next = raw ? `url("${raw}")` : "none";
+      if (currentBackdropValue === next) return;
+      currentBackdropValue = next;
+      el.style.setProperty("--pc-backdrop", next);
     };
 
     let overviewFrame = 0;
@@ -351,10 +373,10 @@
       els.title.textContent = model.year ? `${model.title} ${model.year}` : (model.title || "");
       setChips(model.chips);
       setOverview(model.overview || "");
-      els.poster.src = model.poster || "/assets/img/placeholder_poster.svg";
+      setPosterSrc(model.poster || PLACEHOLDER_POSTER);
       els.poster.alt = model.title || "Poster";
       setPosterLink(model.posterHref || "", model.title);
-      el.style.setProperty("--pc-backdrop", model.backdrop ? `url("${model.backdrop}")` : "none");
+      setBackdrop(model.backdrop);
       setInformation(model.information, model.isMovie);
       setRating(model.rating?.value, model.rating?.votes);
       setProgress(model.progress);

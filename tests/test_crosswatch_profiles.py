@@ -2258,6 +2258,16 @@ def test_playing_card_uses_overview_profile_scope() -> None:
     assert "CARD.cacheScope !== scope" in js
 
 
+def test_playing_card_art_starts_early_and_skips_redundant_image_updates() -> None:
+    driver = Path("assets/js/playingcard.js").read_text("utf-8")
+    renderer = Path("assets/helpers/playing-card.js").read_text("utf-8")
+
+    assert "const buildBackdropUrl = (p, meta = null)" in driver
+    assert "backdrop: buildBackdropUrl(p, meta)" in driver
+    assert "if (currentPosterSrc === next) return;" in renderer
+    assert "if (currentBackdropValue === next) return;" in renderer
+
+
 def test_insights_snapshot_selector_saves_crosswatch_profile_choice(monkeypatch) -> None:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient

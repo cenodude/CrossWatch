@@ -73,9 +73,8 @@
   };
 
   const buildArtUrl = (p) => {
-    if (p?.cover) return p.cover;
     const id = tmdbIdOf(p);
-    if (!id) return "/assets/img/placeholder_poster.svg";
+    if (!id) return p?.cover || "/assets/img/placeholder_poster.svg";
     return `/art/tmdb/${artTypeOf(p)}/${encodeURIComponent(String(id))}?size=w342${artEvidenceOf(p)}`;
   };
 
@@ -157,11 +156,12 @@
     return hr < 24 ? `${hr}h ago` : `${Math.floor(hr / 24)}d ago`;
   };
 
-  const backdropFromMeta = (meta) => {
-    const id = meta?.ids?.tmdb;
+  const buildBackdropUrl = (p, meta = null) => {
+    const id = meta?.ids?.tmdb || meta?.ids?.id || tmdbIdOf(p);
     if (!id) return "";
-    const type = String(meta?.resolved_type || meta?.type || "").toLowerCase() === "movie" ? "movie" : "tv";
-    return `/art/tmdb/${type}/${encodeURIComponent(String(id))}?kind=backdrop&size=w1280`;
+    const resolved = meta?.resolved_type || meta?.type || window.CW?.Meta?.peek(p)?.resolved_type;
+    const type = String(resolved || p?.media_type || p?.type || "").toLowerCase() === "movie" ? "movie" : "tv";
+    return `/art/tmdb/${type}/${encodeURIComponent(String(id))}?kind=backdrop&size=w1280${artEvidenceOf(p)}`;
   };
 
   const SHARED_WATCH_KEY = "__CW_CURRENT_WATCHING_SHARED__";
@@ -422,7 +422,7 @@
       overview,
       poster: buildArtUrl(p),
       posterHref: tmdbUrl,
-      backdrop: meta ? backdropFromMeta(meta) : "",
+      backdrop: buildBackdropUrl(p, meta),
       information: meta ? FMT.informationFor(meta, isMovie) : "loading",
       rating,
       progress: progressModel(p),

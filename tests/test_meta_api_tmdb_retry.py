@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import requests
@@ -84,3 +85,17 @@ def test_posters_survive_a_rate_limited_first_attempt(monkeypatch) -> None:
 def test_posters_return_empty_when_retries_exhausted(monkeypatch) -> None:
     _patch(monkeypatch, [FakeResponse(429, headers={"Retry-After": "1"}) for _ in range(4)])
     assert metaAPI._tmdb_fetch_posters("key", "movie", "8392", "en-US") == []
+
+
+def test_tmdb_art_route_uses_long_lived_cache_headers(monkeypatch, tmp_path) -> None:
+    img = tmp_path / "poster.jpg"
+    img.write_bytes(b"fake jpg")
+
+    monkeypatch.setattr(metaAPI, "load_config", lambda: {"tmdb": {"api_key": "key"}})
+    monkeypatch.setattr(metaAPI, "_env", lambda: (None, tmp_path, lambda: {}))
+    monkeypatch.setattr(metaAPI, "get_art_file", lambda *a, **k: (str(img), "image/jpeg"))
+
+    request = SimpleNamespace(headers={}, url=SimpleNamespace(path="/art/tmdb/movie/1"))
+    response = metaAPI.api_tmdb_art(request, typ="movie", tmdb_id=1, size="w342", kind="poster")
+
+    assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
