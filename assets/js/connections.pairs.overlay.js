@@ -253,7 +253,16 @@
     const board = document.querySelector("#pairs_list .pairs-board");
     const el = board?.querySelector(`.pair-card[data-id="${id}"]`); if (!el) return;
     el.classList.add("removing"); setTimeout(() => el.remove(), 200);
-    try { await fetch(`/api/pairs/${id}`, { method: "DELETE" }); } catch (e) { console.warn("delete api failed", e); }
+    try {
+      const res = await fetch(`/api/pairs/${id}`, { method: "DELETE" });
+      let data = null;
+      try { data = await res.json(); } catch {}
+      if (!res.ok || data?.ok === false || Number(data?.deleted || 0) < 1) throw new Error(data?.error || "pair delete failed");
+    } catch (e) {
+      console.warn("delete api failed", e);
+      el.classList.remove("removing");
+      return;
+    }
     if (Array.isArray(window.cx?.pairs)) window.cx.pairs = window.cx.pairs.filter((p) => String(p.id) !== String(id));
     try { window.dispatchEvent(new CustomEvent("cx:pairs:changed", { detail: { action: "delete", id } })); } catch {}
     setTimeout(() => refreshBadges(board), 220);

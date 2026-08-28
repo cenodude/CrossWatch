@@ -28,6 +28,7 @@ _MEMBERSHIP = {"add_only", "managed_only", "mirror"}
 _ORDER = {"ignore", "preserve"}
 _NAME_MAX = 10
 _PLAYLIST_NAME_MAX = 20
+_PAIR_SCOPE_ORIGINAL_PAIRS_KEY = "_cw_pair_scope_original_pairs"
 _SAFE_NAME_CHARS = " _.'-&()"
 
 
@@ -1253,4 +1254,9 @@ def cleanup_state(cfg: Mapping[str, Any]) -> dict[str, Any]:
 def _save(cfg: dict[str, Any]) -> None:
     from cw_platform.config_base import save_config
 
+    original_pairs = cfg.get(_PAIR_SCOPE_ORIGINAL_PAIRS_KEY)
+    if isinstance(original_pairs, list):
+        cfg = dict(cfg)
+        cfg["pairs"] = original_pairs
+        cfg.pop(_PAIR_SCOPE_ORIGINAL_PAIRS_KEY, None)
     save_config(cfg)

@@ -450,6 +450,24 @@ def test_clear_activity_resets_playlist_run_metadata(config_base, fake_providers
     assert svc.activity(cfg) == []
 
 
+def test_playlist_save_preserves_pairs_for_scoped_sync(monkeypatch):
+    from cw_platform import config_base
+
+    saved: list[dict[str, Any]] = []
+    full_pairs = [{"id": "pair_1"}, {"id": "pair_2"}, {"id": "pair_playlist_1"}]
+    scoped_cfg = {
+        "pairs": [{"id": "pair_playlist_1"}],
+        "playlists": {"endpoints": [], "mappings": []},
+        "_cw_pair_scope_original_pairs": full_pairs,
+    }
+    monkeypatch.setattr(config_base, "save_config", lambda cfg: saved.append(cfg))
+
+    svc._save(scoped_cfg)
+
+    assert saved[0]["pairs"] == full_pairs
+    assert "_cw_pair_scope_original_pairs" not in saved[0]
+
+
 def test_mappings_for_pair_compat_and_one_pair(config_base, fake_providers):
     cfg = _cfg()
     e1, e2 = _seed_endpoints(cfg)
