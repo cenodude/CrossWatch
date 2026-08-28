@@ -132,6 +132,8 @@ def test_activity_history_delete_not_in_non_admin_allowlist() -> None:
 
     assert non_admin_api_allowed("/api/activity/history", "GET") is True
     assert non_admin_api_allowed("/api/activity/history", "DELETE") is False
+    assert non_admin_api_allowed("/api/playlists/activity", "GET") is True
+    assert non_admin_api_allowed("/api/playlists/activity", "DELETE") is False
 
 
 def test_write_permission_no_longer_bypasses_feature_permissions() -> None:

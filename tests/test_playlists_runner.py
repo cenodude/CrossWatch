@@ -26,6 +26,7 @@ class FakeOps:
             can_add=not smart,
             can_remove=not smart,
             can_reorder=bool(d.get("can_reorder", True)) and not smart,
+            extra=dict(d.get("extra") or {}),
         )
 
     def list_playlist_resources(self, cfg, *, instance=None):
@@ -132,6 +133,24 @@ def test_mirror_removes_extras(config_base):
     assert res["added"] == 1 and res["removed"] == 1
     assert res["manual_affected"] is True
     assert {canonical_key(m) for m in dst["T1"]["items"]} == {"tmdb:1", "tmdb:2"}
+
+
+def test_discovery_source_can_mirror_to_writable_target(config_base):
+    src = {
+        "D1": {
+            "name": "Trending",
+            "items": [_movie(2), _movie(1)],
+            "smart": True,
+            "extra": {"endpoint_type": "discovery", "source_kind": "discovery", "discovery": True, "virtual": True},
+        }
+    }
+    dst = {"T1": {"name": "dst", "items": [_movie(1), _movie(3)]}}
+    provs = _providers(src, dst)
+
+    res = R.run_mapping(_cfg(), _mapping(src_pl="D1", membership="mirror", order="preserve"), providers=provs)
+
+    assert res["added"] == 1 and res["removed"] == 1
+    assert [canonical_key(m) for m in dst["T1"]["items"]] == ["tmdb:2", "tmdb:1"]
 
 
 def test_multiple_mappings_isolated(config_base):

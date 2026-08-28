@@ -343,6 +343,18 @@ def load_result(mapping: Mapping[str, Any]) -> dict[str, Any] | None:
     return dict(res) if isinstance(res, Mapping) else None
 
 
+def clear_result(mapping: Mapping[str, Any]) -> bool:
+    data = _load_all_state()
+    key = scope_key(mapping)
+    entry = data.get(key)
+    if isinstance(entry, dict) and "last_result" in entry:
+        entry.pop("last_result", None)
+        data[key] = entry
+        _save_all_state(data)
+        return True
+    return False
+
+
 def prune_baselines(valid_keys: set[str]) -> int:
     data = _load_all_state()
     removed = 0

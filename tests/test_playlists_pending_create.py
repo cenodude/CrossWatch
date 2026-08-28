@@ -202,9 +202,18 @@ def test_an_empty_source_cannot_create_the_target(world) -> None:
     assert provs["PLEX"].created == []
 
 
-def test_service_parks_the_endpoint_when_the_provider_cannot_create_an_empty_list(world, monkeypatch) -> None:
+def test_service_attempts_create_even_when_the_provider_reports_no_empty_create(world, monkeypatch) -> None:
     cfg, _src, _dst, provs = world
     monkeypatch.setattr(svc, "_providers", lambda: provs)
+
+    def create_without_seed(cfg, name, *, media_type=None, items=None, instance=None, dry_run=False):
+        provs["PLEX"]._next_id += 1
+        pid = str(provs["PLEX"]._next_id)
+        provs["PLEX"].pl[pid] = {"name": name, "items": []}
+        provs["PLEX"].created.append({"id": pid, "name": name, "seed": []})
+        return provs["PLEX"]._resource(pid)
+
+    provs["PLEX"].create_playlist = create_without_seed
 
     res = svc.upsert_endpoint(
         cfg,
@@ -212,8 +221,8 @@ def test_service_parks_the_endpoint_when_the_provider_cannot_create_an_empty_lis
     )
 
     assert res["ok"] is True
-    assert provs["PLEX"].created == [], "creation must be deferred, not attempted with no items"
-    assert res["endpoint"]["pending_create"] == {"name": "Later", "media_type": "playlist"}
+    assert provs["PLEX"].created == [{"id": res["endpoint"]["playlist_id"], "name": "Later", "seed": []}]
+    assert "pending_create" not in res["endpoint"]
 
 
 def test_service_still_creates_immediately_when_the_provider_supports_it(world, monkeypatch) -> None:

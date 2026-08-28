@@ -10,6 +10,7 @@ from .id_map import canonical_key, minimal
 
 PLAYLIST_KIND_REGULAR = "regular"
 PLAYLIST_KIND_SMART = "smart"
+PLAYLIST_SOURCE_KIND_DISCOVERY = "discovery"
 RULESET_SCHEMA_VERSION = 1
 BUILTIN_TRAKT_FREE_ACCOUNT_RULESET_ID = "trakt_free_account"
 
@@ -214,6 +215,14 @@ class PlaylistResource:
     def writable(self) -> bool:
         return not self.is_smart and (self.can_add or self.can_remove)
 
+    @property
+    def source_kind(self) -> str:
+        return _clean_str(self.extra.get("source_kind") or self.extra.get("endpoint_type")).lower()
+
+    @property
+    def is_discovery(self) -> bool:
+        return self.source_kind == PLAYLIST_SOURCE_KIND_DISCOVERY or bool(self.extra.get("discovery"))
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "provider": self.provider,
@@ -227,6 +236,10 @@ class PlaylistResource:
             "can_remove": self.can_remove,
             "can_reorder": self.can_reorder,
             "writable": self.writable,
+            "source_kind": self.source_kind,
+            "discovery": self.is_discovery,
+            "virtual": bool(self.extra.get("virtual")),
+            "endpoint_type": _clean_str(self.extra.get("endpoint_type") or self.kind).lower(),
             "media_types": list(self.media_types),
             "extra": dict(self.extra),
         }
@@ -385,6 +398,25 @@ class PlaylistOps(Protocol):
         cfg: Mapping[str, Any],
         playlist_id: str,
         ordered_keys: Sequence[str],
+        *,
+        instance: str | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any]: ...
+
+    def rename_playlist(
+        self,
+        cfg: Mapping[str, Any],
+        playlist_id: str,
+        name: str,
+        *,
+        instance: str | None = None,
+        dry_run: bool = False,
+    ) -> PlaylistResource: ...
+
+    def delete_playlist(
+        self,
+        cfg: Mapping[str, Any],
+        playlist_id: str,
         *,
         instance: str | None = None,
         dry_run: bool = False,
