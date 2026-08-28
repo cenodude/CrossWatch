@@ -30,8 +30,10 @@ def test_playlists_page_is_modal_first_overview():
     assert "Playlist endpoints" in js
     assert "Mappings" in js
     assert "Activity overview" in js
-    assert "+ New endpoint" in js
-    assert "+ New mapping" in js
+    assert "New endpoint" in js
+    assert "New mapping" in js
+    assert 'data-action="endpoint-new">+ New endpoint' not in js
+    assert 'data-action="mapping-new" ${need ? "disabled" : ""}' not in js
     assert "Manage rulesets" in js
     assert 'id="pl-rulesets-summary"' not in js
     assert 'id="pl-manage-rulesets"' not in js
@@ -113,6 +115,9 @@ def test_endpoint_modal_uses_guided_playlist_picker():
     assert "resourceCreate: (body)" in js
     assert "resourceRename: (provider, instance, id, name)" in js
     assert "resourceDelete: (provider, instance, id)" in js
+    assert 'root.dataset.epSingleSelect = isEdit ? "1" : "";' in js
+    assert 'singleSelect ? "radio_button_checked" : "check_box"' in js
+    assert 'singleSelect ? "radio_button_unchecked" : "check_box_outline_blank"' in js
     assert 'id="pl-ep-create-submit"' in js
     assert 'id="pl-ep-create-cancel"' in js
     assert 'id="pl-ep-edit-submit"' in js
@@ -204,6 +209,13 @@ def test_endpoint_and_mapping_tables_use_compact_icon_actions():
     assert "function syncPairIndicator" in js
     assert "Sync pair: ${esc(id)}" in js
     assert "runningEndpoints: new Set()" in js
+    assert "syncSummary: null" in js
+    assert "function syncSummaryRunning" in js
+    assert "function sharedSyncBusy" in js
+    assert "function mappingIsRunning" in js
+    assert "API.runSummary()" in js
+    assert "Synchronization is already running" in js
+    assert 'state.syncSummary = { ...(state.syncSummary || {}), running: true, pair_scope_ids: [String(mapping.assigned_pair || "")] };' in js
     assert "async function syncEndpoint" in js
     assert '"endpoint-sync"' in js
     assert "await API.epSync(id)" in js
@@ -221,17 +233,22 @@ def test_endpoint_and_mapping_tables_use_compact_icon_actions():
     assert "assigned_pair_label" not in js
     assert '<table class="pl-endpoints-table">' in js
     assert '<table class="pl-mappings-table">' in js
-    assert '<th>Mapping</th><th>Source</th><th>Direction</th><th>Destination</th>' in js
+    assert '<th>Mapping</th><th>Source</th><th>Direction</th><th>Destination</th><th>Ruleset</th><th>Sync pair</th><th>Status</th><th>Result</th>' in js
     assert "<td>${syncPairIndicator(m.assigned_pair)}</td>" in js
+    assert 'class="pl-result-cell"' in js
     assert '<th aria-label="Actions">Actions</th>' in js
     assert '<th>Actions</th></tr></thead>' in js
     assert "#page-playlists .pl-endpoints-table{table-layout:fixed;min-width:0}" in css
     assert "#page-playlists .pl-endpoints-table td:nth-child(8) .pl-actions{justify-content:flex-start}" in css
-    assert "#page-playlists .pl-mappings-table{min-width:0}" in css
-    assert "#page-playlists .pl-mappings-table th:nth-child(6),#page-playlists .pl-mappings-table td:nth-child(6){width:6%}" in css
-    assert "#page-playlists .pl-mappings-table th:nth-child(11),#page-playlists .pl-mappings-table td:nth-child(11){width:12%}" in css
-    assert "#page-playlists .pl-mappings-table td:nth-child(11) .pl-actions{justify-content:flex-start}" in css
-    assert "#page-playlists .pl-mappings-table td:nth-child(11) .pl-action-btn{width:34px;height:34px}" in css
+    assert "#page-playlists .pl-mappings-table{width:100%!important;table-layout:fixed;min-width:0!important}" in css
+    assert "#page-playlists .pl-mappings-table th,#page-playlists .pl-mappings-table td{box-sizing:border-box;padding-left:10px;padding-right:10px;overflow:hidden}" in css
+    assert "#page-playlists .pl-mappings-table th:nth-child(4),#page-playlists .pl-mappings-table td:nth-child(4){width:9%}" in css
+    assert "#page-playlists .pl-mappings-table th:nth-child(5),#page-playlists .pl-mappings-table td:nth-child(5){width:7%}" in css
+    assert "#page-playlists .pl-mappings-table th:nth-child(6),#page-playlists .pl-mappings-table td:nth-child(6){width:5%}" in css
+    assert "#page-playlists .pl-mappings-table th:nth-child(8),#page-playlists .pl-mappings-table td:nth-child(8){width:19%}" in css
+    assert "#page-playlists .pl-mappings-table th:nth-child(9),#page-playlists .pl-mappings-table td:nth-child(9){width:14%;text-align:left;overflow:visible}" in css
+    assert "#page-playlists .pl-mappings-table td:nth-child(9) .pl-actions{justify-content:flex-start;gap:6px}" in css
+    assert "#page-playlists .pl-mappings-table td:nth-child(9) .pl-action-btn{width:34px;height:34px}" in css
     assert "#page-playlists .pl-mappings-table .pl-muted{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" in css
 
 
@@ -241,10 +258,16 @@ def test_playlists_overview_uses_dashboard_table_body():
     assert "function endpointIdentity" in js
     assert "function statCard" in js
     assert "function activityChangeSummary" in js
+    assert "function activityStatus" in js
+    assert 'if (counts.unresolved) chips.push(activityChangeChip("Unresolved", counts.unresolved, "help", "unresolved"));' in js
+    assert 'chips.length ? chips.join("") : `<span class="pl-muted">No changes</span>`' in js
+    assert 'const unresolved = Number(result.unresolved_count || result.unresolved || 0);' in js
+    assert 'warningBits.push(`${unresolved} unresolved`)' in js
     assert "function openActivityClear" in js
     assert "activityClear: ()" in js
     assert 'data-action="activity-clear"' in js
     assert '<table class="pl-activity-table">' in js
+    assert '<th>Time</th><th>Mapping</th><th>Result</th><th>Changes</th><th>Status</th>' in js
     assert "<th>Changes</th>" in js
     assert 'class="pl-change-chip' in js
     assert "pl-entity-icon" in js
@@ -254,9 +277,12 @@ def test_playlists_overview_uses_dashboard_table_body():
     assert "#page-playlists .pl-entity" in css
     assert "#page-playlists .pl-state" in css
     assert "#page-playlists .pl-stat-icon" in css
-    assert "#page-playlists .pl-activity-table{table-layout:fixed;min-width:760px}" in css
+    assert "#page-playlists .pl-activity-table{width:100%!important;table-layout:fixed;min-width:0!important}" in css
+    assert "#page-playlists .pl-activity-table th:nth-child(4),#page-playlists .pl-activity-table td:nth-child(4){width:18%}" in css
+    assert "#page-playlists .pl-activity-table th:nth-child(5),#page-playlists .pl-activity-table td:nth-child(5){width:22%;overflow:visible}" in css
     assert "#page-playlists .pl-change-set" in css
     assert "#page-playlists .pl-change-chip" in css
+    assert "#page-playlists .pl-change-chip.unresolved" in css
 
 
 def test_discovery_mapping_modal_collapses_advanced_options():
@@ -284,12 +310,25 @@ def test_playlist_modals_use_styled_scrollbars_and_muted_selection():
     assert "#4167b7" not in css
 
 
-def test_pair_overlay_playlist_manage_button_requires_enabled_playlist_feature():
+def test_pair_overlay_playlist_managed_pairs_open_playlist_mapping():
     js = (REPO / "assets" / "js" / "connections.pairs.overlay.js").read_text(encoding="utf-8")
-    assert "const hasPlaylistMappings" in js
+    css = (REPO / "assets" / "css" / "components.css").read_text(encoding="utf-8")
+    assert "const isPlaylistManagedPair" in js
     assert "window.cxOpenPlaylistMappingsForPair = openPlaylistMappingsForPair" in js
-    assert '${hasPlaylistMappings(f.playlists) ? `<button class="icon-btn" data-tip="Manage playlist mappings"' in js
-    assert '${f.playlists ? `<button class="icon-btn" data-tip="Manage playlist mappings"' not in js
+    assert "board.innerHTML = pairs.map((pair, index) => renderPairCard(pair, index + 1)).join(\"\");" in js
+    assert 'board.querySelectorAll(".pair-card")' in js
+    assert "Sync order" in js
+    assert "Playlist pairs" not in js
+    assert "async function setPlaylistManagedPairEnabled" in js
+    assert "function playlistMappingPayload" in js
+    assert "await setPlaylistManagedPairEnabled(id, on, it)" in js
+    assert 'fetch("/api/playlists/mappings", {' in js
+    assert "async function deletePlaylistManagedPair" in js
+    assert 'fetch(`/api/playlists/mappings/${encodeURIComponent(mapping.id)}`' in js
+    assert "isPlaylistManagedPair(pair)) return openPlaylistMappingsForPair(id, btn)" in js
+    assert 'pair-pill mode playlist-managed' not in js
+    assert 'data-tip="Managed by Playlists"' not in js
+    assert '${managedPlaylist ? ""' not in js
     assert "window.showTab(\"playlists\")" in js
     assert "api?.openMappingForPair" in js
     assert "returnToSyncPairs: true" in js
@@ -297,15 +336,31 @@ def test_pair_overlay_playlist_manage_button_requires_enabled_playlist_feature()
 
 def test_playlists_module_exposes_pair_mapping_modal_entrypoint():
     js = (REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8")
+    pair_modal = (REPO / "assets" / "js" / "modals" / "pair-config" / "index.js").read_text(encoding="utf-8")
     assert "pairMappings: (id) => request(`${BASE}/pairs/${encodeURIComponent(id)}/mappings`)" in js
     assert "async function openMappingForPair" in js
     assert "function returnToSyncPairsOverview" in js
     assert 'window.showTab("settings")' in js
+    assert "function renderManagedPlaylistPairModal" in pair_modal
+    assert "isManagedPlaylistPair(pair)" in pair_modal
+    assert "Open playlist mapping" in pair_modal
     assert 'window.cwSettingsSelect("sync")' in js
     assert "openMappingModal({ mapping, trigger, onDone:" in js
     assert "returnToSyncPairs ? returnToSyncPairsOverview : null" in js
     assert "mappingDone: ctx.opts.onDone" in js
     assert "window.Playlists = { mount: init, openMappingForPair }" in js
+
+
+def test_pair_config_hides_playlist_feature_tab():
+    rules = (REPO / "assets" / "js" / "modals" / "pair-config" / "custom-rules.js").read_text(encoding="utf-8")
+    flow = (REPO / "assets" / "js" / "modals" / "pair-config" / "flow.js").read_text(encoding="utf-8")
+    pair_modal = (REPO / "assets" / "js" / "modals" / "pair-config" / "index.js").read_text(encoding="utf-8")
+
+    assert 'const keys = ["watchlist", "ratings", "history", "progress", "collection"];' in rules
+    assert '["playlists", "pl"]' not in flow
+    assert 'sharedFeatureOrder().filter((key) => String(key || "").toLowerCase() !== "playlists")' in flow
+    assert "function renderManagedPlaylistPairModal" in pair_modal
+    assert "Open playlist mapping" in pair_modal
 
 
 def test_main_hub_treats_playlists_as_first_class_feature():
