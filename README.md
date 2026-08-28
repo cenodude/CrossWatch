@@ -122,6 +122,29 @@ volumes:
 
 > Want no web UI? Add `-e CW_CLI_ONLY=1` or `CW_CLI_ONLY: "1"` in Compose. The API, CLI, webhooks and auth callbacks keep working.
 
+### Run Once and Exit
+
+For cron, Kubernetes CronJobs or other external schedulers, run the container as a one-shot sync job:
+
+```bash
+docker run --rm \
+  -v crosswatch_config:/config \
+  -e TZ=Europe/Amsterdam \
+  ghcr.io/cenodude/crosswatch:latest \
+  run-once
+```
+
+Run selected pairs by id, number or unique prefix:
+
+```bash
+docker run --rm \
+  -v crosswatch_config:/config \
+  ghcr.io/cenodude/crosswatch:latest \
+  run-once --pair pair_07c3 --pair pair_91ab
+```
+
+The one-shot command exits `0` on success and `1` when the sync reports errors or cancellation. Add `--fail-on-unresolved` if unmatched items should fail the job.
+
 ## Sponsors
 
 <div align="center">
