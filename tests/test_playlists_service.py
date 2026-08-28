@@ -439,7 +439,10 @@ def test_clear_activity_resets_playlist_run_metadata(config_base, fake_providers
 
     cleared = svc.clear_activity(cfg)
 
-    assert cleared == {"ok": True, "removed": 3}
+    assert cleared["ok"] is True
+    assert cleared["removed"] == 3
+    assert cleared["activity"] == []
+    assert cleared["overview"]["last_sync_epoch"] is None
     assert "last_synced" not in cfg["playlists"]["endpoints"][0]
     assert "last_result" not in mapping
     assert runner.load_result(resolved) is None

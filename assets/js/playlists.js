@@ -337,7 +337,7 @@
       reconcileSyncSummary();
       const root = $("#page-playlists");
       if (root && root.querySelector(".pl-page")) {
-        if (wasBusy && !sharedSyncBusy()) await refreshOverview(["mappings", "activity"]);
+        if (wasBusy && !sharedSyncBusy()) await refreshOverview(["endpoints", "mappings", "activity"]);
         else {
           updateMappingActions(root);
           refreshSection(root, "mappings");
@@ -2307,7 +2307,9 @@
       primaryText: "Clear activity",
       savingText: "Clearing...",
       onPrimary: async () => {
-        await API.activityClear();
+        const cleared = await API.activityClear();
+        state.activity = Array.isArray(cleared.activity) ? cleared.activity : [];
+        if (cleared.overview) state.overview = cleared.overview;
         closeModal(true);
         await refreshOverview(["endpoints", "mappings", "activity"]);
       },

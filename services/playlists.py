@@ -570,7 +570,7 @@ def clear_activity(cfg: dict[str, Any]) -> dict[str, Any]:
                 removed += 1
     if removed:
         _save(cfg)
-    return {"ok": True, "removed": removed}
+    return {"ok": True, "removed": removed, "activity": activity(cfg), "overview": overview(cfg)}
 
 
 def upsert_endpoint(cfg: dict[str, Any], payload: Mapping[str, Any]) -> dict[str, Any]:
