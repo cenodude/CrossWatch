@@ -103,7 +103,9 @@ def _metadata_enriched(adapter: Any, item: Mapping[str, Any], typ: str) -> dict[
     if stremio_id:
         if not str(out.get("poster") or out.get("poster_url") or "").strip():
             out["poster"] = poster_url_from_item(out, stremio_id)
-        if _duration_ms(out):
+        ids_source = out.get("show_ids") if typ in {"episode", "episodes"} else out.get("ids")
+        ids_map = ids_source if isinstance(ids_source, Mapping) else {}
+        if _duration_ms(out) and str(ids_map.get("tmdb") or "").strip():
             return out
     provider = tmdb_metadata_provider(adapter)
     if provider is None:
@@ -127,17 +129,28 @@ def _metadata_enriched(adapter: Any, item: Mapping[str, Any], typ: str) -> dict[
         return out
     ids_raw = detail.get("ids")
     ids: Mapping[str, Any] = ids_raw if isinstance(ids_raw, Mapping) else {}
+    portable_ids: dict[str, Any] = {}
+    tmdb = str(ids.get("tmdb") or "").strip()
+    if tmdb:
+        portable_ids["tmdb"] = tmdb
     imdb = imdb_id(ids.get("imdb"))
     if imdb:
+        portable_ids["imdb"] = imdb
+    tvdb = str(ids.get("tvdb") or "").strip()
+    if tvdb:
+        portable_ids["tvdb"] = tvdb
+    if portable_ids:
         if typ in {"episode", "episodes"}:
             merged: dict[str, Any] = dict(show_ids)
-            merged["imdb"] = imdb
+            for key, value in portable_ids.items():
+                merged.setdefault(key, value)
             out["show_ids"] = merged
         else:
             out_ids_raw = out.get("ids")
             out_ids: Mapping[str, Any] = out_ids_raw if isinstance(out_ids_raw, Mapping) else {}
             merged = dict(out_ids)
-            merged["imdb"] = imdb
+            for key, value in portable_ids.items():
+                merged.setdefault(key, value)
             out["ids"] = merged
     duration = positive_int(detail.get("runtime_minutes"))
     if duration is None and typ in {"episode", "episodes"}:
