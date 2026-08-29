@@ -1028,6 +1028,29 @@ def _map_event(event: str) -> str | None:
     return None
 
 
+def _completion_session_token(payload: Mapping[str, Any], md: Mapping[str, Any]) -> str:
+    for source in (payload, md):
+        for key in ("PlaySessionId", "playSessionId", "SessionId", "sessionId", "SessionKey", "sessionKey"):
+            val = str(source.get(key) or "").strip()
+            if val:
+                return val
+    return ""
+
+
+def _completion_replay_key(
+    provider_instance: str,
+    account_key: str,
+    session_token: str,
+    rating_key: str,
+) -> str:
+    session_token = str(session_token or "").strip()
+    rating_key = str(rating_key or "").strip()
+    if not (session_token and rating_key):
+        return ""
+    account_key = str(account_key or "").strip().lower() or "unknown"
+    return f"plex:{provider_instance}|u:{account_key}|s:{session_token}|m:{rating_key}"
+
+
 def _verify_signature(raw: bytes | None, headers: Mapping[str, str], secret: str) -> bool:
     if not secret:
         return True
@@ -1352,15 +1375,18 @@ def process_webhook(
     prog_raw = _progress(md)
     acc_key = _account_key(payload)
     rk = str(md.get("ratingKey") or md.get("ratingkey") or "")
+    completion_session = _completion_session_token(payload, md)
+    completion_key = _completion_replay_key(provider_instance, acc_key, completion_session, rk)
     player_uuid = str((payload.get("Player") or {}).get("uuid") or "")
-    sess = f"rk:{rk}|p:{player_uuid or 'na'}|u:{acc_key}"
+    sess_token = completion_session or player_uuid or "na"
+    sess = f"rk:{rk}|s:{sess_token}|p:{player_uuid or 'na'}|u:{acc_key}"
 
     now = time.time()
     st = _SCROBBLE_STATE.get(sess) or {}
     first_seen = float(st.get("first_seen") or now)
     st = {**st, "first_seen": first_seen}
 
-    if st.get("last_event") == event and (now - float(st.get("ts", 0))) < 1.0:
+    if st.get("last_event") == event and (now - float(st.get("ts", 0))) < 1.0 and not st.get("retry_completion"):
         return {"ok": True, "dedup": True}
     if event == "media.pause" and (now - float(st.get("last_pause_ts", 0))) < pause_debounce:
         _emit(logger, f"debounce pause ({pause_debounce}s)", "DEBUG")
@@ -1571,7 +1597,7 @@ def process_webhook(
 
     if event in ("media.stop", "media.scrobble") and prog >= force_stop_at:
         fin = _LAST_FINISH_BY_ACC.get(acc_key)
-        if fin and str(fin.get("rk") or "") == str(rk or "") and (now - float(fin.get("ts", 0))) <= 180:
+        if fin and str(fin.get("rk") or "") == str(rk or "") and fin.get("sess") == sess and (now - float(fin.get("ts", 0))) <= 180:
             _emit(logger, "suppress duplicate finish (stop<->scrobble)", "DEBUG")
             _SCROBBLE_STATE[sess] = {**st,                "ts": now,
                 "last_event": event,
@@ -1583,8 +1609,24 @@ def process_webhook(
             _update_playback_state()
             return {"ok": True, "suppressed": True}
 
-    if event in ("media.stop", "media.scrobble") and prog >= force_stop_at:
-        _LAST_FINISH_BY_ACC[_account_key(payload)] = {"rk": str(rk or ""), "ts": now}
+    if (
+        intended == "/scrobble/stop"
+        and prog >= watched_at
+        and completion_key
+        and st.get("completion_key") == completion_key
+        and st.get("completion_done") is True
+    ):
+        _emit(logger, "suppress duplicate completion replay", "DEBUG")
+        _SCROBBLE_STATE[sess] = {**st,            "ts": now,
+            "last_event": event,
+            "last_pause_ts": st.get("last_pause_ts", 0),
+            "prog": prog,
+            "finished": True,
+            **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
+            "retry_completion": False,
+        }
+        _update_playback_state()
+        return {"ok": True, "suppressed": True, "dedup": True}
 
     _update_playback_state()
 
@@ -1636,6 +1678,7 @@ def process_webhook(
     activity_recorded = bool(rj.get("activity_recorded")) if isinstance(rj, dict) else False
 
     if r.status_code < 400:
+        completed_success = activity_recorded and intended == "/scrobble/stop" and prog >= watched_at
         if activity_recorded and intended == "/scrobble/stop" and prog >= watched_at and not (st.get("wl_removed") is True):
             try:
                 _call_remove_across(ids_all2 or {}, media_type, origin=f"plex:{provider_instance}")
@@ -1648,9 +1691,12 @@ def process_webhook(
             "prog": prog,
             "finished": (activity_recorded and intended == "/scrobble/stop" and prog >= watched_at),
             **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
+            "completion_key": completion_key if completed_success and completion_key else "",
+            "completion_done": bool(completed_success and completion_key),
+            "retry_completion": False,
         }
         if activity_recorded and intended == "/scrobble/stop" and prog >= watched_at:
-            _LAST_FINISH_BY_ACC[_account_key(payload)] = {"rk": str(rk or ""), "ts": now}
+            _LAST_FINISH_BY_ACC[_account_key(payload)] = {"rk": str(rk or ""), "sess": sess, "ts": now}
         try:
             action_name = intended.rsplit("/", 1)[-1]
             _emit(logger, f"user='{_mask_account(acc_title)}' {action_name} {prog:.1f}% • {media_name_dbg}", "INFO")
@@ -1662,9 +1708,6 @@ def process_webhook(
             _archive("scrobble_completed", media_type, md, ids_all2, acc_title, prog)
         return {"ok": True, "status": 200, "action": intended, "trakt": rj, "ignored": not activity_recorded}
 
-    if event in ("media.stop", "media.scrobble") and prog >= force_stop_at:
-        _LAST_FINISH_BY_ACC[_account_key(payload)] = {"rk": str(rk or ""), "ts": now}
-
     _emit(logger, f"{intended} {r.status_code} {(str(rj)[:180])}", "ERROR")
     if "trakt" in sinks_cfg and intended in ("/scrobble/start", "/scrobble/stop"):
         _archive("scrobble_failed", media_type, md, ids_all2, acc_title, prog, reason=str(r.status_code))
@@ -1674,5 +1717,6 @@ def process_webhook(
         "prog": prog,
         "finished": (prog >= force_stop_at),
         **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
+        "retry_completion": bool(intended == "/scrobble/stop" and prog >= watched_at),
     }
     return {"ok": False, "status": r.status_code, "trakt": rj}

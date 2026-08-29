@@ -309,6 +309,15 @@ def _webhook_ignore_log(prefix: str, target_error: dict[str, Any] | None) -> tup
     return f"{prefix}: ignored ({text})", level
 
 
+def _webhook_parse_failure_log(prefix: str, provider: str, content_type: str, raw: bytes | bytearray | None, exc: BaseException) -> str:
+    body_len = len(raw or b"")
+    err_cls = exc.__class__.__name__
+    return (
+        f"{prefix}: failed to parse payload | provider={provider} "
+        f"content-type='{content_type or ''}' bytes={body_len} error_class={err_cls}"
+    )
+
+
 def _resolve_plexwatcher_target(request: Request) -> tuple[str, dict[str, Any], dict[str, Any] | None]:
     cfg = load_config() or {}
     ids = _ensure_webhook_ids(cfg)
@@ -1409,13 +1418,7 @@ async def webhook_jellyfintrakt(request: Request) -> JSONResponse:
             payload = json.loads(raw.decode("utf-8", errors="replace")) if raw else {}
             log("jf-webhook: parsed json payload", "DEBUG")
     except Exception as e:
-        snippet = (
-            raw[:200].decode("utf-8", errors="replace") if raw else "<no body>"
-        )
-        log(
-            f"jf-webhook: failed to parse payload: {e} | body[:200]={snippet}",
-            "ERROR",
-        )
+        log(_webhook_parse_failure_log("jf-webhook", "jellyfin", ct, raw, e), "ERROR")
         return JSONResponse({"ok": True}, status_code=200)
 
     md = (
@@ -1568,13 +1571,7 @@ async def webhook_embytrakt(request: Request) -> JSONResponse:
             payload = json.loads(raw.decode("utf-8", errors="replace")) if raw else {}
             log("emby-webhook: parsed json payload", "DEBUG")
     except Exception as e:
-        snippet = (
-            raw[:200].decode("utf-8", errors="replace") if raw else "<no body>"
-        )
-        log(
-            f"emby-webhook: failed to parse payload: {e} | body[:200]={snippet}",
-            "ERROR",
-        )
+        log(_webhook_parse_failure_log("emby-webhook", "emby", ct, raw, e), "ERROR")
         return JSONResponse({"ok": True}, status_code=200)
 
     md = (
@@ -1732,13 +1729,7 @@ async def webhook_trakt(request: Request) -> JSONResponse:
             payload = json.loads(raw.decode("utf-8", errors="replace")) if raw else {}
             log("plex-webhook: parsed json payload", "DEBUG")
     except Exception as e:
-        snippet = (
-            raw[:200].decode("utf-8", errors="replace") if raw else "<no body>"
-        )
-        log(
-            f"plex-webhook: failed to parse payload: {e} | body[:200]={snippet}",
-            "ERROR",
-        )
+        log(_webhook_parse_failure_log("plex-webhook", "plex", ct, raw, e), "ERROR")
         return JSONResponse({"ok": True}, status_code=200)
 
     payload = payload or {}
@@ -1848,7 +1839,7 @@ async def webhook_plexwatcher(request: Request) -> JSONResponse:
         else:
             payload = json.loads(raw.decode("utf-8", errors="replace")) if raw else {}
     except Exception as e:
-        log(f"plexwatcher-webhook: failed to parse payload: {e}", "ERROR")
+        log(_webhook_parse_failure_log("plexwatcher-webhook", "plexwatcher", ct, raw, e), "ERROR")
         payload = {}
 
     if not isinstance(payload, dict):
