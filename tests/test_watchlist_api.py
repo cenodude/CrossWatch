@@ -33,6 +33,83 @@ def _json_body(resp) -> dict:
     return json.loads(resp.body.decode("utf-8"))
 
 
+def test_watchlist_api_returns_not_modified_for_known_version(monkeypatch) -> None:
+    from api import watchlistAPI
+    import cw_platform.config_base as config_base
+
+    monkeypatch.setattr(config_base, "load_config", lambda: {})
+    monkeypatch.setattr(watchlistAPI, "_tmdb_api_key", lambda _cfg: "")
+    monkeypatch.setattr(watchlistAPI, "_effective_user_filter", lambda *_args: ("", {}))
+    monkeypatch.setattr(watchlistAPI, "_watchlist_version", lambda **_kwargs: "v1")
+    monkeypatch.setattr(
+        watchlistAPI,
+        "_load_watchlist_state",
+        lambda: (_ for _ in ()).throw(AssertionError("state should not load")),
+    )
+
+    data = _json_body(watchlistAPI.api_watchlist(request=_request("/api/watchlist"), known_version="v1"))
+
+    assert data == {"ok": True, "not_modified": True, "version": "v1"}
+
+
+def test_watchlist_api_returns_empty_items_when_state_is_missing(monkeypatch) -> None:
+    from api import watchlistAPI
+    import cw_platform.config_base as config_base
+
+    monkeypatch.setattr(config_base, "load_config", lambda: {})
+    monkeypatch.setattr(watchlistAPI, "_tmdb_api_key", lambda _cfg: "")
+    monkeypatch.setattr(watchlistAPI, "_effective_user_filter", lambda *_args: ("", {}))
+    monkeypatch.setattr(watchlistAPI, "_watchlist_version", lambda **_kwargs: "empty-v1")
+    monkeypatch.setattr(watchlistAPI, "_load_watchlist_state", lambda: {})
+
+    data = _json_body(watchlistAPI.api_watchlist(request=_request("/api/watchlist")))
+
+    assert data["ok"] is True
+    assert data["items"] == []
+    assert data["version"] == "empty-v1"
+
+
+def test_watchlist_api_includes_row_metadata(monkeypatch) -> None:
+    from api import metaAPI
+    from api import watchlistAPI
+    import cw_platform.config_base as config_base
+
+    monkeypatch.setattr(config_base, "load_config", lambda: {"metadata": {"locale": "en-US"}})
+    monkeypatch.setattr(watchlistAPI, "_tmdb_api_key", lambda _cfg: "tmdb-key")
+    monkeypatch.setattr(watchlistAPI, "_effective_user_filter", lambda *_args: ("", {}))
+    monkeypatch.setattr(watchlistAPI, "_load_watchlist_state", lambda: {"last_sync_epoch": 123})
+    monkeypatch.setattr(
+        watchlistAPI,
+        "build_watchlist",
+        lambda _state, tmdb_ok: [
+            {
+                "key": "tmdb:movie:123",
+                "title": "Masters of the Universe",
+                "type": "movie",
+                "tmdb": 123,
+                "year": 2026,
+                "sources": ["plex"],
+                "sources_by_provider": {"plex": ["default"]},
+                "ids": {"tmdb": 123},
+            }
+        ],
+    )
+
+    def fake_get_meta(*_args, **kwargs):
+        assert kwargs["need"]["genres"] is True
+        assert kwargs["need"]["release"] is True
+        return {"genres": ["Action", "Fantasy"], "detail": {"release_date": "2026-06-03"}}
+
+    monkeypatch.setattr(metaAPI, "get_meta", fake_get_meta)
+
+    data = _json_body(watchlistAPI.api_watchlist(request=_request("/api/watchlist"), max_meta=10))
+
+    assert data["ok"] is True
+    assert data["meta_enriched"] == 1
+    assert data["items"][0]["release_date"] == "2026-06-03"
+    assert data["items"][0]["genres"] == ["Action", "Fantasy"]
+
+
 def test_watchlist_api_filters_non_admin_to_assigned_profile(monkeypatch) -> None:
     from api import appAuthAPI as auth
     from api import watchlistAPI

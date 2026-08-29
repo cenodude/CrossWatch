@@ -3,6 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import hashlib
+import json
 import threading
 from typing import Any, cast
 from fastapi import FastAPI, Query, Request
@@ -41,6 +43,11 @@ def _cache_key(*, both_only: bool, active_only: bool, limit: int, user_profile: 
         int(limit or 0),
         str(user_profile or "").strip(),
     )
+
+
+def _cache_version(key: tuple[Any, ...]) -> str:
+    blob = json.dumps(key, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
 
 def _tmdb_api_key(cfg: dict[str, Any]) -> str:
@@ -166,6 +173,7 @@ def register_wall(app: FastAPI) -> None:
         active_only: bool = Query(False, description="Keep only items from configured providers"),
         limit: int = Query(0, ge=0, le=100, description="Optional item limit"),
         user_profile: str = Query("", description="Optional user profile id to scope provider instances"),
+        known_version: str = Query("", description="Client cache version to avoid rebuilding unchanged wall data"),
     ) -> dict[str, Any]:
         from api.appAuthAPI import COOKIE_NAME, effective_user_profile_id
 
@@ -173,6 +181,9 @@ def register_wall(app: FastAPI) -> None:
         token = request.cookies.get(COOKIE_NAME) if request is not None else None
         profile = effective_user_profile_id(cfg, token, user_profile)
         key = _cache_key(both_only=both_only, active_only=active_only, limit=limit, user_profile=profile)
+        version = _cache_version(key)
+        if known_version and str(known_version).strip() == version:
+            return {"ok": True, "not_modified": True, "version": version}
         with _WALL_CACHE_LOCK:
             if _WALL_CACHE.get("key") == key and isinstance(_WALL_CACHE.get("data"), dict):
                 return dict(_WALL_CACHE["data"])
@@ -216,6 +227,7 @@ def register_wall(app: FastAPI) -> None:
             "total": total,
             "missing_tmdb_key": not bool(api_key),
             "last_sync_epoch": st.get("last_sync_epoch") if isinstance(st, dict) else None,
+            "version": version,
         }
         with _WALL_CACHE_LOCK:
             _WALL_CACHE["key"] = key

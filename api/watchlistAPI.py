@@ -3,6 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import hashlib
+import json
 import urllib.parse
 from typing import Any, Literal, cast
 
@@ -21,6 +23,52 @@ from services.watchlist import (
 )
 
 router = APIRouter(prefix="/api/watchlist", tags=["watchlist"])
+_WATCHLIST_PAYLOAD_SCHEMA = "row-meta-v1"
+
+
+def _watchlist_version(
+    *,
+    requested_profile: str = "",
+    overview: str = "none",
+    locale: str | None = None,
+    limit: int = 0,
+    max_meta: int = 250,
+) -> str:
+    try:
+        from cw_platform.config_base import CONFIG, config_path
+        from cw_platform.local_db import manual_policy as sqlite_manual_policy
+        from cw_platform.local_db import state as sqlite_state
+        from cw_platform.local_db import watchlist_hide as sqlite_watchlist_hide
+    except Exception:
+        source = {
+            "schema": _WATCHLIST_PAYLOAD_SCHEMA,
+            "profile": requested_profile,
+            "overview": overview,
+            "locale": locale,
+            "limit": limit,
+            "max_meta": max_meta,
+        }
+    else:
+        try:
+            cfg_path = config_path()
+            cfg_stat = cfg_path.stat()
+            cfg_stamp = (str(cfg_path), int(getattr(cfg_stat, "st_mtime_ns", int(cfg_stat.st_mtime * 1e9))), int(cfg_stat.st_size))
+        except Exception:
+            cfg_stamp = ("", 0, 0)
+        source = {
+            "schema": _WATCHLIST_PAYLOAD_SCHEMA,
+            "state": sqlite_state.fingerprint(CONFIG, {"watchlist"}),
+            "policy": sqlite_manual_policy.fingerprint(CONFIG, {"watchlist"}),
+            "hidden": sqlite_watchlist_hide.fingerprint(CONFIG),
+            "config": cfg_stamp,
+            "profile": requested_profile,
+            "overview": overview,
+            "locale": locale,
+            "limit": int(limit or 0),
+            "max_meta": int(max_meta or 0),
+        }
+    blob = json.dumps(source, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
 
 def _load_watchlist_state() -> dict[str, Any]:
@@ -32,6 +80,17 @@ def _load_watchlist_state() -> dict[str, Any]:
         return state if isinstance(state, dict) else {}
     except Exception:
         return {}
+
+
+def _int_param(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+def _str_param(value: Any, default: str = "") -> str:
+    return value if isinstance(value, str) else default
 
 
 def _public_error(message: str = "operation_failed") -> str:
@@ -579,6 +638,7 @@ def api_watchlist(
         description="Cap enriched items",
     ),
     user_profile: str = Query("", description="Optional user profile id to scope provider instances"),
+    known_version: str = Query("", description="Client cache version to avoid rebuilding unchanged watchlist data"),
 ) -> JSONResponse:
 
     try:
@@ -589,25 +649,54 @@ def api_watchlist(
         return JSONResponse({"ok": False, "error": "server import failed"}, status_code=200)
 
     cfg = load_config()
-    st = _load_watchlist_state()
+    overview_value = _str_param(overview, "none")
+    if overview_value not in {"none", "short", "full"}:
+        overview_value = "none"
+    locale_value = _str_param(locale, "") or None
+    limit_value = _int_param(limit, 0)
+    max_meta_value = _int_param(max_meta, 250)
+    known_version_value = _str_param(known_version, "")
     api_key = _tmdb_api_key(cfg)
     has_key = bool(api_key)
+    profile, user_filter = _effective_user_filter(cfg, request, user_profile)
+    version = _watchlist_version(
+        requested_profile=profile,
+        overview=overview_value,
+        locale=locale_value,
+        limit=limit_value,
+        max_meta=max_meta_value,
+    )
+    if known_version_value and known_version_value.strip() == version:
+        return JSONResponse(
+            {"ok": True, "not_modified": True, "version": version},
+            status_code=200,
+            headers={"Cache-Control": "no-store"},
+        )
+    st = _load_watchlist_state()
 
     if not st:
         return JSONResponse(
-            {"ok": False, "error": "No snapshot found or empty.", "missing_tmdb_key": not has_key},
+            {
+                "ok": True,
+                "items": [],
+                "error": "",
+                "missing_tmdb_key": not has_key,
+                "last_sync_epoch": None,
+                "meta_enriched": 0,
+                "version": version,
+            },
             status_code=200,
+            headers={"Cache-Control": "no-store"},
         )
 
     try:
         items = build_watchlist(st, tmdb_ok=has_key) or []
     except Exception:
         return JSONResponse(
-            {"ok": False, "error": "watchlist build failed", "missing_tmdb_key": not has_key},
+            {"ok": False, "error": "watchlist build failed", "missing_tmdb_key": not has_key, "version": version},
             status_code=200,
         )
 
-    profile, user_filter = _effective_user_filter(cfg, request, user_profile)
     if user_filter:
         items = [
             scoped
@@ -626,19 +715,20 @@ def api_watchlist(
                 "missing_tmdb_key": not has_key,
                 "last_sync_epoch": st.get("last_sync_epoch"),
                 "meta_enriched": 0,
+                "version": version,
             },
             status_code=200,
         )
 
-    if limit:
-        items = items[:limit]
+    if limit_value:
+        items = items[:limit_value]
 
     enriched = 0
-    eff_overview = overview if (overview != "none" and has_key) else "none"
+    eff_overview = overview_value if (overview_value != "none" and has_key) else "none"
 
-    if eff_overview != "none":
+    if has_key and max_meta_value:
         eff_locale = (
-            locale
+            locale_value
             or (cfg.get("metadata") or {}).get("locale")
             or (cfg.get("ui") or {}).get("locale")
             or None
@@ -646,29 +736,58 @@ def api_watchlist(
 
         def _norm_type(x: str | None) -> str:
             t = (x or "").strip().lower()
-            if t in {"tv", "show", "shows", "series", "season", "episode"}:
+            if t in {"anime", "tv", "show", "shows", "series", "season", "episode"}:
                 return "tv"
             if t in {"movie", "movies", "film", "films"}:
                 return "movie"
             return "movie"
 
+        def _genre_names(value: Any) -> list[str]:
+            raw = value if isinstance(value, list) else []
+            out: list[str] = []
+            for row in raw:
+                if isinstance(row, str):
+                    name = row
+                elif isinstance(row, dict):
+                    name = str(row.get("name") or row.get("title") or "").strip()
+                else:
+                    name = ""
+                if name and name not in out:
+                    out.append(name)
+            return out
+
+        def _release_date(meta: dict[str, Any], typ: str) -> str:
+            raw_detail = meta.get("detail")
+            raw_release = meta.get("release")
+            detail: dict[str, Any] = raw_detail if isinstance(raw_detail, dict) else {}
+            release: dict[str, Any] = raw_release if isinstance(raw_release, dict) else {}
+            if typ == "movie":
+                raw = detail.get("release_date") or release.get("date")
+            else:
+                raw = detail.get("first_air_date") or release.get("date")
+            return str(raw or "").strip()
+
         for it in items:
-            if enriched >= int(max_meta):
+            if enriched >= max_meta_value:
                 break
             tmdb_id = it.get("tmdb")
             if not tmdb_id:
                 continue
 
-            it["type"] = _norm_type(it.get("type") or it.get("entity") or it.get("media_type"))
+            meta_type = _norm_type(it.get("type") or it.get("entity") or it.get("media_type"))
             raw_item_ids = it.get("ids")
             item_ids: dict[str, Any] = raw_item_ids if isinstance(raw_item_ids, dict) else {}
+            need: dict[str, bool] = {"genres": True, "release": True, "title": True, "year": True}
+            if eff_overview != "none":
+                need["overview"] = True
+                need["tagline"] = True
             try:
                 meta = get_meta(
                     api_key,
-                    it["type"],
+                    meta_type,
                     tmdb_id,
                     CACHE_DIR,
-                    need={"overview": True, "tagline": True, "title": True, "year": True},
+                    need=need,
                     locale=eff_locale,
                     title=it.get("title"),
                     year=it.get("year"),
@@ -677,14 +796,28 @@ def api_watchlist(
                 ) or {}
                 if meta.get("resolved_type"):
                     it["resolved_type"] = meta["resolved_type"]
-                desc = meta.get("overview") or ""
-                if not desc:
-                    continue
-                if eff_overview == "short":
-                    desc = _shorten(desc, 280)
-                it["overview"] = desc
-                if eff_overview == "short" and meta.get("tagline"):
-                    it["tagline"] = meta["tagline"]
+                genres = _genre_names(meta.get("genres") or (meta.get("detail") or {}).get("genres"))
+                if genres:
+                    it["genres"] = genres
+                release_date = _release_date(meta, meta_type)
+                if release_date:
+                    if meta_type == "movie":
+                        it["release_date"] = release_date
+                    else:
+                        it["first_air_date"] = release_date
+                    if not it.get("year"):
+                        try:
+                            it["year"] = int(release_date[:4])
+                        except Exception:
+                            pass
+                if eff_overview != "none":
+                    desc = meta.get("overview") or ""
+                    if desc:
+                        if eff_overview == "short":
+                            desc = _shorten(desc, 280)
+                        it["overview"] = desc
+                    if eff_overview == "short" and meta.get("tagline"):
+                        it["tagline"] = meta["tagline"]
                 enriched += 1
             except Exception:
                 continue
@@ -696,8 +829,10 @@ def api_watchlist(
             "missing_tmdb_key": not has_key,
             "last_sync_epoch": st.get("last_sync_epoch"),
             "meta_enriched": enriched,
+            "version": version,
         },
         status_code=200,
+        headers={"Cache-Control": "no-store"},
     )
 
 @router.delete("/{key}")
