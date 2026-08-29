@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -1441,6 +1442,76 @@ def test_dashboard_widgets_api_reads_state_widgets_from_db(monkeypatch, tmp_path
     assert payload["recent_history"]["items"][0]["tmdb"] == "949"
     assert payload["latest_ratings"]["items"][0]["tmdb"] == "550"
     assert payload["recent_progress"]["items"][0]["tmdb"] == "40"
+
+
+def test_dashboard_widgets_api_returns_not_modified_for_known_version(monkeypatch, tmp_path) -> None:
+    import cw_platform.config_base as config_base
+    from api import dashboardAPI
+
+    monkeypatch.setattr(config_base, "CONFIG", tmp_path)
+    monkeypatch.setattr(dashboard_widgets, "_tracker_feature_items", lambda _kind: {})
+
+    first = dashboardAPI.dashboard_widgets(
+        history_limit=8,
+        ratings_limit=12,
+        scrobble_limit=8,
+        progress_limit=8,
+        playlists_limit=8,
+        include="history",
+    )
+    version = _loads_body(first.body)["version"]
+    monkeypatch.setattr(
+        dashboardAPI,
+        "dashboard_widgets_payload",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("payload should not rebuild")),
+    )
+
+    second = dashboardAPI.dashboard_widgets(
+        history_limit=8,
+        ratings_limit=12,
+        scrobble_limit=8,
+        progress_limit=8,
+        playlists_limit=8,
+        include="history",
+        known_version=version,
+    )
+    payload = _loads_body(second.body)
+
+    assert payload == {"ok": True, "not_modified": True, "version": version}
+
+
+def test_dashboard_widget_frontend_uses_cached_payload_version() -> None:
+    js = Path("assets/js/dashboard-widgets.js").read_text("utf-8")
+    profile_js = Path("assets/js/profile-page.js").read_text("utf-8")
+
+    assert "const DATA_CACHE_KEY" in js
+    assert "function readCachedWidgetData()" in js
+    assert "function writeCachedWidgetData(payload)" in js
+    assert "const WIDGET_LOADING_DELAY_MS = 700;" in js
+    assert 'const REFRESHABLE_WIDGETS = ["history", "ratings", "scrobble", "progress", "playlists"];' in js
+    assert "async function refreshDashboardWidgets({ forceConfig = false, force = false, preserve = true, kinds = null } = {})" in js
+    assert 'params.set("known_version", cachedPayload.version)' in js
+    assert "if (data?.not_modified && cachedPayload)" in js
+    assert "applyWidgetPayload(cached, active)" in js
+    assert "if (!hasLoaded && cachedPayload)" in js
+    assert "applyWidgetPayload(cachedPayload, active)" in js
+    assert "const preserve = opts.preserve === false ? hasLoaded : true;" in js
+    assert "try { await window.CW?.OverviewProfile?.ready; } catch {}\n    if (seq !== loadSeq || !isOnMain()) return;\n    if (!hasLoaded) revealFromCache();" in js
+    assert "function scheduleSlowWidgetLoading(hosts, requestedKinds)" in js
+    assert "if (!latestItems[kind]?.length) setLoading(hosts[kind], kind);" in js
+    assert "const requestedKinds = REFRESHABLE_WIDGETS.filter((key) => active[key] && (!wantedKinds || wantedKinds.has(key)));" in js
+    assert "mergeWidgetPayload" not in js
+    assert "loadedKinds" not in js
+    assert "if (!partialRefresh) writeCachedWidgetData(data);" in js
+    assert "refreshDashboardWidgets({ preserve: true });" in js
+    assert "refreshDashboardWidgets({ forceConfig: true, preserve: true })" in js
+    assert 'window.addEventListener("sync-complete", refreshForSyncComplete);' in js
+    assert 'window.addEventListener("cw:scrobble-stopped", refreshForScrobbleStopped);' in js
+    assert 'markWidgetsDirty(0, { kinds: ["scrobble", "history", "progress"] });' in js
+    assert 'window.addEventListener("watchlist:refresh", () => markWidgetsDirty(250));' not in js
+    assert "const readAnyCache = (key) =>" in profile_js
+    assert 'widgetParams.set("known_version", cached.widgets.version)' in profile_js
+    assert "if (widgetsNotModified)" in profile_js
 
 
 def test_dashboard_widgets_api_reads_scrobble_from_activity_db(monkeypatch, tmp_path) -> None:
