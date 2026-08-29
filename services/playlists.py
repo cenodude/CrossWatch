@@ -522,6 +522,9 @@ def activity(cfg: Mapping[str, Any], *, limit: int = 25) -> list[dict[str, Any]]
         if ts:
             rows.append({
                 "ts": int(ts), "type": "Sync", "status": "completed",
+                "endpoint_id": str(ep.get("id") or ""),
+                "provider": str(ep.get("provider") or "").strip().upper(),
+                "instance": normalize_instance_id(ep.get("instance")),
                 "label": f"{ep.get('provider_label') or ep.get('provider')} · {ep.get('name')}",
                 "details": (f"{ep.get('item_count')} items" if ep.get("item_count") is not None else ""),
             })
@@ -537,6 +540,21 @@ def activity(cfg: Mapping[str, Any], *, limit: int = 25) -> list[dict[str, Any]]
             has_error = bool(r.get("capacity_error")) or bool(r.get("errors")) or (r.get("ok") is False and not has_warning)
             rows.append({
                 "ts": finished_at, "type": "Run", "status": "error" if has_error else "warning" if has_warning else "completed",
+                "mapping_id": str(m.get("id") or ""),
+                "source_endpoint": str(m.get("source_endpoint") or ""),
+                "target_endpoints": [str(x) for x in (m.get("target_endpoints") or []) if str(x)],
+                "source": {
+                    "provider": str((m.get("source") or {}).get("provider") or "").strip().upper(),
+                    "instance": normalize_instance_id((m.get("source") or {}).get("instance")),
+                },
+                "targets": [
+                    {
+                        "provider": str((target or {}).get("provider") or "").strip().upper(),
+                        "instance": normalize_instance_id((target or {}).get("instance")),
+                    }
+                    for target in (m.get("targets") or [])
+                    if isinstance(target, Mapping)
+                ],
                 "ruleset": ruleset_name,
                 "target_count": target_count,
                 "added": int(r.get("added", 0)),

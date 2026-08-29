@@ -157,6 +157,15 @@ def test_editor_ui_exposes_playlist_source() -> None:
     assert "state.source = ctx.normalizeSource(state.source);" in load_js
 
 
+def test_editor_ui_has_no_mojibake_markers() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    js = (root / "assets" / "js" / "editor.js").read_text(encoding="utf-8")
+    for marker in ("\u00c2", "\u00c3", "\u00e2", "\ufffd"):
+        assert marker not in js
+
+
 def test_editor_playlist_endpoint_picker_uses_styled_single_select() -> None:
     from pathlib import Path
 

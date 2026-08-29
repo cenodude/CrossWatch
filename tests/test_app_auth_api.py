@@ -285,6 +285,89 @@ def test_bootstrap_credentials_still_work_without_origin(monkeypatch) -> None:
     assert cfg["app_auth"]["sessions"]
 
 
+def test_bootstrap_credentials_recheck_latest_config_before_write(monkeypatch) -> None:
+    from api import appAuthAPI as auth
+
+    initial = _auth_cfg(enabled=False)
+    initial["app_auth"]["username"] = ""
+    initial["app_auth"]["password"] = {"scheme": "pbkdf2_sha256", "iterations": 260_000, "salt": "", "hash": ""}
+    latest = _auth_cfg()
+    latest["app_auth"]["username"] = "owner"
+    monkeypatch.setattr(auth, "load_config", lambda: initial)
+
+    def _stale_update(mutator):
+        return latest, mutator(latest)
+
+    monkeypatch.setattr(auth, "_update_config", _stale_update)
+
+    resp = auth.api_set_credentials(_request("/api/app-auth/credentials"), {"enabled": True, "username": "attacker", "password": "secrett2"})
+
+    assert resp.status_code == 401
+    assert _json_body(resp)["error"] == "Unauthorized"
+    assert latest["app_auth"]["username"] == "owner"
+
+
+def test_recovery_credentials_recheck_latest_config_before_write(monkeypatch) -> None:
+    from api import appAuthAPI as auth
+
+    initial = _auth_cfg()
+    initial["app_auth"]["reset_required"] = True
+    latest = _auth_cfg()
+    latest["app_auth"]["username"] = "owner"
+    latest["app_auth"]["reset_required"] = False
+    monkeypatch.setattr(auth, "load_config", lambda: initial)
+
+    def _stale_update(mutator):
+        return latest, mutator(latest)
+
+    monkeypatch.setattr(auth, "_update_config", _stale_update)
+
+    resp = auth.api_set_credentials(_request("/api/app-auth/credentials"), {"enabled": True, "username": "attacker", "password": "secrett2"})
+
+    assert resp.status_code == 401
+    assert _json_body(resp)["error"] == "Unauthorized"
+    assert latest["app_auth"]["username"] == "owner"
+
+
+def test_concurrent_bootstrap_credentials_only_first_write_wins(monkeypatch) -> None:
+    import threading
+
+    from api import appAuthAPI as auth
+
+    cfg = _auth_cfg(enabled=False)
+    cfg["app_auth"]["username"] = ""
+    cfg["app_auth"]["password"] = {"scheme": "pbkdf2_sha256", "iterations": 260_000, "salt": "", "hash": ""}
+    monkeypatch.setattr(auth, "load_config", lambda: cfg)
+
+    gate = threading.Barrier(2)
+    lock = threading.Lock()
+
+    def _concurrent_update(mutator):
+        gate.wait(timeout=5)
+        with lock:
+            return cfg, mutator(cfg)
+
+    monkeypatch.setattr(auth, "_update_config", _concurrent_update)
+    results: dict[str, int] = {}
+
+    def _worker(username: str) -> None:
+        resp = auth.api_set_credentials(
+            _request("/api/app-auth/credentials"),
+            {"enabled": True, "username": username, "password": "secrett2"},
+        )
+        results[username] = resp.status_code
+
+    threads = [threading.Thread(target=_worker, args=(username,)) for username in ("owner", "attacker")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert sorted(results.values()) == [200, 401]
+    assert cfg["app_auth"]["username"] in {"owner", "attacker"}
+    assert results[cfg["app_auth"]["username"]] == 200
+
+
 def test_bootstrap_credentials_clear_untrusted_pre_auth_tokens(monkeypatch) -> None:
     from api import appAuthAPI as auth
 
@@ -326,6 +409,38 @@ def test_bootstrap_credentials_preserve_local_cli_pre_auth_tokens(monkeypatch) -
 
     assert resp.status_code == 200
     assert cfg["app_auth"]["api_tokens"] == [local_token]
+
+
+def test_bootstrap_credentials_reject_unauthenticated_disable(monkeypatch) -> None:
+    from api import appAuthAPI as auth
+
+    cfg = _auth_cfg(enabled=False)
+    cfg["app_auth"]["username"] = ""
+    cfg["app_auth"]["password"] = {"scheme": "pbkdf2_sha256", "iterations": 260_000, "salt": "", "hash": ""}
+    cfg["app_auth"]["api_tokens"] = [{"id": "abcdefabcdefabcd", "version": 2, "secret": "secret"}]
+    monkeypatch.setattr(auth, "load_config", lambda: cfg)
+    monkeypatch.setattr(auth, "save_config", lambda *_args, **_kwargs: None)
+
+    resp = auth.api_set_credentials(_request("/api/app-auth/credentials"), {"enabled": False, "username": "admin"})
+
+    assert resp.status_code == 401
+    assert cfg["app_auth"]["api_tokens"] == [{"id": "abcdefabcdefabcd", "version": 2, "secret": "secret"}]
+
+
+def test_recovery_credentials_reject_unauthenticated_disable(monkeypatch) -> None:
+    from api import appAuthAPI as auth
+
+    cfg = _auth_cfg()
+    cfg["app_auth"]["reset_required"] = True
+    cfg["app_auth"]["api_tokens"] = [{"id": "abcdefabcdefabcd", "version": 2, "secret": "secret"}]
+    monkeypatch.setattr(auth, "load_config", lambda: cfg)
+    monkeypatch.setattr(auth, "save_config", lambda *_args, **_kwargs: None)
+
+    resp = auth.api_set_credentials(_request("/api/app-auth/credentials"), {"enabled": False, "username": "admin"})
+
+    assert resp.status_code == 401
+    assert cfg["app_auth"]["reset_required"] is True
+    assert cfg["app_auth"]["api_tokens"] == [{"id": "abcdefabcdefabcd", "version": 2, "secret": "secret"}]
 
 
 def test_credentials_update_preserves_existing_tokens(monkeypatch) -> None:
@@ -884,6 +999,12 @@ def test_non_admin_api_policy_blocks_sensitive_routes() -> None:
     assert auth.non_admin_api_allowed("/api/import/commit", "POST") is True
     assert auth.non_admin_api_allowed("/api/editor", "POST") is True
     assert auth.non_admin_api_allowed("/api/playlists/mappings", "POST") is True
+    assert auth.non_admin_api_allowed("/api/playlists/rulesets", "GET") is True
+    assert auth.non_admin_api_allowed("/api/playlists/rulesets/custom", "GET") is True
+    assert auth.non_admin_api_allowed("/api/playlists/rulesets/validate", "POST") is True
+    assert auth.non_admin_api_allowed("/api/playlists/rulesets", "POST") is False
+    assert auth.non_admin_api_allowed("/api/playlists/rulesets/custom/clone", "POST") is False
+    assert auth.non_admin_api_allowed("/api/playlists/rulesets/custom", "DELETE") is False
     assert auth.non_admin_api_allowed("/api/snapshots/create", "POST") is True
     assert auth.non_admin_api_allowed("/api/watch/start", "POST") is False
     assert auth.non_admin_api_allowed("/api/playback_progress/settings", "POST") is False
