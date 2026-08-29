@@ -12,7 +12,7 @@ from typing import Any
 
 import requests
 
-from cw_platform.id_map import minimal as id_minimal
+from cw_platform.id_map import ID_KEYS, coalesce_ids, minimal as id_minimal
 from providers.auth._auth_STREMIO import StremioAuthError
 from providers.sync._mod_common import build_op_result, unresolved_keys
 
@@ -25,6 +25,7 @@ from ._common import (
     imdb_ids_from_item,
     imdb_id,
     ids_from_stremio_record,
+    is_capture_mode,
     iso_from_epoch_ms,
     item_from_episode,
     item_from_movie_record,
@@ -373,6 +374,7 @@ _RECONSTRUCTION_FAILURES = {
 _TMDB_KEY_REASONS = {"bare_numeric_id_unverified", "native_episode_index_unavailable", "native_episode_order_unverified"}
 _UNKNOWN_ID_REASONS = {"unsupported_stremio_id", "native_episode_namespace_unsupported", "bare_numeric_id_mismatch"}
 _UNKNOWN_EPISODE_WATCHED_AT = "1970-01-01T00:00:01Z"
+_STORED_EPISODE_ESTIMATE_SOURCE = "stored_episode_estimate"
 
 
 def _series_watched_at(record: Mapping[str, Any]) -> tuple[str | None, str]:
@@ -386,6 +388,140 @@ def _series_watched_at(record: Mapping[str, Any]) -> tuple[str | None, str]:
     return None, ""
 
 
+def _baseline_items(value: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(value, Mapping):
+        return {}
+    return {str(k): dict(v) for k, v in value.items() if isinstance(v, Mapping)}
+
+
+def _load_stremio_history_baseline(adapter: Any) -> dict[str, dict[str, Any]]:
+    injected = getattr(adapter, "_stremio_history_baseline", None)
+    if isinstance(injected, Mapping):
+        return _baseline_items(injected)
+    if is_capture_mode():
+        return {}
+    if not isinstance(getattr(adapter, "config", None), Mapping):
+        return {}
+    try:
+        from pathlib import Path
+
+        from cw_platform.config_base import CONFIG_BASE
+        from cw_platform.orchestrator._state_store import StateStore
+        from cw_platform.provider_instances import normalize_instance_id
+
+        state = StateStore(Path(CONFIG_BASE())).load_state_features({"history"}) or {}
+        providers = state.get("providers") if isinstance(state, Mapping) else None
+        providers = providers if isinstance(providers, Mapping) else {}
+        stremio = providers.get("STREMIO") or providers.get("stremio")
+        if not isinstance(stremio, Mapping):
+            return {}
+
+        instance_id = normalize_instance_id(getattr(adapter, "instance_id", "default"))
+        nodes: list[Mapping[str, Any]] = []
+        if instance_id != "default":
+            instances = stremio.get("instances")
+            if isinstance(instances, Mapping):
+                node = instances.get(instance_id) or instances.get(str(instance_id))
+                if not isinstance(node, Mapping):
+                    for raw_inst, raw_node in instances.items():
+                        if normalize_instance_id(raw_inst) == instance_id and isinstance(raw_node, Mapping):
+                            node = raw_node
+                            break
+                if isinstance(node, Mapping):
+                    nodes.append(node)
+        nodes.append(stremio)
+
+        for node in nodes:
+            history = node.get("history") if isinstance(node, Mapping) else None
+            history = history if isinstance(history, Mapping) else {}
+            baseline = history.get("baseline") if isinstance(history, Mapping) else None
+            baseline = baseline if isinstance(baseline, Mapping) else {}
+            items = baseline.get("items") if isinstance(baseline, Mapping) else None
+            found = _baseline_items(items)
+            if found:
+                return found
+    except Exception:
+        return {}
+    return {}
+
+
+def _episode_base_key(key: Any) -> str:
+    return str(key or "").split("@", 1)[0].strip()
+
+
+def _episode_fragment(item: Mapping[str, Any]) -> str | None:
+    season = positive_int(item.get("season"))
+    episode = positive_int(item.get("episode"))
+    if not season or not episode:
+        return None
+    return f"#s{season:02d}e{episode:02d}"
+
+
+def _episode_date_aliases(item: Mapping[str, Any], key: Any = None) -> set[str]:
+    aliases = {str(alias).strip().lower() for alias in (key, _episode_base_key(key)) if str(alias or "").strip()}
+    try:
+        canonical = canonical_item_key(item)
+        if canonical:
+            aliases.add(canonical.lower())
+    except Exception:
+        pass
+
+    fragment = _episode_fragment(item)
+    if not fragment:
+        return aliases
+    for source in (item.get("show_ids"), item.get("ids")):
+        if not isinstance(source, Mapping):
+            continue
+        ids = coalesce_ids(source)
+        for id_key in ID_KEYS:
+            value = ids.get(id_key)
+            if value:
+                aliases.add(f"{id_key}:{value}{fragment}".lower())
+    return aliases
+
+
+def _remember_previous_date(out: dict[str, str], alias: str, watched_at: str) -> None:
+    alias = str(alias or "").strip().lower()
+    if not alias:
+        return
+    existing = out.get(alias)
+    if existing is None or (epoch_ms(watched_at) or 0) < (epoch_ms(existing) or 0):
+        out[alias] = watched_at
+
+
+def _previous_episode_watched_dates(previous: Mapping[str, Mapping[str, Any]]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for key, item in (previous or {}).items():
+        if not isinstance(item, Mapping):
+            continue
+        if str(item.get("type") or "").strip().lower() not in {"episode", "episodes"}:
+            continue
+        if item.get("watched") is False:
+            continue
+        watched_at = iso_from_epoch_ms(item.get("watched_at"))
+        if not watched_at or watched_at == _UNKNOWN_EPISODE_WATCHED_AT:
+            continue
+        for alias in _episode_date_aliases(item, key):
+            _remember_previous_date(out, alias, watched_at)
+    return out
+
+
+def _apply_episode_watched_at(item: dict[str, Any], key: str, record: Mapping[str, Any], previous_dates: Mapping[str, str]) -> None:
+    previous = next((previous_dates.get(alias) for alias in _episode_date_aliases(item, key) if previous_dates.get(alias)), None)
+    if previous:
+        item["watched_at"] = previous
+        item["_stremio_watched_at_source"] = _STORED_EPISODE_ESTIMATE_SOURCE
+        return
+
+    show_ts, ts_source = _series_watched_at(record)
+    if show_ts:
+        item["watched_at"] = show_ts
+        item["_stremio_watched_at_source"] = ts_source
+    else:
+        item["watched_at"] = _UNKNOWN_EPISODE_WATCHED_AT
+        item["_stremio_watched_at_fallback"] = "unknown_episode_watch_time"
+
+
 def _requires_for(record: Mapping[str, Any], reason: str | None) -> str | None:
     reason_s = str(reason or "")
     if reason_s in _TMDB_KEY_REASONS and stremio_id_namespace(record_id(record)) in {"tmdb", "tmdb_bare"}:
@@ -397,6 +533,7 @@ def _requires_for(record: Mapping[str, Any], reason: str | None) -> str | None:
 
 def build_index(adapter: Any, **kwargs: Any) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
+    previous_dates = _previous_episode_watched_dates(_load_stremio_history_baseline(adapter))
     reset_read_drop_report(adapter, "history")
     for record in library_records(adapter, incremental=bool(kwargs.get("incremental"))):
         typ = str(record.get("type") or "").strip().lower()
@@ -444,14 +581,9 @@ def build_index(adapter: Any, **kwargs: Any) -> dict[str, dict[str, Any]]:
                     continue
                 item = _metadata_enriched(adapter, item, "episode")
                 item["watched"] = True
-                show_ts, ts_source = _series_watched_at(record)
-                if show_ts:
-                    item["watched_at"] = show_ts
-                    item["_stremio_watched_at_source"] = ts_source
-                else:
-                    item["watched_at"] = _UNKNOWN_EPISODE_WATCHED_AT
-                    item["_stremio_watched_at_fallback"] = "unknown_episode_watch_time"
-                out[canonical_item_key(item)] = item
+                key = canonical_item_key(item)
+                _apply_episode_watched_at(item, key, record, previous_dates)
+                out[key] = item
     summary = read_drop_summary(adapter, "history")
     if int(summary.get("dropped") or 0):
         cw_log("STREMIO", "history", "warn", "index_rows_dropped", indexed=len(out), **summary)
