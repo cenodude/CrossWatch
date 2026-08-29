@@ -95,11 +95,7 @@
   }
 
   function currentAvatarUrl(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return "";
-    if (!raw.startsWith("/api/profile/avatar/")) return raw;
-    const q = raw.indexOf("?");
-    return `/api/profile/avatar${q >= 0 ? raw.slice(q) : ""}`;
+    return window.CW?.AccountMenu?.normalizeAvatarUrl?.(value) || String(value || "").trim();
   }
 
   function renderProfileLink() {
@@ -109,17 +105,13 @@
     link.classList.remove("hidden");
     const fallback = authUser?.is_admin ? "Administrator" : "Profile";
     const label = String(authUser?.display_name || authUser?.label || authUser?.username || fallback).trim();
-    link.title = label ? `Open ${label}` : "Open profile";
+    link.title = label ? `Open ${label} menu` : "Open profile menu";
     link.setAttribute("aria-label", link.title);
     const url = currentAvatarUrl(authUser?.avatar_url);
-    avatar.innerHTML = url ? `<img src="${esc(url)}" alt="">` : "person";
-    avatar.classList.toggle("material-symbols-rounded", !url);
-    const img = avatar.querySelector("img");
-    if (img) {
-      img.addEventListener("error", () => {
-        avatar.innerHTML = "person";
-        avatar.classList.add("material-symbols-rounded");
-      }, { once: true });
+    if (window.CW?.AccountMenu?.setAvatarNode) window.CW.AccountMenu.setAvatarNode(avatar, url);
+    else {
+      avatar.innerHTML = url ? `<img src="${esc(url)}" alt="">` : "person";
+      avatar.classList.toggle("material-symbols-rounded", !url);
     }
   }
 
