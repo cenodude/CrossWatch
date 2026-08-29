@@ -893,23 +893,22 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
         except Exception:
             req_pair_ids = set()
 
-        original_pairs_for_scope = list(cfg.get("pairs") or []) if (req_pair_ids or req_pair_id) else None
+        pair_scope_ids: set[str] = set(req_pair_ids)
 
         if req_pair_ids:
             _summary_set("pair_scope_ids", sorted(req_pair_ids))
-            cfg = dict(cfg)
-            cfg["_cw_pair_scope_original_pairs"] = original_pairs_for_scope
-            cfg["pairs"] = [p for p in (cfg.get("pairs") or []) if str(p.get("id") or "") in req_pair_ids]
 
         if req_pair_id:
+            if req_pair_ids and req_pair_id not in req_pair_ids:
+                _sync_progress_ui(f"[!] Pair not found or disabled: {req_pair_id}")
+                _sync_progress_ui("[SYNC] exit code: 1")
+                return
             pair = next((p for p in (cfg.get("pairs") or []) if str(p.get("id") or "") == req_pair_id), None)
             if not pair or not coerce_bool(pair.get("enabled", True), True):
                 _sync_progress_ui(f"[!] Pair not found or disabled: {req_pair_id}")
                 _sync_progress_ui("[SYNC] exit code: 1")
                 return
-            cfg = dict(cfg)
-            cfg["_cw_pair_scope_original_pairs"] = original_pairs_for_scope
-            cfg["pairs"] = [pair]
+            pair_scope_ids = {req_pair_id}
             pair_scope = req_pair_id
             pair_src = str(pair.get("source") or pair_src)
             pair_dst = str(pair.get("target") or pair_dst)
@@ -935,7 +934,13 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
                         return True
                 return False
 
-            for pair in (cfg.get("pairs") or []):
+            pairs_for_run = [
+                p for p in (cfg.get("pairs") or [])
+                if isinstance(p, dict)
+                and (not pair_scope_ids or str(p.get("id") or "") in pair_scope_ids)
+            ]
+
+            for pair in pairs_for_run:
                 if not coerce_bool(pair.get("enabled", True), True):
                     continue
                 if "features" in pair and not _pair_has_enabled_features(pair):
@@ -957,6 +962,7 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
             result = mgr.run_pairs(
                 dry_run=dry,
                 progress=_sync_progress_ui,
+                pair_scope_ids=sorted(pair_scope_ids),
                 write_state_json=write_state_json,
                 use_snapshot=True,
             )

@@ -53,6 +53,7 @@ class Orchestrator:
 
     dry_run: bool = False
     only_feature: str | None = None
+    pair_scope_ids: Sequence[str] | None = None
     write_state_json: bool = True
     state_path: Path | None = None
 
@@ -141,6 +142,7 @@ class Orchestrator:
             emit_rate_warnings=self.emit_rate_warnings,
             tomb_prune=self.prune_tombstones,
             only_feature=self.only_feature,
+            pair_scope_ids=list(self.pair_scope_ids or []),
             write_state_json=self.write_state_json,
             state_path=self.state_path,
             snap_cache=self.snap_cache,
@@ -156,6 +158,7 @@ class Orchestrator:
         *,
         dry_run: bool = False,
         only_feature: str | None = None,
+        pair_scope_ids: Iterable[str] | None = None,
         write_state_json: bool = True,
         state_path: str | None = None,
         progress: Callable[[str], None] | bool | None = None,
@@ -183,6 +186,7 @@ class Orchestrator:
 
             self.dry_run = bool(dry_run)
             self.only_feature = only_feature
+            self.pair_scope_ids = tuple(str(x).strip() for x in (pair_scope_ids or []) if str(x).strip()) or None
             self.write_state_json = bool(write_state_json)
             self.state_path = Path(state_path) if state_path else None
 
@@ -237,6 +241,17 @@ class Orchestrator:
         state_path: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
+        pair_id = str((pair or {}).get("id") or (pair or {}).get("pair_id") or "").strip()
+        if pair_id:
+            only_feat = (pair or {}).get("feature")
+            return self.run(
+                dry_run=dry_run,
+                only_feature=only_feat,
+                pair_scope_ids=[pair_id],
+                write_state_json=write_state_json,
+                state_path=state_path,
+                **kwargs,
+            )
         saved = self.cfg
         try:
             cfg_copy = dict(saved)

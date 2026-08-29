@@ -232,6 +232,38 @@ def test_playlist_pair_refreshes_mapping_endpoints_after_run(config_base, monkey
     assert calls == ["MAP-01"]
 
 
+def test_pair_scope_runs_playlist_pair_without_narrowing_config(config_base, monkeypatch):
+    seen: list[str] = []
+    cfg = _pair_cfg("one-way")
+    cfg["pairs"][0]["id"] = "pair_playlist_1"
+    cfg["pairs"].insert(0, {
+        "id": "regular_pair",
+        "source": "FAKESRC",
+        "target": "FAKEDST",
+        "source_instance": "default",
+        "target_instance": "default",
+        "enabled": True,
+        "mode": "one-way",
+        "features": {"watchlist": {"enable": True}},
+    })
+    ctx = _ctx(cfg)
+    ctx.pair_scope_ids = ["pair_playlist_1"]
+
+    def fake_playlist(ctx, src, dst, *, fcfg, health_map, full_cfg, pair):
+        seen.append(str(pair.get("id") or ""))
+        assert full_cfg is cfg
+        assert [p["id"] for p in full_cfg["pairs"]] == ["regular_pair", "pair_playlist_1"]
+        return {"added": 1, "removed": 0, "updated": 0, "unresolved": 0, "skipped": 0, "errors": 0}
+
+    monkeypatch.setattr(pairs, "run_playlist_mappings", fake_playlist)
+    monkeypatch.setattr(pairs, "run_one_way_feature", lambda *a, **k: (_ for _ in ()).throw(AssertionError("regular pair should not run")))
+
+    result = pairs.run_pairs(ctx)
+
+    assert seen == ["pair_playlist_1"]
+    assert result["added"] == 1
+
+
 def test_manual_and_scheduled_share_core_runner():
     from services import playlists as svc
 
