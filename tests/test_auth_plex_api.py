@@ -2,7 +2,21 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from starlette.requests import Request
+
+
+@pytest.fixture(autouse=True)
+def _reset_plex_flow_state():
+    from services import authPlex
+
+    authPlex._PENDING_FLOWS.clear()
+    authPlex._START_EVENTS.clear()
+    authPlex._PENDING_STARTS_IN_FLIGHT = 0
+    yield
+    authPlex._PENDING_FLOWS.clear()
+    authPlex._START_EVENTS.clear()
+    authPlex._PENDING_STARTS_IN_FLIGHT = 0
 
 
 def _auth_cfg() -> dict:
@@ -76,6 +90,22 @@ def _bind_config(monkeypatch, plex_api, cfg: dict) -> None:
 
 def _json_body(resp) -> dict:
     return json.loads(resp.body.decode("utf-8"))
+
+
+def _enable_plex_sso(cfg: dict) -> None:
+    cfg["app_auth"]["plex_sso"].update({"enabled": True, "linked_plex_account_id": "plex-123", "linked_username": "plexadmin"})
+
+
+class _PlexPinResponse:
+    def __init__(self, pin_id: str = "pin-1", code: str = "ABCD") -> None:
+        self.pin_id = pin_id
+        self.code = code
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict:
+        return {"id": self.pin_id, "code": self.code}
 
 
 def _all_set_cookie_headers(resp) -> str:
@@ -299,6 +329,221 @@ def test_plex_start_sets_flow_cookie(monkeypatch) -> None:
 
     assert resp.status_code == 200
     assert f"{plex_api.FLOW_COOKIE_NAME}=" in _all_set_cookie_headers(resp)
+
+
+def test_plex_start_allows_reasonable_unauthenticated_starts(monkeypatch) -> None:
+    from api import authPlexAPI as plex_api
+
+    cfg = _auth_cfg()
+    _enable_plex_sso(cfg)
+    _bind_config(monkeypatch, plex_api, cfg)
+    calls: list[str] = []
+
+    def fake_post(_url, **_kwargs):
+        calls.append(_url)
+        return _PlexPinResponse(f"pin-{len(calls)}", f"CODE{len(calls)}")
+
+    monkeypatch.setattr(plex_api.authPlex.requests, "post", fake_post)
+
+    responses = [
+        plex_api.api_plex_start(_request("/api/app-auth/plex/start", client=("198.51.100.10", 4000 + i)), {})
+        for i in range(6)
+    ]
+
+    assert [resp.status_code for resp in responses] == [200] * 6
+    assert len(calls) == 6
+    assert len(plex_api.authPlex._PENDING_FLOWS) == 6
+
+
+def test_plex_start_throttles_excessive_starts_from_one_client(monkeypatch) -> None:
+    from api import authPlexAPI as plex_api
+
+    cfg = _auth_cfg()
+    _enable_plex_sso(cfg)
+    _bind_config(monkeypatch, plex_api, cfg)
+    calls: list[str] = []
+
+    def fake_post(_url, **_kwargs):
+        calls.append(_url)
+        return _PlexPinResponse(f"pin-{len(calls)}", f"CODE{len(calls)}")
+
+    monkeypatch.setattr(plex_api.authPlex, "START_RATE_LIMIT", 2)
+    monkeypatch.setattr(plex_api.authPlex.requests, "post", fake_post)
+    req = _request("/api/app-auth/plex/start", client=("198.51.100.20", 5000))
+
+    first = plex_api.api_plex_start(req, {})
+    second = plex_api.api_plex_start(req, {})
+    third = plex_api.api_plex_start(req, {})
+
+    assert [first.status_code, second.status_code, third.status_code] == [200, 200, 429]
+    assert _json_body(third)["retry_after"] >= 1
+    assert len(calls) == 2
+    assert len(plex_api.authPlex._PENDING_FLOWS) == 2
+
+
+def test_plex_start_pending_flow_global_cap_is_enforced(monkeypatch) -> None:
+    from api import authPlexAPI as plex_api
+
+    cfg = _auth_cfg()
+    _enable_plex_sso(cfg)
+    _bind_config(monkeypatch, plex_api, cfg)
+    plex_api.authPlex._PENDING_FLOWS.update(
+        {
+            "a": {"expires_at": 1 << 40},
+            "b": {"expires_at": 1 << 40},
+        }
+    )
+    calls: list[str] = []
+
+    monkeypatch.setattr(plex_api.authPlex, "MAX_PENDING_FLOWS", 2)
+    monkeypatch.setattr(plex_api.authPlex.requests, "post", lambda *_args, **_kwargs: calls.append("post") or _PlexPinResponse())
+
+    resp = plex_api.api_plex_start(_request("/api/app-auth/plex/start", client=("198.51.100.30", 5000)), {})
+
+    assert resp.status_code == 503
+    assert _json_body(resp)["retry_after"] >= 1
+    assert calls == []
+    assert len(plex_api.authPlex._PENDING_FLOWS) == 2
+
+
+def test_plex_start_prunes_expired_flows_before_capacity_check(monkeypatch) -> None:
+    from api import authPlexAPI as plex_api
+
+    cfg = _auth_cfg()
+    _enable_plex_sso(cfg)
+    _bind_config(monkeypatch, plex_api, cfg)
+    plex_api.authPlex._PENDING_FLOWS["old"] = {"expires_at": 99}
+
+    monkeypatch.setattr(plex_api.authPlex, "MAX_PENDING_FLOWS", 1)
+    monkeypatch.setattr(plex_api.authPlex, "_now", lambda: 100)
+    monkeypatch.setattr(plex_api.authPlex.requests, "post", lambda *_args, **_kwargs: _PlexPinResponse())
+
+    resp = plex_api.api_plex_start(_request("/api/app-auth/plex/start", client=("198.51.100.40", 5000)), {})
+
+    assert resp.status_code == 200
+    assert "old" not in plex_api.authPlex._PENDING_FLOWS
+    assert len(plex_api.authPlex._PENDING_FLOWS) == 1
+
+
+def test_plex_start_rate_limit_is_per_client(monkeypatch) -> None:
+    from api import authPlexAPI as plex_api
+
+    cfg = _auth_cfg()
+    _enable_plex_sso(cfg)
+    _bind_config(monkeypatch, plex_api, cfg)
+    calls: list[str] = []
+
+    def fake_post(_url, **_kwargs):
+        calls.append(_url)
+        return _PlexPinResponse(f"pin-{len(calls)}", f"CODE{len(calls)}")
+
+    monkeypatch.setattr(plex_api.authPlex, "START_RATE_LIMIT", 1)
+    monkeypatch.setattr(plex_api.authPlex.requests, "post", fake_post)
+
+    client_a_1 = plex_api.api_plex_start(_request("/api/app-auth/plex/start", client=("198.51.100.50", 5000)), {})
+    client_a_2 = plex_api.api_plex_start(_request("/api/app-auth/plex/start", client=("198.51.100.50", 5001)), {})
+    client_b_1 = plex_api.api_plex_start(_request("/api/app-auth/plex/start", client=("198.51.100.51", 5000)), {})
+
+    assert [client_a_1.status_code, client_a_2.status_code, client_b_1.status_code] == [200, 429, 200]
+    assert len(calls) == 2
+    assert len(plex_api.authPlex._PENDING_FLOWS) == 2
+
+
+def test_plex_start_issues_pin_after_config_update_lock(monkeypatch) -> None:
+    from api import authPlexAPI as plex_api
+
+    cfg = _auth_cfg()
+    _enable_plex_sso(cfg)
+    monkeypatch.setattr(plex_api, "load_config", lambda: cfg)
+    in_update = {"active": False}
+    observed = {"post_inside_update": None}
+
+    def fake_update(mutator):
+        in_update["active"] = True
+        try:
+            result = mutator(cfg)
+        finally:
+            in_update["active"] = False
+        return cfg, result
+
+    def fake_post(_url, **_kwargs):
+        observed["post_inside_update"] = in_update["active"]
+        return _PlexPinResponse()
+
+    monkeypatch.setattr(plex_api.app_auth, "_update_config", fake_update)
+    monkeypatch.setattr(plex_api.authPlex.requests, "post", fake_post)
+
+    resp = plex_api.api_plex_start(_request("/api/app-auth/plex/start"), {})
+
+    assert resp.status_code == 200
+    assert observed["post_inside_update"] is False
+
+
+def test_plex_start_failed_outbound_does_not_consume_pending_capacity(monkeypatch) -> None:
+    from api import authPlexAPI as plex_api
+
+    cfg = _auth_cfg()
+    _enable_plex_sso(cfg)
+    _bind_config(monkeypatch, plex_api, cfg)
+    calls = {"n": 0}
+
+    def fake_post(_url, **_kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("plex unavailable")
+        return _PlexPinResponse("pin-ok", "OKOK")
+
+    monkeypatch.setattr(plex_api.authPlex, "MAX_PENDING_FLOWS", 1)
+    monkeypatch.setattr(plex_api.authPlex.requests, "post", fake_post)
+
+    first = plex_api.api_plex_start(_request("/api/app-auth/plex/start", client=("198.51.100.60", 5000)), {})
+    second = plex_api.api_plex_start(_request("/api/app-auth/plex/start", client=("198.51.100.60", 5001)), {})
+
+    assert first.status_code == 502
+    assert second.status_code == 200
+    assert len(plex_api.authPlex._PENDING_FLOWS) == 1
+    assert plex_api.authPlex._PENDING_STARTS_IN_FLIGHT == 0
+
+
+def test_plex_start_then_callback_login_behavior_still_issues_session(monkeypatch) -> None:
+    from api import authPlexAPI as plex_api
+
+    cfg = _auth_cfg()
+    _enable_plex_sso(cfg)
+    _bind_config(monkeypatch, plex_api, cfg)
+
+    class Response:
+        def __init__(self, data: dict) -> None:
+            self._data = data
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return self._data
+
+    monkeypatch.setattr(plex_api.authPlex.requests, "post", lambda *_args, **_kwargs: Response({"id": "pin-1", "code": "ABCD"}))
+
+    def fake_get(url, **_kwargs):
+        if str(url).endswith("/pin-1"):
+            return Response({"authToken": "plex-token"})
+        return Response({"id": "plex-123", "username": "plexadmin", "email": "plex@example.com", "thumb": ""})
+
+    monkeypatch.setattr(plex_api.authPlex.requests, "get", fake_get)
+
+    start = plex_api.api_plex_start(_request("/api/app-auth/plex/start"), {})
+    start_body = _json_body(start)
+    flow_cookie = _all_set_cookie_headers(start).split(f"{plex_api.FLOW_COOKIE_NAME}=", 1)[1].split(";", 1)[0]
+    check = plex_api.api_plex_check(
+        _request("/api/app-auth/plex/check", headers={"cookie": f"{plex_api.FLOW_COOKIE_NAME}={flow_cookie}"}),
+        {"state": start_body["state"]},
+    )
+
+    assert start.status_code == 200
+    assert check.status_code == 200
+    assert _json_body(check)["ok"] is True
+    assert len(cfg["app_auth"]["sessions"]) == 1
+    assert plex_api.authPlex._PENDING_FLOWS == {}
 
 
 def test_plex_sso_start_reuses_provider_client_id(monkeypatch) -> None:

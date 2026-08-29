@@ -152,6 +152,14 @@ def _unauthorized() -> JSONResponse:
     return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401, headers={"Cache-Control": "no-store"})
 
 
+def _temporary_json_error(message: str, status_code: int, retry_after: int) -> JSONResponse:
+    return JSONResponse(
+        {"ok": False, "error": message, "retry_after": max(1, int(retry_after or 1))},
+        status_code=status_code,
+        headers={"Cache-Control": "no-store", "Retry-After": str(max(1, int(retry_after or 1)))},
+    )
+
+
 def _plex_link_conflict_error() -> str:
     return "This Plex account is already linked to another CrossWatch account"
 
@@ -257,18 +265,42 @@ def api_plex_start(request: Request, payload: dict[str, Any] | None = Body(None)
         return JSONResponse({"ok": False, "error": "Plex sign-in is not linked yet"}, status_code=400, headers={"Cache-Control": "no-store"})
 
     remember_me = bool((payload or {}).get("remember_me"))
+    flow_nonce = secrets.token_urlsafe(24)
     try:
-        flow_nonce = secrets.token_urlsafe(24)
-        cfg, data = app_auth._update_config(lambda latest: authPlex.start_flow(
-            latest,
+        def _prepare_login(latest: dict[str, Any]) -> str:
+            if not app_auth.auth_required(latest):
+                raise PermissionError("Authentication setup required")
+            if not authPlex.login_available(latest):
+                raise ValueError("Plex sign-in is not linked yet")
+            return authPlex.ensure_client_id(latest)
+
+        cfg, client_id = app_auth._update_config(_prepare_login)
+    except PermissionError:
+        return JSONResponse(
+            {"ok": False, "error": "Authentication setup required"},
+            status_code=403,
+            headers={"Cache-Control": "no-store"},
+        )
+    except ValueError:
+        return JSONResponse({"ok": False, "error": "Plex sign-in is not linked yet"}, status_code=400, headers={"Cache-Control": "no-store"})
+
+    try:
+        data = authPlex.start_flow(
+            cfg,
             intent="login",
             callback_url=_callback_url(request),
             flow_nonce_hash=authPlex._sha256_hex(flow_nonce),
             remember_me=remember_me,
-        ))
+            client_id=client_id,
+            client_key=app_auth._effective_client_ip(request),
+        )
         resp = JSONResponse(data, headers={"Cache-Control": "no-store"})
         _set_flow_cookie(resp, flow_nonce, request)
         return resp
+    except authPlex.PlexStartRateLimited as exc:
+        return _temporary_json_error("Too many Plex sign-in starts. Try again shortly.", 429, exc.retry_after)
+    except authPlex.PlexPendingCapacityError as exc:
+        return _temporary_json_error("Too many Plex sign-in flows are pending. Try again shortly.", 503, exc.retry_after)
     except Exception as exc:
         _log(f"Plex sign-in could not start: {exc}", level="ERROR")
         return JSONResponse({"ok": False, "error": "Plex sign-in could not start. Please try again."}, status_code=502, headers={"Cache-Control": "no-store"})
@@ -361,17 +393,31 @@ def api_plex_link_start(request: Request, payload: dict[str, Any] | None = Body(
 
     try:
         flow_nonce = secrets.token_urlsafe(24)
-        cfg, data = app_auth._update_config(lambda latest: authPlex.start_flow(
-            latest,
+        def _prepare_link(latest: dict[str, Any]) -> tuple[str, str]:
+            latest_actor = app_auth.current_user(latest, token)
+            latest_target_id, _latest_target_user, _latest_target_raw = _target_user_for_link(app_auth._cfg_auth(latest), latest_actor, (payload or {}).get("user_id"))
+            if not latest_target_id:
+                raise PermissionError("Unauthorized")
+            return latest_target_id, authPlex.ensure_client_id(latest)
+
+        cfg, prepared = app_auth._update_config(_prepare_link)
+        prepared_target_id, client_id = prepared
+        data = authPlex.start_flow(
+            cfg,
             intent="link",
             callback_url=_callback_url(request),
             flow_nonce_hash=authPlex._sha256_hex(flow_nonce),
             remember_me=False,
-            target_user_id=target_id,
-        ))
+            target_user_id=prepared_target_id,
+            client_id=client_id,
+        )
         resp = JSONResponse(data, headers={"Cache-Control": "no-store"})
         _set_flow_cookie(resp, flow_nonce, request)
         return resp
+    except PermissionError:
+        return _unauthorized()
+    except authPlex.PlexPendingCapacityError as exc:
+        return _temporary_json_error("Too many Plex sign-in flows are pending. Try again shortly.", 503, exc.retry_after)
     except Exception as exc:
         _log(f"Plex link could not start: {exc}", level="ERROR")
         return JSONResponse({"ok": False, "error": "Plex link could not start. Please try again."}, status_code=502, headers={"Cache-Control": "no-store"})
