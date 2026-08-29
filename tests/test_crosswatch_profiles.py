@@ -483,6 +483,56 @@ def test_provider_instances_are_scoped_for_managed_user(monkeypatch) -> None:
     assert [row["id"] for row in all_rows["PLEX"]] == ["PLEX-P01"]
 
 
+def test_provider_instances_are_scoped_for_managed_user_api_token(monkeypatch) -> None:
+    from api import appAuthAPI as auth
+    from api import apiTokensAPI as api_tokens
+    from tests.test_app_auth_api import _auth_cfg, _request
+
+    user_id = "aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa"
+    secret = "A" * 32
+    raw_token = f"{api_tokens.TOKEN_PREFIX}abcdefabcdefabcd.{secret}"
+    store: dict[str, Any] = _auth_cfg()
+    store["user_profiles"] = {
+        ALICE_PROFILE_ID: {"label": "Alice", "instances": {"CROSSWATCH": ["CW-P01"], "PLEX": ["PLEX-P01"]}},
+        BOB_PROFILE_ID: {"label": "Bob", "instances": {"CROSSWATCH": ["CW-P02"], "PLEX": ["PLEX-P02"]}},
+    }
+    _configured_refs(store, [("CROSSWATCH", "CW-P01"), ("CROSSWATCH", "CW-P02"), ("PLEX", "PLEX-P01"), ("PLEX", "PLEX-P02")])
+    store["app_auth"]["users"] = {
+        user_id: {
+            "username": "alice",
+            "enabled": True,
+            "role": "user",
+            "profile_id": ALICE_PROFILE_ID,
+            "permissions": {"dashboard": True},
+            "password": auth._password_hash("secrett2"),
+        }
+    }
+    store["app_auth"]["api_tokens"] = [
+        {
+            "id": "abcdefabcdefabcd",
+            "version": 2,
+            "name": "alice cli",
+            "secret": secret,
+            "prefix": raw_token[: len(api_tokens.TOKEN_PREFIX) + 16 + 1 + 6],
+            "user_id": user_id,
+            "username": "alice",
+            "created_at": auth._now(),
+            "expires_at": 0,
+            "last_used_at": 0,
+        }
+    ]
+    request = _request("/api/provider-instances", method="GET", headers={"Authorization": f"Bearer {raw_token}"})
+
+    monkeypatch.setattr(provider_api, "load_config", lambda: json.loads(json.dumps(store)))
+
+    all_rows = _loads_body(provider_api.api_provider_instances_all(request).body)
+    plex_rows = _loads_body(provider_api.api_provider_instances_provider("PLEX", request).body)
+
+    assert [row["id"] for row in all_rows["CROSSWATCH"]] == ["CW-P01"]
+    assert [row["id"] for row in all_rows["PLEX"]] == ["PLEX-P01"]
+    assert [row["id"] for row in plex_rows] == ["PLEX-P01"]
+
+
 def test_user_profile_detail_is_scoped_for_managed_user(monkeypatch) -> None:
     from api import appAuthAPI as auth
     from tests.test_app_auth_api import _auth_cfg, _request
