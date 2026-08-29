@@ -154,15 +154,14 @@ def test_run_sync_allows_own_pair_and_pins_server_side_scope(monkeypatch) -> Non
     assert "pair_scope" not in overrides
 
 
-def test_run_pairs_thread_scope_filter_precedes_single_pair_selection() -> None:
+def test_run_pairs_thread_passes_pair_scope_without_narrowing_config() -> None:
     from api import syncAPI as sync_api
     import inspect
 
     src = inspect.getsource(sync_api._run_pairs_thread)
-    scope_at = src.find('cfg["pairs"] = [p for p in (cfg.get("pairs") or []) if str(p.get("id") or "") in req_pair_ids]')
-    single_at = src.find('if req_pair_id:\n            pair = next(')
-    assert scope_at > 0 and single_at > 0
-    assert scope_at < single_at
+    assert 'cfg["pairs"] = [p for p in (cfg.get("pairs") or []) if str(p.get("id") or "") in req_pair_ids]' not in src
+    assert 'cfg["pairs"] = [pair]' not in src
+    assert "pair_scope_ids=sorted(pair_scope_ids)" in src
 
 
 # H2 - the OIDC login callback must be bound to the browser that started the flow

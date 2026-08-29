@@ -116,16 +116,14 @@ except Exception:
             return
 
 
-def _collect_health_for_run(ctx) -> dict[str, Any]:
+def _collect_health_for_run(ctx, pairs: list[Mapping[str, Any]]) -> dict[str, Any]:
     emit = ctx.emit
     provs = ctx.providers or {}
 
     cfg: Mapping[str, Any] = ctx.config or {}
     needed: set[tuple[str, str]] = set()
 
-    for p in (cfg.get("pairs") or []):
-        if not p.get("enabled", True):
-            continue
+    for p in pairs:
         s = str(p.get("source") or "").upper().strip()
         t = str(p.get("target") or "").upper().strip()
         si = normalize_instance_id(p.get("source_instance"))
@@ -237,6 +235,27 @@ def _feature_list_for_pair(pair: Mapping[str, Any]) -> list[str]:
     return ["history", "watchlist", "ratings", "progress", "playlists"]
 
 
+def _pair_scope_ids(ctx) -> set[str]:
+    raw = getattr(ctx, "pair_scope_ids", None) or []
+    if isinstance(raw, (str, bytes)):
+        raw = [raw]
+    return {str(x).strip() for x in raw if str(x).strip()}
+
+
+def _pairs_for_run(ctx, cfg: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    scope = _pair_scope_ids(ctx)
+    out: list[Mapping[str, Any]] = []
+    for pair in cfg.get("pairs") or []:
+        if not isinstance(pair, Mapping):
+            continue
+        if not coerce_bool(pair.get("enabled", True), True):
+            continue
+        if scope and str(pair.get("id") or "").strip() not in scope:
+            continue
+        out.append(pair)
+    return out
+
+
 
 def _pair_scope_key(pair: Mapping[str, Any], *, i: int, src: str, dst: str, mode: str) -> str:
     mode_norm = str(mode or "one-way").strip().lower()
@@ -325,7 +344,8 @@ def run_pairs(ctx) -> dict[str, Any]:
     except Exception:
         pass
 
-    health_map = _collect_health_for_run(ctx)
+    pairs = _pairs_for_run(ctx, cfg)
+    health_map = _collect_health_for_run(ctx, pairs)
 
     emit(
         "run:start",
@@ -344,7 +364,6 @@ def run_pairs(ctx) -> dict[str, Any]:
     errors_total = 0
     attempted_add_duplicate_keys_total = 0
 
-    pairs = [p for p in (cfg.get("pairs") or []) if coerce_bool(p.get("enabled", True), True)]
     provs = ctx.providers or {}
 
     features_ran: set[str] = set()
