@@ -136,6 +136,102 @@ def test_global_plex_rating_surfaces_cover_dispatcher_sinks(monkeypatch) -> None
     assert all(saved["scrobble"]["watch"][f"plex_{sink}_ratings"] is True for sink in RATING_SINKS)
 
 
+def test_scrobbler_overview_reuses_runtime_status(monkeypatch) -> None:
+    from api import scrobblerManagementAPI as management
+
+    calls = 0
+
+    def fake_runtime(_request, _cfg):
+        nonlocal calls
+        calls += 1
+        return {
+            "running": True,
+            "alive": True,
+            "groups": [],
+            "routes": [{"id": "R1", "running": True, "sink": "trakt"}],
+        }
+
+    cfg = {
+        "trakt": {"access_token": "token"},
+        "plex": {"token": "token", "baseurl": "http://plex"},
+        "scrobble": {
+            "enabled": True,
+            "sources": {"watcher": True},
+            "watch": {
+                "routes": [
+                    {
+                        "id": "R1",
+                        "enabled": True,
+                        "provider": "plex",
+                        "provider_instance": "default",
+                        "sink": "trakt",
+                        "sink_instance": "default",
+                    }
+                ]
+            },
+        },
+    }
+    monkeypatch.setattr(management, "_runtime_status", fake_runtime)
+    monkeypatch.setattr(management, "_webhook_cards", lambda _cfg, _request: [])
+    monkeypatch.setattr(management, "_eligible_sources", lambda _cfg: [])
+    monkeypatch.setattr(management, "_destination_availability", lambda _cfg: [])
+    monkeypatch.setattr(management, "request_user", lambda _request: None)
+
+    overview = management.build_overview(cfg, _request())
+
+    assert calls == 1
+    assert overview["watcher_runtime"]["running"] is True
+    assert overview["routes"][0]["runtime"]["running"] is True
+
+
+def test_global_plex_rating_targets_only_show_configured_or_enabled_sinks() -> None:
+    js = (ROOT / "assets" / "js" / "scrobbler.js").read_text(encoding="utf-8")
+    block = js.split("function renderRatingsWebhook(o)", 1)[1].split("function renderWebhookDefaults(o)", 1)[0]
+
+    assert "const configured = new Set((o.destination_availability || [])" in block
+    assert ".filter((g) => (g?.profiles || []).some((p) => p?.configured))" in block
+    assert "const visibleSinks = plexRatingSinks.filter((k) => configured.has(k) || r[k]);" in block
+    assert "visibleSinks.map((k)" in block
+    assert "plexRatingSinks.map((k)" not in block
+    assert "Configure a ratings destination first." in block
+
+
+def test_scrobbler_rating_modals_keep_enabled_unconfigured_sinks_visible() -> None:
+    webhook = (ROOT / "assets" / "js" / "modals" / "scrobbler-webhook" / "index.js").read_text(encoding="utf-8")
+    route = (ROOT / "assets" / "js" / "modals" / "scrobbler-route" / "index.js").read_text(encoding="utf-8")
+
+    webhook_block = webhook.split("function visibleRatingSinks(selected = [])", 1)[1].split("function selectedSinkKey()", 1)[0]
+    assert "const available = availableRatingSinks();" in webhook_block
+    assert "ratingSinks.includes(x) && x !== self" in webhook_block
+    assert "return [...selectedList.filter((x) => !available.includes(x)), ...available];" in webhook_block
+
+    webhook_panel = webhook.split("function ratingsPanel(provider, ratingsTargets)", 1)[1].split("function optionsPanel()", 1)[0]
+    assert "const targets = visibleRatingSinks(ratingsTargets);" in webhook_panel
+    assert 'class="scrm-target${configured ? "" : " is-unconfigured"}"' in webhook_panel
+    assert " - not configured" in webhook_panel
+
+    route_render = route.split("function enableSelectedUnavailableRatingTargets()", 1)[1].split("function normalizeActiveTab", 1)[0]
+    assert '.scrm-target.is-disabled input[data-rating-target]:checked' in route_render
+    assert "input.disabled = false;" in route_render
+    assert 'target?.classList.add("is-unconfigured");' in route_render
+
+
+def test_scrobbler_loader_waits_for_auth_bootstrap_before_blocking() -> None:
+    scrobbler = (ROOT / "assets" / "js" / "scrobbler.js").read_text(encoding="utf-8")
+    core = (ROOT / "assets" / "helpers" / "core.js").read_text(encoding="utf-8")
+
+    auth_block = scrobbler.split("async function authSetupBlocked()", 1)[1].split("async function j", 1)[0]
+    assert "w.__cwAuthBootstrapState" in auth_block
+    assert "w.__cwAuthBootstrapPromise" in auth_block
+    assert "await pending.catch(() => null)" in auth_block
+    assert "return resolved.blocked;" in auth_block
+    assert "if (await authSetupBlocked()) throw authPendingError();" in scrobbler
+    assert 'err.code = "auth_setup_pending";' in scrobbler
+    assert "renderAuthPending();" in scrobbler
+    assert 'Promise.resolve(boot).catch((err) => console.warn("[scrobbler] init failed", err));' in core
+    assert 'Promise.resolve(window.Scrobbler?.refresh?.()).catch((err) => console.warn("[scrobbler] refresh failed", err));' in core
+
+
 def test_send_rating_supports_scrob_ops_sink(monkeypatch) -> None:
     from providers.scrobble.plex.ratings_sync import send_rating
     from providers.sync.scrob import _ratings as scrob_ratings

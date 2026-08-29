@@ -502,6 +502,15 @@ function ratingsPanel(r, ratings, ratingTargets) {
   `;
 }
 
+function enableSelectedUnavailableRatingTargets() {
+  root?.querySelectorAll(".scrm-target.is-disabled input[data-rating-target]:checked").forEach((input) => {
+    input.disabled = false;
+    const target = input.closest(".scrm-target");
+    target?.classList.remove("is-disabled");
+    target?.classList.add("is-unconfigured");
+  });
+}
+
 function normalizeActiveTab(tab = activeTab) {
   const next = String(tab || "route");
   return ["route", "filters", "options", "ratings"].includes(next) ? next : "route";
@@ -580,6 +589,7 @@ function render(errors = []) {
     </div>
   `;
   ensureVisiblePanel();
+  enableSelectedUnavailableRatingTargets();
 }
 
 function collect() {

@@ -469,9 +469,9 @@ def _runtime_status(request: Request, cfg: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _normalized_routes(cfg: dict[str, Any], request: Request) -> list[dict[str, Any]]:
+def _normalized_routes(cfg: dict[str, Any], request: Request, runtime: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
     _ensure_route_ratings_webhook_ids(cfg)
-    runtime = _runtime_status(request, cfg)
+    runtime = runtime if isinstance(runtime, Mapping) else _runtime_status(request, cfg)
     running_by_id = {
         str((r or {}).get("id") or ""): bool((r or {}).get("running"))
         for r in runtime.get("routes", [])
@@ -525,13 +525,13 @@ def build_overview(cfg: dict[str, Any], request: Request) -> dict[str, Any]:
         _sync_derived_sources(cfg)
     sources = scrobble_sources(cfg)
     webhooks = _webhook_cards(cfg, request)
-    routes = _normalized_routes(cfg, request)
+    runtime = _runtime_status(request, cfg)
+    routes = _normalized_routes(cfg, request, runtime)
     user = request_user(request)
     if isinstance(user, Mapping) and not bool(user.get("is_admin")):
         pid = managed_profile_id(user)
         webhooks = [row for row in webhooks if pid and webhook_effective_profile_id(cfg, row) == pid]
         routes = [row for row in routes if _user_can_access_route(cfg, user, row)]
-    runtime = _runtime_status(request, cfg)
     sc = _dict(cfg.get("scrobble"))
     watch = _dict(sc.get("watch"))
     wh = _dict(sc.get("webhook"))

@@ -350,6 +350,13 @@ function availableRatingSinks() {
   return ratingSinks.filter((s) => s !== self && sinkProfiles(s).length > 0);
 }
 
+function visibleRatingSinks(selected = []) {
+  const self = sourceProviderKey();
+  const available = availableRatingSinks();
+  const selectedList = selected.map((x) => String(x || "").toLowerCase()).filter((x) => ratingSinks.includes(x) && x !== self);
+  return [...selectedList.filter((x) => !available.includes(x)), ...available];
+}
+
 function selectedSinkKey() {
   const cur = selectedWebhook();
   const current = String(cur.sink || "").toLowerCase();
@@ -495,7 +502,7 @@ function globalRatingTargets() {
 
 function ratingsPanel(provider, ratingsTargets) {
   if (provider !== "plex") return "";
-  const targets = availableRatingSinks();
+  const targets = visibleRatingSinks(ratingsTargets);
   const globalTargets = globalRatingTargets();
   const globalWarn = globalTargets.length
     ? `<div class="scrm-note is-warn"><span class="material-symbols-rounded">warning</span><span>Global Plex ratings is on and already forwarding to <strong>${esc(globalTargets.map(label).join(", "))}</strong>. This webhook sends ratings <em>in addition</em> to the global one — only enable trackers here if this profile needs different destinations.</span></div>`
@@ -507,7 +514,10 @@ function ratingsPanel(provider, ratingsTargets) {
         <div><strong>Plex ratings</strong><p>Forward Plex ratings received on this webhook to the selected trackers.</p></div>
       </div>
       ${globalWarn}
-      <div class="scrm-targets">${targets.length ? targets.map((sink) => `<label class="scrm-target"><input type="checkbox" data-rating="${esc(sink)}" ${ratingsTargets.includes(sink) ? "checked" : ""}><span class="scrm-target-mark">${providerIcon(sink)}</span><span>${esc(label(sink))}</span></label>`).join("") : `<span class="scrm-muted">No configured rating destinations</span>`}</div>
+      <div class="scrm-targets">${targets.length ? targets.map((sink) => {
+        const configured = sinkProfiles(sink).length > 0;
+        return `<label class="scrm-target${configured ? "" : " is-unconfigured"}"><input type="checkbox" data-rating="${esc(sink)}" ${ratingsTargets.includes(sink) ? "checked" : ""}><span class="scrm-target-mark">${providerIcon(sink)}</span><span>${esc(label(sink))}${configured ? "" : " - not configured"}</span></label>`;
+      }).join("") : `<span class="scrm-muted">No configured rating destinations</span>`}</div>
     </section>
   `;
 }
