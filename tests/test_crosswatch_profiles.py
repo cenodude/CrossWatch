@@ -668,6 +668,94 @@ def test_currently_watching_managed_user_forces_own_profile(monkeypatch) -> None
     assert data["currently_watching"]["provider_instance"] == "PLEX-P02"
 
 
+def test_currently_watching_managed_api_token_user_forces_own_profile(monkeypatch) -> None:
+    from api import appAuthAPI as auth
+    from tests.test_app_auth_api import _auth_cfg
+
+    store: dict[str, Any] = _auth_cfg()
+    store["user_profiles"] = {
+        ALICE_PROFILE_ID: {"label": "Alice", "instances": {"PLEX": ["PLEX-P01"]}},
+        BOB_PROFILE_ID: {"label": "Bob", "instances": {"PLEX": ["PLEX-P02"]}},
+    }
+    _configured_refs(store, [("PLEX", "PLEX-P01"), ("PLEX", "PLEX-P02")])
+    store["app_auth"]["users"] = {
+        "aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa": {
+            "username": "bob",
+            "enabled": True,
+            "role": "user",
+            "profile_id": BOB_PROFILE_ID,
+            "permissions": {"dashboard": True},
+            "password": auth._password_hash("secrett2"),
+        }
+    }
+    user = auth._public_user("aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa", store["app_auth"]["users"]["aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa"])
+    request = SimpleNamespace(cookies={}, state=SimpleNamespace(cw_user=user))
+
+    monkeypatch.setattr(scrobble_api, "load_config", lambda: json.loads(json.dumps(store)))
+    monkeypatch.setattr(scrobble_api, "_cw_load_state", _currently_watching_state)
+
+    data = _loads_body(scrobble_api.api_currently_watching(cast(Any, request), user_profile="").body)
+
+    assert data["streams_count"] == 1
+    assert [row["title"] for row in data["streams"]] == ["Bob Movie"]
+    assert data["currently_watching"]["provider_instance"] == "PLEX-P02"
+
+
+def test_currently_watching_managed_api_token_cannot_request_another_profile(monkeypatch) -> None:
+    from api import appAuthAPI as auth
+    from tests.test_app_auth_api import _auth_cfg
+
+    store: dict[str, Any] = _auth_cfg()
+    store["user_profiles"] = {
+        ALICE_PROFILE_ID: {"label": "Alice", "instances": {"PLEX": ["PLEX-P01"]}},
+        BOB_PROFILE_ID: {"label": "Bob", "instances": {"PLEX": ["PLEX-P02"]}},
+    }
+    _configured_refs(store, [("PLEX", "PLEX-P01"), ("PLEX", "PLEX-P02")])
+    store["app_auth"]["users"] = {
+        "aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa": {
+            "username": "bob",
+            "enabled": True,
+            "role": "user",
+            "profile_id": BOB_PROFILE_ID,
+            "permissions": {"dashboard": True},
+            "password": auth._password_hash("secrett2"),
+        }
+    }
+    user = auth._public_user("aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa", store["app_auth"]["users"]["aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa"])
+    request = SimpleNamespace(cookies={}, state=SimpleNamespace(cw_user=user))
+
+    monkeypatch.setattr(scrobble_api, "load_config", lambda: json.loads(json.dumps(store)))
+    monkeypatch.setattr(scrobble_api, "_cw_load_state", _currently_watching_state)
+
+    data = _loads_body(scrobble_api.api_currently_watching(cast(Any, request), user_profile=ALICE_PROFILE_ID).body)
+
+    assert data["streams_count"] == 1
+    assert [row["title"] for row in data["streams"]] == ["Bob Movie"]
+    assert data["currently_watching"]["provider_instance"] == "PLEX-P02"
+
+
+def test_currently_watching_admin_can_read_all_or_requested_profile(monkeypatch) -> None:
+    store: dict[str, Any] = {
+        "user_profiles": {
+            ALICE_PROFILE_ID: {"label": "Alice", "instances": {"PLEX": ["PLEX-P01"]}},
+            BOB_PROFILE_ID: {"label": "Bob", "instances": {"PLEX": ["PLEX-P02"]}},
+        }
+    }
+    _configured_refs(store, [("PLEX", "PLEX-P01"), ("PLEX", "PLEX-P02")])
+    request = SimpleNamespace(cookies={}, state=SimpleNamespace(cw_user={"id": "administrator", "is_admin": True}))
+
+    monkeypatch.setattr(scrobble_api, "load_config", lambda: json.loads(json.dumps(store)))
+    monkeypatch.setattr(scrobble_api, "_cw_load_state", _currently_watching_state)
+
+    all_data = _loads_body(scrobble_api.api_currently_watching(cast(Any, request), user_profile="").body)
+    alice = _loads_body(scrobble_api.api_currently_watching(cast(Any, request), user_profile=ALICE_PROFILE_ID).body)
+
+    assert all_data["streams_count"] == 2
+    assert [row["title"] for row in all_data["streams"]] == ["Bob Movie", "Alice Movie"]
+    assert alice["streams_count"] == 1
+    assert [row["title"] for row in alice["streams"]] == ["Alice Movie"]
+
+
 def test_playback_progress_filter_for_managed_user_forces_own_profile(monkeypatch) -> None:
     from api import appAuthAPI as auth
     from tests.test_app_auth_api import _auth_cfg, _request

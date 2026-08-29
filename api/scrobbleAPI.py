@@ -9,6 +9,7 @@ import secrets
 import hmac
 import urllib.parse
 import xml.etree.ElementTree as ET
+from collections.abc import Mapping
 from typing import Any, cast
 
 from fastapi import APIRouter, Query, Request, HTTPException, Body
@@ -16,7 +17,7 @@ from fastapi.responses import JSONResponse
 from urllib.parse import parse_qs
 
 from cw_platform.account_match import media_account_allowed
-from cw_platform.access_policy import media_account_allowlist_for_profile
+from cw_platform.access_policy import managed_profile_id, media_account_allowlist_for_profile, request_user
 from cw_platform.config_base import load_config, save_config
 from cw_platform.provider_instances import build_provider_config_view, instances_for_user_profile, list_instance_ids, normalize_instance_id
 from cw_platform.provider_usage import webhook_source_enabled
@@ -1103,12 +1104,16 @@ def api_plex_pms(instance: str | None = Query(None)) -> JSONResponse:
 
 
 def _currently_watching_user_filter(cfg: dict[str, Any], request: Request | None, requested_profile: Any) -> dict[str, Any]:
-    try:
-        from api.appAuthAPI import COOKIE_NAME, effective_user_profile_id
-        token = request.cookies.get(COOKIE_NAME) if request is not None else None
-        profile = effective_user_profile_id(cfg, token, requested_profile)
-    except Exception:
-        profile = "__none__"
+    user = request_user(request)
+    if isinstance(user, Mapping) and not bool(user.get("is_admin")):
+        profile = managed_profile_id(user) or "__none__"
+    else:
+        try:
+            from api.appAuthAPI import COOKIE_NAME, effective_user_profile_id
+            token = request.cookies.get(COOKIE_NAME) if request is not None else None
+            profile = effective_user_profile_id(cfg, token, requested_profile)
+        except Exception:
+            profile = "__none__"
     if not str(profile or "").strip():
         return {}
     user_filter = instances_for_user_profile(cfg, profile)
