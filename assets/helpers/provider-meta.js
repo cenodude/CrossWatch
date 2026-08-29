@@ -70,7 +70,19 @@
   }
   function logoPath(v){ const info = get(v); if (!info?.hasLogo) return ""; const file = info.logoFile || `${info.key}.svg`; return assetPath(`/assets/img/${file}`); }
   function logLogoPath(v){ const info = get(v); return info?.hasLogLogo ? assetPath(`/assets/img/${info.key}-log.svg`) : ""; }
-  function brandInfo(v){ const info = get(v); return { cls: info?.brandClass || "", icon: logoPath(v) || "" }; }
+  function brandInfo(v){
+    const k = keyOf(v);
+    const info = get(k);
+    return {
+      key: info?.key || k,
+      label: label(k),
+      shortLabel: shortLabel(k),
+      cls: info?.brandClass || "",
+      icon: logoPath(k) || "",
+      logIcon: logLogoPath(k) || "",
+      tone: tone(k),
+    };
+  }
   function logoHtml(v, cls = "token-logo"){
     const k = keyOf(v);
     const src = logoPath(k);

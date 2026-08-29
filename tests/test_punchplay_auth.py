@@ -493,7 +493,7 @@ def test_discovery_branding_and_frontend_wiring() -> None:
     assert "#punchplay_disconnect" in auth_css
     assert 'punchplay: "/assets/auth/auth.punchplay.js"' in loader
     assert '"sec-punchplay": "punchplay"' in loader
-    assert '"ANILIST", "PUNCHPLAY", "FLOPPY"' in ui
+    assert 'keys: ["CROSSWATCH", "TRAKT", "SIMKL", "TMDB", "MDBLIST", "PUBLICMETADB", "ANILIST", "PUNCHPLAY", "BINGEBASE", "FLICKLIST", "FLOPPY", "SCROB"]' in ui
     assert 'provider: "punchplay", logo: "PUNCHPLAY"' in ui
     assert '"244,64,15", "0,132,216", "PUNCHPLAY"' in ui
     assert "--cw-auth-c1:244,64,15;--cw-auth-c2:0,132,216" in auth_ui
