@@ -46,6 +46,7 @@ from providers.sync.plex._utils import (
     fetch_libraries_from_cfg,
     inspect_and_persist,
 )
+from providers.sync.plex._common import stable_client_id as plex_stable_client_id
 import providers.sync.plex._utils as plex_utils
 
 __all__ = ["register_auth"]
@@ -451,8 +452,8 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
 
         cid = str((base.get("client_id") or plex.get("client_id") or "")).strip()
         if not cid:
-            cid = secrets.token_hex(12)
-            base["client_id"] = cid
+            cid = plex_stable_client_id()
+        base["client_id"] = cid
         plex["client_id"] = cid
         save_config(cfg)
 

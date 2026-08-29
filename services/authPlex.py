@@ -12,6 +12,8 @@ from urllib.parse import urlencode
 
 import requests
 
+from providers.sync.plex._common import stable_client_id
+
 PLEX_PIN_URL = "https://plex.tv/api/v2/pins"
 PLEX_USER_URL = "https://plex.tv/api/v2/user"
 PLEX_AUTH_URL = "https://app.plex.tv/auth#?"
@@ -45,6 +47,17 @@ def _plex_sso(cfg: dict[str, Any], *, create: bool = False) -> dict[str, Any]:
     return plex_sso
 
 
+def _plex_provider(cfg: dict[str, Any], *, create: bool = False) -> dict[str, Any]:
+    plex = cfg.get("plex")
+    if isinstance(plex, dict):
+        return plex
+    if not create:
+        return {}
+    plex = {}
+    cfg["plex"] = plex
+    return plex
+
+
 def _headers(client_id: str, token: str | None = None) -> dict[str, str]:
     out = {
         "Accept": "application/json",
@@ -60,11 +73,12 @@ def _headers(client_id: str, token: str | None = None) -> dict[str, str]:
 
 def _ensure_client_id(cfg: dict[str, Any]) -> str:
     plex_sso = _plex_sso(cfg, create=True)
-    client_id = str(plex_sso.get("client_id") or "").strip()
-    if client_id:
-        return client_id
-    client_id = f"crosswatch-{secrets.token_hex(10)}"
+    plex = _plex_provider(cfg, create=True)
+    client_id = str(plex.get("client_id") or plex_sso.get("client_id") or "").strip()
+    if not client_id:
+        client_id = stable_client_id()
     plex_sso["client_id"] = client_id
+    plex["client_id"] = client_id
     return client_id
 
 
