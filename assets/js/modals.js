@@ -56,9 +56,15 @@ window.openMaintenanceModal = (props = {}) => ModalRegistry.open('maintenance', 
 window.openManualWatchedModal = (props = {}) => ModalRegistry.open('manual-watched', props);
 window.openTlsCertModal = (props = {}) => ModalRegistry.open('tls-cert', props);
 
+function setupWizardBackdropClass(props = {}) {
+  const classes = [props?.backdropClassName];
+  if (props?.auth_reset_required !== true) classes.push('cw-welcome-setup-privacy-backdrop');
+  return classes.filter(Boolean).join(' ');
+}
+
 window.openSetupWizard = (props = {}) => ModalRegistry.open('setup-wizard', {
   ...props,
-  backdropClassName: [props?.backdropClassName, 'cw-setup-privacy-backdrop'].filter(Boolean).join(' '),
+  backdropClassName: setupWizardBackdropClass(props),
 });
 window.openUpgradeWarning = (props = {}) => ModalRegistry.open('upgrade-warning', props);
 
