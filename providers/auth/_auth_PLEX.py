@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import copy
-import secrets
 import time
 from collections.abc import Mapping, MutableMapping
 from typing import Any
@@ -14,6 +13,7 @@ import requests
 from ._auth_base import AuthManifest, AuthProvider, AuthStatus
 from cw_platform.config_base import DEFAULT_CFG, save_config
 from cw_platform.provider_instances import ensure_provider_block, ensure_instance_block, normalize_instance_id
+from providers.sync.plex._common import stable_client_id
 
 try:
     from _logging import log as _real_log
@@ -85,8 +85,8 @@ class PlexAuth(AuthProvider):
 
         cid = str((base.get("client_id") or plex.get("client_id") or "")).strip()
         if not cid:
-            cid = secrets.token_hex(12)
-            base["client_id"] = cid
+            cid = stable_client_id()
+        base["client_id"] = cid
         plex["client_id"] = cid
 
         headers = {

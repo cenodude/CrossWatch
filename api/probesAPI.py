@@ -24,6 +24,7 @@ from cw_platform.config_base import load_config as _load_config
 from cw_platform.provider_instances import get_provider_block, list_instance_ids, normalize_instance_id, provider_key
 from providers.auth._auth_KODI import KodiAuthError, verify_connection as verify_kodi_connection
 from providers.sync.simkl._common import simkl_api_params, simkl_user_agent
+from providers.sync.plex._common import stable_client_id as plex_stable_client_id
 
 
 def _provider_auth():
@@ -82,6 +83,20 @@ _USERINFO_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 _SECRET_CACHE_TAGS: dict[str, str] = {}
 
 _CACHE_LOCK = threading.Lock()
+
+
+def _plex_client_identifier(cfg: Mapping[str, Any] | dict[str, Any]) -> str:
+    plex = cfg.get("plex") if isinstance(cfg, Mapping) else None
+    app_auth = cfg.get("app_auth") if isinstance(cfg, Mapping) else None
+    plex_sso = app_auth.get("plex_sso") if isinstance(app_auth, Mapping) else None
+    for block in (plex, plex_sso):
+        if isinstance(block, Mapping):
+            client_id = str(block.get("client_id") or "").strip()
+            if client_id:
+                return client_id
+    return plex_stable_client_id()
+
+
 _BUST_SEEN: set[str] = set()
 
 _HTTP_TL = threading.local()
@@ -571,7 +586,7 @@ def probe_plex(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> bool:
 
     headers = {
         "X-Plex-Token": token,
-        "X-Plex-Client-Identifier": "crosswatch",
+        "X-Plex-Client-Identifier": _plex_client_identifier(cfg),
         "X-Plex-Product": "CrossWatch",
         "X-Plex-Version": "1.0",
         "Accept": "application/xml",
@@ -738,7 +753,7 @@ def _probe_plex_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tup
     headers = {
         **UA,
         "X-Plex-Token": token,
-        "X-Plex-Client-Identifier": "crosswatch",
+        "X-Plex-Client-Identifier": _plex_client_identifier(cfg),
         "X-Plex-Product": "CrossWatch",
         "X-Plex-Version": "1.0",
     }
@@ -1564,7 +1579,7 @@ def plex_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict
         headers = {
             **UA,
             "X-Plex-Token": token,
-            "X-Plex-Client-Identifier": "crosswatch",
+            "X-Plex-Client-Identifier": _plex_client_identifier(cfg),
             "X-Plex-Product": "CrossWatch",
             "X-Plex-Version": "1.0",
         }

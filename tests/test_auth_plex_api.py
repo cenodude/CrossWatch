@@ -301,6 +301,39 @@ def test_plex_start_sets_flow_cookie(monkeypatch) -> None:
     assert f"{plex_api.FLOW_COOKIE_NAME}=" in _all_set_cookie_headers(resp)
 
 
+def test_plex_sso_start_reuses_provider_client_id(monkeypatch) -> None:
+    from services import authPlex
+
+    cfg = _auth_cfg()
+    cfg["plex"] = {"client_id": "main-plex-client"}
+    cfg["app_auth"]["plex_sso"]["client_id"] = "old-sso-client"
+    sent: dict[str, str] = {}
+
+    class Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"id": "pin-1", "code": "ABCD"}
+
+    def fake_post(_url, *, headers, **_kwargs):
+        sent.update(headers)
+        return Response()
+
+    monkeypatch.setattr(authPlex.requests, "post", fake_post)
+
+    res = authPlex.start_flow(
+        cfg,
+        intent="login",
+        callback_url="https://crosswatch.example/callback",
+        flow_nonce_hash="nonce-hash",
+    )
+
+    assert sent["X-Plex-Client-Identifier"] == "main-plex-client"
+    assert "clientID=main-plex-client" in res["auth_url"]
+    assert cfg["app_auth"]["plex_sso"]["client_id"] == "main-plex-client"
+
+
 def test_plex_login_check_requires_matching_flow_cookie(monkeypatch) -> None:
     from api import authPlexAPI as plex_api
 

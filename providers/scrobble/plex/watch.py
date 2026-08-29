@@ -32,6 +32,7 @@ from providers.scrobble.scrobble import (
 from providers.scrobble.currently_watching import update_from_event as _cw_update, update_from_payload as _cw_update_payload
 from providers.scrobble.media_filters import event_ignore_reason, log_media_filter_drop
 from providers.scrobble.sources import source_enabled
+from providers.sync.plex._common import stable_client_id
 
 
 _CFG_CACHE: dict[str, Any] = {"ts": 0.0, "cfg": {}}
@@ -107,7 +108,9 @@ def _try_discover_pms_token(cfg: dict[str, Any], baseurl: str, cloud_token: str,
         return None, None
 
     px = cfg.get("plex") or {}
-    client_id = str(px.get("client_id") or "crosswatch").strip() or "crosswatch"
+    client_id = str(px.get("client_id") or "").strip()
+    if not client_id:
+        client_id = stable_client_id()
     want_mid = str(px.get("machine_id") or "").strip().lower() or None
 
     try:
