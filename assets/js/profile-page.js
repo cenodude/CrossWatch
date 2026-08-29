@@ -28,6 +28,14 @@
   const writeCache = (key, payload) => {
     try { localStorage.setItem(key, JSON.stringify({ t: Date.now(), payload })); } catch {}
   };
+  const readAnyCache = (key) => {
+    try {
+      const entry = JSON.parse(localStorage.getItem(key) || "null");
+      return entry && entry.payload ? entry.payload : null;
+    } catch {
+      return null;
+    }
+  };
   const profileRouteSegment = (value) => {
     try {
       value = decodeURIComponent(String(value || ""));
@@ -86,17 +94,6 @@
       : "";
     const fallbackHidden = logo ? " hidden" : "";
     return `<span class="cw-profile-provider-badge cw-profile-provider-badge--icon" data-provider="${esc(key)}" title="${esc(label)}" aria-label="${esc(label)}">${icon}<span class="cw-profile-provider-fallback"${fallbackHidden}>${esc(label.slice(0, 2))}</span></span>`;
-  };
-  const providerBadgeHtml = (provider) => {
-    const label = visibleProviderLabel(provider);
-    if (!label) return "";
-    const key = providerKey(provider).toLowerCase().replace(/[^a-z0-9-]+/g, "");
-    const logo = providerLogo(provider);
-    const icon = logo
-      ? `<img class="cw-profile-provider-logo" src="${esc(logo)}" alt="" loading="lazy" onerror="this.hidden=true;this.nextElementSibling.hidden=false">`
-      : "";
-    const fallbackHidden = logo ? " hidden" : "";
-    return `<span class="cw-profile-provider-badge" data-provider="${esc(key)}">${icon}<span class="cw-profile-provider-fallback"${fallbackHidden}>${esc(label)}</span><span>${esc(label)}</span></span>`;
   };
   const providerName = (value) => {
     if (!value) return "";
@@ -561,19 +558,6 @@
     </button>`;
   }
 
-  function posterCard(item) {
-    const meta = [episodeOf(item) || yearOf(item), String(item?.type || item?.media_type || "").replace("_", " ")].filter(Boolean).join(" - ");
-    const key = storePosterItem(item);
-    return `<button class="cw-profile-poster" type="button" data-profile-poster-key="${esc(key)}" aria-label="Show details for ${esc(titleOf(item))}"><img src="${esc(poster(item))}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'"><span>${esc(titleOf(item))}<small>${esc(meta)}</small></span></button>`;
-  }
-
-  function listRow(item, fallbackIcon = "movie") {
-    const source = providerOf(item);
-    const meta = [visibleProviderLabel(source), episodeOf(item) || yearOf(item), relTime(item?.ts || item?.last_watched_at || item?.watched_at || item?.updated_at)].filter(Boolean).join(" - ");
-    const key = storePosterItem(item);
-    return `<button class="cw-profile-row cw-profile-click-row" type="button" data-profile-poster-key="${esc(key)}" aria-label="Show details for ${esc(titleOf(item))}"><img src="${esc(poster(item, "w185"))}" alt="" loading="lazy" onerror="this.onerror=null;this.replaceWith(Object.assign(document.createElement('span'),{className:'material-symbols-rounded',textContent:'${fallbackIcon}'}))"><div><strong>${esc(titleOf(item))}</strong><span>${esc(meta)}</span></div><span></span></button>`;
-  }
-
   const watchedEpoch = (item) => {
     const raw = Number(item?.ts || item?.sort_epoch || item?.last_watched_at || item?.watched_at || 0);
     if (!Number.isFinite(raw) || raw <= 0) return 0;
@@ -797,19 +781,31 @@
 
   async function loadOverview() {
     const cacheKey = profileCacheKey("overview");
-    const cached = readCache(cacheKey);
+    const cached = readCache(cacheKey) || readAnyCache(cacheKey);
     if (cached) renderOverview(cached);
     else paintOverviewSkeletons();
+    const widgetParams = new URLSearchParams({
+      include: "history,ratings,scrobble,progress",
+      history_limit: "8",
+      ratings_limit: "9",
+      scrobble_limit: "8",
+      progress_limit: "8",
+    });
+    if (cached?.widgets?.version) widgetParams.set("known_version", cached.widgets.version);
 
     const [widgetsRes, wallRes, insightsRes, statusRes, collectionRes] = await Promise.allSettled([
-      api("/api/dashboard/widgets?include=history,ratings,scrobble,progress&history_limit=8&ratings_limit=9&scrobble_limit=8&progress_limit=8"),
+      api(`/api/dashboard/widgets?${widgetParams.toString()}`),
       api("/api/state/wall?limit=8"),
       api("/api/insights?limit_samples=0&history=0&runtime=0&include_events=0"),
       api("/api/status"),
       api("/api/profile/collection?page=1&page_size=1"),
     ]);
+    const widgetsNotModified = widgetsRes.status === "fulfilled" && widgetsRes.value?.not_modified && cached?.widgets;
+    const widgets = widgetsRes.status === "fulfilled"
+      ? (widgetsNotModified ? (cached?.widgets || {}) : widgetsRes.value)
+      : (cached?.widgets || {});
     const next = {
-      widgets: widgetsRes.status === "fulfilled" ? widgetsRes.value : (cached?.widgets || {}),
+      widgets,
       wall: wallRes.status === "fulfilled" ? wallRes.value : (cached?.wall || { items: [] }),
       progress: cached?.progress || { items: [] },
       insights: insightsRes.status === "fulfilled" ? insightsRes.value : (cached?.insights || null),
@@ -823,6 +819,10 @@
     }
     renderOverview(next);
     writeCache(cacheKey, next);
+    if (widgetsNotModified) {
+      refreshNowPlaying();
+      return;
+    }
 
     api("/api/playback_progress/items?page=1&page_size=8").then((progress) => {
       const fresh = { ...next, progress: progress || { items: [] } };

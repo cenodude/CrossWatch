@@ -25,6 +25,22 @@
   const WIDE_UNITS = 3;
   const WIDGET_REFRESH_TTL_MS = 60 * 1000;
   const WIDGET_FETCH_RETRY_DELAYS = [350, 900, 1800];
+  const WIDGET_LOADING_DELAY_MS = 700;
+  const REFRESHABLE_WIDGETS = ["history", "ratings", "scrobble", "progress", "playlists"];
+  const WIDGET_PAYLOAD_KEYS = {
+    history: "recent_history",
+    ratings: "latest_ratings",
+    scrobble: "recent_scrobble",
+    progress: "recent_progress",
+    playlists: "recent_playlists",
+  };
+  const WIDGET_COUNT_CHIPS = {
+    history: ["recent-history-count-chip", "item"],
+    ratings: ["latest-ratings-count-chip", "rating"],
+    scrobble: ["recent-scrobble-count-chip", "scrobble"],
+    progress: ["recent-progress-count-chip", "progress sync"],
+    playlists: ["recent-playlists-count-chip", "playlist sync"],
+  };
   const visibleCounts = { history: GRID_PAGE_STEP, ratings: RATING_PAGE_STEP, scrobble: GRID_PAGE_STEP, progress: GRID_PAGE_STEP, playlists: GRID_PAGE_STEP };
   const latestItems = { history: [], ratings: [], scrobble: [], progress: [], playlists: [] };
   const EMPTY_META = {
@@ -39,6 +55,7 @@
   const ON_PROFILE_PAGE = !!document.getElementById("profile-hero");
   const LAYOUT_KEY = ON_PROFILE_PAGE ? "cw.profileWidgets.layout.v3" : "cw.dashboardWidgets.layout.v3";
   const SETTINGS_KEY = "cw.dashboardWidgets.settings.v1";
+  const DATA_CACHE_KEY = ON_PROFILE_PAGE ? "cw.profileWidgets.data.v1" : "cw.dashboardWidgets.data.v1";
   const ALL_WIDGETS = [
     { key: "watchlist", id: "placeholder-card", label: "Watchlist" },
     { key: "history", id: "recent-history-widget", label: "Recent History" },
@@ -139,6 +156,65 @@
       raw.wallEmpty = !!empty;
       localStorage.setItem(SETTINGS_KEY, JSON.stringify(raw));
     } catch {}
+  }
+
+  function widgetDataCacheScope() {
+    return `${ON_PROFILE_PAGE ? "profile" : "main"}:${overviewProfileId() || "all"}`;
+  }
+
+  function readCachedWidgetData() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(DATA_CACHE_KEY) || "null");
+      if (!raw || typeof raw !== "object" || raw.scope !== widgetDataCacheScope()) return null;
+      const payload = raw.payload && typeof raw.payload === "object" ? raw.payload : null;
+      return payload?.ok ? payload : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function writeCachedWidgetData(payload) {
+    try {
+      if (!payload?.ok || payload.not_modified) return;
+      localStorage.setItem(DATA_CACHE_KEY, JSON.stringify({
+        t: Date.now(),
+        scope: widgetDataCacheScope(),
+        payload,
+      }));
+    } catch {}
+  }
+
+  function hasOwn(obj, key) {
+    return Object.prototype.hasOwnProperty.call(obj || {}, key);
+  }
+
+  function normalizeRefreshKinds(kinds) {
+    if (!kinds) return null;
+    const list = Array.isArray(kinds) ? kinds : String(kinds).split(",");
+    const out = list.map((kind) => String(kind || "").trim()).filter((kind) => REFRESHABLE_WIDGETS.includes(kind));
+    return out.length ? new Set(out) : new Set();
+  }
+
+  function applyWidgetPayload(data, active, kinds = null) {
+    const wanted = normalizeRefreshKinds(kinds);
+    let applied = 0;
+    for (const kind of REFRESHABLE_WIDGETS) {
+      if (!active[kind]) continue;
+      if (wanted && !wanted.has(kind)) continue;
+      const payloadKey = WIDGET_PAYLOAD_KEYS[kind];
+      if (!hasOwn(data, payloadKey)) continue;
+      const block = data?.[payloadKey] || {};
+      const items = Array.isArray(block.items) ? block.items : [];
+      const [chipId, chipLabel] = WIDGET_COUNT_CHIPS[kind];
+      setCountChip(chipId, block.total ?? items.length, chipLabel);
+      latestItems[kind] = items;
+      renderWidget(kind);
+      applied += 1;
+    }
+    if (applied) {
+      lastLoadedAt = Date.now();
+      hasLoaded = true;
+    }
   }
 
   function resetLayout() {
@@ -326,7 +402,7 @@
       .finally(() => {
         authRetryQueued = false;
         if (authSetupPending()) return;
-        window.setTimeout(() => refreshDashboardWidgets({ forceConfig: true }), 25);
+        window.setTimeout(() => refreshDashboardWidgets({ forceConfig: true, preserve: true }), 25);
       });
   }
 
@@ -344,26 +420,74 @@
     if (!settings) return;
     applyVisibility(settings);
     const active = activeWidgetSettings(settings);
-    if (active.history) setLoading($("#recent-history-list"));
-    if (active.ratings) setLoading($("#latest-ratings-grid"), "ratings");
-    if (active.scrobble) setLoading($("#recent-scrobble-list"));
-    if (active.progress) setLoading($("#recent-progress-list"));
-    if (active.playlists) setLoading($("#recent-playlists-list"));
+    const cached = readCachedWidgetData();
+    if (cached) {
+      applyWidgetPayload(cached, active);
+      return;
+    }
   }
 
   function markWidgetsDirty(delay = 150, opts = {}) {
     widgetsDirty = true;
     dirtyVersion += 1;
     if (!isOnMain()) return;
-    scheduleWidgetRefresh(delay, { ...opts, force: true, preserve: hasLoaded });
+    const preserve = opts.preserve === false ? hasLoaded : true;
+    scheduleWidgetRefresh(delay, { ...opts, force: true, preserve });
+  }
+
+  function syncLaneHasUpdates(lane) {
+    if (!lane || typeof lane !== "object") return false;
+    for (const key of ["added", "removed", "updated", "created", "deleted", "applied", "failed", "skipped", "blocked"]) {
+      if (Number(lane[key] || 0) > 0) return true;
+    }
+    for (const key of ["spotlight_add", "spotlight_remove", "spotlight_update", "items"]) {
+      if (Array.isArray(lane[key]) && lane[key].length) return true;
+    }
+    return false;
+  }
+
+  function syncFeatureWidgetKind(feature) {
+    const key = String(feature || "").trim().toLowerCase();
+    if (["watch", "watched", "history"].includes(key)) return "history";
+    if (["rating", "ratings"].includes(key)) return "ratings";
+    if (key === "progress") return "progress";
+    if (["playlist", "playlists"].includes(key)) return "playlists";
+    return "";
+  }
+
+  function widgetKindsFromSyncEvent(event) {
+    const features = event?.detail?.summary?.features;
+    if (!features || typeof features !== "object") return null;
+    const kinds = new Set();
+    for (const [feature, lane] of Object.entries(features)) {
+      const kind = syncFeatureWidgetKind(feature);
+      if (kind && syncLaneHasUpdates(lane)) kinds.add(kind);
+    }
+    return Array.from(kinds);
+  }
+
+  function refreshForSyncComplete(event) {
+    const kinds = widgetKindsFromSyncEvent(event);
+    if (kinds === null) {
+      markWidgetsDirty(250);
+    } else if (kinds.length) {
+      markWidgetsDirty(250, { kinds });
+    }
   }
 
   function scheduleScrobbleStopRefresh() {
     window.clearTimeout(scrobbleStopRefreshTimer);
     scrobbleStopRefreshTimer = window.setTimeout(() => {
       scrobbleStopRefreshTimer = null;
-      markWidgetsDirty(0);
+      markWidgetsDirty(0, { kinds: ["scrobble", "history", "progress"] });
     }, 1000);
+  }
+
+  function refreshForScrobbleStopped() {
+    scheduleScrobbleStopRefresh();
+    try {
+      window.dispatchEvent(new CustomEvent("watchlist:refresh", { detail: { source: "scrobble-stop" } }));
+    } catch {}
   }
 
   async function fetchJSON(url) {
@@ -1334,9 +1458,9 @@
       </div>`;
   }
 
-  function setLoading(host, kind = "list") {
+  function setLoading(host, kind) {
     if (!host) return;
-    const widgetKey = kind === "list" ? (host.closest(".cw-dash-widget")?.dataset?.widgetKey || kind) : kind;
+    const widgetKey = WIDGET_KEYS.includes(kind) ? kind : (host.closest(".cw-dash-widget")?.dataset?.widgetKey || kind);
     const view = widgetView(widgetKey);
     setWidgetEmpty(widgetKey, false);
     host.classList.toggle("cw-widget-view-icon", view === "icon");
@@ -1376,6 +1500,16 @@
           <span class="cw-dash-source cw-skel-dot"></span>
         </span>
       </div>`).join("");
+  }
+
+  function scheduleSlowWidgetLoading(hosts, requestedKinds) {
+    if (!requestedKinds.length) return () => {};
+    const timer = window.setTimeout(() => {
+      for (const kind of requestedKinds) {
+        if (!latestItems[kind]?.length) setLoading(hosts[kind], kind);
+      }
+    }, WIDGET_LOADING_DELAY_MS);
+    return () => window.clearTimeout(timer);
   }
 
   function renderCarousel(host, items, count, cardFn, kind) {
@@ -1482,7 +1616,7 @@
     scheduleMasonry();
   }
 
-  async function refreshDashboardWidgets({ forceConfig = false, force = false, preserve = false } = {}) {
+  async function refreshDashboardWidgets({ forceConfig = false, force = false, preserve = true, kinds = null } = {}) {
     if (!isOnMain()) {
       hideDashboardWidgets();
       return;
@@ -1498,6 +1632,8 @@
     const seq = ++loadSeq;
     const refreshVersion = dirtyVersion;
     try { await window.CW?.OverviewProfile?.ready; } catch {}
+    if (seq !== loadSeq || !isOnMain()) return;
+    if (!hasLoaded) revealFromCache();
     let cfg;
     try {
       cfg = await getConfig(forceConfig);
@@ -1517,9 +1653,6 @@
     currentConfig = cfg;
     lastSettings = settings;
     if (seq !== loadSeq || !isOnMain()) return;
-    if (!preserve || !hasLoaded) {
-      ["history", "ratings", "scrobble", "progress", "playlists"].forEach(resetVisibleCount);
-    }
     applyVisibility(settings);
     writeCachedSettings(settings, hasTmdbKeyInConfig(cfg));
     const active = activeWidgetSettings(settings);
@@ -1530,23 +1663,26 @@
     if (!hasTmdbKeyInConfig(cfg)) {
       $("#placeholder-card")?.classList.add("hidden");
     }
+    const cachedPayload = readCachedWidgetData();
+    if (!hasLoaded && cachedPayload) {
+      applyWidgetPayload(cachedPayload, active);
+    }
 
     const historyHost = $("#recent-history-list");
     const ratingsHost = $("#latest-ratings-grid");
     const scrobbleHost = $("#recent-scrobble-list");
     const progressHost = $("#recent-progress-list");
     const playlistsHost = $("#recent-playlists-list");
-    if (!preserve || !hasLoaded) {
-      if (active.history) setLoading(historyHost);
-      if (active.ratings) setLoading(ratingsHost, "ratings");
-      if (active.scrobble) setLoading(scrobbleHost);
-      if (active.progress) setLoading(progressHost);
-      if (active.playlists) setLoading(playlistsHost);
-    }
+    const hosts = { history: historyHost, ratings: ratingsHost, scrobble: scrobbleHost, progress: progressHost, playlists: playlistsHost };
+    const wantedKinds = normalizeRefreshKinds(kinds);
+    const requestedKinds = REFRESHABLE_WIDGETS.filter((key) => active[key] && (!wantedKinds || wantedKinds.has(key)));
+    if (!preserve) requestedKinds.forEach(resetVisibleCount);
+    const partialRefresh = !!wantedKinds;
+    const stopSlowLoading = scheduleSlowWidgetLoading(hosts, requestedKinds);
 
     try {
-      const requestedKinds = ["history", "ratings", "scrobble", "progress", "playlists"].filter((key) => active[key]);
       if (!requestedKinds.length) {
+        stopSlowLoading();
         hasLoaded = true;
         lastLoadedAt = Date.now();
         widgetsDirty = dirtyVersion !== refreshVersion;
@@ -1562,31 +1698,21 @@
       });
       const userProfile = overviewProfileId();
       if (userProfile) params.set("user_profile", userProfile);
+      if (!force && !partialRefresh && cachedPayload?.version) params.set("known_version", cachedPayload.version);
       const data = await fetchWidgetPayload(`/api/dashboard/widgets?${params.toString()}`);
+      stopSlowLoading();
       if (seq !== loadSeq || !isOnMain()) return;
-
-      const historyItems = Array.isArray(data?.recent_history?.items) ? data.recent_history.items : [];
-      const scrobbleItems = Array.isArray(data?.recent_scrobble?.items) ? data.recent_scrobble.items : [];
-      const ratingItems = Array.isArray(data?.latest_ratings?.items) ? data.latest_ratings.items : [];
-      const progressItems = Array.isArray(data?.recent_progress?.items) ? data.recent_progress.items : [];
-      const playlistItems = Array.isArray(data?.recent_playlists?.items) ? data.recent_playlists.items : [];
-      setCountChip("recent-history-count-chip", data?.recent_history?.total ?? historyItems.length, "item");
-      setCountChip("latest-ratings-count-chip", data?.latest_ratings?.total ?? ratingItems.length, "rating");
-      setCountChip("recent-scrobble-count-chip", data?.recent_scrobble?.total ?? scrobbleItems.length, "scrobble");
-      setCountChip("recent-progress-count-chip", data?.recent_progress?.total ?? progressItems.length, "progress sync");
-      setCountChip("recent-playlists-count-chip", data?.recent_playlists?.total ?? playlistItems.length, "playlist sync");
-      latestItems.history = historyItems;
-      latestItems.ratings = ratingItems;
-      latestItems.scrobble = scrobbleItems;
-      latestItems.progress = progressItems;
-      latestItems.playlists = playlistItems;
-      hasLoaded = true;
-      lastLoadedAt = Date.now();
-      widgetsDirty = dirtyVersion !== refreshVersion;
-      for (const kind of ["history", "ratings", "scrobble", "progress", "playlists"]) {
-        if (active[kind]) renderWidget(kind);
+      if (data?.not_modified && cachedPayload) {
+        hasLoaded = true;
+        lastLoadedAt = Date.now();
+        widgetsDirty = dirtyVersion !== refreshVersion;
+        return;
       }
+      applyWidgetPayload(data, active, partialRefresh ? requestedKinds : null);
+      if (!partialRefresh) writeCachedWidgetData(data);
+      widgetsDirty = dirtyVersion !== refreshVersion;
     } catch (e) {
+      stopSlowLoading();
       if (authPendingError(e)) {
         scheduleAuthReadyRefresh();
         return;
@@ -1733,10 +1859,9 @@
     window.addEventListener("cw-user-profiles-changed", () => markWidgetsDirty(150, { forceConfig: true, preserve: hasLoaded }));
     window.addEventListener("cw:overview-profile-changed", () => markWidgetsDirty(0, { preserve: hasLoaded }));
     window.addEventListener("activity-log-cleared", () => markWidgetsDirty(100));
-    window.addEventListener("sync-complete", () => markWidgetsDirty(250));
-    window.addEventListener("cw:scrobble-stopped", scheduleScrobbleStopRefresh);
+    window.addEventListener("sync-complete", refreshForSyncComplete);
+    window.addEventListener("cw:scrobble-stopped", refreshForScrobbleStopped);
     window.addEventListener("cw:manual-watched-saved", () => markWidgetsDirty(250));
-    window.addEventListener("watchlist:refresh", () => markWidgetsDirty(250));
     window.addEventListener("cw:watchlist-widget-state", (event) => {
       setWidgetEmpty("watchlist", !!event?.detail?.empty);
       cacheWatchlistEmpty(!!event?.detail?.empty);
@@ -1746,10 +1871,10 @@
     if (authSetupPending()) scheduleAuthReadyRefresh();
     window.addEventListener("load", () => {
       setTimeout(() => {
-        if (!hasLoaded) refreshDashboardWidgets({ forceConfig: true });
+        if (!hasLoaded) refreshDashboardWidgets({ forceConfig: true, preserve: true });
       }, 100);
     }, { once: true });
-    refreshDashboardWidgets();
+    refreshDashboardWidgets({ preserve: true });
   }
 
   window.CW = window.CW || {};
