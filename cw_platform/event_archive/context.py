@@ -579,7 +579,7 @@ def _title_index() -> dict[str, dict[str, Any]]:
             _ingest_items(d.get("items"))
 
     _TITLE_CACHE["index"] = idx
-    _TITLE_CACHE["ts"] = now
+    _TITLE_CACHE["ts"] = time.monotonic()
     return idx
 
 
