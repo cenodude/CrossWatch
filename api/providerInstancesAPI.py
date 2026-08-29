@@ -3,10 +3,11 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-from typing import Any, cast
 import copy
 import re
+from collections.abc import Mapping
 from functools import lru_cache
+from typing import Any, cast
 
 from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse
@@ -218,16 +219,38 @@ def _profile_scope_provider_key(provider: Any) -> str:
     return "TMDB" if key == "tmdb" else key.upper()
 
 
-def _managed_user_instance_scope(cfg: dict[str, Any], request: Request | None) -> dict[str, set[str]] | None:
+def _authenticated_request_user(cfg: dict[str, Any], request: Request | None) -> Mapping[str, Any] | None:
     if request is None:
         return None
+    try:
+        state = getattr(request, "state", None)
+        user = getattr(state, "cw_user", None) or getattr(state, "user", None)
+        if isinstance(user, Mapping):
+            return user
+    except Exception:
+        pass
+    try:
+        from api.apiTokensAPI import extract_api_token, resolve_api_token
+
+        user = resolve_api_token(cfg, extract_api_token(request))
+        if isinstance(user, Mapping):
+            return user
+    except Exception:
+        pass
     try:
         from api.appAuthAPI import COOKIE_NAME, current_user
 
         user = current_user(cfg, request.cookies.get(COOKIE_NAME))
+        if isinstance(user, Mapping):
+            return user
     except Exception:
-        return None
-    if not isinstance(user, dict) or user.get("is_admin"):
+        pass
+    return None
+
+
+def _managed_user_instance_scope(cfg: dict[str, Any], request: Request | None) -> dict[str, set[str]] | None:
+    user = _authenticated_request_user(cfg, request)
+    if not isinstance(user, Mapping) or user.get("is_admin"):
         return None
     pid = normalize_user_profile_id(user.get("profile_id"))
     if not pid:
