@@ -198,6 +198,73 @@ def test_episode_history_read_uses_show_level_watched_date(monkeypatch) -> None:
     assert "_stremio_watched_at_fallback" not in item
 
 
+def test_episode_history_read_preserves_previous_synthetic_date(monkeypatch) -> None:
+    monkeypatch.setattr(_history, "cinemeta_videos", lambda _adapter, _imdb: bb_videos())
+    adapter = FakeAdapter([series_record("tt0903747:1:1:6:eJxTYIACAAEpACE=")])
+    adapter._stremio_history_baseline = {
+        "imdb:tt0903747#s01e01": {
+            "type": "episode",
+            "show_ids": {"imdb": "tt0903747"},
+            "ids": {"imdb": "tt0903747"},
+            "season": 1,
+            "episode": 1,
+            "watched": True,
+            "watched_at": "2026-01-01T00:00:00Z",
+        }
+    }
+
+    index = _history.build_index(adapter)
+    item = index["imdb:tt0903747#s01e01"]
+
+    assert item["watched"] is True
+    assert item["watched_at"] == "2026-01-01T00:00:00Z"
+    assert item["_stremio_watched_at_source"] == "stored_episode_estimate"
+
+
+def test_episode_history_read_matches_previous_event_key_baseline(monkeypatch) -> None:
+    monkeypatch.setattr(_history, "cinemeta_videos", lambda _adapter, _imdb: bb_videos())
+    adapter = FakeAdapter([series_record("tt0903747:1:1:6:eJxTYIACAAEpACE=")])
+    adapter._stremio_history_baseline = {
+        "imdb:tt0903747#s01e01@1760000000": {
+            "type": "episode",
+            "show_ids": {"imdb": "tt0903747"},
+            "ids": {"imdb": "tt0903747"},
+            "season": 1,
+            "episode": 1,
+            "watched": True,
+            "watched_at": "2026-02-02T03:04:05Z",
+        }
+    }
+
+    index = _history.build_index(adapter)
+
+    assert index["imdb:tt0903747#s01e01"]["watched_at"] == "2026-02-02T03:04:05Z"
+    assert index["imdb:tt0903747#s01e01"]["_stremio_watched_at_source"] == "stored_episode_estimate"
+
+
+def test_episode_history_read_preserves_previous_date_across_id_enrichment(monkeypatch) -> None:
+    videos = [{"id": "tmdb:1396:1:1", "season": 1, "episode": 1, "title": "Pilot"}]
+    monkeypatch.setattr(_history, "video_orders_for_series_record", native_orders(videos))
+    monkeypatch.setattr(_history, "tmdb_metadata_provider", lambda _adapter: title_provider("Breaking Bad"))
+    adapter = FakeAdapter([series_record(watched_value(videos, {"tmdb:1396:1:1"})) | {"_id": "tmdb:1396"}])
+    adapter._stremio_history_baseline = {
+        "imdb:tt0903747#s01e01": {
+            "type": "episode",
+            "show_ids": {"imdb": "tt0903747", "tmdb": "1396"},
+            "ids": {"imdb": "tt0903747", "tmdb": "1396"},
+            "season": 1,
+            "episode": 1,
+            "watched": True,
+            "watched_at": "2026-03-03T04:05:06Z",
+        }
+    }
+
+    index = _history.build_index(adapter)
+
+    assert index["tmdb:1396#s01e01"]["watched_at"] == "2026-03-03T04:05:06Z"
+    assert index["tmdb:1396#s01e01"]["_stremio_watched_at_source"] == "stored_episode_estimate"
+
+
 def test_episode_history_read_falls_back_to_show_mtime(monkeypatch) -> None:
     monkeypatch.setattr(_history, "cinemeta_videos", lambda _adapter, _imdb: bb_videos())
     adapter = FakeAdapter(
