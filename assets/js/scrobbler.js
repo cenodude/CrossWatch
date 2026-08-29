@@ -9,8 +9,29 @@
   const plexRatingSinks = ["crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "flicklist", "scrob"];
   const state = { root: null, overview: null, busy: false, panels: { watcherDefaults: false, ratings: false, webhookDefaults: false }, delBtn: null, delTimer: 0, regenBtn: null, regenTimer: 0, legacyConfirm: false, legacyTimer: 0, hybridDismissed: false };
 
+  async function authSetupBlocked() {
+    const boot = w.__cwAuthBootstrapState;
+    if (boot && typeof boot.blocked === "boolean") return boot.blocked;
+    const pending = w.__cwAuthBootstrapPromise;
+    if (pending && typeof pending.then === "function") {
+      const resolved = await pending.catch(() => null);
+      if (resolved && typeof resolved.blocked === "boolean") return resolved.blocked;
+    }
+    return w.cwIsAuthSetupPending?.() === true;
+  }
+
+  function authPendingError() {
+    const err = new Error("auth setup pending");
+    err.code = "auth_setup_pending";
+    return err;
+  }
+
+  function isAuthPendingError(err) {
+    return err?.code === "auth_setup_pending" || String(err?.message || "").includes("auth setup pending");
+  }
+
   async function j(url, options = {}) {
-    if (w.cwIsAuthSetupPending?.() === true) throw new Error("auth setup pending");
+    if (await authSetupBlocked()) throw authPendingError();
     const res = await fetch(url, { cache: "no-store", credentials: "same-origin", ...options });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data?.ok === false) {
@@ -272,7 +293,12 @@
     const r = st.global_plex_ratings || {};
     const open = state.panels.ratings;
     const url = r.endpoint_url || "";
-    const on = plexRatingSinks.filter((k) => r[k]);
+    const configured = new Set((o.destination_availability || [])
+      .filter((g) => plexRatingSinks.includes(String(g?.provider || "").toLowerCase()))
+      .filter((g) => (g?.profiles || []).some((p) => p?.configured))
+      .map((g) => String(g.provider || "").toLowerCase()));
+    const visibleSinks = plexRatingSinks.filter((k) => configured.has(k) || r[k]);
+    const on = visibleSinks.filter((k) => r[k]);
     const summary = on.length ? `→ ${on.map(label).join(", ")}` : "No destinations selected";
     return `
       <section class="sc2-section sc2-collapse ${open ? "is-open" : ""}" id="sc-sec-ratings">
@@ -283,7 +309,7 @@
         </button>
         <div class="sc2-collapse-body">
           <div class="sc2-rating-targets">
-            ${plexRatingSinks.map((k) => `<button type="button" class="sc2-rating-pill provider-${k} ${r[k] ? "is-on" : ""}" data-rating-target="${k}"><span class="material-symbols-rounded">${r[k] ? "check_circle" : "radio_button_unchecked"}</span>${esc(label(k))}</button>`).join("")}
+            ${visibleSinks.map((k) => `<button type="button" class="sc2-rating-pill provider-${k} ${r[k] ? "is-on" : ""}" data-rating-target="${k}"><span class="material-symbols-rounded">${r[k] ? "check_circle" : "radio_button_unchecked"}</span>${esc(label(k))}</button>`).join("") || '<div class="sc2-muted">Configure a ratings destination first.</div>'}
           </div>
           <div class="sc2-endpoint">
             <code title="${esc(url)}">${esc(url || "Global Plex ratings URL is unavailable until a token exists")}</code>
@@ -347,9 +373,22 @@
     state.root.innerHTML = `<div class="sc2-page">${renderHeader(o)}${gate}${renderSummary(o)}${hybrid}${legacy}${renderRoutes(o)}${collapseRow}${renderRuntime(o)}${renderWebhooks(o)}${webhookDefaults}</div>`;
   }
 
+  function renderAuthPending() {
+    if (!state.root) return;
+    state.root.innerHTML = `<div class="sc2-page">${renderHeader(state.overview || {})}<div class="sc2-empty">Finish authentication setup to load Scrobbler.</div></div>`;
+  }
+
   async function loadOverview() {
-    state.overview = await j("/api/scrobbler/overview");
-    render();
+    try {
+      state.overview = await j("/api/scrobbler/overview");
+      render();
+    } catch (err) {
+      if (isAuthPendingError(err)) {
+        renderAuthPending();
+        return;
+      }
+      throw err;
+    }
   }
 
   function applyMutation(data) {

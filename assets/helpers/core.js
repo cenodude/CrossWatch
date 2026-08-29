@@ -1289,9 +1289,11 @@
 
     const start = () => {
       if (scrobblerInit) return;
-      if (window.Scrobbler?.init) window.Scrobbler.init({ mountId: mount.id });
-      else if (window.Scrobbler?.mount) window.Scrobbler.mount(mount, window._cfgCache || {});
+      let boot;
+      if (window.Scrobbler?.init) boot = window.Scrobbler.init({ mountId: mount.id });
+      else if (window.Scrobbler?.mount) boot = window.Scrobbler.mount(mount, window._cfgCache || {});
       else return;
+      Promise.resolve(boot).catch((err) => console.warn("[scrobbler] init failed", err));
       scrobblerInit = true;
     };
 
@@ -1319,7 +1321,7 @@
     if (String(e?.detail?.pane || "").toLowerCase() !== "scrobbler") return;
     try { window.loadConfig?.(); } catch {}
     if (scrobblerInit) {
-      try { window.Scrobbler?.refresh?.(); } catch {}
+      try { Promise.resolve(window.Scrobbler?.refresh?.()).catch((err) => console.warn("[scrobbler] refresh failed", err)); } catch {}
       return;
     }
     try { ensureScrobbler(); setTimeout(ensureScrobbler, 200); } catch {}
