@@ -7,6 +7,7 @@ from collections import OrderedDict
 from typing import Any
 
 import base64
+import hashlib
 import re
 import secrets
 import time
@@ -58,6 +59,7 @@ router = APIRouter(prefix="/api/profile", tags=["profile"])
 
 MAX_AVATAR_BYTES = 5 * 1024 * 1024
 AVATAR_CACHE_HEADERS = {"Cache-Control": "private, max-age=31536000, immutable"}
+LINKED_AVATAR_PREFIX = "linked-"
 AVATAR_TYPES = {
     "image/png": (".png", b"\x89PNG\r\n\x1a\n"),
     "image/jpeg": (".jpg", b"\xff\xd8\xff"),
@@ -134,6 +136,49 @@ def _avatar_path(filename: Any) -> Path | None:
     return path
 
 
+def _avatar_media_type_for_path(path: Path) -> str:
+    suffix = path.suffix.lower()
+    for media_type, (ext, _magic) in AVATAR_TYPES.items():
+        if ext == suffix:
+            return media_type
+    return "image/png"
+
+
+def _linked_avatar_digest(url: str, version: int) -> str:
+    source = f"{url}\0{version}".encode("utf-8", "surrogatepass")
+    return hashlib.sha256(source).hexdigest()[:32]
+
+
+def _linked_avatar_cache_path(url: str, version: int, content_type: str = "") -> Path | None:
+    root = _avatar_dir().resolve()
+    digest = _linked_avatar_digest(url, version)
+    if content_type:
+        avatar_type = AVATAR_TYPES.get(content_type)
+        if not avatar_type:
+            return None
+        path = (root / f"{LINKED_AVATAR_PREFIX}{digest}{avatar_type[0]}").resolve()
+        return path if root in path.parents else None
+    for ext, _magic in AVATAR_TYPES.values():
+        path = (root / f"{LINKED_AVATAR_PREFIX}{digest}{ext}").resolve()
+        if root in path.parents and path.exists():
+            return path
+    return None
+
+
+def _write_linked_avatar_cache(path: Path, data: bytes) -> bool:
+    tmp = path.with_name(f"{path.name}.{secrets.token_hex(6)}.tmp")
+    try:
+        tmp.write_bytes(data)
+        tmp.replace(path)
+        return True
+    except Exception:
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+    return False
+
+
 def _linked_avatar_source(raw: dict[str, Any]) -> tuple[str, int]:
     candidates: list[tuple[str, Any]] = []
     plex_sso = raw.get("plex_sso")
@@ -186,8 +231,11 @@ def _avatar_response(raw: dict[str, Any]) -> Response:
     avatar = raw.get("avatar")
     path = _avatar_path(avatar.get("file") if isinstance(avatar, dict) else "")
     if path is None or not path.exists():
-        linked_url, _version = _linked_avatar_source(raw)
+        linked_url, version = _linked_avatar_source(raw)
         if linked_url:
+            cached = _linked_avatar_cache_path(linked_url, version)
+            if cached is not None:
+                return FileResponse(cached, media_type=_avatar_media_type_for_path(cached), headers=AVATAR_CACHE_HEADERS)
             try:
                 req = urllib.request.Request(linked_url, headers={"User-Agent": "CrossWatch/0.11"})
                 with urllib.request.urlopen(req, timeout=8) as res:
@@ -195,7 +243,10 @@ def _avatar_response(raw: dict[str, Any]) -> Response:
                     if content_type in AVATAR_TYPES:
                         data = res.read(MAX_AVATAR_BYTES + 1)
                         if len(data) <= MAX_AVATAR_BYTES:
-                            return Response(content=data, media_type=content_type, headers={"Cache-Control": "private, max-age=300"})
+                            cached = _linked_avatar_cache_path(linked_url, version, content_type)
+                            if cached is not None and _write_linked_avatar_cache(cached, data):
+                                return FileResponse(cached, media_type=content_type, headers=AVATAR_CACHE_HEADERS)
+                            return Response(content=data, media_type=content_type, headers=AVATAR_CACHE_HEADERS)
             except Exception:
                 pass
         return Response(content=DEFAULT_AVATAR_SVG, media_type="image/svg+xml", headers={"Cache-Control": "no-store"})

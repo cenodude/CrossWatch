@@ -132,7 +132,7 @@ def register_ui_root(app: FastAPI) -> None:
 
 
 _HELPER_SCRIPTS = (
-    "help-links.js", "provider-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "api.js", "core.js", "details-log.js",
+    "help-links.js", "provider-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "account-menu.js", "api.js", "core.js", "details-log.js",
     "media-meta.js", "trailer.js", "playing-card.js", "watchlist-preview.js", "providers-ui.js", "settings-ui.js", "settings-save.js", "maintenance.js", "backups.js",
     "restart_apply.js",
 )
@@ -142,7 +142,7 @@ _APP_SCRIPTS = (
     "scrobbler.js", "user-profiles.js", "app-users.js",
 )
 _USER_HELPER_SCRIPTS = (
-    "help-links.js", "provider-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "api.js", "core.js",
+    "help-links.js", "provider-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "account-menu.js", "api.js", "core.js",
     "media-meta.js", "trailer.js", "playing-card.js", "watchlist-preview.js",
 )
 _USER_APP_SCRIPTS = (
@@ -228,8 +228,52 @@ def _profile_nav_tab(label: str, href: str, active: bool = False) -> str:
     return f"<button class=\"{cls}\" type=\"button\" onclick=\"location.href='{href}'\">{label}</button>"
 
 
-def _nav_profile_link() -> str:
-    return '    <a id="cw-nav-profile-link" class="cw-nav-profile-link" href="/profile" title="Open profile" aria-label="Open profile"><span id="cw-nav-profile-avatar" class="cw-nav-profile-avatar material-symbols-rounded" aria-hidden="true">person</span></a>'
+def _current_account_avatar_url(user: dict | None) -> str:
+    url = str((user or {}).get("avatar_url") or "").strip() if isinstance(user, dict) else ""
+    if url.startswith("/api/profile/avatar/"):
+        q = url.find("?")
+        return f"/api/profile/avatar{url[q:]}" if q >= 0 else "/api/profile/avatar"
+    return url
+
+
+def _avatar_img_html(url: str) -> str:
+    safe = html_lib.escape(url, quote=True)
+    return f'<img src="{safe}" alt="">'
+
+
+def _nav_profile_avatar(user: dict | None = None) -> str:
+    url = _current_account_avatar_url(user)
+    if url:
+        safe = html_lib.escape(url, quote=True)
+        return f'<span id="cw-nav-profile-avatar" class="cw-nav-profile-avatar" aria-hidden="true" data-cw-avatar-url="{safe}">{_avatar_img_html(url)}</span>'
+    return '<span id="cw-nav-profile-avatar" class="cw-nav-profile-avatar material-symbols-rounded" aria-hidden="true">person</span>'
+
+
+def _seed_nav_profile_avatar(html: str, user: dict | None = None) -> str:
+    placeholder = '<span id="cw-nav-profile-avatar" class="cw-nav-profile-avatar material-symbols-rounded" aria-hidden="true">person</span>'
+    return html.replace(placeholder, _nav_profile_avatar(user), 1)
+
+
+def _profile_avatar_inner(user: dict | None = None) -> str:
+    url = _current_account_avatar_url(user)
+    if url:
+        return _avatar_img_html(url)
+    return '<span class="material-symbols-rounded" aria-hidden="true">person</span>'
+
+
+def _nav_profile_link(user: dict | None = None) -> str:
+    return """    <div class="cw-nav-profile-menu" id="cw-nav-profile-menu">
+      <button id="cw-nav-profile-link" class="cw-nav-profile-link" type="button" title="Open profile menu" aria-label="Open profile menu" aria-haspopup="menu" aria-expanded="false">
+        __CW_NAV_PROFILE_AVATAR__
+        <span class="tab-caret" aria-hidden="true"></span>
+      </button>
+      <div class="cw-menu cw-profile-menu hidden" id="cw-profile-menu" role="menu" aria-labelledby="cw-nav-profile-link">
+        <button class="cw-menu-item" type="button" role="menuitem" data-cw-profile-menu-action="profile"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">person</span><span>Profile</span></button>
+        <button class="cw-menu-item" type="button" role="menuitem" data-cw-profile-menu-action="collections"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">video_library</span><span>Collections</span></button>
+        <div class="cw-menu-sep" role="separator" aria-hidden="true"></div>
+        <button class="cw-menu-item danger" type="button" role="menuitem" data-cw-profile-menu-action="logout"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">logout</span><span>Logout</span></button>
+      </div>
+    </div>""".replace("__CW_NAV_PROFILE_AVATAR__", _nav_profile_avatar(user))
 
 
 def _managed_user_shell(html: str, user: dict | None = None) -> str:
@@ -238,7 +282,6 @@ def _managed_user_shell(html: str, user: dict | None = None) -> str:
     dashboard_allowed = bool(perms.get("dashboard")) and write_allowed
     watchlist_allowed = bool(perms.get("watchlist"))
     playback_allowed = bool(perms.get("playback"))
-    logout_tab = '    <button id="cw-managed-logout" class="tab" type="button" onclick="fetch(\'/api/app-auth/logout\',{method:\'POST\',credentials:\'same-origin\',cache:\'no-store\'}).finally(()=>location.href=\'/login\')">Logout</button>'
     if write_allowed:
         tabs = [
             '    <button id="tab-main" class="tab active" type="button" onclick="showTab(\'main\')">Main</button>',
@@ -247,8 +290,7 @@ def _managed_user_shell(html: str, user: dict | None = None) -> str:
             '    <button id="tab-snapshots" class="tab" type="button" onclick="showTab(\'snapshots\')">Captures</button>',
             '    <button id="tab-playlists" class="tab" type="button" onclick="showTab(\'playlists\')">Playlists</button>',
             '    <button id="tab-editor" class="tab" type="button" onclick="showTab(\'editor\')">Editor</button>',
-            logout_tab,
-            _nav_profile_link(),
+            _nav_profile_link(user),
         ]
         html = _replace_html_range(
             html,
@@ -262,8 +304,7 @@ def _managed_user_shell(html: str, user: dict | None = None) -> str:
             tabs.append('    <button id="tab-watchlist" class="tab" type="button" onclick="showTab(\'watchlist\')">Watchlist</button>')
         if playback_allowed:
             tabs.append('    <button id="tab-playback_progress" class="tab" type="button" onclick="showTab(\'playback_progress\')">Playback</button>')
-        tabs.append(logout_tab)
-        tabs.append(_nav_profile_link())
+        tabs.append(_nav_profile_link(user))
         html = html.replace(
             '<div class="brand" role="button" tabindex="0" title="Go to Main" onclick="showTab(\'main\')" onkeypress="if(event.key===\'Enter\'||event.key===\' \')showTab(\'main\')">',
             '<div class="brand" role="button" tabindex="0" title="Go to Profile" onclick="location.href=\'/profile\'" onkeypress="if(event.key===\'Enter\'||event.key===\' \')location.href=\'/profile\'">',
@@ -437,6 +478,7 @@ def _get_index_html_static() -> str:
 <link rel="stylesheet" href="/assets/css/components.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/css/pages.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/ui-shell.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/css/account-menu.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/css/app-users.css?v=__CW_VERSION__">
 <script>
 (() => {
@@ -541,8 +583,6 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
         <button class="cw-menu-item" data-settings-pane="scheduling" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('scheduling')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">schedule</span><span>Scheduling</span></button>
         <button class="cw-menu-item" data-settings-pane="app" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('app')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">security</span><span>UI and Security</span></button>
         <button class="cw-menu-item" data-settings-pane="maintenance" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('maintenance')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">build</span><span>Maintenance</span></button>
-        <div class="cw-menu-sep" role="separator" aria-hidden="true"></div>
-        <button class="cw-menu-item danger" type="button" role="menuitem" onclick="window.cwSettingsMenuLogout()"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">logout</span><span>Log out</span></button>
       </div>
     </div>
     <div class="cw-tabmenu" id="tab-about-menu">
@@ -557,7 +597,18 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
         <button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwAboutMenuSelect('help')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">help</span><span>Help</span></button>
       </div>
     </div>
-    <a id="cw-nav-profile-link" class="cw-nav-profile-link" href="/profile" title="Open profile" aria-label="Open profile"><span id="cw-nav-profile-avatar" class="cw-nav-profile-avatar material-symbols-rounded" aria-hidden="true">person</span></a>
+    <div class="cw-nav-profile-menu" id="cw-nav-profile-menu">
+      <button id="cw-nav-profile-link" class="cw-nav-profile-link" type="button" title="Open profile menu" aria-label="Open profile menu" aria-haspopup="menu" aria-expanded="false">
+        <span id="cw-nav-profile-avatar" class="cw-nav-profile-avatar material-symbols-rounded" aria-hidden="true">person</span>
+        <span class="tab-caret" aria-hidden="true"></span>
+      </button>
+      <div class="cw-menu cw-profile-menu hidden" id="cw-profile-menu" role="menu" aria-labelledby="cw-nav-profile-link">
+        <button class="cw-menu-item" type="button" role="menuitem" data-cw-profile-menu-action="profile"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">person</span><span>Profile</span></button>
+        <button class="cw-menu-item" type="button" role="menuitem" data-cw-profile-menu-action="collections"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">video_library</span><span>Collections</span></button>
+        <div class="cw-menu-sep" role="separator" aria-hidden="true"></div>
+        <button class="cw-menu-item danger" type="button" role="menuitem" data-cw-profile-menu-action="logout"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">logout</span><span>Logout</span></button>
+      </div>
+    </div>
   </nav>
 
   <div class="cw-ui-toggle" aria-label="UI mode">
@@ -1578,7 +1629,7 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
 </div>
 
 
-<script>(()=>{const $=id=>document.getElementById(id),closeMenu=id=>{const m=$(id==="settings"?"cw-settings-menu":"cw-about-menu"),b=$(id==="settings"?"tab-settings":"tab-about");m?.classList.add("hidden");b?.setAttribute("aria-expanded","false")},closeAll=()=>{closeMenu("settings");closeMenu("about")},toggleMenu=(id,e)=>{e?.preventDefault?.();e?.stopPropagation?.();const menuId=id==="settings"?"cw-settings-menu":"cw-about-menu",btnId=id==="settings"?"tab-settings":"tab-about",m=$(menuId),b=$(btnId);if(!m||!b)return;const open=m.classList.contains("hidden");closeAll();m.classList.toggle("hidden",!open);b.setAttribute("aria-expanded",String(open))},setHelp=open=>{const o=$("cw-help-overlay");if(!o)return;if(open){const f=$("cw-help-frame");if(f&&!f.src)f.src="https://wiki.crosswatch.app";o.classList.remove("hidden");o.setAttribute("aria-hidden","false")}else{o.classList.add("hidden");o.setAttribute("aria-hidden","true")}},openSettings=pane=>{window.showTab?.("settings");setTimeout(()=>window.cwSettingsSelect?.(pane),0)},logout=()=>{closeMenu("settings");if(typeof window.cwAppLogout==="function")return window.cwAppLogout();window.location.href="/logout"};window.CW_CURRENT_VERSION="__CW_CURRENT_VERSION__";window.APP_VERSION="__CW_VERSION__";window["__CW_"+"VERSION__"]=window.APP_VERSION;window.cwOpenHelp=()=>setHelp(true);window.cwCloseHelp=()=>setHelp(false);window.openHelp=()=>window.location?.protocol==="https:"?window.cwOpenHelp?.():window.open("https://wiki.crosswatch.app","_blank","noopener,noreferrer");window.cwCloseAboutMenu=()=>closeMenu("about");window.cwCloseSettingsMenu=()=>closeMenu("settings");window.cwToggleAboutMenu=e=>toggleMenu("about",e);window.cwToggleSettingsMenu=e=>toggleMenu("settings",e);window.cwAboutMenuSelect=w=>(closeMenu("about"),w==="about"?window.openAbout?.():w==="help"?window.openHelp?.():undefined);window.cwSettingsMenuLogout=logout;window.cwSettingsMenuSelect=w=>{closeMenu("settings");if(w==="overview")return openSettings("overview");if(w==="providers")return openSettings("providers");if(w==="scheduling")return openSettings("scheduling");if(w==="pairs"||w==="sync")return openSettings("sync");if(w==="scrobbler")return openSettings("scrobbler");if(w==="app")return openSettings("app");if(w==="maintenance")return openSettings("maintenance")};document.addEventListener("click",e=>{const o=$("cw-help-overlay"),c=$("cw-help-card"),aboutHost=$("tab-about-menu"),settingsHost=$("tab-settings-menu");if(o&&!o.classList.contains("hidden")&&c&&!c.contains(e.target))window.cwCloseHelp?.();if(aboutHost&&!aboutHost.contains(e.target))closeMenu("about");if(settingsHost&&!settingsHost.contains(e.target))closeMenu("settings")},true);document.addEventListener("keydown",e=>{if(e.key!=="Escape")return;window.cwCloseHelp?.();closeAll()},true)})();</script>
+<script>(()=>{const $=id=>document.getElementById(id),closeMenu=id=>{const m=$(id==="settings"?"cw-settings-menu":"cw-about-menu"),b=$(id==="settings"?"tab-settings":"tab-about");m?.classList.add("hidden");b?.setAttribute("aria-expanded","false")},closeAll=()=>{closeMenu("settings");closeMenu("about")},toggleMenu=(id,e)=>{e?.preventDefault?.();e?.stopPropagation?.();const menuId=id==="settings"?"cw-settings-menu":"cw-about-menu",btnId=id==="settings"?"tab-settings":"tab-about",m=$(menuId),b=$(btnId);if(!m||!b)return;const open=m.classList.contains("hidden");closeAll();m.classList.toggle("hidden",!open);b.setAttribute("aria-expanded",String(open))},setHelp=open=>{const o=$("cw-help-overlay");if(!o)return;if(open){const f=$("cw-help-frame");if(f&&!f.src)f.src="https://wiki.crosswatch.app";o.classList.remove("hidden");o.setAttribute("aria-hidden","false")}else{o.classList.add("hidden");o.setAttribute("aria-hidden","true")}},openSettings=pane=>{window.showTab?.("settings");setTimeout(()=>window.cwSettingsSelect?.(pane),0)};window.CW_CURRENT_VERSION="__CW_CURRENT_VERSION__";window.APP_VERSION="__CW_VERSION__";window["__CW_"+"VERSION__"]=window.APP_VERSION;window.cwOpenHelp=()=>setHelp(true);window.cwCloseHelp=()=>setHelp(false);window.openHelp=()=>window.location?.protocol==="https:"?window.cwOpenHelp?.():window.open("https://wiki.crosswatch.app","_blank","noopener,noreferrer");window.cwCloseAboutMenu=()=>closeMenu("about");window.cwCloseSettingsMenu=()=>closeMenu("settings");window.cwToggleAboutMenu=e=>toggleMenu("about",e);window.cwToggleSettingsMenu=e=>toggleMenu("settings",e);window.cwAboutMenuSelect=w=>(closeMenu("about"),w==="about"?window.openAbout?.():w==="help"?window.openHelp?.():undefined);window.cwSettingsMenuSelect=w=>{closeMenu("settings");if(w==="overview")return openSettings("overview");if(w==="providers")return openSettings("providers");if(w==="scheduling")return openSettings("scheduling");if(w==="pairs"||w==="sync")return openSettings("sync");if(w==="scrobbler")return openSettings("scrobbler");if(w==="app")return openSettings("app");if(w==="maintenance")return openSettings("maintenance")};document.addEventListener("click",e=>{const o=$("cw-help-overlay"),c=$("cw-help-card"),aboutHost=$("tab-about-menu"),settingsHost=$("tab-settings-menu");if(o&&!o.classList.contains("hidden")&&c&&!c.contains(e.target))window.cwCloseHelp?.();if(aboutHost&&!aboutHost.contains(e.target))closeMenu("about");if(settingsHost&&!settingsHost.contains(e.target))closeMenu("settings")},true);document.addEventListener("keydown",e=>{if(e.key!=="Escape")return;window.cwCloseHelp?.();closeAll()},true)})();</script>
 
 __CW_ASSET_BLOCK__
 
@@ -1797,6 +1848,8 @@ def get_index_html(include_admin: bool = True, user: dict | None = None) -> str:
         )
         html = html.replace('<html lang="en"', attrs, 1)
         html = _managed_user_shell(html, user)
+    else:
+        html = _seed_nav_profile_avatar(html, user)
     return (
         html
         .replace("__CW_CURRENT_VERSION__", CURRENT_VERSION)
@@ -1845,6 +1898,7 @@ def get_profile_html(user: dict | None = None) -> str:
     app_href_prefix = "/" if is_admin else "/?main=1"
     watchlist_href = f"{app_href_prefix}#watchlist" if is_admin or perms.get("write") else "/?view=watchlist#watchlist"
     playback_href = f"{app_href_prefix}#playback_progress" if is_admin or perms.get("write") else "/?view=playback_progress#playback_progress"
+    profile_avatar_inner = _profile_avatar_inner(user)
     settings_nav = (
         '<div class="cw-tabmenu" id="tab-settings-menu">'
         '<button id="tab-settings" class="tab" type="button" aria-haspopup="menu" aria-expanded="false" onclick="window.cwToggleSettingsMenu(event)"><span>Settings</span><span class="tab-caret" aria-hidden="true"></span></button>'
@@ -1857,8 +1911,6 @@ def get_profile_html(user: dict | None = None) -> str:
         '<button class="cw-menu-item" data-settings-pane="scheduling" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect(\'scheduling\')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">schedule</span><span>Scheduling</span></button>'
         '<button class="cw-menu-item" data-settings-pane="app" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect(\'app\')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">security</span><span>UI and Security</span></button>'
         '<button class="cw-menu-item" data-settings-pane="maintenance" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect(\'maintenance\')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">build</span><span>Maintenance</span></button>'
-        '<div class="cw-menu-sep" role="separator" aria-hidden="true"></div>'
-        '<button class="cw-menu-item danger" type="button" role="menuitem" onclick="window.cwSettingsMenuLogout()"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">logout</span><span>Log out</span></button>'
         '</div></div>'
     )
     about_nav = (
@@ -1889,7 +1941,6 @@ def get_profile_html(user: dict | None = None) -> str:
             _profile_nav_tab("Captures", "/?main=1#snapshots"),
             _profile_nav_tab("Playlists", "/?main=1#playlists"),
             _profile_nav_tab("Editor", "/?main=1#editor"),
-            '<button id="cw-profile-logout" class="tab" type="button">Logout</button>',
         ])
     else:
         nav_items.append(_profile_nav_tab("Main", "/profile", active=True))
@@ -1897,8 +1948,7 @@ def get_profile_html(user: dict | None = None) -> str:
             nav_items.append(_profile_nav_tab("Watchlist", watchlist_href))
         if perms.get("playback"):
             nav_items.append(_profile_nav_tab("Playback", playback_href))
-        nav_items.append('<button id="cw-profile-logout" class="tab" type="button">Logout</button>')
-    nav_items.append(_nav_profile_link().strip())
+    nav_items.append(_nav_profile_link(user).strip())
     profile_nav = "\n    ".join(nav_items)
     html = f"""<!DOCTYPE html>
 <html lang="en" data-cw-role="{role}" data-cw-page="profile" data-cw-perm-dashboard="{dashboard}" data-cw-perm-watchlist="{watchlist}" data-cw-perm-playback="{playback}" data-cw-perm-write="{write}" data-cw-profile-id="{profile_id}">
@@ -1932,6 +1982,7 @@ def get_profile_html(user: dict | None = None) -> str:
 <link rel="stylesheet" href="/assets/css/components.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/css/pages.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/ui-shell.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/css/account-menu.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/css/profile-page.css?v=__CW_VERSION__">
 <link rel="preload" href="/assets/fonts/material-symbols-rounded-full-v355.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/assets/fonts/material-symbols-rounded.css?v=__CW_VERSION__">
@@ -1969,7 +2020,7 @@ def get_profile_html(user: dict | None = None) -> str:
     <div class="cw-profile-hero-shade"></div>
     <div class="cw-profile-identity">
       <div class="cw-profile-avatar-wrap">
-        <button id="profile-avatar-button" class="cw-profile-avatar" type="button" title="Replace profile picture" aria-label="Replace profile picture"><span class="material-symbols-rounded" aria-hidden="true">person</span></button>
+        <button id="profile-avatar-button" class="cw-profile-avatar" type="button" title="Replace profile picture" aria-label="Replace profile picture">{profile_avatar_inner}</button>
         <span class="cw-profile-avatar-badge material-symbols-rounded" aria-hidden="true">photo_camera</span>
         <input id="profile-avatar-input" type="file" accept="image/png,image/jpeg,image/webp" hidden>
       </div>
@@ -2291,11 +2342,6 @@ def get_profile_html(user: dict | None = None) -> str:
     if (what === "help") window.openHelp?.();
     else if (await ensureModals()) window.openAbout?.();
   }};
-  window.cwSettingsMenuLogout = async () => {{
-    closeMenu("settings");
-    try {{ await fetch("/api/app-auth/logout", {{ method: "POST", credentials: "same-origin", cache: "no-store" }}); }} catch {{}}
-    window.location.href = "/login";
-  }};
   document.addEventListener("click", event => {{
     const overlay = $("cw-help-overlay");
     const card = $("cw-help-card");
@@ -2311,6 +2357,7 @@ def get_profile_html(user: dict | None = None) -> str:
 <script type="module" src="/assets/js/modals.js?v=__CW_VERSION__"></script>
 <script src="/assets/helpers/provider-meta.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/icon-select.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/helpers/account-menu.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/api.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/media-meta.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/trailer.js?v=__CW_VERSION__" defer></script>

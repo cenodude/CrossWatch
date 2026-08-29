@@ -240,9 +240,16 @@
   const numberFmt = new Intl.NumberFormat();
 
   function setAvatar(url) {
+    const normalized = window.CW?.AccountMenu?.normalizeAvatarUrl?.(url) || String(url || "").trim();
     const nodes = [$("#profile-avatar-button"), $("#cw-nav-profile-avatar")].filter(Boolean);
     for (const node of nodes) {
-      if (url) node.innerHTML = `<img src="${esc(url)}" alt="">`;
+      if (window.CW?.AccountMenu?.setAvatarNode) {
+        window.CW.AccountMenu.setAvatarNode(node, normalized);
+        continue;
+      }
+      const existing = node.querySelector("img")?.getAttribute("src") || "";
+      if (normalized && existing === normalized) continue;
+      if (normalized) node.innerHTML = `<img src="${esc(normalized)}" alt="">`;
       else node.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">person</span>`;
     }
   }
@@ -1447,14 +1454,29 @@
   }
 
   function wireTabs() {
+    const tabFromHash = () => {
+      const key = profileRouteSegment(String(window.location?.hash || "").replace(/^#\/?/, "").split("?")[0].split("/")[0]);
+      return ["overview", "collection", "security", "preferences"].includes(key) ? key : "";
+    };
+    const selectTab = (key) => {
+      const btn = document.querySelector(`[data-profile-tab="${key}"]`);
+      if (!btn) return false;
+      document.querySelectorAll("[data-profile-tab]").forEach((tab) => tab.classList.toggle("active", tab === btn));
+      document.querySelectorAll(".cw-profile-panel").forEach((panel) => panel.classList.toggle("active", panel.id === `profile-panel-${key}`));
+      if (key === "collection" && !collectionState.loaded) void loadCollection({ reset: true });
+      return true;
+    };
     document.querySelectorAll("[data-profile-tab]").forEach((btn) => {
       btn.addEventListener("click", () => {
-        const key = btn.dataset.profileTab;
-        document.querySelectorAll("[data-profile-tab]").forEach((tab) => tab.classList.toggle("active", tab === btn));
-        document.querySelectorAll(".cw-profile-panel").forEach((panel) => panel.classList.toggle("active", panel.id === `profile-panel-${key}`));
-        if (key === "collection" && !collectionState.loaded) void loadCollection({ reset: true });
+        selectTab(btn.dataset.profileTab);
       });
     });
+    window.addEventListener("hashchange", () => {
+      const key = tabFromHash();
+      if (key) selectTab(key);
+    });
+    const initial = tabFromHash();
+    if (initial) selectTab(initial);
   }
 
   function wireAvatar() {
@@ -1772,15 +1794,6 @@
     });
   }
 
-  function wireLogout() {
-    $("#cw-profile-logout")?.addEventListener("click", async () => {
-      try {
-        await post("/api/app-auth/logout", {});
-      } catch {}
-      location.href = "/login";
-    });
-  }
-
   function wirePosterOverlay() {
     const openFromTarget = (target, event) => {
       if (target?.closest?.("[data-collection-resize]")) return false;
@@ -1841,7 +1854,6 @@
     wireSecurity();
     wirePlexSso();
     wireOidcSso();
-    wireLogout();
     wirePosterOverlay();
     const [profileResult, overviewResult] = await Promise.allSettled([
       refreshProfile(),

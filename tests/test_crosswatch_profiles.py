@@ -944,6 +944,79 @@ def test_overview_profile_avatar_link_replaces_selector() -> None:
     assert "cw-overview-profile-menu" not in css
 
 
+def test_profile_avatar_is_seeded_in_main_and_profile_html() -> None:
+    import ui_frontend
+
+    user = {
+        "is_admin": True,
+        "username": "admin",
+        "display_name": "Pascal",
+        "avatar_url": "/api/profile/avatar/admin_user?ts=1785066084",
+    }
+
+    main = ui_frontend.get_index_html(include_admin=True, user=user)
+    profile = ui_frontend.get_profile_html(user=user)
+
+    assert 'id="cw-nav-profile-avatar" class="cw-nav-profile-avatar" aria-hidden="true" data-cw-avatar-url="/api/profile/avatar?ts=1785066084"><img src="/api/profile/avatar?ts=1785066084" alt=""></span>' in main
+    assert 'id="cw-nav-profile-avatar" class="cw-nav-profile-avatar" aria-hidden="true" data-cw-avatar-url="/api/profile/avatar?ts=1785066084"><img src="/api/profile/avatar?ts=1785066084" alt=""></span>' in profile
+    assert 'id="profile-avatar-button" class="cw-profile-avatar" type="button" title="Replace profile picture" aria-label="Replace profile picture"><img src="/api/profile/avatar?ts=1785066084" alt=""></button>' in profile
+
+
+def test_account_menu_preserves_existing_avatar_node_for_same_url() -> None:
+    js = Path("assets/helpers/account-menu.js").read_text("utf-8")
+    overview = Path("assets/js/overview-profile.js").read_text("utf-8")
+    profile = Path("assets/js/profile-page.js").read_text("utf-8")
+
+    assert 'const existing = node.querySelector("img")?.getAttribute("src") || "";' in js
+    assert "if (url && existing === url)" in js
+    assert "normalizeAvatarUrl(value)" in js
+    assert "window.CW.AccountMenu.setAvatarNode(avatar, url)" in overview
+    assert "window.CW.AccountMenu.setAvatarNode(node, normalized)" in profile
+
+
+def test_linked_profile_avatar_is_cached_after_first_proxy_fetch(monkeypatch, tmp_path) -> None:
+    from api import profileAPI as profile_api
+
+    png = b"\x89PNG\r\n\x1a\ncached-avatar"
+    calls = 0
+
+    class FakeAvatarResponse:
+        headers = {"Content-Type": "image/png"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _size=-1):
+            return png
+
+    def fake_urlopen(_request, timeout=0):
+        nonlocal calls
+        calls += 1
+        assert timeout == 8
+        return FakeAvatarResponse()
+
+    monkeypatch.setattr(profile_api, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(profile_api.urllib.request, "urlopen", fake_urlopen)
+
+    raw = {
+        "plex_sso": {
+            "linked_thumb": "https://plex.tv/users/cfccf9c5c1d518d1/avatar?c=1785066084",
+            "linked_at": 1785066084,
+        }
+    }
+
+    first = profile_api._avatar_response(raw)
+    second = profile_api._avatar_response(raw)
+
+    assert calls == 1
+    assert first.headers["cache-control"] == profile_api.AVATAR_CACHE_HEADERS["Cache-Control"]
+    assert second.headers["cache-control"] == profile_api.AVATAR_CACHE_HEADERS["Cache-Control"]
+    assert len(list((tmp_path / "profile_avatars").glob("linked-*.png"))) == 1
+
+
 def test_provider_instances_all_can_return_configured_only(monkeypatch) -> None:
     store: dict[str, Any] = {
         "anilist": {"access_token": "ani"},
@@ -1774,7 +1847,8 @@ def test_non_admin_shell_omits_admin_only_modules() -> None:
     assert '<a id="tab-main"' not in html
     assert 'id="tab-watchlist"' in html
     assert 'id="tab-playback_progress"' in html
-    assert 'id="cw-managed-logout"' in html
+    assert 'id="cw-managed-logout"' not in html
+    assert 'data-cw-profile-menu-action="logout"' in html
     assert 'id="tab-about-menu"' not in html
 
 
@@ -1825,7 +1899,8 @@ def test_non_admin_shell_uses_initial_permissions() -> None:
     assert 'id="tab-snapshots"' in full_access
     assert 'id="tab-playlists"' in full_access
     assert 'id="tab-editor"' in full_access
-    assert 'id="cw-managed-logout"' in full_access
+    assert 'id="cw-managed-logout"' not in full_access
+    assert 'data-cw-profile-menu-action="logout"' in full_access
     assert "/assets/js/modals.js" in full_access
     assert 'id="tab-settings-menu"' not in full_access
     assert 'id="tab-about-menu"' not in full_access
@@ -1835,7 +1910,7 @@ def test_non_admin_shell_uses_initial_permissions() -> None:
     assert full_access.index('id="tab-playback_progress"') < full_access.index('id="tab-snapshots"')
     assert full_access.index('id="tab-snapshots"') < full_access.index('id="tab-playlists"')
     assert full_access.index('id="tab-playlists"') < full_access.index('id="tab-editor"')
-    assert full_access.index('id="tab-editor"') < full_access.index('id="cw-managed-logout"')
+    assert full_access.index('id="tab-editor"') < full_access.index('id="cw-nav-profile-menu"')
 
 
 def test_profile_nav_keeps_read_only_managed_links() -> None:
@@ -1850,7 +1925,8 @@ def test_profile_nav_keeps_read_only_managed_links() -> None:
     assert """<button class="tab" type="button" onclick="location.href='/?view=playback_progress#playback_progress'">Playback</button>""" in html
     assert 'href="/?view=watchlist#watchlist">View all</a>' in html
     assert 'href="/?view=playback_progress#playback_progress">View all</a>' in html
-    assert 'id="cw-profile-logout"' in html
+    assert 'id="cw-profile-logout"' not in html
+    assert 'data-cw-profile-menu-action="logout"' in html
     assert "location.href='/?main=1#main'" not in html
     assert "location.href='/?main=1#snapshots'" not in html
 
@@ -1871,7 +1947,8 @@ def test_profile_nav_uses_full_user_links_for_write_managed_user() -> None:
     assert 'href="/?main=1#watchlist">View all</a>' in html
     assert 'href="/?main=1#playback_progress">View all</a>' in html
     assert 'href="/?main=1#settings">Settings</a>' not in html
-    assert 'id="cw-profile-logout"' in html
+    assert 'id="cw-profile-logout"' not in html
+    assert 'data-cw-profile-menu-action="logout"' in html
 
 
 def test_profile_page_redirects_stale_app_hashes_to_the_app_shell() -> None:
@@ -1904,6 +1981,8 @@ def test_profile_page_supports_admin_account() -> None:
     assert 'id="tab-about" class="tab"' in html
     assert '<span>About</span><span class="tab-caret"' in html
     assert 'id="cw-profile-logout"' not in html
+    assert 'onclick="window.cwSettingsMenuLogout()"' not in html
+    assert 'data-cw-profile-menu-action="logout"' in html
 
 
 def test_profile_admin_menu_opens_local_modals_without_main_flash() -> None:
