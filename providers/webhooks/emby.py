@@ -526,6 +526,28 @@ def _make_session_id(payload: Mapping[str, Any], md: Mapping[str, Any], ids_all:
     return base + "|" + _session_media_key(md, ids_all, root=payload)
 
 
+def _completion_session_token(payload: Mapping[str, Any]) -> str:
+    for key in ("PlaySessionId", "SessionId", "SessionID"):
+        val = str(payload.get(key) or "").strip()
+        if val:
+            return val
+    return ""
+
+
+def _completion_replay_key(
+    provider_instance: str,
+    account: Any,
+    session_token: str,
+    media_key: str,
+) -> str:
+    session_token = str(session_token or "").strip()
+    media_key = str(media_key or "").strip()
+    if not (session_token and media_key):
+        return ""
+    acc_key = str(account or "").strip().lower() or "unknown"
+    return f"emby:{provider_instance}|u:{acc_key}|s:{session_token}|m:{media_key}"
+
+
 def _guid_search_episode(epi_hint: dict[str, Any], cfg: dict[str, Any], logger: Any | None = None) -> dict[str, Any]:
     try:
         q = {k: epi_hint.get(k) for k in ("tmdb", "imdb", "tvdb") if epi_hint.get(k)}
@@ -964,6 +986,12 @@ def process_webhook(
         now = time.time()
         st = _SCROBBLE_STATE.get(ses) or {}
         ev_lc = event
+        completion_key = _completion_replay_key(
+            provider_instance,
+            acc_title,
+            _completion_session_token(payload),
+            _session_media_key(md, ids_all, root=payload),
+        )
 
         intended: str | None
         if ev_lc in ("playbackstart", "playbackunpause", "play", "playing", "resume", "unpause"):
@@ -1025,6 +1053,25 @@ def process_webhook(
         if intended != "/scrobble/start" and st_prog and (st_prog - prog) > regress_tol:
             _emit(logger, f"regress {st_prog}->{prog} within tol {regress_tol}", "DEBUG")
             prog = st_prog
+
+        if (
+            intended == "/scrobble/stop"
+            and prog >= watched_at
+            and completion_key
+            and st.get("completion_key") == completion_key
+            and st.get("completion_done") is True
+        ):
+            _emit(logger, "suppress duplicate completion replay", "DEBUG")
+            _SCROBBLE_STATE[ses] = {
+                **st,
+                "ts": now,
+                "last_event": ev_lc,
+                "prog": prog,
+                "finished": True,
+                **({"last_stop_ts": now} if intended == "/scrobble/stop" else {}),
+                "retry_completion": False,
+            }
+            return {"ok": True, "suppressed": True, "dedup": True}
 
         cw_ids = dict(ids_all)
         title = (md.get("SeriesName") or md.get("Name") or "").strip()
@@ -1119,6 +1166,7 @@ def process_webhook(
         activity_recorded = bool(rj.get("activity_recorded")) if isinstance(rj, dict) else False
 
         if r.status_code < 400:
+            completed_success = activity_recorded and intended == "/scrobble/stop" and prog >= watched_at
             if activity_recorded and intended == "/scrobble/stop" and prog >= watched_at and not st.get("wl_removed") is True:
                 try:
                     _call_remove_across(ids_all or {}, media_type, origin=f"emby:{provider_instance}")
@@ -1136,6 +1184,8 @@ def process_webhook(
                 "paused": intended == "pause",
                 **({"last_stop_ts": now} if intended == "/scrobble/stop" else {}),
                 **({"last_play_ts": now} if intended == "/scrobble/start" else {}),
+                **({"completion_key": completion_key, "completion_done": True} if completed_success and completion_key else {}),
+                "retry_completion": False,
             }
 
             try:
@@ -1166,6 +1216,7 @@ def process_webhook(
             "finished": prog >= complete_at,
             **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
             "paused": st.get("paused") if paused_flag is None else paused_flag,
+            "retry_completion": bool(intended == "/scrobble/stop" and prog >= watched_at),
         }
         return {"ok": False, "status": r.status_code, "trakt": rj}
     except Exception as e:

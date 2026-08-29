@@ -1012,6 +1012,28 @@ def _make_session_id(payload: Mapping[str, Any], md: Mapping[str, Any], ids_all:
     return base + "|" + _session_media_key(md, ids_all, root=payload)
 
 
+def _completion_session_token(payload: Mapping[str, Any]) -> str:
+    for key in ("PlaySessionId", "SessionId"):
+        val = str(payload.get(key) or "").strip()
+        if val:
+            return val
+    return ""
+
+
+def _completion_replay_key(
+    provider_instance: str,
+    account: Any,
+    session_token: str,
+    media_key: str,
+) -> str:
+    session_token = str(session_token or "").strip()
+    media_key = str(media_key or "").strip()
+    if not (session_token and media_key):
+        return ""
+    acc_key = str(account or "").strip().lower() or "unknown"
+    return f"jellyfin:{provider_instance}|u:{acc_key}|s:{session_token}|m:{media_key}"
+
+
 def _archive(event_type: str, media_type: str, md: dict[str, Any], payload: dict[str, Any], ids: dict[str, Any], account: Any, prog: Any, reason: str | None = None) -> None:
     try:
         from cw_platform.event_archive import record_webhook
@@ -1145,6 +1167,12 @@ def process_webhook(
         st = _SCROBBLE_STATE.get(sess) or {}
         first_seen = float(st.get("first_seen") or now)
         st = {**st, "first_seen": first_seen}
+        completion_key = _completion_replay_key(
+            provider_instance,
+            acc_title,
+            _completion_session_token(payload),
+            item_key,
+        )
 
         ev_lc = (event or "").lower()
         paused_flag = _extract_paused(payload)
@@ -1153,6 +1181,7 @@ def process_webhook(
         if (
             st.get("last_event") == ev_lc
             and (now - float(st.get("ts", 0))) < 1.0
+            and not st.get("retry_completion")
             and not (paused_flag is not None and paused_flag != st.get("paused"))
         ):
             return {"ok": True, "dedup": True}
@@ -1368,7 +1397,7 @@ def process_webhook(
 
         if intended == "/scrobble/stop" and prog >= complete_at:
             fin = _LAST_FINISH_BY_ACC.get(acc_key) or {}
-            if fin.get("ik") == item_key and (now - float(fin.get("ts") or 0)) <= _DUP_FINISH_WINDOW_S:
+            if fin.get("ik") == item_key and fin.get("sess") == sess and (now - float(fin.get("ts") or 0)) <= _DUP_FINISH_WINDOW_S:
                 _emit(logger, "suppress duplicate finish (stop<->scrobble)", "DEBUG")
                 _SCROBBLE_STATE[sess] = {
                     **st,
@@ -1383,6 +1412,28 @@ def process_webhook(
                     "last_stop_ts": now,
                 }
                 return {"ok": True, "suppressed": True}
+        if (
+            intended == "/scrobble/stop"
+            and prog >= watched_at
+            and completion_key
+            and st.get("completion_key") == completion_key
+            and st.get("completion_done") is True
+        ):
+            _emit(logger, "suppress duplicate completion replay", "DEBUG")
+            _SCROBBLE_STATE[sess] = {
+                **st,
+                "ts": now,
+                "last_event": ev_lc,
+                "last_pause_ts": st.get("last_pause_ts", 0),
+                "prog": prog,
+                "sk": sk_current,
+                "finished": True,
+                **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
+                "paused": False,
+                "last_stop_ts": now,
+                "retry_completion": False,
+            }
+            return {"ok": True, "suppressed": True, "dedup": True}
         if (
             ev_lc in ("playbackstop", "playbackstopped")
             and st.get("last_event") in ("playbackstop", "playbackstopped")
@@ -1499,8 +1550,9 @@ def process_webhook(
         activity_recorded = bool(rj.get("activity_recorded")) if isinstance(rj, dict) else False
 
         if r.status_code < 400:
+            completed_success = activity_recorded and intended == "/scrobble/stop" and prog >= watched_at
             if activity_recorded and intended == "/scrobble/stop" and prog >= watched_at:
-                _LAST_FINISH_BY_ACC[acc_key] = {"ik": item_key, "ts": now}
+                _LAST_FINISH_BY_ACC[acc_key] = {"ik": item_key, "sess": sess, "ts": now}
             if activity_recorded and intended == "/scrobble/stop" and prog >= watched_at and not (st.get("wl_removed") is True):
                 try:
                     _call_remove_across(ids_all or {}, media_type, origin=f"jellyfin:{provider_instance}")
@@ -1517,6 +1569,9 @@ def process_webhook(
                 **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
                 "paused": (intended == "pause"),
                 **({"last_stop_ts": now} if intended == "/scrobble/stop" else {}),
+                "completion_key": completion_key if completed_success and completion_key else "",
+                "completion_done": bool(completed_success and completion_key),
+                "retry_completion": False,
             }
 
             try:
@@ -1545,6 +1600,7 @@ def process_webhook(
             "finished": (prog >= complete_at),
             **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
             "paused": st.get("paused") if paused_flag is None else paused_flag,
+            "retry_completion": bool(intended == "/scrobble/stop" and prog >= watched_at),
         }
         return {"ok": False, "status": r.status_code, "trakt": rj}
     except Exception as e:
