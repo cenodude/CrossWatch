@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, cast
 
 from fastapi import APIRouter, Body, Path as FPath, Query, Request
@@ -60,6 +61,51 @@ def _filter_mappings(cfg: dict[str, Any], request: Request | None, mappings: lis
     if not user or bool(user.get("is_admin")):
         return mappings
     return [mapping for mapping in mappings if _mapping_allowed(cfg, request, mapping)]
+
+
+def _managed_mapping_view(request: Request | None, mapping: dict[str, Any]) -> dict[str, Any]:
+    user = request_user(request)
+    if not user or bool(user.get("is_admin")):
+        return mapping
+    out = dict(mapping)
+    ruleset = out.get("ruleset")
+    if isinstance(ruleset, Mapping) and not bool(ruleset.get("built_in")):
+        out.pop("ruleset", None)
+    return out
+
+
+def _ruleset_visible(request: Request | None, ruleset: dict[str, Any] | None) -> bool:
+    if _is_admin_request(request):
+        return True
+    return bool(ruleset and ruleset.get("built_in"))
+
+
+def _ruleset_admin_required(request: Request | None) -> JSONResponse | None:
+    if _is_admin_request(request):
+        return None
+    return _scope_denied()
+
+
+def _activity_row_allowed(cfg: dict[str, Any], request: Request | None, row: Mapping[str, Any]) -> bool:
+    endpoint_id = str(row.get("endpoint_id") or "").strip()
+    if endpoint_id:
+        return _endpoint_allowed(cfg, request, runner.get_endpoint(cfg, endpoint_id))
+    mapping_id = str(row.get("mapping_id") or "").strip()
+    if mapping_id:
+        return _mapping_allowed(cfg, request, svc.get_mapping(cfg, mapping_id))
+    provider = row.get("provider")
+    instance = row.get("instance") or "default"
+    if provider and not _endpoint_allowed(cfg, request, {"provider": provider, "instance": instance}):
+        return False
+    source = row.get("source")
+    if isinstance(source, Mapping) and not _endpoint_allowed(cfg, request, {"provider": source.get("provider"), "instance": source.get("instance") or "default"}):
+        return False
+    targets = row.get("targets")
+    if isinstance(targets, list):
+        for target in targets:
+            if isinstance(target, Mapping) and not _endpoint_allowed(cfg, request, {"provider": target.get("provider"), "instance": target.get("instance") or "default"}):
+                return False
+    return bool(provider or isinstance(source, Mapping) or isinstance(targets, list))
 
 
 @router.get("/providers")
@@ -211,13 +257,9 @@ def api_playlist_activity(request: Request = cast(Request, None)) -> JSONRespons
     cfg = load_config() or {}
     user = request_user(request)
     if user and not bool(user.get("is_admin")):
-        allowed_labels = {
-            str(endpoint.get("provider") or "").upper()
-            for endpoint in _filter_endpoints(cfg, request, svc.list_endpoints(cfg))
-        }
         activity = [
             row for row in svc.activity(cfg)
-            if any(label and label in str(row.get("label") or "").upper() for label in allowed_labels)
+            if isinstance(row, Mapping) and _activity_row_allowed(cfg, request, row)
         ]
         return JSONResponse({"ok": True, "activity": activity})
     return JSONResponse({"ok": True, "activity": svc.activity(cfg)})
@@ -233,21 +275,27 @@ def api_playlist_activity_clear(request: Request = cast(Request, None)) -> JSONR
 
 
 @router.get("/rulesets")
-def api_playlist_rulesets() -> JSONResponse:
+def api_playlist_rulesets(request: Request = cast(Request, None)) -> JSONResponse:
     cfg = load_config() or {}
-    return JSONResponse({"ok": True, "rulesets": svc.list_rulesets(cfg)})
+    rulesets = [row for row in svc.list_rulesets(cfg) if _ruleset_visible(request, row)]
+    return JSONResponse({"ok": True, "rulesets": rulesets})
 
 
 @router.get("/rulesets/{ruleset_id}")
-def api_playlist_ruleset_get(ruleset_id: str = FPath(...)) -> JSONResponse:
+def api_playlist_ruleset_get(ruleset_id: str = FPath(...), request: Request = cast(Request, None)) -> JSONResponse:
     cfg = load_config() or {}
     rs = svc.get_ruleset(cfg, ruleset_id)
+    if rs and not _ruleset_visible(request, rs):
+        return _scope_denied()
     res = {"ok": bool(rs), "ruleset": rs, "error": None if rs else "ruleset not found"}
     return JSONResponse(res, status_code=(200 if rs else 404))
 
 
 @router.post("/rulesets")
-def api_playlist_ruleset_upsert(payload: dict[str, Any] = Body(...)) -> JSONResponse:
+def api_playlist_ruleset_upsert(payload: dict[str, Any] = Body(...), request: Request = cast(Request, None)) -> JSONResponse:
+    blocked = _ruleset_admin_required(request)
+    if blocked is not None:
+        return blocked
     cfg = load_config() or {}
     res = svc.upsert_ruleset(cfg, payload.get("ruleset") or payload)
     return JSONResponse(res, status_code=(200 if res.get("ok") else 400))
@@ -260,14 +308,24 @@ def api_playlist_ruleset_validate(payload: dict[str, Any] = Body(...)) -> JSONRe
 
 
 @router.post("/rulesets/{ruleset_id}/clone")
-def api_playlist_ruleset_clone(ruleset_id: str = FPath(...), payload: dict[str, Any] | None = Body(default=None)) -> JSONResponse:
+def api_playlist_ruleset_clone(
+    ruleset_id: str = FPath(...),
+    payload: dict[str, Any] | None = Body(default=None),
+    request: Request = cast(Request, None),
+) -> JSONResponse:
+    blocked = _ruleset_admin_required(request)
+    if blocked is not None:
+        return blocked
     cfg = load_config() or {}
     res = svc.clone_ruleset(cfg, ruleset_id, payload or {})
     return JSONResponse(res, status_code=(200 if res.get("ok") else 400))
 
 
 @router.delete("/rulesets/{ruleset_id}")
-def api_playlist_ruleset_delete(ruleset_id: str = FPath(...)) -> JSONResponse:
+def api_playlist_ruleset_delete(ruleset_id: str = FPath(...), request: Request = cast(Request, None)) -> JSONResponse:
+    blocked = _ruleset_admin_required(request)
+    if blocked is not None:
+        return blocked
     cfg = load_config() or {}
     res = svc.delete_ruleset(cfg, ruleset_id)
     return JSONResponse(res, status_code=(200 if res.get("ok") else 400))
@@ -278,7 +336,8 @@ def api_playlist_ruleset_delete(ruleset_id: str = FPath(...)) -> JSONResponse:
 @router.get("/mappings")
 def api_playlist_mappings(request: Request = cast(Request, None)) -> JSONResponse:
     cfg = load_config() or {}
-    return JSONResponse({"ok": True, "mappings": _filter_mappings(cfg, request, svc.list_mappings(cfg))})
+    mappings = [_managed_mapping_view(request, mapping) for mapping in _filter_mappings(cfg, request, svc.list_mappings(cfg))]
+    return JSONResponse({"ok": True, "mappings": mappings})
 
 
 @router.post("/mappings")
@@ -291,6 +350,8 @@ def api_playlist_mapping_upsert(payload: dict[str, Any] = Body(...), request: Re
     if mid and not _mapping_allowed(cfg, request, svc.get_mapping(cfg, mid)):
         return _scope_denied()
     res = svc.upsert_mapping(cfg, mapping_payload)
+    if res.get("ok") and isinstance(res.get("mapping"), dict):
+        res["mapping"] = _managed_mapping_view(request, res["mapping"])
     return JSONResponse(res, status_code=(200 if res.get("ok") else 400))
 
 
@@ -345,5 +406,5 @@ def api_playlist_pair_mappings(pair_id: str = FPath(...), request: Request = cas
     res = svc.mappings_for_pair(cfg, pair_id)
     mappings = res.get("mappings")
     if res.get("ok") and isinstance(mappings, list):
-        res["mappings"] = _filter_mappings(cfg, request, [m for m in mappings if isinstance(m, dict)])
+        res["mappings"] = [_managed_mapping_view(request, m) for m in _filter_mappings(cfg, request, [m for m in mappings if isinstance(m, dict)])]
     return JSONResponse(res, status_code=(200 if res.get("ok") else 400))

@@ -703,6 +703,10 @@ def non_admin_api_allowed(path: Any, method: Any) -> bool:
         return m == "GET"
     if p == "/api/logs/watcher":
         return False
+    if p == "/api/playlists/rulesets/validate":
+        return m == "POST"
+    if p == "/api/playlists/rulesets" or p.startswith("/api/playlists/rulesets/"):
+        return m == "GET"
     if p in {"/api/run", "/api/run/cancel", "/api/run/summary", "/api/run/summary/file", "/api/run/summary/stream", "/api/run/unresolved"}:
         return m in {"GET", "POST"}
     if p == "/api/pairs" or p.startswith("/api/pairs/"):
@@ -2015,6 +2019,10 @@ def api_set_credentials(request: Request, payload: dict[str, Any] = Body(...)) -
     enabled = bool(payload.get("enabled"))
     username = str(payload.get("username") or "").strip()
     password = str(payload.get("password") or "")
+    initial_admin = configured0 and is_admin_authenticated(cfg, token)
+
+    if not enabled and not initial_admin:
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
 
     a = cfg.setdefault("app_auth", {})
     if not isinstance(a, dict):
@@ -2037,6 +2045,8 @@ def api_set_credentials(request: Request, payload: dict[str, Any] = Body(...)) -
         actor = current_user(cfg, token)
 
         def _mutate_disable(latest: dict[str, Any]) -> dict[str, Any]:
+            if not (auth_required(latest) and is_admin_authenticated(latest, token)):
+                raise PermissionError("Unauthorized")
             latest_a = latest.setdefault("app_auth", {})
             if not isinstance(latest_a, dict):
                 latest_a = {}
@@ -2050,7 +2060,10 @@ def api_set_credentials(request: Request, payload: dict[str, Any] = Body(...)) -
             _clear_sessions(latest)
             return latest_a
 
-        cfg, a = _update_config(_mutate_disable)
+        try:
+            cfg, a = _update_config(_mutate_disable)
+        except PermissionError:
+            return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
         _audit(req, "credentials_updated", actor=actor, message="Application authentication was disabled", fields={"enabled": False, "username": a["username"]})
         resp = JSONResponse({"ok": True, "enabled": False}, headers={"Cache-Control": "no-store"})
         _del_cookie(resp, req)
@@ -2079,6 +2092,12 @@ def api_set_credentials(request: Request, payload: dict[str, Any] = Body(...)) -
         )
 
     def _mutate_enable(latest: dict[str, Any]) -> tuple[dict[str, Any], str, int]:
+        latest_configured = auth_required(latest)
+        latest_recovery_mode = reset_pending(latest)
+        latest_admin = latest_configured and is_admin_authenticated(latest, token)
+        if latest_configured and not latest_recovery_mode and not latest_admin:
+            raise PermissionError("Unauthorized")
+
         latest_a = latest.setdefault("app_auth", {})
         if not isinstance(latest_a, dict):
             latest_a = {}
@@ -2099,7 +2118,7 @@ def api_set_credentials(request: Request, payload: dict[str, Any] = Body(...)) -
         latest_a["enabled"] = True
         latest_a["username"] = username
         latest_a["reset_required"] = False
-        if (not configured0) or recovery_mode:
+        if (not latest_configured) or latest_recovery_mode:
             latest_a["api_tokens"] = _trusted_pre_auth_api_tokens(latest_a)
         _clear_sessions(latest)
         _clear_setup_autogen_flag(latest)
@@ -2109,6 +2128,8 @@ def api_set_credentials(request: Request, payload: dict[str, Any] = Body(...)) -
 
     try:
         cfg, enabled_result = _update_config(_mutate_enable)
+    except PermissionError:
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
     except RuntimeError:
         return JSONResponse({"ok": False, "error": _ERR_UPDATE_CREDENTIALS_FAILED}, status_code=409)
     except ValueError:
