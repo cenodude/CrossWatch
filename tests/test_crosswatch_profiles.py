@@ -1970,13 +1970,19 @@ def test_setup_wizard_uses_privacy_backdrop() -> None:
     modals = Path("assets/js/modals.js").read_text("utf-8")
     host = Path("assets/js/modals/core/host.js").read_text("utf-8")
     css = Path("assets/js/modals/core/styles.css").read_text("utf-8")
+    flat = Path("assets/themes/flat.css").read_text("utf-8")
 
-    assert "'cw-setup-privacy-backdrop'" in modals
+    assert "props?.auth_reset_required !== true" in modals
+    assert "'cw-welcome-setup-privacy-backdrop'" in modals
+    assert "window.openUpgradeWarning = (props = {}) => ModalRegistry.open('upgrade-warning', props);" in modals
     assert "props?.backdropClassName || props?.backdropClass" in host
     assert "this.backdrop.className = 'cx-backdrop';" in host
-    assert ".cx-backdrop.cw-setup-privacy-backdrop" in css
+    assert ".cx-backdrop.cw-welcome-setup-privacy-backdrop" in css
     assert "blur(20px)" in css
     assert "brightness(.24)" in css
+    assert ".cx-backdrop.cw-welcome-setup-privacy-backdrop:has(#setup-host)" in flat
+    assert ".cx-backdrop.cw-welcome-setup-privacy-backdrop:has(#upg-host)" not in flat
+    assert "brightness(0.24)!important" in flat
 
 
 def test_managed_pair_policy_filters_to_profile_instances() -> None:
