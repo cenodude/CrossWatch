@@ -174,12 +174,19 @@ def test_editor_playlist_endpoint_picker_uses_styled_single_select() -> None:
     sources_js = (root / "assets" / "js" / "editor" / "sources.js").read_text(encoding="utf-8")
     css = (root / "assets" / "css" / "pages.css").read_text(encoding="utf-8")
     assert "function syncPlaylistEndpointIconSelect(selectEl, show)" in js
-    assert 'className: "cw-editor-icon-select cw-editor-endpoint-select"' in js
-    assert 'menuClassName: "pl-endpoint-select-menu cw-editor-endpoint-select-menu"' in js
+    assert 'className: "cw-editor-icon-select"' in js
+    assert 'menuClassName: "cw-editor-icon-select-menu"' in js
+    assert "selectedShowNote: false" in js
+    assert 'menuClassName: "pl-endpoint-select-menu cw-editor-endpoint-select-menu"' not in js
+    assert 'badges: [type].filter(Boolean)' not in js
+    assert "function playlistEndpointType" not in js
     assert "ctx.syncPlaylistEndpointIconSelect?.(snapSel, true);" in sources_js
     assert "ctx.syncProviderIconSelect?.(snapSel, false);" not in sources_js
-    assert "#page-editor .cw-editor-endpoint-select .cw-icon-select-btn" in css
-    assert ".cw-editor-endpoint-select-menu .cw-icon-select-text" in css
+    assert "#page-editor .cw-editor-endpoint-select" not in css
+    assert ".cw-editor-endpoint-select-menu" not in css
+    assert ".cw-editor-icon-select .cw-icon-select-btn" in css
+    assert "#page-editor .cw-editor-icon-select .cw-icon-select-btn{justify-content:flex-start}" in css
+    assert "#page-editor .cw-editor-icon-select .cw-icon-select-caret{margin-left:auto}" in css
 
 
 def test_editor_ui_allows_extra_policy_corrections() -> None:

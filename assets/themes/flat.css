@@ -572,3 +572,10 @@ html[data-cw-theme="flat-dark"] body #page-settings #ui_settings_panels .cw-app-
   transform:none !important;
   outline:0 !important;
 }
+html[data-cw-theme] #page-watchlist .wl-card .wl-provider-icon.is-square img{height:18px !important;max-width:18px !important}
+html[data-cw-theme] #page-watchlist .wl-mat.is-square img{height:18px !important;max-width:18px !important}
+html[data-cw-theme] #page-watchlist .wl-provider-brand.is-square img{height:20px !important;max-width:22px !important}
+html[data-cw-theme] #page-watchlist .wl-empty{background:#20242d !important;background-image:none !important;border-color:rgba(255,255,255,0.13)!important;box-shadow:none !important;color:#a9b0bd !important}
+html[data-cw-theme] #page-watchlist .wl-empty-icon{background:#191c23 !important;border-color:#292d36!important;color:#9299a6 !important}
+html[data-cw-theme="flat-light"] #page-watchlist .wl-empty{background:#ffffff !important;border-color:rgba(16,24,40,0.16)!important;color:#475467 !important}
+html[data-cw-theme="flat-light"] #page-watchlist .wl-empty-icon{background:#f2f4f7 !important;border-color:rgba(16,24,40,0.14)!important;color:#667085 !important}

@@ -6,6 +6,9 @@
   const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
   const PAGE_SIZE_OPTIONS = [50, 100, 150, 200];
   const DEFAULT_PAGE_SIZE = 50;
+  const DATA_CACHE_KEY = "cw.watchlist.page.v2";
+  const DERIVED_CACHE_KEY = "cw.watchlist.derived.v1";
+  const DERIVED_CACHE_MAX = 1000;
   const COLUMN_KEYS = ["poster", "title", "year", "rel", "genre", "type", "tmdb", "imdb", "tvdb", "trakt", "simkl", "anilist", "mal", "sync", "added", "key"];
   const COLUMN_LAYOUT_VERSION = 1;
   const DEFAULT_COLUMN_ORDER = COLUMN_KEYS.slice();
@@ -37,11 +40,27 @@
   const host=document.getElementById("page-watchlist"); if(!host) return;
   const readPrefs=()=>{try{return JSON.parse(localStorage.getItem("wl.prefs")||"{}")}catch{return{}}};
   const writePrefs=p=>{try{localStorage.setItem("wl.prefs",JSON.stringify(p))}catch{}};
-  const prefs=Object.assign({posterMin:150,view:"posters",released:"both",overlays:"yes",genre:"",showHidden:false,sortKey:"title",sortDir:"asc",moreOpen:false,pageSize:DEFAULT_PAGE_SIZE,wideView:false,cols:{},colUser:{},colVis:{},columnOrder:DEFAULT_COLUMN_ORDER.slice(),columnLayoutVersion:COLUMN_LAYOUT_VERSION},readPrefs());
+  const prefs=Object.assign({posterMin:150,view:"posters",released:"both",overlays:"yes",genre:"",sortKey:"title",sortDir:"asc",moreOpen:false,pageSize:DEFAULT_PAGE_SIZE,wideView:false,cols:{},colUser:{},colVis:{},columnOrder:DEFAULT_COLUMN_ORDER.slice(),columnLayoutVersion:COLUMN_LAYOUT_VERSION},readPrefs());
   const providerMeta = () => window.CW?.ProviderMeta || {};
   const providerKey = (value) => providerMeta().keyOf?.(value) || String(value || "").trim().toUpperCase();
   const providerLabel = (value) => providerMeta().label?.(value) || providerKey(value) || String(value || "");
   const providerShortLabel = (value) => providerMeta().shortLabel?.(value) || providerLabel(value);
+  const providerBrandInfo = (value) => {
+    const meta = providerMeta();
+    const key = providerKey(value);
+    const info = meta.brandInfo?.(key);
+    if (info) return info;
+    return {
+      key,
+      label: providerLabel(key),
+      shortLabel: providerShortLabel(key),
+      cls: "",
+      icon: meta.logoPath?.(key) || "",
+      logIcon: meta.logLogoPath?.(key) || "",
+      tone: meta.tone?.(key) || null,
+    };
+  };
+  const providerLogoPath = name => providerBrandInfo(name).icon || "";
   const escOpt = s => String(s == null ? "" : s).replace(/[&<>"]/g, m => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;" }[m]));
   let activeProviders = new Set();
   let configuredProviders = new Set();
@@ -51,13 +70,16 @@
   let userProfileTouched = false;
   let appliedUserProfile = "";
   const overviewProfile = () => window.CW?.OverviewProfile || null;
-  const globalUserProfile = () => String(overviewProfile()?.id || "").trim();
+  const shellProfileId = () => document.documentElement?.dataset?.cwRole === "user"
+    ? String(document.documentElement?.dataset?.cwProfileId || "").trim()
+    : "";
+  const globalUserProfile = () => String(overviewProfile()?.id || shellProfileId()).trim();
   const effectiveUserProfile = () => activeUserProfile || (userProfileTouched ? "" : globalUserProfile());
   const watchlistProviderKeys = () => {
     const keys = providerMeta().watchlistProviders?.();
     return Array.isArray(keys) && keys.length
       ? keys
-      : ["CROSSWATCH","PLEX","JELLYFIN","EMBY","SIMKL","TRAKT","ANILIST","TMDB","MDBLIST","PUBLICMETADB","PUNCHPLAY","FLOPPY","SCROB","NUVIO","STREMIO"];
+      : ["CROSSWATCH","PLEX","JELLYFIN","EMBY","SIMKL","TRAKT","ANILIST","TMDB","MDBLIST","PUBLICMETADB","PUNCHPLAY","FLICKLIST","FLOPPY","SCROB","NUVIO","STREMIO"];
   };
   const PROVIDERS = watchlistProviderKeys();
   const visibleProviders = () => PROVIDERS.filter((p) => activeProviders.has(p));
@@ -86,7 +108,7 @@
     const match = block => block && typeof block === "object" && (block.server_url || block.server) && (block.api_token || block.token);
     return !!(match(root) || (root?.instances && Object.values(root.instances).some(match)));
   };
-  host.innerHTML=`<div class="wl-topline cw-page-hero cw-page-hero-watchlist" data-hero-icon="bookmark_added"><div class="wl-title-stack cw-page-hero-copy"><div class="cw-page-hero-kicker">WATCHLIST</div><div class="wl-title cw-page-hero-title">Watchlist</div><div class="wl-sub cw-page-hero-sub">Browse and manage your unified watchlist</div></div><div class="wl-hero-summary cw-page-hero-actions" id="wl-hero-summary" aria-label="Watchlist summary"><div class="wl-hero-seg"><strong id="wl-stat-total">0</strong><span>items</span></div><div class="wl-hero-seg"><strong id="wl-stat-visible">0</strong><span>visible</span></div><div class="wl-hero-seg wl-hero-sync"><span>Synced</span><strong id="wl-stat-sync">never</strong></div><button id="wl-refresh" class="wl-hero-refresh" title="Sync watchlist" aria-label="Sync watchlist"><span class="material-symbol ss-refresh-icon">refresh</span></button></div></div><div class="wl-wrap" id="watchlist-root"><div class="wl-main-shell"><div class="wl-toolbar"><div class="wl-toolbar-left"><label class="wl-chip wl-selectall"><input id="wl-select-all" type="checkbox"><span>Select all</span></label><span id="wl-count" class="wl-chip is-filter">0 selected</span></div><div class="wl-toolbar-right"><button id="wl-filter-state" type="button" class="wl-chip is-filter wl-select-action">Select all</button></div></div><div id="wl-posters" class="wl-grid" style="display:none"></div><div id="wl-list" class="wl-table-wrap" style="display:none"><table class="wl-table"><colgroup><col class="c-sel"><col class="c-poster"><col class="c-title"><col class="c-rel"><col class="c-genre"><col class="c-type"><col class="c-sync"></colgroup><thead><tr><th style="text-align:center"><input id="wl-list-select-all" type="checkbox"></th><th class="sortable" data-sort="poster" data-col="poster" style="position:relative">Poster<span class="wl-resize"></span></th><th class="sortable" data-sort="title" data-col="title" style="position:relative">Title<span class="wl-resize"></span></th><th class="sortable" data-sort="release" data-col="rel" style="position:relative">Release<span class="wl-resize"></span></th><th class="sortable" data-sort="genre" data-col="genre" style="position:relative">Genre<span class="wl-resize"></span></th><th class="sortable" data-sort="type" data-col="type" style="position:relative">Type<span class="wl-resize"></span></th><th class="sortable" data-sort="sync" data-col="sync" style="position:relative">Sync<span class="wl-resize"></span></th></tr></thead><tbody id="wl-tbody"></tbody></table></div><div id="wl-pagination" class="wl-pagination" style="display:none"><button id="wl-page-prev" class="wl-btn">Previous</button><span id="wl-page-label" class="wl-muted">Page 1 of 1 • Rows 0–0 of 0</span><button id="wl-page-next" class="wl-btn">Next</button></div><div id="wl-empty" class="wl-empty wl-muted" style="display:none">No items match the current filters.</div></div><aside class="wl-side"><div class="ins-card"><div class="ins-row wl-ref-row" style="align-items:center"><div class="ins-icon"><span class="material-symbol">tune</span></div><div class="ins-title" style="margin-right:auto">Filters</div></div><div class="ins-row"><div class="ins-kv"><label for="wl-view">View</label><select id="wl-view" name="wl-view" class="wl-input" style="width:auto;padding:6px 10px"><option value="posters">Posters</option><option value="list">List</option></select><label for="wl-q">Search</label><input id="wl-q" name="wl-q" class="wl-input" placeholder="Search title..."><label for="wl-type">Type</label><select id="wl-type" name="wl-type" class="wl-input"><option value="">All types</option><option value="movie">Movies</option><option value="tv">Shows</option><option value="anime">Anime</option></select><label for="wl-provider">Provider</label><select id="wl-provider" name="wl-provider" class="wl-input">${providerOptions()}</select><label id="wl-size-label" for="wl-size">Size</label><input id="wl-size" name="wl-size" type="range" min="120" max="320" step="10" class="wl-input" style="padding:0"></div></div><div class="ins-row" id="wl-more-panel" style="display:none"><div class="ins-kv"><label for="wl-released">Released</label><select id="wl-released" name="wl-released" class="wl-input"><option value="both">Both</option><option value="released">Released</option><option value="unreleased">Upcoming</option></select><label id="wl-overlays-label" for="wl-overlays">Overlays</label><select id="wl-overlays" name="wl-overlays" class="wl-input"><option value="yes">On</option><option value="no">Off</option></select><label for="wl-genre">Genre</label><select id="wl-genre" name="wl-genre" class="wl-input"><option value="">All</option></select><label for="wl-show-hidden">Hidden</label><label class="wl-chip" style="justify-content:flex-start"><input id="wl-show-hidden" type="checkbox"><span>Include local hidden</span></label><div id="wl-cols-label" class="field-label">Columns</div><div id="wl-cols" class="wl-cols"><label class="wl-colchip"><input type="checkbox" name="wl-col" data-col="poster">Poster</label><label class="wl-colchip"><input type="checkbox" name="wl-col" data-col="rel">Release</label><label class="wl-colchip"><input type="checkbox" name="wl-col" data-col="genre">Genre</label><label class="wl-colchip"><input type="checkbox" name="wl-col" data-col="type">Type</label><label class="wl-colchip"><input type="checkbox" name="wl-col" data-col="sync">Sync</label></div></div></div><div class="ins-row" style="justify-content:flex-end;gap:8px"><button id="wl-more" class="wl-btn" aria-expanded="false">More</button><button id="wl-clear" class="wl-btn">Reset</button></div></div><div class="ins-card"><div class="ins-row wl-action-head"><div class="wl-action-title"><div class="ins-icon"><span class="material-symbol">flash_on</span></div><div class="ins-title">Actions</div></div><button type="button" class="wl-action-help" aria-label="Watchlist actions help" title="Delete selected items from the chosen provider, or from all providers. Hide local only removes selected items from the local CrossWatch view. Unhide all restores locally hidden items."><span class="material-symbol">help</span></button></div><div class="ins-row"><div class="wl-actions-panel"><div class="wl-action-row"><div class="wl-action-copy"><div class="wl-action-label">Delete from</div><div class="wl-action-hint">Selected items only</div></div><div class="wl-action-control is-select"><select id="wl-delete-provider" name="wl-delete-provider" class="wl-input">${deleteProviderOptions()}</select><button id="wl-delete" class="wl-btn danger" disabled>Delete</button></div></div><div class="wl-action-row"><div class="wl-action-copy"><div class="wl-action-label">Visibility</div><div class="wl-action-hint">Local view only</div></div><div class="wl-action-control"><button id="wl-hide" class="wl-btn" disabled>Hide local</button><button id="wl-unhide" class="wl-btn">Unhide all</button></div></div></div></div></div><div class="ins-card"><div class="ins-row"><div class="ins-icon"><span class="material-symbol">monitoring</span></div><div class="ins-title">Coverage Pulse</div></div><div class="ins-row"><div id="wl-metrics" class="ins-metrics"></div></div></div></aside></div><div id="wl-snack" class="wl-snack wl-hidden" role="status" aria-live="polite"></div>`;
+  host.innerHTML=`<div class="wl-topline cw-page-hero cw-page-hero-watchlist" data-hero-icon="bookmark_added"><div class="wl-title-stack cw-page-hero-copy"><div class="cw-page-hero-kicker">WATCHLIST</div><div class="wl-title cw-page-hero-title">Watchlist</div><div class="wl-sub cw-page-hero-sub">Browse and manage your unified watchlist</div></div><div class="wl-hero-summary cw-page-hero-actions" id="wl-hero-summary" aria-label="Watchlist summary"><div class="wl-hero-seg"><strong id="wl-stat-total">0</strong><span>items</span></div><div class="wl-hero-seg"><strong id="wl-stat-visible">0</strong><span>visible</span></div><div class="wl-hero-seg wl-hero-sync"><span>Synced</span><strong id="wl-stat-sync">never</strong></div><button id="wl-refresh" class="wl-hero-refresh" title="Sync watchlist" aria-label="Sync watchlist"><span class="material-symbol ss-refresh-icon">refresh</span></button></div></div><div class="wl-wrap" id="watchlist-root"><div class="wl-main-shell"><div class="wl-toolbar"><div class="wl-toolbar-left"><label class="wl-chip wl-selectall"><input id="wl-select-all" type="checkbox"><span>Select all</span></label><span id="wl-count" class="wl-chip is-filter">0 selected</span></div><div class="wl-toolbar-right"><button id="wl-filter-state" type="button" class="wl-chip is-filter wl-select-action">Select all</button></div></div><div id="wl-posters" class="wl-grid" style="display:none"></div><div id="wl-list" class="wl-table-wrap" style="display:none"><table class="wl-table"><colgroup><col class="c-sel"><col class="c-poster"><col class="c-title"><col class="c-rel"><col class="c-genre"><col class="c-type"><col class="c-sync"></colgroup><thead><tr><th style="text-align:center"><input id="wl-list-select-all" type="checkbox"></th><th class="sortable" data-sort="poster" data-col="poster" style="position:relative">Poster<span class="wl-resize"></span></th><th class="sortable" data-sort="title" data-col="title" style="position:relative">Title<span class="wl-resize"></span></th><th class="sortable" data-sort="release" data-col="rel" style="position:relative">Release<span class="wl-resize"></span></th><th class="sortable" data-sort="genre" data-col="genre" style="position:relative">Genre<span class="wl-resize"></span></th><th class="sortable" data-sort="type" data-col="type" style="position:relative">Type<span class="wl-resize"></span></th><th class="sortable" data-sort="sync" data-col="sync" style="position:relative">Sync<span class="wl-resize"></span></th></tr></thead><tbody id="wl-tbody"></tbody></table></div><div id="wl-pagination" class="wl-pagination" style="display:none"><button id="wl-page-prev" class="wl-btn">Previous</button><span id="wl-page-label" class="wl-muted">Page 1 of 1 • Rows 0–0 of 0</span><button id="wl-page-next" class="wl-btn">Next</button></div><div id="wl-empty" class="wl-empty wl-muted" style="display:none"></div></div><aside class="wl-side"><div class="ins-card"><div class="ins-row wl-ref-row" style="align-items:center"><div class="ins-icon"><span class="material-symbol">tune</span></div><div class="ins-title" style="margin-right:auto">Filters</div></div><div class="ins-row"><div class="ins-kv"><label for="wl-view">View</label><select id="wl-view" name="wl-view" class="wl-input" style="width:auto;padding:6px 10px"><option value="posters">Posters</option><option value="list">List</option></select><label for="wl-q">Search</label><input id="wl-q" name="wl-q" class="wl-input" placeholder="Search title..."><label for="wl-type">Type</label><select id="wl-type" name="wl-type" class="wl-input"><option value="">All types</option><option value="movie">Movies</option><option value="tv">Shows</option><option value="anime">Anime</option></select><label for="wl-provider">Provider</label><select id="wl-provider" name="wl-provider" class="wl-input">${providerOptions()}</select><label id="wl-size-label" for="wl-size">Size</label><input id="wl-size" name="wl-size" type="range" min="120" max="320" step="10" class="wl-input" style="padding:0"></div></div><div class="ins-row" id="wl-more-panel" style="display:none"><div class="ins-kv"><label for="wl-released">Released</label><select id="wl-released" name="wl-released" class="wl-input"><option value="both">Both</option><option value="released">Released</option><option value="unreleased">Upcoming</option></select><label id="wl-overlays-label" for="wl-overlays">Overlays</label><select id="wl-overlays" name="wl-overlays" class="wl-input"><option value="yes">On</option><option value="no">Off</option></select><label for="wl-genre">Genre</label><select id="wl-genre" name="wl-genre" class="wl-input"><option value="">All</option></select><div id="wl-cols-label" class="field-label">Columns</div><div id="wl-cols" class="wl-cols"><label class="wl-colchip"><input type="checkbox" name="wl-col" data-col="poster">Poster</label><label class="wl-colchip"><input type="checkbox" name="wl-col" data-col="rel">Release</label><label class="wl-colchip"><input type="checkbox" name="wl-col" data-col="genre">Genre</label><label class="wl-colchip"><input type="checkbox" name="wl-col" data-col="type">Type</label><label class="wl-colchip"><input type="checkbox" name="wl-col" data-col="sync">Sync</label></div></div></div><div class="ins-row" style="justify-content:flex-end;gap:8px"><button id="wl-more" class="wl-btn" aria-expanded="false">More</button><button id="wl-clear" class="wl-btn">Reset</button></div></div><div class="ins-card"><div class="ins-row wl-action-head"><div class="wl-action-title"><div class="ins-icon"><span class="material-symbol">flash_on</span></div><div class="ins-title">Actions</div></div><button type="button" class="wl-action-help" aria-label="Watchlist actions help" title="Delete selected items from the chosen provider, or from all providers."><span class="material-symbol">help</span></button></div><div class="ins-row"><div class="wl-actions-panel"><div class="wl-action-row"><div class="wl-action-copy"><div class="wl-action-label">Delete from</div><div class="wl-action-hint">Selected items only</div></div><div class="wl-action-control is-select"><select id="wl-delete-provider" name="wl-delete-provider" class="wl-input">${deleteProviderOptions()}</select><button id="wl-delete" class="wl-btn danger" disabled>Delete</button></div></div></div></div></div><div class="ins-card"><div class="ins-row"><div class="ins-icon"><span class="material-symbol">monitoring</span></div><div class="ins-title">Coverage Pulse</div></div><div class="ins-row"><div id="wl-metrics" class="ins-metrics"></div></div></div></aside></div><div id="wl-snack" class="wl-snack wl-hidden" role="status" aria-live="polite"></div>`;
   host.querySelector(".wl-actions-panel")?.closest(".ins-card")?.classList.add("wl-action-card");
   host.classList.toggle("wl-readonly", isProfileUser());
 
@@ -127,7 +149,6 @@
   const topVisibleEl= $("wl-stat-visible");
   const topSyncEl   = $("wl-stat-sync");
   const filterStateEl = $("wl-filter-state");
-  const showHiddenChk = $("wl-show-hidden");
   let pageSizeSel = null;
   let pageSizeValueEl = null;
   let viewValueEl = null;
@@ -797,18 +818,17 @@
   /* Date formatting */
   let [items, filtered] = [[], []];
   const selected = new Set();
-  const hiddenSet = (() => { try { return new Set(JSON.parse(localStorage.getItem("wl.hidden") || "[]")); } catch { return new Set(); } })();
-  const saveHidden = () => { try { localStorage.setItem("wl.hidden", JSON.stringify([...hiddenSet])); } catch {} };
-  const hideBtn = document.getElementById("wl-hide"), unhideBtn = document.getElementById("wl-unhide");
 
   let viewMode = prefs.view === "list" ? "list" : "posters";
   let sortKey = prefs.sortKey === "release" ? "rel" : (COLUMN_KEYS.includes(prefs.sortKey) ? prefs.sortKey : "title");
   let sortDir = prefs.sortDir === "desc" ? "desc" : "asc";
 
   const derivedCache = new Map();
+  let derivedCacheSaveTimer = 0;
   const renderedRowRefs = new Map();
   let rowHydrationSeq = 0;
   let lastRowHydrationKey = "";
+  let watchlistVersion = "";
 
   const sharedMeta = () => window.CW?.Meta || null;
   const peekMeta = (it) => sharedMeta()?.peek(it) || null;
@@ -821,6 +841,80 @@
     if (!TMDB_OK) return null;
     return (await sharedMeta()?.get(it, profile)) || null;
   };
+  const watchlistCacheScope = () => `profile:${effectiveUserProfile() || "all"}`;
+  const readWatchlistCache = () => {
+    try {
+      const raw = JSON.parse(localStorage.getItem(DATA_CACHE_KEY) || "null");
+      return raw?.scope === watchlistCacheScope() && raw?.payload?.ok ? raw.payload : null;
+    } catch {
+      return null;
+    }
+  };
+  const writeWatchlistCache = payload => {
+    try {
+      if (!payload?.ok || payload.not_modified) return;
+      localStorage.setItem(DATA_CACHE_KEY, JSON.stringify({ scope: watchlistCacheScope(), payload }));
+    } catch {}
+  };
+  const clearWatchlistCache = () => {
+    try { localStorage.removeItem(DATA_CACHE_KEY); } catch {}
+  };
+  function applyWatchlistPayload(payload) {
+    if (!payload || !Array.isArray(payload.items)) return false;
+    TMDB_OK = !Boolean(payload.missing_tmdb_key);
+    watchlistMeta.lastSyncEpoch = Number(payload.last_sync_epoch) || 0;
+    watchlistVersion = String(payload.version || "");
+    items = payload.items;
+    addActiveProvidersFromItems(items);
+    rebuildProviderOptions();
+    populateGenreOptions(buildGenreIndex(items));
+    applyFilters();
+    rebuildDeleteProviderOptions();
+    return true;
+  }
+  const revealWatchlistCache = () => applyWatchlistPayload(readWatchlistCache());
+  const derivedCacheScope = () => "watchlist-row-meta:v2";
+  function loadDerivedCache() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(DERIVED_CACHE_KEY) || "null");
+      if (!Array.isArray(raw?.items)) return;
+      derivedCache.clear();
+      raw.items.forEach(([key, value]) => {
+        if (key && value && typeof value === "object") derivedCache.set(String(key), value);
+      });
+    } catch {}
+  }
+  function scheduleDerivedCacheSave() {
+    window.clearTimeout(derivedCacheSaveTimer);
+    derivedCacheSaveTimer = window.setTimeout(() => {
+      try {
+        localStorage.setItem(DERIVED_CACHE_KEY, JSON.stringify({
+          scope: derivedCacheScope(),
+          items: Array.from(derivedCache.entries()).slice(-DERIVED_CACHE_MAX),
+        }));
+      } catch {}
+    }, 250);
+  }
+  function rememberDerived(k, value, persist = false) {
+    const key = String(k || "").trim();
+    if (!key || !value || typeof value !== "object") return false;
+    const prev = derivedCache.get(key) || {};
+    const next = {
+      iso: String(value.iso || "").trim(),
+      relFmt: String(value.relFmt || "").trim(),
+      genresText: String(value.genresText || "").trim(),
+      rowLoaded: !!(value.rowLoaded || prev.rowLoaded),
+    };
+    if (
+      prev.iso === next.iso
+      && prev.relFmt === next.relFmt
+      && prev.genresText === next.genresText
+      && !!prev.rowLoaded === next.rowLoaded
+    ) return false;
+    derivedCache.set(key, next);
+    if (persist) scheduleDerivedCacheSave();
+    return true;
+  }
   const instancesOfProvider = (it, p) => {
     const sbp = it?.sources_by_provider || it?.sourcesByProvider || {};
     const arr = sbp?.[String(p || "").toLowerCase()] || sbp?.[String(p || "").toUpperCase()];
@@ -919,6 +1013,12 @@
   const artType=it=>(((it?.type||it?.media_type||"")+"").toLowerCase()==="movie"?"movie":"tv");
   const artEvidence=it=>{const t=it?.title?`&title=${encodeURIComponent(String(it.title))}`:"";const y=it?.year?`&year=${encodeURIComponent(String(it.year))}`:"";return t+y;};
   const tmdbIdForArt = it => String(sharedMeta()?.tmdbId?.(it) || it?.tmdb || it?.tmdb_id || it?.ids?.tmdb || it?.ids?.tmdb_show || "").trim();
+  const derivedKeyFor = it => {
+    const metaKey = String(sharedMeta()?.key?.(it) || "").trim();
+    if (metaKey) return metaKey;
+    const tmdbId = tmdbIdForArt(it);
+    return tmdbId ? `${artType(it) === "movie" ? "movie" : "show"}:${tmdbId}` : normKey(it);
+  };
   const artUrl=(it,size,kind="poster")=>{const tmdbId=tmdbIdForArt(it);return(!TMDB_OK||!tmdbId)?"":`/art/tmdb/${artType(it)}/${encodeURIComponent(tmdbId)}?kind=${encodeURIComponent(kind)}&size=${encodeURIComponent(size||"w342")}&locale=${encodeURIComponent(window.__CW_LOCALE||navigator.language||"en-US")}${artEvidence(it)}`;};
   const parseReleaseDate = s => { if (typeof s !== "string" || !(s = s.trim())) return null; let y, m, d; if (/^\d{4}-\d{2}-\d{2}$/.test(s)) ([y, m, d] = s.split("-").map(Number)); else if (/^\d{2}-\d{2}-\d{4}$/.test(s)) { const a = s.split("-").map(Number); d = a[0]; m = a[1]; y = a[2]; } else return null; const t = Date.UTC(y, (m || 1) - 1, d || 1), dt = new Date(t); return Number.isFinite(dt.getTime()) ? dt : null; };
   const fmtDateSmart = (raw, loc) => { const dt = parseReleaseDate(raw); if (!dt) return ""; try { return new Intl.DateTimeFormat(loc || toLocale(), { day:"2-digit", month:"2-digit", year:"numeric", timeZone:"UTC" }).format(dt); } catch { return ""; } };
@@ -937,6 +1037,7 @@
       iso = tv ? (m.detail?.first_air_date || m.release?.date || m.first_air_date || "")
               : (m.detail?.release_date || m.release?.date || "");
     }
+    if (!iso) iso = derivedCache.get(derivedKeyFor(it))?.iso || "";
     return typeof iso === "string" ? iso.trim() : "";
   };
 
@@ -990,7 +1091,6 @@
     if (rel === "released") bits.push("Released only");
     if (rel === "unreleased") bits.push("Upcoming only");
     if (genre) bits.push(genre);
-    if (showHiddenChk?.checked) bits.push("Hidden included");
     return bits.length ? bits.join(" • ") : "All items";
   };
   const selectedFilteredKeys = () => filtered.map(it => normKey(it)).filter(Boolean);
@@ -1086,29 +1186,19 @@
     pagerNext.disabled = currentPage >= pageCount;
   }
 
-  /* Hide/Unhide buttons */
-  hideBtn?.addEventListener("click", () => {
-    if (!selected.size) return;
-    selected.forEach(k => hiddenSet.add(k));
-    saveHidden(); selected.clear(); applyFilters(); updateSelCount(); snackbar("Hidden locally");
-  }, true);
-
-  unhideBtn?.addEventListener("click", () => {
-    hiddenSet.clear(); saveHidden(); applyFilters(); updateSelCount(); snackbar("All unhidden");
-  }, true);
-
   /* Hydration listing */
   const _hydrating = new Set();
   const setText = (el, t) => {
     if (!el) return;
     const next = (t || "").trim();
     if (!next) return;
+    if (el.textContent === next && el.title === next) return;
     el.textContent = next;
     el.title = next;
   };
 
   function hydrateRow(it, tr){
-    const k=normKey(it); if(_hydrating.has(k)) return; _hydrating.add(k);
+    const k=derivedKeyFor(it); if(_hydrating.has(k)) return; _hydrating.add(k);
     try{
       const movie = /^movie$/i.test(it.type||"");
       const m = peekMeta(it) || null;
@@ -1127,8 +1217,8 @@
       const relFmtBase = (prev.relFmt||fmtDateSmart(isoBase,toLocale())||"").trim();
       const relFmt = (fmtDateSmart(iso,toLocale())||relFmtBase).trim();
 
-      derivedCache.set(k,{iso,relFmt,genresText});
-      if(tr?.isConnected){ setText(tr.querySelector("td.rel"),relFmt); setText(tr.querySelector("td.genre"),genresText); }
+      const changed = rememberDerived(k, { iso, relFmt, genresText, rowLoaded: !!m }, true);
+      if(changed && tr?.isConnected){ setText(tr.querySelector("td.rel"),relFmt); setText(tr.querySelector("td.genre"),genresText); }
     } finally { _hydrating.delete(k); }
   }
 
@@ -1136,12 +1226,21 @@
   const fetchWatchlist = async () => {
     appliedUserProfile = effectiveUserProfile();
     const scope = appliedUserProfile ? `&user_profile=${encodeURIComponent(appliedUserProfile)}` : "";
-    const r = await fetch(`/api/watchlist/?limit=5000${scope}`, { cache: "no-store" });
+    const cached = readWatchlistCache();
+    const version = String(cached?.version || watchlistVersion || "").trim();
+    const known = version ? `&known_version=${encodeURIComponent(version)}` : "";
+    const r = await fetch(`/api/watchlist/?limit=5000${scope}${known}`, { cache: "no-store" });
     if (!r.ok) throw new Error("watchlist fetch failed");
     const j = await r.json();
+    if (j?.not_modified && Array.isArray(cached?.items)) return cached;
     TMDB_OK = !Boolean(j?.missing_tmdb_key);
     watchlistMeta.lastSyncEpoch = Number(j?.last_sync_epoch) || 0;
-    return Array.isArray(j?.items) ? j.items : [];
+    watchlistVersion = String(j?.version || "");
+    if (Array.isArray(j?.items)) {
+      if (j.ok) writeWatchlistCache(j);
+      else clearWatchlistCache();
+    }
+    return j;
   };
 
   const fetchConfig = async () => {
@@ -1182,12 +1281,20 @@
     return filtered.slice(pageInfo.start, pageInfo.end);
   };
 
-  const rowHydrationKeyFor = targets => targets.map(it => sharedMeta()?.key(it) || "").filter(Boolean).join("|");
+  const rowHydrationKeyFor = targets => targets.map(it => sharedMeta()?.key(it) || derivedKeyFor(it) || "").filter(Boolean).join("|");
+  const hasStableDerivedText = it => {
+    const d = derivedCache.get(derivedKeyFor(it));
+    return !!(d?.rowLoaded || (d?.relFmt && d?.genresText));
+  };
 
   async function hydrateVisibleMetadata() {
     if (!TMDB_OK) return;
-    const targets = visibleItemsForHydration().filter((it) => tmdbIdForArt(it));
+    let targets = visibleItemsForHydration().filter((it) => tmdbIdForArt(it));
     if (!targets.length) return;
+    if (!metadataAffectsListState()) {
+      targets = targets.filter((it) => !hasStableDerivedText(it));
+      if (!targets.length) return;
+    }
     const batchKey = rowHydrationKeyFor(targets);
     const missingRowProfile = targets.some((it) => !hasMeta(it, "row"));
     if (!missingRowProfile && batchKey && batchKey === lastRowHydrationKey) return;
@@ -1219,7 +1326,8 @@
   /*  Genre extraction  */
   const extractGenres = it => {
     const meta = peekMeta(it);
-    const srcs = [it.genres, it.genre, it.detail?.genres, it.meta?.genres, it.meta?.detail?.genres, meta?.genres, meta?.detail?.genres].filter(Boolean);
+    const derived = derivedCache.get(derivedKeyFor(it));
+    const srcs = [it.genres, it.genre, it.detail?.genres, it.meta?.genres, it.meta?.detail?.genres, meta?.genres, meta?.detail?.genres, derived?.genresText].filter(Boolean);
     return srcs.flatMap(s => Array.isArray(s)
       ? s.map(g => typeof g === "string" ? g : (g?.name || g?.title || g?.slug || ""))
       : String(s).split(/[|,\/]/)
@@ -1227,17 +1335,22 @@
   };
 
   function getDerived(it){
-    const k = normKey(it);
+    const k = derivedKeyFor(it);
     let d = derivedCache.get(k);
-    if (d && !peekMeta(it)) return d;
+    if (d && !peekMeta(it)) {
+      const iso = String(d.iso || getReleaseIso(it) || "").trim();
+      const next = { ...d, iso, relFmt: fmtDateSmart(iso, toLocale()) || d.relFmt || "" };
+      rememberDerived(k, next);
+      return derivedCache.get(k) || next;
+    }
 
     const iso = getReleaseIso(it);
     const relFmt = fmtDateSmart(iso, toLocale());
     const genresText = extractGenres(it).slice(0,3).join(", ");
 
-    d = { iso, relFmt, genresText };
-    derivedCache.set(k, d);
-    return d;
+    const next = { iso, relFmt, genresText, rowLoaded: hasMeta(it, "row") || !!(relFmt && genresText) };
+    rememberDerived(k, next, next.rowLoaded);
+    return derivedCache.get(k) || next;
   }
 
   const buildGenreIndex = list => {
@@ -1253,16 +1366,17 @@
   };
 
   /* Provider chips */
-  const providerLogoPath = name => window.CW?.ProviderMeta?.logoPath?.(name) || "";
 
   function providerSelectOptionData(value, option, allLabel = "All", showAllIcon = true) {
     const raw = String(value || "").trim();
     const isAll = !raw || raw.toUpperCase() === "ALL";
-    const label = isAll ? allLabel : providerLabel(raw);
-    const iconSrc = isAll ? "" : providerLogoPath(raw);
+    const brand = isAll ? null : providerBrandInfo(raw);
+    const label = isAll ? allLabel : brand?.label || providerLabel(raw);
+    const shortLabel = isAll ? "ALL" : brand?.shortLabel || providerShortLabel(raw);
+    const iconSrc = isAll ? "" : brand?.icon || "";
     const icons = iconSrc
       ? [{ src: iconSrc, alt: `${label} logo` }]
-      : (isAll && !showAllIcon ? [] : [{ text: isAll ? "ALL" : providerShortLabel(raw) }]);
+      : (isAll && !showAllIcon ? [] : [{ text: shortLabel }]);
     return {
       label: String(option?.textContent || label).trim() || label,
       icons,
@@ -1299,17 +1413,21 @@
   enhanceDeleteProviderSelect();
 
   const providerChip = (name, state = "ok") => {
-    const label = providerLabel(name);
-    const shortLabel = providerShortLabel(name);
-    const src = providerLogoPath(name), icon = state === "ok" ? "check_small" : "remove";
-    return `<span class="wl-mat ${state}" title="${esc(label)} ${state === "ok" ? "present" : "missing"}">${src ? `<img src="${src}" alt="${esc(label)}">` : `<span class="wl-badge">${esc(shortLabel)}</span>`}<span class="material-symbol">${icon}</span></span>`;
+    const brand = providerBrandInfo(name);
+    const label = brand.label || providerLabel(name);
+    const shortLabel = brand.shortLabel || providerShortLabel(name);
+    const src = brand.icon || "", icon = state === "ok" ? "check_small" : "remove";
+    const squareClass = /\.png(?:[?#]|$)/i.test(src) ? " is-square" : "";
+    return `<span class="wl-mat ${state}${squareClass}" title="${esc(label)} ${state === "ok" ? "present" : "missing"}">${src ? `<img src="${src}" alt="${esc(label)}">` : `<span class="wl-badge">${esc(shortLabel)}</span>`}<span class="material-symbol">${icon}</span></span>`;
   };
   const posterProviderIcon = name => {
-    const label = providerLabel(name);
-    const shortLabel = providerShortLabel(name);
-    const src = providerLogoPath(name);
+    const brand = providerBrandInfo(name);
+    const label = brand.label || providerLabel(name);
+    const shortLabel = brand.shortLabel || providerShortLabel(name);
+    const src = brand.icon || "";
+    const squareClass = /\.png(?:[?#]|$)/i.test(src) ? " is-square" : "";
     return src
-      ? `<span class="wl-provider-icon" title="${esc(label)}"><img src="${src}" alt="${esc(label)} logo"></span>`
+      ? `<span class="wl-provider-icon${squareClass}" title="${esc(label)}"><img src="${src}" alt="${esc(label)} logo"></span>`
       : `<span class="wl-provider-icon" title="${esc(label)}"><span class="wl-badge">${esc(shortLabel)}</span></span>`;
   };
   const providerMatrix = have => `<div class="wl-matrix">${PROVIDERS.map(p => activeProviders.has(p) ? providerChip(p, have.has(p) ? "ok" : "miss") : "").join("")}</div>`;
@@ -1324,7 +1442,6 @@
     };
 
     const visible = filtered.length;
-    const hiddenLocal = items.reduce((n, it) => n + (hiddenSet.has(normKey(it)) ? 1 : 0), 0);
     const movies = filtered.filter(it => /^movie$/i.test(String(it?.type || ""))).length;
     const anime = filtered.filter(it => /^anime$/i.test(String(it?.type || ""))).length;
     const series = Math.max(0, visible - movies - anime);
@@ -1347,14 +1464,22 @@
       const insts = [...instSet].filter(Boolean);
       insts.sort((a, b) => (a !== "default") - (b !== "default") || a.localeCompare(b));
       const hint = insts.length ? ` • ${esc(insts.slice(0, 2).join(", "))}${insts.length > 2 ? ` +${insts.length - 2}` : ""}` : "";
-      const src = providerLogoPath(p);
-      const label = providerLabel(p);
-      const shortLabel = providerShortLabel(p);
+      const brandInfo = providerBrandInfo(p);
+      const src = brandInfo.icon || "";
+      const label = brandInfo.label || providerLabel(p);
+      const shortLabel = brandInfo.shortLabel || providerShortLabel(p);
+      const squareClass = /\.png(?:[?#]|$)/i.test(src) ? " is-square" : "";
       const brand = src
-        ? `<span class="wl-provider-brand"><img src="${src}" alt="${esc(label)} logo"></span>`
+        ? `<span class="wl-provider-brand${squareClass}"><img src="${src}" alt="${esc(label)} logo"></span>`
         : `<span class="wl-provider-brand"><span class="wl-badge">${esc(shortLabel)}</span></span>`;
       const providerClass = `provider-${String(p || "").toLowerCase().replace(/[^a-z0-9_-]+/g, "-")}`;
-      return `<div class="wl-provider-card ${providerClass} ${count ? "is-live" : "is-idle"}" data-provider="${esc(p)}" title="${esc(`${label}: ${count}/${visible || 0}`)}">
+      const brandClass = [brandInfo.cls, providerClass, count ? "is-live" : "is-idle"].filter(Boolean).join(" ");
+      const brandVars = [];
+      if (brandInfo.tone?.rgb) brandVars.push(`--pulse-rgb:${esc(brandInfo.tone.rgb)}`);
+      if (brandInfo.tone?.solid) brandVars.push(`--provider-brand:${esc(brandInfo.tone.solid)}`);
+      if (src) brandVars.push(`--pulse-logo:url("${esc(src)}")`);
+      const brandStyle = brandVars.length ? ` style="${brandVars.join(";")}"` : "";
+      return `<div class="wl-provider-card ${brandClass}" data-provider="${esc(p)}" title="${esc(`${label}: ${count}/${visible || 0}`)}"${brandStyle}>
         <div class="wl-provider-top">${brand}<strong>${count}</strong></div>
         <div class="wl-provider-name">${esc(label)}</div>
         <div class="wl-provider-sub">${pct}% coverage${hint}</div>
@@ -1368,7 +1493,6 @@
           ${stat("Visible", visible)}
           ${stat("Movies", movies)}
           ${stat("Series", series + anime)}
-          ${stat("Hidden", hiddenLocal)}
         </div>
       </div>
       <div class="wl-provider-grid">${cards || '<div class="wl-provider-card is-idle"><div class="wl-provider-name">No active sources</div><div class="wl-provider-sub">Connect a source to see coverage.</div></div>'}</div>
@@ -1467,7 +1591,6 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
 
     filtered = items.filter(it => {
       const key = normKey(it);
-      if (hiddenSet.has(key) && !showHiddenChk?.checked) return false;
 
       const title = String(it.title || "").toLowerCase();
       const haystack = [
@@ -1618,6 +1741,35 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
 
   const _show = (el, on) => setControlVisible(el, on);
 
+  function resetFilters() {
+    qEl.value = ""; tEl.value = ""; providerSel.value = "";
+    if (profileSel) profileSel.value = "";
+    enhanceProviderFilterSelect();
+    const prevUserProfile = effectiveUserProfile();
+    activeUserProfile = "";
+    userProfileTouched = false;
+    releasedSel.value = "both"; overlaysSel.value = "yes"; genreSel.value = "";
+    Object.assign(prefs, { released:"both", overlays:"yes", genre:"", userProfile:"" }); writePrefs(prefs);
+    syncProfileControls();
+    applyOverlayPrefUI();
+    if (effectiveUserProfile() !== prevUserProfile) void reloadForUserProfile(); else applyFilters();
+  }
+
+  function renderEmptyState() {
+    const filteredOut = items.length > 0;
+    empty.classList.toggle("is-filtered", filteredOut);
+    empty.innerHTML = `
+      <div class="wl-empty-icon"><span class="material-symbol">${filteredOut ? "filter_alt_off" : "bookmark_added"}</span></div>
+      <div class="wl-empty-copy">
+        <strong>${filteredOut ? "No matching items" : "No watchlist items"}</strong>
+        <span>${filteredOut ? "Try a different search or clear the current filters." : "Synced watchlist titles will appear here."}</span>
+      </div>
+      ${filteredOut ? '<button type="button" class="wl-btn wl-empty-reset" data-wl-empty-reset>Reset filters</button>' : ""}
+    `;
+    empty.querySelector("[data-wl-empty-reset]")?.addEventListener("click", resetFilters, true);
+    empty.style.display = "";
+  }
+
   function render() {
     const posters = viewMode === "posters";
     _show(postersEl, posters); _show(listWrapEl, !posters); _show(sizeInput, posters); _show(sizeLabel, posters);
@@ -1629,7 +1781,7 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
     computePageInfo();
 
     if (!filtered.length) {
-      empty.style.display = "";
+      renderEmptyState();
       if (selAll) selAll.checked = false;
       if (listSelectAll) listSelectAll.checked = false;
       postersEl.innerHTML = ""; listBodyEl.innerHTML = ""; selCount.textContent = "0 selected"; metricsEl.innerHTML = "";
@@ -1765,7 +1917,6 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
       `;
       tr.classList.toggle("selected", !readOnly && selected.has(key));
 
-      if (d.relFmt || d.genresText) hydrateRow(it, tr);
       const posterCell = tr.querySelector(".wl-poster-cell");
       const showFromCover = () => {
         if (canTMDB) showPreview(it, "list");
@@ -1835,7 +1986,6 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
     updateSelectionActionUI();
     rebuildDeleteProviderOptions();
     document.getElementById("wl-delete").disabled = isProfileUser() || !(delProv.value && selected.size);
-    document.getElementById("wl-hide").disabled = isProfileUser() || selected.size === 0;
     updateHeaderSummary();
   }
 
@@ -1959,7 +2109,6 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
   on([releasedSel], ["change","input"], () => { prefs.released = normReleased(releasedSel.value); writePrefs(prefs); applyFilters(); });
   on([overlaysSel], ["change","input"], () => { prefs.overlays = overlaysSel.value || "yes"; writePrefs(prefs); applyOverlayPrefUI(); });
   on([genreSel], ["change","input"], () => { prefs.genre = genreSel.value || ""; writePrefs(prefs); applyFilters(); });
-  showHiddenChk?.addEventListener("change", () => { prefs.showHidden = !!showHiddenChk.checked; writePrefs(prefs); applyFilters(); }, true);
 
   const setFilteredSelection = checked => {
     if (isProfileUser()) return;
@@ -1992,20 +2141,7 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
     updateSelCount();
   });
 
-  clearBtn.addEventListener("click", () => {
-    qEl.value = ""; tEl.value = ""; providerSel.value = "";
-    if (profileSel) profileSel.value = "";
-    enhanceProviderFilterSelect();
-    const prevUserProfile = effectiveUserProfile();
-    activeUserProfile = "";
-    userProfileTouched = false;
-    releasedSel.value = "both"; overlaysSel.value = "yes"; genreSel.value = "";
-    if (showHiddenChk) showHiddenChk.checked = false;
-    Object.assign(prefs, { released:"both", overlays:"yes", genre:"", showHidden:false, userProfile:"" }); writePrefs(prefs);
-    syncProfileControls();
-    applyOverlayPrefUI();
-    if (effectiveUserProfile() !== prevUserProfile) void reloadForUserProfile(); else applyFilters();
-  }, true);
+  clearBtn.addEventListener("click", resetFilters, true);
 
   delProv.addEventListener("change", () => { syncProfileControls(); updateSelCount(); }, true);
 
@@ -2091,7 +2227,10 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
   }, true);
 
   async function hardReloadWatchlist(){
-    try{ items=await fetchWatchlist(); addActiveProvidersFromItems(items); rebuildProviderOptions(); populateGenreOptions(buildGenreIndex(items)); applyFilters(); rebuildDeleteProviderOptions(); }
+    try{
+      revealWatchlistCache();
+      applyWatchlistPayload(await fetchWatchlist());
+    }
     catch(e){ console.warn("watchlist reload failed:", e); }
   }
   async function reloadForUserProfile(){
@@ -2134,7 +2273,11 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
     sizeInput.value = String(prefs.posterMin); setPosterMin(prefs.posterMin);
     releasedSel.value = prefs.released; overlaysSel.value = prefs.overlays; morePanel.style.display = prefs.moreOpen ? "" : "none";
     moreBtn.setAttribute("aria-expanded", String(!!prefs.moreOpen));
-    if (showHiddenChk) showHiddenChk.checked = !!prefs.showHidden;
+    activeUserProfile = String(prefs.userProfile || "").trim();
+    userProfileTouched = !!activeUserProfile;
+    loadDerivedCache();
+    revealWatchlistCache();
+    updateHeaderSummary();
 
     const cfg = await fetchConfig();
     window.__CW_LOCALE = (cfg?.metadata?.locale || cfg?.ui?.locale || window.__CW_LOCALE || navigator.language || "en-US");
@@ -2162,17 +2305,13 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
 
     configuredProviders = new Set(active);
     activeProviders = new Set(active);
-    activeUserProfile = String(prefs.userProfile || "").trim();
-    userProfileTouched = !!activeUserProfile;
     await loadUserProfiles();
     await loadProviderInstances();
     applyUserProfileScope();
     rebuildProviderOptions();
-    items = await fetchWatchlist();
-    addActiveProvidersFromItems(items);
-    rebuildProviderOptions();
-    populateGenreOptions(buildGenreIndex(items));
-    applyOverlayPrefUI(); applyFilters(); rebuildDeleteProviderOptions(); wireSortableHeaders(); updateHeaderSummary();
+    revealWatchlistCache();
+    applyWatchlistPayload(await fetchWatchlist());
+    applyOverlayPrefUI(); wireSortableHeaders(); updateHeaderSummary();
 
     window.dispatchEvent(new CustomEvent("watchlist-ready"));
   }
