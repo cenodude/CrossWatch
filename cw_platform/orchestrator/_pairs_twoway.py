@@ -1739,27 +1739,33 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
     except Exception:
         pass
 
+    blocked_total = 0
     if feature != "watchlist":
-            add_to_A = apply_blocklist(
-                ctx.state_store,
-                add_to_A,
-                dst=a,
-                feature=feature,
-                pair_key=pair_key,
-                cross_feature_unresolved=_cross_feature_unresolved(feature),
-                ignore_pair_tomb=(str(feature or "").lower() in ("history", "ratings")),
-                emit=emit,
-            )
-            add_to_B = apply_blocklist(
-                ctx.state_store,
-                add_to_B,
-                dst=b,
-                feature=feature,
-                pair_key=pair_key,
-                cross_feature_unresolved=_cross_feature_unresolved(feature),
-                ignore_pair_tomb=(str(feature or "").lower() in ("history", "ratings")),
-                emit=emit,
-            )
+        before_blocklist_A = len(add_to_A)
+        add_to_A = apply_blocklist(
+            ctx.state_store,
+            add_to_A,
+            dst=a,
+            feature=feature,
+            pair_key=pair_key,
+            cross_feature_unresolved=_cross_feature_unresolved(feature),
+            ignore_pair_tomb=(str(feature or "").lower() in ("history", "ratings")),
+            emit=emit,
+        )
+        blocked_total += max(0, before_blocklist_A - len(add_to_A))
+
+        before_blocklist_B = len(add_to_B)
+        add_to_B = apply_blocklist(
+            ctx.state_store,
+            add_to_B,
+            dst=b,
+            feature=feature,
+            pair_key=pair_key,
+            cross_feature_unresolved=_cross_feature_unresolved(feature),
+            ignore_pair_tomb=(str(feature or "").lower() in ("history", "ratings")),
+            emit=emit,
+        )
+        blocked_total += max(0, before_blocklist_B - len(add_to_B))
 
     manual_blocked = 0
     if manual_blocks_A:
@@ -1787,6 +1793,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             ctx.stats_manual_blocked = int(getattr(ctx, "stats_manual_blocked", 0) or 0) + int(manual_blocked)
         except Exception:
             pass
+        blocked_total += int(manual_blocked)
 
     bb = ((cfg or {}).get("blackbox") if isinstance(cfg, dict) else getattr(cfg, "blackbox", {})) or {}
     use_phantoms = bool(bb.get("enabled") and bb.get("block_adds", True))
@@ -1796,9 +1803,11 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
     guardB = PhantomGuard(src=a, dst=b, feature=feature, ttl_days=bb_ttl_days, enabled=use_phantoms)
 
     if use_phantoms and add_to_A:
-        add_to_A, _ = guardA.filter_adds(add_to_A, _sync_key, _sync_minimal, emit, ctx.state_store, pair_key)
+        add_to_A, blocked_A = guardA.filter_adds(add_to_A, _sync_key, _sync_minimal, emit, ctx.state_store, pair_key)
+        blocked_total += int(blocked_A or 0)
     if use_phantoms and add_to_B:
-        add_to_B, _ = guardB.filter_adds(add_to_B, _sync_key, _sync_minimal, emit, ctx.state_store, pair_key)
+        add_to_B, blocked_B = guardB.filter_adds(add_to_B, _sync_key, _sync_minimal, emit, ctx.state_store, pair_key)
+        blocked_total += int(blocked_B or 0)
 
     if feature == "ratings":
         upd_to_A = [it for it in add_to_A if _present(A_eff, A_alias, it)]
@@ -2202,7 +2211,6 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                         record_unresolved(a, feature, failed_items_A, hint="apply:add:failed")
                     if promoted_A:
                         clear_unresolved(a, feature, promoted_A)
-                        unresolved_new_A_total = max(0, unresolved_new_A_total - len(promoted_A & set(still_unresolved_A)))
                         
                     _emit_item_failures(emit, a, feature, pair_key, failed_A, k2i_A, _bb_A)
                
@@ -2340,7 +2348,6 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                         record_unresolved(b, feature, failed_items_B, hint="apply:add:failed")
                     if promoted_B:
                         clear_unresolved(b, feature, promoted_B)
-                        unresolved_new_B_total = max(0, unresolved_new_B_total - len(promoted_B & set(still_unresolved_B)))
                         
                     _emit_item_failures(emit, b, feature, pair_key, failed_B, k2i_B, _bb_B)
                 
@@ -2591,6 +2598,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         "unresolved_to_B": unresolved_B_total,
         "unresolved": unresolved_total,
         "skipped": skipped_total,
+        "blocked": int(blocked_total),
         "errors": errors_total,
     }
 
