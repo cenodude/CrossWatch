@@ -161,12 +161,13 @@ def test_resolution_matches_ids_guards_wrong_entry(index: Path) -> None:
     assert resolution_matches_ids(None, {"anilist": "813"}) is False
 
 
-def test_existing_config_is_migrated_to_include_simkl_and_history() -> None:
+def test_existing_config_is_migrated_to_include_default_pairs_and_history() -> None:
     from cw_platform.config_base import _normalize_anime_mapping
 
     cfg = {"anime_mapping": {"enabled": True, "use_for_pairs": ["anilist"], "features": ["watchlist", "ratings"]}}
     _normalize_anime_mapping(cfg)
     assert "simkl" in cfg["anime_mapping"]["use_for_pairs"]
+    assert "crosswatch" in cfg["anime_mapping"]["use_for_pairs"]
     assert "history" in cfg["anime_mapping"]["features"]
 
 

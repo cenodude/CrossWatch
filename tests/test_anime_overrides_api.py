@@ -44,6 +44,18 @@ def test_list_is_empty_and_exposes_the_schema(client: TestClient) -> None:
     assert body["schema"]["media_types"] == ["show", "movie"]
 
 
+def test_settings_response_returns_normalized_default_pairs(client: TestClient) -> None:
+    r = client.post(
+        "/api/anime-mapping/settings",
+        json={"enabled": False, "auto_update": True, "use_for_pairs": ["anilist"]},
+    )
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert set(body["anime_mapping"]["use_for_pairs"]) >= {"anilist", "simkl", "crosswatch"}
+
+
 def test_create_then_list(client: TestClient) -> None:
     r = client.post("/api/anime-mapping/overrides", json=_RULE)
     assert r.status_code == 200

@@ -116,6 +116,33 @@ def test_plex_to_simkl_resolves_native_ids(index: Path) -> None:
     assert _kind_group(out) == "shows"
 
 
+# --- CrossWatch as an intermediate anime identity cache -----------------------
+
+
+def test_kodi_to_crosswatch_resolves_native_ids(index: Path) -> None:
+    out = _enrich({"type": "show", "title": "Frieren", "ids": {"anidb": ANIDB}}, "KODI", "CROSSWATCH")
+    ids = out["ids"]
+    assert ids["simkl"] == SIMKL
+    assert ids["mal"] == MAL
+    assert ids["tmdb"] == TMDB
+
+
+def test_crosswatch_to_simkl_can_use_preserved_kodi_native_ids(index: Path) -> None:
+    from providers.sync.simkl._watchlist import _split_buckets
+
+    crosswatch_item = _enrich(
+        {"type": "show", "title": "Frieren", "ids": {"anidb": ANIDB}},
+        "KODI",
+        "CROSSWATCH",
+    )
+    second_hop = _enrich(crosswatch_item, "CROSSWATCH", "SIMKL")
+    payload, unresolved = _split_buckets([second_hop])
+
+    assert unresolved == []
+    assert payload["shows"][0]["ids"]["simkl"] == SIMKL
+    assert payload["shows"][0]["ids"]["anidb"] == ANIDB
+
+
 # --- 3. SIMKL -> MDBList ------------------------------------------------------
 
 

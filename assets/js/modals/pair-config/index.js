@@ -68,7 +68,7 @@ function hasOwn(obj,key){return !!obj&&Object.prototype.hasOwnProperty.call(obj,
 function isTwoWayMode(state){return !!ID("cx-mode-two")?.checked||String(state?.mode||"").toLowerCase().startsWith("two")}
 function anilistCanReceive(state){return isAniList(state?.dst)||(hasAniList(state)&&isTwoWayMode(state))}
 function globalAnimeMappingEnabled(state){return !!state?.cfgRaw?.anime_mapping?.enabled}
-function hasAnimeProvider(state){return hasAniList(state)||isSimkl(state?.src)||isSimkl(state?.dst)}
+function hasAnimeProvider(state){return hasAniList(state)||isSimkl(state?.src)||isSimkl(state?.dst)||isCrossWatch(state?.src)||isCrossWatch(state?.dst)}
 function tmdbMetadataReady(state){return !!String(state?.cfgRaw?.tmdb?.api_key||state?.cfgRaw?.metadata?.tmdb_api_key||"").trim()}
 function collectionRouteSupported(state){
   const sourceOk=isPlex(state?.src)||isEmby(state?.src)||isJelly(state?.src)||isTrakt(state?.src)||isMDBList(state?.src)||isCrossWatch(state?.src)||isPunchPlay(state?.src);

@@ -763,7 +763,7 @@ DEFAULT_CFG: dict[str, Any] = {
         "release_tag": "v3",                            # AniBridge release tag
         "refresh_hours": 24,                            # Minimum age before an automatic refresh is considered
         "stale_after_days": 14,                         # UI/status warning threshold
-        "use_for_pairs": ["anilist", "simkl"],          # Providers that activate anime mapping when present in a pair ("*" = any pair)
+        "use_for_pairs": ["anilist", "simkl", "crosswatch"],  # Providers that activate anime mapping when present in a pair ("*" = any pair)
         "features": ["watchlist", "ratings", "history"],  # Sync features where anime mapping may apply; history is opt-in per pair
     },
 
@@ -2047,7 +2047,7 @@ def _normalize_scheduling(cfg: dict[str, Any]) -> None:
     adv["workflows"] = wf_out
 
 
-ANIME_MAPPING_PAIRS_DEFAULT: list[str] = ["anilist", "simkl"]
+ANIME_MAPPING_PAIRS_DEFAULT: list[str] = ["anilist", "simkl", "crosswatch"]
 ANIME_MAPPING_FEATURES_DEFAULT: list[str] = ["watchlist", "ratings", "history"]
 
 

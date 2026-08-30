@@ -120,6 +120,13 @@ def api_anime_mapping_settings(payload: dict[str, Any] | None = Body(default=Non
 
         cfg["anime_mapping"] = block
         save_config(cfg)
+        normalized_cfg = load_config() or cfg
+        normalized_block = (
+            normalized_cfg.get("anime_mapping")
+            if isinstance(normalized_cfg.get("anime_mapping"), dict)
+            else block
+        )
+        block = dict(normalized_block or {})
         log(
             "settings_saved",
             level="debug",
@@ -131,7 +138,7 @@ def api_anime_mapping_settings(payload: dict[str, Any] | None = Body(default=Non
                 "use_for_pairs": ",".join(_provider_list(block.get("use_for_pairs")) or ANIME_MAPPING_PAIRS_DEFAULT),
             },
         )
-        st = mapping_status(cfg=cfg)
+        st = mapping_status(cfg=normalized_cfg)
         bootstrap = None
         bootstrap_error = ""
         if bool(block.get("enabled", False)) and not bool(st.get("installed") and st.get("index_ready")):
