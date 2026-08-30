@@ -277,13 +277,30 @@
 
   function openTitleSearchEditor(row, anchor, refs, ctx = {}) {
     ctx.openPopup(anchor, (pop, close) => {
-      const title = document.createElement("div");
-      title.className = "cw-pop-title";
-      title.textContent = "Search metadata";
-      pop.appendChild(title);
+      pop.classList.add("cw-metadata-search-pop");
+
+      const head = document.createElement("div");
+      head.className = "cw-meta-search-head";
+      head.innerHTML = `
+        <span class="material-symbols-rounded cw-meta-search-head-icon" aria-hidden="true">search</span>
+        <div class="cw-meta-search-title">Search metadata</div>
+      `;
+      const headClose = document.createElement("button");
+      headClose.type = "button";
+      headClose.className = "cw-meta-search-close";
+      headClose.setAttribute("aria-label", "Close search metadata");
+      headClose.innerHTML = '<span class="material-symbols-rounded" aria-hidden="true">close</span>';
+      headClose.onclick = close;
+      head.appendChild(headClose);
+      pop.appendChild(head);
 
       const bar = document.createElement("div");
       bar.className = "cw-search-bar";
+
+      const titleField = document.createElement("label");
+      titleField.className = "cw-meta-search-field cw-meta-search-field-title";
+      titleField.htmlFor = "cw_meta_search_title";
+      titleField.appendChild(document.createTextNode("Title"));
 
       const qInput = document.createElement("input");
       qInput.type = "text";
@@ -291,7 +308,21 @@
       qInput.name = qInput.id;
       qInput.placeholder = "Title...";
       qInput.value = row.title || "";
-      bar.appendChild(qInput);
+      const qWrap = document.createElement("div");
+      qWrap.className = "cw-meta-search-input-wrap";
+      qWrap.appendChild(qInput);
+      const qIcon = document.createElement("span");
+      qIcon.className = "material-symbols-rounded cw-meta-search-inline-icon";
+      qIcon.setAttribute("aria-hidden", "true");
+      qIcon.textContent = "search";
+      qWrap.appendChild(qIcon);
+      titleField.appendChild(qWrap);
+      bar.appendChild(titleField);
+
+      const yearField = document.createElement("label");
+      yearField.className = "cw-meta-search-field";
+      yearField.htmlFor = "cw_meta_search_year";
+      yearField.appendChild(document.createTextNode("Year"));
 
       const yearInput = document.createElement("input");
       yearInput.type = "number";
@@ -299,21 +330,52 @@
       yearInput.name = yearInput.id;
       yearInput.placeholder = "Year";
       if (row.year) yearInput.value = row.year;
-      bar.appendChild(yearInput);
+      const yearWrap = document.createElement("div");
+      yearWrap.className = "cw-meta-search-input-wrap";
+      yearWrap.appendChild(yearInput);
+      const yearIcon = document.createElement("span");
+      yearIcon.className = "material-symbols-rounded cw-meta-search-inline-icon";
+      yearIcon.setAttribute("aria-hidden", "true");
+      yearIcon.textContent = "calendar_month";
+      yearWrap.appendChild(yearIcon);
+      yearField.appendChild(yearWrap);
+      bar.appendChild(yearField);
 
-      const typeSelect = document.createElement("select");
-      typeSelect.id = "cw_meta_search_type";
-      typeSelect.name = typeSelect.id;
-      [["movie", "Movie"], ["show", "Show"], ["anime", "Anime"]].forEach(([val, label]) => {
-        const opt = document.createElement("option");
-        opt.value = val;
-        opt.textContent = label;
-        typeSelect.appendChild(opt);
+      const typeOptions = [["all", "All"], ["movie", "Movie"], ["show", "TV Show"]];
+      let typeValue = row.type === "show" || row.type === "episode" ? "show" : row.type === "anime" ? "all" : "movie";
+
+      const typeField = document.createElement("div");
+      typeField.className = "cw-meta-search-field cw-meta-search-type-field";
+      const typeLabel = document.createElement("div");
+      typeLabel.className = "cw-meta-search-label";
+      typeLabel.textContent = "Type";
+      const typeSegment = document.createElement("div");
+      typeSegment.className = "cw-meta-type-segment";
+      typeSegment.setAttribute("role", "group");
+      typeSegment.setAttribute("aria-label", "Metadata type");
+      typeOptions.forEach(([val, label]) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "cw-meta-type-option";
+        btn.dataset.value = val;
+        btn.textContent = label;
+        btn.addEventListener("click", () => {
+          typeValue = val;
+          syncTypeSegment();
+        });
+        typeSegment.appendChild(btn);
       });
-      typeSelect.value = row.type === "anime" ? "anime" : row.type === "show" || row.type === "episode" ? "show" : "movie";
-      bar.appendChild(typeSelect);
+      typeField.append(typeLabel, typeSegment);
+      bar.appendChild(typeField);
 
       pop.appendChild(bar);
+
+      const footer = document.createElement("div");
+      footer.className = "cw-meta-search-footer";
+
+      const status = document.createElement("div");
+      status.className = "cw-search-status";
+      footer.appendChild(status);
 
       const actions = document.createElement("div");
       actions.className = "cw-pop-actions";
@@ -321,7 +383,7 @@
       const searchBtn = document.createElement("button");
       searchBtn.type = "button";
       searchBtn.className = "cw-pop-btn primary";
-      searchBtn.textContent = "Search";
+      searchBtn.innerHTML = '<span class="material-symbols-rounded" aria-hidden="true">search</span><span>Search</span>';
       actions.appendChild(searchBtn);
 
       const closeBtn = document.createElement("button");
@@ -331,15 +393,22 @@
       closeBtn.onclick = close;
       actions.appendChild(closeBtn);
 
-      pop.appendChild(actions);
-
-      const status = document.createElement("div");
-      status.className = "cw-search-status";
-      pop.appendChild(status);
+      footer.appendChild(actions);
+      pop.appendChild(footer);
 
       const resultsBox = document.createElement("div");
       resultsBox.className = "cw-search-results";
       pop.appendChild(resultsBox);
+
+      function syncTypeSegment() {
+        const selected = String(typeValue || "all");
+        typeSegment.querySelectorAll(".cw-meta-type-option").forEach(btn => {
+          const active = btn.dataset.value === selected;
+          btn.classList.toggle("active", active);
+          btn.setAttribute("aria-pressed", active ? "true" : "false");
+        });
+      }
+      syncTypeSegment();
 
       async function doSearch() {
         const q = (qInput.value || "").trim();
@@ -349,7 +418,7 @@
           resultsBox.innerHTML = "";
           return;
         }
-        const typ = String(typeSelect.value || "").toLowerCase();
+        const typ = String(typeValue || "").toLowerCase();
         const makeUrl = t => {
           let u = `/api/metadata/search?q=${encodeURIComponent(q)}&typ=${encodeURIComponent(t)}`;
           if (!Number.isNaN(yearVal)) u += `&year=${yearVal}`;
@@ -360,7 +429,7 @@
         resultsBox.innerHTML = "";
         try {
           let items = [];
-          if (typ === "anime") {
+          if (typ === "all") {
             const [showRes, movieRes] = await Promise.all([ctx.fetchJSON(makeUrl("show")), ctx.fetchJSON(makeUrl("movie"))]);
 
             const showOk = !!(showRes && showRes.ok !== false);
@@ -380,7 +449,7 @@
             const seen = new Set();
             items = items.filter(it => {
               const k = `${String(it.tmdb || "")}:${String(it.type || "")}`;
-              if (!k || seen.has(k)) return false;
+              if (seen.has(k)) return false;
               seen.add(k);
               return true;
             });
@@ -453,7 +522,7 @@
             if (item.year) bits.push(String(item.year));
             bits.push(item.type === "show" ? "TV" : "Movie");
             if (item.tmdb) bits.push(`TMDb ${item.tmdb}`);
-            meta.textContent = bits.join(" - ");
+            meta.textContent = bits.join(" • ");
             content.appendChild(meta);
 
             if (item.overview) {
@@ -478,11 +547,12 @@
                 refs.yearIn.value = row.year;
               }
 
-              const wantsAnime = String(typeSelect.value || "").toLowerCase() === "anime";
+              const selectedType = String(typeValue || "").toLowerCase();
+              const preserveAnime = String(row.type || "").toLowerCase() === "anime" && selectedType === "all";
               const pickedType = String(picked.type || "movie").toLowerCase();
 
-              const newType = wantsAnime ? "anime" : pickedType;
-              const resolveEntity = wantsAnime ? picked._resolve_entity || pickedType || "movie" : newType;
+              const newType = preserveAnime ? "anime" : pickedType;
+              const resolveEntity = picked._resolve_entity || newType;
 
               row.type = newType;
               row.raw.type = newType;
@@ -570,7 +640,7 @@
             resultsBox.appendChild(btn);
           });
 
-          status.textContent = `${items.length} result${items.length === 1 ? "" : "s"} found.`;
+          status.textContent = `${items.length} result${items.length === 1 ? "" : "s"} found`;
         } catch (err) {
           console.error("search failed", err);
           status.textContent = "Search failed.";
@@ -588,7 +658,7 @@
 
       if ((row.title || "").trim().length >= 3) doSearch();
       else status.textContent = "Enter a title and press Enter or Search.";
-    });
+    }, { closeOnOutside: false, trackAnchorOnScroll: true });
   }
 
   Editor.MetadataReplacer = {
