@@ -474,6 +474,7 @@ def test_editor_metadata_replacer_is_extracted() -> None:
     root = Path(__file__).resolve().parents[1]
     js = (root / "assets" / "js" / "editor.js").read_text(encoding="utf-8")
     meta_js = (root / "assets" / "js" / "editor" / "metadata-replacer.js").read_text(encoding="utf-8")
+    css = (root / "assets" / "css" / "pages.css").read_text(encoding="utf-8")
     core_js = (root / "assets" / "helpers" / "core.js").read_text(encoding="utf-8")
     assert 'await ensurePageModule("editor-metadata-replacer", "/assets/js/editor/metadata-replacer.js", "CrossWatchEditorMetadataReplacer");' in core_js
     assert "function metadataReplacerContext()" in js
@@ -485,6 +486,18 @@ def test_editor_metadata_replacer_is_extracted() -> None:
     assert "function openEpisodeReplacer(row, anchor, ctx = {})" in meta_js
     assert "function coordinateKeyFor(row, season, episode)" in meta_js
     assert "Search metadata" in meta_js
+    assert 'pop.classList.add("cw-metadata-search-pop");' in meta_js
+    assert "cw-meta-search-head" in meta_js
+    assert "cw-meta-type-segment" in meta_js
+    assert "}, { closeOnOutside: false, trackAnchorOnScroll: true });" in meta_js
+    assert '[["all", "All"], ["movie", "Movie"], ["show", "TV Show"]]' in meta_js
+    assert 'document.createElement("select")' not in meta_js
+    assert 'searchBtn.innerHTML = \'<span class="material-symbols-rounded" aria-hidden="true">search</span><span>Search</span>\';' in meta_js
+    assert ".cw-pop.cw-metadata-search-pop{width:min(480px" in css
+    assert ".cw-pop.cw-metadata-search-pop .cw-search-results{max-height:220px" in css
+    assert ".cw-metadata-search-pop .cw-search-bar{display:grid;grid-template-columns:minmax(0,1fr)minmax(0,1.5fr)" in css
+    assert ".cw-metadata-search-pop .cw-meta-type-option.active" in css
+    assert "html[data-cw-theme]:not([data-cw-theme=\"flat-light\"]) body .cw-pop.cw-metadata-search-pop .cw-search-bar{background:transparent!important" in css
     assert "Replace episode" in meta_js
     assert "function correctedEpisodeItem" not in js
     assert "const EPISODE_ID_FIELDS" not in js
@@ -695,6 +708,16 @@ def test_editor_uses_page_scroll_for_table() -> None:
     assert '#page-editor .cw-table-scroll{position:static!important;inset:auto!important;overflow:visible!important;border-radius:22px!important}' in css
     assert "cw-table-overflow-x" in css
     assert ".cw-pop.cw-columns-pop{width:min(370px" not in css
+    popup_pos = js[js.index("function positionPopup(pop, anchor)"):js.index("function openPopup(anchor, builder, opts = {})")]
+    assert "let left = rect.left;" in popup_pos
+    assert "let top = rect.bottom + margin;" in popup_pos
+    assert "window.scrollX" not in popup_pos
+    assert "window.scrollY" not in popup_pos
+    popup_open = js[js.index("function openPopup(anchor, builder, opts = {})"):js.index("function formatHistoryLabel(iso)")]
+    assert "if (opts.closeOnOutside !== false) document.addEventListener(\"mousedown\", onDoc);" in popup_open
+    assert "opts.trackAnchorOnScroll === true" in popup_open
+    assert "document.addEventListener(\"scroll\", popupState.onScroll, true);" in popup_open
+    assert "window.addEventListener(\"resize\", popupState.onResize);" in popup_open
     assert "columnOrder: state.columnOrder" in js
     assert "columnWidths: state.columnWidths" in js
     assert "wideView: state.wideView" in js

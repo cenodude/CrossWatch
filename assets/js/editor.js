@@ -1222,6 +1222,9 @@
     if (!activePopup) return;
     document.removeEventListener("mousedown", activePopup.onDoc);
     document.removeEventListener("keydown", activePopup.onKey);
+    if (activePopup.onScroll) document.removeEventListener("scroll", activePopup.onScroll, true);
+    if (activePopup.onResize) window.removeEventListener("resize", activePopup.onResize);
+    if (activePopup.repositionFrame) cancelAnimationFrame(activePopup.repositionFrame);
     if (activePopup.node && activePopup.node.parentNode) {
       activePopup.node.parentNode.removeChild(activePopup.node);
     }
@@ -1233,15 +1236,15 @@
     const margin = 8;
     const viewportWidth = document.documentElement.clientWidth;
     const viewportHeight = document.documentElement.clientHeight;
-    let left = rect.left + window.scrollX;
-    let top = rect.bottom + margin + window.scrollY;
+    let left = rect.left;
+    let top = rect.bottom + margin;
     const width = pop.offsetWidth;
     const height = pop.offsetHeight;
-    if (left + width + margin > window.scrollX + viewportWidth) {
-      left = window.scrollX + viewportWidth - width - margin;
+    if (left + width + margin > viewportWidth) {
+      left = viewportWidth - width - margin;
     }
-    if (top + height + margin > window.scrollY + viewportHeight) {
-      top = rect.top + window.scrollY - height - margin;
+    if (top + height + margin > viewportHeight) {
+      top = rect.top - height - margin;
     }
     if (left < margin) left = margin;
     if (top < margin) top = margin;
@@ -1249,7 +1252,7 @@
     pop.style.top = top + "px";
   }
 
-  function openPopup(anchor, builder) {
+  function openPopup(anchor, builder, opts = {}) {
     closePopup();
     const pop = document.createElement("div");
     pop.className = "cw-pop";
@@ -1269,9 +1272,28 @@
     const onKey = ev => {
       if (ev.key === "Escape") closePopup();
     };
-    activePopup = { node: pop, onDoc, onKey };
-    document.addEventListener("mousedown", onDoc);
+    const popupState = { node: pop, onDoc, onKey, onScroll: null, onResize: null, repositionFrame: 0 };
+    const onReposition = () => {
+      if (popupState.repositionFrame) return;
+      popupState.repositionFrame = requestAnimationFrame(() => {
+        popupState.repositionFrame = 0;
+        if (!activePopup || activePopup.node !== pop) return;
+        if (!document.body.contains(anchor)) {
+          closePopup();
+          return;
+        }
+        positionPopup(pop, anchor);
+      });
+    };
+    if (opts.trackAnchorOnScroll === true) {
+      popupState.onScroll = onReposition;
+      popupState.onResize = onReposition;
+    }
+    activePopup = popupState;
+    if (opts.closeOnOutside !== false) document.addEventListener("mousedown", onDoc);
     document.addEventListener("keydown", onKey);
+    if (popupState.onScroll) document.addEventListener("scroll", popupState.onScroll, true);
+    if (popupState.onResize) window.addEventListener("resize", popupState.onResize);
   }
 
   function formatHistoryLabel(iso) {
