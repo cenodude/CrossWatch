@@ -27,7 +27,7 @@ from .nuvio import _watchlist as feat_watchlist
 from .nuvio._common import pull_library_rows, pull_watch_progress_rows, pull_watched_rows
 from cw_platform.provider_instances import normalize_instance_id
 
-__VERSION__ = "0.4"
+__VERSION__ = "0.5"
 __all__ = ["get_manifest", "NUVIOModule", "OPS"]
 
 if "ctx" not in globals():

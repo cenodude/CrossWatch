@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -38,6 +38,7 @@ __all__ = [
     "content_id_key",
     "epoch_ms",
     "ids_for_content_id",
+    "enrich_external_ids",
     "is_configured",
     "iso_from_epoch_ms",
     "library_lock",
@@ -53,6 +54,7 @@ __all__ = [
     "resolve_episode",
     "rpc",
     "selected_profile_id",
+    "unresolved_result_keys",
     "to_int",
 ]
 
@@ -148,6 +150,61 @@ def ids_for_content_id(content_id: Any) -> dict[str, str] | None:
         if value.isdigit():
             return {"tmdb": value}
     return None
+
+
+def enrich_external_ids(adapter: Any, item: Mapping[str, Any], *, entity: str) -> dict[str, Any]:
+    out = dict(item or {})
+    content_ids = ids_for_content_id(out.get("_nuvio_content_id") or out.get("content_id"))
+    tmdb = str((content_ids or {}).get("tmdb") or "").strip()
+    if not tmdb:
+        ids_raw = out.get("show_ids") if str(entity or "").lower() == "tv" and isinstance(out.get("show_ids"), Mapping) else out.get("ids")
+        ids = ids_raw if isinstance(ids_raw, Mapping) else {}
+        tmdb = str(ids.get("tmdb") or "").strip()
+    if not tmdb.isdigit():
+        return out
+
+    cache = getattr(adapter, "_nuvio_external_ids_cache", None)
+    if not isinstance(cache, dict):
+        cache = {}
+        try:
+            setattr(adapter, "_nuvio_external_ids_cache", cache)
+        except Exception:
+            pass
+
+    ent = "tv" if str(entity or "").strip().lower() in {"tv", "show", "series"} else "movie"
+    cache_key = (ent, tmdb)
+    ids_extra = cache.get(cache_key)
+    if ids_extra is None:
+        provider = _tmdb_metadata_provider(adapter)
+        if provider is None:
+            cache[cache_key] = {}
+            return out
+        try:
+            detail = provider.fetch(entity=ent, ids={"tmdb": tmdb}, need={"poster": False, "backdrop": False, "ids": True})
+        except Exception:
+            cache[cache_key] = {}
+            return out
+        raw = detail.get("ids") if isinstance(detail, Mapping) else None
+        ids_extra = merge_ids({"tmdb": tmdb}, raw if isinstance(raw, Mapping) else {})
+        cache[cache_key] = ids_extra
+
+    if not isinstance(ids_extra, Mapping) or not ids_extra:
+        return out
+
+    ids_cur = out.get("ids") if isinstance(out.get("ids"), Mapping) else {}
+    merged_ids = merge_ids(ids_cur, ids_extra)
+    if merged_ids:
+        out["ids"] = merged_ids
+
+    if str(out.get("type") or "").strip().lower() in {"episode", "season", "show"} or ent == "tv":
+        show_ids_cur = out.get("show_ids") if isinstance(out.get("show_ids"), Mapping) else {}
+        merged_show_ids = merge_ids(show_ids_cur, ids_extra)
+        if merged_show_ids:
+            out["show_ids"] = merged_show_ids
+            if str(out.get("type") or "").strip().lower() in {"episode", "season"}:
+                out["ids"] = merge_ids(out.get("ids") if isinstance(out.get("ids"), Mapping) else {}, merged_show_ids)
+
+    return out
 
 
 def content_id_for_item(item: Mapping[str, Any]) -> str | None:
@@ -302,6 +359,29 @@ def make_item(
 
 def canonical_item_key(item: Mapping[str, Any]) -> str:
     return canonical_key(id_minimal(item))
+
+
+def unresolved_result_keys(unresolved: Iterable[Mapping[str, Any]]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for row in unresolved or []:
+        if not isinstance(row, Mapping):
+            continue
+        key = ""
+        for field in ("key", "_cw_key", "canonical_key"):
+            raw = str(row.get(field) or "").strip()
+            if raw:
+                key = raw
+                break
+        if not key:
+            item = row.get("item")
+            if isinstance(item, Mapping):
+                key = canonical_item_key(item)
+        if not key or key == "unknown:" or key in seen:
+            continue
+        seen.add(key)
+        out.append(key)
+    return out
 
 
 def payload_item_key(payload: Mapping[str, Any]) -> str:

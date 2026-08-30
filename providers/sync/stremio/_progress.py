@@ -293,12 +293,16 @@ def build_index(adapter: Any, **kwargs: Any) -> dict[str, dict[str, Any]]:
     return out
 
 
-def _unresolved(item: Mapping[str, Any], reason: str) -> dict[str, Any]:
-    return {"status": "unresolved", "reason": reason, "item": id_minimal(item)}
+def _unresolved(item: Mapping[str, Any], reason: str, key: str | None = None) -> dict[str, Any]:
+    out = {"status": "unresolved", "reason": reason, "item": id_minimal(item)}
+    if key:
+        out["key"] = key
+        out["canonical_key"] = key
+    return out
 
 
 def _api_failure(item: Mapping[str, Any], key: str, exc: StremioAuthError, fallback: str) -> dict[str, Any]:
-    entry = {"status": "failed", "reason": str(getattr(exc, "reason", "") or fallback), "item": id_minimal(item), "canonical_key": key}
+    entry = {"status": "failed", "reason": str(getattr(exc, "reason", "") or fallback), "item": id_minimal(item), "key": key, "canonical_key": key}
     detail = str(getattr(exc, "detail", "") or "").replace("\n", " ").replace("\r", " ").strip()
     if detail:
         for token in ("authKey", "auth_key", "password"):
@@ -359,7 +363,7 @@ def _write(adapter: Any, items: Iterable[Mapping[str, Any]], clear: bool, *, dry
         item = _metadata_enriched(adapter, item, typ)
         stremio_id = stremio_write_id_for_item(item)
         if not stremio_id or typ not in {"movie", "episode", "episodes"}:
-            entry = _unresolved(item, "stremio_id_missing")
+            entry = _unresolved(item, "stremio_id_missing", key)
             unresolved.append(entry)
             results.append(entry)
             continue
@@ -376,7 +380,7 @@ def _write(adapter: Any, items: Iterable[Mapping[str, Any]], clear: bool, *, dry
 
             read_merge_write(adapter, stremio_id, "movie" if typ == "movie" else "series", item, mutate)
         except ValueError as exc:
-            entry = _unresolved(item, str(exc) or "stremio_progress_write_failed")
+            entry = _unresolved(item, str(exc) or "stremio_progress_write_failed", key)
             unresolved.append(entry)
             results.append(entry)
             continue
@@ -386,7 +390,7 @@ def _write(adapter: Any, items: Iterable[Mapping[str, Any]], clear: bool, *, dry
             results.append(entry)
             continue
         except Exception:
-            entry = {"status": "failed", "reason": "stremio_progress_write_failed", "item": id_minimal(item), "canonical_key": key}
+            entry = {"status": "failed", "reason": "stremio_progress_write_failed", "item": id_minimal(item), "key": key, "canonical_key": key}
             unresolved.append(entry)
             results.append(entry)
             continue

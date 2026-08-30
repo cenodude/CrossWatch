@@ -17,7 +17,7 @@ from providers.sync.stremio import _ratings as feat_ratings
 from providers.sync.stremio import _watchlist as feat_watchlist
 from providers.sync.stremio._common import DEFAULT_STREMIO_PROFILE_ID, datastore_meta, is_capture_mode, is_configured, read_drop_unresolved_items
 
-__VERSION__ = "0.2"
+__VERSION__ = "0.3"
 __all__ = ["get_manifest", "STREMIOModule", "OPS", "feat_history", "feat_progress", "feat_ratings", "feat_watchlist"]
 
 if "ctx" not in globals():
