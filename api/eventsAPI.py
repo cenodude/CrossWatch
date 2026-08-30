@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import json
 import logging
 import math
 from collections import Counter, defaultdict
@@ -40,7 +41,7 @@ from cw_platform.event_archive import (
 from cw_platform.event_archive.groups import run_problem_items as _run_problem_items
 from cw_platform.access_policy import filter_pairs_for_user, pair_refs, request_user, user_can_access_instance
 from cw_platform.config_base import load_config
-from cw_platform.provider_instances import normalize_instance_id
+from cw_platform.provider_instances import instances_for_user_profile, normalize_instance_id, provider_display_key
 from cw_platform.reason_labels import friendly_reason
 
 router = APIRouter(prefix="/api/events", tags=["events"])
@@ -152,6 +153,199 @@ def _filter_event_payload(cfg: dict[str, Any], request: Request | None, payload:
             if key == "items":
                 out["total"] = len(out[key])
     return out
+
+
+def _effective_profile_from_request(request: Request | None, requested: str) -> str:
+    try:
+        from api.appAuthAPI import COOKIE_NAME, effective_user_profile_id
+
+        cfg = load_config() or {}
+        token = request.cookies.get(COOKIE_NAME) if request is not None else None
+        return effective_user_profile_id(cfg, token, requested)
+    except Exception:
+        return "__none__"
+
+
+def _profile_filter(cfg: dict[str, Any], profile: str) -> dict[str, set[str]]:
+    pid = str(profile or "").strip()
+    if not pid:
+        return {}
+    try:
+        raw = instances_for_user_profile(cfg, pid)
+    except Exception:
+        raw = {}
+    return {
+        provider_display_key(provider): {normalize_instance_id(inst) for inst in (instances or [])}
+        for provider, instances in raw.items()
+    }
+
+
+def _row_matches_profile_filter(row: dict[str, Any], user_filter: dict[str, set[str]]) -> bool:
+    if not user_filter:
+        return True
+    for provider, instance in _event_refs(row):
+        prov = provider_display_key(provider)
+        if prov and normalize_instance_id(instance) in user_filter.get(prov, set()):
+            return True
+    return False
+
+
+def _detail_map(row: dict[str, Any]) -> dict[str, Any]:
+    detail = row.get("detail")
+    if isinstance(detail, dict):
+        return detail
+    if isinstance(detail, str) and detail:
+        try:
+            parsed = json.loads(detail)
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+
+def _provider_route(row: dict[str, Any], events: list[dict[str, Any]]) -> str:
+    def pick(key: str) -> str:
+        val = str(row.get(key) or "").strip()
+        if val:
+            return val.upper()
+        for event in events:
+            val = str(event.get(key) or "").strip()
+            if val:
+                return val.upper()
+        return ""
+
+    src = pick("source_provider") or pick("origin_provider")
+    dst = pick("destination_provider")
+    if src and dst and src != dst:
+        return f"{src} -> {dst}"
+    return dst or src
+
+
+def _event_source_kind(events: list[dict[str, Any]]) -> str:
+    for event in reversed(events):
+        kind = str(event.get("source_kind") or "").strip().lower()
+        if kind:
+            return kind
+    return ""
+
+
+def _scheduler_source(events: list[dict[str, Any]]) -> str:
+    for event in events:
+        detail = _detail_map(event)
+        source = str(detail.get("source") or "").strip().lower()
+        mode = str(detail.get("scheduler_mode") or "").strip().lower()
+        if source in {"scheduler", "scheduler_event"} or mode:
+            return mode or source
+    return ""
+
+
+def _first_text(row: dict[str, Any], events: list[dict[str, Any]], key: str) -> str:
+    val = str(row.get(key) or "").strip()
+    if val:
+        return val
+    for event in events:
+        val = str(event.get(key) or "").strip()
+        if val:
+            return val
+    return ""
+
+
+def _scrobble_summary_parts(summary: str) -> dict[str, str]:
+    text = str(summary or "").strip()
+    if not text:
+        return {}
+    action = "Watching" if text.lower().startswith("watching ") else ""
+    body = text[len(action):].strip() if action else text
+    title = body
+    destination = ""
+    progress = ""
+    if " -> " in body:
+        title, rest = body.split(" -> ", 1)
+    elif " \u2192 " in body:
+        title, rest = body.split(" \u2192 ", 1)
+    else:
+        rest = ""
+    if rest:
+        bits = [part.strip() for part in rest.split(",") if part.strip()]
+        destination = bits[0] if bits else ""
+        progress = next((part for part in bits[1:] if part.endswith("%")), "")
+    return {"action": action, "title": title.strip(), "destination": destination, "progress": progress}
+
+
+def _feed_item(group: dict[str, Any], events: list[dict[str, Any]]) -> dict[str, Any]:
+    domain = str(group.get("domain") or "").strip().lower()
+    operation = str(group.get("operation") or "").strip().lower()
+    status = str(group.get("status") or "").strip().lower()
+    severity = str(group.get("severity") or "").strip().lower()
+    summary = str(group.get("summary") or "").strip()
+    source_kind = _event_source_kind(events)
+    scheduler_mode = _scheduler_source(events)
+    route = _provider_route(group, events)
+    item_title = _first_text(group, events, "title")
+    media_type = _first_text(group, events, "media_type")
+    scrobble_parts = _scrobble_summary_parts(summary)
+
+    kind = "sync"
+    icon = "sync"
+    badge = "Sync"
+    title = summary or "Sync activity"
+
+    if domain == "scrobble":
+        kind = "webhook" if source_kind == "webhook" else "watcher"
+        icon = "rss_feed" if kind == "webhook" else "sensors"
+        badge = "Webhook" if kind == "webhook" else "Watcher"
+        item_title = item_title or scrobble_parts.get("title", "")
+        title = item_title or summary or ("Webhook activity" if kind == "webhook" else "Watcher activity")
+    elif scheduler_mode:
+        kind = "scheduler"
+        icon = "event_available"
+        badge = "Scheduler"
+        if operation == "run" and status in {"completed", "failed", "warning"}:
+            title = "Scheduler sync completed" if status == "completed" else "Scheduler sync needs attention"
+    elif operation == "run":
+        icon = "sync"
+        badge = "Sync"
+        if status == "running":
+            title = "Sync run started"
+        elif status == "failed":
+            title = "Sync run failed"
+        elif status == "warning":
+            title = "Sync run completed with issues"
+        else:
+            title = "Sync run completed"
+    elif str(group.get("feature") or "").strip().lower() == "playlists":
+        kind = "playlist"
+        icon = "playlist_play"
+        badge = "Playlist"
+
+    created = int(group.get("last_event_at") or group.get("updated_at") or group.get("created_at") or 0)
+    meta = route or str(group.get("feature") or "").strip().title()
+    if summary and title != summary:
+        meta = f"{meta} - {summary}" if meta else summary
+
+    return {
+        "id": group.get("id"),
+        "kind": kind,
+        "icon": icon,
+        "badge": badge,
+        "title": title,
+        "item_title": item_title,
+        "summary": summary,
+        "meta": meta,
+        "status": status,
+        "severity": severity,
+        "domain": domain,
+        "operation": operation,
+        "feature": group.get("feature"),
+        "media_type": media_type,
+        "route": route,
+        "source_kind": source_kind,
+        "scrobble_action": scrobble_parts.get("action", ""),
+        "scrobble_destination": scrobble_parts.get("destination", ""),
+        "progress": scrobble_parts.get("progress", ""),
+        "event_count": group.get("event_count"),
+        "created_at": created,
+    }
 
 
 def _managed_request(request: Request | None) -> bool:
@@ -441,6 +635,47 @@ def events_recent(
     if str(view).lower() == "events":
         return _ok(_filter_event_payload(cfg, request, _recent(limit=limit, offset=offset, visibility=visibility, order=order, domain=domain)))
     return _ok(_filter_event_payload(cfg, request, _list_groups(visibility=visibility, order=order, limit=limit, offset=offset, domain=domain)))
+
+
+@router.get("/feed")
+def events_feed(
+    limit: int = Query(8, ge=1, le=50),
+    visibility: str = Query("all"),
+    user_profile: str = Query(""),
+    request: Request = cast(Request, None),
+) -> JSONResponse:
+    cfg = load_config() or {}
+    profile = _effective_profile_from_request(request, user_profile)
+    scoped = bool(str(profile or "").strip())
+    profile_filter = _profile_filter(cfg, profile) if scoped else {}
+    if scoped and not profile_filter:
+        return _ok({"ok": True, "items": [], "total": 0, "limit": limit, "user_profile": profile})
+
+    sample_limit = max(50, min(500, int(limit or 8) * 20))
+    rows: list[dict[str, Any]] = []
+    for domain in ("sync", "scrobble"):
+        payload = _list_groups(visibility=visibility, order="newest", limit=sample_limit, offset=0, domain=domain)
+        for group in payload.get("items") or []:
+            if not isinstance(group, dict):
+                continue
+            if not _event_row_allowed(cfg, request, group):
+                continue
+            events = [
+                event for event in (_group_events(group.get("id"), order="asc", limit=250, offset=0).get("items") or [])
+                if isinstance(event, dict)
+            ]
+            if scoped and not (_row_matches_profile_filter(group, profile_filter) or any(_row_matches_profile_filter(event, profile_filter) for event in events)):
+                continue
+            rows.append(_feed_item(group, events))
+
+    rows.sort(key=lambda item: int(item.get("created_at") or 0), reverse=True)
+    return _ok({
+        "ok": True,
+        "items": rows[:limit],
+        "total": len(rows),
+        "limit": limit,
+        **({"user_profile": profile} if scoped else {}),
+    })
 
 
 @router.get("/search")

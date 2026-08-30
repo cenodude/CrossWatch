@@ -43,6 +43,7 @@
   };
   const visibleCounts = { history: GRID_PAGE_STEP, ratings: RATING_PAGE_STEP, scrobble: GRID_PAGE_STEP, progress: GRID_PAGE_STEP, playlists: GRID_PAGE_STEP };
   const latestItems = { history: [], ratings: [], scrobble: [], progress: [], playlists: [] };
+  const loadedWidgetKinds = new Set();
   const EMPTY_META = {
     history: { title: "No history yet", copy: "Watched items will appear here." },
     ratings: { title: "No ratings yet", copy: "Your ratings and scores will appear here." },
@@ -208,6 +209,7 @@
       const [chipId, chipLabel] = WIDGET_COUNT_CHIPS[kind];
       setCountChip(chipId, block.total ?? items.length, chipLabel);
       latestItems[kind] = items;
+      loadedWidgetKinds.add(kind);
       renderWidget(kind);
       applied += 1;
     }
@@ -1506,7 +1508,7 @@
     if (!requestedKinds.length) return () => {};
     const timer = window.setTimeout(() => {
       for (const kind of requestedKinds) {
-        if (!latestItems[kind]?.length) setLoading(hosts[kind], kind);
+        if (!loadedWidgetKinds.has(kind)) setLoading(hosts[kind], kind);
       }
     }, WIDGET_LOADING_DELAY_MS);
     return () => window.clearTimeout(timer);

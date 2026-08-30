@@ -1100,6 +1100,7 @@ def test_non_admin_permissions_gate_feature_reads() -> None:
     assert crosswatch._non_admin_permission_allowed(user, "/api/dashboard/widgets") is True
     assert crosswatch._non_admin_permission_allowed(user, "/api/state/wall") is True
     assert crosswatch._non_admin_permission_allowed(user, "/api/activity/recent") is True
+    assert crosswatch._non_admin_permission_allowed(user, "/api/events/feed") is True
     assert crosswatch._non_admin_permission_allowed(user, "/api/watch/currently_watching") is True
     assert crosswatch._non_admin_permission_allowed(user, "/api/status") is True
     assert crosswatch._non_admin_permission_allowed(user, "/api/pairs") is True

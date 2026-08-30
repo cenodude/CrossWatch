@@ -219,17 +219,240 @@
     progress: `<div class="cw-cw-card cw-dash-skeleton cw-dash-skeleton-row cw-profile-skel" aria-hidden="true"><span class="cw-cw-art cw-skel-block"></span>${skelLines}</div>`,
     watchlist: `<div class="cw-profile-row cw-dash-skeleton cw-dash-skeleton-row cw-profile-skel" aria-hidden="true"><span class="cw-skel-block"></span>${skelLines}<span class="cw-profile-skel-pill cw-skel-dot"></span></div>`,
     stats: `<div class="cw-profile-stat cw-dash-skeleton cw-dash-skeleton-row cw-profile-skel" aria-hidden="true"><span class="cw-profile-skel-icon cw-skel-block"></span>${skelLines}</div>`,
+    activity: `<div class="cw-profile-activity-row cw-dash-skeleton cw-dash-skeleton-row cw-profile-skel" aria-hidden="true"><span class="material-symbols-rounded cw-skel-block"></span>${skelLines}<small class="cw-skel-line cw-skel-line--meta"></small></div>`,
     collection: `<div class="cw-collection-skel cw-dash-skeleton cw-profile-skel" aria-hidden="true"><span class="cw-collection-skel-art cw-skel-block"></span>${skelLines}</div>`,
     collectionRow: `<div class="cw-collection-skel cw-collection-skel--row cw-dash-skeleton cw-profile-skel" aria-hidden="true"><span class="cw-collection-skel-art cw-skel-block"></span>${skelLines}</div>`,
   };
   const skeleton = (kind, count) => Array.from({ length: count }, () => skelShapes[kind]).join("");
 
   function paintOverviewSkeletons() {
-    const hosts = [["#profile-progress", "progress", 3], ["#profile-watchlist", "watchlist", 3], ["#profile-quick-stats", "stats", 6]];
+    const hosts = [["#profile-progress", "progress", 3], ["#profile-watchlist", "watchlist", 3], ["#profile-activity", "activity", 4], ["#profile-quick-stats", "stats", 6]];
     for (const [sel, kind, count] of hosts) {
       const host = $(sel);
       if (host) host.innerHTML = skeleton(kind, count);
     }
+  }
+
+  const ACTIVITY_LIMIT = 5;
+  const activityLabel = (row) => {
+    const kind = String(row?.kind || "").toLowerCase();
+    if (kind === "scheduler") return "Scheduler";
+    if (kind === "webhook") return "Webhook";
+    if (kind === "watcher") return "Watcher";
+    if (kind === "playlist") return "Playlist";
+    return "Sync";
+  };
+  const activityIcon = (row) => {
+    const icon = String(row?.icon || "").trim();
+    if (icon) return icon;
+    const kind = String(row?.kind || "").toLowerCase();
+    if (kind === "scheduler") return "event_available";
+    if (kind === "webhook") return "rss_feed";
+    if (kind === "watcher") return "sensors";
+    if (kind === "playlist") return "playlist_play";
+    return "sync";
+  };
+  const activityTone = (row) => {
+    const sev = String(row?.severity || "").toLowerCase();
+    const status = String(row?.status || "").toLowerCase();
+    if (sev === "error" || status === "failed") return "bad";
+    if (sev === "warn" || sev === "warning" || ["warning", "unresolved", "blackboxed"].includes(status)) return "warn";
+    if (status === "running" || status === "pending") return "live";
+    return "ok";
+  };
+  const isScrobbleActivity = (row) => {
+    const kind = String(row?.kind || "").toLowerCase();
+    return kind === "watcher" || kind === "webhook" || String(row?.domain || "").toLowerCase() === "scrobble";
+  };
+  const parseScrobbleSummary = (row) => {
+    const summary = String(row?.summary || row?.meta || "").trim();
+    const match = summary.match(/^(Watching)\s+(.+?)\s+(?:->|\u2192)\s+([^,]+)(?:,\s*([^,]+))?/i);
+    return {
+      action: String(row?.scrobble_action || match?.[1] || "").trim(),
+      title: String(row?.item_title || (match?.[2] || "") || row?.title || "").trim(),
+      destination: String(row?.scrobble_destination || match?.[3] || "").trim(),
+      progress: String(row?.progress || match?.[4] || "").trim(),
+    };
+  };
+  const activityTitle = (row) => {
+    const title = String(row?.title || row?.summary || "").trim();
+    if (isScrobbleActivity(row)) {
+      const parsed = parseScrobbleSummary(row);
+      return parsed.title || title || `${activityLabel(row)} activity`;
+    }
+    if (String(row?.kind || "").toLowerCase() === "sync") {
+      const status = String(row?.status || "").toLowerCase();
+      if (status === "failed") return "Sync failed";
+      if (status === "warning") return "Sync completed with issues";
+      if (status === "running") return "Sync running";
+      if (/^sync run completed$/i.test(title)) return "Sync completed";
+    }
+    return title || `${activityLabel(row)} activity`;
+  };
+  const syncActivityBits = (row) => {
+    const parts = [];
+    const route = String(row?.route || "").trim();
+    const summary = String(row?.summary || row?.meta || "").trim();
+    const pairMatch = summary.match(/(\d+\s+pairs?)(?:\s*\(([^)]+)\))?/i);
+    if (route) parts.push(route);
+    if (pairMatch?.[1]) parts.push(pairMatch[1]);
+    if (pairMatch?.[2]) parts.push(pairMatch[2]);
+    const count = Number(row?.event_count || 0);
+    if (count > 1) parts.push(`${count} events`);
+    return parts;
+  };
+  const scrobbleActivityBits = (row) => {
+    const parts = [];
+    const parsed = parseScrobbleSummary(row);
+    const count = Number(row?.event_count || 0);
+    if (parsed.action) parts.push(parsed.action);
+    if (parsed.destination) parts.push(parsed.destination);
+    if (parsed.progress) parts.push(parsed.progress);
+    if (row?.route) parts.push(String(row.route));
+    if (count > 0) parts.push(`${count} event${count === 1 ? "" : "s"}`);
+    return parts;
+  };
+  const activityProviderKey = (value) => {
+    const key = providerKey(value);
+    return key && window.CW?.ProviderMeta?.get?.(key) ? key : "";
+  };
+  const activityProviderChip = (value) => {
+    const key = activityProviderKey(value);
+    if (!key) return "";
+    const label = visibleProviderLabel(key) || key;
+    const logo = providerLogLogo(key);
+    const src = logo ? `<img src="${esc(logo)}" alt="" loading="lazy" onerror="this.onerror=null;this.hidden=true">` : "";
+    return `<span class="cw-profile-activity-provider" data-provider="${esc(key.toLowerCase())}" title="${esc(label)}">${src}<span>${esc(label)}</span></span>`;
+  };
+  const activityRouteChip = (value) => {
+    const parts = String(value || "").split(/\s*(?:->|\u2192)\s*/).map((part) => part.trim()).filter(Boolean);
+    if (parts.length < 2 || parts.some((part) => !activityProviderKey(part))) return "";
+    const nodes = parts.map(activityProviderChip).filter(Boolean);
+    if (nodes.length < 2) return "";
+    return nodes.map((node, index) => `${index ? `<span class="material-symbols-rounded cw-profile-activity-route-arrow" aria-hidden="true">chevron_right</span>` : ""}${node}`).join("");
+  };
+  const activityChipHtml = (bit, index) => {
+    const route = activityRouteChip(bit);
+    const provider = !route ? activityProviderChip(bit) : "";
+    const cls = `cw-profile-activity-chip${index === 0 ? " is-primary" : ""}${route ? " has-route" : ""}${provider ? " has-provider" : ""}`;
+    return `<span class="${cls}">${route || provider || esc(bit)}</span>`;
+  };
+  const activityMetaBits = (row) => {
+    if (String(row?.kind || "").toLowerCase() === "sync") return syncActivityBits(row);
+    if (isScrobbleActivity(row)) return scrobbleActivityBits(row);
+    const parts = [];
+    const meta = String(row?.meta || row?.route || "").trim();
+    if (meta && meta !== activityTitle(row)) parts.push(meta);
+    const count = Number(row?.event_count || 0);
+    if (count > 1) parts.push(`${count} events`);
+    return parts;
+  };
+  const futureTime = (value) => {
+    const ts = Number(value || 0);
+    if (!Number.isFinite(ts) || ts <= 0) return "";
+    const delta = Math.floor(ts - Date.now() / 1000);
+    if (delta <= 0) return relTime(ts);
+    const units = [["d", 86400], ["h", 3600], ["m", 60]];
+    for (const [name, seconds] of units) if (delta >= seconds) return `in ${Math.floor(delta / seconds)}${name}`;
+    return "in less than 1m";
+  };
+  const schedulerActivityRow = (status) => {
+    const eff = status?.effective || {};
+    const enabled = !!eff.enabled || !!status?.running;
+    if (!enabled) return null;
+    const mode = String(eff.mode || status?.effective_mode || "").replace(/_/g, " ").trim();
+    const next = Number(status?.next_run_at || 0);
+    const last = Number(status?.last_run_at || 0);
+    const tick = Number(status?.last_tick || 0);
+    const bits = [];
+    if (mode && mode !== "disabled") bits.push(mode);
+    if (next > 0) bits.push(`next ${futureTime(next) || new Date(next * 1000).toLocaleString()}`);
+    return {
+      id: "scheduler-status",
+      kind: "scheduler",
+      icon: "event_available",
+      badge: "Scheduler",
+      title: status?.running ? "Scheduler running" : "Scheduler active",
+      meta: bits.join(" - "),
+      status: status?.running ? "running" : "completed",
+      severity: status?.last_error ? "warning" : "info",
+      created_at: last || tick || Math.floor(Date.now() / 1000),
+      event_count: 0,
+    };
+  };
+  const profileActivityRow = (row) => {
+    const tone = activityTone(row);
+    const badge = String(row?.badge || activityLabel(row)).trim();
+    const bits = activityMetaBits(row);
+    const time = relTime(row?.created_at);
+    const detail = bits.length
+      ? bits.map(activityChipHtml).join("")
+      : `<span class="cw-profile-activity-chip">${esc(badge)}</span>`;
+    return `
+      <button class="cw-profile-activity-row cw-profile-activity-row--${esc(String(row?.kind || "sync").toLowerCase())} is-${esc(tone)}" type="button" data-event-group-id="${esc(row?.id || "")}" data-event-domain="${esc(String(row?.domain || "sync").toLowerCase())}">
+        <span class="material-symbols-rounded" aria-hidden="true">${esc(activityIcon(row))}</span>
+        <span class="cw-profile-activity-copy">
+          <span class="cw-profile-activity-top">
+            <span class="cw-profile-activity-badge">${esc(badge)}</span>
+            <strong>${esc(activityTitle(row))}</strong>
+          </span>
+          <span class="cw-profile-activity-meta">${detail}</span>
+        </span>
+        <small>${esc(time || badge)}</small>
+      </button>
+    `;
+  };
+  const waitForOverviewProfile = async () => {
+    const ready = window.CW?.OverviewProfile?.ready;
+    if (!ready || typeof ready.then !== "function") return;
+    await Promise.race([
+      ready.catch(() => {}),
+      new Promise((resolve) => setTimeout(resolve, 900)),
+    ]);
+  };
+
+  async function loadProfileActivity({ preserve = false } = {}) {
+    const host = $("#profile-activity");
+    if (!host) return;
+    if (!preserve || !host.children.length) host.innerHTML = skeleton("activity", 4);
+    await waitForOverviewProfile();
+    const params = new URLSearchParams({ limit: String(ACTIVITY_LIMIT), visibility: "all" });
+    const userProfile = String(window.CW?.OverviewProfile?.id || "").trim();
+    if (userProfile) params.set("user_profile", userProfile);
+
+    const includeSchedulerStatus = window.CW?.OverviewProfile?.isAdmin !== false;
+    const [feedRes, schedulerRes] = await Promise.allSettled([
+      api(`/api/events/feed?${params.toString()}`),
+      includeSchedulerStatus ? api("/api/scheduling/status") : Promise.resolve(null),
+    ]);
+    const rows = feedRes.status === "fulfilled" && Array.isArray(feedRes.value?.items) ? feedRes.value.items.slice() : [];
+    const schedulerRow = schedulerRes.status === "fulfilled" ? schedulerActivityRow(schedulerRes.value) : null;
+    if (schedulerRow && !rows.some((row) => String(row?.kind || "") === "scheduler")) rows.push(schedulerRow);
+    rows.sort((a, b) => Number(b?.created_at || 0) - Number(a?.created_at || 0));
+    host.innerHTML = rows.length ? rows.slice(0, ACTIVITY_LIMIT).map(profileActivityRow).join("") : empty("No recent activity yet.");
+  }
+
+  function wireProfileActivity() {
+    $("#profile-activity-view-all")?.addEventListener("click", () => {
+      if (window.openEvents) window.openEvents();
+    });
+    $("#profile-activity")?.addEventListener("click", (event) => {
+      const row = event.target?.closest?.("[data-event-group-id]");
+      if (!row || !window.openEvents) return;
+      const groupId = String(row.dataset.eventGroupId || "").trim();
+      const domain = String(row.dataset.eventDomain || "sync").trim();
+      if (/^\d+$/.test(groupId)) {
+        window.openEvents({ groupId, domain, visibility: "all", mode: "grouped" });
+      } else {
+        window.openEvents();
+      }
+    });
+    window.addEventListener("cw:overview-profile-changed", () => {
+      loadProfileActivity().catch(() => {
+        const host = $("#profile-activity");
+        if (host) host.innerHTML = empty("Recent activity could not be loaded.");
+      });
+    });
   }
   let profile = null;
   let posterSeq = 0;
@@ -1855,14 +2078,20 @@
     wirePlexSso();
     wireOidcSso();
     wirePosterOverlay();
-    const [profileResult, overviewResult] = await Promise.allSettled([
+    wireProfileActivity();
+    const [profileResult, overviewResult, activityResult] = await Promise.allSettled([
       refreshProfile(),
       loadOverview(),
+      loadProfileActivity(),
     ]);
     void refreshPlexStatus();
     void refreshOidcStatus();
     if (profileResult.status === "rejected") toast(profileResult.reason?.message || "Profile could not be loaded", true);
     if (overviewResult.status === "rejected") toast(overviewResult.reason?.message || "Profile overview could not be loaded", true);
+    if (activityResult.status === "rejected") {
+      const host = $("#profile-activity");
+      if (host) host.innerHTML = empty("Recent activity could not be loaded.");
+    }
     if (nowTimer) clearInterval(nowTimer);
     nowTimer = setInterval(() => {
       if (document.visibilityState === "visible") refreshNowPlaying();
