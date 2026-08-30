@@ -103,7 +103,6 @@ export default {
         <div class="ao-body cw-scrollbars">
           <section class="ao-card">
             <div class="ao-card-head">
-              <span class="material-symbols-rounded" aria-hidden="true">edit_note</span>
               <div>
                 <h3 id="ao-form-title">Add a rule</h3>
                 <p>Point a show or movie at the anime entry it really is. Leave the episode fields empty to only correct the ID.</p>
@@ -189,7 +188,6 @@ export default {
 
           <section class="ao-card">
             <div class="ao-card-head compact has-tools">
-              <span class="material-symbols-rounded" aria-hidden="true">list</span>
               <div>
                 <h3>Your rules <span class="ao-count" id="ao-count"></span></h3>
                 <p>Rules are checked in order, top first. Disabled rules are ignored.</p>
