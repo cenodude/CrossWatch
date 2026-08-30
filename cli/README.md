@@ -426,6 +426,7 @@ cw scheduler set every 6h
 cw scheduler set daily 03:30
 cw scheduler set interval 45m
 cw scheduler add PAIR_ID --at 00:00 --at 12:00
+cw scheduler setup --kind pair --pair 1,3 --at 03:30
 cw scheduler edit JOB_ID --at 03:30
 cw scheduler pause JOB_ID
 cw scheduler resume JOB_ID

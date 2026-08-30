@@ -180,6 +180,34 @@ def test_find_pair_rejects_ambiguous_prefix() -> None:
     assert "ambiguous" in err.value.message
 
 
+def test_scheduler_pair_selector_accepts_comma_separated_values() -> None:
+    from cli.commands.scheduler import _resolve_pair_selectors
+
+    pairs = [
+        {"id": "pair_a", "source": "plex", "target": "simkl"},
+        {"id": "pair_b", "source": "plex", "target": "mdblist"},
+        {"id": "pair_c", "source": "plex", "target": "trakt"},
+    ]
+
+    resolved = _resolve_pair_selectors(pairs, "1, pair_c, 1")
+
+    assert [pair["id"] for pair in resolved] == ["pair_a", "pair_c"]
+
+
+def test_scheduler_append_pair_jobs_creates_jobs_for_each_pair_and_time() -> None:
+    from cli.commands.scheduler import _append_pair_jobs
+
+    scfg = {"advanced": {"jobs": [{"id": "pair_a_0330", "pair_id": "pair_a"}]}}
+    pairs = [{"id": "pair_a"}, {"id": "pair_b"}]
+
+    created = _append_pair_jobs(scfg, pairs, ["03:30", "12:00"], days="weekdays")
+
+    assert [job["id"] for job in created] == ["pair_a_0330_2", "pair_a_1200", "pair_b_0330", "pair_b_1200"]
+    assert [job["pair_id"] for job in created] == ["pair_a", "pair_a", "pair_b", "pair_b"]
+    assert all(job["days"] == [1, 2, 3, 4, 5] for job in created)
+    assert scfg["advanced"]["enabled"] is True
+
+
 def test_hoist_globals_moves_flags_in_front_of_the_command() -> None:
     assert hoist_globals(["pair", "list", "-o", "json"]) == ["-o", "json", "pair", "list"]
     assert hoist_globals(["sync", "run", "--local", "--pair", "x"]) == ["--local", "sync", "run", "--pair", "x"]

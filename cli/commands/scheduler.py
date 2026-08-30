@@ -175,6 +175,64 @@ def _unique_job_id(existing: list[dict[str, Any]], base: str) -> str:
     return f"{base}_{i}"
 
 
+def _resolve_pair_selectors(pairs: list[dict[str, Any]], value: str) -> list[dict[str, Any]]:
+    selectors = [part.strip() for part in str(value or "").split(",") if part.strip()]
+    if not selectors:
+        raise CLIError("At least one pair id or number is required", exit_code=EXIT_USAGE)
+    resolved: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for selector in selectors:
+        pair = find_pair(pairs, selector)
+        pair_id = str(pair.get("id") or "")
+        if pair_id in seen:
+            continue
+        seen.add(pair_id)
+        resolved.append(pair)
+    return resolved
+
+
+def _append_pair_jobs(
+    scfg: dict[str, Any],
+    pairs: list[dict[str, Any]],
+    times: list[str],
+    *,
+    days: str,
+    after: str = "",
+    paused: bool = False,
+    job_id: str = "",
+) -> list[dict[str, Any]]:
+    if not pairs:
+        raise CLIError("At least one pair is required", exit_code=EXIT_USAGE)
+    if not times:
+        raise CLIError("At least one --at time is required", hint="Example: cw scheduler add PAIR_ID --at 00:00 --at 12:00", exit_code=EXIT_USAGE)
+    custom_id = job_id.strip()
+    if custom_id and (len(pairs) > 1 or len(times) > 1):
+        raise CLIError("--id can only be used when adding one job", exit_code=EXIT_USAGE)
+
+    adv = _advanced(scfg)
+    adv["enabled"] = True
+    jobs = _adv_jobs(scfg)
+    parsed_days = _parse_days(days)
+    created: list[dict[str, Any]] = []
+    for pair in pairs:
+        resolved_pair_id = str(pair.get("id") or "")
+        for time_text in times:
+            base_id = custom_id or f"{_slug(resolved_pair_id)}_{time_text.replace(':', '')}"
+            jid = _unique_job_id(jobs, base_id)
+            job = {
+                "id": jid,
+                "pair_id": resolved_pair_id,
+                "at": time_text,
+                "days": parsed_days,
+                "after": after.strip() or None,
+                "active": not paused,
+            }
+            jobs.append(job)
+            created.append(job)
+    _replace_adv_jobs(scfg, jobs)
+    return created
+
+
 def _find_job(jobs: list[dict[str, Any]], needle: str) -> dict[str, Any]:
     wanted = str(needle or "").strip()
     if not wanted:
@@ -433,31 +491,10 @@ def scheduler_add(
     if not at:
         raise CLIError("At least one --at time is required", hint="Example: cw scheduler add PAIR_ID --at 00:00 --at 12:00", exit_code=EXIT_USAGE)
     times = [_validate_time(item) for item in at]
-    if len(times) > 1 and job_id.strip():
-        raise CLIError("--id can only be used when adding one job", exit_code=EXIT_USAGE)
 
     pair = find_pair(_pairs(state), pair_id)
-    resolved_pair_id = str(pair.get("id") or "")
     scfg = copy.deepcopy(_config(state))
-    adv = _advanced(scfg)
-    adv["enabled"] = True
-    jobs = _adv_jobs(scfg)
-    parsed_days = _parse_days(days)
-    created: list[dict[str, Any]] = []
-    for time_text in times:
-        base_id = job_id.strip() or f"{_slug(resolved_pair_id)}_{time_text.replace(':', '')}"
-        jid = _unique_job_id(jobs, base_id)
-        job = {
-            "id": jid,
-            "pair_id": resolved_pair_id,
-            "at": time_text,
-            "days": parsed_days,
-            "after": after.strip() or None,
-            "active": not paused,
-        }
-        jobs.append(job)
-        created.append(job)
-    _replace_adv_jobs(scfg, jobs)
+    created = _append_pair_jobs(scfg, [pair], times, days=days, after=after, paused=paused, job_id=job_id)
 
     if dry_run:
         _print_preview(state, scfg, title="Scheduler add preview")
@@ -565,7 +602,7 @@ def scheduler_delete(
 def scheduler_setup(
     ctx: typer.Context,
     kind: str = typer.Option("", "--kind", help="standard or pair."),
-    pair_id: str = typer.Option("", "--pair", help="Pair id/prefix/number for pair scheduling."),
+    pair_id: str = typer.Option("", "--pair", help="Pair id/prefix/number for pair scheduling. Use commas for multiple pairs."),
     cadence: str = typer.Option("", "--cadence", help="hourly, every, daily, or interval."),
     value: str = typer.Option("", "--value", help="Interval or daily time, for example 6h, 03:30, or 45m."),
     at: list[str] = typer.Option([], "--at", "-t", help="Run time in HH:MM. Repeat for multiple daily runs."),
@@ -596,16 +633,31 @@ def scheduler_setup(
             title="Sync pairs",
             empty="No sync pairs configured yet.",
         )
-        selected_pair = str(typer.prompt("Pair id or number") or "").strip()
+        selected_pair = str(typer.prompt("Pair id(s) or number(s), comma-separated") or "").strip()
+    selected_pairs = _resolve_pair_selectors(pairs, selected_pair)
     chosen_at = list(at)
     if not chosen_at:
         raw = str(typer.prompt("Run time(s), comma-separated HH:MM", default="03:30") or "").strip()
         chosen_at = [part.strip() for part in raw.split(",") if part.strip()]
+    chosen_times = [_validate_time(item) for item in chosen_at]
     if not yes and not dry_run:
-        state.out.info(f"Will create {len(chosen_at)} advanced job(s).")
+        state.out.info(f"Will create {len(selected_pairs) * len(chosen_times)} advanced job(s) for {len(selected_pairs)} sync pair(s).")
         if not typer.confirm("Save and enable advanced scheduler?", default=True):
             raise CLIError("Cancelled", exit_code=0)
-    scheduler_add(ctx, selected_pair, at=chosen_at, days=days, job_id="", after="", paused=False, dry_run=dry_run)
+    scfg = copy.deepcopy(_config(state))
+    created = _append_pair_jobs(scfg, selected_pairs, chosen_times, days=days)
+    if dry_run:
+        _print_preview(state, scfg, title="Scheduler setup preview")
+        return
+    payload = _save_config(state, scfg)
+    if state.out.json_mode:
+        state.out.data({"ok": True, "created": created, "next_run_at": int(payload.get("next_run_at") or 0)})
+        return
+    pair_word = "pair" if len(selected_pairs) == 1 else "pairs"
+    state.out.success(f"Added {len(created)} advanced scheduler job(s) for {len(selected_pairs)} sync {pair_word}.")
+    nxt = int(payload.get("next_run_at") or 0)
+    if nxt:
+        state.out.info(f"Next run {fmt_ts(nxt)} ({fmt_rel(nxt)})")
 
 
 def _setup_standard(ctx: typer.Context, *, cadence: str, value: str, yes: bool, dry_run: bool) -> None:
