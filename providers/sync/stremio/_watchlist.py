@@ -116,8 +116,12 @@ def build_index(adapter: Any, **kwargs: Any) -> dict[str, dict[str, Any]]:
     return out
 
 
-def _unresolved(item: Mapping[str, Any], reason: str) -> dict[str, Any]:
-    return {"status": "unresolved", "reason": reason, "item": id_minimal(item)}
+def _unresolved(item: Mapping[str, Any], reason: str, key: str | None = None) -> dict[str, Any]:
+    out = {"status": "unresolved", "reason": reason, "item": id_minimal(item)}
+    if key:
+        out["key"] = key
+        out["canonical_key"] = key
+    return out
 
 
 def _apply_membership(record: dict[str, Any], item: Mapping[str, Any], listed: bool) -> None:
@@ -144,8 +148,9 @@ def _write(adapter: Any, items: Iterable[Mapping[str, Any]], listed: bool, *, dr
     attempted = 0
     for raw in [dict(x or {}) for x in items or [] if isinstance(x, Mapping)]:
         typ = str(id_minimal(raw).get("type") or raw.get("type") or "").strip().lower()
+        raw_key = canonical_item_key(raw)
         if typ in {"episode", "episodes", "season", "seasons"}:
-            entry = _unresolved(raw, "stremio_watchlist_type_unsupported")
+            entry = _unresolved(raw, "stremio_watchlist_type_unsupported", raw_key)
             unresolved.append(entry)
             results.append(entry)
             continue
@@ -153,7 +158,7 @@ def _write(adapter: Any, items: Iterable[Mapping[str, Any]], listed: bool, *, dr
         key = canonical_item_key(item)
         stremio_id = stremio_write_id_for_item(item)
         if not stremio_id or typ not in {"movie", "show", "series", "tv"}:
-            entry = _unresolved(item, "stremio_id_missing")
+            entry = _unresolved(item, "stremio_id_missing", key)
             unresolved.append(entry)
             results.append(entry)
             continue
@@ -173,7 +178,7 @@ def _write(adapter: Any, items: Iterable[Mapping[str, Any]], listed: bool, *, dr
             _apply_membership(record, item, listed)
             datastore_put(adapter, [record])
         except Exception:
-            entry = {"status": "failed", "reason": "stremio_watchlist_write_failed", "item": id_minimal(item), "canonical_key": key}
+            entry = {"status": "failed", "reason": "stremio_watchlist_write_failed", "item": id_minimal(item), "key": key, "canonical_key": key}
             unresolved.append(entry)
             results.append(entry)
             continue

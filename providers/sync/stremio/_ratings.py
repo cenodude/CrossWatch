@@ -212,7 +212,7 @@ def _write(adapter: Any, items: Iterable[Mapping[str, Any]], *, clear_missing: b
         media_id = _media_id(item)
         status = None if clear_missing else _status_for_rating(adapter, item.get("rating"))
         if not media_type or not media_id:
-            entry = {"status": "unresolved", "reason": "stremio_rating_id_missing", "item": id_minimal(item), "canonical_key": key}
+            entry = {"status": "unresolved", "reason": "stremio_rating_id_missing", "item": id_minimal(item), "key": key, "canonical_key": key}
             unresolved.append(entry)
             results.append(entry)
             continue
@@ -258,7 +258,7 @@ def _write(adapter: Any, items: Iterable[Mapping[str, Any]], *, clear_missing: b
                 raise StremioAuthError("Stremio rating write failed", reason="request_failed", detail=_response_detail(resp), status_code=resp.status_code, endpoint="likes/send")
         except StremioAuthError as exc:
             reason = str(getattr(exc, "reason", "") or "stremio_rating_write_failed")
-            entry = {"status": "failed", "reason": reason, "item": id_minimal(item), "canonical_key": key}
+            entry = {"status": "failed", "reason": reason, "item": id_minimal(item), "key": key, "canonical_key": key}
             detail = str(getattr(exc, "detail", "") or "").strip()
             if detail:
                 entry["hint"] = detail
@@ -266,7 +266,7 @@ def _write(adapter: Any, items: Iterable[Mapping[str, Any]], *, clear_missing: b
             results.append(entry)
             continue
         except Exception:
-            entry = {"status": "failed", "reason": "stremio_rating_write_failed", "item": id_minimal(item), "canonical_key": key}
+            entry = {"status": "failed", "reason": "stremio_rating_write_failed", "item": id_minimal(item), "key": key, "canonical_key": key}
             unresolved.append(entry)
             results.append(entry)
             continue
