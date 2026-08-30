@@ -709,7 +709,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     modal.className = "cw-snap-picker cw-snap-hidden";
     modal.innerHTML = '<div class="cw-snap-dialog" role="dialog" aria-modal="true" aria-labelledby="cw-snap-title"><div class="cw-snap-head"><div class="cw-snap-title-wrap"><div class="cw-snap-kicker">Snapshot selector</div><div class="cw-snap-title" id="cw-snap-title">Select snapshot for <span class="hl"></span></div></div><button class="snap-icon-close" type="button" aria-label="Close snapshot selector">×</button></div><div class="cw-snap-body"></div><div class="cw-snap-foot"><button class="snap-close" type="button">Cancel</button></div></div>';
     modal.addEventListener("click", async ev => {
-      const close = ev.target === modal || ev.target.closest(".snap-close,.snap-icon-close");
+      const close = ev.target.closest(".snap-close,.snap-icon-close");
       if (close) modal.classList.add("cw-snap-hidden");
       const btn = ev.target.closest(".snap-btn");
       if (!btn) return;

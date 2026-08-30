@@ -14,6 +14,7 @@ const SECTIONS = [
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (value) => String(value ?? "").replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+let cleanupSupportMount = null;
 
 async function fjson(url) {
   const ctrl = new AbortController();
@@ -27,7 +28,7 @@ async function fjson(url) {
   }
 }
 
-async function fblob(url) {
+async function fblob(url, onProgress) {
   const ctrl = new AbortController();
   const timer = window.setTimeout(() => ctrl.abort(timeoutError("Download", DOWNLOAD_TIMEOUT_MS)), DOWNLOAD_TIMEOUT_MS);
   try {
@@ -35,7 +36,26 @@ async function fblob(url) {
     if (!r.ok) throw new Error(`${r.status} ${r.statusText || ""}`.trim());
     const disposition = r.headers.get("content-disposition") || "";
     const match = /filename\*?=(?:UTF-8''|")?([^";]+)/i.exec(disposition);
-    return { blob: await r.blob(), filename: match ? decodeURIComponent(match[1].replace(/"$/, "")) : "" };
+    const filename = match ? decodeURIComponent(match[1].replace(/"$/, "")) : "";
+    const total = Number(r.headers.get("content-length") || 0);
+    const type = r.headers.get("content-type") || "application/octet-stream";
+    if (r.body?.getReader) {
+      const reader = r.body.getReader();
+      const chunks = [];
+      let received = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+        chunks.push(value);
+        received += value.byteLength || value.length || 0;
+        onProgress?.({ received, total });
+      }
+      return { blob: new Blob(chunks, { type }), filename };
+    }
+    const blob = await r.blob();
+    onProgress?.({ received: blob.size, total: blob.size });
+    return { blob, filename };
   } finally {
     window.clearTimeout(timer);
   }
@@ -61,6 +81,14 @@ function formatBytes(raw) {
   return `${value.toFixed(index === 0 ? 0 : value >= 100 ? 0 : value >= 10 ? 1 : 2)} ${units[index]}`;
 }
 
+function elapsedLabel(startedAt) {
+  const seconds = Math.max(0, Math.round((Date.now() - Number(startedAt || Date.now())) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const mins = Math.floor(seconds / 60);
+  const rem = seconds % 60;
+  return `${mins}m ${String(rem).padStart(2, "0")}s`;
+}
+
 function injectCSS() {
   const existing = document.getElementById("cw-support-css");
   if (existing?.tagName === "LINK") return Promise.resolve();
@@ -81,6 +109,8 @@ function injectCSS() {
 
 export default {
   async mount(root) {
+    cleanupSupportMount?.();
+    cleanupSupportMount = null;
     await injectCSS();
 
     const shell = root.closest(".cx-modal-shell");
@@ -154,6 +184,23 @@ export default {
 
         <div class="sup-foot">
           <div class="sup-status" id="sup-status" aria-live="polite"></div>
+          <div id="sup-progress" class="sup-progress hidden" aria-live="polite">
+            <div class="sup-progress-head">
+              <div>
+                <strong id="sup-progress-title">Preparing export</strong>
+                <span id="sup-progress-sub">Starting...</span>
+              </div>
+              <b id="sup-progress-percent">0%</b>
+            </div>
+            <div class="sup-progress-bar" aria-hidden="true"><span id="sup-progress-fill"></span></div>
+            <div class="sup-progress-grid">
+              <div><span>Export</span><b id="sup-progress-kind">-</b></div>
+              <div><span>Scope</span><b id="sup-progress-scope">-</b></div>
+              <div><span>Size</span><b id="sup-progress-size">-</b></div>
+              <div><span>Elapsed</span><b id="sup-progress-elapsed">0s</b></div>
+            </div>
+            <div id="sup-progress-message" class="sup-progress-message">Preparing download...</div>
+          </div>
         </div>
       </div>
     `;
@@ -166,6 +213,7 @@ export default {
     };
 
     const closeModal = () => {
+      if (busy) return;
       try { window.cxCloseModal?.(); } catch {}
     };
     $("#sup-close", root)?.addEventListener("click", closeModal);
@@ -210,9 +258,111 @@ export default {
     };
 
     let busy = false;
+    let progressTimer = 0;
+    let progressStartedAt = 0;
+    let progressPercent = 0;
+
+    const setText = (selector, value) => {
+      const el = $(selector, root);
+      if (el) el.textContent = String(value ?? "");
+    };
+
+    const stopProgressTimer = () => {
+      if (progressTimer) window.clearInterval(progressTimer);
+      progressTimer = 0;
+    };
+    cleanupSupportMount = () => {
+      stopProgressTimer();
+      window.cxSetModalDismissible?.(true);
+    };
+
+    const updateProgress = ({
+      title,
+      sub,
+      message,
+      kind,
+      scope,
+      size,
+      percent,
+      active = true,
+      done = false,
+      error = false,
+    } = {}) => {
+      const panel = $("#sup-progress", root);
+      if (!panel) return;
+      const pct = Math.max(0, Math.min(100, Math.round(Number(percent ?? progressPercent ?? 0))));
+      progressPercent = pct;
+      panel.classList.remove("hidden");
+      panel.classList.toggle("active", !!active && !done && !error);
+      panel.classList.toggle("done", !!done && !error);
+      panel.classList.toggle("error", !!error);
+      $("#sup-progress-fill", root)?.style.setProperty("width", `${pct}%`);
+      setText("#sup-progress-percent", `${pct}%`);
+      if (title) setText("#sup-progress-title", title);
+      if (sub) setText("#sup-progress-sub", sub);
+      if (message) setText("#sup-progress-message", message);
+      if (kind) setText("#sup-progress-kind", kind);
+      if (scope) setText("#sup-progress-scope", scope);
+      if (size) setText("#sup-progress-size", size);
+      setText("#sup-progress-elapsed", elapsedLabel(progressStartedAt));
+    };
+
+    const startProgress = ({ isBundle, scope }) => {
+      stopProgressTimer();
+      progressStartedAt = Date.now();
+      progressPercent = 2;
+      updateProgress({
+        title: isBundle ? "Building support bundle" : "Rebuilding state.json",
+        sub: "Preparing export",
+        message: isBundle ? "Collecting diagnostics, reports and log tails..." : "Rebuilding sync state from the database...",
+        kind: isBundle ? "Support bundle" : "state.json",
+        scope: scope === "all" ? "All pairs" : "1 pair",
+        size: "Waiting",
+        percent: 2,
+        active: true,
+      });
+      progressTimer = window.setInterval(() => {
+        if (!busy) return;
+        const elapsed = Date.now() - progressStartedAt;
+        const ceiling = elapsed > 90_000 ? 94 : elapsed > 30_000 ? 90 : 82;
+        const next = Math.min(ceiling, progressPercent + (progressPercent < 30 ? 3 : 1));
+        updateProgress({ percent: next, active: true });
+      }, 900);
+    };
+
+    const finishProgress = ({ isBundle, scope, blob }) => {
+      stopProgressTimer();
+      updateProgress({
+        title: "Export complete",
+        sub: "Download saved",
+        message: isBundle ? "Support bundle is ready." : "state.json is ready.",
+        kind: isBundle ? "Support bundle" : "state.json",
+        scope: scope === "all" ? "All pairs" : "1 pair",
+        size: formatBytes(blob?.size || 0),
+        percent: 100,
+        active: false,
+        done: true,
+      });
+    };
+
+    const failProgress = (message) => {
+      stopProgressTimer();
+      updateProgress({
+        title: "Export failed",
+        sub: "Download stopped",
+        message,
+        percent: Math.max(progressPercent, 6),
+        active: false,
+        error: true,
+      });
+    };
+
     const setBusy = (on) => {
-      busy = on;
-      root.querySelectorAll(".sup-btn, .sup-select, .sup-check input").forEach((el) => { el.disabled = on; });
+      busy = !!on;
+      window.cxSetModalDismissible?.(!busy);
+      root.querySelectorAll(".sup-btn, .sup-select, .sup-check input").forEach((el) => { el.disabled = busy; });
+      $("#sup-close", root)?.toggleAttribute("disabled", busy);
+      if (!busy) stopProgressTimer();
     };
 
     const download = async (kind) => {
@@ -228,15 +378,30 @@ export default {
       }
       const query = params.toString();
       setBusy(true);
+      startProgress({ isBundle, scope });
       setStatus(isBundle ? "Building support bundle..." : "Rebuilding state.json...", "busy");
       try {
-        const { blob, filename } = await fblob(`/api/maintenance/support/${isBundle ? "bundle" : "state"}${query ? `?${query}` : ""}`);
+        const { blob, filename } = await fblob(`/api/maintenance/support/${isBundle ? "bundle" : "state"}${query ? `?${query}` : ""}`, ({ received, total }) => {
+          const knownTotal = Number.isFinite(total) && total > 0;
+          const pct = knownTotal ? Math.max(progressPercent, Math.min(98, Math.round((received / total) * 100))) : Math.max(progressPercent, 92);
+          updateProgress({
+            title: isBundle ? "Downloading support bundle" : "Downloading state.json",
+            sub: knownTotal ? `${formatBytes(received)} of ${formatBytes(total)}` : `${formatBytes(received)} downloaded`,
+            message: "Receiving export from the server...",
+            size: knownTotal ? `${formatBytes(received)} / ${formatBytes(total)}` : formatBytes(received),
+            percent: pct,
+            active: true,
+          });
+        });
         saveBlob(blob, filename || (isBundle ? "crosswatch-support.zip" : "crosswatch-state.json"));
+        finishProgress({ isBundle, scope, blob });
         const bits = [filename || "download", formatBytes(blob.size), scope === "all" ? "all pairs" : "1 pair"];
         if (isBundle) bits.push(sections.length ? sections.join(", ") : "state only");
         setStatus(`Downloaded · ${bits.join(" · ")}.`, "ok");
       } catch (e) {
-        setStatus(`Download failed: ${e?.message || String(e)}`, "err");
+        const message = `Download failed: ${e?.message || String(e)}`;
+        failProgress(message);
+        setStatus(message, "err");
       } finally {
         setBusy(false);
       }
@@ -248,5 +413,8 @@ export default {
     await loadScopes();
     setStatus("");
   },
-  unmount() {},
+  unmount() {
+    cleanupSupportMount?.();
+    cleanupSupportMount = null;
+  },
 };

@@ -36,7 +36,6 @@
     closeBtn = modal.querySelector(".cw-trailer-close");
 
     closeBtn.addEventListener("click", (e) => { e.preventDefault(); close(); }, true);
-    modal.addEventListener("click", (e) => { if (e.target === modal) close(); }, true);
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape" && modal?.classList.contains("show")) close();
     }, true);

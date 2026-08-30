@@ -1915,7 +1915,11 @@
     btn.classList.toggle("loading", !!busy);
   }
 
-  window.openAbout = () => window.ModalRegistry.open("about");
+  window.openAbout = window.openAbout || (async (props = {}) => {
+    const v = encodeURIComponent(String(window.__CW_VERSION__ || window.CW_ASSET_VERSION || Date.now()));
+    const mod = await import(`/assets/js/modals/about.js?v=${v}`);
+    return mod.openAboutModal?.(props);
+  });
   window.cxEnsureCfgModal = window.cxEnsureCfgModal || function () {};
   window.wireSecretTouch = window.wireSecretTouch || function wireSecretTouch(id) {
     const el = byId(id);

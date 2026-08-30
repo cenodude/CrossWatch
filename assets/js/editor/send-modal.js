@@ -249,7 +249,7 @@
     shell.addEventListener("click", async ev => {
       const target = ev.target instanceof Element ? ev.target : ev.target?.parentElement;
       if (!target) return;
-      if (target.closest("[data-send-close],.modal-backdrop")) {
+      if (target.closest("[data-send-close]")) {
         close();
         return;
       }

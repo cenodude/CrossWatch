@@ -24,7 +24,6 @@
     if (d.getElementById(HOST_ID)) return;
 
     const overlay = el("div", { id: OVERLAY_ID, className: "hidden" });
-    overlay.addEventListener("click", () => api.close());
 
     const host = el("div", { id: HOST_ID, className: "hidden", role: "dialog", "aria-modal": "true" });
     host.appendChild(
