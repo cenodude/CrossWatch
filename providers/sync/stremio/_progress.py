@@ -37,24 +37,44 @@ from ._common import (
 )
 from providers.sync._log import log as cw_log
 
+MAX_STREMIO_PROGRESS_DURATION_MS = 24 * 60 * 60 * 1000
+
 
 def _progress_percent(position: int, duration: int) -> float | None:
     return round((position / duration) * 100.0, 3) if duration > 0 and position >= 0 else None
 
 
+def _bounded_duration_ms(value: Any, scale: int = 1) -> int | None:
+    number = positive_int(value)
+    if number is None:
+        return None
+    duration = number * scale
+    return duration if duration <= MAX_STREMIO_PROGRESS_DURATION_MS else None
+
+
+def _state_duration_ms(state: Mapping[str, Any]) -> tuple[int | None, int | None]:
+    raw = positive_int(state.get("duration"))
+    if raw is None:
+        return None, None
+    duration = _bounded_duration_ms(raw)
+    if duration is not None:
+        return duration, None
+    return None, raw
+
+
 def _duration_ms(item: Mapping[str, Any]) -> int | None:
     for key in ("duration_ms", "durationMs", "duration", "runtime_ms", "runtimeMs"):
-        number = positive_int(item.get(key))
-        if number is not None:
-            return number
+        duration = _bounded_duration_ms(item.get(key))
+        if duration is not None:
+            return duration
     for key in ("duration_seconds", "durationSeconds", "runtime_seconds", "runtimeSeconds"):
-        number = positive_int(item.get(key))
-        if number is not None:
-            return number * 1000
+        duration = _bounded_duration_ms(item.get(key), 1000)
+        if duration is not None:
+            return duration
     for key in ("runtime_minutes", "runtimeMinutes", "duration_minutes", "durationMinutes", "runtime"):
-        number = positive_int(item.get(key))
-        if number is not None:
-            return number * 60_000
+        duration = _bounded_duration_ms(item.get(key), 60_000)
+        if duration is not None:
+            return duration
     return None
 
 
@@ -165,8 +185,15 @@ def _metadata_enriched(adapter: Any, item: Mapping[str, Any], typ: str) -> dict[
                 ep = {}
             if isinstance(ep, Mapping):
                 duration = positive_int(ep.get("runtime"))
-    if duration:
-        out.setdefault("duration_ms", duration * 60_000)
+    duration_ms = _bounded_duration_ms(duration, 60_000) if duration else None
+    if duration_ms is not None:
+        if out.get("_stremio_duration_invalid") or _duration_ms(out) is None:
+            out["duration_ms"] = duration_ms
+            position = _progress_ms(out, duration_ms)
+            if position is not None:
+                out["progress_ms"] = position
+                out["progress_percent"] = _progress_percent(position, duration_ms)
+            out.pop("_stremio_duration_invalid", None)
     if not str(out.get("poster") or out.get("poster_url") or "").strip():
         poster = poster_url_from_item(out, imdb) or _image_url(detail, "poster")
         if poster:
@@ -177,15 +204,18 @@ def _metadata_enriched(adapter: Any, item: Mapping[str, Any], typ: str) -> dict[
 def parse_movie_progress_record(record: Mapping[str, Any]) -> dict[str, Any] | None:
     state = state_of(record)
     position = to_int(state.get("timeOffset"))
-    duration = positive_int(state.get("duration"))
-    if position is None or position <= 0 or not duration:
+    duration, invalid_duration = _state_duration_ms(state)
+    if position is None or position <= 0 or (duration is None and invalid_duration is None):
         return None
     item = item_from_movie_record(record)
     if not item:
         return None
     item["progress_ms"] = position
-    item["duration_ms"] = duration
-    item["progress_percent"] = _progress_percent(position, duration)
+    if duration:
+        item["duration_ms"] = duration
+        item["progress_percent"] = _progress_percent(position, duration)
+    elif invalid_duration is not None:
+        item["_stremio_duration_invalid"] = invalid_duration
     ts = iso_from_epoch_ms(state.get("lastWatched")) or iso_from_epoch_ms(record.get("_mtime"))
     if ts:
         item["progress_at"] = ts
@@ -195,8 +225,8 @@ def parse_movie_progress_record(record: Mapping[str, Any]) -> dict[str, Any] | N
 def parse_episode_progress_record(record: Mapping[str, Any]) -> dict[str, Any] | None:
     state = state_of(record)
     position = to_int(state.get("timeOffset"))
-    duration = positive_int(state.get("duration"))
-    if position is None or position <= 0 or not duration:
+    duration, invalid_duration = _state_duration_ms(state)
+    if position is None or position <= 0 or (duration is None and invalid_duration is None):
         return None
     show_id = str(record.get("_id") or "").strip()
     video_id = str(state.get("video_id") or state.get("videoId") or "").strip()
@@ -218,8 +248,11 @@ def parse_episode_progress_record(record: Mapping[str, Any]) -> dict[str, Any] |
     if not item:
         return None
     item["progress_ms"] = position
-    item["duration_ms"] = duration
-    item["progress_percent"] = _progress_percent(position, duration)
+    if duration:
+        item["duration_ms"] = duration
+        item["progress_percent"] = _progress_percent(position, duration)
+    elif invalid_duration is not None:
+        item["_stremio_duration_invalid"] = invalid_duration
     ts = iso_from_epoch_ms(state.get("lastWatched")) or iso_from_epoch_ms(record.get("_mtime"))
     if ts:
         item["progress_at"] = ts
@@ -246,6 +279,11 @@ def build_index(adapter: Any, **kwargs: Any) -> dict[str, dict[str, Any]]:
         if not item:
             continue
         item = _metadata_enriched(adapter, item, "episode" if str(item.get("type") or "").lower() == "episode" else "movie")
+        if _duration_ms(item) is None:
+            invalid_duration = item.get("_stremio_duration_invalid")
+            if invalid_duration is not None:
+                record_read_drop(adapter, "progress", record, "stremio_duration_invalid", duration_ms=invalid_duration)
+            continue
         key = canonical_item_key(item)
         selected, _reason = select_progress_record(out.get(key), item)
         out[key] = selected

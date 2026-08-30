@@ -5,9 +5,10 @@ from collections.abc import Mapping
 from typing import Any
 
 class FakeClient:
-    def __init__(self, rows: list[dict[str, Any]] | None = None):
+    def __init__(self, rows: list[dict[str, Any]] | None = None, fail_push_content_ids: set[str] | None = None):
         self.rows = list(rows or [])
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.fail_push_content_ids = set(fail_push_content_ids or set())
 
     def request_json(self, method: str, path: str, *, payload: Mapping[str, Any] | None = None, **_: Any) -> Any:
         body = dict(payload or {})
@@ -19,6 +20,8 @@ class FakeClient:
             rows = [row for row in self.rows if int(row.get("last_watched") or 0) > since]
             return rows[:limit]
         if name == "sync_push_watch_progress":
+            if any(str(entry.get("content_id") or "") in self.fail_push_content_ids for entry in body.get("p_entries") or []):
+                raise RuntimeError("push failed")
             for entry in body.get("p_entries") or []:
                 row = dict(entry)
                 row["id"] = row.get("content_id")
@@ -38,7 +41,7 @@ class FakeClient:
 
 
 class FakeAdapter:
-    def __init__(self, rows: list[dict[str, Any]] | None = None, profile_id: int = 1):
+    def __init__(self, rows: list[dict[str, Any]] | None = None, profile_id: int = 1, fail_push_content_ids: set[str] | None = None):
         self.config = {
             "nuvio": {
                 "base_url": "https://api.nuvio.tv",
@@ -48,7 +51,7 @@ class FakeAdapter:
             }
         }
         self.instance_id = "default"
-        self.client = FakeClient(rows)
+        self.client = FakeClient(rows, fail_push_content_ids=fail_push_content_ids)
 
 
 def _row(content_id: str, position: int = 120_000, duration: int = 600_000, last_watched: int = 1_785_000_000_000) -> dict[str, Any]:
@@ -217,6 +220,57 @@ def test_add_returns_unresolved_for_unsupported_id_and_missing_duration() -> Non
     assert result["attempted"] == 0
     assert {row["reason"] for row in result["unresolved"]} == {"nuvio_id_missing", "nuvio_duration_missing"}
     assert not any(name == "sync_push_watch_progress" for name, _body in adapter.client.calls)
+
+
+def test_add_rejects_duration_outside_nuvio_integer_range() -> None:
+    from providers.sync.nuvio import _progress
+
+    adapter = FakeAdapter([])
+    item = {
+        "type": "movie",
+        "ids": {"tmdb": "550"},
+        "progress_ms": 100_000,
+        "duration_ms": 2**63,
+        "progress_at": 1_785_000_000_000,
+    }
+
+    result = _progress.add(adapter, [item])
+
+    assert result["ok"] is False
+    assert result["attempted"] == 0
+    assert result["unresolved"][0]["reason"] == "nuvio_duration_invalid"
+    assert not any(name == "sync_push_watch_progress" for name, _body in adapter.client.calls)
+
+
+def test_add_isolates_failed_progress_entry_after_bulk_push_failure() -> None:
+    from providers.sync.nuvio import _progress
+
+    adapter = FakeAdapter([], fail_push_content_ids={"tmdb:551"})
+    good = {
+        "type": "movie",
+        "ids": {"tmdb": "550"},
+        "progress_ms": 100_000,
+        "duration_ms": 500_000,
+        "progress_at": 1_785_000_000_000,
+    }
+    bad = {
+        "type": "movie",
+        "ids": {"tmdb": "551"},
+        "progress_ms": 100_000,
+        "duration_ms": 500_000,
+        "progress_at": 1_785_000_000_000,
+    }
+
+    result = _progress.add(adapter, [good, bad])
+
+    assert result["ok"] is False
+    assert result["attempted"] == 2
+    assert result["count"] == 1
+    assert result["confirmed_keys"] == ["tmdb:550"]
+    assert result["unresolved"][0]["canonical_key"] == "tmdb:551"
+    assert result["unresolved"][0]["reason"] == "nuvio_progress_write_failed"
+    pushes = [body["p_entries"] for name, body in adapter.client.calls if name == "sync_push_watch_progress"]
+    assert [[entry["content_id"] for entry in entries] for entries in pushes] == [["tmdb:550", "tmdb:551"], ["tmdb:550"], ["tmdb:551"]]
 
 
 def test_add_does_not_write_title_only_unresolved_item() -> None:

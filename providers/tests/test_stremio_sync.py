@@ -838,6 +838,38 @@ def test_progress_read_enriches_imdb_movie_id_with_tmdb_when_duration_exists(mon
     assert index["tmdb:550"]["progress_percent"] == 20.0
 
 
+def test_progress_read_replaces_invalid_movie_duration_from_tmdb(monkeypatch) -> None:
+    class Provider:
+        def fetch(self, **kwargs: Any) -> dict[str, Any]:
+            assert kwargs["entity"] == "movie"
+            assert kwargs["ids"]["imdb"] == "tt0137523"
+            return {"ids": {"tmdb": "550", "imdb": "tt0137523"}, "runtime_minutes": 95, "images": {}}
+
+    monkeypatch.setattr(_progress, "tmdb_metadata_provider", lambda _adapter: Provider())
+    record = movie_record(state={"timeOffset": 3_531_671, "duration": 2**63, "lastWatched": 1_785_441_100_000})
+    adapter = FakeAdapter([record])
+
+    index = _progress.build_index(adapter)
+
+    assert set(index) == {"tmdb:550"}
+    item = index["tmdb:550"]
+    assert item["progress_ms"] == 3_531_671
+    assert item["duration_ms"] == 5_700_000
+    assert item["progress_percent"] == 61.959
+    assert "_stremio_duration_invalid" not in item
+
+
+def test_progress_read_drops_invalid_duration_when_tmdb_cannot_recover() -> None:
+    record = movie_record(state={"timeOffset": 3_531_671, "duration": 2**63, "lastWatched": 1_785_441_100_000})
+    adapter = FakeAdapter([record])
+
+    index = _progress.build_index(adapter)
+
+    assert index == {}
+    assert adapter._stremio_read_drops["progress"][0]["reason"] == "stremio_duration_invalid"
+    assert adapter._stremio_read_drops["progress"][0]["duration_ms"] == 2**63
+
+
 def test_parse_episode_progress_uses_video_id() -> None:
     record = series_record()
     record["state"].update({"video_id": "tt0903747:1:2", "season": 1, "episode": 2, "timeOffset": 60_000, "duration": 600_000})
@@ -896,6 +928,39 @@ def test_progress_read_enriches_imdb_episode_show_id_with_tmdb_when_duration_exi
     assert item["duration_ms"] == 2_520_000
     assert item["progress_percent"] == 30.0
     assert item["_stremio_video_id"] == "tt13111078:1:1"
+
+
+def test_progress_read_replaces_invalid_episode_duration_from_tmdb(monkeypatch) -> None:
+    class Provider:
+        def fetch(self, **kwargs: Any) -> dict[str, Any]:
+            assert kwargs["entity"] == "tv"
+            assert kwargs["ids"]["imdb"] == "tt13111078"
+            assert kwargs["ids"]["title"] == "Lioness"
+            return {"ids": {"tmdb": "113962", "imdb": "tt13111078"}, "runtime_minutes": 42, "images": {}}
+
+    monkeypatch.setattr(_progress, "tmdb_metadata_provider", lambda _adapter: Provider())
+    record = series_record() | {"_id": "tt13111078", "name": "Lioness"}
+    record["state"].update(
+        {
+            "video_id": "tt13111078:1:1",
+            "season": 1,
+            "episode": 1,
+            "timeOffset": 756_000,
+            "duration": 2**63,
+            "lastWatched": 1_788_013_866_000,
+        }
+    )
+    adapter = FakeAdapter([record])
+
+    index = _progress.build_index(adapter)
+
+    assert set(index) == {"tmdb:113962#s01e01"}
+    item = index["tmdb:113962#s01e01"]
+    assert item["show_ids"] == {"imdb": "tt13111078", "tmdb": "113962"}
+    assert item["progress_ms"] == 756_000
+    assert item["duration_ms"] == 2_520_000
+    assert item["progress_percent"] == 30.0
+    assert "_stremio_duration_invalid" not in item
 
 
 def test_progress_write_preserves_history_bitfield_and_unknown_fields() -> None:
