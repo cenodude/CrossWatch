@@ -1632,8 +1632,10 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
         emit=emit, dbg=dbg, dst_name=dst, feature=feature,
     )
 
+    blocked_total = 0
     pair_key = "-".join(sorted([src, dst]))
     if feature != "watchlist":
+        before_blocklist = len(adds)
         adds = apply_blocklist(
             ctx.state_store,
             adds,
@@ -1644,6 +1646,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
             ignore_pair_tomb=(str(feature or "").lower() == "history"),
             emit=emit,
         )
+        blocked_total += max(0, before_blocklist - len(adds))
 
     manual_blocked = 0
     if manual_blocks:
@@ -1663,6 +1666,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                 blocked_keys=int(len(manual_blocks)),
             )
             ctx.stats_manual_blocked = int(getattr(ctx, "stats_manual_blocked", 0) or 0) + int(manual_blocked)
+        blocked_total += int(manual_blocked)
 
     if unresolved_known:
         try:
@@ -1683,6 +1687,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
     guard = PhantomGuard(src, dst, feature, ttl_days=ttl_days, enabled=use_phantoms)
     if use_phantoms and adds:
         adds, _blocked = guard.filter_adds(adds, _sync_key, _sync_minimal, emit, ctx.state_store, pair_key)
+        blocked_total += int(_blocked or 0)
 
     attempted_keys: list[str] = []
     key2item: dict[str, Any] = {}
@@ -1921,7 +1926,6 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                         record_unresolved(dst, feature, failed_items, hint="apply:add:failed")
                     if promoted_keys:
                         clear_unresolved(dst, feature, promoted_keys)
-                        unresolved_new_total = max(0, unresolved_new_total - len(promoted_keys & set(still_unresolved)))
                         
                     _emit_item_failures(emit, dst, feature, pair_key, failed_keys, key2item, _bb)
                             
@@ -2248,6 +2252,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
         "errors": int((res_update or {}).get("errors", 0)) + int((res_add or {}).get("errors", 0)) + int((res_remove or {}).get("errors", 0)),
         "skipped_exact": int((res_update or {}).get("skipped_exact", 0)) + int((res_add or {}).get("skipped_exact", 0)),
         "skipped_inferred": int((res_update or {}).get("skipped_inferred", 0)) + int((res_add or {}).get("skipped_inferred", 0)),
+        "blocked": int(blocked_total),
         "res_add": res_add,
         "res_update": res_update,
         "res_remove": res_remove,

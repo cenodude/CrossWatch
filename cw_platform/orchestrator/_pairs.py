@@ -361,6 +361,7 @@ def run_pairs(ctx) -> dict[str, Any]:
     skipped_total = 0
     skipped_exact_total = 0
     skipped_inferred_total = 0
+    blocked_total = 0
     errors_total = 0
     attempted_add_duplicate_keys_total = 0
 
@@ -487,6 +488,7 @@ def run_pairs(ctx) -> dict[str, Any]:
                             updated_total += int(res.get("updated", 0))
                             unresolved_total += int(res.get("unresolved", 0))
                             skipped_total += int(res.get("skipped", 0))
+                            blocked_total += int(res.get("blocked", 0))
                             errors_total += int(res.get("errors", 0))
                         elif mode == "two-way":
                             res = run_two_way_feature(ctx, src, dst, feature=feature, fcfg=fcfg, health_map=health_map)
@@ -505,6 +507,7 @@ def run_pairs(ctx) -> dict[str, Any]:
                                 + int(res.get("skipped_to_A", 0))
                                 + int(res.get("skipped_to_B", 0))
                             )
+                            blocked_total += int(res.get("blocked", 0))
                             errors_total += (
                                 int(res.get("errors", 0))
                                 + int(res.get("errors_to_A", 0))
@@ -520,6 +523,7 @@ def run_pairs(ctx) -> dict[str, Any]:
                             skipped_total += int(res.get("skipped", 0))
                             skipped_exact_total += int(res.get("skipped_exact", 0))
                             skipped_inferred_total += int(res.get("skipped_inferred", 0))
+                            blocked_total += int(res.get("blocked", 0))
                             attempted_add_duplicate_keys_total += int(res.get("attempted_add_duplicate_keys", 0))
                             errors_total += int(res.get("errors", 0))
 
@@ -580,6 +584,7 @@ def run_pairs(ctx) -> dict[str, Any]:
                     "skipped_inferred": skipped_inferred_total,
                     "attempted_add_duplicate_keys": attempted_add_duplicate_keys_total,
                     "unresolved": unresolved_total,
+                    "blocked": blocked_total,
                     "errors": errors_total,
                 },
             }
@@ -634,6 +639,7 @@ def run_pairs(ctx) -> dict[str, Any]:
         skipped_inferred=skipped_inferred_total,
         attempted_add_duplicate_keys=attempted_add_duplicate_keys_total,
         unresolved=unresolved_total,
+        blocked=blocked_total,
         errors=errors_total,
         pairs=len(pairs),
         cancelled=cancelled,
@@ -653,6 +659,7 @@ def run_pairs(ctx) -> dict[str, Any]:
         "removed": removed_total,
         "skipped": skipped_total,
         "unresolved": unresolved_total,
+        "blocked": blocked_total,
         "errors": errors_total,
         "pairs": len(pairs),
         "cancelled": cancelled,
