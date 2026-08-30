@@ -411,6 +411,11 @@ def test_insights_main_load_uses_lightweight_stats_first():
     assert "return refreshInsightsFastThenFull()" in insights
     assert "optimisticConfigured" in insights
     assert "configuredProvidersSnapshot(blk.active)" in insights
+    assert "function paintTileShell()" in insights
+    assert "function clearInsightsState()" in insights
+    assert 'w.addEventListener("cw:sync-state-cleared", clearInsightsState);' in insights
+    assert "visibleStatusProviderKeys()" in insights
+    assert 'new MutationObserver(() => { if (!paintCachedTiles()) paintTileShell(); })' in insights
     assert "_configuredProvidersCache" in insights
     assert "new Set(Object.entries(active || {}).filter" in insights
     assert "new Set([...Object.keys(blk.providers || {}), ...Object.keys(blk.active || {})])" not in insights

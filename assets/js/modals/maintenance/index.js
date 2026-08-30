@@ -944,6 +944,10 @@ export default {
         if (kind === "scrobbles") {
           try { window.dispatchEvent(new CustomEvent("activity-log-cleared")); } catch {}
         }
+        if (kind === "state") {
+          try { window.CW?.Maintenance?.applySyncStateReset?.(res || { ok: true }); } catch {}
+          await refreshSummary();
+        }
         if (kind === "cache" || kind === "tracker") await refreshSummary();
 
         if (kind === "defaults") {
@@ -1077,16 +1081,20 @@ export default {
       });
     }
 
-    showOverviewStatus();
-    await loadTrackerProfiles();
-    await refreshSummary();
-    setStatus("");
     const initialGroup = String(props?.group || props?.target || "").trim().toLowerCase();
     if (initialGroup) {
       [...root.querySelectorAll(".side-nav-btn[data-target]")]
         .find((btn) => btn.dataset.target === `cxm-group-${initialGroup}`)
         ?.click();
     }
+    showOverviewStatus();
+    const loadMaintenanceBootStatus = async () => {
+      await loadTrackerProfiles();
+      await refreshSummary();
+      if (root.isConnected && !operationBusy) setStatus("");
+    };
+    setStatus("Loading maintenance status...", "busy");
+    void loadMaintenanceBootStatus();
   },
   unmount() {},
 };

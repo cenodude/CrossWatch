@@ -641,7 +641,19 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
     </div>
 
     <div class="sync-status" style="display:none"><div id="sync-icon"></div><div id="sync-status-text"></div><span id="sched-inline" style="display:none"></span></div>
-    <div id="ux-progress"></div><div id="ux-lanes"></div><div id="ux-spotlight"></div>
+    <div id="ux-progress">
+      <div class="sb-head">
+        <div class="sb-head-main">
+          <div>
+            <div class="sb-label">Sync status</div>
+            <div class="sb-phase"><div class="sb-phase-text">Waiting for the next sync run</div></div>
+          </div>
+        </div>
+        <div class="sb-head-side"><div class="sb-note hide"></div><div class="sb-badge">Idle</div></div>
+      </div>
+      <div class="sb-rail"><div class="sb-fill"></div><div class="sb-fly hide"></div></div>
+      <div class="sb-steps"><span data-step="start">Start</span><span data-step="discovering">Discovering</span><span data-step="syncing">Syncing</span><span data-step="done">Done</span></div>
+    </div><div id="ux-lanes"></div><div id="ux-spotlight"></div>
 
     <div class="action-row">
       <div class="action-buttons">

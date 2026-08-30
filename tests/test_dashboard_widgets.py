@@ -1487,6 +1487,9 @@ def test_dashboard_widget_frontend_uses_cached_payload_version() -> None:
     assert "const DATA_CACHE_KEY" in js
     assert "function readCachedWidgetData()" in js
     assert "function writeCachedWidgetData(payload)" in js
+    assert "function clearDashboardWidgetState()" in js
+    assert 'window.addEventListener("cw:sync-state-cleared", clearDashboardWidgetState);' in js
+    assert "clear: clearDashboardWidgetState" in js
     assert "const WIDGET_LOADING_DELAY_MS = 700;" in js
     assert 'const REFRESHABLE_WIDGETS = ["history", "ratings", "scrobble", "progress", "playlists"];' in js
     assert "async function refreshDashboardWidgets({ forceConfig = false, force = false, preserve = true, kinds = null } = {})" in js
@@ -1498,7 +1501,7 @@ def test_dashboard_widget_frontend_uses_cached_payload_version() -> None:
     assert "const preserve = opts.preserve === false ? hasLoaded : true;" in js
     assert "try { await window.CW?.OverviewProfile?.ready; } catch {}\n    if (seq !== loadSeq || !isOnMain()) return;\n    if (!hasLoaded) revealFromCache();" in js
     assert "function scheduleSlowWidgetLoading(hosts, requestedKinds)" in js
-    assert "if (!latestItems[kind]?.length) setLoading(hosts[kind], kind);" in js
+    assert "if (!loadedWidgetKinds.has(kind)) setLoading(hosts[kind], kind);" in js
     assert "const requestedKinds = REFRESHABLE_WIDGETS.filter((key) => active[key] && (!wantedKinds || wantedKinds.has(key)));" in js
     assert "mergeWidgetPayload" not in js
     assert "loadedKinds" not in js
