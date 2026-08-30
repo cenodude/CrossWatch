@@ -318,7 +318,7 @@
     const title = editing ? "Edit user profile" : "Add user profile";
     const currentLabel = modalDraft?.label ?? profile?.label ?? "";
     return `
-      <div class="cw-upm-overlay" data-action="close-modal">
+      <div class="cw-upm-overlay">
         <div class="cw-upm-dialog" role="dialog" aria-modal="true" aria-labelledby="cw-upm-dialog-title" data-modal-root>
           <div class="cw-upm-dialog-head">
             <span class="cw-auth-provider-mark cw-upm-dialog-icon" aria-hidden="true"><span class="material-symbols-rounded cw-auth-provider-icon">person</span></span>

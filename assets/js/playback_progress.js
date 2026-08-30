@@ -385,7 +385,6 @@
         value.removeEventListener("input", syncFromValue);
         apply.removeEventListener("click", onApply);
         cancel.removeEventListener("click", onCancel);
-        dlg.removeEventListener("click", onBackdrop);
         dlg.removeEventListener("keydown", onKey);
         resolve(result);
       };
@@ -398,7 +397,6 @@
         done(Math.round(n * 100) / 100);
       };
       const onCancel = () => done(null);
-      const onBackdrop = (e) => { if (e.target === dlg) done(null); };
       const onKey = (e) => {
         if (e.key === "Escape") done(null);
         if (e.key === "Enter") onApply();
@@ -407,7 +405,6 @@
       value.addEventListener("input", syncFromValue);
       apply.addEventListener("click", onApply);
       cancel.addEventListener("click", onCancel);
-      dlg.addEventListener("click", onBackdrop);
       dlg.addEventListener("keydown", onKey);
     });
   }
@@ -916,11 +913,6 @@
           const item = state.items.find((it) => recordKey(it) === btn.dataset.key);
           if (item) return act(btn.dataset.action, item);
         }
-        return;
-      }
-      const settingsDialog = e.target?.closest?.("#pp-settings-dialog");
-      if (settingsDialog && e.target === settingsDialog) {
-        closeSettings();
         return;
       }
       const card = e.target?.closest?.(".pp-card[data-key]");

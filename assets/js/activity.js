@@ -282,9 +282,6 @@
     state.modal = modal;
 
     $(".activity-close", modal)?.addEventListener("click", closeModal);
-    modal.addEventListener("click", (e) => {
-      if (e.target === modal) closeModal();
-    });
     ["#activity-q", "#activity-media", "#activity-status"].forEach((sel) => {
       $(sel, modal)?.addEventListener("input", () => loadActivityPage(true));
       $(sel, modal)?.addEventListener("change", () => loadActivityPage(true));

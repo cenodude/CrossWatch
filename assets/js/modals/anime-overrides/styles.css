@@ -2,7 +2,7 @@
 .cw-anime-overrides,.cw-anime-overrides *{box-sizing:border-box}
 .cw-anime-overrides{width:100%;height:auto;max-height:inherit;display:flex;flex-direction:column;overflow:hidden;color:var(--ao-text);background:radial-gradient(110% 90% at 0% 0%,color-mix(in srgb,var(--ao-accent) 9%,transparent),transparent 52%),var(--ao-bg)}
 
-.cw-anime-overrides .cx-head{min-height:76px;display:flex!important;align-items:center!important;justify-content:space-between!important;gap:12px;padding:16px 22px!important;border-bottom:1px solid var(--ao-border)!important;background:transparent!important;cursor:move}
+.cw-anime-overrides .cx-head{min-height:76px;display:flex!important;align-items:center!important;justify-content:space-between!important;gap:12px;padding:16px 22px!important;border-bottom:1px solid var(--ao-border)!important;background:transparent!important;cursor:default}
 .cw-anime-overrides .ao-head-left{min-width:0;display:flex;align-items:center;gap:14px}
 .cw-anime-overrides .ao-head-icon{width:46px;height:46px;flex:0 0 46px;border-radius:14px;display:grid;place-items:center;border:1px solid color-mix(in srgb,var(--ao-accent) 38%,var(--ao-border));background:color-mix(in srgb,var(--ao-accent) 15%,var(--ao-card));color:var(--ao-accent)}
 .cw-anime-overrides .ao-head-icon .material-symbols-rounded{font-size:25px}

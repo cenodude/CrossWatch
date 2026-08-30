@@ -45,8 +45,14 @@ window.cxEditPair = (id) => ModalRegistry.open('pair-config', { pairOrId: id });
 window.closePairModal = () => ModalRegistry.close();
 window.cxCloseModal = () => ModalRegistry.close();
 
-window.openAbout = (props = {}) => ModalRegistry.open('about', props);
-window.closeAbout = () => ModalRegistry.close();
+window.openAbout = async (props = {}) => {
+  const mod = await import(_cwVer('./modals/about.js'));
+  return mod.openAboutModal?.(props);
+};
+window.closeAbout = async () => {
+  const mod = await import(_cwVer('./modals/about.js'));
+  return mod.closeAboutModal?.();
+};
 
 window.openAnalyzer = (props = {}) => ModalRegistry.open('analyzer', props);
 window.openEvents = (props = {}) => ModalRegistry.open('events', props);

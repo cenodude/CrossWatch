@@ -683,7 +683,7 @@
     modal.addEventListener("input", () => { ctx.dirty = snapshot(formRoot) !== ctx.initial; });
     modal.addEventListener("change", () => { ctx.dirty = snapshot(formRoot) !== ctx.initial; });
     modal.addEventListener("click", (e) => {
-      if (e.target === modal || e.target.closest("[data-modal-close]") || e.target.closest("[data-modal-cancel]")) closeModal(false);
+      if (e.target.closest("[data-modal-close]") || e.target.closest("[data-modal-cancel]")) closeModal(false);
     });
     const primary = $("[data-modal-primary]", modal);
     if (primary && opts.onPrimary) {

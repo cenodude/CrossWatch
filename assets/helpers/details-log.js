@@ -368,7 +368,6 @@ async function _showUnresolvedModal() {
     document.body.appendChild(modal);
     const close = () => modal.classList.add("hidden");
     modal.querySelector(".cw-unres-close").addEventListener("click", close);
-    modal.querySelector(".cw-unres-backdrop").addEventListener("click", close);
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
   }
   const body = modal.querySelector(".cw-unres-body");

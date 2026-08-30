@@ -156,7 +156,6 @@
     dialog.appendChild(head);
     dialog.appendChild(body);
     modal.appendChild(dialog);
-    modal.addEventListener("click", (e) => { if (e.target === modal) close(); });
     ["input", "change"].forEach((name) => {
       modal.addEventListener(name, (e) => e.stopPropagation());
     });
