@@ -43,7 +43,13 @@ def _shadow_path():
     return state_file("simkl.watchlist.shadow.json")
 
 
+def _history_cover_path():
+    return state_file("simkl.watchlist.history_cover.json")
+
+
 WATCHLIST_BUCKETS = ("movies", "shows", "anime")
+_HISTORY_COVERING_STATUSES = {"completed", "watching"}
+_STATUS_HISTORY_COVERED: dict[str, dict[str, Any]] = {}
 
 
 
@@ -155,6 +161,56 @@ def _shadow_ttl_seconds() -> float:
         return float(value)
     except Exception:
         return 300.0
+
+
+def _history_cover_load() -> dict[str, dict[str, Any]]:
+    if _is_capture_mode():
+        return {}
+    data = load_json_state(_history_cover_path())
+    if not isinstance(data, Mapping):
+        return {}
+    items = data.get("items")
+    if not isinstance(items, Mapping):
+        return {}
+    now = time.time()
+    ttl = _shadow_ttl_seconds()
+    out: dict[str, dict[str, Any]] = {}
+    for key, row in items.items():
+        if not isinstance(key, str) or not isinstance(row, Mapping):
+            continue
+        seen_at = row.get("_cw_seen_at") or data.get("updated_at")
+        if isinstance(seen_at, (int, float, str)):
+            try:
+                age = now - float(seen_at)
+            except ValueError:
+                age = ttl + 1.0
+        else:
+            age = ttl + 1.0
+        if age <= ttl:
+            out[key] = dict(row)
+    return out
+
+
+def _history_cover_save(items: Mapping[str, Mapping[str, Any]]) -> None:
+    if _is_capture_mode():
+        return
+    now = time.time()
+    payload: dict[str, dict[str, Any]] = {}
+    for key, row in items.items():
+        if not isinstance(key, str) or not isinstance(row, Mapping):
+            continue
+        mapped = dict(row)
+        seen_at = mapped.get("_cw_seen_at")
+        mapped["_cw_seen_at"] = float(seen_at) if isinstance(seen_at, (int, float, str)) else now
+        payload[key] = mapped
+    save_json_state(
+        _history_cover_path(),
+        {
+            "schema": 1,
+            "updated_at": now,
+            "items": payload,
+        },
+    )
 
 
 _ALLOWED_ID_KEYS = ("tmdb", "imdb", "tvdb", "trakt", "simkl", "mal", "anilist", "kitsu", "anidb")
@@ -436,6 +492,101 @@ def _sigs_from_write_resp(body: Any) -> set[str]:
     return sigs
 
 
+def _base_key_token(value: Any) -> str:
+    key = str(value or "").strip()
+    if not key:
+        return ""
+    return key.split("@", 1)[0]
+
+
+def _identity_tokens(item: Mapping[str, Any]) -> set[str]:
+    tokens: set[str] = set()
+    if not isinstance(item, Mapping):
+        return tokens
+    try:
+        key = _base_key_token(simkl_key_of(item))
+        if key:
+            tokens.add(key)
+    except Exception:
+        pass
+
+    for field in ("ids", "show_ids"):
+        raw = item.get(field)
+        if not isinstance(raw, Mapping):
+            continue
+        for ns in _ALLOWED_ID_KEYS:
+            value = raw.get(ns)
+            if value not in (None, ""):
+                tokens.add(f"{ns}:{str(value).strip().lower()}")
+    return tokens
+
+
+def _history_cache_items() -> dict[str, dict[str, Any]]:
+    data = load_json_state(state_file("simkl.history.cache.json"))
+    if not isinstance(data, Mapping) or int(data.get("schema") or 0) != 4:
+        return {}
+    items = data.get("items")
+    if not isinstance(items, Mapping):
+        return {}
+    return {str(k): dict(v) for k, v in items.items() if isinstance(v, Mapping)}
+
+
+def _history_covered_tokens() -> set[str]:
+    tokens: set[str] = set()
+    for key, row in _history_cache_items().items():
+        if not row.get("watched") and not row.get("watched_at"):
+            continue
+        base = _base_key_token(key)
+        if base:
+            tokens.add(base)
+        tokens.update(_identity_tokens(row))
+    for key, row in _history_cover_load().items():
+        base = _base_key_token(key)
+        if base:
+            tokens.add(base)
+        tokens.update(_identity_tokens(row))
+    for key, row in _STATUS_HISTORY_COVERED.items():
+        base = _base_key_token(key)
+        if base:
+            tokens.add(base)
+        tokens.update(_identity_tokens(row))
+    return tokens
+
+
+def _remember_status_history_rows(rows: Mapping[str, Mapping[str, Any]]) -> None:
+    if not rows:
+        return
+    remembered = {str(k): dict(v) for k, v in rows.items() if isinstance(v, Mapping)}
+    if not remembered:
+        return
+    _STATUS_HISTORY_COVERED.update(remembered)
+    persisted = _history_cover_load()
+    persisted.update(remembered)
+    _history_cover_save(persisted)
+
+
+def _split_history_covered(
+    items: Iterable[Mapping[str, Any]],
+) -> tuple[list[Mapping[str, Any]], list[str]]:
+    covered_tokens = _history_covered_tokens()
+    if not covered_tokens:
+        return list(items or []), []
+    pending: list[Mapping[str, Any]] = []
+    skipped: list[str] = []
+    for item in items or []:
+        if not isinstance(item, Mapping):
+            pending.append(item)
+            continue
+        tokens = _identity_tokens(item)
+        if tokens and not tokens.isdisjoint(covered_tokens):
+            key = simkl_key_of(id_minimal(item)) or simkl_key_of(item)
+            if key:
+                skipped.append(str(key))
+            continue
+        pending.append(item)
+    return pending, skipped
+
+
 def _mk_shadow_item(item: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
     ids = _ids_filter(dict(item.get("ids") or {}))
     bucket = str(item.get("simkl_bucket") or "").strip().lower()
@@ -600,12 +751,22 @@ def _pull_all_watchlist(
         raise SIMKLFetchError("watchlist aggregate request failed") from exc
 
     out: dict[str, dict[str, Any]] = {}
+    history_covered: dict[str, dict[str, Any]] = {}
     count = 0
     for bucket in WATCHLIST_BUCKETS:
         for row in _rows_from_data(data, bucket):
             if isinstance(row, Mapping):
                 status = str(row.get("status") or "").strip().lower()
                 if status and status != "plantowatch":
+                    if status in _HISTORY_COVERING_STATUSES:
+                        try:
+                            mapped_status = _normalize_row(bucket, row)
+                            if mapped_status.get("ids"):
+                                mapped_status["simkl_status"] = status
+                                mapped_status["_simkl_history_covers_watchlist"] = True
+                                history_covered[simkl_key_of(mapped_status)] = mapped_status
+                        except Exception:
+                            pass
                     continue
             try:
                 mapped = _normalize_row(bucket, row)
@@ -616,7 +777,9 @@ def _pull_all_watchlist(
             out[simkl_key_of(mapped)] = mapped
             count += 1
             if limit and count >= int(limit):
+                _remember_status_history_rows(history_covered)
                 return out
+    _remember_status_history_rows(history_covered)
     return out
 
 
@@ -646,10 +809,11 @@ def _build_index_live(adapter: Any, limit: int | None = None) -> dict[str, dict[
     comp_ts = _composite_ts(ts_map)
 
     if os.getenv("CW_SIMKL_WATCHLIST_CLEAR") == "1":
-        try:
-            _shadow_path().unlink(missing_ok=True)
-        except Exception:
-            pass
+        for path in (_shadow_path(), _history_cover_path()):
+            try:
+                path.unlink(missing_ok=True)
+            except Exception:
+                pass
 
     shadow = _shadow_load()
     buckets_seen: dict[str, Any] = dict(shadow.get("buckets_seen") or {})
@@ -1014,16 +1178,37 @@ def _chunk_items(seq: list[Mapping[str, Any]], n: int) -> Iterable[list[Mapping[
 def add(
     adapter: Any,
     items: Iterable[Mapping[str, Any]],
-) -> tuple[int, list[dict[str, Any]]]:
+) -> dict[str, Any]:
     session = adapter.client.session
     headers = _headers(adapter)
     items_list: list[Mapping[str, Any]] = list(items or [])
     if not items_list:
         _info("write_skipped", op="add", reason="empty_payload", unresolved=0)
-        return 0, []
+        return {
+            "ok": True,
+            "count": 0,
+            "unresolved": [],
+            "confirmed_keys": [],
+            "skipped_keys": [],
+            "presence_confirmed_keys": [],
+        }
+    items_list, skipped_keys = _split_history_covered(items_list)
+    if skipped_keys:
+        _unfreeze_if_present(skipped_keys)
+        _info("write_skipped", op="add", reason="history_covers_watchlist", skipped=len(skipped_keys))
+    if not items_list:
+        return {
+            "ok": True,
+            "count": 0,
+            "unresolved": [],
+            "confirmed_keys": [],
+            "skipped_keys": skipped_keys,
+            "presence_confirmed_keys": [],
+        }
     batch = max(1, int(getattr(adapter.cfg, "watchlist_batch_size", 100) or 100))
     ok = 0
     unresolved: list[dict[str, Any]] = []
+    confirmed_keys: list[str] = []
     for part in _chunk_items(items_list, batch):
         raw_payload, part_unresolved = _split_buckets(part)
         unresolved.extend(part_unresolved)
@@ -1079,10 +1264,17 @@ def add(
                             sig = _id_sig(_ids_filter(item.get("ids") or {}))
                             if sig and sig in sigs:
                                 to_add.append(item)
+                                confirmed_key = simkl_key_of(id_minimal(item)) or simkl_key_of(item)
+                                if confirmed_key:
+                                    confirmed_keys.append(str(confirmed_key))
                         if to_add:
                             _shadow_add_items(to_add)
                     elif processed == len(part):
                         _shadow_add_items(part)
+                        for item in part:
+                            confirmed_key = simkl_key_of(id_minimal(item)) or simkl_key_of(item)
+                            if confirmed_key:
+                                confirmed_keys.append(str(confirmed_key))
                     _unfreeze_if_present([simkl_key_of(id_minimal(it)) for it in part])
             else:
                 _warn("write_failed", op="add", status=resp.status_code, body=(resp.text or '')[:180])
@@ -1119,8 +1311,26 @@ def add(
                         reasons=["exception"],
                         ids_sent=body_ids,
                     )
-    _info("write_done", op="add", ok=bool(items_list) and len(unresolved) == 0 and ok == len(items_list), applied=ok, unresolved=len(unresolved))
-    return ok, unresolved
+    if ok and not confirmed_keys:
+        unresolved_keys = {
+            str(u.get("key") or simkl_key_of(u.get("item") or {}))
+            for u in unresolved
+            if isinstance(u, Mapping)
+        }
+        for item in items_list:
+            confirmed_key = simkl_key_of(id_minimal(item)) or simkl_key_of(item)
+            if confirmed_key and confirmed_key not in unresolved_keys:
+                confirmed_keys.append(str(confirmed_key))
+    confirmed_keys = list(dict.fromkeys(confirmed_keys))
+    _info("write_done", op="add", ok=bool(items_list) and len(unresolved) == 0 and ok == len(items_list), applied=ok, unresolved=len(unresolved), skipped=len(skipped_keys))
+    return {
+        "ok": len(unresolved) == 0 and ok == len(items_list),
+        "count": len(confirmed_keys),
+        "unresolved": unresolved,
+        "confirmed_keys": confirmed_keys,
+        "skipped_keys": skipped_keys,
+        "presence_confirmed_keys": confirmed_keys,
+    }
 
 
 def remove(

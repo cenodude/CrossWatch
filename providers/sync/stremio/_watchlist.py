@@ -53,14 +53,15 @@ def _is_listed(record: Mapping[str, Any]) -> bool:
 def _metadata_enriched(adapter: Any, item: Mapping[str, Any], typ: str) -> dict[str, Any]:
     out = dict(item)
     stremio_id = stremio_id_for_item(out)
+    ids = merge_ids(ids_from(out), imdb_ids_from_item(out))
     if stremio_id:
         if not str(out.get("poster") or out.get("poster_url") or "").strip():
             out["poster"] = poster_url_from_item(out, stremio_id)
-        return out
+        if str(ids.get("tmdb") or "").strip():
+            return out
     provider = tmdb_metadata_provider(adapter)
     if provider is None:
         return out
-    ids = merge_ids(ids_from(out), imdb_ids_from_item(out))
     lookup = {k: str(ids.get(k) or "").strip() for k in ("tmdb", "imdb", "tvdb") if str(ids.get(k) or "").strip()}
     title = str(out.get("series_title") or out.get("show_title") or out.get("title") or "").strip()
     if title:
@@ -77,17 +78,27 @@ def _metadata_enriched(adapter: Any, item: Mapping[str, Any], typ: str) -> dict[
         return out
     detail_ids = detail.get("ids")
     ids_map: Mapping[str, Any] = detail_ids if isinstance(detail_ids, Mapping) else {}
+    portable_ids: dict[str, Any] = {}
+    tmdb = str(ids_map.get("tmdb") or "").strip()
+    if tmdb:
+        portable_ids["tmdb"] = tmdb
     found = imdb_id(ids_map.get("imdb"))
     if found:
+        portable_ids["imdb"] = found
+    tvdb = str(ids_map.get("tvdb") or "").strip()
+    if tvdb:
+        portable_ids["tvdb"] = tvdb
+    if portable_ids:
         out_ids_raw = out.get("ids")
         out_ids: Mapping[str, Any] = out_ids_raw if isinstance(out_ids_raw, Mapping) else {}
         merged = dict(out_ids)
-        merged["imdb"] = found
+        for key, value in portable_ids.items():
+            merged.setdefault(key, value)
         out["ids"] = merged
     if not str(out.get("title") or out.get("series_title") or "").strip() and str(detail.get("title") or "").strip():
         out["title"] = str(detail.get("title") or "").strip()
     if not str(out.get("poster") or out.get("poster_url") or "").strip():
-        poster = poster_url_from_item(out, found) or _image_url(detail, "poster")
+        poster = poster_url_from_item(out, found or stremio_id) or _image_url(detail, "poster")
         if poster:
             out["poster"] = poster
     return out

@@ -1212,6 +1212,24 @@ def test_watchlist_read_indexes_native_tmdb_id() -> None:
     assert adapter._stremio_read_drops["watchlist"] == []
 
 
+def test_watchlist_read_enriches_imdb_movie_id_with_tmdb(monkeypatch) -> None:
+    class Provider:
+        def fetch(self, **kwargs: Any) -> dict[str, Any]:
+            assert kwargs["entity"] == "movie"
+            assert kwargs["ids"]["imdb"] == "tt0137523"
+            return {"ids": {"tmdb": "550", "imdb": "tt0137523"}, "images": {}}
+
+    monkeypatch.setattr(_watchlist, "tmdb_metadata_provider", lambda _adapter: Provider())
+    movie = movie_record(removed=False, temp=False)
+    adapter = FakeAdapter([movie])
+
+    index = _watchlist.build_index(adapter)
+
+    assert set(index) == {"tmdb:550"}
+    assert index["tmdb:550"]["ids"] == {"imdb": "tt0137523", "tmdb": "550"}
+    assert adapter._stremio_read_drops["watchlist"] == []
+
+
 def test_watchlist_excludes_temporary_history_progress_records() -> None:
     movie = movie_record(removed=True, temp=True)
     adapter = FakeAdapter([movie])
