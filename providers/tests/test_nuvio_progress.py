@@ -185,8 +185,8 @@ def test_add_movie_progress_resolves_imdb_to_tmdb_content_id_when_tmdb_configure
 
         def fetch(self, *, entity: str, ids: dict[str, str], locale: str | None = None, need: dict[str, bool] | None = None) -> dict[str, Any]:
             assert entity == "movie"
-            assert ids == {"imdb": "tt0137523"}
-            return {"ids": {"tmdb": "550"}}
+            assert ids in ({"imdb": "tt0137523"}, {"tmdb": "550"})
+            return {"ids": {"tmdb": "550", "imdb": "tt0137523"}}
 
     adapter = FakeAdapter([])
     adapter.config["tmdb"] = {"api_key": "tmdb-key"}
@@ -197,6 +197,7 @@ def test_add_movie_progress_resolves_imdb_to_tmdb_content_id_when_tmdb_configure
 
     assert result["ok"] is True
     assert result["confirmed_keys"] == ["imdb:tt0137523"]
+    assert result["confirmed_destinations"]["imdb:tt0137523"]["key"] == "tmdb:550"
     push = [body for name, body in adapter.client.calls if name == "sync_push_watch_progress"][0]
     assert push["p_entries"][0]["content_id"] == "tmdb:550"
 
@@ -219,6 +220,8 @@ def test_add_returns_unresolved_for_unsupported_id_and_missing_duration() -> Non
     assert result["ok"] is False
     assert result["attempted"] == 0
     assert {row["reason"] for row in result["unresolved"]} == {"nuvio_id_missing", "nuvio_duration_missing"}
+    assert set(result["unresolved_keys"]) == {"tvdb:99", "imdb:tt0137523", "trakt:12", "tmdb:550"}
+    assert {row["key"] for row in result["unresolved"]} == {"tvdb:99", "imdb:tt0137523", "trakt:12", "tmdb:550"}
     assert not any(name == "sync_push_watch_progress" for name, _body in adapter.client.calls)
 
 
@@ -334,6 +337,59 @@ def test_progress_skips_unchanged_when_index_is_iso_and_source_is_epoch_ms() -> 
 
     assert result["attempted"] == 0
     assert result["skipped"] == 1
+    assert result["skipped_keys"] == ["tmdb:550"]
+    assert result["presence_confirmed_keys"] == ["tmdb:550"]
+    assert result["confirmed_destinations"]["tmdb:550"]["key"] == "tmdb:550"
+    assert not any(name == "sync_push_watch_progress" for name, _body in adapter.client.calls)
+
+
+def test_progress_read_enriches_tmdb_rows_with_external_ids(monkeypatch: Any) -> None:
+    from providers.metadata import _meta_TMDB
+    from providers.sync.nuvio import _progress
+
+    class FakeTmdb:
+        def __init__(self, *_: Any, **__: Any) -> None:
+            pass
+
+        def fetch(self, *, entity: str, ids: dict[str, str], locale: str | None = None, need: dict[str, bool] | None = None) -> dict[str, Any]:
+            assert entity == "movie"
+            assert ids == {"tmdb": "550"}
+            return {"ids": {"tmdb": "550", "imdb": "tt0137523"}}
+
+    adapter = FakeAdapter([_row("tmdb:550")])
+    adapter.config["tmdb"] = {"api_key": "tmdb-key"}
+    monkeypatch.setattr(_meta_TMDB, "TmdbProvider", FakeTmdb)
+
+    item = _progress.build_index(adapter)["tmdb:550"]
+
+    assert item["ids"] == {"tmdb": "550", "imdb": "tt0137523"}
+
+
+def test_progress_skip_maps_source_key_to_existing_tmdb_destination(monkeypatch: Any) -> None:
+    from providers.metadata import _meta_TMDB
+    from providers.sync.nuvio import _progress
+
+    class FakeTmdb:
+        def __init__(self, *_: Any, **__: Any) -> None:
+            pass
+
+        def fetch(self, *, entity: str, ids: dict[str, str], locale: str | None = None, need: dict[str, bool] | None = None) -> dict[str, Any]:
+            assert entity == "movie"
+            assert ids in ({"imdb": "tt0137523"}, {"tmdb": "550"})
+            return {"ids": {"tmdb": "550", "imdb": "tt0137523"}}
+
+    adapter = FakeAdapter([_row("tmdb:550")])
+    adapter.config["tmdb"] = {"api_key": "tmdb-key"}
+    monkeypatch.setattr(_meta_TMDB, "TmdbProvider", FakeTmdb)
+    item = {"type": "movie", "ids": {"imdb": "tt0137523"}, "progress_ms": 120_000, "duration_ms": 600_000, "progress_at": 1_785_000_000_000}
+
+    result = _progress.add(adapter, [item])
+
+    assert result["attempted"] == 0
+    assert result["skipped"] == 1
+    assert result["skipped_keys"] == ["imdb:tt0137523"]
+    assert result["presence_confirmed_keys"] == ["imdb:tt0137523"]
+    assert result["confirmed_destinations"]["imdb:tt0137523"]["key"] == "tmdb:550"
     assert not any(name == "sync_push_watch_progress" for name, _body in adapter.client.calls)
 
 
@@ -416,8 +472,8 @@ def test_add_episode_progress_resolves_tvdb_to_tmdb_content_id_when_tmdb_configu
 
         def fetch(self, *, entity: str, ids: dict[str, str], locale: str | None = None, need: dict[str, bool] | None = None) -> dict[str, Any]:
             assert entity == "tv"
-            assert ids == {"tvdb": "355567"}
-            return {"ids": {"tmdb": "69478"}}
+            assert ids in ({"tvdb": "355567"}, {"tmdb": "69478"})
+            return {"ids": {"tmdb": "69478", "tvdb": "355567"}}
 
     adapter = FakeAdapter([])
     adapter.config["tmdb"] = {"api_key": "tmdb-key"}

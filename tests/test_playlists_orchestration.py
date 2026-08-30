@@ -69,7 +69,11 @@ class FakeStats:
 
 
 class FakeStateStore:
+    def __init__(self):
+        self.last = None
+
     def save_last(self, d):
+        self.last = d
         pass
 
     def load_state(self):
@@ -123,6 +127,84 @@ def _pair_cfg(mode="one-way"):
             }
         ],
     }
+
+
+def _history_pair_cfg(mode="one-way"):
+    return {
+        "runtime": {},
+        "sync": {},
+        "pairs": [
+            {
+                "id": "p1",
+                "source": "FAKESRC",
+                "target": "FAKEDST",
+                "source_instance": "default",
+                "target_instance": "default",
+                "enabled": True,
+                "mode": mode,
+                "features": {"history": {"enable": True}},
+            }
+        ],
+    }
+
+
+def test_run_pairs_includes_blocked_from_one_way_feature(monkeypatch):
+    events: list[tuple[str, dict[str, Any]]] = []
+    ctx = _ctx(_history_pair_cfg("one-way"))
+    ctx.emit = lambda event, **fields: events.append((event, dict(fields)))
+    monkeypatch.setattr(pairs, "supports_feature", lambda *_a, **_k: True)
+    monkeypatch.setattr(pairs, "health_feature_ok", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        pairs,
+        "run_one_way_feature",
+        lambda *_a, **_k: {
+            "updated": 0,
+            "added": 0,
+            "removed": 0,
+            "skipped": 0,
+            "unresolved": 0,
+            "blocked": 7,
+            "errors": 0,
+        },
+    )
+    monkeypatch.setattr(pairs, "run_two_way_feature", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no two-way")))
+
+    result = pairs.run_pairs(ctx)
+
+    assert result["blocked"] == 7
+    assert ctx.state_store.last["result"]["blocked"] == 7
+    assert [fields["blocked"] for event, fields in events if event == "run:done"] == [7]
+
+
+def test_run_pairs_includes_blocked_from_two_way_feature(monkeypatch):
+    events: list[tuple[str, dict[str, Any]]] = []
+    ctx = _ctx(_history_pair_cfg("two-way"))
+    ctx.emit = lambda event, **fields: events.append((event, dict(fields)))
+    monkeypatch.setattr(pairs, "supports_feature", lambda *_a, **_k: True)
+    monkeypatch.setattr(pairs, "health_feature_ok", lambda *_a, **_k: True)
+    monkeypatch.setattr(pairs, "run_one_way_feature", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no one-way")))
+    monkeypatch.setattr(
+        pairs,
+        "run_two_way_feature",
+        lambda *_a, **_k: {
+            "upd_to_A": 0,
+            "upd_to_B": 0,
+            "adds_to_A": 0,
+            "adds_to_B": 0,
+            "rem_from_A": 0,
+            "rem_from_B": 0,
+            "skipped": 0,
+            "unresolved": 0,
+            "blocked": 4,
+            "errors": 0,
+        },
+    )
+
+    result = pairs.run_pairs(ctx)
+
+    assert result["blocked"] == 4
+    assert ctx.state_store.last["result"]["blocked"] == 4
+    assert [fields["blocked"] for event, fields in events if event == "run:done"] == [4]
 
 
 def test_pairs_routes_playlists_to_dedicated_runner(config_base, monkeypatch):

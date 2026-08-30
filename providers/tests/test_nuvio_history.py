@@ -127,7 +127,26 @@ def test_history_skips_unchanged_when_index_is_iso_and_source_is_epoch_ms() -> N
     result = _history.add(adapter, [{"type": "movie", "ids": {"tmdb": "550"}, "title": "Fight Club", "watched_at": 1_785_000_000_000}])
 
     assert result["skipped"] == 1
+    assert result["skipped_keys"] == ["tmdb:550"]
+    assert result["presence_confirmed_keys"] == ["tmdb:550"]
+    assert result["confirmed_destinations"]["tmdb:550"]["key"] == "tmdb:550"
     assert [name for name, _ in adapter.client.calls if name == "sync_push_watched_items"] == []
+
+
+def test_history_unresolved_rows_carry_attempted_key() -> None:
+    from providers.sync.nuvio import _history
+
+    adapter = FakeAdapter([])
+    result = _history.add(
+        adapter,
+        [{"type": "movie", "ids": {"tvdb": "99"}, "title": "Unknown", "watched_at": 1_785_000_000_000}],
+    )
+
+    assert result["ok"] is False
+    assert result["attempted"] == 0
+    assert result["unresolved_keys"] == ["tvdb:99"]
+    assert result["unresolved"][0]["key"] == "tvdb:99"
+    assert result["unresolved"][0]["canonical_key"] == "tvdb:99"
 
 
 def test_history_read_enriches_episode_code_title_from_tmdb(monkeypatch: Any) -> None:
@@ -209,8 +228,8 @@ def test_history_adds_movie_resolves_imdb_to_tmdb_content_id_when_tmdb_configure
 
         def fetch(self, *, entity: str, ids: dict[str, str], locale: str | None = None, need: dict[str, bool] | None = None) -> dict[str, Any]:
             assert entity == "movie"
-            assert ids == {"imdb": "tt0137523"}
-            return {"ids": {"tmdb": "550"}}
+            assert ids in ({"imdb": "tt0137523"}, {"tmdb": "550"})
+            return {"ids": {"tmdb": "550", "imdb": "tt0137523"}}
 
     adapter = FakeAdapter([])
     adapter.config["tmdb"] = {"api_key": "tmdb-key"}
@@ -220,8 +239,76 @@ def test_history_adds_movie_resolves_imdb_to_tmdb_content_id_when_tmdb_configure
 
     assert result["ok"] is True
     assert result["confirmed_keys"] == ["imdb:tt0137523"]
+    assert result["confirmed_destinations"]["imdb:tt0137523"]["key"] == "tmdb:550"
     push = [body for name, body in adapter.client.calls if name == "sync_push_watched_items"][0]
     assert push["p_items"][0]["content_id"] == "tmdb:550"
+
+
+def test_history_read_enriches_tmdb_rows_with_external_ids(monkeypatch: Any) -> None:
+    from providers.metadata import _meta_TMDB
+    from providers.sync.nuvio import _history
+
+    class FakeTmdb:
+        def __init__(self, *_: Any, **__: Any) -> None:
+            pass
+
+        def fetch(self, *, entity: str, ids: dict[str, str], locale: str | None = None, need: dict[str, bool] | None = None) -> dict[str, Any]:
+            assert entity == "movie"
+            assert ids == {"tmdb": "550"}
+            return {"ids": {"tmdb": "550", "imdb": "tt0137523"}}
+
+    adapter = FakeAdapter(
+        [
+            {
+                "content_id": "tmdb:550",
+                "content_type": "movie",
+                "title": "Fight Club",
+                "watched_at": 1_785_000_000_000,
+            }
+        ]
+    )
+    adapter.config["tmdb"] = {"api_key": "tmdb-key"}
+    monkeypatch.setattr(_meta_TMDB, "TmdbProvider", FakeTmdb)
+
+    item = _history.build_index(adapter)["tmdb:550"]
+
+    assert item["ids"] == {"tmdb": "550", "imdb": "tt0137523"}
+
+
+def test_history_skip_maps_source_key_to_existing_tmdb_destination(monkeypatch: Any) -> None:
+    from providers.metadata import _meta_TMDB
+    from providers.sync.nuvio import _history
+
+    class FakeTmdb:
+        def __init__(self, *_: Any, **__: Any) -> None:
+            pass
+
+        def fetch(self, *, entity: str, ids: dict[str, str], locale: str | None = None, need: dict[str, bool] | None = None) -> dict[str, Any]:
+            assert entity == "movie"
+            assert ids in ({"imdb": "tt0137523"}, {"tmdb": "550"})
+            return {"ids": {"tmdb": "550", "imdb": "tt0137523"}}
+
+    adapter = FakeAdapter(
+        [
+            {
+                "content_id": "tmdb:550",
+                "content_type": "movie",
+                "title": "Fight Club",
+                "watched_at": 1_785_000_000_000,
+            }
+        ]
+    )
+    adapter.config["tmdb"] = {"api_key": "tmdb-key"}
+    monkeypatch.setattr(_meta_TMDB, "TmdbProvider", FakeTmdb)
+
+    result = _history.add(adapter, [{"type": "movie", "ids": {"imdb": "tt0137523"}, "title": "Fight Club", "watched_at": 1_785_000_000_000}])
+
+    assert result["attempted"] == 0
+    assert result["skipped"] == 1
+    assert result["skipped_keys"] == ["imdb:tt0137523"]
+    assert result["presence_confirmed_keys"] == ["imdb:tt0137523"]
+    assert result["confirmed_destinations"]["imdb:tt0137523"]["key"] == "tmdb:550"
+    assert [name for name, _ in adapter.client.calls if name == "sync_push_watched_items"] == []
 
 
 def test_history_adds_episode_with_show_tmdb_id_not_episode_tmdb_id() -> None:
@@ -262,8 +349,8 @@ def test_history_adds_episode_resolves_tvdb_to_tmdb_content_id_when_tmdb_configu
 
         def fetch(self, *, entity: str, ids: dict[str, str], locale: str | None = None, need: dict[str, bool] | None = None) -> dict[str, Any]:
             assert entity == "tv"
-            assert ids == {"tvdb": "355567"}
-            return {"ids": {"tmdb": "69478"}}
+            assert ids in ({"tvdb": "355567"}, {"tmdb": "69478"})
+            return {"ids": {"tmdb": "69478", "tvdb": "355567"}}
 
     adapter = FakeAdapter([])
     adapter.config["tmdb"] = {"api_key": "tmdb-key"}

@@ -48,10 +48,13 @@ class _StateStore:
 class _Ops:
     def __init__(self, remove_result):
         self.removed: list[dict[str, Any]] = []
+        self.added: list[dict[str, Any]] = []
         self._remove_result = remove_result
 
     def add(self, _cfg, items, *, feature, dry_run=False):
-        return {"ok": True, "count": len(items), "confirmed_keys": [], "unresolved": []}
+        rows = [dict(i) for i in items]
+        self.added.extend(rows)
+        return {"ok": True, "count": len(rows), "confirmed_keys": [canonical_key(i) for i in rows], "unresolved": []}
 
     def remove(self, _cfg, items, *, feature, dry_run=False):
         lst = [dict(i) for i in items]
@@ -160,6 +163,72 @@ def test_twoway_ambiguous_partial_tombstones_nothing(monkeypatch):
     assert cleared == []
     assert len(recorded) == 1
     assert len(recorded[0]["items"]) == 10
+
+
+def test_twoway_promoted_failed_add_still_counts_as_run_unresolved(monkeypatch):
+    for name, val in (
+        ("_supports_feature", lambda _o, _f: True),
+        ("_health_feature_ok", lambda _h, _f: True),
+        ("_health_status", lambda _h: "up"),
+        ("_resolve_flags", lambda _f, _s: {"allow_adds": True, "allow_removals": False}),
+        ("_anime_pair_feature_options", lambda *_a, **_k: {"use_anime_mapping": False}),
+        ("_anime_config_with_pair_feature_options", lambda cfg, _o: cfg),
+        ("_index_semantics", lambda *_a, **_k: "full"),
+        ("prev_checkpoint", lambda *_a, **_k: None),
+        ("module_checkpoint", lambda *_a, **_k: None),
+        ("keys_for_feature", lambda *_a, **_k: {}),
+        ("_manual_policy", lambda *_a, **_k: ([], set())),
+        ("_provider_ignore_dropped_enabled", lambda *_a, **_k: False),
+        ("apply_blocklist", lambda _s, items, **_k: list(items)),
+        ("_maybe_block_massdelete", lambda items, **_k: list(items)),
+        ("effective_chunk_size", lambda *_a, **_k: 100),
+        ("load_blackbox_keys", lambda *_a, **_k: set()),
+        ("record_success", lambda *_a, **_k: {"ok": True, "count": 0}),
+    ):
+        monkeypatch.setattr(twoway, name, val)
+
+    ok_item = {"type": "movie", "title": "OK", "ids": {"tmdb": "1"}, "watched_at": WATCHED_AT}
+    bad_item = {"type": "movie", "title": "Bad", "ids": {"tmdb": "2"}, "watched_at": WATCHED_AT}
+    ok_key = canonical_key(ok_item)
+    bad_key = canonical_key(bad_item)
+    monkeypatch.setattr(twoway, "build_snapshots_for_feature", lambda **_k: {"TRAKT": {ok_key: ok_item, bad_key: bad_item}, "SIMKL": {}})
+    monkeypatch.setattr(twoway, "load_unresolved_keys", lambda *_a, **_k: {bad_key})
+    monkeypatch.setattr(twoway, "record_attempts", lambda *_a, **_k: {"ok": True, "count": 1, "promoted": 1, "promoted_keys": [bad_key]})
+    cleared: list[list[str]] = []
+    monkeypatch.setattr(twoway, "clear_unresolved", lambda _dst, _feature, keys: cleared.append(list(keys)) or {"ok": True})
+
+    class _MixedAddOps(_Ops):
+        def add(self, _cfg, items, *, feature, dry_run=False):
+            rows = [dict(i) for i in items]
+            self.added.extend(rows)
+            return {
+                "ok": False,
+                "count": 1,
+                "confirmed_keys": [ok_key],
+                "unresolved_keys": [bad_key],
+                "unresolved": [{"status": "failed", "reason": "write_failed", "item": bad_item, "key": bad_key}],
+            }
+
+    simkl = _MixedAddOps(lambda _l: {"ok": True, "count": 0})
+    ctx = SimpleNamespace(
+        config={"sync": {"include_observed_deletes": False, "blackbox": {"enabled": True}}, "runtime": {}},
+        providers={"TRAKT": _Ops(lambda _l: {"ok": True, "count": 0}), "SIMKL": simkl},
+        emit=lambda *_a, **_k: None,
+        emit_info=lambda *_a, **_k: None,
+        dbg=lambda *_a, **_k: None,
+        dry_run=False,
+        snap_cache={},
+        snap_ttl_sec=0,
+        state_store=_StateStore({}),
+        stats_manual_blocked=0,
+        apply_chunk_pause_ms=0,
+    )
+
+    result = twoway._two_way_sync(ctx, "TRAKT", "SIMKL", feature="history", fcfg={}, health_map={})
+
+    assert result["adds_to_B"] == 1
+    assert result["unresolved"] == 1
+    assert [bad_key] in cleared
 
 
 def test_twoway_clean_full_count_without_exact_keys_is_accepted(monkeypatch):

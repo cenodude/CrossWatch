@@ -95,8 +95,8 @@ def test_watchlist_add_resolves_imdb_to_tmdb_content_id_when_tmdb_configured(mon
 
         def fetch(self, *, entity: str, ids: dict[str, str], locale: str | None = None, need: dict[str, bool] | None = None) -> dict[str, Any]:
             assert entity == "movie"
-            assert ids == {"imdb": "tt0137523"}
-            return {"ids": {"tmdb": "550"}}
+            assert ids in ({"imdb": "tt0137523"}, {"tmdb": "550"})
+            return {"ids": {"tmdb": "550", "imdb": "tt0137523"}}
 
     adapter = FakeAdapter([])
     adapter.config["tmdb"] = {"api_key": "tmdb-key"}
@@ -107,6 +107,7 @@ def test_watchlist_add_resolves_imdb_to_tmdb_content_id_when_tmdb_configured(mon
 
     assert result["ok"] is True
     assert result["confirmed_keys"] == ["imdb:tt0137523"]
+    assert result["confirmed_destinations"]["imdb:tt0137523"]["key"] == "tmdb:550"
     push = [body for name, body in adapter.client.calls if name == "sync_push_library"][0]
     assert push["p_items"][0]["content_id"] == "tmdb:550"
 
@@ -121,6 +122,19 @@ def test_watchlist_add_skips_tmdb_enrichment_without_metadata_config() -> None:
     assert result["ok"] is True
     push = [body for name, body in adapter.client.calls if name == "sync_push_library"][0]
     assert "poster" not in push["p_items"][0]
+
+
+def test_watchlist_unresolved_rows_carry_attempted_key() -> None:
+    from providers.sync.nuvio import _watchlist
+
+    adapter = FakeAdapter([])
+    result = _watchlist.add(adapter, [{"type": "movie", "ids": {"trakt": "12"}, "title": "Unknown"}])
+
+    assert result["ok"] is False
+    assert result["attempted"] == 0
+    assert result["unresolved_keys"] == ["trakt:12"]
+    assert result["unresolved"][0]["key"] == "trakt:12"
+    assert result["unresolved"][0]["canonical_key"] == "trakt:12"
 
 
 def test_watchlist_add_enriches_nuvio_payload_from_configured_tmdb(monkeypatch: Any) -> None:
@@ -165,8 +179,8 @@ def test_watchlist_add_resolves_tvdb_to_tmdb_content_id_when_tmdb_configured(mon
 
         def fetch(self, *, entity: str, ids: dict[str, str], locale: str | None = None, need: dict[str, bool] | None = None) -> dict[str, Any]:
             assert entity == "tv"
-            assert ids == {"tvdb": "355567"}
-            return {"ids": {"tmdb": "69478"}}
+            assert ids in ({"tvdb": "355567"}, {"tmdb": "69478"})
+            return {"ids": {"tmdb": "69478", "tvdb": "355567"}}
 
     adapter = FakeAdapter([])
     adapter.config["tmdb"] = {"api_key": "tmdb-key"}
@@ -180,6 +194,28 @@ def test_watchlist_add_resolves_tvdb_to_tmdb_content_id_when_tmdb_configured(mon
     push = [body for name, body in adapter.client.calls if name == "sync_push_library"][0]
     assert push["p_items"][0]["content_id"] == "tmdb:69478"
     assert push["p_items"][0]["content_type"] == "series"
+
+
+def test_watchlist_read_enriches_tmdb_rows_with_external_ids(monkeypatch: Any) -> None:
+    from providers.metadata import _meta_TMDB
+    from providers.sync.nuvio import _watchlist
+
+    class FakeTmdb:
+        def __init__(self, *_: Any, **__: Any) -> None:
+            pass
+
+        def fetch(self, *, entity: str, ids: dict[str, str], locale: str | None = None, need: dict[str, bool] | None = None) -> dict[str, Any]:
+            assert entity == "movie"
+            assert ids == {"tmdb": "550"}
+            return {"ids": {"tmdb": "550", "imdb": "tt0137523"}}
+
+    adapter = FakeAdapter([{"content_id": "tmdb:550", "content_type": "movie", "name": "Fight Club"}])
+    adapter.config["tmdb"] = {"api_key": "tmdb-key"}
+    monkeypatch.setattr(_meta_TMDB, "TmdbProvider", FakeTmdb)
+
+    item = _watchlist.build_index(adapter)["tmdb:550"]
+
+    assert item["ids"] == {"tmdb": "550", "imdb": "tt0137523"}
 
 
 def test_watchlist_remove_full_replaces_library_without_removed_item() -> None:
