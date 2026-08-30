@@ -2076,9 +2076,9 @@ def get_profile_html(user: dict | None = None) -> str:
     </div>
     <div class="cw-profile-pair-grid">
       <article class="cw-profile-widget">
-        <div class="cw-profile-widget-head"><h2>Recent Activity</h2><button id="activity-view-all" class="ghost refresh-insights" type="button">View all</button></div>
-        <div class="stat-block" id="recent-activity-block">
-          <div id="recent-activity" class="history-list"></div>
+        <div class="cw-profile-widget-head"><h2>Recent Activity</h2><button id="profile-activity-view-all" class="ghost refresh-insights" type="button">View all</button></div>
+        <div class="stat-block" id="profile-activity-block">
+          <div id="profile-activity" class="cw-profile-activity-list"></div>
         </div>
       </article>
       <article class="cw-profile-widget">

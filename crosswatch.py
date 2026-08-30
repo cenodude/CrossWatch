@@ -447,6 +447,8 @@ def _non_admin_permission_allowed(user: dict, path: str, method: str = "GET") ->
         return bool(perms.get("dashboard"))
     if path.startswith("/api/dashboard/") or path.startswith("/api/state/wall") or path.startswith("/api/activity/") or path == "/api/watch/currently_watching":
         return bool(perms.get("dashboard"))
+    if path == "/api/events/feed":
+        return bool(perms.get("dashboard"))
     if path in {"/api/status", "/api/sync/providers", "/api/sync/providers/counts"}:
         return bool(perms.get("dashboard"))
     if path == "/api/logs/stream":

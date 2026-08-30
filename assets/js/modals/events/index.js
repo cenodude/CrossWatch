@@ -438,7 +438,7 @@ function createSegmented({ items, value, onChange, cls = "" }) {
 let cleanup = null;
 
 export default {
-  async mount(root) {
+  async mount(root, props = {}) {
     cleanup?.();
     await injectCSS();
     root.classList.add("modal-root", "ev-modal");
@@ -456,10 +456,15 @@ export default {
 
     const ls = (k, d) => { try { return localStorage.getItem(k) || d; } catch { return d; } };
     const lset = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
-    let visibility = ls("cw.events.visibility", "open");
+    const initialGroupId = String(props?.groupId || props?.eventGroupId || "").trim();
+    const initialDomain = String(props?.domain || "").trim().toLowerCase();
+    const initialVisibility = String(props?.visibility || "").trim().toLowerCase();
+    const initialMode = String(props?.mode || "").trim().toLowerCase();
+    let visibility = ["open", "acknowledged", "all"].includes(initialVisibility) ? initialVisibility : ls("cw.events.visibility", "open");
     let order = "newest";
-    let mode = ls("cw.events.mode", "grouped");
-    let domain = ls("cw.events.domain", "sync");
+    let mode = ["grouped", "raw"].includes(initialMode) ? initialMode : ls("cw.events.mode", "grouped");
+    if (initialGroupId) mode = "grouped";
+    let domain = ["sync", "scrobble", "audit"].includes(initialDomain) ? initialDomain : ls("cw.events.domain", "sync");
     let detailTab = ls("cw.events.detailtab", "timeline");
     lset("cw.events.order", order);
 
@@ -660,7 +665,7 @@ export default {
     Q("#ev-mode", root).appendChild(modeSeg.el);
     ddCategory.el.style.display = (mode === "grouped") ? "" : "none";
 
-    let view = ls("cw.events.view", domain === "scrobble" ? "scrobble" : "sync");
+    let view = initialDomain && ["sync", "scrobble", "audit"].includes(initialDomain) ? initialDomain : ls("cw.events.view", domain === "scrobble" ? "scrobble" : "sync");
     if (view === "audit" && !isAdmin) view = "sync";
     if (view === "sync" || view === "scrobble" || view === "audit") domain = view;
     let statsRange = ls("cw.events.stats.range", "30d");
@@ -1087,8 +1092,9 @@ export default {
         renderList();
         if (!state.didInitialSelect && state.page === 0 && state.items.length) {
           state.didInitialSelect = true;
-          const latestRun = grouped() ? state.items.find((x) => String(x.operation || "") === "run") : null;
-          const picked = latestRun || state.items[0];
+          const target = initialGroupId ? state.items.find((x) => String(x.id) === initialGroupId) : null;
+          const latestRun = grouped() && !target ? state.items.find((x) => String(x.operation || "") === "run") : null;
+          const picked = target || latestRun || state.items[0];
           if (picked?.id != null) select(picked.id);
         }
         if (page === 0) listEl.scrollTop = 0;
