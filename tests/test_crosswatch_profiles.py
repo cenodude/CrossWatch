@@ -1463,6 +1463,24 @@ def test_maintenance_tracker_archive_uses_profile_selector_toolbar() -> None:
     assert "{ ...cfg, className:" in profile_select_js
 
 
+def test_maintenance_rebuild_state_refreshes_main_page_caches() -> None:
+    root = Path(__file__).resolve().parents[1]
+    modal_js = (root / "assets" / "js" / "modals" / "maintenance" / "index.js").read_text("utf-8")
+    helper_js = (root / "assets" / "helpers" / "maintenance.js").read_text("utf-8")
+
+    assert "function applySyncStateReset(result = {})" in helper_js
+    assert '"insights.tiles.v1", "cw.dashboardWidgets.data.v1", "cw.profileWidgets.data.v1"' in helper_js
+    assert 'prefixes: ["cw.wall.preview.v2."]' in helper_js
+    assert 'window.dispatchEvent(new CustomEvent("cw:sync-state-cleared"' in helper_js
+    assert "window.CW?.DashboardWidgets?.refresh?.({ force: true, forceConfig: true, preserve: false })" in helper_js
+    assert 'if (kind === "state")' in modal_js
+    assert "window.CW?.Maintenance?.applySyncStateReset?.(res || { ok: true })" in modal_js
+    assert "await injectCSS();" in modal_js
+    assert "const loadMaintenanceBootStatus = async () =>" in modal_js
+    assert "void loadMaintenanceBootStatus();" in modal_js
+    assert "await loadTrackerProfiles();\n      await refreshSummary();" in modal_js
+
+
 def test_maintenance_tracker_archive_exports_and_imports_profile_storage(tmp_path: Path, monkeypatch) -> None:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient

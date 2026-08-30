@@ -123,6 +123,18 @@
   const clearWallCache = () => {
     try { localStorage.removeItem(wallCacheKey()); } catch {}
   };
+  const clearAllWallCaches = () => {
+    try {
+      const keys = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i) || "";
+        if (key.startsWith(`${WALL_PREVIEW_CACHE_KEY}.`)) keys.push(key);
+      }
+      for (const key of keys) localStorage.removeItem(key);
+    } catch {
+      clearWallCache();
+    }
+  };
 
   const hasRenderedWall = (row = document.getElementById("poster-row")) => !!(row?.childElementCount && !row.classList.contains("hidden"));
   const previewNeedsRefresh = () => window.__cwWallPreviewDirty
@@ -518,6 +530,21 @@
     window.dispatchEvent(new CustomEvent("cw:watchlist-widget-state", { detail: { empty: true, count: 0 } }));
   };
 
+  function renderCachedPreview({ preserveIfSame = true } = {}) {
+    const card = document.getElementById("placeholder-card");
+    const msg = document.getElementById("wall-msg");
+    const row = document.getElementById("poster-row");
+    if (!card || !msg || !row) return false;
+    if (!isOnMain() || profileWatchlistWidgetHidden()) return false;
+    const cached = readWallCache();
+    if (!cached?.items?.length) return false;
+    card.classList.remove("hidden");
+    return renderWall(row, msg, cached.items, cached.last_sync_epoch || 0, {
+      preserveIfSame,
+      total: cached.total ?? null,
+    });
+  }
+
   function pillFor(status) {
     const raw = String(status || "").toLowerCase().trim();
     if (raw === "deleted") return { text: "DELETED", cls: "p-del" };
@@ -767,19 +794,23 @@
     const myReq = ++wallReqSeq;
     const refreshVersion = window.__cwWallPreviewDirtyVersion;
     const renderedWall = hasRenderedWall(row);
+    const cached = readWallCache();
     if (!renderedWall) {
-      msg.textContent = "Loading...";
-      msg.classList.remove("is-empty");
-      msg.classList.remove("hidden");
-      row.closest(".wall-wrap")?.classList.remove("is-empty");
-      row.classList.add("hidden");
+      if (cached?.items?.length) {
+        renderCachedPreview({ preserveIfSame: true });
+      } else {
+        msg.textContent = "Loading...";
+        msg.classList.remove("is-empty");
+        msg.classList.remove("hidden");
+        row.closest(".wall-wrap")?.classList.remove("is-empty");
+        row.classList.add("hidden");
+      }
     }
 
     const limit = Number.isFinite(window.MAX_WALL_POSTERS) ? Math.max(1, Number(window.MAX_WALL_POSTERS)) : 20;
     const params = new URLSearchParams({ both_only: "0", active_only: "1", limit: String(limit) });
     const userProfile = overviewProfileId();
     if (userProfile) params.set("user_profile", userProfile);
-    const cached = readWallCache();
     if (cached?.version) params.set("known_version", cached.version);
     const wallDataPromise = json(`/api/state/wall?${params.toString()}`)
       .then((data) => ({ data }), (error) => ({ error }));
@@ -938,8 +969,10 @@
       card.classList.remove("hidden");
       const rendered = hasRenderedWall(row);
       if (msg && !window.wallLoaded && !rendered) {
-        msg.textContent = "Loading...";
-        msg.classList.remove("hidden");
+        if (!renderCachedPreview({ preserveIfSame: true })) {
+          msg.textContent = "Loading...";
+          msg.classList.remove("hidden");
+        }
       }
 
       if ((!window.wallLoaded || previewNeedsRefresh()) && !window.__wallLoading) {
@@ -961,6 +994,29 @@
     return true;
   }
 
+  function clearWatchlistPreview() {
+    clearAllWallCaches();
+    wallReqSeq += 1;
+    previewBusy = false;
+    window.__wallLoading = false;
+    window.wallLoaded = false;
+    window.__cwWallPreviewDirty = true;
+    window.__cwWallPreviewDirtyVersion += 1;
+    window.__cwWallPreviewLoadedAt = 0;
+    window._lastSyncEpoch = null;
+    window.__wallRenderSignature = "";
+    const card = document.getElementById("placeholder-card");
+    const row = document.getElementById("poster-row");
+    const msg = document.getElementById("wall-msg");
+    if (card && row && msg && isOnMain() && !profileWatchlistWidgetHidden()) {
+      card.classList.remove("hidden");
+      setWallEmpty(row, msg, "No items to show yet.");
+      return true;
+    }
+    try { window.dispatchEvent(new CustomEvent("cw:watchlist-widget-state", { detail: { empty: true, count: 0 } })); } catch {}
+    return false;
+  }
+
   window.addEventListener("storage", (event) => {
     if (event.key !== "wl_hidden") return;
     updatePreviewVisibility();
@@ -969,6 +1025,7 @@
   window.addEventListener("sync-complete", markWatchlistPreviewDirty);
   window.addEventListener("watchlist:refresh", markWatchlistPreviewDirty);
   window.addEventListener("cw:overview-profile-changed", markWatchlistPreviewDirty);
+  window.addEventListener("cw:sync-state-cleared", clearWatchlistPreview);
 
   const WatchlistPreview = {
     updateEdges,
@@ -980,6 +1037,7 @@
     gridArtUrl,
     applyWidgetView,
     prewarmWallImages,
+    renderCachedPreview,
     loadWall,
     updateWatchlistPreview,
     hasTmdbKey,
@@ -987,6 +1045,7 @@
     isWatchlistPreviewAllowed,
     updatePreviewVisibility,
     markWatchlistPreviewDirty,
+    clearWatchlistPreview,
   };
 
   (window.CW ||= {}).WatchlistPreview = WatchlistPreview;

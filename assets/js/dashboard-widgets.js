@@ -185,6 +185,10 @@
     } catch {}
   }
 
+  function clearCachedWidgetData() {
+    try { localStorage.removeItem(DATA_CACHE_KEY); } catch {}
+  }
+
   function hasOwn(obj, key) {
     return Object.prototype.hasOwnProperty.call(obj || {}, key);
   }
@@ -420,8 +424,12 @@
     if (hasLoaded || !isOnMain() || authSetupPending()) return;
     const settings = readCachedSettings();
     if (!settings) return;
+    lastSettings = settings;
     applyVisibility(settings);
     const active = activeWidgetSettings(settings);
+    if (active.watchlist) {
+      window.CW?.WatchlistPreview?.renderCachedPreview?.({ preserveIfSame: true });
+    }
     const cached = readCachedWidgetData();
     if (cached) {
       applyWidgetPayload(cached, active);
@@ -1584,6 +1592,28 @@
     );
   }
 
+  function clearDashboardWidgetState() {
+    clearCachedWidgetData();
+    loadSeq += 1;
+    widgetsDirty = true;
+    dirtyVersion += 1;
+    lastLoadedAt = 0;
+    loadedWidgetKinds.clear();
+    const settings = lastSettings || readCachedSettings() || widgetSettings(currentConfig?.ui || currentConfig?.user_interface || {});
+    lastSettings = settings;
+    for (const kind of REFRESHABLE_WIDGETS) {
+      latestItems[kind] = [];
+      resetVisibleCount(kind);
+      const [chipId, chipLabel] = WIDGET_COUNT_CHIPS[kind];
+      setCountChip(chipId, 0, chipLabel);
+      renderWidget(kind);
+      loadedWidgetKinds.add(kind);
+    }
+    hasLoaded = true;
+    applyVisibility(settings);
+    scheduleMasonry();
+  }
+
   function applyVisibility(settings) {
     const card = $("#dashboard-widgets-card");
     if (!card) return;
@@ -1861,6 +1891,7 @@
     window.addEventListener("cw-user-profiles-changed", () => markWidgetsDirty(150, { forceConfig: true, preserve: hasLoaded }));
     window.addEventListener("cw:overview-profile-changed", () => markWidgetsDirty(0, { preserve: hasLoaded }));
     window.addEventListener("activity-log-cleared", () => markWidgetsDirty(100));
+    window.addEventListener("cw:sync-state-cleared", clearDashboardWidgetState);
     window.addEventListener("sync-complete", refreshForSyncComplete);
     window.addEventListener("cw:scrobble-stopped", refreshForScrobbleStopped);
     window.addEventListener("cw:manual-watched-saved", () => markWidgetsDirty(250));
@@ -1880,7 +1911,7 @@
   }
 
   window.CW = window.CW || {};
-  window.CW.DashboardWidgets = { refresh: refreshDashboardWidgets, showAll: showAllWidgets, hiddenCount: hiddenWidgetCount };
+  window.CW.DashboardWidgets = { refresh: refreshDashboardWidgets, clear: clearDashboardWidgetState, showAll: showAllWidgets, hiddenCount: hiddenWidgetCount };
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", initDashboardWidgets, { once: true });

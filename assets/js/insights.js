@@ -111,7 +111,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
   let _prefs = loadPrefs(), _visibleFeats = visibleFeatures(_prefs);
   const clampFeature = name => _visibleFeats.includes(String(name)) ? name : (_visibleFeats[0] || "watchlist");
   let _feature = clampFeature(localStorage.getItem("insights.feature"));
-  let _lastStatsFetch = 0, _cwSnapModal = null, _lastInsightsData = null, _fullInsightsTimer = 0, _configuredProvidersCache = null, _tilesFeature = null, _bootScheduled = false, _bootRefreshFired = false, _tilesPainted = false;
+  let _lastStatsFetch = 0, _cwSnapModal = null, _lastInsightsData = null, _fullInsightsTimer = 0, _configuredProvidersCache = null, _tilesFeature = null, _tileShellFeature = null, _bootScheduled = false, _bootRefreshFired = false, _tilesPainted = false;
 
   function syncPrefs(instancesByProvider = {}) {
     const next = normalizePrefs(_prefs, instancesByProvider), changed = JSON.stringify(next) !== JSON.stringify(_prefs);
@@ -371,7 +371,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     const featCount = Math.max(1, _visibleFeats.length);
     host.style.setProperty("--ins-feat-count", String(featCount));
     host.dataset.labels = featCount >= 4 ? "icon" : "text";
-    if (seg) seg.dataset.count = String(featCount);
+    if (seg) seg.dataset.count = String(Math.max(1, _visibleFeats.length));
     host.querySelector(":scope > .ins-gear")?.remove();
     const needsGear = seg && !seg.querySelector(".ins-gear");
     if (host.dataset.feats !== sig || host.dataset.cur !== _feature || needsGear) {
@@ -495,15 +495,39 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
   }
 
   function paintCachedTiles() {
-    if (_tilesPainted) return;
-    if (!$("#stats-card")) return;
+    if (_tilesPainted) return false;
+    if (!$("#stats-card")) return false;
+    if (authSetupPending()) return false;
     const cached = readJSON(TILES_KEY, {})[_feature];
-    if (!cached || !Array.isArray(cached.keys) || !cached.keys.length) return;
+    if (!cached || !Array.isArray(cached.keys) || !cached.keys.length) return false;
     _tilesPainted = true;
     _tilesFeature = _feature;
     footWrap();
     ensureSwitch();
     renderProviderStats(cached.totals, cached.active, new Set(cached.keys), cached.mse, {}, false);
+    return true;
+  }
+
+  function visibleStatusProviderKeys() {
+    return [...new Set($$("#conn-badges [data-provider-key], #conn-badges [data-prov]")
+      .map(node => String(node.dataset.providerKey || node.dataset.prov || "").trim())
+      .filter(Boolean))];
+  }
+
+  function paintTileShell() {
+    if (_tilesPainted || _tileShellFeature === _feature || authSetupPending() || !$("#stats-card")) return false;
+    footWrap();
+    ensureSwitch();
+    let keys = visibleStatusProviderKeys();
+    if (!keys.length) keys = [...configuredProvidersSnapshot({})];
+    keys = keys.filter(k => providerOnSyncSurface(k));
+    if (!keys.length) return false;
+    _tileShellFeature = _feature;
+    _tilesFeature = _feature;
+    const totals = Object.fromEntries(keys.map(k => [k, 0]));
+    const active = Object.fromEntries(keys.map(k => [k, false]));
+    renderProviderStats(totals, active, new Set(keys), {}, {}, false);
+    return true;
   }
 
   function crosswatchSnapshotProfiles(cwSnapshots) {
@@ -622,10 +646,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     if (authSetupPending()) return;
     try {
       const profileParam = overviewProfileId() ? `&user_profile=${encodeURIComponent(overviewProfileId())}` : "";
-      const [data] = await Promise.all([
-        fetchJSON(`/api/insights?limit_samples=60&history=60${profileParam}${force ? `&t=${Date.now()}` : ""}`),
-        getConfiguredProviders(force).catch(() => null),
-      ]);
+      const data = await fetchJSON(`/api/insights?limit_samples=60&history=60${profileParam}${force ? `&t=${Date.now()}` : ""}`);
       await renderFromData(data, false, force);
     }
     catch (e) {
@@ -641,10 +662,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     _lastStatsFetch = now;
     try {
       const profileParam = overviewProfileId() ? `&user_profile=${encodeURIComponent(overviewProfileId())}` : "";
-      const [data] = await Promise.all([
-        fetchJSON(`/api/insights?limit_samples=0&history=0&include_events=0${profileParam}${force ? `&t=${Date.now()}` : ""}`),
-        getConfiguredProviders(force).catch(() => null),
-      ]);
+      const data = await fetchJSON(`/api/insights?limit_samples=0&history=0&include_events=0${profileParam}${force ? `&t=${Date.now()}` : ""}`);
       await renderFromData(data, true, force);
     }
     catch (e) {
@@ -663,12 +681,30 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     }, 180);
   }
 
+  function clearInsightsState() {
+    try { localStorage.removeItem(TILES_KEY); } catch {}
+    clearTimeout(_fullInsightsTimer);
+    _fullInsightsTimer = 0;
+    _lastInsightsData = {};
+    _tilesPainted = false;
+    _tilesFeature = "";
+    _tileShellFeature = null;
+    renderTopStats({});
+    renderHistoryTabs([]);
+    const providers = $("#stat-providers");
+    if (providers) {
+      providers.replaceChildren();
+      providers.hidden = true;
+    }
+  }
+
   w.addEventListener("insights:settings-changed", () => { _prefs = loadPrefs(); _visibleFeats = visibleFeatures(_prefs); _feature = clampFeature(_feature); localStorage.setItem("insights.feature", _feature); refreshInsightsFastThenFull(true); });
   w.addEventListener("cw:overview-profile-changed", () => refreshInsightsFastThenFull(true));
+  w.addEventListener("cw:sync-state-cleared", clearInsightsState);
 
   w.Insights = Object.assign(w.Insights || {}, {
     renderSparkline, refreshInsights, refreshStats, fetchJSON, animateNumber, animateChart, titleOf, subtitleOf,
-    switchFeature, refreshInsightsFastThenFull, get feature() { return _feature; },
+    switchFeature, refreshInsightsFastThenFull, clearState: clearInsightsState, get feature() { return _feature; },
     get bootRefreshFired() { return _bootRefreshFired; }
   });
   w.renderSparkline = renderSparkline;
@@ -685,13 +721,28 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     let tries = 0, limit = max || 20;
     (function tick() {
       if (authSetupPending()) return void (_bootScheduled = false);
-      if ($("#sync-history") || $("#stat-now") || $("#sparkline")) { _bootRefreshFired = true; paintCachedTiles(); return refreshInsightsFastThenFull(); }
+      if ($("#sync-history") || $("#stat-now") || $("#sparkline")) { _bootRefreshFired = true; if (!paintCachedTiles()) paintTileShell(); return refreshInsightsFastThenFull(); }
       if (++tries < limit) setTimeout(tick, 250);
       else _bootScheduled = false;
     })();
   };
 
-  d.addEventListener("DOMContentLoaded", () => { if (!authSetupPending()) w.scheduleInsights(); });
+  d.addEventListener("DOMContentLoaded", () => {
+    const badges = $("#conn-badges");
+    if (badges && !badges.dataset.insightsShellWatch) {
+      badges.dataset.insightsShellWatch = "1";
+      new MutationObserver(() => { if (!paintCachedTiles()) paintTileShell(); }).observe(badges, { childList: true, subtree: true });
+    }
+    if (!authSetupPending()) {
+      if (!paintCachedTiles()) paintTileShell();
+      w.scheduleInsights();
+    }
+  });
+  w.addEventListener("cw-auth-setup-pending", (ev) => {
+    if (ev?.detail?.pending !== false) return;
+    if (!paintCachedTiles()) paintTileShell();
+    w.scheduleInsights();
+  });
   d.addEventListener("tab-changed", ev => {
     if (authSetupPending()) return;
     const tab = String(ev?.detail?.id || ev?.detail?.tab || "").toLowerCase();

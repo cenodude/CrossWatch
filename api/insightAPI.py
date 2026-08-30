@@ -1958,14 +1958,17 @@ def register_insights(app: FastAPI) -> None:
         rows: list[dict[str, Any]] = []
         try:
             history_limit = max(0, int(history))
-            if history_limit > 0 and not wanted_instances:
-                from cw_platform.local_db.sync_reports import base_path_from_report_dir, list_reports
+            if not wanted_instances:
+                def _history_rows() -> list[dict[str, Any]]:
+                    from cw_platform.local_db.sync_reports import base_path_from_report_dir, list_reports
 
-                rows = list_reports(
-                    base_path_from_report_dir(REPORT_DIR),
-                    limit=history_limit,
-                    feature_keys=feature_keys,
-                )
+                    return list_reports(
+                        base_path_from_report_dir(REPORT_DIR),
+                        limit=history_limit,
+                        feature_keys=feature_keys,
+                    )
+
+                rows = _history_rows() if history_limit > 0 else []
         except Exception as e:
             _append_log("INSIGHTS", f"[!] report load failed: {e}")
 

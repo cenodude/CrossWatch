@@ -92,6 +92,9 @@ def test_watchlist_preview_uses_cached_wall_version() -> None:
     assert 'params.set("known_version", cached.version)' in js
     assert "if (data?.not_modified && cached?.items?.length)" in js
     assert "preserveIfSame: true" in js
+    assert "function clearWatchlistPreview()" in js
+    assert 'window.addEventListener("cw:sync-state-cleared", clearWatchlistPreview);' in js
+    assert "key.startsWith(`${WALL_PREVIEW_CACHE_KEY}.`)" in js
 
 
 def test_watchlist_preview_uses_shared_provider_branding() -> None:

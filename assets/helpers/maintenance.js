@@ -31,10 +31,37 @@
     }
   }
 
+  function removeLocalStorageKeys({ exact = [], prefixes = [] } = {}){
+    try {
+      const keys = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i) || "";
+        if (exact.includes(key) || prefixes.some((prefix) => key.startsWith(prefix))) keys.push(key);
+      }
+      for (const key of keys) localStorage.removeItem(key);
+    } catch {}
+  }
+
+  function applySyncStateReset(result = {}){
+    removeLocalStorageKeys({
+      exact: ["insights.tiles.v1", "cw.dashboardWidgets.data.v1", "cw.profileWidgets.data.v1"],
+      prefixes: ["cw.wall.preview.v2."],
+    });
+    try {
+      window.dispatchEvent(new CustomEvent("cw:sync-state-cleared", {
+        detail: { source: "maintenance", result },
+      }));
+    } catch {}
+    try { window.Insights?.refreshInsightsFastThenFull?.(true); } catch {}
+    try { window.refreshStats?.(true); } catch {}
+    try { window.CW?.DashboardWidgets?.refresh?.({ force: true, forceConfig: true, preserve: false }); } catch {}
+  }
+
   async function clearState(){
     return runAction({
       url: "/api/maintenance/reset-state",
       body: { mode: "clear_both" },
+      onSuccess: applySyncStateReset,
       successText: "Clear State – started ✓",
       failText: "Clear State – failed"
     });
@@ -75,5 +102,5 @@
 
   Object.assign(window, { clearState, clearCache, resetStats, resetCurrentlyPlaying, restartCrossWatch });
   (window.CW ||= {});
-  window.CW.Maintenance = { runAction, clearState, clearCache, resetStats, resetCurrentlyPlaying, restartCrossWatch };
+  window.CW.Maintenance = { runAction, clearState, clearCache, resetStats, resetCurrentlyPlaying, restartCrossWatch, applySyncStateReset };
 })();
