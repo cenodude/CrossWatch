@@ -538,6 +538,51 @@ def test_stremio_ops_clears_read_drops_once_the_records_resolve(tmp_path, monkey
     assert _unresolved.load_unresolved_pending("STREMIO", "history") == []
 
 
+def test_stremio_ops_injects_orchestrator_history_baseline(monkeypatch) -> None:
+    class Store:
+        def load_state_features(self, _features: set[str]) -> dict[str, Any]:
+            return {
+                "providers": {
+                    "STREMIO": {
+                        "history": {
+                            "baseline": {
+                                "items": {
+                                    "imdb:tt0903747#s01e01": {
+                                        "type": "episode",
+                                        "show_ids": {"imdb": "tt0903747"},
+                                        "ids": {"imdb": "tt0903747"},
+                                        "season": 1,
+                                        "episode": 1,
+                                        "watched": True,
+                                        "watched_at": "2026-01-01T00:00:00Z",
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+    class Ctx:
+        state_store = Store()
+
+    class FakeStremioModule(FakeAdapter):
+        def build_index(self, feature: str, **_kwargs: Any) -> dict[str, dict[str, Any]]:
+            assert feature == "history"
+            return _history.build_index(self)
+
+    monkeypatch.setattr(mod, "ctx", Ctx())
+    monkeypatch.setattr(_history, "cinemeta_videos", lambda _adapter, _imdb: bb_videos())
+    adapter = FakeStremioModule([series_record("tt0903747:1:1:6:eJxTYIACAAEpACE=")])
+    monkeypatch.setattr(mod.OPS, "_adapter", lambda _cfg: adapter)
+
+    index = mod.OPS.build_index({}, feature="history")
+
+    item = index["imdb:tt0903747#s01e01"]
+    assert item["watched_at"] == "2026-01-01T00:00:00Z"
+    assert item["_stremio_watched_at_source"] == "stored_episode_estimate"
+
+
 def test_history_write_resolves_imdb_with_tmdb_and_uses_metahub_poster(monkeypatch) -> None:
     class Provider:
         def fetch(self, **_kwargs: Any) -> dict[str, Any]:
@@ -1055,6 +1100,50 @@ def test_progress_percent_without_duration_reports_duration_missing() -> None:
 
     assert result["count"] == 0
     assert result["unresolved"][0]["reason"] == "stremio_duration_missing"
+
+
+def test_history_unresolved_preserves_attempted_key_after_enrichment(monkeypatch) -> None:
+    class Provider:
+        def fetch(self, **_kwargs: Any) -> dict[str, Any]:
+            return {"ids": {"imdb": "tt0903747", "tvdb": "81189"}, "images": {}}
+
+    monkeypatch.setattr(_history, "tmdb_metadata_provider", lambda _adapter: Provider())
+    monkeypatch.setattr(_history, "video_orders_for_series_record", lambda *_a, **_k: ([{"id": "tt0903747:1:2", "season": 1, "episode": 2}], False))
+    monkeypatch.setattr(_history, "datastore_put", lambda *_a, **_k: (_ for _ in ()).throw(Exception("write failed")))
+    adapter = FakeAdapter([])
+    item = {"type": "episode", "show_ids": {"tvdb": "81189"}, "series_title": "Breaking Bad", "season": 1, "episode": 2}
+
+    result = _history.add(adapter, [item])
+
+    assert result["count"] == 0
+    assert result["unresolved_keys"] == ["tvdb:81189#s01e02"]
+    assert result["unresolved"][0]["key"] == "tvdb:81189#s01e02"
+    assert result["unresolved"][0]["canonical_key"] == "tvdb:81189#s01e02"
+
+
+def test_progress_unresolved_preserves_attempted_key_after_enrichment(monkeypatch) -> None:
+    class Provider:
+        def fetch(self, **_kwargs: Any) -> dict[str, Any]:
+            return {"ids": {"imdb": "tt0903747", "tvdb": "81189"}, "images": {}, "runtime_minutes": 45}
+
+    monkeypatch.setattr(_progress, "tmdb_metadata_provider", lambda _adapter: Provider())
+    monkeypatch.setattr(_progress, "read_merge_write", lambda *_a, **_k: (_ for _ in ()).throw(Exception("write failed")))
+    adapter = FakeAdapter([])
+    item = {
+        "type": "episode",
+        "show_ids": {"tvdb": "81189"},
+        "series_title": "Breaking Bad",
+        "season": 1,
+        "episode": 2,
+        "progress_percent": 10.0,
+    }
+
+    result = _progress.add(adapter, [item])
+
+    assert result["count"] == 0
+    assert result["unresolved_keys"] == ["tvdb:81189#s01e02"]
+    assert result["unresolved"][0]["key"] == "tvdb:81189#s01e02"
+    assert result["unresolved"][0]["canonical_key"] == "tvdb:81189#s01e02"
 
 
 def test_created_record_uses_stremio_library_shape() -> None:

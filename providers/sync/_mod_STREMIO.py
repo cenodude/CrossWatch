@@ -214,12 +214,62 @@ class _STREMIOOPS:
 
     def _adapter(self, cfg: Mapping[str, Any]) -> STREMIOModule:
         return STREMIOModule(cfg)
+    # Fix #930 - keep a baseline of history items to avoid re-reading them as unresolved in future syncs
+    def _inject_history_baseline(self, adapter: STREMIOModule) -> None:
+        if isinstance(getattr(adapter, "_stremio_history_baseline", None), Mapping):
+            return
+        try:
+            store = getattr(ctx, "state_store", None)
+            load = getattr(store, "load_state_features", None)
+            if not callable(load):
+                return
+            state = load({"history"}) or {}
+            providers = state.get("providers") if isinstance(state, Mapping) else None
+            providers = providers if isinstance(providers, Mapping) else {}
+            stremio = providers.get("STREMIO") or providers.get("stremio")
+            if not isinstance(stremio, Mapping):
+                return
+
+            def _baseline_items(node: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+                history = node.get("history") if isinstance(node, Mapping) else None
+                history = history if isinstance(history, Mapping) else {}
+                baseline = history.get("baseline") if isinstance(history, Mapping) else None
+                baseline = baseline if isinstance(baseline, Mapping) else {}
+                items = baseline.get("items") if isinstance(baseline, Mapping) else None
+                if not isinstance(items, Mapping):
+                    return {}
+                return {str(k): dict(v) for k, v in items.items() if isinstance(v, Mapping)}
+
+            instance_id = normalize_instance_id(getattr(adapter, "instance_id", "default"))
+            nodes: list[Mapping[str, Any]] = []
+            instances = stremio.get("instances")
+            if isinstance(instances, Mapping):
+                node = instances.get(instance_id) or instances.get(str(instance_id))
+                if not isinstance(node, Mapping):
+                    for raw_inst, raw_node in instances.items():
+                        if normalize_instance_id(raw_inst) == instance_id and isinstance(raw_node, Mapping):
+                            node = raw_node
+                            break
+                if isinstance(node, Mapping):
+                    nodes.append(node)
+            nodes.append(stremio)
+
+            for node in nodes:
+                items = _baseline_items(node)
+                if items:
+                    setattr(adapter, "_stremio_history_baseline", items)
+                    return
+        except Exception:
+            return
+        #end of _inject_history_baseline
 
     def health(self, cfg: Mapping[str, Any]) -> Mapping[str, Any]:
         return self._adapter(cfg).health()
 
     def build_index(self, cfg: Mapping[str, Any], *, feature: str) -> Mapping[str, dict[str, Any]]:
         adapter = self._adapter(cfg)
+        if str(feature or "").strip().lower() == "history":
+            self._inject_history_baseline(adapter)
         index = adapter.build_index(feature)
         self._record_read_unresolved(feature, adapter)
         return index
