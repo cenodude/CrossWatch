@@ -10,9 +10,9 @@ from cw_platform.id_map import canonical_key, ids_from, merge_ids, minimal
 
 from .descriptors import descriptor_candidates_for_id, parse_descriptor
 from .overrides import find_identity_overrides
-from .storage import index_ready, query_edges, query_identity_natives
+from .storage import index_ready, query_edges, query_identity_natives, query_native_identity
 
-ANIME_NATIVE_PROVIDERS = {"anilist", "simkl"}
+ANIME_NATIVE_PROVIDERS = {"anilist", "simkl", "crosswatch"}
 DEFAULT_FEATURES = {"watchlist", "ratings"}
 OPT_IN_FEATURES = {"history"}
 ANY_PAIR = "*"
@@ -215,6 +215,32 @@ class AnimeMappingService:
                 return natives
         return {}
 
+    def _identity_target_ids(self, ids: Mapping[str, Any], media_type: str | None = None) -> dict[str, str]:
+        if str(media_type or "").strip().lower() in IDENTITY_SEED_EXCLUDED_TYPES:
+            return {}
+        found: dict[str, str] = {}
+        conflicts: set[str] = set()
+        for key in ("anidb", "mal", "anilist"):
+            value = str(ids.get(key) or "").strip()
+            if not value:
+                continue
+            try:
+                targets = query_native_identity(self.release_tag, key, value)
+            except Exception:
+                continue
+            for target_key in IDENTITY_SEED_KEYS:
+                target_value = str(targets.get(target_key) or "").strip()
+                if not target_value:
+                    continue
+                current = found.get(target_key)
+                if current is None:
+                    found[target_key] = target_value
+                elif current != target_value:
+                    conflicts.add(target_key)
+        for key in conflicts:
+            found.pop(key, None)
+        return found
+
     def enrich_ids(self, ids: Mapping[str, Any] | None, *, media_type: str | None = None) -> dict[str, Any]:
         ids0 = {str(k).lower(): v for k, v in dict(ids or {}).items() if v not in (None, "")}
         if not ids0:
@@ -236,7 +262,8 @@ class AnimeMappingService:
             }
 
         identity_seeds = self._identity_seed_ids(ids0, media_type)
-        seed_ids: dict[str, Any] = {**identity_seeds, **ids0, **ruled}
+        identity_targets = self._identity_target_ids(ids0, media_type)
+        seed_ids: dict[str, Any] = {**identity_seeds, **identity_targets, **ids0, **ruled}
 
         seen_sources: set[tuple[str, str]] = set()
         rows: list[dict[str, Any]] = []
@@ -334,10 +361,11 @@ class AnimeMappingService:
                 "source_descriptors": sorted(set(source_descriptors)),
                 **({"overrides": dict(ruled)} if ruled else {}),
                 **({"identity_seeds": dict(identity_seeds)} if identity_seeds else {}),
+                **({"identity_targets": dict(identity_targets)} if identity_targets else {}),
                 **({"ambiguous": sorted(ambiguous)} if ambiguous else {}),
                 **details,
             }
-        } if (details or ruled or identity_seeds) else {}
+        } if (details or ruled or identity_seeds or identity_targets) else {}
         return {"ids": merged or dict(ids0), "detail": detail, "changed": bool(changed)}
 
     def enrich_item(self, item: Mapping[str, Any]) -> dict[str, Any]:
