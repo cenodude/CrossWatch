@@ -219,6 +219,64 @@ def test_same_key_history_pair_converges_and_stays_native(
     assert len(dst.add_calls) == 1
 
 
+def test_promoted_failed_add_still_counts_as_run_unresolved(
+    config_base: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ok_item = {"type": "movie", "title": "OK", "ids": {"tmdb": "1"}, "watched_at": WATCHED}
+    bad_item = {"type": "movie", "title": "Bad", "ids": {"tmdb": "2"}, "watched_at": WATCHED}
+    ok_key = canonical_key(ok_item)
+    bad_key = canonical_key(bad_item)
+
+    class MixedOps(HistoryOps):
+        def add(
+            self,
+            cfg: Mapping[str, Any],
+            items: Iterable[Mapping[str, Any]],
+            *,
+            feature: str,
+            dry_run: bool = False,
+        ) -> dict[str, Any]:
+            batch = [dict(x) for x in items]
+            self.add_calls.append(batch)
+            self.index[ok_key] = dict(ok_item)
+            return {
+                "ok": False,
+                "count": 1,
+                "confirmed_keys": [ok_key],
+                "unresolved_keys": [bad_key],
+                "unresolved": [{"status": "failed", "reason": "write_failed", "item": bad_item, "key": bad_key}],
+            }
+
+    src = HistoryOps("SRC", {ok_key: ok_item, bad_key: bad_item})
+    dst = MixedOps("DST", {})
+    monkeypatch.setattr(
+        "cw_platform.orchestrator.facade.load_sync_providers",
+        lambda: {"SRC": src, "DST": dst},
+    )
+    monkeypatch.setattr(
+        "cw_platform.orchestrator._snapshots.provider_configured",
+        lambda _cfg, _name: True,
+    )
+    monkeypatch.setattr("cw_platform.orchestrator._pairs_blocklist.load_blackbox_keys", lambda *_a, **_k: set())
+    monkeypatch.setattr("cw_platform.orchestrator._pairs_blocklist.load_unresolved_keys", lambda *_a, **_k: {bad_key})
+    monkeypatch.setattr("cw_platform.orchestrator._pairs_oneway.load_unresolved_keys", lambda *_a, **_k: {bad_key})
+    monkeypatch.setattr(
+        "cw_platform.orchestrator._pairs_oneway.record_attempts",
+        lambda *_a, **_k: {"ok": True, "count": 1, "promoted": 1, "promoted_keys": [bad_key]},
+    )
+    cleared: list[list[str]] = []
+    monkeypatch.setattr(
+        "cw_platform.orchestrator._pairs_oneway.clear_unresolved",
+        lambda _dst, _feature, keys: cleared.append(list(keys)) or {"ok": True},
+    )
+
+    summary = Orchestrator(_cfg("history")).run()
+
+    assert summary["added"] == 1
+    assert summary["unresolved"] == 1
+    assert [bad_key] in cleared
+
+
 def test_collection_baselines_preserve_collected_at(
     config_base: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
