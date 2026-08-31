@@ -668,7 +668,7 @@ DEFAULT_CFG: dict[str, Any] = {
     },
 
     "crosswatch": {
-        "connected":        False,                      # True after local tracker connection is created
+        "connected":        True,                       # Fresh installs enable the local tracker by default
         "root_dir":         "/config/.cw_provider",     # Root folder for local provider state
         "enabled":          True,                       # Enable/disable CrossWatch as sync provider
         "retention_days":   30,                         # Snapshot retention in days; 0 = keep forever
@@ -2804,10 +2804,10 @@ def load_config() -> dict[str, Any]:
         user_cw = user_cfg.get("crosswatch") if isinstance(user_cfg.get("crosswatch"), dict) else user_cfg.get("CrossWatch")
         cw = cfg.get("crosswatch")
         if isinstance(cw, dict):
-            if isinstance(user_cw, dict) and "connected" not in user_cw and user_cw.get("enabled") is not False:
-                cw["connected"] = True
+            if isinstance(user_cw, dict) and "connected" not in user_cw:
+                cw["connected"] = user_cw.get("enabled") is not False
             elif not isinstance(user_cw, dict):
-                cw["connected"] = False
+                cw["connected"] = bool(first_run)
             user_insts = user_cw.get("instances") if isinstance(user_cw, dict) else None
             insts = cw.get("instances")
             if isinstance(user_insts, dict) and isinstance(insts, dict):

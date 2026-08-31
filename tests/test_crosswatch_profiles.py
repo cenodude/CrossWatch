@@ -1699,7 +1699,7 @@ def test_crosswatch_connect_creates_connection_config(monkeypatch) -> None:
     assert store["crosswatch"]["max_snapshots"] == 64
 
 
-def test_crosswatch_default_config_is_not_connected() -> None:
+def test_crosswatch_explicitly_disconnected_config_stays_disconnected() -> None:
     from providers.auth._auth_CROSSWATCH import PROVIDER
     from providers.sync._mod_CROSSWATCH import OPS
 
@@ -1709,18 +1709,29 @@ def test_crosswatch_default_config_is_not_connected() -> None:
     assert OPS.is_configured(cfg) is False
 
 
-def test_crosswatch_config_default_does_not_auto_connect(tmp_path: Path, monkeypatch) -> None:
+def test_crosswatch_config_default_connects_new_install_but_respects_opt_out(tmp_path: Path, monkeypatch) -> None:
     import cw_platform.config_base as config_base
 
     monkeypatch.setattr(config_base, "CONFIG", tmp_path)
     cfg = config_base.load_config()
 
-    assert cfg["crosswatch"]["connected"] is False
+    assert cfg["crosswatch"]["connected"] is True
 
     (tmp_path / "config.json").write_text(json.dumps({"crosswatch": {"root_dir": "/tmp/cw"}}), "utf-8")
     migrated = config_base.load_config()
 
     assert migrated["crosswatch"]["connected"] is True
+
+    (tmp_path / "config.json").write_text(json.dumps({}), "utf-8")
+    removed = config_base.load_config()
+
+    assert removed["crosswatch"]["connected"] is False
+
+    (tmp_path / "config.json").write_text(json.dumps({"crosswatch": {"enabled": False}}), "utf-8")
+    disabled = config_base.load_config()
+
+    assert disabled["crosswatch"]["connected"] is False
+    assert disabled["crosswatch"]["enabled"] is False
 
 
 def test_analyzer_treats_crosswatch_as_tracker_provider() -> None:
