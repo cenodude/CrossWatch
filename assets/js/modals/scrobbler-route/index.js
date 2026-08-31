@@ -445,6 +445,9 @@ function filtersPanel(r, f) {
 }
 
 function optionsPanel(r) {
+  const unresolvedFallback = r.provider === "plex"
+    ? `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">person_alert</span><span><strong>Unresolved user fallback</strong><small>Use the configured Plex username when Plex omits the playback user and the session cannot be resolved.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-unresolved-user-fallback" ${r.options.watch?.unresolved_user_fallback ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`
+    : "";
   return `
     <section class="scrm-panel ${activeTab === "options" ? "active" : ""}" data-panel="options">
       <div class="scrm-journey scrm-journey-compact">
@@ -459,6 +462,7 @@ function optionsPanel(r) {
         ${field("Pause debounce (s)", `<input class="input" id="scr-watch-pause" type="number" min="0" max="3600" value="${esc(r.options.watch?.pause_debounce_seconds ?? "")}" placeholder="Global">`, "", "Seconds to ignore tiny pause/start flaps just after playback starts for this route.")}
         ${field("Suppress start (%)", `<input class="input" id="scr-watch-suppress" type="number" min="0" max="100" value="${esc(r.options.watch?.suppress_start_at ?? "")}" placeholder="Global">`, "", "Ignore new start events at or above this progress for this route.")}
       </div>
+      ${unresolvedFallback}
     </section>
   `;
 }
@@ -622,6 +626,7 @@ function collect() {
   const suppress = root.querySelector("#scr-watch-suppress")?.value;
   if (pause !== "") watch.pause_debounce_seconds = Number(pause);
   if (suppress !== "") watch.suppress_start_at = Number(suppress);
+  if (provider === "plex") watch.unresolved_user_fallback = !!root.querySelector("#scr-unresolved-user-fallback")?.checked;
   const ratingsMode = root.querySelector("#scr-ratings-mode")?.value || "off";
   return {
     id: draft.id,

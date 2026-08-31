@@ -690,6 +690,20 @@ def _validate_route(cfg: Mapping[str, Any], route: dict[str, Any]) -> dict[str, 
     return normalized
 
 
+def _set_plex_unresolved_user_fallback_default(route: dict[str, Any], value: bool) -> None:
+    if str((route or {}).get("provider") or "").strip().lower() != "plex":
+        return
+    options = route.setdefault("options", {})
+    if not isinstance(options, dict):
+        options = {}
+        route["options"] = options
+    watch = options.setdefault("watch", {})
+    if not isinstance(watch, dict):
+        watch = {}
+        options["watch"] = watch
+    watch.setdefault("unresolved_user_fallback", bool(value))
+
+
 def _validate_routes_unique(routes: list[dict[str, Any]]) -> None:
     ids: set[str] = set()
     keys: set[tuple[str, str, str, str]] = set()
@@ -842,6 +856,7 @@ def api_route_create(request: Request, payload: dict[str, Any] = Body(...)) -> J
         routes = _routes_node(after)
         route_body = dict(payload or {})
         route_body["id"] = str(route_body.get("id") or _next_route_id(routes)).strip()
+        _set_plex_unresolved_user_fallback_default(route_body, False)
         route = _validate_route(after, route_body)
         next_routes = [normalize_route(r, f"R{i + 1}") for i, r in enumerate(routes) if isinstance(r, dict)]
         next_routes.append(route)
