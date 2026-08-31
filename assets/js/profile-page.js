@@ -297,19 +297,15 @@
     if (route) parts.push(route);
     if (pairMatch?.[1]) parts.push(pairMatch[1]);
     if (pairMatch?.[2]) parts.push(pairMatch[2]);
-    const count = Number(row?.event_count || 0);
-    if (count > 1) parts.push(`${count} events`);
     return parts;
   };
   const scrobbleActivityBits = (row) => {
     const parts = [];
     const parsed = parseScrobbleSummary(row);
-    const count = Number(row?.event_count || 0);
     if (parsed.action) parts.push(parsed.action);
     if (parsed.destination) parts.push(parsed.destination);
     if (parsed.progress) parts.push(parsed.progress);
     if (row?.route) parts.push(String(row.route));
-    if (count > 0) parts.push(`${count} event${count === 1 ? "" : "s"}`);
     return parts;
   };
   const activityProviderKey = (value) => {
@@ -343,9 +339,11 @@
     const parts = [];
     const meta = String(row?.meta || row?.route || "").trim();
     if (meta && meta !== activityTitle(row)) parts.push(meta);
-    const count = Number(row?.event_count || 0);
-    if (count > 1) parts.push(`${count} events`);
     return parts;
+  };
+  const activityEventCount = (row) => {
+    const count = Number(row?.event_count || 0);
+    return count > 0 ? `${count} event${count === 1 ? "" : "s"}` : "";
   };
   const futureTime = (value) => {
     const ts = Number(value || 0);
@@ -385,9 +383,14 @@
     const badge = String(row?.badge || activityLabel(row)).trim();
     const bits = activityMetaBits(row);
     const time = relTime(row?.created_at);
+    const events = activityEventCount(row);
     const detail = bits.length
       ? bits.map(activityChipHtml).join("")
       : `<span class="cw-profile-activity-chip">${esc(badge)}</span>`;
+    const side = [
+      `<span>${esc(time || badge)}</span>`,
+      events ? `<span class="cw-profile-activity-count">${esc(events)}</span>` : "",
+    ].filter(Boolean).join("");
     return `
       <button class="cw-profile-activity-row cw-profile-activity-row--${esc(String(row?.kind || "sync").toLowerCase())} is-${esc(tone)}" type="button" data-event-group-id="${esc(row?.id || "")}" data-event-domain="${esc(String(row?.domain || "sync").toLowerCase())}">
         <span class="material-symbols-rounded" aria-hidden="true">${esc(activityIcon(row))}</span>
@@ -398,7 +401,7 @@
           </span>
           <span class="cw-profile-activity-meta">${detail}</span>
         </span>
-        <small>${esc(time || badge)}</small>
+        <small>${side}</small>
       </button>
     `;
   };
