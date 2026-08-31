@@ -55,7 +55,7 @@
 * **Synchronization**
   * Watchlists, Ratings, History, Progress and Collections
   * Rewatches: keep separate plays in sync for supported trackers.
-  * Anime ID mapping (powered by AniBridge and animeApi) for AniList and SIMKL pairs, with custom mappings.
+  * Anime ID mapping (powered by AniBridge and animeApi) for AniList, SIMKL and CW tracker pairs, with custom mappings.
 * **Scrobble (tracks your activity)**
   * **Watcher** (Plex/Emby/Jellyfin/Kodi/Scrob to supported trackers)
     * Does not require Plex Pass or Emby Premiere. Yay!
@@ -64,10 +64,11 @@
   * Analyzer: Finds items that are **stuck** or inconsistent between providers.
   * Playback Progress Manager: View and edit unfinished playback sessions across providers.
   * Editor: Inspect and adjust your items and add or block items.
+  * Import and Export: Import your tracker files and export your data.
   * Events Viewer: Search and inspect sync runs.
   * Captures: Rollback tool for provider watchlist, ratings, and history.
 
-And much, much more...such as:
+And much more...such as:
 * Simple and advanced scheduling: From standard to more detailed pair schedules
 * CW Tracker Keeps snapshots/backups from your media servers and trackers.
 * Unified Watchlist: View all watchlist items in one place.
