@@ -93,6 +93,29 @@ class MultiDispatcher:
                 _log(f"Route dispatcher error: {e}", "ERROR")
         return accepted
 
+    def accepts_user(self, event: ScrobbleEvent) -> bool:
+        if not self._dispatchers:
+            return True
+        for d in self._dispatchers:
+            try:
+                fn = getattr(d, "accepts_user", None)
+                if fn is None or bool(fn(event)):
+                    return True
+            except Exception as e:
+                _log(f"Route user gate error: {e}", "ERROR")
+                return True
+        return False
+
+    def needs_user_resolution(self) -> bool:
+        for d in self._dispatchers:
+            try:
+                fn = getattr(d, "needs_user_resolution", None)
+                if callable(fn) and bool(fn()):
+                    return True
+            except Exception as e:
+                _log(f"Route user resolution check error: {e}", "ERROR")
+        return False
+
 
 class _SchedulerEventSink:
     def __init__(self, route_id: str, route_provider: str, route_provider_instance: str) -> None:

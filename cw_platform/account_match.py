@@ -26,6 +26,7 @@ def media_account_allowed(allow: Any, account: Any = "", *, account_id: Any = ""
     title = str((acc.get("title") if isinstance(acc, Mapping) else "") or flat).strip()
     acc_id = str((acc.get("id") if isinstance(acc, Mapping) else "") or account_id or "").strip()
     acc_uuid = str((acc.get("uuid") if isinstance(acc, Mapping) else "") or account_uuid or "").strip().lower()
+    uid = str(user_id or "").strip().lower()
     values = allow if isinstance(allow, list) else [allow]
     for entry in values:
         raw = str(entry or "").strip()
@@ -34,7 +35,7 @@ def media_account_allowed(allow: Any, account: Any = "", *, account_id: Any = ""
         lowered = raw.lower()
         if lowered.startswith("id:"):
             wanted = lowered.split(":", 1)[1].strip()
-            if wanted and wanted == acc_id.lower():
+            if wanted and wanted in (acc_id.lower(), uid):
                 return True
             continue
         if lowered.startswith("uuid:"):

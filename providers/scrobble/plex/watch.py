@@ -388,13 +388,14 @@ class WatchService:
         self._last_pause_ts: dict[str, float] = {}
         self._filtered_ts: dict[str, float] = {}
         self._route_filtered_ts: dict[str, float] = {}
+        self._identity_log_ts: dict[str, float] = {}
+        self._identity_miss: dict[str, int] = {}
         self._last_probe: dict[str, float] = {}
         self._best_offset: dict[str, tuple[int, int, float]] = {}
         self._dur_cache: dict[int, tuple[int, float]] = {}
         self._last_event: dict[str, ScrobbleEvent] = {}
         self._tl_last: dict[str, tuple[int, int, int, float]] = {}
         self._last_seek_emit: dict[str, float] = {}
-        self._sess_user_cache: dict[str, tuple[str, float]] = {}
         self._sess_identity_cache: dict[str, dict[str, Any]] = {}
         self._offline = False
         self._offline_failures = 0
@@ -820,7 +821,30 @@ class WatchService:
                 return _safe_int(v.get("ratingKey") or v.get("ratingkey"))
         return None
 
+    def _accepts_user(self, ev: ScrobbleEvent) -> bool:
+        try:
+            fn = getattr(self._dispatch, "accepts_user", None)
+            return bool(fn(ev)) if callable(fn) else True
+        except Exception:
+            return True
+
+    def _needs_user_resolution(self) -> bool:
+        try:
+            fn = getattr(self._dispatch, "needs_user_resolution", None)
+            return bool(fn()) if callable(fn) else True
+        except Exception:
+            return True
+
+    def _log_identity(self, msg: str, throttle_key: str | None = None) -> None:
+        if throttle_key is not None:
+            now = time.time()
+            if now - self._identity_log_ts.get(throttle_key, 0.0) < 30.0:
+                return
+            self._identity_log_ts[throttle_key] = now
+        self._dbg(msg)
+
     def _resolve_session_identity(self, session_key: str | None) -> dict[str, Any] | None:
+        self._no_sessions_access = False
         if not (self._plex and session_key):
             return None
         sk = str(session_key).strip()
@@ -840,9 +864,20 @@ class WatchService:
                 stale_hit = hit
                 if stale_age is not None and stale_age < 15.0:
                     return hit
+        t0 = time.time()
+
+        def _ms() -> int:
+            return int((time.time() - t0) * 1000)
+
+        now = time.time()
         try:
             el: Any = self._plex.query("/status/sessions")
             if el is None or not hasattr(el, "iter"):
+                self._log_identity(
+                    f"identity unresolved sess={sk} reason=bad_response "
+                    f"in={_ms()}ms",
+                    f"bad|{sk}",
+                )
                 return None
             ident: dict[str, Any] | None = None
             for v in el.iter("Video"):
@@ -884,36 +919,58 @@ class WatchService:
                 }
                 break
 
-            if ident and isinstance(cache, dict):
+            has_identity = bool(
+                ident
+                and any(str(ident.get(k) or "").strip() for k in ("name", "user_name", "user_id", "account_name", "account_id", "account_uuid"))
+            )
+            if has_identity and isinstance(cache, dict):
                 cache[sk] = ident
-                uc = getattr(self, "_sess_user_cache", None)
-                if isinstance(uc, dict):
-                    nm = str(ident.get("name") or "").strip()
-                    if nm:
-                        uc[sk] = (nm, now)
-            if ident:
+            if has_identity:
+                self._identity_miss.pop(sk, None)
+                self._log_identity(
+                    f"identity resolved sess={sk} user={_mask_account(ident.get('name'))} "
+                    f"user_id={ident.get('user_id') or '-'} account_id={ident.get('account_id') or '-'} "
+                    f"in={_ms()}ms"
+                )
                 return ident
-            
             if isinstance(stale_hit, dict) and stale_age is not None and stale_age < 6 * 3600:
+                self._identity_miss.pop(sk, None)
+                self._log_identity(
+                    f"identity stale sess={sk} user={_mask_account(stale_hit.get('name'))} "
+                    f"age={int(stale_age)}s reason=session_not_listed in={_ms()}ms",
+                    f"stale|{sk}",
+                )
                 return stale_hit
+            misses = self._identity_miss.get(sk, 0) + 1
+            self._identity_miss[sk] = misses
+            if misses > 1:
+                self._log_identity(
+                    f"identity unresolved sess={sk} reason=session_not_listed "
+                    f"misses={misses} in={_ms()}ms",
+                    f"miss|{sk}",
+                )
             return None
         except Exception as e:
+            reason = "sessions_error"
             try:
                 msg = str(e).lower()
                 if any(k in msg for k in ("401", "403", "unauthorized", "forbidden")):
                     self._no_sessions_access = True
+                    reason = "sessions_forbidden"
             except Exception:
                 pass
             if isinstance(stale_hit, dict) and stale_age is not None and stale_age < 6 * 3600:
+                self._log_identity(
+                    f"identity stale sess={sk} user={_mask_account(stale_hit.get('name'))} "
+                    f"age={int(stale_age)}s reason={reason} in={_ms()}ms",
+                    f"stale|{sk}",
+                )
                 return stale_hit
+            self._log_identity(
+                f"identity unresolved sess={sk} reason={reason} err={e} in={_ms()}ms",
+                f"err|{sk}",
+            )
             return None
-
-    def _resolve_account_from_session(self, session_key: str | None) -> str | None:
-        ident = self._resolve_session_identity(session_key)
-        if not isinstance(ident, dict):
-            return None
-        name = str(ident.get("name") or "").strip()
-        return name or None
 
     def _event_with_session_identity(self, ev: ScrobbleEvent, ident: dict[str, Any] | None) -> ScrobbleEvent:
         if not isinstance(ident, dict):
@@ -935,30 +992,19 @@ class WatchService:
             return ev
         return ScrobbleEvent(**{**ev.__dict__, "account": account, "raw": raw})
 
-    def _event_with_unresolved_user_fallback(self, ev: ScrobbleEvent, account: str) -> ScrobbleEvent:
-        fallback_account = str(account or "").strip()
-        if str(ev.account or "").strip() or not fallback_account:
+    def _event_with_unresolved_user_fallback(self, ev: ScrobbleEvent) -> ScrobbleEvent:
+        if str(ev.account or "").strip():
             return ev
         raw = dict(ev.raw or {})
-        raw["_cw_unresolved_user_fallback"] = {
-            "account": fallback_account,
-            "source": "configured_plex_username",
-        }
+        raw["_cw_sessions_access_unavailable"] = True
         return ScrobbleEvent(**{**ev.__dict__, "raw": raw})
 
     def _enrich_event_with_plex(self, ev: ScrobbleEvent) -> ScrobbleEvent | None:
         try:
             if not self._plex:
                 return ev
-            acc = self._resolve_account_from_session(ev.session_key)
-            if acc and _norm_user(acc) != _norm_user(ev.account or ""):
-                ev = ScrobbleEvent(**{**ev.__dict__, "account": acc})
             rk = self._find_rating_key(ev.raw or {})
             if not rk:
-                if not ev.account:
-                    acc = self._resolve_account_from_session(ev.session_key)
-                    if acc:
-                        return ScrobbleEvent(**{**ev.__dict__, "account": acc})
                 return ev
 
             it = self._plex.fetchItem(int(rk))
@@ -1017,7 +1063,6 @@ class WatchService:
                     for k, v in show_ids_raw.items():
                         ids.setdefault(f"{k}_show", str(v))
 
-            account = ev.account or self._resolve_account_from_session(ev.session_key)
             return ScrobbleEvent(
                 action=ev.action,
                 media_type=("episode" if media_type == "episode" else "movie"),
@@ -1027,7 +1072,7 @@ class WatchService:
                 season=season,
                 number=number,
                 progress=ev.progress,
-                account=account,
+                account=ev.account,
                 server_uuid=ev.server_uuid,
                 session_key=ev.session_key,
                 raw=raw,
@@ -1094,6 +1139,8 @@ class WatchService:
             self._filtered_ts[key] = now
 
     def _throttled_route_filtered_log(self, ev: ScrobbleEvent, kind: str = "event") -> None:
+        if not str(ev.account or "").strip():
+            return
         key = f"{kind}|{ev.account}|{ev.server_uuid}|{ev.session_key or self._find_rating_key(ev.raw or {}) or '?'}"
         now = time.time()
         last = self._route_filtered_ts.get(key, 0.0)
@@ -1192,14 +1239,18 @@ class WatchService:
                 if prev_acc:
                     ev = ScrobbleEvent(**{**ev.__dict__, "account": prev_acc})
 
-            ident = self._resolve_session_identity(ev.session_key)
-            ev = self._event_with_session_identity(ev, ident)
-            if not str(ev.account or "").strip():
-                cfg_user = (str(inst.get("username") or "").strip() if str(self._instance_id) != "default" else str(px.get("username") or "").strip())
-                ev = self._event_with_unresolved_user_fallback(ev, cfg_user)
+            if not str(ev.account or "").strip() and self._needs_user_resolution():
+                ident = self._resolve_session_identity(ev.session_key)
+                ev = self._event_with_session_identity(ev, ident)
+                if not str(ev.account or "").strip() and getattr(self, "_no_sessions_access", False):
+                    ev = self._event_with_unresolved_user_fallback(ev)
 
             if not self._passes_filters(ev):
                 self._throttled_filtered_log(ev)
+                return
+
+            if not self._accepts_user(ev):
+                self._throttled_route_filtered_log(ev)
                 return
 
             enriched = self._enrich_event_with_plex(ev)
