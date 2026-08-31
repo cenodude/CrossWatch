@@ -23,6 +23,7 @@ ROUTE_WATCH_POLICY_RANGES = {
     "pause_debounce_seconds": (0, 3600),
     "suppress_start_at": (0, 100),
 }
+ROUTE_WATCH_BOOLEAN_KEYS = {"unresolved_user_fallback"}
 
 
 def _deep_clone(v: Any) -> Any:
@@ -99,7 +100,7 @@ def normalize_route_options(options: Any) -> dict[str, Any]:
 
     watch_raw = raw.get("watch")
     watch_src: dict[str, Any] = watch_raw if isinstance(watch_raw, dict) else {}
-    watch: dict[str, int] = {}
+    watch: dict[str, Any] = {}
     for key, (min_val, max_val) in ROUTE_WATCH_POLICY_RANGES.items():
         if key not in watch_src:
             continue
@@ -112,6 +113,9 @@ def normalize_route_options(options: Any) -> dict[str, Any]:
             continue
         if min_val <= val <= max_val:
             watch[key] = val
+    for key in ROUTE_WATCH_BOOLEAN_KEYS:
+        if key in watch_src:
+            watch[key] = bool(watch_src.get(key))
 
     return {
         "auto_remove_watchlist": auto_remove,
@@ -124,6 +128,13 @@ def normalize_route_options(options: Any) -> dict[str, Any]:
         "scrobble": scrobble,
         "watch": watch,
     }
+
+
+def route_options_has_watch_key(options: Any, key: str) -> bool:
+    if not isinstance(options, dict):
+        return False
+    watch = options.get("watch")
+    return isinstance(watch, dict) and key in watch
 
 
 def normalize_route(route: dict[str, Any], fallback_id: str) -> dict[str, Any]:
@@ -146,7 +157,10 @@ def normalize_route(route: dict[str, Any], fallback_id: str) -> dict[str, Any]:
     filters = r.get("filters")
     if not isinstance(filters, dict):
         filters = {}
-    options = normalize_route_options(r.get("options"))
+    raw_options = r.get("options")
+    options = normalize_route_options(raw_options)
+    if prov == "plex" and not route_options_has_watch_key(raw_options, "unresolved_user_fallback"):
+        options["watch"]["unresolved_user_fallback"] = True
     profile_id = normalize_user_profile_id(r.get("profile_id") or r.get("profileId"))
 
     out = {

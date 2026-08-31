@@ -898,7 +898,6 @@ class WatchService:
                 return stale_hit
             return None
         except Exception as e:
-            # allow falling back to configured username later.
             try:
                 msg = str(e).lower()
                 if any(k in msg for k in ("401", "403", "unauthorized", "forbidden")):
@@ -915,6 +914,37 @@ class WatchService:
             return None
         name = str(ident.get("name") or "").strip()
         return name or None
+
+    def _event_with_session_identity(self, ev: ScrobbleEvent, ident: dict[str, Any] | None) -> ScrobbleEvent:
+        if not isinstance(ident, dict):
+            return ev
+        clean_ident = {
+            "name": str(ident.get("name") or "").strip(),
+            "user_name": str(ident.get("user_name") or "").strip(),
+            "user_id": str(ident.get("user_id") or "").strip(),
+            "account_name": str(ident.get("account_name") or "").strip(),
+            "account_id": str(ident.get("account_id") or "").strip(),
+            "account_uuid": str(ident.get("account_uuid") or "").strip().lower(),
+        }
+        if not any(clean_ident.values()):
+            return ev
+        raw = dict(ev.raw or {})
+        raw["_cw_session_identity"] = clean_ident
+        account = clean_ident["name"] or ev.account
+        if account == ev.account and raw == (ev.raw or {}):
+            return ev
+        return ScrobbleEvent(**{**ev.__dict__, "account": account, "raw": raw})
+
+    def _event_with_unresolved_user_fallback(self, ev: ScrobbleEvent, account: str) -> ScrobbleEvent:
+        fallback_account = str(account or "").strip()
+        if str(ev.account or "").strip() or not fallback_account:
+            return ev
+        raw = dict(ev.raw or {})
+        raw["_cw_unresolved_user_fallback"] = {
+            "account": fallback_account,
+            "source": "configured_plex_username",
+        }
+        return ScrobbleEvent(**{**ev.__dict__, "raw": raw})
 
     def _enrich_event_with_plex(self, ev: ScrobbleEvent) -> ScrobbleEvent | None:
         try:
@@ -1128,17 +1158,7 @@ class WatchService:
                     inst = ((px.get("instances") or {}).get(str(self._instance_id)) or {})
                 except Exception:
                     inst = {}
-            # For non-default Plex instances (e.g. Home users), Plex alert payloads may not
-            # include an account name. Use the configured instance username as a fallback so
-            # events are not dropped as unresolved user alerts.
-            fallback_username = ""
-            try:
-                if str(self._instance_id) != "default":
-                    fallback_username = str(inst.get("username") or "").strip()
-            except Exception:
-                fallback_username = ""
             defaults = {
-                "username": fallback_username,
                 "server_uuid": str((
                     server_uuid or
                     inst.get("server_uuid") or inst.get("machine_id") or
@@ -1172,22 +1192,11 @@ class WatchService:
                 if prev_acc:
                     ev = ScrobbleEvent(**{**ev.__dict__, "account": prev_acc})
 
-            acc = self._resolve_account_from_session(ev.session_key)
-            if acc and _norm_user(acc) != _norm_user(ev.account or ""):
-                ev = ScrobbleEvent(**{**ev.__dict__, "account": acc})
-
-            # Fall back to configured username.
-            if not str(ev.account or "").strip() and getattr(self, "_no_sessions_access", False):
-                cfg_user = (str(inst.get("username") or "").strip() if str(self._instance_id) != "default" else str(px.get("username") or "").strip())
-                if cfg_user:
-                    self._dbg(
-                        f"no sessions access; assume token user '{_mask_account(cfg_user)}' inst={self._instance_id} sess={ev.session_key}"
-                    )
-                    ev = ScrobbleEvent(**{**ev.__dict__, "account": cfg_user})
-
-            # Drop unresolved/no-user alerts before filter logging
+            ident = self._resolve_session_identity(ev.session_key)
+            ev = self._event_with_session_identity(ev, ident)
             if not str(ev.account or "").strip():
-                return
+                cfg_user = (str(inst.get("username") or "").strip() if str(self._instance_id) != "default" else str(px.get("username") or "").strip())
+                ev = self._event_with_unresolved_user_fallback(ev, cfg_user)
 
             if not self._passes_filters(ev):
                 self._throttled_filtered_log(ev)

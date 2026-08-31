@@ -132,12 +132,56 @@ def test_route_needs_account_filter_flag() -> None:
     assert route_needs_account_filter(plain, plain["scrobble"]["watch"]["routes"][0]) is False
 
 
+def test_route_options_keep_unresolved_user_fallback() -> None:
+    from providers.scrobble.routes import normalize_route_options
+
+    options = normalize_route_options({"watch": {"unresolved_user_fallback": True}})
+
+    assert options["watch"]["unresolved_user_fallback"] is True
+
+
+def test_existing_plex_route_without_unresolved_fallback_option_defaults_on() -> None:
+    from providers.scrobble.routes import build_route_cfg, normalize_route
+
+    cfg = _cfg(profile=False, whitelist=None)
+    route = cfg["scrobble"]["watch"]["routes"][0]
+
+    normalized = normalize_route(route, "R1")
+    built = build_route_cfg(cfg, route)
+
+    assert normalized["options"]["watch"]["unresolved_user_fallback"] is True
+    assert built["scrobble"]["watch"]["route_options"]["watch"]["unresolved_user_fallback"] is True
+
+
+def test_explicit_unresolved_fallback_false_stays_off() -> None:
+    from providers.scrobble.routes import normalize_route
+
+    cfg = _cfg(profile=False, whitelist=None)
+    route = cfg["scrobble"]["watch"]["routes"][0]
+    route["options"] = {"watch": {"unresolved_user_fallback": False}}
+
+    normalized = normalize_route(route, "R1")
+
+    assert normalized["options"]["watch"]["unresolved_user_fallback"] is False
+
+
+def test_new_plex_route_default_sets_unresolved_fallback_off() -> None:
+    from api.scrobblerManagementAPI import _set_plex_unresolved_user_fallback_default
+
+    route = {"provider": "plex", "options": {"watch": {}}}
+
+    _set_plex_unresolved_user_fallback_default(route, False)
+
+    assert route["options"]["watch"]["unresolved_user_fallback"] is False
+
+
 def test_overview_route_row_exposes_flag() -> None:
     from api.scrobblerManagementAPI import _normalized_routes
 
     cfg = _cfg(profile=True, whitelist=None)
     rows = _normalized_routes(cfg, None)
     assert rows and rows[0]["needs_account_filter"] is True
+    assert rows[0]["options"]["watch"]["unresolved_user_fallback"] is True
 
 
 def _webhook_cfg(*, profile: bool, whitelist: list[str] | None) -> dict[str, Any]:
