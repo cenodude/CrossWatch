@@ -360,6 +360,7 @@ class Dispatcher:
         self._last_action: dict[str, str] = {}
         self._last_progress: dict[str, float] = {}
         self._sink_accepts_cfg: dict[int, bool] = {}
+        self._route_log_ts: dict[str, float] = {}
 
     def _send_sink(self, sink: Any, ev: ScrobbleEvent, cfg: dict[str, Any]) -> None:
         sid = id(sink)
@@ -381,29 +382,78 @@ class Dispatcher:
         except TypeError:
             sink.send(ev, cfg)
 
-    def _route_event(self, ev: ScrobbleEvent, cfg: dict[str, Any]) -> ScrobbleEvent:
+    def _route_label(self, cfg: dict[str, Any]) -> str:
+        try:
+            w = ((cfg.get("scrobble") or {}).get("watch") or {})
+            rid = str(w.get("route_id") or "").strip()
+            prov = str(w.get("route_provider") or "").strip()
+            sink = str(w.get("route_sink") or "").strip()
+            pair = f"{prov}->{sink}" if prov and sink else (prov or sink)
+            if rid and pair:
+                return f"{rid} {pair}"
+            return rid or pair or "?"
+        except Exception:
+            return "?"
+
+    def _throttled_route_log(self, key: str, msg: str, lvl: str = "DEBUG") -> None:
+        now = time.time()
+        if now - self._route_log_ts.get(key, 0.0) >= 30.0:
+            self._route_log_ts[key] = now
+            _log(msg, lvl)
+
+    def _fallback_account(self, ev: ScrobbleEvent, cfg: dict[str, Any]) -> str:
         if str(ev.account or "").strip():
-            return ev
+            return ""
         try:
             watch_cfg = ((cfg.get("scrobble") or {}).get("watch") or {})
             route_options = watch_cfg.get("route_options") or {}
             watch_options = route_options.get("watch") if isinstance(route_options, dict) else {}
             if not (isinstance(watch_options, dict) and bool(watch_options.get("unresolved_user_fallback"))):
-                return ev
+                return ""
         except Exception:
-            return ev
+            return ""
         raw = ev.raw if isinstance(ev.raw, dict) else {}
-        fallback = raw.get("_cw_unresolved_user_fallback") if isinstance(raw, dict) else None
-        fallback_account = ""
+        if not raw.get("_cw_sessions_access_unavailable"):
+            return ""
+        fallback = raw.get("_cw_unresolved_user_fallback")
         if isinstance(fallback, dict):
             fallback_account = str(fallback.get("account") or "").strip()
         else:
             fallback_account = str(fallback or "").strip()
         if not fallback_account:
+            plex_cfg = cfg.get("plex") if isinstance(cfg, dict) else {}
+            if isinstance(plex_cfg, dict):
+                fallback_account = str(plex_cfg.get("username") or "").strip()
+        return fallback_account
+
+    def _route_event(self, ev: ScrobbleEvent, cfg: dict[str, Any]) -> ScrobbleEvent:
+        fallback_account = self._fallback_account(ev, cfg)
+        if not fallback_account:
             return ev
-        raw2 = dict(raw)
+        raw2 = dict(ev.raw if isinstance(ev.raw, dict) else {})
         raw2["_cw_unresolved_user_fallback_used"] = True
+        self._throttled_route_log(
+            f"fallback|{fallback_account}|{ev.session_key}",
+            f"route {self._route_label(cfg)}: unresolved user fallback used "
+            f"user={mask_account(fallback_account)} sess={ev.session_key}",
+        )
         return ScrobbleEvent(**{**ev.__dict__, "account": fallback_account, "raw": raw2})
+
+    def needs_user_resolution(self) -> bool:
+        try:
+            cfg = self._cfg_provider() or {}
+            watch_cfg = ((cfg.get("scrobble") or {}).get("watch") or {})
+            filt = watch_cfg.get("filters") or {}
+            if not isinstance(filt, dict):
+                filt = {}
+            scoped = bool(str(watch_cfg.get("route_profile_id") or "").strip())
+            if filt.get("username_whitelist") or str(filt.get("user_id") or "").strip() or scoped:
+                return True
+            route_options = watch_cfg.get("route_options") or {}
+            watch_options = route_options.get("watch") if isinstance(route_options, dict) else {}
+            return bool(isinstance(watch_options, dict) and watch_options.get("unresolved_user_fallback"))
+        except Exception:
+            return False
 
     def _passes_filters(self, ev: ScrobbleEvent, cfg: dict[str, Any]) -> bool:
         cache_key: str | None = None
@@ -419,6 +469,23 @@ class Dispatcher:
             if cache_key in self._session_ok:
                 return True
 
+        if not self._identity_allowed(ev, cfg):
+            return False
+        if cache_key:
+            self._session_ok.add(cache_key)
+        return True
+
+    def accepts_user(self, ev: ScrobbleEvent) -> bool:
+        try:
+            cfg = self._cfg_provider() or {}
+            acct = self._fallback_account(ev, cfg)
+            if acct:
+                ev = ScrobbleEvent(**{**ev.__dict__, "account": acct})
+            return self._identity_allowed(ev, cfg)
+        except Exception:
+            return True
+
+    def _identity_allowed(self, ev: ScrobbleEvent, cfg: dict[str, Any]) -> bool:
         filt = (((cfg.get("scrobble") or {}).get("watch") or {}).get("filters") or {})
         if not isinstance(filt, dict):
             filt = {}
@@ -479,26 +546,35 @@ class Dispatcher:
             ).strip()
         )
 
-        def _allow() -> bool:
-            if cache_key:
-                self._session_ok.add(cache_key)
-            return True
+        resolved = bool(str(account or "").strip() or str(user_id or "").strip())
 
-        if want_user:
-            if not user_id:
-                return False
-            if want_user != user_id:
-                return False
+        if want_user and want_user != user_id:
+            if resolved:
+                self._throttled_route_log(
+                    f"user_id|{user_id}|{ev.session_key}",
+                    f"route {self._route_label(cfg)}: filtered user={mask_account(account)} "
+                    f"sess={ev.session_key} reason=user_id",
+                )
+            return False
 
         scoped = bool(str(((cfg.get("scrobble") or {}).get("watch") or {}).get("route_profile_id") or "").strip())
         if not wl and scoped:
-            rid = str(((cfg.get("scrobble") or {}).get("watch") or {}).get("route_id") or "?")
-            _log(f"route {rid}: blocked account '{account or '?'}' - profile-scoped route has no username whitelist", "WARNING")
+            _log(
+                f"route {self._route_label(cfg)}: filtered user={mask_account(account)} "
+                f"sess={ev.session_key} reason=profile_scoped_without_whitelist",
+                "WARNING",
+            )
             return False
 
         if not media_account_allowed(wl, account, account_id=acc_id, account_uuid=acc_uuid, user_id=user_id, default_allow=not scoped):
+            if resolved:
+                self._throttled_route_log(
+                    f"username|{account}|{ev.session_key}",
+                    f"route {self._route_label(cfg)}: filtered user={mask_account(account)} "
+                    f"sess={ev.session_key} reason=username_whitelist",
+                )
             return False
-        return _allow()
+        return True
 
     def _should_send(self, ev: ScrobbleEvent, cfg: dict[str, Any]) -> bool:
         sk = ev.session_key or "?"
@@ -547,6 +623,12 @@ class Dispatcher:
                 sent = True
             except Exception as e:
                 _log(f"Sink error: {e}", "ERROR")
+        if sent:
+            self._throttled_route_log(
+                f"sent|{ev.action}|{ev.account}|{ev.session_key}",
+                f"route {self._route_label(cfg)}: sent {ev.action} "
+                f"user={mask_account(ev.account)} sess={ev.session_key}",
+            )
         return sent or not self._sinks
 
 
