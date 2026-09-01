@@ -386,8 +386,19 @@ class Dispatcher:
         try:
             w = ((cfg.get("scrobble") or {}).get("watch") or {})
             rid = str(w.get("route_id") or "").strip()
-            prov = str(w.get("route_provider") or "").strip()
-            sink = str(w.get("route_sink") or "").strip()
+
+            def _side(name_key: str, inst_key: str) -> str:
+                name = str(w.get(name_key) or "").strip()
+                inst = str(w.get(inst_key) or "").strip()
+                if not name or not inst or inst.lower() == "default":
+                    return name
+                raw = cfg.get(name)
+                block = raw if isinstance(raw, dict) else {}
+                shown = str(block.get("label") or "").strip() or inst
+                return f"{name}[{shown}]"
+
+            prov = _side("route_provider", "route_provider_instance")
+            sink = _side("route_sink", "route_sink_instance")
             pair = f"{prov}->{sink}" if prov and sink else (prov or sink)
             if rid and pair:
                 return f"{rid} {pair}"

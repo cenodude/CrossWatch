@@ -33,6 +33,7 @@ from providers.scrobble.currently_watching import update_from_event as _cw_updat
 from providers.scrobble.media_filters import event_ignore_reason, log_media_filter_drop
 from providers.scrobble.sources import source_enabled
 from providers.sync.plex._common import stable_client_id
+from cw_platform.provider_instances import get_instance_block, sanitize_instance_label
 
 
 _CFG_CACHE: dict[str, Any] = {"ts": 0.0, "cfg": {}}
@@ -390,6 +391,8 @@ class WatchService:
         self._route_filtered_ts: dict[str, float] = {}
         self._identity_log_ts: dict[str, float] = {}
         self._identity_miss: dict[str, int] = {}
+        self._account_ctx: dict[str, Any] | None = None
+        self._instance_label: str | None = None
         self._last_probe: dict[str, float] = {}
         self._best_offset: dict[str, tuple[int, int, float]] = {}
         self._dur_cache: dict[int, tuple[int, float]] = {}
@@ -405,6 +408,9 @@ class WatchService:
         lvl = (str(level) or "INFO").upper()
         if lvl == "DEBUG" and not _is_debug_cfg(self._cfg_provider() or {}):
             return
+        shown = self._instance_display()
+        if shown.lower() != "default" and "inst=" not in msg:
+            msg = f"[{shown}] {msg}"
         if BASE_LOG is not None:
             try:
                 BASE_LOG(msg, level=lvl, module="PLEX-WATCH")
@@ -828,6 +834,121 @@ class WatchService:
         except Exception:
             return True
 
+    def _instance_display(self) -> str:
+        inst = str(self._instance_id or "").strip() or "default"
+        if self._instance_label is None:
+            label = ""
+            try:
+                cfg = self._cfg_provider() or {}
+                label = sanitize_instance_label(get_instance_block(cfg, "plex", inst).get("label"))
+            except Exception:
+                label = ""
+            self._instance_label = label or inst
+        return self._instance_label
+
+    def _plex_tv_headers(self, cfg: dict[str, Any], token: str) -> dict[str, str]:
+        px = cfg.get("plex") or {}
+        client_id = str(px.get("client_id") or "").strip() or stable_client_id()
+        return {
+            "X-Plex-Token": token,
+            "X-Plex-Client-Identifier": client_id,
+            "X-Plex-Product": "CrossWatch",
+            "X-Plex-Platform": "CrossWatch",
+        }
+
+    def _server_is_owned(self, cfg: dict[str, Any], token: str, machine_id: str) -> bool | None:
+        try:
+            r = requests.get(
+                "https://plex.tv/api/resources",
+                params={"includeHttps": 1, "includeRelay": 1},
+                headers={**self._plex_tv_headers(cfg, token), "Accept": "application/xml"},
+                timeout=6,
+            )
+            r.raise_for_status()
+            for dev in list(ET.fromstring(r.text or "")):
+                attrs = dev.attrib or {}
+                cid = str(attrs.get("clientIdentifier") or attrs.get("machineIdentifier") or "").strip().lower()
+                if cid == machine_id:
+                    return str(attrs.get("owned") or "").strip().lower() in ("1", "true")
+        except Exception as e:
+            self._dbg(f"account context: resources lookup failed: {e}")
+            return None
+        self._dbg(f"account context: server {machine_id} not listed for this token")
+        return None
+
+    def _plex_tv_identity(self, cfg: dict[str, Any], token: str) -> dict[str, str] | None:
+        try:
+            r = requests.get(
+                "https://plex.tv/api/v2/user",
+                headers={**self._plex_tv_headers(cfg, token), "Accept": "application/json"},
+                timeout=6,
+            )
+            r.raise_for_status()
+            data = r.json() or {}
+        except Exception as e:
+            self._dbg(f"account context: identity lookup failed: {e}")
+            return None
+        name = str(data.get("username") or data.get("title") or "").strip()
+        if not name:
+            return None
+        return {"name": name, "user_id": str(data.get("id") or "").strip()}
+
+    def _refresh_account_context(self) -> None:
+        self._account_ctx = None
+        self._instance_label = None
+        cfg = self._active_cfg()
+        px = cfg.get("plex") or {}
+        token = str(px.get("account_token") or px.get("token") or "").strip()
+        try:
+            mid = str(getattr(self._plex, "machineIdentifier", "") or "").strip().lower()
+        except Exception:
+            mid = ""
+        if not token or not mid:
+            return
+
+        owned = self._server_is_owned(cfg, token, mid)
+        if owned:
+            self._log("Owner Plex token; session lookup active", "INFO")
+            return
+        if owned is None:
+            self._log(
+                "Could not determine Plex server ownership; falling back to session lookup",
+                "WARNING",
+            )
+            return
+
+        ident = self._plex_tv_identity(cfg, token)
+        if not ident:
+            self._log(
+                "Shared Plex token detected but plex.tv identity lookup failed; "
+                "falling back to session lookup",
+                "WARNING",
+            )
+            return
+
+        self._account_ctx = {"owned": False, "name": ident["name"], "user_id": ident["user_id"]}
+        self._log(
+            f"Shared Plex token; scrobbling as {_mask_account(ident['name'])} "
+            f"(user_id={ident['user_id'] or '-'}), skipping session lookup",
+            "INFO",
+        )
+
+    def _shared_instance_identity(self) -> dict[str, Any] | None:
+        ctx = self._account_ctx
+        if not isinstance(ctx, dict) or ctx.get("owned") is not False:
+            return None
+        name = str(ctx.get("name") or "").strip()
+        if not name:
+            return None
+        return {
+            "name": name,
+            "user_name": name,
+            "user_id": str(ctx.get("user_id") or ""),
+            "account_name": "",
+            "account_id": "",
+            "account_uuid": "",
+        }
+
     def _needs_user_resolution(self) -> bool:
         try:
             fn = getattr(self._dispatch, "needs_user_resolution", None)
@@ -923,9 +1044,9 @@ class WatchService:
                 ident
                 and any(str(ident.get(k) or "").strip() for k in ("name", "user_name", "user_id", "account_name", "account_id", "account_uuid"))
             )
-            if has_identity and isinstance(cache, dict):
+            if ident and has_identity and isinstance(cache, dict):
                 cache[sk] = ident
-            if has_identity:
+            if ident and has_identity:
                 self._identity_miss.pop(sk, None)
                 self._log_identity(
                     f"identity resolved sess={sk} user={_mask_account(ident.get('name'))} "
@@ -1240,10 +1361,14 @@ class WatchService:
                     ev = ScrobbleEvent(**{**ev.__dict__, "account": prev_acc})
 
             if not str(ev.account or "").strip() and self._needs_user_resolution():
-                ident = self._resolve_session_identity(ev.session_key)
-                ev = self._event_with_session_identity(ev, ident)
-                if not str(ev.account or "").strip() and getattr(self, "_no_sessions_access", False):
-                    ev = self._event_with_unresolved_user_fallback(ev)
+                shared = self._shared_instance_identity()
+                if shared:
+                    ev = self._event_with_session_identity(ev, shared)
+                else:
+                    ident = self._resolve_session_identity(ev.session_key)
+                    ev = self._event_with_session_identity(ev, ident)
+                    if not str(ev.account or "").strip() and getattr(self, "_no_sessions_access", False):
+                        ev = self._event_with_unresolved_user_fallback(ev)
 
             if not self._passes_filters(ev):
                 self._throttled_filtered_log(ev)
@@ -1401,7 +1526,7 @@ class WatchService:
             self._log("Watcher disabled by config; not starting", "INFO")
             return
         lvl = "DEBUG" if self._quiet_startup else "INFO"
-        self._log(f"Ensuring Watcher is running; inst={self._instance_id} | wired sinks: {self.sinks_count()}", lvl)
+        self._log(f"Ensuring Watcher is running; inst={self._instance_display()} | wired sinks: {self.sinks_count()}", lvl)
         while not self._stop.is_set():
             try:
                 base, token = _plex_btok(self._cfg_provider() or {}, instance_id=self._instance_id)
@@ -1409,13 +1534,14 @@ class WatchService:
                     self._log("Missing plex.account_token or plex.token in config.json", "ERROR")
                     return
                 self._plex = PlexServer(base, token)
+                self._refresh_account_context()
                 self._listener = self._plex.startAlertListener(
                     callback=self._handle_alert,
                     callbackError=lambda e: self._mark_offline(e if isinstance(e, Exception) else RuntimeError(str(e))),
                 )
                 self._attempt = 0
                 self._mark_online()
-                self._log(f"Watcher connected; inst={self._instance_id}", lvl)
+                self._log(f"Watcher connected; inst={self._instance_display()}", lvl)
                 while not self._stop.is_set() and self._listener and self._listener.is_alive():
                     time.sleep(0.5)
             except Exception as e:
@@ -1437,7 +1563,7 @@ class WatchService:
         except Exception:
             pass
         lvl = "DEBUG" if self._quiet_startup else "INFO"
-        self._log(f"Watch service stopping; inst={self._instance_id}", lvl)
+        self._log(f"Watch service stopping; inst={self._instance_display()}", lvl)
 
     def start_async(self) -> None:
         if self._bg and self._bg.is_alive():
