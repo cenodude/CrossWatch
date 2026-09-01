@@ -10,10 +10,10 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from cw_platform.id_map import canonical_key, merge_ids, minimal as id_minimal
+from cw_platform.id_map import canonical_key, merge_ids
 from cw_platform.playlists import PLAYLIST_KIND_REGULAR, PlaylistItem, PlaylistResource, PlaylistSnapshot
 
-from ._common import _atomic_write, _capture_mode, _root, make_logger, readonly
+from ._common import _atomic_write, _capture_mode, _root, make_logger, merge_tracker_identity, readonly, tracker_minimal
 
 _dbg, _info, _warn, _error = make_logger("playlists")
 
@@ -70,7 +70,7 @@ def _migrate_legacy(raw: Mapping[str, Any]) -> dict[str, Any]:
             "id": "watchlist",
             "name": "Watchlist",
             "type": "playlist",
-            "items": {str(k): id_minimal(v) for k, v in raw.get("items", {}).items() if isinstance(v, Mapping)},
+            "items": {str(k): tracker_minimal(v) for k, v in raw.get("items", {}).items() if isinstance(v, Mapping)},
             "order": [str(k) for k in raw.get("items", {}).keys()],
             "created_at": int(raw.get("ts") or 0),
             "updated_at": int(raw.get("ts") or 0),
@@ -100,7 +100,7 @@ def _clean_list_row(list_id: str, row: Mapping[str, Any]) -> dict[str, Any]:
         for raw_key, raw_value in items_raw.items():
             if not isinstance(raw_value, Mapping):
                 continue
-            item = id_minimal(raw_value)
+            item = tracker_minimal(raw_value)
             key = canonical_key(item) or str(raw_key)
             if not key:
                 continue
@@ -109,7 +109,7 @@ def _clean_list_row(list_id: str, row: Mapping[str, Any]) -> dict[str, Any]:
         for raw_value in items_raw:
             if not isinstance(raw_value, Mapping):
                 continue
-            item = id_minimal(raw_value)
+            item = tracker_minimal(raw_value)
             key = canonical_key(item)
             if not key:
                 continue
@@ -261,7 +261,7 @@ def _accepted(items: Sequence[Mapping[str, Any]]) -> tuple[list[tuple[str, dict[
         if not isinstance(raw, Mapping):
             continue
         try:
-            item = id_minimal(raw)
+            item = tracker_minimal(raw)
         except Exception:
             unresolved.append({"item": dict(raw), "hint": "invalid_item"})
             continue
@@ -291,6 +291,7 @@ def add(adapter: Any, playlist_id: Any, items: Sequence[Mapping[str, Any]]) -> d
             merged = merge_ids(old_ids, new_ids)
             if merged:
                 item["ids"] = merged
+            item = merge_tracker_identity(existing, item)
         if existing != item:
             cur[key] = item
             changed += 1

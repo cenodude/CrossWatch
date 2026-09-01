@@ -9,7 +9,7 @@ from pathlib import Path
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from cw_platform.id_map import canonical_key, minimal as id_minimal
+from cw_platform.id_map import canonical_key
 
 from ._common import (
     _atomic_write,
@@ -24,10 +24,12 @@ from ._common import (
     latest_state_file,
     make_logger,
     may_persist,
+    merge_tracker_identity,
     pair_scoped,
     readonly,
     scoped_file,
     state_file_for_read,
+    tracker_minimal,
 )
 
 _dbg, _info, _warn, _error = make_logger("ratings")
@@ -38,7 +40,7 @@ def _now_iso_z() -> str:
 
 
 def _accepted(obj: Mapping[str, Any]) -> dict[str, Any]:
-    base = id_minimal(obj)
+    base = tracker_minimal(obj)
     out: dict[str, Any] = dict(base)
 
     typ = str(obj.get("type") or base.get("type") or "")
@@ -227,6 +229,8 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         new_ts = str(accepted.get("rated_at") or "")
         old_ts = str((existing or {}).get("rated_at") or "")
         if existing is None or old_ts <= new_ts:
+            if isinstance(existing, Mapping):
+                accepted = merge_tracker_identity(existing, accepted)
             cur[key] = accepted
             changed += 1
 

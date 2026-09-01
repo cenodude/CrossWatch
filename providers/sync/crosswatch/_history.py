@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from cw_platform.history_events import history_sync_key, minimal_history_item
-from cw_platform.id_map import canonical_key, minimal as id_minimal
+from cw_platform.id_map import canonical_key
 
 from ._common import (
     _atomic_write,
@@ -24,10 +24,13 @@ from ._common import (
     latest_state_file,
     make_logger,
     may_persist,
+    merge_tracker_identity,
+    preserve_tracker_identity,
     pair_scoped,
     readonly,
     scoped_file,
     state_file_for_read,
+    tracker_minimal,
 )
 
 _dbg, _info, _warn, _error = make_logger("history")
@@ -47,11 +50,11 @@ def _history_key(adapter: Any, item: Mapping[str, Any], fallback_key: Any = None
 
 
 def _history_minimal(adapter: Any, item: Mapping[str, Any], fallback_key: Any = None) -> dict[str, Any]:
-    return minimal_history_item(item, fallback_key, event_mode=_rewatches_enabled(adapter))
+    return preserve_tracker_identity(minimal_history_item(item, fallback_key, event_mode=_rewatches_enabled(adapter)), item)
 
 
 def _accepted(obj: Mapping[str, Any]) -> dict[str, Any]:
-    base = id_minimal(obj)
+    base = tracker_minimal(obj)
     out: dict[str, Any] = dict(base)
     if obj.get("watched") is not None:
         out["watched"] = bool(obj.get("watched"))
@@ -237,6 +240,8 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             unresolved_src.append(obj)
             continue
         if existing is None or (str(existing.get("watched_at") or "") <= str(accepted.get("watched_at") or "")):
+            if isinstance(existing, Mapping):
+                accepted = merge_tracker_identity(existing, accepted)
             cur[key] = _history_minimal(adapter, accepted, key)
             changed += 1
 
