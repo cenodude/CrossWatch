@@ -3,6 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import ipaddress
+import socket
 from typing import Any, Callable
 from urllib.parse import urlsplit, urlunsplit
 
@@ -10,6 +12,7 @@ import requests
 
 SCHEDULED_SYNC_MODES = {"standard", "advanced", "advanced_workflow"}
 EVENTS = {"start", "success", "failure"}
+BLOCKED_HOSTNAMES = {"localhost", "localhost.localdomain"}
 
 DEFAULT_WEBHOOKS: dict[str, Any] = {
     "enabled": False,
@@ -151,6 +154,9 @@ def notify_scheduler_webhook(
     url = callback_url(webhooks, event)
     if not url:
         return False
+    if not scheduler_webhook_url_allowed(url):
+        _log(log_fn, f"[!] Scheduler webhook {event}: blocked unsafe URL")
+        return False
 
     payload = build_payload(event, context, summary, str(webhooks.get("payload_format") or "crosswatch"))
     if webhooks.get("payload_format") == "notifiarr":
@@ -164,6 +170,7 @@ def notify_scheduler_webhook(
             json=payload,
             timeout=timeout,
             headers={"User-Agent": "CrossWatch scheduler webhook"},
+            allow_redirects=False,
         )
         resp.raise_for_status()
         _log(log_fn, f"[i] Scheduler webhook {event}: delivered")
@@ -290,6 +297,64 @@ def _http_url_or_blank(value: Any) -> str:
     if parts.scheme.lower() not in {"http", "https"} or not parts.netloc:
         return ""
     return url
+
+
+def scheduler_webhook_url_allowed(value: Any) -> bool:
+    url = str(value or "").strip()
+    if not url:
+        return False
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except Exception:
+        return False
+
+    if parts.scheme.lower() not in {"http", "https"} or not parts.netloc:
+        return False
+    if parts.username or parts.password:
+        return False
+
+    host = str(parts.hostname or "").strip()
+    if not host:
+        return False
+    if _blocked_hostname(host):
+        return False
+
+    port = int(port or (443 if parts.scheme.lower() == "https" else 80))
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except Exception:
+        return False
+
+    addresses: set[ipaddress.IPv4Address | ipaddress.IPv6Address] = set()
+    for info in infos:
+        try:
+            sockaddr = info[4]
+            ip = ipaddress.ip_address(str(sockaddr[0]))
+        except Exception:
+            return False
+        if not _public_ip_allowed(ip):
+            return False
+        addresses.add(ip)
+
+    return bool(addresses)
+
+
+def _blocked_hostname(host: str) -> bool:
+    clean = host.strip().rstrip(".").lower()
+    if clean in BLOCKED_HOSTNAMES:
+        return True
+    try:
+        return not _public_ip_allowed(ipaddress.ip_address(clean))
+    except ValueError:
+        return False
+
+
+def _public_ip_allowed(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:
+        return _public_ip_allowed(mapped)
+    return bool(ip.is_global)
 
 
 def _payload_format(value: Any) -> str:
