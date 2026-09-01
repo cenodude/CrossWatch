@@ -124,7 +124,9 @@
     return "";
   };
 
-  const instanceLabel = (value) => {
+  const instanceLabel = (value, friendly = "") => {
+    const label = String(friendly || "").trim();
+    if (label) return label;
     const raw = String(value || "").trim();
     if (!raw || raw.toLowerCase() === "default") return "Default";
     return raw;
@@ -289,7 +291,7 @@
   const baseChips = (p, releaseLabel = "") => {
     const chips = [];
     chips.push({ text: sourceLabel(p?.source), cls: sourceChipClass(p?.source) });
-    if (p?.provider_instance) chips.push({ text: instanceLabel(p.provider_instance) });
+    if (p?.provider_instance) chips.push({ text: instanceLabel(p.provider_instance, p.provider_instance_label) });
     chips.push({ text: mediaTypeLabel(p) });
     const sc = streamCount(p, countByKey);
     if (sc > 1) chips.push({ text: `${sc} streams`, cls: "pc-chip-streams" });

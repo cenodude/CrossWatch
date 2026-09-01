@@ -220,7 +220,9 @@ html.cw-theme-original #ops-card{--hub-service-good:#57b58a;--hub-service-bad:#e
     if (s==="jellyfintrakt") return "Jellyfin webhook";
     return String(src||"");
   };
-  const instanceLabel=(value)=>{
+  const instanceLabel=(value,friendly="")=>{
+    const label=String(friendly||"").trim();
+    if (label) return label;
     const raw=String(value||"").trim();
     if (!raw || raw.toLowerCase()==="default") return "Default";
     return raw;
@@ -244,7 +246,7 @@ html.cw-theme-original #ops-card{--hub-service-good:#57b58a;--hub-service-bad:#e
   const streamSummary=(item)=>{
     if (!item || typeof item!=="object") return "";
     const src=sourceLabel(item.source);
-    const inst=instanceLabel(item.provider_instance);
+    const inst=instanceLabel(item.provider_instance,item.provider_instance_label);
     const title=streamTitle(item);
     const pct=visualProgress(item);
     const sourceLine=[src,inst].filter(Boolean).join(" \u2022 ");
