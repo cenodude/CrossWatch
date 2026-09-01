@@ -9,7 +9,7 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-from cw_platform.id_map import canonical_key, merge_ids, minimal as id_minimal
+from cw_platform.id_map import canonical_key, merge_ids
 
 from ._common import (
     _atomic_write,
@@ -24,9 +24,11 @@ from ._common import (
     latest_state_file,
     make_logger,
     may_persist,
+    merge_tracker_identity,
     readonly,
     scoped_file,
     state_file_for_read,
+    tracker_minimal,
 )
 
 _dbg, _info, _warn, _error = make_logger("collection")
@@ -37,7 +39,7 @@ def _collection_path(adapter: Any) -> Path:
 
 
 def _accepted(obj: Mapping[str, Any]) -> dict[str, Any]:
-    item = id_minimal(obj)
+    item = tracker_minimal(obj)
     for key in ("collected_at", "listed_at", "added_at"):
         value = obj.get(key)
         if isinstance(value, str) and value.strip():
@@ -194,6 +196,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             merged = merge_ids(ex_ids, in_ids)
             if merged:
                 accepted["ids"] = merged
+            accepted = merge_tracker_identity(existing, accepted)
             if existing.get("collected_at") and not accepted.get("collected_at"):
                 accepted["collected_at"] = existing.get("collected_at")
         if existing != accepted:

@@ -601,3 +601,188 @@ def test_forbidden_is_logged_on_the_very_first_failure(monkeypatch: pytest.Monke
     unresolved = [ln for ln in lines if ln.startswith("identity unresolved")]
     assert len(unresolved) == 1
     assert "reason=sessions_forbidden" in unresolved[0]
+
+
+def _service_with_account_ctx(
+    monkeypatch: pytest.MonkeyPatch, cfg: dict[str, Any], plex: FakePlex, ctx: dict[str, Any] | None
+) -> tuple[Any, CaptureSink]:
+    service, sink = _service(monkeypatch, cfg, plex)
+    service._account_ctx = ctx
+    return service, sink
+
+
+def test_shared_instance_uses_plex_tv_identity_instead_of_the_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = _cfg(["ceno88"], unresolved_user_fallback=True)
+    plex = FakePlex([RuntimeError("403 forbidden")])
+    ctx = {"owned": False, "name": "ceno88", "user_id": "716210920"}
+    service, sink = _service_with_account_ctx(monkeypatch, cfg, plex, ctx)
+
+    service._handle_alert(_alert("40"))
+
+    assert len(sink.events) == 1
+    assert sink.events[0].account == "ceno88"
+    assert "_cw_unresolved_user_fallback_used" not in (sink.events[0].raw or {})
+    assert sink.events[0].raw["_cw_session_identity"]["user_id"] == "716210920"
+    assert sink.events[0].raw["_cw_session_identity"]["account_uuid"] == ""
+    assert plex.queries == []
+
+
+def test_owned_instance_never_probes_plex_tv(monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = _cfg(["Carmen"])
+    plex = FakePlex([_session_xml("41", user_name="Carmen", user_id="176467484")])
+    service, sink = _service_with_account_ctx(monkeypatch, cfg, plex, {"owned": True, "name": "owner"})
+
+    service._handle_alert(_alert("41"))
+
+    assert sink.events[0].account == "Carmen"
+    assert plex.queries == ["/status/sessions"]
+
+
+def test_shared_identity_falls_back_when_plex_tv_is_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = _cfg(["owner"], unresolved_user_fallback=True)
+    plex = FakePlex([RuntimeError("403 forbidden")])
+    service, sink = _service_with_account_ctx(monkeypatch, cfg, plex, None)
+
+    service._handle_alert(_alert("42"))
+
+    assert len(sink.events) == 1
+    assert sink.events[0].account == "owner"
+    assert sink.events[0].raw["_cw_unresolved_user_fallback_used"] is True
+
+
+class _Resp:
+    def __init__(self, text: str = "", payload: Any = None, ok: bool = True) -> None:
+        self.text = text
+        self._payload = payload
+        self._ok = ok
+
+    def raise_for_status(self) -> None:
+        if not self._ok:
+            raise RuntimeError("http error")
+
+    def json(self) -> Any:
+        return self._payload
+
+
+def _fake_plex_tv(monkeypatch: pytest.MonkeyPatch, *, owned: str, identity: Any) -> list[str]:
+    from providers.scrobble.plex import watch
+
+    calls: list[str] = []
+
+    def _get(url: str, **kwargs: Any) -> _Resp:
+        calls.append(url)
+        if "resources" in url:
+            return _Resp(text=f'<MediaContainer><Device clientIdentifier="server-1" owned="{owned}" /></MediaContainer>')
+        if identity is None:
+            return _Resp(ok=False)
+        return _Resp(payload=identity)
+
+    monkeypatch.setattr(watch.requests, "get", _get)
+    return calls
+
+
+def _service_for_refresh(monkeypatch: pytest.MonkeyPatch) -> Any:
+    cfg = _cfg(["ceno88"])
+    service, _sink = _service(monkeypatch, cfg, FakePlex([]))
+    return service
+
+
+def test_refresh_account_context_detects_shared_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = _service_for_refresh(monkeypatch)
+    calls = _fake_plex_tv(monkeypatch, owned="0", identity={"username": "ceno88", "id": 716210920})
+
+    service._refresh_account_context()
+
+    assert service._account_ctx == {"owned": False, "name": "ceno88", "user_id": "716210920"}
+    assert len(calls) == 2
+
+
+def test_refresh_account_context_skips_identity_for_owner(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = _service_for_refresh(monkeypatch)
+    calls = _fake_plex_tv(monkeypatch, owned="1", identity={"username": "owner", "id": 1})
+
+    service._refresh_account_context()
+
+    assert service._account_ctx is None
+    assert len(calls) == 1
+
+
+def test_refresh_account_context_falls_back_when_identity_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = _service_for_refresh(monkeypatch)
+    _fake_plex_tv(monkeypatch, owned="0", identity=None)
+
+    service._refresh_account_context()
+
+    assert service._account_ctx is None
+
+
+def test_refresh_account_context_clears_stale_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = _service_for_refresh(monkeypatch)
+    service._account_ctx = {"owned": False, "name": "old-user", "user_id": "1"}
+    _fake_plex_tv(monkeypatch, owned="1", identity={"username": "owner", "id": 1})
+
+    service._refresh_account_context()
+
+    assert service._account_ctx is None
+
+
+def test_route_label_names_non_default_instances(monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = _route_dispatcher_cfg("R4", "crosswatch", ["zzz-no-one"], False)
+    watch_cfg = cfg["scrobble"]["watch"]
+    watch_cfg["route_provider_instance"] = "PLEX-P01"
+    watch_cfg["route_sink_instance"] = "default"
+    cfg["plex"]["label"] = "Ceno"
+
+    messages = _dispatch_and_capture(monkeypatch, cfg, {}, account="ceno88")
+
+    assert messages == [
+        "route R4 plex[Ceno]->crosswatch: filtered user=ce*** sess=30 reason=username_whitelist"
+    ]
+
+
+def test_route_label_falls_back_to_instance_id_without_a_label(monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = _route_dispatcher_cfg("R4", "crosswatch", ["zzz-no-one"], False)
+    cfg["scrobble"]["watch"]["route_provider_instance"] = "PLEX-P02"
+
+    messages = _dispatch_and_capture(monkeypatch, cfg, {}, account="ceno88")
+
+    assert messages == [
+        "route R4 plex[PLEX-P02]->crosswatch: filtered user=ce*** sess=30 reason=username_whitelist"
+    ]
+
+
+def test_route_label_omits_default_instances(monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = _route_dispatcher_cfg("R1", "simkl", ["Carmen"], False)
+    cfg["scrobble"]["watch"]["route_provider_instance"] = "default"
+
+    messages = _dispatch_and_capture(monkeypatch, cfg, {}, account="Pascal")
+
+    assert messages == ["route R1 plex->simkl: filtered user=Pa*** sess=30 reason=username_whitelist"]
+
+
+def test_watcher_log_prefixes_use_friendly_instance_names(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.scrobble.plex import watch
+
+    lines: list[str] = []
+    monkeypatch.setattr(watch, "BASE_LOG", lambda msg, level="INFO", module="": lines.append(str(msg)))
+
+    def _svc(instance_id: str, plex_cfg: dict[str, Any]) -> Any:
+        cfg = _cfg(None)
+        cfg["plex"].update(plex_cfg)
+        return watch.WatchService(
+            dispatcher=None, cfg_provider=lambda: cfg, quiet_startup=True, instance_id=instance_id
+        )
+
+    _svc("default", {})._log("hello")
+    _svc("default", {"label": "Main"})._log("hello")
+    _svc("PLEX-P01", {"instances": {"PLEX-P01": {"label": "Ceno"}}})._log("hello")
+    _svc("PLEX-P02", {"instances": {"PLEX-P02": {}}})._log("hello")
+    _svc("PLEX-P01", {"instances": {"PLEX-P01": {"label": "Ceno"}}})._log("Watcher connected; inst=Ceno")
+
+    assert lines == [
+        "hello",
+        "[Main] hello",
+        "[Ceno] hello",
+        "[PLEX-P02] hello",
+        "Watcher connected; inst=Ceno",
+    ]

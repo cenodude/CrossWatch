@@ -10,7 +10,7 @@ from typing import Any, Iterable, Mapping
 
 from cw_platform.anime_mapping.service import mapped_or_default_media_type
 from cw_platform.config_base import load_config, save_config
-from cw_platform.id_map import canonical_key, merge_ids, minimal as id_minimal
+from cw_platform.id_map import canonical_key, merge_ids
 from cw_platform.metadata import MetadataManager
 
 from ._common import (
@@ -26,10 +26,12 @@ from ._common import (
     latest_state_file,
     make_logger,
     may_persist,
+    merge_tracker_identity,
     pair_scoped,
     readonly,
     scoped_file,
     state_file_for_read,
+    tracker_minimal,
 )
 
 _dbg, _info, _warn, _error = make_logger("watchlist")
@@ -71,8 +73,9 @@ def _ensure_tmdb_for_item(item: dict[str, Any]) -> bool:
     ids = dict(item.get("ids") or {}) if isinstance(item.get("ids"), dict) else {}
     if ids.get("tmdb") or item.get("tmdb"):
         if item.get("tmdb") and not ids.get("tmdb"):
-            ids = merge_ids(ids, {"tmdb": item.get("tmdb")})
-            item["ids"] = ids
+            merged = dict(ids)
+            merged.update(merge_ids(ids, {"tmdb": item.get("tmdb")}))
+            item["ids"] = merged
             return True
         return False
 
@@ -93,8 +96,9 @@ def _ensure_tmdb_for_item(item: dict[str, Any]) -> bool:
         tmdb = ((res or {}).get("ids") or {}).get("tmdb")
         if not tmdb:
             return False
-        ids = merge_ids(ids, {"tmdb": tmdb, "imdb": imdb})
-        item["ids"] = ids
+        merged = dict(ids)
+        merged.update(merge_ids(ids, {"tmdb": tmdb, "imdb": imdb}))
+        item["ids"] = merged
         return True
     except Exception:
         return False
@@ -141,7 +145,7 @@ def _load_state(adapter: Any) -> dict[str, Any]:
             key = canonical_key(obj)
             if not key:
                 continue
-            items[key] = id_minimal(obj)
+            items[key] = tracker_minimal(obj)
         state = {"ts": 0, "items": items}
         if items and may_persist(adapter, path):
             _atomic_write(path, {"ts": int(time.time()), "items": items})
@@ -157,7 +161,7 @@ def _load_state(adapter: Any) -> dict[str, Any]:
                 ck = str(key) or canonical_key(value)
                 if not ck:
                     continue
-                items2[ck] = id_minimal(value)
+                items2[ck] = tracker_minimal(value)
             state = {"ts": ts, "items": items2}
             if items2 and may_persist(adapter, path):
                 _atomic_write(path, {"ts": ts or int(time.time()), "items": items2})
@@ -169,7 +173,7 @@ def _load_state(adapter: Any) -> dict[str, Any]:
             ck = str(key) or canonical_key(value)
             if not ck:
                 continue
-            items3[ck] = id_minimal(value)
+            items3[ck] = tracker_minimal(value)
         state = {"ts": 0, "items": items3}
         if items3 and may_persist(adapter, path):
             _atomic_write(path, {"ts": int(time.time()), "items": items3})
@@ -211,7 +215,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         ck = canonical_key(value) or str(key)
         if not ck:
             continue
-        out[ck] = id_minimal(value)
+        out[ck] = tracker_minimal(value)
     total = len(out)
     if prog:
         try:
@@ -237,7 +241,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         if not isinstance(obj, Mapping):
             continue
         try:
-            minimal = id_minimal(obj)
+            minimal = tracker_minimal(obj)
         except Exception:
             unresolved_src.append(obj)
             continue
@@ -252,6 +256,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             merged = merge_ids(ex_ids, in_ids)
             if merged:
                 minimal["ids"] = merged
+            minimal = merge_tracker_identity(existing, minimal)
 
         if not _capture_mode():
             _ensure_tmdb_for_item(minimal)
@@ -281,7 +286,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         if not isinstance(obj, Mapping):
             continue
         try:
-            minimal = id_minimal(obj)
+            minimal = tracker_minimal(obj)
         except Exception:
             unresolved_src.append(obj)
             continue
