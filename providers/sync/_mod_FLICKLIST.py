@@ -22,7 +22,7 @@ from providers.sync.flicklist._common import (
     flicklist_request,
 )
 
-__VERSION__ = "0.1"
+__VERSION__ = "0.2"
 __all__ = ["get_manifest", "FLICKLISTModule", "OPS", "feat_history", "feat_playlists", "feat_progress", "feat_ratings", "feat_watchlist"]
 
 if "ctx" not in globals():
