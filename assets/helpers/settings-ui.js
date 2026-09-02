@@ -570,6 +570,8 @@ function cwSchedSettingsSelect(tab, opts = {}) {
   panel.querySelectorAll(".cw-subpanel[data-sub]").forEach((sp) => {
     sp.classList.toggle("active", (sp.dataset.sub || "").toLowerCase() === want);
   });
+  const webhooks = document.getElementById("schWebhooks");
+  if (webhooks) webhooks.classList.toggle("hidden", want !== "advanced");
 
   if (opts.persist !== false) {
     try { localStorage.setItem(SCHED_SETTINGS_TAB_KEY, want); } catch {}

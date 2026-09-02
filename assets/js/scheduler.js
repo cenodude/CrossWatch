@@ -28,7 +28,8 @@
   // styles (once)
   document.head.appendChild(Object.assign(el("style"), { id: "sch-css", textContent: `
 #sec-scheduling{--sch-shell-bg:#101217;--sch-card-bg:#15181E;--sch-card-bg-soft:#191C23;--sch-input-bg:#101217;--sch-input-bg-hover:#20242C;--sch-border:#292D36;--sch-border-soft:#292D36;--sch-shadow:none;--sch-fg:#F1F3F5;--sch-fg-soft:#9299A6}
-#sec-scheduling .cw-subpanel[data-sub]{padding-top:6px}
+#sec-scheduling .cw-subpanel[data-sub]{display:none;padding-top:6px}
+#sec-scheduling .cw-subpanel[data-sub].active{display:grid}
 #sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card,#schAdv,#schWebhooks{position:relative;border:1px solid var(--sch-border);border-radius:22px;background:var(--sch-shell-bg);box-shadow:var(--sch-shadow);overflow:hidden}
 #sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card::before,#schAdv::before,#schWebhooks::before{content:none;display:none}
 #sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card-fields{position:relative;z-index:1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;padding:16px}
@@ -202,6 +203,7 @@ html[data-cw-theme="flat-light"] .sch-adv .chipdays label:has(input:checked){
 #sec-scheduling #sched-provider-panel,#sec-scheduling #sched-provider-panel .cw-subpanels,#sec-scheduling #sched-provider-panel .cw-subpanel.active{width:100%;box-sizing:border-box}
 #sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card,#sec-scheduling #schAdv,#sec-scheduling #schWebhooks{width:100%;max-width:none;margin:0!important;box-sizing:border-box}
 #sec-scheduling #schWebhooks{margin-top:14px!important}
+#sec-scheduling #sched_advanced_mount{display:grid;gap:14px}
 #sec-scheduling .sch-std-head{position:relative;z-index:1;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:16px;padding:18px 18px 8px!important}
 #sec-scheduling .sch-std-head-copy{display:grid;gap:6px}
 #sec-scheduling .sch-card-head{display:flex;align-items:flex-start;gap:14px;min-width:0}
@@ -625,9 +627,15 @@ html[data-cw-theme="flat-light"] #sec-scheduling .sch-card-icon{background:#eef2
     });
   };
 
+  const syncSchedulerTabVisibility = () => {
+    const active = $("#sched-pane-tabs [data-sub].active");
+    const sub = String(active?.dataset?.sub || "basic").toLowerCase();
+    $("#schWebhooks")?.classList.toggle("hidden", sub !== "advanced");
+  };
+
 const ensureStdEnabledToggle = () => {
   const sel = $("#schEnabled");
-  if (!sel || sel.__toggleEnhanced) return;
+  if (!sel) return;
   const box = sel.parentElement;
   if (!box) return;
   box.classList.add("sch-std-enable-field");
@@ -636,17 +644,26 @@ const ensureStdEnabledToggle = () => {
   if (lab) lab.remove();
   sel.style.display = "none";
 
-  const t = el("label", "cx-toggle sch-std-toggle");
-  t.innerHTML = `<input type="checkbox" id="schEnabledToggle"><span class="cx-toggle-ui" aria-hidden="true"></span><span class="cx-toggle-text">Use standard plan</span><span class="cx-toggle-state" aria-hidden="true"></span>`;
   const head = $("#sec-scheduling .sch-std-head");
-  (head || box).appendChild(t);
+  const host = head || box;
+  let t = $("#schEnabledToggle")?.closest(".sch-std-toggle") || null;
+  if (!t) {
+    t = el("label", "cx-toggle sch-std-toggle");
+    t.innerHTML = `<input type="checkbox" id="schEnabledToggle"><span class="cx-toggle-ui" aria-hidden="true"></span><span class="cx-toggle-text">Use standard plan</span><span class="cx-toggle-state" aria-hidden="true"></span>`;
+  }
+  if (t.parentElement !== host) host.appendChild(t);
 
-  const cb = $("#schEnabledToggle", head || box);
-  const syncFromSel = () => { cb.checked = String(sel.value || "").trim().toLowerCase() === "true"; };
+  const cb = $("#schEnabledToggle", t);
+  if (!cb) return;
+  const syncFromSel = () => {
+    cb.checked = String(sel.value || "").trim().toLowerCase() === "true";
+    t.dataset.checked = cb.checked ? "true" : "false";
+    t.setAttribute("aria-checked", cb.checked ? "true" : "false");
+  };
   sel.__toggleSync = syncFromSel;
   syncFromSel();
 
-  cb.onchange = () => {
+  if (!cb.__stdToggleWired) cb.addEventListener("change", () => {
     // Standard on -> force advanced off
     if (cb.checked) {
       const advCb = $("#schAdvEnabled");
@@ -659,9 +676,10 @@ const ensureStdEnabledToggle = () => {
     try { sel.dispatchEvent(new Event("input", { bubbles: true })); } catch {}
 
     applyModeLocks();
-  };
+  });
+  cb.__stdToggleWired = true;
 
-  sel.addEventListener("change", syncFromSel);
+  if (!sel.__toggleEnhanced) sel.addEventListener("change", syncFromSel);
   sel.__toggleEnhanced = true;
 };
 
@@ -1904,7 +1922,13 @@ const ensureStdEnabledToggle = () => {
   // mount UI
   const ensureUI = () => {
     const host = $("#sched_advanced_mount") || $("#sec-scheduling .body");
-    if (!host || $("#schAdv")) return;
+    if (!host) return;
+    if ($("#schAdv")) {
+      const hooks = $("#schWebhooks");
+      if (hooks && host && hooks.parentElement !== host) host.appendChild(hooks);
+      syncSchedulerTabVisibility();
+      return;
+    }
 
     const adv = Object.assign(el("div", "sch-adv"), { id: "schAdv" });
     adv.innerHTML = `
@@ -2069,8 +2093,9 @@ const ensureStdEnabledToggle = () => {
   </div>
 </section>
 `;
-    const hooksHost = $("#sec-scheduling .body") || host;
+    const hooksHost = host;
     hooksHost.appendChild(hooks);
+    syncSchedulerTabVisibility();
     hooks.querySelectorAll("input,select").forEach((node) => {
       node.addEventListener("input", syncWebhooksFromFields);
       node.addEventListener("change", syncWebhooksFromFields);
@@ -2267,6 +2292,7 @@ const ensureStdEnabledToggle = () => {
     if (authSetupPending()) return;
     if (_loading) return; _loading = true;
     try {
+      try { window.cwSchedProviderEnsure?.(); } catch {}
       ensureUI();
       decorateStandardPanel();
       decorateStandardFieldHelp();
@@ -2320,6 +2346,12 @@ const ensureStdEnabledToggle = () => {
       updateStandardWizard();
 
       try { window.cwSchedSettingsHubInit?.(); } catch {}
+      decorateStandardPanel();
+      decorateStandardFieldHelp();
+      ensureStdEnabledToggle();
+      wireStandardWizard();
+      applyModeLocks();
+      syncSchedulerTabVisibility();
       try { window.cwSchedSettingsHubUpdate?.(); } catch {}
 
       try { typeof window.refreshSchedulingBanner === "function" && window.refreshSchedulingBanner(); } catch {}
