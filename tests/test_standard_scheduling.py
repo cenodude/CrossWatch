@@ -209,3 +209,29 @@ def test_recurring_workflow_runs_pair_steps_in_order(monkeypatch) -> None:
     assert ok is True
     assert ran_again is False
     assert seen == ["nuvio-crosswatch", "crosswatch-publicmetadb"]
+
+
+def test_standard_scheduler_toggle_enhancer_repairs_header_mount() -> None:
+    from pathlib import Path
+
+    js = Path("assets/js/scheduler.js").read_text(encoding="utf-8")
+
+    assert 'if (!sel) return;' in js
+    assert 'let t = $("#schEnabledToggle")?.closest(".sch-std-toggle") || null;' in js
+    assert "if (t.parentElement !== host) host.appendChild(t);" in js
+    assert 'if (!cb.__stdToggleWired) cb.addEventListener("change", () => {' in js
+    assert 'if (!sel.__toggleEnhanced) sel.addEventListener("change", syncFromSel);' in js
+
+
+def test_scheduler_tabs_keep_webhooks_out_of_standard_view() -> None:
+    from pathlib import Path
+
+    scheduler_js = Path("assets/js/scheduler.js").read_text(encoding="utf-8")
+    settings_js = Path("assets/helpers/settings-ui.js").read_text(encoding="utf-8")
+
+    assert "#sec-scheduling .cw-subpanel[data-sub]{display:none;" in scheduler_js
+    assert "#sec-scheduling .cw-subpanel[data-sub].active{display:grid}" in scheduler_js
+    assert 'const hooksHost = host;' in scheduler_js
+    assert 'syncSchedulerTabVisibility();' in scheduler_js
+    assert 'try { window.cwSchedProviderEnsure?.(); } catch {}' in scheduler_js
+    assert 'webhooks.classList.toggle("hidden", want !== "advanced");' in settings_js
