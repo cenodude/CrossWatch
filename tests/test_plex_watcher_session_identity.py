@@ -32,7 +32,7 @@ class FakePlex:
         return []
 
 
-def _session_xml(
+def _video_xml(
     session_key: str,
     *,
     user_name: str = "",
@@ -55,7 +55,15 @@ def _session_xml(
         account_attrs.append(f'uuid="{account_uuid}"')
     user = f"<User {' '.join(user_attrs)} />" if user_attrs else ""
     account = f"<Account {' '.join(account_attrs)} />" if account_attrs else ""
-    return f'<MediaContainer><Video sessionKey="{session_key}">{user}{account}</Video></MediaContainer>'
+    return f'<Video sessionKey="{session_key}">{user}{account}</Video>'
+
+
+def _sessions_xml(*videos: str) -> str:
+    return f"<MediaContainer>{''.join(videos)}</MediaContainer>"
+
+
+def _session_xml(session_key: str, **kwargs: Any) -> str:
+    return _sessions_xml(_video_xml(session_key, **kwargs))
 
 
 def _cfg(username_whitelist: list[str] | None, *, unresolved_user_fallback: bool = False) -> dict[str, Any]:
@@ -786,3 +794,77 @@ def test_watcher_log_prefixes_use_friendly_instance_names(monkeypatch: pytest.Mo
         "[PLEX-P02] hello",
         "Watcher connected; inst=Ceno",
     ]
+
+
+def test_one_sessions_fetch_resolves_every_active_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = _cfg(["owner"])
+    plex = FakePlex(
+        [
+            _sessions_xml(
+                _video_xml("s-shared", user_name="shared", user_id="u2", account_id="a2"),
+                _video_xml("s-owner", user_name="owner", user_id="u1", account_id="a1"),
+            )
+        ]
+    )
+    service, sink = _service(monkeypatch, cfg, plex)
+
+    service._handle_alert(_alert("s-shared"))
+    service._handle_alert(_alert("s-owner"))
+
+    assert plex.queries == ["/status/sessions"]
+    assert [e.account for e in sink.events] == ["owner"]
+
+
+def test_identity_resolved_is_logged_once_per_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = _cfg(["Carmen"])
+    row = _session_xml("31", user_name="Carmen", user_id="176467484")
+    plex = FakePlex([row, row, row])
+    service, _sink = _service(monkeypatch, cfg, plex)
+    lines = _identity_logs(monkeypatch, service)
+
+    for _ in range(3):
+        service._sess_identity_cache.clear()
+        service._last_event.clear()
+        service._handle_alert(_alert("31"))
+
+    assert plex.queries == ["/status/sessions"] * 3
+    assert len([ln for ln in lines if ln.startswith("identity resolved")]) == 1
+
+
+def test_identity_is_logged_again_when_the_session_key_changes_hands(monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = _cfg(["Carmen", "Pascal"])
+    plex = FakePlex([
+        _session_xml("31", user_name="Carmen", user_id="176467484"),
+        _session_xml("31", user_name="Pascal", user_id="114349713"),
+    ])
+    service, _sink = _service(monkeypatch, cfg, plex)
+    lines = _identity_logs(monkeypatch, service)
+
+    service._handle_alert(_alert("31"))
+    service._sess_identity_cache.clear()
+    service._last_event.clear()
+    service._handle_alert(_alert("31"))
+
+    resolved = [ln for ln in lines if ln.startswith("identity resolved")]
+    assert len(resolved) == 2
+    assert "user=Ca***" in resolved[0]
+    assert "user=Pa***" in resolved[1]
+
+
+def test_route_filtered_log_is_emitted_once_per_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = _cfg(["owner"])
+    row = _session_xml("s-shared", user_name="shared", user_id="u2", account_id="a2")
+    plex = FakePlex([row, row, row])
+    service, sink = _service(monkeypatch, cfg, plex)
+    messages: list[str] = []
+    monkeypatch.setattr(service, "_dbg", lambda msg: messages.append(str(msg)))
+
+    for _ in range(3):
+        service._sess_identity_cache.clear()
+        service._handle_alert(_alert("s-shared"))
+        for key in list(service._route_filtered_ts):
+            service._route_filtered_ts[key] -= 60.0
+
+    assert sink.events == []
+    assert len([m for m in messages if m.startswith("event filtered by route dispatcher")]) == 1
+
