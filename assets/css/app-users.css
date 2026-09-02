@@ -196,7 +196,7 @@
 }
 
 #page-settings .cw-app-user-create #btn-app-user-create:disabled {
-  cursor: not-allowed;
+  cursor:default;
   opacity: .46;
   filter: saturate(.72);
 }
