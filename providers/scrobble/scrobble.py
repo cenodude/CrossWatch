@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Iterable, Literal, Protocol
 
 from cw_platform.account_match import media_account_allowed, normalize_media_account_name
+from providers.scrobble.anime_mapping import maybe_enrich_event_for_sink, sink_name_for_mapping
 from providers.scrobble.media_filters import event_ignore_reason, log_media_filter_drop
 
 try:
@@ -630,7 +631,8 @@ class Dispatcher:
         sent = False
         for s in self._sinks:
             try:
-                self._send_sink(s, ev, cfg)
+                ev_for_sink = maybe_enrich_event_for_sink(ev, sink_name_for_mapping(s), cfg)
+                self._send_sink(s, ev_for_sink, cfg)
                 sent = True
             except Exception as e:
                 _log(f"Sink error: {e}", "ERROR")

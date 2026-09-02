@@ -10,6 +10,7 @@ from typing import Any
 from cw_platform.provider_instances import normalize_instance_id
 from cw_platform.access_policy import webhook_effective_profile_id
 from cw_platform.user_profile_resources import webhook_assigned_profile_id, webhook_resource_id
+from providers.scrobble.anime_mapping import maybe_enrich_event_for_sink
 from providers.scrobble.media_filters import event_ignore_reason, log_media_filter_drop
 from providers.scrobble.scrobble import ScrobbleAction, ScrobbleEvent
 from providers.webhooks.config import sink_configured, webhook_settings, webhook_sink_instance, webhook_sinks
@@ -26,6 +27,13 @@ class DispatchResponse:
 
 
 _SINKS: dict[tuple[str, str, str], Any] = {}
+
+
+def _anime_mapping_enabled(settings: Mapping[str, Any], sink: str) -> bool:
+    key = str(sink or "").strip().lower()
+    if key not in {"crosswatch", "simkl"}:
+        return False
+    return bool(settings.get(f"anime_mapping_{key}"))
 
 
 def _emit(logger: Callable[..., None] | Any | None, msg: str, level: str = "INFO") -> None:
@@ -143,6 +151,8 @@ def _route_cfg(cfg: dict[str, Any], provider: str, provider_instance: str, sink:
     watch["event_method"] = "webhook"
     watch["route_profile_id"] = assigned_profile_id
     watch["route_effective_profile_id"] = effective_profile_id
+    if sink in {"crosswatch", "simkl"}:
+        watch["route_options"] = {"watch": {"anime_mapping": _anime_mapping_enabled(wh, sink)}}
     if provider == "plex":
         watch["filters"] = dict(wh.get("filters_plex") or {})
     elif provider == "emby":
@@ -248,7 +258,8 @@ def dispatch_scrobble(
 
         target = {"target": sink, "target_instance": inst, "ok": True}
         try:
-            _make_sink(sink, inst, _provider).send(ev, cfg=route_cfg)
+            ev_for_sink = maybe_enrich_event_for_sink(ev, sink, route_cfg)
+            _make_sink(sink, inst, _provider).send(ev_for_sink, cfg=route_cfg)
         except Exception as e:
             target["ok"] = False
             target["error"] = str(e)

@@ -98,12 +98,12 @@ function syncCollectionModeLock(state){
 }
 function animeHistoryBlockReason(state){
   if(!tmdbMetadataReady(state)) return "Requires a TMDB metadata key. Add one under Settings &rsaquo; Metadata first.";
-  if(!globalAnimeMappingEnabled(state)) return "Enabling this also turns on Anime ID Mapping and downloads the AniBridge dataset.";
+  if(!globalAnimeMappingEnabled(state)) return "Enable global Anime ID Mapping first.";
   return "";
 }
 function normalizeAnimeHistoryOptions(state){
   const opts=Object.assign({}, state?.options?.history||{});
-  if(!hasAnimeProvider(state)||!tmdbMetadataReady(state)){
+  if(!hasAnimeProvider(state)||!tmdbMetadataReady(state)||!globalAnimeMappingEnabled(state)){
     opts.use_anime_mapping=false;
   }else{
     opts.use_anime_mapping=!!opts.use_anime_mapping;
@@ -122,8 +122,8 @@ function normalizeAnimeFeatureOptions(state, feature){
     return opts;
   }
   const canOnly=anilistCanReceive(state);
-  if(!hasOwn(opts,"use_anime_mapping")) opts.use_anime_mapping=canOnly||globalAnimeMappingEnabled(state);
-  opts.use_anime_mapping=!!opts.use_anime_mapping;
+  if(!hasOwn(opts,"use_anime_mapping")) opts.use_anime_mapping=false;
+  opts.use_anime_mapping=!!opts.use_anime_mapping&&globalAnimeMappingEnabled(state);
   if(!opts.use_anime_mapping || !canOnly){
     opts.anime_only_sync=false;
   }else if(!hasOwn(opts,"anime_only_sync")){
@@ -1344,6 +1344,7 @@ function renderFeaturePanel(state){
     const trPair = (state.pairProviders?.trakt) || {};
     const showAnime = hasAnimeProvider(state);
     const canAnimeOnly = anilistCanReceive(state);
+    const animeMapDisabled = !globalAnimeMappingEnabled(state);
     const animeOnlyDisabled = !wl.use_anime_mapping || !canAnimeOnly;
 
     left.innerHTML = `
@@ -1362,8 +1363,9 @@ function renderFeaturePanel(state){
         <div class="grid2 compact">
           <div class="opt-row">
             <label for="cx-wl-anime-map">Use Anime ID Mapping</label>
-            <label class="switch"><input id="cx-wl-anime-map" type="checkbox" ${wl.use_anime_mapping?"checked":""}><span class="slider"></span></label>
+            <label class="switch"><input id="cx-wl-anime-map" type="checkbox" ${wl.use_anime_mapping?"checked":""} ${animeMapDisabled?"disabled":""}><span class="slider"></span></label>
           </div>
+          ${animeMapDisabled?`<div class="muted" style="grid-column:1/-1">Enable global Anime ID Mapping first.</div>`:""}
           ${canAnimeOnly?`<div class="opt-row ${animeOnlyDisabled?"muted":""}">
             <label for="cx-wl-anime-only">Anime-only sync</label>
             <label class="switch"><input id="cx-wl-anime-only" type="checkbox" ${wl.anime_only_sync?"checked":""} ${animeOnlyDisabled?"disabled":""}><span class="slider"></span></label>
@@ -1581,6 +1583,7 @@ function renderFeaturePanel(state){
     const rt=normalizeAnimeFeatureOptions(state,"ratings"),hasType=t=>Array.isArray(rt.types)&&rt.types.includes(t);
     const showAnime = hasAnimeProvider(state);
     const canAnimeOnly = anilistCanReceive(state);
+    const animeMapDisabled = !globalAnimeMappingEnabled(state);
     const animeOnlyDisabled = !rt.use_anime_mapping || !canAnimeOnly;
 
     left.innerHTML=`<div class="panel-title">Ratings | Basics</div>
@@ -1592,8 +1595,9 @@ function renderFeaturePanel(state){
         <div class="grid2 compact">
           <div class="opt-row">
             <label for="cx-rt-anime-map">Use Anime ID Mapping</label>
-            <label class="switch"><input id="cx-rt-anime-map" type="checkbox" ${rt.use_anime_mapping?"checked":""}><span class="slider"></span></label>
+            <label class="switch"><input id="cx-rt-anime-map" type="checkbox" ${rt.use_anime_mapping?"checked":""} ${animeMapDisabled?"disabled":""}><span class="slider"></span></label>
           </div>
+          ${animeMapDisabled?`<div class="muted" style="grid-column:1/-1">Enable global Anime ID Mapping first.</div>`:""}
           ${canAnimeOnly?`<div class="opt-row ${animeOnlyDisabled?"muted":""}">
             <label for="cx-rt-anime-only">Anime-only sync</label>
             <label class="switch"><input id="cx-rt-anime-only" type="checkbox" ${rt.anime_only_sync?"checked":""} ${animeOnlyDisabled?"disabled":""}><span class="slider"></span></label>
@@ -1793,7 +1797,7 @@ function renderFeaturePanel(state){
         </div>`
       : "";
     const animeOpts = normalizeAnimeHistoryOptions(state);
-    const animeBlocked = !tmdbMetadataReady(state);
+    const animeBlocked = !tmdbMetadataReady(state) || !globalAnimeMappingEnabled(state);
     const animeNote = animeHistoryBlockReason(state);
     const animeRow = hasAnimeProvider(state)
       ? `
@@ -2499,12 +2503,6 @@ async function saveConfigBits(state){
   try{
     const cur=await fetch("/api/config",{cache:"no-store"}).then(r=>r.ok?r.json():{});
     const cfg=typeof structuredClone==="function"?structuredClone(cur||{}):jclone(cur||{});
-    const shouldEnableAnimeMapping = hasAnimeProvider(state) && (
-      !!normalizeAnimeFeatureOptions(state, "watchlist").use_anime_mapping ||
-      !!normalizeAnimeFeatureOptions(state, "ratings").use_anime_mapping ||
-      !!normalizeAnimeHistoryOptions(state).use_anime_mapping
-    );
-
     if(ID("gl-dry")){
       const dropOn=!!ID("gl-drop")?.checked;
       const massOn=!!ID("gl-mass")?.checked && !dropOn;
@@ -2749,24 +2747,8 @@ async function saveConfigBits(state){
       cfg.mdblist = md;
     }
 
-    if(shouldEnableAnimeMapping){
-      const am=Object.assign({provider:"anibridge",release_tag:"v3"}, cfg.anime_mapping||{});
-      am.enabled=true;
-      cfg.anime_mapping=am;
-    }
-
     const res=await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(cfg)});
     if(!res.ok)throw new Error("POST /api/config "+res.status);
-    if(shouldEnableAnimeMapping){
-      const am=cfg.anime_mapping||{};
-      try{
-        await fetch("/api/anime-mapping/settings",{
-          method:"POST",
-          headers:{"Content-Type":"application/json"},
-          body:JSON.stringify({enabled:true,provider:am.provider||"anibridge",release_tag:am.release_tag||"v3"})
-        });
-      }catch{}
-    }
   }catch(e){console.warn("[cx] saving config bits failed",e)}
 }
 
@@ -2783,8 +2765,8 @@ function buildPayload(state,wrap){
   const ratings=get("ratings");
   const normalizeAnimePairBlock=(block)=>{
     if(animePair){
-      if(!hasOwn(block,"use_anime_mapping")) block.use_anime_mapping=globalAnimeMappingEnabled(state);
-      block.use_anime_mapping=!!block.use_anime_mapping;
+      if(!hasOwn(block,"use_anime_mapping")) block.use_anime_mapping=false;
+      block.use_anime_mapping=!!block.use_anime_mapping&&globalAnimeMappingEnabled(state);
       if(!block.use_anime_mapping||!animeCanReceive) block.anime_only_sync=false;
       else if(!hasOwn(block,"anime_only_sync")) block.anime_only_sync=true;
       else block.anime_only_sync=!!block.anime_only_sync;

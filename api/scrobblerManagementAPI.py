@@ -71,6 +71,8 @@ WEBHOOK_SETTING_KEYS = {
     "plex_scrob_ratings",
     "pause_debounce_seconds",
     "suppress_start_at",
+    "anime_mapping_crosswatch",
+    "anime_mapping_simkl",
 }
 
 
@@ -268,6 +270,7 @@ def _normalize_webhook_settings(cfg: Mapping[str, Any], provider: str, body: Map
     unknown = sorted(set(str(k) for k in body.keys()) - allowed - {"provider", "provider_instance", "regenerate"})
     if unknown:
         raise ValidationFailure([_err("settings", "unsupported_setting", "Unsupported setting: " + ", ".join(unknown))])
+    current_sinks = list(webhook_sinks(cfg, provider, body.get("provider_instance")))
     if "enabled" in body:
         out["enabled"] = bool(body.get("enabled"))
     if "sinks" in body:
@@ -298,6 +301,11 @@ def _normalize_webhook_settings(cfg: Mapping[str, Any], provider: str, body: Map
         for key in ("plex_trakt_ratings", "plex_simkl_ratings", "plex_mdblist_ratings", "plex_crosswatch_ratings", "plex_floppy_ratings", "plex_punchplay_ratings", "plex_flicklist_ratings", "plex_scrob_ratings"):
             if key in body:
                 out[key] = bool(body.get(key))
+    selected_sinks = [str(s or "").strip().lower() for s in (out.get("sinks") or _as_list(body.get("sinks")) or current_sinks)]
+    for sink in ("crosswatch", "simkl"):
+        key = f"anime_mapping_{sink}"
+        if key in body:
+            out[key] = bool(body.get(key)) if sink in selected_sinks else False
     for key in ("pause_debounce_seconds", "suppress_start_at"):
         if key in body:
             val = _coerce_int(body.get(key), key)
@@ -538,6 +546,7 @@ def build_overview(cfg: dict[str, Any], request: Request) -> dict[str, Any]:
     trakt_policy = _dict(sc.get("trakt"))
     global_settings = {
         "enabled": bool(sc.get("enabled")),
+        "global_anime_mapping_enabled": bool(_dict(cfg.get("anime_mapping")).get("enabled")),
         "sources": {
             "webhook": bool(sources.get("webhook")),
             "watcher": bool(sources.get("watcher")),
@@ -764,7 +773,11 @@ def api_profile_webhook_save(request: Request, payload: dict[str, Any] = Body(..
                 insts_now[k] = v
             node["sinks"] = sinks_now
             node["sink_instances"] = {k: v for k, v in insts_now.items() if k in sinks_now}
+            if prev_sink in {"crosswatch", "simkl"} and prev_sink not in sinks_now:
+                node.pop(f"anime_mapping_{prev_sink}", None)
         node.update(settings)
+        if any(k in settings for k in ("anime_mapping_crosswatch", "anime_mapping_simkl")):
+            node.pop("anime_mapping", None)
         if "enabled" not in node:
             node["enabled"] = True
         _ensure_media_profile_webhook_ids(after, regenerate=bool(payload.get("regenerate")))
@@ -789,6 +802,8 @@ def api_profile_webhook_disable(request: Request, payload: dict[str, Any] = Body
                     node = _profile_override_node(after, provider, instance)
                     node["sinks"] = remaining
                     node["sink_instances"] = {s: webhook_sink_instance(settings, s) for s in remaining}
+                    if sink in {"crosswatch", "simkl"}:
+                        node.pop(f"anime_mapping_{sink}", None)
                 else:
                     _profile_override_remove(after, provider, instance)
                     if webhook_sinks(after, provider, instance):

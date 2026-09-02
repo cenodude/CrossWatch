@@ -366,6 +366,39 @@ def _body_ids_desc(b: dict[str, Any]) -> str:
     return _ids_desc_map(ids if isinstance(ids, dict) else {})
 
 
+def _anime_absolute(ev: Any) -> int | None:
+    raw = getattr(ev, "raw", {}) or {}
+    values: list[Any] = []
+    if isinstance(raw, Mapping):
+        values.extend([raw.get("_simkl_episode_number"), raw.get("_anime_absolute")])
+        amap = raw.get("_cw_anime_map")
+        if isinstance(amap, Mapping):
+            values.append(amap.get("absolute"))
+    for value in values:
+        try:
+            num = int(str(value).strip())
+        except Exception:
+            continue
+        if num > 0:
+            return num
+    return None
+
+
+def _mapped_anime_ids(ev: Any, show: Mapping[str, Any]) -> dict[str, Any]:
+    raw = getattr(ev, "raw", {}) or {}
+    out: dict[str, Any] = {}
+    if isinstance(raw, Mapping):
+        amap = raw.get("_cw_anime_map")
+        if isinstance(amap, Mapping):
+            namespace = str(amap.get("namespace") or "").strip().lower()
+            target = str(amap.get("target_id") or "").strip()
+            if namespace in _SIMKL_ANIME_ID_KEYS and target:
+                out[namespace] = target
+    if show.get("simkl"):
+        out["simkl"] = show["simkl"]
+    return out
+
+
 def _bodies(ev: Any, p: float) -> list[dict[str, Any]]:
     ids = _ids(ev)
     show = _show_ids(ev)
@@ -405,7 +438,17 @@ def _bodies(ev: Any, p: float) -> list[dict[str, Any]]:
     season = getattr(ev, "season", None)
     number = getattr(ev, "number", None)
     has_sn = season is not None and number is not None
+    absolute = _anime_absolute(ev) if parent == "anime" else None
 
+    anime_ids = _mapped_anime_ids(ev, show) if absolute is not None and parent == "anime" else {}
+    if absolute is not None and anime_ids:
+        bodies.append(
+            {
+                "progress": p,
+                "anime": {"ids": anime_ids},
+                "episode": {"number": absolute},
+            }
+        )
     if has_sn and show:
         bodies.append(
             {

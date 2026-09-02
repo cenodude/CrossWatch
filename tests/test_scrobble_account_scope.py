@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 PROFILE_ID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -140,6 +141,16 @@ def test_route_options_keep_unresolved_user_fallback() -> None:
     assert options["watch"]["unresolved_user_fallback"] is True
 
 
+def test_route_options_keep_anime_mapping_default_off() -> None:
+    from providers.scrobble.routes import normalize_route_options
+
+    assert normalize_route_options({})["watch"].get("anime_mapping") is None
+
+    options = normalize_route_options({"watch": {"anime_mapping": True}})
+
+    assert options["watch"]["anime_mapping"] is True
+
+
 def test_existing_plex_route_without_unresolved_fallback_option_defaults_on() -> None:
     from providers.scrobble.routes import build_route_cfg, normalize_route
 
@@ -182,6 +193,90 @@ def test_overview_route_row_exposes_flag() -> None:
     rows = _normalized_routes(cfg, None)
     assert rows and rows[0]["needs_account_filter"] is True
     assert rows[0]["options"]["watch"]["unresolved_user_fallback"] is True
+
+
+def test_scrobbler_overview_exposes_global_anime_mapping_flag() -> None:
+    from api.scrobblerManagementAPI import build_overview
+
+    cfg = _cfg(profile=False, whitelist=None)
+    cfg["anime_mapping"] = {"enabled": True}
+
+    overview = build_overview(cfg, None)
+
+    assert overview["source_state"]["global_anime_mapping_enabled"] is True
+
+
+def test_route_modal_disables_anime_mapping_when_global_off() -> None:
+    text = Path("assets/js/modals/scrobbler-route/index.js").read_text("utf-8")
+
+    assert "globalAnimeMappingEnabled()" in text
+    assert "global_anime_mapping_enabled" in text
+    assert 'id="scr-anime-mapping"' in text
+    assert "Enable global Anime ID Mapping first." in text
+
+
+def test_webhook_modal_disables_anime_mapping_when_global_off() -> None:
+    text = Path("assets/js/modals/scrobbler-webhook/index.js").read_text("utf-8")
+
+    assert "globalAnimeMappingEnabled()" in text
+    assert "webhookAnimeMappingEnabled(sink)" in text
+    assert "global_anime_mapping_enabled" in text
+    assert 'id="scw-anime-mapping"' in text
+    assert "Enable global Anime ID Mapping first." in text
+    assert 'new Set(["crosswatch", "simkl"])' in text
+    assert "body[`anime_mapping_${sink}`]" in text
+
+
+def test_webhook_anime_mapping_is_per_sink_and_preserved_when_global_off() -> None:
+    from api.scrobblerManagementAPI import _normalize_webhook_settings
+
+    body = {"sinks": ["simkl"], "anime_mapping_simkl": True}
+
+    off = _normalize_webhook_settings({"anime_mapping": {"enabled": False}}, "plex", body)
+    on = _normalize_webhook_settings({"anime_mapping": {"enabled": True}}, "plex", body)
+    unsupported = _normalize_webhook_settings({"anime_mapping": {"enabled": True}}, "plex", {"sinks": ["trakt"], "anime_mapping_simkl": True})
+
+    assert off["anime_mapping_simkl"] is True
+    assert on["anime_mapping_simkl"] is True
+    assert unsupported["anime_mapping_simkl"] is False
+
+
+def test_webhook_anime_mapping_partial_update_uses_existing_sinks() -> None:
+    from api.scrobblerManagementAPI import _normalize_webhook_settings
+
+    cfg = {"scrobble": {"webhook": {"sinks": ["simkl"]}}}
+    out = _normalize_webhook_settings(cfg, "plex", {"provider_instance": "default", "anime_mapping_simkl": True})
+
+    assert out["anime_mapping_simkl"] is True
+
+
+def test_webhook_route_cfg_carries_anime_mapping_option_for_supported_sinks() -> None:
+    from providers.webhooks.dispatch import _route_cfg
+
+    cfg = {
+        "anime_mapping": {"enabled": True},
+        "scrobble": {
+            "webhook": {
+                "profiles": {
+                    "plex": {
+                        "default": {
+                            "anime_mapping": True,
+                            "anime_mapping_simkl": True,
+                            "anime_mapping_crosswatch": False,
+                        }
+                    }
+                }
+            }
+        },
+    }
+
+    simkl = _route_cfg(cfg, "plex", "default", "simkl", "default")
+    trakt = _route_cfg(cfg, "plex", "default", "trakt", "default")
+    crosswatch = _route_cfg(cfg, "plex", "default", "crosswatch", "default")
+
+    assert simkl["scrobble"]["watch"]["route_options"]["watch"]["anime_mapping"] is True
+    assert crosswatch["scrobble"]["watch"]["route_options"]["watch"]["anime_mapping"] is False
+    assert "route_options" not in trakt["scrobble"]["watch"]
 
 
 def _webhook_cfg(*, profile: bool, whitelist: list[str] | None) -> dict[str, Any]:

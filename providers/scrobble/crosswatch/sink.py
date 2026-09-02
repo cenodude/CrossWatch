@@ -136,15 +136,19 @@ def _best_duration_ms(raw: Any) -> int | None:
     return walk(raw)
 
 
+_TRACKER_ID_KEYS = ("tmdb", "imdb", "tvdb", "trakt", "simkl", "mal", "anilist", "kitsu", "anidb", "mdblist", "plex", "jellyfin", "emby", "slug")
+_TRACKER_PASSTHROUGH_FIELDS = ("_cw_anime_map", "_anime_absolute", "_simkl_episode_number", "simkl_bucket", "anime_type")
+
+
 def _ids_for_movie(ev: ScrobbleEvent) -> dict[str, Any]:
     ids = ev.ids or {}
-    return {key: ids[key] for key in ("tmdb", "imdb", "tvdb", "trakt", "simkl", "mdblist", "plex", "jellyfin", "emby", "slug") if ids.get(key)}
+    return {key: ids[key] for key in _TRACKER_ID_KEYS if ids.get(key)}
 
 
 def _show_ids(ev: ScrobbleEvent) -> dict[str, Any]:
     ids = ev.ids or {}
     out: dict[str, Any] = {}
-    for key in ("tmdb", "imdb", "tvdb", "trakt", "simkl", "mdblist", "plex", "jellyfin", "emby", "slug"):
+    for key in _TRACKER_ID_KEYS:
         show_key = f"{key}_show"
         if ids.get(show_key):
             out[key] = ids[show_key]
@@ -225,6 +229,11 @@ def _item_from_event(ev: ScrobbleEvent, cfg: Mapping[str, Any], progress: float)
     if duration_ms and duration_ms > 0:
         item["duration_ms"] = duration_ms
         item["progress_ms"] = max(0, min(duration_ms, position_ms if position_ms is not None else round((progress / 100.0) * float(duration_ms))))
+    raw = ev.raw if isinstance(ev.raw, Mapping) else {}
+    for field in _TRACKER_PASSTHROUGH_FIELDS:
+        value = raw.get(field)
+        if value not in (None, ""):
+            item[field] = value
     return {k: v for k, v in item.items() if v not in (None, "", {}, [])}
 
 
