@@ -391,6 +391,7 @@ class WatchService:
         self._route_filtered_ts: dict[str, float] = {}
         self._identity_log_ts: dict[str, float] = {}
         self._identity_miss: dict[str, int] = {}
+        self._identity_logged: dict[str, str] = {}
         self._account_ctx: dict[str, Any] | None = None
         self._instance_label: str | None = None
         self._last_probe: dict[str, float] = {}
@@ -1000,9 +1001,20 @@ class WatchService:
                     f"bad|{sk}",
                 )
                 return None
+
+            def _has_identity(d: dict[str, Any] | None) -> bool:
+                return bool(
+                    d
+                    and any(
+                        str(d.get(k) or "").strip()
+                        for k in ("name", "user_name", "user_id", "account_name", "account_id", "account_uuid")
+                    )
+                )
+
             ident: dict[str, Any] | None = None
             for v in el.iter("Video"):
-                if v.get("sessionKey") != sk:
+                vk = str(v.get("sessionKey") or "").strip()
+                if not vk:
                     continue
                 user_name = ""
                 user_id = ""
@@ -1029,7 +1041,7 @@ class WatchService:
                             acc_name = str(val).strip()
                             break
 
-                ident = {
+                row: dict[str, Any] = {
                     "name": user_name or acc_name,
                     "user_name": user_name,
                     "user_id": user_id,
@@ -1038,21 +1050,25 @@ class WatchService:
                     "account_uuid": acc_uuid,
                     "ts": now,
                 }
-                break
+                if vk == sk:
+                    ident = row
+                if _has_identity(row) and isinstance(cache, dict):
+                    cache[vk] = row
 
-            has_identity = bool(
-                ident
-                and any(str(ident.get(k) or "").strip() for k in ("name", "user_name", "user_id", "account_name", "account_id", "account_uuid"))
-            )
-            if ident and has_identity and isinstance(cache, dict):
-                cache[sk] = ident
+            has_identity = _has_identity(ident)
             if ident and has_identity:
                 self._identity_miss.pop(sk, None)
-                self._log_identity(
-                    f"identity resolved sess={sk} user={_mask_account(ident.get('name'))} "
-                    f"user_id={ident.get('user_id') or '-'} account_id={ident.get('account_id') or '-'} "
-                    f"in={_ms()}ms"
+                sig = "|".join(
+                    str(ident.get(k) or "")
+                    for k in ("name", "user_name", "user_id", "account_id", "account_uuid")
                 )
+                if self._identity_logged.get(sk) != sig:
+                    self._identity_logged[sk] = sig
+                    self._log_identity(
+                        f"identity resolved sess={sk} user={_mask_account(ident.get('name'))} "
+                        f"user_id={ident.get('user_id') or '-'} account_id={ident.get('account_id') or '-'} "
+                        f"in={_ms()}ms"
+                    )
                 return ident
             if isinstance(stale_hit, dict) and stale_age is not None and stale_age < 6 * 3600:
                 self._identity_miss.pop(sk, None)
@@ -1263,11 +1279,10 @@ class WatchService:
         if not str(ev.account or "").strip():
             return
         key = f"{kind}|{ev.account}|{ev.server_uuid}|{ev.session_key or self._find_rating_key(ev.raw or {}) or '?'}"
-        now = time.time()
-        last = self._route_filtered_ts.get(key, 0.0)
-        if now - last >= 30.0:
-            self._dbg(f"{kind} filtered by route dispatcher: user={_mask_account(ev.account)} server={ev.server_uuid} sess={ev.session_key}")
-            self._route_filtered_ts[key] = now
+        if key in self._route_filtered_ts:
+            return
+        self._route_filtered_ts[key] = time.time()
+        self._dbg(f"{kind} filtered by route dispatcher: user={_mask_account(ev.account)} server={ev.server_uuid} sess={ev.session_key}")
 
     def _clear_currently_watching(self, ev: ScrobbleEvent) -> None:
         try:
