@@ -4,6 +4,7 @@ const label = (v) => window.CW?.ProviderMeta?.label?.(v) || ({ plex: "Plex", jel
 const sinks = ["crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "bingebase", "flicklist", "scrob"];
 const ratingSinks = ["crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "flicklist", "scrob"];
 const webhookSources = new Set(["plex", "jellyfin", "emby"]);
+const animeMappingSinks = new Set(["crosswatch", "simkl"]);
 
 function flashCopied(btn) {
   if (!btn) return;
@@ -192,6 +193,16 @@ async function fetchServerUuid(targetId, btn, keepTab = currentActiveTab()) {
 
 function settings() {
   return selectedWebhook().effective_settings || {};
+}
+
+function globalAnimeMappingEnabled() {
+  return !!props.overview?.source_state?.global_anime_mapping_enabled;
+}
+
+function webhookAnimeMappingEnabled(sink) {
+  const key = String(sink || "").toLowerCase();
+  const s = settings();
+  return !!s[`anime_mapping_${key}`];
 }
 
 function sourceProviders() {
@@ -523,6 +534,11 @@ function ratingsPanel(provider, ratingsTargets) {
 }
 
 function optionsPanel() {
+  const sink = selectedSinkKey();
+  const animeGlobalOn = globalAnimeMappingEnabled();
+  const animeMapping = animeMappingSinks.has(sink)
+    ? `<label class="scrm-toggle-row ${animeGlobalOn ? "" : "is-disabled"}"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">animation</span><span><strong>Anime ID Mapping</strong><small>${animeGlobalOn ? "Use local anime mappings for this webhook before sending scrobbles." : "Enable global Anime ID Mapping first."}</small></span></span><span class="scrm-switch"><input type="checkbox" id="scw-anime-mapping" ${webhookAnimeMappingEnabled(sink) ? "checked" : ""} ${animeGlobalOn ? "" : "disabled"}><span class="scrm-switch-track"></span></span></label>`
+    : "";
   return `
     <section class="scrm-panel ${activeTab === "options" ? "active" : ""}" data-panel="options">
       <div class="scrm-journey scrm-journey-compact">
@@ -534,6 +550,7 @@ function optionsPanel() {
         ${field("Pause debounce", `<input class="input" id="scw-pause" type="number" min="0" max="3600" value="${esc(settings().pause_debounce_seconds ?? "")}" placeholder="Inherited">`)}
         ${field("Suppress start", `<input class="input" id="scw-suppress" type="number" min="0" max="3600" value="${esc(settings().suppress_start_at ?? "")}" placeholder="Inherited">`)}
       </div>
+      ${animeMapping}
     </section>
   `;
 }
@@ -663,6 +680,7 @@ function payload() {
     if (pause !== "") body.pause_debounce_seconds = Number(pause);
     if (suppress !== "") body.suppress_start_at = Number(suppress);
   }
+  if (animeMappingSinks.has(sink)) body[`anime_mapping_${sink}`] = !!root.querySelector("#scw-anime-mapping")?.checked;
   return body;
 }
 

@@ -23,7 +23,7 @@ ROUTE_WATCH_POLICY_RANGES = {
     "pause_debounce_seconds": (0, 3600),
     "suppress_start_at": (0, 100),
 }
-ROUTE_WATCH_BOOLEAN_KEYS = {"unresolved_user_fallback"}
+ROUTE_WATCH_BOOLEAN_KEYS = {"unresolved_user_fallback", "anime_mapping"}
 
 
 def _deep_clone(v: Any) -> Any:
