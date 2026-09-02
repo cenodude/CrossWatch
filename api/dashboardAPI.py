@@ -6,7 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Mapping, cast
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
@@ -43,9 +43,47 @@ def _dashboard_config_stamp(base_path: Any) -> float:
         return 0.0
 
 
+def _dashboard_tracker_stamp(
+    base_path: Any,
+    cfg: Mapping[str, Any],
+    requested: set[str],
+) -> list[tuple[str, int, int]]:
+    tracker_features = requested & {"history", "ratings", "progress"}
+    if not tracker_features:
+        return []
+    try:
+        from cw_platform.provider_instances import normalize_instance_id
+
+        node = cfg.get("crosswatch") if isinstance(cfg, Mapping) else {}
+        raw_root = str(node.get("root_dir") or "").strip() if isinstance(node, Mapping) else ""
+        root = Path(raw_root or ".cw_provider")
+        if not root.is_absolute():
+            root = Path(base_path) / root
+        roots: list[tuple[str, Path]] = [("default", root)]
+        instances = node.get("instances") if isinstance(node, Mapping) else {}
+        if isinstance(instances, Mapping):
+            for raw_id in instances.keys():
+                inst = normalize_instance_id(raw_id)
+                if inst != "default":
+                    roots.append((inst, root / "profiles" / inst))
+        stamp: list[tuple[str, int, int]] = []
+        for inst, base in roots:
+            for feature in sorted(tracker_features):
+                path = base / f"{feature}.json"
+                try:
+                    st = path.stat()
+                    stamp.append((f"{inst}:{feature}", int(st.st_mtime_ns), int(st.st_size)))
+                except OSError:
+                    stamp.append((f"{inst}:{feature}", 0, 0))
+        return stamp
+    except Exception:
+        return []
+
+
 def _dashboard_widgets_version(
     base_path: Any,
     *,
+    cfg: Mapping[str, Any],
     requested: set[str],
     state_features: set[str],
     profile: str,
@@ -69,6 +107,7 @@ def _dashboard_widgets_version(
         "policy": policy_fp,
         "db": _dashboard_db_stamp(base_path),
         "config": _dashboard_config_stamp(base_path),
+        "tracker": _dashboard_tracker_stamp(base_path, cfg, requested),
     }
     blob = json.dumps(source, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
@@ -106,6 +145,7 @@ def dashboard_widgets(
         }
         version = _dashboard_widgets_version(
             CONFIG,
+            cfg=cfg,
             requested=requested,
             state_features=state_features,
             profile=str(profile or "").strip(),

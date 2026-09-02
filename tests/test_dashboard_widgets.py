@@ -1480,6 +1480,54 @@ def test_dashboard_widgets_api_returns_not_modified_for_known_version(monkeypatc
     assert payload == {"ok": True, "not_modified": True, "version": version}
 
 
+def test_dashboard_widgets_api_version_tracks_crosswatch_tracker_files(monkeypatch, tmp_path) -> None:
+    import cw_platform.config_base as config_base
+    from api import dashboardAPI
+
+    root = tmp_path / ".cw_provider"
+    root.mkdir()
+    (tmp_path / "config.json").write_text(
+        json.dumps({"crosswatch": {"root_dir": str(root)}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config_base, "CONFIG", tmp_path)
+    monkeypatch.setattr(dashboard_widgets, "_tracker_feature_items", lambda _kind: {})
+
+    first = dashboardAPI.dashboard_widgets(
+        history_limit=8,
+        ratings_limit=12,
+        scrobble_limit=8,
+        progress_limit=8,
+        playlists_limit=8,
+        include="history",
+    )
+    version = _loads_body(first.body)["version"]
+    (root / "history.json").write_text(
+        json.dumps({"items": {"movie:tmdb:949": {"type": "movie", "title": "Heat", "ids": {"tmdb": 949}}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        dashboardAPI,
+        "dashboard_widgets_payload",
+        lambda *_args, **_kwargs: {"ok": True, "recent_history": {"ok": True, "items": [], "total": 0}},
+    )
+
+    second = dashboardAPI.dashboard_widgets(
+        history_limit=8,
+        ratings_limit=12,
+        scrobble_limit=8,
+        progress_limit=8,
+        playlists_limit=8,
+        include="history",
+        known_version=version,
+    )
+    payload = _loads_body(second.body)
+
+    assert payload["ok"] is True
+    assert payload.get("not_modified") is not True
+    assert payload["version"] != version
+
+
 def test_dashboard_widget_frontend_uses_cached_payload_version() -> None:
     js = Path("assets/js/dashboard-widgets.js").read_text("utf-8")
     profile_js = Path("assets/js/profile-page.js").read_text("utf-8")

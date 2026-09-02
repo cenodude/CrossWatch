@@ -45,6 +45,24 @@ const post = (url, body) =>
     body: JSON.stringify(body),
   });
 const listParts = (data, defs) => defs.flatMap(([k, label]) => data && data[k] != null ? [`${data[k]} ${label}${data[k] === 1 ? "" : "s"}`] : []);
+const notifyTrackerStateChanged = (result = {}) => {
+  try {
+    if (window.CW?.Maintenance?.applySyncStateReset) {
+      window.CW.Maintenance.applySyncStateReset({ ...(result || {}), source: "tracker" });
+      return;
+    }
+  } catch {}
+  try {
+    localStorage.removeItem("cw.dashboardWidgets.data.v1");
+    localStorage.removeItem("cw.profileWidgets.data.v1");
+  } catch {}
+  try {
+    window.dispatchEvent(new CustomEvent("cw:sync-state-cleared", {
+      detail: { source: "tracker", result },
+    }));
+  } catch {}
+  try { window.CW?.DashboardWidgets?.refresh?.({ force: true, forceConfig: true, preserve: false }); } catch {}
+};
 const SIMPLE_OPS = {
   state: "/api/maintenance/clear-state",
   cache: "/api/maintenance/clear-cache",
@@ -534,6 +552,7 @@ export default {
         if (data?.ok === false) throw new Error(data.error || "Import failed");
         const parts = listParts(data, [["files", "file"], ["states", "state file"], ["snapshots", "snapshot"]]);
         setStatus("Imported " + (parts.length ? parts.join(", ") : "tracker archive") + ".", "ok");
+        if (Number(data?.states || 0) > 0) notifyTrackerStateChanged(data);
         await refreshSummary();
         if (selectedInsightKind === "tracker") await loadActionInsight("tracker");
       } catch (e) {
@@ -880,6 +899,7 @@ export default {
 
       try {
         let res = null;
+        let trackerStateChanged = false;
         if (SIMPLE_OPS[kind]) {
           const body = kind === "stats" ? {
             recalc: false,
@@ -906,6 +926,7 @@ export default {
             clear_snapshots: clearSnaps,
             provider_instance: trackerProfile(),
           });
+          trackerStateChanged = clearState;
         } else if (kind === "defaults") {
           const warn = [
             "WARNING Reset all to default",
@@ -947,6 +968,9 @@ export default {
         if (kind === "state") {
           try { window.CW?.Maintenance?.applySyncStateReset?.(res || { ok: true }); } catch {}
           await refreshSummary();
+        }
+        if (kind === "tracker" && trackerStateChanged) {
+          notifyTrackerStateChanged(res || { ok: true });
         }
         if (kind === "cache" || kind === "tracker") await refreshSummary();
 

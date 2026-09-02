@@ -1475,6 +1475,13 @@ def test_maintenance_rebuild_state_refreshes_main_page_caches() -> None:
     assert "window.CW?.DashboardWidgets?.refresh?.({ force: true, forceConfig: true, preserve: false })" in helper_js
     assert 'if (kind === "state")' in modal_js
     assert "window.CW?.Maintenance?.applySyncStateReset?.(res || { ok: true })" in modal_js
+    assert "const notifyTrackerStateChanged = (result = {}) =>" in modal_js
+    assert 'window.CW.Maintenance.applySyncStateReset({ ...(result || {}), source: "tracker" })' in modal_js
+    assert 'localStorage.removeItem("cw.dashboardWidgets.data.v1")' in modal_js
+    assert 'window.dispatchEvent(new CustomEvent("cw:sync-state-cleared"' in modal_js
+    assert 'trackerStateChanged = clearState;' in modal_js
+    assert 'if (kind === "tracker" && trackerStateChanged)' in modal_js
+    assert "if (Number(data?.states || 0) > 0) notifyTrackerStateChanged(data);" in modal_js
     assert "await injectCSS();" in modal_js
     assert "const loadMaintenanceBootStatus = async () =>" in modal_js
     assert "void loadMaintenanceBootStatus();" in modal_js
