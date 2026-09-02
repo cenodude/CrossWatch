@@ -189,7 +189,7 @@
     }
 
     if (!totalFiltered) {
-      if (ctx.empty) ctx.empty.style.display = "block";
+      if (ctx.empty) ctx.empty.style.display = "grid";
       if (ctx.empty) {
         const main = ctx.empty.closest(".cw-main");
         if (main) main.classList.add("cw-main-empty");

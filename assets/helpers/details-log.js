@@ -25,6 +25,7 @@ if (typeof window.debugStickBottom === "undefined") window.debugStickBottom = tr
 if (typeof window.debugBuf === "undefined") window.debugBuf = [];
 if (typeof window._debugFlushRAF === "undefined") window._debugFlushRAF = null;
 if (typeof window._detailsTabsWired === "undefined") window._detailsTabsWired = false;
+if (typeof window._detailsDebugReady === "undefined") window._detailsDebugReady = false;
 if (typeof window._detailsTab === "undefined") window._detailsTab = "sync";
 if (typeof window.DETAILS_MAX_LINES === "undefined") window.DETAILS_MAX_LINES = 300;
 if (typeof window.DETAILS_STREAM_TAIL === "undefined") window.DETAILS_STREAM_TAIL = 120;
@@ -69,23 +70,72 @@ function _detailsManagedUser() {
   }
 }
 
+function _currentDetailsDebugEnabled() {
+  const cfg = window.CW?.Cache?.getCfg?.() || window._cfgCache || {};
+  if (cfg && typeof cfg === "object" && cfg.runtime && typeof cfg.runtime === "object") {
+    return _isAppDebugMode(cfg);
+  }
+  return !!window.appDebug;
+}
+
+function _setDetailsDebugAvailable(enabled) {
+  const available = !!enabled && !_detailsManagedUser();
+  const tabDebug = document.getElementById("det-tab-debug");
+  const debugPanel = document.getElementById("det-panel-debug");
+  window._detailsDebugReady = available;
+  if (tabDebug) {
+    tabDebug.hidden = !available;
+    tabDebug.disabled = !available;
+    tabDebug.setAttribute("aria-hidden", String(!available));
+    tabDebug.setAttribute("aria-disabled", String(!available));
+    if (!available) tabDebug.setAttribute("tabindex", "-1");
+    else tabDebug.removeAttribute("tabindex");
+  }
+  if (debugPanel) {
+    debugPanel.hidden = !available;
+    debugPanel.setAttribute("aria-hidden", String(!available));
+  }
+  if (!available) {
+    if (window._detailsTab === "debug") window._detailsTab = "sync";
+    try { closeDebugLog(); } catch {}
+  }
+  return available;
+}
+
+async function refreshDetailsDebugAvailability(force = false) {
+  let cfg = window.CW?.Cache?.getCfg?.() || window._cfgCache;
+  if (force || !cfg) {
+    try {
+      cfg = await fetch("/api/config", { cache: "no-store" }).then(r => r.json());
+      window._cfgCache = cfg;
+      try { window.CW?.Cache?.setCfg?.(cfg); } catch {}
+    } catch {}
+  }
+  window.appDebug = _isAppDebugMode(cfg || {});
+  return _setDetailsDebugAvailable(window.appDebug);
+}
+
+function _canUseDebugDetailsTab() {
+  return !!window._detailsDebugReady && _currentDetailsDebugEnabled() && !_detailsManagedUser();
+}
+
 function _syncManagedDetailsTabs() {
   const managed = _detailsManagedUser();
   const tabWatch = document.getElementById("det-tab-watcher");
   const tabDebug = document.getElementById("det-tab-debug");
   const watchPanel = document.getElementById("det-panel-watcher");
   const debugPanel = document.getElementById("det-panel-debug");
-  [tabWatch, tabDebug, watchPanel, debugPanel].forEach((el) => {
+  [tabWatch, watchPanel].forEach((el) => {
     if (!el) return;
     el.hidden = managed;
     el.setAttribute("aria-hidden", String(managed));
   });
-  if (managed && (window._detailsTab === "watcher" || window._detailsTab === "debug")) {
+  const debugAvailable = _setDetailsDebugAvailable(!managed && _currentDetailsDebugEnabled());
+  if ((managed && window._detailsTab === "watcher") || (!debugAvailable && window._detailsTab === "debug")) {
     window._detailsTab = "sync";
   }
   if (managed) {
     try { closeWatcherLog(); } catch {}
-    try { closeDebugLog(); } catch {}
   }
   return managed;
 }
@@ -543,7 +593,7 @@ async function _copyDetailsLog(btn) {
 
 function setDetailsTab(tab) {
   const managed = _syncManagedDetailsTabs();
-  const t = managed ? "sync" : ((tab === "watcher" || tab === "debug") ? tab : "sync");
+  const t = managed ? "sync" : (tab === "debug" ? (_canUseDebugDetailsTab() ? "debug" : "sync") : (tab === "watcher" ? "watcher" : "sync"));
   window._detailsTab = t;
 
   const syncPanel  = document.getElementById("det-panel-sync");
@@ -585,6 +635,7 @@ function setDetailsTab(tab) {
 
 function initDetailsTabs() {
   _syncManagedDetailsTabs();
+  refreshDetailsDebugAvailability(false).catch(() => _syncManagedDetailsTabs());
   if (window._detailsTabsWired) return;
   const tabSync  = document.getElementById("det-tab-sync");
   const tabWatch = document.getElementById("det-tab-watcher");
@@ -595,7 +646,7 @@ function initDetailsTabs() {
 
   tabSync.addEventListener("click", () => setDetailsTab("sync"));
   tabWatch.addEventListener("click", () => { if (!_detailsManagedUser()) setDetailsTab("watcher"); });
-  tabDebug.addEventListener("click", () => { if (!_detailsManagedUser()) setDetailsTab("debug"); });
+  tabDebug.addEventListener("click", () => { if (_canUseDebugDetailsTab()) setDetailsTab("debug"); });
 
   const btnCopy = document.getElementById("det-copy");
   if (btnCopy) {
@@ -701,8 +752,15 @@ function closeDebugLog() {
   _updateDetailsConsoleStatus();
 }
 
-function openDebugLog() {
+async function openDebugLog() {
   if (_detailsManagedUser()) return;
+  if (!_canUseDebugDetailsTab()) {
+    const available = await refreshDetailsDebugAvailability(false);
+    if (!available) {
+      if (window._detailsTab === "debug") setDetailsTab("sync");
+      return;
+    }
+  }
   const el = document.getElementById("det-debug-log");
   const details = document.getElementById("details");
   const tabDebug = document.getElementById("det-tab-debug");
@@ -957,6 +1015,7 @@ async function openDetailsLog() {
     if (openSeq !== window._detOpenSeq) return;
     window._cfgCache = cfg;
     window.appDebug = _isAppDebugMode(cfg);
+    _setDetailsDebugAvailable(window.appDebug);
   } catch (_) {}
   if (openSeq !== window._detOpenSeq || !_detailsVisible() || window._detailsTab !== "sync") return;
 
@@ -1226,6 +1285,14 @@ function _wireModalStreamPause() {
 if (document.body) _wireModalStreamPause();
 else document.addEventListener("DOMContentLoaded", _wireModalStreamPause, { once: true });
 
+window.addEventListener("settings-changed", () => {
+  refreshDetailsDebugAvailability(false).then(() => {
+    if (_detailsVisible()) setDetailsTab(window._detailsTab || "sync");
+  }).catch(() => {
+    _syncManagedDetailsTabs();
+  });
+});
+
 window.addEventListener("beforeunload", () => {
   try { closeDetailsLog(); } catch {}
 });
@@ -1239,6 +1306,7 @@ window.addEventListener("beforeunload", () => {
     openWatcherLog,
     closeDebugLog,
     openDebugLog,
+    refreshDetailsDebugAvailability,
     openDetailsLog,
     closeDetailsLog,
     resetDetailsSyncLog,

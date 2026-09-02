@@ -319,6 +319,40 @@ def test_sync_log_reachable_for_full_access_managed_users() -> None:
     assert crosswatch._non_admin_permission_allowed(readonly, "/api/logs/stream", "GET") is False
 
 
+def test_details_debug_tab_requires_runtime_debug() -> None:
+    from pathlib import Path
+
+    import ui_frontend
+
+    html = ui_frontend.get_index_html(include_admin=True)
+    details_js = Path("assets/helpers/details-log.js").read_text("utf-8")
+
+    assert 'id="det-tab-debug" class="det-tab" type="button"\n                role="tab" aria-selected="false" aria-controls="det-panel-debug" data-tab="debug" hidden disabled aria-hidden="true" aria-disabled="true"' in html
+    assert 'id="det-panel-debug" class="det-panel hidden" role="tabpanel" aria-labelledby="det-tab-debug" hidden aria-hidden="true"' in html
+    assert "function _currentDetailsDebugEnabled()" in details_js
+    assert 'if (cfg && typeof cfg === "object" && cfg.runtime && typeof cfg.runtime === "object")' in details_js
+    assert "return _isAppDebugMode(cfg);" in details_js
+    assert "return !!window.appDebug;" in details_js
+    assert 'const t = managed ? "sync" : (tab === "debug" ? (_canUseDebugDetailsTab() ? "debug" : "sync") : (tab === "watcher" ? "watcher" : "sync"));' in details_js
+    assert "async function openDebugLog()" in details_js
+    assert "const available = await refreshDetailsDebugAvailability(false);" in details_js
+    assert 'url.searchParams.set("tag", "DEBUG");' in details_js
+    assert 'window.addEventListener("settings-changed", () => {' in details_js
+
+
+def test_debug_log_stream_is_disabled_when_runtime_debug_is_off(monkeypatch) -> None:
+    import asyncio
+    import crosswatch
+
+    monkeypatch.setattr(crosswatch, "_is_debug_enabled", lambda: False)
+    monkeypatch.setattr(crosswatch, "_is_mods_debug_enabled", lambda: False)
+
+    response = asyncio.run(crosswatch.api_logs_stream_initial(_request("/api/logs/stream"), tag="DEBUG"))
+
+    assert response.status_code == 403
+    assert json.loads(response.body)["error"] == "Debug logging is disabled"
+
+
 def test_run_log_visibility_requires_owning_the_whole_run(monkeypatch) -> None:
     from api import syncAPI as sync_api
 
