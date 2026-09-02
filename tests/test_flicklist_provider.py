@@ -682,7 +682,7 @@ def test_history_add_does_not_confirm_items_echoed_in_not_found(monkeypatch: pyt
     assert res["unresolved"][0]["status"] == "not_found"
 
 
-def test_history_add_does_not_confirm_when_nothing_was_applied(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_history_add_confirms_when_counters_do_not_account_for_the_item(monkeypatch: pytest.MonkeyPatch) -> None:
     from providers.sync.flicklist import _history as history
 
     monkeypatch.setattr(history, "flicklist_request", lambda adapter, method, url, **kwargs: _Resp(200, {"added": 0, "existing": 0, "not_found": []}))
@@ -694,9 +694,9 @@ def test_history_add_does_not_confirm_when_nothing_was_applied(monkeypatch: pyte
         "ids": {"tmdb": "550"},
     }])
 
-    assert res["ok"] is False
-    assert res["count"] == 0
-    assert res["unresolved"][0]["status"] == "write_not_applied"
+    assert res["ok"] is True
+    assert res["count"] == 1
+    assert res["unresolved"] == []
 
 
 def test_history_add_counts_existing_plays_as_confirmed(monkeypatch: pytest.MonkeyPatch) -> None:

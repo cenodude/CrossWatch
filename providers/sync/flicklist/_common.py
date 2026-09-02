@@ -431,7 +431,7 @@ def percent_of(item: Mapping[str, Any]) -> float | None:
 
 
 _WRITE_ID_ORDER = ("fldb", "tmdb", "imdb", "tvdb")
-_ADD_COUNTERS = ("added", "existing")
+_ADD_COUNTERS = ("added", "existing", "restored")
 _REMOVE_COUNTERS = ("removed",)
 
 
@@ -513,14 +513,13 @@ def classify_write(
         unresolved.append({"key": found, "status": "not_found", "reason": str(row.get("reason") or "") or None})
 
     applied = sum(int(counters.get(name) or 0) for name in (_REMOVE_COUNTERS if str(method).upper() == "DELETE" else _ADD_COUNTERS) if name in counters)
-    has_applied = any(name in counters for name in (_REMOVE_COUNTERS if str(method).upper() == "DELETE" else _ADD_COUNTERS))
     expected = len(sent) - len(misses)
-    shortfall = has_applied and applied < expected
+    if applied != expected:
+        counters["counter_gap"] = expected - applied
 
-    if unmatched or shortfall:
-        status = "not_found_unmatched" if unmatched else "write_not_applied"
+    if unmatched:
         unresolved_keys = [key for key, _ in sent if key]
-        unresolved = [{"key": key, "status": status, "applied": applied, "not_found": len(misses), "sent": len(sent)} for key in unresolved_keys]
+        unresolved = [{"key": key, "status": "not_found_unmatched", "applied": applied, "not_found": len(misses), "sent": len(sent)} for key in unresolved_keys]
         return [], unresolved_keys, unresolved, counters
 
     blocked = set(unresolved_keys)
