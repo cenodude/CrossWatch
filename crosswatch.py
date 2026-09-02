@@ -151,6 +151,9 @@ def _is_debug_enabled() -> bool:
     except Exception:
         return False
 
+def _is_any_runtime_debug_enabled() -> bool:
+    return _is_debug_enabled() or _is_mods_debug_enabled()
+
 
 def _resolve_config_scoped_path(raw_path: str) -> Path:
     raw = str(raw_path or "").strip()
@@ -1126,6 +1129,8 @@ async def api_logs_stream_initial(
     managed = isinstance(user, dict) and not user.get("is_admin")
     if managed and tag != "SYNC":
         return JSONResponse({"ok": False, "error": "Administrator access required"}, status_code=403, headers={"Cache-Control": "no-store"})
+    if tag == DIAG_LOG_TAG and not _is_any_runtime_debug_enabled():
+        return JSONResponse({"ok": False, "error": "Debug logging is disabled"}, status_code=403, headers={"Cache-Control": "no-store"})
 
     def _run_visible() -> bool:
         if not managed:

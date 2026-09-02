@@ -54,6 +54,16 @@ def test_editor_layout_has_firefox_safe_wrap_points() -> None:
     assert "#page-editor .cw-side{display:none}}" in css
 
 
+def test_editor_empty_state_keeps_icon_centered_in_firefox() -> None:
+    css = _read("assets/css/pages.css")
+    table_controller_js = _read("assets/js/editor/table-controller.js")
+
+    assert 'ctx.empty.style.display = "grid"' in table_controller_js
+    assert 'ctx.empty.style.display = "block"' not in table_controller_js
+    assert ".cw-main.cw-main-empty .cw-empty{flex:0 0 auto;display:grid;grid-template-columns:minmax(0,1fr);justify-items:center;align-content:center;" in css
+    assert ".cw-empty .cw-empty-icon{width:54px;height:54px;display:grid;place-items:center;justify-self:center;align-self:center;margin:0 auto;float:none;position:static;" in css
+
+
 def test_firefox_scrollbar_fallbacks_cover_key_scroll_regions() -> None:
     base_css = _read("assets/css/base.css")
     pages_css = _read("assets/css/pages.css")

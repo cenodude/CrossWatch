@@ -680,7 +680,7 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
               <button id="det-tab-watcher" class="det-tab" type="button"
                 role="tab" aria-selected="false" aria-controls="det-panel-watcher" data-tab="watcher">Watcher</button>
               <button id="det-tab-debug" class="det-tab" type="button"
-                role="tab" aria-selected="false" aria-controls="det-panel-debug" data-tab="debug">Debug</button>
+                role="tab" aria-selected="false" aria-controls="det-panel-debug" data-tab="debug" hidden disabled aria-hidden="true" aria-disabled="true">Debug</button>
             </div>
             <div class="det-tools">
               <button id="det-copy" class="ghost det-tool-icon" type="button" title="Copy current output" aria-label="Copy current output"><span class="material-symbols-rounded" aria-hidden="true">content_copy</span></button>
@@ -695,7 +695,7 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
             <div id="det-panel-watcher" class="det-panel hidden" role="tabpanel" aria-labelledby="det-tab-watcher">
               <div id="det-watch-log" class="log wlog"></div>
             </div>
-            <div id="det-panel-debug" class="det-panel hidden" role="tabpanel" aria-labelledby="det-tab-debug">
+            <div id="det-panel-debug" class="det-panel hidden" role="tabpanel" aria-labelledby="det-tab-debug" hidden aria-hidden="true">
               <div id="det-debug-log" class="log wlog"></div>
             </div>
           </div>
