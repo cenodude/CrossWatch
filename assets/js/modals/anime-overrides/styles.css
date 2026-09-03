@@ -34,7 +34,7 @@
 .cw-anime-overrides .ao-target-id{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px}
 .cw-anime-overrides .ao-find{display:inline-flex;align-items:center;justify-content:center;width:42px;min-width:42px;height:42px;padding:0;border:1px solid color-mix(in srgb,var(--ao-accent) 40%,var(--ao-border));border-radius:12px;background:color-mix(in srgb,var(--ao-accent) 16%,var(--ao-card));color:var(--ao-accent);cursor:pointer}
 .cw-anime-overrides .ao-find[hidden]{display:none}
-.cw-anime-overrides .ao-find:disabled{opacity:.4;cursor:default;border-color:var(--ao-border);background:color-mix(in srgb,var(--ao-panel) 86%,#0b1321);color:var(--ao-muted)}
+.cw-anime-overrides .ao-find:disabled{opacity:.4;cursor:not-allowed;border-color:var(--ao-border);background:color-mix(in srgb,var(--ao-panel) 86%,#0b1321);color:var(--ao-muted)}
 .cw-anime-overrides .ao-find .material-symbols-rounded{font-size:20px}
 .cw-anime-overrides .ao-find-note{margin:0;font-size:12px;color:var(--ao-muted);opacity:.85}
 .cw-anime-overrides .ao-find-note[hidden]{display:none}

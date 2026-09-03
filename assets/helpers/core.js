@@ -1369,6 +1369,52 @@
     return keys.some((key) => featureEnabled(features[key]));
   }
 
+  const SYNC_FEATURE_DOT_CLASSES = {
+    watchlist: "wl",
+    ratings: "rt",
+    history: "hi",
+    progress: "pr",
+    playlists: "pl",
+    collection: "co",
+  };
+
+  const SYNC_FEATURE_LABELS = {
+    watchlist: "Watchlist",
+    ratings: "Ratings",
+    history: "History",
+    progress: "Progress",
+    playlists: "Playlists",
+    collection: "Collections",
+  };
+
+  function syncFeatureOrder() {
+    return ["watchlist", "ratings", "history", "progress", "playlists", "collection"];
+  }
+
+  function syncFeatureLabel(key) {
+    const k = String(key || "").trim().toLowerCase();
+    return SYNC_FEATURE_LABELS[k] || k || "?";
+  }
+
+  function enabledPairFeatures(pair) {
+    const features = pair?.features || {};
+    return syncFeatureOrder().filter((key) => SYNC_FEATURE_DOT_CLASSES[key] && featureEnabled(features[key]));
+  }
+
+  function syncFeatureDotsHTML(pair) {
+    const enabled = enabledPairFeatures(pair);
+    if (!enabled.length) return "";
+    const label = enabled.map(syncFeatureLabel).join(", ");
+    const dots = enabled
+      .map((key) => {
+        const cls = SYNC_FEATURE_DOT_CLASSES[key];
+        const tip = `${syncFeatureLabel(key)} enabled`;
+        return `<span class="cw-sync-feature-dot ${cls}" title="${escapeHtml(tip)}" aria-hidden="true"></span>`;
+      })
+      .join("");
+    return `<span class="cw-sync-menu-features" role="img" aria-label="${escapeHtml(label)}">${dots}</span>`;
+  }
+
   function pairTitle(pair) {
     const source = providerLabel(pair.source);
     const target = providerLabel(pair.target);
@@ -1502,7 +1548,7 @@
       button.type = "button";
       button.className = "cw-menu-item";
       button.setAttribute("role", "menuitem");
-      button.innerHTML = `<span class="cw-sync-menu-title">${escapeHtml(pairTitle(pair))}</span>${modeLabel ? `<span class="cw-sync-menu-meta">${escapeHtml(modeLabel)}</span>` : ""}`;
+      button.innerHTML = `<span class="cw-sync-menu-main"><span class="cw-sync-menu-title">${escapeHtml(pairTitle(pair))}</span>${syncFeatureDotsHTML(pair)}</span>${modeLabel ? `<span class="cw-sync-menu-meta">${escapeHtml(modeLabel)}</span>` : ""}`;
       button.addEventListener("click", () => {
         cwCloseSyncMenu();
         runSync({ pair_id: String(pair.id || "").trim() });
@@ -1539,7 +1585,8 @@
     };
     window.__cwSyncMenuOutside = (event) => {
       const target = event?.target;
-      if (!target || target === btn || menu.contains(target)) return;
+      const liveBtn = byId("run-menu");
+      if (!target || liveBtn?.contains?.(target) || menu.contains(target)) return;
       cwCloseSyncMenu();
     };
     window.__cwSyncMenuEsc = (event) => {
