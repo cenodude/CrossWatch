@@ -10,6 +10,7 @@ import re
 import datetime as _dt
 
 from ._pairs_oneway import _emit_item_failures, _emit_item_resolutions, compute_effective_add, compute_effective_remove, current_attempt_unresolved_keys, is_remove_retry_reason, load_feature_state, resolve_baseline_writes, select_baseline_keys
+from ..run_control import cancel_requested
 
 try:
     from ._pairs_oneway import (
@@ -477,6 +478,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
     )
     A_cur = snaps.get(a) or {}
     B_cur = snaps.get(b) or {}
+    cancelled = bool(cancel_requested())
 
 
     prev_state_cache = getattr(ctx, "_stable_prev_state_by_feature", None)
@@ -1887,6 +1889,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
          add_to_A=len(add_to_A), add_to_B=len(add_to_B),
          upd_to_A=len(upd_to_A), upd_to_B=len(upd_to_B),
          rem_from_A=len(rem_from_A), rem_from_B=len(rem_from_B))
+    cancelled = cancelled or bool(cancel_requested())
 
     resA_rem: dict[str, Any] = {"ok": True, "count": 0}
     resB_rem: dict[str, Any] = {"ok": True, "count": 0}
@@ -1927,7 +1930,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         except Exception:
             pass
 
-    if rem_from_A:
+    if rem_from_A and not cancelled:
         if a_down:
             record_unresolved(a, feature, rem_from_A, hint="provider_down:remove")
             remove_unresolved_A = len(set(remA_keys))
@@ -1972,8 +1975,9 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                  unresolved=remove_unresolved_A,
                  errors=int(resA_rem.get("errors", 0)),
                  result=resA_rem)
+            cancelled = bool((resA_rem or {}).get("cancelled")) or bool(cancel_requested())
 
-    if rem_from_B:
+    if rem_from_B and not cancelled:
         if b_down:
             record_unresolved(b, feature, rem_from_B, hint="provider_down:remove")
             remove_unresolved_B = len(set(remB_keys))
@@ -2018,6 +2022,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                  unresolved=remove_unresolved_B,
                  errors=int(resB_rem.get("errors", 0)),
                  result=resB_rem)
+            cancelled = bool((resB_rem or {}).get("cancelled")) or bool(cancel_requested())
 
     resA_add: dict[str, Any] = {"ok": True, "count": 0}
     resB_add: dict[str, Any] = {"ok": True, "count": 0}
@@ -2032,7 +2037,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
     unresolved_new_A_total = 0
     unresolved_new_B_total = 0
 
-    if upd_to_A:
+    if upd_to_A and not cancelled:
         if a_down:
             record_unresolved(a, feature, upd_to_A, hint="provider_down:update")
             emit("writes:skipped", dst=a, feature=feature, reason="provider_down", op="update", count=len(upd_to_A))
@@ -2071,8 +2076,9 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                  unresolved=int(resA_upd.get("unresolved", 0)),
                  errors=int(resA_upd.get("errors", 0)),
                  result=resA_upd)
+            cancelled = bool((resA_upd or {}).get("cancelled")) or bool(cancel_requested())
 
-    if upd_to_B:
+    if upd_to_B and not cancelled:
         if b_down:
             record_unresolved(b, feature, upd_to_B, hint="provider_down:update")
             emit("writes:skipped", dst=b, feature=feature, reason="provider_down", op="update", count=len(upd_to_B))
@@ -2111,8 +2117,9 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                  unresolved=int(resB_upd.get("unresolved", 0)),
                  errors=int(resB_upd.get("errors", 0)),
                  result=resB_upd)
+            cancelled = bool((resB_upd or {}).get("cancelled")) or bool(cancel_requested())
 
-    if add_to_A:
+    if add_to_A and not cancelled:
         if a_down:
             record_unresolved(a, feature, add_to_A, hint="provider_down:add")
             emit("writes:skipped", dst=a, feature=feature, reason="provider_down", op="add", count=len(add_to_A))
@@ -2248,8 +2255,9 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                  unresolved=int(resA_add.get("unresolved", 0)),
                  errors=int(resA_add.get("errors", 0)),
                  result=resA_add)
+            cancelled = bool((resA_add or {}).get("cancelled")) or bool(cancel_requested())
 
-    if add_to_B:
+    if add_to_B and not cancelled:
         if b_down:
             record_unresolved(b, feature, add_to_B, hint="provider_down:add")
             emit("writes:skipped", dst=b, feature=feature, reason="provider_down", op="add", count=len(add_to_B))
@@ -2385,6 +2393,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                  unresolved=int(resB_add.get("unresolved", 0)),
                  errors=int(resB_add.get("errors", 0)),
                  result=resB_add)
+            cancelled = bool((resB_add or {}).get("cancelled")) or bool(cancel_requested())
 
     def _post_apply_refresh(prov: str, inst: str, res: dict[str, Any] | None, ops: Any, eff: dict[str, Any], down: bool) -> None:
         if dry_run_flag or down or not needs_post_apply_refresh(res):
@@ -2426,10 +2435,13 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
              refreshed_count=len(refreshed or {}), first_keys=list(refreshed or {})[:10],
              contains_trace_key=contains_trace, baseline_update_count=base_update)
 
-    _post_apply_refresh(a, src_inst, post_apply_A_res, aops, A_eff, a_down)
-    _post_apply_refresh(b, dst_inst, post_apply_B_res, bops, B_eff, b_down)
+    if not cancelled:
+        _post_apply_refresh(a, src_inst, post_apply_A_res, aops, A_eff, a_down)
+        _post_apply_refresh(b, dst_inst, post_apply_B_res, bops, B_eff, b_down)
 
     try:
+        if cancelled:
+            raise RuntimeError("sync cancelled before checkpoint persistence")
         if not getattr(ctx, "write_state_json", True):
             raise RuntimeError("legacy state persistence disabled")
 
@@ -2600,6 +2612,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         "skipped": skipped_total,
         "blocked": int(blocked_total),
         "errors": errors_total,
+        "cancelled": bool(cancelled or cancel_requested()),
     }
 
 def run_two_way_feature(

@@ -1692,7 +1692,7 @@
         state.cancelPending = false;
         setSyncHeader("sync-warn", payload?.error ? `Cancel failed – ${payload.error}` : "Cancel failed");
       } else {
-        setSyncHeader("sync-warn", "Cancelling — finishing the current step…");
+        setSyncHeader("sync-warn", "Cancelling — stopping after the current batch…");
       }
     } catch {
       state.cancelPending = false;

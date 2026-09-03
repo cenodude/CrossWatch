@@ -10,6 +10,7 @@ import re
 import datetime as _dt
 
 from ._progress_completion import fcfg_for_progress_target
+from ..run_control import cancel_requested
 
 
 def load_feature_state(state_store: Any, feature: str) -> dict[str, Any]:
@@ -1114,6 +1115,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
 
     src_cur = snaps.get(src) or {}
     dst_cur = snaps.get(dst) or {}
+    cancelled = bool(cancel_requested())
 
     prev_state = load_feature_state(ctx.state_store, feature)
     manual_adds, manual_blocks = _manual_policy(prev_state, src, feature)
@@ -1744,8 +1746,9 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
     dry_run_flag = bool(ctx.dry_run or sync_cfg.get("dry_run", False))
     verify_after_write = bool(sync_cfg.get("verify_after_write", False))
     post_apply_add_res: dict[str, Any] | None = None
+    cancelled = cancelled or bool(cancel_requested())
 
-    if updates:
+    if updates and not cancelled:
         if dst_down:
             record_unresolved(dst, feature, updates, hint="provider_down:update")
             emit("writes:skipped", dst=dst, feature=feature, reason="provider_down", op="update", count=len(updates))
@@ -1794,8 +1797,9 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                         dst_full[k] = v
                 if keys_to_write:
                     _bust_snapshot(dst)
+            cancelled = bool((upd_res or {}).get("cancelled")) or bool(cancel_requested())
 
-    if adds:
+    if adds and not cancelled:
         if dst_down:
             record_unresolved(dst, feature, adds, hint="provider_down:add")
             emit("writes:skipped", dst=dst, feature=feature, reason="provider_down", op="add", count=len(adds))
@@ -1956,12 +1960,13 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                         dst_canonical[dk] = item
                 _bust_snapshot(dst)
             post_apply_add_res = add_res
+            cancelled = bool((add_res or {}).get("cancelled")) or bool(cancel_requested())
 
     removed_count = 0
     rem_keys_attempted: list[str] = []
     res_remove: dict[str, Any] = {"attempted": 0, "confirmed": 0, "skipped": 0, "unresolved": 0, "errors": 0}
     rem_key2item: dict[str, dict[str, Any]] = {}
-    if removes:
+    if removes and not cancelled:
         try:
             for it in removes:
                 k = _sync_key(_sync_minimal(it))
@@ -2048,6 +2053,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                          added=len(removed_tokens), scope="pair")
                 except Exception:
                     pass
+            cancelled = bool((rem_res or {}).get("cancelled")) or bool(cancel_requested())
             if not dry_run_flag and removed_count:
                 for k in rem_success_keys:
                     if k in dst_full:
@@ -2097,7 +2103,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                     out[fld] = merged
         return out
 
-    if (not dry_run_flag) and (not dst_down) and needs_post_apply_refresh(post_apply_add_res):
+    if (not cancelled) and (not dry_run_flag) and (not dst_down) and needs_post_apply_refresh(post_apply_add_res):
         _r = post_apply_add_res or {}
         emit("post_apply_refresh:start", provider=dst, instance=dst_inst, feature=feature,
              reason="accepted_not_live_confirmed",
@@ -2127,7 +2133,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
              refreshed_count=len(refreshed or {}), first_keys=list(refreshed or {})[:10],
              contains_trace_key=contains_trace, baseline_update_count=base_update)
 
-    if getattr(ctx, "write_state_json", True):
+    if (not cancelled) and getattr(ctx, "write_state_json", True):
         try:
             provs_block: dict[str, Any] = {}
 
@@ -2256,4 +2262,5 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
         "res_add": res_add,
         "res_update": res_update,
         "res_remove": res_remove,
+        "cancelled": bool(cancelled or cancel_requested()),
     }

@@ -317,7 +317,7 @@ def sync_follow(
 
 @sync_app.command("cancel")
 def sync_cancel(ctx: typer.Context) -> None:
-    """Ask the running sync to stop after the current step."""
+    """Ask the running sync to stop after the current batch."""
     state: Ctx = ctx.obj
     state.require_service("Cancelling a sync")
     result = state.post("/api/run/cancel")
@@ -327,7 +327,7 @@ def sync_cancel(ctx: typer.Context) -> None:
     if isinstance(result, dict) and result.get("ok") is False:
         state.out.warn(error_text(result, "Nothing to cancel"))
         return
-    state.out.success("Cancel requested; the run stops after the current step.")
+    state.out.success("Cancel requested; the run stops after the current batch.")
 
 
 @sync_app.command("once")

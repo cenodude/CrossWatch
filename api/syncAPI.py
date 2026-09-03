@@ -21,6 +21,7 @@ from cw_platform.provider_instances import list_user_profiles, normalize_user_pr
 from cw_platform.local_db.legacy_files import LAST_SYNC_JSON
 from cw_platform.reason_labels import friendly_reason
 from cw_platform.run_control import (
+    SyncCancelled,
     cancel_requested,
     cancel_state,
     clear_cancel,
@@ -1037,6 +1038,11 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
                 _emit_unresolved_details(unresolved)
             except Exception:
                 pass
+        _sync_progress_ui("[SYNC] exit code: 0")
+    except SyncCancelled:
+        was_cancelled = True
+        _summary_set("cancelled", True)
+        _sync_progress_ui("[!] Sync cancelled - already applied changes were kept.")
         _sync_progress_ui("[SYNC] exit code: 0")
     except Exception as e:
         _sync_progress_ui(f"[!] Sync error: {e}")
@@ -2791,7 +2797,7 @@ def api_cancel_sync(request: Request = cast(Request, None)) -> Any:
     run_id = str(_summary_snapshot().get("run_id") or "")
     state = request_cancel(run_id, reason="user")
     _summary_set("cancel_requested", True)
-    _rt()[8]("SYNC", "[!] Cancel requested; finishing the current step and stopping.")
+    _rt()[8]("SYNC", "[!] Cancel requested; stopping after the current batch.")
     return {"ok": True, "running": True, "run_id": state.get("run_id"), "requested_at": state.get("requested_at")}
 
 

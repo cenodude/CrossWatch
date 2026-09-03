@@ -174,9 +174,39 @@ def _collect_health_for_run(ctx, pairs: list[Mapping[str, Any]]) -> dict[str, An
             inject_ctx_into_provider(ops, ctx)
             try:
                 h = ops.health(cfg_view, emit=emit) or {}
+            except SyncCancelled:
+                h = {"ok": False, "status": "cancelled", "details": "health cancelled"}
+                health_map[f"{str(name).upper()}#{normalize_instance_id(inst)}"] = h
+                emit(
+                    "health",
+                    provider=name,
+                    instance=normalize_instance_id(inst),
+                    status="cancelled",
+                    ok=False,
+                    latency_ms=None,
+                    details=h.get("details"),
+                    features={},
+                    api={},
+                )
+                break
             except TypeError:
                 try:
                     h = ops.health(cfg_view) or {}
+                except SyncCancelled:
+                    h = {"ok": False, "status": "cancelled", "details": "health cancelled"}
+                    health_map[f"{str(name).upper()}#{normalize_instance_id(inst)}"] = h
+                    emit(
+                        "health",
+                        provider=name,
+                        instance=normalize_instance_id(inst),
+                        status="cancelled",
+                        ok=False,
+                        latency_ms=None,
+                        details=h.get("details"),
+                        features={},
+                        api={},
+                    )
+                    break
                 except Exception as e:
                     h = {"ok": False, "status": "down", "details": f"health exception: {e}"}
             except Exception as e:
@@ -526,6 +556,11 @@ def run_pairs(ctx) -> dict[str, Any]:
                             blocked_total += int(res.get("blocked", 0))
                             attempted_add_duplicate_keys_total += int(res.get("attempted_add_duplicate_keys", 0))
                             errors_total += int(res.get("errors", 0))
+
+                        if isinstance(res, Mapping) and coerce_bool(res.get("cancelled"), False):
+                            emit("feature:cancelled", src=src, dst=dst, feature=feature)
+                            cancelled = True
+                            break
 
                     except SyncCancelled:
                         emit("feature:cancelled", src=src, dst=dst, feature=feature)
