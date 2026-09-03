@@ -128,7 +128,7 @@ cw sync once --pair a --pair b     local one-shot selected pair run
 cw sync once --feature watchlist   local one-shot feature-only run
 cw sync status                     current or last run, with counts
 cw sync follow                     attach to a run already going
-cw sync cancel                     stop after the current step
+cw sync cancel                     stop after the current batch
 cw sync unresolved                 what the last run could not match
 cw sync providers [--counts]
 ```

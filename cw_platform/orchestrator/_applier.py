@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence, Mapping
 from typing import Any, Callable, cast
 from . import _unresolved as _unresolved_mod
-from ..run_control import cancel_requested
+from ..run_control import SyncCancelled, cancel_requested
 record_unresolved = cast(Callable[..., dict[str, Any]], getattr(_unresolved_mod, "record_unresolved"))
 
 _UNRESOLVED_EXAMPLE_CAP = 25
@@ -26,6 +26,8 @@ def _retry(fn: Callable[[], Any], *, attempts: int = 3, base_sleep: float = 0.5)
     last = None
     for i in range(attempts):
         try: return fn()
+        except SyncCancelled:
+            raise
         except Exception as e:
             last = e
             __import__("time").sleep(base_sleep * (2 ** i))
@@ -442,7 +444,11 @@ def _apply_chunked(
         return {"ok": True, "attempted": 0, "confirmed": 0, "skipped": 0, "unresolved": 0, "errors": 0, "count": 0, "cancelled": True}
     csize = int(chunk_size or 0)
     if csize <= 0 or total <= csize:
-        raw = _retry(lambda: call(items))
+        try:
+            raw = _retry(lambda: call(items))
+        except SyncCancelled:
+            emit(f"{tag}:cancelled", dst=dst, feature=feature, done=0, total=total)
+            return {"ok": True, "attempted": 0, "confirmed": 0, "skipped": 0, "unresolved": 0, "errors": 0, "count": 0, "cancelled": True}
         return _normalize(raw, items, tag, dst=dst, feature=feature, emit=emit)
 
     done = 0
@@ -467,7 +473,12 @@ def _apply_chunked(
             emit(f"{tag}:cancelled", dst=dst, feature=feature, done=done, total=total)
             break
         chunk = items[i : i + csize]
-        raw = _retry(lambda: call(chunk))
+        try:
+            raw = _retry(lambda: call(chunk))
+        except SyncCancelled:
+            agg["cancelled"] = True
+            emit(f"{tag}:cancelled", dst=dst, feature=feature, done=done, total=total)
+            break
         res = _normalize(raw, chunk, tag, dst=dst, feature=feature, emit=emit)
         agg["ok"] = agg["ok"] and res["ok"]
         agg["attempted"] += res["attempted"]
@@ -503,7 +514,7 @@ def _apply_chunked(
         done += len(chunk)
         emit(f"{tag}:progress", dst=dst, feature=feature, done=done, total=total, ok=res["ok"])
         pause = int(chunk_pause_ms or 0)
-        if pause:
+        if pause and not cancel_requested():
             try:
                 __import__("time").sleep(pause / 1000.0)
             except Exception:

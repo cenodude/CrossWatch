@@ -4,6 +4,7 @@ import sys
 import threading
 import types
 import json
+import time
 from typing import Any
 
 import pytest
@@ -68,6 +69,98 @@ def test_apply_chunked_stops_after_current_chunk() -> None:
     assert seen == [2, 2]
     assert res["cancelled"] is True
     assert res["attempted"] == 4
+
+
+def test_apply_chunked_preserves_counts_when_cancel_raises_mid_batch() -> None:
+    calls = 0
+    events: list[str] = []
+
+    def call(chunk):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            run_control.request_cancel()
+            raise run_control.SyncCancelled("stop")
+        return {"ok": True, "count": len(chunk)}
+
+    res = _applier._apply_chunked(
+        "add",
+        dst="TRAKT",
+        feature="watchlist",
+        items=[{"n": i} for i in range(5)],
+        call=call,
+        emit=lambda event, **_k: events.append(event),
+        dbg=lambda *a, **k: None,
+        chunk_size=2,
+        chunk_pause_ms=0,
+    )
+
+    assert calls == 2
+    assert res["cancelled"] is True
+    assert res["attempted"] == 2
+    assert res["confirmed"] == 2
+    assert "add:cancelled" in events
+
+
+def test_apply_chunked_single_shot_returns_cancelled_when_call_raises() -> None:
+    def call(_items):
+        run_control.request_cancel()
+        raise run_control.SyncCancelled("stop")
+
+    res = _applier._apply_chunked(
+        "add",
+        dst="TRAKT",
+        feature="watchlist",
+        items=[{"n": 1}],
+        call=call,
+        emit=lambda *a, **k: None,
+        dbg=lambda *a, **k: None,
+        chunk_size=0,
+        chunk_pause_ms=0,
+    )
+
+    assert res["cancelled"] is True
+    assert res["attempted"] == 0
+
+
+def test_retry_does_not_retry_sync_cancelled() -> None:
+    calls = 0
+
+    def call():
+        nonlocal calls
+        calls += 1
+        raise run_control.SyncCancelled("stop")
+
+    with pytest.raises(run_control.SyncCancelled):
+        _applier._retry(call, attempts=3, base_sleep=0)
+
+    assert calls == 1
+
+
+def test_apply_chunked_skips_pause_after_cancel(monkeypatch) -> None:
+    slept: list[float] = []
+
+    monkeypatch.setattr(time, "sleep", lambda seconds: slept.append(float(seconds)))
+
+    def call(chunk):
+        run_control.request_cancel()
+        return {"ok": True, "count": len(chunk)}
+
+    res = _applier._apply_chunked(
+        "add",
+        dst="TRAKT",
+        feature="watchlist",
+        items=[{"n": 1}, {"n": 2}],
+        call=call,
+        emit=lambda *a, **k: None,
+        dbg=lambda *a, **k: None,
+        chunk_size=1,
+        chunk_pause_ms=100,
+    )
+
+    assert slept == []
+    assert res["cancelled"] is True
+    assert res["attempted"] == 1
 
 
 def test_apply_chunked_completes_when_not_cancelled() -> None:
@@ -318,3 +411,29 @@ def test_manual_run_clears_a_stale_queue_stop(monkeypatch, tmp_path) -> None:
     sync.clear_queue_stop()
 
     assert run_control.queue_stopped() is False
+
+
+def test_request_with_retries_exits_during_retry_sleep(monkeypatch) -> None:
+    from providers.sync import _mod_common
+
+    class Session:
+        calls = 0
+
+        def request(self, *_args, **_kwargs):
+            self.calls += 1
+            return types.SimpleNamespace(status_code=503, headers={}, text="")
+
+    session = Session()
+    slept: list[float] = []
+
+    def fake_sleep(seconds: float) -> None:
+        slept.append(float(seconds))
+        run_control.request_cancel()
+
+    monkeypatch.setattr(_mod_common.time, "sleep", fake_sleep)
+
+    with pytest.raises(run_control.SyncCancelled):
+        _mod_common.request_with_retries(session, "GET", "https://example.test", max_retries=3)
+
+    assert session.calls == 1
+    assert slept == [0.25]

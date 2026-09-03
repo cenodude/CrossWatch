@@ -42,6 +42,9 @@ class FakeOps:
         return True
 
     def health(self, cfg: Mapping[str, Any], **_: Any) -> dict[str, Any]:
+        hook = self.hooks.get("health")
+        if hook:
+            hook(self)
         return {"ok": True, "status": "ok", "features": {"watchlist": True}, "api": {}}
 
     def build_index(self, cfg: Mapping[str, Any], *, feature: str) -> Mapping[str, dict[str, Any]]:
@@ -54,6 +57,9 @@ class FakeOps:
     def add(self, cfg, items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool = False):
         batch = [dict(x) for x in items]
         self.add_calls.append(batch)
+        hook = self.hooks.get("add")
+        if hook:
+            hook(self)
         if not dry_run:
             for it in batch:
                 k = canonical_key(it)
@@ -64,6 +70,9 @@ class FakeOps:
     def remove(self, cfg, items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool = False):
         batch = [dict(x) for x in items]
         self.remove_calls.append(batch)
+        hook = self.hooks.get("remove")
+        if hook:
+            hook(self)
         return {"ok": True, "removed": len(batch), "count": len(batch)}
 
 
@@ -146,6 +155,41 @@ def test_uncancelled_run_still_writes(config_base, monkeypatch) -> None:
     assert result["added"] == 1
 
 
+def test_cancel_during_health_returns_cancelled_summary(config_base, monkeypatch) -> None:
+    src = FakeOps("SRC", {"imdb:tt01": _movie("01")})
+    dst = FakeOps("DST", {})
+
+    def hook(_ops: FakeOps) -> None:
+        run_control.request_cancel()
+        raise run_control.SyncCancelled("stop")
+
+    src.hooks["health"] = hook
+    _wire(monkeypatch, {"SRC": src, "DST": dst})
+
+    result = Orchestrator(_cfg([_pair("p1", "SRC", "DST")])).run()
+
+    assert result["cancelled"] is True
+    assert src.index_calls == []
+    assert dst.add_calls == []
+
+
+def test_cancelled_one_way_apply_skips_feature_checkpoint_persistence(config_base, monkeypatch) -> None:
+    src = FakeOps("SRC", {"imdb:tt01": _movie("01")})
+    dst = FakeOps("DST", {})
+    dst.hooks["add"] = lambda _ops: run_control.request_cancel()
+    _wire(monkeypatch, {"SRC": src, "DST": dst})
+
+    orch = Orchestrator(_cfg([_pair("p1", "SRC", "DST")]))
+    saved: list[object] = []
+    monkeypatch.setattr(orch.state_store, "save_feature_blocks", lambda *a, **k: saved.append((a, k)))
+
+    result = orch.run()
+
+    assert dst.add_calls
+    assert result["cancelled"] is True
+    assert saved == []
+
+
 def _twoway(pid: str, src: str, dst: str) -> dict[str, Any]:
     return {
         "id": pid, "enabled": True, "source": src, "target": dst, "mode": "two-way",
@@ -171,6 +215,21 @@ def test_one_cancel_stops_every_remaining_pair(config_base, monkeypatch) -> None
         assert ops[f"S{i}"].index_calls == [], f"pair {i} source was read"
         assert ops[f"D{i}"].index_calls == [], f"pair {i} target was read"
         assert ops[f"D{i}"].add_calls == [], f"pair {i} was written"
+
+
+def test_two_way_cancel_after_side_a_write_skips_side_b(config_base, monkeypatch) -> None:
+    a = FakeOps("A", {"imdb:tt01": _movie("01")})
+    b = FakeOps("B", {"imdb:tt02": _movie("02")})
+    a.hooks["add"] = lambda _ops: run_control.request_cancel()
+    _wire(monkeypatch, {"A": a, "B": b})
+
+    cfg = _cfg([_twoway("p1", "A", "B")])
+    cfg["sync"]["enable_remove"] = False
+    result = Orchestrator(cfg).run()
+
+    assert a.add_calls, "side A should receive B's missing item"
+    assert b.add_calls == [], "side B should not start after side A requested cancel"
+    assert result["cancelled"] is True
 
 
 def test_cancel_marks_queue_stopped_until_consumed() -> None:

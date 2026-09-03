@@ -14,7 +14,7 @@ _LOCK = threading.RLock()
 _STATE: dict[str, Any] = {"run_id": None, "requested_at": None, "reason": "", "queue_stopped": False}
 
 
-class SyncCancelled(RuntimeError):
+class SyncCancelled(BaseException):
     pass
 
 

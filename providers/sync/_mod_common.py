@@ -13,8 +13,11 @@ from urllib.parse import parse_qs, urlparse
 import requests
 
 from ._log import log as cw_log
+from cw_platform.run_control import raise_if_cancelled
 
 __VERSION__ = "0.2.1"
+MAX_RETRY_AFTER_SLEEP_S = 60.0
+CANCEL_SLEEP_SLICE_S = 0.25
 __all__ = [
     "HitSession",
     "make_emitter",
@@ -588,6 +591,16 @@ def safe_json(resp: requests.Response) -> Any:
         return {}
 
 
+def _sleep_cancellable(seconds: float) -> None:
+    remaining = max(0.0, float(seconds or 0.0))
+    while remaining > 0:
+        raise_if_cancelled()
+        step = min(CANCEL_SLEEP_SLICE_S, remaining)
+        time.sleep(step)
+        remaining -= step
+    raise_if_cancelled()
+
+
 def request_with_retries(
     session: requests.Session,
     method: str,
@@ -609,6 +622,7 @@ def request_with_retries(
 
     last: Any = None
     for i in range(max(1, int(max_retries))):
+        raise_if_cancelled()
         try:
             t0 = time.monotonic()
             resp = session.request(method, url, timeout=timeout, **kwargs)
@@ -620,7 +634,7 @@ def request_with_retries(
                     if resp.status_code == 429:
                         ra = resp.headers.get("Retry-After")
                         if ra:
-                            retry_after = float(ra)
+                            retry_after = min(float(ra), MAX_RETRY_AFTER_SLEEP_S)
                             wait = max(wait, retry_after)
                 except Exception:
                     pass
@@ -659,7 +673,7 @@ def request_with_retries(
                         dur_ms=dur_ms,
                     )
 
-                time.sleep(wait)
+                _sleep_cancellable(wait)
                 last = resp
                 continue
             return resp
@@ -685,7 +699,7 @@ def request_with_retries(
                     dur_ms=dur_ms,
                     error=f"{type(e).__name__}: {e}",
                 )
-                time.sleep(wait)
+                _sleep_cancellable(wait)
             else:
                 _http_log(
                     session,
