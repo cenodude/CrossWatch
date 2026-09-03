@@ -1165,6 +1165,50 @@ def test_recent_scrobble_widget_reports_scrobble_total_separately(monkeypatch) -
     assert payload["scrobble_hours"] == 0.0
 
 
+def test_recent_scrobble_widget_total_is_not_page_limited(monkeypatch) -> None:
+    rows = [
+        {
+            "id": f"scrobble-{idx}",
+            "kind": "scrobble",
+            "status": "ok",
+            "source": "plex",
+            "target": "trakt",
+            "media_type": "movie",
+            "title": f"Movie {idx}",
+            "watched_at": 1767225600 + idx,
+            "captured_at": 1767225600 + idx,
+        }
+        for idx in range(20)
+    ]
+    noise = [
+        {
+            "id": f"activity-{idx}",
+            "kind": "activity",
+            "status": "ok",
+            "source": "sync",
+            "media_type": "movie",
+            "title": f"Noise {idx}",
+            "captured_at": 1767225500 + idx,
+        }
+        for idx in range(5)
+    ]
+
+    def fake_list_events(**kwargs: Any) -> dict[str, Any]:
+        kind = kwargs.get("kind")
+        items = rows if kind == "scrobble" else [*rows, *noise]
+        limit = int(kwargs.get("limit") or len(items))
+        return {"ok": True, "total": len(items), "items": items[:limit]}
+
+    monkeypatch.setattr(dashboard_widgets, "list_events", fake_list_events)
+    monkeypatch.setattr(dashboard_widgets, "_resolve_missing_art_rows", lambda rows, **_kwargs: rows)
+
+    payload = dashboard_widgets.recent_scrobble_widget(limit=4)
+
+    assert len(payload["items"]) == 4
+    assert payload["total"] == 20
+    assert payload["scrobble_total"] == 20
+
+
 def test_recent_scrobble_widget_reports_scrobble_hours(monkeypatch) -> None:
     monkeypatch.setattr(
         dashboard_widgets,
@@ -1308,6 +1352,22 @@ def test_recent_playlists_widget_uses_playlist_activity(monkeypatch) -> None:
         "items": [{"ts": 1767225600, "type": "Run", "status": "completed", "label": "MAP-01", "details": "+2/-0"}],
         "total": 1,
     }
+
+
+def test_recent_playlists_widget_total_is_not_page_limited(monkeypatch) -> None:
+    from services import playlists
+
+    rows = [
+        {"ts": 1767225600 + idx, "type": "Run", "status": "completed", "label": f"MAP-{idx:02d}", "details": "+1/-0"}
+        for idx in range(10)
+    ]
+    monkeypatch.setattr(playlists, "activity", lambda _cfg, limit=25: rows if limit is None else rows[:limit])
+    monkeypatch.setattr("cw_platform.config_base.load_config", lambda: {})
+
+    payload = dashboard_widgets.recent_playlists_widget(limit=4)
+
+    assert len(payload["items"]) == 4
+    assert payload["total"] == 10
 
 
 def _many_movie_items(feature: str, count: int) -> dict:
@@ -1538,8 +1598,16 @@ def test_dashboard_widget_frontend_uses_cached_payload_version() -> None:
     assert "function clearDashboardWidgetState()" in js
     assert 'window.addEventListener("cw:sync-state-cleared", clearDashboardWidgetState);' in js
     assert "clear: clearDashboardWidgetState" in js
+    assert "const WIDGET_FETCH_TIMEOUT_MS = 30 * 1000;" in js
+    assert "window.CW.API.j(url, {}, WIDGET_FETCH_TIMEOUT_MS)" in js
+    assert 'controller.abort("timeout")' in js
+    assert "function isTimeoutError(e)" in js
+    assert '${e?.name || \"\"} ${e?.message || \"\"} ${e || \"\"}' in js
+    assert "if (isTimeoutError(e)) break;" in js
     assert "const WIDGET_LOADING_DELAY_MS = 700;" in js
     assert 'const REFRESHABLE_WIDGETS = ["history", "ratings", "scrobble", "progress", "playlists"];' in js
+    assert "const latestTotals = { history: 0, ratings: 0, scrobble: 0, progress: 0, playlists: 0 };" in js
+    assert "block.scrobble_total" in js
     assert "async function refreshDashboardWidgets({ forceConfig = false, force = false, preserve = true, kinds = null } = {})" in js
     assert 'params.set("known_version", cachedPayload.version)' in js
     assert "if (data?.not_modified && cachedPayload)" in js
@@ -1547,9 +1615,25 @@ def test_dashboard_widget_frontend_uses_cached_payload_version() -> None:
     assert "if (!hasLoaded && cachedPayload)" in js
     assert "applyWidgetPayload(cachedPayload, active)" in js
     assert "const preserve = opts.preserve === false ? hasLoaded : true;" in js
-    assert "try { await window.CW?.OverviewProfile?.ready; } catch {}\n    if (seq !== loadSeq || !isOnMain()) return;\n    if (!hasLoaded) revealFromCache();" in js
+    assert "try { await window.CW?.OverviewProfile?.ready; } catch {}\n    if (seq !== loadSeq || !isOnMain()) return false;\n    if (!hasLoaded) revealFromCache();" in js
     assert "function scheduleSlowWidgetLoading(hosts, requestedKinds)" in js
     assert "if (!loadedWidgetKinds.has(kind)) setLoading(hosts[kind], kind);" in js
+    assert "function hasWidgetContent(host)" in js
+    assert "function setWidgetLoadError(host, message, preserve)" in js
+    assert "function showWidgetToast(message, ok = false)" in js
+    assert "function setExpandBusy(btn, busy)" in js
+    assert 'btn.classList.toggle("spinning"' not in js
+    assert "function widgetFetchLimit(key)" in js
+    assert 'history_limit: String(widgetFetchLimit("history"))' in js
+    assert 'history_limit: String(MAX_WIDGET_ITEMS)' not in js
+    assert "function expandWidget(kind, opts = {})" in js
+    assert "if (!REFRESHABLE_WIDGETS.includes(kind)) return false;" in js
+    assert 'refreshDashboardWidgets({ force: true, preserve: true, kinds: [kind] })' in js
+    assert "visibleCounts[kind] = current;" in js
+    assert 'showWidgetToast("Could not load more items.");' in js
+    assert "if (!wanted) lastLoadedAt = Date.now();" in js
+    assert "window.console.warn(\"[CrossWatch] dashboard widgets refresh failed\"" in js
+    assert 'const shouldShowWidgetError = (kind) => active[kind] && (!partialRefresh || requestedKinds.includes(kind));' in js
     assert "const requestedKinds = REFRESHABLE_WIDGETS.filter((key) => active[key] && (!wantedKinds || wantedKinds.has(key)));" in js
     assert "mergeWidgetPayload" not in js
     assert "loadedKinds" not in js

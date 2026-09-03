@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import re
 from typing import Any, Iterable, Mapping
 
+from services.activity import DEFAULT_LIMIT as ACTIVITY_DEFAULT_LIMIT
 from services.activity import list_events
 from cw_platform.provider_instances import normalize_instance_id, provider_display_key
 
@@ -1207,12 +1208,12 @@ def recent_history_widget(
 
 def recent_scrobble_widget(*, limit: int = 8, user_filter: Mapping[str, Any] | None = None) -> dict[str, Any]:
     cap = max(1, min(int(limit or 8), 24))
-    payload = list_events(limit=max(cap, 12), offset=0, status="ok", kind="all", group_routes=True)
+    payload = list_events(limit=ACTIVITY_DEFAULT_LIMIT, offset=0, status="ok", kind="all", group_routes=True)
     rows = [
         row
         for item in payload.get("items") or []
-        for row in [_activity_row(item)]
         if isinstance(item, Mapping) and str(item.get("kind") or "").strip().lower() in {"scrobble", "history_sync"}
+        for row in [_activity_row(item)]
         if _sources_match_user(row.get("sources"), user_filter)
     ]
     selected = _resolve_missing_art_rows(rows[:cap], size="w300", episode_still=True)
@@ -1374,7 +1375,7 @@ def recent_playlists_widget(*, limit: int = 8, user_filter: Mapping[str, Any] | 
         from cw_platform.config_base import load_config
         from services import playlists
 
-        rows = playlists.activity(load_config() or {}, limit=max(1, min(int(limit or 8), 24)))
+        rows = playlists.activity(load_config() or {}, limit=None)
         if _normalize_user_filter(user_filter):
             rows = [
                 row for row in rows
@@ -1382,7 +1383,8 @@ def recent_playlists_widget(*, limit: int = 8, user_filter: Mapping[str, Any] | 
             ]
     except Exception:
         rows = []
-    return {"ok": True, "items": rows, "total": len(rows)}
+    cap = max(1, min(int(limit or 8), 24))
+    return {"ok": True, "items": rows[:cap], "total": len(rows)}
 
 
 def dashboard_widgets_payload(

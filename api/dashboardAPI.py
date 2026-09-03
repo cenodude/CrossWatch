@@ -13,6 +13,13 @@ from fastapi.responses import JSONResponse
 
 from services.dashboard_widgets import dashboard_widgets_payload
 
+try:
+    from _logging import log as _base_log
+
+    LOG = _base_log.child("DASH")
+except Exception:  # pragma: no cover
+    LOG = None
+
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 
@@ -172,7 +179,12 @@ def dashboard_widgets(
         if scoped:
             payload["user_profile"] = str(profile or "").strip()
         return JSONResponse(payload, headers={"Cache-Control": "no-store"})
-    except Exception:
+    except Exception as exc:
+        try:
+            if LOG is not None:
+                LOG.error("dashboard widgets payload failed", extra={"error": f"{type(exc).__name__}: {exc}"})
+        except Exception:
+            pass
         return JSONResponse(
             {"ok": False, "error": "dashboard_widgets_failed"},
             status_code=200,
