@@ -89,6 +89,10 @@ def test_watchlist_preview_uses_cached_wall_version() -> None:
     js = Path("assets/helpers/watchlist-preview.js").read_text("utf-8")
 
     assert "version" in js
+    assert "const WALL_PREVIEW_FETCH_TIMEOUT_MS = 30 * 1000;" in js
+    assert "window.CW.API.j(url, {}, WALL_PREVIEW_FETCH_TIMEOUT_MS)" in js
+    assert 'const controller = !opt?.signal && typeof AbortController === "function" ? new AbortController() : null;' in js
+    assert 'controller.abort("timeout")' in js
     assert 'params.set("known_version", cached.version)' in js
     assert "if (data?.not_modified && cached?.items?.length)" in js
     assert "preserveIfSame: true" in js

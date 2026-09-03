@@ -213,10 +213,16 @@
       const block = data?.[payloadKey] || {};
       const items = Array.isArray(block.items) ? block.items : [];
       const total = Number(block.total ?? items.length);
-      const chipTotal = Number(kind === "scrobble" && block.scrobble_total !== undefined ? block.scrobble_total : (block.total ?? items.length));
+      const rawChipTotal = kind === "scrobble"
+        ? block.scrobble_total
+        : (block.library_total !== undefined ? block.library_total : block.total);
+      const chipTotal = Number(rawChipTotal ?? items.length);
       const [chipId, chipLabel] = WIDGET_COUNT_CHIPS[kind];
       latestTotals[kind] = Math.max(items.length, Number.isFinite(total) ? total : 0);
-      setCountChip(chipId, Math.max(items.length, Number.isFinite(chipTotal) ? chipTotal : latestTotals[kind]), chipLabel);
+      const chipCount = kind === "scrobble"
+        ? Math.max(0, Number.isFinite(chipTotal) ? chipTotal : latestTotals[kind])
+        : Math.max(items.length, Number.isFinite(chipTotal) ? chipTotal : latestTotals[kind]);
+      setCountChip(chipId, chipCount, chipLabel);
       latestItems[kind] = items;
       loadedWidgetKinds.add(kind);
       renderWidget(kind);
@@ -541,8 +547,7 @@
   }
 
   function isTimeoutError(e) {
-    const text = `${e?.name || ""} ${e?.message || ""} ${e || ""}`.toLowerCase();
-    return text.includes("abort") || text.includes("timeout");
+    return e === "timeout" || e?.name === "AbortError";
   }
 
   async function fetchWidgetPayload(url) {
@@ -1506,7 +1511,7 @@
       </div>`;
   }
 
-  function hasWidgetContent(host) {
+  function hasPreservableContent(host) {
     if (!host || !host.children.length) return false;
     if (host.querySelector(".cw-dash-skeleton")) return false;
     const empty = host.querySelector(".cw-dash-empty");
@@ -1515,7 +1520,7 @@
   }
 
   function setWidgetLoadError(host, message, preserve) {
-    if (preserve && hasWidgetContent(host)) return;
+    if (preserve && hasPreservableContent(host)) return;
     setEmpty(host, "error", message);
   }
 
@@ -1539,7 +1544,8 @@
       el.textContent = String(message || "");
       el.classList.remove("hide", "error", "ok");
       el.classList.add(ok ? "ok" : "error");
-      window.setTimeout(() => el.classList.add("hide"), 2200);
+      window.clearTimeout(showWidgetToast._timer);
+      showWidgetToast._timer = window.setTimeout(() => el.classList.add("hide"), 2200);
     } catch {}
   }
 
@@ -1749,7 +1755,8 @@
     const seq = ++loadSeq;
     const refreshVersion = dirtyVersion;
     try { await window.CW?.OverviewProfile?.ready; } catch {}
-    if (seq !== loadSeq || !isOnMain()) return false;
+    if (seq !== loadSeq) return null;
+    if (!isOnMain()) return false;
     if (!hasLoaded) revealFromCache();
     let cfg;
     let widgetUrl = "";
@@ -1771,7 +1778,8 @@
     const settings = widgetSettings(cfg?.ui || cfg?.user_interface || {});
     currentConfig = cfg;
     lastSettings = settings;
-    if (seq !== loadSeq || !isOnMain()) return false;
+    if (seq !== loadSeq) return null;
+    if (!isOnMain()) return false;
     applyVisibility(settings);
     writeCachedSettings(settings, hasTmdbKeyInConfig(cfg));
     const active = activeWidgetSettings(settings);
@@ -1802,9 +1810,11 @@
     try {
       if (!requestedKinds.length) {
         stopSlowLoading();
-        hasLoaded = true;
-        lastLoadedAt = Date.now();
-        widgetsDirty = dirtyVersion !== refreshVersion;
+        if (!partialRefresh) {
+          hasLoaded = true;
+          lastLoadedAt = Date.now();
+          widgetsDirty = dirtyVersion !== refreshVersion;
+        }
         return true;
       }
       const params = new URLSearchParams({
@@ -1817,21 +1827,27 @@
       });
       const userProfile = overviewProfileId();
       if (userProfile) params.set("user_profile", userProfile);
-      if (!force && !partialRefresh && cachedPayload?.version) params.set("known_version", cachedPayload.version);
+      if (!forceConfig && !partialRefresh && cachedPayload?.version) params.set("known_version", cachedPayload.version);
       widgetUrl = `/api/dashboard/widgets?${params.toString()}`;
       widgetStartedAt = Date.now();
       const data = await fetchWidgetPayload(widgetUrl);
       stopSlowLoading();
-      if (seq !== loadSeq || !isOnMain()) return false;
+      if (seq !== loadSeq) return null;
+      if (!isOnMain()) return false;
       if (data?.not_modified && cachedPayload) {
         hasLoaded = true;
         lastLoadedAt = Date.now();
         widgetsDirty = dirtyVersion !== refreshVersion;
+        if (requestedKinds.some((kind) => !hasPreservableContent(hosts[kind]))) {
+          applyWidgetPayload(cachedPayload, active, partialRefresh ? requestedKinds : null);
+        }
         return true;
       }
       const applied = applyWidgetPayload(data, active, partialRefresh ? requestedKinds : null);
-      if (!partialRefresh) writeCachedWidgetData(data);
-      widgetsDirty = dirtyVersion !== refreshVersion;
+      if (!partialRefresh) {
+        writeCachedWidgetData(data);
+        widgetsDirty = dirtyVersion !== refreshVersion;
+      }
       return applied > 0;
     } catch (e) {
       stopSlowLoading();
@@ -1881,6 +1897,7 @@
       setExpandBusy(opts.button, true);
       void refreshDashboardWidgets({ force: true, preserve: true, kinds: [kind] }).then((ok) => {
         setExpandBusy(opts.button, false);
+        if (ok === null) return;
         const loadedEnough = (latestItems[kind]?.length || 0) >= next || widgetTotal(kind) <= current;
         if (!ok && !loadedEnough) {
           visibleCounts[kind] = current;

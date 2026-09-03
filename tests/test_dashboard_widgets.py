@@ -1165,6 +1165,127 @@ def test_recent_scrobble_widget_reports_scrobble_total_separately(monkeypatch) -
     assert payload["scrobble_hours"] == 0.0
 
 
+def _history_tracker_items(count: int) -> dict:
+    return {
+        f"movie:tmdb:{idx}": {
+            "type": "movie",
+            "title": f"Movie {idx}",
+            "year": 2000 + (idx % 20),
+            "ids": {"tmdb": 900000 + idx},
+            "watched_at": f"2026-01-01T00:00:{idx % 60:02d}Z",
+            "watched": True,
+            "_epoch": 1767225600 + idx,
+        }
+        for idx in range(count)
+    }
+
+
+def test_recent_history_widget_windowing_keeps_newest_items(monkeypatch) -> None:
+    monkeypatch.setattr(dashboard_widgets, "_resolve_missing_art_rows", lambda rows, **_kwargs: rows)
+    monkeypatch.setattr(dashboard_widgets, "_history_alias_representatives", lambda: {})
+
+    count = dashboard_widgets._ROW_WINDOW * 3
+    items = _history_tracker_items(count)
+    for idx, key in enumerate(items):
+        items[key]["watched_at"] = 1767225600 + idx
+
+    payload = dashboard_widgets.recent_history_widget({}, limit=6, tracker_items=items)
+    titles = [row["title"] for row in payload["items"]]
+
+    assert titles == [f"Movie {idx}" for idx in range(count - 1, count - 7, -1)]
+    assert payload["library_total"] == count
+
+
+def test_recent_history_widget_window_matches_unwindowed_top_rows(monkeypatch) -> None:
+    monkeypatch.setattr(dashboard_widgets, "_resolve_missing_art_rows", lambda rows, **_kwargs: rows)
+    monkeypatch.setattr(dashboard_widgets, "_history_alias_representatives", lambda: {})
+
+    items = _history_tracker_items(dashboard_widgets._ROW_WINDOW * 2)
+    for idx, key in enumerate(items):
+        items[key]["watched_at"] = 1767225600 + idx
+
+    windowed = dashboard_widgets._latest_history_tracker_rows(items, window=dashboard_widgets._ROW_WINDOW)
+    full = dashboard_widgets._latest_history_tracker_rows(items, window=None)
+
+    assert [row["key"] for row in windowed[:24]] == [row["key"] for row in full[:24]]
+    assert len(windowed) <= dashboard_widgets._ROW_WINDOW
+    assert len(full) == len(items)
+
+
+def _rating_tracker_items(count: int, *, same_epoch: bool) -> dict:
+    return {
+        f"movie:tmdb:{idx}": {
+            "type": "movie",
+            "title": f"Rating {idx:05d}",
+            "year": 2000 + (idx % 20),
+            "ids": {"tmdb": 800000 + idx},
+            "rating": (idx % 10) + 1,
+            "rated_at": "2026-01-01T00:00:00Z" if same_epoch else f"2026-01-01T00:00:{idx % 60:02d}Z",
+        }
+        for idx in range(count)
+    }
+
+
+def test_latest_ratings_widget_window_respects_full_sort_tiebreak(monkeypatch) -> None:
+    monkeypatch.setattr(dashboard_widgets, "_resolve_missing_art_rows", lambda rows, **_kwargs: rows)
+
+    items = _rating_tracker_items(dashboard_widgets._ROW_WINDOW * 2, same_epoch=True)
+
+    windowed = dashboard_widgets.latest_ratings_widget(
+        {}, limit=24, tracker_items=items, window=dashboard_widgets._ROW_WINDOW
+    )
+    full = dashboard_widgets.latest_ratings_widget({}, limit=24, tracker_items=items, window=0)
+
+    assert [row["title"] for row in windowed["items"]] == [row["title"] for row in full["items"]]
+    assert windowed["library_total"] == full["library_total"] == len(items)
+
+
+def test_latest_ratings_widget_widens_window_when_merge_underfills(monkeypatch) -> None:
+    monkeypatch.setattr(dashboard_widgets, "_resolve_missing_art_rows", lambda rows, **_kwargs: rows)
+
+    items = _rating_tracker_items(100, same_epoch=False)
+    payload = dashboard_widgets.latest_ratings_widget({}, limit=24, tracker_items=items, window=5)
+
+    assert len(payload["items"]) == 24
+
+
+def test_recent_history_widget_widens_window_when_merge_underfills(monkeypatch) -> None:
+    monkeypatch.setattr(dashboard_widgets, "_resolve_missing_art_rows", lambda rows, **_kwargs: rows)
+    monkeypatch.setattr(dashboard_widgets, "_history_alias_representatives", lambda: {})
+    monkeypatch.setattr(dashboard_widgets, "_ROW_WINDOW", 2)
+
+    items = _history_tracker_items(100)
+    for idx, key in enumerate(items):
+        items[key]["watched_at"] = 1767225600 + idx
+
+    payload = dashboard_widgets.recent_history_widget({}, limit=24, tracker_items=items)
+
+    assert len(payload["items"]) == 24
+
+
+def test_dashboard_widgets_api_version_tracks_history_alias_files(monkeypatch, tmp_path) -> None:
+    import cw_platform.config_base as config_base
+    from api import dashboardAPI
+    from services import analyzer
+
+    alias_dir = tmp_path / ".cw_state"
+    alias_dir.mkdir()
+    alias_file = alias_dir / "PLEX-TRAKT.history.pair_alias.json"
+    alias_file.write_text('{"a": 1}', encoding="utf-8")
+
+    monkeypatch.setattr(config_base, "CONFIG", tmp_path)
+    monkeypatch.setattr(analyzer, "CWS_DIR", alias_dir)
+    monkeypatch.setattr(dashboard_widgets, "_tracker_feature_items", lambda _kind: {})
+    dashboardAPI.clear_dashboard_payload_cache()
+
+    first = dashboardAPI.dashboard_widgets(include="history", history_limit=8)
+    alias_file.write_text('{"a": 2, "b": 3}', encoding="utf-8")
+    second = dashboardAPI.dashboard_widgets(include="history", history_limit=8)
+
+    assert _loads_body(first.body)["version"] != _loads_body(second.body)["version"]
+    dashboardAPI.clear_dashboard_payload_cache()
+
+
 def test_recent_scrobble_widget_total_is_not_page_limited(monkeypatch) -> None:
     rows = [
         {
@@ -1540,6 +1661,58 @@ def test_dashboard_widgets_api_returns_not_modified_for_known_version(monkeypatc
     assert payload == {"ok": True, "not_modified": True, "version": version}
 
 
+def test_dashboard_widgets_api_reuses_payload_for_same_version(monkeypatch, tmp_path) -> None:
+    import cw_platform.config_base as config_base
+    from api import dashboardAPI
+
+    monkeypatch.setattr(config_base, "CONFIG", tmp_path)
+    monkeypatch.setattr(dashboard_widgets, "_tracker_feature_items", lambda _kind: {})
+    dashboardAPI.clear_dashboard_payload_cache()
+
+    first = dashboardAPI.dashboard_widgets(
+        history_limit=8,
+        ratings_limit=12,
+        scrobble_limit=8,
+        progress_limit=8,
+        playlists_limit=8,
+        include="history",
+    )
+    first_payload = _loads_body(first.body)
+
+    monkeypatch.setattr(
+        dashboardAPI,
+        "dashboard_widgets_payload",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("payload should not rebuild")),
+    )
+
+    second = dashboardAPI.dashboard_widgets(
+        history_limit=8,
+        ratings_limit=12,
+        scrobble_limit=8,
+        progress_limit=8,
+        playlists_limit=8,
+        include="history",
+    )
+
+    assert _loads_body(second.body) == first_payload
+    dashboardAPI.clear_dashboard_payload_cache()
+
+
+def test_dashboard_widgets_api_rebuilds_when_version_changes(monkeypatch, tmp_path) -> None:
+    import cw_platform.config_base as config_base
+    from api import dashboardAPI
+
+    monkeypatch.setattr(config_base, "CONFIG", tmp_path)
+    monkeypatch.setattr(dashboard_widgets, "_tracker_feature_items", lambda _kind: {})
+    dashboardAPI.clear_dashboard_payload_cache()
+
+    first = dashboardAPI.dashboard_widgets(include="history", history_limit=8)
+    second = dashboardAPI.dashboard_widgets(include="history", history_limit=12)
+
+    assert _loads_body(first.body)["version"] != _loads_body(second.body)["version"]
+    dashboardAPI.clear_dashboard_payload_cache()
+
+
 def test_dashboard_widgets_api_version_tracks_crosswatch_tracker_files(monkeypatch, tmp_path) -> None:
     import cw_platform.config_base as config_base
     from api import dashboardAPI
@@ -1602,7 +1775,7 @@ def test_dashboard_widget_frontend_uses_cached_payload_version() -> None:
     assert "window.CW.API.j(url, {}, WIDGET_FETCH_TIMEOUT_MS)" in js
     assert 'controller.abort("timeout")' in js
     assert "function isTimeoutError(e)" in js
-    assert '${e?.name || \"\"} ${e?.message || \"\"} ${e || \"\"}' in js
+    assert 'return e === "timeout" || e?.name === "AbortError";' in js
     assert "if (isTimeoutError(e)) break;" in js
     assert "const WIDGET_LOADING_DELAY_MS = 700;" in js
     assert 'const REFRESHABLE_WIDGETS = ["history", "ratings", "scrobble", "progress", "playlists"];' in js
@@ -1611,14 +1784,15 @@ def test_dashboard_widget_frontend_uses_cached_payload_version() -> None:
     assert "async function refreshDashboardWidgets({ forceConfig = false, force = false, preserve = true, kinds = null } = {})" in js
     assert 'params.set("known_version", cachedPayload.version)' in js
     assert "if (data?.not_modified && cachedPayload)" in js
+    assert "if (requestedKinds.some((kind) => !hasPreservableContent(hosts[kind]))) {" in js
     assert "applyWidgetPayload(cached, active)" in js
     assert "if (!hasLoaded && cachedPayload)" in js
     assert "applyWidgetPayload(cachedPayload, active)" in js
     assert "const preserve = opts.preserve === false ? hasLoaded : true;" in js
-    assert "try { await window.CW?.OverviewProfile?.ready; } catch {}\n    if (seq !== loadSeq || !isOnMain()) return false;\n    if (!hasLoaded) revealFromCache();" in js
+    assert "try { await window.CW?.OverviewProfile?.ready; } catch {}\n    if (seq !== loadSeq) return null;\n    if (!isOnMain()) return false;\n    if (!hasLoaded) revealFromCache();" in js
     assert "function scheduleSlowWidgetLoading(hosts, requestedKinds)" in js
     assert "if (!loadedWidgetKinds.has(kind)) setLoading(hosts[kind], kind);" in js
-    assert "function hasWidgetContent(host)" in js
+    assert "function hasPreservableContent(host)" in js
     assert "function setWidgetLoadError(host, message, preserve)" in js
     assert "function showWidgetToast(message, ok = false)" in js
     assert "function setExpandBusy(btn, busy)" in js
@@ -1629,15 +1803,16 @@ def test_dashboard_widget_frontend_uses_cached_payload_version() -> None:
     assert "function expandWidget(kind, opts = {})" in js
     assert "if (!REFRESHABLE_WIDGETS.includes(kind)) return false;" in js
     assert 'refreshDashboardWidgets({ force: true, preserve: true, kinds: [kind] })' in js
+    assert "if (ok === null) return;" in js
     assert "visibleCounts[kind] = current;" in js
     assert 'showWidgetToast("Could not load more items.");' in js
     assert "if (!wanted) lastLoadedAt = Date.now();" in js
     assert "window.console.warn(\"[CrossWatch] dashboard widgets refresh failed\"" in js
     assert 'const shouldShowWidgetError = (kind) => active[kind] && (!partialRefresh || requestedKinds.includes(kind));' in js
+    assert "if (!partialRefresh) {\n        writeCachedWidgetData(data);\n        widgetsDirty = dirtyVersion !== refreshVersion;\n      }" in js
     assert "const requestedKinds = REFRESHABLE_WIDGETS.filter((key) => active[key] && (!wantedKinds || wantedKinds.has(key)));" in js
     assert "mergeWidgetPayload" not in js
     assert "loadedKinds" not in js
-    assert "if (!partialRefresh) writeCachedWidgetData(data);" in js
     assert "refreshDashboardWidgets({ preserve: true });" in js
     assert "refreshDashboardWidgets({ forceConfig: true, preserve: true })" in js
     assert 'window.addEventListener("sync-complete", refreshForSyncComplete);' in js

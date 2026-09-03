@@ -17,6 +17,7 @@
   const WALL_PREVIEW_CACHE_KEY = "cw.wall.preview.v2";
   const WALL_PREVIEW_MIGRATION_KEY = "cw.wallPreviewMigrated.v1";
   const WALL_PREVIEW_REFRESH_TTL_MS = 60 * 1000;
+  const WALL_PREVIEW_FETCH_TIMEOUT_MS = 30 * 1000;
   const DEFAULT_INSTANCE = "default";
 
   const migrateWallPreviewCache = () => {
@@ -35,8 +36,15 @@
 
   const json = async (url, opt) => {
     if (authSetupPending()) throw new Error("auth setup pending");
-    if (window.CW?.API?.j && !opt) return window.CW.API.j(url);
-    const res = await fetch(url, { cache: "no-store", ...(opt || {}) });
+    if (window.CW?.API?.j && !opt) return window.CW.API.j(url, {}, WALL_PREVIEW_FETCH_TIMEOUT_MS);
+    const controller = !opt?.signal && typeof AbortController === "function" ? new AbortController() : null;
+    const timer = controller ? window.setTimeout(() => controller.abort("timeout"), WALL_PREVIEW_FETCH_TIMEOUT_MS) : 0;
+    let res;
+    try {
+      res = await fetch(url, { cache: "no-store", ...(opt || {}), signal: opt?.signal || controller?.signal });
+    } finally {
+      if (timer) window.clearTimeout(timer);
+    }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json();
   };

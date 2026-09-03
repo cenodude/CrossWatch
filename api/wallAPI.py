@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
+from collections import OrderedDict
 from typing import Any, cast
 from fastapi import FastAPI, Query, Request
 
@@ -19,7 +20,30 @@ from services.watchlist import build_watchlist, detect_available_watchlist_provi
 
 
 _WALL_CACHE_LOCK = threading.Lock()
-_WALL_CACHE: dict[str, Any] = {"key": None, "data": None}
+_WALL_CACHE: "OrderedDict[tuple[Any, ...], dict[str, Any]]" = OrderedDict()
+_WALL_CACHE_MAX = 8
+
+
+def _wall_cache_get(key: tuple[Any, ...]) -> dict[str, Any] | None:
+    with _WALL_CACHE_LOCK:
+        data = _WALL_CACHE.get(key)
+        if data is None:
+            return None
+        _WALL_CACHE.move_to_end(key)
+        return dict(data)
+
+
+def _wall_cache_put(key: tuple[Any, ...], data: dict[str, Any]) -> None:
+    with _WALL_CACHE_LOCK:
+        _WALL_CACHE[key] = dict(data)
+        _WALL_CACHE.move_to_end(key)
+        while len(_WALL_CACHE) > _WALL_CACHE_MAX:
+            _WALL_CACHE.popitem(last=False)
+
+
+def clear_wall_cache() -> None:
+    with _WALL_CACHE_LOCK:
+        _WALL_CACHE.clear()
 
 
 def _path_key(path: Any) -> tuple[str, int, int]:
@@ -184,9 +208,9 @@ def register_wall(app: FastAPI) -> None:
         version = _cache_version(key)
         if known_version and str(known_version).strip() == version:
             return {"ok": True, "not_modified": True, "version": version}
-        with _WALL_CACHE_LOCK:
-            if _WALL_CACHE.get("key") == key and isinstance(_WALL_CACHE.get("data"), dict):
-                return dict(_WALL_CACHE["data"])
+        cached = _wall_cache_get(key)
+        if cached is not None:
+            return cached
 
         st = _load_state()
         api_key = _tmdb_api_key(cfg)
@@ -229,7 +253,5 @@ def register_wall(app: FastAPI) -> None:
             "last_sync_epoch": st.get("last_sync_epoch") if isinstance(st, dict) else None,
             "version": version,
         }
-        with _WALL_CACHE_LOCK:
-            _WALL_CACHE["key"] = key
-            _WALL_CACHE["data"] = data
+        _wall_cache_put(key, data)
         return data
