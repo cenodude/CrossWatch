@@ -290,9 +290,18 @@
   }
 
   function widgetPageStep(key) {
+    if (profileGridLimitApplies(key)) return GRID_PAGE_STEP;
     if (effectiveSize(key) === "large") return widgetView(key) === "media" ? MEDIA_PAGE_STEP : (key === "ratings" ? RATING_PAGE_STEP : PAGE_STEP);
     const step = widgetView(key) === "grid" ? GRID_PAGE_STEP : (key === "ratings" ? RATING_PAGE_STEP : PAGE_STEP);
     return effectiveSpan(key) === 2 ? step * 2 : step;
+  }
+
+  function profileGridLimitApplies(key) {
+    return ON_PROFILE_PAGE && REFRESHABLE_WIDGETS.includes(key) && effectiveSize(key) !== "large" && widgetView(key) === "grid";
+  }
+
+  function widgetMaxItems(key) {
+    return profileGridLimitApplies(key) ? GRID_PAGE_STEP : MAX_WIDGET_ITEMS;
   }
 
   function widgetTotal(key) {
@@ -301,7 +310,8 @@
   }
 
   function widgetFetchLimit(key) {
-    return Math.max(1, Math.min(MAX_WIDGET_ITEMS, Math.max(visibleCounts[key] || 0, widgetPageStep(key))));
+    const maxItems = widgetMaxItems(key);
+    return Math.max(1, Math.min(maxItems, Math.max(visibleCounts[key] || 0, widgetPageStep(key))));
   }
 
   function resetVisibleCount(key) {
@@ -1595,7 +1605,8 @@
   }
 
   function renderCarousel(host, items, count, cardFn, kind) {
-    const visible = Math.min(count, items.length, MAX_WIDGET_ITEMS);
+    const maxItems = widgetMaxItems(kind);
+    const visible = Math.min(count, items.length, maxItems);
     const cards = items.slice(0, visible).map(cardFn).join("");
     host.innerHTML = `
       <div class="cw-widget-carousel" data-cw-widget-carousel="${esc(kind)}">
@@ -1623,8 +1634,9 @@
       scheduleMasonry();
       return;
     }
-    const visible = Math.min(count, items.length);
-    const hasMore = Math.min(widgetTotal(kind), MAX_WIDGET_ITEMS) > visible;
+    const maxItems = widgetMaxItems(kind);
+    const visible = Math.min(count, items.length, maxItems);
+    const hasMore = Math.min(widgetTotal(kind), maxItems) > visible;
     const moreContent = kind === "playlists"
       ? `<span class="cw-dash-see-more-label">${hasMore ? "View more playlists" : "View all playlists"}</span>`
       : `<span class="material-symbols-rounded">expand_more</span>`;
@@ -1849,7 +1861,7 @@
   function expandWidget(kind, opts = {}) {
     if (!REFRESHABLE_WIDGETS.includes(kind)) return false;
     const step = widgetPageStep(kind);
-    const total = Math.min(widgetTotal(kind), MAX_WIDGET_ITEMS);
+    const total = Math.min(widgetTotal(kind), widgetMaxItems(kind));
     const current = visibleCounts[kind] || step;
     const next = Math.min(current + step, total || latestItems[kind]?.length || current);
     if (next <= current) return false;
@@ -1971,7 +1983,7 @@
         const kind = String(scrollBtn.getAttribute("data-cw-widget-scroll") || "");
         const dir = Number(scrollBtn.dataset.dir || 1) < 0 ? -1 : 1;
         const amount = Math.max(220, Math.floor(row.clientWidth * 0.82));
-        if (dir > 0 && Math.min(widgetTotal(kind), MAX_WIDGET_ITEMS) > (visibleCounts[kind] || widgetPageStep(kind))) {
+        if (dir > 0 && Math.min(widgetTotal(kind), widgetMaxItems(kind)) > (visibleCounts[kind] || widgetPageStep(kind))) {
           expandWidget(kind, { button: scrollBtn, previousLeft: row.scrollLeft, scrollAmount: amount });
           return;
         }
