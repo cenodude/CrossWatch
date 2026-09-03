@@ -33,7 +33,7 @@
 .cw-provider-cleanup .cc-feature-copy small{display:block;margin-top:3px;color:var(--cc-muted);font-size:12px;line-height:1.25}
 .cw-provider-cleanup .cc-feature.selected{border-color:color-mix(in srgb,var(--cc-accent) 58%,var(--cc-border));background:color-mix(in srgb,var(--cc-accent) 10%,var(--cc-panel));box-shadow:0 0 0 1px color-mix(in srgb,var(--cc-accent) 18%,transparent)}
 .cw-provider-cleanup .cc-feature.selected .cc-feature-icon{border:1px solid color-mix(in srgb,var(--cc-accent) 44%,var(--cc-border));background:color-mix(in srgb,var(--cc-accent) 22%,var(--cc-card))}
-.cw-provider-cleanup .cc-feature.disabled{opacity:.45;cursor:default}
+.cw-provider-cleanup .cc-feature.disabled{opacity:.45;cursor:not-allowed}
 .cw-provider-cleanup .cc-feature-empty{padding:14px;border:1px solid var(--cc-border);border-radius:12px;background:color-mix(in srgb,var(--cc-panel) 88%,#091321);color:var(--cc-muted);font-size:13px;line-height:1.35}
 .cw-provider-cleanup .cc-feature-empty.hidden{display:none}
 .cw-provider-cleanup .cc-run-card{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;border-color:color-mix(in srgb,#ffbd4a 28%,var(--cc-border))}
@@ -71,7 +71,7 @@
 .cw-provider-cleanup .cc-progress-grid span{display:block;color:var(--cc-muted);font-size:10px;font-weight:900;letter-spacing:.06em;text-transform:uppercase}
 .cw-provider-cleanup .cc-progress-grid b{display:block;margin-top:4px;color:var(--cc-text);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cw-provider-cleanup .cc-progress-message{padding:10px 12px;border:1px solid var(--cc-border);border-radius:10px;background:color-mix(in srgb,var(--cc-bg) 46%,transparent);color:var(--cc-muted);font-size:12px}
-.cw-provider-cleanup button:disabled,.cw-provider-cleanup select:disabled{opacity:.55;cursor:default}
+.cw-provider-cleanup button:disabled,.cw-provider-cleanup select:disabled{opacity:.55;cursor:not-allowed}
 html[data-cw-theme] body .cx-modal-shell.cw-provider-cleanup-shell,html[data-cw-theme] body .cx-modal-shell.cw-provider-cleanup-shell .cw-provider-cleanup{color:var(--cc-text)!important;-webkit-text-fill-color:currentColor!important;border-color:var(--cc-border)!important}
 html[data-cw-theme] body .cx-modal-shell.cw-provider-cleanup-shell .cw-provider-cleanup:is(.cc-title,h3,.cc-feature-copy strong,.cc-progress-grid b,.cc-progress-head strong){color:var(--cc-text)!important;-webkit-text-fill-color:var(--cc-text)!important}
 html[data-cw-theme] body .cx-modal-shell.cw-provider-cleanup-shell .cw-provider-cleanup:is(.cc-sub,p,.cc-target-grid label>span,.cc-feature-copy small,.cc-warning,.cc-status,.cc-progress-message,.cc-progress-grid span,.cc-progress-head span){color:var(--cc-muted)!important;-webkit-text-fill-color:var(--cc-muted)!important}

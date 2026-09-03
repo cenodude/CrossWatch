@@ -73,11 +73,10 @@ def test_firefox_scrollbar_fallbacks_cover_key_scroll_regions() -> None:
     assert ".cw-editor-send-card .body{min-height:0;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:var(--cw-scrollbar-thumb,#8b5cf6)var(--cw-scrollbar-track,#10131a)}" in pages_css
 
 
-def test_disabled_controls_do_not_use_block_cursor() -> None:
-    offenders = []
-    for path in _asset_css_files():
-        css = path.read_text(encoding="utf-8")
-        if "cursor:not-allowed" in css or "cursor: not-allowed" in css:
-            offenders.append(path.relative_to(ROOT).as_posix())
+def test_disabled_and_locked_controls_use_block_cursor() -> None:
+    crosswatch_css = _read("assets/crosswatch.css")
+    pages_css = _read("assets/css/pages.css")
 
-    assert not offenders
+    assert ".btn:disabled,.iconbtn:disabled{opacity:0.55;cursor:not-allowed;box-shadow:none}" in crosswatch_css
+    assert "#page-snapshots .ss-capture-running .ss-item{cursor:not-allowed}" in pages_css
+    assert "#page-watchlist #wl-filter-state:disabled{opacity:.52;cursor:not-allowed}" in pages_css
