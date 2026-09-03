@@ -24,6 +24,7 @@
   const UNITS = 2;
   const WIDE_UNITS = 3;
   const WIDGET_REFRESH_TTL_MS = 60 * 1000;
+  const WIDGET_FETCH_TIMEOUT_MS = 30 * 1000;
   const WIDGET_FETCH_RETRY_DELAYS = [350, 900, 1800];
   const WIDGET_LOADING_DELAY_MS = 700;
   const REFRESHABLE_WIDGETS = ["history", "ratings", "scrobble", "progress", "playlists"];
@@ -43,6 +44,7 @@
   };
   const visibleCounts = { history: GRID_PAGE_STEP, ratings: RATING_PAGE_STEP, scrobble: GRID_PAGE_STEP, progress: GRID_PAGE_STEP, playlists: GRID_PAGE_STEP };
   const latestItems = { history: [], ratings: [], scrobble: [], progress: [], playlists: [] };
+  const latestTotals = { history: 0, ratings: 0, scrobble: 0, progress: 0, playlists: 0 };
   const loadedWidgetKinds = new Set();
   const EMPTY_META = {
     history: { title: "No history yet", copy: "Watched items will appear here." },
@@ -210,17 +212,21 @@
       if (!hasOwn(data, payloadKey)) continue;
       const block = data?.[payloadKey] || {};
       const items = Array.isArray(block.items) ? block.items : [];
+      const total = Number(block.total ?? items.length);
+      const chipTotal = Number(kind === "scrobble" && block.scrobble_total !== undefined ? block.scrobble_total : (block.total ?? items.length));
       const [chipId, chipLabel] = WIDGET_COUNT_CHIPS[kind];
-      setCountChip(chipId, block.total ?? items.length, chipLabel);
+      latestTotals[kind] = Math.max(items.length, Number.isFinite(total) ? total : 0);
+      setCountChip(chipId, Math.max(items.length, Number.isFinite(chipTotal) ? chipTotal : latestTotals[kind]), chipLabel);
       latestItems[kind] = items;
       loadedWidgetKinds.add(kind);
       renderWidget(kind);
       applied += 1;
     }
     if (applied) {
-      lastLoadedAt = Date.now();
+      if (!wanted) lastLoadedAt = Date.now();
       hasLoaded = true;
     }
+    return applied;
   }
 
   function resetLayout() {
@@ -287,6 +293,15 @@
     if (effectiveSize(key) === "large") return widgetView(key) === "media" ? MEDIA_PAGE_STEP : (key === "ratings" ? RATING_PAGE_STEP : PAGE_STEP);
     const step = widgetView(key) === "grid" ? GRID_PAGE_STEP : (key === "ratings" ? RATING_PAGE_STEP : PAGE_STEP);
     return effectiveSpan(key) === 2 ? step * 2 : step;
+  }
+
+  function widgetTotal(key) {
+    const total = Number(latestTotals[key] || 0);
+    return Math.max(latestItems[key]?.length || 0, Number.isFinite(total) ? total : 0);
+  }
+
+  function widgetFetchLimit(key) {
+    return Math.max(1, Math.min(MAX_WIDGET_ITEMS, Math.max(visibleCounts[key] || 0, widgetPageStep(key))));
   }
 
   function resetVisibleCount(key) {
@@ -502,10 +517,22 @@
 
   async function fetchJSON(url) {
     if (authSetupPending()) throw new Error("auth setup pending");
-    if (window.CW?.API?.j) return window.CW.API.j(url);
-    const res = await fetch(url, { cache: "no-store" });
+    if (window.CW?.API?.j) return window.CW.API.j(url, {}, WIDGET_FETCH_TIMEOUT_MS);
+    const controller = typeof AbortController === "function" ? new AbortController() : null;
+    const timer = controller ? window.setTimeout(() => controller.abort("timeout"), WIDGET_FETCH_TIMEOUT_MS) : 0;
+    let res;
+    try {
+      res = await fetch(url, { cache: "no-store", signal: controller?.signal });
+    } finally {
+      if (timer) window.clearTimeout(timer);
+    }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json();
+  }
+
+  function isTimeoutError(e) {
+    const text = `${e?.name || ""} ${e?.message || ""} ${e || ""}`.toLowerCase();
+    return text.includes("abort") || text.includes("timeout");
   }
 
   async function fetchWidgetPayload(url) {
@@ -518,6 +545,7 @@
       } catch (e) {
         if (authPendingError(e)) throw e;
         lastError = e;
+        if (isTimeoutError(e)) break;
         const delay = WIDGET_FETCH_RETRY_DELAYS[attempt];
         if (!delay) break;
         await new Promise((resolve) => window.setTimeout(resolve, delay));
@@ -1468,6 +1496,50 @@
       </div>`;
   }
 
+  function hasWidgetContent(host) {
+    if (!host || !host.children.length) return false;
+    if (host.querySelector(".cw-dash-skeleton")) return false;
+    const empty = host.querySelector(".cw-dash-empty");
+    if (!empty) return true;
+    return !empty.classList.contains("cw-dash-empty--error");
+  }
+
+  function setWidgetLoadError(host, message, preserve) {
+    if (preserve && hasWidgetContent(host)) return;
+    setEmpty(host, "error", message);
+  }
+
+  function showWidgetToast(message, ok = false) {
+    try {
+      const fn = window.CW?.DOM?.showToast || window._cwShowToast || window.showToast;
+      const host = document.getElementById("save_msg") || document.querySelector(".save-toast");
+      if (host && typeof fn === "function") {
+        fn(String(message || ""), !!ok);
+        return;
+      }
+    } catch {}
+    try {
+      let el = document.querySelector(".save-toast");
+      if (!el) {
+        el = document.createElement("div");
+        el.className = "save-toast hide";
+        el.setAttribute("aria-live", "polite");
+        document.body.appendChild(el);
+      }
+      el.textContent = String(message || "");
+      el.classList.remove("hide", "error", "ok");
+      el.classList.add(ok ? "ok" : "error");
+      window.setTimeout(() => el.classList.add("hide"), 2200);
+    } catch {}
+  }
+
+  function setExpandBusy(btn, busy) {
+    if (!btn) return;
+    btn.toggleAttribute("disabled", !!busy);
+    if (busy) btn.setAttribute("aria-busy", "true");
+    else btn.removeAttribute("aria-busy");
+  }
+
   function setLoading(host, kind) {
     if (!host) return;
     const widgetKey = WIDGET_KEYS.includes(kind) ? kind : (host.closest(".cw-dash-widget")?.dataset?.widgetKey || kind);
@@ -1552,7 +1624,7 @@
       return;
     }
     const visible = Math.min(count, items.length);
-    const hasMore = visible < items.length;
+    const hasMore = Math.min(widgetTotal(kind), MAX_WIDGET_ITEMS) > visible;
     const moreContent = kind === "playlists"
       ? `<span class="cw-dash-see-more-label">${hasMore ? "View more playlists" : "View all playlists"}</span>`
       : `<span class="material-symbols-rounded">expand_more</span>`;
@@ -1603,6 +1675,7 @@
     lastSettings = settings;
     for (const kind of REFRESHABLE_WIDGETS) {
       latestItems[kind] = [];
+      latestTotals[kind] = 0;
       resetVisibleCount(kind);
       const [chipId, chipLabel] = WIDGET_COUNT_CHIPS[kind];
       setCountChip(chipId, 0, chipLabel);
@@ -1651,47 +1724,49 @@
   async function refreshDashboardWidgets({ forceConfig = false, force = false, preserve = true, kinds = null } = {}) {
     if (!isOnMain()) {
       hideDashboardWidgets();
-      return;
+      return false;
     }
     revealCachedWidgets();
     const fresh = hasLoaded && (Date.now() - lastLoadedAt) < WIDGET_REFRESH_TTL_MS;
-    if (!force && !widgetsDirty && fresh) return;
+    if (!force && !widgetsDirty && fresh) return true;
     if (authSetupPending()) {
       scheduleAuthReadyRefresh();
-      return;
+      return false;
     }
     if (forceConfig) cfgPromise = null;
     const seq = ++loadSeq;
     const refreshVersion = dirtyVersion;
     try { await window.CW?.OverviewProfile?.ready; } catch {}
-    if (seq !== loadSeq || !isOnMain()) return;
+    if (seq !== loadSeq || !isOnMain()) return false;
     if (!hasLoaded) revealFromCache();
     let cfg;
+    let widgetUrl = "";
+    let widgetStartedAt = 0;
     try {
       cfg = await getConfig(forceConfig);
     } catch (e) {
       if (authPendingError(e)) {
         scheduleAuthReadyRefresh();
-        return;
+        return false;
       }
       if (preserve && hasLoaded) {
         revealCachedWidgets();
-        return;
+        return false;
       }
       hideDashboardWidgets();
-      return;
+      return false;
     }
     const settings = widgetSettings(cfg?.ui || cfg?.user_interface || {});
     currentConfig = cfg;
     lastSettings = settings;
-    if (seq !== loadSeq || !isOnMain()) return;
+    if (seq !== loadSeq || !isOnMain()) return false;
     applyVisibility(settings);
     writeCachedSettings(settings, hasTmdbKeyInConfig(cfg));
     const active = activeWidgetSettings(settings);
     if (active.watchlist) {
       Promise.resolve(window.updatePreviewVisibility?.()).catch(() => null);
     }
-    if (!active.watchlist && !active.history && !active.ratings && !active.scrobble && !active.progress && !active.playlists) return;
+    if (!active.watchlist && !active.history && !active.ratings && !active.scrobble && !active.progress && !active.playlists) return true;
     if (!hasTmdbKeyInConfig(cfg)) {
       $("#placeholder-card")?.classList.add("hidden");
     }
@@ -1718,44 +1793,96 @@
         hasLoaded = true;
         lastLoadedAt = Date.now();
         widgetsDirty = dirtyVersion !== refreshVersion;
-        return;
+        return true;
       }
       const params = new URLSearchParams({
         include: requestedKinds.join(","),
-        history_limit: String(MAX_WIDGET_ITEMS),
-        ratings_limit: String(MAX_WIDGET_ITEMS),
-        scrobble_limit: String(MAX_WIDGET_ITEMS),
-        progress_limit: String(MAX_WIDGET_ITEMS),
-        playlists_limit: String(MAX_WIDGET_ITEMS),
+        history_limit: String(widgetFetchLimit("history")),
+        ratings_limit: String(widgetFetchLimit("ratings")),
+        scrobble_limit: String(widgetFetchLimit("scrobble")),
+        progress_limit: String(widgetFetchLimit("progress")),
+        playlists_limit: String(widgetFetchLimit("playlists")),
       });
       const userProfile = overviewProfileId();
       if (userProfile) params.set("user_profile", userProfile);
       if (!force && !partialRefresh && cachedPayload?.version) params.set("known_version", cachedPayload.version);
-      const data = await fetchWidgetPayload(`/api/dashboard/widgets?${params.toString()}`);
+      widgetUrl = `/api/dashboard/widgets?${params.toString()}`;
+      widgetStartedAt = Date.now();
+      const data = await fetchWidgetPayload(widgetUrl);
       stopSlowLoading();
-      if (seq !== loadSeq || !isOnMain()) return;
+      if (seq !== loadSeq || !isOnMain()) return false;
       if (data?.not_modified && cachedPayload) {
         hasLoaded = true;
         lastLoadedAt = Date.now();
         widgetsDirty = dirtyVersion !== refreshVersion;
-        return;
+        return true;
       }
-      applyWidgetPayload(data, active, partialRefresh ? requestedKinds : null);
+      const applied = applyWidgetPayload(data, active, partialRefresh ? requestedKinds : null);
       if (!partialRefresh) writeCachedWidgetData(data);
       widgetsDirty = dirtyVersion !== refreshVersion;
+      return applied > 0;
     } catch (e) {
       stopSlowLoading();
       if (authPendingError(e)) {
         scheduleAuthReadyRefresh();
-        return;
+        return false;
       }
-      if (preserve && hasLoaded) return;
-      if (active.history) setEmpty(historyHost, "error", "Recent history could not be loaded.");
-      if (active.ratings) setEmpty(ratingsHost, "error", "Latest ratings could not be loaded.");
-      if (active.scrobble) setEmpty(scrobbleHost, "error", "Recent scrobble could not be loaded.");
-      if (active.progress) setEmpty(progressHost, "error", "Recent progress could not be loaded.");
-      if (active.playlists) setEmpty(playlistsHost, "error", "Recent playlists could not be loaded.");
+      try {
+        if (window.console?.warn && widgetUrl) {
+          window.console.warn("[CrossWatch] dashboard widgets refresh failed", {
+            elapsed_ms: widgetStartedAt ? Date.now() - widgetStartedAt : 0,
+            error: String(e?.message || e || "unknown"),
+            url: widgetUrl,
+          });
+        }
+      } catch {}
+      const shouldShowWidgetError = (kind) => active[kind] && (!partialRefresh || requestedKinds.includes(kind));
+      if (shouldShowWidgetError("history")) setWidgetLoadError(historyHost, "Recent history could not be loaded.", preserve);
+      if (shouldShowWidgetError("ratings")) setWidgetLoadError(ratingsHost, "Latest ratings could not be loaded.", preserve);
+      if (shouldShowWidgetError("scrobble")) setWidgetLoadError(scrobbleHost, "Recent scrobble could not be loaded.", preserve);
+      if (shouldShowWidgetError("progress")) setWidgetLoadError(progressHost, "Recent progress could not be loaded.", preserve);
+      if (shouldShowWidgetError("playlists")) setWidgetLoadError(playlistsHost, "Recent playlists could not be loaded.", preserve);
+      return false;
     }
+  }
+
+  function expandWidget(kind, opts = {}) {
+    if (!REFRESHABLE_WIDGETS.includes(kind)) return false;
+    const step = widgetPageStep(kind);
+    const total = Math.min(widgetTotal(kind), MAX_WIDGET_ITEMS);
+    const current = visibleCounts[kind] || step;
+    const next = Math.min(current + step, total || latestItems[kind]?.length || current);
+    if (next <= current) return false;
+    visibleCounts[kind] = next;
+
+    const afterRender = () => {
+      if (!opts.scrollAmount) return;
+      requestAnimationFrame(() => {
+        const row = widgetNode(kind)?.querySelector(".cw-widget-carousel-row");
+        if (!row) return;
+        row.scrollLeft = Number(opts.previousLeft || 0);
+        row.scrollBy({ left: Number(opts.scrollAmount || 0), behavior: "smooth" });
+      });
+    };
+
+    if (next > (latestItems[kind]?.length || 0) && (latestItems[kind]?.length || 0) < total) {
+      setExpandBusy(opts.button, true);
+      void refreshDashboardWidgets({ force: true, preserve: true, kinds: [kind] }).then((ok) => {
+        setExpandBusy(opts.button, false);
+        const loadedEnough = (latestItems[kind]?.length || 0) >= next || widgetTotal(kind) <= current;
+        if (!ok && !loadedEnough) {
+          visibleCounts[kind] = current;
+          renderWidget(kind);
+          showWidgetToast("Could not load more items.");
+          return;
+        }
+        afterRender();
+      });
+    } else {
+      renderWidget(kind);
+      afterRender();
+    }
+    return true;
   }
 
   async function refreshFromButton(btn) {
@@ -1844,17 +1971,8 @@
         const kind = String(scrollBtn.getAttribute("data-cw-widget-scroll") || "");
         const dir = Number(scrollBtn.dataset.dir || 1) < 0 ? -1 : 1;
         const amount = Math.max(220, Math.floor(row.clientWidth * 0.82));
-        if (dir > 0 && latestItems[kind]?.length > (visibleCounts[kind] || widgetPageStep(kind))) {
-          const step = widgetPageStep(kind);
-          const previousLeft = row.scrollLeft;
-          visibleCounts[kind] = Math.min((visibleCounts[kind] || step) + step, latestItems[kind].length);
-          renderWidget(kind);
-          requestAnimationFrame(() => {
-            const nextRow = widgetNode(kind)?.querySelector(".cw-widget-carousel-row");
-            if (!nextRow) return;
-            nextRow.scrollLeft = previousLeft;
-            nextRow.scrollBy({ left: amount, behavior: "smooth" });
-          });
+        if (dir > 0 && Math.min(widgetTotal(kind), MAX_WIDGET_ITEMS) > (visibleCounts[kind] || widgetPageStep(kind))) {
+          expandWidget(kind, { button: scrollBtn, previousLeft: row.scrollLeft, scrollAmount: amount });
           return;
         }
         row.scrollBy({ left: dir * amount, behavior: "smooth" });
@@ -1875,10 +1993,8 @@
       const btn = event.target?.closest?.("[data-cw-widget-more]");
       if (!btn) return;
       const kind = String(btn.getAttribute("data-cw-widget-more") || "");
-      if (!["history", "ratings", "scrobble", "progress", "playlists"].includes(kind)) return;
-      const step = widgetPageStep(kind);
-      visibleCounts[kind] = Math.min((visibleCounts[kind] || step) + step, latestItems[kind].length);
-      renderWidget(kind);
+      if (!REFRESHABLE_WIDGETS.includes(kind)) return;
+      expandWidget(kind, { button: btn });
     });
     document.addEventListener("tab-changed", (event) => {
       const id = event?.detail?.id || event?.detail?.tab;

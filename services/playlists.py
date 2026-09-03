@@ -515,7 +515,7 @@ def refresh_mapping_endpoints(cfg: dict[str, Any], mapping: Mapping[str, Any], *
     return {"ok": True, "endpoints": endpoints}
 
 
-def activity(cfg: Mapping[str, Any], *, limit: int = 25) -> list[dict[str, Any]]:
+def activity(cfg: Mapping[str, Any], *, limit: int | None = 25) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for ep in list_endpoints(cfg):
         ts = ep.get("last_synced")
@@ -566,6 +566,8 @@ def activity(cfg: Mapping[str, Any], *, limit: int = 25) -> list[dict[str, Any]]
                 "details": f"{(m.get('ruleset') or {}).get('name') or r.get('ruleset_id') or 'direct'}, {len(m.get('targets') or [])} target(s), +{int(r.get('added', 0))}/-{int(r.get('removed', 0))}" + (f", {unresolved} unresolved" if unresolved else "") + (", capacity error" if r.get("capacity_error") else ""),
             })
     rows.sort(key=lambda x: x["ts"], reverse=True)
+    if limit is None:
+        return rows
     return rows[: max(1, int(limit))]
 
 
