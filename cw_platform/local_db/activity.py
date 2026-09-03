@@ -203,6 +203,18 @@ def clear_events(base_path: str | Path | None, *, kind: str | None = None) -> di
     return {"existed": before > 0, "removed": removed, "remaining": remaining}
 
 
+def fingerprint(base_path: str | Path | None) -> tuple[Any, ...] | None:
+    conn = get_conn(base_path)
+    if conn is None:
+        return None
+    row = conn.execute(
+        "SELECT COUNT(*), COALESCE(MAX(updated_at),0), COALESCE(MAX(captured_at),0) FROM activity_events"
+    ).fetchone()
+    if row is None:
+        return None
+    return (int(row[0] or 0), int(row[1] or 0), int(row[2] or 0))
+
+
 def event_count(base_path: str | Path | None, *, kind: str | None = None) -> int:
     conn = get_conn(base_path)
     if conn is None:

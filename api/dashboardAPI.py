@@ -3,8 +3,12 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
+import threading
+import traceback
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Mapping, cast
 
@@ -22,25 +26,66 @@ except Exception:  # pragma: no cover
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
+_PAYLOAD_CACHE: "OrderedDict[str, dict[str, Any]]" = OrderedDict()
+_PAYLOAD_CACHE_LOCK = threading.Lock()
+_PAYLOAD_CACHE_MAX = 8
 
-def _dashboard_db_stamp(base_path: Any) -> tuple[float, float]:
+
+def _cached_widgets_payload(version: str) -> dict[str, Any] | None:
+    if not version:
+        return None
+    with _PAYLOAD_CACHE_LOCK:
+        payload = _PAYLOAD_CACHE.get(version)
+        if payload is None:
+            return None
+        _PAYLOAD_CACHE.move_to_end(version)
+        return copy.deepcopy(payload)
+
+
+def _store_widgets_payload(version: str, payload: Mapping[str, Any]) -> None:
+    if not version:
+        return
+    with _PAYLOAD_CACHE_LOCK:
+        _PAYLOAD_CACHE[version] = copy.deepcopy(dict(payload))
+        _PAYLOAD_CACHE.move_to_end(version)
+        while len(_PAYLOAD_CACHE) > _PAYLOAD_CACHE_MAX:
+            _PAYLOAD_CACHE.popitem(last=False)
+
+
+def clear_dashboard_payload_cache() -> None:
+    with _PAYLOAD_CACHE_LOCK:
+        _PAYLOAD_CACHE.clear()
+
+
+def _dashboard_alias_stamp(requested: set[str]) -> list[tuple[str, int, int]]:
+    if "history" not in requested:
+        return []
     try:
-        from cw_platform.local_db.db import crosswatch_db_path
+        from services.analyzer import CWS_DIR
 
-        db = Path(str(crosswatch_db_path(base_path)))
-        stamp = 0.0
-        wal_stamp = 0.0
-        try:
-            stamp = db.stat().st_mtime
-        except OSError:
-            pass
-        try:
-            wal_stamp = db.with_name(db.name + "-wal").stat().st_mtime
-        except OSError:
-            pass
-        return round(stamp, 3), round(wal_stamp, 3)
+        if not CWS_DIR.is_dir():
+            return []
+        stamp: list[tuple[str, int, int]] = []
+        for path in sorted(CWS_DIR.glob("*history.pair_alias*.json")):
+            try:
+                st = path.stat()
+                stamp.append((path.name, int(st.st_mtime_ns), int(st.st_size)))
+            except OSError:
+                stamp.append((path.name, 0, 0))
+        return stamp
     except Exception:
-        return 0.0, 0.0
+        return []
+
+
+def _dashboard_activity_stamp(base_path: Any, requested: set[str]) -> tuple[Any, ...] | None:
+    if "scrobble" not in requested:
+        return None
+    try:
+        from cw_platform.local_db import activity as sqlite_activity
+
+        return sqlite_activity.fingerprint(base_path)
+    except Exception:
+        return None
 
 
 def _dashboard_config_stamp(base_path: Any) -> float:
@@ -112,9 +157,10 @@ def _dashboard_widgets_version(
         "limits": limits,
         "state": state_fp,
         "policy": policy_fp,
-        "db": _dashboard_db_stamp(base_path),
+        "activity": _dashboard_activity_stamp(base_path, requested),
         "config": _dashboard_config_stamp(base_path),
         "tracker": _dashboard_tracker_stamp(base_path, cfg, requested),
+        "alias": _dashboard_alias_stamp(requested),
     }
     blob = json.dumps(source, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
@@ -160,21 +206,24 @@ def dashboard_widgets(
         )
         if known_version and str(known_version).strip() == version:
             return JSONResponse({"ok": True, "not_modified": True, "version": version}, headers={"Cache-Control": "no-store"})
-        state = StateStore(CONFIG).load_state_features(state_features) if state_features else {}
         scoped = bool(str(profile or "").strip())
-        user_filter = instances_for_user_profile(cfg, profile) if scoped else {}
-        if scoped and not user_filter:
-            user_filter = {"__NONE__": ["__NONE__"]}
-        payload = dashboard_widgets_payload(
-            state,
-            history_limit=history_limit,
-            ratings_limit=ratings_limit,
-            scrobble_limit=scrobble_limit,
-            progress_limit=progress_limit,
-            playlists_limit=playlists_limit,
-            include=requested,
-            user_filter=user_filter,
-        )
+        payload = _cached_widgets_payload(version)
+        if payload is None:
+            state = StateStore(CONFIG).load_state_features(state_features) if state_features else {}
+            user_filter = instances_for_user_profile(cfg, profile) if scoped else {}
+            if scoped and not user_filter:
+                user_filter = {"__NONE__": ["__NONE__"]}
+            payload = dashboard_widgets_payload(
+                state,
+                history_limit=history_limit,
+                ratings_limit=ratings_limit,
+                scrobble_limit=scrobble_limit,
+                progress_limit=progress_limit,
+                playlists_limit=playlists_limit,
+                include=requested,
+                user_filter=user_filter,
+            )
+            _store_widgets_payload(version, payload)
         payload["version"] = version
         if scoped:
             payload["user_profile"] = str(profile or "").strip()
@@ -182,7 +231,10 @@ def dashboard_widgets(
     except Exception as exc:
         try:
             if LOG is not None:
-                LOG.error("dashboard widgets payload failed", extra={"error": f"{type(exc).__name__}: {exc}"})
+                LOG.error(
+                    "dashboard widgets payload failed",
+                    extra={"error": f"{type(exc).__name__}: {exc}", "traceback": traceback.format_exc()},
+                )
         except Exception:
             pass
         return JSONResponse(

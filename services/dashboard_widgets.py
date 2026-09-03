@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+import heapq
 import re
 from typing import Any, Iterable, Mapping
 
@@ -615,6 +616,7 @@ def _ensure_art_urls(
 
 
 _ART_RESOLVE_WORKERS = 8
+_ROW_WINDOW = 400
 
 
 def _needs_metadata_lookup(row: Mapping[str, Any]) -> bool:
@@ -914,7 +916,9 @@ def latest_ratings_widget(
     limit: int = 12,
     tracker_items: Mapping[str, Any] | None = None,
     user_filter: Mapping[str, Any] | None = None,
+    window: int | None = None,
 ) -> dict[str, Any]:
+    window = window if window is not None else max(_ROW_WINDOW, min(int(limit or 12), 24) * 8)
     rows: dict[str, dict[str, Any]] = {}
     aliases: dict[str, str] = {}
 
@@ -933,14 +937,19 @@ def latest_ratings_widget(
         for alias in _rating_aliases(rows[match_key]):
             aliases[alias] = match_key
 
+    entries: list[tuple[tuple[int, int, str], int, str, dict[str, Any], list[dict[str, str]], bool]] = []
+
+    def _rank(item: Mapping[str, Any]) -> tuple[int, int, str]:
+        return (int(_rating_epoch(item) or 0), int(_update_epoch(item) or 0), str(_title(item) or ""))
+
     for raw_key, raw_item in (tracker_items or {}).items():
         item = _unwrap_rating_item(raw_item)
-        row = _rating_row(str(raw_key), item, _sources_from_item(item))
-        if row:
-            if not _sources_match_user(row.get("sources"), user_filter):
-                continue
-            row[_RATING_TRACKER_FLAG] = True
-            put(row)
+        if _rating_value(item) is None:
+            continue
+        sources = _sources_from_item(item)
+        if not _sources_match_user(sources, user_filter):
+            continue
+        entries.append((_rank(item), len(entries), str(raw_key), item, sources, True))
 
     providers = state.get("providers") if isinstance(state.get("providers"), Mapping) else {}
     provider_keys = sorted({str(p).upper() for p in providers.keys()}) if isinstance(providers, Mapping) else []
@@ -948,29 +957,50 @@ def latest_ratings_widget(
         for instance, block in _provider_blocks(state, provider):
             if not _endpoint_matches_user(provider, instance, user_filter):
                 continue
+            ref = _provider_ref(provider, instance)
             for raw_key, raw_item in _feature_items(block, "ratings").items():
                 item = _unwrap_rating_item(raw_item)
-                row = _rating_row(str(raw_key), item, [_provider_ref(provider, instance)])
-                if not row:
+                if _rating_value(item) is None:
                     continue
-                put(row)
+                entries.append((_rank(item), len(entries), str(raw_key), item, [ref], False))
 
-    items = sorted(
-        rows.values(),
-        key=lambda x: (
-            int(x.get("sort_epoch") or 0),
-            int(x.get("updated_epoch") or 0),
-            str(x.get("title") or ""),
-        ),
-        reverse=True,
-    )
+    library_total = len(entries)
     cap = max(1, min(int(limit or 12), 24))
+
+    def _build(selected: list) -> list[dict[str, Any]]:
+        rows.clear()
+        aliases.clear()
+        for _rank_key, _ordinal, raw_key, item, sources, from_tracker in selected:
+            row = _rating_row(raw_key, item, sources)
+            if not row:
+                continue
+            if from_tracker:
+                row[_RATING_TRACKER_FLAG] = True
+            put(row)
+        return sorted(
+            rows.values(),
+            key=lambda x: (
+                int(x.get("sort_epoch") or 0),
+                int(x.get("updated_epoch") or 0),
+                str(x.get("title") or ""),
+            ),
+            reverse=True,
+        )
+
+    windowed = entries
+    if window is not None and window > 0 and len(entries) > window:
+        windowed = heapq.nlargest(window, entries, key=lambda entry: entry[0])
+        windowed.sort(key=lambda entry: entry[1])
+
+    items = _build(windowed)
+    if len(items) < cap and len(windowed) < len(entries):
+        items = _build(entries)
     selected = _resolve_missing_art_rows(
         items[:cap], size="w300", episode_still=True, backdrop_fallback=True, resolve_art_type=True
     )
     for row in selected:
         row.pop(_RATING_TRACKER_FLAG, None)
-    return {"ok": True, "items": selected, "total": len(items)}
+    return {"ok": True, "items": selected, "total": len(items), "library_total": library_total}
 
 
 def _activity_row(event: Mapping[str, Any]) -> dict[str, Any]:
@@ -1120,42 +1150,92 @@ def _history_aliases(row: Mapping[str, Any], alias_map: Mapping[str, str] | None
     return aliases
 
 
-def _latest_history_state_rows(state: Mapping[str, Any], *, user_filter: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
+def _latest_history_state_rows(
+    state: Mapping[str, Any],
+    *,
+    user_filter: Mapping[str, Any] | None = None,
+    window: int | None = None,
+) -> list[dict[str, Any]]:
     rows: dict[str, dict[str, Any]] = {}
+    entries: list[tuple[int, int, str, dict[str, Any], dict[str, str]]] = []
+    for provider, instance, block in _history_provider_blocks(state, user_filter):
+        ref = _provider_ref(provider, instance)
+        for raw_key, raw_item in _feature_items(block, "history").items():
+            item = _unwrap_history_item(raw_item)
+            key = str(raw_key)
+            epoch = int(_history_sort_epoch(item) or _history_key_epoch(key) or 0)
+            entries.append((epoch, len(entries), key, item, ref))
+    if window is not None and window > 0 and len(entries) > window:
+        entries = heapq.nlargest(window, entries, key=lambda entry: entry[0])
+        entries.sort(key=lambda entry: entry[1])
+    for _epoch, _ordinal, raw_key, item, ref in entries:
+        row = _history_state_row(raw_key, item, [ref])
+        if not row:
+            continue
+        key = str(row["key"])
+        prev = rows.get(key)
+        if not prev:
+            rows[key] = row
+            continue
+        prev_sources = prev.setdefault("sources", [])
+        for src in row.get("sources") or []:
+            if src not in prev_sources:
+                prev_sources.append(src)
+        if int(row.get("sort_epoch") or 0) >= int(prev.get("sort_epoch") or 0):
+            row["sources"] = prev_sources
+            rows[key] = row
+    return sorted(rows.values(), key=lambda x: int(x.get("sort_epoch") or 0), reverse=True)
+
+
+def _history_provider_blocks(state: Mapping[str, Any], user_filter: Mapping[str, Any] | None):
     providers = state.get("providers") if isinstance(state.get("providers"), Mapping) else {}
     provider_keys = sorted({str(p).upper() for p in providers.keys()}) if isinstance(providers, Mapping) else []
     for provider in provider_keys:
         for instance, block in _provider_blocks(state, provider):
             if not _endpoint_matches_user(provider, instance, user_filter):
                 continue
-            for raw_key, raw_item in _feature_items(block, "history").items():
-                item = _unwrap_history_item(raw_item)
-                row = _history_state_row(str(raw_key), item, [_provider_ref(provider, instance)])
-                if not row:
-                    continue
-                key = str(row["key"])
-                prev = rows.get(key)
-                if not prev:
-                    rows[key] = row
-                    continue
-                prev_sources = prev.setdefault("sources", [])
-                for src in row.get("sources") or []:
-                    if src not in prev_sources:
-                        prev_sources.append(src)
-                if int(row.get("sort_epoch") or 0) >= int(prev.get("sort_epoch") or 0):
-                    row["sources"] = prev_sources
-                    rows[key] = row
-    return sorted(rows.values(), key=lambda x: int(x.get("sort_epoch") or 0), reverse=True)
+            yield provider, instance, block
 
 
-def _latest_history_tracker_rows(items: Mapping[str, Any], *, user_filter: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
-    rows: dict[str, dict[str, Any]] = {}
-    for raw_key, raw_item in (items or {}).items():
-        item = _unwrap_history_item(raw_item)
-        row = _history_state_row(str(raw_key), item, _sources_from_item(item))
-        if not row:
+def _history_library_total(
+    state: Mapping[str, Any],
+    tracker_items: Mapping[str, Any] | None,
+    *,
+    user_filter: Mapping[str, Any] | None = None,
+) -> int:
+    scoped = bool(_normalize_user_filter(user_filter))
+    seen: set[str] = set()
+    for raw_key, raw_item in (tracker_items or {}).items():
+        if scoped and not _sources_match_user(_sources_from_item(_unwrap_history_item(raw_item)), user_filter):
             continue
-        if not _sources_match_user(row.get("sources"), user_filter):
+        seen.add(str(raw_key))
+    for _provider, _instance, block in _history_provider_blocks(state or {}, user_filter):
+        seen.update(str(raw_key) for raw_key in _feature_items(block, "history").keys())
+    return len(seen)
+
+
+def _latest_history_tracker_rows(
+    items: Mapping[str, Any],
+    *,
+    user_filter: Mapping[str, Any] | None = None,
+    window: int | None = None,
+) -> list[dict[str, Any]]:
+    entries: list[tuple[int, int, str, dict[str, Any], list[dict[str, str]]]] = []
+    for ordinal, (raw_key, raw_item) in enumerate((items or {}).items()):
+        item = _unwrap_history_item(raw_item)
+        sources = _sources_from_item(item)
+        if not _sources_match_user(sources, user_filter):
+            continue
+        key = str(raw_key)
+        epoch = int(_history_sort_epoch(item) or _history_key_epoch(key) or 0)
+        entries.append((epoch, ordinal, key, item, sources))
+    if window is not None and window > 0 and len(entries) > window:
+        entries = heapq.nlargest(window, entries, key=lambda entry: entry[0])
+        entries.sort(key=lambda entry: entry[1])
+    rows: dict[str, dict[str, Any]] = {}
+    for _epoch, _ordinal, raw_key, item, sources in entries:
+        row = _history_state_row(raw_key, item, sources)
+        if not row:
             continue
         rows[str(row["key"])] = row
     return sorted(rows.values(), key=lambda x: int(x.get("sort_epoch") or 0), reverse=True)
@@ -1199,11 +1279,22 @@ def recent_history_widget(
     user_filter: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     cap = max(1, min(int(limit or 8), 24))
-    state_rows = _latest_history_state_rows(state or {}, user_filter=user_filter)
-    tracker_rows = _latest_history_tracker_rows(tracker_items or {}, user_filter=user_filter)
-    rows = _merge_history_rows(state_rows, tracker_rows, alias_map=_history_alias_representatives())
+    window = max(_ROW_WINDOW, cap * 8)
+    alias_map = _history_alias_representatives()
+    state_rows = _latest_history_state_rows(state or {}, user_filter=user_filter, window=window)
+    tracker_rows = _latest_history_tracker_rows(tracker_items or {}, user_filter=user_filter, window=window)
+    rows = _merge_history_rows(state_rows, tracker_rows, alias_map=alias_map)
+    if len(rows) < cap and (len(state_rows) >= window or len(tracker_rows) >= window):
+        state_rows = _latest_history_state_rows(state or {}, user_filter=user_filter, window=None)
+        tracker_rows = _latest_history_tracker_rows(tracker_items or {}, user_filter=user_filter, window=None)
+        rows = _merge_history_rows(state_rows, tracker_rows, alias_map=alias_map)
     selected = _resolve_missing_art_rows(rows[:cap], size="w300", episode_still=True)
-    return {"ok": True, "items": selected, "total": len(rows)}
+    return {
+        "ok": True,
+        "items": selected,
+        "total": len(rows),
+        "library_total": _history_library_total(state or {}, tracker_items, user_filter=user_filter),
+    }
 
 
 def recent_scrobble_widget(*, limit: int = 8, user_filter: Mapping[str, Any] | None = None) -> dict[str, Any]:
