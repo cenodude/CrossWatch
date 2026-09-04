@@ -1756,22 +1756,55 @@ def _system_diagnostics() -> list[dict[str, Any]]:
     return sorted(probs, key=_problem_sort_key)
 
 
+_ALIAS_ID_NAMESPACES = (
+    "tmdb", "imdb", "tvdb", "trakt", "simkl", "mal", "anilist",
+    "plex", "emby", "guid", "mdblist", "publicmetadb",
+)
+
+
+def _alias_scope_fragment(obj: Mapping[str, Any]) -> str:
+    t = (obj.get("type") or "").lower()
+    if t not in ("season", "episode"):
+        return ""
+    season = _hist_num(obj.get("season") if obj.get("season") is not None else obj.get("season_number"))
+    if not isinstance(season, int):
+        return ""
+    if t == "season":
+        return f"#season:{season}"
+    episode = _hist_num(obj.get("episode") if obj.get("episode") is not None else obj.get("episode_number"))
+    if not isinstance(episode, int):
+        return ""
+    return f"#s{season:02d}e{episode:02d}"
+
+
 def _alias_keys(obj: dict[str, Any]) -> list[str]:
     t = (obj.get("type") or "").lower()
     ids = dict(obj.get("ids") or {})
+    show_ids_raw = obj.get("show_ids")
+    show_ids = dict(show_ids_raw) if isinstance(show_ids_raw, Mapping) and show_ids_raw else {}
     out: list[str] = []
     seen: set[str] = set()
 
     if obj.get("_key"):
         out.append(obj["_key"])
 
-    for ns in ("tmdb", "imdb", "tvdb", "trakt", "simkl", "mal", "anilist", "plex", "emby", "guid", "mdblist", "publicmetadb"):
-        v = ids.get(ns)
+    scoped = t in ("season", "episode") and bool(show_ids)
+    scope_ids = show_ids if scoped else ids
+    frag = _alias_scope_fragment(obj) if scoped else ""
+
+    for ns in _ALIAS_ID_NAMESPACES:
+        v = scope_ids.get(ns)
         if v:
-            vs = str(v)
+            vs = f"{v}{frag}"
             out.append(f"{ns}:{vs}")
             if t in ("movie", "show", "season", "episode"):
                 out.append(f"{t}:{ns}:{vs}")
+
+    if t in ("season", "episode"):
+        for ns in _ALIAS_ID_NAMESPACES:
+            v = ids.get(ns)
+            if v and str(show_ids.get(ns) or "") != str(v):
+                out.append(f"ep:{ns}:{v}")
 
     title = (obj.get("title") or "").strip().lower()
     year = obj.get("year")
@@ -2133,16 +2166,27 @@ def _hist_num(v: Any) -> Any:
         return v
 
 
-def _history_exact_key(item: Mapping[str, Any]) -> tuple[str, str, Any, Any] | None:
+def _history_exact_keys(item: Mapping[str, Any]) -> set[tuple[str, str, Any, Any]]:
     typ = str(item.get("type") or "").strip().lower()
     if typ not in {"episode", "season"}:
-        return None
-    sig = _history_show_signature(dict(item))
-    if not sig:
-        return None
+        return set()
+    sigs = _history_show_signatures(item)
+    if not sigs:
+        return set()
     season = _hist_num(item.get("season"))
     episode = _hist_num(item.get("episode")) if typ == "episode" else None
-    return (sig, typ, season, episode)
+    return {(sig, typ, season, episode) for sig in sigs}
+
+
+def _history_exact_key(item: Mapping[str, Any]) -> tuple[str, str, Any, Any] | None:
+    keys = _history_exact_keys(item)
+    if not keys:
+        return None
+    sig = _history_show_signature(dict(item))
+    for key in keys:
+        if key[0] == sig:
+            return key
+    return next(iter(keys))
 
 
 def _history_event_tokens(item: Mapping[str, Any]) -> set[str]:
@@ -2175,9 +2219,9 @@ def _history_exact_indices(s: dict[str, Any]) -> dict[str, set[tuple[str, str, A
     for prov, feat, _, item in _iter_items(s):
         if feat != "history" or not isinstance(item, dict):
             continue
-        key = _history_exact_key(item)
-        if key is not None:
-            out.setdefault(_norm_prov_token(prov), set()).add(key)
+        keys = _history_exact_keys(item)
+        if keys:
+            out.setdefault(_norm_prov_token(prov), set()).update(keys)
     return out
 
 
@@ -2186,16 +2230,19 @@ def _history_show_index(s: dict[str, Any]) -> dict[str, dict[str, dict[str, Any]
     for prov, feat, _, item in _iter_items(s):
         if feat != "history" or not isinstance(item, dict):
             continue
-        sig = _history_show_signature(item)
-        if not sig:
+        sigs = _history_show_signatures(item)
+        if not sigs:
             continue
-        entry = out.setdefault(_norm_prov_token(prov), {}).setdefault(sig, {"episode_count": 0, "episodes": set()})
-        if str(item.get("type") or "").strip().lower() == "episode":
-            entry["episode_count"] += 1
-            season = item.get("season")
-            episode = item.get("episode")
-            if season is not None and episode is not None:
-                entry["episodes"].add((season, episode))
+        prov_map = out.setdefault(_norm_prov_token(prov), {})
+        is_episode = str(item.get("type") or "").strip().lower() == "episode"
+        season = item.get("season")
+        episode = item.get("episode")
+        for sig in sigs:
+            entry = prov_map.setdefault(sig, {"episode_count": 0, "episodes": set()})
+            if is_episode:
+                entry["episode_count"] += 1
+                if season is not None and episode is not None:
+                    entry["episodes"].add((season, episode))
     return out
 
 
@@ -2526,9 +2573,9 @@ def _target_peer_match(
             if history_event_present(item, item_key, dest_items, _history_event_tokens, 0):
                 return "history_event"
             return "anime_coords" if ctx.anime_history_match(prov_key, dst_key, item, require_minute=True) else ""
-        exact_key = _history_exact_key(item)
-        if exact_key is not None:
-            if exact_key in (ctx.history_exact.get(dst_key) or set()):
+        exact_keys = _history_exact_keys(item)
+        if exact_keys:
+            if exact_keys & (ctx.history_exact.get(dst_key) or set()):
                 return "history_exact"
     target_aliases = ctx.aliases.get((dst_key, feat_key)) or {}
     if any(alias in target_aliases for alias in _alias_keys(vv)):
@@ -3056,28 +3103,26 @@ def _anime_mapping_diagnostics(ctx: _AnalysisContext) -> list[dict[str, Any]]:
     return probs
 
 
-def _history_show_signature(rec: dict[str, Any]) -> str | None:
+def _history_show_signatures(rec: Mapping[str, Any]) -> list[str]:
     typ = str(rec.get("type") or "").strip().lower()
     ids = (rec.get("ids") or {}) or {}
     show_ids = (rec.get("show_ids") or {}) or {}
 
-    def pick(obj: dict[str, Any]) -> str | None:
+    def pick_all(obj: Mapping[str, Any]) -> list[str]:
+        out: list[str] = []
         for idk in ("tmdb", "imdb", "tvdb", "slug"):
             v = obj.get(idk)
             if v:
-                return f"{idk}:{str(v).lower()}"
-        return None
+                out.append(f"{idk}:{str(v).lower()}")
+        return out
 
-    sig: str | None = None
-    if typ == "episode":
-        sig = pick(show_ids)
-    elif typ == "show":
-        sig = pick(ids)
-    else:
-        if show_ids or rec.get("series_title") or rec.get("show_title"):
-            sig = pick(show_ids)
+    sigs: list[str] = []
+    if typ == "show":
+        sigs = pick_all(ids)
+    elif typ == "episode" or show_ids or rec.get("series_title") or rec.get("show_title"):
+        sigs = pick_all(show_ids)
 
-    if sig is None:
+    if not sigs:
         title = (
             rec.get("series_title")
             or rec.get("show_title")
@@ -3086,8 +3131,13 @@ def _history_show_signature(rec: dict[str, Any]) -> str | None:
         )
         if title:
             y = rec.get("series_year") or rec.get("year")
-            sig = f"{str(title).strip().lower()}|year:{y}"
-    return sig
+            sigs = [f"{str(title).strip().lower()}|year:{y}"]
+    return sigs
+
+
+def _history_show_signature(rec: dict[str, Any]) -> str | None:
+    sigs = _history_show_signatures(rec)
+    return sigs[0] if sigs else None
 
 
 def _missing_peer_show_hints(
