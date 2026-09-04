@@ -24,7 +24,7 @@ from ._common import (
     _is_capture_mode,
 )
 from ._routes import items as items_route, played as played_route, user_data as user_data_route, user_params
-from cw_platform.id_map import canonical_key, minimal as id_minimal
+from cw_platform.id_map import KEY_PRIORITY, canonical_key, minimal as id_minimal
 
 def _unresolved_path() -> str:
     return str(state_file("jellyfin_history.unresolved.json"))
@@ -44,6 +44,19 @@ _dbg, _info, _warn = make_logger("history")
 # unresolved
 _UNRES_CACHE: dict[str, dict[str, Any]] = {}
 _UNRES_DIRTY: set[str] = set()
+
+
+def _event_base_key(event: Mapping[str, Any], fallback: Mapping[str, Any]) -> str:
+    try:
+        key = canonical_key(event)
+    except Exception:
+        key = ""
+    if key and any(key.startswith(f"{prefix}:") for prefix in KEY_PRIORITY):
+        return key
+    try:
+        return canonical_key(fallback)
+    except Exception:
+        return "unknown:"
 
 
 def _unres_load() -> dict[str, Any]:
@@ -632,7 +645,7 @@ def build_index(
             if lib_id:
                 event["library_id"] = lib_id
 
-            base_key = canonical_key(m)
+            base_key = _event_base_key(event, m)
             event.setdefault("_cw_key", base_key)
             jf_iid = m.get("jellyfin_item_id")
             if jf_iid:

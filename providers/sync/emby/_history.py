@@ -23,7 +23,7 @@ from ._common import (
     _series_minimal_from_episode,
     prefetch_series_minimals,
 )
-from cw_platform.id_map import canonical_key, minimal as id_minimal
+from cw_platform.id_map import KEY_PRIORITY, canonical_key, minimal as id_minimal
 
 def _unresolved_path() -> str:
     return state_file("emby_history.unresolved.json")
@@ -43,6 +43,19 @@ def sleep_ms(ms: int) -> None:
         time.sleep(max(0, int(ms)) / 1000.0)
     except Exception:
         pass
+
+
+def _event_base_key(event: Mapping[str, Any], fallback: Mapping[str, Any]) -> str:
+    try:
+        key = canonical_key(event)
+    except Exception:
+        key = ""
+    if key and any(key.startswith(f"{prefix}:") for prefix in KEY_PRIORITY):
+        return key
+    try:
+        return canonical_key(fallback)
+    except Exception:
+        return "unknown:"
 
 # timestamp helpers
 def _parse_iso_to_epoch(s: str | None) -> int | None:
@@ -977,7 +990,7 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
                             lib_id = show_roots[0]
                 if lib_id:
                     event["library_id"] = str(lib_id)
-                ev_key = f"{canonical_key(m)}@{ts}"
+                ev_key = f"{_event_base_key(event, m)}@{ts}"
                 events.append((ts, {"key": ev_key}, event))
                 added_events += 1
 
