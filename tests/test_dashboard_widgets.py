@@ -1783,6 +1783,8 @@ def test_dashboard_widget_frontend_uses_cached_payload_version() -> None:
     assert "block.scrobble_total" in js
     assert "async function refreshDashboardWidgets({ forceConfig = false, force = false, preserve = true, kinds = null } = {})" in js
     assert 'params.set("known_version", cachedPayload.version)' in js
+    assert "const anyWidgetBlank = requestedKinds.some((kind) => !(latestItems[kind]?.length));" in js
+    assert "if (!forceConfig && !anyWidgetBlank && !partialRefresh && cachedPayload?.version)" in js
     assert "if (data?.not_modified && cachedPayload)" in js
     assert "if (requestedKinds.some((kind) => !hasPreservableContent(hosts[kind]))) {" in js
     assert "applyWidgetPayload(cached, active)" in js
