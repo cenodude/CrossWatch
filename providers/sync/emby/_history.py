@@ -45,7 +45,55 @@ def sleep_ms(ms: int) -> None:
         pass
 
 
+def _scope_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
+def _scope_fragment(event: Mapping[str, Any]) -> str:
+    typ = str(event.get("type") or "").strip().lower()
+    season = _scope_int(event.get("season"))
+    if season is None:
+        return ""
+    if typ == "season":
+        return f"#season:{season}"
+    episode = _scope_int(event.get("episode"))
+    if episode is None:
+        return ""
+    return f"#s{season:02d}e{episode:02d}"
+
+
+def _series_scope_key(event: Mapping[str, Any]) -> str:
+    title = str(event.get("series_title") or "").strip().lower()
+    if not title:
+        return ""
+    year = event.get("series_year")
+    year_part = "" if year in (None, "") else str(year)
+    return f"show|title:{title}|year:{year_part}{_scope_fragment(event)}"
+
+
 def _event_base_key(event: Mapping[str, Any], fallback: Mapping[str, Any]) -> str:
+    typ = str(event.get("type") or "").strip().lower()
+    if typ in ("episode", "season"):
+        show_ids = event.get("show_ids") if isinstance(event.get("show_ids"), Mapping) else None
+        if show_ids:
+            try:
+                key = canonical_key(event)
+            except Exception:
+                key = ""
+            if key and any(key.startswith(f"{prefix}:") for prefix in KEY_PRIORITY):
+                return key
+        scoped = _series_scope_key(event)
+        if scoped:
+            return scoped
+        try:
+            return canonical_key(fallback)
+        except Exception:
+            return "unknown:"
     try:
         key = canonical_key(event)
     except Exception:
@@ -368,7 +416,7 @@ def _item_meta(http: Any, item_id: str | None) -> Mapping[str, Any] | None:
     if iid in _item_meta_cache:
         return _item_meta_cache[iid]
     try:
-        r = http.get(f"/Items/{iid}", params={"Fields": "ProviderIds,ProductionYear"})
+        r = http.get(f"/Items/{iid}", params={"Fields": "ProviderIds,ProductionYear,Type"})
         if getattr(r, 'status_code', 0) != 200:
             _item_meta_cache[iid] = None
             return None
@@ -444,6 +492,13 @@ def _item_ids_for(http: Any, item_id: str | None) -> dict[str, str]:
     _item_ids_cache[iid] = ids
     return ids
 
+
+def _series_ids_via_item(http: Any, item_id: str | None) -> dict[str, str]:
+    body = _item_meta(http, item_id)
+    if not isinstance(body, Mapping) or str(body.get('Type') or '').strip() != 'Series':
+        return {}
+    return _item_ids_for(http, item_id)
+
 def _resp_snip(r: Any) -> str:
     try:
         j = r.json()
@@ -457,8 +512,36 @@ def _resp_snip(r: Any) -> str:
         except Exception:
             return "<no-body>"
 
+_SERIES_SCOPE_RX = re.compile(
+    r"^show\|title:(?P<title>[^|]*)\|year:(?P<year>\d*)(?:#s(?P<s>\d+)e(?P<e>\d+))?$"
+)
+
+
 def _minimal_from_ckey(key: str) -> dict[str, Any]:
     k = str(key or "").strip().lower()
+    sm = _SERIES_SCOPE_RX.match(k)
+    if sm:
+        out: dict[str, Any] = {"watched": True}
+        title = (sm.group("title") or "").strip()
+        if not title:
+            return out
+        out["series_title"] = title
+        year = sm.group("year")
+        if year:
+            try:
+                out["series_year"] = int(year)
+            except Exception:
+                pass
+        s = sm.group("s")
+        e = sm.group("e")
+        if s and e:
+            try:
+                out["type"] = "episode"
+                out["season"] = int(s)
+                out["episode"] = int(e)
+            except Exception:
+                pass
+        return out
     m = re.match(r"^(?P<idkey>[a-z0-9_]+):(?P<idval>[^#]+)(?:#s(?P<s>\d+)e(?P<e>\d+))?$", k)
     if not m:
         return {"watched": True}
@@ -851,7 +934,7 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
                                     except Exception:
                                         pass
                                 if not show_ids and sid:
-                                    show_ids = _item_ids_for(http, str(sid))
+                                    show_ids = _series_ids_via_item(http, str(sid))
                                 if show_ids:
                                     mm["show_ids"] = dict(show_ids)
 
@@ -899,7 +982,7 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
                             pass
                     if not show_ids and sid:
                         # Fallback to direct item lookup (cached) if the series item couldn't be resolved.
-                        show_ids = _item_ids_for(http, sid)
+                        show_ids = _series_ids_via_item(http, sid)
                     season = m.get("season")
                     episode = m.get("episode")
                     if season is None:

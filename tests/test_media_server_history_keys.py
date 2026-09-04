@@ -141,14 +141,19 @@ def test_emby_history_no_id_episode_title_fallback_uses_original_row(monkeypatch
 
     monkeypatch.setattr(_history, "_emby_library_roots", lambda _adapter: {})
     monkeypatch.setattr(_history, "prefetch_series_minimals", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(_history, "_series_minimal_from_episode", lambda *_args, **_kwargs: {"ids": {}})
+    monkeypatch.setattr(
+        _history,
+        "_series_minimal_from_episode",
+        lambda _http, _uid, ep, _cache: {"ids": {}, "year": 2019 if ep.get("SeriesId") == "series-a" else 2018},
+    )
+    monkeypatch.setattr(_history, "_series_ids_via_item", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(_history, "_shadow_load", lambda: {})
     monkeypatch.setattr(_history, "_bb_load", lambda: {})
 
     out = _history.build_index(adapter)
 
-    assert "episode|title:ep one|year:2020@1767312000" in out
-    assert "episode|title:ep two|year:2021@1767312000" in out
+    assert "show|title:show a|year:2019#s06e03@1767312000" in out
+    assert "show|title:show b|year:2018#s06e03@1767312000" in out
     assert "episode|title:s06e03|year:@1767312000" not in out
 
 
@@ -186,11 +191,109 @@ def test_jellyfin_history_no_id_episode_title_fallback_uses_original_row(monkeyp
     monkeypatch.setattr(_history, "jf_get_library_roots", lambda _adapter: {})
     monkeypatch.setattr(_history, "_prefetch_series_meta", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(_history, "_series_ids_for", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(
+        _history,
+        "_series_year_for",
+        lambda _http, _uid, sid: 2019 if sid == "series-a" else 2018,
+    )
     monkeypatch.setattr(_history, "_shadow_load", lambda: {})
     monkeypatch.setattr(_history, "_bb_load", lambda: {})
 
     out = _history.build_index(adapter)
 
-    assert "episode|title:ep one|year:2020@1767312000" in out
-    assert "episode|title:ep two|year:2021@1767312000" in out
+    assert "show|title:show a|year:2019#s06e03@1767312000" in out
+    assert "show|title:show b|year:2018#s06e03@1767312000" in out
     assert "episode|title:s06e03|year:@1767312000" not in out
+
+
+def test_emby_history_never_keys_episode_on_its_own_imdb_id(monkeypatch: Any) -> None:
+    from providers.sync.emby import _history
+
+    row = {
+        "Id": "episode-3",
+        "Type": "Episode",
+        "Name": "Sleep Hypnosis",
+        "SeriesName": "What We Do in the Shadows",
+        "SeriesId": "series-wwdits",
+        "ParentIndexNumber": 6,
+        "IndexNumber": 3,
+        "ProviderIds": {"Imdb": "tt33029958"},
+        "UserData": {"Played": True, "LastPlayedDate": "2026-01-02T00:00:00Z"},
+    }
+    adapter = SimpleNamespace(client=_Http([row]), cfg=SimpleNamespace(user_id="user-1"))
+
+    monkeypatch.setattr(_history, "_emby_library_roots", lambda _adapter: {})
+    monkeypatch.setattr(_history, "prefetch_series_minimals", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(_history, "_series_minimal_from_episode", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(_history, "_series_ids_via_item", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(_history, "_shadow_load", lambda: {})
+    monkeypatch.setattr(_history, "_bb_load", lambda: {})
+
+    out = _history.build_index(adapter)
+
+    assert "imdb:tt33029958#s06e03@1767312000" not in out
+    assert "show|title:what we do in the shadows|year:#s06e03@1767312000" in out
+
+
+def test_jellyfin_history_never_keys_episode_on_its_own_imdb_id(monkeypatch: Any) -> None:
+    from providers.sync.jellyfin import _history
+
+    row = {
+        "Id": "episode-3",
+        "Type": "Episode",
+        "Name": "Sleep Hypnosis",
+        "SeriesName": "What We Do in the Shadows",
+        "SeriesId": "series-wwdits",
+        "ParentIndexNumber": 6,
+        "IndexNumber": 3,
+        "ProviderIds": {"Imdb": "tt33029958"},
+        "UserData": {"Played": True, "LastPlayedDate": "2026-01-02T00:00:00Z"},
+    }
+    adapter = SimpleNamespace(client=_Http([row]), cfg=SimpleNamespace(user_id="user-1"))
+
+    monkeypatch.setattr(_history, "jf_get_library_roots", lambda _adapter: {})
+    monkeypatch.setattr(_history, "_prefetch_series_meta", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(_history, "_series_ids_for", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(_history, "_series_year_for", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(_history, "_shadow_load", lambda: {})
+    monkeypatch.setattr(_history, "_bb_load", lambda: {})
+
+    out = _history.build_index(adapter)
+
+    assert "imdb:tt33029958#s06e03@1767312000" not in out
+    assert "show|title:what we do in the shadows|year:#s06e03@1767312000" in out
+
+
+def test_jellyfin_history_falls_back_to_parent_series_ids(monkeypatch: Any) -> None:
+    from providers.sync.jellyfin import _history
+
+    row = {
+        "Id": "episode-3",
+        "Type": "Episode",
+        "Name": "Sleep Hypnosis",
+        "SeriesName": "What We Do in the Shadows",
+        "SeriesId": "",
+        "ParentId": "series-wwdits",
+        "ParentIndexNumber": 6,
+        "IndexNumber": 3,
+        "ProviderIds": {"Imdb": "tt33029958"},
+        "UserData": {"Played": True, "LastPlayedDate": "2026-01-02T00:00:00Z"},
+    }
+    adapter = SimpleNamespace(client=_Http([row]), cfg=SimpleNamespace(user_id="user-1"))
+
+    monkeypatch.setattr(_history, "jf_get_library_roots", lambda _adapter: {})
+    monkeypatch.setattr(_history, "_prefetch_series_meta", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        _history,
+        "_series_ids_for",
+        lambda _http, _uid, sid: {"tmdb": "83631", "imdb": "tt7908628"} if sid == "series-wwdits" else {},
+    )
+    monkeypatch.setattr(_history, "_series_meta_type", lambda sid: "Series" if sid == "series-wwdits" else "")
+    monkeypatch.setattr(_history, "_series_year_for", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(_history, "_shadow_load", lambda: {})
+    monkeypatch.setattr(_history, "_bb_load", lambda: {})
+
+    out = _history.build_index(adapter)
+
+    assert "tmdb:83631#s06e03@1767312000" in out
+    assert out["tmdb:83631#s06e03@1767312000"]["show_ids"] == {"tmdb": "83631", "imdb": "tt7908628"}
