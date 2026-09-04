@@ -21,6 +21,7 @@ from ._common import (
     _pair_scope,
     _is_capture_mode,
     _series_minimal_from_episode,
+    _items_by_ids,
     prefetch_series_minimals,
 )
 from cw_platform.id_map import KEY_PRIORITY, canonical_key, minimal as id_minimal
@@ -493,11 +494,42 @@ def _item_ids_for(http: Any, item_id: str | None) -> dict[str, str]:
     return ids
 
 
-def _series_ids_via_item(http: Any, item_id: str | None) -> dict[str, str]:
-    body = _item_meta(http, item_id)
-    if not isinstance(body, Mapping) or str(body.get('Type') or '').strip() != 'Series':
+_series_fallback_cache: dict[str, dict[str, str]] = {}
+
+
+def _series_ids_via_item(http: Any, uid: str, item_id: str | None) -> dict[str, str]:
+    iid = str(item_id or '').strip()
+    if not iid:
         return {}
-    return _item_ids_for(http, item_id)
+    if iid in _series_fallback_cache:
+        return dict(_series_fallback_cache[iid])
+    found = _series_ids_via_item_uncached(http, uid, iid)
+    _series_fallback_cache[iid] = dict(found)
+    return dict(found)
+
+
+def _series_ids_via_item_uncached(http: Any, uid: str, item_id: str) -> dict[str, str]:
+    iid = str(item_id or '').strip()
+    if not iid:
+        return {}
+    _ok, rows = _items_by_ids(http, uid, [iid])
+    row = rows.get(iid)
+    if isinstance(row, Mapping):
+        kind = str(row.get('Type') or '').strip()
+        if kind == 'Series':
+            return _pids_to_ids(row.get('ProviderIds'))
+        if kind == 'Season':
+            parent = str(row.get('SeriesId') or row.get('ParentId') or '').strip()
+            if parent:
+                _ok2, prows = _items_by_ids(http, uid, [parent])
+                prow = prows.get(parent)
+                if isinstance(prow, Mapping) and str(prow.get('Type') or '').strip() == 'Series':
+                    return _pids_to_ids(prow.get('ProviderIds'))
+        return {}
+    body = _item_meta(http, iid)
+    if isinstance(body, Mapping) and str(body.get('Type') or '').strip() == 'Series':
+        return _item_ids_for(http, iid)
+    return {}
 
 def _resp_snip(r: Any) -> str:
     try:
@@ -742,6 +774,7 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
     _item_meta_cache.clear()
     _item_ids_cache.clear()
     _lib_anc_cache.clear()
+    _series_fallback_cache.clear()
     series_cache: dict[str, dict[str, Any] | None] = {}
     played_ts_cache: dict[str, int] = {}
     page_size = _history_page_size(adapter)
@@ -785,6 +818,7 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
                     scope_libs = [str(x) for x in anc if x]
 
     events: list[tuple[int, dict[str, Any], dict[str, Any]]] = []
+    ep_show_ids_stats = {"resolved": 0, "missing": 0}
     presence_items: dict[str, dict[str, Any]] = {}
 
     def _is_movieish(row: Mapping[str, Any]) -> bool:
@@ -933,12 +967,21 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
                                         show_ids[k] = str(int(vv))
                                     except Exception:
                                         pass
-                                if not show_ids and sid:
-                                    show_ids = _series_ids_via_item(http, str(sid))
+                                if not show_ids and smeta is None and sid:
+                                    show_ids = _series_ids_via_item(http, uid, str(sid))
                                 if show_ids:
                                     mm["show_ids"] = dict(show_ids)
+                                    ep_show_ids_stats["resolved"] += 1
+                                else:
+                                    ep_show_ids_stats["missing"] += 1
+                                sy = smeta.get("year") if isinstance(smeta, Mapping) else None
+                                if sy is not None:
+                                    try:
+                                        mm["series_year"] = int(sy)
+                                    except Exception:
+                                        pass
 
-                            pk = canonical_key(mm)
+                            pk = _event_base_key(mm, m0)
                             if pk and pk not in presence_items:
                                 presence_items[pk] = mm
                             skipped_untimed += 1
@@ -980,9 +1023,9 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
                             show_ids[k] = str(int(vv))
                         except Exception:
                             pass
-                    if not show_ids and sid:
+                    if not show_ids and smeta is None and sid:
                         # Fallback to direct item lookup (cached) if the series item couldn't be resolved.
-                        show_ids = _series_ids_via_item(http, sid)
+                        show_ids = _series_ids_via_item(http, uid, sid)
                     season = m.get("season")
                     episode = m.get("episode")
                     if season is None:
@@ -1014,6 +1057,9 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
                     }
                     if show_ids:
                         event["show_ids"] = dict(show_ids)
+                        ep_show_ids_stats["resolved"] += 1
+                    else:
+                        ep_show_ids_stats["missing"] += 1
                     sy = smeta.get("year") if isinstance(smeta, Mapping) else None
                     if sy is not None:
                         try:
@@ -1166,6 +1212,12 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
             lib_counts[s] = lib_counts.get(s, 0) + 1
         _dbg("index_fetch_counts", source="library_distribution", cfg_libs=cfg_libs, distribution=lib_counts)
 
+    if ep_show_ids_stats["missing"]:
+        _warn(
+            "episode_show_ids_missing",
+            missing=ep_show_ids_stats["missing"],
+            resolved=ep_show_ids_stats["resolved"],
+        )
     _info("index_done", count=len(out), mode="events+presence")
     return out
 

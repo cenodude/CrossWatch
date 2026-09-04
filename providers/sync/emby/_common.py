@@ -841,28 +841,77 @@ def _is_future_episode(it: Any) -> bool:
     return False
 
 
+_SERIES_FIELDS = "ProviderIds,ProductionYear,Type,Name,SeriesId,ParentId"
+
+
+def _items_by_ids(http: Any, uid: str, ids: list[str]) -> tuple[bool, dict[str, Mapping[str, Any]]]:
+    if not ids:
+        return True, {}
+    try:
+        r = http.get(
+            f"/Users/{uid}/Items",
+            params={"Ids": ",".join(ids), "Fields": _SERIES_FIELDS},
+        )
+    except Exception:
+        return False, {}
+    if getattr(r, "status_code", 0) != 200:
+        return False, {}
+    try:
+        arr = (r.json() or {}).get("Items") or []
+    except Exception:
+        return True, {}
+    out: dict[str, Mapping[str, Any]] = {}
+    for raw in arr if isinstance(arr, list) else []:
+        if not isinstance(raw, Mapping):
+            continue
+        rid = str(raw.get("Id") or "").strip()
+        if rid:
+            out[rid] = raw
+    return True, out
+
+
+def _series_id_for_episode(http: Any, uid: str, ep: Mapping[str, Any]) -> str:
+    sid = str(ep.get("SeriesId") or ep.get("seriesid") or "").strip()
+    if sid:
+        return sid
+    parent = str(ep.get("ParentId") or "").strip()
+    if not parent:
+        return ""
+    ok, rows = _items_by_ids(http, uid, [parent])
+    row = rows.get(parent)
+    if not ok or not isinstance(row, Mapping):
+        return ""
+    kind = str(row.get("Type") or "").strip()
+    if kind == "Series":
+        return parent
+    if kind == "Season":
+        return str(row.get("SeriesId") or row.get("ParentId") or "").strip()
+    return ""
+
+
 def _series_minimal_from_episode(
     http: Any,
     uid: str,
     ep: Mapping[str, Any],
     _cache: dict[str, dict[str, Any] | None],
 ) -> dict[str, Any] | None:
-    sid = ep.get("SeriesId") or ep.get("seriesid")
-    if not sid:
-        return None
-    if sid in _cache:
+    sid = str(ep.get("SeriesId") or ep.get("seriesid") or "").strip()
+    if sid and sid in _cache:
         return _cache[sid]
-    r = http.get(
-        f"/Users/{uid}/Items",
-        params={"Ids": sid, "Fields": "ProviderIds,ProductionYear,Type,Name"},
-    )
-    if getattr(r, "status_code", 0) == 200:
-        arr = (r.json() or {}).get("Items") or []
-        if arr:
-            m = normalize(arr[0])
-            _cache[sid] = m
-            return m
-    _cache[sid] = None
+    if not sid:
+        sid = _series_id_for_episode(http, uid, ep)
+        if not sid:
+            return None
+        if sid in _cache:
+            return _cache[sid]
+    ok, rows = _items_by_ids(http, uid, [sid])
+    row = rows.get(sid)
+    if isinstance(row, Mapping) and str(row.get("Type") or "").strip() == "Series":
+        m = normalize(row)
+        _cache[sid] = m
+        return m
+    if ok:
+        _cache[sid] = None
     return None
 
 
@@ -889,13 +938,11 @@ def prefetch_series_minimals(
         try:
             r = http.get(
                 f"/Users/{uid}/Items",
-                params={"Ids": ','.join(batch), "Fields": "ProviderIds,ProductionYear,Type,Name"},
+                params={"Ids": ','.join(batch), "Fields": _SERIES_FIELDS},
             )
         except Exception:
             r = None
         if r is None or getattr(r, 'status_code', 0) != 200:
-            for sid in batch:
-                _cache.setdefault(sid, None)
             continue
         try:
             arr = (r.json() or {}).get('Items') or []
@@ -904,12 +951,10 @@ def prefetch_series_minimals(
         for raw in arr:
             try:
                 sid = str((raw or {}).get('Id') or '').strip()
-                if sid:
+                if sid and str((raw or {}).get('Type') or '').strip() == 'Series':
                     _cache[sid] = normalize(raw)
             except Exception:
                 pass
-        for sid in batch:
-            _cache.setdefault(sid, None)
 
 def _fetch_all_playlist_items(
     http: Any,
