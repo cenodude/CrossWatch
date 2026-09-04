@@ -46,7 +46,55 @@ _UNRES_CACHE: dict[str, dict[str, Any]] = {}
 _UNRES_DIRTY: set[str] = set()
 
 
+def _scope_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
+def _scope_fragment(event: Mapping[str, Any]) -> str:
+    typ = str(event.get("type") or "").strip().lower()
+    season = _scope_int(event.get("season"))
+    if season is None:
+        return ""
+    if typ == "season":
+        return f"#season:{season}"
+    episode = _scope_int(event.get("episode"))
+    if episode is None:
+        return ""
+    return f"#s{season:02d}e{episode:02d}"
+
+
+def _series_scope_key(event: Mapping[str, Any]) -> str:
+    title = str(event.get("series_title") or "").strip().lower()
+    if not title:
+        return ""
+    year = event.get("series_year")
+    year_part = "" if year in (None, "") else str(year)
+    return f"show|title:{title}|year:{year_part}{_scope_fragment(event)}"
+
+
 def _event_base_key(event: Mapping[str, Any], fallback: Mapping[str, Any]) -> str:
+    typ = str(event.get("type") or "").strip().lower()
+    if typ in ("episode", "season"):
+        show_ids = event.get("show_ids") if isinstance(event.get("show_ids"), Mapping) else None
+        if show_ids:
+            try:
+                key = canonical_key(event)
+            except Exception:
+                key = ""
+            if key and any(key.startswith(f"{prefix}:") for prefix in KEY_PRIORITY):
+                return key
+        scoped = _series_scope_key(event)
+        if scoped:
+            return scoped
+        try:
+            return canonical_key(fallback)
+        except Exception:
+            return "unknown:"
     try:
         key = canonical_key(event)
     except Exception:
@@ -374,6 +422,38 @@ def _series_ids_for(http: Any, uid: str, series_id: str | None) -> dict[str, str
     return out
 
 
+def _series_meta_type(series_id: str | None) -> str:
+    body = _SERIES_META_CACHE.get(str(series_id or '').strip()) or {}
+    return str(body.get('Type') or '').strip() if isinstance(body, Mapping) else ''
+
+
+def _series_year_for(http: Any, uid: str, series_id: str | None) -> int | None:
+    sid = (str(series_id or '').strip()) or ''
+    if not sid:
+        return None
+    if sid not in _SERIES_META_CACHE:
+        _prefetch_series_meta(http, uid, [sid])
+    body = _SERIES_META_CACHE.get(sid) or {}
+    year = body.get('ProductionYear') if isinstance(body, Mapping) else None
+    try:
+        return int(year) if year is not None else None
+    except Exception:
+        return None
+
+
+def _episode_show_ids(http: Any, uid: str, row: Mapping[str, Any]) -> tuple[str, dict[str, str]]:
+    sid = str(row.get('SeriesId') or '').strip()
+    ids = _series_ids_for(http, uid, sid) if sid else {}
+    if ids:
+        return sid, ids
+    parent = str(row.get('ParentId') or '').strip()
+    if parent and parent != sid:
+        parent_ids = _series_ids_for(http, uid, parent)
+        if parent_ids and _series_meta_type(parent) == 'Series':
+            return parent, parent_ids
+    return sid, ids
+
+
 # low-level Jellyfin writes
 def _mark_played(http: Any, uid: str, item_id: str, *, date_played_iso: str | None) -> bool:
     try:
@@ -617,7 +697,7 @@ def build_index(
                     "watched": True,
                 }
             elif typ == "Episode":
-                show_ids = _series_ids_for(http, uid, row.get("SeriesId"))
+                series_id, show_ids = _episode_show_ids(http, uid, row)
                 s = m.get("season")
                 e = m.get("episode")
                 try:
@@ -638,6 +718,9 @@ def build_index(
                     "watched_at": watched_at,
                     "watched": True,
                 }
+                series_year = _series_year_for(http, uid, series_id)
+                if series_year is not None:
+                    event["series_year"] = series_year
             else:
                 continue
 
