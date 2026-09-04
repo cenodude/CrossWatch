@@ -157,9 +157,14 @@ class StateStore:
                 out["providers"][str(provider)] = dst
         return out
 
-    def load_state_features(self, features: set[str] | list[str] | tuple[str, ...]) -> dict[str, Any]:
+    def load_state_features(
+        self,
+        features: set[str] | list[str] | tuple[str, ...],
+        *,
+        recent_limit: int | None = None,
+    ) -> dict[str, Any]:
         wanted = {str(feature or "").strip().lower() for feature in features or [] if str(feature or "").strip()}
-        state = sqlite_state.load_state_features(self.base_path, features)
+        state = sqlite_state.load_state_features(self.base_path, features, recent_limit=recent_limit)
         policy = self._filter_policy_features(sqlite_manual_policy.load_policy(self.base_path), wanted)
         return self._merge_policy(state, policy)
 

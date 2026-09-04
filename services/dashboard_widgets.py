@@ -964,7 +964,6 @@ def latest_ratings_widget(
                     continue
                 entries.append((_rank(item), len(entries), str(raw_key), item, [ref], False))
 
-    library_total = len(entries)
     cap = max(1, min(int(limit or 12), 24))
 
     def _build(selected: list) -> list[dict[str, Any]]:
@@ -1000,7 +999,7 @@ def latest_ratings_widget(
     )
     for row in selected:
         row.pop(_RATING_TRACKER_FLAG, None)
-    return {"ok": True, "items": selected, "total": len(items), "library_total": library_total}
+    return {"ok": True, "items": selected, "total": len(items)}
 
 
 def _activity_row(event: Mapping[str, Any]) -> dict[str, Any]:
@@ -1197,23 +1196,6 @@ def _history_provider_blocks(state: Mapping[str, Any], user_filter: Mapping[str,
             yield provider, instance, block
 
 
-def _history_library_total(
-    state: Mapping[str, Any],
-    tracker_items: Mapping[str, Any] | None,
-    *,
-    user_filter: Mapping[str, Any] | None = None,
-) -> int:
-    scoped = bool(_normalize_user_filter(user_filter))
-    seen: set[str] = set()
-    for raw_key, raw_item in (tracker_items or {}).items():
-        if scoped and not _sources_match_user(_sources_from_item(_unwrap_history_item(raw_item)), user_filter):
-            continue
-        seen.add(str(raw_key))
-    for _provider, _instance, block in _history_provider_blocks(state or {}, user_filter):
-        seen.update(str(raw_key) for raw_key in _feature_items(block, "history").keys())
-    return len(seen)
-
-
 def _latest_history_tracker_rows(
     items: Mapping[str, Any],
     *,
@@ -1289,12 +1271,7 @@ def recent_history_widget(
         tracker_rows = _latest_history_tracker_rows(tracker_items or {}, user_filter=user_filter, window=None)
         rows = _merge_history_rows(state_rows, tracker_rows, alias_map=alias_map)
     selected = _resolve_missing_art_rows(rows[:cap], size="w300", episode_still=True)
-    return {
-        "ok": True,
-        "items": selected,
-        "total": len(rows),
-        "library_total": _history_library_total(state or {}, tracker_items, user_filter=user_filter),
-    }
+    return {"ok": True, "items": selected, "total": len(rows)}
 
 
 def recent_scrobble_widget(*, limit: int = 8, user_filter: Mapping[str, Any] | None = None) -> dict[str, Any]:
