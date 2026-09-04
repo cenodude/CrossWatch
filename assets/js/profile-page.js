@@ -4,8 +4,17 @@
 (function () {
   const $ = (sel, root = document) => root.querySelector(sel);
   const esc = (value) => String(value ?? "").replace(/[&<>"]/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[m]));
-  const api = async (url, opt = {}) => {
-    const res = await fetch(url, { cache: "no-store", credentials: "same-origin", ...opt });
+  const API_TIMEOUT_MS = 60 * 1000;
+
+  const api = async (url, opt = {}, ms = API_TIMEOUT_MS) => {
+    const controller = typeof AbortController === "function" ? new AbortController() : null;
+    const timer = controller ? window.setTimeout(() => controller.abort("timeout"), ms) : 0;
+    let res;
+    try {
+      res = await fetch(url, { cache: "no-store", credentials: "same-origin", signal: controller?.signal, ...opt });
+    } finally {
+      if (timer) window.clearTimeout(timer);
+    }
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data?.ok === false) throw new Error(data?.error || `HTTP ${res.status}`);
     return data;
@@ -123,8 +132,9 @@
     const show = objectOf(item?.show || item?.series || item?.anime);
     const showIds = objectOf(meta.show_ids);
     const nestedShowIds = objectOf(show.ids);
+    const idsShowIds = objectOf(ids.show_ids);
     if (mediaValue(item) === "movie") return item?.tmdb || item?.tmdb_id || ids.tmdb || ids.id || "";
-    return showIds.tmdb || nestedShowIds.tmdb || show.tmdb || show.tmdb_id || ids.tmdb_show || item?.tmdb_show || ids.show_tmdb || item?.show_tmdb || item?.tmdb || item?.tmdb_id || ids.tmdb || "";
+    return showIds.tmdb || nestedShowIds.tmdb || objectOf(item?.show_ids).tmdb || idsShowIds.tmdb || show.tmdb || show.tmdb_id || ids.tmdb_show || item?.tmdb_show || ids.show_tmdb || item?.show_tmdb || item?.tmdb || item?.tmdb_id || ids.tmdb || "";
   };
   const showTmdbId = (item) => {
     const ids = objectOf(item?.ids);
@@ -133,8 +143,9 @@
     const showIds = objectOf(meta.show_ids);
     const nestedShowIds = objectOf(show.ids);
     const directShowIds = objectOf(item?.show_ids);
+    const idsShowIds = objectOf(ids.show_ids);
     return String(
-      showIds.tmdb || nestedShowIds.tmdb || directShowIds.tmdb || show.tmdb || show.tmdb_id
+      showIds.tmdb || nestedShowIds.tmdb || directShowIds.tmdb || idsShowIds.tmdb || show.tmdb || show.tmdb_id
       || ids.tmdb_show || item?.tmdb_show || ids.show_tmdb || item?.show_tmdb || ""
     ).trim();
   };

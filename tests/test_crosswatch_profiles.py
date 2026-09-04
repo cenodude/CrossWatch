@@ -2129,6 +2129,18 @@ def test_profile_last_watched_uses_provider_branding_icons() -> None:
     assert "#profile-watchlist .cw-profile-watchlist-status{display:inline-flex;align-items:center;justify-content:center;align-self:center;justify-self:center;height:28px;min-height:28px" in css
 
 
+def test_profile_show_tmdb_id_reads_nested_ids_show_ids() -> None:
+    js = Path("assets/js/profile-page.js").read_text("utf-8")
+
+    # history widget rows nest the show id at ids.show_ids, not at top level
+    show = js[js.index("  const showTmdbId = (item) => {"):js.index("  const titleOf =")]
+    assert "const idsShowIds = objectOf(ids.show_ids);" in show
+    assert "directShowIds.tmdb || idsShowIds.tmdb" in show
+
+    tmdb = js[js.index("  const tmdbId = (item) => {"):js.index("  const showTmdbId =")]
+    assert "objectOf(item?.show_ids).tmdb || idsShowIds.tmdb" in tmdb
+
+
 def test_profile_watchlist_rows_reuse_widget_art_url() -> None:
     js = Path("assets/js/profile-page.js").read_text("utf-8")
     helper = Path("assets/helpers/watchlist-preview.js").read_text("utf-8")
