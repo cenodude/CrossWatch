@@ -481,7 +481,18 @@ def has_state(base_path: str | Path) -> bool:
     return bool(row and int(row[0] or 0) > 0)
 
 
-def _build_state_from_feature_rows(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> dict[str, Any]:
+_RECENT_ORDER_COLUMNS = {
+    "history": "watched_at",
+    "ratings": "rated_at",
+}
+
+
+def _build_state_from_feature_rows(
+    conn: sqlite3.Connection,
+    rows: list[sqlite3.Row],
+    *,
+    recent_limit: int | None = None,
+) -> dict[str, Any]:
     providers: dict[str, Any] = {}
     wall: list[dict[str, Any]] = []
     for pfs in rows:
@@ -496,10 +507,17 @@ def _build_state_from_feature_rows(conn: sqlite3.Connection, rows: list[sqlite3.
         checkpoint = _scalar_from_row(pfs, "checkpoint")
         if checkpoint is not None:
             feat_node["checkpoint"] = checkpoint
-        items = conn.execute(
-            "SELECT * FROM baseline_items WHERE provider_state_id=? ORDER BY item_key",
-            (int(pfs["id"]),),
-        ).fetchall()
+        order_column = _RECENT_ORDER_COLUMNS.get(feature) if recent_limit else None
+        if order_column:
+            items = conn.execute(
+                f"SELECT * FROM baseline_items WHERE provider_state_id=? ORDER BY {order_column} DESC LIMIT ?",
+                (int(pfs["id"]), int(recent_limit)),
+            ).fetchall()
+        else:
+            items = conn.execute(
+                "SELECT * FROM baseline_items WHERE provider_state_id=? ORDER BY item_key",
+                (int(pfs["id"]),),
+            ).fetchall()
         for row in items:
             item = _row_to_item(row)
             feat_node["baseline"]["items"][str(row["item_key"])] = item
@@ -532,7 +550,12 @@ def load_state(base_path: str | Path) -> dict[str, Any]:
         return state
 
 
-def load_state_features(base_path: str | Path, features: set[str] | list[str] | tuple[str, ...]) -> dict[str, Any]:
+def load_state_features(
+    base_path: str | Path,
+    features: set[str] | list[str] | tuple[str, ...],
+    *,
+    recent_limit: int | None = None,
+) -> dict[str, Any]:
     wanted = sorted({str(feature or "").strip().lower() for feature in features or [] if str(feature or "").strip()})
     if not wanted:
         return {"providers": {}, "wall": [], "last_sync_epoch": None}
@@ -545,7 +568,7 @@ def load_state_features(base_path: str | Path, features: set[str] | list[str] | 
             f"SELECT * FROM provider_feature_state WHERE feature IN ({placeholders}) ORDER BY provider, instance, feature",
             wanted,
         ).fetchall()
-        return _build_state_from_feature_rows(conn, rows)
+        return _build_state_from_feature_rows(conn, rows, recent_limit=recent_limit)
 
 
 def provider_feature_counts(base_path: str | Path, feature: str = "watchlist") -> dict[str, int]:

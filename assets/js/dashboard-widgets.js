@@ -24,7 +24,7 @@
   const UNITS = 2;
   const WIDE_UNITS = 3;
   const WIDGET_REFRESH_TTL_MS = 60 * 1000;
-  const WIDGET_FETCH_TIMEOUT_MS = 30 * 1000;
+  const WIDGET_FETCH_TIMEOUT_MS = 60 * 1000;
   const WIDGET_FETCH_RETRY_DELAYS = [350, 900, 1800];
   const WIDGET_LOADING_DELAY_MS = 700;
   const REFRESHABLE_WIDGETS = ["history", "ratings", "scrobble", "progress", "playlists"];
@@ -509,11 +509,8 @@
 
   function refreshForSyncComplete(event) {
     const kinds = widgetKindsFromSyncEvent(event);
-    if (kinds === null) {
-      markWidgetsDirty(250);
-    } else if (kinds.length) {
-      markWidgetsDirty(250, { kinds });
-    }
+    if (kinds && kinds.length) markWidgetsDirty(250, { kinds });
+    else markWidgetsDirty(250);
   }
 
   function scheduleScrobbleStopRefresh() {

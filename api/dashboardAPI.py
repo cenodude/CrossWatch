@@ -52,9 +52,65 @@ def _store_widgets_payload(version: str, payload: Mapping[str, Any]) -> None:
             _PAYLOAD_CACHE.popitem(last=False)
 
 
+_PAYLOAD_INFLIGHT: dict[str, threading.Event] = {}
+_PAYLOAD_BUILD_WAIT_SECONDS = 55.0
+_STATE_RECENT_LIMIT = 400
+_COUNT_FEATURES = {
+    "history": "recent_history",
+    "ratings": "latest_ratings",
+    "progress": "recent_progress",
+}
+
+
+def _feature_library_totals(base_path: Any, requested: set[str], user_filter: Mapping[str, Any]) -> dict[str, int]:
+    wanted = requested & set(_COUNT_FEATURES)
+    if not wanted:
+        return {}
+    scoped = {str(provider or "").strip().upper() for provider in (user_filter or {})}
+    try:
+        from cw_platform.orchestrator._state_store import StateStore
+
+        store = StateStore(base_path)
+    except Exception:
+        return {}
+    totals: dict[str, int] = {}
+    for feature in sorted(wanted):
+        try:
+            counts = store.provider_feature_counts(feature) or {}
+        except Exception:
+            continue
+        values = [
+            int(value or 0)
+            for provider, value in counts.items()
+            if not scoped or str(provider or "").strip().upper() in scoped
+        ]
+        totals[feature] = max(values) if values else 0
+    return totals
+
+
+def _begin_widgets_build(version: str) -> tuple[threading.Event, bool]:
+    with _PAYLOAD_CACHE_LOCK:
+        event = _PAYLOAD_INFLIGHT.get(version)
+        if event is not None:
+            return event, False
+        event = threading.Event()
+        _PAYLOAD_INFLIGHT[version] = event
+        return event, True
+
+
+def _finish_widgets_build(version: str) -> None:
+    with _PAYLOAD_CACHE_LOCK:
+        event = _PAYLOAD_INFLIGHT.pop(version, None)
+    if event is not None:
+        event.set()
+
+
 def clear_dashboard_payload_cache() -> None:
     with _PAYLOAD_CACHE_LOCK:
         _PAYLOAD_CACHE.clear()
+        for event in _PAYLOAD_INFLIGHT.values():
+            event.set()
+        _PAYLOAD_INFLIGHT.clear()
 
 
 def _dashboard_alias_stamp(requested: set[str]) -> list[tuple[str, int, int]]:
@@ -209,21 +265,38 @@ def dashboard_widgets(
         scoped = bool(str(profile or "").strip())
         payload = _cached_widgets_payload(version)
         if payload is None:
-            state = StateStore(CONFIG).load_state_features(state_features) if state_features else {}
-            user_filter = instances_for_user_profile(cfg, profile) if scoped else {}
-            if scoped and not user_filter:
-                user_filter = {"__NONE__": ["__NONE__"]}
-            payload = dashboard_widgets_payload(
-                state,
-                history_limit=history_limit,
-                ratings_limit=ratings_limit,
-                scrobble_limit=scrobble_limit,
-                progress_limit=progress_limit,
-                playlists_limit=playlists_limit,
-                include=requested,
-                user_filter=user_filter,
-            )
-            _store_widgets_payload(version, payload)
+            build_event, build_owner = _begin_widgets_build(version)
+            try:
+                if not build_owner:
+                    build_event.wait(timeout=_PAYLOAD_BUILD_WAIT_SECONDS)
+                    payload = _cached_widgets_payload(version)
+                if payload is None:
+                    state = (
+                        StateStore(CONFIG).load_state_features(state_features, recent_limit=_STATE_RECENT_LIMIT)
+                        if state_features
+                        else {}
+                    )
+                    user_filter = instances_for_user_profile(cfg, profile) if scoped else {}
+                    if scoped and not user_filter:
+                        user_filter = {"__NONE__": ["__NONE__"]}
+                    payload = dashboard_widgets_payload(
+                        state,
+                        history_limit=history_limit,
+                        ratings_limit=ratings_limit,
+                        scrobble_limit=scrobble_limit,
+                        progress_limit=progress_limit,
+                        playlists_limit=playlists_limit,
+                        include=requested,
+                        user_filter=user_filter,
+                    )
+                    for feature, total in _feature_library_totals(CONFIG, requested, user_filter).items():
+                        block = payload.get(_COUNT_FEATURES[feature])
+                        if isinstance(block, dict):
+                            block["library_total"] = total
+                    _store_widgets_payload(version, payload)
+            finally:
+                if build_owner:
+                    _finish_widgets_build(version)
         payload["version"] = version
         if scoped:
             payload["user_profile"] = str(profile or "").strip()

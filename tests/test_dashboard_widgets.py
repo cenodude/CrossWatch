@@ -1193,7 +1193,6 @@ def test_recent_history_widget_windowing_keeps_newest_items(monkeypatch) -> None
     titles = [row["title"] for row in payload["items"]]
 
     assert titles == [f"Movie {idx}" for idx in range(count - 1, count - 7, -1)]
-    assert payload["library_total"] == count
 
 
 def test_recent_history_widget_window_matches_unwindowed_top_rows(monkeypatch) -> None:
@@ -1237,7 +1236,6 @@ def test_latest_ratings_widget_window_respects_full_sort_tiebreak(monkeypatch) -
     full = dashboard_widgets.latest_ratings_widget({}, limit=24, tracker_items=items, window=0)
 
     assert [row["title"] for row in windowed["items"]] == [row["title"] for row in full["items"]]
-    assert windowed["library_total"] == full["library_total"] == len(items)
 
 
 def test_latest_ratings_widget_widens_window_when_merge_underfills(monkeypatch) -> None:
@@ -1284,6 +1282,46 @@ def test_dashboard_widgets_api_version_tracks_history_alias_files(monkeypatch, t
 
     assert _loads_body(first.body)["version"] != _loads_body(second.body)["version"]
     dashboardAPI.clear_dashboard_payload_cache()
+
+
+def test_bounded_state_load_matches_full_load(monkeypatch, tmp_path) -> None:
+    import time as _time
+
+    from cw_platform.local_db import state as sqlite_state
+    from cw_platform.orchestrator._state_store import StateStore
+
+    monkeypatch.setattr(dashboard_widgets, "_resolve_missing_art_rows", lambda rows, **_kwargs: rows)
+    monkeypatch.setattr(dashboard_widgets, "_history_alias_representatives", lambda: {})
+
+    count = 1200
+    items = {
+        f"ep:{idx}": {
+            "type": "episode",
+            "title": f"Show {idx}",
+            "season": 1,
+            "episode": (idx % 24) + 1,
+            "watched_at": _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime(1700000000 + idx * 600)),
+            "ids": {"tmdb": 900000 + idx},
+            "show_ids": {"tmdb": 5000 + idx},
+        }
+        for idx in range(count)
+    }
+    StateStore(tmp_path).save_state({"providers": {"EMBY": {"history": {"baseline": {"items": items}}}}})
+
+    full = sqlite_state.load_state_features(tmp_path, {"history"})
+    bounded = sqlite_state.load_state_features(tmp_path, {"history"}, recent_limit=400)
+
+    full_payload = dashboard_widgets.recent_history_widget(full, limit=24, tracker_items={})
+    bounded_payload = dashboard_widgets.recent_history_widget(bounded, limit=24, tracker_items={})
+
+    assert [r["key"] for r in bounded_payload["items"]] == [r["key"] for r in full_payload["items"]]
+
+    # the unbounded load must keep its original shape for the orchestrator
+    full_node = full["providers"]["EMBY"]["history"]["baseline"]
+    bounded_node = bounded["providers"]["EMBY"]["history"]["baseline"]
+    assert "item_keys" not in full_node
+    assert len(full_node["items"]) == count
+    assert len(bounded_node["items"]) == 400
 
 
 def test_recent_scrobble_widget_total_is_not_page_limited(monkeypatch) -> None:
@@ -1713,6 +1751,91 @@ def test_dashboard_widgets_api_rebuilds_when_version_changes(monkeypatch, tmp_pa
     dashboardAPI.clear_dashboard_payload_cache()
 
 
+def test_dashboard_widgets_api_collapses_concurrent_builds(monkeypatch, tmp_path) -> None:
+    import threading
+    import time
+
+    import cw_platform.config_base as config_base
+    from api import dashboardAPI
+
+    monkeypatch.setattr(config_base, "CONFIG", tmp_path)
+    monkeypatch.setattr(dashboard_widgets, "_tracker_feature_items", lambda _kind: {})
+    dashboardAPI.clear_dashboard_payload_cache()
+
+    builds = []
+    builds_lock = threading.Lock()
+    real_payload = dashboardAPI.dashboard_widgets_payload
+
+    def slow_payload(*args, **kwargs):
+        with builds_lock:
+            builds.append(1)
+        time.sleep(0.4)
+        return real_payload(*args, **kwargs)
+
+    monkeypatch.setattr(dashboardAPI, "dashboard_widgets_payload", slow_payload)
+
+    results = []
+    results_lock = threading.Lock()
+
+    def hit():
+        r = dashboardAPI.dashboard_widgets(include="history", history_limit=8)
+        with results_lock:
+            results.append(_loads_body(r.body))
+
+    threads = [threading.Thread(target=hit) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(builds) == 1, f"expected a single build, got {len(builds)}"
+    assert len(results) == 4
+    assert len({r["version"] for r in results}) == 1
+    dashboardAPI.clear_dashboard_payload_cache()
+
+
+def test_dashboard_widgets_api_library_total_uses_highest_provider_count(monkeypatch, tmp_path) -> None:
+    import time as _time
+
+    import cw_platform.config_base as config_base
+    from api import dashboardAPI
+    from cw_platform.orchestrator._state_store import StateStore
+
+    def items(prefix: str, count: int, stamp: str) -> dict:
+        return {
+            f"{prefix}:{idx}": {
+                "type": "movie",
+                "title": f"Item {idx}",
+                "year": 2000,
+                "rating": (idx % 10) + 1,
+                stamp: _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime(1700000000 + idx * 600)),
+                "ids": {"tmdb": 900000 + idx},
+            }
+            for idx in range(count)
+        }
+
+    StateStore(tmp_path).save_state(
+        {
+            "providers": {
+                "EMBY": {"history": {"baseline": {"items": items("ep", 432, "watched_at")}}},
+                "SIMKL": {"history": {"baseline": {"items": items("ep", 400, "watched_at")}}},
+            }
+        }
+    )
+
+    monkeypatch.setattr(config_base, "CONFIG", tmp_path)
+    monkeypatch.setattr(dashboard_widgets, "_tracker_feature_items", lambda _kind: {})
+    monkeypatch.setattr(dashboard_widgets, "_resolve_missing_art_rows", lambda rows, **_kwargs: rows)
+    monkeypatch.setattr(dashboard_widgets, "_history_alias_representatives", lambda: {})
+    dashboardAPI.clear_dashboard_payload_cache()
+
+    payload = _loads_body(dashboardAPI.dashboard_widgets(include="history", history_limit=6).body)
+
+    # highest provider count wins, never the sum
+    assert payload["recent_history"]["library_total"] == 432
+    dashboardAPI.clear_dashboard_payload_cache()
+
+
 def test_dashboard_widgets_api_version_tracks_crosswatch_tracker_files(monkeypatch, tmp_path) -> None:
     import cw_platform.config_base as config_base
     from api import dashboardAPI
@@ -1771,7 +1894,7 @@ def test_dashboard_widget_frontend_uses_cached_payload_version() -> None:
     assert "function clearDashboardWidgetState()" in js
     assert 'window.addEventListener("cw:sync-state-cleared", clearDashboardWidgetState);' in js
     assert "clear: clearDashboardWidgetState" in js
-    assert "const WIDGET_FETCH_TIMEOUT_MS = 30 * 1000;" in js
+    assert "const WIDGET_FETCH_TIMEOUT_MS = 60 * 1000;" in js
     assert "window.CW.API.j(url, {}, WIDGET_FETCH_TIMEOUT_MS)" in js
     assert 'controller.abort("timeout")' in js
     assert "function isTimeoutError(e)" in js
@@ -1781,6 +1904,7 @@ def test_dashboard_widget_frontend_uses_cached_payload_version() -> None:
     assert 'const REFRESHABLE_WIDGETS = ["history", "ratings", "scrobble", "progress", "playlists"];' in js
     assert "const latestTotals = { history: 0, ratings: 0, scrobble: 0, progress: 0, playlists: 0 };" in js
     assert "block.scrobble_total" in js
+    assert "block.library_total" in js
     assert "async function refreshDashboardWidgets({ forceConfig = false, force = false, preserve = true, kinds = null } = {})" in js
     assert 'params.set("known_version", cachedPayload.version)' in js
     assert "const anyWidgetBlank = requestedKinds.some((kind) => !(latestItems[kind]?.length));" in js
@@ -1818,6 +1942,8 @@ def test_dashboard_widget_frontend_uses_cached_payload_version() -> None:
     assert "refreshDashboardWidgets({ preserve: true });" in js
     assert "refreshDashboardWidgets({ forceConfig: true, preserve: true })" in js
     assert 'window.addEventListener("sync-complete", refreshForSyncComplete);' in js
+    assert "if (kinds && kinds.length) markWidgetsDirty(250, { kinds });" in js
+    assert "else markWidgetsDirty(250);" in js
     assert 'window.addEventListener("cw:scrobble-stopped", refreshForScrobbleStopped);' in js
     assert 'markWidgetsDirty(0, { kinds: ["scrobble", "history", "progress"] });' in js
     assert 'window.addEventListener("watchlist:refresh", () => markWidgetsDirty(250));' not in js
