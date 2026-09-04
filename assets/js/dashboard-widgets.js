@@ -1827,7 +1827,8 @@
       });
       const userProfile = overviewProfileId();
       if (userProfile) params.set("user_profile", userProfile);
-      if (!forceConfig && !partialRefresh && cachedPayload?.version) params.set("known_version", cachedPayload.version);
+      const anyWidgetBlank = requestedKinds.some((kind) => !(latestItems[kind]?.length));
+      if (!forceConfig && !anyWidgetBlank && !partialRefresh && cachedPayload?.version) params.set("known_version", cachedPayload.version);
       widgetUrl = `/api/dashboard/widgets?${params.toString()}`;
       widgetStartedAt = Date.now();
       const data = await fetchWidgetPayload(widgetUrl);
