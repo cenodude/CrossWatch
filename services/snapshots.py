@@ -789,18 +789,22 @@ def _pick_id(
     ids: Mapping[str, Any] | None,
     show_ids: Mapping[str, Any] | None,
     order: Sequence[str],
+    *,
+    prefer_show: bool = False,
 ) -> tuple[str, str, str] | None:
     ids = ids if isinstance(ids, Mapping) else {}
     show_ids = show_ids if isinstance(show_ids, Mapping) else {}
 
-    for k in order:
-        v = ids.get(k)
-        if v not in (None, "", 0, False):
-            return (str(k), str(v), "ids")
-    for k in order:
-        v = show_ids.get(k)
-        if v not in (None, "", 0, False):
-            return (str(k), str(v), "show_ids")
+    sources = (
+        (("show_ids", show_ids), ("ids", ids))
+        if prefer_show
+        else (("ids", ids), ("show_ids", show_ids))
+    )
+    for src, obj in sources:
+        for k in order:
+            v = obj.get(k)
+            if v not in (None, "", 0, False):
+                return (str(k), str(v), src)
     return None
 
 
@@ -838,10 +842,16 @@ def _canonical_item_key(provider: str, feature: Feature, orig_key: str, item: Ma
         "PUBLICMETADB": ["tmdb"],
     }
 
+    prefer_show = kind in ("season", "episode")
     if pid in native:
-        picked = _pick_id(ids, show_ids, native[pid])
+        picked = _pick_id(ids, show_ids, native[pid], prefer_show=prefer_show)
     else:
-        picked = _pick_id(ids, show_ids, ["tmdb", "imdb", "tvdb", "trakt", "simkl", "anilist"])
+        picked = _pick_id(
+            ids,
+            show_ids,
+            ["tmdb", "imdb", "tvdb", "trakt", "simkl", "anilist"],
+            prefer_show=prefer_show,
+        )
 
     if not picked:
         return str(orig_key or "").strip()
