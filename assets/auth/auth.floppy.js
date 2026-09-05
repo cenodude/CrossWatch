@@ -110,6 +110,7 @@
   async function onDisconnect() {
     try {
       const r = await Shared.fetchJSON(api("/api/floppy/disconnect"), { method: "POST", cache: "no-store" });
+      if (Shared.reportProviderUsage(r)) return;
       if (!r.ok || (r.data && r.data.ok === false)) throw new Error(r.data?.error || "disconnect_failed");
       if (el("floppy_server")) el("floppy_server").value = "";
       Shared.maskSecret(el("floppy_token"), false);
