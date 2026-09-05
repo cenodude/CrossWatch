@@ -221,8 +221,8 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     }, { A: 0, R: 0, S: 0 });
     const ms = Date.now();
     if (!Number.isFinite(+now)) now = rows.length ? totalsFor(feat, rows.at(-1).r).sum : 0;
-    if (!Number.isFinite(+week)) week = sumSince(ms - 7 * 86400000).S;
-    if (!Number.isFinite(+month)) month = sumSince(ms - 30 * 86400000).S;
+    if (!Number.isFinite(+week)) week = sumSince(ms - 7 * 86400000).A;
+    if (!Number.isFinite(+month)) month = sumSince(ms - 30 * 86400000).A;
     if (!Number.isFinite(+added) || !Number.isFinite(+removed)) {
       const m = sumSince(ms - 30 * 86400000);
       if (!Number.isFinite(+added)) added = m.A;
@@ -233,6 +233,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
       providers: raw.providers || {},
       active: raw.providers_active || data?.providers_active || {},
       now: asNum(now), week: asNum(week), month: asNum(month), added: asNum(added), removed: asNum(removed),
+      weekRemoved: asNum(raw.week_removed), monthRemoved: asNum(raw.month_removed),
       raw
     };
   }
@@ -591,7 +592,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     }).join("");
   }
 
-  function renderTopStats({ now = 0, week = 0, month = 0, added = 0, removed = 0 }) {
+  function renderTopStats({ now = 0, week = 0, month = 0, added = 0, removed = 0, weekRemoved = 0 }) {
     [["#stat-now", now], ["#stat-week", week], ["#stat-month", month], ["#stat-added", added], ["#stat-removed", removed]].forEach(([sel, val]) => animateNumber($(sel), val | 0));
     const fill = $("#stat-fill"), max = Math.max(1, now, week, month);
     if (fill) fill.style.width = `${Math.round(now / max * 100)}%`;
@@ -600,12 +601,12 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     if (lab) lab.textContent = featureLabel(_feature);
     const chip = $("#trend-week") || $("#stat-delta-chip");
     if (chip) {
-      const diff = (now | 0) - (week | 0);
-      chip.textContent = diff === 0 ? "no change" : `${diff > 0 ? "+" : ""}${diff} vs last week`;
+      const diff = (week | 0) - (weekRemoved | 0);
+      chip.textContent = diff === 0 ? "no change" : `${diff > 0 ? "+" : ""}${diff} this week`;
       chip.classList.remove("up", "down", "flat", "muted");
       chip.classList.add(diff > 0 ? "up" : diff < 0 ? "down" : "flat");
       chip.classList.toggle("muted", diff === 0);
-      chip.title = diff === 0 ? "No change versus last week" : `${Math.abs(diff)} ${diff > 0 ? "more" : "fewer"} than last week`;
+      chip.title = diff === 0 ? "No change in the last 7 days" : `${week | 0} added, ${weekRemoved | 0} removed in the last 7 days`;
     }
     $("#stat-breakdown")?.remove();
   }

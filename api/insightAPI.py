@@ -1877,6 +1877,12 @@ def register_insights(app: FastAPI) -> None:
                         bucket = "remove"
                     elif anyin(action, ("update", "edit", "rename", "move", "reorder")):
                         bucket = "update"
+                elif feat == "collection" or ("collection" in feat) or ("collect" in action) or ("library" in feat):
+                    lane_name = "collection"
+                    if anyin(action, ("uncollect", "remove", "delete", "del", "rm", "clear")):
+                        bucket = "remove"
+                    elif anyin(action, ("update", "edit", "upgrade", "replace", "fix")):
+                        bucket = "update"
                 else:
                     is_history_feat = feat in ("history", "watch", "watched") or ("history" in action)
                     is_add_like = anyin(action, ("watch", "scrobble", "checkin", "mark_watched", "history_add", "add_history"))
@@ -2418,8 +2424,6 @@ def register_insights(app: FastAPI) -> None:
 
 
         now_ts = int(time.time())
-        week_floor = now_ts - 7 * 86400
-        month_floor = now_ts - 30 * 86400
 
         def _last_run_lane(feat: str) -> dict[str, Any]:
             for row in rows:
@@ -2470,6 +2474,7 @@ def register_insights(app: FastAPI) -> None:
             return out
 
         week_tot = _lane_totals(7)
+        month_tot = _lane_totals(30)
 
         ts_grid = [r["ts"] for r in series_by_feature.get("watchlist", [])]
         if len(ts_grid) < 2:
@@ -2502,22 +2507,12 @@ def register_insights(app: FastAPI) -> None:
                 out_series.append({"ts": ts_grid[i], "count": v})
             series_by_feature[f] = list(reversed(out_series))
 
-        def _val_at(series_list: list[dict[str, int]], floor_ts: int) -> int:
-            try:
-                arr = sorted(series_list or [], key=lambda r: int(r.get("ts") or 0))
-                if not arr:
-                    return 0
-                val = int(arr[0].get("count") or 0)
-                for r in arr:
-                    t = int(r.get("ts") or 0)
-                    if t <= floor_ts:
-                        val = int(r.get("count") or 0)
-                    else:
-                        break
-                return val
-            except Exception:
-                return 0
-            
+        def _window_totals(feat: str, totals: dict[str, tuple[int, int, int]]) -> tuple[int, int]:
+            lane = totals.get(feat)
+            if isinstance(lane, tuple) and len(lane) == 3:
+                return int(lane[0] or 0), int(lane[1] or 0)
+            return 0, 0
+
         history_counts = derived.get("history_counts") or {}
 
         feats_out: dict[str, dict[str, Any]] = {}
@@ -2526,17 +2521,19 @@ def register_insights(app: FastAPI) -> None:
             add_last = int(last_lane.get("added") or 0)
             rem_last = int(last_lane.get("removed") or 0)
             upd_last = int(last_lane.get("updated") or 0)
-            t = week_tot.get(feat)
-            if isinstance(t, tuple) and len(t) == 3:
-                wa, wr, wu = t
-            else:
-                wa, wr, wu = (0, 0, 0)
 
             s = series_by_feature.get(feat, [])
+            now_val = _union_now(feat)
+            week_added, week_removed = _window_totals(feat, week_tot)
+            month_added, month_removed = _window_totals(feat, month_tot)
+            week_added = min(week_added, now_val + week_removed)
+            month_added = min(month_added, now_val + month_removed)
             feats_out[feat] = {
-                "now": _union_now(feat),
-                "week": _val_at(s, week_floor),
-                "month": _val_at(s, month_floor),
+                "now": now_val,
+                "week": week_added,
+                "month": month_added,
+                "week_removed": week_removed,
+                "month_removed": month_removed,
                 "added": add_last,
                 "removed": rem_last,
                 "updated": upd_last,
