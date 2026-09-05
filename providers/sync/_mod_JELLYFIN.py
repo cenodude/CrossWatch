@@ -113,7 +113,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "2.5"
+__VERSION__ = "2.6"
 _MIN_PROGRESS_WRITE_VERSION = (10, 9)
 _JF_VERSION_CACHE: dict[str, tuple[float, str | None]] = {}
 
