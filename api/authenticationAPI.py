@@ -1861,10 +1861,13 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return {"ok": False, "connected": False, "pending": False, "error": "verify_failed", "instance": inst}
 
     @app.post("/api/tmdb_sync/disconnect", tags=["auth"])
-    def api_tmdb_sync_disconnect(instance: str | None = Query(None)) -> dict[str, Any]:
+    def api_tmdb_sync_disconnect(instance: str | None = Query(None)) -> Any:
         inst = normalize_instance_id(instance)
         try:
             cfg = load_config()
+            conflict = usage_conflict_response(cfg, "tmdb", inst)
+            if conflict is not None:
+                return conflict
             tm = ensure_instance_block(cfg, "tmdb_sync", inst)
             tm["api_key"] = ""
             tm["session_id"] = ""
@@ -2299,9 +2302,12 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         return {"connected": bool(ok), "instance": normalize_instance_id(instance), **({} if ok else {"reason": reason})}
 
     @app.post("/api/publicmetadb/disconnect", tags=["auth"])
-    def api_publicmetadb_disconnect(instance: str | None = Query(None)) -> dict[str, Any]:
+    def api_publicmetadb_disconnect(instance: str | None = Query(None)) -> Any:
         try:
             cfg = load_config()
+            conflict = usage_conflict_response(cfg, "publicmetadb", normalize_instance_id(instance))
+            if conflict is not None:
+                return conflict
             p = ensure_instance_block(cfg, "publicmetadb", instance)
             p["api_key"] = ""
             save_config(cfg)
@@ -2533,10 +2539,13 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         return {"connected": bool(ok), "instance": inst, **({} if ok else {"reason": reason})}
 
     @app.post("/api/tautulli/disconnect", tags=["auth"])
-    def api_tautulli_disconnect(instance: str | None = Query(None)) -> dict[str, Any]:
+    def api_tautulli_disconnect(instance: str | None = Query(None)) -> Any:
         inst = normalize_instance_id(instance)
         try:
             cfg = load_config()
+            conflict = usage_conflict_response(cfg, "tautulli", inst)
+            if conflict is not None:
+                return conflict
             t = ensure_instance_block(cfg, "tautulli", inst)
             t["server_url"] = ""
             t["api_key"] = ""
@@ -2613,10 +2622,13 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         return {"connected": bool(ok), "server_url": server, "has_token": True, "verify_ssl": coerce_bool(f.get("verify_ssl", False), False), "instance": inst, **({} if ok else {"reason": reason})}
 
     @app.post("/api/floppy/disconnect", tags=["auth"])
-    def api_floppy_disconnect(instance: str | None = Query(None)) -> dict[str, Any]:
+    def api_floppy_disconnect(instance: str | None = Query(None)) -> Any:
         inst = normalize_instance_id(instance)
         try:
             cfg = load_config()
+            conflict = usage_conflict_response(cfg, "floppy", inst)
+            if conflict is not None:
+                return conflict
             f = ensure_instance_block(cfg, "floppy", inst)
             f["server_url"] = ""
             f["api_token"] = ""
@@ -2761,10 +2773,13 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         return {**base, "connected": bool(ok), **({} if ok else {"reason": reason})}
 
     @app.post("/api/scrob/disconnect", tags=["auth"])
-    def api_scrob_disconnect(instance: str | None = Query(None)) -> dict[str, Any]:
+    def api_scrob_disconnect(instance: str | None = Query(None)) -> Any:
         inst = normalize_instance_id(instance)
         try:
             cfg = load_config()
+            conflict = usage_conflict_response(cfg, "scrob", inst)
+            if conflict is not None:
+                return conflict
             s = ensure_instance_block(cfg, "scrob", inst)
             s["server_url"] = ""
             s["api_key"] = ""
@@ -3092,9 +3107,12 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return PlainTextResponse("Error", 500)
 
     @app.post("/api/anilist/token/delete", tags=["auth"])
-    def api_anilist_token_delete(instance: str = Query("default")) -> dict[str, Any]:
+    def api_anilist_token_delete(instance: str = Query("default")) -> Any:
         cfg = load_config()
         inst = normalize_instance_id(instance)
+        conflict = usage_conflict_response(cfg, "anilist", inst)
+        if conflict is not None:
+            return conflict
         a = ensure_instance_block(cfg, "anilist", inst)
         a["access_token"] = ""
         a.pop("user", None)

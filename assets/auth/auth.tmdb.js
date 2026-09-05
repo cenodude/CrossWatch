@@ -219,6 +219,7 @@
     stopPoll();
     try {
       const r = await fetchJSON(tmdbApi(API.disconnect), { method: "POST" });
+      if (Shared.reportProviderUsage(r)) return;
       if (!r.ok || (r.data && r.data.ok === false)) throw new Error("disconnect_failed");
       const keyEl = el("tmdb_sync_api_key");
       const sessEl = el("tmdb_sync_session_id");

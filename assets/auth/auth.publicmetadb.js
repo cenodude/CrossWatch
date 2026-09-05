@@ -231,6 +231,7 @@
   async function onDisc() {
     try {
       const r = await fetchJSON(api("/api/publicmetadb/disconnect"), { method: "POST" });
+      if (Shared.reportProviderUsage(r)) return;
       if (!r.ok || (r.data && r.data.ok === false)) throw new Error("disconnect_failed");
       maskInput(el("publicmetadb_key"), false);
       el("publicmetadb_hint")?.classList.remove("hidden");

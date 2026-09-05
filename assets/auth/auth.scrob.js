@@ -182,6 +182,7 @@
   async function onDisconnect() {
     try {
       const r = await Shared.fetchJSON(api("/api/scrob/disconnect"), { method: "POST", cache: "no-store" });
+      if (Shared.reportProviderUsage(r)) return;
       if (!r.ok || (r.data && r.data.ok === false)) throw new Error(r.data?.error || "disconnect_failed");
       if (el("scrob_server")) el("scrob_server").value = "";
       if (el("scrob_username")) el("scrob_username").value = "";

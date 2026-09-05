@@ -386,6 +386,12 @@
     overlay?.querySelector("#cw-auth-provider-picker")?.classList.remove("hidden");
   }
 
+  function setPickerHtml(picker, html) {
+    if (picker.__cwPickerHtml === html) return;
+    picker.__cwPickerHtml = html;
+    picker.innerHTML = html;
+  }
+
   function renderAuthPicker(overlay, cfg = getCachedConfig(), mode = "provider") {
     const picker = overlay?.querySelector("#cw-auth-provider-picker");
     if (!picker) return;
@@ -399,7 +405,7 @@
           <span class="cw-auth-card-status ${status.ok ? "ok" : ""}"><span></span></span>
         </button>`;
       }).join("");
-      picker.innerHTML = `<div class="cw-auth-picker-group"><h4>${META_GROUP.title}</h4><div class="cw-auth-picker-grid">${items}</div></div>`;
+      setPickerHtml(picker, `<div class="cw-auth-picker-group"><h4>${META_GROUP.title}</h4><div class="cw-auth-picker-grid">${items}</div></div>`);
       return;
     }
     const configured = configuredProviderKeys(cfg);
@@ -417,7 +423,7 @@
         }).join("");
       return items ? `<div class="cw-auth-picker-group"><h4>${group.title}</h4><div class="cw-auth-picker-grid">${items}</div></div>` : "";
     }).join("");
-    picker.innerHTML = rows || '<div class="cw-auth-empty">No supported providers found.</div>';
+    setPickerHtml(picker, rows || '<div class="cw-auth-empty">No supported providers found.</div>');
   }
 
   function renderAuthCards(slot, cfg = getCachedConfig()) {
@@ -518,13 +524,17 @@
         <div class="cw-auth-service-grid">${cards}</div>
       </section>`;
     }).join("");
-    shell.innerHTML = `
+    const dashboardHtml = `
       <div class="cw-auth-dashboard">
         <div class="cw-auth-summary-row">
           ${summaryCards}
         </div>
         <div class="cw-auth-service-list">${userProfileSection}${serviceSections}</div>
       </div>`;
+    if (shell.__cwAuthCardsHtml !== dashboardHtml) {
+      shell.__cwAuthCardsHtml = dashboardHtml;
+      shell.innerHTML = dashboardHtml;
+    }
     try { window.cwUserProfilesManager?.init?.(true); } catch {}
     const overlay = document.getElementById("cw-auth-connection-overlay");
     renderAuthPicker(overlay, cfg, overlay?.dataset?.cwPickerMode || "provider");
@@ -1627,13 +1637,64 @@
     btn.__cwConnectionDeleteTimer = setTimeout(() => resetConnectionDeleteConfirm(btn), 4200);
   }
 
+  function connectionDeleteWarningVisible(panel) {
+    const warn = panel?.querySelector(".cw-connection-footer-warn");
+    return !!(warn && !warn.classList.contains("hidden"));
+  }
+
+  function connectionConnectedPill(panel) {
+    if (!panel) return null;
+    const nodes = Array.from(panel.querySelectorAll("#plex_msg, #jfy_msg, #emby_msg, .cw-connection-status-pill"));
+    return nodes.find((node) => {
+      const text = String(node?.textContent || "").trim().toLowerCase();
+      return /\bconnected\b/.test(text) && !/\bnot\s+connected\b/.test(text) && !node.classList?.contains("hidden") && node.getAttribute?.("aria-hidden") !== "true";
+    }) || null;
+  }
+
+  async function awaitConnectionDeleteSettled(panel, hadPill) {
+    const start = Date.now();
+    const deadline = start + 2500;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      if (connectionDeleteWarningVisible(panel)) return false;
+      if (hadPill) {
+        if (!connectionConnectedPill(panel)) return true;
+      } else if (Date.now() - start >= 900) {
+        return true;
+      }
+    }
+    return !hadPill;
+  }
+
+  async function runConnectionSave(panel, info, footer) {
+    const btn = footer?.querySelector(".cw-connection-footer-save");
+    if (btn?.__cwSaving) return false;
+    if (btn) {
+      btn.__cwSaving = true;
+      setConnectionSaveBusy(btn, true);
+    }
+    try {
+      await window.CW?.AuthShared?.saveVisibleProfileLabels?.(panel);
+      if (info.key === "NUVIO") await window.cwAuth?.nuvio?.saveSelectedProfile?.({ silent: true });
+      const ret = window.saveSettings?.();
+      if (ret && typeof ret.then === "function") await ret;
+      if (btn) flashConnectionResult(btn, true);
+      return true;
+    } catch {
+      if (btn) flashConnectionResult(btn, false);
+      return false;
+    } finally {
+      if (btn) btn.__cwSaving = false;
+    }
+  }
+
   function ensureConnectionModalFooter(panel, info) {
     if (!panel.querySelector(":scope > .cw-connection-modal-footer")) {
       const footer = document.createElement("div");
       footer.className = "cw-connection-modal-footer";
       footer.innerHTML = `<button type="button" class="btn danger cw-connection-footer-delete"><span class="material-symbols-rounded" aria-hidden="true">delete</span><span>Delete connection</span></button><span class="cw-connection-footer-warn hidden" role="alert" aria-live="polite"></span><button type="button" class="btn cw-connection-footer-cancel">Cancel</button><button type="button" class="btn primary cw-connection-footer-save">Save changes</button>`;
       panel.appendChild(footer);
-      footer.querySelector(".cw-connection-footer-delete")?.addEventListener("click", (ev) => {
+      footer.querySelector(".cw-connection-footer-delete")?.addEventListener("click", async (ev) => {
         const trigger = ev.currentTarget;
         if (connectionDeleteBlockedByProfiles(panel, info)) {
           resetConnectionDeleteConfirm(trigger);
@@ -1645,38 +1706,32 @@
           return;
         }
         resetConnectionDeleteConfirm(trigger);
-        const btn = info.deleteSelector ? panel.querySelector(info.deleteSelector) || document.querySelector(info.deleteSelector) : null;
-        btn?.click?.();
-        [700, 1600].forEach((delay) => setTimeout(() => {
-          const warn = panel.querySelector(".cw-connection-footer-warn");
-          if (warn && !warn.classList.contains("hidden")) return;
+        if (trigger.__cwDeleting) return;
+        trigger.__cwDeleting = true;
+        try { window.CW.AuthShared.clearConnectionWarnings(); } catch {}
+        try {
+          const btn = info.deleteSelector ? panel.querySelector(info.deleteSelector) || document.querySelector(info.deleteSelector) : null;
+          if (!btn) return;
+          const hadPill = !!connectionConnectedPill(panel);
+          btn.click();
+          if (!await awaitConnectionDeleteSettled(panel, hadPill)) return;
           showConnectionDisconnected(panel);
-        }, delay));
+          if (!await runConnectionSave(panel, info, footer)) return;
+          setTimeout(closeAuthProviderOverlay, 600);
+        } finally {
+          trigger.__cwDeleting = false;
+        }
       });
       footer.querySelector(".cw-connection-footer-cancel")?.addEventListener("click", () => {
         resetConnectionDeleteConfirm(footer.querySelector(".cw-connection-footer-delete"));
         closeAuthProviderOverlay();
       });
-      footer.querySelector(".cw-connection-footer-save")?.addEventListener("click", async (ev) => {
+      footer.querySelector(".cw-connection-footer-save")?.addEventListener("click", async () => {
         resetConnectionDeleteConfirm(footer.querySelector(".cw-connection-footer-delete"));
-        const btn = ev.currentTarget;
-        if (btn.__cwSaving) return;
         const keepOpen = ["PLEX", "JELLYFIN", "EMBY"].includes(info.key);
-        btn.__cwSaving = true;
-        setConnectionSaveBusy(btn, true);
-        try {
-          await window.CW?.AuthShared?.saveVisibleProfileLabels?.(panel);
-          if (info.key === "NUVIO") await window.cwAuth?.nuvio?.saveSelectedProfile?.({ silent: true });
-          const ret = window.saveSettings?.();
-          if (ret && typeof ret.then === "function") await ret;
-          flashConnectionResult(btn, true);
-          loadConfig(true).then((cfg) => syncConnectionSuccessState(panel, info, cfg)).catch(() => {});
-          if (!keepOpen) setTimeout(closeAuthProviderOverlay, 1100);
-        } catch {
-          flashConnectionResult(btn, false);
-        } finally {
-          btn.__cwSaving = false;
-        }
+        if (!await runConnectionSave(panel, info, footer)) return;
+        loadConfig(true).then((cfg) => syncConnectionSuccessState(panel, info, cfg)).catch(() => {});
+        if (!keepOpen) setTimeout(closeAuthProviderOverlay, 1100);
       });
     }
     const deleteBtn = panel.querySelector(".cw-connection-footer-delete");
@@ -1909,8 +1964,30 @@
     });
   }
 
+  let pointerHeld = false;
+  let deferredCardRender = false;
+  function flushDeferredCardRender() {
+    if (!deferredCardRender) return;
+    deferredCardRender = false;
+    const slot = document.getElementById("auth-providers");
+    if (slot) renderAuthCards(slot, getCachedConfig());
+  }
+  function releasePointerHold() {
+    if (!pointerHeld) return;
+    pointerHeld = false;
+    setTimeout(flushDeferredCardRender, 0);
+  }
+  document.addEventListener("pointerdown", () => { pointerHeld = true; }, true);
+  document.addEventListener("pointerup", releasePointerHold, true);
+  document.addEventListener("pointercancel", releasePointerHold, true);
+  window.addEventListener("blur", releasePointerHold);
+
   async function refreshAuthPresentation(slot, force = false) {
     const cfg = await loadConfig(!!force);
+    if (pointerHeld) {
+      deferredCardRender = true;
+      return;
+    }
     renderAuthCards(slot, cfg);
   }
 

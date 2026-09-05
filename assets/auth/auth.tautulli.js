@@ -152,6 +152,7 @@
   async function onDisc() {
     try {
       const r = await fetchJSON(tautApi("/api/tautulli/disconnect"), { method: "POST" });
+      if (Shared.reportProviderUsage(r)) return;
       if (!r.ok || (r.data && r.data.ok === false)) throw new Error(r.data?.error || "disconnect_failed");
 
       maskKey(el("tautulli_key"), false);

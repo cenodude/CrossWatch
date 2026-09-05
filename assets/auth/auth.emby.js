@@ -344,8 +344,6 @@
   }
 
   async function embyDeleteToken() {
-    const inst = getEmbyInstance();
-    if (!confirm(`Delete Emby token for "${inst}"?`)) return;
     const msg = Q("#emby_msg");
     setMsgBanner(msg, "warn", "Deleting…");
     try {

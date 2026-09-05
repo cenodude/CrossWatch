@@ -362,20 +362,32 @@
       </div>`;
   }
 
+  function setHostHtml(host, html) {
+    if (host.__cwUpmHtml === html) return;
+    host.__cwUpmHtml = html;
+    host.innerHTML = html;
+  }
+
+  function invalidateHostHtml() {
+    [$(HOST_ID), $("cw-upm-floating-host")].forEach((node) => {
+      if (node) node.__cwUpmHtml = null;
+    });
+  }
+
   function render() {
     const host = (floatingModal ? $("cw-upm-floating-host") : null) || $(HOST_ID);
     if (!host) return;
     if (floatingModal) {
-      host.innerHTML = renderModal();
+      setHostHtml(host, renderModal());
       return;
     }
-    host.innerHTML = `
+    setHostHtml(host, `
       <div class="cw-auth-service-grid cw-upm-service-grid">
         ${userProfiles.map(renderProfileCard).join("")}
         ${renderAddCard()}
       </div>
       <div class="cw-upm-status" id="cw-upm-status"></div>
-      ${renderModal()}`;
+      ${renderModal()}`);
   }
 
   async function load(force = false) {
@@ -407,7 +419,10 @@
       loadedOnce = true;
     } catch (e) {
       const status = $("cw-upm-status");
-      if (status) status.textContent = String(e?.message || e || "Failed to load user profiles");
+      if (status) {
+        status.textContent = String(e?.message || e || "Failed to load user profiles");
+        invalidateHostHtml();
+      }
       toast("Could not load user profiles: " + String(e?.message || e), false);
     } finally {
       loading = false;
@@ -561,6 +576,7 @@
     target.dataset.cwConfirmDelete = "";
     target.classList.remove("is-confirming");
     target.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">delete</span><span>Delete profile</span>`;
+    invalidateHostHtml();
   }
 
   function armDeleteConfirm(btn) {
@@ -568,6 +584,7 @@
     btn.dataset.cwConfirmDelete = "1";
     btn.classList.add("is-confirming");
     btn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">warning</span><span>Confirm delete</span>`;
+    invalidateHostHtml();
     if (deleteConfirmTimer) clearTimeout(deleteConfirmTimer);
     deleteConfirmTimer = setTimeout(() => resetDeleteConfirm(btn), 4200);
   }
@@ -582,6 +599,7 @@
     node.classList.add("hidden");
     node.classList.remove("is-fading");
     node.textContent = "";
+    invalidateHostHtml();
   }
 
   function showDeleteWarning(message) {
@@ -595,6 +613,7 @@
     node.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">warning</span><span class="cw-connection-footer-warn-text"></span>`;
     node.lastElementChild.textContent = text;
     node.classList.remove("hidden", "is-fading");
+    invalidateHostHtml();
   }
 
   async function deleteProfile(btn) {
