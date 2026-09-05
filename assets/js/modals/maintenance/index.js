@@ -75,6 +75,7 @@ const SIMPLE_OPS = {
   "events-health": "/api/maintenance/events-health",
   "events-optimize": "/api/maintenance/events-optimize",
   "events-rebuild": "/api/maintenance/events-rebuild",
+  "events-purge": "/api/maintenance/events-purge",
   "state-file": "/api/maintenance/state-file/compact",
   "state-file-prune": "/api/maintenance/state-file/prune",
 };
@@ -197,6 +198,14 @@ const OPS = [
     desc: "Compacts and re-indexes the event archive to reclaim space.",
   },
   {
+    key: "events-purge",
+    kind: "events-purge",
+    icon: "delete_sweep",
+    title: "Clear event data",
+    tag: "event history",
+    desc: "Empties every event category and the sync activity calendar. Leaves the rest of the local database alone.",
+  },
+  {
     key: "events-rebuild",
     kind: "events-rebuild",
     icon: "database",
@@ -248,7 +257,7 @@ const GROUPS = [
     icon: "history",
     title: "Events",
     desc: "Check, optimize and rebuild the event history archive.",
-    keys: ["events-health", "events-optimize", "events-rebuild"],
+    keys: ["events-health", "events-optimize", "events-purge", "events-rebuild"],
   },
   {
     id: "state-file",
@@ -281,7 +290,7 @@ const GROUPS = [
 ];
 
 const OPS_BY_KEY = Object.fromEntries(OPS.map((op) => [op.key, op]));
-const OVERVIEW_EXCLUDED_KEYS = new Set(["tracker", "captures", "defaults", "events-health", "events-optimize", "events-rebuild", "database-health", "state-file", "state-file-prune"]);
+const OVERVIEW_EXCLUDED_KEYS = new Set(["tracker", "captures", "defaults", "events-health", "events-optimize", "events-purge", "events-rebuild", "database-health", "state-file", "state-file-prune"]);
 const OVERVIEW_KEYS = GROUPS
   .flatMap((group) => group.keys)
   .filter((key) => !OVERVIEW_EXCLUDED_KEYS.has(key));
@@ -877,6 +886,11 @@ export default {
         return false;
       }
 
+      if (!skipConfirm && kind === "events-purge" && !confirm("Clear all event data?\n\nThis empties every event category (sync, scrobble, audits) and the sync activity calendar.\n\nNothing else in the local database is touched. This cannot be undone.")) {
+        setStatus("Cancelled.", "");
+        return false;
+      }
+
       if (!skipConfirm && kind === "events-rebuild" && !confirm("This removes the current event archive and rebuilds it from current runtime state.\n\nHistorical events that only exist in the event database may be lost.\n\nThis does not change CrossWatch configuration or provider runtime state.")) {
         setStatus("Cancelled.", "");
         return false;
@@ -907,7 +921,7 @@ export default {
             purge_state: false,
             purge_reports: true,
             purge_insights: true,
-          } : kind === "events-rebuild" ? { confirm: true } : undefined;
+          } : (kind === "events-rebuild" || kind === "events-purge") ? { confirm: true } : undefined;
           res = await post(SIMPLE_OPS[kind], body);
         } else if (kind === "tracker") {
           const chkState = $("#cxm-cw-state", root);

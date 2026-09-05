@@ -28,8 +28,10 @@ from .groups import (
     unacknowledge_group,
 )
 from .context import build_context, build_group_context
-from .maintenance import health, optimize, rebuild, boot_check
+from .maintenance import health, optimize, rebuild, boot_check, purge
 from .stats import statistics
+from .activity import Scope as CalendarScope, UNRESTRICTED as CALENDAR_ALL, calendar, day_runs, invalidate as invalidate_calendar
+from .run_scope import backfill_run_pairs, record_run_pairs, scope_key
 
 __all__ = [
     "events_db_path",
@@ -70,5 +72,14 @@ __all__ = [
     "optimize",
     "rebuild",
     "boot_check",
+    "purge",
     "statistics",
+    "CalendarScope",
+    "CALENDAR_ALL",
+    "calendar",
+    "day_runs",
+    "invalidate_calendar",
+    "backfill_run_pairs",
+    "record_run_pairs",
+    "scope_key",
 ]
