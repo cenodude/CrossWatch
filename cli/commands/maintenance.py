@@ -171,17 +171,24 @@ def maintenance_events(
     ctx: typer.Context,
     optimize: bool = typer.Option(False, "--optimize", help="Optimize the archive."),
     rebuild: bool = typer.Option(False, "--rebuild", help="Rebuild the archive index."),
+    purge: bool = typer.Option(False, "--purge", help="Empty every event category and the sync activity calendar."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Do not ask for confirmation."),
 ) -> None:
-    """Check, optimize or rebuild the events archive."""
+    """Check, optimize, purge or rebuild the events archive."""
     state: Ctx = ctx.obj
-    if optimize and rebuild:
-        raise CLIError("Pick one of --optimize or --rebuild", exit_code=EXIT_USAGE)
+    if sum(1 for flag in (optimize, rebuild, purge) if flag) > 1:
+        raise CLIError("Pick one of --optimize, --purge or --rebuild", exit_code=EXIT_USAGE)
+    if purge:
+        state.require_service("Clearing event data")
+        if not yes and not typer.confirm("Clear all event data, including the sync activity calendar?", default=False):
+            raise CLIError("Cancelled", exit_code=0)
+        _flat(state, state.post("/api/maintenance/events-purge", json_body={"confirm": True}), "Events purge")
+        return
     if rebuild:
         state.require_service("Rebuilding the events archive")
         if not yes and not typer.confirm("Rebuild the events index?", default=False):
             raise CLIError("Cancelled", exit_code=0)
-        _flat(state, state.post("/api/maintenance/events-rebuild"), "Events rebuild")
+        _flat(state, state.post("/api/maintenance/events-rebuild", json_body={"confirm": True}), "Events rebuild")
         return
     if optimize:
         state.require_service("Optimizing the events archive")
