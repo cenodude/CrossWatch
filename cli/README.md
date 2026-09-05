@@ -219,6 +219,8 @@ cw events show <group_id>
 cw events run <run_id>             everything one sync run recorded
 cw events item <item_key>          the history of one item
 cw events stats --range 7d
+cw events calendar [--range 3m|6m|1y|60] [--metric changes|runs|failures]
+cw events day [2026-09-05|today|yesterday]   the sync runs of one day
 cw events ack <group_id> [--undo]
 cw events clear
 ```
@@ -389,7 +391,7 @@ cw activity clear
 ```
 cw maintenance tools               show modal-style maintenance actions
 cw maintenance database            runtime db health
-cw maintenance events              archive health, --optimize, --rebuild
+cw maintenance events              archive health, --optimize, --purge, --rebuild
 cw maintenance cache <what>        all, metadata, provider-sync, activity-log, scrobbles, state
 cw maintenance provider-cache
 cw maintenance provider-cleanup    clear provider watchlist, ratings, history, progress or collection

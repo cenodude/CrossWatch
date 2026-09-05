@@ -3,14 +3,17 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import time
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import typer
+from rich.text import Text
 
 from .._context import Ctx
 from .._errors import EXIT_NOT_FOUND, CLIError
 from .._render import state_text
-from .._util import as_dict, coerce_bool, error_text, fmt_ts, rows_from_payload
+from .._util import as_dict, coerce_bool, error_text, fmt_duration, fmt_ts, rows_from_payload
 
 events_app = typer.Typer(help="Search and inspect the events archive.", no_args_is_help=True)
 
@@ -69,6 +72,182 @@ def _filters(
     if visibility.strip():
         params["visibility"] = visibility.strip()
     return params
+
+
+
+DAY = 86400
+RANGES = {"3m": 98, "6m": 189, "1y": 371}
+METRICS = ("changes", "runs", "failures")
+LEVEL_COLORS = ("#2d333b", "#0e4429", "#006d32", "#26a641", "#39d353")
+FAIL_COLOR = "#f85149"
+MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def _tz_offset() -> int:
+    off = datetime.now().astimezone().utcoffset()
+    return int(off.total_seconds()) if off else 0
+
+
+def _day_index(epoch: float, tz: int) -> int:
+    return int((float(epoch) + tz) // DAY)
+
+
+def _index_date(index: int, tz: int) -> date:
+    return datetime.fromtimestamp(int(index) * DAY, tz=timezone.utc).date()
+
+
+def _index_bounds(index: int, tz: int) -> tuple[int, int]:
+    since = int(index) * DAY - tz
+    return since, since + DAY
+
+
+def _parse_day(text: str, tz: int) -> int:
+    raw = str(text or "").strip().lower()
+    today = _day_index(time.time(), tz)
+    if raw in ("", "today"):
+        return today
+    if raw == "yesterday":
+        return today - 1
+    try:
+        parsed = date.fromisoformat(raw)
+    except ValueError:
+        raise CLIError(f"Cannot read {text!r} as a date", hint="Use YYYY-MM-DD, today or yesterday") from None
+    return int(datetime(parsed.year, parsed.month, parsed.day, tzinfo=timezone.utc).timestamp() // DAY)
+
+
+def _range_days(window: str) -> int:
+    raw = str(window or "").strip().lower()
+    if raw in RANGES:
+        return RANGES[raw]
+    digits = raw[:-1] if raw.endswith("d") else raw
+    try:
+        days = int(digits)
+    except ValueError:
+        raise CLIError(f"Unknown range {window!r}", hint="Use 3m, 6m, 1y or a day count like 60") from None
+    return max(7, min(400, days))
+
+
+def _metric_value(row: dict[str, Any], metric: str) -> int:
+    if metric == "runs":
+        return int(row.get("runs") or 0)
+    if metric == "failures":
+        return int(row.get("failed") or 0)
+    return int(row.get("changes") or 0)
+
+
+def _levels(values: list[int]) -> list[int]:
+    hot = sorted(v for v in values if v > 0)
+    if not hot:
+        return [1, 2, 3, 4]
+    def at(p: float) -> int:
+        return hot[min(len(hot) - 1, int(p * (len(hot) - 1)))]
+    steps: list[int] = []
+    prev = 0
+    for p in (0.25, 0.5, 0.75, 0.92):
+        nxt = max(prev + 1, at(p))
+        steps.append(nxt)
+        prev = nxt
+    return steps
+
+
+def _level_of(value: int, steps: list[int]) -> int:
+    if value <= 0:
+        return 0
+    for i, step in enumerate(steps):
+        if value <= step:
+            return i + 1
+    return 4
+
+
+def _glyphs(encoding: str) -> tuple[str, ...]:
+    try:
+        "■".encode(encoding or "utf-8")
+    except Exception:
+        return (".", "-", "+", "*", "#")
+    return ("■",) * 5
+
+
+def _heatmap(days_map: dict[int, dict[str, Any]], first: int, last: int, metric: str, glyphs: tuple[str, ...]) -> list[Text]:
+    weeks = ((last - first) // 7) + 1
+    steps = _levels([_metric_value(r, metric) for r in days_map.values()])
+
+    slots = [" "] * weeks
+    month_of = [_index_date(first + w * 7, 0).month for w in range(weeks)]
+    col = 0
+    while col < weeks:
+        month = month_of[col]
+        end = col
+        while end < weeks and month_of[end] == month:
+            end += 1
+        name = MONTHS[month - 1]
+        if end - col >= 3 and col + len(name) <= weeks:
+            for i, char in enumerate(name):
+                slots[col + i] = char
+        col = end
+    lines = [Text("     " + "".join(slots), style="cw.muted")]
+
+    for row in range(7):
+        line = Text(f"{WEEKDAYS[row] if row in (0, 2, 4) else '   '}  ", style="cw.muted")
+        for w in range(weeks):
+            index = first + w * 7 + row
+            if index > last:
+                line.append(" ")
+                continue
+            entry = days_map.get(index)
+            value = _metric_value(entry, metric) if entry else 0
+            level = _level_of(value, steps)
+            color = FAIL_COLOR if entry and int(entry.get("failed") or 0) and metric != "runs" else LEVEL_COLORS[level]
+            line.append(glyphs[level], style=color)
+        lines.append(line)
+
+    legend = Text("     Less ", style="cw.muted")
+    for level, color in enumerate(LEVEL_COLORS):
+        legend.append(glyphs[level] + " ", style=color)
+    legend.append("More", style="cw.muted")
+    lines.append(legend)
+    return lines
+
+
+def _routes(run: dict[str, Any]) -> str:
+    seen: list[str] = []
+    for pair in run.get("pair_rows") or []:
+        if not isinstance(pair, dict):
+            continue
+        label = f"{pair.get('src_provider') or '?'} -> {pair.get('dst_provider') or '?'}"
+        if label not in seen:
+            seen.append(label)
+    return ", ".join(seen) if seen else "-"
+
+
+def _features(run: dict[str, Any]) -> str:
+    seen: list[str] = []
+    for pair in run.get("pair_rows") or []:
+        if not isinstance(pair, dict):
+            continue
+        feature = str(pair.get("feature") or "").strip()
+        if feature and feature not in seen:
+            seen.append(feature)
+    return ", ".join(seen) if seen else "-"
+
+
+def _counts(run: dict[str, Any]) -> str:
+    bits = []
+    for key, sign in (("added", "+"), ("removed", "-"), ("updated", "~")):
+        value = int(run.get(key) or 0)
+        if value:
+            bits.append(f"{sign}{value}")
+    return " ".join(bits) if bits else "0"
+
+
+RUN_COLUMNS = [
+    ("TIME", lambda r: datetime.fromtimestamp(int(r.get("started_at") or 0)).strftime("%H:%M") if r.get("started_at") else "-"),
+    ("STATUS", lambda r: "error" if int(r.get("errors") or 0) else str(r.get("status") or "-")),
+    ("ROUTE", _routes),
+    ("FEATURES", _features),
+    ("CHANGES", _counts),
+    ("DUR", lambda r: fmt_duration(r.get("duration")) if r.get("duration") else "-"),
+]
 
 
 @events_app.command("status")
@@ -242,6 +421,79 @@ def events_stats(
             ],
             title="Buckets",
         )
+
+
+
+@events_app.command("calendar")
+def events_calendar(
+    ctx: typer.Context,
+    window: str = typer.Option("1y", "--range", "-r", help="3m, 6m, 1y or a day count."),
+    metric: str = typer.Option("changes", "--metric", "-m", help="changes, runs or failures."),
+) -> None:
+    """Show sync activity per day as a calendar heatmap."""
+    state: Ctx = ctx.obj
+    if metric not in METRICS:
+        raise CLIError(f"Unknown metric {metric!r}", hint="Use changes, runs or failures")
+    days = _range_days(window)
+    tz = _tz_offset()
+    payload = as_dict(state.get("/api/events/calendar", params={"days": days, "tz": tz}))
+    if state.out.json_mode:
+        state.out.data(payload)
+        return
+    if payload.get("ok") is False:
+        raise CLIError(error_text(payload, "Calendar unavailable"))
+
+    rows = [as_dict(row) for row in (payload.get("days") or [])]
+    days_map = {int(row.get("d") or 0): row for row in rows}
+    totals = as_dict(payload.get("totals"))
+    last = _day_index(time.time(), tz)
+    first = last - days + 1
+    first -= (_index_date(first, tz).weekday())
+
+    state.out.kv(
+        [
+            ("Sync runs", str(totals.get("runs") or 0)),
+            ("With errors", str(totals.get("failed") or 0)),
+            ("Changes", f"{totals.get('changes') or 0} (+{totals.get('added') or 0} / -{totals.get('removed') or 0} / ~{totals.get('updated') or 0})"),
+            ("Active days", f"{totals.get('active_days') or 0} of {days}"),
+            ("Scope", "current profile" if payload.get("scoped") else "all profiles"),
+        ],
+        title=f"Sync activity ({metric})",
+    )
+    state.out.print()
+    glyphs = _glyphs(getattr(state.out.console, "encoding", "") or "")
+    for line in _heatmap(days_map, first, last, metric, glyphs):
+        state.out.print(line)
+    if rows:
+        newest = _index_date(max(days_map), tz).isoformat()
+        state.out.print()
+        state.out.print(Text(f"Latest activity {newest}, see: cw events day {newest}", style="cw.muted"))
+
+
+@events_app.command("day")
+def events_day(
+    ctx: typer.Context,
+    when: str = typer.Argument("today", help="YYYY-MM-DD, today or yesterday."),
+    limit: int = typer.Option(200, "--limit", "-n", help="Maximum runs."),
+) -> None:
+    """Show the sync runs recorded on one day."""
+    state: Ctx = ctx.obj
+    tz = _tz_offset()
+    index = _parse_day(when, tz)
+    since, until = _index_bounds(index, tz)
+    payload = as_dict(state.get("/api/events/calendar/day", params={"since": since, "until": until, "limit": limit}))
+    if state.out.json_mode:
+        state.out.data(payload)
+        return
+    if payload.get("ok") is False:
+        raise CLIError(error_text(payload, "Cannot read that day"))
+
+    runs = [as_dict(row) for row in (payload.get("runs") or [])]
+    changes = sum(int(row.get("changes") or 0) for row in runs)
+    failed = sum(1 for row in runs if int(row.get("errors") or 0))
+    label = _index_date(index, tz).isoformat()
+    title = f"{label} - {len(runs)} runs, {changes} changes" + (f", {failed} with errors" if failed else "")
+    state.out.records(runs, RUN_COLUMNS, title=title, empty="No sync runs on that day.")
 
 
 @events_app.command("ack")
