@@ -1833,6 +1833,16 @@ class _AnimeResolveState:
         self.failed = 0
 
 
+def _tvdb_known_non_anime(tvdb: Any, state: _AnimeResolveState | None) -> bool:
+    key = str(tvdb or "").strip()
+    if not key or state is None:
+        return False
+    miss_ts = state.misses.get(key)
+    if miss_ts is None:
+        return False
+    return _now_epoch() - int(miss_ts) < _ANIME_RESOLVE_MISS_TTL
+
+
 def _load_anime_resolve_cache() -> _AnimeResolveState:
     data = _load_json(_anime_resolve_path())
     resolved: dict[str, str] = {}
@@ -3232,7 +3242,10 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                                 retry_ids = dict(obj_retry_ids)
                                 if not retry_ids:
                                     retry_ids = _anime_retry_show_ids(_orig)
-                                if obj_confirms_anime or retry_ids.get("tvdb"):
+                                retry_tvdb = retry_ids.get("tvdb")
+                                if obj_confirms_anime or (
+                                    retry_tvdb and not _tvdb_known_non_anime(retry_tvdb, native_resolve_state)
+                                ):
                                     retry_confirmed_keys.add(retry_key)
                                     if retry_ids:
                                         retry_response_ids[retry_key] = retry_ids

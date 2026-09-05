@@ -79,7 +79,7 @@ def _confirmed_keys(key_of, items: Iterable[Mapping[str, Any]], unresolved: Any)
         seen.add(k)
     return out
 
-__VERSION__ = "1.7"
+__VERSION__ = "1.8"
 __all__ = ["get_manifest", "SIMKLModule", "OPS"]
 
 
