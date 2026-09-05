@@ -140,7 +140,75 @@ def test_orchestrator_oneway_watchlist_add_then_observed_remove(
     assert [it.get("ids", {}).get("imdb") for it in dst.add_calls[0]] == ["tt03"]
     assert dst.remove_calls == []
 
-    # Run 2: now DST has a baseline that includes B,  removal is allowed.
+    src.index.pop("imdb:tt03")
+
+    # Run 2: C was present on the source baseline and is now gone, so it can be
+    # treated as an observed source delete.
     orch.run()
     assert len(dst.remove_calls) == 1
-    assert [it.get("ids", {}).get("imdb") for it in dst.remove_calls[0]] == ["tt02"]
+    assert [it.get("ids", {}).get("imdb") for it in dst.remove_calls[0]] == ["tt03"]
+
+
+def test_oneway_pair_remove_mode_overrides_global_mirror(
+    config_base: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    src_items = {
+        "imdb:tt01": {"type": "movie", "title": "A", "year": 2000, "ids": {"imdb": "tt01"}},
+    }
+    dst_items = {
+        "imdb:tt01": {"type": "movie", "title": "A", "year": 2000, "ids": {"imdb": "tt01"}},
+        "imdb:tt02": {"type": "movie", "title": "B", "year": 2001, "ids": {"imdb": "tt02"}},
+    }
+
+    src = FakeOps("SRC", src_items)
+    dst = FakeOps("DST", dst_items)
+
+    monkeypatch.setattr(
+        "cw_platform.orchestrator.facade.load_sync_providers",
+        lambda: {"SRC": src, "DST": dst},
+    )
+    monkeypatch.setattr(
+        "cw_platform.orchestrator._snapshots.provider_configured",
+        lambda _cfg, _name: True,
+    )
+
+    cfg = {
+        "runtime": {
+            "debug": False,
+            "snapshot_ttl_sec": 0,
+            "apply_chunk_size": 0,
+            "apply_chunk_pause_ms": 0,
+        },
+        "sync": {
+            "dry_run": False,
+            "enable_add": True,
+            "enable_remove": True,
+            "include_observed_deletes": True,
+            "allow_mass_delete": True,
+            "one_way_remove_mode": "mirror",
+        },
+        "pairs": [
+            {
+                "id": "p1",
+                "enabled": True,
+                "source": "SRC",
+                "target": "DST",
+                "mode": "one-way",
+                "feature": "watchlist",
+                "features": {
+                    "watchlist": {
+                        "enable": True,
+                        "add": True,
+                        "remove": True,
+                        "remove_mode": "source_deletes",
+                    }
+                },
+            }
+        ],
+    }
+
+    orch = Orchestrator(cfg)
+    orch.run()
+    orch.run()
+
+    assert dst.remove_calls == []

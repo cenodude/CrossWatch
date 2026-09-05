@@ -68,12 +68,44 @@ def test_api_normalizes_collection_types_to_movies_by_default() -> None:
     assert out["collection"]["types"] == ["movies"]
 
 
+def test_api_normalizes_feature_remove_mode_and_drops_empty_fallback() -> None:
+    from api.syncAPI import _normalize_features
+
+    out = _normalize_features(
+        {
+            "watchlist": {"enable": True, "remove_mode": "mirror"},
+            "history": {"enable": True, "remove_mode": "nonsense"},
+            "progress": {"enable": True, "remove_mode": ""},
+        }
+    )
+
+    assert out["watchlist"]["remove_mode"] == "mirror"
+    assert out["history"]["remove_mode"] == "source_deletes"
+    assert "remove_mode" not in out["progress"]
+
+
 def test_config_loader_normalizes_collection_types_to_movies_by_default() -> None:
     from cw_platform.config_base import _normalize_features_map
 
     out = _normalize_features_map({"collection": {"enable": True, "add": True, "remove": True}})
 
     assert out["collection"]["types"] == ["movies"]
+
+
+def test_config_loader_normalizes_feature_remove_mode_and_drops_empty_fallback() -> None:
+    from cw_platform.config_base import _normalize_features_map
+
+    out = _normalize_features_map(
+        {
+            "watchlist": {"enable": True, "remove_mode": "mirror"},
+            "history": {"enable": True, "remove_mode": "nonsense"},
+            "progress": {"enable": True, "remove_mode": ""},
+        }
+    )
+
+    assert out["watchlist"]["remove_mode"] == "mirror"
+    assert out["history"]["remove_mode"] == "source_deletes"
+    assert "remove_mode" not in out["progress"]
 
 
 def test_pair_config_allows_server_collection_show_and_season_scope() -> None:

@@ -1409,6 +1409,13 @@ def _normalize_collection_feature(val: dict[str, Any]) -> dict[str, Any]:
     return v
 
 
+def _normalize_remove_mode(raw: Any) -> str | None:
+    mode = str(raw or "").strip().lower()
+    if not mode:
+        return None
+    return "mirror" if mode == "mirror" else "source_deletes"
+
+
 def _normalize_features_map(features: dict[str, Any] | None) -> dict[str, Any]:
     f: dict[str, Any] = dict(features or {})
     for name, val in list(f.items()):
@@ -1417,6 +1424,12 @@ def _normalize_features_map(features: dict[str, Any] | None) -> dict[str, Any]:
             v.setdefault("enable", True)
             v.setdefault("add", True)
             v.setdefault("remove", False)
+            if "remove_mode" in v:
+                remove_mode = _normalize_remove_mode(v.get("remove_mode"))
+                if remove_mode is None:
+                    v.pop("remove_mode", None)
+                else:
+                    v["remove_mode"] = remove_mode
 
             # Ratings has extra fields
             if name == "ratings":

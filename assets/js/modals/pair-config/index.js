@@ -65,6 +65,25 @@ function pairInstanceForKind(state, kind){
 const isAniList=(v)=>same(v,"anilist");
 function hasAniList(state){return isAniList(state?.src)||isAniList(state?.dst)}
 function hasOwn(obj,key){return !!obj&&Object.prototype.hasOwnProperty.call(obj,key)}
+function normalizeRemoveMode(value){return String(value||"source_deletes").trim().toLowerCase()==="mirror"?"mirror":"source_deletes"}
+function pairRemoveModeFromFeatures(features, fallback="source_deletes"){
+  const mode=normalizeRemoveMode(fallback);
+  if(!features||typeof features!=="object") return mode;
+  for(const key of ["watchlist","ratings","history","progress","collection"]){
+    const block=features[key];
+    if(block&&typeof block==="object"&&hasOwn(block,"remove_mode")) return normalizeRemoveMode(block.remove_mode);
+  }
+  return mode;
+}
+function applyPairRemoveMode(features, mode){
+  const clean=normalizeRemoveMode(mode);
+  if(!features||typeof features!=="object") return features;
+  for(const key of ["watchlist","ratings","history","progress","collection"]){
+    const block=features[key];
+    if(block&&typeof block==="object"&&block.enable!==false) block.remove_mode=clean;
+  }
+  return features;
+}
 function isTwoWayMode(state){return !!ID("cx-mode-two")?.checked||String(state?.mode||"").toLowerCase().startsWith("two")}
 function anilistCanReceive(state){return isAniList(state?.dst)||(hasAniList(state)&&isTwoWayMode(state))}
 function globalAnimeMappingEnabled(state){return !!state?.cfgRaw?.anime_mapping?.enabled}
@@ -339,6 +358,8 @@ function defaultState(){
       collection:{enable:false,add:false,remove:false,types:["movies"]}
     },
     pairProviders:{},
+    pair_remove_mode:"source_deletes",
+    pair_remove_mode_touched:false,
     jellyfin:{watchlist:{mode:"favorites",playlist_name:"Watchlist"}},
     emby:{watchlist:{mode:"favorites",playlist_name:"Watchlist"}},
     globals:{
@@ -474,7 +495,7 @@ async function loadConfigBits(state){
     verify_after_write:!!s.verify_after_write,
     drop_guard:dropOn,
     allow_mass_delete:massOn,
-    one_way_remove_mode:(String(s.one_way_remove_mode||"source_deletes").trim().toLowerCase()==="mirror"?"mirror":"source_deletes"),
+    one_way_remove_mode:normalizeRemoveMode(s.one_way_remove_mode),
     tombstone_ttl_days:Number.isFinite(s.tombstone_ttl_days)?s.tombstone_ttl_days:30,
     include_observed_deletes:!!s.include_observed_deletes,
     blackbox:Object.assign(
@@ -1286,6 +1307,11 @@ function renderFeaturePanel(state){
 
   if(state.feature==="globals"){
     const g=state.globals||{},bb=g.blackbox||{},rt=g.runtime||{suspect_min_prev:20,suspect_shrink_ratio:0.1};
+    const removeModeDisabled=isTwoWayMode(state);
+    const removeModeLabel=normalizeRemoveMode(state.pair_remove_mode)==="mirror"?"Stored: Mirror-mode":"Stored: Source";
+    const removeModeRow=removeModeDisabled
+      ? `<div class="opt-row muted"><label data-tip-id="gl-oneway-remove">One-Way Remove mode Source | Mirror-mode</label><span class="provider-card-badge" title="Kept for one-way mode">${removeModeLabel}</span></div>`
+      : `<div class="opt-row"><label for="gl-oneway-remove">One-Way Remove mode Source | Mirror-mode</label><label class="switch"><input id="gl-oneway-remove" type="checkbox" ${normalizeRemoveMode(state.pair_remove_mode)==="source_deletes"?"checked":""}><span class="slider"></span></label></div>`;
     const pct = Math.round((Number.isFinite(rt.suspect_shrink_ratio)?rt.suspect_shrink_ratio:0.1)*100);
     const minPrevVal = Number.isFinite(rt.suspect_min_prev)?rt.suspect_min_prev:20;
 
@@ -1314,9 +1340,10 @@ function renderFeaturePanel(state){
       </div>
       <div class="grid2 compact">
         <div class="opt-row"><label for="gl-mass">Allow mass delete</label><label class="switch"><input id="gl-mass" type="checkbox" ${g.allow_mass_delete?"checked":""}><span class="slider"></span></label></div>
-        <div class="opt-row"><label for="gl-oneway-remove">One-Way Remove mode Source</label><label class="switch"><input id="gl-oneway-remove" type="checkbox" ${((String(g.one_way_remove_mode||"source_deletes").trim().toLowerCase()==="mirror")?"":"checked")}><span class="slider"></span></label></div>
       </div>`;
-    right.innerHTML=`<div class="panel-title">Advanced <button type="button" class="cx-help material-symbols-rounded" data-tip-id="gl-section-advanced">help</button></div>
+    right.innerHTML=`<div class="panel-title small">Pair safety</div>
+      ${removeModeRow}
+      <div class="panel-title" style="margin-top:10px">Advanced <button type="button" class="cx-help material-symbols-rounded" data-tip-id="gl-section-advanced">help</button></div>
       <div class="opt-row"><label for="gl-ttl">Tombstone TTL (days)</label><input id="gl-ttl" class="input" type="number" min="0" step="1" value="${g.tombstone_ttl_days??30}"></div><div class="muted">Keep delete markers to avoid re-adding.</div>
       <div class="opt-row"><label for="gl-observed">Include observed deletes</label><label class="switch"><input id="gl-observed" type="checkbox" ${g.include_observed_deletes?"checked":""}><span class="slider"></span></label></div>
       <div class="panel-title small" style="margin-top:10px">Blackbox <button type="button" class="cx-help material-symbols-rounded" data-tip-id="gl-bb-section">help</button></div>
@@ -2440,11 +2467,16 @@ function bindChangeHandlers(state,root){
         verify_after_write:!!Q("#gl-verify")?.checked,
         drop_guard:dropOn,
         allow_mass_delete:!!Q("#gl-mass")?.checked && !dropOn,
+        one_way_remove_mode:normalizeRemoveMode(state.globals?.one_way_remove_mode),
         tombstone_ttl_days:parseInt(Q("#gl-ttl")?.value||"0",10)||0,
         include_observed_deletes:!!Q("#gl-observed")?.checked,
         runtime:{suspect_min_prev:minPrev,suspect_shrink_ratio:pct/100},
         blackbox:bb
       };
+      if(id==="gl-oneway-remove"){
+        state.pair_remove_mode=!!Q("#gl-oneway-remove")?.checked ? "source_deletes" : "mirror";
+        state.pair_remove_mode_touched=true;
+      }
     }
 
     if(id==="cx-jf-wl-mode-fav"||id==="cx-jf-wl-mode-pl"||id==="cx-jf-wl-mode-col"||id==="cx-jf-wl-pl-name"||id==="cx-wl-q"||id==="cx-wl-delay"||id==="cx-wl-guid"){
@@ -2511,7 +2543,6 @@ async function saveConfigBits(state){
         verify_after_write:!!ID("gl-verify")?.checked,
         drop_guard:dropOn,
         allow_mass_delete:massOn,
-        one_way_remove_mode:!!ID("gl-oneway-remove")?.checked ? "source_deletes" : "mirror",
         tombstone_ttl_days:Math.max(0,parseInt(ID("gl-ttl")?.value||"0",10)||0),
         include_observed_deletes:!!ID("gl-observed")?.checked
       };
@@ -2791,6 +2822,7 @@ function buildPayload(state,wrap){
     collection.types=keep.length?keep:(allowedCollectionTypes.includes("movies")?["movies"]:allowedCollectionTypes.slice(0,1));
   }
   const features=sanitizeFeaturesForPair({src,dst,twoWay:modeTwo},{watchlist,ratings,history,progress,playlists:get("playlists"),collection});
+  if(state.pair_remove_mode_touched) applyPairRemoveMode(features,state.pair_remove_mode);
   const payload={source:src,target:dst,source_instance:String(srcInst||"default"),target_instance:String(dstInst||"default"),enabled,mode:modeTwo?"two-way":"one-way",features};
   const eid=wrap.dataset&&wrap.dataset.editingId?String(wrap.dataset.editingId||""):"";
   const selectedProfileId=String(state.selected_user_profile_id||"").trim();
@@ -2916,6 +2948,7 @@ export default{
     }
 
     await loadConfigBits(state);
+    state.pair_remove_mode=pairRemoveModeFromFeatures(pair?.features,state.globals.one_way_remove_mode);
     await loadProviders(state);
     await loadProviderInstances(state);
     await loadUserProfiles(state);

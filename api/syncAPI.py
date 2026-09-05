@@ -185,6 +185,12 @@ def _normalize_collection_block(v: dict | bool | None) -> dict:
 
     return d
 
+def _normalize_remove_mode(raw: Any) -> str | None:
+    mode = str(raw or "").strip().lower()
+    if not mode:
+        return None
+    return "mirror" if mode == "mirror" else "source_deletes"
+
 def _normalize_features(f: dict | None) -> dict:
     f = dict(f or {})
     for k in FEATURE_KEYS:
@@ -204,6 +210,12 @@ def _normalize_features(f: dict | None) -> dict:
             v["remove"] = coerce_bool(v.get("remove", False))
         if k == "history" and isinstance(f.get(k), dict):
             f[k]["rewatches"] = coerce_bool(f[k].get("rewatches", False))
+        if isinstance(f.get(k), dict) and "remove_mode" in f[k]:
+            mode = _normalize_remove_mode(f[k].get("remove_mode"))
+            if mode is None:
+                f[k].pop("remove_mode", None)
+            else:
+                f[k]["remove_mode"] = mode
         if isinstance(f.get(k), dict) and ("use_anime_mapping" in f[k] or "anime_only_sync" in f[k]):
             use_map = coerce_bool(f[k].get("use_anime_mapping", False))
             f[k]["use_anime_mapping"] = use_map
