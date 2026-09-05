@@ -619,6 +619,18 @@ _ART_RESOLVE_WORKERS = 8
 _ROW_WINDOW = 400
 
 
+def _window_per_source(entries: list, window: int | None, *, rank, source_of) -> list:
+    if window is None or window <= 0 or len(entries) <= window:
+        return list(entries)
+    buckets: dict[Any, list] = {}
+    for entry in entries:
+        buckets.setdefault(source_of(entry), []).append(entry)
+    out: list = []
+    for bucket in buckets.values():
+        out.extend(heapq.nlargest(window, bucket, key=rank) if len(bucket) > window else bucket)
+    return out
+
+
 def _needs_metadata_lookup(row: Mapping[str, Any]) -> bool:
     if not (row.get("poster") or row.get("tmdb")):
         return True
@@ -986,10 +998,15 @@ def latest_ratings_widget(
             reverse=True,
         )
 
-    windowed = entries
-    if window is not None and window > 0 and len(entries) > window:
-        windowed = heapq.nlargest(window, entries, key=lambda entry: entry[0])
-        windowed.sort(key=lambda entry: entry[1])
+    windowed = _window_per_source(
+        entries,
+        window,
+        rank=lambda entry: entry[0],
+        source_of=lambda entry: tuple(
+            (ref.get("provider"), ref.get("instance")) for ref in (entry[4] or [])
+        ),
+    )
+    windowed.sort(key=lambda entry: entry[1])
 
     items = _build(windowed)
     if len(items) < cap and len(windowed) < len(entries):
@@ -1164,9 +1181,13 @@ def _latest_history_state_rows(
             key = str(raw_key)
             epoch = int(_history_sort_epoch(item) or _history_key_epoch(key) or 0)
             entries.append((epoch, len(entries), key, item, ref))
-    if window is not None and window > 0 and len(entries) > window:
-        entries = heapq.nlargest(window, entries, key=lambda entry: entry[0])
-        entries.sort(key=lambda entry: entry[1])
+    entries = _window_per_source(
+        entries,
+        window,
+        rank=lambda entry: entry[0],
+        source_of=lambda entry: (entry[4]["provider"], entry[4]["instance"]),
+    )
+    entries.sort(key=lambda entry: entry[1])
     for _epoch, _ordinal, raw_key, item, ref in entries:
         row = _history_state_row(raw_key, item, [ref])
         if not row:

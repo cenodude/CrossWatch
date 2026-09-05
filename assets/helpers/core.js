@@ -1784,13 +1784,13 @@
     if (!chart || !tip) return;
 
     [
-      [document.querySelector(".bar.week"), "Last Week"],
-      [document.querySelector(".bar.month"), "Last Month"],
-      [document.querySelector(".bar.now"), "Now"],
-    ].forEach(([el, label]) => {
+      [document.querySelector(".bar.week"), "Last Week", "added"],
+      [document.querySelector(".bar.month"), "Last Month", "added"],
+      [document.querySelector(".bar.now"), "Now", "items"],
+    ].forEach(([el, label, unit]) => {
       if (!el) return;
       const show = (x, y) => {
-        tip.textContent = `${label}: ${el.dataset.v || "0"} items`;
+        tip.textContent = `${label}: ${el.dataset.v || "0"} ${unit}`;
         tip.style.left = `${x}px`;
         tip.style.top = `${y}px`;
         tip.hidden = false;
