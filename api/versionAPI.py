@@ -170,6 +170,7 @@ def get_module_versions() -> dict[str, Any]:
     groups = {
         g: {name: _get_module_version(path) for name, path in mods.items()}
         for g, mods in _env_modules().items()
+        if g != "AUTH"
     }
     flat: dict[str, str] = {
         name: ver for mods in groups.values() for name, ver in mods.items()

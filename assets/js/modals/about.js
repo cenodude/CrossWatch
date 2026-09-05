@@ -258,7 +258,6 @@ function view(info, mods, logo) {
                 </div>
                 <span class="material-symbols-rounded lede-mark" aria-hidden="true">language</span>
               </section>
-              ${_fold("Authentication Providers", _providerRows(mods.groups?.AUTH), "lock")}
               ${_fold("Synchronization Providers", _providerRows(mods.groups?.SYNC), "sync")}
               <section class="about-card disclaimer">
                 <div class="about-section-title"><span class="material-symbols-rounded warn" aria-hidden="true">warning</span><span>Disclaimer</span></div>
