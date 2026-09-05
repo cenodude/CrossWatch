@@ -7,7 +7,7 @@ export const HELP_TEXT = {
   "gl-verify": "Verify after write\nRe-check the destination after writes (when supported).",
   "gl-drop": "Drop guard\nProtects against sudden inventory drops by pausing delete plans.",
   "gl-mass": "Allow mass delete\nIf off, blocks large delete plans (roughly >10%). Enable for first runs.\n It's either mass-delete or drop-guard or none; not both.",
-  "gl-oneway-remove": "Deletions based on Source\nWhen enabled there should always be a match between source and destination before deletion.\nWhen disabled it acts in mirror mode, meaning it will always follow source (destructive; use with care)",
+  "gl-oneway-remove": "Deletions based on Source\nWhen enabled, this pair only removes items after CrossWatch observed them disappear from the source.\nWhen disabled, this pair runs mirror mode and removes target items missing from the source (destructive; use with care).",
   "gl-observed": "Include observed deletes\nIf off, observed deletes are ignored and delta-delete providers are disabled (safer).",
   "gl-bb-enable": "Blackbox: Enabled\nAutomatic flapper protection and failure quarantine.",
   "gl-bb-pair": "Blackbox: Pair scoped\nKeep blackbox decisions per pair instead of global.",
