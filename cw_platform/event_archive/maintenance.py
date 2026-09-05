@@ -17,6 +17,16 @@ from .importer import import_all
 from .query import status
 
 
+_PURGE_TABLES = ("events", "event_groups", "sync_runs", "run_pairs", "event_imports")
+
+
+def _table_count(conn: sqlite3.Connection, table: str) -> int:
+    try:
+        return int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] or 0)
+    except Exception:
+        return 0
+
+
 def _file_size(p: Path) -> int:
     try:
         return p.stat().st_size if p.exists() else 0
@@ -199,3 +209,49 @@ def rebuild(
         except Exception:
             imported = 0
     return {"ok": True, "path": str(path), "removed": removed, "imported": imported, "events": int(status(conn=c).get("events") or 0)}
+
+
+def purge(domain: str | None = None) -> dict[str, Any]:
+    """Delete archived events without touching the rest of the local database.
+
+    `domain` limits the wipe to one event domain; None or "all" clears every
+    domain plus the run tables the sync activity calendar reads.
+    """
+    c = get_conn()
+    path = events_db_path()
+    if c is None:
+        return {"ok": False, "available": False, "path": str(path)}
+
+    scope = str(domain or "").strip().lower()
+    before = {t: _table_count(c, t) for t in _PURGE_TABLES}
+    try:
+        with c:
+            if scope in ("", "all"):
+                for table in _PURGE_TABLES:
+                    c.execute(f"DELETE FROM {table}")
+            else:
+                c.execute("DELETE FROM events WHERE domain=?", (scope,))
+                c.execute("DELETE FROM event_groups WHERE domain=?", (scope,))
+                if scope == "sync":
+                    for table in ("sync_runs", "run_pairs", "event_imports"):
+                        c.execute(f"DELETE FROM {table}")
+    except Exception:
+        _LOG.exception("events purge failed")
+        return {"ok": False, "path": str(path), "error": "purge_failed", "domain": scope or "all"}
+
+    try:
+        from .activity import invalidate
+
+        invalidate()
+    except Exception:
+        pass
+
+    after = {t: _table_count(c, t) for t in _PURGE_TABLES}
+    return {
+        "ok": True,
+        "cleared": True,
+        "path": str(path),
+        "domain": scope or "all",
+        "removed": {t: max(0, before[t] - after[t]) for t in _PURGE_TABLES},
+        "remaining": after,
+    }

@@ -36,6 +36,7 @@ ModalRegistry.register('scrobbler-route', () => import(_cwVer('./modals/scrobble
 ModalRegistry.register('editor-raw', () => import(_cwVer('./modals/editor-raw/index.js')));
 ModalRegistry.register('anime-overrides', () => import(_cwVer('./modals/anime-overrides/index.js')));
 ModalRegistry.register('support',      () => import(_cwVer('./modals/support/index.js')));
+ModalRegistry.register('statistics',   () => import(_cwVer('./modals/statistics/index.js')));
 
 export const openModal = ModalRegistry.open;
 export const closeModal = ModalRegistry.close;
@@ -56,6 +57,7 @@ window.closeAbout = async () => {
 
 window.openAnalyzer = (props = {}) => ModalRegistry.open('analyzer', props);
 window.openEvents = (props = {}) => ModalRegistry.open('events', props);
+window.openStatisticsModal = (props = {}) => ModalRegistry.open('statistics', props);
 window.openExporter = (props = {}) => ModalRegistry.open('exporter', props);
 
 window.openMaintenanceModal = (props = {}) => ModalRegistry.open('maintenance', props);

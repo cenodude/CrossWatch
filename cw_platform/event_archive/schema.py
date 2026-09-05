@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 _CREATE_SYNC_RUNS = """
 CREATE TABLE IF NOT EXISTS sync_runs (
@@ -105,6 +105,25 @@ CREATE TABLE IF NOT EXISTS event_groups (
 )
 """
 
+_CREATE_RUN_PAIRS = """
+CREATE TABLE IF NOT EXISTS run_pairs (
+    run_id        TEXT NOT NULL,
+    pair_id       TEXT NOT NULL DEFAULT '',
+    scope_key     TEXT NOT NULL DEFAULT '',
+    feature       TEXT NOT NULL DEFAULT '',
+    pair_key      TEXT NOT NULL DEFAULT '',
+    src_provider  TEXT NOT NULL DEFAULT '',
+    src_instance  TEXT NOT NULL DEFAULT '',
+    dst_provider  TEXT NOT NULL DEFAULT '',
+    dst_instance  TEXT NOT NULL DEFAULT '',
+    added         INTEGER NOT NULL DEFAULT 0,
+    removed       INTEGER NOT NULL DEFAULT 0,
+    updated       INTEGER NOT NULL DEFAULT 0,
+    errors        INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (run_id, pair_id, scope_key, feature)
+) WITHOUT ROWID
+"""
+
 _CREATE_EVENT_IMPORTS = """
 CREATE TABLE IF NOT EXISTS event_imports (
     source_file        TEXT PRIMARY KEY,
@@ -165,7 +184,7 @@ _EXTRA_INDEXES = (
 
 
 def _create_tables(conn: sqlite3.Connection) -> None:
-    for stmt in (_CREATE_SYNC_RUNS, _CREATE_EVENTS, _CREATE_EVENT_GROUPS, _CREATE_EVENT_IMPORTS):
+    for stmt in (_CREATE_SYNC_RUNS, _CREATE_EVENTS, _CREATE_EVENT_GROUPS, _CREATE_EVENT_IMPORTS, _CREATE_RUN_PAIRS):
         conn.execute(stmt)
 
 
@@ -193,4 +212,12 @@ def apply_schema(conn: sqlite3.Connection) -> int:
         _create_indexes(conn)
         if ver < SCHEMA_VERSION:
             conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+
+    if ver < 7:
+        try:
+            from .run_scope import backfill_run_pairs
+
+            backfill_run_pairs(conn)
+        except Exception:
+            pass
     return max(ver, SCHEMA_VERSION)

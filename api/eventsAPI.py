@@ -37,6 +37,13 @@ from cw_platform.event_archive import (
     acknowledge_group as _acknowledge_group,
     unacknowledge_group as _unacknowledge_group,
     events_db_path,
+    calendar as _calendar,
+    day_runs as _day_runs,
+    CalendarScope,
+    CALENDAR_ALL,
+    scope_key as _scope_key,
+    invalidate_calendar as _invalidate_calendar,
+    purge as _purge_events,
 )
 from cw_platform.event_archive.groups import run_problem_items as _run_problem_items
 from cw_platform.access_policy import filter_pairs_for_user, pair_refs, request_user, user_can_access_instance
@@ -619,6 +626,57 @@ def events_statistics(
     return _ok(_statistics(since=s, until=u, bucket=bs))
 
 
+_CALENDAR_MIN_DAYS = 7
+_CALENDAR_MAX_DAYS = 400
+
+
+def _calendar_scope(cfg: dict[str, Any], request: Request | None) -> CalendarScope:
+    user = request_user(request)
+    if not user or bool(user.get("is_admin")):
+        return CALENDAR_ALL
+    pair_ids: set[str] = set()
+    scope_keys: set[str] = set()
+    for pair in filter_pairs_for_user(cfg, user, _configured_pairs(cfg)):
+        pid = str(pair.get("id") or "").strip()
+        if pid:
+            pair_ids.add(pid)
+        (src, src_inst), (dst, dst_inst) = pair_refs(pair)
+        key = _scope_key(src, src_inst, dst, dst_inst)
+        if key:
+            scope_keys.add(key)
+    return CalendarScope(unrestricted=False, pair_ids=pair_ids, scope_keys=scope_keys)
+
+
+@router.get("/calendar")
+def events_calendar(
+    days: int = Query(371, ge=_CALENDAR_MIN_DAYS, le=_CALENDAR_MAX_DAYS),
+    tz: int = Query(0),
+    request: Request = cast(Request, None),
+) -> JSONResponse:
+    scope = _calendar_scope(load_config() or {}, request)
+    now = int(_time.time())
+    until = now + 86400
+    since = until - int(days) * 86400
+    payload = _calendar(since=since, until=until, tz_offset=tz, scope=scope)
+    payload["scoped"] = not scope.unrestricted
+    return _ok(payload)
+
+
+@router.get("/calendar/day")
+def events_calendar_day(
+    since: int = Query(..., ge=0),
+    until: int = Query(..., ge=0),
+    limit: int = Query(200, ge=1, le=500),
+    request: Request = cast(Request, None),
+) -> JSONResponse:
+    if until <= since or until - since > 7 * 86400:
+        return _ok({"ok": False, "error": "invalid_range"}, status_code=400)
+    scope = _calendar_scope(load_config() or {}, request)
+    payload = _day_runs(since=since, until=until, scope=scope, limit=limit)
+    payload["scoped"] = not scope.unrestricted
+    return _ok(payload)
+
+
 @router.get("/recent")
 def events_recent(
     limit: int = Query(50, ge=1, le=500),
@@ -944,24 +1002,11 @@ def events_clear(payload: dict[str, Any] | None = Body(None), request: Request =
         return _scope_denied()
     if not bool((payload or {}).get("confirm")):
         return _ok({"ok": False, "error": "confirmation_required", "confirm": False}, status_code=400)
-    conn = get_conn()
-    if conn is None:
-        return _ok({"ok": False, "available": False, "path": str(events_db_path())})
     domain = str((payload or {}).get("domain") or "").strip().lower()
-    try:
-        with conn:
-            if domain in ("", "all"):
-                conn.execute("DELETE FROM events")
-                conn.execute("DELETE FROM event_groups")
-                conn.execute("DELETE FROM sync_runs")
-                conn.execute("DELETE FROM event_imports")
-            else:
-                conn.execute("DELETE FROM events WHERE domain=?", (domain,))
-                conn.execute("DELETE FROM event_groups WHERE domain=?", (domain,))
-                if domain == "sync":
-                    conn.execute("DELETE FROM sync_runs")
-                    conn.execute("DELETE FROM event_imports")
-        return _ok({"ok": True, "cleared": True, "domain": domain or "all"})
-    except Exception:
-        _LOG.exception("events clear failed")
+    result = _purge_events(domain)
+    if not result.get("ok"):
+        if result.get("available") is False:
+            return _ok(result)
+        _LOG.error("events clear failed: %s", result.get("error"))
         return _ok({"ok": False, "error": "internal_error"}, status_code=500)
+    return _ok(result)

@@ -460,7 +460,9 @@ export default {
     const initialDomain = String(props?.domain || "").trim().toLowerCase();
     const initialVisibility = String(props?.visibility || "").trim().toLowerCase();
     const initialMode = String(props?.mode || "").trim().toLowerCase();
+    let runFilter = String(props?.runId || props?.run_id || "").trim();
     let visibility = ["open", "acknowledged", "all"].includes(initialVisibility) ? initialVisibility : ls("cw.events.visibility", "open");
+    if (runFilter) visibility = ["open", "acknowledged", "all"].includes(initialVisibility) ? initialVisibility : "all";
     let order = "newest";
     let mode = ["grouped", "raw"].includes(initialMode) ? initialMode : ls("cw.events.mode", "grouped");
     if (initialGroupId) mode = "grouped";
@@ -588,7 +590,7 @@ export default {
       ev.preventDefault();
     });
 
-    let dateRange = ls("cw.events.range", "all");
+    let dateRange = runFilter ? "all" : ls("cw.events.range", "all");
     const ddRange = createDropdown({
       label: "All time", value: dateRange,
       items: [
@@ -786,7 +788,7 @@ export default {
       return "Custom range";
     };
 
-    const hiddenActive = () => !!(ddType.value || ddProvider.value || ddOrigin.value || ddFeature.value || ddPair.value || (dateRange && dateRange !== "all"));
+    const hiddenActive = () => !!(runFilter || ddType.value || ddProvider.value || ddOrigin.value || ddFeature.value || ddPair.value || (dateRange && dateRange !== "all"));
     const filtersActive = () => !!(qEl.value.trim() || (grouped() && ddCategory.value) || hiddenActive());
 
     const clearHidden = (k) => {
@@ -797,6 +799,7 @@ export default {
       if (all || k === "origin") ddOrigin.reset();
       if (all || k === "feature") ddFeature.reset();
       if (all || k === "pair") ddPair.reset();
+      if (all || k === "run") runFilter = "";
       if (isAdmin && (all || k === "profile")) { eventScope = ""; ddProfile.value = ""; }
       if (view === "statistics") loadStats();
       else load(0);
@@ -804,6 +807,7 @@ export default {
 
     const updateHidden = () => {
       const chips = [];
+      if (runFilter) chips.push({ k: "run", label: `Run: ${runFilter}` });
       if (dateRange && dateRange !== "all") chips.push({ k: "range", label: dateRange === "custom" ? customRangeLabel() : RANGE_LABEL[dateRange] });
       if (ddType.value) chips.push({ k: "type", label: ddType.labelOf(ddType.value) });
       if (ddProvider.value) chips.push({ k: "provider", label: ddProvider.labelOf(ddProvider.value) });
@@ -831,6 +835,7 @@ export default {
       if (ddOrigin.value) p.set("origin_provider", ddOrigin.value);
       if (ddFeature.value) p.set("feature", ddFeature.value);
       if (ddPair.value) p.set("pair_key", ddPair.value);
+      if (runFilter) p.set("run_id", runFilter);
       if (grouped() && ddCategory.value) p.set((domain === "scrobble" || domain === "audit") ? "status" : "category", ddCategory.value);
       p.set("domain", domain);
       const { since, until } = rangeEpoch();
@@ -1889,6 +1894,12 @@ export default {
       btn.setAttribute("aria-expanded", String(open));
       btn.classList.toggle("on", open);
     });
+    if (runFilter) {
+      moreWrap.removeAttribute("hidden");
+      moreBtn.setAttribute("aria-expanded", "true");
+      moreBtn.classList.add("on");
+    }
+
     Q("#ev-refresh", root).addEventListener("click", () => doRefresh());
     Q("#ev-clear", root)?.addEventListener("click", async () => {
       const label = domain === "audit" ? "audit" : (domain === "scrobble" ? "scrobble" : "sync");

@@ -13,6 +13,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from .db import get_conn
+from .run_scope import pair_id_from_scope, record_run_pairs, scope_key as _scope_key
 
 _LOG = logging.getLogger("crosswatch.event_archive")
 
@@ -196,6 +197,9 @@ class RunRecorder:
         self._b = ""
         self._two = False
         self._started = False
+        self._pair_id = ""
+        self._scope = ""
+        self._pair_stats: dict[tuple[str, str, str], dict[str, Any]] = {}
 
     def emit(self, event: str, **fields: Any):
         try:
@@ -225,6 +229,34 @@ class RunRecorder:
         kw.setdefault("pair_key", self._pair or None)
         kw.setdefault("source_kind", "runtime")
         self._buf.append(make_event(hash_extra=len(self._buf), **kw))
+
+    def _capture_pair_scope(self) -> None:
+        self._pair_id = pair_id_from_scope(os.environ.get("CW_PAIR_KEY"))
+        src, dst = self._ctx_providers()
+        self._scope = _scope_key(src, self._si or "default", dst, self._di or "default")
+
+    def _bump_pair_stats(self, *, src: str, dst: str, added: int = 0, removed: int = 0, updated: int = 0, errors: int = 0) -> None:
+        if not (added or removed or updated or errors):
+            return
+        scope = self._scope or _scope_key(src, self._si or "default", dst, self._di or "default")
+        key = (self._pair_id, scope, self._feature or "")
+        entry = self._pair_stats.get(key)
+        if entry is None:
+            entry = self._pair_stats[key] = {
+                "pair_id": self._pair_id,
+                "scope_key": scope,
+                "feature": self._feature or "",
+                "pair_key": self._pair or "",
+                "src_provider": src or "",
+                "src_instance": (self._si or "default").lower(),
+                "dst_provider": dst or "",
+                "dst_instance": (self._di or "default").lower(),
+                "added": 0, "removed": 0, "updated": 0, "errors": 0,
+            }
+        entry["added"] += int(added)
+        entry["removed"] += int(removed)
+        entry["updated"] += int(updated)
+        entry["errors"] += int(errors)
 
     def _seen_blackbox_item(self, *, feature: Any, pair_key: Any, dst: Any, src_instance: Any, dst_instance: Any, item_key: Any) -> bool:
         key = tuple(str(v or "") for v in (feature, pair_key, dst, src_instance, dst_instance, item_key))
@@ -265,6 +297,9 @@ class RunRecorder:
         if event == "run:done":
             self._add(event_type="sync_run_finished", operation="run", detail=dict(f))
             self._flush(force=True)
+            if self._pair_stats:
+                record_run_pairs(self._run_id, list(self._pair_stats.values()), conn=self._conn)
+                self._pair_stats = {}
             record_run_finished(
                 self._run_id,
                 status="done",
@@ -294,6 +329,7 @@ class RunRecorder:
             self._di = os.environ.get("CW_PAIR_DST_INSTANCE") or ""
             self._feature = str(f.get("feature") or "")
             self._pair = _pair_key(self._src, self._dst)
+            self._capture_pair_scope()
             return
 
         if event == "two:start":
@@ -304,6 +340,7 @@ class RunRecorder:
             self._di = os.environ.get("CW_PAIR_DST_INSTANCE") or ""
             self._feature = str(f.get("feature") or "")
             self._pair = _pair_key(self._a, self._b)
+            self._capture_pair_scope()
             return
 
         if event in ("one:plan", "two:plan"):
@@ -353,6 +390,14 @@ class RunRecorder:
             src_eff = src if src and src != dst else (self._b if dst == self._a else self._a)
             attempted = int(f.get("attempted") or 0)
             errors = int(f.get("errors") or 0)
+            self._bump_pair_stats(
+                src=src_eff or "",
+                dst=dst or "",
+                added=int(f.get("added") or 0),
+                removed=int(f.get("removed") or 0),
+                updated=int(f.get("updated") or 0),
+                errors=errors,
+            )
             self._add(
                 event_type="write_attempted",
                 operation=op,

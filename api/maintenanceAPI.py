@@ -848,7 +848,7 @@ def maintenance_action_status(action: str) -> dict[str, Any]:
                 _metric("Capture storage kept", captures["bytes"], "bytes"),
             ],
         )
-    elif action in ("events-health", "events-optimize", "events-rebuild"):
+    elif action in ("events-health", "events-optimize", "events-rebuild", "events-purge"):
         from cw_platform import event_archive as _ea
         st = _ea.status()
         db_path = Path(_ea.events_db_path())
@@ -876,6 +876,16 @@ def maintenance_action_status(action: str) -> dict[str, Any]:
                     _metric("Events", events),
                     _metric("Archive size", size, "bytes"),
                     _metric("Last updated", usage.get("modified"), "datetime"),
+                ],
+            )
+        elif action == "events-purge":
+            response.update(
+                title="Clear event data",
+                note="Empties every event category plus the sync activity calendar. Leaves the rest of the local database untouched. This cannot be undone.",
+                metrics=[
+                    _metric("Events removed", events),
+                    _metric("Sync runs removed", runs),
+                    _metric("Acknowledged", acknowledged),
                 ],
             )
         else:
@@ -1486,6 +1496,19 @@ def maintenance_events_rebuild(payload: dict[str, Any] | None = Body(None)) -> d
         return rebuild(reimport=False)
     except Exception:
         _LOG.exception("events-rebuild failed")
+        return {"ok": False, "error": "internal_error"}
+
+
+@router.post("/events-purge")
+def maintenance_events_purge(payload: dict[str, Any] | None = Body(None)) -> dict[str, Any]:
+    if not bool((payload or {}).get("confirm")):
+        return {"ok": False, "error": "confirmation_required", "confirm": False}
+    try:
+        from cw_platform.event_archive.maintenance import purge
+
+        return purge(None)
+    except Exception:
+        _LOG.exception("events-purge failed")
         return {"ok": False, "error": "internal_error"}
 
 

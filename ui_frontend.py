@@ -729,8 +729,11 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
       <div class="cw-main-card-head-copy">
         <div class="cw-main-card-kicker">Statistics</div>
       </div>
-      <div id="cw-view-as" class="cw-view-as hidden">
-        <select id="cw-view-as-select" aria-label="View data as profile"></select>
+      <div class="cw-stats-head-side">
+        <button id="stats-calendar-open" class="cw-stats-calendar-btn" type="button" onclick="window.openStatisticsModal?.()" title="Sync activity calendar" aria-label="Open sync activity calendar"><span class="material-symbols-rounded" aria-hidden="true">calendar_month</span></button>
+        <div id="cw-view-as" class="cw-view-as hidden">
+          <select id="cw-view-as-select" aria-label="View data as profile"></select>
+        </div>
       </div>
     </div>
 
