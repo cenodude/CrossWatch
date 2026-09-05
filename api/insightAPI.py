@@ -8,6 +8,7 @@ import json
 import re
 import threading
 import time
+from collections import OrderedDict
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Callable
@@ -85,8 +86,10 @@ def _load_state_features(features: set[str] | list[str] | tuple[str, ...]) -> di
 
 
 _DERIVED_LOCK = threading.RLock()
-_DERIVED_CACHE: dict[str, Any] = {"key": None, "value": None}
-_TITLEMAP_CACHE: dict[str, Any] = {"key": None, "value": None}
+_DERIVED_CACHE: "OrderedDict[Any, Any]" = OrderedDict()
+_DERIVED_CACHE_MAX = 6
+_TITLEMAP_CACHE: "OrderedDict[Any, Any]" = OrderedDict()
+_TITLEMAP_CACHE_MAX = 4
 _REAL_LOAD_STATE_FEATURES = _load_state_features
 
 
@@ -153,34 +156,47 @@ def _provider_instances(
     return out
 
 
-def _derived_cache_get(key: Any) -> Any:
+def _generation_of(key: Any) -> Any:
+    return key[0] if isinstance(key, tuple) and key else key
+
+
+def _lru_get(cache: "OrderedDict[Any, Any]", key: Any) -> Any:
     if key is None:
         return None
     with _DERIVED_LOCK:
-        return _DERIVED_CACHE["value"] if _DERIVED_CACHE["key"] == key else None
+        if key not in cache:
+            return None
+        cache.move_to_end(key)
+        return cache[key]
+
+
+def _lru_put(cache: "OrderedDict[Any, Any]", limit: int, key: Any, value: Any) -> None:
+    if key is None:
+        return
+    with _DERIVED_LOCK:
+        gen = _generation_of(key)
+        for stale in [k for k in cache if _generation_of(k) != gen]:
+            cache.pop(stale, None)
+        cache[key] = value
+        cache.move_to_end(key)
+        while len(cache) > limit:
+            cache.popitem(last=False)
+
+
+def _derived_cache_get(key: Any) -> Any:
+    return _lru_get(_DERIVED_CACHE, key)
 
 
 def _derived_cache_put(key: Any, value: Any) -> None:
-    if key is None:
-        return
-    with _DERIVED_LOCK:
-        _DERIVED_CACHE["key"] = key
-        _DERIVED_CACHE["value"] = value
+    _lru_put(_DERIVED_CACHE, _DERIVED_CACHE_MAX, key, value)
 
 
 def _titlemap_cache_get(key: Any) -> Any:
-    if key is None:
-        return None
-    with _DERIVED_LOCK:
-        return _TITLEMAP_CACHE["value"] if _TITLEMAP_CACHE["key"] == key else None
+    return _lru_get(_TITLEMAP_CACHE, key)
 
 
 def _titlemap_cache_put(key: Any, value: Any) -> None:
-    if key is None:
-        return
-    with _DERIVED_LOCK:
-        _TITLEMAP_CACHE["key"] = key
-        _TITLEMAP_CACHE["value"] = value
+    _lru_put(_TITLEMAP_CACHE, _TITLEMAP_CACHE_MAX, key, value)
 
 
 _AUTH_KEYS = {
