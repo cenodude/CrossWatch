@@ -735,13 +735,12 @@
       const currentProviders = providersForItem(item).slice(0, 5);
       const routeTitle = sourceRouteTitle(item);
       const synced = String(source).toLowerCase() === "both";
-      overlay.className = `ovr wl-status ${synced ? "is-synced" : "is-provider"}`;
+      const iconsHtml = currentProviders.length ? currentProviders.map(providerIconMarkup).join("") : "";
+      overlay.className = `ovr wl-status ${synced ? "is-synced" : "is-provider"}${iconsHtml ? " has-icons" : ""}`;
       if (routeTitle) {
         overlay.setAttribute("aria-label", routeTitle);
       }
-      overlay.innerHTML = synced
-        ? pillMarkup(pill)
-        : currentProviders.length ? currentProviders.map(providerIconMarkup).join("") : pillMarkup(pill);
+      overlay.innerHTML = `<span class="wl-status-pill">${pillMarkup(pill)}</span><span class="wl-status-icons">${iconsHtml}</span>`;
       link.appendChild(overlay);
 
       if (synced) {

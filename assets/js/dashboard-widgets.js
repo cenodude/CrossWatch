@@ -1263,7 +1263,7 @@
     const artStyle = art ? ` style="--cw-history-art:url(&quot;${esc(art)}&quot;)"` : "";
     const route = sourceRouteTitle(item?.sources);
     return `
-      <${tag} class="cw-history-widget-item"${hrefAttr}${artStyle}${widgetItemAttrs("history", index)}>
+      <${tag} class="cw-history-widget-item cw-history-widget-item--stack"${hrefAttr}${artStyle}${widgetItemAttrs("history", index)}>
         <span class="cw-history-thumb">
           <img src="${esc(art)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'">
           ${age ? `<span class="cw-rating-grid-age">${esc(age)}</span>` : ""}
@@ -1309,7 +1309,7 @@
     const source = scrobbleSourceRow(item);
     const sinks = scrobbleSinkIcons(item?.targets);
     return `
-      <${tag} class="cw-history-widget-item cw-history-widget-item--activity"${hrefAttr}${artStyle}${widgetItemAttrs("scrobble", index)}>
+      <${tag} class="cw-history-widget-item cw-history-widget-item--stack cw-history-widget-item--activity"${hrefAttr}${artStyle}${widgetItemAttrs("scrobble", index)}>
         <span class="cw-history-thumb">
           <img src="${esc(art)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'">
           ${age ? `<span class="cw-rating-grid-age">${esc(age)}</span>` : ""}
@@ -1339,7 +1339,7 @@
     const art = poster(item);
     const route = sourceRouteTitle(item?.sources);
     return `
-      <${tag} class="cw-history-widget-item cw-history-widget-item--progress"${hrefAttr}${widgetItemAttrs("progress", index)}>
+      <${tag} class="cw-history-widget-item cw-history-widget-item--stack cw-history-widget-item--progress"${hrefAttr}${widgetItemAttrs("progress", index)}>
         <span class="cw-history-thumb">
           <img src="${esc(art)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'">
           ${age ? `<span class="cw-rating-grid-age">${esc(age)}</span>` : ""}
@@ -1480,7 +1480,7 @@
     const art = poster(item);
     const route = sourceRouteTitle(item?.sources);
     return `
-      <${tag} class="cw-history-widget-item cw-history-widget-item--rating"${hrefAttr}${widgetItemAttrs("ratings", index)}>
+      <${tag} class="cw-history-widget-item cw-history-widget-item--stack cw-history-widget-item--rating"${hrefAttr}${widgetItemAttrs("ratings", index)}>
         <span class="cw-history-thumb">
           <img src="${esc(art)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'">
           ${ratedLabel ? `<span class="cw-rating-grid-age">${esc(ratedLabel)}</span>` : ""}
