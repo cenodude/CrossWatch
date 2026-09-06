@@ -288,6 +288,8 @@ def _save_policy_manual(
     adds_items: dict[str, Any],
     blocks: list[str],
     provider_instance: str | None = None,
+    *,
+    merge: bool = False,
 ) -> None:
     adds_items = _canonicalize_manual_items(adds_items, kind)
 
@@ -332,13 +334,13 @@ def _save_policy_manual(
             f = {}
             node[kind] = f
 
-        f["blocks"] = list(blocks or [])
+        f["blocks"] = _merge_blocks(f.get("blocks") or [], blocks or []) if merge else list(blocks or [])
 
         adds = f.get("adds")
         if not isinstance(adds, dict):
             adds = {}
             f["adds"] = adds
-        adds["items"] = dict(adds_items or {})
+        adds["items"] = {**(adds.get("items") or {}), **adds_items} if merge else dict(adds_items or {})
 
 
     try:

@@ -74,6 +74,9 @@ class StateStore:
             if not isinstance(s_node, dict):
                 s_node = {}
                 provs[p_node["__prov_key__"]] = s_node
+            instance = p_node.get("__instance__", "default")
+            if instance != "default":
+                s_node = s_node.setdefault("instances", {}).setdefault(instance, {})
             s_manual = s_node.get("manual")
             if not isinstance(s_manual, dict):
                 s_manual = {}
@@ -100,9 +103,7 @@ class StateStore:
                     s_items = s_adds.get("items")
                     if not isinstance(s_items, dict):
                         s_items = {}
-                    for k, v in p_items.items():
-                        if k not in s_items:
-                            s_items[k] = v
+                    s_items.update(p_items)
                     s_adds["items"] = s_items
                     s_feat["adds"] = s_adds
 
@@ -121,6 +122,15 @@ class StateStore:
             for feature in ("watchlist", "history", "ratings", "progress", "playlists", "collection"):
                 if feature in p_node and isinstance(p_node.get(feature), dict):
                     _merge_feature(p_node, feature, p_node.get(feature))
+            for instance, instance_node in (p_node.get("instances") or {}).items():
+                if not isinstance(instance_node, dict):
+                    continue
+                scoped = {**instance_node, "__prov_key__": prov_key, "__instance__": instance}
+                for feature, block in (instance_node.get("manual") or {}).items():
+                    _merge_feature(scoped, str(feature).lower(), block)
+                for feature in ("watchlist", "history", "ratings", "progress", "playlists", "collection"):
+                    if feature in scoped:
+                        _merge_feature(scoped, feature, scoped[feature])
 
         return state
 

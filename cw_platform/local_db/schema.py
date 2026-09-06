@@ -381,6 +381,7 @@ CREATE TABLE IF NOT EXISTS manual_policy_add_items (
     watched                  INTEGER,
     watched_at               TEXT,
     last_watched_at          TEXT,
+    collected_at             TEXT,
     rating                   REAL,
     user_rating              REAL,
     rated_at                 TEXT,
@@ -632,6 +633,7 @@ def apply_schema(conn: sqlite3.Connection) -> int:
         conn.execute(_CREATE_MANUAL_POLICY_FEATURES)
         conn.execute(_CREATE_MANUAL_POLICY_BLOCKS)
         conn.execute(_CREATE_MANUAL_POLICY_ADD_ITEMS)
+        _ensure_column(conn, "manual_policy_add_items", "collected_at", "TEXT")
         conn.execute(_CREATE_WATCHLIST_HIDDEN_ITEMS)
         conn.execute(_CREATE_CURRENTLY_WATCHING_STREAMS)
         conn.execute(_CREATE_CURRENTLY_WATCHING_IDS)

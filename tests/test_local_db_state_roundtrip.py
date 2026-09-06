@@ -109,6 +109,26 @@ def test_schema_upgrade_adds_collected_at_to_existing_baseline_items(tmp_path) -
     assert "collected_at" in columns
 
 
+def test_schema_upgrade_preserves_existing_manual_mappings(tmp_path) -> None:
+    db_path = tmp_path / "old-manual-policy.sqlite3"
+    old_schema = sqlite_schema._CREATE_MANUAL_POLICY_ADD_ITEMS.replace("    collected_at             TEXT,\n", "")
+    raw = sqlite3.connect(db_path)
+    try:
+        raw.execute(sqlite_schema._CREATE_MANUAL_POLICY_FEATURES)
+        raw.execute(old_schema)
+        raw.execute("INSERT INTO manual_policy_features(id,provider,feature,updated_at) VALUES(1,'SRC','collection',0)")
+        raw.execute("INSERT INTO manual_policy_add_items(feature_id,item_key,title,updated_at) VALUES(1,'tmdb:1','Existing mapping',0)")
+        raw.commit()
+    finally:
+        raw.close()
+    conn = connect(db_path, base_path=tmp_path)
+    try:
+        row = conn.execute("SELECT item_key,title,collected_at FROM manual_policy_add_items").fetchone()
+        assert tuple(row) == ("tmdb:1", "Existing mapping", None)
+    finally:
+        conn.close()
+
+
 def _feature_row_ids(base_path) -> dict[tuple[str, str, str], int]:
     conn = get_conn(base_path)
     assert conn is not None
