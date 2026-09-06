@@ -12,6 +12,7 @@ from typing import Any, Iterable, Mapping
 from pathlib import Path
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from, ids_from_guid
+from providers.sync._mod_common import observation_time
 
 from ._common import (
     _as_base_url,
@@ -1396,6 +1397,7 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
         max_seen = 0
         workers = plex_worker_count(adapter, "history_workers", "CW_PLEX_HISTORY_WORKERS", 12)
         include_marked = bool(_history_cfg_get(adapter, "include_marked_watched", True))
+        interactive_read = bool(observation_time(adapter))
 
         # Optional cursor debugging: show the rows that are considered "new" for this run.
         if eff_since is not None and str(os.environ.get("CW_PLEX_HISTORY_DEBUG_CURSOR", "")).strip().lower() in ("1", "true", "yes"):
@@ -1450,7 +1452,12 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
             if not explicit_user and cli_acct_id and aid is not None and int(aid) != int(cli_acct_id):
                 return None
 
-            meta = minimal_from_history_row(raw, token=None, allow_discover=False)
+            rk = str(getattr(raw, "ratingKey", None) or "").strip()
+            catalog_entry = cat.by_rk.get(rk) if interactive_read and scope_ok else None
+            if catalog_entry and (has_external_ids(catalog_entry.get("ids") or {}) or has_external_ids(catalog_entry.get("show_ids") or {})):
+                meta = _catalog_entry_to_minimal(catalog_entry)
+            else:
+                meta = minimal_from_history_row(raw, token=None, allow_discover=False)
             if not meta and fallback_guid:
                 meta = minimal_from_history_row(raw, token=None, allow_discover=True)
             if not meta:

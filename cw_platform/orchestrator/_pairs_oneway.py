@@ -1118,7 +1118,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
     cancelled = bool(cancel_requested())
 
     prev_state = load_feature_state(ctx.state_store, feature)
-    manual_adds, manual_blocks = _manual_policy(prev_state, src, feature)
+    manual_adds, manual_blocks = _manual_policy(prev_state, src, feature, src_inst)
     prev_provs = (prev_state.get("providers") or {})
 
     def _prev_items(pmap: Mapping[str, Any], prov: str, inst: str, feat: str) -> dict[str, Any]:
@@ -1646,6 +1646,8 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
             pair_key=pair_key,
             cross_feature_unresolved=_cross_feature_unresolved(feature),
             ignore_pair_tomb=(str(feature or "").lower() == "history"),
+            tomb_ttl_seconds=max(1, int(sync_cfg.get("tombstone_ttl_days", 30))) * 86400,
+            now=getattr(getattr(ctx, "interactive", None), "planned_at", None),
             emit=emit,
         )
         blocked_total += max(0, before_blocklist - len(adds))
@@ -1690,6 +1692,15 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
     if use_phantoms and adds:
         adds, _blocked = guard.filter_adds(adds, _sync_key, _sync_minimal, emit, ctx.state_store, pair_key)
         blocked_total += int(_blocked or 0)
+
+    review = getattr(ctx, "interactive", None)
+    if review is not None:
+        review_args = dict(source=src, source_instance=src_inst, before=dst_full, down=dst_down)
+        adds = review.filter(feature, dst, dst_inst, "add", adds, **review_args)
+        updates = review.filter(feature, dst, dst_inst, "update", updates, **review_args)
+        removes = review.filter(feature, dst, dst_inst, "remove", removes, **review_args)
+        if review.preview:
+            return {"blocked": blocked_total, "cancelled": cancelled}
 
     attempted_keys: list[str] = []
     key2item: dict[str, Any] = {}
@@ -2226,6 +2237,8 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                 dbg("baseline.provider_native", feature=feature, dst=dst,
                     canonical=len(dst_commit), comparison=len(dst_full))
 
+            if review is not None and review.retain_deferred(feature, src, src_inst, src_idx, prev_src, _sync_key):
+                now_cp_src = prev_cp_src
             _commit_baseline(provs_block, src, src_inst, feature, src_idx)
             _commit_baseline(provs_block, dst, dst_inst, feature, dst_commit)
             _commit_checkpoint(provs_block, src, src_inst, feature, now_cp_src)

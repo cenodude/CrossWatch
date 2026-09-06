@@ -63,6 +63,8 @@ def keys_for_feature(
     *,
     pair: str | None = None,
     include_global: bool = True,
+    ttl_seconds: int | None = None,
+    now: int | None = None,
 ) -> dict[str, int]:
     tomb = store.load_tomb()
     raw = tomb.get("keys") or {}
@@ -72,6 +74,10 @@ def keys_for_feature(
         }
     else:
         ks_all = {}
+
+    if ttl_seconds is not None:
+        current = int(time.time()) if now is None else now
+        ks_all = {k: ts for k, ts in ks_all.items() if current - ts < ttl_seconds}
 
     out: dict[str, int] = {}
 

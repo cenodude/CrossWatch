@@ -467,8 +467,12 @@ def _ops_cfg(providers: Mapping[str, Any], cfg: Mapping[str, Any], endpoint: Map
     return ops, build_provider_config_view(cfg, provider, inst), inst, provider, playlist_id
 
 
-def _snapshot_endpoint(providers: Mapping[str, Any], cfg: Mapping[str, Any], endpoint: Mapping[str, Any]) -> tuple[PlaylistSnapshot, Any, Mapping[str, Any], str]:
+def _snapshot_endpoint(providers: Mapping[str, Any], cfg: Mapping[str, Any], endpoint: Mapping[str, Any], *, review_pending: bool = False) -> tuple[PlaylistSnapshot, Any, Mapping[str, Any], str]:
     ops, view, inst, provider, playlist_id = _ops_cfg(providers, cfg, endpoint)
+    if not playlist_id and review_pending and isinstance(endpoint.get("pending_create"), Mapping):
+        resource = PlaylistResource(provider=provider, id="pending", instance=inst,
+                                    name=str(endpoint["pending_create"].get("name") or "New playlist"), can_add=True)
+        return PlaylistSnapshot(resource=resource), ops, view, inst
     if not playlist_id:
         raise PlaylistRunError("playlist id missing")
     snap = ops.get_playlist_snapshot(view, playlist_id, instance=inst)
@@ -602,6 +606,8 @@ def _aggregate_targets(
     providers: Mapping[str, Any],
     cfg: Mapping[str, Any],
     targets: Sequence[Mapping[str, Any]],
+    *,
+    review_pending: bool = False,
 ) -> dict[str, Any]:
     logical: dict[str, PlaylistItem] = {}
     physical: dict[str, list[dict[str, Any]]] = {}
@@ -611,7 +617,7 @@ def _aggregate_targets(
     warnings: list[str] = []
     for pos, target in enumerate(targets):
         endpoint_id = str(target.get("endpoint_id") or "").strip()
-        snap, ops, view, inst = _snapshot_endpoint(providers, cfg, target)
+        snap, ops, view, inst = _snapshot_endpoint(providers, cfg, target, review_pending=review_pending)
         resource = snap.resource
         _merge_warnings(warnings, resource)
         if resource.is_smart:
@@ -666,6 +672,7 @@ def _plan_ruleset(
     *,
     providers: Mapping[str, Any] | None = None,
     materialize: bool = False,
+    review_pending: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     providers = providers or _providers()
     ruleset = _ruleset_for_mapping(cfg, mapping)
@@ -689,9 +696,9 @@ def _plan_ruleset(
     source_keys = [it.key for it in source_items]
     source_set = set(source_by_key)
     for tgt in targets:
-        if isinstance(tgt, Mapping) and tgt.get("pending_create"):
+        if isinstance(tgt, Mapping) and tgt.get("pending_create") and not review_pending:
             _materialize_pending(providers, cfg, mapping, tgt, source_items, materialize=materialize)
-    agg = _aggregate_targets(providers, cfg, targets)
+    agg = _aggregate_targets(providers, cfg, targets, review_pending=review_pending)
     warnings: list[str] = list(agg.get("warnings") or [])
     if ruleset["direction"] == "bidirectional":
         _merge_warnings(warnings, source_snap.resource)
@@ -832,6 +839,7 @@ def build_plan(
     *,
     providers: Mapping[str, Any] | None = None,
     materialize: bool = False,
+    review_pending: bool = False,
 ) -> tuple[PlaylistPlan, dict[str, Any]]:
     providers = providers or _providers()
     source = mapping.get("source") or {}
@@ -862,15 +870,16 @@ def build_plan(
     src_snap: PlaylistSnapshot = src_ops.get_playlist_snapshot(src_cfg, src_pl, instance=src_inst)
 
     seeded_keys: set[str] = set()
-    if not dst_pl:
+    pending_review = review_pending and not dst_pl and isinstance(target.get("pending_create"), Mapping)
+    if not dst_pl and not pending_review:
         dst_pl, seeded_keys = _materialize_pending(
             providers, cfg, mapping, target, src_snap.items, materialize=materialize
         )
         dst_cfg = build_provider_config_view(cfg, dst, dst_inst)
-    if not dst_pl:
+    if not dst_pl and not pending_review:
         raise PlaylistRunError("mapping target playlist id missing")
 
-    dst_resource = _find_resource(dst_ops, dst_cfg, dst_inst, dst_pl)
+    dst_resource = PlaylistResource(provider=dst, id="pending", name=str((target.get("pending_create") or {}).get("name") or "New playlist"), instance=dst_inst, can_add=True) if pending_review else _find_resource(dst_ops, dst_cfg, dst_inst, dst_pl)
     if dst_resource is None:
         raise PlaylistRunError(f"target playlist not found: {dst_pl}")
     if dst_resource.is_smart:
@@ -879,7 +888,7 @@ def build_plan(
         raise PlaylistRunError("target playlist is read only")
     _merge_warnings(plan.warnings, dst_resource)
 
-    dst_snap: PlaylistSnapshot = dst_ops.get_playlist_snapshot(dst_cfg, dst_pl, instance=dst_inst)
+    dst_snap: PlaylistSnapshot = PlaylistSnapshot(resource=dst_resource) if pending_review else dst_ops.get_playlist_snapshot(dst_cfg, dst_pl, instance=dst_inst)
 
     src_by_key = src_snap.by_key()
     dst_by_key = dst_snap.by_key()
@@ -935,7 +944,9 @@ def build_plan(
         "dst_set": dst_set,
         "src_set": src_set,
         "src_keys": src_keys,
+        "dst_keys": dst_snap.ordered_keys(),
         "seeded_keys": {k for k in seeded_keys if k in dst_set},
+        "pending_review": pending_review,
     }
     return plan, ctx
 
@@ -970,8 +981,9 @@ def _apply_ruleset_mapping(
     dry_run: bool = False,
     providers: Mapping[str, Any] | None = None,
     emit: Callable[..., None] | None = None,
+    interactive: Any = None,
 ) -> dict[str, Any]:
-    plan, ctx = _plan_ruleset(cfg, mapping, providers=providers, materialize=not dry_run)
+    plan, ctx = _plan_ruleset(cfg, mapping, providers=providers, materialize=not dry_run and interactive is None, review_pending=interactive is not None)
     mapping_id = str(mapping.get("id") or "")
     result: dict[str, Any] = {
         "ok": not bool(plan.get("blocked")),
@@ -1000,9 +1012,34 @@ def _apply_ruleset_mapping(
         result["error"] = "capacity exceeded"
         result["unresolved_count"] = 0
         result["finished_at"] = int(time.time())
-        store_result(mapping, result)
+        if not dry_run:
+            store_result(mapping, result)
         _emit(emit, "playlist:capacity", mapping=mapping_id, ruleset=plan.get("ruleset_id"), overflow=result["overflow_count"])
         return result
+    if interactive is not None:
+        source = mapping.get("source") or {}
+        target_meta = {str(t["endpoint_id"]): t for t in plan.get("per_target", [])}
+        for field_name, operation in (("target_additions", "add"), ("target_removals", "remove")):
+            for eid, keys in ctx[field_name].items():
+                meta = target_meta[eid]
+                batch = [_item_dict_from_sources(k, ctx["source_by_key"], ctx["target_by_key"], ctx["assignments"]) for k in keys]
+                kept = interactive.filter("playlists", str(meta["provider"]).upper(), normalize_instance_id(meta.get("instance")), operation, batch,
+                                          source=str(source.get("provider") or "").upper(), source_instance=ctx["source_inst"], scope=f"{mapping_id}:{eid}",
+                                          destination_label=str(meta.get("playlist_name") or eid) + (" (create playlist)" if not meta.get("playlist_id") else ""))
+                ctx[field_name][eid] = [canonical_key(it) for it in kept]
+        for field_name, operation in (("add_to_source", "add"), ("remove_from_source", "remove")):
+            batch = [_item_dict_from_sources(k, ctx["source_by_key"], ctx["target_by_key"], ctx["assignments"]) for k in sorted(ctx[field_name])]
+            kept = interactive.filter("playlists", str(source.get("provider") or "").upper(), ctx["source_inst"], operation, batch, scope=f"{mapping_id}:source")
+            ctx[field_name] = {canonical_key(it) for it in kept}
+        if not interactive.preview:
+            target_keys = set(ctx["target_keys"])
+            selected_additions = {k for keys in ctx["target_additions"].values() for k in keys}
+            selected_removals = {k for keys in ctx["target_removals"].values() for k in keys}
+            ctx["final_source"] = (set(ctx["source_keys"]) | ctx["add_to_source"]) - ctx["remove_from_source"]
+            ctx["final_managed"] = (set(ctx["assignments"]) | selected_additions) & ((target_keys - selected_removals) | selected_additions)
+            ctx["assignment_target"] = {k: v.get("endpoint_id") for k, v in ctx["assignments"].items()}
+            for eid, keys in ctx["target_additions"].items():
+                ctx["assignment_target"].update({k: eid for k in keys})
     if dry_run:
         result["added"] = int(plan.get("planned_additions") or 0)
         result["removed"] = int(plan.get("planned_removals") or 0)
@@ -1011,6 +1048,20 @@ def _apply_ruleset_mapping(
     source_by_key = ctx["source_by_key"]
     target_by_key = ctx["target_by_key"]
     assignments = ctx["assignments"]
+    if interactive is not None:
+        for target in _mapping_targets(mapping):
+            eid = str(target.get("endpoint_id") or "")
+            keys = ctx["target_additions"].get(eid) or []
+            if not keys or target.get("playlist_id") or not target.get("pending_create"):
+                continue
+            items = [_item_dict_from_sources(k, source_by_key, target_by_key, assignments) for k in keys]
+            playlist_id, seeded = _materialize_pending(providers or _providers(), cfg, mapping, target,
+                                                       [PlaylistItem.from_media(it) for it in items], materialize=True)
+            ctx["target_ctx"][eid]["playlist_id"] = playlist_id
+            ctx["target_additions"][eid] = [k for k in keys if k not in seeded]
+            ctx["target_keys"] = list(set(ctx["target_keys"]) | seeded)
+            result["added"] += len(seeded)
+            _record_events(_event_rows(mapping_id=mapping_id, ctx={"src": ctx["ruleset"]["id"], "dst": eid, "dst_inst": ""}, operation="add", items=[it for it in items if canonical_key(it) in seeded]))
     applied_ok = True
     for eid, keys in ctx["target_removals"].items():
         if not keys:
@@ -1196,10 +1247,11 @@ def run_mapping(
     dry_run: bool = False,
     providers: Mapping[str, Any] | None = None,
     emit: Callable[..., None] | None = None,
+    interactive: Any = None,
 ) -> dict[str, Any]:
     if mapping.get("ruleset_id"):
-        return _apply_ruleset_mapping(cfg, mapping, dry_run=dry_run, providers=providers, emit=emit)
-    plan, ctx = build_plan(cfg, mapping, providers=providers, materialize=not dry_run)
+        return _apply_ruleset_mapping(cfg, mapping, dry_run=dry_run, providers=providers, emit=emit, interactive=interactive)
+    plan, ctx = build_plan(cfg, mapping, providers=providers, materialize=not dry_run and interactive is None, review_pending=interactive is not None)
 
     dst_ops = ctx["dst_ops"]
     dst_cfg = ctx["dst_cfg"]
@@ -1253,6 +1305,18 @@ def run_mapping(
             result["warnings"].append("mass_delete_blocked")
         remove_items = guarded
 
+    if interactive is not None:
+        review_args = dict(source=ctx["src"], source_instance=ctx["src_inst"], scope=mapping_id,
+                           destination_label=ctx["dst_resource"].name + (" (create playlist)" if ctx["pending_review"] else ""))
+        plan.add_items = interactive.filter("playlists", ctx["dst"], dst_inst, "add", plan.add_items, **review_args)
+        remove_items = interactive.filter("playlists", ctx["dst"], dst_inst, "remove", remove_items, **review_args)
+        if plan.reorder_count:
+            reorder = {"type": "playlist", "title": "Reorder playlist", "ids": {"slug": dst_pl}, "target_order": plan.target_order,
+                       "current_order": ctx["dst_keys"]}
+            kept = interactive.filter("playlists", ctx["dst"], dst_inst, "update", [reorder], **review_args)
+            if not kept:
+                plan.reorder_count = 0
+
     applied_add_keys: set[str] = set(ctx.get("seeded_keys") or ())
     applied_remove_keys: set[str] = set()
     if applied_add_keys:
@@ -1269,9 +1333,22 @@ def run_mapping(
 
     from .id_map import canonical_key
 
+    if ctx.get("pending_review"):
+        if not plan.add_items:
+            return result
+        dst_pl, seeded = _materialize_pending(providers or _providers(), cfg, mapping, mapping.get("target") or {},
+                                              [PlaylistItem.from_media(it) for it in plan.add_items], materialize=True)
+        dst_cfg = build_provider_config_view(cfg, ctx["dst"], dst_inst)
+        applied_add_keys |= seeded
+        result["created"] = True
+        result["added"] = len(seeded)
+        ctx["dst_pl"] = dst_pl
+        _record_events(_event_rows(mapping_id=mapping_id, ctx=ctx, operation="add", items=[it for it in plan.add_items if canonical_key(it) in seeded]))
+        plan.add_items = [it for it in plan.add_items if canonical_key(it) not in seeded]
+
     if plan.add_items:
         add_res = dst_ops.add_playlist_items(dst_cfg, dst_pl, plan.add_items, instance=dst_inst) or {}
-        result["added"] = int(add_res.get("count") or 0)
+        result["added"] += int(add_res.get("count") or 0)
         result["unresolved"].extend(add_res.get("unresolved") or [])
         _merge_warnings(result, add_res)
         confirmed = set(add_res.get("confirmed_keys") or [])
@@ -1322,6 +1399,11 @@ def run_mapping(
         except Exception:
             present = set()
         target_order = [k for k in plan.target_order if not present or k in present]
+        if interactive is not None:
+            target_order = [k for k in plan.target_order if k in present]
+            ordered = set(target_order)
+            if present:
+                target_order.extend(k for k in dst_snap2.ordered_keys() if k not in ordered)
         if ctx["dst_resource"].can_reorder and target_order:
             ro = dst_ops.reorder_playlist_items(dst_cfg, dst_pl, target_order, instance=dst_inst) or {}
             result["reordered"] = int(ro.get("reordered") or ro.get("count") or 0)

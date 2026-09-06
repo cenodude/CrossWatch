@@ -344,6 +344,8 @@ def _pair_env(pair: Mapping[str, Any], *, i: int, src: str, dst: str, mode: str,
                 os.environ[k] = v
 
 def run_pairs(ctx) -> dict[str, Any]:
+    review = getattr(ctx, "interactive", None)
+    preview = review is not None and review.preview
     for k in ("CW_PAIR_KEY", "CW_PAIR_SCOPE", "CW_SYNC_PAIR", "CW_PAIR"):
         if str(os.environ.get(k, "")).strip().lower() == "unscoped":
             os.environ.pop(k, None)
@@ -358,19 +360,21 @@ def run_pairs(ctx) -> dict[str, Any]:
     emit = ctx.emit
 
     _event_rec = None
-    try:
-        from ..event_archive import RunRecorder as _RunRecorder
-        import time as _t
-        _rid = str(os.environ.get("CW_RUN_ID") or int(_t.time()))
-        _event_rec = _RunRecorder(ctx.emit, run_id=_rid)
-        ctx.emit = _event_rec.emit
-        emit = ctx.emit
-    except Exception:
-        _event_rec = None
+    if not preview:
+        try:
+            from ..event_archive import RunRecorder as _RunRecorder
+            import time as _t
+            _rid = str(os.environ.get("CW_RUN_ID") or int(_t.time()))
+            _event_rec = _RunRecorder(ctx.emit, run_id=_rid)
+            ctx.emit = _event_rec.emit
+            emit = ctx.emit
+        except Exception:
+            _event_rec = None
 
     try:
         ttl_days = int(sync_cfg.get("tombstone_ttl_days", 30))
-        ctx.tomb_prune(max(1, ttl_days) * 24 * 3600)
+        if not preview:
+            ctx.tomb_prune(max(1, ttl_days) * 24 * 3600)
     except Exception:
         pass
 
@@ -557,6 +561,9 @@ def run_pairs(ctx) -> dict[str, Any]:
                             attempted_add_duplicate_keys_total += int(res.get("attempted_add_duplicate_keys", 0))
                             errors_total += int(res.get("errors", 0))
 
+                        if review is not None and not preview and review.on_result is not None:
+                            review.on_result(feature, src, dst, src_inst, dst_inst, mode, res)
+
                         if isinstance(res, Mapping) and coerce_bool(res.get("cancelled"), False):
                             emit("feature:cancelled", src=src, dst=dst, feature=feature)
                             cancelled = True
@@ -574,6 +581,11 @@ def run_pairs(ctx) -> dict[str, Any]:
                     ctx.config = prev_cfg
     if not cancelled and cancel_requested():
         cancelled = True
+
+    if preview:
+        ctx.emit = metrics._orig_emit
+        return {"ok": not errors_total and not cancelled, "errors": errors_total,
+                "blocked": blocked_total, "cancelled": cancelled, "pairs": len(pairs)}
 
     if "watchlist" in features_ran:
         try:

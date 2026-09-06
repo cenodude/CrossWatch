@@ -773,11 +773,13 @@ def library_index(adapter: Any, feature: str = "") -> LibraryIndex:
 
 
 def feature_index(adapter: Any, feature: str) -> dict[str, dict[str, Any]]:
+    from providers.sync._mod_common import observation_time
+
     idx = library_index(adapter, feature)
     out: dict[str, dict[str, Any]] = {}
     prior_ratings = _load_kodi_ratings_baseline(adapter) if feature == "ratings" else {}
     prior_progress = _load_kodi_progress_baseline(adapter) if feature == "progress" else {}
-    now_iso = _utc_now_iso() if feature in {"ratings", "progress"} else ""
+    now_iso = observation_time(adapter, _utc_now_iso) if feature in {"ratings", "progress"} else ""
     for base in idx.items:
         item = dict(base)
         raw_obj = item.get("_kodi_raw")

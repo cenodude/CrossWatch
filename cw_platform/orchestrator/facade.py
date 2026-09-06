@@ -56,6 +56,7 @@ class Orchestrator:
     pair_scope_ids: Sequence[str] | None = None
     write_state_json: bool = True
     state_path: Path | None = None
+    interactive: Any = None
 
     files: StateStore | None = field(init=False, default=None)
     providers: dict[str, InventoryOps] = field(init=False, default_factory=dict)
@@ -129,7 +130,7 @@ class Orchestrator:
         from types import SimpleNamespace
 
         return SimpleNamespace(
-            config=self.cfg,
+            config={**self.cfg, "_cw_interactive_planned_at": self.interactive.planned_at} if self.interactive is not None else self.cfg,
             providers=self.providers,
             emit=self.emitter.emit,
             emit_info=self.emitter.info,
@@ -145,6 +146,7 @@ class Orchestrator:
             pair_scope_ids=list(self.pair_scope_ids or []),
             write_state_json=self.write_state_json,
             state_path=self.state_path,
+            interactive=self.interactive,
             snap_cache=self.snap_cache,
             snap_ttl_sec=self.snap_ttl_sec,
             apply_chunk_size=self.apply_chunk_size,
@@ -191,6 +193,9 @@ class Orchestrator:
             self.state_path = Path(state_path) if state_path else None
 
             summary = _run_pairs(self.context)
+
+            if self.interactive is not None and self.interactive.preview:
+                return summary
 
 
             if self.write_state_json:

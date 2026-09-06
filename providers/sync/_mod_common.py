@@ -18,6 +18,16 @@ from cw_platform.run_control import raise_if_cancelled
 __VERSION__ = "0.2.1"
 MAX_RETRY_AFTER_SLEEP_S = 60.0
 CANCEL_SLEEP_SLICE_S = 0.25
+
+
+def observation_time(adapter: Any, fallback: Callable[[], str] | None = None) -> str:
+    config = getattr(adapter, "config", None) or getattr(adapter, "raw_cfg", None)
+    planned_at = config.get("_cw_interactive_planned_at") if isinstance(config, Mapping) else None
+    if isinstance(planned_at, (int, float)) and planned_at > 0:
+        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(planned_at))
+    return fallback() if fallback is not None else ""
+
+
 __all__ = [
     "HitSession",
     "make_emitter",
@@ -481,6 +491,7 @@ class HitSession(requests.Session):
         self._emit = emit
         self._label = feature_label or (lambda m, u, kw: default_feature_label(provider, m, u, kw))
         self._emit_hits = bool(os.getenv("CW_API_HITS")) if emit_hits is None else bool(emit_hits)
+        self._on_request: Callable[[Mapping[str, Any]], object] | None = None
         self._rate_limiter = None
         self._rate_limiter_meta = None
         try:
@@ -553,6 +564,11 @@ class HitSession(requests.Session):
                     self._emit("api:hit", {"provider": self._provider, "feature": feature})
                 except Exception:
                     pass
+            if self._on_request is not None:
+                try:
+                    self._on_request({"event": "api:request", "provider": self._provider, "feature": feature})
+                except Exception:
+                    pass
 
 
 def build_session(
@@ -562,7 +578,11 @@ def build_session(
     feature_label: FeatureLabelFn | None = None,
     emit_hits: bool | None = None,
 ) -> HitSession:
-    return HitSession(provider, make_emitter(ctx), feature_label, emit_hits)
+    session = HitSession(provider, make_emitter(ctx), feature_label, emit_hits)
+    callback = getattr(getattr(ctx, "interactive", None), "on_progress", None)
+    if callable(callback):
+        session._on_request = callback
+    return session
 
 
 def parse_rate_limit(h: Mapping[str, Any]) -> dict[str, int | None]:

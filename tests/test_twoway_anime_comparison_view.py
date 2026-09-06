@@ -60,7 +60,7 @@ def test_view_is_used_for_comparison_features(feature: str) -> None:
 def test_source_only_reads_the_hook_when_anime_mapping_is_on() -> None:
     source = twoway.__loader__.get_source(twoway.__name__)
     anchor = source.index("if bool(anime_pair_opts.get(\"use_anime_mapping\", False)):")
-    gate = source[anchor : source.index("\n    now = int(_t.time())", anchor)]
+    gate = source[anchor : source.index("\n    tomb_ttl_days =", anchor)]
     assert "_comparison_view(aops" in gate
     assert "_comparison_view(bops" in gate
     assert source.count("_comparison_view(aops") == 1

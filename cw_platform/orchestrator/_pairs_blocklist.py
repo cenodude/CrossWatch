@@ -184,13 +184,18 @@ def apply_blocklist(
     pair_key: str | None = None,
     cross_feature_unresolved: bool = True,
     ignore_pair_tomb: bool = False,
+    tomb_ttl_seconds: int | None = None,
+    now: int | None = None,
+    observed_tombstones: Mapping[str, int] | None = None,
     emit=None,
 ) -> list[dict[str, Any]]:
     global_tomb: set[str] = set()
 
     try:
-        pmap_raw = keys_for_feature(state_store, feature, pair=pair_key) or {}
+        pmap_raw = keys_for_feature(state_store, feature, pair=pair_key, ttl_seconds=tomb_ttl_seconds, now=now) or {}
         pmap: dict[str, int] = {str(k): int(v) for k, v in (pmap_raw or {}).items()} if isinstance(pmap_raw, Mapping) else {}
+        for key, timestamp in (observed_tombstones or {}).items():
+            pmap.setdefault(key, timestamp)
         pair_tomb: set[str] = set(pmap.keys())
     except Exception:
         pmap = {}

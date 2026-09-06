@@ -74,12 +74,15 @@ def run_playlist_mappings(
     for mapping in resolved:
         mapping_id = str(mapping.get("id") or "")
         try:
+            review = getattr(ctx, "interactive", None)
+            review_kwargs = {"interactive": review} if review is not None else {}
             res = run_mapping(
                 full_cfg,
                 mapping,
                 dry_run=dry_run,
                 providers=providers,
                 emit=ctx.emit,
+                **review_kwargs,
             )
             if not dry_run and isinstance(full_cfg, dict):
                 try:

@@ -723,6 +723,7 @@ def non_admin_api_allowed(path: Any, method: Any) -> bool:
         "/api/export",
         "/api/import",
         "/api/editor",
+        "/api/interactive-sync",
         "/api/playlists",
         "/api/snapshots",
         "/api/manual",

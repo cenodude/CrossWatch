@@ -10,6 +10,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from cw_platform.id_map import canonical_key
+from providers.sync._mod_common import observation_time
 
 from ._common import (
     _atomic_write,
@@ -39,7 +40,7 @@ def _now_iso_z() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
-def _accepted(obj: Mapping[str, Any]) -> dict[str, Any]:
+def _accepted(obj: Mapping[str, Any], *, observed_at: str | None = None) -> dict[str, Any]:
     base = tracker_minimal(obj)
     out: dict[str, Any] = dict(base)
 
@@ -78,7 +79,7 @@ def _accepted(obj: Mapping[str, Any]) -> dict[str, Any]:
     if ra:
         out["rated_at"] = str(ra)
     elif obj.get("rating") is not None or obj.get("liked") is not None:
-        out["rated_at"] = _now_iso_z()
+        out["rated_at"] = observed_at or _now_iso_z()
     return out
 
 
@@ -90,6 +91,7 @@ def _load_state(adapter: Any) -> dict[str, Any]:
     if _pair_scope() is None:
         return {"ts": 0, "items": {}}
     root = _root(adapter)
+    observed_at = observation_time(adapter)
     path = _ratings_path(adapter)
     raw: Any | None
 
@@ -122,7 +124,7 @@ def _load_state(adapter: Any) -> dict[str, Any]:
             key = canonical_key(obj)
             if not key:
                 continue
-            items[key] = _accepted(obj)
+            items[key] = _accepted(obj, observed_at=observed_at)
         state = {"ts": 0, "items": items}
         if items and may_persist(adapter, path):
             _atomic_write(path, {"ts": int(time.time()), "items": items})
@@ -139,7 +141,7 @@ def _load_state(adapter: Any) -> dict[str, Any]:
                 ck = str(key) or canonical_key(value)
                 if not ck:
                     continue
-                items2[ck] = _accepted(value)
+                items2[ck] = _accepted(value, observed_at=observed_at)
             state = {"ts": ts, "items": items2}
             if items2 and may_persist(adapter, path):
                 _atomic_write(path, {"ts": ts or int(time.time()), "items": items2})
@@ -152,7 +154,7 @@ def _load_state(adapter: Any) -> dict[str, Any]:
             ck = str(key) or canonical_key(value)
             if not ck:
                 continue
-            items3[ck] = _accepted(value)
+            items3[ck] = _accepted(value, observed_at=observed_at)
         state = {"ts": 0, "items": items3}
         if items3 and may_persist(adapter, path):
             _atomic_write(path, {"ts": int(time.time()), "items": items3})
