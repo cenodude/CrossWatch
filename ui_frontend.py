@@ -132,7 +132,7 @@ def register_ui_root(app: FastAPI) -> None:
 
 
 _HELPER_SCRIPTS = (
-    "help-links.js", "provider-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "account-menu.js", "api.js", "core.js", "details-log.js",
+    "help-links.js", "provider-meta.js", "feature-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "account-menu.js", "api.js", "core.js", "details-log.js",
     "media-meta.js", "trailer.js", "playing-card.js", "watchlist-preview.js", "providers-ui.js", "settings-ui.js", "settings-save.js", "maintenance.js", "backups.js",
     "restart_apply.js",
 )
@@ -362,6 +362,7 @@ def _asset_block(include_admin: bool = True, user: dict | None = None) -> str:
         '<script src="/assets/auth/auth_loader.js?v=__CW_VERSION__" defer></script>',
         '<script src="/assets/auth/auth.tmdb.js?v=__CW_VERSION__" defer></script>',
         '<script type="module" src="/assets/js/modals.js?v=__CW_VERSION__"></script>',
+        '<script type="module" src="/assets/js/topology/advisor.js?v=__CW_VERSION__"></script>',
     ) if include_admin else (('<script type="module" src="/assets/js/modals.js?v=__CW_VERSION__"></script>',) if full_user else ())
     return "\n".join((
         helper_tags,
@@ -480,6 +481,7 @@ def _get_index_html_static() -> str:
 <link rel="stylesheet" href="/assets/ui-shell.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/css/account-menu.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/css/app-users.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/css/topology.css?v=__CW_VERSION__">
 <script>
 (() => {
   try {
@@ -1072,7 +1074,9 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
             <div class="section open cw-settings-section" id="sec-sync" data-accordion="off">
               <div class="body">
                 <div id="providers_list" class="grid2"></div>
-                <div class="sep"></div><h4 class="cw-sync-subhead">Pairs</h4><div id="pairs_list"></div>
+                <div class="sep"></div><h4 class="cw-sync-subhead">Pairs</h4>
+                <section id="sync-topology-health" class="topology-summary" aria-label="Topology health"></section>
+                <div id="pairs_list"></div>
                 <div class="footer"><div class="pair-selectors" style="margin-top:1em;">
                   <label for="source-provider" style="margin-right:1em;">Source:</label><select id="source-provider" name="source_provider" style="margin-left:.5em;"></select>
                   <label for="target-provider">Target:</label><select id="target-provider" name="target_provider" style="margin-left:.5em;"></select>

@@ -51,6 +51,14 @@
   }
   function get(v){ return providers[keyOf(v)] || null; }
   function label(v){ const info = get(v); return info?.label || keyOf(v) || "?"; }
+  function instanceLabel(provider, instance, config = window.CW?.Cache?.getCfg?.() || window._cfgCache || {}){
+    const key = keyOf(provider).toLowerCase();
+    const id = String(instance || "default").trim() || "default";
+    const keys = key === "tmdb" ? ["tmdb_sync", "tmdb"] : key === "crosswatch" ? ["crosswatch", "cw"] : [key];
+    const block = keys.map(name => config[name]).find(value => value && typeof value === "object");
+    const entry = id.toLowerCase() === "default" ? block : block?.instances?.[id];
+    return String(entry?.label || "").trim() || (id.toLowerCase() === "default" ? "Default instance" : id);
+  }
   function shortLabel(v){ const info = get(v); return info?.shortLabel || info?.label || keyOf(v) || "?"; }
   function aliases(v){ const info = get(v); return Array.isArray(info?.aliases) && info.aliases.length ? info.aliases.slice() : [keyOf(v)].filter(Boolean); }
   function aliasesMap(){ return Object.fromEntries(order.map((key) => [key, aliases(key)])); }
@@ -97,7 +105,7 @@
   }
   (window.CW ||= {});
   window.CW.ProviderMeta = {
-    providers, order, get, normalizeToken, keyOf, matchKey, label, shortLabel, aliases, aliasesMap, badgeId, sectionId, authGroupId,
+    providers, order, get, normalizeToken, keyOf, matchKey, label, instanceLabel, shortLabel, aliases, aliasesMap, badgeId, sectionId, authGroupId,
     statusLegacy, tone, statusProviders, authProviders, watchlistProviders, scrobblerSinks, syncSurfaceProvider, assetPath, logoPath, logLogoPath, brandInfo, logoHtml,
     logLogoHtml, logo: logoPath, logLogo: logLogoPath,
     labels: Object.fromEntries(order.map((key) => [key, label(key)])),

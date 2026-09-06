@@ -2159,13 +2159,13 @@
         const visible = Array.isArray(arr) && arr.some((item) => typeof item?.configured === "boolean")
           ? arr.filter((item) => item?.configured !== false)
           : arr;
+        window.cx = window.cx || {};
+        window.cx.providers = Array.isArray(visible) ? visible : [];
+        document.dispatchEvent(new Event("cw:sync-data-changed"));
         if (!Array.isArray(visible) || !visible.length) {
           div.innerHTML = '<div class="muted">No providers discovered.</div>';
           return [];
         }
-
-        window.cx = window.cx || {};
-        window.cx.providers = visible;
 
         if (typeof window.renderConnections === "function") {
           try { window.renderConnections(); } catch (e) { console.warn("renderConnections failed", e); }

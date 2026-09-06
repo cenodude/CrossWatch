@@ -2052,6 +2052,7 @@
       const list = await _getPairsFresh(!!force);
       window.cx = window.cx || {};
       window.cx.pairs = Array.isArray(list) ? list : [];
+      document.dispatchEvent(new Event("cw:sync-data-changed"));
       renderConnectionsSafe();
       return window.cx.pairs;
     } catch (e) {
