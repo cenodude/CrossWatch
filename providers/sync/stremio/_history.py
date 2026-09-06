@@ -409,7 +409,7 @@ def _load_stremio_history_baseline(adapter: Any) -> dict[str, dict[str, Any]]:
         from cw_platform.orchestrator._state_store import StateStore
         from cw_platform.provider_instances import normalize_instance_id
 
-        state = StateStore(Path(CONFIG_BASE())).load_state_features({"history"}) or {}
+        state = StateStore(Path(CONFIG_BASE()), pair_scope=adapter.config.get("_cw_pair_scope")).load_state_features({"history"}) or {}
         providers = state.get("providers") if isinstance(state, Mapping) else None
         providers = providers if isinstance(providers, Mapping) else {}
         stremio = providers.get("STREMIO") or providers.get("stremio")
@@ -429,7 +429,8 @@ def _load_stremio_history_baseline(adapter: Any) -> dict[str, dict[str, Any]]:
                             break
                 if isinstance(node, Mapping):
                     nodes.append(node)
-        nodes.append(stremio)
+        if instance_id == "default":
+            nodes.append(stremio)
 
         for node in nodes:
             history = node.get("history") if isinstance(node, Mapping) else None

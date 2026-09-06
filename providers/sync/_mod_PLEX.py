@@ -288,6 +288,9 @@ def _adapter_identity(cfg: Mapping[str, Any]) -> str:
             return str(v or "")
 
     behavior = {
+        "pair_scope": cfg.get("_cw_pair_scope"),
+        "readonly": cfg.get("_cw_readonly"),
+        "planned_at": cfg.get("_cw_interactive_planned_at"),
         "fallback_GUID": pl.get("fallback_GUID") if "fallback_GUID" in pl else pl.get("fallback_guid"),
         "history": pl.get("history") if isinstance(pl.get("history"), Mapping) else {},
         "progress": pl.get("progress") if isinstance(pl.get("progress"), Mapping) else {},
@@ -1238,7 +1241,7 @@ class PLEXModule:
             strict_id_matching=coerce_bool(plex_cfg.get("strict_id_matching", False)),
         )
 
-        configure_plex_context(baseurl=self.cfg.baseurl or "", token=(self.cfg.pms_token or self.cfg.token or ""))
+        configure_plex_context(baseurl=self.cfg.baseurl or "", token=(self.cfg.pms_token or self.cfg.token or ""), account_token=self.cfg.token or "")
 
         if self.cfg.client_id:
             cid = str(self.cfg.client_id)
@@ -1602,7 +1605,10 @@ class _PlexOPS:
         with _ADAPTER_LOCK:
             ent = _ADAPTER_CACHE.get(key)
             if ent is not None and (now - ent[1]) < _ADAPTER_TTL:
-                return ent[0]
+                mod = ent[0]
+                server = getattr(getattr(mod, "client", None), "server", None)
+                configure_plex_context(baseurl=mod.cfg.baseurl or "", token=getattr(server, "_token", None) or mod.cfg.pms_token or mod.cfg.token or "", account_token=mod.cfg.token or "")
+                return mod
         mod = PLEXModule(cfg)
         try:
             setattr(mod, "_cw_home_scope_sticky", True)

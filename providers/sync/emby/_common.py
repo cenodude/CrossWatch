@@ -52,7 +52,7 @@ def state_file(name: str) -> str:
         legacy = _STATE_DIR / name
 
     # Auto-migrate legacy unscoped state to scoped file
-    if (not _is_capture_mode()) and (not scoped.exists()) and legacy.exists():
+    if not str(_pair_scope() or "").startswith("cw2_") and (not _is_capture_mode()) and (not scoped.exists()) and legacy.exists():
         try:
             _STATE_DIR.mkdir(parents=True, exist_ok=True)
             shutil.copy2(legacy, scoped)
@@ -68,7 +68,7 @@ _BAD_NUM = re.compile(r"^\d{13,}$")
 CfgLike = Mapping[str, Any] | object
 
 # Adapter-scoped provider-index cache
-_PROVIDER_INDEX_CACHE: dict[tuple[int, tuple[str, ...]], tuple[float, dict[str, list[dict[str, Any]]]]] = {}
+_PROVIDER_INDEX_CACHE: dict[tuple[Any, ...], tuple[float, dict[str, list[dict[str, Any]]]]] = {}
 
 
 def _debug_level() -> str:
@@ -736,7 +736,7 @@ def build_provider_index(adapter: Any, *, feature: str | None = None) -> dict[st
 
 
 def provider_index(adapter: Any, *, ttl_sec: int = 300, force_refresh: bool = False, feature: str = "history") -> dict[str, list[dict[str, Any]]]:
-    key = (id(adapter), tuple(sorted(emby_selected_library_ids(adapter.cfg, feature))))
+    key = (id(adapter), scope_safe(), feature, tuple(sorted(emby_selected_library_ids(adapter.cfg, feature))))
     now = time.time()
     if not force_refresh:
         hit = _PROVIDER_INDEX_CACHE.get(key)
@@ -748,7 +748,7 @@ def provider_index(adapter: Any, *, ttl_sec: int = 300, force_refresh: bool = Fa
 
 
 def _cached_provider_index(adapter: Any, feature: str, *, ttl_sec: int = 300) -> dict[str, list[dict[str, Any]]] | None:
-    key = (id(adapter), tuple(sorted(emby_selected_library_ids(adapter.cfg, feature))))
+    key = (id(adapter), scope_safe(), feature, tuple(sorted(emby_selected_library_ids(adapter.cfg, feature))))
     hit = _PROVIDER_INDEX_CACHE.get(key)
     if hit and (time.time() - hit[0]) < max(1, int(ttl_sec)):
         return hit[1]

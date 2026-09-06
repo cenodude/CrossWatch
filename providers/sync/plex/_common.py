@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import shutil
@@ -58,7 +59,7 @@ def state_file(name: str) -> Path:
     p = Path(name)
     scoped = STATE_DIR / (f"{p.stem}.{safe}{p.suffix}" if p.suffix else f"{name}.{safe}")
     legacy = STATE_DIR / (f"{p.stem}{p.suffix}" if p.suffix else name)
-    if (not _is_capture_mode()) and (not scoped.exists()) and legacy.exists():
+    if not str(_pair_scope() or "").startswith("cw2_") and (not _is_capture_mode()) and (not scoped.exists()) and legacy.exists():
         try:
             STATE_DIR.mkdir(parents=True, exist_ok=True)
             shutil.copy2(legacy, scoped)
@@ -120,8 +121,8 @@ def configure_plex_context(
 ) -> None:
     _PLEX_CTX["baseurl"] = baseurl.rstrip("/") if isinstance(baseurl, str) else None
     _PLEX_CTX["token"] = token or None
-    if account_token:
-        _PLEX_CTX["account_token"] = account_token
+    if account_token is not None:
+        _PLEX_CTX["account_token"] = account_token or None
 
 
 DISCOVER = "https://discover.provider.plex.tv"
@@ -657,6 +658,7 @@ def server_find_rating_key_by_guid(srv: Any, guids: Iterable[str]) -> str | None
 
 
 _FBGUID_MEMO: dict[str, Any] = {}
+_FBGUID_MEMO_PATH: Path | None = None
 _FBGUID_NOHIT = "__NOHIT__"
 def _fbguid_cache_path() -> Path:
     return state_file("plex_fallback_memo.json")
@@ -714,10 +716,18 @@ def _fb_key_from_row(row: Any) -> str:
 
 
 def _fb_cache_load() -> dict[str, Any]:
+    global _FBGUID_MEMO_PATH, _FBGUID_MEMO_DIRTY
+    path = _fbguid_cache_path()
+    if path != _FBGUID_MEMO_PATH:
+        if _FBGUID_MEMO_DIRTY and _FBGUID_MEMO_PATH is not None:
+            _fb_cache_save()
+        _FBGUID_MEMO.clear()
+        _FBGUID_MEMO_DIRTY = False
+        _FBGUID_MEMO_PATH = path
     if _FBGUID_MEMO:
         return _FBGUID_MEMO
     try:
-        data = read_json(_fbguid_cache_path())
+        data = read_json(path)
         if isinstance(data, dict):
             _FBGUID_MEMO.update(data)
     except Exception:
@@ -727,7 +737,7 @@ def _fb_cache_load() -> dict[str, Any]:
 
 def _fb_cache_save() -> None:
     try:
-        write_json(_fbguid_cache_path(), _FBGUID_MEMO, indent=0, sort_keys=False, separators=(",", ":"))
+        write_json(_FBGUID_MEMO_PATH or _fbguid_cache_path(), _FBGUID_MEMO, indent=0, sort_keys=False, separators=(",", ":"))
     except Exception:
         pass
 
@@ -743,15 +753,22 @@ def _fb_cache_flush() -> None:
 _SHOW_PMS_GUID_CACHE: dict[str, dict[str, str]] = {}
 _EP_SHOW_IDS_CACHE: dict[str, dict[str, str]] = {}
 
+def _metadata_cache_key(rating_key: str, token: str | None = None, base: str | None = None) -> str:
+    identity = [scope_safe(), base or _PLEX_CTX.get("baseurl"), token or _PLEX_CTX.get("token"), _PLEX_CTX.get("account_token")]
+    digest = hashlib.sha256(json.dumps(identity, separators=(",", ":")).encode()).hexdigest()
+    return f"{digest}:{rating_key}"
+
+
 def _hydrate_show_ids_from_episode_rk(token: str | None, episode_rk: str | None) -> dict[str, str]:
     if not token or not episode_rk:
         return {}
     rk = str(episode_rk).strip()
     if not rk:
         return {}
+    key = _metadata_cache_key(rk, token)
 
-    if rk in _EP_SHOW_IDS_CACHE:
-        return dict(_EP_SHOW_IDS_CACHE[rk])
+    if key in _EP_SHOW_IDS_CACHE:
+        return dict(_EP_SHOW_IDS_CACHE[key])
 
     headers = plex_headers(token)
     headers["Accept"] = "application/json, application/xml;q=0.9,*/*;q=0.5"
@@ -791,12 +808,12 @@ def _hydrate_show_ids_from_episode_rk(token: str | None, episode_rk: str | None)
             if not r.ok:
                 continue
             ids = _parse(r)
-            _EP_SHOW_IDS_CACHE[rk] = dict(ids)
+            _EP_SHOW_IDS_CACHE[key] = dict(ids)
             return dict(ids)
         except Exception:
             continue
 
-    _EP_SHOW_IDS_CACHE[rk] = {}
+    _EP_SHOW_IDS_CACHE[key] = {}
     return {}
 
 
@@ -805,13 +822,14 @@ def _hydrate_show_ids_from_pms(obj: Any) -> dict[str, str]:
     if not rk:
         return {}
     rk = str(rk)
-    if rk in _SHOW_PMS_GUID_CACHE:
-        return _SHOW_PMS_GUID_CACHE[rk]
     srv = getattr(obj, "_server", None)
+    key = _metadata_cache_key(rk, getattr(srv, "token", None) or getattr(srv, "_token", None), _as_base_url(srv))
+    if key in _SHOW_PMS_GUID_CACHE:
+        return _SHOW_PMS_GUID_CACHE[key]
     base = _as_base_url(srv) or _PLEX_CTX["baseurl"]
     token = getattr(srv, "token", None) or getattr(srv, "_token", None) or _PLEX_CTX["token"]
     if not base or not token:
-        _SHOW_PMS_GUID_CACHE[rk] = {}
+        _SHOW_PMS_GUID_CACHE[key] = {}
         return {}
     url = f"{base}/library/metadata/{rk}?includeGuids=1"
     try:
@@ -845,11 +863,11 @@ def _hydrate_show_ids_from_pms(obj: Any) -> dict[str, str]:
                         if gid:
                             ids.update(ids_from_guid(str(gid)))
         ids = {k: v for k, v in ids.items() if v}
-        _SHOW_PMS_GUID_CACHE[rk] = ids
+        _SHOW_PMS_GUID_CACHE[key] = ids
         return ids
     except Exception as e:
         _warn("hydrate_show_pms_failed", rk=rk, error=str(e))
-        _SHOW_PMS_GUID_CACHE[rk] = {}
+        _SHOW_PMS_GUID_CACHE[key] = {}
         return {}
 
 
@@ -941,10 +959,11 @@ def hydrate_external_ids(token: str | None, rating_key: str | None) -> dict[str,
     rk = str(rating_key).strip()
     if not rk:
         return {}
+    key = _metadata_cache_key(rk, token)
     with _HYDRATE_LOCK:
-        if rk in _GUID_CACHE:
-            return _GUID_CACHE[rk]
-        if rk in _HYDRATE_404:
+        if key in _GUID_CACHE:
+            return _GUID_CACHE[key]
+        if key in _HYDRATE_404:
             return {}
 
     headers = plex_headers(token)
@@ -1002,7 +1021,7 @@ def hydrate_external_ids(token: str | None, rating_key: str | None) -> dict[str,
                 continue
             ids = _parse_response(r)
             with _HYDRATE_LOCK:
-                _GUID_CACHE[rk] = ids
+                _GUID_CACHE[key] = ids
             return ids
         except Exception as e:
             last_err = str(e)
@@ -1010,12 +1029,12 @@ def hydrate_external_ids(token: str | None, rating_key: str | None) -> dict[str,
 
     if meta_status == 404:
         with _HYDRATE_LOCK:
-            _HYDRATE_404.add(rk)
-            _GUID_CACHE[rk] = {}
+            _HYDRATE_404.add(key)
+            _GUID_CACHE[key] = {}
         return {}
 
     with _HYDRATE_LOCK:
-        _GUID_CACHE[rk] = {}
+        _GUID_CACHE[key] = {}
     if last_err:
         _warn("hydrate_failed", rk=rk, error=last_err, meta_status=meta_status)
     return {}
@@ -1345,7 +1364,7 @@ def _show_episode_cache_entry(show_obj: Any) -> dict[str, Any]:
     if rk:
         srv = getattr(show_obj, "_server", None) or getattr(show_obj, "server", None)
         sid = getattr(srv, "machineIdentifier", None) or _as_base_url(srv) or ""
-        key = f"{sid}:{rk}"
+        key = _metadata_cache_key(f"{sid}:{rk}", getattr(srv, "_token", None), _as_base_url(srv))
     now = time.monotonic()
     if key:
         entry = _SHOW_EPISODE_CACHE.get(key)
@@ -1864,7 +1883,7 @@ def minimal_from_history_row(
     allow_discover: bool = False,
 ) -> dict[str, Any] | None:
     global _FBGUID_MEMO_DIRTY
-    key = _fb_key_from_row(row)
+    key = _metadata_cache_key(_fb_key_from_row(row), token)
     memo = _fb_cache_load()
     hit = memo.get(key, None)
     if hit == _FBGUID_NOHIT and not allow_discover:
