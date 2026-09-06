@@ -20,7 +20,6 @@ const { ModalRegistry } = await import(_cwVer('./modals/core/registry.js'));
 // Register modals
 ModalRegistry.register('pair-config', () => import(_cwVer('./modals/pair-config/index.js')));
 ModalRegistry.register('about',        () => import(_cwVer('./modals/about.js')));
-ModalRegistry.register('analyzer',     () => import(_cwVer('./modals/analyzer/index.js')));
 ModalRegistry.register('events',       () => import(_cwVer('./modals/events/index.js')));
 ModalRegistry.register('exporter',     () => import(_cwVer('./modals/exporter/index.js')));
 ModalRegistry.register('maintenance',  () => import(_cwVer('./modals/maintenance/index.js')));
@@ -56,7 +55,7 @@ window.closeAbout = async () => {
   return mod.closeAboutModal?.();
 };
 
-window.openAnalyzer = (props = {}) => ModalRegistry.open('analyzer', props);
+window.openAnalyzer = () => window.showTab ? window.showTab('analyzer') : (location.hash = 'analyzer');
 window.openEvents = (props = {}) => ModalRegistry.open('events', props);
 window.openStatisticsModal = (props = {}) => ModalRegistry.open('statistics', props);
 window.openExporter = (props = {}) => ModalRegistry.open('exporter', props);

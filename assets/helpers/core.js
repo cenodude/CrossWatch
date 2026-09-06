@@ -83,7 +83,7 @@
   const statusCacheKey = () => `${STATUS_CACHE_KEY}.${String(window.CW?.OverviewProfile?.id || "").trim() || "all"}`;
   const DETAILS_MAX_LINES = 300;
   const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
-  const ROUTE_TABS = new Set(["main", "watchlist", "playback_progress", "snapshots", "playlists", "editor", "settings"]);
+  const ROUTE_TABS = new Set(["main", "watchlist", "playback_progress", "snapshots", "playlists", "editor", "analyzer", "interactive_sync", "settings"]);
   const SETTINGS_PANES = new Set(["overview", "providers", "sync", "scrobbler", "scheduling", "app", "maintenance"]);
   let routeSyncing = false;
 
@@ -110,7 +110,7 @@
     if (normalized === "main") return perms.dashboard !== false;
     if (normalized === "playback_progress") return perms.playback !== false;
     if (normalized === "watchlist") return perms.watchlist !== false;
-    if (["snapshots", "playlists", "editor"].includes(normalized)) return perms.write === true;
+    if (["snapshots", "playlists", "editor", "analyzer", "interactive_sync"].includes(normalized)) return perms.write === true;
     return false;
   }
 
@@ -149,6 +149,7 @@
   }
 
   function routeHash(tab, pane) {
+    if (tab === "interactive_sync") return "#interactive_sync" + (window.location.hash.startsWith("#interactive_sync?") ? window.location.hash.slice(window.location.hash.indexOf("?")) : "");
     if (tab === "main") return "";
     if (tab === "settings") {
       const settingsPane = normalizeSettingsPane(pane || window.__cwSettingsPane || "overview");
@@ -1028,7 +1029,7 @@
   }
 
   function setTabHeaderState(tab) {
-    ["main", "watchlist", "playback_progress", "snapshots", "playlists", "editor", "settings"].forEach((name) => {
+    ["main", "watchlist", "playback_progress", "snapshots", "playlists", "editor", "analyzer", "settings"].forEach((name) => {
       byId(`tab-${name}`)?.classList.toggle("active", name === tab);
     });
   }
@@ -1043,6 +1044,8 @@
     byId("page-snapshots")?.classList.toggle("hidden", tab !== "snapshots");
     byId("page-playlists")?.classList.toggle("hidden", tab !== "playlists");
     byId("page-editor")?.classList.toggle("hidden", tab !== "editor");
+    byId("page-analyzer")?.classList.toggle("hidden", tab !== "analyzer");
+    byId("page-interactive_sync")?.classList.toggle("hidden", tab !== "interactive_sync");
     byId("page-settings")?.classList.toggle("hidden", tab !== "settings");
 
     delete document.documentElement.dataset.cwInitialTab;
@@ -1087,11 +1090,12 @@
       const watchlistAllowed = perms.watchlist !== false;
       const playbackAllowed = perms.playback !== false;
       const writeAllowed = perms.write === true;
-      if (!(tab === "main" && dashboardAllowed) && !(tab === "watchlist" && watchlistAllowed) && !(tab === "playback_progress" && playbackAllowed) && !(["snapshots", "playlists", "editor"].includes(tab) && writeAllowed)) tab = allowedRouteTab(tab);
+      if (!(tab === "main" && dashboardAllowed) && !(tab === "watchlist" && watchlistAllowed) && !(tab === "playback_progress" && playbackAllowed) && !(["snapshots", "playlists", "editor", "analyzer"].includes(tab) && writeAllowed)) tab = allowedRouteTab(tab);
     }
     writeRouteHash(tab);
 
     if (state.currentTab === tab) {
+      if (tab === "interactive_sync") window.InteractiveSync?.refresh?.();
       if (tab === "settings") {
         const pane = normalizeSettingsPane(window.__cwSettingsPane || readRouteHash().pane || "overview");
         window.__cwSettingsPane = pane;
@@ -1181,6 +1185,26 @@
         }
       }
       if (!isCurrentNavigation()) return;
+      return;
+    }
+
+    if (tab === "interactive_sync") {
+      await ensurePageModule("interactive-sync", "/assets/js/interactive-sync.js", "InteractiveSync");
+      return;
+    }
+
+    if (tab === "analyzer") {
+      try {
+        await ensurePageModule("analyzer", "/assets/js/analyzer/index.js", "Analyzer");
+        if (!isCurrentNavigation()) return;
+        await window.Analyzer.mount(byId("page-analyzer"));
+      } catch (error) {
+        if (!isCurrentNavigation()) return;
+        const root = byId("page-analyzer");
+        window.Analyzer?.unmount?.();
+        if (root) root.innerHTML = '<div class="cw-page-load-error">Analyzer failed to load. Refresh the page and try again.</div>';
+        console.error("Analyzer failed to load", error);
+      }
       return;
     }
 

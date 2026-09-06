@@ -1748,7 +1748,7 @@ def test_analyzer_treats_crosswatch_as_tracker_provider() -> None:
 
 
 def test_profile_labels_are_used_in_analyzer_and_events_modals() -> None:
-    analyzer_js = Path("assets/js/modals/analyzer/index.js").read_text("utf-8")
+    analyzer_js = Path("assets/js/analyzer/index.js").read_text("utf-8")
     events_js = Path("assets/js/modals/events/index.js").read_text("utf-8")
     scrobbler_js = Path("assets/js/scrobbler.js").read_text("utf-8")
     dashboard_js = Path("assets/js/dashboard-widgets.js").read_text("utf-8")
@@ -2080,7 +2080,7 @@ def test_main_shell_has_early_hash_route_hint() -> None:
     core_js = Path("assets/helpers/core.js").read_text("utf-8")
 
     assert "data-cw-initial-tab" in html
-    assert 'const tabs = new Set(["watchlist", "playback_progress", "snapshots", "playlists", "editor", "settings"]);' in html
+    assert 'const tabs = new Set(["watchlist", "playback_progress", "snapshots", "playlists", "editor", "analyzer", "interactive_sync", "settings"]);' in html
     assert 'html[data-cw-initial-tab]:not([data-cw-initial-tab="main"]) #ops-card' in html
     assert 'html[data-cw-initial-tab="settings"] #page-settings' in html
     assert "delete document.documentElement.dataset.cwInitialTab;" in core_js
