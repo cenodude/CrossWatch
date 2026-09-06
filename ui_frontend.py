@@ -419,6 +419,7 @@ def _get_index_html_static() -> str:
     playlists: "Playlists",
     editor: "Editor",
     analyzer: "Analyzer",
+    interactive_sync: "Interactive Sync",
     settings: "Settings",
   };
 

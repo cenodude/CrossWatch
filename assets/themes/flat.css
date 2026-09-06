@@ -580,3 +580,94 @@ html[data-cw-theme] #page-watchlist .wl-empty-icon{background:#191c23 !important
 html[data-cw-theme="flat-light"] #page-watchlist .wl-empty{background:#ffffff !important;border-color:rgba(16,24,40,0.16)!important;color:#475467 !important}
 html[data-cw-theme="flat-light"] #page-watchlist .wl-empty-icon{background:#f2f4f7 !important;border-color:rgba(16,24,40,0.14)!important;color:#667085 !important}
 html[data-cw-theme] #cw-sync-menu .cw-sync-feature-dot{box-shadow:none !important}
+
+html[data-cw-theme="flat-dark"] #layout > :is(#ops-card, #stats-card, #dashboard-widgets-card) {
+  --panel: #0b0e13;
+  --panel2: #10141b;
+  --border: #1c222c;
+  --bd: #1c222c;
+  --cw-flat-panel: #080a0d;
+  --cw-flat-panel-2: #0b0e13;
+  --cw-flat-panel-3: #10141b;
+  --cw-flat-input: #080a0d;
+  --cw-flat-border: #1c222c;
+  --cw-flat-border-strong: #252c38;
+}
+
+html[data-cw-theme="flat-dark"] #ops-card.card.cw-main-card,
+html[data-cw-theme="flat-dark"] #stats-card.card.cw-main-card,
+html[data-cw-theme="flat-dark"] #layout > #dashboard-widgets-card .cw-dash-widget {
+  background: #080a0d !important;
+  border-color: #1c222c !important;
+  box-shadow: none !important;
+}
+
+html[data-cw-theme="flat-dark"] #layout > #dashboard-widgets-card .cw-dash-widget {
+  --dash-panel: #080a0d;
+  --dash-panel-soft: #0b0e13;
+  --dash-panel-strong: #10141b;
+  --dash-border: #1c222c;
+  --dash-border-strong: #252c38;
+}
+
+html[data-cw-theme="flat-dark"] #layout > #dashboard-widgets-card :is(.cw-history-widget-item, .cw-dash-title-row .material-symbols-rounded, .cw-dash-ghost, .cw-dash-see-more, .cw-dash-source),
+html[data-cw-theme="flat-dark"] #ops-card .action-row {
+  background: #0b0e13 !important;
+  border-color: #1c222c !important;
+  box-shadow: none !important;
+}
+
+html[data-cw-theme="flat-dark"] body:not(.cw-profile-page) #layout > #dashboard-widgets-card .cw-dash-title-row .material-symbols-rounded {
+  background: #10141b !important;
+  border-color: #252c38 !important;
+}
+
+html[data-cw-theme="flat-dark"] #ops-card :is(.cw-hub-action, .iconbtn, .det-tool-icon, .det-follow, .det-tab:not(.active)),
+html[data-cw-theme="flat-dark"] #stats-card :is(.cw-stats-calendar-btn, .ghost, .chip.trend),
+html[data-cw-theme="flat-dark"] #layout > #dashboard-widgets-card :is(.nav, .cw-watchlist-see-all) {
+  background: #10141b !important;
+  border-color: #252c38 !important;
+  box-shadow: none !important;
+}
+
+html[data-cw-theme="flat-dark"] #ops-card :is(.cw-hub-action, .iconbtn, .det-tool-icon, .det-follow, .det-tab:not(.active)):hover,
+html[data-cw-theme="flat-dark"] #ops-card #ux-lanes .lane:hover,
+html[data-cw-theme="flat-dark"] #stats-card :is(.stat-block, .cw-stats-calendar-btn, .ghost):hover,
+html[data-cw-theme="flat-dark"] #stats-card #sync-history .history-item:hover,
+html[data-cw-theme="flat-dark"] #stats-card #insights-switch :is(.seg-btn:not(.active), .ins-gear):hover,
+html[data-cw-theme="flat-dark"] #layout > #dashboard-widgets-card :is(.cw-history-widget-item, .cw-dash-ghost, .cw-dash-see-more, .nav, .cw-watchlist-see-all):hover {
+  background: #171c26 !important;
+  border-color: #252c38 !important;
+}
+
+html[data-cw-theme="flat-dark"] #ops-card #ux-progress .sb-steps span.current,
+html[data-cw-theme="flat-dark"] #stats-card #insights-switch .seg-btn.active {
+  background: #211a3d !important;
+  border-color: #493777 !important;
+  color: #c4b5fd !important;
+}
+
+html[data-cw-theme="flat-dark"] #ops-card #sched-inline-log :is(.sched, .badge),
+html[data-cw-theme="flat-dark"] #ops-card #sched-inline-log .sched[data-tip]::after {
+  background: #10141b !important;
+}
+
+html[data-cw-theme="flat-dark"] #ops-card #sched-inline-log .hub-group-items {
+  background: #10141b;
+  border-color: #252c38;
+  box-shadow: none;
+}
+
+html[data-cw-theme="flat-dark"] #ops-card #sched-inline-log .hub-group-items .sched {
+  background: transparent !important;
+}
+
+html[data-cw-theme="flat-dark"] #ops-card #sched-inline-log .sched[data-tip]:hover,
+html[data-cw-theme="flat-dark"] #ops-card #sched-inline-log .sched[data-tip]:focus-visible {
+  background: #171c26 !important;
+}
+
+html[data-cw-theme="flat-dark"] #ops-card #ux-progress .sb-rail {
+  background: #1c222c !important;
+  box-shadow: none !important;
+}

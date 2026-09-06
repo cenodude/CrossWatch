@@ -31,8 +31,11 @@ html[data-cw-theme="flat-dark"] .topology-summary{--cw-theme-surface:#080a0d;--c
 #sec-sync #pairs_list .ord-badge{background:var(--cw-sync-badge)!important;border-color:color-mix(in srgb,var(--cw-theme-accent) 35%,var(--cw-sync-border))!important;color:var(--cw-theme-text)!important;border-radius:11px;box-shadow:inset 0 1px 0 rgba(255,255,255,.06)!important}
 #sec-sync #pairs_list .arrow{background:var(--cw-sync-badge)!important;border-color:color-mix(in srgb,var(--cw-theme-accent) 22%,var(--cw-sync-border))!important;color:var(--cw-theme-accent)!important}
 #sec-sync #pairs_list .pair-actions{background:transparent!important;border-color:transparent!important}
-#sec-sync #pairs_list .feat-beads,#sec-sync #pairs_list .icon-btn:not(.power):not(.danger){background:var(--cw-sync-surface)!important;border-color:var(--cw-sync-border)!important}
-#sec-sync #pairs_list .icon-btn:not(.power):not(.danger):hover{background:var(--cw-sync-badge)!important;border-color:var(--cw-theme-accent)!important}
+#sec-sync #pairs_list .feat-beads{background:var(--cw-sync-surface)!important;border-color:var(--cw-sync-border)!important}
+#sec-sync #pairs_list .icon-btn:not(.power):not(.danger){background:color-mix(in srgb,var(--cw-theme-text) 8%,var(--cw-sync-raised))!important;border-color:color-mix(in srgb,var(--cw-theme-text) 35%,var(--cw-sync-border))!important;color:var(--cw-theme-text)!important}
+#sec-sync #pairs_list .icon-btn:not(.power):not(.danger):not(:disabled):hover,#sec-sync #pairs_list .icon-btn:not(.power):not(.danger):focus-visible{background:var(--cw-sync-badge)!important;border-color:var(--cw-theme-accent)!important}
+#sec-sync #pairs_list .icon-btn:focus-visible,#sec-sync #pairs_list .icon-btn:has(input:focus-visible){outline:2px solid var(--cw-theme-accent);outline-offset:3px}
+#sec-sync #pairs_list .icon-btn:disabled{cursor:not-allowed!important;transform:none!important}
 #sec-sync #pairs_list .pair-card.pair-disabled{background:var(--cw-sync-surface)!important;border-color:var(--cw-sync-border)!important}
 .topology-pair-badge{display:inline-flex;align-items:center;justify-content:center;flex:none;min-width:25px;height:25px;padding:0 6px;box-sizing:border-box;border:1px solid color-mix(in srgb,var(--cw-theme-accent) 40%,var(--cw-theme-border));border-radius:8px;background:color-mix(in srgb,var(--cw-theme-accent) 18%,var(--cw-theme-surface));color:var(--cw-theme-text);font-size:12px;font-weight:750;font-variant-numeric:tabular-nums;line-height:1}
 .topology-edge-badge rect{fill:color-mix(in srgb,var(--cw-theme-accent) 22%,var(--cw-theme-surface));stroke:color-mix(in srgb,var(--cw-theme-accent) 55%,var(--cw-theme-border));stroke-width:1}
