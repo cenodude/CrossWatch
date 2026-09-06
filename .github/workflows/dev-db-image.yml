@@ -2,6 +2,12 @@ name: dev-db-image
 
 on:
   workflow_dispatch:
+    inputs:
+      bump:
+        description: "Dev version bump from the newest release tag"
+        type: choice
+        options: [patch, minor, major]
+        default: patch
 
 env:
   IMAGE: ghcr.io/${{ github.repository_owner }}/crosswatch-dev
@@ -12,6 +18,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+
     steps:
       - name: Check branch
         if: github.ref_name != 'dev-db'
@@ -25,23 +32,44 @@ jobs:
 
       - name: Resolve dev version
         id: ver
+        env:
+          IN_BUMP: ${{ inputs.bump }}
         run: |
           set -euo pipefail
 
           last="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1)"
-          if [ -z "${last}" ]; then
-            echo "No release tag found, leaving the version to the app fallback"
-            echo "app_version=v0.0.0" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
+          echo "Newest tag: ${last:-none}"
 
-          IFS=. read -r major minor patch <<< "${last#v}"
-          version="v${major}.${minor}.$((patch + 1))-dev"
+          base="${last#v}"
+          base="${base:-0.0.0}"
+          IFS=. read -r major minor patch <<< "${base}"
 
-          echo "Newest tag ${last}, building as ${version}"
+          case "${IN_BUMP}" in
+            major)
+              major=$((major + 1))
+              minor=0
+              patch=0
+              ;;
+            minor)
+              minor=$((minor + 1))
+              patch=0
+              ;;
+            patch)
+              patch=$((patch + 1))
+              ;;
+            *)
+              echo "Unknown bump ${IN_BUMP}"
+              exit 1
+              ;;
+          esac
+
+          version="v${major}.${minor}.${patch}-dev"
+
+          echo "Building ${version} from ${last:-no release tag}"
           echo "app_version=${version}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-qemu-action@v3
+
       - uses: docker/setup-buildx-action@v3
 
       - uses: docker/login-action@v3
@@ -69,3 +97,13 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Summary
+        run: |
+          {
+            echo "### Built ${{ steps.ver.outputs.app_version }}"
+            echo
+            echo '```'
+            echo "docker pull ${{ env.IMAGE }}:dev-db"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
