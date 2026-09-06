@@ -1133,12 +1133,15 @@ def _preview_item_label(item: Mapping[str, Any] | None, key: str) -> str:
     title = str(item.get("title") or "").strip()
     season = item.get("season")
     episode = item.get("episode")
-    if typ == "episode" and season is not None and episode is not None:
-        base = series or title or str(key)
-        return f"{base} - S{int(season):02d}E{int(episode):02d}"
-    if typ == "season" and season is not None:
-        base = series or title or str(key)
-        return f"{base} - S{int(season):02d}"
+    try:
+        if typ == "episode" and season is not None and episode is not None:
+            base = series or title or str(key)
+            return f"{base} - S{int(season):02d}E{int(episode):02d}"
+        if typ == "season" and season is not None:
+            base = series or title or str(key)
+            return f"{base} - S{int(season):02d}"
+    except (TypeError, ValueError, OverflowError):
+        pass
     return title or series or str(key)
 
 
@@ -4332,17 +4335,17 @@ def _cached_analysis(pairs_raw: str | None, *, include_system: bool = False, inc
         return dict(result)
 
 
-def _cached_system() -> dict[str, Any]:
+def _cached_system(refresh: bool = False) -> dict[str, Any]:
     signature = _state_signature(None)
     with _SYSTEM_CACHE_LOCK:
         cached = _SYSTEM_CACHE.get(signature)
-        if cached is not None:
+        if cached is not None and not refresh:
             return _with_cache_hit(cached)
 
     with _sig_lock(("system",) + signature):
         with _SYSTEM_CACHE_LOCK:
             cached = _SYSTEM_CACHE.get(signature)
-            if cached is not None:
+            if cached is not None and not refresh:
                 return _with_cache_hit(cached)
         started = time.perf_counter()
         try:
@@ -4390,7 +4393,16 @@ def _detail_for_item(pairs_raw: str | None, provider: str, feature: str, key: st
     return {"targets": missing_targets, "hints": hints, "target_show_info": details}
 
 @router.get("/analyzer/state", response_class=JSONResponse)
-def api_state(pairs: str | None = None, offset: int = 0, limit: int = 250, request: Request = cast(Request, None)) -> dict[str, Any]:
+def api_state(
+    pairs: str | None = None,
+    offset: int = 0,
+    limit: int = 250,
+    request: Request = cast(Request, None),
+    q: str = "",
+    feature: str = "",
+    sort: str = "",
+    direction: str = "asc",
+) -> dict[str, Any]:
     pairs = _scoped_pairs_arg(request, pairs)
     try:
         items, counts = _cached_scoped_rows(pairs)
@@ -4399,6 +4411,24 @@ def api_state(pairs: str | None = None, offset: int = 0, limit: int = 250, reque
             items, counts = [], {}
         else:
             raise
+    terms = str(q or "")[:300].casefold().split()
+    feature = str(feature or "").strip().lower()
+    if feature:
+        items = [item for item in items if item.get("feature") == feature]
+    if terms:
+        def matches(item: dict[str, Any]) -> bool:
+            ids = item.get("ids") or {}
+            values = [item.get(k) for k in ("provider", "feature", "title", "series_title", "year", "type", "key")]
+            values.extend(f"{key}:{value}" for key, value in ids.items())
+            values.append(_preview_item_label(item, str(item.get("key") or "")))
+            haystack = " ".join(str(value or "") for value in values).casefold()
+            return all(term in haystack for term in terms)
+        items = [item for item in items if matches(item)]
+    if sort in {"title", "provider", "feature", "type"}:
+        def sort_key(item: dict[str, Any]) -> str:
+            value = _preview_item_label(item, str(item.get("key") or "")) if sort == "title" else item.get(sort)
+            return str(value or "").casefold()
+        items = sorted(items, key=sort_key, reverse=direction == "desc")
     start = max(0, int(offset or 0))
     page_size = max(0, min(int(limit or 0), 500))
     page = items[start : start + page_size] if page_size else []
@@ -4422,11 +4452,11 @@ def api_problems(pairs: str | None = None, include_system: bool = False, include
 
 
 @router.get("/analyzer/system", response_class=JSONResponse)
-def api_system(pairs: str | None = None, request: Request = cast(Request, None)) -> dict[str, Any]:
+def api_system(pairs: str | None = None, request: Request = cast(Request, None), refresh: bool = False) -> dict[str, Any]:
     user = request_user(request)
     if user and not bool(user.get("is_admin")):
-        return {"problems": [], "summary": {"total": 0, "by_severity": {}, "by_category": {}, "by_type": {}}}
-    return _cached_system()
+        return {"available": False, "problems": [], "summary": {"total": 0, "by_severity": {}, "by_category": {}, "by_type": {}}}
+    return {**_cached_system(refresh=refresh), "available": True}
 
 
 @router.get("/analyzer/pair-activity", response_class=JSONResponse)
@@ -4473,72 +4503,6 @@ def api_cw_state(pairs: str | None = None, request: Request = cast(Request, None
     except HTTPException:
         allowed = None
     return _read_cw_state(allowed)
-
-@router.post("/analyzer/patch", response_class=JSONResponse)
-def api_patch(payload: dict[str, Any], pairs: str | None = None, request: Request = cast(Request, None)) -> dict[str, Any]:
-    pairs = _scoped_pairs_arg(request, pairs)
-    for f in ("provider", "feature", "key", "ids"):
-        if f not in payload:
-            raise HTTPException(400, f"Missing {f}")
-
-    feature = str(payload["feature"]).strip().lower()
-    handles = _load_state_handles(pairs, _ANALYZER_FEATURES)
-    new_key = str(payload["key"])
-    touched = 0
-
-    for h in handles:
-        s = h["state"]
-        hits = _find_items(s, payload["provider"], feature, payload["key"])
-        if not hits:
-            continue
-        provider_token, b, it = hits[0]
-
-        ids = dict(it.get("ids") or {})
-        for k_any, v in (payload.get("ids") or {}).items():
-            k = str(k_any)
-            nv = _norm(k, v)
-            if nv is None:
-                ids.pop(k, None)
-            else:
-                ids[k] = nv
-
-        it["ids"] = ids
-
-        if payload.get("merge_peer_ids"):
-            peer_ids = _peer_ids(s, it)
-            for k, v in peer_ids.items():
-                if k not in ids and v:
-                    ids[k] = v
-            it["ids"] = ids
-
-        old_key = str(payload["key"])
-        if payload.get("rekey"):
-            new_key = _rekey(b, old_key, it)
-
-        cfg = _cfg()
-        pairs_map = _pair_map(cfg, s)
-        idx = _indices_for(s)
-        pair_libs = _pair_lib_filters(cfg)
-        pair_types = _pair_type_filters(cfg)
-        it["_ignore_missing_peer"] = _has_peer_by_pairs(
-            s,
-            pairs_map,
-            payload["provider"],
-            feature,
-            new_key,
-            it,
-            idx,
-            pair_libs,
-            pair_types,
-            cfg,
-        )
-
-        _save_state_handle(h, s, provider=provider_token, feature=feature)
-        touched += 1
-
-    if touched == 0:
-        raise HTTPException(404, "Item not found")
-    return {"ok": True, "new_key": new_key}
 
 @router.post("/analyzer/suggest", response_class=JSONResponse)
 def api_suggest(payload: dict[str, Any], pairs: str | None = None, request: Request = cast(Request, None)) -> dict[str, Any]:
