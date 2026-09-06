@@ -11,6 +11,10 @@ from .db import crosswatch_db_path, get_conn
 from .schema import SCHEMA_VERSION
 
 _ORPHAN_QUERIES = {
+    "pair_baseline_items_missing_feature": (
+        "SELECT COUNT(*) FROM pair_baseline_items b "
+        "LEFT JOIN pair_feature_state p ON p.id=b.provider_state_id WHERE p.id IS NULL"
+    ),
     "baseline_items_missing_feature": (
         "SELECT COUNT(*) FROM baseline_items b "
         "LEFT JOIN provider_feature_state p ON p.id=b.provider_state_id WHERE p.id IS NULL"
