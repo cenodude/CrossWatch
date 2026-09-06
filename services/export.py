@@ -10,10 +10,11 @@ import time
 from collections.abc import Mapping
 from datetime import datetime
 from functools import lru_cache
-from typing import Any, Callable, Iterable, cast
+from typing import Any, Callable, Iterable, Literal, cast
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field
 
 from cw_platform.access_policy import managed_profile_instances, request_user, user_can_access_instance
 from cw_platform.config_base import CONFIG as CONFIG_DIR, load_config
@@ -1156,11 +1157,13 @@ def api_export_sample(
     include_rewatches: bool = Query(True, description="Keep separate history events when supported by the source provider"),
     limit: int = Query(25, ge=1, le=250),
     q: str = Query("", description="case-insensitive multi-token contains"),
+    offset: int = Query(0, ge=0),
     request: Request = cast(Request, None),
 ) -> dict[str, Any]:
     feature = feature.lower().strip()
     q = q if isinstance(q, str) else ""
-    limit = limit if isinstance(limit, int) else 25
+    limit = max(1, min(limit, 250)) if isinstance(limit, int) else 25
+    offset = max(0, offset) if isinstance(offset, int) else 0
     s = _load_state(_state_features_for_export(feature))
     provider = (provider or "").upper().strip()
     cfg = _load_config_safe()
@@ -1198,7 +1201,7 @@ def api_export_sample(
         }
 
     items: list[dict[str, Any]] = []
-    for i, (k, it) in enumerate(exportable):
+    for k, it in exportable[offset : offset + limit]:
         t, title, year, watched, ids = _row_base(it)
         items.append(
             {
@@ -1211,11 +1214,11 @@ def api_export_sample(
                 "rating": it.get("rating") or it.get("user_rating"),
             }
         )
-        if i + 1 >= limit:
-            break
     return {
         "items": items,
         "total": len(exportable),
+        "offset": offset,
+        "limit": limit,
         "matched_total": validation["matched_total"],
         "dropped_total": validation["unsupported_media_total"] + validation["missing_identity_total"],
         "warnings": warnings,
@@ -1239,6 +1242,14 @@ def api_export_file(
     ids: str = Query("", description="optional CSV of keys to include (overrides q)"),
     request: Request = cast(Request, None),
 ) -> Response:
+    return _export_file(provider, provider_instance, feature, format, media_types,
+                        include_watched_date, include_rewatches, q, ids, request)
+
+
+def _export_file(provider: str, provider_instance: str, feature: str, format: str,
+                 media_types: str, include_watched_date: bool, include_rewatches: bool,
+                 q: str, ids: str, request: Request, *,
+                 selected: list[str] | None = None, excluded: set[str] | None = None) -> Response:
     provider_in = (provider or "").upper().strip()
     provider_eff = provider_in or "TRAKT"
     feature = feature.lower().strip()
@@ -1257,8 +1268,9 @@ def api_export_file(
     if feature not in _target_caps(fmt)["features"]:
         raise HTTPException(400, f"{_target_caps(fmt)['label']} does not support {feature} exports")
 
-    if ids.strip():
-        requested_keys = [k.strip() for k in ids.split(",") if k.strip()]
+    ids = ids if isinstance(ids, str) else ""
+    if selected is not None or ids.strip():
+        requested_keys = selected if selected is not None else [k.strip() for k in ids.split(",") if k.strip()]
         bucket = _feature_bucket(s, provider_eff, feature, instance_id=inst, include_rewatches=rewatch_mode)
         items = [
             (k, bucket.get(k, {}))
@@ -1282,6 +1294,9 @@ def api_export_file(
         bucket = _feature_bucket(s, provider_eff, feature, instance_id=inst, include_rewatches=rewatch_mode)
         items = [(k, bucket.get(k, {})) for k in requested_keys]
 
+    if excluded:
+        items = [(key, item) for key, item in items if key not in excluded]
+
     exportable, _warnings, _validation = _validate_items(
         fmt,
         feature,
@@ -1300,3 +1315,30 @@ def api_export_file(
             include_rewatches=rewatch_mode,
         )
     return _BUILDERS[fmt](provider_eff, feature, s, keys, inst, include_rewatches=rewatch_mode)
+
+
+class ExportFileRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str
+    provider_instance: str = "all"
+    feature: Literal["watchlist", "history", "ratings", "combined"] = "watchlist"
+    format: Literal["letterboxd", "imdb", "justwatch", "yamtrack", "tmdb"] = "letterboxd"
+    media_types: str = "movie"
+    include_watched_date: bool = True
+    include_rewatches: bool = True
+    q: str = Field(default="", max_length=1000)
+    mode: Literal["all", "selected"] = "all"
+    row_ids: list[str] = Field(default_factory=list)
+    excluded_row_ids: list[str] = Field(default_factory=list)
+
+
+@router.post("/export/file")
+def api_export_file_selected(payload: ExportFileRequest, request: Request = cast(Request, None)) -> Response:
+    return _export_file(
+        payload.provider, payload.provider_instance, payload.feature, payload.format,
+        payload.media_types, payload.include_watched_date, payload.include_rewatches,
+        payload.q, "", request,
+        selected=payload.row_ids if payload.mode == "selected" else None,
+        excluded=set(payload.excluded_row_ids),
+    )

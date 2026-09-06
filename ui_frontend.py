@@ -323,6 +323,7 @@ def _managed_user_shell(html: str, user: dict | None = None) -> str:
             '  <section id="page-playlists" class="card hidden tab-page"></section>\n\n',
             '  <section id="page-editor" class="card hidden tab-page"></section>\n\n',
             '  <section id="page-analyzer" class="card hidden tab-page"></section>\n\n',
+            '  <section id="page-import_export" class="card hidden tab-page"></section>\n\n',
             '  <section id="page-interactive_sync" class="card hidden tab-page"></section>\n\n',
         ):
             html = html.replace(fragment, "")
@@ -419,6 +420,7 @@ def _get_index_html_static() -> str:
     playlists: "Playlists",
     editor: "Editor",
     analyzer: "Analyzer",
+    import_export: "Import / Export",
     interactive_sync: "Interactive Sync",
     settings: "Settings",
   };
@@ -516,7 +518,7 @@ def _get_index_html_static() -> str:
 (() => {
   try {
     const route = String(window.location.hash || "").replace(/^#\/?/, "").split("?")[0].split("/")[0].trim().toLowerCase().replace(/-/g, "_");
-    const tabs = new Set(["watchlist", "playback_progress", "snapshots", "playlists", "editor", "analyzer", "interactive_sync", "settings"]);
+    const tabs = new Set(["watchlist", "playback_progress", "snapshots", "playlists", "editor", "analyzer", "import_export", "interactive_sync", "settings"]);
     let tab = tabs.has(route) ? route : "main";
     if (document.documentElement.classList.contains("cw-compact") && tab !== "main") tab = "main";
     document.documentElement.dataset.cwInitialTab = tab;
@@ -537,6 +539,7 @@ html[data-cw-initial-tab="snapshots"] #page-snapshots,
 html[data-cw-initial-tab="playlists"] #page-playlists,
 html[data-cw-initial-tab="editor"] #page-editor,
 html[data-cw-initial-tab="analyzer"] #page-analyzer,
+html[data-cw-initial-tab="import_export"] #page-import_export,
 html[data-cw-initial-tab="interactive_sync"] #page-interactive_sync,
 html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
 </style>
@@ -876,6 +879,8 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
   <section id="page-editor" class="card hidden tab-page"></section>
 
   <section id="page-analyzer" class="card hidden tab-page"></section>
+
+  <section id="page-import_export" class="card hidden tab-page"></section>
 
   <section id="page-interactive_sync" class="card hidden tab-page"></section>
 
