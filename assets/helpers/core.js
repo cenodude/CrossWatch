@@ -83,7 +83,7 @@
   const statusCacheKey = () => `${STATUS_CACHE_KEY}.${String(window.CW?.OverviewProfile?.id || "").trim() || "all"}`;
   const DETAILS_MAX_LINES = 300;
   const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
-  const ROUTE_TABS = new Set(["main", "watchlist", "playback_progress", "snapshots", "playlists", "editor", "analyzer", "interactive_sync", "settings"]);
+  const ROUTE_TABS = new Set(["main", "watchlist", "playback_progress", "snapshots", "playlists", "editor", "analyzer", "import_export", "interactive_sync", "settings"]);
   const SETTINGS_PANES = new Set(["overview", "providers", "sync", "scrobbler", "scheduling", "app", "maintenance"]);
   let routeSyncing = false;
 
@@ -110,7 +110,7 @@
     if (normalized === "main") return perms.dashboard !== false;
     if (normalized === "playback_progress") return perms.playback !== false;
     if (normalized === "watchlist") return perms.watchlist !== false;
-    if (["snapshots", "playlists", "editor", "analyzer", "interactive_sync"].includes(normalized)) return perms.write === true;
+    if (["snapshots", "playlists", "editor", "analyzer", "import_export", "interactive_sync"].includes(normalized)) return perms.write === true;
     return false;
   }
 
@@ -1029,7 +1029,7 @@
   }
 
   function setTabHeaderState(tab) {
-    ["main", "watchlist", "playback_progress", "snapshots", "playlists", "editor", "analyzer", "settings"].forEach((name) => {
+    ["main", "watchlist", "playback_progress", "snapshots", "playlists", "editor", "analyzer", "import_export", "settings"].forEach((name) => {
       byId(`tab-${name}`)?.classList.toggle("active", name === tab);
     });
   }
@@ -1045,6 +1045,7 @@
     byId("page-playlists")?.classList.toggle("hidden", tab !== "playlists");
     byId("page-editor")?.classList.toggle("hidden", tab !== "editor");
     byId("page-analyzer")?.classList.toggle("hidden", tab !== "analyzer");
+    byId("page-import_export")?.classList.toggle("hidden", tab !== "import_export");
     byId("page-interactive_sync")?.classList.toggle("hidden", tab !== "interactive_sync");
     byId("page-settings")?.classList.toggle("hidden", tab !== "settings");
 
@@ -1090,7 +1091,7 @@
       const watchlistAllowed = perms.watchlist !== false;
       const playbackAllowed = perms.playback !== false;
       const writeAllowed = perms.write === true;
-      if (!(tab === "main" && dashboardAllowed) && !(tab === "watchlist" && watchlistAllowed) && !(tab === "playback_progress" && playbackAllowed) && !(["snapshots", "playlists", "editor", "analyzer"].includes(tab) && writeAllowed)) tab = allowedRouteTab(tab);
+      if (!(tab === "main" && dashboardAllowed) && !(tab === "watchlist" && watchlistAllowed) && !(tab === "playback_progress" && playbackAllowed) && !(["snapshots", "playlists", "editor", "analyzer", "import_export"].includes(tab) && writeAllowed)) tab = allowedRouteTab(tab);
     }
     writeRouteHash(tab);
 
@@ -1190,6 +1191,21 @@
 
     if (tab === "interactive_sync") {
       await ensurePageModule("interactive-sync", "/assets/js/interactive-sync.js", "InteractiveSync");
+      return;
+    }
+
+    if (tab === "import_export") {
+      try {
+        await ensurePageModule("import-export", "/assets/js/import-export/index.js", "ImportExport");
+        if (!isCurrentNavigation()) return;
+        await window.ImportExport.mount(byId("page-import_export"));
+      } catch (error) {
+        if (!isCurrentNavigation()) return;
+        window.ImportExport?.unmount?.();
+        const root = byId("page-import_export");
+        if (root) root.innerHTML = '<div class="cw-page-load-error">Import / Export failed to load. Refresh the page and try again.</div>';
+        console.error("Import / Export failed to load", error);
+      }
       return;
     }
 
@@ -1446,7 +1462,8 @@
     const targetInst = String(pair.target_instance || "").trim();
     const sourceLabel = sourceInst && sourceInst.toLowerCase() !== "default" ? `${source} · ${sourceInst}` : source;
     const targetLabel = targetInst && targetInst.toLowerCase() !== "default" ? `${target} · ${targetInst}` : target;
-    return `${sourceLabel} → ${targetLabel}`;
+    const arrow = String(pair.mode || "").trim().toLowerCase() === "two-way" ? "↔" : "→";
+    return `${sourceLabel} ${arrow} ${targetLabel}`;
   }
 
   function clampMenuToViewport(menu, margin = 10) {
@@ -1543,10 +1560,16 @@
     const menu = byId("cw-sync-menu");
     if (!menu) return;
     menu.innerHTML = "";
-    menu.appendChild(buildSyncMenuButton("Sync all", () => {
+    const syncAll = buildSyncMenuButton("Sync all", () => {
       cwCloseSyncMenu();
       runSync();
-    }));
+    }, "cw-sync-menu-all");
+    const syncIcon = document.createElement("span");
+    syncIcon.className = "material-symbols-rounded";
+    syncIcon.setAttribute("aria-hidden", "true");
+    syncIcon.textContent = "sync";
+    syncAll.prepend(syncIcon);
+    menu.appendChild(syncAll);
 
     const auth = window.CW?.AuthState?.read?.();
     let pairs = await _getPairsFresh(auth?.isManaged === true);
