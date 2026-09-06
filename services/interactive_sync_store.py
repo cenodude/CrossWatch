@@ -62,6 +62,29 @@ class ReviewStore:
         self.counts = dict(changes=0, conflicts=0, attention=0, selected=0)
         self.features = []
         self.selectable_count = 0
+        self.db.execute("CREATE TABLE report_issues (id TEXT PRIMARY KEY, provider TEXT NOT NULL, feature TEXT NOT NULL, result TEXT NOT NULL, operation TEXT NOT NULL, provisional INTEGER NOT NULL, search TEXT NOT NULL, payload TEXT NOT NULL)")
+
+    def clear_report_issues(self, provider=None, feature=None, operation=None):
+        with self.lock:
+            if provider is None:
+                self.db.execute("DELETE FROM report_issues")
+            else:
+                self.db.execute("DELETE FROM report_issues WHERE provider=? AND feature=? AND operation=? AND provisional=1", (provider, feature, operation))
+
+    def put_report_issue(self, key, row, provisional=False):
+        payload = json.dumps(row, ensure_ascii=False, default=str)
+        with self.lock:
+            self.db.execute("INSERT OR REPLACE INTO report_issues VALUES(?,?,?,?,?,?,?,?)",
+                            (key, row["provider"], row["feature"], row["result"], row["operation"], int(provisional), payload.casefold(), payload))
+
+    def report_page(self, *, offset=0, limit=75, feature="", result="", q=""):
+        where, args = self.where(feature, result, q)
+        with self.lock:
+            total = self.db.execute(f"SELECT COUNT(*) FROM report_issues WHERE {where}", args).fetchone()[0]
+            limit = max(1, min(200, int(limit)))
+            offset = max(0, min(int(offset), ((total - 1) // limit) * limit)) if total else 0
+            rows = self.db.execute(f"SELECT payload FROM report_issues WHERE {where} ORDER BY rowid LIMIT ? OFFSET ?", [*args, limit, offset]).fetchall()
+        return dict(items=[json.loads(row[0]) for row in rows], total=total, offset=offset, limit=limit)
 
     def put(self, key, value, kind):
         result = "conflict" if kind == "conflict" else value["result"]

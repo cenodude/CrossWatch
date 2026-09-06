@@ -145,6 +145,17 @@ def refresh(sid: str, payload: Refresh, request: Request):
         return session.public()
 
 
+@router.get("/{sid}/report-issues")
+def report_issues(sid: str, request: Request, offset: int = Query(default=0, ge=0),
+                  limit: int = Query(default=75, ge=1, le=200), feature: str = Query(default="", max_length=32),
+                  result: str = Query(default="", max_length=32), q: str = Query(default="", max_length=256)):
+    with svc.LOCK:
+        session = get_session(sid, request, load_config())
+        if session.report is None or session.store is None:
+            raise HTTPException(409, "The sync report is not available yet")
+        return dict(ok=True, **session.store.report_page(offset=offset, limit=limit, feature=feature, result=result, q=q))
+
+
 @router.get("/{sid}/rows")
 def rows(sid: str, request: Request, revision: int = Query(ge=0), offset: int = Query(default=0, ge=0),
          limit: int = Query(default=75, ge=1, le=200), feature: str = Query(default="", max_length=32),

@@ -159,7 +159,7 @@ def apply(session: Session, cfg: dict[str, Any], selected: set[str]):
     session.progress.begin("apply")
     session.apply_review = None
     session.report = None
-    report = SyncReport()
+    report = SyncReport(session.store, session.pair)
     if fingerprint(cfg) != session.config_hash or mapping_version(cfg) != session.mapping_version:
         refresh(session, cfg, session.plan.choices, restart_progress=False)
         _apply_needs_review(session, selected, "Settings or mappings changed.")

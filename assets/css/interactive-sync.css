@@ -152,6 +152,14 @@
 .is-report-table th:first-child { width: 30%; }
 .is-report-table tbody th { text-align: left; padding: 15px 20px; border-bottom: 1px solid var(--is-line); font-weight: 600; }
 .is-report-feature { background: color-mix(in srgb, var(--is-accent) 5%, var(--is-surface)); }
+.is-report-items { table-layout: fixed; min-width: 650px; }
+.is-table-wrap:has(> .is-report-items) { max-height: min(65vh, 620px); }
+.is-report-items thead th { position: sticky; top: 0; z-index: 1; background: var(--is-surface); }
+.is-report-items td { overflow-wrap: anywhere; }
+.is-report-items th:first-child { width: 30%; }
+.is-report-items th:nth-child(2) { width: 24%; }
+.is-report-items th:nth-child(3) { width: 16%; }
+.is-report-items .is-report-reason { white-space: pre-wrap; }
 .is-report-table .is-report-destination { padding-left: 34px; color: var(--is-muted); font-size: 12px; font-weight: 400; }
 .is-report-checks { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
 .is-report-checks > div { border: 1px solid var(--is-line); border-radius: 10px; padding: 17px; display: flex; flex-direction: column; gap: 12px; }

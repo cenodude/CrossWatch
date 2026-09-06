@@ -80,6 +80,9 @@
   }
   function accept(data, forcePage = false) {
     const changed = !session || session.id !== data.id || session.revision !== data.revision || session.selection_version !== data.selection_version || session.status !== data.status;
+    if (data.report && (!session?.report || session.id !== data.id)) {
+      page = 0; feature = ""; result = ""; query = ""; pageData = {items: [], total: 0};
+    }
     session = data;
     progressReceived = Date.now();
     pollFailures = 0;
@@ -96,7 +99,8 @@
     clearTimeout(searchTimer);
   }
   async function loadPage() {
-    if (!session?.revision || session.report || pending() || !active()) return;
+    if (!session?.revision || pending() || !active()) return;
+    if (session.report && !session.report.issue_count) return;
     invalidatePage();
     const request = pageRequest, current = generation, sid = session.id;
     pageController = new AbortController();
@@ -104,12 +108,14 @@
     render();
     const params = new URLSearchParams({ revision: session.revision, offset: page * PAGE_SIZE, limit: PAGE_SIZE, feature, result, q: query });
     try {
-      const data = await json(`${API}/${sid}/rows?${params}`, { signal: pageController.signal });
+      const data = await json(`${API}/${sid}/${session.report ? "report-issues" : "rows"}?${params}`, { signal: pageController.signal });
       if (request !== pageRequest || current !== generation) return;
       pageData = data;
       page = Math.floor(data.offset / PAGE_SIZE);
-      session.counts = data.counts;
-      session.selection_version = data.selection_version;
+      if (!session.report) {
+        session.counts = data.counts;
+        session.selection_version = data.selection_version;
+      }
       pageLoading = false;
       render();
     } catch (error) {
@@ -151,6 +157,16 @@
     const box = host.querySelector(".is-error");
     if (box) { box.textContent = error.message || String(error); box.hidden = false; }
   }
+  function reportIssuesHTML() {
+    const report = session.report;
+    if (!report.issue_count && !report.issue_details_omitted) return "";
+    const pages = Math.max(1, Math.ceil(pageData.total / PAGE_SIZE));
+    return `<section class="is-report-section"><h2>Items that need attention (${number(report.issue_count)})</h2><p>Item details and reasons recorded by the sync engine during this run.</p>
+      ${report.issue_details_omitted ? `<p class="is-report-warning">${number(report.issue_details_omitted)} additional items were omitted from the engine's detailed events. The totals above include them.</p>` : ""}
+      <div class="is-toolbar"><label class="is-search"><span class="material-symbols-rounded" aria-hidden="true">search</span><input data-filter="query" type="search" maxlength="256" placeholder="Search titles, IDs or reasons" aria-label="Search report items" value="${esc(query)}"></label><label>Feature<select data-filter="feature"><option value="">All features</option>${session.report.features.map(row => `<option value="${esc(row.feature)}" ${feature === row.feature ? "selected" : ""}>${esc(row.feature)}</option>`).join("")}</select></label><label>Result<select data-filter="result"><option value="">All results</option>${Object.entries({failed:"Not confirmed",unresolved:"Unresolved",blocked:"Blocked"}).map(([key,label]) => `<option value="${key}" ${result === key ? "selected" : ""}>${label}</option>`).join("")}</select></label></div>
+      <p class="is-report-item-range" role="status">${pageLoading ? "Loading..." : `${number(pageData.total ? page * PAGE_SIZE + 1 : 0)}&ndash;${number(Math.min((page + 1) * PAGE_SIZE, pageData.total))} of ${number(pageData.total)} matching items`}</p><div class="is-table-wrap"><table class="is-table is-report-items"><thead><tr><th>Item</th><th>Feature / destination</th><th>Result</th><th>Reason</th></tr></thead><tbody>${pageLoading ? `<tr><td colspan="4">Loading item details…</td></tr>` : pageData.items.map(row => `<tr><td><strong>${esc(title(row.item))}</strong><small>${esc(row.key || Object.entries(row.item?.ids || {}).map(([key,value]) => `${key}:${value}`).join(" · "))}</small></td><td>${esc(row.feature)}<small>${esc(endpoint(row.provider,row.instance))} · ${esc(labels[row.operation] || row.operation)}</small></td><td><span class="is-badge ${row.result === "blocked" ? "blocked" : "unresolved"}">${row.result === "blocked" ? "Blocked" : row.result === "unresolved" ? "Unresolved" : "Not confirmed"}</span></td><td class="is-report-reason">${esc(row.explanation || row.reason)}${row.explanation ? `<small>${esc(row.reason)}</small>` : ""}</td></tr>`).join("") || `<tr><td colspan="4">No matching items.</td></tr>`}</tbody></table></div>
+      <nav class="is-pagination" aria-label="Report item pages"><button class="is-btn is-small" data-action="first" ${pageLoading || !page ? "disabled" : ""}>First</button><button class="is-btn is-small" data-action="prev" ${pageLoading || !page ? "disabled" : ""}>Previous</button><label>Page <input type="number" data-page min="1" max="${pages}" value="${page + 1}" ${pageLoading ? "disabled" : ""}> of ${number(pages)}</label><button class="is-btn is-small" data-action="next" ${pageLoading || page + 1 >= pages ? "disabled" : ""}>Next</button><button class="is-btn is-small" data-action="last" ${pageLoading || page + 1 >= pages ? "disabled" : ""}>Last</button></nav></section>`;
+  }
   function reportHTML() {
     const report = session.report, totals = report.totals;
     const outcomes = {
@@ -170,9 +186,10 @@
       ${changes ? `<div class="is-report-distribution" role="img" aria-label="${number(totals.added)} added, ${number(totals.updated)} updated, ${number(totals.removed)} removed">${["added", "updated", "removed"].map(key => `<span class="${key}" style="width:${totals[key] / changes * 100}%"></span>`).join("")}</div><div class="is-report-legend">${columns.slice(0, 3).map(([key, label]) => `<span><i class="${key}"></i>${label}</span>`).join("")}</div>` : ""}
       <dl class="is-report-facts"><div><dt>Selected for this run</dt><dd>${number(report.requested)} of ${number(report.proposed)} proposals</dd></div><div><dt>Not selected</dt><dd>${number(report.not_selected)}</dd></div><div><dt>Started</dt><dd>${date(report.started_at)}</dd></div><div><dt>Finished</dt><dd>${date(report.finished_at)}</dd></div><div><dt>API requests</dt><dd>${number(report.requests)}</dd></div><div><dt>Conflict decisions</dt><dd>${number(report.conflicts_reviewed)}</dd></div></dl>
       <section class="is-report-section"><h2>Results by feature and destination</h2><p>Counts reported by the sync engine for this operation.</p><div class="is-table-wrap"><table class="is-table is-report-table"><thead><tr><th scope="col">Feature / destination</th>${columns.map(([, label]) => `<th scope="col">${label}</th>`).join("")}</tr></thead><tbody>${report.features.map(row => `<tr class="is-report-feature"><th scope="row">${esc(row.feature.charAt(0).toUpperCase() + row.feature.slice(1))}</th>${cells(row)}</tr>${row.destinations.map(dst => `<tr><th scope="row" class="is-report-destination">${esc(endpoint(dst.provider, dst.instance))}</th>${cells(dst)}</tr>`).join("")}`).join("") || `<tr><td colspan="8">No completed feature results were reported.</td></tr>`}</tbody></table></div></section>
-      <section class="is-report-section is-report-attention"><h2>Attention and follow-up</h2><div class="is-report-checks">${[["Unresolved mappings", totals.unresolved], ["Provider errors", totals.errors], ["Blocked by sync rules", totals.blocked], ["Selected proposals not reached", report.not_reached]].map(([label, n]) => `<div class="${n ? "needs-attention" : ""}"><span>${label}</span><strong>${number(n)}</strong></div>`).join("")}</div>${report.not_reached ? `<p>These selected proposals did not reach execution. Data may have changed, a protection may have stopped them, or the run may have ended early.</p>` : ""}${report.incomplete_note ? `<p class="is-report-warning">${esc(report.incomplete_note)}</p>` : ""}${report.outcome !== "success" ? `<p>Check Events for details. Start a new review to see what still needs syncing before retrying.</p>` : ""}</section>
+      <section class="is-report-section is-report-attention"><h2>Attention and follow-up</h2><div class="is-report-checks">${[["Unresolved items", totals.unresolved], ["Provider errors", totals.errors], ["Blocked by sync rules", totals.blocked], ["Selected proposals not reached", report.not_reached]].map(([label, n]) => `<div class="${n ? "needs-attention" : ""}"><span>${label}</span><strong>${number(n)}</strong></div>`).join("")}</div>${report.not_reached ? `<p>These selected proposals did not reach execution. Data may have changed, a protection may have stopped them, or the run may have ended early.</p>` : ""}${report.incomplete_note ? `<p class="is-report-warning">${esc(report.incomplete_note)}</p>` : ""}${report.outcome !== "success" ? `<p>${report.issue_count ? "Review the affected items below." : "The engine did not include item-level details. Check Events for the available diagnostics."} Start a new review to see what still needs syncing before retrying.</p>` : ""}</section>
       ${(report.notices || []).length ? `<details class="is-notices" open><summary>Execution notices (${number(report.notices.length)})</summary>${report.notices.map(n => `<p><strong>${esc([n.feature, n.provider].filter(Boolean).join(" · "))}</strong> ${esc(n.reason)}${n.occurrences > 1 ? ` (${number(n.occurrences)} occurrences)` : ""}</p>`).join("")}${report.notice_overflow ? `<p>Additional notices are available in Events.</p>` : ""}</details>` : ""}
       ${(report.review_notices || []).length ? `<details class="is-notices"><summary>Protections and notices from the preview (${number(report.review_notices.length)})</summary>${report.review_notices.map(n => `<p>${esc(n.feature)} ${esc(n.provider)} · ${esc(n.reason)}</p>`).join("")}</details>` : ""}
+      ${reportIssuesHTML()}
       <p class="is-report-accounting">${esc(report.accounting_note)}</p>
       <footer class="is-report-footer"><div><strong>Keep a copy of this report</strong><small>Available while this review session is retained. Download it for your records.</small></div><div class="is-header-actions"><button class="is-btn" data-action="download-report"><span class="material-symbols-rounded" aria-hidden="true">download</span>Download JSON</button><a class="is-btn is-primary" href="#settings/sync">Back to Synchronization</a></div></footer>
     </section>`;
@@ -304,12 +321,22 @@
     if (button.dataset.map) return mapping(pageData.items.find(row => row.id === button.dataset.map));
     const name = button.dataset.action;
     if (name === "download-report" && session.report) {
-      const url = URL.createObjectURL(new Blob([JSON.stringify(session.report, null, 2)], { type: "application/json" }));
+      const report = session.report, sid = session.id, issues = [];
+      button.disabled = true;
+      try {
+        while (issues.length < (report.issue_count || 0)) {
+          const data = await json(`${API}/${sid}/report-issues?offset=${issues.length}&limit=200`);
+          if (!data.items.length) throw new Error("Could not read all report items. Try downloading again.");
+          issues.push(...data.items);
+        }
+      } catch (error) { button.disabled = false; showError(error); return; }
+      const url = URL.createObjectURL(new Blob([JSON.stringify({...report, issues}, null, 2)], { type: "application/json" }));
       const link = document.createElement("a");
       link.href = url;
-      link.download = `crosswatch-sync-${session.id}.json`;
+      link.download = `crosswatch-sync-${sid}.json`;
       document.body.append(link); link.click(); link.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
+      button.disabled = false;
       return;
     }
     if (name === "refresh") return action("refresh");
