@@ -298,8 +298,11 @@
     const bead = (cls, tip, val) => `<span class="bead ${cls} ${truthy(val) ? "on" : ""}" data-tip="${tip}"></span>`;
     const inst = (v) => (String(v || "default").trim() || "default");
     const pill = (provider, instance, role) => {
-      const name = providerLabel(provider), full = String(instance || "default").toLowerCase() !== "default" ? `${name}:${instance}` : name, logo = providerLogo(provider), tip = `${role === "src" ? "Source" : "Target"}: ${full}`;
-      return `<span class="pair-pill ${role}" data-tip="${esc(tip)}"><span class="pair-pill-text">${esc(full)}</span><span class="prov-watermark" aria-hidden="true" style="--wm:url('${esc(logo)}')"></span></span>`;
+      const name = providerLabel(provider), logo = providerLogo(provider);
+      const detail = providerMeta()?.instanceLabel?.(provider, instance) || (instance === "default" ? "Default instance" : instance);
+      const named = detail !== "Default instance";
+      const tip = `${role === "src" ? "Source" : "Target"}: ${name}${named ? ` (${detail})` : ""}`;
+      return `<span class="pair-pill ${role}" data-tip="${esc(tip)}"><span class="pair-pill-text"><span>${esc(name)}</span>${named ? `<small class="pair-instance-name">${esc(detail)}</small>` : ""}</span><span class="prov-watermark" aria-hidden="true" style="--wm:url('${esc(logo)}')"></span></span>`;
     };
 
     const renderPairCard = (pr, displayIndex) => {
@@ -380,6 +383,7 @@
         const newIdx = dir === "prev" ? Math.max(0, idx - 1) : Math.min(list.length - 1, idx + 1); if (newIdx === idx) return;
 
         const [item] = list.splice(idx, 1); list.splice(newIdx, 0, item);
+        document.dispatchEvent(new Event("cw:sync-data-changed"));
 
         const board = document.querySelector("#pairs_list .pairs-board");
         const el = board?.querySelector(`.pair-card[data-id="${id}"]`);
@@ -430,6 +434,7 @@
     }
   });
   document.addEventListener("cx-state-change", renderOrEnhance);
+  window.addEventListener("auth-changed", () => renderOrEnhance());
   window.addEventListener("cx:pairs:changed", () => { renderOrEnhance(true); });
 
   window.addEventListener("resize", () => {

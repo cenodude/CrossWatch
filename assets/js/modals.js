@@ -37,6 +37,7 @@ ModalRegistry.register('editor-raw', () => import(_cwVer('./modals/editor-raw/in
 ModalRegistry.register('anime-overrides', () => import(_cwVer('./modals/anime-overrides/index.js')));
 ModalRegistry.register('support',      () => import(_cwVer('./modals/support/index.js')));
 ModalRegistry.register('statistics',   () => import(_cwVer('./modals/statistics/index.js')));
+ModalRegistry.register('sync-topology', () => import(_cwVer('./modals/sync-topology/index.js')));
 
 export const openModal = ModalRegistry.open;
 export const closeModal = ModalRegistry.close;
