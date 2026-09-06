@@ -20,6 +20,8 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from cw_platform.access_policy import filter_pairs_for_user, pair_ids_for_user, request_user
+from cw_platform.pair_scope import pair_feature_scope
+from cw_platform.orchestrator._state_store import StateStore
 from cw_platform.anime_mapping.history_coords import (
     HistoryCoordinateAliases,
     build_history_coordinate_aliases,
@@ -332,7 +334,7 @@ def _pair_id(pair: Mapping[str, Any]) -> str:
 def _config_for_pairs(cfg: dict[str, Any], pairs_raw: str | None) -> dict[str, Any]:
     """Return a shallow config view containing only explicitly selected pairs."""
     selected = set(_parse_pairs_raw(pairs_raw))
-    if not selected:
+    if not selected and not str(pairs_raw or "").startswith(_STRICT_PAIRS_PREFIX):
         return cfg
     out = dict(cfg or {})
     out["_analyzer_pairs_selected"] = True
@@ -458,23 +460,26 @@ def _load_state_at(path: Path) -> dict[str, Any]:
         raise HTTPException(500, f"Failed to parse {path.name}")
 
 
+def _analysis_pair_ids(pairs_raw: str | None) -> list[str]:
+    cfg = _config_for_pairs(_cfg(), pairs_raw)
+    return [_pair_id(pair) for pair in cfg.get("pairs") or [] if isinstance(pair, Mapping) and _pair_id(pair) and pair.get("enabled") is not False]
+
+
 def _load_state_handles(pairs_raw: str | None, features: Iterable[str] | None = None) -> list[dict[str, Any]]:
-    strict_pairs = str(pairs_raw or "").startswith(_STRICT_PAIRS_PREFIX)
-    pairs = _parse_pairs_raw(pairs_raw)
+    cfg = _cfg()
+    selected = set(_analysis_pair_ids(pairs_raw))
     handles: list[dict[str, Any]] = []
-    if pairs:
-        for pid in pairs:
-            safe = _safe_scope(pid)
-            cand = _state_candidates(safe)
-            legacy = _legacy_state_token(pid)
-            if legacy and legacy != safe:
-                cand += _state_candidates(legacy)
-            path = _pick_existing(cand)
-            if path is None:
-                continue
-            handles.append({"pair": pid, "safe": safe, "path": path, "state": _load_state_at(path)})
-        if handles:
-            return handles
+    wanted = _feature_set(features)
+    for index, pair in enumerate(cfg.get("pairs") or [], 1):
+        if not isinstance(pair, Mapping) or _pair_id(pair) not in selected:
+            continue
+        pid = _pair_id(pair)
+        for feature in wanted:
+            scope = pair_feature_scope(cfg, pair, feature, index)
+            state = StateStore(CONFIG_DIR).for_pair(scope).load_state_features({feature})
+            handles.append({"pair": pid, "safe": scope, "state": state})
+    if handles or cfg.get("pairs") or str(pairs_raw or "").startswith(_STRICT_PAIRS_PREFIX):
+        return handles
     state = _load_main_state(features)
     if state.get("providers") or _main_state_db_exists():
         return [{"pair": None, "safe": None, "main": True, "state": state}]
@@ -486,7 +491,7 @@ def _merge_states(handles: list[dict[str, Any]], features: Iterable[str] | None 
     wanted = _feature_set(features)
 
     def merge_feat(dst_blk: dict[str, Any], src_blk: dict[str, Any], feat: str) -> None:
-        items = (((src_blk.get(feat) or {}).get("baseline") or {}).get("items") or {})
+        items = ((src_blk.get(feat) or {}).get("baseline") or {}).get("items")
         if not isinstance(items, dict):
             return
         mb = dst_blk.setdefault(feat, {}).setdefault("baseline", {}).setdefault("items", {})
@@ -576,6 +581,12 @@ def _save_state_handle(
             _save_main_feature(state, provider, feature)
             return
         raise HTTPException(500, "Analyzer main DB writes require a provider and feature")
+    if handle.get("pair") and handle.get("safe"):
+        block = _feature_block(state, provider, feature) if provider and feature else None
+        if block is None:
+            raise HTTPException(400, "A pair feature is required")
+        base, instance, name, value = block
+        StateStore(CONFIG_DIR).for_pair(handle["safe"]).save_feature_blocks({(base, instance, name): value})
         return
     path = handle.get("path")
     if not isinstance(path, Path):
@@ -849,7 +860,7 @@ def _read_cw_state(allowed_scopes: set[str] | None = None) -> dict[str, Any]:
 
     scopes = set(allowed_scopes or [])
     for p in sorted(CWS_DIR.glob("*.json")):
-        if scopes:
+        if allowed_scopes is not None:
             if not any(p.name.endswith(f".{safe}.json") for safe in scopes):
                 continue
         try:
@@ -2263,21 +2274,9 @@ def _alias_destination_key(rec: Mapping[str, Any]) -> str:
     return event.split("@", 1)[0] if event else ""
 
 
-def _pair_alias_scope_key(pair: Mapping[str, Any], index: int, mode: str, src: str, dst: str, si: str, ti: str) -> str:
-    mode_norm = "two-way" if str(mode or "").strip().lower() in (
-        "two-way", "two_way", "two way", "bi", "both", "mirror", "two"
-    ) else "one-way"
-    a = f"{src}#{si}"
-    b = f"{dst}#{ti}"
-    base = "-".join(sorted([a, b])) if mode_norm == "two-way" else f"{a}-{b}"
-    raw_id = pair.get("id") or pair.get("pair_id") or pair.get("name") or pair.get("label") or ""
-    pid = str(raw_id).strip() or str(index)
-    return f"{mode_norm}:{base}:{pid}"
-
-
 def _expected_alias_scopes(cfg: Mapping[str, Any]) -> dict[str, tuple[str, str]]:
     out: dict[str, tuple[str, str]] = {}
-    for index, pair in enumerate(cfg.get("pairs") or []):
+    for index, pair in enumerate(cfg.get("pairs") or [], 1):
         if not isinstance(pair, Mapping) or pair.get("enabled") is False:
             continue
         src = str(pair.get("src") or pair.get("source") or "").upper().strip()
@@ -2287,11 +2286,11 @@ def _expected_alias_scopes(cfg: Mapping[str, Any]) -> dict[str, tuple[str, str]]
         si = normalize_instance_id(pair.get("src_instance") or pair.get("source_instance"))
         ti = normalize_instance_id(pair.get("dst_instance") or pair.get("target_instance"))
         mode = str(pair.get("mode") or "one-way")
-        key = _pair_alias_scope_key(pair, index, mode, src, dst, si, ti)
+        key = pair_feature_scope(cfg, pair, "history", index)
         src_tok = _prov_token(src, si)
         dst_tok = _prov_token(dst, ti)
         out[f"{key}|{src}>{dst}"] = (src_tok, dst_tok)
-        if key.startswith("two-way:"):
+        if mode.lower() in {"two-way", "two_way", "two way", "bi", "both", "mirror", "two"}:
             out[f"{key}|{dst}>{src}"] = (dst_tok, src_tok)
     return out
 
@@ -2605,7 +2604,8 @@ def _eligible_targets(ctx: _AnalysisContext, prov: str, feat: str, item: dict[st
     return [
         dst
         for dst in ctx.pairs.get((prov_key, feat_key), [])
-        if _passes_pair_lib_filter(ctx.pair_libs, prov_key, feat_key, dst, item)
+        if _bucket(ctx.state, dst, feat_key) is not None
+        and _passes_pair_lib_filter(ctx.pair_libs, prov_key, feat_key, dst, item)
         and _passes_pair_type_filter(ctx.pair_types, prov_key, feat_key, dst, item)
     ]
 
@@ -2673,6 +2673,8 @@ def _pair_stats(
     for (prov, feat), targets in analysis.pairs.items():
         src_items = _bucket(s, prov, feat) or {}
         for dst in targets:
+            if _bucket(s, prov, feat) is None or _bucket(s, dst, feat) is None:
+                continue
             total = 0
             synced = 0
             anime_synced = 0
@@ -2702,6 +2704,19 @@ def _pair_stats(
                 rec["anime_synced"] = anime_synced
             stats.append(rec)
     return stats
+
+
+def _snapshot_gaps(ctx: _AnalysisContext) -> list[dict[str, Any]]:
+    gaps = []
+    seen = set()
+    for (src, feature), targets in ctx.pairs.items():
+        for dst in targets:
+            route = (tuple(sorted((src, dst))), feature)
+            missing = [provider for provider in (src, dst) if _bucket(ctx.state, provider, feature) is None]
+            if missing and route not in seen:
+                seen.add(route)
+                gaps.append(dict(source=src, target=dst, feature=feature, missing=missing))
+    return gaps
 
 
 def _pair_exclusions(
@@ -2964,6 +2979,8 @@ def _history_normalization_issues(s: dict[str, Any], cfg: dict[str, Any] | None 
         for dst in targets:
             b = _norm_prov_token(dst)
             if not b or a == b:
+                continue
+            if _bucket(s, a, "history") is None or _bucket(s, b, "history") is None:
                 continue
 
             key = (a, b) if a <= b else (b, a)
@@ -4209,13 +4226,16 @@ def _path_stamp(path: Path) -> tuple[str, int, int]:
 
 def _state_signature(pairs_raw: str | None) -> tuple[Any, ...]:
     artifacts = sorted(CWS_DIR.glob("*.json")) if CWS_DIR.exists() else []
+    artifacts.extend(sorted(CONFIG_DIR.glob("state.*.json")))
     try:
         from cw_platform.local_db import crosswatch_db_path
 
-        db_stamp = _path_stamp(crosswatch_db_path(CONFIG_DIR))
+        db_path = crosswatch_db_path(CONFIG_DIR)
+        db_stamp = (_path_stamp(db_path), _path_stamp(Path(str(db_path) + "-wal")))
     except Exception:
         db_stamp = ("local-db", 0, 0)
     return (
+        str(pairs_raw or "").startswith(_STRICT_PAIRS_PREFIX),
         tuple(_parse_pairs_raw(pairs_raw)),
         _path_stamp(CONFIG_DIR / "config.json"),
         db_stamp,
@@ -4250,8 +4270,10 @@ def _load_analysis_state(pairs_raw: str | None) -> tuple[dict[str, Any], _Analys
     selected_cfg = _config_for_pairs(_cfg(), pairs_raw)
     context = _analysis_context(state, selected_cfg)
     t2 = time.perf_counter()
-    scopes = {h.get("safe") for h in handles if h.get("safe")}
-    allowed = set(x for x in scopes if isinstance(x, str) and x) or None
+    selected = _analysis_pair_ids(pairs_raw)
+    allowed = set() if selected or str(pairs_raw or "").startswith(_STRICT_PAIRS_PREFIX) else None
+    if allowed is not None:
+        allowed.update(str(handle["safe"]) for handle in handles if handle.get("safe"))
     entry = (state, context, allowed, selected_cfg)
     with _STATE_CACHE_LOCK:
         _STATE_CACHE.clear()
@@ -4265,8 +4287,14 @@ def _cached_scoped_rows(pairs_raw: str | None) -> tuple[list[dict[str, Any]], di
         cached = _SCOPED_ROWS_CACHE.get(signature)
         if cached is not None:
             return cached
-    state, _context, _allowed, selected_cfg, _timings = _load_analysis_state(pairs_raw)
-    rows = _scoped_item_rows(state, selected_cfg)
+    ids = _analysis_pair_ids(pairs_raw)
+    if len(ids) > 1:
+        rows = [row for pid in ids for row in _cached_scoped_rows(pid)[0]]
+    else:
+        state, _context, _allowed, selected_cfg, _timings = _load_analysis_state(pairs_raw)
+        rows = _scoped_item_rows(state, selected_cfg)
+        if ids:
+            rows = [{**row, "pair_id": ids[0]} for row in rows]
     result = (rows, _counts_from_rows(rows))
     with _SCOPED_ROWS_CACHE_LOCK:
         _SCOPED_ROWS_CACHE.clear()
@@ -4287,6 +4315,24 @@ def _cached_analysis(pairs_raw: str | None, *, include_system: bool = False, inc
             if cached is not None:
                 return _with_cache_hit(cached)
 
+        ids = _analysis_pair_ids(pairs_raw)
+        if len(ids) > 1:
+            results = [_cached_analysis(pid, include_hints=include_hints) for pid in ids]
+            problems = [row for result in results for row in result["problems"]]
+            if include_system:
+                problems.extend(_cached_system()["problems"])
+            attention_rows = [row for result in results for row in result["attention"]["rows"]]
+            counts = {key: sum(result["attention"]["counts"].get(key, 0) for result in results)
+                      for key in ("current_mismatch", "pending_retry", "blocked", "total")}
+            result = {"problems": problems, "summary": _diagnostic_summary(problems),
+                      "attention": {"rows": attention_rows, "counts": counts},
+                      "timings_ms": {"cache_hit": False}}
+            for key in ("pair_stats", "pair_exclusions", "snapshot_gaps"):
+                result[key] = [row for part in results for row in part[key]]
+            with _ANALYSIS_CACHE_LOCK:
+                _ANALYSIS_CACHE[signature] = result
+            return result
+
         started = time.perf_counter()
         state, context, allowed, selected_cfg, st_tim = _load_analysis_state(pairs_raw)
         inner: dict[str, Any] = {}
@@ -4299,6 +4345,9 @@ def _cached_analysis(pairs_raw: str | None, *, include_system: bool = False, inc
             attention = _attention_from_analysis(problems, allowed, context)
         except Exception:
             attention = {"rows": [], "counts": {"current_mismatch": 0, "pending_retry": 0, "blocked": 0, "total": 0}}
+        if ids:
+            problems = [{**row, "pair_id": ids[0]} for row in problems]
+            attention["rows"] = [{**row, "pair_id": ids[0]} for row in attention["rows"]]
         completed = time.perf_counter()
         timings = {
             "state_load": st_tim.get("state_load", 0.0),
@@ -4316,6 +4365,7 @@ def _cached_analysis(pairs_raw: str | None, *, include_system: bool = False, inc
             "summary": _diagnostic_summary(problems),
             "pair_stats": stats,
             "pair_exclusions": exclusions,
+            "snapshot_gaps": _snapshot_gaps(context),
             "attention": attention,
             "timings_ms": timings,
         }
@@ -4365,6 +4415,14 @@ def _cached_system(refresh: bool = False) -> dict[str, Any]:
 
 
 def _detail_for_item(pairs_raw: str | None, provider: str, feature: str, key: str) -> dict[str, Any]:
+    ids = _analysis_pair_ids(pairs_raw)
+    if len(ids) > 1:
+        parts = [(pid, _detail_for_item(pid, provider, feature, key)) for pid in ids]
+        return {
+            "targets": sorted({target for _, part in parts for target in part["targets"]}),
+            "hints": [{**hint, "pair_id": pid} for pid, part in parts for hint in part["hints"]],
+            "target_show_info": [{**hint, "pair_id": pid} for pid, part in parts for hint in part["target_show_info"]],
+        }
     state, context, allowed, _cfg_sel, _tim = _load_analysis_state(pairs_raw)
     prov_key = _norm_prov_token(provider)
     feat_key = str(feature or "").lower()
@@ -4470,13 +4528,8 @@ def api_pair_activity(request: Request = cast(Request, None)) -> dict[str, Any]:
         pid = str(pair.get("id") or "").strip()
         if not pid:
             continue
-        path = _pick_existing(_state_candidates(_safe_scope_for_pair(pair)))
-        mtime = 0
-        if path is not None:
-            try:
-                mtime = int(path.stat().st_mtime_ns)
-            except OSError:
-                mtime = 0
+        handles = _load_state_handles(pid, _ANALYZER_FEATURES)
+        mtime = max((int((handle["state"].get("last_sync_epoch") or 0) * 1_000_000_000) for handle in handles), default=0)
         out.append({"id": pid, "last_run_ns": mtime})
     return {"pairs": out}
 
@@ -4499,9 +4552,9 @@ def api_cw_state(pairs: str | None = None, request: Request = cast(Request, None
     try:
         handles = _load_state_handles(pairs)
         scopes = {h.get("safe") for h in handles if h.get("safe")}
-        allowed = set(x for x in scopes if isinstance(x, str) and x) or None
+        allowed = set(x for x in scopes if isinstance(x, str) and x)
     except HTTPException:
-        allowed = None
+        allowed = set()
     return _read_cw_state(allowed)
 
 @router.post("/analyzer/suggest", response_class=JSONResponse)

@@ -15,7 +15,7 @@ const icon = name => `<span class="material-symbols-rounded" aria-hidden="true">
 const array = value => Array.isArray(value) ? value : [];
 const human = value => String(value || "").replace(/[_-]+/g, " ").replace(/^./, c => c.toUpperCase());
 const severity = row => row.severity === "error" ? "error" : ["warn", "warning"].includes(row.severity) ? "warn" : "info";
-const identity = row => `${row.provider || ""}::${row.feature || ""}::${row.key || ""}`;
+const identity = row => `${row.pair_id || ""}::${row.provider || ""}::${row.feature || ""}::${row.key || ""}`;
 const label = row => {
   const item = row.item || row;
   const title = row.title || row.item_title || item.title || row.series_title || item.series_title || row.message || row.key || array(row.keys)[0] || "Untitled item";
@@ -137,7 +137,7 @@ const Analyzer = {
     const $ = selector => root.querySelector(selector);
     const lifetime = new AbortController();
     let analysisController, systemController, pageController, detailController, searchTimer;
-    let pairs = [], problems = [], pending = [], system = [], exclusions = [];
+    let pairs = [], problems = [], pending = [], system = [], exclusions = [], snapshotGaps = [];
     let PROFILE_LABELS = {}, activity = {}, status = {};
     let view = "missing", analysisState = "loading", systemState = "loading";
     let analysisError = "", systemError = "", checked = "", pageError = "";
@@ -160,9 +160,9 @@ const Analyzer = {
       if (activeCleanup === cleanup) activeCleanup = null;
     };
     activeCleanup = cleanup;
-    const scoped = path => {
+    const scoped = (path, pairId = "") => {
       const url = new URL(path, location.origin);
-      const ids = $("#an-pair").value ? [$("#an-pair").value] : pairs.map(p => p.id);
+      const ids = pairId ? [pairId] : $("#an-pair").value ? [$("#an-pair").value] : pairs.map(p => p.id);
       if (ids.length) url.searchParams.set("pairs", ids.join(","));
       return url.pathname + url.search;
     };
@@ -218,6 +218,7 @@ const Analyzer = {
       }
       $('[data-view="system"]').classList.toggle("has-errors", errors > 0 || systemState === "error");
       const alerts = [];
+      if (analysisState === "ready" && snapshotGaps.length) alerts.push(`<div class="an-notice" role="status">${icon("info")}<div><strong>Some pair comparisons are unavailable</strong><p>Run the affected pair to read both providers. An unread snapshot is not treated as an empty library.</p>${snapshotGaps.slice(0, 5).map(row => `<p>${esc(providerName(row.source))} → ${esc(providerName(row.target))} · ${esc(human(row.feature))}: no saved snapshot for ${esc(array(row.missing).map(providerName).join(", "))}.</p>`).join("")}${snapshotGaps.length > 5 ? `<p>${snapshotGaps.length - 5} more comparisons need snapshot data.</p>` : ""}</div></div>`);
       if (analysisState === "error") alerts.push(`<div class="an-notice an-error" role="alert">${icon("error")}<div><strong>Item analysis could not finish</strong><p>${esc(analysisError)}</p></div><button type="button" class="an-button" data-retry="analysis">Retry</button></div>`);
       if (systemState === "error") alerts.push(`<div class="an-notice an-error" role="alert">${icon("error")}<div><strong>System health could not be checked</strong><p>${esc(systemError)} The result is unknown.</p></div><button type="button" class="an-button" data-retry="system">Retry</button></div>`);
       if (errors || warnings) alerts.push(`<div class="an-notice ${errors ? "an-error" : "an-warning"}">${icon(errors ? "error" : "warning")}<div><strong>${errors ? `${errors} system failure${errors === 1 ? "" : "s"}` : `${warnings} system warning${warnings === 1 ? "" : "s"}`} need${(errors || warnings) === 1 ? "s" : ""} attention</strong><p>${errors && warnings ? `${warnings} warning${warnings === 1 ? "" : "s"} also found. ` : ""}Review provider and saved-state diagnostics.</p></div><button type="button" class="an-button" data-open-system>View findings</button></div>`);
@@ -271,6 +272,11 @@ const Analyzer = {
           title = loading ? "Analysis in progress" : failed ? "Results unavailable" : ({ missing: "No missing items found", pending: "No pending retries", blocked: "No blocked items", system: "No system findings", all: "No saved items" })[view];
           message = loading ? "Results will appear here as the checks finish." : failed ? "Retry the failed check using the message above." : view === "system" && systemState === "restricted" ? "Global system diagnostics are available to administrators. Pair findings remain visible here." : view === "missing" ? "No presence differences were found in the saved snapshots for these pairs." : "There is nothing to review in this view for the current scope.";
           symbol = loading ? "progress_activity" : failed ? "error" : "check_circle";
+          if (!loading && !failed && view === "missing" && snapshotGaps.length) {
+            title = "Comparison incomplete";
+            message = "No missing items were found where both snapshots are available. Run the affected pairs to check the remaining comparisons.";
+            symbol = "info";
+          }
           if (!loading && !failed && view !== "system" && !pairs.length) {
             title = "No active sync pairs";
             message = "Create or enable a pair in Synchronization, then run it to create saved snapshots.";
@@ -396,7 +402,7 @@ const Analyzer = {
       if (!mismatch || detailCache.has(identity(row))) return;
       try {
         const params = new URLSearchParams({ provider: row.provider, feature: row.feature, key: row.key });
-        const detail = await requestJSON(scoped(`/api/analyzer/detail?${params}`), controller.signal);
+        const detail = await requestJSON(scoped(`/api/analyzer/detail?${params}`, row.pair_id), controller.signal);
         if (controller.signal.aborted || lifetime.signal.aborted) return;
         if (detailCache.size >= 500) detailCache.clear();
         detailCache.set(identity(row), detail);
@@ -416,6 +422,7 @@ const Analyzer = {
       problems = [];
       pending = [];
       exclusions = [];
+      snapshotGaps = [];
       missingIndex.clear();
       blockedIndex.clear();
       indexResultGroups();
@@ -444,6 +451,7 @@ const Analyzer = {
         problems = array(meta.problems);
         pending = array(meta.attention?.rows).filter(row => row.unresolved).map(row => ({ ...row.item, ...row, key: row.key || array(row.keys)[0] }));
         exclusions = array(meta.pair_exclusions);
+        snapshotGaps = array(meta.snapshot_gaps);
         missingIndex = new Map(problems.filter(p => p.type === "missing_peer").map(p => [identity(p), p]));
         blockedIndex = new Map(problems.filter(p => p.type === "blocked_manual").map(p => [identity(p), p]));
         indexResultGroups();
