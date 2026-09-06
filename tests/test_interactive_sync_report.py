@@ -11,7 +11,7 @@ import pytest
 from cw_platform.orchestrator._interactive import InteractivePlan
 from services.interactive_sync import Session
 from services.interactive_sync_report import COUNTERS, SyncReport
-from test_interactive_sync import run
+from test_interactive_sync import api_client, run
 from test_interactive_sync_features import FEATURES, feature_item, feature_setup
 
 
@@ -127,3 +127,94 @@ def test_fatal_execution_still_keeps_a_report(config_base, monkeypatch):
         assert session.report["not_reached"] == 1
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("feature", FEATURES)
+@pytest.mark.parametrize("mode", ["one-way", "two-way"])
+def test_report_keeps_engine_item_failure_details(config_base, monkeypatch, feature, mode):
+    from api import syncAPI
+    from services import interactive_sync as svc
+
+    cfg, src, dst = feature_setup(config_base, monkeypatch, feature,
+                                  [feature_item(feature, 1), feature_item(feature, 2)], [], mode)
+    monkeypatch.setattr(syncAPI, "_env", lambda: (lambda: deepcopy(cfg), lambda *_: None))
+    def unresolved(cfg, items, **kwargs):
+        return dict(ok=True, count=0, unresolved=[dict(item=dict(item), hint="not_found") for item in items])
+    monkeypatch.setattr(dst, "add", unresolved)
+    session = Session(pair_id="p1", owner="local")
+    session.pair = dict(source="SRC", target="DST", target_instance="other", mode=mode)
+    try:
+        svc.refresh(session, cfg, {})
+        svc.apply(session, cfg, session.store.selected_ids())
+        details = session.store.report_page()
+        assert session.report["outcome"] == "attention"
+        assert session.report["issue_count"] == details["total"] == 2
+        assert all(row["feature"] == feature and row["provider"] == "DST" for row in details["items"])
+        assert all(row["instance"] == "other" and row["reason"] == "not_found" for row in details["items"])
+        assert all(row["item"]["title"] for row in details["items"])
+        assert "issues" not in session.public()["report"]
+    finally:
+        session.close()
+
+
+def test_report_pages_all_failures_and_replaces_log_samples():
+    from services.interactive_sync_store import ReviewStore
+
+    store = ReviewStore()
+    collector = SyncReport(store)
+    try:
+        collector.event(dict(event="apply:unresolved", provider="PLEX", feature="history",
+                             items=[dict(title="Sample", reason="not_found")], omitted=4999))
+        collector.event(dict(event="archive:item_failures", provider="PLEX", feature="history", op="add",
+                             items=[dict(key=f"tmdb:{n}", item=dict(title=f"Movie {n}", ids={"tmdb":n}, token="private"),
+                                         reason="not_found", promoted=n == 4999) for n in range(5000)]))
+        assert not collector.detail_omitted
+        page = store.report_page(offset=4990, limit=10)
+        assert page["total"] == 5000 and len(page["items"]) == 10
+        assert page["items"][-1]["item"]["title"] == "Movie 4999"
+        assert page["items"][-1]["result"] == "blocked"
+        assert "private" not in json.dumps(page)
+        assert store.report_page(q="Movie 4999")["total"] == 1
+        assert store.report_page(result="blocked")["total"] == 1
+        assert store.report_page(feature="ratings")["total"] == 0
+        assert len(store.report_page(limit=5000)["items"]) == 200
+    finally:
+        store.close()
+
+
+def test_update_and_remove_keep_available_reasons_and_omitted_counts():
+    from services.interactive_sync_store import ReviewStore
+
+    store = ReviewStore()
+    collector = SyncReport(store)
+    try:
+        for operation in ("update", "remove"):
+            collector.event(dict(event=f"apply:{operation}:start", dst="TRAKT", feature="ratings"))
+            collector.event(dict(event="apply:unresolved", provider="TRAKT", feature="ratings",
+                                 items=[dict(title="Movie", reason="http:429")], omitted=30))
+        assert store.report_page()["total"] == 2
+        assert {row["operation"] for row in store.report_page()["items"]} == {"update", "remove"}
+        report = collector.finish(Session(pair_id="p1", owner="local"), InteractivePlan(preview=False), {"ok":True,"unresolved":62})
+        assert report["issue_details_omitted"] == 60
+    finally:
+        store.close()
+
+
+def test_report_issue_api_is_paged_and_session_scoped(api_client):
+    client, session, api = api_client
+    url = f"/api/interactive-sync/{session.id}/report-issues"
+    assert client.get(url).status_code == 409
+    collector = SyncReport(session.store)
+    collector.event(dict(event="archive:item_failures", provider="DST", feature="history", op="add",
+                         items=[dict(key=str(n), item=dict(title=f"Episode {n}"), reason="not_found") for n in range(5000)]))
+    session.report = collector.finish(session, InteractivePlan(preview=False), {"ok":True,"unresolved":5000})
+    session.status = "complete"
+    response = client.get(url, params=dict(offset=4995,limit=5,feature="history",result="failed"))
+    assert response.status_code == 200
+    assert response.json()["total"] == 5000
+    assert [row["item"]["title"] for row in response.json()["items"]] == [f"Episode {n}" for n in range(4995,5000)]
+    assert len(response.content) < 4000
+    assert client.get(url, params=dict(q="Episode 4999")).json()["total"] == 1
+    assert client.get(url, params=dict(limit=201)).status_code == 422
+    assert client.get(url, headers={"x-test-user":"bob"}).status_code == 404
+    assert client.get(url.replace(session.id,"missing")).status_code == 404
