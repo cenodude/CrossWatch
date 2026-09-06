@@ -489,11 +489,12 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             setattr(ctx, "_stable_prev_state_by_feature", prev_state_cache)
         except Exception:
             pass
-    prev_state = prev_state_cache.get(feature)
+    state_key = (getattr(ctx.state_store, "pair_scope", None), feature)
+    prev_state = prev_state_cache.get(state_key)
     if not prev_state:
         prev_state = load_feature_state(ctx.state_store, feature)
         try:
-            prev_state_cache[feature] = prev_state
+            prev_state_cache[state_key] = prev_state
         except Exception:
             pass
 
@@ -525,9 +526,9 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                                 break
                     if isinstance(pblk2, Mapping) and pblk2:
                         pblk = pblk2
-                    elif feat not in pblk:
+                    else:
                         return {}
-                elif feat not in pblk:
+                else:
                     return {}
                 if not isinstance(pblk, Mapping):
                     return {}
@@ -669,7 +670,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
     now = review.planned_at if review is not None else int(_t.time())
     tomb_ttl_days = int((cfg.get("sync") or {}).get("tombstone_ttl_days", 30))
     tomb_ttl_secs = max(1, tomb_ttl_days) * 24 * 3600
-    pair_key = "-".join(sorted([a, b]))
+    pair_key = str(getattr(ctx.state_store, "pair_scope", None) or "-".join(sorted([a, b]))).upper()
     tomb_map = keys_for_feature(ctx.state_store, feature, pair=pair_key, ttl_seconds=tomb_ttl_secs, now=now) or {}
     tomb = set(tomb_map)
 
@@ -2607,7 +2608,8 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         }
         ctx.state_store.save_feature_blocks(blocks, last_sync_epoch=last_sync_epoch)
     except Exception:
-        pass
+        if getattr(ctx.state_store, "pair_scope", None):
+            raise
 
     emit("two:done", a=a, b=b, feature=feature,
          upd_to_A=eff_upd_A, upd_to_B=eff_upd_B,

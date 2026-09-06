@@ -6,7 +6,7 @@ from __future__ import annotations
 import sqlite3
 import time
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 ID_KEYS = (
     "tmdb",
@@ -613,6 +613,13 @@ def apply_schema(conn: sqlite3.Connection) -> int:
         conn.execute(_CREATE_LOCAL_META)
         conn.execute(_CREATE_PROVIDER_FEATURE_STATE)
         conn.execute(_CREATE_BASELINE_ITEMS)
+        conn.execute(_CREATE_PROVIDER_FEATURE_STATE.replace("provider_feature_state", "pair_feature_state").replace(
+            "provider          TEXT", "pair_scope        TEXT NOT NULL,\n    provider          TEXT"
+        ).replace("UNIQUE(provider, instance, feature)", "UNIQUE(pair_scope, provider, instance, feature)"))
+        conn.execute(_CREATE_BASELINE_ITEMS.replace("baseline_items", "pair_baseline_items").replace(
+            "REFERENCES provider_feature_state", "REFERENCES pair_feature_state"
+        ))
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_pair_items_state_key ON pair_baseline_items(provider_state_id, item_key)")
         _ensure_column(conn, "baseline_items", "collected_at", "TEXT")
         conn.execute(_CREATE_LAST_SYNC_SUMMARY)
         conn.execute(_CREATE_LAST_SYNC_FIELDS)

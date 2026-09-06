@@ -8,6 +8,7 @@ from copy import deepcopy
 import pytest
 
 from cw_platform.orchestrator import Orchestrator
+from cw_platform.pair_scope import pair_feature_scope
 from cw_platform.orchestrator._interactive import InteractivePlan
 from test_orchestrator_dry_run_no_side_effects import FakeOps, _cfg, _install
 from test_playlists_pending_create import world
@@ -166,7 +167,7 @@ def test_two_way_preview_matches_normal_plan_for_tombstone_expiry(config_base, m
     cfg["pairs"][0]["features"]["watchlist"]["remove"] = True
     run(cfg, InteractivePlan(preview=False))
     store = StateStore(config_base)
-    tomb = {"keys": {"watchlist:DST-SRC|imdb:tt0000002": int(time.time()) - age_days * 86400}}
+    tomb = {"keys": {f"watchlist:{pair_feature_scope(cfg, cfg['pairs'][0], 'watchlist').upper()}|imdb:tt0000002": int(time.time()) - age_days * 86400}}
     store.save_tomb(tomb)
     before_tomb = deepcopy(store.load_tomb())
     plan = InteractivePlan()

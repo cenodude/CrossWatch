@@ -17,6 +17,12 @@ from ..local_db import watchlist_hide as sqlite_watchlist_hide
 @dataclass
 class StateStore:
     base_path: Path
+    pair_scope: str | None = None
+
+    def for_pair(self, scope: str) -> StateStore:
+        if not scope:
+            raise ValueError("Pair scope is required")
+        return StateStore(self.base_path, pair_scope=scope)
 
     @property
     def cw_state_dir(self) -> Path:
@@ -135,7 +141,7 @@ class StateStore:
         return state
 
     def load_state(self) -> dict[str, Any]:
-        state = sqlite_state.load_state(self.base_path)
+        state = sqlite_state.load_pair_state(self.base_path, self.pair_scope) if self.pair_scope else sqlite_state.load_state(self.base_path)
         policy = sqlite_manual_policy.load_policy(self.base_path)
         return self._merge_policy(state, policy)
 
@@ -174,7 +180,7 @@ class StateStore:
         recent_limit: int | None = None,
     ) -> dict[str, Any]:
         wanted = {str(feature or "").strip().lower() for feature in features or [] if str(feature or "").strip()}
-        state = sqlite_state.load_state_features(self.base_path, features, recent_limit=recent_limit)
+        state = sqlite_state.load_pair_state(self.base_path, self.pair_scope, wanted) if self.pair_scope else sqlite_state.load_state_features(self.base_path, features, recent_limit=recent_limit)
         policy = self._filter_policy_features(sqlite_manual_policy.load_policy(self.base_path), wanted)
         return self._merge_policy(state, policy)
 
@@ -191,6 +197,8 @@ class StateStore:
         return sqlite_state.last_sync_epoch(self.base_path)
 
     def save_state(self, data: Mapping[str, Any]) -> None:
+        if self.pair_scope:
+            raise ValueError("Pair state must be saved by feature")
         sqlite_state.save_state(self.base_path, data or {})
 
     def save_feature_baseline(
@@ -203,6 +211,9 @@ class StateStore:
         checkpoint: Any = None,
         last_sync_epoch: Any = None,
     ) -> None:
+        if self.pair_scope:
+            self.save_feature_blocks({(provider, instance, feature): {"baseline": {"items": items}, "checkpoint": checkpoint}}, last_sync_epoch=last_sync_epoch)
+            return
         sqlite_state.save_feature_baseline(
             self.base_path,
             provider=provider,
@@ -219,13 +230,19 @@ class StateStore:
         *,
         last_sync_epoch: Any = None,
     ) -> None:
-        sqlite_state.save_feature_blocks(self.base_path, blocks, last_sync_epoch=last_sync_epoch)
+        if self.pair_scope:
+            sqlite_state.save_pair_blocks(self.base_path, self.pair_scope, blocks, last_sync_epoch=last_sync_epoch)
+        else:
+            sqlite_state.save_feature_blocks(self.base_path, blocks, last_sync_epoch=last_sync_epoch)
 
     def set_last_sync_epoch(self, value: Any) -> None:
         sqlite_state.set_last_sync_epoch(self.base_path, value)
 
     def clear_state(self) -> None:
-        sqlite_state.clear_state(self.base_path)
+        if self.pair_scope:
+            sqlite_state.clear_pair_state(self.base_path, self.pair_scope)
+        else:
+            sqlite_state.clear_state(self.base_path)
 
     def load_tomb(self) -> dict[str, Any]:
         t = self._read(self.tomb, {"keys": {}, "pruned_at": None})

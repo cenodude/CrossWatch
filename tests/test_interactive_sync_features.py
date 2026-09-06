@@ -11,6 +11,7 @@ import pytest
 
 from cw_platform.id_map import canonical_key
 from cw_platform.orchestrator import Orchestrator
+from cw_platform.pair_scope import pair_feature_scope
 from cw_platform.orchestrator._interactive import InteractivePlan
 from cw_platform.orchestrator._state_store import StateStore
 from test_interactive_sync import item, run, setup_ops
@@ -49,7 +50,7 @@ def test_expired_deletion_does_not_change_preview_from_normal_plan(config_base, 
     cfg, src, dst = feature_setup(config_base, monkeypatch, feature, [common, extra], [common], mode)
     run(cfg, InteractivePlan(preview=False))
     store = StateStore(config_base)
-    store.save_tomb({"keys": {f"{feature}:DST-SRC|{canonical_key(extra)}": int(time.time()) - 31 * 86400}})
+    store.save_tomb({"keys": {f"{feature}:{pair_feature_scope(cfg, cfg['pairs'][0], feature).upper()}|{canonical_key(extra)}": int(time.time()) - 31 * 86400}})
     before = deepcopy(store.load_tomb())
     plan = InteractivePlan()
     run(cfg, plan)
@@ -93,7 +94,7 @@ def test_two_way_deletion_safety_matches_normal_plan(config_base, monkeypatch, f
     run(cfg, InteractivePlan(preview=False))
     store = StateStore(config_base)
     if scenario == "active_tomb":
-        store.save_tomb({"keys": {f"{feature}:DST-SRC|{canonical_key(extra)}": int(time.time()) - 86400}})
+        store.save_tomb({"keys": {f"{feature}:{pair_feature_scope(cfg, cfg['pairs'][0], feature).upper()}|{canonical_key(extra)}": int(time.time()) - 86400}})
     else:
         dst.index.pop(canonical_key(extra))
     if scenario == "removals_disabled":

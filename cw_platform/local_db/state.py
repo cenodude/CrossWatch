@@ -8,7 +8,7 @@ import re
 import sqlite3
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -335,10 +335,10 @@ def _feature_mode(items: Mapping[str, Any]) -> str:
     return "event" if any(_event_parts(str(k))[1] for k in items.keys()) else "collapsed"
 
 
-def _stored_item_compare_map(conn: sqlite3.Connection, provider_state_id: int) -> dict[str, tuple[Any, ...]]:
+def _stored_item_compare_map(conn: sqlite3.Connection, provider_state_id: int, *, pair: bool = False) -> dict[str, tuple[Any, ...]]:
     columns = ",".join(_BASELINE_ITEM_COMPARE_COLUMNS)
     rows = conn.execute(
-        f"SELECT {columns} FROM baseline_items WHERE provider_state_id=?",
+        f"SELECT {columns} FROM {'pair_baseline_items' if pair else 'baseline_items'} WHERE provider_state_id=?",
         (provider_state_id,),
     ).fetchall()
     return {str(row["item_key"]): tuple(row) for row in rows}
@@ -360,7 +360,14 @@ def _replace_feature(
     feature: str,
     block: Mapping[str, Any],
     ts: int,
+    *,
+    pair_scope: str | None = None,
 ) -> bool:
+    def sql(statement: str) -> str:
+        if pair_scope is None:
+            return statement
+        return statement.replace("provider_feature_state", "pair_feature_state").replace("baseline_items", "pair_baseline_items")
+
     provider, instance, feature = _feature_key(provider, instance, feature)
     if not provider or not feature:
         return False
@@ -373,19 +380,24 @@ def _replace_feature(
     mode = _feature_mode(items)
     checkpoint = _scalar_parts(block.get("checkpoint"))
     pfs = conn.execute(
-        "SELECT * FROM provider_feature_state WHERE provider=? AND instance=? AND feature=?",
-        (provider, instance, feature),
+        sql("SELECT * FROM provider_feature_state WHERE provider=? AND instance=? AND feature=?") + (" AND pair_scope=?" if pair_scope is not None else ""),
+        (provider, instance, feature, pair_scope) if pair_scope is not None else (provider, instance, feature),
     ).fetchone()
     cp_text, cp_int, cp_real, cp_type = checkpoint
     if pfs is None:
-        cur = conn.execute(_PFS_INSERT_SQL, (provider, instance, feature, mode, cp_text, cp_int, cp_real, cp_type, ts))
+        statement = sql(_PFS_INSERT_SQL)
+        values: tuple[Any, ...] = (provider, instance, feature, mode, cp_text, cp_int, cp_real, cp_type, ts)
+        if pair_scope is not None:
+            statement = statement.replace("(provider,", "(pair_scope,provider,").replace("VALUES(", "VALUES(?,")
+            values = (pair_scope, *values)
+        cur = conn.execute(statement, values)
         pfs_id_raw = cur.lastrowid
         if pfs_id_raw is None:
             return False
         pfs_id = int(pfs_id_raw)
         if rows:
             conn.executemany(
-                _BASELINE_ITEM_INSERT_SQL,
+                sql(_BASELINE_ITEM_INSERT_SQL),
                 [(pfs_id, *row[1:-1], ts) for row in rows],
             )
         return True
@@ -398,7 +410,7 @@ def _replace_feature(
         pfs["checkpoint_type"],
     )
     metadata_changed = str(pfs["mode"] or "") != mode or current_checkpoint != checkpoint
-    existing = _stored_item_compare_map(conn, pfs_id)
+    existing = _stored_item_compare_map(conn, pfs_id, pair=pair_scope is not None)
     incoming_rows = _incoming_item_row_map(rows)
     incoming_compare = {key: tuple(row[1:-1]) for key, row in incoming_rows.items()}
     existing_keys = set(existing)
@@ -414,24 +426,25 @@ def _replace_feature(
         return False
 
     conn.execute(
-        "UPDATE provider_feature_state SET mode=?,checkpoint_text=?,checkpoint_int=?,"
-        "checkpoint_real=?,checkpoint_type=?,updated_at=? WHERE id=?",
+        sql("UPDATE provider_feature_state SET mode=?,checkpoint_text=?,checkpoint_int=?,"
+        "checkpoint_real=?,checkpoint_type=?,updated_at=? WHERE id=?"),
         (mode, cp_text, cp_int, cp_real, cp_type, ts, pfs_id),
     )
-    if delete_keys:
-        placeholders = ",".join("?" for _ in delete_keys)
+    for offset in range(0, len(delete_keys), 500):
+        chunk = delete_keys[offset:offset + 500]
+        placeholders = ",".join("?" for _ in chunk)
         conn.execute(
-            f"DELETE FROM baseline_items WHERE provider_state_id=? AND item_key IN ({placeholders})",
-            (pfs_id, *delete_keys),
+            sql(f"DELETE FROM baseline_items WHERE provider_state_id=? AND item_key IN ({placeholders})"),
+            (pfs_id, *chunk),
         )
     if insert_rows:
         conn.executemany(
-            _BASELINE_ITEM_INSERT_SQL,
+            sql(_BASELINE_ITEM_INSERT_SQL),
             [(pfs_id, *row[1:-1], ts) for row in insert_rows],
         )
     if update_rows:
         conn.executemany(
-            _BASELINE_ITEM_UPDATE_SQL,
+            sql(_BASELINE_ITEM_UPDATE_SQL),
             [(*row[2:-1], ts, pfs_id, str(row[1])) for row in update_rows],
         )
     return True
@@ -492,7 +505,9 @@ def _build_state_from_feature_rows(
     rows: list[sqlite3.Row],
     *,
     recent_limit: int | None = None,
+    pair: bool = False,
 ) -> dict[str, Any]:
+    table = "pair_baseline_items" if pair else "baseline_items"
     providers: dict[str, Any] = {}
     wall: list[dict[str, Any]] = []
     for pfs in rows:
@@ -508,14 +523,14 @@ def _build_state_from_feature_rows(
         if checkpoint is not None:
             feat_node["checkpoint"] = checkpoint
         order_column = _RECENT_ORDER_COLUMNS.get(feature) if recent_limit else None
-        if order_column:
+        if order_column and recent_limit is not None:
             items = conn.execute(
-                f"SELECT * FROM baseline_items WHERE provider_state_id=? ORDER BY {order_column} DESC LIMIT ?",
+                f"SELECT * FROM {table} WHERE provider_state_id=? ORDER BY {order_column} DESC LIMIT ?",
                 (int(pfs["id"]), int(recent_limit)),
             ).fetchall()
         else:
             items = conn.execute(
-                "SELECT * FROM baseline_items WHERE provider_state_id=? ORDER BY item_key",
+                f"SELECT * FROM {table} WHERE provider_state_id=? ORDER BY item_key",
                 (int(pfs["id"]),),
             ).fetchall()
         for row in items:
@@ -719,6 +734,52 @@ def save_feature_blocks(
         _invalidate()
 
 
+def load_pair_state(base_path: str | Path, pair_scope: str, features: Iterable[str] | None = None) -> dict[str, Any]:
+    with _LOCK:
+        conn = get_conn(base_path)
+        if conn is None:
+            raise RuntimeError("Pair state database is unavailable")
+        params: list[Any] = [pair_scope]
+        query = "SELECT * FROM pair_feature_state WHERE pair_scope=?"
+        if features is not None:
+            wanted = sorted(set(features))
+            if not wanted:
+                return {"providers": {}, "wall": [], "last_sync_epoch": None}
+            query += " AND feature IN (" + ",".join("?" for _ in wanted) + ")"
+            params.extend(wanted)
+        rows = conn.execute(query + " ORDER BY provider,instance,feature", params).fetchall()
+        state = _build_state_from_feature_rows(conn, rows, pair=True)
+        state["last_sync_epoch"] = max((int(row["updated_at"]) for row in rows), default=0) / 1_000_000_000 or None
+        return state
+
+
+def save_pair_blocks(base_path: str | Path, pair_scope: str, blocks: Mapping[tuple[str, str, str], Mapping[str, Any]], *, last_sync_epoch: Any = None) -> None:
+    if not pair_scope:
+        raise ValueError("Pair scope is required")
+    with _LOCK:
+        conn = get_conn(base_path)
+        if conn is None:
+            raise RuntimeError("Pair state database is unavailable")
+        ts = _now()
+        with conn:
+            for (provider, instance, feature), block in blocks.items():
+                _replace_feature(conn, provider, instance, feature, block, ts, pair_scope=pair_scope)
+                _replace_feature(conn, provider, instance, feature, block, ts)
+            if last_sync_epoch is not None:
+                _set_meta(conn, "last_sync_epoch", last_sync_epoch, ts)
+        _invalidate()
+
+
+def clear_pair_state(base_path: str | Path, pair_scope: str) -> None:
+    with _LOCK:
+        conn = get_conn(base_path)
+        if conn is None:
+            raise RuntimeError("Pair state database is unavailable")
+        with conn:
+            conn.execute("DELETE FROM pair_feature_state WHERE pair_scope=?", (pair_scope,))
+        _invalidate()
+
+
 def set_last_sync_epoch(base_path: str | Path, value: Any) -> None:
     with _LOCK:
         conn = get_conn(base_path)
@@ -735,6 +796,8 @@ def clear_state(base_path: str | Path) -> None:
         if conn is None:
             return
         with conn:
+            conn.execute("DELETE FROM pair_baseline_items")
+            conn.execute("DELETE FROM pair_feature_state")
             conn.execute("DELETE FROM baseline_items")
             conn.execute("DELETE FROM provider_feature_state")
             conn.execute("DELETE FROM state_meta")

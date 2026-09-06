@@ -21,6 +21,7 @@ from ._pairs_twoway import run_two_way_feature
 from ._pairs_playlists import run_playlist_mappings
 from ..run_control import SyncCancelled, cancel_requested
 from ..value_coercion import coerce_bool
+from ..pair_scope import pair_feature_scope
 
 def _deep_merge_provider_overrides(dst: dict[str, Any], src: Mapping[str, Any]) -> None:
     for k, v in (src or {}).items():
@@ -311,8 +312,8 @@ def _pair_scope_key(pair: Mapping[str, Any], *, i: int, src: str, dst: str, mode
 
 
 @contextmanager
-def _pair_env(pair: Mapping[str, Any], *, i: int, src: str, dst: str, mode: str, feature: str):
-    key = _pair_scope_key(pair, i=i, src=src, dst=dst, mode=mode)
+def _pair_env(pair: Mapping[str, Any], *, i: int, src: str, dst: str, mode: str, feature: str, scope: str | None = None):
+    key = scope or _pair_scope_key(pair, i=i, src=src, dst=dst, mode=mode)
     src_inst = normalize_instance_id(pair.get("source_instance"))
     dst_inst = normalize_instance_id(pair.get("target_instance"))
     new = {
@@ -482,9 +483,12 @@ def run_pairs(ctx) -> dict[str, Any]:
             if isinstance(fcfg, dict) and not coerce_bool(fcfg.get("enable", True), True):
                 continue
 
-            with _pair_env(pair, i=i, src=src, dst=dst, mode=mode, feature=feature):
+            scope = pair_feature_scope(cfg, pair, feature, i)
+            with _pair_env(pair, i=i, src=src, dst=dst, mode=mode, feature=feature, scope=scope):
                 prev_cfg = ctx.config
-                ctx.config = _config_with_pair_feature_options(pair_cfg_view, fcfg, (src, dst), feature)
+                prev_store = ctx.state_store
+                ctx.state_store = prev_store.for_pair(scope)
+                ctx.config = {**_config_with_pair_feature_options(pair_cfg_view, fcfg, (src, dst), feature), "_cw_pair_scope": scope}
                 try:
                     if not injected:
                         inject_ctx_into_provider(sops, ctx)
@@ -579,6 +583,7 @@ def run_pairs(ctx) -> dict[str, Any]:
                         continue
                 finally:
                     ctx.config = prev_cfg
+                    ctx.state_store = prev_store
     if not cancelled and cancel_requested():
         cancelled = True
 

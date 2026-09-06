@@ -34,7 +34,7 @@ def scoped_file(root: Path, name: str, *, migrate: bool = True) -> Path:
         scoped = root / f"{p.stem}.{scope}{p.suffix}"
     else:
         scoped = root / f"{name}.{scope}"
-    if migrate:
+    if migrate and not scope.startswith("cw2_"):
         legacy = root / name
         if not scoped.exists() and legacy.exists():
             try:

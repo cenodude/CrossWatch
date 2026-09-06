@@ -1144,9 +1144,9 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                                 break
                     if isinstance(pblk2, Mapping) and pblk2:
                         pblk = pblk2
-                    elif feat not in pblk:
+                    else:
                         return {}
-                elif feat not in pblk:
+                else:
                     return {}
                 if not isinstance(pblk, Mapping):
                     return {}
@@ -1635,7 +1635,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
     )
 
     blocked_total = 0
-    pair_key = "-".join(sorted([src, dst]))
+    pair_key = str(getattr(ctx.state_store, "pair_scope", None) or "-".join(sorted([src, dst]))).upper()
     if feature != "watchlist":
         before_blocklist = len(adds)
         adds = apply_blocklist(
@@ -2252,7 +2252,8 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
             }
             ctx.state_store.save_feature_blocks(blocks, last_sync_epoch=last_sync_epoch)
         except Exception:
-            pass
+            if getattr(ctx.state_store, "pair_scope", None):
+                raise
 
     emit("feature:done", src=src, dst=dst, feature=feature)
 
