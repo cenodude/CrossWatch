@@ -252,7 +252,8 @@ class _STREMIOOPS:
                             break
                 if isinstance(node, Mapping):
                     nodes.append(node)
-            nodes.append(stremio)
+            if instance_id == "default":
+                nodes.append(stremio)
 
             for node in nodes:
                 items = _baseline_items(node)

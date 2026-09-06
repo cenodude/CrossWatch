@@ -49,7 +49,7 @@ def state_file(name: str) -> Path:
         legacy = STATE_DIR / name
 
     # Auto-migrate legacy state to scoped file
-    if (not _is_capture_mode()) and (not scoped.exists()) and legacy.exists():
+    if not str(_pair_scope() or "").startswith("cw2_") and (not _is_capture_mode()) and (not scoped.exists()) and legacy.exists():
         try:
             STATE_DIR.mkdir(parents=True, exist_ok=True)
             shutil.copy2(legacy, scoped)

@@ -480,7 +480,9 @@ def _load_kodi_feature_baseline(adapter: Any, feature: str) -> Mapping[str, Mapp
         from cw_platform.config_base import CONFIG_BASE
         from cw_platform.orchestrator._state_store import StateStore
 
-        state = StateStore(Path(CONFIG_BASE())).load_state()
+        config = getattr(adapter, "config", None) or {}
+        scope = config.get("_cw_pair_scope") if isinstance(config, Mapping) else None
+        state = StateStore(Path(CONFIG_BASE()), pair_scope=scope).load_state_features({name})
         providers = state.get("providers") if isinstance(state, Mapping) else None
         providers = providers if isinstance(providers, Mapping) else {}
         kodi = providers.get("KODI") or providers.get("kodi")
@@ -493,7 +495,8 @@ def _load_kodi_feature_baseline(adapter: Any, feature: str) -> Mapping[str, Mapp
             inst_node = instances.get(instance_id) or instances.get(str(instance_id))
             if isinstance(inst_node, Mapping):
                 nodes.append(inst_node)
-        nodes.append(kodi)
+        if instance_id == "default":
+            nodes.append(kodi)
         for node in nodes:
             block = node.get(name)
             block = block if isinstance(block, Mapping) else {}

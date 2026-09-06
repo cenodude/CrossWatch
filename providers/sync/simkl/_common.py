@@ -116,6 +116,8 @@ def _legacy_path(path: Path) -> Path | None:
 
 
 def _migrate_legacy_json(path: Path) -> None:
+    if str(_pair_scope() or "").startswith("cw2_"):
+        return
     if path.exists():
         return
     if _is_capture_mode() or _pair_scope() is None:

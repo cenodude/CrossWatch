@@ -63,7 +63,7 @@ def state_file(name: str) -> Path:
     else:
         scoped = STATE_DIR / f"{name}.{safe}"
         legacy = STATE_DIR / name
-    if (not _is_capture_mode()) and scoped != legacy and not scoped.exists() and legacy.exists():
+    if not str(_pair_scope() or "").startswith("cw2_") and (not _is_capture_mode()) and scoped != legacy and not scoped.exists() and legacy.exists():
         try:
             STATE_DIR.mkdir(parents=True, exist_ok=True)
             shutil.copy2(legacy, scoped)
