@@ -1,5 +1,5 @@
 /* assets/js/modals/pair-config/styles.css */
-/* Styles for the pair-config modal. */
+/* CrossWatch - Pair configuration modal styles */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 .cx-modal-shell.pair-config-modal{--pc-shell:#0f1117;--pc-panel:#171a22;--pc-panel-2:#20242d;--pc-panel-3:#242936;--pc-input:#141821;--pc-border:rgba(255,255,255,0.14);--pc-border-soft:rgba(255,255,255,0.09);--pc-text:#eef1f6;--pc-muted:#a9b0bd;--pc-muted-2:#7f8796;--pc-accent:#7d86c9;--cx-actions-position:relative;--cx-actions-z:30;--cx-actions-pointer:auto;--cx-tab-active-bg:var(--pc-panel);--cx-tab-active-border:var(--pc-border-soft);--cx-tab-active-shadow:none;--cx-tab-active-before-opacity:.7;width:var(--cxModalW,min(var(--cxModalMaxW,1280px),calc(100vw - 64px)))!important;max-width:min(var(--cxModalMaxW,1280px),calc(100vw - 64px))!important;height:min(var(--cxModalMaxH,92vh),calc(100vh - 48px))!important;padding:0!important;border:0!important;border-radius:24px!important;background:transparent!important;box-shadow:none!important;overflow:visible!important}.cx-modal-shell.pair-config-modal #cx-modal.cx-card{width:100%;height:100%;box-sizing:border-box;background:radial-gradient(95% 140% at 0% 0%,rgba(125,134,201,0.12)0%,rgba(125,134,201,0)38%),radial-gradient(85% 120% at 100% 100%,rgba(87,181,138,0.08)0%,rgba(87,181,138,0)42%),var(--pc-shell);border:1px solid var(--pc-border)!important;border-radius:24px!important;box-shadow:none;overflow:hidden!important}
 .cx-modal-shell.pair-config-modal #cx-modal .cx-head{padding:15px 19px 14px;border-bottom:1px solid var(--pc-border-soft);background:var(--pc-panel);backdrop-filter:none}.cx-modal-shell.pair-config-modal #cx-modal .title-wrap{display:flex;align-items:flex-start;gap:12px;min-width:0}.cx-modal-shell.pair-config-modal #cx-modal .app-logo{display:grid;place-items:center;width:42px;height:42px;border-radius:14px;background:var(--pc-panel-2);border:1px solid var(--pc-border);box-shadow:none;color:var(--pc-text)}.cx-modal-shell.pair-config-modal #cx-modal .app-name{font-size:18px;line-height:1.1;letter-spacing:-0.01em;color:var(--pc-text)}.cx-modal-shell.pair-config-modal #cx-modal .app-sub{margin-top:4px;color:var(--pc-muted)}.cx-modal-shell.pair-config-modal #cx-modal .cx-body{padding:13px 19px 7px}
@@ -60,3 +60,85 @@
 }
 .cx-modal-shell.pair-config-modal #cx-modal .cx-user-profile-row{display:block;min-width:180px;max-width:240px;min-height:0;margin:0;padding:0;border:0;border-radius:0;background:transparent;color:inherit;box-shadow:none}.cx-modal-shell.pair-config-modal #cx-modal .cx-user-profile-display{display:flex;align-items:center;gap:8px;width:100%;height:42px;min-width:0;padding:0 14px;border:1px solid var(--pc-border-soft);border-radius:16px;background:var(--pc-panel);color:var(--pc-text);font-weight:850;box-shadow:inset 0 1px 0 rgba(255,255,255,0.035)}.cx-modal-shell.pair-config-modal #cx-modal .cx-user-profile-display .material-symbols-rounded{flex:0 0 auto;font-size:20px;color:var(--pc-muted)}.cx-modal-shell.pair-config-modal #cx-modal .cx-user-profile-display span:last-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cx-modal-shell.pair-config-modal #cx-modal .flow-control-row .flow-mode-inline{width:auto}.cx-modal-shell.pair-config-modal #cx-modal .flow-control-row .flow-mode-inline .seg{height:42px}@media(max-width:980px){.cx-modal-shell.pair-config-modal #cx-modal .flow-control-row{width:100%;justify-content:flex-start;flex-wrap:wrap;margin-left:0}.cx-modal-shell.pair-config-modal #cx-modal .flow-control-row .flow-mode-inline{width:auto}.cx-modal-shell.pair-config-modal #cx-modal .flow-control-row .flow-mode-inline .seg{width:auto}.cx-modal-shell.pair-config-modal #cx-modal .cx-user-profile-row{max-width:min(100%,340px)}}@media(max-width:560px){.cx-modal-shell.pair-config-modal #cx-modal .flow-control-row{display:grid;grid-template-columns:1fr}.cx-modal-shell.pair-config-modal #cx-modal .cx-user-profile-row{max-width:none}.cx-modal-shell.pair-config-modal #cx-modal .flow-control-row .flow-mode-inline,.cx-modal-shell.pair-config-modal #cx-modal .flow-control-row .flow-mode-inline .seg{width:100%}}
+
+html[data-cw-theme="flat-dark"] .cx-modal-shell.pair-config-modal {
+  --pc-shell: #080a0d;
+  --pc-panel: #0b0e13;
+  --pc-panel-2: #10141b;
+  --pc-panel-3: #171c26;
+  --pc-input: #080a0d;
+  --pc-border: #252c38;
+  --pc-border-soft: #1c222c;
+  --pc-accent: #a78bfa;
+  --cw-flat-panel: var(--pc-panel);
+  --cw-flat-panel-2: var(--pc-panel-2);
+  --cw-flat-panel-3: var(--pc-panel-3);
+  --cw-flat-input: var(--pc-input);
+  --cw-flat-border: var(--pc-border-soft);
+  --cw-flat-border-strong: var(--pc-border);
+  --cw-flat-accent: var(--pc-accent);
+}
+
+html[data-cw-theme="flat-dark"] .cx-modal-shell.pair-config-modal #cx-modal.cx-card {
+  background: var(--pc-shell) !important;
+}
+
+html[data-cw-theme="flat-dark"] .cx-modal-shell.pair-config-modal #cx-modal .endpoint-card {
+  background: linear-gradient(135deg, color-mix(in srgb, rgb(var(--endpoint-rgb)) 3%, var(--pc-panel)), var(--pc-shell)) !important;
+}
+
+html[data-cw-theme="flat-dark"] .cx-modal-shell.pair-config-modal #cx-modal .endpoint-card::after {
+  opacity: .045 !important;
+}
+
+html[data-cw-theme="flat-dark"] .cx-modal-shell.pair-config-modal #cx-modal .flow-card {
+  background: linear-gradient(135deg, var(--pc-panel), var(--pc-shell)) !important;
+}
+
+html[data-cw-theme="flat-dark"] .cx-modal-shell.pair-config-modal #cx-modal .cx-profile-select-glass .cw-icon-select-btn {
+  background: var(--pc-input) !important;
+  border-color: var(--pc-border) !important;
+  box-shadow: none !important;
+}
+
+html[data-cw-theme="flat-dark"] .cx-modal-shell.pair-config-modal #cx-modal .cx-profile-select-glass .cw-icon-select-btn:hover {
+  background: var(--pc-panel-2) !important;
+  border-color: rgba(var(--endpoint-rgb), .34) !important;
+}
+
+html[data-cw-theme="flat-dark"] .cx-modal-shell.pair-config-modal #cx-modal .app-logo,
+html[data-cw-theme="flat-dark"] .cx-modal-shell.pair-config-modal #cx-modal .chip-row .chip.on {
+  background: #211a3d !important;
+  border-color: #493777 !important;
+  color: #c4b5fd !important;
+  box-shadow: none !important;
+}
+
+html[data-cw-theme="flat-dark"] .cx-modal-shell.pair-config-modal #cx-modal #cx-mode-one:checked + label,
+html[data-cw-theme="flat-dark"] .cx-modal-shell.pair-config-modal #cx-modal #cx-mode-two:checked + label {
+  background: #5037a5 !important;
+}
+
+html[data-cw-theme="flat-dark"] .cx-modal-shell.pair-config-modal #cx-modal .cx-help {
+  background: var(--pc-panel-2) !important;
+  border-color: var(--pc-border) !important;
+  color: var(--pc-muted) !important;
+}
+
+html[data-cw-theme="flat-dark"] .cx-modal-shell.pair-config-modal #cx-modal #gl-drop-adv input[type="range"] {
+  background: linear-gradient(90deg, #8b5cf6 0%, #8b5cf6 var(--cw-range-pct, 50%), var(--pc-border) var(--cw-range-pct, 50%), var(--pc-border) 100%) !important;
+}
+
+html[data-cw-theme="flat-dark"] .cx-modal-shell.pair-config-modal #cx-modal #gl-drop-adv input[type="range"]::-webkit-slider-thumb {
+  background: var(--pc-accent) !important;
+  box-shadow: 0 0 0 1px #493777 !important;
+}
+
+html[data-cw-theme="flat-dark"] .cx-modal-shell.pair-config-modal #cx-modal #gl-drop-adv input[type="range"]::-moz-range-thumb {
+  background: var(--pc-accent) !important;
+  box-shadow: 0 0 0 1px #493777 !important;
+}
+
+html[data-cw-theme="flat-dark"] .cx-modal-shell.pair-config-modal #cx-modal #gl-drop-adv input[type="range"]::-moz-range-track {
+  background: var(--pc-border) !important;
+}

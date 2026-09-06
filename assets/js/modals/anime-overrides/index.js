@@ -30,6 +30,7 @@ async function apiJson(url, opts = {}) {
     const r = await fetch(url, { cache: "no-store", credentials: "same-origin", ...opts, signal: ctrl.signal });
     const data = await r.json().catch(() => ({}));
     if (!r.ok || data.ok === false) throw new Error(data.message || data.error || `${r.status} ${r.statusText || ""}`.trim());
+    if (opts.method && opts.method !== "GET" && (url === API || url.startsWith(`${API}/`))) window.dispatchEvent(new CustomEvent("cw:anime-mappings-changed"));
     return data;
   } catch (e) {
     if (e?.name === "AbortError") throw new Error("Request timed out");

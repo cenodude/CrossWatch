@@ -340,6 +340,10 @@
                 ${bead("co", "Collections", f.collection)}
               </div>
 
+              <button type="button" class="icon-btn" data-tip="Run and review sync" aria-label="Run and review sync" ${enabled ? "" : "disabled"} data-interactive-pair="${esc(pr.id)}">
+                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M8 5l11 7-11 7V5z"></path></svg>
+              </button>
+
               <label class="icon-btn power ${enabled ? "" : "off"}" data-tip="Enable / disable" role="switch" aria-checked="${enabled}">
                 <input class="sr-only" type="checkbox" name="pair-enabled" ${enabled ? "checked" : ""}
                   onchange="this.closest('.icon-btn.power')?.setAttribute('aria-checked', this.checked); window.cxToggleEnable && window.cxToggleEnable('${pr.id}', this.checked, this)">
@@ -435,6 +439,10 @@
   });
   document.addEventListener("cx-state-change", renderOrEnhance);
   window.addEventListener("auth-changed", () => renderOrEnhance());
+  document.addEventListener("click", event => {
+    const button = event.target.closest?.("[data-interactive-pair]");
+    if (button && !button.disabled) location.hash = `interactive_sync?pair=${encodeURIComponent(button.dataset.interactivePair)}`;
+  });
   window.addEventListener("cx:pairs:changed", () => { renderOrEnhance(true); });
 
   window.addEventListener("resize", () => {
