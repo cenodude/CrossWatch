@@ -6,7 +6,7 @@ from collections.abc import Mapping, Callable
 from typing import Any
 import importlib
 from collections.abc import Mapping as _Mapping
-from ..id_map import canonical_key as _ck, ID_KEYS
+from ..id_map import canonical_key as _ck, keys_for_item, ID_KEYS
 
 LIBRARY_SCOPED_FEATURES = frozenset({"history", "ratings", "progress", "collection"})
 
@@ -167,10 +167,12 @@ def pair_key(a: str, b: str, *, mode: str = "two-way", src: str | None = None, d
     A, B = str(a).upper(), str(b).upper()
     return "-".join(sorted([A, B]))
 
-def manual_policy(state: _Mapping[str, Any] | None, provider: str, feature: str) -> tuple[dict[str, Any], set[str]]:
+def manual_policy(state: _Mapping[str, Any] | None, provider: str, feature: str, instance: str = "default") -> tuple[dict[str, Any], set[str]]:
     st = state or {}
     provs = st.get("providers") or {}
     p = provs.get(str(provider).upper()) or provs.get(str(provider).lower()) or {}
+    if instance != "default":
+        p = (p.get("instances") or {}).get(instance) or {}
     feat_key = str(feature).lower()
 
     f: Any = {}
@@ -215,6 +217,11 @@ def merge_manual_adds(idx: dict[str, Any], adds: _Mapping[str, Any] | None) -> d
         kk = str(k).strip()
         if not kk:
             continue
+        if isinstance(v, _Mapping):
+            for alias in keys_for_item(v):
+                existing = out.get(alias)
+                if alias != kk and isinstance(existing, _Mapping) and existing.get("type") == v.get("type"):
+                    out.pop(alias, None)
         out[kk] = v
     return out
 
