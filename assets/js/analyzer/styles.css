@@ -2,7 +2,8 @@
 /* CrossWatch - Sync Analyzer Page Styles */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
-.an-page{--an-panel:var(--panel,#101318);--an-card:var(--panel2,#171c24);--an-text:var(--fg,#edf0f8);--an-muted:var(--muted,#939daf);--an-border:var(--border,#29313b);--an-accent:var(--accent,#8057ff);--an-error:var(--cw-theme-danger,color-mix(in srgb,#ef7182 60%,var(--fg,#edf0f8)));--an-warning:var(--cw-theme-warning,color-mix(in srgb,#e8b86b 55%,var(--fg,#edf0f8)));color:var(--an-text);max-width:1600px;margin:0 auto;padding:20px 8px 40px;font-family:inherit;font-size:14px;line-height:1.5}
+#page-analyzer{padding:0;overflow:visible;background:transparent;border:0;box-shadow:none}
+.an-page{--an-panel:var(--panel,#101318);--an-card:var(--an-panel);--an-text:var(--fg,#edf0f8);--an-muted:var(--muted,#939daf);--an-border:var(--border,#29313b);--an-accent:var(--accent,#8057ff);--an-error:var(--cw-theme-danger,color-mix(in srgb,#ef7182 60%,var(--fg,#edf0f8)));--an-warning:var(--cw-theme-warning,color-mix(in srgb,#e8b86b 55%,var(--fg,#edf0f8)));color:var(--an-text);max-width:1600px;margin:0 auto;padding:20px 8px 40px;font-family:inherit;font-size:14px;line-height:1.5}
 .an-page *{box-sizing:border-box}
 .an-page [hidden]{display:none!important}
 .an-page button,.an-page input,.an-page select{font:inherit;letter-spacing:normal;text-transform:none}
@@ -79,6 +80,7 @@
 .an-page .an-table tr:last-child td{border-bottom:0}
 .an-page .an-table td:first-child{width:42%;min-width:210px}
 .an-page .an-table td:nth-child(2){min-width:95px}
+.an-page .an-table tr[data-row]{cursor:pointer}
 .an-page .an-table tr:hover td{background:color-mix(in srgb,var(--an-accent) 4%,var(--an-panel))}
 .an-page .an-table .is-selected td{background:color-mix(in srgb,var(--an-accent) 9%,var(--an-panel))}
 .an-page .an-table .is-selected td:first-child{box-shadow:inset 3px 0 var(--an-accent)}
