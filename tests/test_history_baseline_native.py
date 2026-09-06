@@ -398,7 +398,7 @@ def test_manual_history_date_change_updates_upsert_destination(
     dst_event = {**_simkl_event(), "watched_at": old_watched}
     key = _event_key(src_event)
 
-    def manual_policy(_state, provider, _feature):
+    def manual_policy(_state, provider, _feature, _instance="default"):
         if provider == "SRC":
             return {key: manual_event}, set()
         return {}, set()

@@ -69,6 +69,7 @@ except Exception:  # pragma: no cover
 
 from ..provider_instances import normalize_instance_id
 from ._planner import diff_ratings, diff_progress, _pick_rating
+from ._interactive import choose_conflict
 from ._progress_completion import fcfg_for_progress_target
 try:
     from ._pairs_oneway import _media_type_filter_index as _media_filter
@@ -496,8 +497,8 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         except Exception:
             pass
 
-    manual_adds_A, manual_blocks_A = _manual_policy(prev_state, a, feature)
-    manual_adds_B, manual_blocks_B = _manual_policy(prev_state, b, feature)
+    manual_adds_A, manual_blocks_A = _manual_policy(prev_state, a, feature, src_inst)
+    manual_adds_B, manual_blocks_B = _manual_policy(prev_state, b, feature, dst_inst)
 
     prev_provs = (prev_state.get("providers") or {})
 
@@ -664,20 +665,18 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             A_eff = collapse_history_latest(A_eff)
             B_eff = collapse_history_latest(B_eff)
 
-    now = int(_t.time())
+    review = getattr(ctx, "interactive", None)
+    now = review.planned_at if review is not None else int(_t.time())
     tomb_ttl_days = int((cfg.get("sync") or {}).get("tombstone_ttl_days", 30))
     tomb_ttl_secs = max(1, tomb_ttl_days) * 24 * 3600
     pair_key = "-".join(sorted([a, b]))
-    tomb_map = dict(
-        keys_for_feature(
-            ctx.state_store, feature, pair=pair_key
-        ) or {}
-    )
-    tomb = {k for k, ts in tomb_map.items() if not isinstance(ts, int) or (now - int(ts)) <= tomb_ttl_secs}
+    tomb_map = keys_for_feature(ctx.state_store, feature, pair=pair_key, ttl_seconds=tomb_ttl_secs, now=now) or {}
+    tomb = set(tomb_map)
 
     bootstrap = (not prevA) and (not prevB) and not tomb
     obsA: set[str] = set()
     obsB: set[str] = set()
+    observed_tombstones: dict[str, int] = {}
     if not bootstrap:
         if include_obs_A and not A_suspect:
             obsA = {k for k in prevA.keys() if k not in (A_cur or {})}
@@ -686,9 +685,6 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         newly = (obsA | obsB) - tomb
 
         if newly:
-            t = ctx.state_store.load_tomb() or {}
-            ks = t.setdefault("keys", {})
-
             def _tokens_for_ck(ck: str) -> set[str]:
                 toks = {ck}
                 if feature == "history" and history_event_mode:
@@ -708,10 +704,13 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             for ck in set(newly):
                 write_tokens |= _tokens_for_ck(ck)
 
-            for tok in write_tokens:
-                ks.setdefault(f"{feature}:{pair_key}|{tok}", now)
-
-            ctx.state_store.save_tomb(t)
+            observed_tombstones = dict.fromkeys(write_tokens, now)
+            if review is None:
+                t = ctx.state_store.load_tomb() or {}
+                ks = t.setdefault("keys", {})
+                for tok in write_tokens:
+                    ks.setdefault(f"{feature}:{pair_key}|{tok}", now)
+                ctx.state_store.save_tomb(t)
 
         emit("debug", msg="observed.deletions", a=len(obsA), b=len(obsB), tomb=len(tomb),
              suppressed_on_A=bool(A_suspect), suppressed_on_B=bool(B_suspect))
@@ -1111,6 +1110,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                     win = a if ta > tb else b
                 else:
                     win = prefer
+                win = choose_conflict(ctx, feature, ak, a, b, av, bv, win)
                 if win == a:
                     addB.append(_minimal_keep_rating(av))
                 else:
@@ -1470,6 +1470,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                         else:
                             win = prefer
 
+                win = choose_conflict(ctx, feature, k, a, b, a_it, b_it, win)
                 if win == a:
                     addB.append(_minimal_keep_progress(upB[k]))
                 else:
@@ -1485,6 +1486,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                     win = a if ta > tb else b
                 else:
                     win = prefer
+                win = choose_conflict(ctx, feature, k, a, b, clB[k], b_it, win)
                 if win == a:
                     if allow_removals:
                         remB.append(_minimal(clB[k]))
@@ -1499,6 +1501,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                     win = a if ta > tb else b
                 else:
                     win = prefer
+                win = choose_conflict(ctx, feature, k, a, b, a_it, clA[k], win)
                 if win == b:
                     if allow_removals:
                         remA.append(_minimal(clA[k]))
@@ -1752,6 +1755,9 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             pair_key=pair_key,
             cross_feature_unresolved=_cross_feature_unresolved(feature),
             ignore_pair_tomb=(str(feature or "").lower() in ("history", "ratings")),
+            tomb_ttl_seconds=tomb_ttl_secs,
+            now=now,
+            observed_tombstones=observed_tombstones,
             emit=emit,
         )
         blocked_total += max(0, before_blocklist_A - len(add_to_A))
@@ -1765,25 +1771,29 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             pair_key=pair_key,
             cross_feature_unresolved=_cross_feature_unresolved(feature),
             ignore_pair_tomb=(str(feature or "").lower() in ("history", "ratings")),
+            tomb_ttl_seconds=tomb_ttl_secs,
+            now=now,
+            observed_tombstones=observed_tombstones,
             emit=emit,
         )
         blocked_total += max(0, before_blocklist_B - len(add_to_B))
 
     manual_blocked = 0
-    if manual_blocks_A:
+    manual_blocks = manual_blocks_A | manual_blocks_B
+    if manual_blocks:
         pre_add, pre_rem = len(add_to_A), len(rem_from_A)
-        add_to_A = _filter_manual_block(add_to_A, manual_blocks_A)
-        rem_from_A = _filter_manual_block(rem_from_A, manual_blocks_A)
+        add_to_A = _filter_manual_block(add_to_A, manual_blocks)
+        rem_from_A = _filter_manual_block(rem_from_A, manual_blocks)
         blk = (pre_add - len(add_to_A)) + (pre_rem - len(rem_from_A))
         if blk:
             emit("debug", msg="blocked.counts", feature=feature, dst=a, pair=f"{a}-{b}",
                  blocked_manual=int(blk), blocked_total=int(blk))
         manual_blocked += blk
 
-    if manual_blocks_B:
+    if manual_blocks:
         pre_add, pre_rem = len(add_to_B), len(rem_from_B)
-        add_to_B = _filter_manual_block(add_to_B, manual_blocks_B)
-        rem_from_B = _filter_manual_block(rem_from_B, manual_blocks_B)
+        add_to_B = _filter_manual_block(add_to_B, manual_blocks)
+        rem_from_B = _filter_manual_block(rem_from_B, manual_blocks)
         blk = (pre_add - len(add_to_B)) + (pre_rem - len(rem_from_B))
         if blk:
             emit("debug", msg="blocked.counts", feature=feature, dst=b, pair=f"{a}-{b}",
@@ -1890,6 +1900,19 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
          upd_to_A=len(upd_to_A), upd_to_B=len(upd_to_B),
          rem_from_A=len(rem_from_A), rem_from_B=len(rem_from_B))
     cancelled = cancelled or bool(cancel_requested())
+
+    review = getattr(ctx, "interactive", None)
+    if review is not None:
+        args_A = dict(source=b, source_instance=dst_inst, before=A_eff, down=a_down)
+        args_B = dict(source=a, source_instance=src_inst, before=B_eff, down=b_down)
+        add_to_A = review.filter(feature, a, src_inst, "add", add_to_A, **args_A)
+        add_to_B = review.filter(feature, b, dst_inst, "add", add_to_B, **args_B)
+        upd_to_A = review.filter(feature, a, src_inst, "update", upd_to_A, **args_A)
+        upd_to_B = review.filter(feature, b, dst_inst, "update", upd_to_B, **args_B)
+        rem_from_A = review.filter(feature, a, src_inst, "remove", rem_from_A, **args_A)
+        rem_from_B = review.filter(feature, b, dst_inst, "remove", rem_from_B, **args_B)
+        if review.preview:
+            return {"cancelled": cancelled}
 
     resA_rem: dict[str, Any] = {"ok": True, "count": 0}
     resB_rem: dict[str, Any] = {"ok": True, "count": 0}
@@ -2567,6 +2590,11 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                 return out
 
             B_eff = _rekey_to_other(B_eff, A_eff)
+        if review is not None:
+            if review.retain_deferred(feature, a, src_inst, A_eff, prevA, _sync_key):
+                now_cp_A = prev_cp_A
+            if review.retain_deferred(feature, b, dst_inst, B_eff, prevB, _sync_key):
+                now_cp_B = prev_cp_B
         _commit_baseline(provs_block, a, src_inst, feature, A_eff)
         _commit_baseline(provs_block, b, dst_inst, feature, B_eff)
         _commit_checkpoint(provs_block, a, src_inst, feature, now_cp_A)

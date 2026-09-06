@@ -208,7 +208,7 @@ def test_manual_history_date_correction_updates_upsert_peer(monkeypatch) -> None
     trakt_key = f"tmdb:1402#s00e48@{WATCHED_EPOCH}"
     simkl_key = f"tvdb:153021#s00e48@{WATCHED_EPOCH}"
 
-    def manual_policy(_state, provider, _feature):
+    def manual_policy(_state, provider, _feature, _instance="default"):
         if provider == "TRAKT":
             return {canonical_key(trakt_manual): trakt_manual}, set()
         return {}, set()

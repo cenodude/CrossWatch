@@ -771,7 +771,7 @@ def _emit_unresolved_details(total_unresolved: int | None = None) -> None:
         for line in shown:
             _sync_progress_ui(f"[i] {line}")
 
-def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
+def _run_pairs_thread(run_id: str, overrides: dict | None = None, *, interactive: Any = None) -> None:
     rt = _rt()
     LOG_BUFFERS, RUNNING_PROCS, _append_log, strip_ansi = rt[0], rt[1], rt[8], rt[7]
     overrides = overrides or {}
@@ -880,6 +880,11 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
     try:
         load_config, _save = _env()
         cfg = load_config()
+        if interactive is not None:
+            from cw_platform.orchestrator._interactive import fingerprint
+
+            if fingerprint(cfg) != interactive.config_hash:
+                return
         scheduler_webhook_cfg = cfg if isinstance(cfg, dict) else {}
 
         try:
@@ -965,6 +970,8 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
                     )
 
             mgr = OrchestratorClass(config=cfg)
+            if interactive is not None:
+                mgr.interactive = interactive
             dry = coerce_bool((cfg.get("sync") or {}).get("dry_run", False)) or coerce_bool((overrides or {}).get("dry_run"))
             runtime_cfg = cfg.get("runtime") or {}
             sync_cfg = cfg.get("sync") or {}
@@ -972,13 +979,20 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
                 sync_cfg.get("write_state_json", runtime_cfg.get("write_state_json", True)),
                 True,
             )
+            def report_progress(line):
+                _sync_progress_ui(line)
+                if interactive is not None and interactive.on_progress is not None:
+                    interactive.on_progress(line)
+
             result = mgr.run_pairs(
                 dry_run=dry,
-                progress=_sync_progress_ui,
+                progress=report_progress,
                 pair_scope_ids=sorted(pair_scope_ids),
                 write_state_json=write_state_json,
                 use_snapshot=True,
             )
+            if interactive is not None:
+                interactive.result = result
 
         if coerce_bool(result.get("cancelled")) or cancel_requested(run_id):
             was_cancelled = True

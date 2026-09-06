@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping, cast
 
 from cw_platform.id_map import minimal as id_minimal
+from providers.sync._mod_common import observation_time
 
 from .._log import log as cw_log
 from ._common import (
@@ -550,7 +551,9 @@ def build_index(adapter: Any, *, since_iso: str | None = None) -> dict[str, dict
 
     out: dict[str, dict[str, Any]] = {}
     thaw: set[str] = set()
-    shadow_has_data = bool((_rshadow_load().get("items") or {}))
+    shadow_items = _rshadow_load().get("items") or {}
+    shadow_has_data = bool(shadow_items)
+    observed_at = observation_time(adapter)
 
     act_latest: str | None = None
 
@@ -702,10 +705,15 @@ def build_index(adapter: Any, *, since_iso: str | None = None) -> dict[str, dict
                         pass
                 continue
 
+            ts = _as_epoch(m.get("rated_at"))
+            if observed_at and not m.get("rated_at"):
+                previous_raw = shadow_items.get(k)
+                previous = previous_raw if isinstance(previous_raw, Mapping) else {}
+                previous_date = previous.get("rated_at") if _norm_rating(previous.get("rating")) == rt else None
+                m["rated_at"] = previous_date or observed_at
             out[k] = m
             thaw.add(k)
 
-            ts = _as_epoch(m.get("rated_at"))
             if ts is not None:
                 latest = max(latest or 0, ts)
 

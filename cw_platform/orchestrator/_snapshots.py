@@ -726,6 +726,7 @@ def build_snapshots_for_feature(
         if not provider_configured(config, name):
             continue
 
+        emit_info(json.dumps(dict(event="snapshot:start", provider=name, feature=feature)))
         scope = pair_scope() or "unscoped"
         mode = "events" if bool((config or {}).get("_cw_history_rewatches")) and str(feature).lower() == "history" else "state"
         memo_key = (scope, name, feature, mode)
@@ -736,6 +737,7 @@ def build_snapshots_for_feature(
                 if (now - ts) < snap_ttl_sec:
                     snaps[name] = cached_idx
                     dbg("snapshot.memo", provider=name, feature=feature, count=_eventish_count(feature, cached_idx), raw_count=len(cached_idx))
+                    emit_info(json.dumps(dict(event="snapshot:done", provider=name, feature=feature, count=_eventish_count(feature, cached_idx))))
                     if on_snapshot is not None:
                         on_snapshot(name, cached_idx)
                     continue
@@ -764,6 +766,7 @@ def build_snapshots_for_feature(
                 snap_cache[memo_key] = (now, canon)
 
         dbg("snapshot", provider=name, feature=feature, count=_eventish_count(feature, canon), raw_count=len(canon))
+        emit_info(json.dumps(dict(event="snapshot:done", provider=name, feature=feature, count=_eventish_count(feature, canon))))
         if on_snapshot is not None:
             on_snapshot(name, canon)
 

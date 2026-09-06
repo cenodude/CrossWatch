@@ -468,6 +468,7 @@ def _non_admin_permission_allowed(user: dict, path: str, method: str = "GET") ->
         "/api/export",
         "/api/import",
         "/api/editor",
+        "/api/interactive-sync",
         "/api/playlists",
         "/api/snapshots",
         "/api/manual",
