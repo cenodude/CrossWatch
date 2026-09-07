@@ -11,7 +11,8 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from cw_platform.access_policy import request_user, user_can_access_pair
+from cw_platform.access_policy import request_user, user_can_access_pair, pair_profile_id, profile_allows_pair, profile_instances_map
+from cw_platform.provider_instances import normalize_user_profile_id
 from cw_platform.config_base import load_config
 from cw_platform.id_map import canonical_key, coalesce_ids, keys_for_item, ID_KEYS
 from cw_platform.value_coercion import coerce_bool
@@ -46,9 +47,19 @@ class Selection(Revision):
     q: str = Field(default="", max_length=256)
 
 
-class MappingEdit(Revision):
-    row_id: str
+class MappingChange(BaseModel):
+    row_id: str = Field(min_length=1, max_length=128)
     item: dict[str, Any]
+    selected: bool = True
+
+
+class MappingEdit(Revision, MappingChange):
+    pass
+
+
+class MappingBatch(Revision):
+    selection_version: int = Field(ge=0)
+    edits: list[MappingChange] = Field(min_length=1, max_length=200)
 
 
 def owner(request):
@@ -107,6 +118,38 @@ def launch(session, task, *args, applying=False, prepare=None):
         thread.start()
 
 
+@router.get("")
+def reviews(request: Request, user_profile: str = Query(default="", max_length=64)):
+    cfg = load_config()
+    user_id = owner(request)
+    profile = normalize_user_profile_id(user_profile)
+    if user_profile.strip() and not profile:
+        raise HTTPException(400, "Invalid profile")
+    instances = profile_instances_map(cfg, profile) if profile else {}
+    with svc.LOCK:
+        svc.prune()
+        available = []
+        for session in sorted(svc.SESSIONS.values(), key=lambda s: (s.status in ("reading", "applying"), s.touched), reverse=True):
+            if session.owner != user_id:
+                continue
+            try:
+                pair = pair_for(cfg, request, session.pair_id)
+            except HTTPException:
+                continue
+            if profile:
+                assigned = pair_profile_id(pair)
+                matches = assigned == profile if assigned else profile_allows_pair(instances, pair)
+                if not matches:
+                    continue
+            available.append(dict(
+                id=session.id, pair_id=session.pair_id, status=session.status,
+                pair={k: pair.get(k) for k in ("source", "target", "source_instance", "target_instance", "mode", "name")},
+                planned_at=session.planned_at,
+            ))
+        # Listing must not extend the lifetime of unattended reviews.
+        return dict(ok=True, sessions=available)
+
+
 @router.post("")
 def start(payload: Start, request: Request):
     cfg = load_config()
@@ -159,7 +202,8 @@ def report_issues(sid: str, request: Request, offset: int = Query(default=0, ge=
 @router.get("/{sid}/rows")
 def rows(sid: str, request: Request, revision: int = Query(ge=0), offset: int = Query(default=0, ge=0),
          limit: int = Query(default=75, ge=1, le=200), feature: str = Query(default="", max_length=32),
-         result: str = Query(default="", max_length=32), q: str = Query(default="", max_length=256)):
+         result: str = Query(default="", max_length=32), q: str = Query(default="", max_length=256),
+         selected_only: bool = False, editable_only: bool = False):
     with svc.LOCK:
         session = get_session(sid, request, load_config())
         if revision != session.revision:
@@ -167,7 +211,8 @@ def rows(sid: str, request: Request, revision: int = Query(ge=0), offset: int = 
         if session.store is None:
             raise HTTPException(409, "Wait for the plan to finish")
         return dict(ok=True, revision=session.revision, selection_version=session.selection_version,
-                    counts=dict(session.store.counts), **session.store.page(offset=offset, limit=limit, feature=feature, result=result, q=q))
+                    counts=dict(session.store.counts), **session.store.page(offset=offset, limit=limit, feature=feature, result=result, q=q,
+                                                                          selected_only=selected_only, editable_only=editable_only))
 
 
 @router.post("/{sid}/selection")
@@ -204,45 +249,135 @@ def apply(sid: str, payload: Apply, request: Request):
         return session.public()
 
 
+def mapping_row(session, row_id):
+    row = session.plan.rows.get(row_id)
+    if not row or row["operation"] not in ("add", "update") or row["feature"] == "playlists":
+        raise HTTPException(400, "This change cannot be remapped")
+    return row
+
+
+def prepare_mapping(row, corrected):
+    item = deepcopy(row["item"])
+    for key in (*ID_KEYS, "_trakt_history_id", "history_id", "_simkl_history_id", "_plex_history_id", "watched_id", "play_id", "provider_item_id", "provider_event_id"):
+        item.pop(key, None)
+    for key in ("type", "title", "year", "season", "episode", "series_title", "series_year", "show_ids"):
+        item.pop(key, None)
+        if key in corrected:
+            item[key] = corrected[key]
+    ids = corrected.get("ids")
+    if not isinstance(ids, dict) or any(k not in ID_KEYS for k in ids):
+        raise HTTPException(400, "Supply supported media identifiers")
+    item["ids"] = coalesce_ids(ids)
+    if "show_ids" in item:
+        if not isinstance(item["show_ids"], dict) or any(k not in ID_KEYS for k in item["show_ids"]):
+            raise HTTPException(400, "Supply supported show identifiers")
+        item["show_ids"] = coalesce_ids(item["show_ids"])
+    if item.get("type") not in ("movie", "show", "anime", "season", "episode"):
+        raise HTTPException(400, "Invalid media type")
+    if item["type"] in ("season", "episode"):
+        for field in (("season", "episode") if item["type"] == "episode" else ("season",)):
+            number = item.get(field)
+            if isinstance(number, bool) or not isinstance(number, int) or number < (1 if field == "episode" else 0):
+                raise HTTPException(400, f"Supply a valid {field} number")
+    key = canonical_key(item)
+    if key == "unknown:" or not (item["ids"] or item.get("show_ids")):
+        raise HTTPException(400, "A media identifier is required")
+    original = row["key"]
+    blocks = [original] if original and key != original and original not in keys_for_item(item) else []
+    return key, item, blocks
+
+
+def save_mappings(session, cfg, request, changes):
+    from .editorAPI import _require_instance_scope, _save_policy_manual_batch
+    from services.saved_mappings import mapping_details
+
+    prepared, corrections, seen, targets = [], [], set(), set()
+    mappings = {}
+    for edit in changes:
+        if edit.row_id in seen:
+            raise HTTPException(400, "An item can only be corrected once per batch")
+        seen.add(edit.row_id)
+        row = mapping_row(session, edit.row_id)
+        _require_instance_scope(cfg, request, row["source"], row["source_instance"])
+        try:
+            key, item, blocks = prepare_mapping(row, edit.item)
+        except HTTPException as error:
+            label = str(row["item"].get("series_title") or row["item"].get("title") or row["key"])
+            raise HTTPException(error.status_code, f"{label} ({row['key']}): {error.detail}") from error
+        target = (row["feature"], row["source"], row["source_instance"], key)
+        if target in targets:
+            raise HTTPException(400, "Two corrections point to the same item. Check the destination episode numbers.")
+        targets.add(target)
+        mappings.setdefault(target[:3], {})[key] = dict(
+            original_key=row["key"], original=mapping_details(row["item"]),
+            saved_at=int(time.time()), origin="interactive_sync",
+        )
+        prepared.append((row["feature"], row["source"], {key: item}, blocks, row["source_instance"]))
+        corrections.append(dict(identity=(row["feature"], key, row["source"], row["source_instance"], row["provider"], row["instance"]),
+                                selected=edit.selected))
+    launch(session, svc.refresh_mappings, cfg, dict(session.plan.choices), corrections,
+           prepare=lambda: _save_policy_manual_batch(prepared, mappings=mappings))
+    return session.public()
+
+
 @router.post("/{sid}/mapping")
 def mapping(sid: str, payload: MappingEdit, request: Request):
-    from .editorAPI import _require_instance_scope, _save_policy_manual
+    cfg = load_config()
+    with svc.LOCK:
+        session = get_session(sid, request, cfg)
+        check_revision(session, payload.revision)
+        return save_mappings(session, cfg, request, [payload])
+
+
+@router.post("/{sid}/mappings")
+def mappings(sid: str, payload: MappingBatch, request: Request):
+    cfg = load_config()
+    with svc.LOCK:
+        session = get_session(sid, request, cfg)
+        check_revision(session, payload.revision)
+        check_selection(session, payload.selection_version)
+        return save_mappings(session, cfg, request, payload.edits)
+
+
+@router.get("/{sid}/mapping-catalogs")
+def mapping_catalogs(sid: str, request: Request, revision: int = Query(ge=0),
+                     row_id: str = Query(min_length=1, max_length=128)):
+    from services.interactive_sync_catalogs import search_catalogs
+
+    cfg = load_config()
+    with svc.LOCK:
+        session = get_session(sid, request, cfg)
+        check_revision(session, revision)
+        row = deepcopy(mapping_row(session, row_id))
+    from services.interactive_sync_episodes import metadata_key
+    return {**search_catalogs(cfg, row), "episode_matching": bool(metadata_key(cfg, row))}
+
+
+@router.post("/{sid}/mapping-episodes")
+def mapping_episodes(sid: str, payload: MappingBatch, request: Request):
+    from services.interactive_sync_episodes import suggest_episodes
 
     cfg = load_config()
     with svc.LOCK:
         session = get_session(sid, request, cfg)
         check_revision(session, payload.revision)
-        row = session.plan.rows.get(payload.row_id)
-        if not row or row["operation"] not in ("add", "update") or row["feature"] == "playlists":
-            raise HTTPException(400, "This change cannot be remapped")
-        _require_instance_scope(cfg, request, row["source"], row["source_instance"])
-        item = deepcopy(row["item"])
-        for key in (*ID_KEYS, "_trakt_history_id", "history_id", "_simkl_history_id", "_plex_history_id", "watched_id", "play_id"):
-            item.pop(key, None)
-        for key in ("type", "title", "year", "season", "episode", "series_title", "series_year", "show_ids"):
-            item.pop(key, None)
-            if key in payload.item:
-                item[key] = payload.item[key]
-        ids = payload.item.get("ids")
-        if not isinstance(ids, dict) or any(k not in ID_KEYS for k in ids):
-            raise HTTPException(400, "Supply supported media identifiers")
-        item["ids"] = coalesce_ids(ids)
-        if "show_ids" in item:
-            if not isinstance(item["show_ids"], dict) or any(k not in ID_KEYS for k in item["show_ids"]):
-                raise HTTPException(400, "Supply supported show identifiers")
-            item["show_ids"] = coalesce_ids(item["show_ids"])
-        if item.get("type") not in ("movie", "show", "anime", "season", "episode"):
-            raise HTTPException(400, "Invalid media type")
-        key = canonical_key(item)
-        if key == "unknown:" or not (item["ids"] or item.get("show_ids")):
-            raise HTTPException(400, "A media identifier is required")
-        original = row["key"]
-        def save():
-            _save_policy_manual(row["feature"], row["source"], {key: item},
-                                [original] if original and key != original and original not in keys_for_item(item) else [],
-                                row["source_instance"], merge=True)
-        launch(session, svc.refresh, cfg, session.plan.choices, prepare=save)
-        return session.public()
+        check_selection(session, payload.selection_version)
+        edits = [(deepcopy(mapping_row(session, edit.row_id)), edit.item) for edit in payload.edits]
+    return suggest_episodes(cfg, edits)
+
+
+@router.get("/{sid}/mapping-search")
+def mapping_search(sid: str, request: Request, revision: int = Query(ge=0),
+                   row_id: str = Query(min_length=1, max_length=128), q: str = Query(min_length=2, max_length=200),
+                   catalog: str = Query(default="destination", pattern="^(destination|tmdb)$")):
+    from services.interactive_sync_mapping import search_candidates
+
+    cfg = load_config()
+    with svc.LOCK:
+        session = get_session(sid, request, cfg)
+        check_revision(session, revision)
+        row = deepcopy(mapping_row(session, row_id))
+    return search_candidates(cfg, row, q, catalog=catalog)
 
 
 @router.delete("/{sid}")

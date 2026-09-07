@@ -277,7 +277,7 @@
       const menu = d.createElement("div");
       menu.className = "cw-icon-select-menu hidden";
       menu.setAttribute("role", "listbox");
-      d.body.appendChild(menu);
+      (select.closest("dialog") || d.body).appendChild(menu);
       wrap.__cwMenu = menu;
       select.classList.add("cw-icon-select-native");
       select.insertAdjacentElement("afterend", wrap);
@@ -285,7 +285,7 @@
       const menu = d.createElement("div");
       menu.className = "cw-icon-select-menu hidden";
       menu.setAttribute("role", "listbox");
-      d.body.appendChild(menu);
+      (select.closest("dialog") || d.body).appendChild(menu);
       wrap.__cwMenu = menu;
     }
     wrap.__cwNativeSelect = select;

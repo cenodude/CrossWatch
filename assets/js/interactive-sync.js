@@ -5,9 +5,9 @@
   const API = "/api/interactive-sync";
   const host = document.getElementById("page-interactive_sync");
   const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-  const labels = { add: "Add", remove: "Remove", update: "Update", unresolved: "Needs mapping", blocked: "Blocked", conflict: "Conflict" };
+  const labels = { add: "Add", remove: "Remove", update: "Update", unresolved: "Needs attention", blocked: "Blocked", conflict: "Conflict" };
   let session = null, busy = false, timer = null, page = 0, route = "", generation = 0;
-  let feature = "", result = "", query = "", mappingDirty = false;
+  let feature = "", result = "", query = "", mappingDirty = false, mappingWorkspace = null;
   let pageData = { items: [], total: 0 }, pageLoading = false, pageRequest = 0, pageController = null, searchTimer = null;
   let progressTimer = null, progressReceived = Date.now(), pollFailures = 0;
   const PAGE_SIZE = 75;
@@ -62,7 +62,7 @@
       <div class="is-progress-caption"><strong>${determinate ? `${number(p.done)} of ${number(p.total)} ${esc(p.unit)}` : p.done ? `${number(p.done)} ${esc(p.unit)}` : ["reading", "verifying"].includes(p.stage) ? "Waiting for provider totals" : "Working on this stage"}</strong><span>${determinate ? `${p.percent}%` : "In progress"}</span></div>
       <div class="is-progress-track ${determinate ? "" : "indeterminate"}" role="progressbar" aria-label="${esc(p.label || "Current sync activity")}" aria-valuemin="0" aria-valuemax="100" ${determinate ? `aria-valuenow="${p.percent}"` : 'aria-valuetext="In progress; total not yet available"'}><span style="width:${determinate ? p.percent : 30}%"></span></div>
       <div class="is-progress-stats"><div><span>Elapsed</span><strong data-progress-elapsed>${duration(p.elapsed_seconds)}</strong></div><div><span>Current activity</span><strong data-progress-stage>${duration(p.stage_seconds)}</strong></div><div><span>Items read</span><strong>${number(p.items_read)}</strong></div><div><span>API requests</span><strong>${number(p.requests)}</strong></div></div>
-      <div class="is-progress-note"><span class="material-symbols-rounded" aria-hidden="true">info</span><p><span data-progress-quiet>Waiting for the next provider update.</span><br>You can leave this page and return. This operation continues on the server.</p></div>
+      <div class="is-progress-note"><span class="material-symbols-rounded" aria-hidden="true">info</span><p><span data-progress-quiet>Waiting for the next provider update.</span><br>This operation continues on the server. Return using the notification bell or Sync reviews below your pairs in Synchronization settings.</p></div>
       ${(p.recent || []).length ? `<details class="is-progress-details" ${detailsOpen ? "open" : ""}><summary>Recent activity</summary><ol>${p.recent.slice().reverse().map(row => `<li><time>${esc(new Date(row.at * 1000).toLocaleTimeString())}</time><span>${esc(row.text)}</span></li>`).join("")}</ol></details>` : ""}
     </section>`;
   }
@@ -186,6 +186,7 @@
       ${changes ? `<div class="is-report-distribution" role="img" aria-label="${number(totals.added)} added, ${number(totals.updated)} updated, ${number(totals.removed)} removed">${["added", "updated", "removed"].map(key => `<span class="${key}" style="width:${totals[key] / changes * 100}%"></span>`).join("")}</div><div class="is-report-legend">${columns.slice(0, 3).map(([key, label]) => `<span><i class="${key}"></i>${label}</span>`).join("")}</div>` : ""}
       <dl class="is-report-facts"><div><dt>Selected for this run</dt><dd>${number(report.requested)} of ${number(report.proposed)} proposals</dd></div><div><dt>Not selected</dt><dd>${number(report.not_selected)}</dd></div><div><dt>Started</dt><dd>${date(report.started_at)}</dd></div><div><dt>Finished</dt><dd>${date(report.finished_at)}</dd></div><div><dt>API requests</dt><dd>${number(report.requests)}</dd></div><div><dt>Conflict decisions</dt><dd>${number(report.conflicts_reviewed)}</dd></div></dl>
       <section class="is-report-section"><h2>Results by feature and destination</h2><p>Counts reported by the sync engine for this operation.</p><div class="is-table-wrap"><table class="is-table is-report-table"><thead><tr><th scope="col">Feature / destination</th>${columns.map(([, label]) => `<th scope="col">${label}</th>`).join("")}</tr></thead><tbody>${report.features.map(row => `<tr class="is-report-feature"><th scope="row">${esc(row.feature.charAt(0).toUpperCase() + row.feature.slice(1))}</th>${cells(row)}</tr>${row.destinations.map(dst => `<tr><th scope="row" class="is-report-destination">${esc(endpoint(dst.provider, dst.instance))}</th>${cells(dst)}</tr>`).join("")}`).join("") || `<tr><td colspan="8">No completed feature results were reported.</td></tr>`}</tbody></table></div></section>
+      ${report.manual_excluded ? `<section class="is-report-section" aria-label="Mapping and manual exclusions"><h2>Mapping and manual exclusions</h2><p>${number(report.manual_excluded)} items were excluded by saved mappings or Editor rules. Old identities stay excluded so their corrected replacements can sync. These exclusions are not failed sync attempts.</p><dl class="is-report-facts">${report.features.filter(row => row.manual_excluded).map(row => `<div><dt>${esc(row.feature.charAt(0).toUpperCase() + row.feature.slice(1))}</dt><dd>${number(row.manual_excluded)} excluded</dd></div>`).join("")}</dl></section>` : ""}
       <section class="is-report-section is-report-attention"><h2>Attention and follow-up</h2><div class="is-report-checks">${[["Unresolved items", totals.unresolved], ["Provider errors", totals.errors], ["Blocked by sync rules", totals.blocked], ["Selected proposals not reached", report.not_reached]].map(([label, n]) => `<div class="${n ? "needs-attention" : ""}"><span>${label}</span><strong>${number(n)}</strong></div>`).join("")}</div>${report.not_reached ? `<p>These selected proposals did not reach execution. Data may have changed, a protection may have stopped them, or the run may have ended early.</p>` : ""}${report.incomplete_note ? `<p class="is-report-warning">${esc(report.incomplete_note)}</p>` : ""}${report.outcome !== "success" ? `<p>${report.issue_count ? "Review the affected items below." : "The engine did not include item-level details. Check Events for the available diagnostics."} Start a new review to see what still needs syncing before retrying.</p>` : ""}</section>
       ${(report.notices || []).length ? `<details class="is-notices" open><summary>Execution notices (${number(report.notices.length)})</summary>${report.notices.map(n => `<p><strong>${esc([n.feature, n.provider].filter(Boolean).join(" · "))}</strong> ${esc(n.reason)}${n.occurrences > 1 ? ` (${number(n.occurrences)} occurrences)` : ""}</p>`).join("")}${report.notice_overflow ? `<p>Additional notices are available in Events.</p>` : ""}</details>` : ""}
       ${(report.review_notices || []).length ? `<details class="is-notices"><summary>Protections and notices from the preview (${number(report.review_notices.length)})</summary>${report.review_notices.map(n => `<p>${esc(n.feature)} ${esc(n.provider)} · ${esc(n.reason)}</p>`).join("")}</details>` : ""}
@@ -216,7 +217,7 @@
       ${done ? `<div class="is-metrics">${[["Added", summary.added], ["Updated", summary.updated], ["Removed", summary.removed], ["Unresolved", summary.unresolved], ["Errors", summary.errors], ["Changed since review", summary.not_applied]].map(([label, n]) => `<div><strong>${Number(n || 0)}</strong><span>${label}</span></div>`).join("")}</div>` : `<div class="is-metrics"><div><strong>${count}</strong><span>Proposed changes</span></div><div><strong>${selectedCount}</strong><span>Selected</span></div><div><strong>${session?.counts?.conflicts || 0}</strong><span>Conflicts to review</span></div><div><strong>${session?.counts?.attention || 0}</strong><span>Need attention</span></div></div>`}
       ${(session?.notices || []).length ? `<details class="is-notices"><summary>Sync protections and provider notices (${session.notices.length})</summary>${session.notices.map(n => `<p>${esc(n.feature)} ${esc(n.provider)} · ${esc(n.reason.replaceAll("_", " ").replaceAll(":", ": "))}</p>`).join("")}</details>` : ""}
       <div class="is-toolbar"><label class="is-search"><span class="material-symbols-rounded" aria-hidden="true">search</span><input data-filter="query" type="search" maxlength="256" placeholder="Search titles or IDs" aria-label="Search proposed changes" value="${esc(query)}"></label><label>Feature<select data-filter="feature"><option value="">All features</option>${(session?.features || []).map(f => `<option value="${esc(f)}" ${feature === f ? "selected" : ""}>${esc(f.charAt(0).toUpperCase() + f.slice(1))}</option>`).join("")}</select></label><label>Result<select data-filter="result"><option value="">All results</option>${Object.entries(labels).map(([k, v]) => `<option value="${k}" ${result === k ? "selected" : ""}>${v}</option>`).join("")}</select></label></div>
-      <div class="is-list-actions"><span>${pageLoading ? "Loading page..." : `${pageData.total} matching items`}</span><button class="is-link" data-action="select" ${locked ? "disabled" : ""}>Select filtered</button><button class="is-link" data-action="deselect" ${locked ? "disabled" : ""}>Deselect filtered</button></div>
+      <div class="is-list-actions"><span>${pageLoading ? "Loading page..." : `${pageData.total} matching items`}</span><button class="is-btn is-small" data-action="map-selected" ${locked || !selectedCount ? "disabled" : ""} title="Edit checked items across all pages">Edit selected</button><button class="is-link" data-action="select" ${locked ? "disabled" : ""}>Select filtered</button><button class="is-link" data-action="deselect" ${locked ? "disabled" : ""}>Deselect filtered</button></div>
       <div class="is-table-wrap" aria-busy="${pageLoading}"><table class="is-table"><thead><tr><th scope="col"><span class="sr-only">Selected</span></th><th scope="col">Item</th><th scope="col">Feature</th><th scope="col">Proposed change</th><th scope="col">Review</th></tr></thead><tbody>${rows.map(row => {
         if (row.result === "conflict") return `<tr class="is-conflict"><td><span class="material-symbols-rounded" aria-hidden="true">compare_arrows</span></td><td><strong>${esc(title(row.left))}</strong><small>${esc(row.key)}</small></td><td>${esc(row.feature)}</td><td><span class="is-badge conflict">Conflict</span><small>${esc(row.source)}: ${esc(value(row.left, row.feature))} · ${esc(row.target)}: ${esc(value(row.right, row.feature))}</small></td><td><label class="is-sr-label" for="choice-${row.id}">Use value from</label><select id="choice-${row.id}" data-choice="${row.id}" ${locked ? "disabled" : ""}>${[row.source, row.target].map(p => `<option value="${esc(p)}" ${p === row.winner ? "selected" : ""}>Use ${esc(p)}</option>`).join("")}</select></td></tr>`;
         return `<tr><td><input type="checkbox" data-select="${row.id}" aria-label="Select ${esc(title(row.item))}" ${row.selected ? "checked" : ""} ${locked || !row.selectable ? "disabled" : ""}></td><td><strong>${esc(title(row.item))}</strong><small>${esc(row.item.type || "")} ${esc(row.item.year || "")} · ${esc(row.key)}</small>${row.reason ? `<small class="is-reason">${esc(row.reason)}</small>` : ""}</td><td>${esc(row.feature)}</td><td><span class="is-badge ${esc(row.result)}">${labels[row.result] || esc(row.result)}</span><span class="is-destination">${esc(endpoint(row.provider, row.instance))}</span>${row.destination_label ? `<small>${esc(row.destination_label)}</small>` : ""}<small>${esc(value(row.before, row.feature))} → ${row.operation === "remove" ? "Removed" : esc(value(row.item, row.feature))}</small></td><td>${["add", "update"].includes(row.operation) && row.feature !== "playlists" ? `<button class="is-btn is-small" data-map="${row.id}" ${locked ? "disabled" : ""}>Mapping</button>` : "—"}</td></tr>`;
@@ -224,7 +225,6 @@
       <div class="is-pagination"><button class="is-btn is-small" data-action="first" ${pageLoading || page === 0 ? "disabled" : ""}>First</button><button class="is-btn is-small" data-action="prev" ${pageLoading || page === 0 ? "disabled" : ""}>Previous</button><label>Page <input data-page type="number" min="1" max="${pages}" value="${page + 1}" aria-label="Page number" ${pageLoading ? "disabled" : ""}> of ${pages}</label><button class="is-btn is-small" data-action="next" ${pageLoading || page + 1 >= pages ? "disabled" : ""}>Next</button><button class="is-btn is-small" data-action="last" ${pageLoading || page + 1 >= pages ? "disabled" : ""}>Last</button></div>
       <footer class="is-footer"><div><strong>${done ? "Operation finished" : `${selectedCount} changes selected`}</strong><small>${done ? "Provider results are also available in Events." : "Mappings are saved permanently. Only selected sync changes will be applied."}</small></div>${done ? `<a class="is-btn is-primary" href="#settings/sync">Back to Synchronization</a>` : `<button class="is-btn is-primary" data-action="apply" ${locked || !selectedCount ? "disabled" : ""}><span class="material-symbols-rounded" aria-hidden="true">check</span>Apply selected (${selectedCount})</button>`}</footer>
       </div>`}
-      <div class="is-mapping-host"></div>
     </div>`;
     if (focused) {
       const input = host.querySelector('[data-filter="query"]');
@@ -259,39 +259,21 @@
     }
   }
   async function mapping(row) {
-    const root = host.querySelector(".is-mapping-host");
-    root.innerHTML = `<section class="is-mapping" aria-label="Resolve mapping"><div class="is-mapping-head"><div><h2>Resolve mapping</h2><p>${esc(title(row.item))}</p></div><button class="is-btn" data-close-map>Close</button></div><p>Save a persistent correction using the same overrides as Editor. The plan will be recalculated.</p><div class="is-map-tools"><button class="is-btn" data-search-map>Search metadata</button>${document.documentElement.dataset.cwRole !== "user" ? `<button class="is-btn" data-anime-map>Anime ID mappings</button>` : ""}</div><form class="is-map-form"><div class="is-map-fields">${["imdb", "tmdb", "tvdb", "trakt", "simkl", "anilist", "mal", "anidb"].map(k => `<label>${esc(k.toUpperCase())}<input name="${k}" value="${esc(row.item.ids?.[k] || "")}" autocomplete="off"></label>`).join("")}</div><button type="submit" class="is-btn is-primary">Save mapping and recalculate</button></form><div class="is-map-search"></div></section>`;
-    root.scrollIntoView({ behavior: "smooth", block: "center" });
-    root.querySelector("input")?.focus();
-    root.querySelector("[data-close-map]").onclick = () => { root.innerHTML = ""; };
-    root.querySelector("form").onsubmit = event => {
-      event.preventDefault();
-      const ids = { ...row.item.ids };
-      for (const [k, v] of new FormData(event.target)) { if (String(v).trim()) ids[k] = String(v).trim(); else delete ids[k]; }
-      action("mapping", { row_id: row.id, item: { ...row.item, ids } });
-    };
-    root.querySelector("[data-anime-map]")?.addEventListener("click", async () => {
-      if (!window.openAnimeOverridesModal) await import(`/assets/js/modals.js?v=${encodeURIComponent(window.APP_VERSION || "1")}`);
-      window.openAnimeOverridesModal?.();
-    });
-    root.querySelector("[data-search-map]").onclick = async event => {
-      try {
-        for (const name of ["datetime", "search", "row-editor", "metadata-replacer"]) await import(`/assets/js/editor/${name}.js?v=${encodeURIComponent(window.APP_VERSION || "1")}`);
-        const editorRow = { key: row.key, type: row.item.type, title: title(row.item), year: row.item.year, raw: structuredClone(row.item) };
-        const searchRoot = root.querySelector(".is-map-search");
-        window.CW.Editor.MetadataReplacer.openItemReplacer(editorRow, event.target, {
-          isPolicySource: () => true,
-          fetchJSON: json,
-          formatEpisodeVisualTitle: r => title(r.raw),
-          updateTypeDisplay: window.CW.Editor.RowEditor.updateTypeDisplay,
-          openPopup: (_, build) => { searchRoot.innerHTML = ""; build(searchRoot, () => { searchRoot.innerHTML = ""; }); },
-          appendPopupTitle: (el, text) => { const h = document.createElement("h3"); h.textContent = text; el.append(h); },
-          appendPopupActions: (el, buttons) => buttons.forEach(b => { const btn = document.createElement("button"); btn.type = "button"; btn.className = "is-btn"; btn.textContent = b.label; btn.onclick = b.onClick; el.append(btn); }),
-          setStatusSticky: text => showError(new Error(text)),
-          commitReplacement: (_, corrected) => { action("mapping", { row_id: row.id, item: corrected }); return ""; },
-        });
-      } catch (error) { showError(error); }
-    };
+    if (mappingWorkspace || pending() || pageLoading) return;
+    const sid = session.id, revision = session.revision, selectionVersion = session.selection_version;
+    mappingWorkspace = {};
+    try {
+      const {openMappingWorkspace} = await import(`/assets/js/interactive-sync-mapping.js?v=${encodeURIComponent(window.APP_VERSION || "1")}`);
+      const data = row ? {items:[row], total:1} : await json(`${API}/${sid}/rows?${new URLSearchParams({revision, limit:200, selected_only:true, editable_only:true})}`);
+      if (sid !== session?.id || revision !== session.revision) throw new Error("The plan changed. Open mapping again.");
+      if (!row && (data.selection_version !== selectionVersion || session.selection_version !== selectionVersion)) throw new Error("Your selection changed. Open mapping again.");
+      const editable = data.items.filter(item => ["add", "update"].includes(item.operation) && item.feature !== "playlists");
+      if (!editable.length) throw new Error("Check items to edit first. Removed items and playlists cannot be mapped.");
+      mappingWorkspace = openMappingWorkspace({rows:editable, total:data.total, session:{...session}, json, post,
+        onClose: () => { mappingWorkspace = null; },
+        onSaved: data => { mappingWorkspace = null; if (session?.id === sid) accept(data, true); },
+      });
+    } catch (error) { mappingWorkspace = null; showError(error); }
   }
   host?.addEventListener("change", event => {
     const el = event.target;
@@ -320,6 +302,7 @@
     if (!button || button.disabled) return;
     if (button.dataset.map) return mapping(pageData.items.find(row => row.id === button.dataset.map));
     const name = button.dataset.action;
+    if (name === "map-selected") return mapping();
     if (name === "download-report" && session.report) {
       const report = session.report, sid = session.id, issues = [];
       button.disabled = true;

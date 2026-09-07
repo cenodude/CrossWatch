@@ -1,0 +1,27 @@
+/* assets/css/sync-reviews.css */
+/* CrossWatch - Interactive Sync return links */
+/* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
+
+.cw-sync-reviews { scroll-margin-top: 100px; margin: 20px 0 0; padding-top: 20px; border-top: 1px solid #262b34; color: #e6e9ee; }
+.cw-sync-reviews[hidden] { display: none; }
+#sec-sync .cw-sync-reviews { scroll-margin-top: 100px; margin: 24px 0; }
+.cw-sync-reviews h3 { margin: 0 0 12px; font-size: 16px; font-weight: 600; }
+.cw-sync-reviews ul { display: grid; gap: 8px; padding: 0; margin: 0; list-style: none; }
+.cw-sync-reviews li { display: flex; align-items: center; gap: 14px; padding: 14px 16px; background: #0f1217; border: 1px solid #262b34; border-radius: 8px; }
+.cw-sync-reviews .cw-review-icon { color: #7957ff; font-size: 24px; }
+.cw-sync-reviews .cw-review-copy { display: grid; gap: 4px; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.cw-sync-reviews strong { font-size: 14px; font-weight: 600; }
+.cw-sync-reviews small, .cw-sync-reviews p, .cw-review-copy > span { color: #929ba8; font-size: 13px; }
+.cw-sync-reviews p { margin: 10px 0 0; }
+.cw-sync-reviews .cw-review-link, .cw-sync-reviews button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 9px 12px; background: #15191f; border: 1px solid #303642; border-radius: 6px; color: #e6e9ee; font: inherit; font-size: 14px; font-weight: 400; text-decoration: none; white-space: nowrap; cursor: pointer; transition: background .12s, transform .12s; }
+.cw-sync-reviews .cw-review-link:hover, .cw-sync-reviews button:hover { background: #20252d; }
+.cw-sync-reviews .cw-review-link:active, .cw-sync-reviews button:active { transform: translateY(1px); }
+.cw-sync-reviews .cw-review-link:focus-visible, .cw-sync-reviews button:focus-visible { outline: 2px solid #7957ff; outline-offset: 3px; }
+.cw-review-link .material-symbols-rounded { font-size: 18px; }
+@media (max-width: 600px) {
+  .cw-sync-reviews li { flex-wrap: wrap; }
+  .cw-sync-reviews .cw-review-link { width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cw-sync-reviews .cw-review-link, .cw-sync-reviews button { transition: none; transform: none; }
+}

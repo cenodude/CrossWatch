@@ -1700,7 +1700,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
         updates = review.filter(feature, dst, dst_inst, "update", updates, **review_args)
         removes = review.filter(feature, dst, dst_inst, "remove", removes, **review_args)
         if review.preview:
-            return {"blocked": blocked_total, "cancelled": cancelled}
+            return {"blocked": blocked_total, "manual_excluded": int(manual_blocked), "cancelled": cancelled}
 
     attempted_keys: list[str] = []
     key2item: dict[str, Any] = {}
@@ -2273,6 +2273,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
         "skipped_exact": int((res_update or {}).get("skipped_exact", 0)) + int((res_add or {}).get("skipped_exact", 0)),
         "skipped_inferred": int((res_update or {}).get("skipped_inferred", 0)) + int((res_add or {}).get("skipped_inferred", 0)),
         "blocked": int(blocked_total),
+        "manual_excluded": int(manual_blocked),
         "res_add": res_add,
         "res_update": res_update,
         "res_remove": res_remove,

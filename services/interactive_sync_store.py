@@ -95,7 +95,7 @@ class ReviewStore:
         payload = json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
         with self.lock:
             self.db.execute("INSERT INTO review(id,kind,feature,result,selectable,selected,search,payload) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,search=excluded.search",
-                            (key, kind, value["feature"], result, selectable, selectable, search.casefold(), payload))
+                            (key, kind, value["feature"], result, selectable, selectable and result != "unresolved", search.casefold(), payload))
 
     def finish(self, previous=None):
         with self.lock:
@@ -136,10 +136,14 @@ class ReviewStore:
             args.append(q.casefold())
         return " AND ".join(clauses), args
 
-    def page(self, *, offset=0, limit=75, feature="", result="", q=""):
+    def page(self, *, offset=0, limit=75, feature="", result="", q="", selected_only=False, editable_only=False):
         where, args = self.where(feature, result, q)
+        if selected_only:
+            where += " AND selected=1"
+        if editable_only:
+            where += " AND kind='change' AND feature!='playlists' AND json_extract(payload,'$.operation') IN ('add','update')"
         with self.lock:
-            if not args:
+            if not args and not selected_only and not editable_only:
                 total = self.counts["changes"] + self.counts["conflicts"]
                 selectable, selected = self.selectable_count, self.counts["selected"]
             else:
@@ -179,6 +183,19 @@ class ReviewStore:
     def selected_ids(self):
         with self.lock:
             return {r[0] for r in self.db.execute("SELECT id FROM review WHERE selected=1")}
+
+    def select_corrected(self, corrections):
+        with self.lock:
+            for correction in corrections:
+                rows = self.db.execute(
+                    "SELECT id FROM review WHERE kind='change' AND selectable=1 AND result IN ('add','update') "
+                    "AND feature=? AND json_extract(payload,'$.key')=? "
+                    "AND json_extract(payload,'$.source')=? AND json_extract(payload,'$.source_instance')=? "
+                    "AND json_extract(payload,'$.provider')=? AND json_extract(payload,'$.instance')=?",
+                    correction["identity"],
+                ).fetchall()
+                if len(rows) == 1:
+                    self.select(correction["selected"], ids=[rows[0][0]])
 
     def recheck_details(self, previous, missing, *, limit=5):
         from itertools import islice
