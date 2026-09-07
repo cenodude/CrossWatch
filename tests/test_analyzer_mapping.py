@@ -1,3 +1,7 @@
+# tests/test_analyzer_mapping.py
+# CrossWatch - Analyzer mapping correction tests
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
+
 import pytest
 from fastapi import HTTPException
 

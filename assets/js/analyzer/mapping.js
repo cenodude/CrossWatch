@@ -1,4 +1,7 @@
+/* assets/js/analyzer/mapping.js */
 /* CrossWatch - Analyzer entry point to the shared mapping workspace */
+/* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
+
 async function loadStyles() {
   if (document.querySelector('link[href*="/assets/css/interactive-sync.css"]')) return;
   const link = document.createElement('link');

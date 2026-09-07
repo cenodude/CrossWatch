@@ -108,7 +108,7 @@ const Analyzer = {
     root.innerHTML = `
       <a class="an-back" href="#main">${icon("arrow_back")}Main</a>
       <header class="an-header">
-        <div><div class="an-eyebrow">SYNC INSIGHTS</div><h1>Sync Analyzer</h1><p>Understand missing items, failed attempts and the health of your sync setup.</p></div>
+        <div><div class="an-eyebrow">SYNC INSIGHTS</div><h1>Sync Analyzer</h1></div>
         <button class="an-button an-primary" id="an-run" type="button">${icon("refresh")}<span>Analyze</span></button>
       </header>
       <div id="an-progress" class="an-progress" role="status" aria-live="polite" hidden></div>

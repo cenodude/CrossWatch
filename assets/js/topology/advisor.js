@@ -30,13 +30,13 @@ function renderSummary() {
   const state = result.unsupportedPairs ? "review" : result.status;
   const label = result.unsupportedPairs ? "Review recommended" : result.activePairs ? statusLabel(result) : "No active pairs";
   const focus = document.activeElement?.closest?.("#sync-topology-health button")?.dataset.action;
-  host.innerHTML = `<div class="topology-summary-content"><div class="topology-summary-icon" aria-hidden="true"><span class="material-symbol">hub</span></div><div class="topology-summary-main">
+  host.innerHTML = `<div class="topology-summary-content"><div class="topology-summary-main">
     <div class="topology-summary-title"><h4 class="topology-kicker" id="topology-health-title">Topology health</h4>
       <span class="topology-status is-${state}"><span class="material-symbol" aria-hidden="true">${result.unsupportedPairs ? "info" : statusIcon(result)}</span>${label}</span></div>
     <div class="topology-counters" aria-label="Topology summary"><span><strong>${result.activePairs}</strong> active ${result.activePairs === 1 ? "pair" : "pairs"}</span>
       ${minimal ? "" : `<span><strong>${result.conflicts}</strong> ${result.conflicts === 1 ? "conflict" : "conflicts"}</span><span><strong>${result.loops}</strong> ${result.loops === 1 ? "loop" : "loops"}</span><span><strong>${result.suggestions}</strong> ${result.suggestions === 1 ? "suggestion" : "suggestions"}</span>`}</div>
     <p class="topology-copy">${summaryCopy(result)} <span class="topology-scope">${esc(result.scope)}</span></p>
-    </div></div><div class="topology-summary-actions"><button type="button" class="btn topology-primary" data-action="view"><span class="material-symbol" aria-hidden="true">hub</span>View topology</button>
+    </div></div><div class="topology-summary-actions"><button type="button" class="btn topology-primary" data-action="view">View topology</button>
       ${result.findings.some(finding => !finding.informational) ? `<button type="button" class="btn" data-action="review">${result.status === "healthy" ? `Review ${result.suggestions === 1 ? "suggestion" : "suggestions"}` : "Review findings"}</button>` : ""}</div>`;
   host.querySelectorAll("button").forEach(button => button.addEventListener("click", async () => {
     button.disabled = true;

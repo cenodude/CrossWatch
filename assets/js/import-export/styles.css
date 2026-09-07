@@ -3,7 +3,7 @@
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 #page-import_export{background:transparent;border:0;box-shadow:none;padding:0;overflow:visible}
-.ie-page{--ie-panel:var(--panel,#101318);--ie-card:var(--ie-panel);--ie-text:var(--fg,#edf0f8);--ie-muted:var(--muted,#939daf);--ie-border:var(--border,#29313b);--ie-accent:var(--accent,#8057ff);max-width:1500px;margin:0 auto;padding:24px 16px 48px;color:var(--ie-text);font:14px/1.5 var(--font,system-ui,sans-serif)}
+.ie-page{--ie-panel:var(--panel,#101318);--ie-card:var(--ie-panel);--ie-text:var(--fg,#edf0f8);--ie-muted:var(--muted,#939daf);--ie-border:var(--border,#29313b);--ie-accent:var(--accent,#8057ff);max-width:1500px;margin:0 auto;padding:12px 8px 48px;color:var(--ie-text);font:14px/1.5 var(--font,system-ui,sans-serif)}
 .ie-page *{box-sizing:border-box}
 .ie-page [hidden]{display:none!important}
 .ie-page :is(button,input,select){font:inherit;text-transform:none;letter-spacing:normal}
@@ -18,12 +18,12 @@
 .ie-page input[type=checkbox]:disabled{opacity:.35;cursor:default}
 .ie-page fieldset{border:0;padding:0;margin:0;min-width:0}
 .ie-page fieldset:disabled{opacity:.65}
-.ie-back{display:inline-flex;align-items:center;gap:8px;color:var(--ie-muted);text-decoration:none;margin-bottom:28px}
+.ie-back{display:inline-flex;align-items:center;gap:8px;color:var(--ie-muted);text-decoration:none;font-size:13px}
 .ie-back:hover{color:var(--ie-text)}
-.ie-page .ie-header{position:static;display:flex;align-items:center;justify-content:space-between;gap:20px;background:none;border:0;box-shadow:none;padding:0;margin:0 0 28px;z-index:auto}
+.ie-page .ie-header{position:static;display:flex;align-items:center;justify-content:space-between;gap:16px;background:none;border:0;box-shadow:none;padding:14px 0;margin:0;z-index:auto}
 .ie-eyebrow{display:block;color:var(--ie-accent);font-size:10px;font-weight:700;letter-spacing:.16em}
-.ie-header h1{font-size:clamp(30px,3.2vw,44px);letter-spacing:-.045em;font-weight:800;line-height:1.15;margin:8px 0 12px}
-.ie-header>span{font-size:64px;color:var(--ie-accent);opacity:.55;margin-right:12px}
+.ie-header h1{font-size:32px;letter-spacing:-.035em;font-weight:800;line-height:1.2;margin:5px 0 0}
+.ie-header>span{font-size:32px;color:var(--ie-accent);opacity:.55;margin-right:8px}
 .ie-tabs{display:flex;gap:24px;border-bottom:1px solid var(--ie-border);margin-bottom:24px}
 .ie-tabs button{display:flex;align-items:center;gap:8px;padding:12px 2px 16px;border:0;border-bottom:2px solid transparent;border-radius:0;background:none;color:var(--ie-muted);font-weight:500;box-shadow:none}
 .ie-tabs button[aria-pressed=true]{color:var(--ie-text);border-color:var(--ie-accent)}

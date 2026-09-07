@@ -951,19 +951,27 @@
 
   const ensureRoot = () => {
     if (root && root.isConnected) return root;
+    if (!document.getElementById("cw-quick-add-style")) {
+      const style = document.createElement("link");
+      style.id = "cw-quick-add-style";
+      style.rel = "stylesheet";
+      style.href = `/assets/css/quick-add.css?v=${encodeURIComponent(window.APP_VERSION || "1")}`;
+      document.head.appendChild(style);
+    }
     root = document.createElement("div");
     root.id = ROOT_ID;
     root.className = "hidden";
     root.innerHTML = `
-      <div class="cw-qa-shell cw-qa-desktop" aria-hidden="true">
-        <button type="button" class="cw-qa-tab" aria-label="Open quick add item" title="Click to Quick Add, drag to move">
-          <span class="cw-qa-tab-text">Quick Add</span>
-          <span class="material-symbols-rounded cw-qa-grip" aria-hidden="true">drag_indicator</span>
+      <div class="cw-qa-shell cw-qa-desktop">
+        <button type="button" class="cw-qa-tab" aria-label="Quick add a movie or show" title="Quick add">
+          <span class="cw-qa-plus material-symbols-rounded" aria-hidden="true">add</span>
+          <span class="cw-qa-tab-text"><strong>Quick add</strong><small>Movies &amp; shows</small></span>
         </button>
+        <button type="button" class="cw-qa-grip" aria-label="Move Quick add up or down" title="Drag to move, or use the arrow keys"><span class="material-symbols-rounded" aria-hidden="true">drag_indicator</span></button>
       </div>
       <button type="button" class="cw-qa-shell cw-qa-fab" aria-label="Quick Add item" title="Click to Quick Add, drag to move">
-        <span class="material-symbols-rounded" aria-hidden="true">add</span>
-        <span>Quick Add</span>
+        <span class="cw-qa-plus material-symbols-rounded" aria-hidden="true">add</span>
+        <span>Quick add</span>
       </button>
     `;
     document.body.appendChild(root);
@@ -1055,6 +1063,14 @@
       event.stopPropagation();
       beginDrag(event, "desktop");
     });
+    gripBtn?.addEventListener("keydown", event => {
+      if (!["ArrowUp", "ArrowDown"].includes(event.key)) return;
+      event.preventDefault();
+      const current = parseFloat(root.style.getPropertyValue("--cw-qa-desktop-top")) || 66;
+      const next = clamp(current + (event.key === "ArrowUp" ? -3 : 3), 18, 88);
+      root.style.setProperty("--cw-qa-desktop-top", `${next}%`);
+      writeStoredNumber(DESKTOP_POS_KEY, next);
+    });
     window.addEventListener("pointermove", moveDrag);
     window.addEventListener("pointerup", endDrag);
     window.addEventListener("pointercancel", endDrag);
@@ -1086,6 +1102,8 @@
     el.classList.toggle("is-desktop", showDesktop);
     el.classList.toggle("is-mobile", showMobile);
     el.classList.toggle("is-ready", canOpen());
+    el.querySelector(".cw-qa-tab").disabled = !canOpen();
+    el.querySelector(".cw-qa-fab").disabled = !canOpen();
     if (!showDesktop) el.classList.remove("is-open", "is-peek");
     if (showDesktop) maybePeek();
   };
