@@ -17,6 +17,19 @@ from cw_platform.log_context import log_run_id, log_pair_id
 from cw_platform.orchestrator._pairs import _pair_env
 
 
+@pytest.mark.parametrize("text,tag,expected", [
+    ("[MDBLIST:history] INFO index_done", "SYNC", "MDBLIST"),
+    ("[SYNC] [PLEX-WATCH] INFO playing", "SYNC", "PLEX-WATCH"),
+    ("[SIMKL:history:episodes] DEBUG read", "SYNC", "SIMKL"),
+    ("[A:" * 10000, "SYNC", "SYNC"),
+    ("[A:" * 10000 + "[TRAKT:history] INFO read", "SYNC", "TRAKT"),
+    ("[A:" * 10000 + "]", "SYNC", "SYNC"),
+    ('[SYNC] {"provider":"MDBLIST","event":"debug"}', "SYNC", "MDBLIST"),
+])
+def test_provider_tags_handle_valid_and_unclosed_brackets(text, tag, expected):
+    assert describe_line(text, tag)[2] == expected
+
+
 @pytest.fixture
 def store(tmp_path):
     result = LogArchive(tmp_path / 'logs.db')

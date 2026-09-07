@@ -30,7 +30,7 @@ def describe_line(text: str, tag: str) -> tuple[str, str, str]:
     level = (matches[-1].upper() if matches else "WARN" if text.startswith("[!]") else "INFO")
     level = {"WARNING": "WARN", "CRITICAL": "ERROR", "SUCCESS": "INFO"}.get(level, level)
     provider = tag.upper()
-    tags = re.findall(r"\[([A-Z][A-Z0-9_-]*)(?::[^\]]+)?\]", text)
+    tags = re.findall(r"\[([A-Z][A-Z0-9_-]*)(?::[^\[\]]+)?\]", text)
     if tags:
         provider = tags[-1]
     try:
