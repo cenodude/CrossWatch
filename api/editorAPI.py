@@ -42,6 +42,35 @@ router = APIRouter(prefix="/api/editor", tags=["editor"])
 _STATE_BASE = Path(CONFIG_DIR)
 
 
+@router.get("/mappings")
+def api_saved_mappings(request: Request, q: str = Query(default="", max_length=256),
+                       provider: str = "", instance: str = "", feature: str = "",
+                       offset: int = Query(default=0, ge=0), limit: int = Query(default=50, ge=1, le=100),
+                       user_profile: str = Query(default="", max_length=64)):
+    from cw_platform.access_policy import profile_instances_map, profile_allows_instance
+    from cw_platform.provider_instances import normalize_user_profile_id
+    from services.saved_mappings import saved_corrections
+
+    cfg, user = load_config(), request_user(request)
+    if user and not user.get("is_admin") and not (user.get("permissions") or {}).get("write"):
+        raise HTTPException(403, "Write permission required")
+    profile = normalize_user_profile_id(user_profile)
+    if user_profile.strip() and not profile:
+        raise HTTPException(400, "Invalid profile")
+    scope = profile_instances_map(cfg, profile) if profile else {}
+    rows = [row for row in saved_corrections(_load_policy())
+            if user_can_access_instance(cfg, user, row["provider"], row["instance"])
+            and (not profile or profile_allows_instance(scope, row["provider"], row["instance"]))]
+    sources = sorted({(row["provider"], row["instance"]) for row in rows})
+    query = q.strip().casefold()
+    rows = [row for row in rows if (not provider or str(row.get("provider") or "").casefold() == provider.casefold())
+            and (not instance or row["instance"] == instance) and (not feature or row["feature"] == feature)
+            and (not query or query in json.dumps(row, ensure_ascii=False).casefold())]
+    rows.sort(key=lambda row: (-(row["saved_at"] or 0), row["provider"], row["instance"], row["feature"], row["key"]))
+    return dict(ok=True, items=rows[offset:offset + limit], total=len(rows), offset=offset, limit=limit,
+                sources=[dict(provider=p, instance=i) for p, i in sources])
+
+
 def _is_admin_request(request: Request | None) -> bool:
     user = request_user(request)
     return not user or bool(user.get("is_admin"))
@@ -291,56 +320,71 @@ def _save_policy_manual(
     *,
     merge: bool = False,
 ) -> None:
-    adds_items = _canonicalize_manual_items(adds_items, kind)
+    _save_policy_manual_batch([(kind, provider, adds_items, blocks, provider_instance)], merge=merge)
+
+
+def _save_policy_manual_batch(edits, *, merge=True, mappings=None):
+    prepared = [(kind, provider, _canonicalize_manual_items(items, kind), blocks, instance)
+                for kind, provider, items, blocks, instance in edits]
 
     def _mutate(raw: dict[str, Any]) -> None:
-        providers = raw.get("providers")
-        if not isinstance(providers, dict):
-            providers = {}
-            raw["providers"] = providers
+        for kind, provider, adds_items, blocks, provider_instance in prepared:
+            providers = raw.get("providers")
+            if not isinstance(providers, dict):
+                providers = {}
+                raw["providers"] = providers
 
-        key = None
-        if provider in providers:
-            key = provider
-        else:
-            pl = str(provider).lower()
-            for k in providers.keys():
-                if str(k).lower() == pl:
-                    key = str(k)
-                    break
-        if key is None:
-            key = provider
-            providers[key] = {}
+            key = None
+            if provider in providers:
+                key = provider
+            else:
+                pl = str(provider).lower()
+                for k in providers.keys():
+                    if str(k).lower() == pl:
+                        key = str(k)
+                        break
+            if key is None:
+                key = provider
+                providers[key] = {}
 
-        node = providers.get(key)
-        if not isinstance(node, dict):
-            node = {}
-            providers[key] = node
+            node = providers.get(key)
+            if not isinstance(node, dict):
+                node = {}
+                providers[key] = node
 
-        inst = normalize_instance_id(provider_instance)
-        if inst != "default":
-            insts = node.get("instances")
-            if not isinstance(insts, dict):
-                insts = {}
-                node["instances"] = insts
-            in_node = insts.get(inst)
-            if not isinstance(in_node, dict):
-                in_node = {}
-                insts[inst] = in_node
-            node = in_node
+            inst = normalize_instance_id(provider_instance)
+            if inst != "default":
+                insts = node.get("instances")
+                if not isinstance(insts, dict):
+                    insts = {}
+                    node["instances"] = insts
+                in_node = insts.get(inst)
+                if not isinstance(in_node, dict):
+                    in_node = {}
+                    insts[inst] = in_node
+                node = in_node
 
-        f = node.get(kind)
-        if not isinstance(f, dict):
-            f = {}
-            node[kind] = f
+            f = node.get(kind)
+            if not isinstance(f, dict):
+                f = {}
+                node[kind] = f
 
-        f["blocks"] = _merge_blocks(f.get("blocks") or [], blocks or []) if merge else list(blocks or [])
+            f["blocks"] = _merge_blocks(f.get("blocks") or [], blocks or []) if merge else list(blocks or [])
 
-        adds = f.get("adds")
-        if not isinstance(adds, dict):
-            adds = {}
-            f["adds"] = adds
-        adds["items"] = {**(adds.get("items") or {}), **adds_items} if merge else dict(adds_items or {})
+            adds = f.get("adds")
+            if not isinstance(adds, dict):
+                adds = {}
+                f["adds"] = adds
+            adds["items"] = {**(adds.get("items") or {}), **adds_items} if merge else dict(adds_items or {})
+            records = dict(f.get("mappings") or {})
+            for target, record in (mappings or {}).get((kind, provider, inst), {}).items():
+                previous = records.get(target) or records.get(record.get("original_key"))
+                if isinstance(previous, dict) and previous.get("original"):
+                    record = {**record, "original": previous["original"], "original_key": previous["original_key"]}
+                records[target] = record
+            if records:
+                f["mappings"] = {key: value for key, value in records.items() if key in adds["items"]}
+
 
 
     try:
@@ -414,6 +458,8 @@ def _merge_policy(into: dict[str, Any], src: dict[str, Any], mode: str) -> dict[
                 for mk, mv in _canonicalize_manual_items({str(k): v for k, v in items_in.items()}, kind).items():
                     merged[mk] = _merge_manual_item(merged.get(mk), mv)
                 adds_out["items"] = merged
+            if isinstance(f.get("mappings"), dict):
+                t["mappings"] = {**(t.get("mappings") or {}), **f["mappings"]}
 
     for p, node in prov_in.items():
         if not isinstance(node, dict):
@@ -1077,7 +1123,22 @@ def api_editor_save_state(payload: dict[str, Any] = Body(...), request: Request 
 
         blocks = _normalize_blocks(payload.get("blocks"))
 
-        _save_policy_manual(kind, provider, items, blocks, inst)
+        from services.saved_mappings import mapping_details
+        import time
+        records = {}
+        original_keys = payload.get("mapping_originals")
+        if isinstance(original_keys, dict) and original_keys:
+            baseline = _load_state_items(kind, provider, inst)
+            previous, _ = _load_policy_manual(kind, provider, inst)
+            for input_key, corrected in (payload.get("items") or {}).items():
+                old_key = original_keys.get(input_key)
+                original = previous.get(old_key) or baseline.get(old_key) if isinstance(old_key, str) else None
+                if isinstance(original, dict) and isinstance(corrected, dict) and mapping_details(original) != mapping_details(corrected):
+                    target = next(iter(_canonicalize_manual_items({input_key: corrected}, kind)), None)
+                    if target:
+                        records[target] = dict(original_key=old_key, original=mapping_details(original),
+                                               saved_at=int(time.time()), origin="editor")
+        _save_policy_manual_batch([(kind, provider, items, blocks, inst)], mappings={(kind, provider, inst): records})
         ts = None
         try:
             ts = _policy_mtime()

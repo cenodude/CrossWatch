@@ -79,6 +79,7 @@
     }
     state.source = ctx.normalizeSource(state.source);
     state.loading = true;
+    state.loadError = null;
     ctx.setTag("warn", "Loading");
     try {
       const params = new URLSearchParams({ kind: state.kind, source: state.source });
@@ -175,6 +176,7 @@
         ctx.setStatus(state.playlistWarnings[0]);
       }
     } catch (e) {
+      state.loadError = e;
       console.error(e);
       const msg = String(e || "");
 
