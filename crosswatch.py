@@ -456,6 +456,8 @@ def _non_admin_permission_allowed(user: dict, path: str, method: str = "GET") ->
         return bool(perms.get("dashboard"))
     if path == "/api/logs/stream":
         return write
+    if path == "/api/logs/archive" or path.startswith("/api/logs/archive/"):
+        return write
     if path == "/api/logs/watcher":
         return False
     if path == "/api/pairs":
@@ -873,6 +875,9 @@ def ansi_to_html(line: str) -> str:
 def _append_log_to_buffer(tag: str, raw_line: str) -> None:
     t = _norm_log_tag(tag)
     safe_line = _redact_secrets_in_text(raw_line)
+    if t in {"SYNC", DIAG_LOG_TAG} or t in WATCH_LOG_TAGS:
+        from services.log_archive import capture
+        capture(t, safe_line, watcher=t in WATCH_LOG_TAGS)
     html = ansi_to_html(safe_line.rstrip("\n"))
     buf = _get_log_buf(t)
     buf.append(html)

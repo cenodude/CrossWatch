@@ -344,6 +344,10 @@
                 <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M8 5l11 7-11 7V5z"></path></svg>
               </button>
 
+              <button type="button" class="icon-btn" data-tip="Latest logs" aria-label="Latest logs" data-pair-logs="${esc(pr.id)}">
+                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="m7 9 3 3-3 3M13 15h4"></path></svg>
+              </button>
+
               <label class="icon-btn power ${enabled ? "" : "off"}" data-tip="Enable / disable" role="switch" aria-checked="${enabled}">
                 <input class="sr-only" type="checkbox" name="pair-enabled" ${enabled ? "checked" : ""}
                   onchange="this.closest('.icon-btn.power')?.setAttribute('aria-checked', this.checked); window.cxToggleEnable && window.cxToggleEnable('${pr.id}', this.checked, this)">
@@ -440,6 +444,8 @@
   document.addEventListener("cx-state-change", renderOrEnhance);
   window.addEventListener("auth-changed", () => renderOrEnhance());
   document.addEventListener("click", event => {
+    const logs = event.target.closest?.('[data-pair-logs]');
+    if (logs) window.openLogs?.({pairId:logs.dataset.pairLogs, latest:true});
     const button = event.target.closest?.("[data-interactive-pair]");
     if (button && !button.disabled) location.hash = `interactive_sync?pair=${encodeURIComponent(button.dataset.interactivePair)}`;
   });

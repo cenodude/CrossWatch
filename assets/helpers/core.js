@@ -83,7 +83,7 @@
   const statusCacheKey = () => `${STATUS_CACHE_KEY}.${String(window.CW?.OverviewProfile?.id || "").trim() || "all"}`;
   const DETAILS_MAX_LINES = 300;
   const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
-  const ROUTE_TABS = new Set(["main", "watchlist", "playback_progress", "snapshots", "playlists", "editor", "analyzer", "import_export", "interactive_sync", "settings"]);
+  const ROUTE_TABS = new Set(["main", "watchlist", "playback_progress", "snapshots", "playlists", "editor", "analyzer", "events", "logs", "import_export", "interactive_sync", "settings"]);
   const SETTINGS_PANES = new Set(["overview", "providers", "sync", "scrobbler", "scheduling", "app", "maintenance"]);
   let routeSyncing = false;
 
@@ -110,7 +110,7 @@
     if (normalized === "main") return perms.dashboard !== false;
     if (normalized === "playback_progress") return perms.playback !== false;
     if (normalized === "watchlist") return perms.watchlist !== false;
-    if (["snapshots", "playlists", "editor", "analyzer", "import_export", "interactive_sync"].includes(normalized)) return perms.write === true;
+    if (["snapshots", "playlists", "editor", "analyzer", "events", "logs", "import_export", "interactive_sync"].includes(normalized)) return perms.write === true;
     return false;
   }
 
@@ -150,6 +150,8 @@
 
   function routeHash(tab, pane) {
     if (tab === "interactive_sync") return "#interactive_sync" + (window.location.hash.startsWith("#interactive_sync?") ? window.location.hash.slice(window.location.hash.indexOf("?")) : "");
+    if (tab === "logs") return "#logs" + (window.location.hash.startsWith("#logs?") ? window.location.hash.slice(window.location.hash.indexOf("?")) : "");
+    if (tab === "events") return "#events" + (window.location.hash.startsWith("#events?") ? window.location.hash.slice(window.location.hash.indexOf("?")) : "");
     if (tab === "main") return "";
     if (tab === "settings") {
       const settingsPane = normalizeSettingsPane(pane || window.__cwSettingsPane || "overview");
@@ -1029,7 +1031,7 @@
   }
 
   function setTabHeaderState(tab) {
-    ["main", "watchlist", "playback_progress", "snapshots", "playlists", "editor", "analyzer", "import_export", "settings"].forEach((name) => {
+    ["main", "watchlist", "playback_progress", "snapshots", "playlists", "editor", "analyzer", "events", "logs", "import_export", "settings"].forEach((name) => {
       byId(`tab-${name}`)?.classList.toggle("active", name === tab);
     });
   }
@@ -1045,6 +1047,8 @@
     byId("page-playlists")?.classList.toggle("hidden", tab !== "playlists");
     byId("page-editor")?.classList.toggle("hidden", tab !== "editor");
     byId("page-analyzer")?.classList.toggle("hidden", tab !== "analyzer");
+    byId("page-events")?.classList.toggle("hidden", tab !== "events");
+    byId("page-logs")?.classList.toggle("hidden", tab !== "logs");
     byId("page-import_export")?.classList.toggle("hidden", tab !== "import_export");
     byId("page-interactive_sync")?.classList.toggle("hidden", tab !== "interactive_sync");
     byId("page-settings")?.classList.toggle("hidden", tab !== "settings");
@@ -1091,12 +1095,14 @@
       const watchlistAllowed = perms.watchlist !== false;
       const playbackAllowed = perms.playback !== false;
       const writeAllowed = perms.write === true;
-      if (!(tab === "main" && dashboardAllowed) && !(tab === "watchlist" && watchlistAllowed) && !(tab === "playback_progress" && playbackAllowed) && !(["snapshots", "playlists", "editor", "analyzer", "import_export"].includes(tab) && writeAllowed)) tab = allowedRouteTab(tab);
+      if (!(tab === "main" && dashboardAllowed) && !(tab === "watchlist" && watchlistAllowed) && !(tab === "playback_progress" && playbackAllowed) && !(["snapshots", "playlists", "editor", "analyzer", "events", "logs", "import_export"].includes(tab) && writeAllowed)) tab = allowedRouteTab(tab);
     }
     writeRouteHash(tab);
 
     if (state.currentTab === tab) {
       if (tab === "interactive_sync") window.InteractiveSync?.refresh?.();
+      if (tab === "events") await window.EventsPage?.mount?.(byId("page-events"));
+      if (tab === "logs") await window.LogsPage?.mount?.(byId("page-logs"));
       if (tab === "settings") {
         const pane = normalizeSettingsPane(window.__cwSettingsPane || readRouteHash().pane || "overview");
         window.__cwSettingsPane = pane;
@@ -1109,6 +1115,8 @@
     const previousTab = state.currentTab;
     const isCurrentNavigation = () => navSeq === state.navSeq;
 
+    if (previousTab === "events") window.EventsPage?.hide?.();
+    if (previousTab === "logs") window.LogsPage?.hide?.();
     setTabHeaderState(tab);
     setPageVisibility(tab);
     document.dispatchEvent(new CustomEvent("tab-changed", { detail: { id: tab, tab } }));
@@ -1205,6 +1213,39 @@
         const root = byId("page-import_export");
         if (root) root.innerHTML = '<div class="cw-page-load-error">Import / Export failed to load. Refresh the page and try again.</div>';
         console.error("Import / Export failed to load", error);
+      }
+      return;
+    }
+
+    if (tab === "logs") {
+      try {
+        await ensurePageModule("logs", "/assets/js/logs.js", "LogsPage");
+        if (!isCurrentNavigation()) return;
+        await window.LogsPage.mount(byId("page-logs"));
+      } catch (error) {
+        if (!isCurrentNavigation()) return;
+        window.LogsPage?.unmount?.();
+        const root = byId("page-logs");
+        if (root) root.innerHTML = '<div class="cw-page-load-error">Logs failed to load. Refresh the page and try again.</div>';
+      }
+      return;
+    }
+
+    if (tab === "events") {
+      try {
+        const root = byId("page-events");
+        if (root && !root.children.length) {
+          root.innerHTML = '<div class="cw-page-loading" role="status">Loading events…</div>';
+        }
+        await ensurePageModule("events", "/assets/js/events/page.js", "EventsPage");
+        if (!isCurrentNavigation()) return;
+        await window.EventsPage.mount(byId("page-events"));
+      } catch (error) {
+        if (!isCurrentNavigation()) return;
+        window.EventsPage?.unmount?.();
+        const root = byId("page-events");
+        if (root) root.innerHTML = '<div class="cw-page-load-error">Events failed to load. Refresh the page and try again.</div>';
+        console.error("Events failed to load", error);
       }
       return;
     }

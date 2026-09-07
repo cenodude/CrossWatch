@@ -780,6 +780,22 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None, *, interactive
     scheduler_webhook_cfg: dict[str, Any] | None = None
     scheduler_start_sent = False
     was_cancelled = False
+    from cw_platform.log_context import log_run_id
+    log_token = log_run_id.set(str(run_id))
+    archived_run = None
+    try:
+        from services.log_archive import archive
+        log_cfg = _env()[0]()
+        requested = str(overrides.get("pair_id") or overrides.get("pair_scope") or "").strip()
+        raw_log_scope = overrides.get("pair_scope_ids")
+        scope = {str(value or '').strip() for value in raw_log_scope if str(value or '').strip()} if isinstance(raw_log_scope, list) else set()
+        log_pairs = [{key: p.get(key) for key in ("id", "source", "source_instance", "src_instance", "target", "target_instance", "dst_instance", "mode")}
+                     for p in log_cfg.get("pairs", []) if isinstance(p, dict) and coerce_bool(p.get("enabled", True), True)
+                     and (not requested or str(p.get("id")) == requested)
+                     and (not scope or str(p.get("id") or '').strip() in scope)]
+        archived_run = archive().start(str(run_id), log_pairs)
+    except Exception:
+        pass
     clear_cancel()
     _summary_reset()
     _summary_set("run_id", str(run_id))
@@ -1108,7 +1124,15 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None, *, interactive
         except Exception:
             pass
         clear_cancel()
+        if archived_run:
+            try:
+                snap = _summary_snapshot()
+                outcome = "cancelled" if was_cancelled else "failed" if snap.get("exit_code") not in (0, "0") or snap.get("errors") else "issues" if snap.get("unresolved") or snap.get("blocked") else "completed"
+                archive().finish(archived_run, outcome)
+            except Exception:
+                pass
         RUNNING_PROCS.pop("SYNC", None)
+        log_run_id.reset(log_token)
 
 def _lanes_enabled_defaults() -> dict[str, bool]:
     return {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": True, "collection": True}

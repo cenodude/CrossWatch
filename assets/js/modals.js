@@ -20,7 +20,6 @@ const { ModalRegistry } = await import(_cwVer('./modals/core/registry.js'));
 // Register modals
 ModalRegistry.register('pair-config', () => import(_cwVer('./modals/pair-config/index.js')));
 ModalRegistry.register('about',        () => import(_cwVer('./modals/about.js')));
-ModalRegistry.register('events',       () => import(_cwVer('./modals/events/index.js')));
 ModalRegistry.register('maintenance',  () => import(_cwVer('./modals/maintenance/index.js')));
 ModalRegistry.register('manual-watched', () => import(_cwVer('./modals/manual-watched/index.js')));
 ModalRegistry.register('insight-settings', () => import(_cwVer('./modals/insight-settings/index.js')));
@@ -55,7 +54,31 @@ window.closeAbout = async () => {
 };
 
 window.openAnalyzer = () => window.showTab ? window.showTab('analyzer') : (location.hash = 'analyzer');
-window.openEvents = (props = {}) => ModalRegistry.open('events', props);
+window.openLogs = (props = {}) => {
+  const query = new URLSearchParams({channel: props.channel || 'sync'});
+  if (props.runId) query.set('runId', props.runId);
+  if (props.pairId) query.set('pairId', props.pairId);
+  if (props.latest) query.set('latest', '1');
+  const hash = '#logs?' + query;
+  ModalRegistry.close();
+  if (!document.getElementById('page-logs') || !window.showTab) { location.href = '/?main=1' + hash; return; }
+  if (location.hash !== hash) history.pushState(null, '', hash);
+  return window.showTab('logs');
+};
+window.openEvents = (props = {}) => {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries({ groupId: props.groupId || props.eventGroupId, runId: props.runId || props.run_id, domain: props.domain, visibility: props.visibility, mode: props.mode })) {
+    if (value) query.set(key, String(value));
+  }
+  const hash = '#events' + (query.size ? `?${query}` : '');
+  ModalRegistry.close();
+  if (!document.getElementById('page-events') || !window.showTab) {
+    location.href = '/?main=1' + hash;
+    return;
+  }
+  if (location.hash !== hash) history.pushState(null, '', hash);
+  return window.showTab('events');
+};
 window.openStatisticsModal = (props = {}) => ModalRegistry.open('statistics', props);
 window.openExporter = () => window.showTab ? window.showTab('import_export') : (location.hash = 'import_export');
 
