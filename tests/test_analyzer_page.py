@@ -9,10 +9,11 @@ from ui_frontend import get_index_html
 
 
 @pytest.mark.parametrize("admin,write,visible", [(True, False, True), (False, True, True), (False, False, False)])
-def test_analyzer_page_respects_existing_write_access(admin, write, visible):
+@pytest.mark.parametrize("page,label", [("analyzer", "Analyzer"), ("events", "Events"), ("logs", "Logs")])
+def test_analyzer_page_respects_existing_write_access(admin, write, visible, page, label):
     html = get_index_html(include_admin=admin, user={"permissions": {"write": write, "dashboard": True}})
-    assert ('id="page-analyzer"' in html) is visible
-    assert 'id="tab-analyzer"' not in html
+    assert (f'id="page-{page}"' in html) is visible
+    assert f'id="tab-{page}"' not in html
     if visible:
-        assert 'html[data-cw-initial-tab="analyzer"] #page-analyzer' in html
-        assert 'analyzer: "Analyzer"' in html
+        assert f'html[data-cw-initial-tab="{page}"] #page-{page}' in html
+        assert f'{page}: "{label}"' in html

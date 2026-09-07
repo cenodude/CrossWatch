@@ -143,3 +143,7 @@
 
 .an-page .an-tabs,.an-page .an-table-scroll,.an-page .an-detail{scrollbar-width:thin;scrollbar-color:var(--an-border) transparent}
 @media(max-width:720px){.an-page .an-header{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 12px}.an-page .an-header>div{display:contents}.an-page .an-header .an-eyebrow{grid-column:1/-1}.an-page .an-header h1{grid-column:1;grid-row:2;font-size:26px;white-space:nowrap}.an-page .an-header p{grid-column:1/-1;grid-row:3}.an-page #an-run{grid-column:2;grid-row:2;min-height:38px;padding:8px 10px;font-size:12px}.an-page .an-tabs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));overflow:visible;gap:6px}.an-page .an-tab{justify-content:flex-start;min-width:0}.an-page .an-tab:last-child{grid-column:1/-1}.an-page .an-notice{display:grid;grid-template-columns:24px minmax(0,1fr);align-items:start}.an-page .an-notice>.an-button{grid-column:2;justify-self:start;margin-left:0}.an-page .an-scope-bar>label{display:grid;gap:8px}}
+/* Mapping actions share the Analyzer's compact icon controls. */
+.an-page .an-mapping-column{width:56px;text-align:right;white-space:nowrap}
+.an-page .an-mapping-column .an-icon-button:hover{color:var(--accent,#8057ff);border-color:var(--accent,#8057ff)}
+.an-page .an-mapping-notice{padding:12px 16px;border:1px solid var(--border,#2a2e38);border-radius:12px;background:var(--panel,#101318);color:var(--muted,#959eab)}

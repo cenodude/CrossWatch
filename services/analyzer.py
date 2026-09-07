@@ -18,6 +18,7 @@ import threading
 import requests
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
+from services.analyzer_mapping import MappingRequest, handle_mapping
 
 from cw_platform.access_policy import filter_pairs_for_user, pair_ids_for_user, request_user
 from cw_platform.pair_scope import pair_feature_scope
@@ -4498,6 +4499,11 @@ def api_state(
         "limit": page_size,
         "has_more": start + len(page) < len(items),
     }
+
+
+@router.post("/analyzer/mapping", response_class=JSONResponse)
+def api_mapping(payload: MappingRequest, request: Request):
+    return handle_mapping(payload, request)
 
 
 @router.get("/analyzer/problems", response_class=JSONResponse)
