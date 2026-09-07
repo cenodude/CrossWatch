@@ -1,13 +1,13 @@
 <section class="cw-hero">
-  <a class="cw-hero-media" href="https://github.com/user-attachments/assets/e481fb6a-bc71-4f04-85c4-7c1012c6c84e" aria-label="Open CrossWatch interface preview">
-    <img width="1672" height="941" alt="CrossWatch interface preview" src="https://github.com/user-attachments/assets/e481fb6a-bc71-4f04-85c4-7c1012c6c84e">
+  <a class="cw-hero-media" href="https://github.com/user-attachments/assets/88602f46-8974-44f9-afca-5c9f977452db" aria-label="Open CrossWatch interface preview">
+    <img width="1672" height="941" alt="CrossWatch interface preview" src="https://github.com/user-attachments/assets/88602f46-8974-44f9-afca-5c9f977452db">
   </a>
   <div class="cw-hero-shade"></div>
   <div class="cw-hero-inner">
     <img class="cw-logo" src="images/CrossWatch.png" alt="CrossWatch">
     <p class="cw-kicker">Media sync hub</p>
     <h1>CrossWatch</h1>
-    <p class="cw-lede">Keep your media servers, media clients and trackers moving together from one local web UI.</p>
+    <p class="cw-lede">Keep your media servers, media clients and trackers in sync. Review changes before applying them with Interactive Sync.</p>
     <div class="cw-actions" aria-label="CrossWatch links">
       <a class="cw-button is-primary" href="https://wiki.crosswatch.app/getting-started/installation">Install CrossWatch</a>
       <a class="cw-button" href="images/screenshots/cw1.png" data-cw-gallery="crosswatch">View screenshots</a>
@@ -193,9 +193,14 @@
 
 <section class="cw-feature-grid">
   <article>
+    <span class="cw-token">REVIEW</span>
+    <h3>Interactive Sync</h3>
+    <p>Review additions, updates and removals before applying them. Resolve conflicts and correct titles, IDs, seasons and episodes.</p>
+  </article>
+  <article>
     <span class="cw-token">SYNC</span>
     <h3>Watchlists, ratings, history and progress</h3>
-    <p>Keep core media state aligned across media servers and trackers, including unfinished playback records where supported.</p>
+    <p>Keep media state aligned across servers and trackers, including collections, separate rewatches and unfinished playback where supported.</p>
   </article>
   <article>
     <span class="cw-token">HUB</span>
@@ -205,7 +210,7 @@
   <article>
     <span class="cw-token">LIVE</span>
     <h3>Watcher and webhooks</h3>
-    <p>Route Watcher play events from Plex, Emby, Jellyfin and Kodi to Trakt, SIMKL, MDBList, BingeBase, FlickList, Floppy or the CW local tracker. Webhooks support Plex, Emby and Jellyfin to Trakt, SIMKL, MDBList, BingeBase or FlickList, without needing Plex Pass or Emby Premiere.</p>
+    <p>Send play events from Plex, Emby, Jellyfin, Kodi or Scrob to supported trackers with Watcher, without Plex Pass or Emby Premiere. Webhooks are also available for Plex, Emby and Jellyfin.</p>
   </article>
   <article>
     <span class="cw-token">SAFE</span>
@@ -214,13 +219,23 @@
   </article>
   <article>
     <span class="cw-token">TOOLS</span>
-    <h3>Analyzer, editor and events</h3>
-    <p>Find stuck items, inspect sync runs, adjust records, block noisy matches and clean up provider state from the UI.</p>
+    <h3>Analyzer and saved mappings</h3>
+    <p>Find missing items and correct mappings for pending retries in Analyzer. Use the Editor to inspect, add or block items and review or edit saved mappings.</p>
+  </article>
+  <article>
+    <span class="cw-token">ROUTES</span>
+    <h3>Sync topology advisor</h3>
+    <p>Visualize your sync routes and identify overlapping paths between providers.</p>
+  </article>
+  <article>
+    <span class="cw-token">LOGS</span>
+    <h3>Events and live logs</h3>
+    <p>Search sync history and open logs for a run. Filter live and saved logs by pair or run, highlight errors and keep logs for later.</p>
   </article>
   <article>
     <span class="cw-token">ANIME</span>
-    <h3>AniList matching support</h3>
-    <p>Anime ID mapping powered by AniBridge helps CrossWatch match anime cleanly across supported providers.</p>
+    <h3>Anime ID mapping</h3>
+    <p>Match anime across AniList, SIMKL and CW tracker pairs with AniBridge, animeApi and custom mappings. Watcher and webhooks also support anime mapping for supported providers.</p>
   </article>
 </section>
 
@@ -237,13 +252,13 @@
   </div>
   <div>
     <span>03</span>
-    <strong>Automate</strong>
-    <p>Run manually, schedule jobs, or trigger with Watcher and/or webhooks.</p>
+    <strong>Sync</strong>
+    <p>Review changes with Interactive Sync, run automatically on a schedule or send play events through Watcher and webhooks.</p>
   </div>
   <div>
     <span>04</span>
-    <strong>Review</strong>
-    <p>Use stats, events, captures and tools.</p>
+    <strong>Follow up</strong>
+    <p>Open notifications for sync progress, pending reviews, reports and release updates. Use Events and Logs to investigate problems.</p>
   </div>
 </section>
 
