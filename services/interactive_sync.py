@@ -106,23 +106,25 @@ def build(session: Session, cfg: dict[str, Any], choices: dict[str, str], *, sto
     return plan, summary
 
 
-def refresh(session: Session, cfg: dict[str, Any], choices: dict[str, str], *, restart_progress=True):
+def refresh(session: Session, cfg: dict[str, Any], choices: dict[str, str], *, restart_progress=True, corrections=()):
     if restart_progress:
         session.progress.begin("preview")
     version = mapping_version(cfg)
     store = ReviewStore()
     try:
         plan, summary = build(session, cfg, choices, store=store)
-        _finish_review(session, cfg, version, plan, summary, store)
+        _finish_review(session, cfg, version, plan, summary, store, corrections=corrections)
     except Exception:
         if session.store is not store:
             store.close()
         raise
 
 
-def _finish_review(session, cfg, version, plan, summary, store):
+def _finish_review(session, cfg, version, plan, summary, store, *, corrections=()):
     session.progress.set_stage("finalizing", "Preparing pages and preserving selections")
     store.finish(session.store)
+    if summary.get("ok"):
+        store.select_corrected(corrections)
     with LOCK:
         session.close()
         session.store = store
@@ -136,10 +138,16 @@ def _finish_review(session, cfg, version, plan, summary, store):
         session.report = None
         session.status = "review" if summary.get("ok") else "error"
         session.message = "Review the proposed changes. Nothing has been applied." if summary.get("ok") else "The plan could not be completed. Check provider status and refresh."
+        if corrections and summary.get("ok"):
+            session.message = "Mappings saved and the plan recalculated. Review the corrected changes before applying."
         if summary.get("cancelled"):
             session.message = "Reading cancelled. Refresh to build a new plan."
         session.touched = time.monotonic()
         session.progress.finish("cancelled" if summary.get("cancelled") else session.status, session.message)
+
+
+def refresh_mappings(session, cfg, choices, corrections):
+    refresh(session, cfg, choices, corrections=corrections)
 
 
 def _apply_needs_review(session, selected, reason):

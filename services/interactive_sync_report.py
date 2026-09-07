@@ -123,6 +123,8 @@ class SyncReport:
 
     def record(self, feature, src, dst, src_instance, dst_instance, mode, result):
         totals = {key: count(result.get(key)) for key in COUNTERS}
+        manual_excluded = min(totals["blocked"], count(result.get("manual_excluded")))
+        totals["blocked"] -= manual_excluded
         destinations = []
         if mode == "two-way" and feature != "playlists":
             for side, provider, instance in (("A", src, src_instance), ("B", dst, dst_instance)):
@@ -141,19 +143,25 @@ class SyncReport:
                 totals[key] += count(result.get(f"{key}_to_A")) + count(result.get(f"{key}_to_B"))
         elif feature != "playlists":
             destinations.append(dict(provider=dst, instance=dst_instance, **totals))
-        self.features.append(dict(feature=feature, **totals, destinations=destinations))
+        self.features.append(dict(feature=feature, **totals, manual_excluded=manual_excluded, destinations=destinations))
 
     def finish(self, session, execution, result):
         totals = {key: count(result.get(key)) if result is not None else sum(row[key] for row in self.features) for key in COUNTERS}
+        manual_excluded = sum(row["manual_excluded"] for row in self.features)
+        engine_blocked = totals["blocked"] if result is not None else totals["blocked"] + manual_excluded
+        if result is not None:
+            manual_excluded = min(totals["blocked"], manual_excluded)
+            totals["blocked"] -= manual_excluded
         requested = len(execution.selected)
         not_reached = len(execution.selected - execution.seen)
         cancelled = self.cancelled or bool((result or {}).get("cancelled"))
         outcome = "cancelled" if cancelled else "incomplete" if result is None or not result.get("ok", True) else "attention" if not_reached or any(totals[k] for k in ("errors", "unresolved", "blocked")) or self.notices else "success"
         counts = session.store.counts if session.store else {}
-        return dict(version=2, run_id="interactive-" + session.id, pair=dict(session.pair),
+        return dict(version=3, run_id="interactive-" + session.id, pair=dict(session.pair),
                     started_at=timestamp(self.started), finished_at=timestamp(time.time()),
                     duration_seconds=session.progress.public().get("elapsed_seconds", 0),
                     outcome=outcome, totals=totals, requested=requested,
+                    manual_excluded=manual_excluded, engine_blocked=engine_blocked,
                     proposed=count(counts.get("changes")),
                     not_selected=max(0, count(counts.get("changes")) - requested),
                     reached_execution=requested - not_reached, not_reached=not_reached,
@@ -163,5 +171,5 @@ class SyncReport:
                     issue_details_omitted=sum(self.detail_omitted.values()),
                     review_notices=session.plan.notices[:100],
                     requests=session.progress.public().get("requests", 0),
-                    accounting_note="Totals use the existing sync engine's provider results. Skips can include items already present. Errors and protection counts can overlap or describe a whole batch; they are not an item-by-item receipt. Playlist totals count playlist contents and ordering operations.",
+                    accounting_note="Totals use the existing sync engine's provider results. Mapping and manual exclusions are shown separately from blocked items; the raw engine blocked count includes both. Skips can include items already present. Errors and protection counts can overlap or describe a whole batch; they are not an item-by-item receipt. Playlist totals count playlist contents and ordering operations.",
                     incomplete_note="Some writes may have completed before the interruption without final counts. Check Events before starting another sync." if outcome in ("cancelled", "incomplete") else "")

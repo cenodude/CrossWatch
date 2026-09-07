@@ -54,6 +54,32 @@ def test_fifty_thousand_rows_have_bounded_responses_and_server_selection(api_cli
                          status_bytes=len(status.content), last_page_bytes=len(last_response.content), sqlite_bytes=session.store.path.stat().st_size)))
 
 
+def test_mapping_rows_filter_selection_before_paging(api_client):
+    client, session, api = api_client
+    session.close()
+    session.store = ReviewStore()
+    session.plan = InteractivePlan(rows=session.store.rows, conflicts=session.store.conflicts, copy_rows=False)
+    session.plan.filter("history", "DST", "default", "remove", (item(i) for i in range(300)), source="SRC")
+    session.plan.filter("history", "DST", "default", "add", (item(i) for i in range(300, 5300)), source="SRC")
+    session.store.finish()
+    all_rows = list(session.store.rows.values())
+    chosen = [r["id"] for r in all_rows[:300] + all_rows[-3:]]
+    session.store.select(False)
+    session.store.select(True, ids=chosen)
+    params = dict(revision=1, selected_only=True, editable_only=True, limit=2)
+    first = client.get(f"/api/interactive-sync/{session.id}/rows", params=params).json()
+    last = client.get(f"/api/interactive-sync/{session.id}/rows", params={**params, "offset": 2}).json()
+    assert first["total"] == last["total"] == 3
+    assert len(first["items"]) == 2 and len(last["items"]) == 1
+    returned = first["items"] + last["items"]
+    assert {r["id"] for r in returned} == set(chosen[-3:])
+    assert all(r["selected"] and r["operation"] == "add" for r in returned)
+    assert session.store.counts["selected"] == 303
+    session.store.select(False)
+    empty = client.get(f"/api/interactive-sync/{session.id}/rows", params=params).json()
+    assert empty["total"] == 0 and empty["items"] == []
+
+
 def test_conflicts_share_bounded_paging(api_client):
     client, session, api = api_client
     for i in range(1200):

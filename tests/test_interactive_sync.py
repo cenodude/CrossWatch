@@ -386,6 +386,91 @@ def test_api_rejects_cross_user_session(api_client):
     assert client.get(f"/api/interactive-sync/{session.id}", headers={"x-test-user": "bob"}).status_code == 404
 
 
+def test_review_list_is_private_and_does_not_extend_expiry(api_client, monkeypatch):
+    client, session, api = api_client
+    touched = session.touched
+    monkeypatch.setattr(api, "launch", lambda *a, **k: pytest.fail("Reopening must not start another scan"))
+    response = client.get("/api/interactive-sync")
+    assert response.status_code == 200
+    entries = response.json()["sessions"]
+    assert [entry["id"] for entry in entries] == [session.id]
+    assert entries[0]["pair"]["source"] == "SRC"
+    assert "report" not in entries[0] and "owner" not in entries[0]
+    assert session.touched == touched
+    assert client.get("/api/interactive-sync", headers={"x-test-user": "bob"}).json()["sessions"] == []
+    reopened = client.get(f"/api/interactive-sync/{entries[0]['id']}").json()
+    assert reopened["revision"] == session.revision
+    assert reopened["status"] == "review"
+
+
+def test_review_list_hides_inaccessible_and_disabled_pairs(api_client, monkeypatch):
+    client, session, api = api_client
+    monkeypatch.setattr(api, "user_can_access_pair", lambda *a: False)
+    assert client.get("/api/interactive-sync").json()["sessions"] == []
+    monkeypatch.setattr(api, "user_can_access_pair", lambda *a: True)
+    api.load_config()["pairs"][0]["enabled"] = False
+    assert client.get("/api/interactive-sync").json()["sessions"] == []
+
+
+@pytest.mark.parametrize("status", ["reading", "applying", "review", "complete", "error"])
+def test_review_list_expiry_and_running_operations(api_client, status):
+    from services import interactive_sync as svc
+
+    client, session, api = api_client
+    session.status = status
+    session.touched = -svc.SESSION_TTL
+    entries = client.get("/api/interactive-sync").json()["sessions"]
+    assert bool(entries) == (status in ("reading", "applying"))
+
+
+def test_review_list_requires_write_permission(api_client, monkeypatch):
+    client, session, api = api_client
+    monkeypatch.setattr(api, "request_user", lambda request: dict(id="alice", permissions=dict(write=False)))
+    assert client.get("/api/interactive-sync").status_code == 403
+
+
+def test_review_list_keeps_reports_until_explicitly_closed(api_client):
+    client, session, api = api_client
+    session.status = "complete"
+    assert client.get("/api/interactive-sync").json()["sessions"][0]["status"] == "complete"
+    assert client.delete(f"/api/interactive-sync/{session.id}").status_code == 200
+    assert client.get("/api/interactive-sync").json()["sessions"] == []
+
+
+def test_review_list_follows_profile_and_legacy_pair_instances(api_client, monkeypatch):
+    from services import interactive_sync as svc
+
+    client, session, api = api_client
+    cfg = api.load_config()
+    base = dict(cfg["pairs"][0])
+    cfg["pairs"][0]["profile_id"] = "alice-profile"
+    # Both profiles share endpoints: explicit assignments must still take precedence.
+    cfg["pairs"].extend([
+        {**base, "id": "p2", "profile_id": "bob-profile"},
+        {**base, "id": "legacy"},
+        {**base, "id": "other-instance", "target_instance": "other"},
+    ])
+    for pair_id in ("p2", "legacy", "other-instance"):
+        extra = svc.Session(pair_id=pair_id, owner="alice", status="review")
+        svc.SESSIONS[extra.id] = extra
+    monkeypatch.setattr(api, "profile_instances_map", lambda cfg, pid:
+                        {"SRC": ["default"], "DST": ["default"]} if pid in ("alice-profile", "bob-profile") else {})
+
+    def pair_ids(profile=""):
+        response = client.get("/api/interactive-sync", params={"user_profile": profile})
+        assert response.status_code == 200
+        return {entry["pair_id"] for entry in response.json()["sessions"]}
+
+    assert pair_ids() == {"p1", "p2", "legacy", "other-instance"}
+    assert pair_ids("alice-profile") == {"p1", "legacy"}
+    assert pair_ids("bob-profile") == {"p2", "legacy"}
+    assert pair_ids("unknown-profile") == set()
+    assert client.get("/api/interactive-sync?user_profile=bad/profile").status_code == 400
+    assert client.get("/api/interactive-sync?user_profile=alice-profile", headers={"x-test-user": "bob"}).json()["sessions"] == []
+    monkeypatch.setattr(api, "user_can_access_pair", lambda *a: False)
+    assert pair_ids("alice-profile") == set()
+
+
 @pytest.mark.parametrize("payload, status", [({"revision": 0, "selection_version": 0}, 409), ({"revision": 1, "selection_version": 9}, 409), ({"revision": 1, "selection_version": 0, "selected": ["forged"]}, 422)])
 def test_api_rejects_stale_or_invalid_selection(api_client, payload, status):
     client, session, api = api_client

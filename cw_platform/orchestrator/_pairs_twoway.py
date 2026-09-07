@@ -2641,6 +2641,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         "unresolved": unresolved_total,
         "skipped": skipped_total,
         "blocked": int(blocked_total),
+        "manual_excluded": int(manual_blocked),
         "errors": errors_total,
         "cancelled": bool(cancelled or cancel_requested()),
     }

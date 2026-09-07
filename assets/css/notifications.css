@@ -1,0 +1,49 @@
+/* assets/css/notifications.css */
+/* CrossWatch - flat notification bell and menu. */
+/* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
+#cw-notifications-button, #cw-notifications-panel {
+  --notice-bg: var(--cw-theme-surface, #101217);
+  --notice-hover: var(--cw-theme-surface-raised, #191c23);
+  --notice-line: var(--cw-theme-border, #292d35);
+  --notice-text: var(--cw-theme-text, #e6e9ee);
+  --notice-muted: var(--cw-theme-muted, #929ba8);
+  --notice-accent: var(--cw-theme-accent, #7957ff);
+  color: var(--notice-text); font-family: inherit;
+}
+#cw-notifications-button { position: relative; display: inline-flex; align-items: center; justify-content: center; align-self: center; flex: 0 0 40px; width: 40px; height: 40px; padding: 0; margin: 0 6px; background: transparent; border: 1px solid transparent; border-radius: 8px; cursor: pointer; box-shadow: none; transition: background .12s, transform .12s; }
+#cw-notifications-button > .cw-notifications-bell { display: block; width: 22px; height: 22px; flex: none; }
+#cw-notifications-button:hover, #cw-notifications-button[aria-expanded="true"] { background: var(--notice-hover); border-color: var(--notice-line); }
+#cw-notifications-button:active { transform: translateY(1px); }
+#cw-notifications-button .cw-notifications-count { position: absolute; top: -3px; right: -4px; min-width: 18px; height: 18px; padding: 0 4px; border: 2px solid var(--notice-bg); border-radius: 12px; background: var(--notice-accent); color: #fff; font: 600 10px/14px system-ui, sans-serif; box-sizing: border-box; }
+#cw-notifications-panel { position: fixed; z-index: 10000; width: min(390px, calc(100vw - 16px)); display: flex; flex-direction: column; overflow: hidden; background: var(--notice-bg); border: 1px solid var(--notice-line); border-radius: 10px; box-shadow: 0 12px 32px #0004; }
+#cw-notifications-panel[hidden], #cw-notifications-panel [hidden], #cw-notifications-button [hidden] { display: none; }
+.cw-notifications-tools { display: flex; align-items: center; gap: 8px; }
+.cw-notifications-body li { display: flex; align-items: flex-start; }
+#cw-notifications-panel .cw-notification { flex: 1; min-width: 0; }
+#cw-notifications-panel [data-notification-clear] { flex: 0 0 32px; width: 32px; height: 32px; margin: 12px 10px 0 0; }
+.cw-notifications-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; border-bottom: 1px solid var(--notice-line); }
+#cw-notifications-title { font-size: 14px; font-weight: 600; letter-spacing: 0; margin: 0; }
+#cw-notifications-panel button { display: inline-flex; justify-content: center; align-items: center; padding: 6px; border: 1px solid transparent; border-radius: 6px; background: transparent; box-shadow: none; color: var(--notice-muted); font: inherit; font-size: 13px; cursor: pointer; }
+#cw-notifications-panel button:hover { background: var(--notice-hover); color: var(--notice-text); }
+#cw-notifications-panel button .material-symbols-rounded { font-size: 19px; }
+.cw-notifications-body { overflow: auto; overscroll-behavior: contain; }
+.cw-notifications-body ul { list-style: none; margin: 0; padding: 0; }
+.cw-notifications-body li + li { border-top: 1px solid var(--notice-line); }
+#cw-notifications-panel .cw-notification { display: flex; align-items: flex-start; gap: 12px; padding: 16px; text-decoration: none; color: var(--notice-text); background: transparent; }
+#cw-notifications-panel .cw-notification:hover { background: var(--notice-hover); }
+.cw-notification-icon { font-size: 22px; color: var(--notice-accent); margin-top: 2px; }
+.cw-notification-copy { display: grid; gap: 5px; min-width: 0; overflow-wrap: anywhere; font-size: 13px; }
+.cw-notification-copy strong { font-size: 14px; font-weight: 600; line-height: 1.4; }
+.cw-notification-copy > span, .cw-notification-copy small { color: var(--notice-muted); }
+.cw-notification-copy small { font-size: 11px; }
+.cw-notification-copy .cw-notification-action { display: flex; align-items: center; gap: 6px; margin-top: 5px; color: var(--notice-accent); }
+.cw-notification-action .material-symbols-rounded, .cw-notifications-footer .material-symbols-rounded { font-size: 17px; }
+.cw-notifications-empty { padding: 38px 20px; text-align: center; color: var(--notice-muted); }
+.cw-notifications-empty > .material-symbols-rounded { font-size: 38px; opacity: .6; }
+.cw-notifications-empty p { margin: 12px 0 6px; font-size: 15px; color: var(--notice-text); }
+.cw-notifications-empty small { font-size: 12px; }
+#cw-notifications-panel .cw-notifications-footer { display: flex; justify-content: center; align-items: center; gap: 8px; padding: 14px 16px; border-top: 1px solid var(--notice-line); color: var(--notice-accent); text-decoration: none; font-size: 13px; }
+.cw-notifications-footer:hover { background: var(--notice-hover); }
+.cw-notifications-message { padding: 16px; color: var(--notice-muted); font-size: 13px; }
+#cw-notifications-button:focus-visible, #cw-notifications-panel :is(a, button):focus-visible { outline: 2px solid var(--notice-accent); outline-offset: -3px; }
+@media (prefers-reduced-motion: reduce) { #cw-notifications-button { transition: none; transform: none; } }

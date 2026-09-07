@@ -218,3 +218,52 @@ def test_report_issue_api_is_paged_and_session_scoped(api_client):
     assert client.get(url, params=dict(limit=201)).status_code == 422
     assert client.get(url, headers={"x-test-user":"bob"}).status_code == 404
     assert client.get(url.replace(session.id,"missing")).status_code == 404
+
+
+@pytest.mark.parametrize("feature", FEATURES)
+@pytest.mark.parametrize("mode", ["one-way", "two-way"])
+def test_mapping_exclusions_are_informational_and_still_suppress_originals(config_base, monkeypatch, feature, mode):
+    from api import editorAPI
+    from cw_platform.id_map import canonical_key
+
+    original, corrected = feature_item(feature, 1), feature_item(feature, 2)
+    cfg, src, dst = feature_setup(config_base, monkeypatch, feature, [original], [], mode)
+    monkeypatch.setattr(editorAPI, "_STATE_BASE", config_base)
+    editorAPI._save_policy_manual(feature, "SRC", {canonical_key(corrected): corrected}, [canonical_key(original)])
+    preview = InteractivePlan()
+    run(cfg, preview)
+    assert {row["key"] for row in preview.rows.values()} == {canonical_key(corrected)}
+    collector = SyncReport()
+    execution = InteractivePlan(preview=False, selected=set(preview.rows), on_result=collector.record)
+    result = run(cfg, execution)
+    report = collector.finish(Session(pair_id="p1", owner="local"), execution, result)
+    assert report["outcome"] == "success"
+    assert report["manual_excluded"] == report["engine_blocked"] == result["blocked"] == 1
+    assert report["totals"]["blocked"] == report["features"][0]["blocked"] == 0
+    assert report["totals"]["added"] == 1
+    assert report["features"][0]["manual_excluded"] == 1
+    if mode == "one-way":
+        assert report["features"][0]["destinations"][0]["blocked"] == 0
+    assert [canonical_key(it) for batch in dst.add_calls for it in batch] == [canonical_key(corrected)]
+    assert not src.add_calls
+
+
+@pytest.mark.parametrize("result", [{"ok": True, "blocked": 13}, None])
+def test_manual_exclusions_do_not_hide_other_protection_blocks(result):
+    collector = SyncReport()
+    collector.record("history", "SIMKL", "MDBLIST", "default", "other", "one-way",
+                     {"updated": 7, "blocked": 13, "manual_excluded": 11})
+    report = collector.finish(Session(pair_id="p1", owner="local"), InteractivePlan(preview=False), result)
+    assert report["manual_excluded"] == 11
+    assert report["engine_blocked"] == 13
+    assert report["totals"]["blocked"] == report["features"][0]["blocked"] == 2
+    assert report["outcome"] == ("attention" if result else "incomplete")
+
+
+def test_report_without_exclusion_breakdown_keeps_all_blocks():
+    collector = SyncReport()
+    collector.record("history", "SIMKL", "MDBLIST", "default", "other", "one-way", {"blocked": 11})
+    report = collector.finish(Session(pair_id="p1", owner="local"), InteractivePlan(preview=False), {"ok": True, "blocked": 11})
+    assert report["totals"]["blocked"] == report["engine_blocked"] == 11
+    assert report["manual_excluded"] == 0
+    assert report["outcome"] == "attention"
