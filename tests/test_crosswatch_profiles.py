@@ -914,7 +914,7 @@ def test_events_audit_domain_is_admin_only_for_managed_users(monkeypatch) -> Non
 
 
 def test_events_modal_has_admin_only_audits_tab() -> None:
-    js = Path("assets/js/modals/events/index.js").read_text("utf-8")
+    js = Path("assets/js/events/index.js").read_text("utf-8")
 
     assert 'value: "scrobble", label: "Scrobble"' in js
     assert 'value: "audit", label: "Audits"' in js
@@ -1749,7 +1749,7 @@ def test_analyzer_treats_crosswatch_as_tracker_provider() -> None:
 
 def test_profile_labels_are_used_in_analyzer_and_events_modals() -> None:
     analyzer_js = Path("assets/js/analyzer/index.js").read_text("utf-8")
-    events_js = Path("assets/js/modals/events/index.js").read_text("utf-8")
+    events_js = Path("assets/js/events/index.js").read_text("utf-8")
     scrobbler_js = Path("assets/js/scrobbler.js").read_text("utf-8")
     dashboard_js = Path("assets/js/dashboard-widgets.js").read_text("utf-8")
 
@@ -2080,7 +2080,7 @@ def test_main_shell_has_early_hash_route_hint() -> None:
     core_js = Path("assets/helpers/core.js").read_text("utf-8")
 
     assert "data-cw-initial-tab" in html
-    assert 'const tabs = new Set(["watchlist", "playback_progress", "snapshots", "playlists", "editor", "analyzer", "interactive_sync", "settings"]);' in html
+    assert 'const tabs = new Set(["watchlist", "playback_progress", "snapshots", "playlists", "editor", "analyzer", "import_export", "interactive_sync", "settings"]);' in html
     assert 'html[data-cw-initial-tab]:not([data-cw-initial-tab="main"]) #ops-card' in html
     assert 'html[data-cw-initial-tab="settings"] #page-settings' in html
     assert "delete document.documentElement.dataset.cwInitialTab;" in core_js
@@ -3302,9 +3302,9 @@ def test_view_as_query_overrides_ambient_header(monkeypatch) -> None:
 
 
 def test_events_modal_has_profile_filter_in_more_filters() -> None:
-    js = Path("assets/js/modals/events/index.js").read_text("utf-8")
+    js = Path("assets/js/events/index.js").read_text("utf-8")
 
-    assert "function withEventScope(u)" in js
+    assert "function withEventScope(u, eventScope)" in js
     assert 'if (!url.pathname.startsWith("/api/events/")) return u;' in js
     assert 'url.searchParams.set("user_profile", eventScope || "all");' in js
     assert "const ddProfile = createDropdown({" in js

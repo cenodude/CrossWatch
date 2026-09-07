@@ -6,7 +6,7 @@ from __future__ import annotations
 import sqlite3
 import time
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 ID_KEYS = (
     "tmdb",
@@ -641,6 +641,7 @@ def apply_schema(conn: sqlite3.Connection) -> int:
         conn.execute(_CREATE_MANUAL_POLICY_BLOCKS)
         conn.execute(_CREATE_MANUAL_POLICY_ADD_ITEMS)
         _ensure_column(conn, "manual_policy_add_items", "collected_at", "TEXT")
+        _ensure_column(conn, "manual_policy_features", "mappings_json", "TEXT")
         conn.execute(_CREATE_WATCHLIST_HIDDEN_ITEMS)
         conn.execute(_CREATE_CURRENTLY_WATCHING_STREAMS)
         conn.execute(_CREATE_CURRENTLY_WATCHING_IDS)

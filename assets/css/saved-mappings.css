@@ -1,0 +1,39 @@
+/* assets/css/saved-mappings.css */
+/* CrossWatch - saved mapping comparisons */
+/* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
+.sm-dialog { width:min(1180px,calc(100vw - 32px)); max-height:calc(100dvh - 40px); padding:0; color:var(--fg,#e6e9ee); background:var(--cw-theme-surface,#101217); border:1px solid var(--border,#292d35); border-radius:12px; }
+.sm-dialog[open] { display:flex; flex-direction:column; }
+.sm-dialog::backdrop { background:#0009; }
+.sm-head { display:flex; justify-content:space-between; align-items:flex-start; gap:20px; padding:24px; border-bottom:1px solid var(--border,#292d35); }
+.sm-head h2 { margin:0 0 8px; font-size:24px; }
+.sm-head p,.sm-note,.sm-muted { color:var(--muted,#929ba8); }
+.sm-head p { margin:0; font-size:14px; }
+.sm-dialog button,.sm-dialog input,.sm-dialog select { font:inherit; font-size:14px; color:inherit; background:var(--cw-theme-input,#101217); border:1px solid var(--border,#292d35); border-radius:6px; padding:10px 12px; }
+.sm-dialog button { display:inline-flex; align-items:center; justify-content:center; gap:8px; cursor:pointer; box-shadow:none; }
+.sm-dialog button:hover { background:var(--cw-theme-surface-raised,#191c23); }
+.sm-dialog button:disabled { opacity:.4; cursor:default; }
+.sm-dialog :is(button,input,select):focus-visible { outline:2px solid var(--accent,#7957ff); outline-offset:2px; }
+.sm-dialog .material-symbols-rounded { font-size:20px; }
+.sm-filters { display:flex; align-items:flex-end; flex-wrap:wrap; gap:12px; padding:20px 24px 0; }
+.sm-filters label { display:grid; gap:8px; font-size:13px; color:var(--muted,#929ba8); min-width:150px; }
+.sm-filters label:first-child { flex:1; }
+.sm-filters input { width:100%; box-sizing:border-box; }
+.sm-note { padding:0 24px; font-size:13px; line-height:1.5; }
+.sm-results { overflow:auto; min-height:160px; margin:0 24px; border:1px solid var(--border,#292d35); border-radius:8px; }
+.sm-dialog table { width:100%; border-collapse:collapse; table-layout:fixed; }
+.sm-dialog th { text-align:left; color:var(--muted,#929ba8); font-size:13px; font-weight:500; background:var(--cw-theme-surface,#101217); position:sticky; top:0; }
+.sm-dialog td,.sm-dialog th { padding:16px; border-bottom:1px solid var(--border,#292d35); vertical-align:top; overflow-wrap:anywhere; }
+.sm-dialog th:last-child { width:22%; }
+.sm-dialog td { font-size:14px; }
+.sm-dialog td > :is(strong,span,small) { display:block; margin-bottom:6px; }
+.sm-dialog td small { font-size:12px; color:var(--muted,#929ba8); }
+.sm-ids { display:flex; flex-wrap:wrap; gap:6px; margin:10px 0; }
+.sm-ids span { padding:4px 6px; border:1px solid var(--border,#292d35); border-radius:4px; font-size:12px; }
+.sm-key { overflow-wrap:anywhere; }
+.sm-edit-error { margin:0 24px 12px; color:var(--danger,#e06470); font-size:14px; }
+.sm-edit-error:empty { display:none; }
+.sm-dialog .sm-edit { width:36px; height:36px; padding:7px; margin-top:8px; color:var(--accent,#7957ff); }
+.sm-empty { padding:28px; text-align:center; color:var(--muted,#929ba8); }
+.sm-dialog footer { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:18px 24px; font-size:13px; color:var(--muted,#929ba8); }
+.sm-dialog footer > div { display:flex; gap:8px; }
+@media(max-width:650px) { .sm-results table { min-width:700px; } .sm-head,.sm-filters { padding:16px; } .sm-note { padding:0 16px; } .sm-results { margin:0 16px; } .sm-filters label { flex:1; min-width:100%; } }

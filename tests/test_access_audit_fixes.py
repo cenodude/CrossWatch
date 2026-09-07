@@ -739,7 +739,7 @@ def test_events_clear_is_hidden_from_managed_users() -> None:
     assert 'if _managed_request(request):' in pathlib.Path("api/eventsAPI.py").read_text(encoding="utf-8")
     assert eventsAPI.events_clear.__module__ == "api.eventsAPI"
 
-    modal = pathlib.Path("assets/js/modals/events/index.js").read_text(encoding="utf-8")
+    modal = pathlib.Path("assets/js/events/index.js").read_text(encoding="utf-8")
     assert '${isAdmin ? `<button class="ev-tbtn" id="ev-clear"' in modal
     assert 'Q("#ev-clear", root)?.addEventListener' in modal
     assert 'showToast("Clear failed.", null, "error")' in modal

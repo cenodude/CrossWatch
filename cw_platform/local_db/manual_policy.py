@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import json
 import threading
 import time
 from collections.abc import Mapping
@@ -276,6 +277,13 @@ def load_policy(base_path: str | Path, policy_path: str | Path | None = None) ->
             ).fetchall()
             items = {str(row["item_key"]): _row_to_item(row) for row in items_rows if row["item_key"] not in (None, "")}
             node[feature] = {"blocks": blocks, "adds": {"items": items}}
+            try:
+                mappings = json.loads(feature_row["mappings_json"] or "{}")
+            except (ValueError, TypeError):
+                mappings = {}
+            if isinstance(mappings, dict) and mappings:
+                node[feature]["mappings"] = {key: value for key, value in mappings.items() if key in items}
+
         return out
 
 
@@ -339,8 +347,8 @@ def save_policy(base_path: str | Path, policy: Mapping[str, Any], policy_path: s
             _set_meta(conn, "manual_policy_version", version or 1, ts)
             for ordinal, (provider, instance, feature, block) in enumerate(_feature_blocks(policy)):
                 cur = conn.execute(
-                    "INSERT INTO manual_policy_features(provider,instance,feature,ordinal,updated_at) VALUES(?,?,?,?,?)",
-                    (provider, instance, feature, ordinal, ts),
+                    "INSERT INTO manual_policy_features(provider,instance,feature,ordinal,updated_at,mappings_json) VALUES(?,?,?,?,?,?)",
+                    (provider, instance, feature, ordinal, ts, json.dumps(block.get("mappings") or {}, ensure_ascii=False)),
                 )
                 feature_id_raw = cur.lastrowid
                 if feature_id_raw is None:

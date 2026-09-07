@@ -30,6 +30,7 @@
     const state = stateOf(ctx);
     const items = {};
     const blocks = [];
+    const originals = {};
     const seenBlocks = new Set();
 
     for (const row of state.rows || []) {
@@ -79,9 +80,11 @@
       raw.year = Number.isFinite(n) ? n : null;
 
       items[key] = raw;
+      originals[key] = String(row._replacedKey || key);
     }
 
     const payload = { kind: state.kind, source: state.source, items };
+    if (ctx.isPolicySource?.()) payload.mapping_originals = originals;
     if (ctx.isProviderPickerSource?.()) {
       payload.provider = state.snapshot;
       payload.provider_instance = state.instance || "default";

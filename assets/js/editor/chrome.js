@@ -206,6 +206,22 @@
 
     setButtonIcon(ctx.addBtn, "add", "Add row");
     setButtonIcon(ctx.saveBtn, "check", "Save changes");
+    if (ctx.addBtn && !document.getElementById("cw-saved-mappings")) {
+      const button = document.createElement("button");
+      button.id = "cw-saved-mappings";
+      button.type = "button";
+      button.className = "cw-btn";
+      setButtonIcon(button, "compare_arrows", "Saved mappings");
+      ctx.addBtn.before(button);
+      button.addEventListener("click", async () => {
+        button.disabled = true;
+        try {
+          const view = await import(`/assets/js/editor/saved-mappings.js?v=${encodeURIComponent(window.APP_VERSION || "1")}`);
+          view.open(button, ctx.mappingEditor);
+        } catch { ctx.setStatus?.("Could not open saved mappings. Please try again."); }
+        finally { button.disabled = false; }
+      });
+    }
 
     const typeFilterWrap = ctx.typeFilterWrap;
     if (typeFilterWrap && typeFilterWrap.dataset.decorated !== "1") {

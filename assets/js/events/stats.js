@@ -1,4 +1,4 @@
-/* assets/js/modals/events/stats.js */
+/* assets/js/events/stats.js */
 /* CrossWatch - Events statistics dashboard */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
