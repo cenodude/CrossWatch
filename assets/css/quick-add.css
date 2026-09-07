@@ -1,0 +1,66 @@
+/* assets/css/quick-add.css */
+/* CrossWatch - Quick Add launcher and shared flat surfaces */
+/* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
+
+#cw-quick-add {
+  --qa-bg:var(--cw-theme-surface,#101217);
+  --qa-hover:var(--cw-theme-surface-raised,#191c23);
+  --qa-line:var(--cw-theme-border,#292d36);
+  --qa-text:var(--cw-theme-text,#f1f3f5);
+  --qa-muted:var(--cw-theme-muted,#9299a6);
+  --qa-accent:var(--cw-theme-accent,#7c5cff);
+  position:fixed; z-index:70; pointer-events:none; font-family:inherit;
+}
+#cw-quick-add.hidden { display:none!important; }
+#cw-quick-add .cw-qa-shell { pointer-events:auto; }
+#cw-quick-add .cw-qa-desktop {
+  position:fixed; right:20px; top:var(--cw-qa-desktop-top,66%); transform:translateY(-50%);
+  width:56px; height:56px; overflow:hidden; border:1px solid var(--qa-line); border-radius:16px;
+  background:var(--qa-bg); box-shadow:0 4px 16px #0002;
+  transition:width .22s ease,border-color .18s ease;
+}
+#cw-quick-add:is(.is-open,.is-peek) .cw-qa-desktop { width:222px; border-color:color-mix(in srgb,var(--qa-accent) 36%,var(--qa-line)); }
+#cw-quick-add button { font:inherit; color:var(--qa-text); box-shadow:none; text-transform:none; cursor:pointer; }
+#cw-quick-add .cw-qa-tab {
+  display:flex; align-items:center; gap:12px; width:100%; height:100%; padding:10px;
+  border:0; border-radius:15px; background:transparent; text-align:left; overflow:hidden;
+}
+#cw-quick-add .cw-qa-plus {
+  display:grid; place-items:center; flex:0 0 34px; width:34px; height:34px; border-radius:10px;
+  background:color-mix(in srgb,var(--qa-accent) 14%,var(--qa-bg)); color:var(--qa-accent); font-size:25px;
+  transition:background .18s ease,color .18s ease;
+}
+#cw-quick-add .cw-qa-tab:hover .cw-qa-plus,#cw-quick-add .cw-qa-fab:hover .cw-qa-plus { background:var(--qa-accent); color:#fff; }
+#cw-quick-add .cw-qa-tab-text { display:grid; gap:4px; white-space:nowrap; opacity:0; transition:opacity .16s ease; }
+#cw-quick-add .cw-qa-tab-text strong { font-size:14px; font-weight:650; line-height:1.1; }
+#cw-quick-add .cw-qa-tab-text small { font-size:11px; color:var(--qa-muted); line-height:1.1; }
+#cw-quick-add:is(.is-open,.is-peek) .cw-qa-tab-text { opacity:1; }
+#cw-quick-add .cw-qa-grip {
+  position:absolute; right:6px; top:10px; width:28px; height:34px; display:grid; place-items:center;
+  background:transparent; color:var(--qa-muted); border:0; border-left:1px solid var(--qa-line); border-radius:0 6px 6px 0;
+  padding:0; opacity:0; pointer-events:none; touch-action:none; cursor:grab;
+}
+#cw-quick-add .cw-qa-grip .material-symbols-rounded { font-size:18px; }
+#cw-quick-add:is(.is-open,.is-peek) .cw-qa-grip { opacity:1; pointer-events:auto; }
+#cw-quick-add .cw-qa-grip:hover { background:var(--qa-hover); color:var(--qa-text); }
+#cw-quick-add button:focus-visible { outline:2px solid var(--qa-accent); outline-offset:-3px; }
+#cw-quick-add button:disabled { opacity:.5; cursor:wait; }
+#cw-quick-add .cw-qa-fab {
+  position:fixed; right:16px; bottom:calc(var(--cw-qa-mobile-bottom,22px) + env(safe-area-inset-bottom,0px));
+  display:inline-flex; align-items:center; gap:10px; height:52px; padding:8px 16px 8px 8px;
+  background:var(--qa-bg); border:1px solid var(--qa-line); border-radius:16px; font-size:14px; font-weight:650;
+  touch-action:none; box-shadow:0 4px 16px #0002;
+}
+#cw-quick-add:not(.is-desktop) .cw-qa-desktop,#cw-quick-add:not(.is-mobile) .cw-qa-fab { display:none; }
+#cw-quick-add.is-dragging .cw-qa-desktop { transition:none; border-color:var(--qa-accent); }
+#cw-quick-add.is-dragging .cw-qa-grip,#cw-quick-add.is-dragging .cw-qa-fab { cursor:grabbing; }
+@media(prefers-reduced-motion:reduce) { #cw-quick-add * { transition:none!important; } }
+
+/* The Quick add flow uses the same palette as the launcher. */
+html[data-cw-theme] .cx-modal-shell.cw-manual-watched-modal { background:var(--cw-theme-bg)!important; border-color:var(--cw-theme-border)!important; box-shadow:none!important; }
+html[data-cw-theme] .cw-mw { --mw-bg:var(--cw-theme-bg); --mw-panel:var(--cw-theme-surface); --mw-card:var(--cw-theme-surface); --mw-card-2:var(--cw-theme-surface-raised); --mw-border:var(--cw-theme-border); --mw-border-soft:var(--cw-theme-border); --mw-text:var(--cw-theme-text); --mw-muted:var(--cw-theme-muted); --mw-accent:var(--cw-theme-accent); background:var(--mw-bg)!important; }
+html[data-cw-theme] .cw-mw::before { display:none; }
+html[data-cw-theme] .cw-mw .cw-mw-title { font-weight:700!important; font-size:24px!important; }
+html[data-cw-theme] .cw-mw .cw-mw-head-icon { background:color-mix(in srgb,var(--mw-accent) 12%,var(--mw-panel)); border-color:transparent; }
+html[data-cw-theme] .cw-mw .cw-mw-step.active { background:color-mix(in srgb,var(--mw-accent) 10%,var(--mw-panel))!important; }
+html[data-cw-theme] .cw-mw .cw-mw-btn.primary { background:var(--mw-accent)!important; border-color:var(--mw-accent)!important; color:#fff!important; }

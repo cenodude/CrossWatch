@@ -10,7 +10,7 @@
   --ev-accent-weak:color-mix(in srgb,var(--ev-accent) 12%,var(--ev-card));--ev-accent-soft:color-mix(in srgb,var(--ev-accent) 22%,var(--ev-card));--ev-sel:color-mix(in srgb,var(--ev-accent) 13%,var(--ev-card));
   --ev-ok-bg:color-mix(in srgb,var(--ev-ok) 16%,transparent);--ev-warn-bg:color-mix(in srgb,var(--ev-warn) 16%,transparent);--ev-err-bg:color-mix(in srgb,var(--ev-err) 18%,transparent);--ev-info-bg:color-mix(in srgb,var(--ev-info) 18%,transparent);
   --ev-color-scheme:dark;--ev-ctl-h:40px;
-  padding:20px 8px 32px;min-width:0;max-width:1800px;width:100%;margin:0 auto;
+  padding:12px 8px 32px;min-width:0;max-width:1800px;width:100%;margin:0 auto;
   background:transparent;border:0;box-shadow:none;overflow:visible;
 }
 html[data-cw-theme=flat-light] #page-events{--ev-color-scheme:light}
@@ -19,13 +19,13 @@ html[data-cw-theme=flat-light] #page-events{--ev-color-scheme:light}
 .ev-app [hidden]{display:none!important}
 .ev-app button,.ev-app input{font-family:inherit}
 .ev-app :is(button,a,input,[tabindex]):focus-visible{outline:2px solid var(--ev-accent);outline-offset:-2px}
-.ev-back{display:inline-flex;align-items:center;gap:8px;align-self:flex-start;color:var(--ev-muted);text-decoration:none;margin-bottom:22px}
+.ev-back{display:inline-flex;align-items:center;gap:8px;align-self:flex-start;color:var(--ev-muted);text-decoration:none;font-size:13px}
 .ev-back:hover{color:var(--ev-text)}
-.ev-header{position:static;z-index:auto;display:flex;justify-content:space-between;align-items:center;gap:24px;margin:0 0 26px;padding:0;border:0;background:transparent;box-shadow:none}
+.ev-header{position:static;z-index:auto;display:flex;justify-content:space-between;align-items:center;gap:16px;margin:0;padding:14px 0 0;border:0;background:transparent;box-shadow:none}
 .ev-eyebrow{font-size:10px;font-weight:750;letter-spacing:.16em;color:var(--ev-accent)}
-.ev-header h1{font-size:clamp(28px,3.1vw,42px);line-height:1.18;letter-spacing:-.035em;font-weight:800;margin:7px 0 10px}
+.ev-header h1{font-size:32px;line-height:1.2;letter-spacing:-.035em;font-weight:800;margin:5px 0 0}
 .ev-header p{margin:0;color:var(--ev-muted);font-size:14px}
-.ev-header-icon{font-size:52px;color:var(--ev-accent);opacity:.6;margin-right:12px}
+.ev-header-icon{font-size:32px;color:var(--ev-accent);opacity:.6;margin-right:8px}
 .ev-head-left,.ev-actions,.ev-toolbar-row,.ev-vis,.ev-list-head,.ev-list-head-left,.ev-list-head-right,.ev-pagemini,.ev-pagenums,.ev-dhead-row,.ev-card-head,.ev-tl-head,.ev-toast{display:flex;align-items:center}
 .ev-actions{gap:8px}
 .ev-tbtn.busy{opacity:.6;pointer-events:none}

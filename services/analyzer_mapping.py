@@ -1,4 +1,7 @@
+# services/analyzer_mapping.py
 # CrossWatch - Mapping corrections from Analyzer pending retries
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
+
 from __future__ import annotations
 
 from copy import deepcopy

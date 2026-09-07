@@ -71,6 +71,13 @@ const closeModalAfterTap = () => {
 
 export default {
   async mount(root) {
+    if (!document.getElementById("cw-quick-add-style")) {
+      const style = document.createElement("link");
+      style.id = "cw-quick-add-style";
+      style.rel = "stylesheet";
+      style.href = `/assets/css/quick-add.css?v=${encodeURIComponent(window.APP_VERSION || "1")}`;
+      document.head.appendChild(style);
+    }
     const shell = root.closest(".cx-modal-shell");
     shell?.classList.add("cw-manual-watched-modal");
     root.style.setProperty("--cxModalMaxW", "1360px");
@@ -330,7 +337,7 @@ export default {
         <div class="cx-head">
           <div class="cw-mw-head">
             <span class="cw-mw-head-icon"><span class="material-symbols-rounded">add_circle</span></span>
-            <div><div class="cw-mw-title">Quick Add Item</div><div class="cw-mw-sub">Add a movie or show to your providers in a few simple steps.</div></div>
+            <div><div class="cw-mw-title">Quick add</div><div class="cw-mw-sub">Find a title. Choose what to save.</div></div>
           </div>
           <button type="button" class="cw-mw-close" data-role="close" aria-label="Close"><span class="material-symbols-rounded">close</span></button>
         </div>
