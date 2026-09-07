@@ -701,6 +701,8 @@ def non_admin_api_allowed(path: Any, method: Any) -> bool:
         return m == "GET"
     if p == "/api/logs/stream":
         return m == "GET"
+    if p == "/api/logs/archive" or p.startswith("/api/logs/archive/"):
+        return m in {"GET", "PATCH", "DELETE"}
     if p == "/api/logs/watcher":
         return False
     if p == "/api/playlists/rulesets/validate":

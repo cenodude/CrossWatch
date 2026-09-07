@@ -132,21 +132,21 @@ def register_ui_root(app: FastAPI) -> None:
 
 
 _HELPER_SCRIPTS = (
-    "help-links.js", "provider-meta.js", "feature-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "account-menu.js", "api.js", "core.js", "details-log.js",
+    "help-links.js", "provider-meta.js", "feature-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "account-menu.js", "notifications.js", "update-notifications.js", "api.js", "core.js", "details-log.js",
     "media-meta.js", "trailer.js", "playing-card.js", "watchlist-preview.js", "providers-ui.js", "settings-ui.js", "settings-save.js", "maintenance.js", "backups.js",
     "restart_apply.js",
 )
 _APP_SCRIPTS = (
-    "syncbar.js", "run-summary-stream.js", "overview-profile.js", "main.js", "connections.overlay.js", "connections.pairs.overlay.js", "scheduler.js",
+    "syncbar.js", "run-summary-stream.js", "overview-profile.js", "sync-reviews.js", "main.js", "connections.overlay.js", "connections.pairs.overlay.js", "scheduler.js",
     "schedulerbanner.js", "playingcard.js", "insights.js", "activity.js", "dashboard-widgets.js", "auth-dots.js", "main-status.js",
     "scrobbler.js", "user-profiles.js", "app-users.js",
 )
 _USER_HELPER_SCRIPTS = (
-    "help-links.js", "provider-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "account-menu.js", "api.js", "core.js",
+    "help-links.js", "provider-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "account-menu.js", "notifications.js", "update-notifications.js", "api.js", "core.js",
     "media-meta.js", "trailer.js", "playing-card.js", "watchlist-preview.js",
 )
 _USER_APP_SCRIPTS = (
-    "overview-profile.js", "main.js", "playingcard.js", "insights.js", "activity.js", "dashboard-widgets.js", "auth-dots.js", "main-status.js",
+    "overview-profile.js", "sync-reviews.js", "main.js", "playingcard.js", "insights.js", "activity.js", "dashboard-widgets.js", "auth-dots.js", "main-status.js",
 )
 _FULL_USER_HELPER_SCRIPTS = tuple(dict.fromkeys((*_USER_HELPER_SCRIPTS, "details-log.js")))
 _FULL_USER_APP_SCRIPTS = tuple(dict.fromkeys(("syncbar.js", "run-summary-stream.js", "schedulerbanner.js", *_USER_APP_SCRIPTS)))
@@ -323,6 +323,8 @@ def _managed_user_shell(html: str, user: dict | None = None) -> str:
             '  <section id="page-playlists" class="card hidden tab-page"></section>\n\n',
             '  <section id="page-editor" class="card hidden tab-page"></section>\n\n',
             '  <section id="page-analyzer" class="card hidden tab-page"></section>\n\n',
+            '  <section id="page-events" class="card hidden tab-page"></section>\n\n',
+            '  <section id="page-logs" class="card hidden tab-page"></section>\n\n',
             '  <section id="page-import_export" class="card hidden tab-page"></section>\n\n',
             '  <section id="page-interactive_sync" class="card hidden tab-page"></section>\n\n',
         ):
@@ -420,6 +422,8 @@ def _get_index_html_static() -> str:
     playlists: "Playlists",
     editor: "Editor",
     analyzer: "Analyzer",
+    events: "Events",
+    logs: "Logs",
     import_export: "Import / Export",
     interactive_sync: "Interactive Sync",
     settings: "Settings",
@@ -486,6 +490,7 @@ def _get_index_html_static() -> str:
 <link rel="stylesheet" href="/assets/css/pages.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/ui-shell.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/css/account-menu.css?v=__CW_VERSION__">
+<link id="cw-notifications-css" rel="stylesheet" href="/assets/css/notifications.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/css/app-users.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/css/topology.css?v=__CW_VERSION__">
 <script>
@@ -518,7 +523,7 @@ def _get_index_html_static() -> str:
 (() => {
   try {
     const route = String(window.location.hash || "").replace(/^#\/?/, "").split("?")[0].split("/")[0].trim().toLowerCase().replace(/-/g, "_");
-    const tabs = new Set(["watchlist", "playback_progress", "snapshots", "playlists", "editor", "analyzer", "import_export", "interactive_sync", "settings"]);
+    const tabs = new Set(["watchlist", "playback_progress", "snapshots", "playlists", "editor", "analyzer", "events", "logs", "import_export", "interactive_sync", "settings"]);
     let tab = tabs.has(route) ? route : "main";
     if (document.documentElement.classList.contains("cw-compact") && tab !== "main") tab = "main";
     document.documentElement.dataset.cwInitialTab = tab;
@@ -539,6 +544,8 @@ html[data-cw-initial-tab="snapshots"] #page-snapshots,
 html[data-cw-initial-tab="playlists"] #page-playlists,
 html[data-cw-initial-tab="editor"] #page-editor,
 html[data-cw-initial-tab="analyzer"] #page-analyzer,
+html[data-cw-initial-tab="events"] #page-events,
+html[data-cw-initial-tab="logs"] #page-logs,
 html[data-cw-initial-tab="import_export"] #page-import_export,
 html[data-cw-initial-tab="interactive_sync"] #page-interactive_sync,
 html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
@@ -694,6 +701,7 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
                 role="tab" aria-selected="false" aria-controls="det-panel-debug" data-tab="debug" hidden disabled aria-hidden="true" aria-disabled="true">Debug</button>
             </div>
             <div class="det-tools">
+              <button id="det-open-logs" class="ghost det-tool-icon" type="button" title="Open logs page" aria-label="Open logs page" onclick="openLogs({channel: window._detailsTab || 'sync'})"><span class="material-symbols-rounded" aria-hidden="true">open_in_full</span></button>
               <button id="det-copy" class="ghost det-tool-icon" type="button" title="Copy current output" aria-label="Copy current output"><span class="material-symbols-rounded" aria-hidden="true">content_copy</span></button>
               <button id="det-clear" class="ghost det-tool-icon" type="button" title="Clear current output" aria-label="Clear current output"><span class="material-symbols-rounded" aria-hidden="true">delete</span></button>
               <button id="det-follow" class="ghost det-follow" type="button" title="Toggle auto-follow" aria-pressed="true"><span class="material-symbols-rounded det-follow-icon" aria-hidden="true">podcasts</span><span>Follow</span><span class="material-symbols-rounded det-follow-caret" aria-hidden="true">expand_more</span></button>
@@ -879,6 +887,10 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
   <section id="page-editor" class="card hidden tab-page"></section>
 
   <section id="page-analyzer" class="card hidden tab-page"></section>
+
+  <section id="page-events" class="card hidden tab-page"></section>
+
+  <section id="page-logs" class="card hidden tab-page"></section>
 
   <section id="page-import_export" class="card hidden tab-page"></section>
 
@@ -2017,6 +2029,7 @@ def get_profile_html(user: dict | None = None) -> str:
 <link rel="stylesheet" href="/assets/css/pages.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/ui-shell.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/css/account-menu.css?v=__CW_VERSION__">
+<link id="cw-notifications-css" rel="stylesheet" href="/assets/css/notifications.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/css/profile-page.css?v=__CW_VERSION__">
 <link rel="preload" href="/assets/fonts/material-symbols-rounded-full-v355.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/assets/fonts/material-symbols-rounded.css?v=__CW_VERSION__">
@@ -2390,6 +2403,10 @@ def get_profile_html(user: dict | None = None) -> str:
 <script src="/assets/helpers/provider-meta.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/icon-select.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/account-menu.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/helpers/notifications.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/helpers/update-notifications.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/js/overview-profile.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/js/sync-reviews.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/api.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/media-meta.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/trailer.js?v=__CW_VERSION__" defer></script>

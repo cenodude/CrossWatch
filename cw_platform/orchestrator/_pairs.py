@@ -22,6 +22,7 @@ from ._pairs_playlists import run_playlist_mappings
 from ..run_control import SyncCancelled, cancel_requested
 from ..value_coercion import coerce_bool
 from ..pair_scope import pair_feature_scope
+from ..log_context import log_pair_id
 
 def _deep_merge_provider_overrides(dst: dict[str, Any], src: Mapping[str, Any]) -> None:
     for k, v in (src or {}).items():
@@ -330,6 +331,7 @@ def _pair_env(pair: Mapping[str, Any], *, i: int, src: str, dst: str, mode: str,
     }
 
     old = {k: os.environ.get(k) for k in new.keys()}
+    log_token = log_pair_id.set(str(pair.get('id') or ''))
     try:
         for k, v in new.items():
             if v is None:
@@ -338,6 +340,7 @@ def _pair_env(pair: Mapping[str, Any], *, i: int, src: str, dst: str, mode: str,
                 os.environ[k] = str(v)
         yield
     finally:
+        log_pair_id.reset(log_token)
         for k, v in old.items():
             if v is None:
                 os.environ.pop(k, None)
@@ -439,6 +442,7 @@ def run_pairs(ctx) -> dict[str, Any]:
         if not features:
             emit(
                 "run:pair:skip",
+                pair_id=str(pair.get('id') or ''),
                 src=src,
                 dst=dst,
                 mode=mode,
@@ -451,6 +455,7 @@ def run_pairs(ctx) -> dict[str, Any]:
 
         emit(
             "run:pair",
+            pair_id=str(pair.get('id') or ''),
             i=i,
             n=len(pairs),
             src=src,
@@ -464,13 +469,14 @@ def run_pairs(ctx) -> dict[str, Any]:
         sops = provs.get(src)
         dops = provs.get(dst)
         if not sops or not dops:
+            emit('pair:skip', pair_id=str(pair.get('id') or ''), src=src, dst=dst, reason='missing_provider_ops')
             emit_info(f"[!] Missing provider ops for {src}→{dst}")
             continue
 
         ss = health_status(health_map.get(f"{src}#{src_inst}") or health_map.get(src) or {})
         sd = health_status(health_map.get(f"{dst}#{dst_inst}") or health_map.get(dst) or {})
         if ss == "auth_failed" or sd == "auth_failed":
-            emit("pair:skip", src=src, dst=dst, reason="auth_failed", src_status=ss, dst_status=sd)
+            emit("pair:skip", pair_id=str(pair.get('id') or ''), src=src, dst=dst, reason="auth_failed", src_status=ss, dst_status=sd)
             continue
 
         injected = False
