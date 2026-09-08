@@ -7,7 +7,7 @@ export function pageBackLink(returnTo, currentHref, source = 'logs') {
   if (!returnTo) return fallback;
   try {
     const current = new URL(currentHref), target = new URL(returnTo, current);
-    if (target.origin !== current.origin || target.username || target.password) return fallback;
+    if (!['http:', 'https:'].includes(target.protocol) || target.origin !== current.origin || target.username || target.password) return fallback;
     const path = target.hash.slice(1).split('?')[0];
     if (path === source) return fallback;
     const labels = new Map([
@@ -20,8 +20,17 @@ export function pageBackLink(returnTo, currentHref, source = 'logs') {
     ]);
     const label = target.pathname === '/profile' ? 'Profile' : target.pathname === '/' ? labels.get(path) : null;
     if (!label) return fallback;
-    const href = target.pathname === current.pathname && target.search === current.search
-      ? target.hash || '#main' : target.pathname + target.search + target.hash;
+    // Keep untrusted URL fields behind literal internal prefixes at every navigation sink.
+    const fragment = target.hash.slice(1);
+    const hash = fragment ? '#' + fragment : '';
+    let href;
+    if (target.pathname === current.pathname && target.search === current.search) {
+      href = fragment ? '#' + fragment : '#main';
+    } else if (target.pathname === '/profile') {
+      href = '/profile' + (target.search ? '?' + target.search.slice(1) : '') + hash;
+    } else {
+      href = target.search ? '/?' + target.search.slice(1) + hash : fragment ? '/#' + fragment : '/';
+    }
     return {href, label};
   } catch { return fallback; }
 }
