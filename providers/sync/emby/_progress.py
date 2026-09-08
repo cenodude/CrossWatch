@@ -128,7 +128,7 @@ def _active_item_ids(http: Any, uid: str) -> set[str]:
 def _target_state(http: Any, uid: str, item_id: str) -> dict[str, Any]:
     response = http.get(
         f"/Users/{uid}/Items/{item_id}",
-        params={"Fields": "UserData,RunTimeTicks,LibraryId,CollectionFolderId"},
+        params={"Fields": "UserData,UserDataLastPlayedDate,UserDataPlayCount,RunTimeTicks,LibraryId,CollectionFolderId"},
     )
     if getattr(response, "status_code", 0) != 200:
         raise RuntimeError(f"target_state_http_{getattr(response, 'status_code', 0)}")
@@ -189,7 +189,7 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
     base_params: dict[str, Any] = {
         "Recursive": True,
         "IncludeItemTypes": "Movie,Episode",
-        "Fields": "UserData,ProviderIds,RunTimeTicks,ProductionYear,Type,IndexNumber,ParentIndexNumber,SeriesId,ParentId,CollectionFolderId,AncestorIds,LibraryId,Name",
+        "Fields": "UserData,UserDataLastPlayedDate,UserDataPlayCount,ProviderIds,RunTimeTicks,ProductionYear,Type,IndexNumber,ParentIndexNumber,SeriesId,ParentId,CollectionFolderId,AncestorIds,LibraryId,Name",
         "EnableUserData": True,
         "Filters": "IsResumable",
     }
