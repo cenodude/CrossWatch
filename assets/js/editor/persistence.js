@@ -29,9 +29,9 @@
   function buildSaveData(ctx = {}) {
     const state = stateOf(ctx);
     const items = {};
-    const blocks = [];
+    const blocks = ctx.isPolicySource?.() ? [...(state.preservedBlocks || [])] : [];
     const originals = {};
-    const seenBlocks = new Set();
+    const seenBlocks = new Set(blocks.map(key => key.toLowerCase()));
 
     for (const row of state.rows || []) {
       if (row.deleted) {
@@ -88,6 +88,7 @@
     if (ctx.isProviderPickerSource?.()) {
       payload.provider = state.snapshot;
       payload.provider_instance = state.instance || "default";
+      payload.pair_id = state.mappingPair || "";
       payload.blocks = blocks;
     }
     if (state.source === "playlist") {
@@ -158,12 +159,10 @@
         if (unresolved) parts.push(`${unresolved} unresolved`);
         ctx.setStatus?.(`Applied playlist changes: ${parts.join(", ")}`);
         await ctx.loadState?.();
-      } else if (ctx.isManualSource?.()) {
-        ctx.setStatus?.(`Saved ${res.count || Object.keys(items).length} overrides`);
-        await ctx.loadState?.();
       } else {
         ctx.setStatus?.(`Saved ${res.count || Object.keys(items).length} items`);
         await ctx.loadSnapshots?.();
+        await ctx.loadState?.();
       }
     } catch (e) {
       console.error(e);

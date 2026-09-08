@@ -39,7 +39,7 @@ export async function openAnalyzerMapping({reference, signal, onSaved, onClose})
       catalogs: () => request('catalogs'),
       search: (_row, q, catalog, options) => request('search', {q, catalog}, options),
       episodes: (edits, options) => request('episodes', {item:edits[0].item}, options),
-      save: edits => request('save', {item:edits[0].item}),
+      save: (edits, scope) => request('save', {item:edits[0].item, scope}),
     },
   });
 }

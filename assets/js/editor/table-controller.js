@@ -123,7 +123,6 @@
       anilistMode,
       wideActions,
       isPolicySource: ctx.isPolicySource,
-      isTrackerSource: ctx.isTrackerSource,
       isRowLocked: ctx.isRowLocked,
       isExtraKindEditable: ctx.isExtraKindEditable,
       canReplaceRow: ctx.canReplaceRow,
@@ -191,13 +190,18 @@
     if (!totalFiltered) {
       if (ctx.empty) ctx.empty.style.display = "grid";
       if (ctx.empty) {
+        const label = ctx.empty.querySelector(".cw-empty-text");
+        const icon = ctx.empty.querySelector(".cw-empty-icon");
+        if (label) label.textContent = state.loadError ? "Could not load Editor data. Try Refresh."
+          : state.loading ? "Loading Editor data…" : "No rows match this view.";
+        if (icon) icon.textContent = state.loadError ? "error_outline" : state.loading ? "hourglass_empty" : "table_rows";
         const main = ctx.empty.closest(".cw-main");
         if (main) main.classList.add("cw-main-empty");
       }
       if (ctx.pager) ctx.pager.style.display = "none";
       if (ctx.summaryVisible) ctx.summaryVisible.textContent = "0";
       if (ctx.summaryTotal) ctx.summaryTotal.textContent = String(totalAll || 0);
-      ctx.setStatus("0 rows visible");
+      ctx.setStatus(state.loading ? "Loading Editor data…" : "0 rows visible");
       state.pageRids = [];
       ctx.syncSelectPageCheckbox();
       ctx.syncBulkBar();

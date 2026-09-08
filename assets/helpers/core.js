@@ -963,7 +963,7 @@
     }
     writeRouteHash(tab);
 
-    if (state.currentTab === tab) {
+    if (state.currentTab === tab && !(tab === "editor" && byId("page-editor")?.querySelector("[data-editor-load-error]"))) {
       if (tab === "interactive_sync") window.InteractiveSync?.refresh?.();
       if (tab === "events") await window.EventsPage?.mount?.(byId("page-events"));
       if (tab === "logs") await window.LogsPage?.mount?.(byId("page-logs"));
@@ -1128,25 +1128,48 @@
     }
 
     if (tab === "editor") {
+      const root = byId("page-editor");
+      if (root && !root.querySelector(".cw-root")) {
+        root.setAttribute("aria-busy", "true");
+        root.innerHTML = `<div class="cw-root cw-editor-skeleton">
+          <div class="cw-topline cw-page-hero cw-page-hero-editor" data-hero-icon="edit_note">
+            <div class="cw-head-copy cw-page-hero-copy"><div class="cw-page-hero-kicker">EDITOR</div><div class="cw-title-row"><div><div class="cw-title cw-page-hero-title">Editor</div><div class="cw-sub cw-page-hero-sub">Edit your current state or playlist endpoints</div></div></div></div>
+            <div class="cw-editor-hero-summary cw-page-hero-actions"><div class="cw-editor-hero-seg"><strong role="status">Loading Editor...</strong><span>Please wait</span></div></div>
+          </div>
+          <div class="cw-wrap" aria-hidden="true"><div class="cw-main">
+            <div class="cw-controls"><span class="cw-skeleton-bar cw-skeleton-search"></span><span class="cw-skeleton-bar cw-skeleton-action"></span><span class="cw-skeleton-bar cw-skeleton-action"></span></div>
+            <div class="cw-table-wrap"><div class="cw-skeleton-table-head"><span class="cw-skeleton-bar"></span></div>${'<div class="cw-skeleton-table-row"><span class="cw-skeleton-bar"></span><span class="cw-skeleton-bar"></span><span class="cw-skeleton-bar"></span></div>'.repeat(6)}</div>
+          </div><aside class="cw-side"><div class="ins-card cw-skeleton-sidebar">${'<div><span class="cw-skeleton-bar cw-skeleton-label"></span><span class="cw-skeleton-bar cw-skeleton-field"></span></div>'.repeat(5)}</div></aside></div>
+        </div>`;
+      }
       try {
-        await ensurePageModule("editor-datetime", "/assets/js/editor/datetime.js", "CrossWatchEditorDateTime");
-        await ensurePageModule("editor-search", "/assets/js/editor/search.js", "CrossWatchEditorSearch");
-        await ensurePageModule("editor-rows", "/assets/js/editor/rows.js", "CrossWatchEditorRows");
-        await ensurePageModule("editor-sources", "/assets/js/editor/sources.js", "CrossWatchEditorSources");
-        await ensurePageModule("editor-importers", "/assets/js/editor/importers.js", "CrossWatchEditorImporters");
-        await ensurePageModule("editor-persistence", "/assets/js/editor/persistence.js", "CrossWatchEditorPersistence");
-        await ensurePageModule("editor-table", "/assets/js/editor/table.js", "CrossWatchEditorTable");
-        await ensurePageModule("editor-chrome", "/assets/js/editor/chrome.js", "CrossWatchEditorChrome");
-        await ensurePageModule("editor-row-editor", "/assets/js/editor/row-editor.js", "CrossWatchEditorRowEditor");
-        await ensurePageModule("editor-table-controller", "/assets/js/editor/table-controller.js", "CrossWatchEditorTableController");
-        await ensurePageModule("editor-file-utils", "/assets/js/editor/file-utils.js", "CrossWatchEditorFileUtils");
-        await ensurePageModule("editor-load-controller", "/assets/js/editor/load-controller.js", "CrossWatchEditorLoadController");
-        await ensurePageModule("editor-extra-editors", "/assets/js/editor/extra-editors.js", "CrossWatchEditorExtraEditors");
-        await ensurePageModule("editor-metadata-replacer", "/assets/js/editor/metadata-replacer.js", "CrossWatchEditorMetadataReplacer");
-        await ensurePageModule("editor-send-modal", "/assets/js/editor/send-modal.js", "CrossWatchEditorSendModal");
+        await Promise.all([
+          ensurePageModule("editor-datetime", "/assets/js/editor/datetime.js", "CrossWatchEditorDateTime"),
+          ensurePageModule("editor-search", "/assets/js/editor/search.js", "CrossWatchEditorSearch"),
+          ensurePageModule("editor-rows", "/assets/js/editor/rows.js", "CrossWatchEditorRows"),
+          ensurePageModule("editor-sources", "/assets/js/editor/sources.js", "CrossWatchEditorSources"),
+          ensurePageModule("editor-importers", "/assets/js/editor/importers.js", "CrossWatchEditorImporters"),
+          ensurePageModule("editor-persistence", "/assets/js/editor/persistence.js", "CrossWatchEditorPersistence"),
+          ensurePageModule("editor-table", "/assets/js/editor/table.js", "CrossWatchEditorTable"),
+          ensurePageModule("editor-chrome", "/assets/js/editor/chrome.js", "CrossWatchEditorChrome"),
+          ensurePageModule("editor-row-editor", "/assets/js/editor/row-editor.js", "CrossWatchEditorRowEditor"),
+          ensurePageModule("editor-table-controller", "/assets/js/editor/table-controller.js", "CrossWatchEditorTableController"),
+          ensurePageModule("editor-file-utils", "/assets/js/editor/file-utils.js", "CrossWatchEditorFileUtils"),
+          ensurePageModule("editor-load-controller", "/assets/js/editor/load-controller.js", "CrossWatchEditorLoadController"),
+          ensurePageModule("editor-extra-editors", "/assets/js/editor/extra-editors.js", "CrossWatchEditorExtraEditors"),
+          ensurePageModule("editor-metadata-replacer", "/assets/js/editor/metadata-replacer.js", "CrossWatchEditorMetadataReplacer"),
+          ensurePageModule("editor-send-modal", "/assets/js/editor/send-modal.js", "CrossWatchEditorSendModal"),
+        ]);
+        if (!isCurrentNavigation()) return;
         await ensurePageModule("editor", "/assets/js/editor.js", "Editor");
       } catch (e) {
         console.warn("Editor load failed:", e);
+        if (!isCurrentNavigation()) return;
+        if (root) {
+          root.removeAttribute("aria-busy");
+          root.innerHTML = '<div class="cw-editor-loading" data-editor-load-error><h1>Editor</h1><p role="alert">Could not load the Editor. Please try again.</p><button type="button" class="btn">Try again</button></div>';
+          root.querySelector("button").addEventListener("click", () => showTab("editor"));
+        }
       }
       if (!isCurrentNavigation()) return;
       return;

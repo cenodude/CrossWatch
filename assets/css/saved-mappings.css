@@ -33,6 +33,15 @@
 .sm-edit-error { margin:0 24px 12px; color:var(--danger,#e06470); font-size:14px; }
 .sm-edit-error:empty { display:none; }
 .sm-dialog .sm-edit { width:36px; height:36px; padding:7px; margin-top:8px; color:var(--accent,#7957ff); }
+.sm-tabs{display:flex;gap:8px;padding:16px 24px 0}
+.sm-tabs button[aria-pressed="true"]{color:var(--accent,#7957ff);background:color-mix(in srgb,var(--accent,#7957ff) 14%,transparent);border-color:var(--accent,#7957ff)}
+.sm-add-block{display:flex;align-items:flex-end;flex-wrap:wrap;gap:10px;margin:0 24px 16px}
+.sm-add-block[hidden]{display:none}
+.sm-add-block label{display:grid;gap:6px;flex:1;min-width:220px;font-size:13px;color:var(--muted,#929ba8)}
+.sm-add-block small{flex-basis:100%;color:var(--muted,#929ba8)}
+.sm-dialog .sm-block-label{display:inline-flex;align-items:center;gap:6px;color:var(--danger,#e06470);font-size:12px}
+.sm-action-status{margin:0 24px 12px;font-size:13px;color:var(--success,#51b995)}
+.sm-action-status:empty{display:none}
 .sm-empty { padding:28px; text-align:center; color:var(--muted,#929ba8); }
 .sm-dialog footer { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:18px 24px; font-size:13px; color:var(--muted,#929ba8); }
 .sm-dialog footer > div { display:flex; gap:8px; }

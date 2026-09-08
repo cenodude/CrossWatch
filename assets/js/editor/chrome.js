@@ -48,14 +48,7 @@
     if (sourceSelect) {
       sourceSelect.querySelector('option[value="pair"]')?.remove();
       sourceSelect.querySelector('option[value="tracker"]')?.remove();
-      if (!sourceSelect.querySelector('option[value="manual"]')) {
-        const manualOpt = document.createElement("option");
-        manualOpt.value = "manual";
-        manualOpt.textContent = "Manual Overrides";
-        sourceSelect.appendChild(manualOpt);
-      } else {
-        sourceSelect.querySelector('option[value="manual"]').textContent = "Manual Overrides";
-      }
+      sourceSelect.querySelector('option[value="manual"]')?.remove();
       sourceSelect.querySelector('option[value="playlist"]')?.remove();
     }
 
@@ -211,7 +204,7 @@
       button.id = "cw-saved-mappings";
       button.type = "button";
       button.className = "cw-btn";
-      setButtonIcon(button, "compare_arrows", "Saved mappings");
+      setButtonIcon(button, "compare_arrows", "Mappings & blocks");
       ctx.addBtn.before(button);
       button.addEventListener("click", async () => {
         button.disabled = true;
