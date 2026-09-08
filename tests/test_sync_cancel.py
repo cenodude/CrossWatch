@@ -339,6 +339,26 @@ def test_normal_run_is_not_marked_cancelled(monkeypatch, tmp_path) -> None:
     assert any("Done. Total added: 1" in line for line in log["SYNC"])
 
 
+def test_saved_run_keeps_feature_settings_from_start(monkeypatch, tmp_path) -> None:
+    from services import log_archive
+
+    sync, _events, _log = _run_thread_harness(monkeypatch, tmp_path, {"added": 1})
+    cfg = sync._env()[0]()
+    cfg["pairs"][0]["features"] = {"watchlist": {"enable": True}, "history": {"enable": False}}
+    store = log_archive.LogArchive(tmp_path / "features.db")
+    monkeypatch.setattr(log_archive, "archive", lambda: store)
+    try:
+        sync._run_pairs_thread("run-features", {"pair_id": "plex-trakt"})
+        cfg["pairs"][0]["features"]["watchlist"]["enable"] = False
+        saved = store.sessions("sync", run_id="run-features")
+        assert len(saved) == 1
+        assert json.loads(saved[0]["pairs"])[0]["features"] == {
+            "watchlist": {"enable": True}, "history": {"enable": False},
+        }
+    finally:
+        store.close()
+
+
 def test_final_unresolved_summary_uses_deduped_orchestrator_count(monkeypatch, tmp_path) -> None:
     item = {
         "type": "episode",

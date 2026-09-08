@@ -662,7 +662,7 @@ def run_pairs(ctx) -> dict[str, Any]:
         emit(
             "debug",
             msg="state.persisted",
-            providers=len((ctx.providers or {})),
+            loaded_adapters=len((ctx.providers or {})),
             wall=(len(wall) if isinstance(wall, dict) else 0),
         )
     except Exception:

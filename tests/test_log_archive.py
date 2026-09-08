@@ -135,10 +135,68 @@ def test_structured_error_levels():
     assert describe_line('{"provider":"SIMKL","level":"WARN","msg":"rate_limited"}', 'DEBUG')[1:] == ('WARN', 'SIMKL')
 
 
+@pytest.mark.parametrize('text,level,provider', [
+    ('[DEBUG] snapshot loaded', 'DEBUG', 'SYNC'),
+    ('[SYNC] INFO [DEBUG] snapshot loaded', 'DEBUG', 'SYNC'),
+    ('[TRAKT:history] [DEBUG] index cache hit', 'DEBUG', 'TRAKT'),
+    ('2026-09-07T20:48:20.486+00:00 [SYNC] [DEBUG] detail', 'DEBUG', 'SYNC'),
+    ('[WARN] rate limited', 'WARN', 'SYNC'),
+    ('[PLEX] [ERROR] failed', 'ERROR', 'PLEX'),
+    ('[PLEX] INFO debug logging enabled', 'INFO', 'PLEX'),
+])
+def test_bracketed_levels_are_not_mistaken_for_providers(text, level, provider):
+    assert describe_line(text, 'SYNC')[1:] == (level, provider)
+
+
+def test_orchestrator_debug_messages_are_searchable_by_level(store):
+    from cw_platform.orchestrator._logging import Emitter
+    sid = store.start('debug-run', [])
+    emitter = Emitter(lambda text: store.append('sync', 'SYNC', text))
+    emitter.dbg(True, 'snapshot loaded')
+    emitter.dbg(True, 'state.persisted', saved_state_providers=2)
+    emitter.dbg(False, 'not emitted')
+    emitter.info('Normal sync message')
+    result = store.page(sid, level='DEBUG')
+    assert result['total'] == 2
+    assert {row['provider'] for row in result['items']} == {'SYNC'}
+    assert 'snapshot loaded' in ''.join(store.export(sid, level='DEBUG'))
+    assert store.page(sid, level='INFO')['total'] == 1
+
+
+@pytest.mark.parametrize('runtime,enabled', [
+    ({}, False), ({'debug': False, 'debug_mods': False}, False),
+    ({'debug': True}, True), ({'debug_mods': True}, True),
+    ({'debug': True, 'debug_mods': True, 'debug_http': True}, True),
+    ({'debug_http': True}, False),
+])
+def test_debug_archive_access_follows_runtime_setting(monkeypatch, store, runtime, enabled):
+    from api import logsAPI
+    cfg = {'runtime': runtime}
+    monkeypatch.setattr(logsAPI, 'archive', lambda: store)
+    monkeypatch.setattr(logsAPI, 'load_config', lambda: cfg)
+    store.append('debug', 'META', '[DEBUG] detail')
+    sid = store.sessions('debug')[0]['id']
+    line_id = store.page(sid)['items'][0]['id']
+    app = FastAPI()
+    app.include_router(logsAPI.router)
+    with TestClient(app) as client:
+        listing = client.get('/api/logs/archive?channel=debug').json()
+        assert ('debug' in listing['channels']) == enabled
+        assert bool(listing['items']) == enabled
+        for path in ('lines', f'context/{line_id}', 'download'):
+            assert client.get(f'/api/logs/archive/{sid}/{path}').status_code == (200 if enabled else 404)
+        assert client.patch(f'/api/logs/archive/{sid}', json={'pinned': True}).status_code == (200 if enabled else 404)
+        cfg['runtime'] = {'debug': False, 'debug_mods': False}
+        assert 'debug' not in client.get('/api/logs/archive').json()['channels']
+        assert client.get(f'/api/logs/archive/{sid}/lines').status_code == 404
+        assert client.delete(f'/api/logs/archive/{sid}').status_code == 404
+        assert store.session(sid) is not None
+
+
 def test_api_scopes_every_read_export_pin_and_delete(monkeypatch, store):
     from api import logsAPI
     monkeypatch.setattr(logsAPI, 'archive', lambda:store)
-    monkeypatch.setattr(logsAPI, 'load_config', lambda:{})
+    monkeypatch.setattr(logsAPI, 'load_config', lambda:{'runtime':{'debug':True}})
     monkeypatch.setattr(logsAPI, 'user_can_access_instance', lambda cfg,user,provider,instance:provider=='PLEX')
     mine=store.start('mine', [{'id':'mine','source':'PLEX','target':'PLEX'}]);store.append('sync','SYNC','INFO own log');store.finish(mine,'completed')
     theirs=store.start('theirs',[{'id':'theirs','source':'TRAKT','target':'TRAKT'}]);store.append('sync','SYNC','ERROR private log');store.finish(theirs,'failed')
@@ -228,7 +286,7 @@ def test_pair_api_latest_run_counts_context_and_debug_run(monkeypatch, store):
     old = record_pair_run(store, 'run-one', pairs)
     new = record_pair_run(store, 'run-two', pairs[:1])
     monkeypatch.setattr(logsAPI, 'archive', lambda:store)
-    monkeypatch.setattr(logsAPI, 'load_config', lambda:{'pairs':pairs})
+    monkeypatch.setattr(logsAPI, 'load_config', lambda:{'pairs':pairs, 'runtime':{'debug':True}})
     app = FastAPI(); app.include_router(logsAPI.router)
     with TestClient(app) as client:
         result = client.get('/api/logs/archive?pair_id=b').json()

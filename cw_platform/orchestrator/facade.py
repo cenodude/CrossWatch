@@ -459,7 +459,7 @@ class Orchestrator:
             self.state_store.set_last_sync_epoch(last_sync_epoch)
         self.dbg(
             "state.persisted",
-            providers=len(touched),
+            saved_state_providers=len(touched),
             wall=0,
         )
         return {"providers": {name: {} for name in sorted(touched)}, "last_sync_epoch": last_sync_epoch}
@@ -520,7 +520,7 @@ class Orchestrator:
         self.state_store.set_last_sync_epoch(last_sync_epoch)
         self.dbg(
             "state.persisted",
-            providers=len(providers),
+            saved_state_providers=len(providers),
             wall=len(uniq),
         )
         return state

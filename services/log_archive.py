@@ -21,7 +21,7 @@ from cw_platform.log_context import log_pair_id, log_run_id
 RETENTION_DAYS = 7
 MAX_BYTES = 100 * 1024 * 1024
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
-LEVEL = re.compile(r"(?:^|\]\s+|\d{2}:\d{2}:\d{2}\s+)(ERROR|CRITICAL|WARNING|WARN|DEBUG|INFO|SUCCESS)\b", re.I)
+LEVEL = re.compile(r"(?:^|\]\s+|\d{2}:\d{2}:\d{2}\s+|\[)(ERROR|CRITICAL|WARNING|WARN|DEBUG|INFO|SUCCESS)\b", re.I)
 
 
 def describe_line(text: str, tag: str) -> tuple[str, str, str]:
@@ -30,7 +30,8 @@ def describe_line(text: str, tag: str) -> tuple[str, str, str]:
     level = (matches[-1].upper() if matches else "WARN" if text.startswith("[!]") else "INFO")
     level = {"WARNING": "WARN", "CRITICAL": "ERROR", "SUCCESS": "INFO"}.get(level, level)
     provider = tag.upper()
-    tags = re.findall(r"\[([A-Z][A-Z0-9_-]*)(?::[^\[\]]+)?\]", text)
+    tags = [value for value in re.findall(r"\[([A-Z][A-Z0-9_-]*)(?::[^\[\]]+)?\]", text)
+            if value not in {'ERROR', 'CRITICAL', 'WARNING', 'WARN', 'DEBUG', 'INFO', 'SUCCESS'}]
     if tags:
         provider = tags[-1]
     try:
