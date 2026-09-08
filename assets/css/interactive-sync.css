@@ -246,3 +246,7 @@ html:has(dialog.is-mapping-dialog[open]) { overflow: hidden; }
 .is-map-status { display: inline-flex; align-items: center; gap: 6px; color: var(--is-muted); font-size: 12px; white-space: nowrap; }
 .is-map-status.is-edited { color: var(--is-accent); }
 .is-map-status.is-review { color: var(--cw-theme-warning, #e8bb69); }
+
+.is-map-scope{display:flex;flex-direction:column;gap:8px;margin:0 0 18px;font-weight:600}
+.is-map-scope select{width:100%;max-width:520px;min-width:0;background:var(--panel,#101318);color:inherit;border:1px solid var(--border,#292e38);border-radius:10px;padding:12px}
+.is-map-scope small{font-weight:400;color:var(--muted,#969eab)}

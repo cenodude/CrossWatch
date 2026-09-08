@@ -22,20 +22,15 @@
     return s.slice(5).split("#")[0];
   }
 
-  function idFromKey(key, prefix) {
-    const s = (key || "") + "";
-    if (!s.toLowerCase().startsWith(`${prefix}:`)) return "";
-    return s.slice(prefix.length + 1).split("#")[0];
-  }
-
   function applyManualRow(row, item, key) {
     const ids = item.ids || {};
+    if (row.key && row.key !== key && !row._replacedKey) row._replacedKey = row.key;
     row.key = key;
     row.raw = item;
-    row.type = "episode";
-    row.episode = true;
-    row.title = String(item.series_title || row.title || "");
-    row.year = item.series_year != null ? String(item.series_year) : row.year || "";
+    row.type = item.type || row.type || "movie";
+    row.episode = row.type === "episode";
+    row.title = String(item.series_title || item.show_title || item.title || "");
+    row.year = item.year != null ? String(item.year) : item.series_year != null ? String(item.series_year) : "";
     row.imdb = ids.imdb ? String(ids.imdb) : "";
     row.tmdb = ids.tmdb ? String(ids.tmdb) : "";
     row.tvdb = ids.tvdb ? String(ids.tvdb) : "";
@@ -88,45 +83,11 @@
     return rows;
   }
 
-  function buildManualOverrideRows(items, blocks, options = {}) {
-    const rows = buildRows(items || {}, options);
-    const itemKeys = new Set(rows.map(row => String(row.key || "").toLowerCase()));
-    for (const blockKey of blocks || []) {
-      const key = String(blockKey || "").trim();
-      if (!key || itemKeys.has(key.toLowerCase())) continue;
-      rows.push({
-        _rid: nextRid(options),
-        key,
-        type: "",
-        title: "",
-        year: "",
-        imdb: imdbFromKey(key),
-        tmdb: idFromKey(key, "tmdb"),
-        tvdb: idFromKey(key, "tvdb"),
-        trakt: idFromKey(key, "trakt"),
-        simkl: idFromKey(key, "simkl"),
-        mal: "",
-        anilist: "",
-        raw: { ids: {}, type: null, title: null },
-        deleted: true,
-        episode: false,
-        _origin: "baseline",
-        _manualBlock: true,
-      });
-    }
-    rows.sort((a, b) => {
-      if (a.deleted !== b.deleted) return a.deleted ? 1 : -1;
-      return String(a.title || a.key || "").localeCompare(String(b.title || b.key || ""));
-    });
-    return rows;
-  }
-
   Editor.Rows = {
     imdbFromKey,
     applyManualRow,
     buildManualRow,
     buildRows,
-    buildManualOverrideRows,
   };
   window.CrossWatchEditorRows = Editor.Rows;
 })();

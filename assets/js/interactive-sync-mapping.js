@@ -44,12 +44,12 @@ export function correctedEpisode(original, match) {
   return {...correctedItem(original, {...match, ids: sameShow ? {...ids, ...match.ids} : match.ids}), episode:match.episode};
 }
 
-export function openMappingWorkspace({rows, session = {}, json, post, onSaved, onClose, total, mappingApi, standalone = false}) {
+export function openMappingWorkspace({rows, session = {}, json, post, onSaved, onClose, total, mappingApi, standalone = false, scope = "pair", scopes = [{id:"pair", label:"This sync pair"}, {id:"shared", label:"All pairs using this provider instance"}], staged = false}) {
   const api = mappingApi || {
     catalogs: row => json(`/api/interactive-sync/${session.id}/mapping-catalogs?${new URLSearchParams({revision:session.revision, row_id:row.id})}`),
     search: (row, q, catalog, options) => json(`/api/interactive-sync/${session.id}/mapping-search?${new URLSearchParams({revision:session.revision, row_id:row.id, q, catalog})}`, options),
     episodes: (edits, options) => json(`/api/interactive-sync/${session.id}/mapping-episodes`, {...options, method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({revision:session.revision, selection_version:session.selection_version, edits})}),
-    save: edits => post(`/api/interactive-sync/${session.id}/mappings`, {revision:session.revision, selection_version:session.selection_version, edits}),
+    save: (edits, scope) => post(`/api/interactive-sync/${session.id}/mappings`, {revision:session.revision, selection_version:session.selection_version, edits, scope}),
   };
   const dialog = document.createElement("dialog");
   dialog.className = "is-page is-mapping-dialog";
@@ -82,7 +82,8 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
   };
   dialog.innerHTML = `<header class="is-mapping-head"><div><div class="is-eyebrow">MAPPING</div><h2>Edit mappings</h2><p>Choose the correct title and review your changes.</p></div><button class="is-btn is-map-close" data-close aria-label="Close" title="Close">${icon("close")}</button></header>
     <div class="is-mapping-body">
-    <div class="is-map-intro"><span>${rows.length} item${rows.length === 1 ? "" : "s"}${total > rows.length ? ` from ${total} results` : ""}</span><details class="is-map-help"><summary aria-label="About saved mappings" title="About saved mappings">${icon("info")}</summary><p>Saved mappings also apply to future syncs using the same source and profile. Watched dates and ratings are kept. ${standalone ? "Run the pair again to retry with your correction. Saving does not start a sync." : "Saving updates your sync review; it does not start a sync."}</p></details></div>
+    <div class="is-map-intro"><span>${rows.length} item${rows.length === 1 ? "" : "s"}${total > rows.length ? ` from ${total} results` : ""}</span><details class="is-map-help"><summary aria-label="About saved mappings" title="About saved mappings">${icon("info")}</summary><p>Pair mappings override shared corrections for that pair. Shared corrections apply to every pair using the source provider instance. Watched dates and ratings are kept. ${standalone ? "Run the pair again to retry with your correction. Saving does not start a sync." : "Saving updates your sync review; it does not start a sync."}</p></details></div>
+    <label class="is-map-scope">Apply correction to<select data-mapping-scope ${scopes.length < 2 ? "disabled" : ""}>${scopes.map(option => `<option value="${esc(option.id)}" ${option.id === scope ? "selected" : ""}>${esc(option.label)}</option>`).join("")}</select><small data-scope-note></small></label>
     <section class="is-map-bulk" aria-label="Choose a title"><div class="is-map-search-heading"><h3>Choose a title</h3><div class="is-map-actions"><button class="is-btn" data-suggest hidden>${icon("auto_fix_high")}Auto match</button><button class="is-btn" data-stop-search hidden>Stop search</button></div></div>
       <div data-chosen hidden class="is-map-chosen"><span>${icon("check_circle")}<strong data-match></strong></span><button class="is-btn is-small" data-change-match>Change match</button></div>
       <div data-search-panel><div class="is-map-search-bar" hidden><label>Search title<input data-search-query value="${esc(seriesTitle(first.item))}" maxlength="200"></label><label>Search in<select data-catalog></select></label><button class="is-btn" data-search>Find matches</button></div><div class="is-map-candidates"></div></div>
@@ -91,10 +92,19 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
     <div class="is-map-row-tools"><strong data-selection-count></strong><button class="is-btn is-small" data-check-all>Select all</button><button class="is-btn is-small" data-check-none>Clear selection</button></div>
     <details class="is-map-numbering" hidden><summary>Adjust episode numbering</summary><div class="is-map-numbering-fields"><label>Season<input data-season type="number" min="0" placeholder="Keep current"></label><label>Shift episode numbers by<input data-offset type="number" value="0"></label><button class="is-btn" data-bulk>Apply numbering</button></div><p>Use 0 to keep episode numbers, or a shift such as −10 to change episode 11 to 1. Applies to selected episodes.</p></details>
     <div class="is-map-review">${groups.map((indices, groupIndex) => indices.length === 1 ? renderDraft(indices[0]) : `<details class="is-map-group" data-group="${groupIndex}"><summary><span><strong>${esc(seriesTitle(rows[indices[0]].item))} · Season ${esc(rows[indices[0]].item.season)}</strong><small>${indices.length} episodes · ${esc(endpoint(rows[indices[0]]))}</small></span><span data-group-after>Review episodes</span></summary><div class="is-map-group-tools"><button class="is-btn is-small" data-select-group="${groupIndex}">Select this season</button><span data-group-count></span></div>${indices.map(renderDraft).join("")}</details>`).join("")}</div>
-    </div><footer class="is-map-save"><div><strong data-count>No changes yet</strong><p data-error role="alert"></p></div><button class="is-btn is-primary" data-save disabled>Save mappings</button></footer>`;
+    </div><footer class="is-map-save"><div><strong data-count>No changes yet</strong><p data-error role="alert"></p></div><button class="is-btn is-primary" data-save disabled>${staged ? "Use correction" : "Save mappings"}</button></footer>`;
   document.body.append(dialog);
   dialog.showModal();
   const $ = selector => dialog.querySelector(selector);
+  function updateScopeNote() {
+    const shared = $("[data-mapping-scope]").value === "shared";
+    $("[data-scope-note]").textContent = (shared
+      ? "Shared correction for every pair using this provider instance."
+      : "Only this pair uses the correction; shared mappings stay available to other pairs.")
+      + (staged ? " Use Save changes in Editor to save it." : " Applies to future syncs too.");
+  }
+  $("[data-mapping-scope]").onchange = updateScopeNote;
+  updateScopeNote();
   function updateCatalogs() {
     const row = drafts.find(d => d.checked)?.row || first;
     const options = catalogs.get(routeKey(row)) || [];
@@ -175,7 +185,7 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
     changed(draft);
   }
   function lock(value) {
-    dialog.querySelectorAll("button,input,select").forEach(el => { el.disabled = value || el.hasAttribute("data-match-unavailable"); });
+    dialog.querySelectorAll("button,input,select").forEach(el => { el.disabled = value || el.hasAttribute("data-match-unavailable") || (el.hasAttribute("data-mapping-scope") && scopes.length < 2); });
     $("[data-stop-search]").hidden = !searching;
     $("[data-stop-search]").disabled = !searching;
     if (!value) $("[data-save]").disabled = !drafts.some(d => d.dirty) || saving || searching;
@@ -425,7 +435,7 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
     if (!edits.length) return;
     saving = true; lock(true); $("[data-error]").textContent = "";
     try {
-      const data = await api.save(edits);
+      const data = await api.save(edits, $("[data-mapping-scope]").value);
       closed = true; dialog.close(); dialog.remove(); onSaved(data);
     } catch (error) { $("[data-error]").textContent = error.message; }
     finally { saving = false; if (!closed) lock(false); }

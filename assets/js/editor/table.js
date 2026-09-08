@@ -154,6 +154,16 @@
       if (visual) titleIn.value = visual;
     };
     titleRow.appendChild(titleIn);
+    if (row._mappingScope) {
+      const indicator = document.createElement("span");
+      indicator.className = "material-symbols-rounded cw-mapping-indicator";
+      indicator.textContent = "link";
+      indicator.title = row._mappingScope === "pair" ? "Mapping saved for this pair"
+        : state.mappingPair ? "Shared mapping inherited by this pair" : "Shared mapping for all pairs using this provider instance";
+      indicator.setAttribute("role", "img");
+      indicator.setAttribute("aria-label", indicator.title);
+      titleRow.appendChild(indicator);
+    }
 
     const yearIn = document.createElement("input");
     yearIn.name = fieldName("year");

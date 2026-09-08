@@ -23,11 +23,27 @@ function context() {
 test("opens the correct provider/profile/feature and focuses a mapping beyond the first page",async()=>{
   const {ctx,target}=context();
   const focus=await navigateToMapping(mapping,ctx);
-  assert.deepEqual(ctx.calls[0],["manual","SIMKL","second","history"]);
+  assert.deepEqual(ctx.calls[0],["state","SIMKL","second","history"]);
   assert.equal(ctx.state.filter,""); assert.equal(ctx.state.blockedOnly,false);
   assert.equal(ctx.state.typeFilter.episode,true); assert.equal(ctx.state.page,1);
   assert.equal(ctx.state.hasChanges,false);
   focus(); assert.equal(ctx.calls.at(-1),target);
+});
+
+test("saved pair mappings open their own scope and shared mappings reset it", async () => {
+  const {ctx} = context();
+  await navigateToMapping({...mapping, pair_id:"pair-one"}, ctx);
+  assert.equal(ctx.state.mappingPair, "pair-one");
+  await navigateToMapping(mapping, ctx);
+  assert.equal(ctx.state.mappingPair, "");
+});
+
+test("mapping navigation counts only visible current-state rows for pagination", async () => {
+  const {ctx,target} = context();
+  ctx.loadState = async () => {ctx.state.rows=[...Array.from({length:60},(_,i)=>({key:String(i),deleted:true})),target];};
+  ctx.applyFilter = rows => rows.filter(row => !row.deleted);
+  await navigateToMapping(mapping,ctx);
+  assert.equal(ctx.state.page,0);
 });
 
 test("cancelling preserves unsaved work without loading another scope",async()=>{
