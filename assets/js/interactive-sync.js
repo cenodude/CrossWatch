@@ -170,7 +170,7 @@
   function reportHTML() {
     const report = session.report, totals = report.totals;
     const outcomes = {
-      success: ["check_circle", "Sync completed", "The sync engine finished processing your selected changes."],
+      success: ["check_circle", "Sync completed", report.requested === 0 ? "No changes applied. Your sync data has been refreshed." : "The sync engine finished processing your selected changes."],
       attention: ["warning", "Finished with items to review", "Some changes need attention. Review the results and notices below."],
       cancelled: ["pause_circle", "Sync cancelled", "Changes already applied were kept."],
       incomplete: ["error", "Sync did not finish", "The report contains the results available before the operation stopped."]
