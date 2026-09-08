@@ -1439,14 +1439,14 @@ def test_connection_modals_mount_and_bind_before_opening() -> None:
 
 def test_maintenance_tracker_archive_uses_profile_selector_toolbar() -> None:
     root = Path(__file__).resolve().parents[1]
-    modal_js = (root / "assets" / "js" / "modals" / "maintenance" / "index.js").read_text("utf-8")
-    modal_css = (root / "assets" / "js" / "modals" / "maintenance" / "styles.css").read_text("utf-8")
+    modal_js = (root / "assets" / "js" / "maintenance" / "index.js").read_text("utf-8")
+    modal_css = (root / "assets" / "js" / "maintenance" / "styles.css").read_text("utf-8")
     icon_select_js = (root / "assets" / "helpers" / "icon-select.js").read_text("utf-8")
     profile_select_js = (root / "assets" / "helpers" / "profile-select.js").read_text("utf-8")
 
     assert "tracker-archive-options" in modal_js
     assert "tracker-profile-control" in modal_js
-    assert "archive-btn icon-only secondary" in modal_js
+    assert "archive-btn secondary" in modal_js
     assert "aria-label=\"Download tracker archive\"" in modal_js
     assert "aria-label=\"Import tracker archive\"" in modal_js
     assert "CW?.ProfileSelect?.enhanceProfile" in modal_js
@@ -1454,8 +1454,7 @@ def test_maintenance_tracker_archive_uses_profile_selector_toolbar() -> None:
     assert "menuClassName: \"cxm-tracker-profile-menu\"" in modal_js
     assert "menuMinWidth: 220" in modal_js
     assert "button, input, label, a, summary, .cw-icon-select" in modal_js
-    assert "tracker-archive-options { align-items: center; flex-wrap: nowrap" in modal_css
-    assert "archive-btn.icon-only" in modal_css
+    assert "tracker-archive-options { display:grid;" in modal_css
     assert ".tracker-profile-control .cxm-tracker-profile-select" in modal_css
     assert "cxm-tracker-profile-menu" in modal_css
     assert "menuMinWidth" in icon_select_js
@@ -1465,7 +1464,7 @@ def test_maintenance_tracker_archive_uses_profile_selector_toolbar() -> None:
 
 def test_maintenance_rebuild_state_refreshes_main_page_caches() -> None:
     root = Path(__file__).resolve().parents[1]
-    modal_js = (root / "assets" / "js" / "modals" / "maintenance" / "index.js").read_text("utf-8")
+    modal_js = (root / "assets" / "js" / "maintenance" / "index.js").read_text("utf-8")
     helper_js = (root / "assets" / "helpers" / "maintenance.js").read_text("utf-8")
 
     assert "function applySyncStateReset(result = {})" in helper_js

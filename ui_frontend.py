@@ -277,6 +277,7 @@ def _nav_profile_link(user: dict | None = None) -> str:
 
 
 def _managed_user_shell(html: str, user: dict | None = None) -> str:
+    html = html.replace('  <section id="page-maintenance" class="card hidden tab-page"></section>\n\n', "")
     perms = _managed_user_permissions(user)
     write_allowed = bool(perms.get("write"))
     dashboard_allowed = bool(perms.get("dashboard")) and write_allowed
@@ -425,6 +426,7 @@ def _get_index_html_static() -> str:
     events: "Events",
     logs: "Logs",
     import_export: "Import / Export",
+    maintenance: "Maintenance tools",
     interactive_sync: "Interactive Sync",
     settings: "Settings",
   };
@@ -523,7 +525,7 @@ def _get_index_html_static() -> str:
 (() => {
   try {
     const route = String(window.location.hash || "").replace(/^#\/?/, "").split("?")[0].split("/")[0].trim().toLowerCase().replace(/-/g, "_");
-    const tabs = new Set(["watchlist", "playback_progress", "snapshots", "playlists", "editor", "analyzer", "events", "logs", "import_export", "interactive_sync", "settings"]);
+    const tabs = new Set(["watchlist", "playback_progress", "snapshots", "playlists", "editor", "analyzer", "events", "logs", "import_export", "interactive_sync", "maintenance", "settings"]);
     let tab = tabs.has(route) ? route : "main";
     if (document.documentElement.classList.contains("cw-compact") && tab !== "main") tab = "main";
     document.documentElement.dataset.cwInitialTab = tab;
@@ -544,6 +546,7 @@ html[data-cw-initial-tab="snapshots"] #page-snapshots,
 html[data-cw-initial-tab="playlists"] #page-playlists,
 html[data-cw-initial-tab="editor"] #page-editor,
 html[data-cw-initial-tab="analyzer"] #page-analyzer,
+html[data-cw-initial-tab="maintenance"] #page-maintenance,
 html[data-cw-initial-tab="events"] #page-events,
 html[data-cw-initial-tab="logs"] #page-logs,
 html[data-cw-initial-tab="import_export"] #page-import_export,
@@ -887,6 +890,8 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
   <section id="page-editor" class="card hidden tab-page"></section>
 
   <section id="page-analyzer" class="card hidden tab-page"></section>
+
+  <section id="page-maintenance" class="card hidden tab-page"></section>
 
   <section id="page-events" class="card hidden tab-page"></section>
 
@@ -1621,7 +1626,7 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
                     </span>
                     <span class="cw-maint-action-cta" aria-hidden="true"><span>Open</span><span class="material-symbols-rounded">arrow_forward</span></span>
                   </button>
-                  <button class="btn cw-maint-action tools" type="button" onclick="openMaintenanceModal()">
+                  <button class="btn cw-maint-action tools" type="button" onclick="openMaintenance()">
                     <span class="material-symbols-rounded cw-maint-action-icon" aria-hidden="true">tune</span>
                     <span class="cw-maint-action-copy">
                       <strong>Maintenance Tools</strong>

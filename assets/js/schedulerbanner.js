@@ -141,7 +141,7 @@ html.cw-theme-original #ops-card{--hub-service-good:#57b58a;--hub-service-bad:#e
   })();
 
   function activateStatusTarget(target){
-    if (target==="maintenance") return window.openMaintenanceModal?.();
+    if (target==="maintenance") return window.openMaintenance?.();
     window.showTab?.("settings");
     setTimeout(()=>{
       if (target==="scheduling") return window.cwSettingsSelect?.("scheduling");
