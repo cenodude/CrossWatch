@@ -18,7 +18,14 @@ from services.log_archive import archive, MAX_BYTES, RETENTION_DAYS
 router = APIRouter(prefix='/api/logs/archive', tags=['logging'])
 
 
+def debug_enabled(cfg: dict) -> bool:
+    runtime = cfg.get('runtime') or {}
+    return bool(runtime.get('debug') or runtime.get('debug_mods'))
+
+
 def allowed(request: Request, session: dict) -> bool:
+    if session['channel'] == 'debug' and not debug_enabled(load_config() or {}):
+        return False
     user = request_user(request)
     profile = requested_view_as_profile(request)
     if (not user or user.get('is_admin')) and not profile:
@@ -50,7 +57,8 @@ def sessions(request: Request, channel: Literal['sync', 'watcher', 'debug'] = 's
     sync_logs = [item for item in store.sessions('sync') if allowed(request, item)]
     choices = {}
     # Include configured pairs with no logs yet, and retained logs for removed pairs.
-    configured = (load_config() or {}).get('pairs') or []
+    cfg = load_config() or {}
+    configured = cfg.get('pairs') or []
     for pair in configured:
         if isinstance(pair, dict) and allowed(request, dict(channel='sync', pairs=json.dumps([pair]))):
             choices[str(pair.get('id') or '')] = pair
@@ -69,7 +77,10 @@ def sessions(request: Request, channel: Literal['sync', 'watcher', 'debug'] = 's
         items = [dict(item, **store.counts(item['id'], pair_id, run_id)) for item in items]
     user = request_user(request)
     admin = (not user or bool(user.get('is_admin'))) and not requested_view_as_profile(request)
-    return dict(items=items, pairs=pairs, latest_run_id=latest, channels=['sync', 'watcher', 'debug'] if admin else ['sync'], retention_days=RETENTION_DAYS,
+    channels = ['sync', 'watcher'] if admin else ['sync']
+    if admin and debug_enabled(cfg):
+        channels.append('debug')
+    return dict(items=items, pairs=pairs, latest_run_id=latest, channels=channels, retention_days=RETENTION_DAYS,
                 max_bytes=MAX_BYTES, used_bytes=archive().used if admin else sum(item['bytes'] for item in items))
 
 
