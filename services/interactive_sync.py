@@ -14,6 +14,7 @@ import uuid
 
 from cw_platform.orchestrator import Orchestrator
 from cw_platform.orchestrator._interactive import InteractivePlan, fingerprint
+from cw_platform.value_coercion import coerce_bool
 from .interactive_sync_store import ReviewStore
 from .interactive_sync_progress import SyncProgress
 from .interactive_sync_report import SyncReport
@@ -106,7 +107,12 @@ def build(session: Session, cfg: dict[str, Any], choices: dict[str, str], *, sto
     return plan, summary
 
 
-def refresh(session: Session, cfg: dict[str, Any], choices: dict[str, str], *, restart_progress=True, corrections=()):
+def _empty_review(plan, summary):
+    return (bool(summary.get("ok")) and not plan.rows and not plan.conflicts and not plan.notices
+            and not any(summary.get(key) for key in ("cancelled", "errors", "unresolved", "blocked")))
+
+
+def refresh(session: Session, cfg: dict[str, Any], choices: dict[str, str], *, restart_progress=True, corrections=(), complete_empty=True):
     if restart_progress:
         session.progress.begin("preview")
     version = mapping_version(cfg)
@@ -118,6 +124,13 @@ def refresh(session: Session, cfg: dict[str, Any], choices: dict[str, str], *, r
         if session.store is not store:
             store.close()
         raise
+    if complete_empty and _empty_review(plan, summary) and not coerce_bool((cfg.get("sync") or {}).get("dry_run", False)):
+        # An empty review has no Apply action. Finish through the normal run path
+        # so provider baselines and the state-backed inventory are still saved.
+        with LOCK:
+            session.status = "applying"
+            session.message = "No changes proposed. Checking providers and saving the sync baseline."
+        apply(session, cfg, set())
 
 
 def _finish_review(session, cfg, version, plan, summary, store, *, corrections=()):
@@ -169,19 +182,22 @@ def apply(session: Session, cfg: dict[str, Any], selected: set[str]):
     session.report = None
     report = SyncReport(session.store, session.pair)
     if fingerprint(cfg) != session.config_hash or mapping_version(cfg) != session.mapping_version:
-        refresh(session, cfg, session.plan.choices, restart_progress=False)
+        refresh(session, cfg, session.plan.choices, restart_progress=False, complete_empty=False)
         _apply_needs_review(session, selected, "Settings or mappings changed.")
         return
     version = mapping_version(cfg)
     store = ReviewStore()
     try:
         plan, summary = build(session, cfg, session.plan.choices, selected=selected, store=store)
-        if not summary.get("ok") or not selected <= plan.seen:
+        empty_changed = not selected and not _empty_review(plan, summary)
+        if not summary.get("ok") or not selected <= plan.seen or empty_changed:
             if session.store is not None:
                 for detail in store.recheck_details(session.store, selected - plan.seen):
                     LOG.info("interactive_sync_proposal_changed session=%s detail=%s", session.id, json.dumps(detail, sort_keys=True))
             _finish_review(session, cfg, version, plan, summary, store)
             reason = "The provider recheck could not be completed." if not summary.get("ok") else "Some selected proposals changed or are no longer available."
+            if empty_changed and summary.get("ok"):
+                reason = "Provider data changed or needs attention."
             _apply_needs_review(session, selected, reason)
             return
     finally:
@@ -207,6 +223,8 @@ def apply(session: Session, cfg: dict[str, Any], selected: set[str]):
         session.summary["not_applied"] = len(selected - execution.seen)
         session.status = "complete" if result is not None else "error"
         session.message = "Selected changes processed. Review the results below." if result is not None else "Sync failed. Check Events before running again."
+        if not selected and session.report.get("outcome") == "success":
+            session.message = "No changes needed. Sync baseline saved."
         if session.summary.get("cancelled"):
             session.message = "Sync cancelled. Changes already applied were kept."
         session.touched = time.monotonic()
