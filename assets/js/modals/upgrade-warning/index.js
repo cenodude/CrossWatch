@@ -1,7 +1,7 @@
 /* assets/js/modals/upgrade-warning/index.js */
 /* CrossWatch - upgrade warning modal component */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
-const NOTES_ENDPOINT = "/api/update";
+const NOTES_ENDPOINT = "/api/version/release-notes";
 const _cwV = (() => {
   try { return new URL(import.meta.url).searchParams.get("v") || window.__CW_VERSION__ || Date.now(); }
   catch { return window.__CW_VERSION__ || Date.now(); }
@@ -10,7 +10,7 @@ const _cwV = (() => {
 const _cwVer = (u) => u + (u.includes("?") ? "&" : "?") + "v=" + encodeURIComponent(String(_cwV));
 
 const { getJson, postJson } = await import(_cwVer("../core/net.js"));
-const { renderNotesMarkup } = await import(_cwVer("./notes.js"));
+const { parseReleaseNotes, renderInlineMarkup, releaseNotesUrl } = await import(_cwVer("./notes.js"));
 const {
   escapeHtml,
   fetchAppAuthStatus,
@@ -121,9 +121,13 @@ export default {
       autoSaveFailed: false,
       autoSaveMessage: "",
       notesLoaded: false,
-      notesVisible: false,
-      notesBody: "",
-      notesMeta: "",
+      notesLoading: true,
+      highlights: [],
+      wikiLinks: [],
+      upgradeNote: "",
+      showAllHighlights: false,
+      backup: "",
+      adjustedSettings: false,
       notesUrl: "https://github.com/cenodude/CrossWatch/releases",
     };
 
@@ -149,16 +153,17 @@ export default {
       state.notesLoaded = true;
       try {
         const j = await getJson(NOTES_ENDPOINT, { cache: "no-store" });
-        const body = String(j.body || "").trim();
-        state.notesUrl = String(j.html_url || j.url || state.notesUrl || "").trim() || state.notesUrl;
-        if (!body) return;
-        const latest = _norm(j.latest_version || j.latest || "");
-        const published = String(j.published_at || "").trim();
-        state.notesBody = renderNotesMarkup(body);
-        state.notesMeta = `Latest${latest ? ` v${latest}` : ""}${published ? ` - ${published}` : ""}`;
-        state.notesVisible = true;
+        state.notesUrl = releaseNotesUrl(j.html_url, state.notesUrl);
+        if (_norm(j.version) === cur) {
+          const notes = parseReleaseNotes(j.body);
+          state.highlights = notes.highlights;
+          state.wikiLinks = notes.wikiLinks;
+          state.upgradeNote = notes.upgradeNote;
+        }
+      } catch {} finally {
+        state.notesLoading = false;
         render();
-      } catch {}
+      }
     }
 
     async function ensureAutoSaved() {
@@ -174,6 +179,8 @@ export default {
           throw new Error(String(res.error || "config_save_failed"));
         }
         state.autoSaveDone = true;
+        state.backup = String(res.backup || "").split(/[\\/]/).pop() || "";
+        state.adjustedSettings = [res.forced_paths, res.profile_cleanup_paths, res.obsolete_paths].some(paths => Array.isArray(paths) && paths.length);
         state.autoSaveMessage = res && res.backup
           ? `Saved the updated config format. Backup created: ${res.backup}`
           : "Saved the updated config format.";
@@ -226,16 +233,16 @@ export default {
     function layout(body, foot) {
       return `
 
-        <div id="upg-host">
+        <div id="upg-host" role="dialog" aria-modal="true" aria-labelledby="upg-title">
           <div class="head">
-            <div class="icon" aria-hidden="true"><span class="material-symbols-rounded">system_update</span></div>
+            <div class="icon" aria-hidden="true"><span class="material-symbols-rounded">${state.autoSaveDone ? "fact_check" : "system_update"}</span></div>
             <div>
-              <div class="t">${requiresCleanReset ? "Unsupported config detected" : "Config version notice"}</div>
-              ${requiresCleanReset ? '<div class="sub">Pre-v0.9.12 requires a clean reset</div>' : ""}
+              <h1 class="t" id="upg-title">${requiresCleanReset ? "Unsupported config detected" : state.step !== "migrate" ? "Update your configuration" : state.autoSaveFailed ? "Configuration update failed" : state.autoSaveDone ? "Configuration updated" : "Updating configuration"}</h1>
+              <div class="sub">${requiresCleanReset ? "Pre-v0.9.12 requires a clean reset" : state.step !== "migrate" ? "Set up sign-in to continue your upgrade." : state.autoSaveFailed ? "The update could not be completed. Review the error below." : state.autoSaveDone ? `Your config was migrated successfully${state.backup ? " and a backup was created" : ""}.` : "Your existing config is being updated. Please wait."}</div>
             </div>
             <div class="pill">
-              <span class="b">Engine v${cur}</span>
-              <span class="b">${hasCfgVer ? `Config v${cfg}` : "Config: Legacy"}</span>
+              <span class="b">${hasCfgVer ? `Config v${escapeHtml(cfg)}${state.autoSaveDone ? ` &rarr; v${escapeHtml(cur)}` : ""}` : "Config: Legacy"}</span>
+              <span class="b">Engine v${escapeHtml(cur)}</span>
             </div>
           </div>
           <div class="body">${body}</div>
@@ -245,31 +252,27 @@ export default {
     }
 
     function migrationBody() {
+      const success = state.autoSaveDone;
+      const icon = state.autoSaveFailed ? "error" : success ? "check_circle" : "sync";
+      const highlights = state.showAllHighlights ? state.highlights : state.highlights.slice(0, 5);
       return `
-        <div class="card">
-          <div class="h">Current status</div>
-          <div class="p">${escapeHtml(state.autoSaveMessage || "Preparing the upgrade flow...")}</div>
-          ${state.autoSaveFailed ? '<div class="p" style="color:#ffb3b3">Automatic save failed. Review logs before continuing.</div>' : ""}
-        </div>
-        <div class="card">
-          <div class="h">Release notes</div>
-          <div class="p" style="opacity:.72">${state.notesVisible ? escapeHtml(state.notesMeta) : "Open the full release notes if inline notes are unavailable."}</div>
-          ${state.notesVisible
-            ? `<div class="notes">${state.notesBody}</div>`
-            : `<div class="p">Release notes could not be loaded in-app right now. <a href="${escapeHtml(state.notesUrl)}" target="_blank" rel="noopener noreferrer">Open release notes</a>.</div>`}
-        </div>
-        <div class="card">
-          <div class="h">Need help?</div>
-          <div class="p"><b>Tip:</b> After each CrossWatch update, hard refresh your browser (Ctrl+F5) so the UI loads the new assets.</div>
-          <a class="helpLink" href="https://wiki.crosswatch.app/" target="_blank" rel="noopener noreferrer">
-            <span class="helpCopy">
-              <span class="helpEyebrow">Documentation</span>
-              <span class="helpTitle">Open the CrossWatch Wiki</span>
-              <span class="helpSub">Setup guides, upgrade notes, and troubleshooting in one place.</span>
-            </span>
-            <span class="helpIcon" aria-hidden="true"><span class="material-symbols-rounded">menu_book</span></span>
-          </a>
-        </div>
+        <section class="upg-result ${state.autoSaveFailed ? "upg-failed" : success ? "upg-success" : ""}" role="status" aria-live="polite">
+          <span class="material-symbols-rounded upg-result-icon" aria-hidden="true">${icon}</span>
+          <div><h2>${state.autoSaveFailed ? "Update needs attention" : success ? "Update completed successfully" : "Updating your configuration"}</h2>
+          ${success ? `<ul class="upg-checks">
+            <li><span class="material-symbols-rounded" aria-hidden="true">check_circle</span>${state.adjustedSettings ? "Existing config migrated with compatibility adjustments" : "Existing settings retained"}</li>
+            <li><span class="material-symbols-rounded" aria-hidden="true">${state.backup ? "check_circle" : "info"}</span>${state.backup ? `Backup created: <code>${escapeHtml(state.backup)}</code>` : "No backup was reported. Check your backups before making further changes."}</li>
+            <li><span class="material-symbols-rounded" aria-hidden="true">${state.upgradeNote ? "info" : "check_circle"}</span>${state.upgradeNote ? "Review the upgrade note below" : "Configuration migration complete"}</li>
+          </ul>` : `<p>${escapeHtml(state.autoSaveMessage || "Preparing the configuration update...")}</p>`}</div>
+        </section>
+        ${state.upgradeNote ? `<section class="upg-upgrade-note" aria-label="Upgrade note"><h2><span class="material-symbols-rounded" aria-hidden="true">info</span>Upgrade note</h2><div>${state.upgradeNote.split(/\n\s*\n/).map(text => `<p>${renderInlineMarkup(text.replace(/\n/g, " "))}</p>`).join("")}</div></section>` : ""}
+        <section class="upg-changes" aria-label="What changed"><h2>What changed</h2>
+          ${highlights.length ? `<ul class="upg-highlights">${highlights.map((item, index) => `<li><span class="material-symbols-rounded" aria-hidden="true">${["auto_awesome", "tune", "sync_alt", "dashboard", "insights"][index % 5]}</span><div>${item.children.length ? `<details><summary>${renderInlineMarkup(item.text)}</summary><ul>${item.children.map(text => `<li>${renderInlineMarkup(text)}</li>`).join("")}</ul></details>` : renderInlineMarkup(item.text)}</div></li>`).join("")}</ul>` : `<p class="upg-muted">${state.notesLoading ? "Loading release highlights..." : "Highlights are unavailable for this build. You can check the full release notes below."}</p>`}
+          ${state.highlights.length > 5 ? `<button class="upg-show-all" type="button" data-x="highlights" aria-expanded="${state.showAllHighlights}">${state.showAllHighlights ? "Show fewer highlights" : `Show all highlights (${state.highlights.length})`}</button>` : ""}
+          <a class="upg-release-link" href="${escapeHtml(state.notesUrl)}" target="_blank" rel="noopener noreferrer">View full release notes <span class="material-symbols-rounded" aria-hidden="true">arrow_forward</span></a>
+        </section>
+        ${state.wikiLinks.length ? `<section class="upg-wiki" aria-label="Updated Wiki"><h2>Updated Wiki</h2><ul>${state.wikiLinks.map(item => `<li><a href="${escapeHtml(item.url)}" title="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer"><span class="material-symbols-rounded" aria-hidden="true">menu_book</span>${escapeHtml(item.title)}<span class="material-symbols-rounded" aria-hidden="true">open_in_new</span></a></li>`).join("")}</ul></section>` : ""}
+        <aside class="upg-help"><span class="material-symbols-rounded" aria-hidden="true">info</span><p>After updating CrossWatch, refresh your browser with <b>Ctrl + F5</b> if the UI does not load the latest assets.</p><a href="https://wiki.crosswatch.app/" target="_blank" rel="noopener noreferrer"><span class="material-symbols-rounded" aria-hidden="true">menu_book</span>Open documentation</a></aside>
       `;
     }
 
@@ -359,13 +362,23 @@ export default {
     }
 
     function renderMigrate() {
-      setModalDismissible(true);
+      const waiting = !state.autoSaveDone && !state.autoSaveFailed;
+      setModalDismissible(!waiting);
       hostEl.innerHTML = layout(migrationBody(), `
-        <button class="btn primary" type="button" data-x="ok"${state.autoSaveFailed ? " disabled" : ""}>OK</button>
+        <button class="btn" type="button" data-x="close"${waiting ? " disabled" : ""}>Close</button>
+        <button class="btn primary" type="button" data-x="continue"${!state.autoSaveDone ? " disabled" : ""}>Continue <span class="material-symbols-rounded" aria-hidden="true">arrow_forward</span></button>
       `);
       setModalShellInline(shell);
-      hostEl.querySelector('[data-x="ok"]')?.addEventListener("click", () => {
-        try { window.cxCloseModal?.(); } catch {}
+      hostEl.querySelector('[data-x="close"]')?.addEventListener("click", () => {
+        window.cxCloseModal?.();
+      });
+      hostEl.querySelector('[data-x="continue"]')?.addEventListener("click", () => {
+        window.cxCloseModal?.();
+      });
+      hostEl.querySelector('[data-x="highlights"]')?.addEventListener("click", () => {
+        state.showAllHighlights = !state.showAllHighlights;
+        render();
+        hostEl.querySelector('[data-x="highlights"]')?.focus({preventScroll: true});
       });
       ensureNotesLoaded();
     }

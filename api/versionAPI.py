@@ -11,6 +11,7 @@ from functools import lru_cache
 from importlib import import_module
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import requests
 from fastapi import APIRouter
@@ -134,6 +135,33 @@ def api_update() -> dict[str, Any]:
         "body": cache.get("body", ""),
         "published_at": cache.get("published_at"),
     }
+
+
+@lru_cache(maxsize=8)
+def _cached_installed_release(repo: str, version: str, _marker: int) -> dict[str, Any]:
+    tag = quote(f"v{version}", safe="")
+    release_url = f"https://github.com/{repo}/releases/tag/{tag}"
+    result: dict[str, Any] = {"version": version, "body": "", "html_url": f"https://github.com/{repo}/releases"}
+    try:
+        response = requests.get(
+            f"https://api.github.com/repos/{repo}/releases/tags/{tag}",
+            headers={"Accept": "application/vnd.github+json", "User-Agent": "CrossWatch"},
+            timeout=8,
+        )
+        response.raise_for_status()
+        data = response.json() or {}
+        # Development builds must not borrow notes from a different release.
+        if _norm(str(data.get("tag_name") or "")) == version:
+            result["body"] = str(data.get("body") or "")
+            result["html_url"] = release_url
+    except (requests.RequestException, ValueError, TypeError, AttributeError):
+        pass
+    return result
+
+
+@router.get("/version/release-notes")
+def api_installed_release_notes() -> dict[str, Any]:
+    return _cached_installed_release(REPO, _norm(CURRENT_VERSION), _ttl_marker(300))
 
 
 @router.get("/version")
