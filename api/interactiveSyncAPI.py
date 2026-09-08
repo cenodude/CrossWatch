@@ -6,7 +6,7 @@ from __future__ import annotations
 from copy import deepcopy
 import threading
 import time
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -54,10 +54,11 @@ class MappingChange(BaseModel):
 
 
 class MappingEdit(Revision, MappingChange):
-    pass
+    scope: Literal["pair", "shared"] = "pair"
 
 
 class MappingBatch(Revision):
+    scope: Literal["pair", "shared"] = "pair"
     selection_version: int = Field(ge=0)
     edits: list[MappingChange] = Field(min_length=1, max_length=200)
 
@@ -287,7 +288,7 @@ def prepare_mapping(row, corrected):
     return key, item, blocks
 
 
-def save_mappings(session, cfg, request, changes):
+def save_mappings(session, cfg, request, changes, scope="pair"):
     from .editorAPI import _require_instance_scope, _save_policy_manual_batch
     from services.saved_mappings import mapping_details
 
@@ -316,7 +317,7 @@ def save_mappings(session, cfg, request, changes):
         corrections.append(dict(identity=(row["feature"], key, row["source"], row["source_instance"], row["provider"], row["instance"]),
                                 selected=edit.selected))
     launch(session, svc.refresh_mappings, cfg, dict(session.plan.choices), corrections,
-           prepare=lambda: _save_policy_manual_batch(prepared, mappings=mappings))
+           prepare=lambda: _save_policy_manual_batch(prepared, mappings=mappings, pair_id=session.pair_id if scope == "pair" else ""))
     return session.public()
 
 
@@ -326,7 +327,7 @@ def mapping(sid: str, payload: MappingEdit, request: Request):
     with svc.LOCK:
         session = get_session(sid, request, cfg)
         check_revision(session, payload.revision)
-        return save_mappings(session, cfg, request, [payload])
+        return save_mappings(session, cfg, request, [payload], payload.scope)
 
 
 @router.post("/{sid}/mappings")
@@ -336,7 +337,7 @@ def mappings(sid: str, payload: MappingBatch, request: Request):
         session = get_session(sid, request, cfg)
         check_revision(session, payload.revision)
         check_selection(session, payload.selection_version)
-        return save_mappings(session, cfg, request, payload.edits)
+        return save_mappings(session, cfg, request, payload.edits, payload.scope)
 
 
 @router.get("/{sid}/mapping-catalogs")

@@ -284,6 +284,11 @@ def load_policy(base_path: str | Path, policy_path: str | Path | None = None) ->
             if isinstance(mappings, dict) and mappings:
                 node[feature]["mappings"] = {key: value for key, value in mappings.items() if key in items}
 
+        pairs = {str(row[0]): json.loads(row[1]) for row in conn.execute(
+            "SELECT pair_id,policy_json FROM manual_policy_pairs ORDER BY pair_id"
+        )}
+        if pairs:
+            out["pairs"] = pairs
         return out
 
 
@@ -341,6 +346,12 @@ def save_policy(base_path: str | Path, policy: Mapping[str, Any], policy_path: s
         ]
         item_sql = f"INSERT INTO manual_policy_add_items({','.join(item_columns)}) VALUES({','.join('?' for _ in item_columns)})"
         with conn:
+            conn.execute("DELETE FROM manual_policy_pairs")
+            conn.executemany("INSERT INTO manual_policy_pairs(pair_id,policy_json,updated_at) VALUES(?,?,?)", [
+                (str(pair_id), json.dumps(scoped, ensure_ascii=False), ts)
+                for pair_id, scoped in (policy.get("pairs") or {}).items()
+                if pair_id and isinstance(scoped, Mapping)
+            ])
             conn.execute("DELETE FROM manual_policy_add_items")
             conn.execute("DELETE FROM manual_policy_blocks")
             conn.execute("DELETE FROM manual_policy_features")
@@ -425,7 +436,7 @@ def has_policy(base_path: str | Path, policy_path: str | Path | None = None) -> 
         if conn is None:
             return False
         row = conn.execute("SELECT COUNT(*) FROM manual_policy_features").fetchone()
-        return bool(row and int(row[0] or 0) > 0)
+        return bool(row and int(row[0] or 0) > 0) or bool(conn.execute("SELECT 1 FROM manual_policy_pairs LIMIT 1").fetchone())
 
 
 def policy_mtime(base_path: str | Path) -> int | None:
@@ -442,6 +453,7 @@ def clear_policy(base_path: str | Path) -> None:
         if conn is None:
             return
         with conn:
+            conn.execute("DELETE FROM manual_policy_pairs")
             conn.execute("DELETE FROM manual_policy_add_items")
             conn.execute("DELETE FROM manual_policy_blocks")
             conn.execute("DELETE FROM manual_policy_features")

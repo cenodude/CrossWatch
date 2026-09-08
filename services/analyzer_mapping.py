@@ -17,6 +17,7 @@ from cw_platform.access_policy import request_user, user_can_access_pair
 
 
 class MappingRequest(BaseModel):
+    scope: Literal["pair", "shared"] = "pair"
     pair_id: str = Field(min_length=1, max_length=256)
     provider: str = Field(min_length=1, max_length=128)
     feature: Literal["history", "watchlist", "ratings", "progress", "collection"]
@@ -105,5 +106,5 @@ def handle_mapping(payload: MappingRequest, request):
     scope = (row["feature"], row["source"], row["source_instance"])
     records = {scope: {key: dict(original_key=row["key"], original=mapping_details(row["item"]),
                                saved_at=int(time.time()), origin="analyzer")}}
-    _save_policy_manual_batch([(row["feature"], row["source"], {key: item}, blocks, row["source_instance"])], mappings=records)
+    _save_policy_manual_batch([(row["feature"], row["source"], {key: item}, blocks, row["source_instance"])], mappings=records, pair_id=payload.pair_id if payload.scope == "pair" else "")
     return dict(ok=True, key=key)

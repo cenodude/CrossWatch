@@ -638,6 +638,9 @@ def apply_schema(conn: sqlite3.Connection) -> int:
         conn.execute(_CREATE_STATISTICS_FEATURE_TOTALS)
         conn.execute(_CREATE_STATISTICS_INGESTED_RUNS)
         conn.execute(_CREATE_MANUAL_POLICY_FEATURES)
+        conn.execute("""CREATE TABLE IF NOT EXISTS manual_policy_pairs (
+            pair_id TEXT PRIMARY KEY, policy_json TEXT NOT NULL, updated_at INTEGER NOT NULL
+        )""")
         conn.execute(_CREATE_MANUAL_POLICY_BLOCKS)
         conn.execute(_CREATE_MANUAL_POLICY_ADD_ITEMS)
         _ensure_column(conn, "manual_policy_add_items", "collected_at", "TEXT")

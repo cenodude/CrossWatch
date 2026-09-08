@@ -3,7 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-from typing import Any, Mapping, cast
+from typing import Any, Literal, Mapping, cast
 
 import io
 import json
@@ -32,6 +32,7 @@ from cw_platform.provider_instances import (
     sanitize_instance_label,
 )
 from services import playlists as playlist_svc
+from services.editor_mapping import MappingRequest as EditorMappingRequest, BlockRequest
 
 from services.editor import (
     Kind,
@@ -41,15 +42,27 @@ router = APIRouter(prefix="/api/editor", tags=["editor"])
 
 _STATE_BASE = Path(CONFIG_DIR)
 
+@router.post("/mapping")
+def api_editor_mapping(payload: EditorMappingRequest, request: Request):
+    from services.editor_mapping import handle_mapping
+    return handle_mapping(payload, request)
+
+
+@router.post("/mapping-block")
+def api_editor_mapping_block(payload: BlockRequest, request: Request):
+    from services.editor_mapping import update_block
+    return update_block(payload, request)
+
 
 @router.get("/mappings")
 def api_saved_mappings(request: Request, q: str = Query(default="", max_length=256),
                        provider: str = "", instance: str = "", feature: str = "",
+                       pair_id: str = "", entry_type: Literal["mapping", "block"] = "mapping",
                        offset: int = Query(default=0, ge=0), limit: int = Query(default=50, ge=1, le=100),
                        user_profile: str = Query(default="", max_length=64)):
-    from cw_platform.access_policy import profile_instances_map, profile_allows_instance
+    from cw_platform.access_policy import profile_instances_map, profile_allows_instance, user_can_access_pair
     from cw_platform.provider_instances import normalize_user_profile_id
-    from services.saved_mappings import saved_corrections
+    from services.saved_mappings import saved_corrections, saved_blocks
 
     cfg, user = load_config(), request_user(request)
     if user and not user.get("is_admin") and not (user.get("permissions") or {}).get("write"):
@@ -58,16 +71,37 @@ def api_saved_mappings(request: Request, q: str = Query(default="", max_length=2
     if user_profile.strip() and not profile:
         raise HTTPException(400, "Invalid profile")
     scope = profile_instances_map(cfg, profile) if profile else {}
-    rows = [row for row in saved_corrections(_load_policy())
+    pairs = {str(p.get("id")): p for p in cfg.get("pairs", []) if user_can_access_pair(cfg, user, p)}
+    entries = saved_blocks if entry_type == "block" else saved_corrections
+    rows = [row for row in entries(_load_policy())
             if user_can_access_instance(cfg, user, row["provider"], row["instance"])
+            and (not row["pair_id"] or row["pair_id"] in pairs)
             and (not profile or profile_allows_instance(scope, row["provider"], row["instance"]))]
+    for row in rows:
+        pair = pairs.get(row["pair_id"]) or {}
+        row["scope_label"] = str(pair.get("name") or pair.get("label") or
+                                 f"{pair.get('source')} → {pair.get('target')}") if row["pair_id"] else "All pairs"
     sources = sorted({(row["provider"], row["instance"]) for row in rows})
     query = q.strip().casefold()
     rows = [row for row in rows if (not provider or str(row.get("provider") or "").casefold() == provider.casefold())
+            and (not pair_id or row["pair_id"] == ("" if pair_id == "shared" else pair_id))
             and (not instance or row["instance"] == instance) and (not feature or row["feature"] == feature)
             and (not query or query in json.dumps(row, ensure_ascii=False).casefold())]
     rows.sort(key=lambda row: (-(row["saved_at"] or 0), row["provider"], row["instance"], row["feature"], row["key"]))
-    return dict(ok=True, items=rows[offset:offset + limit], total=len(rows), offset=offset, limit=limit,
+    page = rows[offset:offset + limit]
+    if entry_type == "block":
+        from services.saved_mappings import mapping_details
+        details: dict[tuple[Kind, str, str], dict[str, Any]] = {}
+        for row in page:
+            if row["feature"] not in ("watchlist", "history", "ratings", "progress", "collection"):
+                continue
+            identity = (cast(Kind, row["feature"]), row["provider"], row["instance"])
+            if identity not in details:
+                details[identity] = _load_state_items(*identity)
+            item = details[identity].get(row["key"])
+            if not row["corrected"] and item:
+                row["corrected"] = mapping_details(item)
+    return dict(ok=True, items=page, total=len(rows), offset=offset, limit=limit,
                 sources=[dict(provider=p, instance=i) for p, i in sources])
 
 
@@ -203,6 +237,8 @@ def _policy_providers(raw: dict[str, Any]) -> list[str]:
 def _union_providers(state_raw: dict[str, Any], policy_raw: dict[str, Any]) -> list[str]:
     a = _state_providers(state_raw)
     b = _policy_providers(policy_raw)
+    for scoped in (policy_raw.get("pairs") or {}).values():
+        b.extend(_policy_providers(scoped))
     seen: set[str] = set()
     out: list[str] = []
     for x in a + b:
@@ -268,8 +304,11 @@ def _load_policy_manual(
     provider: str,
     provider_instance: str | None = None,
     raw_policy: dict[str, Any] | None = None,
+    pair_id: str = "",
 ) -> tuple[dict[str, Any], list[str]]:
     raw = raw_policy if isinstance(raw_policy, dict) else _load_policy()
+    if pair_id:
+        raw = (raw.get("pairs") or {}).get(pair_id) or {}
     node = _policy_provider_node(raw, provider, provider_instance)
     if not isinstance(node, dict):
         return {}, []
@@ -323,72 +362,13 @@ def _save_policy_manual(
     _save_policy_manual_batch([(kind, provider, adds_items, blocks, provider_instance)], merge=merge)
 
 
-def _save_policy_manual_batch(edits, *, merge=True, mappings=None):
-    prepared = [(kind, provider, _canonicalize_manual_items(items, kind), blocks, instance)
+def _save_policy_manual_batch(edits, *, merge=True, mappings=None, pair_id=""):
+    from cw_platform.mapping_policy import update_mappings
+    prepared = [(kind, provider, _canonicalize_manual_items(items, kind), blocks, normalize_instance_id(instance))
                 for kind, provider, items, blocks, instance in edits]
-
-    def _mutate(raw: dict[str, Any]) -> None:
-        for kind, provider, adds_items, blocks, provider_instance in prepared:
-            providers = raw.get("providers")
-            if not isinstance(providers, dict):
-                providers = {}
-                raw["providers"] = providers
-
-            key = None
-            if provider in providers:
-                key = provider
-            else:
-                pl = str(provider).lower()
-                for k in providers.keys():
-                    if str(k).lower() == pl:
-                        key = str(k)
-                        break
-            if key is None:
-                key = provider
-                providers[key] = {}
-
-            node = providers.get(key)
-            if not isinstance(node, dict):
-                node = {}
-                providers[key] = node
-
-            inst = normalize_instance_id(provider_instance)
-            if inst != "default":
-                insts = node.get("instances")
-                if not isinstance(insts, dict):
-                    insts = {}
-                    node["instances"] = insts
-                in_node = insts.get(inst)
-                if not isinstance(in_node, dict):
-                    in_node = {}
-                    insts[inst] = in_node
-                node = in_node
-
-            f = node.get(kind)
-            if not isinstance(f, dict):
-                f = {}
-                node[kind] = f
-
-            f["blocks"] = _merge_blocks(f.get("blocks") or [], blocks or []) if merge else list(blocks or [])
-
-            adds = f.get("adds")
-            if not isinstance(adds, dict):
-                adds = {}
-                f["adds"] = adds
-            adds["items"] = {**(adds.get("items") or {}), **adds_items} if merge else dict(adds_items or {})
-            records = dict(f.get("mappings") or {})
-            for target, record in (mappings or {}).get((kind, provider, inst), {}).items():
-                previous = records.get(target) or records.get(record.get("original_key"))
-                if isinstance(previous, dict) and previous.get("original"):
-                    record = {**record, "original": previous["original"], "original_key": previous["original_key"]}
-                records[target] = record
-            if records:
-                f["mappings"] = {key: value for key, value in records.items() if key in adds["items"]}
-
-
-
     try:
-        sqlite_manual_policy.update_policy(_STATE_BASE, _mutate)
+        sqlite_manual_policy.update_policy(_STATE_BASE, lambda raw: update_mappings(
+            raw, prepared, mappings=mappings, pair_id=pair_id, merge=merge))
     except HTTPException:
         raise
     except Exception as e:
@@ -404,6 +384,7 @@ def _merge_policy(into: dict[str, Any], src: dict[str, Any], mode: str) -> dict[
         base = {"version": 1, "providers": {}}
         prov = src.get("providers") if isinstance(src, dict) else None
         base["providers"] = prov if isinstance(prov, dict) else {}
+        base["pairs"] = src.get("pairs") or {}
         return base
 
     out = into if isinstance(into, dict) else {"version": 1, "providers": {}}
@@ -414,6 +395,10 @@ def _merge_policy(into: dict[str, Any], src: dict[str, Any], mode: str) -> dict[
         prov_out = {}
         out["providers"] = prov_out
 
+    for pair_id, policy in (src.get("pairs") or {}).items():
+        if isinstance(policy, dict):
+            pairs = out.setdefault("pairs", {})
+            pairs[pair_id] = _merge_policy(pairs.get(pair_id) or {}, policy, "merge")
     prov_in = src.get("providers") if isinstance(src, dict) else None
     if not isinstance(prov_in, dict):
         return out
@@ -922,6 +907,7 @@ def api_editor_get_state(
     provider: str | None = None,
     provider_instance: str | None = None,
     endpoint: str | None = None,
+    pair_id: str = "",
     request: Request = cast(Request, None),
 ) -> dict[str, Any]:
     k = _normalize_kind(kind)
@@ -929,6 +915,7 @@ def api_editor_get_state(
     if src in ("playlist", "playlists", "playlist-endpoint"):
         return api_editor_playlist_endpoint((endpoint or snapshot or "").strip(), request=request)
 
+    from services.editor_mapping import require_mapping_pair, scope_options
     cfg = load_config() or {}
     if src in ("state", "current"):
         raw_state = _load_current_state_features({k})
@@ -952,14 +939,41 @@ def api_editor_get_state(
 
         inst = _instance_for_request(cfg, request, chosen, provider_instance)
         _require_instance_scope(cfg, request, chosen, inst)
+        pair = require_mapping_pair(cfg, request, pair_id, chosen, inst, k)
 
+        if pair:
+            from cw_platform.pair_scope import pair_feature_scope
+            from cw_platform.local_db import state as sqlite_state
+            raw_state = sqlite_state.load_pair_state(_STATE_BASE, pair_feature_scope(cfg, pair, k, cfg["pairs"].index(pair) + 1), {k})
         items = _load_state_items(k, chosen, inst, raw_state=raw_state)
-        st_adds, st_blocks = _load_state_manual(k, chosen, inst, raw_state=raw_state) if raw_state else ({}, [])
-        pol_adds, pol_blocks = _load_policy_manual(k, chosen, inst, raw_policy=raw_policy)
+        inherited: dict[str, Any] = {}
+        if pair_id:
+            from cw_platform.mapping_policy import effective_policy
+            effective = effective_policy(raw_policy, pair_id)
+            effective_adds, effective_blocks = _load_policy_manual(k, chosen, inst, raw_policy=effective)
+            own_adds, own_blocks = _load_policy_manual(k, chosen, inst, raw_policy=raw_policy, pair_id=pair_id)
+            inherited = {key: item for key, item in effective_adds.items() if key not in own_adds}
+            own_node = _policy_provider_node((raw_policy.get("pairs") or {}).get(pair_id) or {}, chosen, inst) or {}
+            originals = {record.get("original_key") for record in (own_node.get(k, {}).get("mappings") or {}).values()}
+            # Keep ordinary blocked rows editable. Mapping originals stay hidden;
+            # their blocks are maintained with the saved correction itself.
+            editable_blocks = set(own_blocks) - originals
+            items = {key: item for key, item in {**items, **inherited}.items()
+                     if key not in effective_blocks or key in editable_blocks}
+        st_adds, st_blocks = _load_state_manual(k, chosen, inst, raw_state=raw_state) if raw_state and not pair_id else ({}, [])
+        pol_adds, pol_blocks = _load_policy_manual(k, chosen, inst, raw_policy=raw_policy, pair_id=pair_id)
 
         manual_adds = dict(st_adds or {})
         manual_adds.update(dict(pol_adds or {}))
         manual_blocks = _merge_blocks(st_blocks or [], pol_blocks or [])
+        from services.saved_mappings import correction_block_keys
+        scoped_policy = (raw_policy.get("pairs") or {}).get(pair_id) or {} if pair_id else raw_policy
+        scoped_node = _policy_provider_node(scoped_policy, chosen, inst) or {}
+        automatic_blocks = correction_block_keys(scoped_node.get(k) or {})
+        visible_keys = {key.lower() for key in [*items, *manual_adds]}
+        manual_keys = {key.lower() for key in manual_adds}
+        preserved_blocks = [key for key in manual_blocks if key.lower() not in automatic_blocks
+                            and (key.lower() not in visible_keys or key.lower() in manual_keys)]
 
         ts = None
         try:
@@ -980,7 +994,12 @@ def api_editor_get_state(
             "items": items,
             "manual_adds": manual_adds,
             "manual_blocks": manual_blocks,
-            "instance_sharing": _shared_instance_note(cfg, chosen, inst),
+            "preserved_blocks": preserved_blocks,
+            "instance_sharing": _shared_instance_note(cfg, chosen, inst) if not pair_id else None,
+            "pair_id": pair_id,
+            "mapping_scopes": scope_options(cfg, request, chosen, inst, k),
+            "mapping_origins": {**({key: "shared" for key in inherited} if pair_id else {}),
+                                **{key: "pair" if pair_id else "shared" for key in manual_adds}},
         }
     if src in ("manual", "manual-overrides", "policy", "overrides"):
         raw_state = _load_current_state_features({k})
@@ -1004,8 +1023,9 @@ def api_editor_get_state(
 
         inst = _instance_for_request(cfg, request, chosen, provider_instance)
         _require_instance_scope(cfg, request, chosen, inst)
-        pol_adds, pol_blocks = _load_policy_manual(k, chosen, inst, raw_policy=raw_policy)
-        if not pol_adds and not pol_blocks and raw_state:
+        pair = require_mapping_pair(cfg, request, pair_id, chosen, inst, k)
+        pol_adds, pol_blocks = _load_policy_manual(k, chosen, inst, raw_policy=raw_policy, pair_id=pair_id)
+        if not pair_id and not pol_adds and not pol_blocks and raw_state:
             pol_adds, pol_blocks = _load_state_manual(k, chosen, inst, raw_state=raw_state)
 
         ts = None
@@ -1029,7 +1049,10 @@ def api_editor_get_state(
             "items": manual_adds,
             "manual_adds": manual_adds,
             "manual_blocks": manual_blocks,
-            "instance_sharing": _shared_instance_note(cfg, chosen, inst),
+            "instance_sharing": _shared_instance_note(cfg, chosen, inst) if not pair_id else None,
+            "pair_id": pair_id,
+            "mapping_scopes": scope_options(cfg, request, chosen, inst, k),
+            "mapping_origins": {key: "pair" if pair_id else "shared" for key in manual_adds},
         }
     raise HTTPException(status_code=400, detail=f"Unsupported source: {src}")
 
@@ -1121,6 +1144,9 @@ def api_editor_save_state(payload: dict[str, Any] = Body(...), request: Request 
         inst = _instance_for_request(cfg, request, provider, payload.get("provider_instance"))
         _require_instance_scope(cfg, request, provider, inst)
 
+        from services.editor_mapping import require_mapping_pair
+        pair_id = str(payload.get("pair_id") or "")
+        pair = require_mapping_pair(cfg, request, pair_id, provider, inst, kind)
         blocks = _normalize_blocks(payload.get("blocks"))
 
         from services.saved_mappings import mapping_details
@@ -1129,7 +1155,13 @@ def api_editor_save_state(payload: dict[str, Any] = Body(...), request: Request 
         original_keys = payload.get("mapping_originals")
         if isinstance(original_keys, dict) and original_keys:
             baseline = _load_state_items(kind, provider, inst)
-            previous, _ = _load_policy_manual(kind, provider, inst)
+            if pair:
+                from cw_platform.pair_scope import pair_feature_scope
+                from cw_platform.local_db import state as sqlite_state
+                raw_state = sqlite_state.load_pair_state(_STATE_BASE, pair_feature_scope(cfg, pair, kind, cfg["pairs"].index(pair) + 1), {kind})
+                baseline = {**baseline, **_load_state_items(kind, provider, inst, raw_state=raw_state)}
+            from cw_platform.mapping_policy import effective_policy
+            previous, _ = _load_policy_manual(kind, provider, inst, raw_policy=effective_policy(_load_policy(), pair_id))
             for input_key, corrected in (payload.get("items") or {}).items():
                 old_key = original_keys.get(input_key)
                 original = previous.get(old_key) or baseline.get(old_key) if isinstance(old_key, str) else None
@@ -1138,7 +1170,7 @@ def api_editor_save_state(payload: dict[str, Any] = Body(...), request: Request 
                     if target:
                         records[target] = dict(original_key=old_key, original=mapping_details(original),
                                                saved_at=int(time.time()), origin="editor")
-        _save_policy_manual_batch([(kind, provider, items, blocks, inst)], mappings={(kind, provider, inst): records})
+        _save_policy_manual_batch([(kind, provider, items, blocks, inst)], mappings={(kind, provider, inst): records}, pair_id=pair_id, merge=False)
         ts = None
         try:
             ts = _policy_mtime()

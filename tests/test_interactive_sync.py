@@ -641,7 +641,7 @@ def test_mapping_api_persists_and_recalculates(api_client, config_base, monkeypa
     assert len(session.plan.rows) == 1
     row = next(iter(session.plan.rows.values()))
     assert row["key"] == ("tmdb:2" if enrichment else "imdb:tt0000002")
-    adds, blocks = editorAPI._load_policy_manual("watchlist", "SRC")
+    adds, blocks = editorAPI._load_policy_manual("watchlist", "SRC", pair_id=session.pair_id)
     assert "_trakt_history_id" not in next(iter(adds.values()))
     assert blocks == ([] if enrichment else ["imdb:tt0000001"])
 

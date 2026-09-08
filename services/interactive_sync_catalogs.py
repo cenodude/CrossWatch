@@ -52,6 +52,8 @@ def configured(provider, block):
 
 
 def search_catalogs(cfg, row):
+    if row.get("metadata_only"):
+        return dict(ok=True, catalogs=[dict(id="tmdb", label="TMDb metadata")] if (cfg.get("tmdb") or {}).get("api_key") else [])
     provider = str(row["provider"]).upper()
     block = provider_block(cfg, provider, row.get("instance") or "default")
     options = []

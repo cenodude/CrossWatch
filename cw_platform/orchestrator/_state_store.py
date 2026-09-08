@@ -18,11 +18,12 @@ from ..local_db import watchlist_hide as sqlite_watchlist_hide
 class StateStore:
     base_path: Path
     pair_scope: str | None = None
+    mapping_pair_id: str = ""
 
-    def for_pair(self, scope: str) -> StateStore:
+    def for_pair(self, scope: str, *, pair_id: str = "") -> StateStore:
         if not scope:
             raise ValueError("Pair scope is required")
-        return StateStore(self.base_path, pair_scope=scope)
+        return StateStore(self.base_path, pair_scope=scope, mapping_pair_id=pair_id)
 
     @property
     def cw_state_dir(self) -> Path:
@@ -142,8 +143,12 @@ class StateStore:
 
     def load_state(self) -> dict[str, Any]:
         state = sqlite_state.load_pair_state(self.base_path, self.pair_scope) if self.pair_scope else sqlite_state.load_state(self.base_path)
-        policy = sqlite_manual_policy.load_policy(self.base_path)
+        policy = self._mapping_policy()
         return self._merge_policy(state, policy)
+
+    def _mapping_policy(self) -> dict[str, Any]:
+        from ..mapping_policy import effective_policy
+        return effective_policy(sqlite_manual_policy.load_policy(self.base_path), self.mapping_pair_id)
 
     def _filter_policy_features(self, policy: Mapping[str, Any], features: set[str]) -> dict[str, Any]:
         wanted = {str(feature or "").strip().lower() for feature in features if str(feature or "").strip()}
@@ -181,7 +186,7 @@ class StateStore:
     ) -> dict[str, Any]:
         wanted = {str(feature or "").strip().lower() for feature in features or [] if str(feature or "").strip()}
         state = sqlite_state.load_pair_state(self.base_path, self.pair_scope, wanted) if self.pair_scope else sqlite_state.load_state_features(self.base_path, features, recent_limit=recent_limit)
-        policy = self._filter_policy_features(sqlite_manual_policy.load_policy(self.base_path), wanted)
+        policy = self._filter_policy_features(self._mapping_policy(), wanted)
         return self._merge_policy(state, policy)
 
     def provider_feature_counts(self, feature: str = "watchlist") -> dict[str, int]:

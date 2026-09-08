@@ -493,7 +493,7 @@ def run_pairs(ctx) -> dict[str, Any]:
             with _pair_env(pair, i=i, src=src, dst=dst, mode=mode, feature=feature, scope=scope):
                 prev_cfg = ctx.config
                 prev_store = ctx.state_store
-                ctx.state_store = prev_store.for_pair(scope)
+                ctx.state_store = prev_store.for_pair(scope, pair_id=str(pair.get("id") or ""))
                 ctx.config = {**_config_with_pair_feature_options(pair_cfg_view, fcfg, (src, dst), feature), "_cw_pair_scope": scope}
                 try:
                     if not injected:

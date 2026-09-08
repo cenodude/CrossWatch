@@ -477,7 +477,7 @@ def _load_state_handles(pairs_raw: str | None, features: Iterable[str] | None = 
         pid = _pair_id(pair)
         for feature in wanted:
             scope = pair_feature_scope(cfg, pair, feature, index)
-            state = StateStore(CONFIG_DIR).for_pair(scope).load_state_features({feature})
+            state = StateStore(CONFIG_DIR).for_pair(scope, pair_id=pid).load_state_features({feature})
             handles.append({"pair": pid, "safe": scope, "state": state})
     if handles or cfg.get("pairs") or str(pairs_raw or "").startswith(_STRICT_PAIRS_PREFIX):
         return handles

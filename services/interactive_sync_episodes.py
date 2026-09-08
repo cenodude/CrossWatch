@@ -14,6 +14,8 @@ from services.interactive_sync_catalogs import configured, provider_block
 
 
 def metadata_key(cfg, row):
+    if row.get("metadata_only"):
+        return (cfg.get("tmdb") or {}).get("api_key")
     provider = str(row["provider"]).upper()
     block = provider_block(cfg, provider, row.get("instance") or "default")
     if not configured(provider, block):
