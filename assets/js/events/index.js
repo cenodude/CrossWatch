@@ -2,6 +2,8 @@
 /* CrossWatch - Events page */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
+import {pageBackLink, statisticsReturn, returnFromEvents} from '../page-return.js';
+
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => (
   { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
 ));
@@ -463,6 +465,8 @@ export default {
     const initialDomain = String(props?.domain || "").trim().toLowerCase();
     const initialVisibility = String(props?.visibility || "").trim().toLowerCase();
     const initialMode = String(props?.mode || "").trim().toLowerCase();
+    const back = pageBackLink(props?.returnTo, location.href, 'events');
+    if (statisticsReturn(props?.returnContext)) back.label = 'Sync activity';
     let runFilter = String(props?.runId || props?.run_id || "").trim();
     let visibility = ["open", "acknowledged", "all"].includes(initialVisibility) ? initialVisibility : ls("cw.events.visibility", "open");
     if (runFilter) visibility = ["open", "acknowledged", "all"].includes(initialVisibility) ? initialVisibility : "all";
@@ -478,7 +482,7 @@ export default {
 
     root.innerHTML = `
       <div class="ev-app">
-        <a class="ev-back" href="#main" id="ev-back"><span class="material-symbols-rounded" aria-hidden="true">arrow_back</span>Main</a>
+        <a class="ev-back" href="${esc(back.href)}" id="ev-back"><span class="material-symbols-rounded" aria-hidden="true">arrow_back</span>${esc(back.label)}</a>
         <header class="ev-header">
           <div>
             <div class="ev-eyebrow">ACTIVITY HISTORY</div>
@@ -581,10 +585,10 @@ export default {
       if (listReturnPosition !== null) window.scrollTo({ top: listReturnPosition, behavior: "instant" });
       listEl.querySelector(".ev-row.sel")?.focus({ preventScroll: true });
     });
-    Q("#ev-back", root).addEventListener("click", event => {
+    Q("#ev-back", root).addEventListener("click", async event => {
       if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
       event.preventDefault();
-      window.showTab?.("main");
+      await returnFromEvents(props);
     });
 
     // resizable list/detail split
