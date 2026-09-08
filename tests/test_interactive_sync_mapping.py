@@ -50,7 +50,7 @@ def test_ten_corrections_one_policy_write_one_refresh(api_client, config_base, m
     assert session.store.counts["selected"] == (11 if selected else 1)
     assert not dst.add_calls and not src.add_calls
     policy = editorAPI.sqlite_manual_policy.load_policy(config_base)
-    records = policy["providers"]["SRC"]["watchlist"]["mappings"]
+    records = policy["pairs"][session.pair_id]["providers"]["SRC"]["watchlist"]["mappings"]
     assert len(records) == 10
     for n, row in enumerate(rows[:10]):
         record = records[next(iter(editorAPI._canonicalize_manual_items({"key": item(100+n)}, "watchlist")))]
@@ -101,7 +101,7 @@ def test_ids_and_episode_changed_together_preserve_watch_value(api_client, confi
     response = client.post(f"/api/interactive-sync/{session.id}/mappings", json=dict(
         revision=1, selection_version=0, edits=[dict(row_id=row["id"], item=corrected)]))
     assert response.status_code == 200
-    adds, blocks = editorAPI._load_policy_manual("history", "SRC")
+    adds, blocks = editorAPI._load_policy_manual("history", "SRC", pair_id=session.pair_id)
     saved = next(iter(adds.values()))
     assert saved["ids"] == saved["show_ids"] == {"tmdb": "1398"}
     assert (saved["season"], saved["episode"]) == (1, 9)
@@ -153,6 +153,22 @@ def test_batch_limit_rejects_oversized_request(api_client):
     edit = dict(row_id=next(iter(session.plan.rows)), item=item(1))
     response = client.post(f"/api/interactive-sync/{session.id}/mappings", json=dict(revision=1, selection_version=0, edits=[edit] * 201))
     assert response.status_code == 422
+
+
+def test_shared_scope_is_explicit_and_invalid_scope_cannot_save(api_client, config_base, monkeypatch):
+    from api import editorAPI
+    client, session, api = api_client
+    monkeypatch.setattr(editorAPI, "_STATE_BASE", config_base)
+    monkeypatch.setattr(api, "launch", lambda *args, prepare=None, **kwargs: prepare())
+    edit = dict(row_id=next(iter(session.plan.rows)), item=item(10))
+    payload = dict(revision=1, selection_version=0, edits=[edit])
+    assert client.post(f"/api/interactive-sync/{session.id}/mappings", json={**payload, "scope":"unknown"}).status_code == 422
+    assert not editorAPI._load_policy()["providers"]
+    response = client.post(f"/api/interactive-sync/{session.id}/mappings", json={**payload, "scope":"shared"})
+    assert response.status_code == 200, response.text
+    policy = editorAPI._load_policy()
+    assert policy["providers"]["SRC"]["watchlist"]["adds"]["items"]
+    assert not policy.get("pairs")
 
 
 @pytest.mark.parametrize("path", ["mappings", "mapping-search", "mapping-catalogs", "mapping-episodes"])

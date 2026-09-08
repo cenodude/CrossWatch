@@ -43,6 +43,7 @@ def test_saves_source_profile_preserving_watched_date_and_rating(mapping_case, m
     result = mapping.handle_mapping(payload.model_copy(update=dict(action="save", version=context["version"], item=corrected)), None)
     assert result["key"] == "tmdb:456#s01e03"
     edits, metadata = saved[0]
+    assert metadata["pair_id"] == "p1"
     feature, provider, items, blocks, instance = edits[0]
     assert (feature, provider, instance) == ("history", "SIMKL", "alice")
     assert items[result["key"]]["watched_at"] == original["watched_at"]
@@ -114,7 +115,7 @@ def test_api_save_persists_in_editor_saved_mappings(mapping_case, config_base, m
     from api import editorAPI
 
     monkeypatch.setattr(editorAPI, "_STATE_BASE", config_base)
-    monkeypatch.setattr(editorAPI, "load_config", lambda: {})
+    monkeypatch.setattr(editorAPI, "load_config", lambda: {"pairs": [mapping_case[1]]})
     app = FastAPI()
     app.include_router(an.router)
     app.include_router(editorAPI.router)
