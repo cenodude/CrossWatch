@@ -8,7 +8,7 @@ import vm from "node:vm";
 import {readFileSync} from "node:fs";
 
 const script = readFileSync(new URL("../assets/helpers/notifications.js", import.meta.url), "utf8");
-function setup(storage = new Map()) {
+function setup(storage = new Map(), {pairs = true, role = "admin", write = "on"} = {}) {
   class Element {
     hidden = false; innerHTML = ""; style = {}; dataset = {}; children = new Map(); listeners = {};
     setAttribute() {} append() {} before() {} focus() {} contains() { return true; }
@@ -20,7 +20,8 @@ function setup(storage = new Map()) {
     addEventListener(name, fn) { this.listeners[name] = fn; }
   }
   const elements = [];
-  const document = {head:new Element(),body:new Element(),getElementById:id=>id==="cw-notifications-css" ? null : new Element(),
+  const document = {head:new Element(),body:new Element(),documentElement:{dataset:{cwRole:role,cwPermWrite:write}},
+    getElementById:id=>id==="cw-notifications-css" || (id==="pairs_list" && !pairs) ? null : new Element(),
     createElement:()=>{const el=new Element();elements.push(el);return el;},addEventListener:(name,fn)=>events[name]=fn};
   const events = {};
   const window = {CW:{AuthState:{user:{id:"alice"}},OverviewProfile:{id:"home"}},
@@ -40,6 +41,25 @@ function setup(storage = new Map()) {
   }
   return {window,events,publish,clear,clearAll,item,html:()=>body.innerHTML,storage,context};
 }
+
+test("sync reviews link works from the main app and standalone profiles", () => {
+  assert.match(setup().html(), /class="cw-notifications-footer" href="#settings\/sync"/);
+  const profile = setup(new Map(), {pairs:false});
+  assert.match(profile.html(), /class="cw-notifications-footer" href="\/#settings\/sync"/);
+  const managed = setup(new Map(), {pairs:false,role:"user"});
+  assert.match(managed.html(), /href="\/\?main=1#settings\/sync"/);
+});
+
+test("sync reviews link respects write access and setup state", () => {
+  const profile = setup(new Map(), {pairs:false,role:"user",write:"off"});
+  assert.doesNotMatch(profile.html(), /cw-notifications-footer/);
+  profile.context.document.documentElement.dataset.cwPermWrite = "on";
+  profile.events["cw:auth-state-changed"]();
+  assert.match(profile.html(), /cw-notifications-footer/);
+  profile.window.cwIsAuthSetupPending = () => true;
+  profile.publish([]);
+  assert.doesNotMatch(profile.html(), /cw-notifications-footer/);
+});
 
 test("clear one survives polling and reload without clearing another review", () => {
   const app=setup(), items=[app.item("one"),app.item("two")];

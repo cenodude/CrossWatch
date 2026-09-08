@@ -8,12 +8,7 @@
   const DOM = CW.DOM || {};
   const META = CW.ProviderMeta || {};
 
-  const isTV = (v) => /^(tv|show|shows|series|season|episode|anime)$/i.test(String(v || ""));
   const byId = (id) => document.getElementById(id);
-  const readValue = (id, fallback = "") => {
-    const el = byId(id);
-    return el && "value" in el ? (el.value ?? fallback) : fallback;
-  };
   const readText = (id, fallback = "") => {
     const el = byId(id);
     return el ? (el.textContent ?? fallback) : fallback;
@@ -26,11 +21,6 @@
     const el = byId(id);
     if (el) el.textContent = value ?? "";
   };
-  const setChecked = (id, on) => {
-    const el = byId(id);
-    if (el) el.checked = !!on;
-  };
-  const boolSelect = (id) => String(readValue(id, "false")).toLowerCase() === "true";
   const onReady = (fn) => {
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", fn, { once: true });
     else fn();
@@ -70,9 +60,8 @@
     lastStatusMs: 0,
     navSeq: 0,
     pairedFetchAt: 0,
-    softMainBusy: false,
   };
-  let mainBootLoadRefreshDone = false;
+  let mainRefreshStarted = false;
   const AUTO_STATUS = false;
   const STATUS_MIN_INTERVAL = 24 * 60 * 60 * 1000;
   const UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
@@ -292,119 +281,10 @@
     return res.json();
   }
 
-  function maybeCall(fn, ...args) {
-    if (typeof fn !== "function") return undefined;
-    return fn(...args);
-  }
-
   function queueSafe(fn) {
     queueMicrotask(() => {
       try { fn(); } catch {}
     });
-  }
-
-  const providerInstanceCache = new Map();
-  const providerUsersCache = new Map();
-
-  async function cwGetProviderInstances(provider, opts = {}) {
-    const key = String(provider || "").trim().toLowerCase();
-    if (!key) return [{ id: "default", name: "default" }];
-
-    const ttlMs = Number.isFinite(opts.ttlMs) ? opts.ttlMs : 15_000;
-    const force = !!opts.force;
-    const now = Date.now();
-    const slot = providerInstanceCache.get(key) || { ts: 0, list: null, pending: null };
-    providerInstanceCache.set(key, slot);
-
-    if (!force && Array.isArray(slot.list) && (now - slot.ts) < ttlMs) return slot.list;
-    if (slot.pending) return slot.pending;
-
-    slot.pending = (async () => {
-      try {
-        const data = await requestJSON(`/api/provider-instances/${encodeURIComponent(key)}`);
-        slot.list = [{ id: "default", name: "default" }].concat(
-          (data.instances || []).map((item) => ({ id: item.id, name: item.name || item.id }))
-        );
-      } catch {
-        slot.list = [{ id: "default", name: "default" }];
-      }
-      slot.ts = Date.now();
-      return slot.list;
-    })().finally(() => {
-      slot.pending = null;
-    });
-
-    return slot.pending;
-  }
-
-  async function cwGetProviderUsers(provider, instanceId = "default", opts = {}) {
-    const prov = String(provider || "").trim().toLowerCase();
-    const inst = String(instanceId || "default").trim() || "default";
-    if (!prov) return [];
-
-    const ttlMs = Number.isFinite(opts.ttlMs) ? opts.ttlMs : 15_000;
-    const force = !!opts.force;
-    const cacheKey = `${prov}:${inst}`;
-    const now = Date.now();
-    const slot = providerUsersCache.get(cacheKey) || { ts: 0, value: null, pending: null };
-    providerUsersCache.set(cacheKey, slot);
-
-    if (!force && Array.isArray(slot.value) && (now - slot.ts) < ttlMs) return slot.value;
-    if (slot.pending) return slot.pending;
-
-    slot.pending = (async () => {
-      try {
-        slot.value = await requestJSON(`/api/${encodeURIComponent(prov)}/users?instance=${encodeURIComponent(inst)}`);
-      } catch {
-        slot.value = [];
-      }
-      slot.ts = Date.now();
-      return slot.value;
-    })().finally(() => {
-      slot.pending = null;
-    });
-
-    return slot.pending;
-  }
-
-  function cwEnsureScrobbleRoutes(cfg) {
-    if (!cfg || typeof cfg !== "object") return cfg;
-    cfg.scrobble ||= {};
-    cfg.scrobble.watch ||= {};
-    const watch = cfg.scrobble.watch;
-    if (!Array.isArray(watch.routes)) watch.routes = [];
-    return cfg;
-  }
-
-  function cwNextRouteId(routes) {
-    const used = new Set((routes || []).map((row) => row?.id).filter(Boolean));
-    let index = 1;
-    while (used.has(`R${index}`)) index += 1;
-    return `R${index}`;
-  }
-
-  function applyServerSecret(inputId, hasSecret) {
-    const el = byId(inputId);
-    if (!el) return;
-    el.value = hasSecret ? "********" : "";
-    el.dataset.masked = hasSecret ? "1" : "0";
-    el.dataset.loaded = "1";
-    el.dataset.touched = "";
-    el.dataset.clear = "";
-  }
-
-  function startSecretLoad(inputId) {
-    const el = byId(inputId);
-    if (!el) return;
-    el.dataset.loaded = "0";
-    el.dataset.touched = "";
-  }
-
-  function finishSecretLoad(inputId, hasSecret) {
-    applyServerSecret(inputId, !!hasSecret);
-    if (String(inputId || "") === "tmdb_api_key") {
-      try { window.cwMetaSettingsHubUpdate?.(); } catch {}
-    }
   }
 
   function getConfiguredProviders(cfg = window._cfgCache || {}) {
@@ -831,10 +711,12 @@
     state.lastStatusMs = now;
 
     try {
-      await refreshPairedProviders(force ? 0 : 5000);
-      const payload = typeof API.Status?.get === "function"
-        ? await API.Status.get(!!force)
-        : await requestJSON(force ? "/api/status?fresh=1" : "/api/status", {}, 15000);
+      const [, payload] = await Promise.all([
+        refreshPairedProviders(force ? 0 : 5000),
+        typeof API.Status?.get === "function"
+          ? API.Status.get(!!force)
+          : requestJSON(force ? "/api/status?fresh=1" : "/api/status", {}, 15000),
+      ]);
       state.appDebug = !!payload?.debug;
       const providers = extractProviderStatus(payload);
       renderConnectorStatus(providers, { stale: false });
@@ -986,40 +868,21 @@
     byId("stats-card")?.classList.remove("hidden");
   }
 
-  async function softRefreshMain() {
+  async function hardRefreshMain() {
     if (authSetupPending()) return;
-    if (state.softMainBusy) return;
-    state.softMainBusy = true;
-    enforceMainLayout();
-    try {
-      await Promise.allSettled([
-        refreshStatus(false),
-        refreshStats(false),
-        Promise.resolve(window.refreshInsights?.()),
-        Promise.resolve(window.updatePreviewVisibility?.()),
-      ]);
-    } finally {
-      state.softMainBusy = false;
-    }
-  }
-
-  async function hardRefreshMain(opts) {
-    if (authSetupPending()) return;
+    mainRefreshStarted = true;
     enforceMainLayout();
     state.lastStatusMs = 0;
-    const previewAlreadyRendered = !!(window.wallLoaded || byId("poster-row")?.childElementCount);
-    const skipInsights = !!opts?.skipInsights && !!window.Insights?.bootRefreshFired;
-    await Promise.allSettled([
-      refreshStatus(false),
-      skipInsights ? Promise.resolve() : Promise.resolve(window.refreshInsights?.(true)),
-      previewAlreadyRendered ? Promise.resolve(window.updatePreviewVisibility?.()) : Promise.resolve(),
-    ]);
-
     if (!window.esSum) queueSafe(() => window.openSummaryStream?.());
     if (!window.esLogs) queueSafe(() => window.openLogStream?.());
-    if (!previewAlreadyRendered) {
-      try { await window.updatePreviewVisibility?.(); } catch {}
-    }
+
+    const pending = [
+      refreshStatus(false),
+      Promise.resolve(window.updatePreviewVisibility?.()),
+      Promise.resolve(typeof window.Insights?.refreshInsightsFastThenFull === "function"
+        ? window.Insights.refreshInsightsFastThenFull()
+        : window.refreshInsights?.()),
+    ];
 
     if (typeof window.refreshSchedulingBanner === "function") {
       window.refreshSchedulingBanner();
@@ -1028,6 +891,7 @@
         try { window.refreshSchedulingBanner?.(); } catch {}
       }, { once: true });
     }
+    await Promise.allSettled(pending);
   }
 
   function setTabHeaderState(tab) {
@@ -1127,15 +991,13 @@
 
     if (tab === "main") {
       enforceMainLayout();
-      if (previousTab === "main") await softRefreshMain();
-      else await hardRefreshMain();
-      if (!isCurrentNavigation()) return;
       logPanel?.classList.remove("hidden");
       queueSafe(() => {
-        if (byId("det-log") && !window.esDet) {
+        if (isCurrentNavigation() && byId("det-log") && !window.esDet) {
           try { window.openDetailsLog?.(); } catch {}
         }
       });
+      await hardRefreshMain();
       return;
     }
 
@@ -1352,13 +1214,12 @@
   });
 
   window.addEventListener("load", () => {
-    if (mainBootLoadRefreshDone) return;
-    mainBootLoadRefreshDone = true;
+    if (mainRefreshStarted) return;
     if (authSetupPending()) return;
     const tab = String(state.currentTab || document.documentElement?.dataset?.tab || document.body?.dataset?.tab || "main").toLowerCase();
     if (tab !== "main") return;
     queueSafe(() => {
-      hardRefreshMain({ skipInsights: true }).catch(() => {});
+      if (!mainRefreshStarted) hardRefreshMain().catch(() => {});
     });
   }, { once: true });
 
@@ -1496,13 +1357,29 @@
     return `<span class="cw-sync-menu-features" role="img" aria-label="${escapeHtml(label)}">${dots}</span>`;
   }
 
+  function syncMenuInstanceLabel(provider, instance) {
+    const id = String(instance || "default").trim() || "default";
+    const label = String(META.instanceLabel?.(provider, id) || id).trim();
+    if (id.toLowerCase() === "default") return label === "Default instance" || label.toLowerCase() === "default" ? "" : label;
+    if (label !== id) return label;
+    const numbered = id.match(/(?:^|[-_])P(\d+)$/i);
+    return numbered ? `P${numbered[1].padStart(2, "0")}` : id;
+  }
+
+  function syncMenuProviderHTML(provider, instance) {
+    const brand = META.brandInfo?.(provider) || {};
+    const name = brand.label || providerLabel(provider);
+    const detail = syncMenuInstanceLabel(provider, instance);
+    return `<span class="cw-sync-provider" style="--sync-brand:${escapeHtml(brand.tone?.solid || "var(--accent)")}" title="${escapeHtml(detail ? `${name} · ${detail}` : name)}">${brand.icon ? `<img src="${escapeHtml(brand.icon)}" width="16" height="16" alt="" aria-hidden="true">` : ""}<span class="cw-sync-provider-name">${escapeHtml(name)}</span>${detail ? `<small>${escapeHtml(detail)}</small>` : ""}</span>`;
+  }
+
   function pairTitle(pair) {
     const source = providerLabel(pair.source);
     const target = providerLabel(pair.target);
-    const sourceInst = String(pair.source_instance || "").trim();
-    const targetInst = String(pair.target_instance || "").trim();
-    const sourceLabel = sourceInst && sourceInst.toLowerCase() !== "default" ? `${source} · ${sourceInst}` : source;
-    const targetLabel = targetInst && targetInst.toLowerCase() !== "default" ? `${target} · ${targetInst}` : target;
+    const sourceInst = syncMenuInstanceLabel(pair.source, pair.source_instance);
+    const targetInst = syncMenuInstanceLabel(pair.target, pair.target_instance);
+    const sourceLabel = sourceInst ? `${source} · ${sourceInst}` : source;
+    const targetLabel = targetInst ? `${target} · ${targetInst}` : target;
     const arrow = String(pair.mode || "").trim().toLowerCase() === "two-way" ? "↔" : "→";
     return `${sourceLabel} ${arrow} ${targetLabel}`;
   }
@@ -1630,18 +1507,31 @@
     }
 
     runnable.forEach((pair) => {
+      const row = document.createElement("div");
+      row.className = "cw-sync-menu-row";
+      row.setAttribute("role", "none");
       const button = document.createElement("button");
       const mode = String(pair.mode || "").toLowerCase();
       const modeLabel = mode === "two-way" ? "two-way" : (mode === "one-way" ? "one-way" : "");
       button.type = "button";
       button.className = "cw-menu-item";
       button.setAttribute("role", "menuitem");
-      button.innerHTML = `<span class="cw-sync-menu-main"><span class="cw-sync-menu-title">${escapeHtml(pairTitle(pair))}</span>${syncFeatureDotsHTML(pair)}</span>${modeLabel ? `<span class="cw-sync-menu-meta">${escapeHtml(modeLabel)}</span>` : ""}`;
+      button.setAttribute("aria-label", `Sync: ${pairTitle(pair)}`);
+      button.innerHTML = `<span class="cw-sync-menu-main"><span class="cw-sync-menu-title">${syncMenuProviderHTML(pair.source, pair.source_instance)}<span class="cw-sync-menu-arrow" aria-hidden="true">${mode === "two-way" ? "↔" : "→"}</span>${syncMenuProviderHTML(pair.target, pair.target_instance)}</span>${syncFeatureDotsHTML(pair)}</span>${modeLabel ? `<span class="cw-sync-menu-meta">${escapeHtml(modeLabel)}</span>` : ""}`;
       button.addEventListener("click", () => {
         cwCloseSyncMenu();
         runSync({ pair_id: String(pair.id || "").trim() });
       });
-      menu.appendChild(button);
+      const review = buildSyncMenuButton("", () => {
+        cwCloseSyncMenu();
+        location.hash = `interactive_sync?pair=${encodeURIComponent(String(pair.id || "").trim())}`;
+      });
+      review.className = "cw-sync-menu-review";
+      review.title = "Interactive Sync";
+      review.setAttribute("aria-label", `Interactive Sync: ${pairTitle(pair)}`);
+      review.innerHTML = '<span class="material-symbols-rounded" aria-hidden="true">fact_check</span>';
+      row.append(button, review);
+      menu.appendChild(row);
     });
   }
 
@@ -1825,45 +1715,13 @@
     (byId("btn-sync") || document.querySelector('[data-action="sync"], .btn-sync'))?.addEventListener("click", () => setStatsExpanded(false));
   }
 
-  async function fetchJSON() {
-    if (window.Insights?.fetchJSON) return window.Insights.fetchJSON.apply(this, arguments);
-    return null;
-  }
-
-  function scheduleInsights() {
-    return window.Insights?.scheduleInsights?.apply(this, arguments);
-  }
-
   async function refreshInsights() {
     return window.Insights?.refreshInsights?.apply(this, arguments);
-  }
-
-  function renderSparkline() {
-    return window.Insights?.renderSparkline?.apply(this, arguments);
-  }
-
-  function animateNumber() {
-    return window.Insights?.animateNumber?.apply(this, arguments);
-  }
-
-  function animateChart() {
-    return window.Insights?.animateChart?.apply(this, arguments);
   }
 
   async function refreshStats(force = false) {
     if (window.Insights?.refreshStats) return window.Insights.refreshStats(force);
     return null;
-  }
-
-  function _setBarValues(now, week, month) {
-    [
-      [".bar.week", week],
-      [".bar.month", month],
-      [".bar.now", now],
-    ].forEach(([selector, value]) => {
-      const el = document.querySelector(selector);
-      if (el) el.dataset.v = String(value);
-    });
   }
 
   function _initStatsTooltip() {
@@ -2076,32 +1934,6 @@
   };
 
 
-  function isPlaceholder(value, placeholder) {
-    return String(value || "").trim().toUpperCase() === String(placeholder || "").trim().toUpperCase();
-  }
-
-  function isSettingsVisible() {
-    const page = byId("page-settings");
-    return !!(page && !page.classList.contains("hidden"));
-  }
-
-  function setBtnBusy(id, busy) {
-    const el = byId(id);
-    if (!el) return;
-    el.disabled = !!busy;
-    el.classList.toggle("opacity-50", !!busy);
-  }
-
-  function flashBtnOK(btnEl) {
-    if (!btnEl) return;
-    btnEl.disabled = true;
-    btnEl.classList.add("copied");
-    setTimeout(() => {
-      btnEl.classList.remove("copied");
-      btnEl.disabled = false;
-    }, 700);
-  }
-
   function normalizePairPayload(data, editingId = "") {
     const src = String(data?.source || "").trim();
     const dst = String(data?.target || "").trim();
@@ -2230,7 +2062,6 @@ CW.checkForUpdate = checkForUpdate;
     const authPendingAtReady = authSetupPending();
     try { fixFormLabels(); } catch {}
     try { wireDetailsToStats(); } catch {}
-    try { scheduleInsights(); } catch {}
     try { _initStatsTooltip(); } catch {}
     try {
       const route = readRouteHash();
@@ -2252,7 +2083,7 @@ CW.checkForUpdate = checkForUpdate;
           const tab = String(state.currentTab || document.documentElement?.dataset?.tab || document.body?.dataset?.tab || "main").toLowerCase();
           if (tab !== "main") return;
           queueSafe(() => {
-            hardRefreshMain().catch(() => {});
+            if (!mainRefreshStarted) hardRefreshMain().catch(() => {});
           });
         });
     }

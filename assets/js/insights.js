@@ -111,7 +111,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
   let _prefs = loadPrefs(), _visibleFeats = visibleFeatures(_prefs);
   const clampFeature = name => _visibleFeats.includes(String(name)) ? name : (_visibleFeats[0] || "watchlist");
   let _feature = clampFeature(localStorage.getItem("insights.feature"));
-  let _lastStatsFetch = 0, _cwSnapModal = null, _lastInsightsData = null, _fullInsightsTimer = 0, _configuredProvidersCache = null, _tilesFeature = null, _tileShellFeature = null, _bootScheduled = false, _bootRefreshFired = false, _tilesPainted = false;
+  let _lastStatsFetch = 0, _cwSnapModal = null, _lastInsightsData = null, _fullInsightsTimer = 0, _configuredProvidersCache = null, _tilesFeature = null, _tileShellFeature = null, _bootScheduled = false, _tilesPainted = false;
 
   function syncPrefs(instancesByProvider = {}) {
     const next = normalizePrefs(_prefs, instancesByProvider), changed = JSON.stringify(next) !== JSON.stringify(_prefs);
@@ -645,6 +645,8 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
 
   async function refreshInsights(force = false) {
     if (authSetupPending()) return;
+    clearTimeout(_fullInsightsTimer);
+    _fullInsightsTimer = 0;
     try {
       const profileParam = overviewProfileId() ? `&user_profile=${encodeURIComponent(overviewProfileId())}` : "";
       const data = await fetchJSON(`/api/insights?limit_samples=60&history=60${profileParam}${force ? `&t=${Date.now()}` : ""}`);
@@ -705,8 +707,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
 
   w.Insights = Object.assign(w.Insights || {}, {
     renderSparkline, refreshInsights, refreshStats, fetchJSON, animateNumber, animateChart, titleOf, subtitleOf,
-    switchFeature, refreshInsightsFastThenFull, clearState: clearInsightsState, get feature() { return _feature; },
-    get bootRefreshFired() { return _bootRefreshFired; }
+    switchFeature, refreshInsightsFastThenFull, clearState: clearInsightsState, get feature() { return _feature; }
   });
   w.renderSparkline = renderSparkline;
   w.refreshInsights = refreshInsights;
@@ -722,7 +723,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     let tries = 0, limit = max || 20;
     (function tick() {
       if (authSetupPending()) return void (_bootScheduled = false);
-      if ($("#sync-history") || $("#stat-now") || $("#sparkline")) { _bootRefreshFired = true; if (!paintCachedTiles()) paintTileShell(); return refreshInsightsFastThenFull(); }
+      if ($("#sync-history") || $("#stat-now") || $("#sparkline")) { if (!paintCachedTiles()) paintTileShell(); return refreshInsightsFastThenFull(); }
       if (++tries < limit) setTimeout(tick, 250);
       else _bootScheduled = false;
     })();
@@ -743,11 +744,6 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     if (ev?.detail?.pending !== false) return;
     if (!paintCachedTiles()) paintTileShell();
     w.scheduleInsights();
-  });
-  d.addEventListener("tab-changed", ev => {
-    if (authSetupPending()) return;
-    const tab = String(ev?.detail?.id || ev?.detail?.tab || "").toLowerCase();
-    if (tab === "main") refreshInsightsFastThenFull(true);
   });
 
   const snapLabel = name => {

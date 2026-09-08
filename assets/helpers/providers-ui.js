@@ -426,7 +426,46 @@
     setPickerHtml(picker, rows || '<div class="cw-auth-empty">No supported providers found.</div>');
   }
 
-  function renderAuthCards(slot, cfg = getCachedConfig()) {
+  function syncAuthChildren(parent, nextChildren, keyOf, update) {
+    const current = new Map(Array.from(parent.children, (node) => [keyOf(node), node]));
+    let cursor = parent.firstElementChild;
+    for (const next of nextChildren) {
+      const key = keyOf(next);
+      const node = current.get(key) || next;
+      current.delete(key);
+      if (node !== next) update(node, next);
+      if (node !== cursor) parent.insertBefore(node, cursor);
+      cursor = node.nextElementSibling;
+    }
+    current.forEach((node) => node.remove());
+  }
+
+  function updateAuthDashboard(shell, html) {
+    if (!shell.querySelector(":scope > .cw-auth-dashboard")) {
+      shell.innerHTML = html;
+      return;
+    }
+    const template = document.createElement("template");
+    template.innerHTML = html;
+    const patchCard = (node, next) => {
+      if (node.className !== next.className) node.className = next.className;
+      if (node.innerHTML !== next.innerHTML) node.innerHTML = next.innerHTML;
+    };
+    syncAuthChildren(shell.querySelector(".cw-auth-summary-row"),
+      Array.from(template.content.querySelector(".cw-auth-summary-row").children),
+      (node) => node.dataset.cwAuthSummary, patchCard);
+    syncAuthChildren(shell.querySelector(".cw-auth-service-list"),
+      Array.from(template.content.querySelector(".cw-auth-service-list").children),
+      (node) => node.dataset.cwAuthGroup, (section, next) => {
+        const grid = section.querySelector(":scope > .cw-auth-service-grid");
+        if (!grid) return;
+        syncAuthChildren(grid, Array.from(next.querySelector(".cw-auth-service-grid").children),
+          (node) => node.dataset.cwAuthOpen || node.dataset.cwMetaOpen || `add:${node.dataset.cwAuthEmptyAdd}`,
+          patchCard);
+      });
+  }
+
+  function renderAuthCards(slot, cfg = getCachedConfig(), refreshProfiles = false) {
     const { shell } = ensureAuthShell(slot);
     const configured = configuredProviderKeys(cfg);
     const sectionCopy = {
@@ -532,10 +571,11 @@
         <div class="cw-auth-service-list">${userProfileSection}${serviceSections}</div>
       </div>`;
     if (shell.__cwAuthCardsHtml !== dashboardHtml) {
+      updateAuthDashboard(shell, dashboardHtml);
       shell.__cwAuthCardsHtml = dashboardHtml;
-      shell.innerHTML = dashboardHtml;
     }
-    try { window.cwUserProfilesManager?.init?.(true); } catch {}
+    const profileHost = shell.querySelector("#cw-user-profile-manager");
+    try { window.cwUserProfilesManager?.init?.(refreshProfiles || !profileHost?.childElementCount); } catch {}
     const overlay = document.getElementById("cw-auth-connection-overlay");
     renderAuthPicker(overlay, cfg, overlay?.dataset?.cwPickerMode || "provider");
   }
@@ -1966,11 +2006,14 @@
 
   let pointerHeld = false;
   let deferredCardRender = false;
+  let deferredProfileRefresh = false;
   function flushDeferredCardRender() {
     if (!deferredCardRender) return;
     deferredCardRender = false;
+    const refreshProfiles = deferredProfileRefresh;
+    deferredProfileRefresh = false;
     const slot = document.getElementById("auth-providers");
-    if (slot) renderAuthCards(slot, getCachedConfig());
+    if (slot) renderAuthCards(slot, getCachedConfig(), refreshProfiles);
   }
   function releasePointerHold() {
     if (!pointerHeld) return;
@@ -1986,9 +2029,10 @@
     const cfg = await loadConfig(!!force);
     if (pointerHeld) {
       deferredCardRender = true;
+      deferredProfileRefresh ||= force;
       return;
     }
-    renderAuthCards(slot, cfg);
+    renderAuthCards(slot, cfg, force);
   }
 
   function renderProviderToken(el, key) {
@@ -2035,12 +2079,21 @@
         const slot = document.getElementById("auth-providers");
         if (!slot) return;
         if (!authHtml || force) authHtml = await apiText("/api/auth/providers/html");
+        const main = slot.querySelector(":scope > .cw-auth-main");
+        if (main && slot.__cwAuthSourceHtml === authHtml) {
+          if (force) await window.hydrateAuthFromConfig?.();
+          await refreshAuthPresentation(slot, !!force);
+          return;
+        }
         const overlay = slot.querySelector(":scope > .cw-auth-overlay");
         const liveSectionIds = new Set(
           Array.from(overlay?.querySelectorAll("#cw-auth-provider-form > .section[id]") || [], (node) => node.id)
         );
         overlay?.remove();
+        main?.remove();
         slot.innerHTML = authHtml;
+        slot.__cwAuthSourceHtml = authHtml;
+        if (main) slot.prepend(main);
         if (overlay) {
           Array.from(slot.querySelectorAll(".section[id]")).forEach((node) => {
             if (liveSectionIds.has(node.id)) node.remove();
