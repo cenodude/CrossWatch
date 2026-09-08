@@ -2,6 +2,8 @@
 /* CrossWatch - JavaScript Modal Management Module */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
+import {statisticsReturn, resumeEventsReturn} from './page-return.js';
+
 const _cwGetV = () => {
   try {
     return (window.__CW_VERSION__ || new URL(import.meta.url).searchParams.get('v') || Date.now());
@@ -59,6 +61,10 @@ window.openLogs = (props = {}) => {
   if (props.runId) query.set('runId', props.runId);
   if (props.pairId) query.set('pairId', props.pairId);
   if (props.latest) query.set('latest', '1');
+  const returnTo = location.hash.startsWith('#logs')
+    ? new URLSearchParams(location.hash.split('?')[1] || '').get('returnTo')
+    : location.pathname + location.search + location.hash;
+  if (returnTo) query.set('returnTo', returnTo);
   const hash = '#logs?' + query;
   ModalRegistry.close();
   if (!document.getElementById('page-logs') || !window.showTab) { location.href = '/?main=1' + hash; return; }
@@ -70,6 +76,11 @@ window.openEvents = (props = {}) => {
   for (const [key, value] of Object.entries({ groupId: props.groupId || props.eventGroupId, runId: props.runId || props.run_id, domain: props.domain, visibility: props.visibility, mode: props.mode })) {
     if (value) query.set(key, String(value));
   }
+  const previous = location.hash.split('?')[0] === '#events' ? new URLSearchParams(location.hash.split('?')[1] || '') : null;
+  const returnTo = previous ? previous.get('returnTo') : location.pathname + location.search + location.hash;
+  const returnContext = statisticsReturn(props.returnContext || previous?.get('returnContext'));
+  if (returnTo) query.set('returnTo', returnTo);
+  if (returnContext) query.set('returnContext', JSON.stringify(returnContext));
   const hash = '#events' + (query.size ? `?${query}` : '');
   ModalRegistry.close();
   if (!document.getElementById('page-events') || !window.showTab) {
@@ -80,6 +91,8 @@ window.openEvents = (props = {}) => {
   return window.showTab('events');
 };
 window.openStatisticsModal = (props = {}) => ModalRegistry.open('statistics', props);
+if (document.readyState === 'complete') resumeEventsReturn();
+else window.addEventListener('load', resumeEventsReturn, {once:true});
 window.openExporter = () => window.showTab ? window.showTab('import_export') : (location.hash = 'import_export');
 
 window.openMaintenanceModal = (props = {}) => ModalRegistry.open('maintenance', props);

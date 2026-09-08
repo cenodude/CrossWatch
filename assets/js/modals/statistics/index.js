@@ -2,6 +2,8 @@
 /* CrossWatch - Sync activity modal */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
+import {statisticsReturn} from '../../page-return.js';
+
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => (
   { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
 ));
@@ -149,8 +151,9 @@ export default {
     }
 
     let alive = true;
-    let range = RANGES.some((r) => r.value === ls("cw.stats.range", "")) ? ls("cw.stats.range", "12m") : "12m";
-    let metric = METRICS.some((m) => m.value === ls("cw.stats.metric", "")) ? ls("cw.stats.metric", "changes") : "changes";
+    let restored = statisticsReturn(props);
+    let range = restored?.range || (RANGES.some((r) => r.value === ls("cw.stats.range", "")) ? ls("cw.stats.range", "12m") : "12m");
+    let metric = restored?.metric || (METRICS.some((m) => m.value === ls("cw.stats.metric", "")) ? ls("cw.stats.metric", "changes") : "changes");
     let payload = null;
     let byIndex = new Map();
     let selected = Number(props?.day) || null;
@@ -383,8 +386,7 @@ export default {
         const id = btn.closest(".sc-run")?.dataset?.run;
         const openEvents = window.openEvents;
         if (!id || typeof openEvents !== "function") return;
-        window.cxCloseModal?.();
-        openEvents({ runId: id, domain: "sync", visibility: "all", mode: "grouped" });
+        openEvents({ runId: id, domain: "sync", visibility: "all", mode: "grouped", returnContext:{modal:'statistics',day:selected,range,metric,filter:dayState.filter,expanded:[...dayState.expanded]} });
       }));
     };
 
@@ -421,6 +423,11 @@ export default {
     const selectDay = async (index) => {
       selected = index;
       dayState = { index, runs: [], loading: true, error: "", filter: "", expanded: new Set() };
+      if (restored?.day === index) {
+        dayState.filter = restored.filter;
+        dayState.expanded = new Set(restored.expanded);
+      }
+      restored = null;
       renderCalendar();
       renderDay();
       const since = index * DAY - TZ;

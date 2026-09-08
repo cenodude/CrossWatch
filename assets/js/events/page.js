@@ -8,7 +8,7 @@ const { default: EventsView } = await import(viewURL.href);
 
 export function readEventsRoute(hash = window.location.hash) {
   const query = new URLSearchParams(String(hash).split('?')[1] || '');
-  const props = Object.fromEntries(['groupId', 'runId', 'domain', 'visibility', 'mode'].map(key => [key, query.get(key) || '']));
+  const props = Object.fromEntries(['groupId', 'runId', 'domain', 'visibility', 'mode', 'returnTo', 'returnContext'].map(key => [key, query.get(key) || '']));
   if (!/^\d+$/.test(props.groupId)) props.groupId = '';
   return props;
 }
