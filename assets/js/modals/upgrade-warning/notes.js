@@ -1,127 +1,73 @@
-function escapeHtml(s) {
-  return String(s || "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
+/* Release highlights from the standard CrossWatch release format. */
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;", "<":"&lt;", ">":"&gt;", '\"':"&quot;", "'":"&#39;"})[c]);
 }
 
-function renderInlineMarkup(text) {
-  const linkLabel = (url) => {
-    const issue = String(url || "").match(/^https?:\/\/github\.com\/cenodude\/CrossWatch\/issues\/(\d+)\/?$/i);
-    if (issue) return `#${issue[1]}`;
-    const pull = String(url || "").match(/^https?:\/\/github\.com\/cenodude\/CrossWatch\/pull\/(\d+)\/?$/i);
-    if (pull) return `PR #${pull[1]}`;
-    return url;
-  };
-
-  let out = escapeHtml(text || "");
-  out = out.replace(/`([^`]+)`/g, '<code>$1</code>');
-  out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  out = out.replace(/\*([^*]+)\*/g, "<em>$1</em>");
-  out = out.replace(
-    /(https?:\/\/[^\s<]+)/g,
-    (_m, url) => `<a href="${url}" target="_blank" rel="noopener noreferrer">${escapeHtml(linkLabel(url))}</a>`,
-  );
-  return out;
+export function releaseNotesUrl(value, fallback = "https://github.com/cenodude/CrossWatch/releases") {
+  try {
+    const url = new URL(value);
+    if (["https:", "http:"].includes(url.protocol) && !url.username && !url.password) return url.href;
+  } catch {}
+  return fallback;
 }
 
-export function renderNotesMarkup(src) {
-  const lines = String(src || "").replace(/\r\n?/g, "\n").split("\n");
-  const html = [];
-  let listOpen = false;
-  let quoteOpen = false;
-  let codeFence = null;
-
-  const closeList = () => {
-    if (!listOpen) return;
-    html.push("</ul>");
-    listOpen = false;
-  };
-
-  const closeQuote = () => {
-    if (!quoteOpen) return;
-    html.push("</blockquote>");
-    quoteOpen = false;
-  };
-
-  const closeCodeFence = () => {
-    if (!codeFence) return;
-    html.push("</code></pre>");
-    codeFence = null;
-  };
-
-  for (const raw of lines) {
-    const line = String(raw || "");
-    const trimmed = line.trim();
-
-    if (codeFence) {
-      if (/^```/.test(trimmed)) {
-        closeCodeFence();
-      } else {
-        html.push(`${escapeHtml(line)}\n`);
-      }
-      continue;
+// Escape each original token before adding markup; never process generated HTML.
+export function renderInlineMarkup(value) {
+  const source = String(value ?? "");
+  const tokens = /(`[^`]+`|\*\*[^*]+\*\*|\[[^\]\n]+\]\([^\s)]+\))/g;
+  let html = "", offset = 0;
+  for (const match of source.matchAll(tokens)) {
+    html += escapeHtml(source.slice(offset, match.index));
+    const token = match[0];
+    if (token.startsWith("`")) html += `<code>${escapeHtml(token.slice(1, -1))}</code>`;
+    else if (token.startsWith("**")) html += `<strong>${escapeHtml(token.slice(2, -2))}</strong>`;
+    else {
+      const link = token.match(/^\[([^\]]+)\]\((.+)\)$/);
+      const url = releaseNotesUrl(link[2], "");
+      html += url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(link[1])}</a>` : escapeHtml(link[1]);
     }
-
-    const fence = trimmed.match(/^```([\w-]+)?\s*$/);
-    if (fence) {
-      closeList();
-      closeQuote();
-      const lang = String(fence[1] || "").trim();
-      const cls = lang ? ` class="lang-${escapeHtml(lang)}"` : "";
-      html.push(`<pre class="notes-code"><code${cls}>`);
-      codeFence = lang || true;
-      continue;
-    }
-
-    if (!trimmed) {
-      closeList();
-      closeQuote();
-      continue;
-    }
-
-    const heading = trimmed.match(/^(#{1,6})\s+(.+)$/);
-    if (heading) {
-      closeList();
-      closeQuote();
-      const level = Math.min(3, heading[1].length + 1);
-      html.push(`<h${level}>${renderInlineMarkup(heading[2])}</h${level}>`);
-      continue;
-    }
-
-    const bullet = line.match(/^(\s*)[-*]\s+(.+)$/);
-    if (bullet) {
-      closeQuote();
-      if (!listOpen) {
-        html.push('<ul class="notes-list">');
-        listOpen = true;
-      }
-      const indent = Math.min(2, Math.floor((bullet[1] || "").length / 2));
-      const cls = indent > 0 ? ` class="indent-${indent}"` : "";
-      html.push(`<li${cls}>${renderInlineMarkup(bullet[2])}</li>`);
-      continue;
-    }
-
-    const quote = line.match(/^\s*>\s?(.*)$/);
-    if (quote) {
-      closeList();
-      if (!quoteOpen) {
-        html.push('<blockquote class="notes-quote">');
-        quoteOpen = true;
-      }
-      html.push(`<p>${renderInlineMarkup(quote[1])}</p>`);
-      continue;
-    }
-
-    closeList();
-    closeQuote();
-    html.push(`<p>${renderInlineMarkup(trimmed)}</p>`);
+    offset = match.index + token.length;
   }
+  return html + escapeHtml(source.slice(offset));
+}
 
-  closeList();
-  closeQuote();
-  closeCodeFence();
-  return html.join("");
+export function parseReleaseNotes(source) {
+  const highlights = [], note = [], wikiLinks = [];
+  let section = "", current = null, child = false, fence = false;
+  for (const raw of String(source || "").replace(/\r\n?/g, "\n").split("\n")) {
+    const line = raw.trim();
+    if (/^```|^~~~/.test(line)) { fence = !fence; continue; }
+    if (fence) continue;
+    const heading = line.match(/^#{1,6}\s+(.+)$/);
+    if (heading) {
+      const name = heading[1].replace(/[^\p{L}\p{N}\s]/gu, "").trim().toLowerCase();
+      section = name === "highlights" ? "highlights" : name === "upgrade note" ? "upgrade" : name === "updated wiki" ? "wiki" : "";
+      current = null;
+      continue;
+    }
+    const upgrade = line.match(/^(?:\*\*)?Upgrade note:?(?:\*\*)?:?\s*(.*)$/i);
+    if (upgrade) { section = "upgrade"; if (upgrade[1]) note.push(upgrade[1]); continue; }
+    if (section === "upgrade") { note.push(line); continue; }
+    if (section === "wiki") {
+      const entry = line.replace(/^[-*+]\s+/, "");
+      const link = entry.match(/^(.*?)\[([^\]\n]+)\]\(([^\s)]+)\)\s*$/);
+      if (link) {
+        const url = releaseNotesUrl(link[3], "");
+        const title = link[1].replace(/\s*[-:]\s*$/, "").trim() || link[2];
+        if (url && !wikiLinks.some(item => item.url === url)) wikiLinks.push({title, url});
+      }
+      continue;
+    }
+    if (section !== "highlights") continue;
+    const bullet = raw.match(/^(\s*)[-*+]\s+(.+)$/);
+    if (bullet) {
+      child = bullet[1].length > 0;
+      if (!child) { current = {text: bullet[2], children: []}; highlights.push(current); }
+      else if (current) current.children.push(bullet[2]);
+    } else if (line && /^\s+/.test(raw) && current) {
+      if (child && current.children.length) current.children[current.children.length - 1] += ` ${line}`;
+      else current.text += ` ${line}`;
+    }
+  }
+  return {highlights, upgradeNote: note.join("\n").trim(), wikiLinks};
 }
