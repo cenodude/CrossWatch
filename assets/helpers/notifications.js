@@ -100,6 +100,9 @@
     bell.setAttribute("aria-label", items.length ? `Notifications (${items.length})` : "Notifications");
     const loading = values.some(source => source.loading);
     const errors = values.map(source => source.error).filter(Boolean);
+    const managed = document.documentElement.dataset.cwRole === "user";
+    const canReview = !window.cwIsAuthSetupPending?.() && (!managed || document.documentElement.dataset.cwPermWrite === "on");
+    const reviewsHref = document.getElementById("pairs_list") ? "#settings/sync" : `${managed ? "/?main=1" : "/"}#settings/sync`;
     const html = `${items.length ? `<ul>${items.map(item => {
       // Only local pages and official CrossWatch releases are valid targets.
       const href = String(item.href || "");
@@ -111,7 +114,7 @@
       } catch { return ""; }
       const time = item.time ? new Date(item.time * 1000).toLocaleString() : "";
       return `<li><a class="cw-notification" href="${esc(href)}"${external ? ' target="_blank" rel="noopener noreferrer"' : ""}><span class="material-symbols-rounded cw-notification-icon" aria-hidden="true">${esc(item.icon || "notifications")}</span><span class="cw-notification-copy"><strong>${esc(item.title)}</strong><span>${esc(item.detail)}</span>${time ? `<small>${esc(time)}</small>` : ""}<span class="cw-notification-action">${esc(item.action || "View")}<span class="material-symbols-rounded" aria-hidden="true">arrow_forward</span></span></span></a><button type="button" data-notification-clear="${esc(item.notificationKey)}" aria-label="${esc(`Clear notification: ${item.title}`)}" title="Clear notification"><span class="material-symbols-rounded" aria-hidden="true">close</span></button></li>`;
-    }).join("")}</ul>` : !loading && !errors.length ? '<div class="cw-notifications-empty"><span class="material-symbols-rounded" aria-hidden="true">notifications_none</span><p>You’re all caught up</p><small>New notifications will appear here.</small></div>' : ""}${loading ? '<p class="cw-notifications-message" role="status">Loading notifications…</p>' : ""}${errors.length ? `<div class="cw-notifications-message"><p>${errors.map(esc).join("<br>")}</p><button type="button" data-notifications-retry>Try again</button></div>` : ""}${document.getElementById("pairs_list") ? '<a class="cw-notifications-footer" href="#settings/sync">View sync reviews<span class="material-symbols-rounded" aria-hidden="true">arrow_forward</span></a>' : ""}`;
+    }).join("")}</ul>` : !loading && !errors.length ? '<div class="cw-notifications-empty"><span class="material-symbols-rounded" aria-hidden="true">notifications_none</span><p>You’re all caught up</p><small>New notifications will appear here.</small></div>' : ""}${loading ? '<p class="cw-notifications-message" role="status">Loading notifications…</p>' : ""}${errors.length ? `<div class="cw-notifications-message"><p>${errors.map(esc).join("<br>")}</p><button type="button" data-notifications-retry>Try again</button></div>` : ""}${canReview ? `<a class="cw-notifications-footer" href="${reviewsHref}">View sync reviews<span class="material-symbols-rounded" aria-hidden="true">arrow_forward</span></a>` : ""}`;
     if (body.innerHTML !== html) body.innerHTML = html;
     position();
   }
