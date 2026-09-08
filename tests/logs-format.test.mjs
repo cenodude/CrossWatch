@@ -100,7 +100,19 @@ test('search reveals raw-only matches and all log values are escaped',()=>{
   assert.match(html,/<mark>internal_key<\/mark>/);
   assert.doesNotMatch(html,/<img src=x/);
   assert.match(html,/&lt;img/);
-  const plain=readableLogHTML({text:'<script>alert(1)</script>'},highlight);
-  assert.doesNotMatch(plain,/<script>/);
   assert.equal(describeLog(row({event:'__proto__'})).summary,'Proto');
+});
+
+test('readable summaries and original logs escape HTML in every tag case',()=>{
+  for(const [text,escaped] of [
+    ['<script>alert(1)</script>','&lt;script&gt;alert(1)&lt;/script&gt;'],
+    ['<SCRIPT>alert(1)</SCRIPT>','&lt;SCRIPT&gt;alert(1)&lt;/SCRIPT&gt;'],
+    ['<ScRiPt src="x">alert(1)</ScRiPt >','&lt;ScRiPt src=&quot;x&quot;&gt;alert(1)&lt;/ScRiPt &gt;'],
+    ["<IMG src=x onerror='alert(1)'> & text",'&lt;IMG src=x onerror=&#39;alert(1)&#39;&gt; &amp; text'],
+  ]) {
+    assert.equal(readableLogHTML({text},highlight),
+      `<span class="logs-readable-summary">${escaped}</span><details class="logs-original"><summary>Original log</summary><pre>${escaped}</pre></details>`);
+  }
+  assert.equal(highlight('<ScRiPt>alert(1)</ScRiPt>','script'),
+    '&lt;<mark>ScRiPt</mark>&gt;alert(1)&lt;/<mark>ScRiPt</mark>&gt;');
 });

@@ -28,10 +28,25 @@ test('saved logs render columns, feature states, status badges and safe log labe
   assert.equal((html.match(/class="logs-feature-dot /g)||[]).length,6);
   assert.equal((html.match(/class="logs-feature-dot \w+ on"/g)||[]).length,3);
   assert.match(html,/logs-status-success/);assert.match(html,/>2s</);
-  assert.match(html,/PLEX &lt;script&gt;/);assert.doesNotMatch(html,/<script>/);
+  assert.ok(html.includes('<strong>PLEX &lt;script&gt; to TRAKT</strong>'));
   assert.match(savedLogsTable([{...base,status:'issues'}]),/logs-status-warning/);
   assert.match(savedLogsTable([{...base,status:'__proto__'}]),/logs-status-neutral/);
   assert.match(savedLogsTable([{...base,pairs:'[]'}]),/Feature settings unavailable/);
+});
+
+test('saved log labels escape tags and quotes in both text and attributes',()=>{
+  const base={id:'one',started:100,ended:102,status:'completed',errors:0,warnings:0};
+  for(const [label,escaped] of [
+    ['<script>alert(1)</script>','&lt;script&gt;alert(1)&lt;/script&gt;'],
+    ['<SCRIPT>alert(1)</SCRIPT>','&lt;SCRIPT&gt;alert(1)&lt;/SCRIPT&gt;'],
+    ['<ScRiPt src="x">alert(1)</ScRiPt >','&lt;ScRiPt src=&quot;x&quot;&gt;alert(1)&lt;/ScRiPt &gt;'],
+    ['" onmouseover="alert(1)" & \'quoted\'','&quot; onmouseover=&quot;alert(1)&quot; &amp; &#39;quoted&#39;'],
+  ]) {
+    const html=savedLogsTable([{...base,label}]);
+    assert.ok(html.includes(`<strong>${escaped}</strong>`));
+    assert.ok(html.includes(`aria-label="Open log: ${escaped}"`));
+    assert.equal(html,savedLogsTable([{...base,label:'SAFE_LABEL'}]).replaceAll('SAFE_LABEL',escaped));
+  }
 });
 test('search highlights literal matches and escapes log HTML',()=>{
   assert.equal(highlight('<script>Error & ERROR</script>','error'),'&lt;script&gt;<mark>Error</mark> &amp; <mark>ERROR</mark>&lt;/script&gt;');
