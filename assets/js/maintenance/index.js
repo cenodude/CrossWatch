@@ -1,5 +1,6 @@
-﻿/* assets/js/modals/maintenance/index.js */
-/* Modal for maintenance and troubleshooting operations like clearing state, cache, tracker data, and resetting stats. */
+﻿/* assets/js/maintenance/index.js */
+/* CrossWatch - Maintenance tools page */
+import {pageBackLink} from "../page-return.js";
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 const REQUEST_TIMEOUT_MS = 45_000;
@@ -85,7 +86,6 @@ const OPS = [
     kind: "state",
     icon: "deployed_code_history",
     title: "Rebuild sync state",
-    tag: "sync pairs",
     desc: "Starts every sync pair from fresh provider baselines.",
   },
   {
@@ -93,7 +93,6 @@ const OPS = [
     kind: "cache",
     icon: "network_node",
     title: "Retry provider items",
-    tag: "runtime",
     desc: "Clears temporary retry and health data so items are tried again.",
   },
   {
@@ -101,7 +100,6 @@ const OPS = [
     kind: "database-health",
     icon: "database",
     title: "Database health",
-    tag: "diagnostics",
     desc: "Checks the local CrossWatch database integrity and row consistency.",
   },
   {
@@ -109,7 +107,6 @@ const OPS = [
     kind: "state-file",
     icon: "data_object",
     title: "Compact sync state",
-    tag: "backup first",
     desc: "Creates an app-state backup, then rewrites the sync state database.",
   },
   {
@@ -117,7 +114,6 @@ const OPS = [
     kind: "state-file-prune",
     icon: "cleaning_services",
     title: "Prune stale state",
-    tag: "backup first",
     desc: "Creates an app-state backup, then removes state baselines for pairs or routes that no longer exist.",
   },
   {
@@ -125,7 +121,6 @@ const OPS = [
     kind: "metadata",
     icon: "gallery_thumbnail",
     title: "Refresh artwork & metadata",
-    tag: "artwork",
     desc: 'Removes cached artwork and metadata so fresh copies are fetched when needed.',
   },
   {
@@ -133,7 +128,6 @@ const OPS = [
     kind: "tracker",
     icon: "deployed_code",
     title: "CW tracker archive",
-    tag: "archive & recovery",
     desc: "Manage local tracker state files, snapshots, exports and imports.",
     extra: `
       <div class="action-options tracker-archive-options">
@@ -147,11 +141,13 @@ const OPS = [
     `,
     sideActions: `
       <div class="archive-actions">
-        <button type="button" class="archive-btn icon-only secondary" id="cxm-cw-export" data-label="Download tracker archive" title="Download tracker archive" aria-label="Download tracker archive">
+        <button type="button" class="archive-btn secondary" id="cxm-cw-export" data-label="Download tracker archive" title="Download tracker archive" aria-label="Download tracker archive">
           <span class="material-symbols-rounded" aria-hidden="true">download</span>
+          Download archive
         </button>
-        <button type="button" class="archive-btn icon-only secondary" id="cxm-cw-import" data-label="Import tracker archive" title="Import tracker archive" aria-label="Import tracker archive">
+        <button type="button" class="archive-btn secondary" id="cxm-cw-import" data-label="Import tracker archive" title="Import tracker archive" aria-label="Import tracker archive">
           <span class="material-symbols-rounded" aria-hidden="true">upload_file</span>
+          Import archive
         </button>
         <input type="file" id="cxm-cw-import-file" accept=".zip,.json" hidden>
       </div>
@@ -162,7 +158,6 @@ const OPS = [
     kind: "scrobbles",
     icon: "podcasts",
     title: "Clear Recent Scrobbles",
-    tag: "scrobbles only",
     desc: "Clears only the local Recent Scrobble list while keeping other Recent Activity entries.",
   },
   {
@@ -170,7 +165,6 @@ const OPS = [
     kind: "stats",
     icon: "monitoring",
     title: "Rebuild statistics",
-    tag: "stats & reports",
     desc: "Rebuilds Statistics, Reports and Insights from clean local data.",
   },
   {
@@ -178,7 +172,6 @@ const OPS = [
     kind: "playing",
     icon: "live_tv",
     title: "Clear currently playing",
-    tag: "playback",
     desc: 'Removes stuck items from the local Currently Playing list.',
   },
   {
@@ -186,7 +179,6 @@ const OPS = [
     kind: "events-health",
     icon: "health_and_safety",
     title: "Health check",
-    tag: "diagnostics",
     desc: "Checks database integrity, archive size and event totals.",
   },
   {
@@ -194,7 +186,6 @@ const OPS = [
     kind: "events-optimize",
     icon: "tune",
     title: "Optimize archive",
-    tag: "maintenance",
     desc: "Compacts and re-indexes the event archive to reclaim space.",
   },
   {
@@ -202,23 +193,20 @@ const OPS = [
     kind: "events-purge",
     icon: "delete_sweep",
     title: "Clear event data",
-    tag: "event history",
     desc: "Empties every event category and the sync activity calendar. Leaves the rest of the local database alone.",
   },
   {
     key: "events-rebuild",
     kind: "events-rebuild",
     icon: "database",
-    title: "Clear archive",
-    tag: "event history",
-    desc: "Deletes all events from the archive. New syncs record events again automatically.",
+    title: "Rebuild archive",
+    desc: "Rebuilds the event archive from current runtime state. Older events may be lost.",
   },
   {
     key: "captures",
     kind: "captures",
     icon: "photo_library",
     title: "Clear all captures",
-    tag: "saved captures",
     desc: "Deletes every saved provider capture from local storage.",
   },
   {
@@ -226,7 +214,6 @@ const OPS = [
     kind: "defaults",
     icon: "release_alert",
     title: "Factory reset",
-    tag: "danger zone",
     desc: "Returns CrossWatch to a clean install and backs up config.json. Snapshots are kept.",
   },
 ];
@@ -290,44 +277,34 @@ const GROUPS = [
 ];
 
 const OPS_BY_KEY = Object.fromEntries(OPS.map((op) => [op.key, op]));
-const OVERVIEW_EXCLUDED_KEYS = new Set(["tracker", "captures", "defaults", "events-health", "events-optimize", "events-purge", "events-rebuild", "database-health", "state-file", "state-file-prune"]);
-const OVERVIEW_KEYS = GROUPS
-  .flatMap((group) => group.keys)
-  .filter((key) => !OVERVIEW_EXCLUDED_KEYS.has(key));
-
-const renderActionRow = ({ key, kind, icon, title, desc, extra = "", sideActions = "", runLabel = "Run" }) => `
-  <div class="action-row${sideActions ? " has-side-actions" : ""}" data-op="${key}" data-kind="${kind}" tabindex="0" aria-label="Inspect ${title} status">
-    <div class="action-main">
-      <div class="action-icon">
-        <span class="material-symbols-rounded" aria-hidden="true">${icon}</span>
-      </div>
-      <div class="action-copy">
-        <div class="action-title">${title}</div>
-        <div class="action-desc">${desc}</div>
-        ${extra}
-      </div>
-    </div>
-    ${sideActions ? `<div class="action-side-actions">${sideActions}</div>` : ""}
-    <button type="button" class="run-btn action-run-btn" data-label="${title}">${runLabel}</button>
-  </div>
-`;
-
-const renderGroup = ({ id, icon, title, desc, keys }) => `
-  <section class="action-group ${id}" id="cxm-group-${id}" data-group="${id}">
-    <div class="group-info">
-      <div class="group-title-row">
-        <div class="group-icon">
-          <span class="material-symbols-rounded" aria-hidden="true">${icon}</span>
-        </div>
-        <div class="group-title">${title}</div>
-      </div>
-      <div class="group-desc">${desc}</div>
-    </div>
-    <div class="group-actions${keys.length === 1 ? " single" : keys.length === 2 ? " two" : ""}">
-      ${keys.map((key) => renderActionRow(OPS_BY_KEY[key])).join("")}
-    </div>
-  </section>
-`;
+const DEFAULT_RECOMMENDED = ["cache", "database-health", "playing"];
+const SAFE_ACTIONS = new Set([...DEFAULT_RECOMMENDED, "events-health", "events-optimize", "meta"]);
+const DESTRUCTIVE_ACTIONS = new Set(["state", "scrobbles", "stats", "events-purge", "events-rebuild", "captures", "defaults"]);
+const riskFor = op => SAFE_ACTIONS.has(op.key) ? "safe" : DESTRUCTIVE_ACTIONS.has(op.key) ? "destructive" : "review";
+const historyKey = auth => `cw.maintenance.history.v1:${encodeURIComponent(String(auth?.user?.id || auth?.user?.username || auth?.profileId || "admin"))}`;
+function cleanHistory(value) {
+  return (Array.isArray(value) ? value : []).filter(entry => entry && Object.hasOwn(OPS_BY_KEY, entry.key)
+    && ["success", "issues", "error"].includes(entry.status) && Number.isFinite(entry.at) && entry.at > 0 && Number.isFinite(new Date(entry.at).getTime()))
+    .map(({key, status, at, batch}) => ({key, status, at, batch:batch === true}))
+    .sort((a,b) => b.at - a.at).slice(0,100);
+}
+function recommendedKeys(entries) {
+  const counts = new Map();
+  for (const entry of entries) if (entry.status === "success" && !entry.batch && SAFE_ACTIONS.has(entry.key)) counts.set(entry.key, (counts.get(entry.key) || 0) + 1);
+  const candidates = [...SAFE_ACTIONS];
+  return candidates.sort((a,b) => ((counts.get(b) || 0) + (DEFAULT_RECOMMENDED.includes(b) ? 2 : 0))
+    - ((counts.get(a) || 0) + (DEFAULT_RECOMMENDED.includes(a) ? 2 : 0))).slice(0,3);
+}
+const groupFor = op => GROUPS.find(group => group.keys.includes(op.key));
+const icon = name => `<span class="material-symbols-rounded" aria-hidden="true">${name}</span>`;
+const renderActionRow = op => `<article class="maint-task" data-op="${op.key}" data-kind="${op.kind}" aria-label="${op.title}">
+  <div class="task-copy"><strong>${op.title}</strong><p>${op.desc}</p><div class="task-meta"><span class="risk-pill ${riskFor(op)}">${({safe:"Safe",review:"Review first",destructive:"Destructive"})[riskFor(op)]}</span><span class="task-status" data-status="idle">Not run</span><span data-last-run></span></div></div>
+  <div class="task-actions">${op.kind === "tracker"
+    ? `<button type="button" class="archive-configure" aria-controls="cxm-archive-panel" aria-expanded="false">${icon("tune")}Configure</button>`
+    : `<button type="button" class="run-btn action-run-btn" data-label="${op.title}" data-idle-label="Run">${icon("play_arrow")}Run</button>`}<button type="button" class="details-btn" aria-label="Details for ${op.title}" title="Task details">${icon("info")}</button></div>
+</article>`;
+const renderCategory = group => `<details class="maint-group ${group.id === "danger" ? "danger-group" : ""}" data-group="${group.id}"><summary><span class="action-icon">${icon(group.icon)}</span><span class="group-copy"><strong>${group.title}</strong><span>${group.desc}</span></span><span class="group-count"></span>${icon("expand_more")}</summary><div class="group-tasks">${group.keys.map(key => renderActionRow(OPS_BY_KEY[key])).join("")}</div></details>`;
+let activeRoot, syncRoute;
 
 function injectCSS() {
   const existing = document.getElementById("cw-maint-css");
@@ -347,171 +324,204 @@ function injectCSS() {
   });
 }
 
-export default {
-  async mount(root, props = {}) {
+const MaintenancePage = {
+  async mount(root) {
+    if (!root) return;
+    if (activeRoot === root && root.querySelector(".cw-maint")) { syncRoute?.(); return; }
     await injectCSS();
 
-    const shell = root.closest(".cx-modal-shell");
-    if (shell) {
-      shell.classList.add("cw-maint-shell");
-      shell.style.setProperty("--cxModalW", "1180px");
-      shell.style.setProperty("--cxModalMaxW", "1180px");
-      shell.style.setProperty("--cxModalMaxH", "700px");
-    }
     root.innerHTML = `
       <div class="cw-maint">
-        <div class="cx-head">
-          <div class="cx-head-left">
-            <div class="head-text">
-              <div class="head-title">Maintenance tools</div>
-              <div class="head-sub">Reset, rebuild or clean the local CrossWatch data without touching provider accounts.</div>
-            </div>
-          </div>
-          <div class="cx-head-right">
-            <button type="button" class="header-action" id="cxm-close">
-              <span class="material-symbols-rounded" aria-hidden="true">close</span>
-              <span class="header-action-label">Close</span>
-            </button>
-          </div>
+        <nav class="maint-breadcrumb" aria-label="Breadcrumb"><a id="cxm-back" href="#main">${icon("arrow_back")}Main</a><span aria-hidden="true">/</span><span>Maintenance</span></nav>
+        <div class="maint-heading"><div><h1>Maintenance tools</h1><p>These tools repair or clean local CrossWatch data without touching provider accounts.</p></div><div class="heading-actions"><button type="button" class="run-btn primary" id="cxm-run-recommended">${icon("play_arrow")}Run safe recommended</button><button type="button" id="cxm-history-toggle" aria-controls="cxm-history" aria-expanded="false">${icon("history")}View history</button></div></div>
+        <div class="maint-overview">
+          <div class="overview-card"><span class="overview-icon good">${icon("check_circle")}</span><div><strong>3 recommended</strong><p>Safe to run now</p></div></div>
+          <button type="button" class="overview-card" id="cxm-attention"><span class="overview-icon warning">${icon("warning")}</span><span><strong id="cxm-attention-count">0 need attention</strong><span class="overview-note">Results that need your review</span></span></button>
+          <div class="overview-card last-maintenance"><span class="overview-icon">${icon("schedule")}</span><div><strong>Last maintenance</strong><p id="cxm-last-maintenance">No runs recorded yet</p></div><span class="health-note" id="cxm-health-note">Local data only</span></div>
         </div>
-
-        <div class="maint-layout">
-          <aside class="maint-sidebar" aria-label="Maintenance categories">
-            <div>
-              <nav class="side-nav primary">
-                <div class="side-nav-item active" data-group="overview">
-                  <button type="button" class="side-nav-btn active" data-target="cxm-main" aria-current="page">
-                    <span class="material-symbols-rounded" aria-hidden="true">home</span>
-                    <span>Overview</span>
-                  </button>
-                  <button type="button" class="category-run-btn" id="cxm-run-overview" aria-label="Run complete local cleanup">Run</button>
-                </div>
-              </nav>
-
-              <div class="sidebar-label">Categories</div>
-              <nav class="side-nav secondary">
-                <div class="side-nav-item" data-group="sync">
-                  <button type="button" class="side-nav-btn" data-target="cxm-group-sync">
-                    <span class="material-symbols-rounded" aria-hidden="true">sync</span>
-                    <span>Sync</span>
-                  </button>
-                  <button type="button" class="category-run-btn" data-run-group="sync" aria-label="Run all Sync tools">Run</button>
-                </div>
-                <div class="side-nav-item" data-group="playback">
-                  <button type="button" class="side-nav-btn" data-target="cxm-group-playback">
-                    <span class="material-symbols-rounded" aria-hidden="true">play_arrow</span>
-                    <span>Playback</span>
-                  </button>
-                  <button type="button" class="category-run-btn" data-run-group="playback" aria-label="Run all Playback tools">Run</button>
-                </div>
-                <div class="side-nav-item" data-group="reports">
-                  <button type="button" class="side-nav-btn" data-target="cxm-group-reports">
-                    <span class="material-symbols-rounded" aria-hidden="true">bar_chart</span>
-                    <span>Reports & Metadata</span>
-                  </button>
-                  <button type="button" class="category-run-btn" data-run-group="reports" aria-label="Run all Reports and Metadata tools">Run</button>
-                </div>
-                <div class="side-nav-item" data-group="events">
-                  <button type="button" class="side-nav-btn" data-target="cxm-group-events">
-                    <span class="material-symbols-rounded" aria-hidden="true">history</span>
-                    <span>Events</span>
-                  </button>
-                </div>
-                <div class="side-nav-item" data-group="state-file">
-                  <button type="button" class="side-nav-btn" data-target="cxm-group-state-file">
-                    <span class="material-symbols-rounded" aria-hidden="true">data_object</span>
-                    <span>Sync State</span>
-                  </button>
-                  <button type="button" class="category-run-btn" data-run-group="state-file" aria-label="Run all Sync State tools">Run</button>
-                </div>
-                <div class="side-nav-item" data-group="archive">
-                  <button type="button" class="side-nav-btn" data-target="cxm-group-archive">
-                    <span class="material-symbols-rounded" aria-hidden="true">inventory_2</span>
-                    <span>Archive & Recovery</span>
-                  </button>
-                  <button type="button" class="category-run-btn" data-run-group="archive" aria-label="Run all Archive and Recovery tools">Run</button>
-                </div>
-                <div class="side-nav-item" data-group="captures">
-                  <button type="button" class="side-nav-btn" data-target="cxm-group-captures">
-                    <span class="material-symbols-rounded" aria-hidden="true">photo_library</span>
-                    <span>Captures</span>
-                  </button>
-                  <button type="button" class="category-run-btn" data-run-group="captures" aria-label="Run all Captures tools">Run</button>
-                </div>
-                <div class="side-nav-item danger" data-group="danger">
-                  <button type="button" class="side-nav-btn danger" data-target="cxm-group-danger">
-                    <span class="material-symbols-rounded" aria-hidden="true">warning</span>
-                    <span>Danger zone</span>
-                  </button>
-                  <button type="button" class="category-run-btn" data-run-group="danger" aria-label="Run Danger zone tools">Run</button>
-                </div>
-              </nav>
-            </div>
-
-            <div class="sidebar-status" id="cxm-sidebar-status">
-              <div class="status-heading">Status</div>
-              <div id="cxm-status" class="status-message" aria-live="polite" hidden></div>
-              <div id="cxm-overview-status">
-                <div class="status-lines">
-                  <div class="status-line">
-                    <span class="status-dot" aria-hidden="true"></span>
-                    <span id="cxm-tracker-count">Tracker - state · - snapshots</span>
-                  </div>
-                  <div class="status-line">
-                    <span class="status-dot" aria-hidden="true"></span>
-                    <span id="cxm-cache-count">Provider cache - files</span>
-                  </div>
-                </div>
-                <details class="storage-details">
-                  <summary>
-                    <span>Storage details</span>
-                    <span class="material-symbols-rounded" aria-hidden="true">expand_more</span>
-                  </summary>
-                  <div class="summary-paths">
-                    <div class="storage-path">
-                      <span>Tracker</span>
-                      <code id="cxm-tracker-root">/config/.cw_provider</code>
-                    </div>
-                    <div class="storage-path">
-                      <span>Provider cache</span>
-                      <code id="cxm-cache-root">/config/.cw_state</code>
-                    </div>
-                  </div>
-                </details>
-              </div>
-              <div id="cxm-action-insight" class="action-insight" aria-live="polite" hidden>
-                <div class="insight-head">
-                  <span class="material-symbols-rounded insight-icon" aria-hidden="true"></span>
-                  <div>
-                    <div class="insight-kicker">Selected tool</div>
-                    <div class="insight-title"></div>
-                  </div>
-                </div>
-                <div class="insight-metrics"></div>
-                <div class="insight-note"></div>
-              </div>
-            </div>
-          </aside>
-
-          <main class="maint-main" id="cxm-main">
-            ${GROUPS.map(renderGroup).join("")}
-          </main>
+        <section class="maint-history" id="cxm-history" aria-labelledby="cxm-history-title" hidden><div class="section-heading"><div><h2 id="cxm-history-title" tabindex="-1">Maintenance history</h2><p>Last 100 runs for this account in this browser.</p></div><button type="button" id="cxm-history-close" aria-label="Close maintenance history">${icon("close")}</button></div><ol id="cxm-history-list"></ol></section>
+        <section class="maint-recommendations" aria-labelledby="cxm-recommended-title"><div class="section-heading"><span class="section-icon">${icon("auto_awesome")}</span><div><h2 id="cxm-recommended-title">Recommended actions</h2><p>Your frequent safe tasks. Suggestions adapt as you use them.</p></div></div><div class="recommended-grid" id="cxm-recommended-cards"></div></section>
+        <div class="maint-filters">
+          <label class="maint-search">${icon("search")}<input type="search" id="cxm-search" placeholder="Search maintenance tasks..." aria-label="Search maintenance tasks"></label>
+          <select id="cxm-category" aria-label="Category" data-cw-native-select="true"><option value="all">All categories</option>${GROUPS.map(group => `<option value="${group.id}">${group.title}</option>`).join("")}</select>
+          <select id="cxm-risk" aria-label="Risk level" data-cw-native-select="true"><option value="all">All risk levels</option><option value="safe">Safe</option><option value="review">Review first</option><option value="destructive">Destructive</option></select>
+          <select id="cxm-filter-status" aria-label="Tasks" data-cw-native-select="true"><option value="all">All tasks</option><option value="attention">Needs attention</option><option value="idle">Not run</option><option value="success">Success</option></select>
         </div>
-      </div>
-    `;
-
-    const statusEl = $("#cxm-status", root);
-    const closeModal = () => {
-      try { window.cxCloseModal?.(); } catch {}
-      if (root.isConnected) {
-        root.dispatchEvent(new CustomEvent("cw-modal-close", { bubbles: true }));
+        <div id="cxm-status" class="status-message" role="status" hidden></div>
+        <div class="maint-categories">${[GROUPS.slice(0,4), GROUPS.slice(4,-1)].map(groups => `<div class="maint-category-column">${groups.map(renderCategory).join("")}</div>`).join("")}${renderCategory(GROUPS.at(-1))}</div>
+        <p id="cxm-empty" hidden>No maintenance tasks match these filters.</p><p id="cxm-range" class="maint-range"></p>
+        <section id="cxm-archive-panel" class="archive-panel" aria-labelledby="cxm-archive-title" hidden>
+          <div class="archive-panel-heading"><span class="action-icon">${icon("inventory_2")}</span><div><h2 id="cxm-archive-title" tabindex="-1">CW tracker archive</h2><p>Choose a profile to manage its local tracker data.</p></div><button type="button" id="cxm-archive-close" aria-label="Close archive options">${icon("close")}</button></div>
+          ${OPS_BY_KEY.tracker.extra}
+          <div class="archive-panel-footer">${OPS_BY_KEY.tracker.sideActions}<button type="button" class="run-btn archive-clear" id="cxm-cw-clear" data-kind="tracker" data-label="CW tracker archive" data-idle-label="Clear selected">${icon("delete_sweep")}Clear selected</button></div>
+          <div id="cxm-archive-status" class="status-message" role="status" hidden></div>
+        </section>
+        <section id="cxm-action-insight" class="action-insight" aria-live="polite" hidden><div class="insight-head"><span class="material-symbols-rounded insight-icon" aria-hidden="true"></span><h2 class="insight-title"></h2><button type="button" id="cxm-insight-close" aria-label="Close task details">${icon("close")}</button></div><div class="insight-metrics"></div><p class="insight-note"></p></section>
+        <details class="storage-details" id="cxm-overview-status"><summary>Storage details</summary><div class="status-lines"><span id="cxm-tracker-count">Loading tracker status...</span><span id="cxm-cache-count">Loading cache status...</span></div><dl><dt>Tracker</dt><dd><code id="cxm-tracker-root"></code></dd><dt>Provider cache</dt><dd><code id="cxm-cache-root"></code></dd></dl></details>
+      </div>`;
+    activeRoot = root;
+    function syncFilterSelects() {
+      for (const select of root.querySelectorAll(".maint-filters select")) {
+        const wrap = window.CW?.IconSelect?.enhance(select, { className: "cw-plain-select maint-filter-select", menuMinWidth: 240 });
+        const label = select.getAttribute("aria-label");
+        wrap?.querySelector("button")?.setAttribute("aria-label", `${label}: ${select.selectedOptions[0]?.textContent || ""}`);
+        wrap?.__cwMenu?.setAttribute("aria-label", label);
       }
+    }
+    const currentAuth = window.CW?.AuthState?.read?.();
+    const auth = currentAuth?.status ? currentAuth : await window.CW?.AuthState?.refresh?.() || currentAuth;
+    const storageKey = historyKey(auth);
+    let entries = [];
+    try { entries = cleanHistory(JSON.parse(localStorage.getItem(storageKey) || "[]")); } catch {}
+    const results = new Map();
+    for (const entry of entries) if (!results.has(OPS_BY_KEY[entry.key].kind)) results.set(OPS_BY_KEY[entry.key].kind, entry);
+    let recommended = recommendedKeys(entries);
+    let batchRunning = false;
+    function saveResult(key, status) {
+      entries = cleanHistory([{key, status, at:Date.now(), batch:batchRunning}, ...entries]);
+      try { localStorage.setItem(storageKey, JSON.stringify(entries)); } catch {}
+    }
+    function updateOverview() {
+      const attention = [...results.values()].filter(result => ["issues","error"].includes(result.status)).length;
+      $("#cxm-attention-count", root).textContent = `${attention} need attention`;
+      $("#cxm-last-maintenance", root).textContent = entries.length ? new Date(entries[0].at).toLocaleString() : "No runs recorded yet";
+      $("#cxm-health-note", root).textContent = attention ? "Review recent results" : entries.length ? "No issues recorded" : "Local data only";
+      $("#cxm-history-list", root).innerHTML = entries.length ? entries.map(entry => `<li><strong>${OPS_BY_KEY[entry.key].title}</strong><time datetime="${new Date(entry.at).toISOString()}">${new Date(entry.at).toLocaleString()}</time><span class="task-status" data-status="${entry.status}">${({success:"Success",issues:"Issues found",error:"Failed"})[entry.status]}</span>${entry.batch ? '<span class="history-source">Batch</span>' : ""}</li>`).join("") : '<li>No maintenance runs recorded yet.</li>';
+      if (!operationBusy) recommended = recommendedKeys(entries);
+      const cards = $("#cxm-recommended-cards", root);
+      if (cards.dataset.keys !== recommended.join(",")) {
+        cards.dataset.keys = recommended.join(",");
+        cards.innerHTML = recommended.map(key => {
+          const op = OPS_BY_KEY[key];
+          return `<article class="recommended-card" data-recommended="${key}"><span class="action-icon">${icon(op.icon)}</span><div class="recommended-copy"><h3>${op.title}</h3><p>${op.desc}</p></div><span class="recommended-badge">${icon("check_circle")}Recommended</span><div class="recommended-footer"><span class="recommended-last">${icon("schedule")}<span data-recommended-last></span></span><button type="button" class="run-btn primary" data-run-recommended="${key}" aria-label="Run ${op.title}">${icon("play_arrow")}Run</button></div></article>`;
+        }).join("");
+      }
+      cards.querySelectorAll("[data-recommended]").forEach(card => {
+        const result = results.get(OPS_BY_KEY[card.dataset.recommended].kind);
+        card.querySelector("[data-recommended-last]").textContent = result?.status === "running" ? "Running..." : result ? `Last run: ${new Date(result.at).toLocaleString()}` : "Last run: Never";
+        card.querySelector("button").disabled = operationBusy;
+      });
+    }
+    const rows = [...root.querySelectorAll(".maint-task")];
+    const archivePanel = $("#cxm-archive-panel", root);
+    const archiveConfigure = $(".archive-configure", root);
+    function setArchiveOpen(open) {
+      archivePanel.hidden = !open;
+      archiveConfigure.setAttribute("aria-expanded", String(open));
+      if (open) {
+        showOverviewStatus();
+        $("#cxm-archive-status", root).hidden = true;
+        archivePanel.scrollIntoView({behavior:"smooth", block:"nearest"});
+        $("#cxm-archive-title", root).focus({preventScroll:true});
+      }
+    }
+    archiveConfigure.addEventListener("click", () => setArchiveOpen(archivePanel.hidden));
+    $("#cxm-archive-close", root).addEventListener("click", () => { setArchiveOpen(false); archiveConfigure.focus(); });
+    $("#cxm-cw-clear", root).addEventListener("click", event => runOp("tracker", event.currentTarget));
+    function updateRows() {
+      const query = $("#cxm-search", root).value.trim().toLowerCase();
+      const category = $("#cxm-category", root).value;
+      const risk = $("#cxm-risk", root).value;
+      const status = $("#cxm-filter-status", root).value;
+      let visible = 0;
+      for (const row of rows) {
+        const op = OPS_BY_KEY[row.dataset.op];
+        const result = results.get(op.kind);
+        const statusMatch = status === "all" || (status === "attention" ? ["issues","error"].includes(result?.status) : status === (result?.status || "idle"));
+        row.hidden = !((risk === "all" || riskFor(op) === risk) && (category === "all" || groupFor(op).id === category)
+          && statusMatch && `${op.title} ${op.desc} ${groupFor(op).title}`.toLowerCase().includes(query));
+        if (!row.hidden) visible++;
+        const statusEl = $(".task-status", row);
+        statusEl.dataset.status = result?.status || "idle";
+        statusEl.textContent = ({idle:"Not run",running:"Running",success:"Success",issues:"Issues found",error:"Failed"})[statusEl.dataset.status];
+        $("[data-last-run]", row).textContent = result?.at ? new Date(result.at).toLocaleString() : "\u2014";
+      }
+      $("#cxm-empty", root).hidden = visible > 0;
+      if (selectedInsightKind && rows.find(row => row.dataset.kind === selectedInsightKind)?.hidden) showOverviewStatus();
+      if (!operationBusy && rows.find(row => row.dataset.kind === "tracker")?.hidden) setArchiveOpen(false);
+      $("#cxm-range", root).textContent = `${visible} of ${OPS.length} tasks`;
+      root.querySelectorAll("[data-group]").forEach(group => {
+        const count = [...group.querySelectorAll(".maint-task")].filter(row => !row.hidden).length;
+        group.hidden = !count;
+        group.querySelector(".group-count").textContent = `${count} ${count === 1 ? "task" : "tasks"}`;
+        if (count && (query || category !== "all" || risk !== "all" || status !== "all")) group.open = true;
+      });
+      const columns = [...root.querySelectorAll(".maint-category-column")];
+      for (const column of columns) column.hidden = !column.querySelector(".maint-group:not([hidden])");
+      $(".maint-categories", root).classList.toggle("is-single-column", columns.filter(column => !column.hidden).length === 1);
+      updateOverview();
+      $("#cxm-run-recommended", root).disabled = operationBusy;
+    }
+    function updateRoute() {
+      const params = new URLSearchParams(location.hash.split("?")[1] || "");
+      const group = $("#cxm-category", root).value;
+      if (group === "all") params.delete("group"); else params.set("group", group);
+      history.replaceState(history.state, "", "#maintenance" + (params.size ? `?${params}` : ""));
+    }
+    syncRoute = () => {
+      const params = new URLSearchParams(location.hash.split("?")[1] || "");
+      const category = params.get("group");
+      $("#cxm-category", root).value = GROUPS.some(group => group.id === category) ? category : "all";
+      const back = pageBackLink(params.get("returnTo") || "#main", location.href, "maintenance");
+      $("#cxm-back", root).href = back.href;
+      $("#cxm-back", root).innerHTML = icon("arrow_back") + escapeHtml(back.label === "Maintenance" ? "Settings" : back.label);
+      syncFilterSelects();
+      updateRows();
     };
+    for (const input of root.querySelectorAll(".maint-filters input, .maint-filters select")) {
+      input.addEventListener(input.tagName === "INPUT" ? "input" : "change", () => {
+        if (input.tagName === "SELECT") syncFilterSelects();
+        updateRows(); updateRoute();
+      });
+    }
+    $("#cxm-recommended-cards", root).addEventListener("click", event => {
+      const button = event.target.closest("[data-run-recommended]");
+      if (!button || operationBusy) return;
+      const row = rows.find(row => row.dataset.op === button.dataset.runRecommended);
+      if (row) runOp(row.dataset.kind, row.querySelector(".action-run-btn"));
+    });
+    function toggleHistory(open) {
+      $("#cxm-history", root).hidden = !open;
+      $("#cxm-history-toggle", root).setAttribute("aria-expanded", String(open));
+      if (open) { $("#cxm-history", root).scrollIntoView({block:"nearest",behavior:"smooth"}); $("#cxm-history-title", root).focus({preventScroll:true}); }
+      else $("#cxm-history-toggle", root).focus();
+    }
+    $("#cxm-history-toggle", root).addEventListener("click", () => toggleHistory($("#cxm-history", root).hidden));
+    $("#cxm-history-close", root).addEventListener("click", () => toggleHistory(false));
+    $("#cxm-attention", root).addEventListener("click", () => {
+      $("#cxm-search", root).value = "";
+      $("#cxm-category", root).value = "all";
+      $("#cxm-risk", root).value = "all";
+      $("#cxm-filter-status", root).value = "attention";
+      syncFilterSelects(); updateRows(); updateRoute();
+    });
+    const statusEl = $("#cxm-status", root);
+    const returnToCaller = () => { $("#cxm-back", root).click(); };
+    let statusFadeTimer, statusHideTimer;
     const setStatus = (msg, kind = "") => {
       if (!statusEl) return;
+      window.clearTimeout(statusFadeTimer);
+      window.clearTimeout(statusHideTimer);
       statusEl.textContent = msg;
       statusEl.className = "status-message" + (kind ? " " + kind : "");
       statusEl.hidden = !msg;
+      const archiveStatus = $("#cxm-archive-status", root);
+      if (!archivePanel.hidden) {
+        archiveStatus.textContent = msg;
+        archiveStatus.className = statusEl.className;
+        archiveStatus.hidden = !msg;
+      }
+      if (msg && kind === "ok") {
+        statusFadeTimer = window.setTimeout(() => {
+          statusEl.classList.add("is-fading");
+          archiveStatus.classList.add("is-fading");
+          const duration = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 700;
+          statusHideTimer = window.setTimeout(() => {
+            statusEl.hidden = true;
+            archiveStatus.hidden = true;
+          }, duration);
+        }, 5000);
+      }
     };
     const trackerProfile = () => String($("#cxm-cw-profile", root)?.value || "default").trim() || "default";
     const trackerProfileQuery = () => `provider_instance=${encodeURIComponent(trackerProfile())}`;
@@ -578,7 +588,7 @@ export default {
     function setOperationBusy(busy) {
       if (operationBusy === busy) return;
       operationBusy = busy;
-      const controls = root.querySelectorAll(".run-btn, .archive-btn, .category-run-btn, #cxm-cw-profile, #cxm-close");
+      const controls = root.querySelectorAll(".run-btn, .archive-btn, .archive-configure, #cxm-cw-profile, #cxm-cw-state, #cxm-cw-snaps, #cxm-archive-close");
       controls.forEach((control) => {
         if (busy) {
           control.dataset.cwWasDisabled = control.disabled ? "1" : "0";
@@ -589,7 +599,7 @@ export default {
         }
       });
       $(".cw-maint", root)?.toggleAttribute("aria-busy", busy);
-      try { window.cxSetModalDismissible?.(!busy); } catch {}
+      updateRows();
     }
 
     const formatBytes = (raw) => {
@@ -706,7 +716,7 @@ export default {
     function showOverviewStatus() {
       selectedInsightKind = null;
       insightRequestId += 1;
-      root.querySelectorAll(".action-row.is-inspected").forEach((row) => row.classList.remove("is-inspected"));
+      root.querySelectorAll(".maint-task.is-inspected").forEach((row) => row.classList.remove("is-inspected"));
       const overview = $("#cxm-overview-status", root);
       const insight = $("#cxm-action-insight", root);
       if (overview) overview.hidden = false;
@@ -761,15 +771,16 @@ export default {
     async function loadActionInsight(kind) {
       const op = OPS.find((item) => item.kind === kind);
       if (!op) return;
-      setStatus("");
+      if (!operationBusy) setStatus("");
       selectedInsightKind = kind;
       const requestId = ++insightRequestId;
-      root.querySelectorAll(".action-row").forEach((row) => {
+      root.querySelectorAll(".maint-task").forEach((row) => {
         row.classList.toggle("is-inspected", row.dataset.kind === kind);
       });
       const overview = $("#cxm-overview-status", root);
       if (overview) overview.hidden = true;
       renderActionInsight(op, null, "loading");
+      $("#cxm-action-insight", root)?.scrollIntoView({behavior:"smooth", block:"nearest"});
 
       try {
         const payload = await fjson(`/api/maintenance/action-status/${encodeURIComponent(kind)}`);
@@ -782,33 +793,7 @@ export default {
       }
     }
 
-    const actionGroups = [...root.querySelectorAll(".action-group")];
-    root.querySelectorAll(".side-nav-btn[data-target]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const target = root.querySelector(`#${btn.dataset.target}`);
-        if (!target) return;
-        const isOverview = target.id === "cxm-main";
-        root.querySelectorAll(".side-nav-btn").forEach((item) => {
-          const active = item === btn;
-          item.classList.toggle("active", active);
-          item.closest(".side-nav-item")?.classList.toggle("active", active);
-          if (active) item.setAttribute("aria-current", "page");
-          else item.removeAttribute("aria-current");
-        });
-        actionGroups.forEach((group) => group.classList.toggle("is-focused", !isOverview && group === target));
-        showOverviewStatus();
-        if (!isOverview) {
-          target.classList.remove("focus-pop");
-          void target.offsetWidth;
-          target.classList.add("focus-pop");
-          window.setTimeout(() => target.classList.remove("focus-pop"), 520);
-        }
-        if (isOverview) target.scrollTo({ top: 0, behavior: "smooth" });
-        else target.scrollIntoView({ behavior: "smooth", block: "start" });
-      });
-    });
-
-    $("#cxm-close", root)?.addEventListener("click", closeModal);
+    $("#cxm-insight-close", root).addEventListener("click", showOverviewStatus);
 
     async function refreshSummary() {
       try {
@@ -837,14 +822,18 @@ export default {
       }
     }
 
+    function actionRow(btn) {
+      return btn.closest(".maint-task") || (btn.dataset.kind === "tracker" ? root.querySelector('.maint-task[data-kind="tracker"]') : null);
+    }
+
     function resetActionFeedback(btn) {
       if (!btn) return;
       if (btn._cwResultTimer) window.clearTimeout(btn._cwResultTimer);
       btn._cwResultTimer = null;
       btn.classList.remove("busy", "result-success", "result-error");
       btn.removeAttribute("aria-busy");
-      btn.textContent = btn.dataset.idleLabel || "Run";
-      btn.closest(".action-row")?.classList.remove("is-running", "run-success", "run-error");
+      btn.innerHTML = icon("play_arrow") + escapeHtml(btn.dataset.idleLabel || "Run");
+      actionRow(btn)?.classList.remove("is-running", "run-success", "run-error");
     }
 
     function startActionFeedback(btn) {
@@ -853,55 +842,59 @@ export default {
       resetActionFeedback(btn);
       btn.classList.add("busy");
       btn.setAttribute("aria-busy", "true");
-      btn.closest(".action-row")?.classList.add("is-running");
+      actionRow(btn)?.classList.add("is-running");
+      const kind = actionRow(btn)?.dataset.kind;
+      if (kind) { results.set(kind, {status:"running",at:Date.now(),previous:results.get(kind)}); updateRows(); }
     }
 
     function finishActionFeedback(btn, result) {
       if (!btn) return;
-      const row = btn.closest(".action-row");
+      const row = actionRow(btn);
       row?.classList.remove("is-running");
       btn.classList.remove("busy");
       btn.removeAttribute("aria-busy");
       if (result === "cancel") {
+        const kind = row?.dataset.kind;
+        if (kind) { const previous = results.get(kind)?.previous; if (previous) results.set(kind,previous); else results.delete(kind); updateRows(); }
         resetActionFeedback(btn);
         return;
       }
 
+      if (row) { results.set(row.dataset.kind, {status:result,at:Date.now()}); saveResult(row.dataset.op, result); updateRows(); }
       const ok = result === "success";
       row?.classList.add(ok ? "run-success" : "run-error");
       btn.classList.add(ok ? "result-success" : "result-error");
-      btn.textContent = ok ? "Done" : "Failed";
+      btn.textContent = ok ? "Done" : result === "issues" ? "Issues" : "Failed";
       btn._cwResultTimer = window.setTimeout(() => resetActionFeedback(btn), 1400);
     }
 
     async function runOp(kind, btn, options = {}) {
       const {
         manageLock = true,
-        skipConfirm = false,
       } = options;
       if (manageLock && operationBusy) return false;
 
-      if (!skipConfirm && kind === "captures" && !confirm("Delete all saved captures? This cannot be undone.")) {
+      if (kind === "captures" && !confirm("Delete all saved captures? This cannot be undone.")) {
         setStatus("Cancelled.", "");
         return false;
       }
 
-      if (!skipConfirm && kind === "events-purge" && !confirm("Clear all event data?\n\nThis empties every event category (sync, scrobble, audits) and the sync activity calendar.\n\nNothing else in the local database is touched. This cannot be undone.")) {
+      if (kind === "events-purge" && !confirm("Clear all event data?\n\nThis empties every event category (sync, scrobble, audits) and the sync activity calendar.\n\nNothing else in the local database is touched. This cannot be undone.")) {
         setStatus("Cancelled.", "");
         return false;
       }
 
-      if (!skipConfirm && kind === "events-rebuild" && !confirm("This removes the current event archive and rebuilds it from current runtime state.\n\nHistorical events that only exist in the event database may be lost.\n\nThis does not change CrossWatch configuration or provider runtime state.")) {
+      if (kind === "events-rebuild" && !confirm("This removes the current event archive and rebuilds it from current runtime state.\n\nHistorical events that only exist in the event database may be lost.\n\nThis does not change CrossWatch configuration or provider runtime state.")) {
         setStatus("Cancelled.", "");
         return false;
       }
 
-      if (!skipConfirm && kind === "state-file" && !confirm("Create an app-state backup and compact the sync state database?")) {
+      if (kind === "state-file" && !confirm("Create an app-state backup and compact the sync state database?")) {
         setStatus("Cancelled.", "");
         return false;
       }
 
-      if (!skipConfirm && kind === "state-file-prune" && !confirm("Create an app-state backup and prune stale sync state baselines?\n\nThis removes provider or instance baselines that are no longer referenced by configured sync pairs or scrobbler routes.")) {
+      if (kind === "state-file-prune" && !confirm("Create an app-state backup and prune stale sync state baselines?\n\nThis removes provider or instance baselines that are no longer referenced by configured sync pairs or scrobbler routes.")) {
         setStatus("Cancelled.", "");
         return false;
       }
@@ -953,13 +946,13 @@ export default {
             "Are you absolutely sure you want to continue?"
           ].join("\n");
 
-          if (!skipConfirm && !confirm(warn)) {
+          if (!confirm(warn)) {
             setStatus("Cancelled.", "");
             finishActionFeedback(btn, "cancel");
             return false;
           }
 
-          if (!skipConfirm) {
+          {
             const typed = prompt("Type RESET to continue");
             if (String(typed || "").trim().toUpperCase() !== "RESET") {
               setStatus("Cancelled.", "");
@@ -990,7 +983,7 @@ export default {
 
         if (kind === "defaults") {
           finishActionFeedback(btn, "success");
-          closeModal();
+          returnToCaller();
           setTimeout(() => {
             if (window.cwRestartCrossWatchWithOverlay) {
               window.cwRestartCrossWatchWithOverlay();
@@ -1008,8 +1001,8 @@ export default {
         const dbReceipt = databaseReceipt(kind, res);
         const stateReceipt = kind === "state-file" ? stateFileReceipt(res) : null;
         const statePrune = kind === "state-file-prune" ? statePruneReceipt(res) : null;
-        setStatus(evReceipt || dbReceipt || stateReceipt || statePrune || completionReceipt(label, res), "ok");
-        finishActionFeedback(btn, "success");
+        setStatus(evReceipt || dbReceipt || stateReceipt || statePrune || completionReceipt(label, res), res?.healthy === false ? "err" : "ok");
+        finishActionFeedback(btn, res?.healthy === false ? "issues" : "success");
         return res || { ok: true };
       } catch (e) {
         setStatus(`Error: ${e.message || String(e)}`, "err");
@@ -1020,38 +1013,11 @@ export default {
       }
     }
 
-    async function runGroup(groupId, groupBtn) {
-      const group = GROUPS.find((item) => item.id === groupId);
-      if (!group || operationBusy) return;
-
-      root.querySelector(`.side-nav-btn[data-target="cxm-group-${groupId}"]`)?.click();
-      setOperationBusy(true);
-      groupBtn.classList.add("busy");
-      groupBtn.setAttribute("aria-busy", "true");
-      setStatus(`Running all ${group.title.toLowerCase()} tools...`, "busy");
-
-      const results = [];
-      try {
-        for (const key of group.keys) {
-          const op = OPS_BY_KEY[key];
-          const actionBtn = root.querySelector(`.action-row[data-op="${key}"] .action-run-btn`);
-          if (!op || !actionBtn) continue;
-          const result = await runOp(op.kind, actionBtn, { manageLock: false });
-          if (!result || !root.isConnected) return;
-          results.push(result);
-        }
-        setStatus(completionReceipt(group.title, results, [plural(results.length, "tool")]), "ok");
-      } finally {
-        groupBtn.classList.remove("busy");
-        groupBtn.removeAttribute("aria-busy");
-        setOperationBusy(false);
-      }
-    }
-
     OPS.forEach(({ key, kind }) => {
-      const row = root.querySelector(`.action-row[data-op="${key}"]`);
+      const row = root.querySelector(`.maint-task[data-op="${key}"]`);
       const btn = row?.querySelector(".action-run-btn");
       if (btn) btn.addEventListener("click", () => runOp(kind, btn));
+      row?.querySelector(".details-btn")?.addEventListener("click", () => loadActionInsight(kind));
       row?.addEventListener("click", (event) => {
         if (event.target.closest("button, input, label, a, summary, .cw-icon-select")) return;
         loadActionInsight(kind);
@@ -1079,60 +1045,32 @@ export default {
       }
     });
 
-    root.querySelectorAll(".category-run-btn[data-run-group]").forEach((btn) => {
-      btn.addEventListener("click", () => runGroup(btn.dataset.runGroup, btn));
+    $("#cxm-run-recommended", root).addEventListener("click", async () => {
+      if (operationBusy) return;
+      const tasks = recommended.filter(key => SAFE_ACTIONS.has(key)).map(key => rows.find(row => row.dataset.op === key)).filter(Boolean);
+      if (!tasks.length) return;
+      batchRunning = true;
+      setOperationBusy(true);
+      try {
+        const completed = [];
+        for (const row of tasks) {
+          const result = await runOp(row.dataset.kind, row.querySelector(".action-run-btn"), {manageLock:false});
+          if (!result || result.healthy === false) return;
+          completed.push(result);
+        }
+        setStatus(completionReceipt("Recommended tasks", completed, [plural(completed.length, "tool")]), "ok");
+      } finally { batchRunning = false; setOperationBusy(false); }
     });
-
-    const overviewRunBtn = root.querySelector("#cxm-run-overview");
-    if (overviewRunBtn) {
-      overviewRunBtn.addEventListener("click", async () => {
-        if (operationBusy) return;
-        if (!confirm("Run the Overview maintenance tools? This clears sync state, retry data, recent scrobbles, statistics, metadata and currently playing. Local tracker data, captures and Factory reset are excluded.")) {
-          return;
-        }
-
-        root.querySelector('.side-nav-btn[data-target="cxm-main"]')?.click();
-        setOperationBusy(true);
-        overviewRunBtn.classList.add("busy");
-        overviewRunBtn.setAttribute("aria-busy", "true");
-        setStatus("Running complete local cleanup...", "busy");
-        const results = [];
-        try {
-          for (const key of OVERVIEW_KEYS) {
-            const op = OPS_BY_KEY[key];
-            const actionBtn = root.querySelector(`.action-row[data-op="${key}"] .action-run-btn`);
-            if (!op || !actionBtn) continue;
-            const result = await runOp(op.kind, actionBtn, {
-              manageLock: false,
-              skipConfirm: true,
-            });
-            if (!result || !root.isConnected) return;
-            results.push(result);
-          }
-          await refreshSummary();
-          setStatus(completionReceipt("Complete local cleanup", results, [plural(results.length, "tool")]), "ok");
-        } finally {
-          overviewRunBtn.classList.remove("busy");
-          overviewRunBtn.removeAttribute("aria-busy");
-          setOperationBusy(false);
-        }
-      });
-    }
-
-    const initialGroup = String(props?.group || props?.target || "").trim().toLowerCase();
-    if (initialGroup) {
-      [...root.querySelectorAll(".side-nav-btn[data-target]")]
-        .find((btn) => btn.dataset.target === `cxm-group-${initialGroup}`)
-        ?.click();
-    }
+    syncRoute();
     showOverviewStatus();
     const loadMaintenanceBootStatus = async () => {
       await loadTrackerProfiles();
       await refreshSummary();
-      if (root.isConnected && !operationBusy) setStatus("");
+      if (root.isConnected && !operationBusy && statusEl.textContent === "Loading maintenance status...") setStatus("");
     };
     setStatus("Loading maintenance status...", "busy");
     void loadMaintenanceBootStatus();
   },
-  unmount() {},
 };
+window.MaintenancePage = MaintenancePage;
+export default MaintenancePage;

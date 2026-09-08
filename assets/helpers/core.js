@@ -72,7 +72,7 @@
   const statusCacheKey = () => `${STATUS_CACHE_KEY}.${String(window.CW?.OverviewProfile?.id || "").trim() || "all"}`;
   const DETAILS_MAX_LINES = 300;
   const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
-  const ROUTE_TABS = new Set(["main", "watchlist", "playback_progress", "snapshots", "playlists", "editor", "analyzer", "events", "logs", "import_export", "interactive_sync", "settings"]);
+  const ROUTE_TABS = new Set(["main", "watchlist", "playback_progress", "snapshots", "playlists", "editor", "analyzer", "events", "logs", "import_export", "interactive_sync", "maintenance", "settings"]);
   const SETTINGS_PANES = new Set(["overview", "providers", "sync", "scrobbler", "scheduling", "app", "maintenance"]);
   let routeSyncing = false;
 
@@ -141,6 +141,7 @@
     if (tab === "interactive_sync") return "#interactive_sync" + (window.location.hash.startsWith("#interactive_sync?") ? window.location.hash.slice(window.location.hash.indexOf("?")) : "");
     if (tab === "logs") return "#logs" + (window.location.hash.startsWith("#logs?") ? window.location.hash.slice(window.location.hash.indexOf("?")) : "");
     if (tab === "events") return "#events" + (window.location.hash.startsWith("#events?") ? window.location.hash.slice(window.location.hash.indexOf("?")) : "");
+    if (tab === "maintenance") return "#maintenance" + (window.location.hash.startsWith("#maintenance?") ? window.location.hash.slice(window.location.hash.indexOf("?")) : "");
     if (tab === "main") return "";
     if (tab === "settings") {
       const settingsPane = normalizeSettingsPane(pane || window.__cwSettingsPane || "overview");
@@ -895,7 +896,7 @@
   }
 
   function setTabHeaderState(tab) {
-    ["main", "watchlist", "playback_progress", "snapshots", "playlists", "editor", "analyzer", "events", "logs", "import_export", "settings"].forEach((name) => {
+    ["main", "watchlist", "playback_progress", "snapshots", "playlists", "editor", "analyzer", "events", "logs", "import_export", "maintenance", "settings"].forEach((name) => {
       byId(`tab-${name}`)?.classList.toggle("active", name === tab);
     });
   }
@@ -911,6 +912,7 @@
     byId("page-playlists")?.classList.toggle("hidden", tab !== "playlists");
     byId("page-editor")?.classList.toggle("hidden", tab !== "editor");
     byId("page-analyzer")?.classList.toggle("hidden", tab !== "analyzer");
+    byId("page-maintenance")?.classList.toggle("hidden", tab !== "maintenance");
     byId("page-events")?.classList.toggle("hidden", tab !== "events");
     byId("page-logs")?.classList.toggle("hidden", tab !== "logs");
     byId("page-import_export")?.classList.toggle("hidden", tab !== "import_export");
@@ -965,6 +967,7 @@
 
     if (state.currentTab === tab && !(tab === "editor" && byId("page-editor")?.querySelector("[data-editor-load-error]"))) {
       if (tab === "interactive_sync") window.InteractiveSync?.refresh?.();
+      if (tab === "maintenance") await window.MaintenancePage?.mount?.(byId("page-maintenance"));
       if (tab === "events") await window.EventsPage?.mount?.(byId("page-events"));
       if (tab === "logs") await window.LogsPage?.mount?.(byId("page-logs"));
       if (tab === "settings") {
@@ -1061,6 +1064,22 @@
 
     if (tab === "interactive_sync") {
       await ensurePageModule("interactive-sync", "/assets/js/interactive-sync.js", "InteractiveSync");
+      return;
+    }
+
+    if (tab === "maintenance") {
+      try {
+        const root = byId("page-maintenance");
+        if (root && !root.querySelector(".cw-maint")) root.innerHTML = '<div class="cw-page-loading" role="status">Loading maintenance tools...</div>';
+        await ensurePageModule("maintenance", "/assets/js/maintenance/index.js", "MaintenancePage");
+        if (!isCurrentNavigation()) return;
+        await window.MaintenancePage.mount(root);
+      } catch (error) {
+        if (!isCurrentNavigation()) return;
+        const root = byId("page-maintenance");
+        if (root) root.innerHTML = '<div class="cw-page-load-error">Maintenance tools failed to load. Refresh the page and try again.</div>';
+        console.error("Maintenance tools failed to load", error);
+      }
       return;
     }
 

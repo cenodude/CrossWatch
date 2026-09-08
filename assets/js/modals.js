@@ -22,7 +22,6 @@ const { ModalRegistry } = await import(_cwVer('./modals/core/registry.js'));
 // Register modals
 ModalRegistry.register('pair-config', () => import(_cwVer('./modals/pair-config/index.js')));
 ModalRegistry.register('about',        () => import(_cwVer('./modals/about.js')));
-ModalRegistry.register('maintenance',  () => import(_cwVer('./modals/maintenance/index.js')));
 ModalRegistry.register('manual-watched', () => import(_cwVer('./modals/manual-watched/index.js')));
 ModalRegistry.register('insight-settings', () => import(_cwVer('./modals/insight-settings/index.js')));
 ModalRegistry.register('tls-cert',     () => import(_cwVer('./modals/tls/index.js')));
@@ -95,7 +94,21 @@ if (document.readyState === 'complete') resumeEventsReturn();
 else window.addEventListener('load', resumeEventsReturn, {once:true});
 window.openExporter = () => window.showTab ? window.showTab('import_export') : (location.hash = 'import_export');
 
-window.openMaintenanceModal = (props = {}) => ModalRegistry.open('maintenance', props);
+window.openMaintenance = (props = {}) => {
+  const previous = location.hash.split('?')[0] === '#maintenance'
+    ? new URLSearchParams(location.hash.split('?')[1] || '') : null;
+  const query = new URLSearchParams();
+  const returnTo = previous ? previous.get('returnTo') : location.pathname + location.search + location.hash;
+  if (returnTo) query.set('returnTo', returnTo);
+  if (props.group || props.target) query.set('group', String(props.group || props.target));
+  const hash = '#maintenance' + (query.size ? `?${query}` : '');
+  ModalRegistry.close();
+  if (!document.getElementById('page-maintenance') || !window.showTab) { location.href = '/?main=1' + hash; return; }
+  if (location.hash !== hash) history.pushState(null, '', hash);
+  return window.showTab('maintenance');
+};
+// Keep external callers working while Maintenance is now a page.
+window.openMaintenanceModal = window.openMaintenance;
 window.openManualWatchedModal = (props = {}) => ModalRegistry.open('manual-watched', props);
 window.openTlsCertModal = (props = {}) => ModalRegistry.open('tls-cert', props);
 
