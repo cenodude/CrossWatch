@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 
 from fastapi import APIRouter, Body, File, HTTPException, Query, Request, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from cw_platform.access_policy import managed_profile_instances, request_user, user_can_access_instance
 from cw_platform.config_base import CONFIG as CONFIG_DIR, load_config
@@ -33,6 +33,7 @@ from cw_platform.provider_instances import (
 )
 from services import playlists as playlist_svc
 from services.editor_mapping import MappingRequest as EditorMappingRequest, BlockRequest
+from services.mapping_transfer import RuleIdentity
 
 from services.editor import (
     Kind,
@@ -103,6 +104,37 @@ def api_saved_mappings(request: Request, q: str = Query(default="", max_length=2
                 row["corrected"] = mapping_details(item)
     return dict(ok=True, items=page, total=len(rows), offset=offset, limit=limit,
                 sources=[dict(provider=p, instance=i) for p, i in sources])
+
+
+@router.post("/mappings/delete")
+def api_delete_mapping(payload: RuleIdentity, request: Request):
+    from services.mapping_transfer import delete_rule
+    return delete_rule(request, payload)
+
+
+@router.get("/mappings/export")
+def api_export_mappings(request: Request, provider: str = "", instance: str = "", feature: str = "",
+                        pair_id: str = "", user_profile: str = Query(default="", max_length=64)):
+    from services.mapping_transfer import export_rules
+    content = export_rules(request, provider=provider, instance=instance, feature=feature,
+                           pair_id=pair_id, user_profile=user_profile)
+    return Response(content, media_type="application/json", headers={
+        "Content-Disposition": 'attachment; filename="crosswatch-mappings-blocks.json"', "Cache-Control": "no-store"})
+
+
+@router.post("/mappings/import")
+async def api_import_mappings(request: Request, file: UploadFile = File(...)):
+    from pydantic import ValidationError
+    from services.mapping_transfer import MAX_BYTES, RuleBundle, authorize_rules, import_rules
+    authorize_rules(request, [])
+    content = await file.read(MAX_BYTES + 1)
+    if len(content) > MAX_BYTES:
+        raise HTTPException(413, "Mapping file must be 20 MB or smaller")
+    try:
+        bundle = RuleBundle.model_validate_json(content)
+    except ValidationError:
+        raise HTTPException(400, "Invalid mapping file. Use a Mappings & blocks JSON export (version 1).") from None
+    return import_rules(request, bundle)
 
 
 def _is_admin_request(request: Request | None) -> bool:

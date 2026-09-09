@@ -4,6 +4,8 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import {readFileSync} from "node:fs";
+import vm from "node:vm";
 import {navigateToMapping} from "../assets/js/editor/saved-mappings.js";
 
 const mapping = {provider:"SIMKL",instance:"second",feature:"history",key:"tmdb:286801#s01e05"};
@@ -28,6 +30,36 @@ test("opens the correct provider/profile/feature and focuses a mapping beyond th
   assert.equal(ctx.state.typeFilter.episode,true); assert.equal(ctx.state.page,1);
   assert.equal(ctx.state.hasChanges,false);
   focus(); assert.equal(ctx.calls.at(-1),target);
+});
+
+test("the saved mapping pencil opens the Editor mapping dialog after the list closes", async () => {
+  const {ctx, target} = context();
+  const source = readFileSync(new URL("../assets/js/editor.js", import.meta.url), "utf8");
+  const start = source.indexOf("      focusMapping(row) {");
+  const end = source.indexOf("\n      },", start);
+  assert.ok(start >= 0 && end > start);
+  let listOpen = true;
+  const calls = [];
+  const input = {closest:() => ({scrollIntoView(){}}), focus(){calls.push("focus");}};
+  const workspace = {open:true};
+  ctx.focusMapping = vm.runInNewContext(`({${source.slice(start, end)}\n}}).focusMapping`, {
+    tbody:{querySelector(selector){assert.equal(selector, `[name="cw-row-${target._rid}-title"]`);return input;}},
+    openItemReplacer(row, anchor) {
+      assert.equal(listOpen, false);
+      assert.equal(row, target);
+      assert.equal(anchor, input);
+      assert.equal(ctx.state.snapshot, mapping.provider);
+      assert.equal(ctx.state.instance, mapping.instance);
+      assert.equal(ctx.state.kind, mapping.feature);
+      calls.push("open");
+      return Promise.resolve(workspace);
+    },
+  });
+  const afterClose = await navigateToMapping(mapping, ctx);
+  assert.deepEqual(calls, []);
+  listOpen = false;
+  assert.equal(await afterClose(), workspace);
+  assert.deepEqual(calls, ["focus", "open"]);
 });
 
 test("saved pair mappings open their own scope and shared mappings reset it", async () => {

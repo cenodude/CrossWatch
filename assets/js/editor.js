@@ -361,7 +361,7 @@
         const input = tbody?.querySelector(`[name="cw-row-${row._rid}-title"]`);
         input?.closest("tr")?.scrollIntoView({ block: "center" });
         input?.focus();
-        setStatusSticky("Edit this mapping, then choose Save changes. Corrections apply to future syncs.", 8000);
+        return openItemReplacer(row, input);
       },
     },
   });
