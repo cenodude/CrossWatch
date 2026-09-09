@@ -922,9 +922,9 @@ html[data-cw-theme] #cw-sync-menu.cw-menu{
   --sync-menu-hover:#1b2230;
   --sync-menu-border:#252c38;
   box-sizing:border-box;
-  width:480px;
+  width:max-content;
   min-width:0;
-  max-width:calc(100vw - 20px);
+  max-width:min(500px,calc(100vw - 20px));
   padding:4px 0;
   gap:0;
   border:1px solid var(--sync-menu-border)!important;

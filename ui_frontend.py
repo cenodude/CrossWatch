@@ -321,6 +321,7 @@ def _managed_user_shell(html: str, user: dict | None = None) -> str:
         html = html.replace('    <button id="tab-editor" class="tab" type="button" onclick="showTab(\'editor\')">Editor</button>\n', "")
         for fragment in (
             '  <section id="page-snapshots" class="card hidden tab-page"></section>\n\n',
+            '  <section id="page-capture_compare" class="card hidden tab-page"></section>\n\n',
             '  <section id="page-playlists" class="card hidden tab-page"></section>\n\n',
             '  <section id="page-editor" class="card hidden tab-page"></section>\n\n',
             '  <section id="page-analyzer" class="card hidden tab-page"></section>\n\n',
@@ -420,6 +421,7 @@ def _get_index_html_static() -> str:
     watchlist: "Watchlist",
     playback_progress: "Playback Progress",
     snapshots: "Captures",
+    capture_compare: "Capture Compare",
     playlists: "Playlists",
     editor: "Editor",
     analyzer: "Analyzer",
@@ -525,7 +527,7 @@ def _get_index_html_static() -> str:
 (() => {
   try {
     const route = String(window.location.hash || "").replace(/^#\/?/, "").split("?")[0].split("/")[0].trim().toLowerCase().replace(/-/g, "_");
-    const tabs = new Set(["watchlist", "playback_progress", "snapshots", "playlists", "editor", "analyzer", "events", "logs", "import_export", "interactive_sync", "maintenance", "settings"]);
+    const tabs = new Set(["watchlist", "playback_progress", "snapshots", "capture_compare", "playlists", "editor", "analyzer", "events", "logs", "import_export", "interactive_sync", "maintenance", "settings"]);
     let tab = tabs.has(route) ? route : "main";
     if (document.documentElement.classList.contains("cw-compact") && tab !== "main") tab = "main";
     document.documentElement.dataset.cwInitialTab = tab;
@@ -543,6 +545,7 @@ html[data-cw-initial-tab]:not([data-cw-initial-tab="main"]) #log-panel{display:n
 html[data-cw-initial-tab="watchlist"] #page-watchlist,
 html[data-cw-initial-tab="playback_progress"] #page-playback_progress,
 html[data-cw-initial-tab="snapshots"] #page-snapshots,
+html[data-cw-initial-tab="capture_compare"] #page-capture_compare,
 html[data-cw-initial-tab="playlists"] #page-playlists,
 html[data-cw-initial-tab="editor"] #page-editor,
 html[data-cw-initial-tab="analyzer"] #page-analyzer,
@@ -884,6 +887,8 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
   </section>
 
   <section id="page-snapshots" class="card hidden tab-page"></section>
+
+  <section id="page-capture_compare" class="card hidden tab-page"></section>
 
   <section id="page-playlists" class="card hidden tab-page"></section>
 

@@ -27,7 +27,6 @@ ModalRegistry.register('insight-settings', () => import(_cwVer('./modals/insight
 ModalRegistry.register('tls-cert',     () => import(_cwVer('./modals/tls/index.js')));
 ModalRegistry.register('setup-wizard', () => import(_cwVer('./modals/setup-wizard/index.js')));
 ModalRegistry.register('upgrade-warning', () => import(_cwVer('./modals/upgrade-warning/index.js')));
-ModalRegistry.register('capture-compare', () => import(_cwVer('./modals/capture-compare/index.js')));
 ModalRegistry.register('provider-cleanup', () => import(_cwVer('./modals/provider-cleanup/index.js')));
 ModalRegistry.register('scrobbler-webhook', () => import(_cwVer('./modals/scrobbler-webhook/index.js')));
 ModalRegistry.register('scrobbler-route', () => import(_cwVer('./modals/scrobbler-route/index.js')));
@@ -135,7 +134,11 @@ window.cxOpenModalFor = async (pairOrId = null) => {
 };
 
 window.openInsightSettingsModal = (props = {}) => ModalRegistry.open('insight-settings', props);
-window.openCaptureCompare = (props = {}) => ModalRegistry.open('capture-compare', props);
+window.openCaptureCompare = (props = {}) => {
+  const query = new URLSearchParams({a:String(props.aPath || props.a || ''), b:String(props.bPath || props.b || '')});
+  if (props.feature || props.compareFeature) query.set('feature', props.feature || props.compareFeature);
+  window.location.hash = '#capture_compare?' + query;
+};
 window.openProviderCleanupModal = (props = {}) => ModalRegistry.open('provider-cleanup', props);
 window.openScrobblerWebhookModal = (props = {}) => ModalRegistry.open('scrobbler-webhook', { ...props, dismissible: false });
 window.openScrobblerRouteModal = (props = {}) => ModalRegistry.open('scrobbler-route', { ...props, dismissible: false });

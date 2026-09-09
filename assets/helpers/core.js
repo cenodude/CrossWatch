@@ -113,7 +113,7 @@
   const statusCacheKey = () => `${STATUS_CACHE_KEY}.${String(window.CW?.OverviewProfile?.id || "").trim() || "all"}`;
   const DETAILS_MAX_LINES = 300;
   const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
-  const ROUTE_TABS = new Set(["main", "watchlist", "playback_progress", "snapshots", "playlists", "editor", "analyzer", "events", "logs", "import_export", "interactive_sync", "maintenance", "settings"]);
+  const ROUTE_TABS = new Set(["main", "watchlist", "playback_progress", "snapshots", "capture_compare", "playlists", "editor", "analyzer", "events", "logs", "import_export", "interactive_sync", "maintenance", "settings"]);
   const SETTINGS_PANES = new Set(["overview", "providers", "sync", "scrobbler", "scheduling", "app", "maintenance"]);
   let routeSyncing = false;
 
@@ -140,7 +140,7 @@
     if (normalized === "main") return perms.dashboard !== false;
     if (normalized === "playback_progress") return perms.playback !== false;
     if (normalized === "watchlist") return perms.watchlist !== false;
-    if (["snapshots", "playlists", "editor", "analyzer", "events", "logs", "import_export", "interactive_sync"].includes(normalized)) return perms.write === true;
+    if (["snapshots", "capture_compare", "playlists", "editor", "analyzer", "events", "logs", "import_export", "interactive_sync"].includes(normalized)) return perms.write === true;
     return false;
   }
 
@@ -181,6 +181,7 @@
   function routeHash(tab, pane) {
     if (tab === "interactive_sync") return "#interactive_sync" + (window.location.hash.startsWith("#interactive_sync?") ? window.location.hash.slice(window.location.hash.indexOf("?")) : "");
     if (tab === "logs") return "#logs" + (window.location.hash.startsWith("#logs?") ? window.location.hash.slice(window.location.hash.indexOf("?")) : "");
+    if (tab === "capture_compare") return "#capture_compare" + (window.location.hash.startsWith("#capture_compare?") ? window.location.hash.slice(window.location.hash.indexOf("?")) : "");
     if (tab === "events") return "#events" + (window.location.hash.startsWith("#events?") ? window.location.hash.slice(window.location.hash.indexOf("?")) : "");
     if (tab === "maintenance") return "#maintenance" + (window.location.hash.startsWith("#maintenance?") ? window.location.hash.slice(window.location.hash.indexOf("?")) : "");
     if (tab === "main") return "";
@@ -937,8 +938,8 @@
   }
 
   function setTabHeaderState(tab) {
-    ["main", "watchlist", "playback_progress", "snapshots", "playlists", "editor", "analyzer", "events", "logs", "import_export", "maintenance", "settings"].forEach((name) => {
-      byId(`tab-${name}`)?.classList.toggle("active", name === tab);
+    ["main", "watchlist", "playback_progress", "snapshots", "capture_compare", "playlists", "editor", "analyzer", "events", "logs", "import_export", "maintenance", "settings"].forEach((name) => {
+      byId(`tab-${name}`)?.classList.toggle("active", name === tab || (name === "snapshots" && tab === "capture_compare"));
     });
   }
 
@@ -950,6 +951,7 @@
     byId("page-watchlist")?.classList.toggle("hidden", tab !== "watchlist");
     byId("page-playback_progress")?.classList.toggle("hidden", tab !== "playback_progress");
     byId("page-snapshots")?.classList.toggle("hidden", tab !== "snapshots");
+    byId("page-capture_compare")?.classList.toggle("hidden", tab !== "capture_compare");
     byId("page-playlists")?.classList.toggle("hidden", tab !== "playlists");
     byId("page-editor")?.classList.toggle("hidden", tab !== "editor");
     byId("page-analyzer")?.classList.toggle("hidden", tab !== "analyzer");
@@ -1002,13 +1004,14 @@
       const watchlistAllowed = perms.watchlist !== false;
       const playbackAllowed = perms.playback !== false;
       const writeAllowed = perms.write === true;
-      if (!(tab === "main" && dashboardAllowed) && !(tab === "watchlist" && watchlistAllowed) && !(tab === "playback_progress" && playbackAllowed) && !(["snapshots", "playlists", "editor", "analyzer", "events", "logs", "import_export"].includes(tab) && writeAllowed)) tab = allowedRouteTab(tab);
+      if (!(tab === "main" && dashboardAllowed) && !(tab === "watchlist" && watchlistAllowed) && !(tab === "playback_progress" && playbackAllowed) && !(["snapshots", "capture_compare", "playlists", "editor", "analyzer", "events", "logs", "import_export"].includes(tab) && writeAllowed)) tab = allowedRouteTab(tab);
     }
     writeRouteHash(tab);
 
     if (state.currentTab === tab && !(tab === "editor" && byId("page-editor")?.querySelector("[data-editor-load-error]"))) {
       if (tab === "interactive_sync") window.InteractiveSync?.refresh?.();
       if (tab === "maintenance") await window.MaintenancePage?.mount?.(byId("page-maintenance"));
+      if (tab === "capture_compare") await window.CaptureComparePage?.mount?.(byId("page-capture_compare"));
       if (tab === "events") await window.EventsPage?.mount?.(byId("page-events"));
       if (tab === "logs") await window.LogsPage?.mount?.(byId("page-logs"));
       if (tab === "settings") {
@@ -1023,6 +1026,7 @@
     const previousTab = state.currentTab;
     const isCurrentNavigation = () => navSeq === state.navSeq;
 
+    if (previousTab === "capture_compare") window.CaptureComparePage?.hide?.();
     if (previousTab === "events") window.EventsPage?.hide?.();
     if (previousTab === "logs") window.LogsPage?.hide?.();
     setTabHeaderState(tab);
@@ -1149,6 +1153,23 @@
         window.LogsPage?.unmount?.();
         const root = byId("page-logs");
         if (root) root.innerHTML = '<div class="cw-page-load-error">Logs failed to load. Refresh the page and try again.</div>';
+      }
+      return;
+    }
+
+    if (tab === "capture_compare") {
+      try {
+        const root = byId("page-capture_compare");
+        if (root && !root.children.length) root.innerHTML = '<div class="cw-page-loading" role="status">Loading Capture Compare...</div>';
+        await ensurePageModule("capture-compare", "/assets/js/capture-compare/index.js", "CaptureComparePage");
+        if (!isCurrentNavigation()) return;
+        await window.CaptureComparePage.mount(root);
+      } catch (error) {
+        if (!isCurrentNavigation()) return;
+        window.CaptureComparePage?.unmount?.();
+        const root = byId("page-capture_compare");
+        if (root) root.innerHTML = '<div class="cw-page-load-error">Capture Compare failed to load. <a href="#snapshots">Back to Captures</a></div>';
+        console.error("Capture Compare failed to load", error);
       }
       return;
     }
