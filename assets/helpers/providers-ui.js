@@ -1117,11 +1117,16 @@
 
   function refreshConnectionProfileCreateState(select, newBtn) {
     if (!select || !newBtn) return;
+    const raw = getCachedConfig()?.runtime?.max_profiles_per_provider;
+    const valid = typeof raw === "number" || typeof raw === "boolean"
+      || (typeof raw === "string" && /^[+-]?\d+$/.test(raw.trim()));
+    const parsed = valid ? Number(raw) : NaN;
+    const limit = Math.max(1, Math.min(100, Number.isFinite(parsed) ? Math.trunc(parsed) : 10));
     const count = Array.from(select.options || []).filter((option) => option.value).length;
-    const capped = count >= 10;
+    const capped = count >= limit;
     newBtn.disabled = capped;
     newBtn.setAttribute("aria-disabled", capped ? "true" : "false");
-    if (capped) newBtn.title = "Maximum 10 profiles reached.";
+    if (capped) newBtn.title = `Maximum ${limit} profiles reached.`;
     else newBtn.removeAttribute("title");
   }
 
