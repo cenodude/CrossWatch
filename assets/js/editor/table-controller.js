@@ -126,8 +126,6 @@
       isRowLocked: ctx.isRowLocked,
       isExtraKindEditable: ctx.isExtraKindEditable,
       canReplaceRow: ctx.canReplaceRow,
-      usesCoordinateReplacer: ctx.usesCoordinateReplacer,
-      rowType: ctx.rowType,
       markChanged: ctx.markChanged,
       renderRows: ctx.renderRows,
       syncBulkBar: ctx.syncBulkBar,
@@ -183,7 +181,7 @@
     const wideActions = !!ctx.isPolicySource();
     if (actionHead) {
       actionHead.classList.toggle("cw-action-wide", wideActions);
-      actionHead.style.width = wideActions ? "84px" : "46px";
+      actionHead.style.width = wideActions ? "56px" : "46px";
       actionHead.style.minWidth = actionHead.style.width;
     }
 

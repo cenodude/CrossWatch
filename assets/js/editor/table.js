@@ -79,17 +79,6 @@
     delTd.className = "cw-action-cell";
     if (ctx.wideActions) delTd.classList.add("cw-action-wide");
 
-    if (call(ctx, "canReplaceRow", row)) {
-      const t = String(call(ctx, "rowType", row) || "").toLowerCase();
-      const repBtn = document.createElement("button");
-      repBtn.type = "button";
-      repBtn.className = "cw-btn cw-btn-del";
-      repBtn.innerHTML = '<span class="material-symbol">published_with_changes</span>';
-      repBtn.title = t === "episode" ? "Replace episode" : t === "season" ? "Replace season" : "Replace item";
-      repBtn.onclick = () => call(ctx, "openItemReplacer", row, repBtn);
-      actionWrap.appendChild(repBtn);
-    }
-
     if (blockMode) {
       const rawBtn = document.createElement("button");
       rawBtn.type = "button";
@@ -207,10 +196,9 @@
     searchBtn.type = "button";
     searchBtn.className = "cw-title-search-btn";
     searchBtn.innerHTML = '<span class="material-symbol">search</span>';
-    const searchUsesCorrection = locked && call(ctx, "canReplaceRow", row);
-    searchBtn.title = searchUsesCorrection
-      ? (call(ctx, "usesCoordinateReplacer", row) ? "Replace episode" : "Search and add correction")
-      : "Search and fill IDs";
+    const searchUsesCorrection = !!call(ctx, "canReplaceRow", row);
+    searchBtn.title = searchUsesCorrection ? "Edit mapping" : "Search and fill IDs";
+    searchBtn.setAttribute("aria-label", searchBtn.title);
     searchBtn.disabled = locked && !searchUsesCorrection;
     if (searchBtn.disabled) {
       searchBtn.style.opacity = "0.6";
