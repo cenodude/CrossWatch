@@ -727,6 +727,7 @@ DEFAULT_CFG: dict[str, Any] = {
         "debug_mods": False,                            # Extra verbode MODS logging for Synchronization Providers
         "state_dir": "",                                # Optional override for state dir (defaults to CONFIG/state)  - this will break container setups!
         "telemetry": {"enabled": True},                 # Usage stats
+        "max_profiles_per_provider": 10,                # Total profiles per provider incl. default (1-100)
 
         # progress
         "snapshot_ttl_sec": 300,                        # Reuse snapshots within 5 min

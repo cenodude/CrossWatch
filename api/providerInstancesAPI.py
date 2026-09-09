@@ -51,7 +51,22 @@ _CFG_KEY_ALIAS = {
     "cw": "crosswatch",
     "crosswatch": "crosswatch",
 }
-_MAX_GENERATED_PROFILES = 9
+_DEFAULT_MAX_PROFILES = 10
+
+
+def _max_profiles_per_provider(cfg: Mapping[str, Any] | None = None) -> int:
+    try:
+        src = cfg if isinstance(cfg, Mapping) else (load_config() or {})
+        rt = src.get("runtime")
+        raw = rt.get("max_profiles_per_provider") if isinstance(rt, Mapping) else None
+        total = _DEFAULT_MAX_PROFILES if raw is None else int(raw)
+    except Exception:
+        total = _DEFAULT_MAX_PROFILES
+    return max(1, min(100, total))
+
+
+def _max_generated_profiles(cfg: Mapping[str, Any] | None = None) -> int:
+    return _max_profiles_per_provider(cfg) - 1
 
 
 def _cfg_key(provider: str) -> str:
@@ -88,7 +103,7 @@ def _prov_prefix(provider: str) -> str:
     return str(provider or "").strip().upper()
 
 
-def _canonical_profile_id(provider: str, instance_id: Any) -> str | None:
+def _canonical_profile_id(provider: str, instance_id: Any, cfg: Mapping[str, Any] | None = None) -> str | None:
     inst = normalize_instance_id(instance_id)
     if inst == "default":
         return None
@@ -100,15 +115,15 @@ def _canonical_profile_id(provider: str, instance_id: Any) -> str | None:
         num = int(m.group(1))
     except Exception:
         return ""
-    if num < 1 or num > _MAX_GENERATED_PROFILES:
+    if num < 1 or num > _max_generated_profiles(cfg):
         return ""
     return f"{prov}-P{num:02d}"
 
 
-def _next_profile_id(provider: str, insts: dict[str, Any]) -> str:
+def _next_profile_id(provider: str, insts: dict[str, Any], cfg: Mapping[str, Any] | None = None) -> str:
     prov = _prov_prefix(provider)
     existing = {str(k).strip().upper() for k in (insts or {}).keys()}
-    for n in range(1, _MAX_GENERATED_PROFILES + 1):
+    for n in range(1, _max_generated_profiles(cfg) + 1):
         cand = f"{prov}-P{n:02d}"
         if cand not in existing:
             return cand
@@ -356,9 +371,9 @@ def api_provider_instances_create_next(provider: str, payload: dict[str, Any] = 
         insts = {}
         blk["instances"] = insts
 
-    inst = _next_profile_id(provider, insts)
+    inst = _next_profile_id(provider, insts, cfg)
     if not inst:
-        return {"ok": False, "error": "profile_limit_reached"}
+        return {"ok": False, "error": "profile_limit_reached", "limit": _max_profiles_per_provider(cfg)}
 
     if inst in insts and isinstance(insts.get(inst), dict):
         uid = provider_instance_uid_for(cfg, provider, inst, create=True)
@@ -373,14 +388,14 @@ def api_provider_instances_create_next(provider: str, payload: dict[str, Any] = 
 
 @router.post("/provider-instances/{provider}/{instance_id}")
 def api_provider_instances_create(provider: str, instance_id: str, payload: dict[str, Any] = Body(default_factory=dict), request: Request = cast(Request, None)) -> Any:
-    canon = _canonical_profile_id(provider, instance_id)
+    cfg = dict(load_config() or {})
+    canon = _canonical_profile_id(provider, instance_id, cfg)
     if canon is None:
         return {"ok": False, "error": "reserved_instance_id"}
     if not canon:
         return {"ok": False, "error": "invalid_instance_id"}
     inst = canon
 
-    cfg = dict(load_config() or {})
     blocked = _admin_required_response(request, cfg)
     if blocked is not None:
         return blocked

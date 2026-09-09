@@ -631,13 +631,17 @@
           });
           const j = await r.json().catch(() => ({}));
           const id = txt(j && j.id);
-          if (!r.ok || (j && j.ok === false) || !id) throw new Error(String((j && j.error) || "create_failed"));
+          if (!r.ok || (j && j.ok === false) || !id) {
+            const err = new Error(String((j && j.error) || "create_failed"));
+            if (j && j.limit) err.limit = j.limit;
+            throw err;
+          }
           setInstance(id);
           await refreshOptions(true);
           try { panel.dispatchEvent(new CustomEvent("cw-auth-profile-created", { bubbles: true, detail: { provider: apiProvider, instance: id } })); } catch (_) {}
           try { Promise.resolve(onChange?.()).catch(() => {}); } catch (_) {}
         } catch (e) {
-          const message = e && e.message === "profile_limit_reached" ? "Maximum 10 profiles reached." : (e && e.message ? e.message : e);
+          const message = e && e.message === "profile_limit_reached" ? `Maximum ${e.limit || 10} profiles reached.` : (e && e.message ? e.message : e);
           notify("Could not create profile: " + message);
         }
       });
