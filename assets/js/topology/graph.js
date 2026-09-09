@@ -39,6 +39,16 @@ export function mergeGraphs(graphs) {
     connections: [...connections.values()].sort(connectionOrder) };
 }
 
+export function topologySummary(graph, findings, unsupportedPairs = 0) {
+  const twoWay = graph.connections.filter(connection => connection.twoWay).length;
+  const review = unsupportedPairs || findings.some(finding => !finding.informational);
+  const conflict = findings.some(finding => !finding.informational && finding.severity === "conflict");
+  const status = conflict ? "attention" : review ? "review" : graph.nodes.length ? "healthy" : "empty";
+  return { providers: graph.nodes.length, twoWay, oneWay: graph.connections.length - twoWay, status,
+    label: { attention: "Attention", review: "Review", healthy: "Healthy", empty: "No routes" }[status],
+    icon: { attention: "error", review: "info", healthy: "check_circle", empty: "route" }[status] };
+}
+
 export function layoutGraph(graph, compact = false) {
   const positions = new Map();
   if (compact) {
