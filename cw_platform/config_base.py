@@ -495,7 +495,9 @@ DEFAULT_CFG: dict[str, Any] = {
          "history": {
              "user_id": "",                             # Optional user filter
              "per_page": 100,                           # Tautulli history page size
-             "max_pages": 5000                          # Safety cap
+             "max_pages": 5000,                         # Safety cap
+             "watched_only": True,                      # Skip partial playback sessions (Tautulli logs every play)
+             "min_percent": 90                          # Completion fallback when watched_status is absent
          },
      },
 

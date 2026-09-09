@@ -33,6 +33,25 @@ def _rewatches_enabled(adapter: Any) -> bool:
     return bool(isinstance(cfg, Mapping) and cfg.get("_cw_history_rewatches"))
 
 
+def _to_float(v: Any) -> float | None:
+    if v is None or isinstance(v, bool):
+        return None
+    try:
+        return float(str(v).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _row_is_watched(row: Mapping[str, Any], min_percent: float) -> bool:
+    ws = _to_float(row.get("watched_status"))
+    if ws is not None:
+        return ws >= 1.0
+    pc = _to_float(row.get("percent_complete"))
+    if pc is not None:
+        return pc >= min_percent
+    return True
+
+
 def _to_int(v: Any) -> int | None:
     if v is None or isinstance(v, bool):
         return None
@@ -235,8 +254,19 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
     cfg_max_pages = int(_cfg_get(adapter, "tautulli.history.max_pages", max_pages) or max_pages)
     if cfg_max_pages <= 0:
         cfg_max_pages = max_pages
+    watched_only = bool(_cfg_get(adapter, "tautulli.history.watched_only", True))
+    min_percent = _to_float(_cfg_get(adapter, "tautulli.history.min_percent", 90))
+    if min_percent is None:
+        min_percent = 90.0
 
-    _log("index_fetch_counts", per_page=cfg_per_page, max_pages=cfg_max_pages, has_user_id=bool(user_id))
+    _log(
+        "index_fetch_counts",
+        per_page=cfg_per_page,
+        max_pages=cfg_max_pages,
+        has_user_id=bool(user_id),
+        watched_only=watched_only,
+        min_percent=min_percent,
+    )
 
     out: dict[str, dict[str, Any]] = {}
     meta_cache: dict[str, Mapping[str, Any] | None] = {}
@@ -248,6 +278,7 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
     rows_seen = 0
     rows_kept = 0
     skipped_type = 0
+    skipped_partial = 0
     skipped_no_time = 0
     skipped_no_ids = 0
     event_mode = _rewatches_enabled(adapter)
@@ -324,6 +355,10 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
             mtype = (row.get("media_type") or row.get("mediaType") or "").lower()
             if mtype not in ("movie", "episode"):
                 skipped_type += 1
+                continue
+
+            if watched_only and not _row_is_watched(row, min_percent):
+                skipped_partial += 1
                 continue
 
             ts = _as_epoch(row.get("date") or row.get("started") or row.get("time"))
@@ -413,6 +448,7 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
         rows_seen=rows_seen,
         rows_kept=rows_kept,
         skipped_type=skipped_type,
+        skipped_partial=skipped_partial,
         skipped_no_time=skipped_no_time,
         skipped_no_ids=skipped_no_ids,
         meta_cache=len(meta_cache),
