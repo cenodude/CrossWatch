@@ -259,7 +259,24 @@
     }
   }
 
+  function prepareMobileFilters(root) {
+    const side = root.querySelector('.cw-side');
+    if (!side || side.parentElement.classList.contains('cw-editor-filters')) return;
+    const details = document.createElement('details');
+    details.className = 'cw-editor-filters';
+    const summary = document.createElement('summary');
+    summary.textContent = 'Source and filters';
+    details.appendChild(summary);
+    side.before(details);
+    details.appendChild(side);
+    const narrow = window.matchMedia('(max-width: 1320px)');
+    const update = () => { details.open = !narrow.matches; };
+    update();
+    narrow.addEventListener('change', update);
+  }
+
   Editor.Chrome = {
+    prepareMobileFilters,
     wireStaticLabels,
     prepareSourceOptions,
     addTrackerNotice,

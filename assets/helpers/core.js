@@ -27,6 +27,47 @@
   };
   const raf = (fn) => (window.requestAnimationFrame || ((cb) => setTimeout(cb, 0)))(fn);
 
+  function initMobileNavigation() {
+    const nav = document.querySelector('header > nav.tabs');
+    if (!nav || document.documentElement.classList.contains('cw-compact') || byId('cw-mobile-nav-toggle')) return;
+    const header = nav.parentElement;
+    const toggle = document.createElement('button');
+    toggle.id = 'cw-mobile-nav-toggle';
+    toggle.className = 'cw-mobile-nav-toggle';
+    toggle.type = 'button';
+    toggle.setAttribute('aria-label', 'Menu');
+    toggle.innerHTML = '<span class="material-symbols-rounded" aria-hidden="true">menu</span><span>Menu</span>';
+    nav.id ||= 'cw-primary-navigation';
+    toggle.setAttribute('aria-controls', nav.id);
+    toggle.setAttribute('aria-expanded', 'false');
+    header.insertBefore(toggle, nav);
+    const close = () => {
+      if (toggle.getAttribute('aria-expanded') !== 'true') return;
+      if (nav.contains(document.activeElement)) toggle.focus();
+      header.classList.remove('cw-nav-open');
+      toggle.setAttribute('aria-expanded', 'false');
+      window.cwCloseSettingsMenu?.();
+      window.cwCloseAboutMenu?.();
+    };
+    toggle.addEventListener('click', () => {
+      if (toggle.getAttribute('aria-expanded') === 'true') return close();
+      header.classList.add('cw-nav-open');
+      toggle.setAttribute('aria-expanded', 'true');
+    });
+    nav.addEventListener('click', event => {
+      if (event.target.closest('.tab:not([aria-haspopup]), [role="menuitem"], a[href]')) close();
+    });
+    document.addEventListener('click', event => { if (!header.contains(event.target)) close(); });
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && toggle.getAttribute('aria-expanded') === 'true') {
+        close();
+        toggle.focus();
+      }
+    });
+    window.addEventListener('hashchange', close);
+    window.matchMedia('(max-width: 760px)').addEventListener('change', close);
+  }
+
   const PROVIDER_ORDER = Array.isArray(META.order) ? META.order : [];
   const STATUS_PROVIDERS = typeof META.statusProviders === "function" ? META.statusProviders() : [];
   const BADGE_IDS = Object.fromEntries([
@@ -2101,6 +2142,7 @@ Object.assign(window, {
 CW.checkForUpdate = checkForUpdate;
 
   onReady(() => {
+    initMobileNavigation();
     const authPendingAtReady = authSetupPending();
     try { fixFormLabels(); } catch {}
     try { wireDetailsToStats(); } catch {}

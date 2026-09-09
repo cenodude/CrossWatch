@@ -471,7 +471,17 @@
         </main>
       </div>
     `;
+    labelMobileTables(root);
     wirePage(root);
+  }
+
+  function labelMobileTables(root) {
+    root.querySelectorAll('.pl-table-wrap table').forEach(table => {
+      const labels = Array.from(table.querySelectorAll('thead th'), th => th.textContent.trim());
+      table.querySelectorAll('tbody tr').forEach(row => {
+        Array.from(row.children).forEach((cell, index) => { cell.dataset.label = labels[index] || ''; });
+      });
+    });
   }
 
   function renderEndpoints() {
@@ -2388,7 +2398,10 @@
     const spec = targets[key];
     if (!spec) return;
     const el = $(spec[0], root);
-    if (el) el.innerHTML = spec[1]();
+    if (el) {
+      el.innerHTML = spec[1]();
+      labelMobileTables(el);
+    }
   }
 
   async function refreshOverview(sections = ["endpoints", "mappings", "activity"]) {
