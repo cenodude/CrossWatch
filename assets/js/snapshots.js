@@ -1140,7 +1140,7 @@ async function onDiffRun() {
   if (!page) return;
   const { a, b, ok } = diffSelection();
   if (!ok) return toast("Pick two captures from the same provider and instance", false);
-  if (!window.openCaptureCompare) return toast("Capture Compare modal not available", false);
+  if (!window.openCaptureCompare) return toast("Capture Compare page not available", false);
   window.openCaptureCompare({ aPath: a, bPath: b });
 }
 
