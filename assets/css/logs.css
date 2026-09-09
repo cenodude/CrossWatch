@@ -158,3 +158,6 @@ html[data-cw-theme="flat-dark"][data-tab="logs"] .cw-icon-select-menu .cw-icon-s
 @media(max-height:650px) { html[data-tab="logs"] { overflow: auto; } .logs-page { height: auto!important; min-height: calc(100dvh - 100px); } .logs-content { flex: none; height: 320px; } }
 @media(max-width:700px) { .logs-nowrap.logs-pretty .logs-line { grid-template-columns: 65px 45px minmax(0,1fr) 24px; } }
 @media(max-width:700px) { .logs-options { margin-left: auto; } .logs-run-title { flex: 1 1 100%; order: -1; } }
+
+/* Keep the log reader usable when wrapped controls exceed the viewport. */
+@media(max-width:760px){html[data-tab="logs"]{overflow:auto}.logs-page{height:auto!important;min-height:calc(100dvh - 76px)}.logs-content{flex:none;height:55dvh;min-height:320px}.logs-footer{flex-wrap:wrap}.logs-toolbar>*{max-width:100%;box-sizing:border-box}}

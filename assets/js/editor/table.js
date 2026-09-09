@@ -284,6 +284,9 @@
       const td = dataCells[column];
       if (!td) return;
       td.dataset.column = column;
+      td.dataset.label = ({key: 'Key', type: 'Type', title: 'Title', year: 'Year',
+        id: anilistMode ? 'AniList' : 'TMDB', imdb: 'IMDb', tvdb: 'TVDB', trakt: 'Trakt',
+        simkl: 'SIMKL', anilist: 'AniList', extra: 'Extra'})[column];
       tr.appendChild(td);
     });
 
