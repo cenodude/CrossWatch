@@ -894,7 +894,7 @@ def _iter_marked_watched_from_library(
             for row in rows:
                 view_count = max(_int0(row.get("viewCount")), _int0(row.get("leafCountViewed")))
                 ts = _as_epoch(row.get("lastViewedAt") or row.get("viewedAt"))
-                watched = view_count > 0 or bool(ts)
+                watched = view_count > 0
                 if not watched:
                     continue
                 page_watched += 1
