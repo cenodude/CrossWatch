@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import { analyzeTopology, endpointId, pairsForProfile } from "../assets/js/topology/analysis.js";
-import { connectionLabel, findingConnections, layoutGraph, mergeGraphs, nodeName, renderGraph } from "../assets/js/topology/graph.js";
+import { connectionLabel, findingConnections, layoutGraph, mergeGraphs, nodeName, renderGraph, topologySummary } from "../assets/js/topology/graph.js";
 import { currentTopology } from "../assets/js/topology/state.js";
 import { graphViewBox } from "../assets/js/topology/viewport.js";
 
@@ -363,4 +363,28 @@ test("two source instances align with their targets to avoid crossing diagonals"
   assert.equal(Math.sign(family.y - home.y), Math.sign(simkl.y - trakt.y));
   assert.ok(Math.abs(home.y - family.y) >= 140);
   assert.ok(simkl.x - family.x >= 310);
+});
+
+
+test("topology summary counts unique pairs across features and respects feature selection", () => {
+  const result = analyze([pair("A", "B", { mode: "two-way", features: { history: true, watchlist: true } }), pair("B", "C")]);
+  const all = topologySummary(mergeGraphs(result.graphs), result.findings);
+  assert.equal(all.providers, 3);
+  assert.equal(all.twoWay, 1);
+  assert.equal(all.oneWay, 1);
+  const watchlist = topologySummary(mergeGraphs(result.graphs.filter(graph => graph.feature === "watchlist")), []);
+  assert.equal(watchlist.providers, 2);
+  assert.equal(watchlist.twoWay, 1);
+  assert.equal(watchlist.oneWay, 0);
+});
+
+test("topology summary distinguishes informational notes, review, conflicts and empty routes", () => {
+  const result = analyze([pair("A", "B", { mode: "two-way" }), pair("B", "C", { mode: "two-way" })]);
+  const graph = mergeGraphs(result.graphs);
+  assert.equal(topologySummary(graph, result.findings).status, "healthy");
+  assert.equal(topologySummary(graph, [], 1).status, "review");
+  assert.equal(topologySummary(graph, [{ severity: "warning" }]).status, "review");
+  assert.equal(topologySummary(graph, [{ severity: "conflict" }]).status, "attention");
+  assert.equal(topologySummary(mergeGraphs([]), []).status, "empty");
+  assert.equal(topologySummary(mergeGraphs([]), [], 1).status, "review");
 });
