@@ -13,6 +13,7 @@ from cw_platform.user_profile_resources import webhook_assigned_profile_id, webh
 from providers.scrobble.anime_mapping import maybe_enrich_event_for_sink
 from providers.scrobble.media_filters import event_ignore_reason, log_media_filter_drop
 from providers.scrobble.scrobble import ScrobbleAction, ScrobbleEvent
+from providers.scrobble.routes import same_scrobble_endpoint
 from providers.webhooks.config import sink_configured, webhook_settings, webhook_sink_instance, webhook_sinks
 
 
@@ -72,7 +73,23 @@ def _make_sink(name: str, instance_id: str, cfg_provider: Callable[[], dict[str,
     if key in _SINKS:
         return _SINKS[key]
     cls: Any
-    if sink == "trakt":
+    if sink == "plex":
+        from providers.scrobble.plex.sink import PlexSink
+
+        cls = PlexSink
+    elif sink == "jellyfin":
+        from providers.scrobble.jellyfin.sink import JellyfinSink
+
+        cls = JellyfinSink
+    elif sink == "emby":
+        from providers.scrobble.emby.sink import EmbySink
+
+        cls = EmbySink
+    elif sink == "kodi":
+        from providers.scrobble.kodi.sink import KodiSink
+
+        cls = KodiSink
+    elif sink == "trakt":
         from providers.scrobble.trakt.sink import TraktSink
 
         cls = TraktSink
@@ -240,6 +257,9 @@ def dispatch_scrobble(
     dispatched: list[str] = []
     for sink in sinks:
         inst = webhook_sink_instance(wh, sink)
+        if same_scrobble_endpoint(provider_lc, provider_inst, sink, inst):
+            targets.append({"target": sink, "target_instance": inst, "ok": False, "skipped": True, "error": "same_source_destination"})
+            continue
         route_cfg = _route_cfg(cfg, provider_lc, provider_inst, sink, inst)
         ignore_reason = event_ignore_reason(ev, route_cfg)
         if ignore_reason:
@@ -259,13 +279,17 @@ def dispatch_scrobble(
         target = {"target": sink, "target_instance": inst, "ok": True}
         try:
             ev_for_sink = maybe_enrich_event_for_sink(ev, sink, route_cfg)
-            _make_sink(sink, inst, _provider).send(ev_for_sink, cfg=route_cfg)
+            result = _make_sink(sink, inst, _provider).send(ev_for_sink, cfg=route_cfg)
+            if isinstance(result, Mapping):
+                target.update({k: result[k] for k in ("ok", "skipped", "reason", "error", "retryable") if k in result})
         except Exception as e:
             target["ok"] = False
             target["error"] = str(e)
             _emit(logger, f"webhook sink {sink}:{inst} failed: {e}", "ERROR")
         targets.append(target)
     ok = not targets or any(bool(t.get("ok")) for t in targets)
+    if any(not bool(t.get("ok")) and not bool(t.get("skipped")) for t in targets):
+        ok = False
     payload = {
         "action": path,
         "status": 200 if ok else 502,

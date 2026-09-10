@@ -7,6 +7,9 @@ import json
 import inspect
 import re
 import time
+import threading
+import hashlib
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Literal, Protocol
@@ -362,8 +365,14 @@ class Dispatcher:
         self._last_progress: dict[str, float] = {}
         self._sink_accepts_cfg: dict[int, bool] = {}
         self._route_log_ts: dict[str, float] = {}
+        self._retry_after: dict[str, tuple[float, int]] = {}
+        self._dispatch_lock = threading.RLock()
+        self._pending: OrderedDict[str, tuple[float, ScrobbleEvent]] = OrderedDict()
+        self._config_identity = ""
+        self._inflight: set[int] = set()
+        self._failed_ids: OrderedDict[str, dict[str, str]] = OrderedDict()
 
-    def _send_sink(self, sink: Any, ev: ScrobbleEvent, cfg: dict[str, Any]) -> None:
+    def _send_sink(self, sink: Any, ev: ScrobbleEvent, cfg: dict[str, Any]) -> Any:
         sid = id(sink)
         ok = self._sink_accepts_cfg.get(sid)
         if ok is None:
@@ -376,12 +385,11 @@ class Dispatcher:
                 ok = False
             self._sink_accepts_cfg[sid] = ok
         if not ok:
-            sink.send(ev)
-            return
+            return sink.send(ev)
         try:
-            sink.send(ev, cfg=cfg)
+            return sink.send(ev, cfg=cfg)
         except TypeError:
-            sink.send(ev, cfg)
+            return sink.send(ev, cfg)
 
     def _route_label(self, cfg: dict[str, Any]) -> str:
         try:
@@ -588,8 +596,7 @@ class Dispatcher:
             return False
         return True
 
-    def _should_send(self, ev: ScrobbleEvent, cfg: dict[str, Any]) -> bool:
-        sk = ev.session_key or "?"
+    def _should_send(self, ev: ScrobbleEvent, cfg: dict[str, Any], sk: str) -> bool:
         last_a = self._last_action.get(sk)
         last_p = self._last_progress.get(sk, -1)
         try:
@@ -601,7 +608,7 @@ class Dispatcher:
         if ev.action == "start" and last_p is not None and last_p >= sup and ev.progress >= sup:
             return False
 
-        changed = (ev.action != last_a) or (abs(ev.progress - (last_p or -1)) >= 1)
+        changed = (ev.action != last_a) or (abs(ev.progress - last_p) >= 1)
 
         if ev.action == "pause":
             now = time.time()
@@ -622,27 +629,195 @@ class Dispatcher:
         return self._passes_filters(ev, cfg)
 
     def dispatch(self, ev: ScrobbleEvent) -> bool:
+        return self._dispatch(ev)
+
+    def retry_pending(self, cancelled: threading.Event | None = None) -> None:
+        due: list[tuple[str, ScrobbleEvent]] = []
+        with self._dispatch_lock:
+            now = time.monotonic()
+            config_identity = self._config_identity
+            for sk, (created, ev) in list(self._pending.items()):
+                if cancelled is not None and cancelled.is_set():
+                    return
+                if now - created >= 3600:
+                    self._pending.pop(sk, None)
+                    self._retry_after.pop(sk, None)
+                    continue
+                if now >= self._retry_after.get(sk, (0.0, 0))[0]:
+                    due.append((sk, ev))
+        if not due or (cancelled is not None and cancelled.is_set()):
+            return
         cfg = self._cfg_provider() or {}
-        ev = self._route_event(ev, cfg)
-        if not self._passes_filters(ev, cfg):
-            return False
-        if not self._should_send(ev, cfg):
-            return False
+        started = time.monotonic()
+        for sk, ev in due[:4]:
+            if cancelled is not None and cancelled.is_set():
+                return
+            self._dispatch(ev, retry_key=sk, cfg=cfg, config_identity=config_identity)
+            if time.monotonic() - started >= 1.0:
+                break
+
+    def _queue_pending(self, sk: str, ev: ScrobbleEvent) -> None:
+        now = time.monotonic()
+        self._pending[sk] = (self._pending.get(sk, (now, ev))[0], ev)
+        self._pending.move_to_end(sk)
+        if len(self._pending) > 1024:
+            expired, _ = self._pending.popitem(last=False)
+            self._retry_after.pop(expired, None)
+
+    def _failed_sink(self, sk: str, ev: ScrobbleEvent) -> None:
+        retry = self._retry_after.get(sk)
+        attempts = min(5, (retry[1] if retry else 0) + 1)
+        now = time.monotonic()
+        self._retry_after[sk] = (now + min(300, 30 * 2 ** (attempts - 1)), attempts)
+        self._last_action.pop(sk, None)
+        self._last_progress.pop(sk, None)
+        self._queue_pending(sk, ev)
+
+    def _delivery_identity(self, cfg: dict[str, Any]) -> str:
+        from providers.scrobble.routes import scrobble_sink_config
+
+        scrobble = cfg.get("scrobble") or {}
+        watch = scrobble.get("watch") or {}
+        sink = str(watch.get("route_sink") or "").strip().lower()
+        block = scrobble_sink_config(cfg, sink, watch.get("route_sink_instance"))[sink] if sink else {}
+        relevant = {"watch": {k: v for k, v in watch.items() if k != "routes"},
+                    "sink": block, "policy": scrobble.get("trakt"), "anime_mapping": cfg.get("anime_mapping")}
+        return hashlib.sha256(json.dumps(relevant, sort_keys=True, default=str).encode()).hexdigest()
+
+    def _session_key(self, sink: Any, ev: ScrobbleEvent) -> str:
+        identity: Any = ev.session_key
+        raw = ev.raw if isinstance(ev.raw, dict) else {}
+        playing = raw.get("NowPlayingItem")
+        item_id = playing.get("Id") if isinstance(playing, dict) else None
+        if not identity:
+            identity = [ev.title, ev.year, ev.ids]
+        return json.dumps([id(sink), ev.server_uuid, ev.account, identity, item_id, ev.media_type, ev.season, ev.number], sort_keys=True)
+
+    def _dispatch(self, ev: ScrobbleEvent, *, retry_key: str | None = None, cfg: dict[str, Any] | None = None,
+                  config_identity: str | None = None) -> bool:
+        from providers.scrobble.routes import same_scrobble_endpoint
+        with self._dispatch_lock:
+            if config_identity is not None and config_identity != self._config_identity:
+                return False
+            cfg = cfg if cfg is not None else (self._cfg_provider() or {})
+            identity = self._delivery_identity(cfg)
+            watch = ((cfg.get("scrobble") or {}).get("watch") or {})
+            if identity != self._config_identity:
+                if self._pending:
+                    _log(f"route {self._route_label(cfg)}: cancelled {len(self._pending)} queued deliveries after destination or route configuration changed", "WARNING")
+                self._pending.clear()
+                self._retry_after.clear()
+                self._session_ok.clear()
+                self._last_action.clear()
+                self._last_progress.clear()
+                self._debounce.clear()
+                self._failed_ids.clear()
+                self._config_identity = identity
+            if retry_key is not None:
+                if retry_key not in self._pending:
+                    return False
+                ev = self._pending[retry_key][1]
+            if same_scrobble_endpoint(watch.get("route_provider"), watch.get("route_provider_instance"), watch.get("route_sink"), watch.get("route_sink_instance")):
+                return False
+            ev = self._route_event(ev, cfg)
+            if not self._passes_filters(ev, cfg):
+                return False
         sent = False
+        failed = False
+        queued = False
         for s in self._sinks:
+            sk = self._session_key(s, ev)
+            with self._dispatch_lock:
+                if identity != self._config_identity:
+                    return False
+                if retry_key is not None and (sk != retry_key or sk not in self._pending):
+                    continue
+                if id(s) in self._inflight:
+                    if retry_key is None:
+                        self._queue_pending(sk, ev)
+                        self._retry_after.setdefault(sk, (time.monotonic(), 0))
+                    queued = True
+                    continue
+                retry = self._retry_after.get(sk)
+                if retry and time.monotonic() < retry[0]:
+                    if sk in self._pending and retry_key is None:
+                        self._queue_pending(sk, ev)
+                    failed = True
+                    continue
+                if retry_key is None and sk in self._pending:
+                    self._queue_pending(sk, ev)
+                if sk in self._failed_ids and self._failed_ids[sk] != ev.ids:
+                    self._last_action.pop(sk, None)
+                    self._last_progress.pop(sk, None)
+                if not self._should_send(ev, cfg, sk):
+                    if retry_key is not None:
+                        self._pending.pop(sk, None)
+                        self._retry_after.pop(sk, None)
+                    continue
+                self._inflight.add(id(s))
+            delivered = False
             try:
-                ev_for_sink = maybe_enrich_event_for_sink(ev, sink_name_for_mapping(s), cfg)
-                self._send_sink(s, ev_for_sink, cfg)
-                sent = True
-            except Exception as e:
-                _log(f"Sink error: {e}", "ERROR")
-        if sent:
-            self._throttled_route_log(
-                f"sent|{ev.action}|{ev.account}|{ev.session_key}",
-                f"route {self._route_label(cfg)}: sent {ev.action} "
-                f"user={mask_account(ev.account)} sess={ev.session_key}",
-            )
-        return sent or not self._sinks
+                log_delivery = bool(getattr(s, "log_delivery", True))
+                try:
+                    ev_for_sink = maybe_enrich_event_for_sink(ev, sink_name_for_mapping(s), cfg)
+                    result = self._send_sink(s, ev_for_sink, cfg)
+                except Exception as e:
+                    result = {"ok": False, "error": str(e), "retryable": True}
+                delivered = True
+                with self._dispatch_lock:
+                    if identity != self._config_identity:
+                        continue
+                    pending = self._pending.get(sk)
+                    newer = pending is not None and pending[1] is not ev
+                    if isinstance(result, dict) and result.get("ok") is False:
+                        failed = True
+                        self._failed_ids[sk] = dict(ev.ids)
+                        self._failed_ids.move_to_end(sk)
+                        if len(self._failed_ids) > 1024:
+                            expired, _ = self._failed_ids.popitem(last=False)
+                            self._last_action.pop(expired, None)
+                            self._last_progress.pop(expired, None)
+                            self._debounce.pop(f"{expired}|pause", None)
+                        if result.get("retryable", not result.get("skipped")):
+                            self._failed_sink(sk, pending[1] if newer and pending else ev)
+                        elif newer:
+                            self._last_action.pop(sk, None)
+                            self._last_progress.pop(sk, None)
+                            self._retry_after[sk] = (time.monotonic(), 0)
+                        else:
+                            self._retry_after.pop(sk, None)
+                            self._pending.pop(sk, None)
+                        if log_delivery:
+                            _log(f"route {self._route_label(cfg)}: failed {ev.action} "
+                                 f"user={mask_account(ev.account)} sess={ev.session_key} "
+                                 f"reason={result.get('error') or 'unknown'}", "ERROR")
+                        continue
+                    self._failed_ids.pop(sk, None)
+                    if newer:
+                        self._retry_after[sk] = (time.monotonic(), 0)
+                    else:
+                        self._retry_after.pop(sk, None)
+                        self._pending.pop(sk, None)
+                    sent = True
+                    if log_delivery:
+                        skipped = isinstance(result, dict) and bool(result.get("skipped"))
+                        status = "skipped" if skipped else "accepted"
+                        reason = str(result.get("reason") or "unknown") if skipped else ""
+                        self._throttled_route_log(
+                            f"{id(s)}|{status}|{reason}|{ev.action}|{ev.account}|{ev.session_key}",
+                            f"route {self._route_label(cfg)}: {status} {ev.action} "
+                            f"user={mask_account(ev.account)} p={ev.progress} sess={ev.session_key}"
+                            + (f" reason={reason}" if reason else ""),
+                        )
+            finally:
+                with self._dispatch_lock:
+                    self._inflight.discard(id(s))
+                    if not delivered and identity == self._config_identity:
+                        self._last_action.pop(sk, None)
+                        self._last_progress.pop(sk, None)
+                        self._debounce.pop(f"{sk}|pause", None)
+
+        return not failed and (sent or queued or not self._sinks)
 
 
 __all__ = (

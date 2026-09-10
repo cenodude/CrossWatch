@@ -8,7 +8,9 @@ import time
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from cw_platform.id_map import canonical_key
 from cw_platform.provider_instances import build_provider_config_view, normalize_instance_id
+from providers.scrobble._episode_ids import episode_ids
 from providers.scrobble.scrobble import ScrobbleEvent, ScrobbleSink, mask_account
 from providers.sync._mod_CROSSWATCH import OPS as CROSSWATCH_OPS
 from services.activity import record_scrobble_event
@@ -213,6 +215,8 @@ def _item_from_event(ev: ScrobbleEvent, cfg: Mapping[str, Any], progress: float)
         series_title = str(detail.get("title") or ev.title or "").strip()
         if not show_ids and series_title:
             show_ids = {"slug": _slug(series_title)}
+        if canonical_key({"type": "show", "ids": show_ids}) == "unknown:":
+            return None
         item = {
             "type": "episode",
             "title": f"S{season:02d}E{episode:02d}",
@@ -220,7 +224,7 @@ def _item_from_event(ev: ScrobbleEvent, cfg: Mapping[str, Any], progress: float)
             "year": detail.get("year") or ev.year,
             "season": season,
             "episode": episode,
-            "ids": {},
+            "ids": episode_ids(ev.ids or {}, show_ids),
             "show_ids": show_ids,
             "progress_percent": round(progress, 3),
             "progress_at": now,

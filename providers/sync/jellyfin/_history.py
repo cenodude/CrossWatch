@@ -886,11 +886,11 @@ def _prepare_want(
     if raw_iid:
         m["jellyfin_item_id"] = raw_iid
 
-    if has_ids:
-        for key in _COPY_OVER_KEYS:
-            if base_d.get(key) not in (None, ""):
-                m[key] = base_d[key]
+    for key in _COPY_OVER_KEYS:
+        if base_d.get(key) not in (None, ""):
+            m[key] = base_d[key]
 
+    if has_ids:
         ids = dict(nm.get("ids") or {})
         for k_id, v_id in base_ids.items():
             if str(k_id).strip().lower() != "jellyfin" and v_id not in (None, "", 0):

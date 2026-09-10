@@ -8,10 +8,15 @@ from collections.abc import Mapping
 from typing import Any
 
 from cw_platform.provider_instances import get_provider_block, normalize_instance_id
+from providers.scrobble.routes import ROUTE_SINKS, same_scrobble_endpoint, scrobble_sink_config
 
-_SINKS = {"trakt", "simkl", "mdblist", "crosswatch", "floppy", "punchplay", "bingebase", "flicklist", "scrob"}
+_SINKS = ROUTE_SINKS
 
 _SINK_CREDENTIALS: dict[str, tuple[str, ...]] = {
+    "plex": ("account_token", "pms_token", "token"),
+    "jellyfin": ("access_token",),
+    "emby": ("access_token",),
+    "kodi": ("connection_verified",),
     "trakt": ("access_token",),
     "simkl": ("access_token",),
     "mdblist": ("api_key", "access_token"),
@@ -96,6 +101,18 @@ def profile_scoped_webhook(cfg: Mapping[str, Any] | None, provider: str, provide
 
 def sink_configured(cfg: Mapping[str, Any] | None, sink: str, instance_id: Any = None) -> bool:
     key = str(sink or "").strip().lower()
+    if key in {"jellyfin", "emby", "kodi"}:
+        block = scrobble_sink_config(_dict(cfg), key, instance_id)[key]
+        server = str(block.get("server") or "").strip()
+        if key == "kodi":
+            return bool(server and block.get("connection_verified") is True)
+        return bool(server and str(block.get("access_token") or "").strip() and str(block.get("user_id") or "").strip())
+    if key == "plex":
+        block = scrobble_sink_config(_dict(cfg), key, instance_id)[key]
+        pms = _dict(block.get("pms"))
+        server = block.get("server_url") or block.get("baseurl") or pms.get("url") or pms.get("baseurl") or pms.get("server_url") or block.get("server_name") or block.get("server")
+        token = block.get("pms_token") or block.get("account_token") or block.get("token") or pms.get("token") or pms.get("x_plex_token")
+        return bool(server and token)
     if key == "crosswatch":
         block = get_provider_block(_dict(cfg), key, normalize_instance_id(instance_id))
         value = block.get("enabled")
@@ -126,7 +143,8 @@ def configured_webhook_sinks(cfg: Mapping[str, Any] | None, provider: str, provi
     return [
         sink
         for sink in webhook_sinks(cfg, provider, provider_instance)
-        if sink_configured(cfg, sink, webhook_sink_instance(wh, sink))
+        if not same_scrobble_endpoint(provider, provider_instance, sink, webhook_sink_instance(wh, sink))
+        and sink_configured(cfg, sink, webhook_sink_instance(wh, sink))
     ]
 
 
