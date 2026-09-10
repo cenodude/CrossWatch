@@ -78,7 +78,7 @@ def _to_int_total(v: Any) -> int | None:
 
 
 def _as_epoch(v: Any) -> int | None:
-    if v is None:
+    if v is None or isinstance(v, bool):
         return None
     try:
         if isinstance(v, (int, float)):
@@ -97,7 +97,8 @@ def _as_epoch(v: Any) -> int | None:
         dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
         if not dt.tzinfo:
             dt = dt.replace(tzinfo=timezone.utc)
-        return int(dt.timestamp())
+        x = int(dt.timestamp())
+        return x if x > 0 else None
     except Exception:
         return None
 
@@ -109,6 +110,14 @@ def _iso_z(epoch: int | None) -> str | None:
         return datetime.fromtimestamp(int(epoch), tz=timezone.utc).isoformat().replace("+00:00", "Z")
     except Exception:
         return None
+
+
+def _watched_at(row: Mapping[str, Any]) -> str | None:
+    for field in ("stopped", "date", "started", "time"):
+        value = _iso_z(_as_epoch(row.get(field)))
+        if value:
+            return value
+    return None
 
 
 def _clean_guid(s: str) -> str:
@@ -314,7 +323,14 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
             _log("index_reconcile", level="warn", reason="max_pages_reached", pages=pages, max_pages=cfg_max_pages)
             break
 
-        params: dict[str, Any] = {"start": start, "length": cfg_per_page, "order_column": "date", "order_dir": "desc"}
+        params: dict[str, Any] = {
+            "start": start,
+            "length": cfg_per_page,
+            "order_column": "date",
+            "order_dir": "desc",
+            "grouping": 1,
+            "include_activity": 0,
+        }
         if user_id:
             params["user_id"] = user_id
 
@@ -361,8 +377,7 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
                 skipped_partial += 1
                 continue
 
-            ts = _as_epoch(row.get("date") or row.get("started") or row.get("time"))
-            watched_at = _iso_z(ts)
+            watched_at = _watched_at(row)
             if not watched_at:
                 skipped_no_time += 1
                 continue
@@ -429,9 +444,10 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
                 continue
 
             ck = canonical_key(item)
-            if ck and ck not in out:
+            if ck and (ck not in out or watched_at > out[ck]["watched_at"]):
+                if ck not in out:
+                    rows_kept += 1
                 out[ck] = item
-                rows_kept += 1
 
         start += cfg_per_page
         total_i = _to_int_total(total)
