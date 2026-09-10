@@ -39,9 +39,12 @@ def test_every_webhook_sink_is_protected_from_deletion(sink: str):
 
 
 @pytest.mark.parametrize("sink", sorted(ROUTE_SINKS))
-def test_a_sink_that_is_not_selected_stays_deletable(sink: str):
+def test_a_sink_that_is_not_selected_has_no_sink_usage(sink: str):
     others = [s for s in sorted(ROUTE_SINKS) if s != sink]
-    assert find_provider_usage(webhook_cfg(others), sink) == []
+    usages = find_provider_usage(webhook_cfg(others), sink)
+    assert not any(u["role"] == "sink" for u in usages)
+    if sink not in WEBHOOK_SOURCE_PROVIDERS:
+        assert usages == []
 
 
 @pytest.mark.parametrize("provider", sorted(ROUTE_PROVIDERS))
@@ -151,28 +154,18 @@ def read_asset(rel: str) -> str:
     return (Path(__file__).resolve().parents[1] / rel).read_text(encoding="utf-8", errors="ignore")
 
 
-def test_route_modal_never_offers_a_provider_as_its_own_destination():
-    js = read_asset("assets/js/modals/scrobbler-route/index.js")
+@pytest.mark.parametrize("modal", ["watcher", "webhook"])
+def test_modals_enforce_instance_scoped_destinations(modal: str):
+    import shutil
+    import subprocess
+    from pathlib import Path
 
-    assert 'function sinkProviders(selected = "", source = "") {' in js
-    assert 'const available = sinks.filter((p) => p !== self && allSinkProfiles(p).length);' in js
-    assert 'if (current === self) return available;' in js
-
-    assert 'function ratingSinkProviders(selected = [], source = "") {' in js
-    assert 'ratingSinks.includes(x) && x !== self' in js
-
-    assert 'optionsForProviders("sink", r.sink, r.provider)' in js
-    assert 'const sink = sinkProviders("", srcProvider)[0] || "";' in js
-    assert 'ratingSinkProviders(ratingTargets, r.provider)' in js
-    assert 'if (draft.sink === draft.provider) draft.sink = sinkProviders("", draft.provider)[0] || "";' in js
-
-
-def test_webhook_modal_never_offers_a_provider_as_its_own_destination():
-    js = read_asset("assets/js/modals/scrobbler-webhook/index.js")
-
-    assert "function sourceProviderKey() {" in js
-    assert "return sinks.filter((s) => s !== self && sinkProfiles(s).length > 0);" in js
-    assert "return ratingSinks.filter((s) => s !== self && sinkProfiles(s).length > 0);" in js
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js unavailable")
+    result = subprocess.run([node, "--test", f"--test-name-pattern={modal}", "tests/scrobbler-sink-instances.test.mjs"],
+                            cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_both_modals_offer_every_route_sink():
@@ -183,7 +176,11 @@ def test_both_modals_offer_every_route_sink():
         assert offered == ROUTE_SINKS, f"{rel} offers {offered}, ROUTE_SINKS is {ROUTE_SINKS}"
 
 
-def test_scrob_is_the_only_provider_that_could_self_route():
-    from providers.scrobble.routes import ROUTE_PROVIDERS
+@pytest.mark.parametrize("provider", sorted(ROUTE_PROVIDERS & ROUTE_SINKS))
+def test_source_providers_require_distinct_destination_instances(provider: str):
+    from providers.scrobble.routes import same_scrobble_endpoint
 
-    assert ROUTE_PROVIDERS & ROUTE_SINKS == {"scrob"}
+    assert same_scrobble_endpoint(provider, "default", provider, "default")
+    assert same_scrobble_endpoint(provider, "P01", provider, "P01")
+    assert not same_scrobble_endpoint(provider, "default", provider, "P01")
+    assert not same_scrobble_endpoint(provider, "P01", provider, "default")

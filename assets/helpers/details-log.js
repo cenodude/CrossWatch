@@ -339,7 +339,9 @@ function _parseLogParts(raw, fallbackProvider = "") {
     const token = String(match[1] || "").trim();
     const tokenLevel = levelName(token);
     const tokenTime = token.match(/\b(\d{2}:\d{2}:\d{2})(?:[.,]\d+)?\b/);
-    if (tokenTime) time ||= tokenTime[1];
+    const isoTime = /^\d{4}-\d{2}-\d{2}T/.test(token) ? new Date(token) : null;
+    if (isoTime && !Number.isNaN(isoTime.getTime())) time ||= isoTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+    else if (tokenTime) time ||= tokenTime[1];
     else if (tokenLevel) level ||= tokenLevel;
     else if (known.has(token.toUpperCase()) || /^[A-Z][A-Z0-9_-]{1,20}$/.test(token)) provider ||= token.toUpperCase();
     else break;

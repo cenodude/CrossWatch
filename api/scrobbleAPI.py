@@ -281,7 +281,9 @@ def _resolve_media_webhook_request(request: Request, provider: str, legacy_key: 
             blocked = _webhook_profile_gate(cfg, provider_lc, inst)
             if blocked:
                 return None, inst, blocked
-            return apply_webhook_settings(build_provider_config_view(cfg, provider_lc, inst), provider_lc, inst), inst, None
+            view = build_provider_config_view(cfg, provider_lc, inst)
+            view["_cw_scrobble_provider_configs"] = {provider_lc: cfg.get(provider_lc) or {}}
+            return apply_webhook_settings(view, provider_lc, inst), inst, None
         return None, "default", {"ok": True, "ignored": True, "error": "invalid_profile"}
 
     ids = _ensure_webhook_ids(cfg)

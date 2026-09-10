@@ -23,6 +23,7 @@ from providers.scrobble.routes import (
     normalize_route_options,
     normalize_routes,
     route_needs_account_filter,
+    same_scrobble_endpoint,
 )
 from providers.scrobble.sources import legacy_mode_for_sources, scrobble_sources
 from providers.webhooks.config import (
@@ -678,6 +679,8 @@ def _validate_route(cfg: Mapping[str, Any], route: dict[str, Any]) -> dict[str, 
         raise ValidationFailure([_err("provider", "unsupported_provider", "Unsupported source provider")])
     if sink not in ROUTE_SINKS:
         raise ValidationFailure([_err("sink", "unsupported_provider", "Unsupported destination provider")])
+    if same_scrobble_endpoint(provider, normalized.get("provider_instance"), sink, normalized.get("sink_instance")):
+        raise ValidationFailure([_err("sink_instance", "same_source_destination", "Source and destination must use different providers or profiles")])
     _require_source_profile(cfg, provider, str(normalized.get("provider_instance") or "default"))
     _require_sink_profile(cfg, sink, str(normalized.get("sink_instance") or "default"))
     normalized["filters"] = _normalize_filters(normalized.get("filters"), provider, "filters")
@@ -776,6 +779,10 @@ def api_profile_webhook_save(request: Request, payload: dict[str, Any] = Body(..
             if prev_sink in {"crosswatch", "simkl"} and prev_sink not in sinks_now:
                 node.pop(f"anime_mapping_{prev_sink}", None)
         node.update(settings)
+        effective = webhook_settings(after, provider, instance)
+        for sink in webhook_sinks(after, provider, instance):
+            if same_scrobble_endpoint(provider, instance, sink, webhook_sink_instance(effective, sink)):
+                raise ValidationFailure([_err(f"sink_instances.{sink}", "same_source_destination", "Source and destination must use different providers or profiles")])
         if any(k in settings for k in ("anime_mapping_crosswatch", "anime_mapping_simkl")):
             node.pop("anime_mapping", None)
         if "enabled" not in node:

@@ -354,7 +354,7 @@ def test_route_fallback_and_send_logs_name_the_route(monkeypatch: pytest.MonkeyP
 
     assert messages == [
         "route R2 plex->mdblist: unresolved user fallback used user=ow*** sess=30",
-        "route R2 plex->mdblist: sent start user=ow*** sess=30",
+        "route R2 plex->mdblist: accepted start user=ow*** p=5.0 sess=30",
     ]
 
 
@@ -867,4 +867,3 @@ def test_route_filtered_log_is_emitted_once_per_session(monkeypatch: pytest.Monk
 
     assert sink.events == []
     assert len([m for m in messages if m.startswith("event filtered by route dispatcher")]) == 1
-
