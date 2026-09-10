@@ -192,7 +192,7 @@ def _resolve_rating_key(adapter: Any, it: Mapping[str, Any]) -> str | None:
             rk_any = None
         if not rk_any and guids:
             try:
-                _hist_build_guid_index(adapter, allow)
+                _hist_build_guid_index(adapter, allow, feature="ratings")
                 rk_any = _hist_find_in_guid_index("movie" if is_movie else "show", guids)
             except Exception:
                 pass

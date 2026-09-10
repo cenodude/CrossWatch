@@ -595,7 +595,7 @@ def _resolve_rating_key(adapter: Any, it: Mapping[str, Any]) -> str | None:
     if guid_candidates:
         rk_idx = None
         try:
-            _hist_build_guid_index(adapter, allowed)
+            _hist_build_guid_index(adapter, allowed, feature="progress")
             rk_idx = _hist_find_in_guid_index("show" if is_episode else "movie", guid_candidates)
         except Exception:
             rk_idx = None

@@ -99,10 +99,7 @@ def plex(monkeypatch):
     adapter = _Adapter(srv)
 
     monkeypatch.setattr(h, "_as_base_url", lambda _s: "http://pms")
-    monkeypatch.setattr(h, "_load_guid_index", lambda *a, **k: False)
-    monkeypatch.setattr(h, "_save_guid_index", lambda *a, **k: None)
     h._clear_guid_index()
-    h._GUID_INDEX_KEY = None
 
     monkeypatch.setattr(pr, "server_find_rating_key_by_guid", lambda *a, **k: None)
     monkeypatch.setattr(pr, "plex_feature_library_ids", lambda *a, **k: set())

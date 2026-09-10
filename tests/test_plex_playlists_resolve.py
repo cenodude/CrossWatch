@@ -132,12 +132,9 @@ def plex(monkeypatch, tmp_path):
     from providers.sync.plex import _playlists as pl
 
     monkeypatch.setattr(h, "_as_base_url", lambda _s: "http://pms")
-    monkeypatch.setattr(h, "_load_guid_index", lambda *a, **k: False)
-    monkeypatch.setattr(h, "_save_guid_index", lambda *a, **k: None)
     monkeypatch.setattr(pl, "server_find_rating_key_by_guid", lambda *a, **k: None)
     monkeypatch.setattr(pl, "plex_feature_library_ids", lambda *a, **k: set())
     h._clear_guid_index()
-    h._GUID_INDEX_KEY = None
 
     playlist = _Playlist()
     return pl, _Adapter(_Server(playlist)), playlist
