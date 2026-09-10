@@ -48,27 +48,42 @@ from ._mod_common import (
 _HISTORY_META_FIELDS = ("confirmed_keys", "unresolved_keys", "results", "reason_counts")
 
 
-def _finalize_result(adapter: Any, key_of, feature: str, items, cnt: int, unresolved: Any) -> dict[str, Any]:
+def _finalize_result(adapter: Any, key_of, feature: str, items, cnt: int, unresolved: Any, *, op: str = "add") -> dict[str, Any]:
     meta = getattr(adapter, "_history_write_meta", None) if feature == "history" else None
     if isinstance(meta, Mapping):
         rc = meta.get("reason_counts")
+        confirmed = list(meta.get("confirmed_keys") or [])
+        skipped = {
+            str(row.get("key")) for row in (meta.get("results") or [])
+            if isinstance(row, Mapping) and row.get("action") == "skip" and row.get("key")
+        } if op == "add" else set()
+        skipped_keys = [key for key in confirmed if key in skipped]
         return build_op_result(
             ok=True,
             count=int(cnt),
-            confirmed_keys=meta.get("confirmed_keys") or [],
+            confirmed_keys=[key for key in confirmed if key not in skipped],
             unresolved_keys=meta.get("unresolved_keys") or _unresolved_keys(unresolved, key_of),
             unresolved=unresolved,
             results=meta.get("results") or [],
             reason_counts=(dict(rc) if isinstance(rc, Mapping) else None),
+            **({"skipped_keys": skipped_keys, "skipped": len(skipped_keys)} if op == "add" else {}),
         )
     results = list(getattr(adapter, "_progress_write_results", [])) if feature == "progress" else []
+    confirmed = _confirmed_keys(key_of, items, unresolved)
+    applied = {str(row.get("key")) for row in results if row.get("status") == "applied"}
+    skipped = {
+        str(row.get("key")) for row in results
+        if row.get("status") == "skipped" and row.get("key")
+    } - applied if op == "add" else set()
+    skipped_keys = [key for key in confirmed if key in skipped]
     return build_op_result(
         ok=True,
         count=int(cnt),
-        confirmed_keys=_confirmed_keys(key_of, items, unresolved),
+        confirmed_keys=[key for key in confirmed if key not in skipped],
         unresolved_keys=_unresolved_keys(unresolved, key_of),
         unresolved=unresolved,
         results=results,
+        **({"skipped_keys": skipped_keys, "skipped": len(skipped_keys)} if feature == "progress" and op == "add" else {}),
     )
 
 
@@ -728,7 +743,7 @@ class EMBYModule:
         except Exception:
             pass
         cnt, unresolved = mod.remove(self, lst)
-        return _finalize_result(self, self.key_of, f, lst, cnt, unresolved)
+        return _finalize_result(self, self.key_of, f, lst, cnt, unresolved, op="remove")
 class _EmbyOPS:
     def name(self) -> str:
         return "EMBY"

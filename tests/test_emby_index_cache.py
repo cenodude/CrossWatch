@@ -169,11 +169,11 @@ def test_resolved_episode_needs_only_provider_id_query():
     assert ad.client.calls[0]["AnyProviderIdEquals"] == "tvdb.456"
 
 
-def test_movie_copies_still_expand_and_reuse_index(monkeypatch):
+def test_movie_copies_still_expand_and_reuse_direct_query():
     ad = adapter(2)
     for row in ad.client.rows:
         row["ProviderIds"] = {"Tmdb": "1"}
-    monkeypatch.setattr(common, "resolve_item_id", lambda *args, **kwargs: "1")
     for _ in range(2):
         assert common.resolve_item_ids(ad, {"type": "movie", "ids": {"tmdb": "1"}}, feature="progress") == ["1", "2"]
     assert len(ad.client.calls) == 1
+    assert ad.client.calls[0]["AnyProviderIdEquals"] == "tmdb.1"
