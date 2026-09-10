@@ -197,6 +197,63 @@ def _baseline(orch: Orchestrator, provider: str, feature: str) -> dict[str, Any]
     return dict((block.get("baseline") or {}).get("items") or {})
 
 
+@pytest.mark.parametrize("rewatches", [False, True])
+def test_tautulli_history_import_converges_on_second_run(
+    config_base: Any, monkeypatch: pytest.MonkeyPatch, rewatches: bool
+) -> None:
+    from providers.sync import _mod_TAUTULLI
+
+    class TautulliSource(HistoryOps):
+        def capabilities(self) -> Mapping[str, Any]:
+            return _mod_TAUTULLI.OPS.capabilities()
+
+        def build_index(self, cfg: Mapping[str, Any], *, feature: str) -> Mapping[str, dict[str, Any]]:
+            return _mod_TAUTULLI.OPS.build_index(
+                {**cfg, "tautulli": {"server_url": "http://tautulli.test", "api_key": "test"}},
+                feature=feature,
+            )
+
+    def call(_client: Any, cmd: str, **params: Any) -> Mapping[str, Any]:
+        assert cmd == "get_history"
+        assert params["grouping"] == 1
+        assert params["include_activity"] == 0
+        return {
+            "data": [
+                {
+                    "media_type": "movie",
+                    "guid": "com.plexapp.agents.themoviedb://550",
+                    "row_id": row_id,
+                    "reference_id": row_id - 1,
+                    "group_count": 2,
+                    "group_ids": f"{row_id - 1},{row_id}",
+                    "started": stopped - 3600,
+                    "date": stopped - 1800,
+                    "stopped": stopped,
+                    "watched_status": 1,
+                }
+                for row_id, stopped in [(20, 1704153600), (10, 1704067200)]
+            ],
+            "recordsFiltered": 2,
+        }
+
+    monkeypatch.setattr(_mod_TAUTULLI.TAUTULLIClient, "call", call)
+    src = TautulliSource("SRC", {})
+    dst = HistoryOps("DST", {}, history_rewatches=True)
+
+    orch = _run(monkeypatch, src, dst, "history", rewatches=rewatches)
+
+    assert len(dst.add_calls) == 1
+    assert sorted(item["watched_at"] for item in dst.add_calls[0]) == (
+        ["2024-01-01T00:00:00Z", "2024-01-02T00:00:00Z"] if rewatches else ["2024-01-02T00:00:00Z"]
+    )
+    assert _baseline(orch, "SRC", "history").keys() == _baseline(orch, "DST", "history").keys()
+
+    orch.run()
+
+    assert len(dst.add_calls) == 1
+    assert dst.remove_calls == []
+
+
 def test_same_key_history_pair_converges_and_stays_native(
     config_base: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
