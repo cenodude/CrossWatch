@@ -601,14 +601,20 @@ def meta_guids(meta_obj: Any) -> list[str]:
 
 
 def server_find_rating_key_by_guid(srv: Any, guids: Iterable[str]) -> str | None:
+    candidates = list(dict.fromkeys(str(g) for g in (guids or []) if g))
+    queried: set[str] = set()
     # PlexAPI XML query path
     try:
-        for g in [x for x in (guids or []) if x]:
+        for g in candidates:
             try:
                 qg = quote(str(g), safe="")
                 root = srv.query(  # type: ignore[attr-defined]
                     f"/library/all?guid={qg}&X-Plex-Container-Start=0&X-Plex-Container-Size=1"
                 )
+                # A valid empty response is a completed lookup. Raw HTTP is
+                # only needed if PlexAPI could not query or parse this GUID.
+                if root is not None and getattr(root, "tag", None) == "MediaContainer":
+                    queried.add(g)
                 el = None
                 try:
                     el = root.find(".//*[@ratingKey]") if root is not None else None
@@ -634,7 +640,9 @@ def server_find_rating_key_by_guid(srv: Any, guids: Iterable[str]) -> str | None
     hdrs = dict(getattr(ses, "headers", {}) or {})
     hdrs.update(plex_headers(tok, accept="application/xml, application/json;q=0.9,*/*;q=0.5"))
 
-    for g in [x for x in (guids or []) if x]:
+    for g in candidates:
+        if g in queried:
+            continue
         try:
             r = ses.get(
                 f"{base}/library/all",

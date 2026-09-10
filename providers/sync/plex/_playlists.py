@@ -456,7 +456,7 @@ def _resolve_object(
                 candidates.append(obj)
         rk_idx = None
         try:
-            _hist_build_guid_index(adapter, allow)
+            _hist_build_guid_index(adapter, allow, feature="playlists")
             rk_idx = _hist_find_in_guid_index(_library_type_for(item), guids)
         except Exception:
             rk_idx = None

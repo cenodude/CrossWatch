@@ -76,26 +76,23 @@ def _setup(monkeypatch):
     adapter.client = type("C", (), {"server": srv})()
 
     monkeypatch.setattr(h, "_as_base_url", lambda _s: "http://pms")
-    monkeypatch.setattr(h, "_load_guid_index", lambda *a, **k: False)
-    monkeypatch.setattr(h, "_save_guid_index", lambda *a, **k: None)
     h._clear_guid_index()
-    h._GUID_INDEX_KEY = None
     return h, adapter, ses
 
 
 def test_guid_index_is_built_from_paged_rows(monkeypatch) -> None:
     h, adapter, ses = _setup(monkeypatch)
 
-    h._build_guid_index(adapter, set(), force=True)
+    index = h._build_guid_index(adapter, set(), force=True)
 
-    assert h._GUID_INDEX_MOVIE == {
+    assert index["movies"] == {
         "plex://movie/aaa": "11",
         "tmdb://603": "11",
         "imdb://tt0133093": "11",
         "plex://movie/bbb": "12",
         "tmdb://604": "12",
     }
-    assert h._GUID_INDEX_SHOW == {"plex://show/ccc": "21", "tvdb://81797": "21"}
+    assert h._cached_guid_index(adapter, set())["shows"] == {"plex://show/ccc": "21", "tvdb://81797": "21"}
 
 
 def test_requests_ask_for_guids_and_correct_types(monkeypatch) -> None:
@@ -123,7 +120,7 @@ def test_allow_filter_skips_other_sections(monkeypatch) -> None:
     h._build_guid_index(adapter, {"1"}, force=True)
 
     assert len(ses.calls) == 1
-    assert h._GUID_INDEX_SHOW == {}
+    assert h._cached_guid_index(adapter, {"1"})["shows"] == {}
 
 
 def test_row_guids_reads_attribute_and_children() -> None:

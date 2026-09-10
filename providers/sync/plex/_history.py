@@ -10,12 +10,17 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 from pathlib import Path
+from hashlib import sha256
+from threading import local
+
+from cw_platform.log_context import log_run_id
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from, ids_from_guid
 from providers.sync._mod_common import observation_time
 
 from ._common import (
     _as_base_url,
+    _pair_scope,
     _fb_cache_flush,
     _xml_to_container,
     active_pms_token,
@@ -106,55 +111,12 @@ def _save_watermark(key: str, epoch: int) -> None:
     except Exception:
         pass
 
-def _guid_index_path() -> Path:
-    return state_file("plex_history.guid_index.json")
-
-def _load_guid_index(srv: Any, allow: set[str]) -> bool:
-    try:
-        data = read_json(_guid_index_path()) or {}
-        mid = str(getattr(srv, "machineIdentifier", "") or "")
-        if not mid or data.get("machine_id") != mid:
-            return False
-        stored_allow = set(str(x) for x in (data.get("allow") or []))
-        if stored_allow != set(str(x) for x in (allow or set())):
-            return False
-        # TTL to avoid stale indices forever.
-        ttl_days = int(os.environ.get("CW_PLEX_GUID_INDEX_TTL_DAYS", "0") or "7")
-        created = int(data.get("created_epoch") or 0)
-        if created and ttl_days > 0 and (int(time.time()) - created) > ttl_days * 86400:
-            return False
-        movies = data.get("movies") or {}
-        shows = data.get("shows") or {}
-        if not isinstance(movies, dict) or not isinstance(shows, dict):
-            return False
-        _GUID_INDEX_MOVIE.update({str(k): str(v) for k, v in movies.items() if k and v})
-        _GUID_INDEX_SHOW.update({str(k): str(v) for k, v in shows.items() if k and v})
-        return bool(_GUID_INDEX_MOVIE or _GUID_INDEX_SHOW)
-    except Exception:
-        return False
-
-def _save_guid_index(srv: Any, allow: set[str]) -> None:
-    try:
-        mid = str(getattr(srv, "machineIdentifier", "") or "")
-        if not mid:
-            return
-        out = {
-            "machine_id": mid,
-            "allow": sorted(str(x) for x in (allow or set())),
-            "created_epoch": int(time.time()),
-            "movies": _GUID_INDEX_MOVIE,
-            "shows": _GUID_INDEX_SHOW,
-        }
-        write_json(_guid_index_path(), out, indent=0, sort_keys=False, separators=(",", ":"))
-    except Exception:
-        pass
 _dbg, _info, _warn, _error, _log = make_logger("history")
 
-
-# PMS GUID index cache (used for strict ID matching).
-_GUID_INDEX_MOVIE: dict[str, str] = {}
-_GUID_INDEX_SHOW: dict[str, str] = {}
-_GUID_INDEX_KEY: str | None = None
+# A sync thread owns its indexes. Persisted GUID snapshots are no longer read:
+# a new run must see library changes instead of loading an indefinitely old file.
+_INDEX_CACHE = local()
+_GUID_INDEX_TTL_SEC = 300
 _ALLOWED_HISTORY_TYPES = frozenset({"movie", "episode"})
 
 
@@ -162,17 +124,37 @@ def _allowed_history_type(row: Any) -> bool:
     return str(getattr(row, "type", "") or "").strip().lower() in _ALLOWED_HISTORY_TYPES
 
 
-def _guid_index_key(srv: Any, allow: set[str]) -> str:
-    mid = str(getattr(srv, "machineIdentifier", "") or "").strip()
-    libs = ",".join(sorted(str(x) for x in (allow or set())))
-    return f"{mid}|{libs}"
+def _index_cache_context(adapter: Any, allow: set[str], feature: str) -> tuple[tuple[Any, ...], bool]:
+    srv = getattr(getattr(adapter, "client", None), "server", None)
+    config = getattr(adapter, "config", {}) or {}
+    pair_scope = (config.get("_cw_pair_scope") if isinstance(config, Mapping) else None) or _pair_scope()
+    pair_scope = str(pair_scope or "").strip()
+    run_id = log_run_id.get()
+    base = _as_base_url(srv) or ""
+    token = str(active_pms_token(adapter) or "")
+    identity = sha256(token.encode()).digest()
+    share = bool(run_id and base and token and pair_scope and pair_scope.lower() not in {"unscoped", "default", "none"})
+    owner = None
+    if not share:
+        owner = getattr(adapter, "_plex_index_owner", None)
+        if owner is None:
+            owner = object()
+            setattr(adapter, "_plex_index_owner", owner)
+    key = (run_id, pair_scope, feature, base, str(getattr(srv, "machineIdentifier", "") or ""),
+           _user_scope_key(adapter), identity, tuple(sorted(str(x) for x in allow)), owner)
+    return key, share
 
 
 def _clear_guid_index() -> None:
-    global _GUID_INDEX_KEY
-    _GUID_INDEX_MOVIE.clear()
-    _GUID_INDEX_SHOW.clear()
-    _GUID_INDEX_KEY = None
+    _INDEX_CACHE.guid = None
+
+
+def _cached_guid_index(adapter: Any, allow: set[str], *, feature: str = "history") -> dict[str, Any] | None:
+    key, share = _index_cache_context(adapter, allow, feature)
+    entry = getattr(_INDEX_CACHE, "guid", None)
+    if entry is not None and entry["key"] == key and (share or time.monotonic() - entry["ts"] < _GUID_INDEX_TTL_SEC):
+        return entry
+    return None
 
 
 def _row_guids(row: Mapping[str, Any]) -> list[str]:
@@ -192,7 +174,7 @@ def _fetch_section_guid_rows(srv: Any, section_id: str, plex_type: int) -> tuple
     ses = getattr(srv, "_session", None)
     token = getattr(srv, "token", None) or getattr(srv, "_token", None) or ""
     if not (base and ses and token and section_id):
-        return [], 0
+        raise RuntimeError("plex_guid_index_server_unavailable")
 
     headers = dict(getattr(ses, "headers", {}) or {})
     headers.update(plex_headers(token))
@@ -213,11 +195,11 @@ def _fetch_section_guid_rows(srv: Any, section_id: str, plex_type: int) -> tuple
         }
         try:
             r = ses.get(f"{base}/library/sections/{section_id}/all", params=params, headers=headers, timeout=20)
-        except Exception:
-            break
+        except Exception as exc:
+            raise RuntimeError("plex_guid_index_request_failed") from exc
         made += 1
         if not getattr(r, "ok", False):
-            break
+            raise RuntimeError(f"plex_guid_index_http_{getattr(r, 'status_code', 0)}")
         try:
             ctype = (r.headers.get("content-type") or "").lower()
             data = (r.json() or {}) if "application/json" in ctype else _xml_to_container(r.text or "")
@@ -225,71 +207,60 @@ def _fetch_section_guid_rows(srv: Any, section_id: str, plex_type: int) -> tuple
             rows = [x for x in (mc.get("Metadata") or []) if isinstance(x, Mapping)]
             total = mc.get("totalSize")
             total_i = int(total) if total is not None else None
-        except Exception:
-            break
+        except Exception as exc:
+            raise RuntimeError("plex_guid_index_parse_failed") from exc
         if not rows:
+            if total_i is not None and start < total_i:
+                raise RuntimeError("plex_guid_index_incomplete_page")
             break
         signature = tuple(str(row.get("ratingKey") or row.get("key") or "") for row in rows)
         if signature in seen_pages:
-            break
+            raise RuntimeError("plex_guid_index_repeated_page")
         seen_pages.add(signature)
         out.extend(rows)
         start += len(rows)
         if total_i is not None and start >= total_i:
             break
-        if len(rows) < page_size:
+        if total_i is None and len(rows) < page_size:
             break
 
     return out, made
 
 
-def _build_guid_index(adapter: Any, allow: set[str], *, force: bool = False) -> None:
-    global _GUID_INDEX_KEY
-    srv = getattr(getattr(adapter, "client", None), "server", None)
-    key = _guid_index_key(srv, allow)
-    if (not force) and _GUID_INDEX_KEY == key and (_GUID_INDEX_MOVIE or _GUID_INDEX_SHOW):
-        return
+def _build_guid_index(adapter: Any, allow: set[str], *, force: bool = False, feature: str = "history") -> dict[str, Any]:
+    cached = None if force else _cached_guid_index(adapter, allow, feature=feature)
+    if cached is not None:
+        return cached
     _clear_guid_index()
-    if (not force) and srv and _load_guid_index(srv, allow):
-        _GUID_INDEX_KEY = key
-        _dbg("index_cache_hit", source="guid_index", movies=len(_GUID_INDEX_MOVIE), shows=len(_GUID_INDEX_SHOW))
-        return
-    try:
-        requests_made = 0
-        for sec in adapter.libraries(types=("movie", "show")) or []:
-            sid = str(getattr(sec, "key", "") or "").strip()
-            if allow and sid and sid not in allow:
+    srv = getattr(getattr(adapter, "client", None), "server", None)
+    key, _ = _index_cache_context(adapter, allow, feature)
+    entry: dict[str, Any] = {"key": key, "movies": {}, "shows": {}}
+    requests_made = 0
+    for sec in adapter.libraries(types=("movie", "show")) or []:
+        sid = str(getattr(sec, "key", "") or "").strip()
+        if allow and sid and sid not in allow:
+            continue
+        is_movie = getattr(sec, "type", "") == "movie"
+        dst = entry["movies" if is_movie else "shows"]
+        rows, n = _fetch_section_guid_rows(srv, sid, 1 if is_movie else 2)
+        requests_made += n
+        for row in rows:
+            rk = str(row.get("ratingKey") or "").strip()
+            if not rk:
                 continue
-            libtype = "movie" if getattr(sec, "type", "") == "movie" else "show"
-            dst = _GUID_INDEX_MOVIE if libtype == "movie" else _GUID_INDEX_SHOW
-            try:
-                rows, n = _fetch_section_guid_rows(srv, sid, 1 if libtype == "movie" else 2)
-                requests_made += n
-                for row in rows:
-                    rk = str(row.get("ratingKey") or "").strip()
-                    if not rk:
-                        continue
-                    for g in _row_guids(row):
-                        gg = str(g or "").strip().lower()
-                        if gg and gg not in dst:
-                            dst[gg] = rk
-            except Exception:
-                continue
-        if srv:
-            _save_guid_index(srv, allow)
-        _GUID_INDEX_KEY = key
-        _dbg(
-            "index_fetch_counts",
-            source="guid_index",
-            movies=len(_GUID_INDEX_MOVIE),
-            shows=len(_GUID_INDEX_SHOW),
-            requests=requests_made,
-        )
-    except Exception:
-        pass
+            for g in _row_guids(row):
+                gg = str(g or "").strip().lower()
+                if gg and gg not in dst:
+                    dst[gg] = rk
+    entry["ts"] = time.monotonic()
+    _INDEX_CACHE.guid = entry
+    _dbg("index_fetch_counts", source="guid_index", movies=len(entry["movies"]), shows=len(entry["shows"]), requests=requests_made)
+    return entry
+
 
 def _pms_find_in_guid_index(libtype: str, candidates: list[str]) -> str | None:
-    src = _GUID_INDEX_SHOW if libtype == "show" else _GUID_INDEX_MOVIE
+    entry = getattr(_INDEX_CACHE, "guid", None) or {}
+    src = entry.get("shows" if libtype == "show" else "movies", {})
     for g in candidates or []:
         gg = str(g or "").strip().lower()
         if gg and gg in src:
@@ -1144,12 +1115,12 @@ def _build_history_catalog(adapter: Any, allow: set[str], *, force: bool = False
     cat = HistoryCatalog()
     if force:
         _clear_guid_index()
-    _build_guid_index(adapter, allow, force=force)
-    for guid, rk in list(_GUID_INDEX_MOVIE.items()):
+    index = _build_guid_index(adapter, allow, force=force)
+    for guid, rk in list(index["movies"].items()):
         ids = ids_from_guid(str(guid))
         if ids:
             cat.add({"rk": rk, "type": "movie", "ids": ids, "watched": False})
-    for guid, rk in list(_GUID_INDEX_SHOW.items()):
+    for guid, rk in list(index["shows"].items()):
         ids = ids_from_guid(str(guid))
         if ids:
             cat.add({"rk": rk, "type": "show", "ids": ids, "watched": False})
@@ -1165,14 +1136,11 @@ def _build_history_catalog(adapter: Any, allow: set[str], *, force: bool = False
     _emit({
         "event": "plex.catalog", "action": "done", "feature": "history", "level": "debug",
         "force": bool(force), "live": bool(live), "allow": allow_list,
-        "guid_movies": len(_GUID_INDEX_MOVIE), "guid_shows": len(_GUID_INDEX_SHOW),
+        "guid_movies": len(index["movies"]), "guid_shows": len(index["shows"]),
         "watched_movies": watched_movies, "watched_episodes": watched_eps,
         "catalog_entries": len(cat.by_rk), "duration_ms": int((time.time() - t0) * 1000),
     })
     return cat
-
-
-_CATALOG_CACHE: dict[str, Any] = {"cat": None, "ts": 0.0, "key": None}
 
 
 def _user_scope_key(adapter: Any) -> str:
@@ -1188,22 +1156,20 @@ def _user_scope_key(adapter: Any) -> str:
     return _wm_key(acct, uname)
 
 
-def _catalog_cache_key(adapter: Any, allow: set[str]) -> str:
-    srv = getattr(getattr(adapter, "client", None), "server", None)
-    mid = str(getattr(srv, "machineIdentifier", "") or "")
-    return f"{mid}|{_user_scope_key(adapter)}|{','.join(sorted(str(x) for x in (allow or set())))}"
+def _catalog_cache_key(adapter: Any, allow: set[str]) -> tuple[Any, ...]:
+    return _index_cache_context(adapter, allow, "history")[0]
 
 
 def _store_history_catalog(adapter: Any, allow: set[str], cat: HistoryCatalog) -> None:
-    _CATALOG_CACHE.update({"cat": cat, "ts": time.time(), "key": _catalog_cache_key(adapter, allow)})
+    _INDEX_CACHE.catalog = {"cat": cat, "ts": time.monotonic(), "key": _catalog_cache_key(adapter, allow)}
 
 
 def _get_history_catalog(adapter: Any, allow: set[str], *, force: bool = False) -> HistoryCatalog:
     key = _catalog_cache_key(adapter, allow)
-    now = time.time()
-    if (not force) and _CATALOG_CACHE.get("cat") is not None and _CATALOG_CACHE.get("key") == key \
-            and (now - float(_CATALOG_CACHE.get("ts") or 0)) < _CATALOG_MEM_TTL_SEC:
-        return _CATALOG_CACHE["cat"]  # type: ignore[return-value]
+    cached = getattr(_INDEX_CACHE, "catalog", None)
+    if not force and cached is not None and cached["key"] == key and time.monotonic() - cached["ts"] < _CATALOG_MEM_TTL_SEC:
+        return cached["cat"]
+    _INDEX_CACHE.catalog = None
     cat = _build_history_catalog(adapter, allow, force=force)
     _store_history_catalog(adapter, allow, cat)
     return cat
