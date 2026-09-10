@@ -1640,7 +1640,8 @@ def _direct_query_by_pairs(
                 seen_pages.add(signature)
                 for row in page:
                     iid = str(row.get("Id") or "")
-                    row_pairs = {f"{k}.{v}" for k, v in _ids_from_provider_ids(row.get("ProviderIds")).items()}
+                    row_pairs = {format_provider_pair(k, v)
+                                 for k, v in _ids_from_provider_ids(row.get("ProviderIds")).items()}
                     if not requested.intersection(row_pairs) or row.get("Type") not in types:
                         raise RuntimeError("unexpected_provider_id_result")
                     if iid and not looks_like_bad_id(iid):
@@ -1880,11 +1881,12 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any], *, feature: str = "hist
         if season is not None and episode is not None:
             for pref in series_pairs:
                 rows = _query_by_pairs(adapter, [pref], "Series", scope, feature)
-                for series in _prefer_library(rows):
+                for series in sorted(_prefer_library(rows), key=lambda row: str(row.get("Id") or "")):
                     sid = str(series.get("Id") or "")
                     if series.get("Type") != "Series" or not sid:
                         continue
-                    for ep in _series_episodes_cached(adapter, http, uid, sid, feature=feature):
+                    episodes = _series_episodes_cached(adapter, http, uid, sid, feature=feature)
+                    for ep in sorted(episodes, key=lambda row: str(row.get("Id") or "")):
                         iid = str(ep.get("Id") or "")
                         if (iid and not looks_like_bad_id(iid) and ep.get("Type") == "Episode"
                                 and str(ep.get("SeriesId") or sid) == sid
