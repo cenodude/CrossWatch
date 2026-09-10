@@ -951,6 +951,9 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         reason_counts[reason] = reason_counts.get(reason, 0) + 1
         results.append(_result_row(str(u.get("key") or ""), _ST_RESOLVE_FAILED, action="resolve", reason=reason))
 
+    from ._id_lookup import prepare
+    prepare(adapter, "history", wants.values())
+
     for k, m in wants.items():
         iid = _try_resolve_iid(adapter, m)
         if iid:

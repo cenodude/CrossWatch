@@ -16,7 +16,6 @@ from threading import local
 from cw_platform.log_context import log_run_id
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from, ids_from_guid
-from providers.sync._mod_common import observation_time
 
 from ._common import (
     _as_base_url,
@@ -1363,7 +1362,6 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
         max_seen = 0
         workers = plex_worker_count(adapter, "history_workers", "CW_PLEX_HISTORY_WORKERS", 12)
         include_marked = bool(_history_cfg_get(adapter, "include_marked_watched", True))
-        interactive_read = bool(observation_time(adapter))
 
         # Optional cursor debugging: show the rows that are considered "new" for this run.
         if eff_since is not None and str(os.environ.get("CW_PLEX_HISTORY_DEBUG_CURSOR", "")).strip().lower() in ("1", "true", "yes"):
@@ -1419,8 +1417,15 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                 return None
 
             rk = str(getattr(raw, "ratingKey", None) or "").strip()
-            catalog_entry = cat.by_rk.get(rk) if interactive_read and scope_ok else None
-            if catalog_entry and (has_external_ids(catalog_entry.get("ids") or {}) or has_external_ids(catalog_entry.get("show_ids") or {})):
+            # History retains titles from playback time. Use the same current
+            # metadata as incremental presence reads when this library item is
+            # available, so targeted destination searches stay stable across runs.
+            catalog_entry = cat.by_rk.get(rk) if scope_ok else None
+            if (
+                catalog_entry
+                and (catalog_entry.get("title") or catalog_entry.get("series_title"))
+                and (has_external_ids(catalog_entry.get("ids") or {}) or has_external_ids(catalog_entry.get("show_ids") or {}))
+            ):
                 meta = _catalog_entry_to_minimal(catalog_entry)
             else:
                 meta = minimal_from_history_row(raw, token=None, allow_discover=False)

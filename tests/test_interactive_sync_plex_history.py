@@ -19,7 +19,7 @@ from providers.sync.plex import _history as history
 def test_history_selection_survives_full_to_incremental_read(config_base, monkeypatch, kind, interactive, include_marked):
     watched_at = 1787093918
     raw = SimpleNamespace(type=kind, ratingKey="42", title="History title", guid="tmdb://123",
-                          viewedAt=watched_at, grandparentTitle="Example series", grandparentGuid="tvdb://99", parentIndex=1, index=2)
+                          viewedAt=watched_at, grandparentTitle="Old series title", grandparentGuid="tvdb://99", parentIndex=1, index=2)
     server = SimpleNamespace(history=lambda **kwargs: [] if kwargs.get("mindate") else [raw])
     adapter = SimpleNamespace(client=SimpleNamespace(server=server), cfg=SimpleNamespace(), config={"_cw_interactive_planned_at": 1788650000} if interactive else {})
     catalog = history.HistoryCatalog()
@@ -46,13 +46,14 @@ def test_history_selection_survives_full_to_incremental_read(config_base, monkey
     first = history.build_index(adapter)
     second = history.build_index(adapter)
     assert len(first) == len(second) == 1
+    assert first == second
+    row = next(iter(first.values()))
+    assert row["year"] == 2026
+    if kind == "movie":
+        assert row["title"] == "Catalog title"
+    else:
+        assert row["series_title"] == "Example series"
     if not interactive:
-        expected = history.minimal_from_history_row(raw, token=None, allow_discover=False)
-        row = next(iter(first.values()))
-        assert row["ids"] == expected["ids"]
-        assert row["year"] == expected["year"]
-        if kind == "movie":
-            assert row["title"] == "History title"
         return
     initial = InteractivePlan()
     initial.filter("history", "SIMKL", "SIMKL-P01", "add", [minimal(row) for row in first.values()], source="PLEX")
