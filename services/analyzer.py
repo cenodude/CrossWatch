@@ -2518,6 +2518,7 @@ class _AnalysisContext:
     history_pair_aliases: dict[tuple[str, str], dict[str, Any]] = field(default_factory=dict)
     history_keys: dict[str, dict[str, Any]] = field(default_factory=dict)
     history_rewatch_pairs: set[tuple[str, str]] = field(default_factory=set)
+    history_identity_items: dict[str, dict[str, list[tuple[str, Mapping[str, Any]]]]] = field(default_factory=dict)
     anime_coords: _AnimeHistoryCoords | None = None
 
     def anime_history_match(self, src_tok: str, dst_tok: str, item: Mapping[str, Any], *, require_minute: bool = False) -> bool:
@@ -2586,6 +2587,42 @@ def _target_peer_match(
     if feat_key == "history" and ctx.anime_history_match(prov_key, dst_key, item):
         return "anime_coords"
     return ""
+
+
+def _history_time_differences(
+    ctx: _AnalysisContext, prov: str, feat: str, item: Mapping[str, Any], targets: Iterable[str],
+) -> list[dict[str, Any]]:
+    """Explain unmatched events without accepting a different watch as synchronized."""
+    if feat != "history":
+        return []
+    source_epoch = _parse_epochish(item.get("watched_at"))
+    if source_epoch is None:
+        return []
+    tokens = _history_event_tokens(item)
+    differences = []
+    for dst in targets:
+        if (_norm_prov_token(prov), _norm_prov_token(dst)) not in ctx.history_rewatch_pairs:
+            continue
+        if dst not in ctx.history_identity_items:
+            index: dict[str, list[tuple[str, Mapping[str, Any]]]] = defaultdict(list)
+            for key, peer in (ctx.history_keys.get(dst) or {}).items():
+                if isinstance(peer, Mapping):
+                    for token in _history_event_tokens(peer):
+                        index[token].append((key, peer))
+            ctx.history_identity_items[dst] = dict(index)
+        candidates = {key: peer for token in tokens for key, peer in ctx.history_identity_items[dst].get(token, [])}
+        dated = [(abs(source_epoch - epoch), key, peer, epoch) for key, peer in candidates.items()
+                 if (epoch := _parse_epochish(peer.get("watched_at"))) is not None]
+        if not dated or any(delta == 0 for delta, *_ in dated):
+            continue
+        _, key, peer, epoch = min(dated, key=lambda row: (row[0], row[1]))
+        differences.append({
+            "target": dst, "source": prov, "source_watched_at": item.get("watched_at"),
+            "target_watched_at": peer.get("watched_at"), "difference_seconds": source_epoch - epoch,
+            "target_key": key, "candidate_count": len(dated),
+            "message": f"{dst} has this item, but no watch at the source timestamp. The closest recorded watch is shown; it may represent a different playback.",
+        })
+    return differences
 
 
 def _target_has_peer(
@@ -3195,7 +3232,7 @@ def _missing_peer_show_hints(
         elif has_episode:
             msg = (
                 f"{dst_name} history snapshot already has this episode, "
-                "but it did not match by IDs."
+                "but the saved history entry did not match."
             )
         else:
             if season is not None and episode is not None:
@@ -3314,6 +3351,8 @@ def _iter_unresolved_files(
                 stem = stem[: -len(marker)]
                 break
         for marker, knd in (
+            (".blackbox.", "blackbox"),
+            ("_blackbox.", "blackbox"),
             (".unresolved.", "unresolved"),
             ("_unresolved.", "unresolved"),
             (".shadow.", "shadow"),
@@ -3325,7 +3364,7 @@ def _iter_unresolved_files(
                 kind = knd
                 stem = stem.split(marker, 1)[0]
                 break
-        for knd in ("unresolved", "shadow"):
+        for knd in ("unresolved", "shadow", "blackbox"):
             if kind is not None:
                 break
             if stem.endswith(f".{knd}"):
@@ -3402,6 +3441,8 @@ def _unresolved_index(allowed_scopes: set[str] | None) -> dict[tuple[str, str], 
             if not aks:
                 continue
             meta: dict[str, Any] = {"file": name, "kind": "unresolved_pending" if pending else kind}
+            if kind == "blackbox":
+                meta["blocked_key"] = uk
             reasons = rec.get("reasons")
             if isinstance(reasons, list):
                 meta["reasons"] = [str(r) for r in reasons if str(r or "").strip()]
@@ -3417,7 +3458,10 @@ def _unresolved_index(allowed_scopes: set[str] | None) -> dict[tuple[str, str], 
 
 def _unresolved_records(allowed_scopes: set[str] | None) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
-    for prov_key, feat_key, kind, pending, name, rows in _iter_unresolved_files(allowed_scopes):
+    files = list(_iter_unresolved_files(allowed_scopes))
+    blocked_keys = {(prov, feat, key) for prov, feat, kind, _, _, rows in files
+                    if kind == "blackbox" for key, _, _ in rows}
+    for prov_key, feat_key, kind, pending, name, rows in files:
         if kind != "unresolved":
             continue
         for uk, item, rec in rows:
@@ -3437,7 +3481,9 @@ def _unresolved_records(allowed_scopes: set[str] | None) -> list[dict[str, Any]]
                     "ids": dict(item.get("ids") or {}) if isinstance(item, dict) else {},
                     "item": item if isinstance(item, dict) else {},
                     "reason": reason,
+                    "reason_message": _unresolved_reason_message(prov_key, feat_key, [reason]),
                     "pending": pending,
+                    "retry_blocked": (prov_key, feat_key, uk) in blocked_keys,
                     "file": name,
                 }
             )
@@ -3517,6 +3563,7 @@ def _attention_model(
             "season": row.get("season"),
             "episode": row.get("episode"),
             "ids": row.get("ids") or {},
+            "watch_time_differences": row.get("watch_time_differences") or [],
         }
         targets = row.get("targets") or []
         if not targets:
@@ -3543,7 +3590,9 @@ def _attention_model(
                 "key": rec.get("key"),
                 "ids": rec.get("ids") or {},
                 "reason": rec.get("reason"),
+                "reason_message": rec.get("reason_message"),
                 "item": rec.get("item") or {},
+                "retry_blocked": bool(rec.get("retry_blocked")),
             },
         )
 
@@ -3571,6 +3620,9 @@ def _attention_model(
                     "current_mismatch": cm,
                     "unresolved": un,
                     "blocked": bl,
+                    "retry_blocked": any(c["data"].get("retry_blocked") for c in cluster),
+                    "reason": next((c["data"]["reason"] for c in cluster if c["data"].get("reason")), data.get("reason")),
+                    "reason_message": next((c["data"]["reason_message"] for c in cluster if c["data"].get("reason_message")), data.get("reason_message")),
                     "keys": alias_union,
                 }
             )
@@ -3625,6 +3677,7 @@ def _attention_mismatch_rows(problems: Iterable[Mapping[str, Any]]) -> list[dict
                 "season": p.get("season"),
                 "episode": p.get("episode"),
                 "ids": p.get("ids") or {},
+                "watch_time_differences": p.get("watch_time_differences") or [],
             }
         )
     return rows
@@ -3692,6 +3745,8 @@ def _attention_from_analysis(
 
 def _unresolved_reason_message(dst: str, feature: str, reasons: list[str]) -> str:
     for reason in reasons:
+        if reason == "apply:add:no_confirmations_fallback":
+            return "The previous write did not confirm that the requested item or watch event was added."
         message = reason_message(reason, provider=dst, feature=feature)
         if message:
             return message
@@ -3730,6 +3785,7 @@ def _missing_peer_hints(
     alias_keys: list[str],
     missing_targets: list[str],
     blocked: bool,
+    item_key: str = "",
 ) -> list[dict[str, Any]]:
     hints: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str, str]] = set()
@@ -3749,6 +3805,8 @@ def _missing_peer_hints(
                 if rows:
                     break
             for meta in rows:
+                if meta.get("kind") == "blackbox" and meta.get("blocked_key") != item_key:
+                    continue
                 h: dict[str, Any] = {"provider": dst, "feature": feat}
                 reasons = [str(r) for r in (meta.get("reasons") or []) if str(r or "").strip()] if isinstance(meta.get("reasons"), list) else []
                 reason = str(meta.get("reason") or "").strip()
@@ -3765,6 +3823,8 @@ def _missing_peer_hints(
                     h["source"] = meta["file"]
                 if "kind" in meta:
                     h["kind"] = meta["kind"]
+                    if meta["kind"] == "blackbox":
+                        h["message"] = "Automatic retries are blocked after repeated failures."
                 dedupe = (
                     str(h.get("provider") or ""),
                     str(h.get("source") or ""),
@@ -3846,11 +3906,14 @@ def _problems(
                     "targets": missing_targets,
                     **({"manual_ref": _MANUAL_POLICY_REF} if blocked else {}),
                 }
+                time_differences = _history_time_differences(analysis, prov, feat, v, missing_targets)
+                if time_differences:
+                    prob["watch_time_differences"] = time_differences
                 if tracker_to_media and not blocked:
                     prob["sync_context"] = "tracker_to_media_server"
                     prob["message"] = TRACKER_TO_MEDIA_SERVER_MESSAGE
                 if include_hints:
-                    hints = _missing_peer_hints(unresolved_index, feat, alias_keys, missing_targets, blocked)
+                    hints = _missing_peer_hints(unresolved_index, feat, alias_keys, missing_targets, blocked, k)
                     anime_hint = _anime_history_hint(analysis, feat, v)
                     if anime_hint:
                         hints.append(anime_hint)
@@ -3865,6 +3928,8 @@ def _problems(
                         prob["hints"] = hints
                     _th = time.perf_counter()
                     details = _missing_peer_show_hints(feat, v, missing_targets, analysis.history_show_index)
+                    time_targets = {entry["target"] for entry in time_differences}
+                    details = [entry for entry in details if entry["target"] not in time_targets]
                     hint_seconds += time.perf_counter() - _th
                     if blocked:
                         details = ([{"target": "ALL", "feature": feat, "message": f"Blocked by {_MANUAL_POLICY_REF}."}] + (details or []))
@@ -4423,6 +4488,7 @@ def _detail_for_item(pairs_raw: str | None, provider: str, feature: str, key: st
             "targets": sorted({target for _, part in parts for target in part["targets"]}),
             "hints": [{**hint, "pair_id": pid} for pid, part in parts for hint in part["hints"]],
             "target_show_info": [{**hint, "pair_id": pid} for pid, part in parts for hint in part["target_show_info"]],
+            "watch_time_differences": [{**hint, "pair_id": pid} for pid, part in parts for hint in part.get("watch_time_differences", [])],
         }
     state, context, allowed, _cfg_sel, _tim = _load_analysis_state(pairs_raw)
     prov_key = _norm_prov_token(provider)
@@ -4441,15 +4507,18 @@ def _detail_for_item(pairs_raw: str | None, provider: str, feature: str, key: st
     blocks = _manual_blocks_for(manual_blocks, prov_key, feat_key)
     blocked = bool(blocks and any(kk in blocks for kk in [key, *alias_keys]))
 
-    hints = _missing_peer_hints(_unresolved_index(allowed), feat_key, alias_keys, missing_targets, blocked)
+    hints = _missing_peer_hints(_unresolved_index(allowed), feat_key, alias_keys, missing_targets, blocked, key)
     if missing_targets:
         anime_hint = _anime_history_hint(context, feat_key, it)
         if anime_hint:
             hints.append(anime_hint)
     details = _missing_peer_show_hints(feat_key, it, missing_targets, context.history_show_index)
+    time_differences = _history_time_differences(context, prov_key, feat_key, it, missing_targets)
+    time_targets = {entry["target"] for entry in time_differences}
+    details = [entry for entry in details if entry["target"] not in time_targets]
     if blocked:
         details = ([{"target": "ALL", "feature": feat_key, "message": f"Blocked by {_MANUAL_POLICY_REF}."}] + details)
-    return {"targets": missing_targets, "hints": hints, "target_show_info": details}
+    return {"targets": missing_targets, "hints": hints, "target_show_info": details, "watch_time_differences": time_differences}
 
 @router.get("/analyzer/state", response_class=JSONResponse)
 def api_state(

@@ -4,7 +4,7 @@
 
 const FEATURES = ["history", "watchlist", "ratings", "progress", "collection"];
 const VIEWS = {
-  missing: { title: "Missing items", icon: "compare_arrows", description: "Items present in one saved snapshot and missing from a destination. These are findings, not proposed sync changes." },
+  missing: { title: "Snapshot differences", icon: "compare_arrows", description: "Missing items and unmatched watch times in saved snapshots. Review each finding before deciding whether a sync change is needed." },
   pending: { title: "Pending retries", icon: "pending_actions", description: "Items a previous sync could not match or write. Review the reason before running the pair again." },
   system: { title: "System health", icon: "monitor_heart", description: "Provider, orchestrator and saved-state diagnostics across CrossWatch, plus findings for the selected pairs." },
   blocked: { title: "Blocked items", icon: "block", description: "Items held back by saved blocking rules or automatic protections." },
@@ -26,6 +26,28 @@ const label = row => {
 };
 const reasonText = hint => hint?.message || [hint?.provider, array(hint?.reasons).join(", ") || hint?.reason || hint?.kind].filter(Boolean).join(": ");
 const unique = rows => [...new Map(rows.map(row => [JSON.stringify(row), row])).values()];
+export function watchDifferenceLabel(row, providerName = String) {
+  const differences = array(row.watch_time_differences);
+  const timeTargets = new Set(differences.map(entry => entry.target));
+  const missing = array(row.targets).filter(target => !timeTargets.has(target));
+  return [differences.length && `Watch time differs at ${[...timeTargets].map(providerName).join(", ")}`,
+    missing.length && `Missing at ${missing.map(providerName).join(", ")}`].filter(Boolean).join("; ") || "Missing at destination";
+}
+export function retryLabel(row) {
+  return row.retry_blocked ? "Automatic retries blocked" : "Pending retry";
+}
+export function nextStepText(row) {
+  const blocked = row.retry_blocked ? "Automatic retries are blocked after repeated failures. Resolve the cause before clearing the retry block. " : "";
+  if (array(row.watch_time_differences).length) return blocked + "Compare the recorded watch times and playback history. Matching IDs do not establish whether these are the same playback or separate watches. A mapping edit does not correct the watch time.";
+  return blocked + "Review the provider's reported reason and the pair's sync rules. Correct the mapping only if the item was identified incorrectly.";
+}
+export function watchDifferenceDetails(differences, providerName = String) {
+  return array(differences).map(entry => {
+    const seconds = Math.abs(Number(entry.difference_seconds));
+    const duration = `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+    return `<div class="an-detail-reasons"><h4>Watch time differs</h4><p>${esc(providerName(entry.source))}: ${esc(entry.source_watched_at)}</p><p>${esc(providerName(entry.target))} (closest recorded watch): ${esc(entry.target_watched_at)}</p><p>Difference: ${esc(duration)}. Times are shown with their recorded time zone.</p><p>${esc(entry.message)}</p></div>`;
+  }).join("");
+}
 const affectedLabels = row => [
   ...array(row.affected_items).map(value => [value.label || value.key, value.reason, value.attempts != null && `Attempts: ${value.attempts}`].filter(Boolean).join(" · ")),
   ...array(row.extra_source_titles || row.extra_source).map(value => `Only at source: ${value}`),
@@ -187,6 +209,10 @@ const Analyzer = {
       const endpoint = (provider, instance) => providerName(`${provider}${instance ? `@${instance}` : ""}`);
       return `${endpoint(pair.source, pair.source_instance)} ${twoWay ? "↔" : "→"} ${endpoint(pair.target, pair.target_instance)}`;
     };
+    const rowPairName = row => {
+      const pair = pairs.find(pair => pair.id === row.pair_id);
+      return pair ? pairName(pair) : row.pair_id || "";
+    };
     const filterResults = createResultFilter(providerName);
     let groups = { missing: [], blocked: [], system: [], errors: 0, warnings: 0 };
     function indexResultGroups() {
@@ -273,8 +299,8 @@ const Analyzer = {
         if (!$("#an-search").value && !$("#an-feature").value && !$("#an-severity").value) {
           const loading = view === "system" ? systemState === "loading" : analysisState === "loading";
           const failed = view === "system" ? systemState === "error" : analysisState === "error";
-          title = loading ? "Analysis in progress" : failed ? "Results unavailable" : ({ missing: "No missing items found", pending: "No pending retries", blocked: "No blocked items", system: "No system findings", all: "No saved items" })[view];
-          message = loading ? "Results will appear here as the checks finish." : failed ? "Retry the failed check using the message above." : view === "system" && systemState === "restricted" ? "Global system diagnostics are available to administrators. Pair findings remain visible here." : view === "missing" ? "No presence differences were found in the saved snapshots for these pairs." : "There is nothing to review in this view for the current scope.";
+          title = loading ? "Analysis in progress" : failed ? "Results unavailable" : ({ missing: "No snapshot differences found", pending: "No pending retries", blocked: "No blocked items", system: "No system findings", all: "No saved items" })[view];
+          message = loading ? "Results will appear here as the checks finish." : failed ? "Retry the failed check using the message above." : view === "system" && systemState === "restricted" ? "Global system diagnostics are available to administrators. Pair findings remain visible here." : view === "missing" ? "No missing items or unmatched watch times were found in the saved snapshots for these pairs." : "There is nothing to review in this view for the current scope.";
           symbol = loading ? "progress_activity" : failed ? "error" : "check_circle";
           if (!loading && !failed && view === "missing" && snapshotGaps.length) {
             title = "Comparison incomplete";
@@ -297,15 +323,15 @@ const Analyzer = {
       const editable = view === "pending" && window.CW?.AuthState?.read?.().permissions?.write !== false;
       $("#an-list").innerHTML = `<div class="an-table-scroll"><table class="an-table"><thead><tr><th scope="col">Item</th><th scope="col">Provider</th><th scope="col">Feature</th><th scope="col">Finding</th>${editable ? '<th scope="col" class="an-mapping-column" aria-label="Edit mapping"></th>' : ''}</tr></thead><tbody>${currentRows.map((row, index) => {
         const mismatch = missingIndex.get(identity(row));
-        const finding = view === "pending" ? "Pending retry" : row.type === "missing_peer" || mismatch ? `Missing at ${array((mismatch || row).targets).map(providerName).join(", ") || "destination"}` : blockedIndex.has(identity(row)) ? "Blocked" : "No presence issue";
-        return `<tr data-row="${index}" class="${selected === row ? "is-selected" : ""}"><td><button type="button" class="an-item-button" data-row="${index}" aria-pressed="${selected === row}"><strong>${esc(label(row))}</strong><span>${esc([human(row.item_type || row.item?.type || (row.type === "missing_peer" ? "" : row.type)), row.year || row.item?.year].filter(Boolean).join(" · "))}</span></button></td><td>${esc(providerName(row.provider))}</td><td><span class="an-feature-badge">${esc(human(row.feature))}</span></td><td><span class="an-result-badge ${mismatch || row.type === "missing_peer" ? "an-warn-text" : ""}">${esc(finding)}</span></td>${editable ? `<td class="an-mapping-column">${row.key && FEATURES.includes(row.feature) ? `<button type="button" class="an-icon-button" data-edit-mapping="${index}" title="Edit mapping" aria-label="Edit mapping for ${esc(label(row))}">${icon("edit")}</button>` : ''}</td>` : ''}</tr>`;
+        const finding = view === "pending" ? retryLabel(row) : row.type === "missing_peer" || mismatch ? watchDifferenceLabel(mismatch || row, providerName) : blockedIndex.has(identity(row)) ? "Blocked" : "No presence issue";
+        return `<tr data-row="${index}" class="${selected === row ? "is-selected" : ""}"><td><button type="button" class="an-item-button" data-row="${index}" aria-pressed="${selected === row}"><strong>${esc(label(row))}</strong><span>${esc([human(row.item_type || row.item?.type || (row.type === "missing_peer" ? "" : row.type)), row.year || row.item?.year].filter(Boolean).join(" · "))}</span></button></td><td>${esc(providerName(row.provider))}${rowPairName(row) ? `<span class="an-pair-label">${esc(rowPairName(row))}</span>` : ""}</td><td><span class="an-feature-badge">${esc(human(row.feature))}</span></td><td><span class="an-result-badge ${mismatch || row.type === "missing_peer" ? "an-warn-text" : ""}">${esc(finding)}</span></td>${editable ? `<td class="an-mapping-column">${row.key && FEATURES.includes(row.feature) && !array(row.watch_time_differences).length ? `<button type="button" class="an-icon-button" data-edit-mapping="${index}" title="Edit mapping" aria-label="Edit mapping for ${esc(label(row))}">${icon("edit")}</button>` : ''}</td>` : ''}</tr>`;
       }).join("")}</tbody></table></div>`;
     }
     function renderFinding(row, index) {
       const sev = severity(row);
       const title = row.title || row.message || human(row.type) || "Diagnostic finding";
       const context = [providerName(row.provider || row.source), row.feature && human(row.feature), row.category && human(row.category)].filter(Boolean).join(" · ");
-      const detail = [row.message && row.message !== title ? row.message : "", row.item_title, row.key && `Key: ${row.key}`, row.module && `Module: ${row.module}`, row.path && `Path: ${row.path}`, row.error, row.reason, row.count != null && `Items affected: ${row.count}`, row.source && row.target && `${row.source} → ${row.target}`, row.show_delta && `Shows: ${row.show_delta.source} at source / ${row.show_delta.target} at destination`, row.show_gap && `Source-only shows: ${row.show_gap.source_only}; destination-only shows: ${row.show_gap.target_only}`, row.missing?.length && `Missing IDs: ${row.missing.join(", ")}`, row.id_name && `ID field: ${row.id_name} (${row.id_value ?? ""})`, row.watermark_key && `Watermark: ${row.watermark_key}`, row.value != null && `Value: ${row.value}`].filter(Boolean);
+      const detail = [rowPairName(row) && `Sync pair: ${rowPairName(row)}`, row.message && row.message !== title ? row.message : "", row.item_title, row.key && `Key: ${row.key}`, row.module && `Module: ${row.module}`, row.path && `Path: ${row.path}`, row.error, row.reason, row.count != null && `Items affected: ${row.count}`, row.source && row.target && `${row.source} → ${row.target}`, row.show_delta && `Shows: ${row.show_delta.source} at source / ${row.show_delta.target} at destination`, row.show_gap && `Source-only shows: ${row.show_gap.source_only}; destination-only shows: ${row.show_gap.target_only}`, row.missing?.length && `Missing IDs: ${row.missing.join(", ")}`, row.id_name && `ID field: ${row.id_name} (${row.id_value ?? ""})`, row.watermark_key && `Watermark: ${row.watermark_key}`, row.value != null && `Value: ${row.value}`].filter(Boolean);
       const items = affectedLabels(row);
       return `<article class="an-finding an-severity-${sev}"><div class="an-finding-icon">${icon(sev === "error" ? "error" : sev === "warn" ? "warning" : "info")}</div><div class="an-finding-content"><div class="an-finding-top"><span class="an-severity-badge">${sev === "error" ? "Error" : sev === "warn" ? "Warning" : "Information"}</span><span>${esc(context)}</span></div><h3>${esc(title)}</h3>${detail.map(value => `<p>${esc(value)}</p>`).join("")}${items.length ? `<details class="an-affected"><summary>Affected items (${items.length.toLocaleString()})</summary><ul>${items.slice(0, 25).map(value => `<li>${esc(value)}</li>`).join("")}</ul>${items.length > 25 ? `<button type="button" class="an-button" data-more="${index}" data-shown="25">Show more</button>` : ""}</details>` : ""}<span class="an-finding-code">${esc(row.type)}</span></div></article>`;
     }
@@ -390,18 +416,19 @@ const Analyzer = {
       const mismatch = missingIndex.get(identity(row));
       const render = (detail = {}, error = "") => {
         if (controller.signal.aborted || lifetime.signal.aborted || selected !== row) return;
-        const reasons = [...new Set([row.message, row.reason, ...array(detail.hints).map(reasonText), ...array(detail.target_show_info).map(reasonText)].filter(Boolean))];
+        const reasons = [...new Set([row.message, row.reason_message || row.reason, ...array(detail.hints).map(reasonText), ...array(detail.target_show_info).map(reasonText)].filter(Boolean))];
         const targets = array(detail.targets || mismatch?.targets || row.targets);
         const ids = Object.entries(row.ids || row.item?.ids || {});
         const provider = providerName(row.provider);
-        const presence = view === "pending" ? "Waiting for a successful retry" : blockedIndex.has(identity(row)) ? "Blocked by a saved rule" : mismatch ? `Missing at ${targets.map(providerName).join(", ") || "destination"}` : "Present in the saved snapshot";
+        const diagnosis = { ...row, ...mismatch, ...detail, retry_blocked: row.retry_blocked || mismatch?.retry_blocked || array(detail.hints).some(hint => hint.kind === "blackbox") };
+        const presence = view === "pending" ? retryLabel(row) : blockedIndex.has(identity(row)) ? "Blocked by a saved rule" : mismatch ? watchDifferenceLabel(diagnosis, providerName) : "Present in the saved snapshot";
         const limitNotes = targets.map(target => {
           const provider = status.providers?.[String(target).split("@")[0]];
           const key = row.feature === "collection" ? "collection" : "watchlist";
           const limit = ["watchlist", "collection"].includes(row.feature) ? provider?.limits?.[key] : null;
           return limit && limit.item_count > 0 && limit.used >= limit.item_count ? `${providerName(target)} ${human(key)} limit reached (${limit.used}/${limit.item_count}). Free up space or review the provider account limit.` : "";
         }).filter(Boolean);
-        $("#an-detail").innerHTML = `<div class="an-detail-heading"><span class="an-eyebrow">ITEM DETAILS</span><button type="button" class="an-icon-button" id="an-close-detail" aria-label="Close item details">${icon("close")}</button></div><h3>${esc(label(row))}</h3><p class="an-detail-meta">${esc([provider, human(row.feature), row.year || row.item?.year].filter(Boolean).join(" · "))}</p><div class="an-detail-status">${icon(mismatch || view === "pending" ? "info" : "check_circle")}<strong>${esc(presence)}</strong></div>${reasons.length || limitNotes.length ? `<div class="an-detail-reasons"><h4>What happened</h4>${[...limitNotes, ...reasons].map(reason => `<p>${esc(reason)}</p>`).join("")}</div>` : mismatch ? '<p class="an-muted">CrossWatch found this item in the source snapshot but could not confirm it at the destination.</p>' : ""}${error ? `<p class="an-detail-error" role="alert">${esc(error)}</p><button type="button" class="an-button" id="an-retry-detail">Retry details</button>` : ""}${mismatch || view === "pending" ? '<div class="an-next-step"><h4>Next step</h4><p>Check the pair’s sync rules and the provider. Use the pencil beside a pending item to correct its mapping, then run the pair again.</p></div>' : ""}${ids.length ? `<details class="an-identifiers"><summary>Item IDs (${ids.length})</summary><dl>${ids.map(([key, value]) => `<div><dt>${esc(key)}</dt><dd>${esc(value)}</dd></div>`).join("")}</dl></details>` : ""}${row.key ? `<p class="an-item-key">${esc(row.key)}</p>` : ""}`;
+        $("#an-detail").innerHTML = `<div class="an-detail-heading"><span class="an-eyebrow">ITEM DETAILS</span><button type="button" class="an-icon-button" id="an-close-detail" aria-label="Close item details">${icon("close")}</button></div><h3>${esc(label(row))}</h3><p class="an-detail-meta">${esc([provider, human(row.feature), row.year || row.item?.year].filter(Boolean).join(" · "))}</p>${rowPairName(row) ? `<p class="an-detail-meta">Sync pair: ${esc(rowPairName(row))}</p>` : ""}<div class="an-detail-status">${icon(mismatch || view === "pending" ? "info" : "check_circle")}<strong>${esc(presence)}</strong></div>${reasons.length || limitNotes.length ? `<div class="an-detail-reasons"><h4>What happened</h4>${[...limitNotes, ...reasons].map(reason => `<p>${esc(reason)}</p>`).join("")}</div>` : mismatch ? '<p class="an-muted">CrossWatch found this item in the source snapshot but could not confirm it at the destination.</p>' : ""}${watchDifferenceDetails(diagnosis.watch_time_differences, providerName)}${error ? `<p class="an-detail-error" role="alert">${esc(error)}</p><button type="button" class="an-button" id="an-retry-detail">Retry details</button>` : ""}${mismatch || view === "pending" ? `<div class="an-next-step"><h4>Next step</h4><p>${esc(nextStepText(diagnosis))}</p></div>` : ""}${ids.length ? `<details class="an-identifiers"><summary>Item IDs (${ids.length})</summary><dl>${ids.map(([key, value]) => `<div><dt>${esc(key)}</dt><dd>${esc(value)}</dd></div>`).join("")}</dl></details>` : ""}${row.key ? `<p class="an-item-key">${esc(row.key)}</p>` : ""}`;
       };
       render(detailCache.get(identity(row)));
       if (!mismatch || detailCache.has(identity(row))) return;

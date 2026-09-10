@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 
 globalThis.window = {};
 globalThis.document = { addEventListener() {} };
-const { createResultFilter } = await import("../assets/js/analyzer/index.js");
+const { createResultFilter, watchDifferenceLabel, retryLabel, nextStepText, watchDifferenceDetails } = await import("../assets/js/analyzer/index.js");
 const features = ["history", "watchlist", "ratings", "progress", "collection"];
 const rows = Object.freeze(Array.from({ length: 5000 }, (_, n) => Object.freeze({
   title: `Movie ${String(n).padStart(5, "0")}`, provider: "SIMKL", feature: features[n % 5],
@@ -63,4 +63,28 @@ test("repeated filtering reuses searchable labels for unchanged rows", () => {
 test("pending episode retries are searchable by title, IDs and episode", () => {
   const row = { provider: "SIMKL", feature: "history", item: { type: "episode", series_title: "The Series", season: 1, episode: 23, ids: { tvdb: "123" } } };
   assert.deepEqual(createResultFilter()([row], { query: "series S01E23 tvdb:123" }), [row]);
+});
+
+test("watch time differences remain distinct from absent destinations", () => {
+  const row = { targets: ["SIMKL", "TRAKT"], watch_time_differences: [{ target: "SIMKL" }] };
+  assert.equal(watchDifferenceLabel(row), "Watch time differs at SIMKL; Missing at TRAKT");
+  assert.match(nextStepText(row), /separate watches/);
+  assert.match(nextStepText(row), /mapping edit does not correct/);
+});
+
+test("blocked retries explain why another sync does not retry", () => {
+  assert.equal(retryLabel({ retry_blocked: true }), "Automatic retries blocked");
+  assert.equal(retryLabel({}), "Pending retry");
+  assert.match(nextStepText({ retry_blocked: true }), /Resolve the cause before clearing/);
+});
+
+test("watch comparison displays both times and safely escapes provider data", () => {
+  const html = watchDifferenceDetails([{ source: "<CROSSWATCH>", target: "SIMKL", difference_seconds: -352,
+    source_watched_at: "2026-09-05T11:12:58Z", target_watched_at: "2026-09-05T11:07:06Z", message: "<script>" }]);
+  assert.match(html, /5m 52s/);
+  assert.match(html, /11:12:58Z/);
+  assert.match(html, /11:07:06Z/);
+  assert.match(html, /closest recorded watch/);
+  assert(!html.includes("<script>"));
+  assert(html.includes("&lt;CROSSWATCH&gt;"));
 });
