@@ -234,3 +234,21 @@ def test_series_episode_response_cannot_match_wrong_type_or_parent(extra):
 
     ad = adapter(WrongSeries([series]))
     assert common.resolve_item_ids(ad, {"type": "episode", "show_ids": {"tmdb": "20"}, "season": 1, "episode": 1}) == []
+
+
+def test_zero_padded_provider_ids_are_valid_query_matches():
+    row = movie(ProviderIds={"Tvdb": "0081871"})
+    http = SimpleNamespace(get=lambda *a, **k: SimpleNamespace(status_code=200, json=lambda: {"Items": [row]}))
+    assert common._direct_query_by_pairs(http, "user", ["tvdb.81871"], "Movie", {}) == [row]
+
+
+def test_duplicate_series_and_episode_order_does_not_change_match():
+    series = [{"Id": sid, "Type": "Series", "ProviderIds": {"Tmdb": "20"}} for sid in ("10", "20")]
+    episodes = [{"Id": sid + suffix, "Type": "Episode", "SeriesId": sid, "ParentIndexNumber": 0, "IndexNumber": 1}
+                for sid in ("10", "20") for suffix in ("1", "2")]
+    server = Server(series + episodes)
+    source = {"type": "episode", "show_ids": {"tmdb": "20"}, "season": 0, "episode": 1}
+    assert common.resolve_item_id(adapter(server), source) == "101"
+    server.rows.reverse()
+    log_run_id.set("second")
+    assert common.resolve_item_id(adapter(server), source) == "101"

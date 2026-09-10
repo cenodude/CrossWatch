@@ -876,20 +876,22 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
 
             r = http.get(f"/Users/{uid}/Items", params=params)
             if getattr(r, "status_code", 0) != 200:
-                _warn("http_failed", op="index", status=getattr(r, 'status_code', None), body=_resp_snip(r))
-                break
+                raise RuntimeError(f"emby_history_http_{getattr(r, 'status_code', 0)}")
 
             try:
-                body = r.json() or {}
-                rows = body.get("Items") or []
-            except Exception as e:
-                _warn("parse_failed", op="index", error=str(e))
-                rows = []
+                body = r.json()
+            except Exception as exc:
+                raise ValueError("emby_history_invalid_response") from exc
+            if not isinstance(body, Mapping) or not isinstance(body.get("Items"), list):
+                raise ValueError("emby_history_invalid_response")
+            rows = body["Items"]
+            if any(not isinstance(row, Mapping) or not row.get("Id") for row in rows):
+                raise ValueError("emby_history_invalid_row")
 
             signature = tuple(str(row.get("Id") or "") for row in rows if isinstance(row, Mapping))
             if rows and signature in seen_pages:
                 _warn("pagination_repeated_page", scan=include_types, source_library_id=parent_id, start_index=start)
-                break
+                raise RuntimeError("emby_history_repeated_page")
             seen_pages.add(signature)
 
             page += 1
