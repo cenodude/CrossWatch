@@ -114,19 +114,23 @@ class _FakeHttp:
         self.calls.append(("GET", path))
         if path == "/Sessions":
             return _Response(200, [])
-        return _Response(
-            200,
-            {
-                "Id": "jf-item-1",
-                "RunTimeTicks": RUNTIME_MS * 10_000,
-                "LibraryId": "lib-1",
-                "UserData": {
-                    "Played": self.watched,
-                    "PlaybackPositionTicks": 0,
-                    "LastPlayedDate": ISSUE_689_TARGET_TS,
-                },
+        row = {
+            "Id": "jf-item-1",
+            "Type": "Movie",
+            "Name": "Example",
+            "ProductionYear": 2026,
+            "ProviderIds": {"Tmdb": "1083381", "Imdb": "tt26657236"},
+            "RunTimeTicks": RUNTIME_MS * 10_000,
+            "LibraryId": "lib-1",
+            "UserData": {
+                "Played": self.watched,
+                "PlaybackPositionTicks": 0,
+                "LastPlayedDate": ISSUE_689_TARGET_TS,
             },
-        )
+        }
+        if path == "/Items":
+            return _Response(200, {"Items": [row], "TotalRecordCount": 1})
+        return _Response(200, row)
 
     def delete(self, path: str, params: Mapping[str, Any] | None = None) -> _Response:
         self.calls.append(("DELETE", path))
