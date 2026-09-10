@@ -147,3 +147,9 @@
 .an-page .an-mapping-column{width:56px;text-align:right;white-space:nowrap}
 .an-page .an-mapping-column .an-icon-button:hover{color:var(--accent,#8057ff);border-color:var(--accent,#8057ff)}
 .an-page .an-mapping-notice{padding:12px 16px;border:1px solid var(--border,#2a2e38);border-radius:12px;background:var(--panel,#101318);color:var(--muted,#959eab)}
+.an-page .an-pair-label {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.8rem;
+  opacity: 0.7;
+}
