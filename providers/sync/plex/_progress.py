@@ -15,10 +15,12 @@ from providers.sync._progress_policy import decide_progress_write, select_progre
 from ._common import (
     active_pms_token,
     episode_rating_key_from_show,
+    guid_lookup_scope,
     has_external_ids,
     home_scope_enter,
     home_scope_exit,
     item_guid_candidates,
+    ids_from_obj,
     plex_cfg_get,
     plex_feature_cfg,
     plex_feature_library_ids,
@@ -33,6 +35,7 @@ from ._common import (
 from ._history import (
     _build_guid_index as _hist_build_guid_index,
     _pms_find_in_guid_index as _hist_find_in_guid_index,
+    _index_cache_context,
 )
 
 
@@ -468,6 +471,44 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
 
 
 def _resolve_rating_key(adapter: Any, it: Mapping[str, Any]) -> str | None:
+    allowed = plex_feature_library_ids(adapter, "progress")
+    key, _ = _index_cache_context(adapter, allowed, "progress")
+    with guid_lookup_scope(key):
+        return _resolve_rating_key_in_scope(adapter, it)
+
+
+def _native_progress_identity_matches(obj: Any, item: Mapping[str, Any], ids: Mapping[str, Any]) -> bool:
+    kind = str(item.get("type") or "movie").lower()
+    kind = "episode" if kind == "anime" else kind
+    if str(getattr(obj, "type", "") or "").lower() != kind:
+        return False
+    namespaces = ("tmdb", "imdb", "tvdb", "mal", "anilist")
+
+    def matches(requested: Mapping[str, Any], current: Mapping[str, Any]) -> bool:
+        for key in namespaces:
+            want = str(requested.get(key) or "").strip().lower()
+            have = str(current.get(key) or "").strip().lower()
+            if want and have and (want == have or (want.isdigit() and have.isdigit() and int(want) == int(have))):
+                return True
+        return False
+
+    try:
+        if any(ids.get(key) for key in namespaces):
+            return matches(ids, ids_from_obj(obj))
+        if kind == "episode":
+            show_ids = item.get("show_ids") or {}
+            if any(show_ids.get(key) for key in namespaces):
+                if not matches(show_ids, ids_from_obj(obj.show())):
+                    return False
+            for field, attr in (("season", "parentIndex"), ("episode", "index")):
+                if item.get(field) is not None and int(getattr(obj, attr, -1)) != int(item[field]):
+                    return False
+        return True
+    except Exception:
+        return False
+
+
+def _resolve_rating_key_in_scope(adapter: Any, it: Mapping[str, Any]) -> str | None:
     setattr(adapter, "_plex_progress_last_resolve_hint", None)
     allowed = plex_feature_library_ids(adapter, "progress")
     outside_scope_seen = False
@@ -497,7 +538,9 @@ def _resolve_rating_key(adapter: Any, it: Mapping[str, Any]) -> str | None:
             direct_obj = srv0.fetchItem(int(base_rk)) if srv0 else None  # type: ignore[attr-defined]
         except Exception:
             direct_obj = None
-        if direct_obj is not None and _allowed_obj(direct_obj, "direct_plex_rating_key"):
+        if (direct_obj is not None and str(getattr(direct_obj, "ratingKey", "")) == base_rk
+                and _native_progress_identity_matches(direct_obj, it, ids)
+                and _allowed_obj(direct_obj, "direct_plex_rating_key")):
             return base_rk
 
     srv = getattr(getattr(adapter, "client", None), "server", None)

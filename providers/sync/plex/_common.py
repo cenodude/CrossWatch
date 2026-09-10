@@ -17,11 +17,12 @@ import uuid
 import socket
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from threading import RLock
+from threading import RLock, local
 from typing import Any, Iterable, Mapping
 from urllib.parse import urlsplit, quote
 
 from .._log import log as cw_log
+from cw_platform.log_context import log_run_id
 
 import requests
 
@@ -600,12 +601,42 @@ def meta_guids(meta_obj: Any) -> list[str]:
     return vals
 
 
+_LOOKUP_SCOPE: ContextVar[tuple[Any, ...] | None] = ContextVar("plex_lookup_scope", default=None)
+_LOOKUP_CACHE = local()
+
+
+@contextmanager
+def guid_lookup_scope(key: tuple[Any, ...]):
+    token = _LOOKUP_SCOPE.set(key)
+    try:
+        yield
+    finally:
+        _LOOKUP_SCOPE.reset(token)
+
+
+def _guid_query_cache() -> dict[str, str | None]:
+    key = _LOOKUP_SCOPE.get()
+    if key is None:
+        return {}
+    entry = getattr(_LOOKUP_CACHE, "entry", None)
+    if entry is None or entry[0] != key or (not log_run_id.get() and time.monotonic() - entry[1] >= 300):
+        entry = (key, time.monotonic(), {})
+        _LOOKUP_CACHE.entry = entry
+    return entry[2]
+
+
 def server_find_rating_key_by_guid(srv: Any, guids: Iterable[str]) -> str | None:
     candidates = list(dict.fromkeys(str(g) for g in (guids or []) if g))
+    cache = _guid_query_cache()
     queried: set[str] = set()
     # PlexAPI XML query path
     try:
         for g in candidates:
+            if g in cache:
+                if cache[g]:
+                    return cache[g]
+                queried.add(g)
+                continue
             try:
                 qg = quote(str(g), safe="")
                 root = srv.query(  # type: ignore[attr-defined]
@@ -624,7 +655,10 @@ def server_find_rating_key_by_guid(srv: Any, guids: Iterable[str]) -> str | None
                     a = getattr(el, "attrib", {}) or {}
                     rk = a.get("ratingKey") or a.get("ratingkey")
                     if rk:
+                        cache[g] = str(rk)
                         return str(rk)
+                if g in queried and root is not None and not list(root) and root.get("size") == "0":
+                    cache[g] = None
             except Exception:
                 continue
     except Exception:
@@ -657,15 +691,19 @@ def server_find_rating_key_by_guid(srv: Any, guids: Iterable[str]) -> str | None
 
             # JSON path
             if "json" in ct:
-                try:
-                    j = r.json()
-                except Exception:
-                    j = {}
-                md = (j.get("MediaContainer", {}) or {}).get("Metadata") or []
+                j = r.json()
+                container = j.get("MediaContainer") if isinstance(j, Mapping) else None
+                if not isinstance(container, Mapping):
+                    continue
+                md = container.get("Metadata") or []
                 if md and isinstance(md, list):
                     rk = md[0].get("ratingKey") or md[0].get("ratingkey")
                     if rk:
+                        cache[g] = str(rk)
                         return str(rk)
+                if not md and (container.get("size") == 0 or container.get("Metadata") == []):
+                    cache[g] = None
+                continue
 
             # XML path
             try:
@@ -677,7 +715,10 @@ def server_find_rating_key_by_guid(srv: Any, guids: Iterable[str]) -> str | None
             if el is not None:
                 rk = (el.attrib or {}).get("ratingKey") or (el.attrib or {}).get("ratingkey")
                 if rk:
+                    cache[g] = str(rk)
                     return str(rk)
+            if root.tag == "MediaContainer" and not list(root) and root.get("size") == "0":
+                cache[g] = None
         except Exception:
             pass
     return None
@@ -1379,7 +1420,7 @@ def season_rating_key_from_show(show_obj: Any, season: Any) -> str | None:
     return None
 
 
-_SHOW_EPISODE_CACHE: dict[str, dict[str, Any]] = {}
+_SHOW_EPISODE_CACHE: dict[tuple[Any, ...], dict[str, Any]] = {}
 _SHOW_EPISODE_CACHE_TTL = 300.0
 _SHOW_EPISODE_CACHE_MAX = 256
 
@@ -1390,7 +1431,9 @@ def _show_episode_cache_entry(show_obj: Any) -> dict[str, Any]:
     if rk:
         srv = getattr(show_obj, "_server", None) or getattr(show_obj, "server", None)
         sid = getattr(srv, "machineIdentifier", None) or _as_base_url(srv) or ""
-        key = _metadata_cache_key(f"{sid}:{rk}", getattr(srv, "_token", None), _as_base_url(srv))
+        owner = _LOOKUP_SCOPE.get() or ("object", id(show_obj))
+        key = (owner, log_run_id.get(), _pair_scope(),
+               _metadata_cache_key(f"{sid}:{rk}", getattr(srv, "_token", None), _as_base_url(srv)))
     now = time.monotonic()
     if key:
         entry = _SHOW_EPISODE_CACHE.get(key)
