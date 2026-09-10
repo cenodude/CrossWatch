@@ -9,12 +9,15 @@ import os
 import re
 import time
 import shutil
+from hashlib import sha256
 from pathlib import Path
+from threading import local
 
 from .._log import log as cw_log
 
 from cw_platform.anime_mapping.service import mapped_or_default_media_type
 from cw_platform.id_map import minimal as id_minimal, canonical_key
+from cw_platform.log_context import log_run_id
 
 from ._routes import favorite as favorite_route, user_data as user_data_route, user_params, views as views_route
 
@@ -710,10 +713,35 @@ def _index_row_provider_ids(out: dict[str, list[dict[str, Any]]], row: Mapping[s
 
 
 # provider index
+_RUN_PROVIDER_INDEX = local()
+
+
 def build_provider_index(adapter: Any, *, feature: str | None = None) -> dict[str, list[dict[str, Any]]]:
     cache = getattr(adapter, "_provider_index_cache", None)
     scope_key = tuple(sorted(jf_selected_library_ids(adapter.cfg, feature or "history")))
-    if isinstance(cache, dict) and cache and getattr(adapter, "_provider_index_scope", None) == scope_key:
+    # The sync API sets/resets this task-local ID. Do not use CW_RUN_ID: that
+    # environment variable can remain set after a run has finished.
+    run_id = log_run_id.get()
+    server = str(getattr(adapter.cfg, "server", "") or "")
+    user = str(getattr(adapter.cfg, "user_id", "") or "")
+    credential = sha256(str(getattr(adapter.cfg, "access_token", "") or "").encode()).digest()
+    pair_scope = _pair_scope()
+    run_key = (run_id, server, user, credential, pair_scope, feature or "history", scope_key)
+    # Cross-adapter reuse must have an explicit pair scope, even within a run.
+    share = bool(run_id and server and user and pair_scope and pair_scope.lower() not in {"unscoped", "default", "none"})
+    if not share:
+        _RUN_PROVIDER_INDEX.entry = None
+    if isinstance(cache, dict) and getattr(adapter, "_provider_index_run_key", None) == run_key:
+        return cache
+    shared = getattr(_RUN_PROVIDER_INDEX, "entry", None) if share else None
+    if shared is not None and shared[0] == run_key:
+        _, cache, paths = shared
+        setattr(adapter, "_provider_index_cache", cache)
+        setattr(adapter, "_provider_index_scope", scope_key)
+        setattr(adapter, "_provider_index_run_key", run_key)
+        setattr(adapter, "_path_index_cache", paths)
+        setattr(adapter, "_path_index_scope", scope_key)
+        _dbg("index_cache_hit", source="run", count=len(cache), path_count=len(paths))
         return cache
 
     http = adapter.client
@@ -746,6 +774,8 @@ def build_provider_index(adapter: Any, *, feature: str | None = None) -> dict[st
         if parent_id:
             params["ParentId"] = parent_id
         r = http.get("/Items", params={**params, "userId": uid})
+        if getattr(r, "status_code", 0) != 200:
+            raise RuntimeError(f"jellyfin_provider_index_http_{getattr(r, 'status_code', 0)}")
         body = r.json() or {}
         items = body.get("Items") or []
         signature = tuple(str(row.get("Id") or "") for row in items if isinstance(row, Mapping))
@@ -777,8 +807,13 @@ def build_provider_index(adapter: Any, *, feature: str | None = None) -> dict[st
     _dbg('index_done', source='provider_index', count=len(out), path_count=len(path_index))
     setattr(adapter, "_provider_index_cache", out)
     setattr(adapter, "_provider_index_scope", scope_key)
+    setattr(adapter, "_provider_index_run_key", run_key)
     setattr(adapter, "_path_index_cache", path_index)
     setattr(adapter, "_path_index_scope", scope_key)
+    if share:
+        # One entry per thread keeps memory bounded; the sync thread releases
+        # it on exit. A different run or scope never reuses this entry.
+        _RUN_PROVIDER_INDEX.entry = (run_key, out, path_index)
     return out
 
 
@@ -1848,6 +1883,10 @@ def resolve_item_ids(adapter: Any, it: Mapping[str, Any], *, feature: str = "his
         return []
 
     one = resolve_item_id(adapter, it, feature=feature)
+    # Only movies expand to multiple copies below. Episode/show resolution is
+    # already complete, including any necessary index fallback.
+    if _lookup_type(it) != "movie":
+        return [str(one)] if one else []
     selected_libs = jf_selected_library_ids(adapter.cfg, feature)
 
     ids = dict(it.get("ids") or {})

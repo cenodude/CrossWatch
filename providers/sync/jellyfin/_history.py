@@ -743,8 +743,10 @@ def build_index(
         start += raw_count
         if isinstance(limit, int) and limit > 0 and len(events) >= int(limit):
             break
-        total = int(body.get("TotalRecordCount") or 0)
-        if not rows or raw_count < page_size or (total and start >= total):
+        # Total counting is disabled: Jellyfin can report the page length as
+        # TotalRecordCount. Only an exhausted page (or the since cutoff) ends
+        # this library's scan.
+        if not rows or raw_count < page_size:
             scope_index += 1
             if scope_index >= len(query_parents):
                 break

@@ -406,6 +406,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                     timestamp_tolerance_seconds=tolerance,
                 )
                 context = {
+                    "key": str(ck),
                     "provider": "jellyfin", "provider_instance": os.getenv("CW_PAIR_DST_INSTANCE") or "default",
                     "remote_item_id": str(iid), "library_id": target.get("library_id") or it0.get("library_id"),
                     "source_timestamp": pa, "target_timestamp": target.get("timestamp"),
