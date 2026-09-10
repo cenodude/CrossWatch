@@ -6,7 +6,7 @@ from __future__ import annotations
 import inspect
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, cast
 
 try:
@@ -15,7 +15,7 @@ except Exception:
     BASE_LOG = None
 
 from cw_platform.config_base import load_config
-from providers.scrobble.routes import build_route_cfg, build_route_cfg_by_id, find_route, normalize_routes
+from providers.scrobble.routes import build_route_cfg, build_route_cfg_by_id, find_route, normalize_routes, route_is_self_target
 from providers.scrobble.scrobble import Dispatcher, ScrobbleEvent
 from providers.scrobble.sources import source_enabled
 
@@ -65,6 +65,9 @@ def _stop_groups(groups: dict[str, Any] | None) -> None:
     if not isinstance(groups, dict):
         return
     for g in list(groups.values()):
+        retry_stop = getattr(g, "retry_stop", None)
+        if retry_stop is not None:
+            retry_stop.set()
         try:
             _stop_blocking(getattr(g, "watcher", None))
         except Exception:
@@ -118,6 +121,8 @@ class MultiDispatcher:
 
 
 class _SchedulerEventSink:
+    log_delivery = False
+
     def __init__(self, route_id: str, route_provider: str, route_provider_instance: str) -> None:
         self._route_id = str(route_id or "").strip()
         self._provider = str(route_provider or "").strip().lower()
@@ -162,6 +167,18 @@ class WatchGroup:
     watcher: Any
     routes: list[RouteRunner]
     started_at: float
+    retry_stop: threading.Event = field(default_factory=threading.Event)
+
+
+def _retry_deliveries(group: WatchGroup) -> None:
+    while not group.retry_stop.wait(1.0):
+        for runner in group.routes:
+            if group.retry_stop.is_set():
+                return
+            try:
+                runner.dispatcher.retry_pending(group.retry_stop)
+            except Exception as exc:
+                _log(f"Route retry failed: {exc}", "ERROR")
 
 
 def _make_sink(name: str, cfg_provider: Callable[[], dict[str, Any]], instance_id: str) -> Any:
@@ -169,7 +186,23 @@ def _make_sink(name: str, cfg_provider: Callable[[], dict[str, Any]], instance_i
     if not sink:
         raise ValueError("Empty sink")
     cls: Any | None = None
-    if sink == "trakt":
+    if sink == "plex":
+        from providers.scrobble.plex.sink import PlexSink
+
+        cls = PlexSink
+    elif sink == "jellyfin":
+        from providers.scrobble.jellyfin.sink import JellyfinSink
+
+        cls = JellyfinSink
+    elif sink == "emby":
+        from providers.scrobble.emby.sink import EmbySink
+
+        cls = EmbySink
+    elif sink == "kodi":
+        from providers.scrobble.kodi.sink import KodiSink
+
+        cls = KodiSink
+    elif sink == "trakt":
         from providers.scrobble.trakt.sink import TraktSink
 
         cls = TraktSink
@@ -293,6 +326,9 @@ class WatchManager:
             routes = [r for r in normalize_routes(cfg) if isinstance(r, dict) and bool(r.get("enabled"))]
             grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
             for r in routes:
+                if route_is_self_target(r):
+                    _log(f"Skipping self-targeting route {r.get('id')}", "WARNING")
+                    continue
                 prov = str(r.get("provider") or "plex").strip().lower() or "plex"
                 inst = str(r.get("provider_instance") or "default").strip() or "default"
                 grouped.setdefault((prov, inst), []).append(r)
@@ -352,6 +388,7 @@ class WatchManager:
                     routes=runners,
                     started_at=time.time(),
                 )
+                threading.Thread(target=_retry_deliveries, args=(watch_groups[key],), daemon=True).start()
 
             self._app.state.watch_groups = watch_groups
             return self.status()
@@ -360,6 +397,8 @@ class WatchManager:
         with self._lock:
             groups = getattr(self._app.state, "watch_groups", None)
             groups_copy = dict(groups) if isinstance(groups, dict) else {}
+            for group in groups_copy.values():
+                group.retry_stop.set()
             self._app.state.watch_groups = {}
             if wait:
                 _stop_groups(groups_copy)

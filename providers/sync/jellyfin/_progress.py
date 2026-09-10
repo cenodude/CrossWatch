@@ -163,7 +163,7 @@ def _series_ids_by_item_id(
                 items_route(),
                 params=user_params(uid, {
                     "Ids": ",".join(batch),
-                    "Fields": "ProviderIds,ProductionYear,Type,Name",
+                    "Fields": "ProviderIds",
                 }),
             )
             if getattr(response, "status_code", 0) != 200:
@@ -181,6 +181,27 @@ def _series_ids_by_item_id(
     return out
 
 
+def _progress_library_ids(http: Any, uid: str, raw: Mapping[str, Any], allowed: set[str], cache: dict[str, set[str]]) -> set[str]:
+    memberships = jf_item_library_ids(raw)
+    if memberships:
+        return memberships
+    parent_id = str(raw.get("ParentId") or "").strip()
+    if parent_id in allowed:
+        return {parent_id}
+    lookup_id = parent_id or str(raw.get("Id") or "").strip()
+    if not lookup_id:
+        raise RuntimeError("progress_library_scope_missing_item_id")
+    if lookup_id not in cache:
+        response = http.get(f"/Items/{lookup_id}/Ancestors", params=user_params(uid))
+        if getattr(response, "status_code", 0) != 200:
+            raise RuntimeError(f"progress_library_scope_http_{getattr(response, 'status_code', 0)}")
+        ancestors = response.json()
+        if not isinstance(ancestors, list):
+            raise RuntimeError("progress_library_scope_invalid_ancestors")
+        cache[lookup_id] = {str(row["Id"]) for row in ancestors if isinstance(row, Mapping) and row.get("Id")}
+    return cache[lookup_id]
+
+
 def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
     http = getattr(adapter, "client", None)
     uid = getattr(getattr(adapter, "cfg", None), "user_id", None)
@@ -190,7 +211,7 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
     base_params: dict[str, Any] = {
         "Recursive": True,
         "IncludeItemTypes": "Movie,Episode",
-        "Fields": "UserData,ProviderIds,RunTimeTicks,ProductionYear,Type,IndexNumber,ParentIndexNumber,SeriesId,ParentId,CollectionFolderId,AncestorIds,LibraryId,Name",
+        "Fields": "ProviderIds,ParentId",
         "EnableUserData": True,
         "Filters": "IsResumable",
     }
@@ -244,6 +265,7 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
                 break
 
     series_ids_by_item_id = _series_ids_by_item_id(http, str(uid), rows)
+    library_ids_cache: dict[str, set[str]] = {}
     out: dict[str, dict[str, Any]] = {}
     total_rows = 0
     dup_keys = 0
@@ -254,10 +276,13 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
             _warn("unsupported_progress_row_type", provider_item_id=str(raw.get("Id") or ""), media_type=raw_type)
             continue
         if allowed:
-            memberships = jf_item_library_ids(raw)
-            if memberships and not (memberships & allowed):
+            memberships = _progress_library_ids(http, str(uid), raw, allowed, library_ids_cache)
+            matched_libraries = memberships & allowed
+            if not matched_libraries:
                 _dbg("outside_library_scope", provider_item_id=str(raw.get("Id") or ""), source_library_id=source_library_id, allowed_library_ids=sorted(allowed), item_title=str(raw.get("Name") or ""), media_type=str(raw.get("Type") or ""), provider_ids=dict(raw.get("ProviderIds") or {}))
                 continue
+            if source_library_id not in matched_libraries:
+                source_library_id = sorted(matched_libraries)[0]
         try:
             item = jelly_normalize(raw)
         except Exception:

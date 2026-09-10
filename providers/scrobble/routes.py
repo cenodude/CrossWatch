@@ -9,7 +9,7 @@ from cw_platform.provider_instances import get_provider_block, normalize_instanc
 
 DEFAULT_INSTANCE_ID = "default"
 ROUTE_PROVIDERS = {"plex", "emby", "jellyfin", "kodi", "scrob"}
-ROUTE_SINKS = {"trakt", "simkl", "mdblist", "crosswatch", "floppy", "punchplay", "bingebase", "flicklist", "scrob"}
+ROUTE_SINKS = {"plex", "jellyfin", "emby", "kodi", "trakt", "simkl", "mdblist", "crosswatch", "floppy", "punchplay", "bingebase", "flicklist", "scrob"}
 ROUTE_RATING_SINKS = {"trakt", "simkl", "mdblist", "crosswatch", "floppy", "punchplay", "flicklist", "scrob"}
 ROUTE_OPTION_STATES = {"inherit", "on", "off"}
 ROUTE_RATINGS_MODES = {"off", "custom"}
@@ -24,6 +24,33 @@ ROUTE_WATCH_POLICY_RANGES = {
     "suppress_start_at": (0, 100),
 }
 ROUTE_WATCH_BOOLEAN_KEYS = {"unresolved_user_fallback", "anime_mapping"}
+
+
+def same_scrobble_endpoint(provider: Any, provider_instance: Any, sink: Any, sink_instance: Any) -> bool:
+    source = str(provider or "").strip().lower()
+    return bool(source) and source == str(sink or "").strip().lower() and normalize_instance_id(provider_instance) == normalize_instance_id(sink_instance)
+
+
+def route_is_self_target(route: dict[str, Any]) -> bool:
+    return same_scrobble_endpoint(route.get("provider"), route.get("provider_instance"), route.get("sink"), route.get("sink_instance"))
+
+
+def scrobble_sink_config(cfg: dict[str, Any], provider: str, instance: Any) -> dict[str, Any]:
+    inst = normalize_instance_id(instance)
+    captured = cfg.get("_cw_scrobble_sink") or {}
+    if captured.get("provider") == provider and captured.get("instance") == inst:
+        block = _deep_clone(captured.get("config") or {})
+    else:
+        original = cfg.get("_cw_scrobble_provider_configs") or {}
+        base = {**cfg, **original}
+        block = _deep_clone(get_provider_block(base, provider, inst))
+    block.pop("instances", None)
+    if inst == "default" and provider in {"jellyfin", "emby"}:
+        auth = (cfg.get("auth") or {}).get(provider) or {}
+        for field in ("server", "access_token", "user_id"):
+            if field not in block and auth.get(field) is not None:
+                block[field] = _deep_clone(auth[field])
+    return {**cfg, provider: block}
 
 
 def _deep_clone(v: Any) -> Any:
@@ -256,10 +283,16 @@ def build_route_cfg(cfg: dict[str, Any], route: dict[str, Any]) -> dict[str, Any
     out: dict[str, Any] = _deep_clone(cfg) if isinstance(cfg, dict) else {}
     w = _watch_cfg(out)
 
+    if r["sink"]:
+        out["_cw_scrobble_sink"] = {
+            "provider": r["sink"], "instance": r["sink_instance"],
+            "config": _deep_clone(scrobble_sink_config(cfg, r["sink"], r["sink_instance"])[r["sink"]]),
+        }
+
     if r["provider"]:
         out[r["provider"]] = _provider_view(out, r["provider"], r["provider_instance"])
-    if r["sink"]:
-        out[r["sink"]] = _provider_view(out, r["sink"], r["sink_instance"])
+    if r["sink"] and r["sink"] != r["provider"]:
+        out[r["sink"]] = _provider_view(cfg, r["sink"], r["sink_instance"])
     ratings = (r.get("options") or {}).get("ratings")
     rating_targets = ratings.get("targets") if isinstance(ratings, dict) else []
     for target in rating_targets if isinstance(rating_targets, list) else []:

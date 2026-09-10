@@ -1239,30 +1239,30 @@ def _normalize_for_write(base_item: Mapping[str, Any]) -> tuple[dict[str, Any], 
     base_ids: dict[str, Any] = dict(base_ids_raw) if isinstance(base_ids_raw, Mapping) else {}
     has_ids = bool(base_ids) and any(v not in (None, "", 0) for v in base_ids.values())
 
+    nm = emby_normalize(base)
+    m: dict[str, Any] = dict(nm)
+    for key in (
+        "type",
+        "title",
+        "year",
+        "watch_type",
+        "watched_at",
+        "library_id",
+        "season",
+        "episode",
+        "series_title",
+        "show_ids",
+        "series_year",
+    ):
+        if base.get(key) not in (None, ""):
+            m[key] = base[key]
     if has_ids:
-        nm = emby_normalize(base)
-        m: dict[str, Any] = dict(nm)
-        # Preserve common fields from the caller input.
-        for key in (
-            "type",
-            "title",
-            "year",
-            "watch_type",
-            "watched_at",
-            "library_id",
-            "season",
-            "episode",
-        ):
-            if base.get(key) not in (None, ""):
-                m[key] = base[key]
         ids = dict(nm.get("ids") or {})
         for k_id, v_id in base_ids.items():
             if v_id not in (None, "", 0):
                 ids[k_id] = v_id
         if ids:
             m["ids"] = ids
-    else:
-        m = dict(emby_normalize(base))
 
     _coerce_anime_type(m)
     return m, base

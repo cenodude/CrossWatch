@@ -24,6 +24,7 @@ except Exception:
 
 from providers.scrobble._auto_remove_watchlist import remove_across_providers_by_ids as _rm_across
 from providers.scrobble._watched_gate import resolve_stop_action
+from providers.scrobble.routes import scrobble_sink_config
 
 try:
     from providers.scrobble.scrobble import ScrobbleEvent, ScrobbleSink, mask_account  # type: ignore
@@ -197,6 +198,8 @@ class ScrobSink(ScrobbleSink):
             try:
                 cfg = self._cfg_provider()
                 if isinstance(cfg, Mapping):
+                    if (cfg.get("_cw_scrobble_sink") or {}).get("provider") == "scrob":
+                        return scrobble_sink_config(dict(cfg), "scrob", self.instance_id)
                     return dict(cfg)
             except Exception:
                 pass

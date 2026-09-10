@@ -9,6 +9,8 @@ import os
 import re
 import shutil
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 import unicodedata
 import uuid
@@ -111,6 +113,21 @@ except ImportError:
     from _id_map import minimal as id_minimal, ids_from_guid  # type: ignore
 
 _PLEX_CTX: dict[str, str | None] = {"baseurl": None, "token": None, "account_token": None}
+_SCOPED_PLEX_CTX: ContextVar[dict[str, str | None] | None] = ContextVar("plex_context", default=None)
+
+
+def plex_context() -> dict[str, str | None]:
+    scoped = _SCOPED_PLEX_CTX.get()
+    return scoped if scoped is not None else _PLEX_CTX
+
+
+@contextmanager
+def isolated_plex_context():
+    token = _SCOPED_PLEX_CTX.set({"baseurl": None, "token": None, "account_token": None})
+    try:
+        yield
+    finally:
+        _SCOPED_PLEX_CTX.reset(token)
 
 
 def configure_plex_context(
@@ -119,10 +136,11 @@ def configure_plex_context(
     token: str | None,
     account_token: str | None = None,
 ) -> None:
-    _PLEX_CTX["baseurl"] = baseurl.rstrip("/") if isinstance(baseurl, str) else None
-    _PLEX_CTX["token"] = token or None
+    context = plex_context()
+    context["baseurl"] = baseurl.rstrip("/") if isinstance(baseurl, str) else None
+    context["token"] = token or None
     if account_token is not None:
-        _PLEX_CTX["account_token"] = account_token or None
+        context["account_token"] = account_token or None
 
 
 DISCOVER = "https://discover.provider.plex.tv"
@@ -754,7 +772,7 @@ _SHOW_PMS_GUID_CACHE: dict[str, dict[str, str]] = {}
 _EP_SHOW_IDS_CACHE: dict[str, dict[str, str]] = {}
 
 def _metadata_cache_key(rating_key: str, token: str | None = None, base: str | None = None) -> str:
-    identity = [scope_safe(), base or _PLEX_CTX.get("baseurl"), token or _PLEX_CTX.get("token"), _PLEX_CTX.get("account_token")]
+    identity = [scope_safe(), base or plex_context().get("baseurl"), token or plex_context().get("token"), plex_context().get("account_token")]
     digest = hashlib.sha256(json.dumps(identity, separators=(",", ":")).encode()).hexdigest()
     return f"{digest}:{rating_key}"
 
@@ -772,7 +790,7 @@ def _hydrate_show_ids_from_episode_rk(token: str | None, episode_rk: str | None)
 
     headers = plex_headers(token)
     headers["Accept"] = "application/json, application/xml;q=0.9,*/*;q=0.5"
-    base = str(_PLEX_CTX.get("baseurl") or "").strip().rstrip("/")
+    base = str(plex_context().get("baseurl") or "").strip().rstrip("/")
 
     def _parse(r: requests.Response) -> dict[str, str]:
         ctype = (r.headers.get("content-type") or "").lower()
@@ -826,8 +844,8 @@ def _hydrate_show_ids_from_pms(obj: Any) -> dict[str, str]:
     key = _metadata_cache_key(rk, getattr(srv, "token", None) or getattr(srv, "_token", None), _as_base_url(srv))
     if key in _SHOW_PMS_GUID_CACHE:
         return _SHOW_PMS_GUID_CACHE[key]
-    base = _as_base_url(srv) or _PLEX_CTX["baseurl"]
-    token = getattr(srv, "token", None) or getattr(srv, "_token", None) or _PLEX_CTX["token"]
+    base = _as_base_url(srv) or plex_context()["baseurl"]
+    token = getattr(srv, "token", None) or getattr(srv, "_token", None) or plex_context()["token"]
     if not base or not token:
         _SHOW_PMS_GUID_CACHE[key] = {}
         return {}
@@ -967,9 +985,9 @@ def hydrate_external_ids(token: str | None, rating_key: str | None) -> dict[str,
             return {}
 
     headers = plex_headers(token)
-    cloud_token = str(_PLEX_CTX.get("account_token") or "").strip() or token
+    cloud_token = str(plex_context().get("account_token") or "").strip() or token
     cloud_headers = plex_headers(cloud_token) if cloud_token != token else headers
-    base = str(_PLEX_CTX.get("baseurl") or "").strip().rstrip("/")
+    base = str(plex_context().get("baseurl") or "").strip().rstrip("/")
 
     meta_status: int | None = None
     last_err: str | None = None
@@ -1071,7 +1089,7 @@ def normalize(obj: Any) -> dict[str, Any]:
                 base.setdefault("show_ids", {}).update(extra)
         if not has_ext(base.get("show_ids")):
             srv = getattr(obj, "_server", None)
-            token = getattr(srv, "_token", None) or getattr(srv, "token", None) or _PLEX_CTX["token"]
+            token = getattr(srv, "_token", None) or getattr(srv, "token", None) or plex_context()["token"]
             gp_rk = getattr(obj, "grandparentRatingKey", None)
             if token and gp_rk:
                 extra2 = hydrate_external_ids(token, str(gp_rk))
@@ -1119,7 +1137,7 @@ def normalize_discover_row(
     hydrate_item_ids: bool = True,
 ) -> dict[str, Any]:
     if token is None:
-        token = _PLEX_CTX["token"]
+        token = plex_context()["token"]
     t = (row.get("type") or "movie").lower()
     ids = ids_from_discover_row(row)
     if hydrate_item_ids and not any(k in ids for k in ("tmdb", "imdb", "tvdb")) and token:
@@ -1895,7 +1913,7 @@ def minimal_from_history_row(
     m = _build_minimal_from_row(row, ids)
     if not _has_ext_ids(m.get("ids", {})):
         rk = m.get("ids", {}).get("plex")
-        tok = token or _PLEX_CTX["token"]
+        tok = token or plex_context()["token"]
         if rk and tok:
             _emit(
                 {
@@ -1918,7 +1936,7 @@ def minimal_from_history_row(
                 m["ids"].update({k: v for k, v in extra.items() if v})
                 
     if kind == "episode" and not _has_ext_ids(m.get("show_ids", {})):
-        tok = token or _PLEX_CTX["token"]
+        tok = token or plex_context()["token"]
         gp_rk = _row_get(row, "grandparentRatingKey")
         if tok and gp_rk:
             _emit(
@@ -1950,7 +1968,7 @@ def minimal_from_history_row(
                     m.setdefault("show_ids", {}).update({k: v for k, v in extra3.items() if v})
                     
     if not _has_ext_ids(m.get("ids", {})) and allow_discover:
-        tok = token or _PLEX_CTX["token"]
+        tok = token or plex_context()["token"]
         title = m.get("series_title") if kind == "episode" else m.get("title")
         year = m.get("year")
         _emit(

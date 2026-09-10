@@ -141,6 +141,7 @@ def _currently_playing(
     *,
     account_id: int | None = None,
     username: str | None = None,
+    fail_on_error: bool = False,
 ) -> bool:
     try:
         for session in srv.sessions() or []:  # type: ignore[attr-defined]
@@ -161,6 +162,8 @@ def _currently_playing(
                     continue
             return True
     except Exception:
+        if fail_on_error:
+            raise
         pass
     return False
 
