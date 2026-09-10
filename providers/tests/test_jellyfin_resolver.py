@@ -102,6 +102,7 @@ def jf_row(
 def test_episode_provider_id_resolves_from_index_without_jellyfin_filter_query():
     episode = jf_row("E1", "Episode", "Pilot", tmdb="7535444", series_id="S1", season=1, episode=1)
     adapter = FakeAdapter(FakeHttp([episode]))
+    adapter.cfg.targeted_lookup = False
 
     item = {"type": "episode", "title": "Pilot", "season": 1, "episode": 1, "ids": {"tmdb": "7535444"}}
 
@@ -132,6 +133,7 @@ def test_episode_can_resolve_by_path_when_provider_ids_are_missing():
     path = r"Z:\TV\Example Show\Season 01\S01E02.mkv"
     episode = jf_row("E3", "Episode", "Second", series_id="S1", season=1, episode=2, path=path)
     adapter = FakeAdapter(FakeHttp([episode]))
+    adapter.cfg.targeted_lookup = False
 
     item = {"type": "episode", "title": "Second", "season": 1, "episode": 2, "ids": {}, "path": path}
 
@@ -166,7 +168,7 @@ def test_resolve_rejects_stale_native_jellyfin_id_when_public_id_disagrees():
 
     assert common.resolve_item_id(adapter, item, feature="history") == "M1"
     assert any(call["path"] == "/Items/M0" for call in adapter.client.calls)
-    assert any(call["params"].get("SearchTerm") == "Encanto" for call in adapter.client.calls)
+    assert not any(call["params"].get("SearchTerm") for call in adapter.client.calls)
 
 
 def test_resolve_rejects_stale_jellyfin_item_id_when_public_id_disagrees():
@@ -178,7 +180,7 @@ def test_resolve_rejects_stale_jellyfin_item_id_when_public_id_disagrees():
 
     assert common.resolve_item_id(adapter, item, feature="history") == "M1"
     assert any(call["path"] == "/Items/M0" for call in adapter.client.calls)
-    assert any(call["params"].get("SearchTerm") == "Encanto" for call in adapter.client.calls)
+    assert not any(call["params"].get("SearchTerm") for call in adapter.client.calls)
 
 
 def test_progress_write_does_not_trust_stale_jellyfin_item_id():
@@ -214,8 +216,8 @@ def test_movie_targeted_lookup_resolves_without_full_provider_index():
     item = {"type": "movie", "title": "Encanto", "year": 2021, "ids": {"tmdb": "568124"}}
 
     assert common.resolve_item_id(adapter, item, feature="history") == "M1"
-    assert any(call["params"].get("SearchTerm") == "Encanto" for call in adapter.client.calls)
-    assert not any("StartIndex" in call["params"] for call in adapter.client.calls)
+    assert not any(call["params"].get("SearchTerm") for call in adapter.client.calls)
+    assert all(call["params"].get("IncludeItemTypes") == "Movie,Series" for call in adapter.client.calls if call["path"] == "/Items")
 
 
 def test_movie_targeted_lookup_disabled_falls_back_to_provider_index():
@@ -239,11 +241,11 @@ def test_strict_targeted_lookup_requires_provider_id_match():
     item = {"type": "movie", "title": "Encanto", "year": 2021, "ids": {"tmdb": "568124"}}
 
     assert common.resolve_item_id(adapter, item, feature="history") == "M1"
-    assert any(call["params"].get("SearchTerm") == "Encanto" for call in adapter.client.calls)
-    assert not any("StartIndex" in call["params"] for call in adapter.client.calls)
+    assert not any(call["params"].get("SearchTerm") for call in adapter.client.calls)
+    assert all(call["params"].get("IncludeItemTypes") == "Movie,Series" for call in adapter.client.calls if call["path"] == "/Items")
 
 
-def test_episode_targeted_lookup_uses_series_search_and_episode_numbers():
+def test_episode_targeted_lookup_uses_series_ids_and_episode_numbers():
     series = jf_row("S1", "Series", "Example Show", tmdb="999")
     episode = jf_row("E2", "Episode", "Second", series_id="S1", season=1, episode=2)
     adapter = FakeAdapter(FakeHttp([series], episodes={"S1": [episode]}))
@@ -259,9 +261,9 @@ def test_episode_targeted_lookup_uses_series_search_and_episode_numbers():
     }
 
     assert common.resolve_item_id(adapter, item, feature="history") == "E2"
-    assert any(call["path"] == "/Items" and call["params"].get("SearchTerm") == "Example Show" for call in adapter.client.calls)
+    assert not any(call["params"].get("SearchTerm") for call in adapter.client.calls)
     assert any(call["path"] == "/Shows/S1/Episodes" for call in adapter.client.calls)
-    assert not any("StartIndex" in call["params"] for call in adapter.client.calls if call["path"] == "/Items")
+    assert all(call["params"].get("IncludeItemTypes") == "Movie,Series" for call in adapter.client.calls if call["path"] == "/Items")
 
 
 def test_jellyfin_scoped_provider_index_trusts_rows_without_library_metadata():

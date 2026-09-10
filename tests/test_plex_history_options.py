@@ -98,3 +98,48 @@ def test_manual_watched_changes_survive_cached_guid_index(isolated_state, timest
     row["viewCount"] = 0
     assert history.build_index(ad) == {}
     assert len(index_reads) == 1
+
+
+@pytest.mark.parametrize("catalog_kind", ["current", "missing", "id_only", "no_external_ids", "wrong_user_scope"])
+@pytest.mark.parametrize("include_marked", [False, True])
+def test_history_metadata_selection_preserves_fallback_and_watched_dates(
+    isolated_state, monkeypatch, catalog_kind, include_marked,
+):
+    played_at = 1787093918
+    live_at = played_at + 3600
+    raw = SimpleNamespace(type="movie", ratingKey="42", title="Historical title", year=2020, viewedAt=played_at)
+    server = SimpleNamespace(history=lambda **kwargs: [raw])
+    adapter = SimpleNamespace(client=SimpleNamespace(server=server), config={"plex": {
+        "history_workers": 1, "history": {"include_marked_watched": include_marked},
+    }})
+    catalog = history.HistoryCatalog()
+    if catalog_kind != "missing":
+        catalog.add({
+            "rk": "42", "type": "movie", "title": None if catalog_kind == "id_only" else "Current title",
+            "ids": {"plex": "42"} if catalog_kind == "no_external_ids" else {"plex": "42", "tmdb": "123"},
+        })
+    fallback_calls = []
+
+    def fallback(*args, **kwargs):
+        fallback_calls.append(1)
+        return {"type": "movie", "title": "Historical title", "ids": {"plex": "42", "tmdb": "123"}}
+
+    monkeypatch.setattr(history, "home_scope_enter", lambda _: (catalog_kind == "wrong_user_scope", False, None, None))
+    monkeypatch.setattr(history, "home_scope_exit", lambda *_: None)
+    monkeypatch.setattr(history, "plex_feature_library_ids", lambda *_: set())
+    monkeypatch.setattr(history, "_history_force_full", lambda _: False)
+    monkeypatch.setattr(history, "_build_history_catalog", lambda *a, **k: catalog)
+    monkeypatch.setattr(history, "_store_history_catalog", lambda *_: None)
+    monkeypatch.setattr(history, "_save_watermark", lambda *_: None)
+    monkeypatch.setattr(history, "_keep_in_snapshot", lambda *_: True)
+    monkeypatch.setattr(history, "minimal_from_history_row", fallback)
+    monkeypatch.setattr(history, "_pms_fetch_metadata_row", lambda *_: {"viewCount": 1, "lastViewedAt": live_at})
+    monkeypatch.setattr(history, "_load_marked_state", lambda: {})
+    monkeypatch.setattr(history, "_iter_marked_watched_from_library", lambda *a, **k: [])
+
+    result = history.build_index(adapter)
+    assert len(result) == 1
+    item = next(iter(result.values()))
+    assert item["watched_at"] == history._iso(live_at if include_marked else played_at)
+    assert item["title"] == ("Current title" if catalog_kind == "current" else "Historical title")
+    assert len(fallback_calls) == (0 if catalog_kind == "current" else 1)

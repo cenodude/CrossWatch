@@ -52,8 +52,8 @@ export const HELP_TEXT = {
   "plx-fallback-guid": "Plex: Fallback GUID\nAlso searches Plex's database beyond your visible libraries (including hidden/old items) to recover older matches.\nWarning: enable only for a single run, it increases duration and resource usage.",
   "plx-marked-watched": "Plex: Marked watched\nInclude items you manually marked as watched in Plex when syncing history.\nDisable if you only want actual play history.",
   "plx-strict-ids": "Plex: Strict ID matching\nWhen enabled, CrossWatch only matches by IDs (Plex IDs + external IDs). Title/year searches are disabled.",
-  "jf-strict-ids": "Jellyfin: Strict ID matching\nWhen enabled, CrossWatch only matches by IDs (Jellyfin IDs + external IDs). Title/year searches are disabled.",
-  "jf-targeted-lookup": "Jellyfin: Targeted library lookup\nWhen writing to Jellyfin, search Jellyfin by title first and verify the result before falling back to the full library scan. Disable to use the slower all-items scan behavior.",
+  "jf-strict-ids": "Jellyfin: Strict ID matching\nRequire Jellyfin or external IDs to confirm matches. Title searches and path matching are disabled. Episodes can match by series ID plus season and episode numbers.",
+  "jf-targeted-lookup": "Jellyfin: Targeted library lookup\nMatch through a cached movie and series ID catalogue, then fetch episodes only for matched series. The catalogue checks for metadata changes on each sync that needs matching and refreshes fully every 24 hours. Disable to allow a full episode index. Title and path fallback require Strict ID matching to be off.",
   "em-strict-ids": "Emby: Strict ID matching\nWhen enabled, CrossWatch only matches by IDs (Emby IDs + external IDs). Title/year searches are disabled.",
 };
 

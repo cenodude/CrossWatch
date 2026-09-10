@@ -111,6 +111,7 @@ def test_tracker_episode_ids_reach_destination_id_resolver(monkeypatch, provider
     target_id = "1234567890abcdef1234567890abcdef"
     row = {"Id": target_id, "Type": "Episode", "ProviderIds": {"Imdb": "tt1234567"}, "ParentIndexNumber": 0, "IndexNumber": 2}
     if provider == "jellyfin":
+        adapter.cfg.targeted_lookup = False
         _, prepared, error = history._prepare_want(item)
         assert error is None
         monkeypatch.setattr(common, "_targeted_lookup_item_id", lambda *a, **kw: None)

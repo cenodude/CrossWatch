@@ -87,7 +87,7 @@ def test_progress_movies_still_resolve_multiple_copies(monkeypatch):
     monkeypatch.setattr(common, "build_provider_index", lambda *args, **kwargs: {
         "tmdb.1": [{"Id": "copy1", "Type": "Movie"}, {"Id": "copy2", "Type": "Movie"}],
     })
-    adapter = SimpleNamespace(client=Library(0), cfg=SimpleNamespace(user_id="user"))
+    adapter = SimpleNamespace(client=Library(0), cfg=SimpleNamespace(user_id="user", targeted_lookup=False))
     assert common.resolve_item_ids(adapter, {"type": "movie", "ids": {"tmdb": "1"}}, feature="progress") == ["copy1", "copy2"]
 
 
