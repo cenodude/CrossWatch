@@ -1385,12 +1385,11 @@ def _targeted_cache(adapter: Any, feature: str) -> dict[Any, Any]:
             entry = (key, {})
             _TARGETED_CACHE.entry = entry
         return entry[1]
-    # Without a complete scope, reuse only on this adapter during an active run.
-    if not run:
-        return {}
+    now = time.monotonic()
     entry = getattr(adapter, "_jellyfin_targeted_cache", None)
-    if entry is None or entry[0] != key:
-        entry = (key, {})
+    if (entry is None or entry[0] != key
+            or (not run and (len(entry) < 3 or now - entry[2] >= 300))):
+        entry = (key, {}, now)
         setattr(adapter, "_jellyfin_targeted_cache", entry)
     return entry[1]
 

@@ -274,3 +274,47 @@ def test_strict_title_only_item_is_left_unresolved_without_search():
     server = Server(item("movie"))
     assert common.resolve_item_id(adapter(server), {"type": "movie", "title": "English title"}) is None
     assert not server.calls
+
+
+def test_standalone_cache_is_local_bounded_and_refreshes_next_run(monkeypatch):
+    log_run_id.set("")
+    now = [100.0]
+    monkeypatch.setattr(common.time, "monotonic", lambda: now[0])
+    server = Server(item("movie"))
+    ad = adapter(server, pair=None)
+    source = {"type": "movie", "ids": {"tmdb": "1"}}
+    for _ in range(3):
+        assert common.resolve_item_id(ad, source) == "movie"
+    assert len(server.calls) == 2
+    other = adapter(server, pair=None)
+    assert common.resolve_item_id(other, source) == "movie"
+    assert len(server.calls) == 4
+    server.rows.clear()
+    now[0] += 301
+    assert common.resolve_item_id(ad, source) is None
+    assert len(server.calls) == 6
+    server.rows["new"] = item("new")
+    log_run_id.set("new-run")
+    assert common.resolve_item_id(ad, source) == "new"
+
+
+@pytest.mark.parametrize("failure", ["http", "exception", "malformed"])
+def test_failed_batch_validation_retries_individually(failure):
+    server = Server(item("movie", changed=100))
+    ad = adapter(server)
+    source = {"type": "movie", "ids": {"tmdb": "1"}}
+    lookup.prepare(ad, "history", [source])
+    log_run_id.set("id-run-2")
+    original = server.get
+
+    def get(path, *, params):
+        if params.get("Ids"):
+            if failure == "exception":
+                raise RuntimeError("Batch unavailable")
+            return SimpleNamespace(status_code=500 if failure == "http" else 200, json=lambda: {})
+        return original(path, params=params)
+
+    server.get = get
+    lookup.prepare(ad, "history", [source])
+    assert common.resolve_item_id(ad, source) == "movie"
+    assert any(path == "/Items/movie" for path, _ in server.calls)
