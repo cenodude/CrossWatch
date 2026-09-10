@@ -8,8 +8,10 @@ import json
 import logging
 import re
 import sqlite3
+import threading
 import time
-from typing import Any
+from functools import wraps
+from typing import Any, Callable, ParamSpec, TypeVar
 
 from .db import get_conn
 from . import query as _query
@@ -17,6 +19,21 @@ from .scrobble_recorder import session_token
 from ..reason_labels import friendly_reason
 
 _LOG = logging.getLogger("crosswatch.event_archive")
+
+_GROUP_LOCK = threading.RLock()
+_PArgs = ParamSpec("_PArgs")
+_Result = TypeVar("_Result")
+
+
+def _serialized(fn: Callable[_PArgs, _Result]) -> Callable[_PArgs, _Result]:
+    @wraps(fn)
+    def wrapped(*args: _PArgs.args, **kwargs: _PArgs.kwargs) -> _Result:
+        # Include version checks and reads so a rebuild cannot invalidate the
+        # groups another request is currently assembling.
+        with _GROUP_LOCK:
+            return fn(*args, **kwargs)
+    return wrapped
+
 
 _GROUP_COLUMNS = (
     "id", "group_hash", "domain", "created_at", "updated_at", "first_event_at", "last_event_at",
@@ -576,38 +593,33 @@ def _persist_titles(conn: sqlite3.Connection, ids: list[int]) -> None:
             pass
 
 
+@_serialized
 def correlate(*, conn: sqlite3.Connection | None = None, reset: bool = False) -> dict[str, Any]:
     c = conn or get_conn()
     if c is None:
         return {"ok": False, "available": False, "grouped": 0}
-    if reset:
-        try:
-            with c:
-                c.execute("UPDATE events SET group_id=NULL")
-                c.execute("DELETE FROM event_groups")
-        except Exception as exc:
-            _LOG.warning("event correlation reset failed: %s", exc)
-    try:
-        rows = c.execute(
-            "SELECT id, event_hash, domain, event_type, feature, operation, item_key, title, season, episode, created_at, "
-            "source_kind, session_key, source_provider, source_instance, destination_provider, destination_instance, "
-            "pair_key, run_id FROM events WHERE group_id IS NULL"
-        ).fetchall()
-    except Exception as exc:
-        _LOG.warning("event correlation query failed: %s", exc)
-        return {"ok": False, "error": "internal_error", "grouped": 0}
-    if not rows:
-        return {"ok": True, "grouped": 0, "groups_touched": 0}
-
-    now = int(time.time())
-    all_ids = [int(r["id"]) for r in rows]
-    buckets: dict[str, list[int]] = {}
-    for r in rows:
-        buckets.setdefault(group_hash(r), []).append(int(r["id"]))
-
-    touched: set[int] = set()
     try:
         with c:
+            # Reset and replacement must commit together. On failure, retain
+            # the previous groups so the next request can retry the rebuild.
+            if reset:
+                c.execute("UPDATE events SET group_id=NULL")
+                c.execute("DELETE FROM event_groups")
+            rows = c.execute(
+                "SELECT id, event_hash, domain, event_type, feature, operation, item_key, title, season, episode, created_at, "
+                "source_kind, session_key, source_provider, source_instance, destination_provider, destination_instance, "
+                "pair_key, run_id FROM events WHERE group_id IS NULL"
+            ).fetchall()
+            if not rows:
+                return {"ok": True, "grouped": 0, "groups_touched": 0}
+
+            now = int(time.time())
+            all_ids = [int(r["id"]) for r in rows]
+            buckets: dict[str, list[int]] = {}
+            for r in rows:
+                buckets.setdefault(group_hash(r), []).append(int(r["id"]))
+
+            touched: set[int] = set()
             _persist_titles(c, all_ids)
             for gh, ids in buckets.items():
                 c.execute(
@@ -621,18 +633,21 @@ def correlate(*, conn: sqlite3.Connection | None = None, reset: bool = False) ->
             for gid in touched:
                 _recompute(c, gid, now)
     except Exception as exc:
-        _LOG.warning("event correlation failed: %s", exc)
+        _LOG.warning("event correlation failed: %s", exc, exc_info=True)
         return {"ok": False, "error": "internal_error", "grouped": 0}
     return {"ok": True, "grouped": len(rows), "groups_touched": len(touched)}
 
 
+@_serialized
 def _ensure_correlated(conn: sqlite3.Connection) -> None:
     try:
         appid = int(conn.execute("PRAGMA application_id").fetchone()[0] or 0)
     except Exception:
         appid = CORRELATION_VERSION
     if appid < CORRELATION_VERSION:
-        correlate(conn=conn, reset=True)
+        result = correlate(conn=conn, reset=True)
+        if not result.get("ok"):
+            return
         try:
             conn.execute(f"PRAGMA application_id={CORRELATION_VERSION}")
         except Exception:
@@ -671,6 +686,7 @@ _CATEGORY_STATUS = {
 }
 
 
+@_serialized
 def list_groups(
     *,
     q: str | None = None,
@@ -804,7 +820,7 @@ def list_groups(
             [*params, lim, off],
         ).fetchall()
     except Exception as exc:
-        _LOG.warning("group list failed: %s", exc)
+        _LOG.warning("group list failed: %s", exc, exc_info=True)
         return {"items": [], "total": 0, "limit": lim, "offset": off}
     return {"items": _with_reason_labels([dict(r) for r in rows]), "total": total, "limit": lim, "offset": off}
 
@@ -1080,6 +1096,7 @@ def _run_problem_status_counts_bulk(
     return out
 
 
+@_serialized
 def list_tree(*, order: str | None = "newest", limit: int = 50, offset: int = 0,
               include_children: bool = True, domain: str | None = None,
               conn: sqlite3.Connection | None = None, **filters: Any) -> dict[str, Any]:

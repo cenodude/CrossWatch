@@ -12,8 +12,9 @@ from pathlib import Path
 _LOG = logging.getLogger("crosswatch.local_db")
 
 _LOCK = threading.RLock()
-_CONN: sqlite3.Connection | None = None
-_CONN_PATH: str | None = None
+# A connection owns its transaction state. Sharing it between workers allows
+# one worker's commit/rollback to affect another worker's writes.
+_CONNECTIONS: dict[threading.Thread, tuple[str, sqlite3.Connection]] = {}
 
 
 class LocalDatabaseError(Exception):
@@ -107,43 +108,46 @@ def connect(
 
 
 def get_conn(base_path: str | os.PathLike[str] | None = None) -> sqlite3.Connection | None:
-    global _CONN, _CONN_PATH
     with _LOCK:
+        worker = threading.current_thread()
+        # Reap short-lived workers without relying on recycled thread IDs.
+        for owner in list(_CONNECTIONS):
+            if owner is not worker and not owner.is_alive():
+                _, stale = _CONNECTIONS.pop(owner)
+                try:
+                    stale.close()
+                except Exception:
+                    pass
         want = str(crosswatch_db_path(base_path))
-        if _CONN is not None and _CONN_PATH == want:
-            if want == ":memory:" or Path(want).exists():
-                return _CONN
+        cached = _CONNECTIONS.get(worker)
+        if cached is not None:
+            path, conn = cached
+            if path == want and (want == ":memory:" or Path(want).exists()):
+                return conn
             try:
-                _CONN.close()
+                conn.close()
             except Exception:
                 pass
-            _CONN = None
-            _CONN_PATH = None
-            _LOG.warning("local database file missing; recreating %s", want)
-        if _CONN is not None:
-            try:
-                _CONN.close()
-            except Exception:
-                pass
-            _CONN = None
-        try:
-            _CONN = connect(want, base_path=base_path)
-            _CONN_PATH = want
-            return _CONN
-        except Exception as exc:
-            _LOG.warning("local database unavailable: %s", exc)
-            _CONN = None
-            _CONN_PATH = None
-            return None
+            del _CONNECTIONS[worker]
+            if path == want:
+                _LOG.warning("local database file missing; recreating %s", want)
+    # Schema setup can wait for another worker's transaction. Do not hold the
+    # registry lock while waiting: that worker may need get_conn() to finish.
+    try:
+        conn = connect(want, base_path=base_path)
+        with _LOCK:
+            _CONNECTIONS[worker] = (want, conn)
+        return conn
+    except Exception as exc:
+        _LOG.warning("local database unavailable: %s", exc)
+        return None
 
 
 def close_conn() -> None:
-    global _CONN, _CONN_PATH
     with _LOCK:
-        if _CONN is not None:
+        for _, conn in _CONNECTIONS.values():
             try:
-                _CONN.close()
+                conn.close()
             except Exception:
                 pass
-        _CONN = None
-        _CONN_PATH = None
+        _CONNECTIONS.clear()
