@@ -4,7 +4,9 @@
 from __future__ import annotations
 from typing import Any, Iterable, Mapping, Sequence
 from datetime import datetime
+from hashlib import sha256
 from pathlib import Path
+from threading import local
 import json
 import os
 import re
@@ -12,6 +14,7 @@ import shutil
 import time
 from cw_platform.anime_mapping.service import mapped_or_default_media_type
 from cw_platform.id_map import minimal as id_minimal, canonical_key
+from cw_platform.log_context import log_run_id
 from .._log import log as cw_log
 
 _STATE_DIR = Path("/config/.cw_state")
@@ -67,8 +70,8 @@ _BAD_NUM = re.compile(r"^\d{13,}$")
 
 CfgLike = Mapping[str, Any] | object
 
-# Adapter-scoped provider-index cache
-_PROVIDER_INDEX_CACHE: dict[tuple[Any, ...], tuple[float, dict[str, list[dict[str, Any]]]]] = {}
+# One shared index per sync thread; standalone calls cache on their adapter.
+_RUN_PROVIDER_INDEX = local()
 
 
 def _debug_level() -> str:
@@ -686,6 +689,8 @@ def build_provider_index(adapter: Any, *, feature: str | None = None) -> dict[st
         if parent_id:
             params["ParentId"] = parent_id
         r = http.get(f"/Users/{uid}/Items", params=params)
+        if getattr(r, "status_code", 0) != 200:
+            raise RuntimeError(f"emby_provider_index_http_{getattr(r, 'status_code', 0)}")
         body = r.json() or {}
         items = body.get("Items") or []
         signature = tuple(str(row.get("Id") or "") for row in items if isinstance(row, Mapping))
@@ -735,23 +740,50 @@ def build_provider_index(adapter: Any, *, feature: str | None = None) -> dict[st
     return out
 
 
+def _provider_index_context(adapter: Any, feature: str) -> tuple[tuple[Any, ...], bool]:
+    # CW_RUN_ID can remain in the environment after a run; use its context ID.
+    run_id = log_run_id.get()
+    cfg = adapter.cfg
+    server = str(getattr(cfg, "server", "") or "")
+    user = str(getattr(cfg, "user_id", "") or "")
+    credential = sha256(str(getattr(cfg, "access_token", "") or "").encode()).digest()
+    pair_scope = _pair_scope()
+    key = (run_id, server, user, credential, pair_scope, feature, tuple(sorted(emby_selected_library_ids(cfg, feature))))
+    share = bool(run_id and server and user and pair_scope and pair_scope.lower() not in {"unscoped", "default", "none"})
+    return key, share
+
+
 def provider_index(adapter: Any, *, ttl_sec: int = 300, force_refresh: bool = False, feature: str = "history") -> dict[str, list[dict[str, Any]]]:
-    key = (id(adapter), scope_safe(), feature, tuple(sorted(emby_selected_library_ids(adapter.cfg, feature))))
-    now = time.time()
     if not force_refresh:
-        hit = _PROVIDER_INDEX_CACHE.get(key)
-        if hit and (now - hit[0]) < max(1, int(ttl_sec)):
-            return hit[1]
+        cached = _cached_provider_index(adapter, feature, ttl_sec=ttl_sec)
+        if cached is not None:
+            return cached
+    key, share = _provider_index_context(adapter, feature)
+    adapter._provider_index_cache = None
+    _RUN_PROVIDER_INDEX.entry = None
     idx = build_provider_index(adapter) if feature == "history" else build_provider_index(adapter, feature=feature)
-    _PROVIDER_INDEX_CACHE[key] = (now, idx)
+    entry = (key, time.monotonic(), idx)
+    adapter._provider_index_cache = entry
+    if share:
+        _RUN_PROVIDER_INDEX.entry = entry
     return idx
 
 
 def _cached_provider_index(adapter: Any, feature: str, *, ttl_sec: int = 300) -> dict[str, list[dict[str, Any]]] | None:
-    key = (id(adapter), scope_safe(), feature, tuple(sorted(emby_selected_library_ids(adapter.cfg, feature))))
-    hit = _PROVIDER_INDEX_CACHE.get(key)
-    if hit and (time.time() - hit[0]) < max(1, int(ttl_sec)):
-        return hit[1]
+    key, share = _provider_index_context(adapter, feature)
+    if not share:
+        _RUN_PROVIDER_INDEX.entry = None
+    shared = getattr(_RUN_PROVIDER_INDEX, "entry", None) if share else None
+    if shared is not None and shared[0] == key:
+        if getattr(adapter, "_provider_index_cache", None) is not shared:
+            cw_log("EMBY", "common", "debug", "index_cache_hit", source="run", count=len(shared[2]))
+        adapter._provider_index_cache = shared
+        return shared[2]
+    hit = getattr(adapter, "_provider_index_cache", None)
+    # Active syncs reuse the index for the entire run. Standalone adapters keep
+    # the existing TTL, without retaining them in a process-wide ID cache.
+    if hit is not None and hit[0] == key and (share or time.monotonic() - hit[1] < max(1, int(ttl_sec))):
+        return hit[2]
     return None
 
 
@@ -2074,6 +2106,9 @@ def resolve_item_ids(adapter: Any, it: Mapping[str, Any], *, feature: str = "his
         return []
 
     one = resolve_item_id(adapter, it, feature=feature)
+    # A resolved episode/show needs no movie/series index expansion.
+    if one and _lookup_type(it) != "movie":
+        return [str(one)]
     selected_libs = emby_selected_library_ids(adapter.cfg, feature)
 
     ids = dict(it.get("ids") or {})
@@ -2098,7 +2133,7 @@ def resolve_item_ids(adapter: Any, it: Mapping[str, Any], *, feature: str = "his
             if p not in pairs:
                 pairs.append(p)
 
-    idx = build_provider_index(adapter) if feature == "history" else build_provider_index(adapter, feature=feature)
+    idx = provider_index(adapter, feature=feature)
 
     def _valid(iid: Any) -> str | None:
         s = str(iid or "").strip()
