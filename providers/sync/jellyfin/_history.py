@@ -633,14 +633,22 @@ def build_index(
             params["ParentId"] = current_parent
 
         r = http.get(items_route(), params=user_params(uid, params))
-        body = r.json() or {}
-        rows = body.get("Items") or []
+        if getattr(r, "status_code", 0) != 200:
+            raise RuntimeError(f"jellyfin_history_http_{getattr(r, 'status_code', 0)}")
+        try:
+            body = r.json()
+        except Exception as exc:
+            raise ValueError("jellyfin_history_invalid_response") from exc
+        if not isinstance(body, Mapping) or not isinstance(body.get("Items"), list):
+            raise ValueError("jellyfin_history_invalid_response")
+        rows = body["Items"]
+        if any(not isinstance(row, Mapping) or not row.get("Id") for row in rows):
+            raise ValueError("jellyfin_history_invalid_row")
         raw_count = len(rows)
         signature = tuple(str(row.get("Id") or "") for row in rows if isinstance(row, Mapping))
         if rows and signature in seen_pages:
             _warn("pagination_repeated_page", source_library_id=current_parent, start_index=start)
-            rows = []
-            raw_count = 0
+            raise RuntimeError("jellyfin_history_repeated_page")
         seen_pages.add(signature)
         page += 1
         took_ms = int((time.monotonic() - t0) * 1000)

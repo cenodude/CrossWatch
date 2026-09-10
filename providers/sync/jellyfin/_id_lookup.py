@@ -222,8 +222,6 @@ def prepare(adapter: Any, feature: str, items: Any) -> None:
                       and str(row["Id"]) not in catalogue["validated"]})
     for offset in range(0, len(pending), 100):
         batch = pending[offset:offset + 100]
-        # Missing/deleted items and failed reads must not become assumed matches.
-        catalogue["validated"].update({iid: {} for iid in batch})
         try:
             response = adapter.client.get("/Items", params={
                 "userId": adapter.cfg.user_id, "Ids": ",".join(batch), "Fields": _FIELDS,
@@ -235,8 +233,11 @@ def prepare(adapter: Any, feature: str, items: Any) -> None:
             rows = body.get("Items") if isinstance(body, dict) else None
             if not isinstance(rows, list):
                 continue
+            if any(not isinstance(row, dict) or str(row.get("Id")) not in batch for row in rows):
+                continue
+            validated = {iid: {} for iid in batch}
             for row in rows:
-                if isinstance(row, dict) and str(row.get("Id")) in batch:
-                    catalogue["validated"][str(row["Id"])] = row
+                validated[str(row["Id"])] = row
+            catalogue["validated"].update(validated)
         except Exception as exc:
             common._dbg("identity_validation_failed", lookup_feature=feature, error_type=type(exc).__name__)
