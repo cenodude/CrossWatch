@@ -114,6 +114,8 @@ def test_crosswatch_watcher_sink_writes_progress_and_history(monkeypatch, tmp_pa
     history_item = ops.added[-1]["items"][0]
     assert progress_item["type"] == "episode"
     assert progress_item["show_ids"] == {"tmdb": "124800"}
+    assert progress_item["ids"] == {"tvdb": "9621656"}
+    assert history_item["ids"] == {"tvdb": "9621656"}
     assert progress_item["season"] == 1
     assert progress_item["episode"] == 7
     assert progress_item["progress_percent"] == 12.0

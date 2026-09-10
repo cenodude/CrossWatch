@@ -3,10 +3,11 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 from typing import Any, Dict, List, Optional
+from collections import deque
 from collections.abc import AsyncIterator
 
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, quote
@@ -747,6 +748,9 @@ WATCH_LOG_DEFAULT_TAGS = [
     "SIMKL-SCROBBLE",
     "MDBLIST-SCROBBLE",
 ]
+WATCH_LOG_BUFFER: deque[tuple[int, str, str]] = deque(maxlen=MAX_LOG_LINES * len(WATCH_LOG_TAGS))
+WATCH_LOG_LOCK = threading.Lock()
+WATCH_LOG_NEXT_SEQ = 1
 
 ANSI_RE    = re.compile(r"\x1b\[([0-9;]*)m")
 ANSI_STRIP = re.compile(r"\x1b\[[0-9;]*m")
@@ -873,12 +877,18 @@ def ansi_to_html(line: str) -> str:
     return "".join(out)
 
 def _append_log_to_buffer(tag: str, raw_line: str) -> None:
+    global WATCH_LOG_NEXT_SEQ
     t = _norm_log_tag(tag)
     safe_line = _redact_secrets_in_text(raw_line)
     if t in {"SYNC", DIAG_LOG_TAG} or t in WATCH_LOG_TAGS:
         from services.log_archive import capture
         capture(t, safe_line, watcher=t in WATCH_LOG_TAGS)
     html = ansi_to_html(safe_line.rstrip("\n"))
+    if t in WATCH_LOG_TAGS:
+        with WATCH_LOG_LOCK:
+            stamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+            WATCH_LOG_BUFFER.append((WATCH_LOG_NEXT_SEQ, t, f"[{stamp}] {html}"))
+            WATCH_LOG_NEXT_SEQ += 1
     buf = _get_log_buf(t)
     buf.append(html)
     LOG_NEXT_SEQ[t] = int(LOG_NEXT_SEQ.get(t, 1)) + 1
@@ -1215,6 +1225,24 @@ async def api_logs_stream_initial(
         },
     )
 
+def _watch_log_snapshot(tags: List[str], after: int, limit: int | None) -> tuple[int, list[tuple[int, str, str]]]:
+    with WATCH_LOG_LOCK:
+        latest = WATCH_LOG_NEXT_SEQ - 1
+        rows = list(WATCH_LOG_BUFFER)
+    selected: list[tuple[int, str, str]] = []
+    counts: dict[str, int] = {}
+    for row in reversed(rows):
+        seq, tag, _line = row
+        if seq <= after:
+            break
+        if tag not in tags or (limit and counts.get(tag, 0) >= limit):
+            continue
+        counts[tag] = counts.get(tag, 0) + 1
+        selected.append(row)
+    selected.reverse()
+    return latest, selected
+
+
 @app.get("/api/logs/watcher", tags=["logging"])
 async def api_logs_watcher(
     request: Request,
@@ -1233,45 +1261,22 @@ async def api_logs_watcher(
     tags_sel = _watch_log_selection(tags)
 
     async def agen():
-        last_seq: Dict[str, int] = {}
-
-        for t in tags_sel:
-            buf = _get_log_buf(t)
-            if not skip_backlog:
-                start = max(0, len(buf) - int(tail))
-                for line in buf[start:]:
-                    safe = _log_stream_text(line, plain)
-                    yield f"event: {t}\ndata: {safe}\n\n"
-            base = int(LOG_BASE_SEQ.get(t, int(LOG_NEXT_SEQ.get(t, 1))))
-            last_seq[t] = base + len(buf) - 1
+        last_seq, rows = _watch_log_snapshot(tags_sel, 0, int(tail))
+        if not skip_backlog:
+            for _seq, tag, line in rows:
+                safe = _log_stream_text(line, plain)
+                yield f"event: {tag}\ndata: {safe}\n\n"
 
         last = time.time()
         while True:
             if await request.is_disconnected():
                 break
 
-            for t in tags_sel:
-                buf = _get_log_buf(t)
-                base = int(LOG_BASE_SEQ.get(t, int(LOG_NEXT_SEQ.get(t, 1))))
-                seen = int(last_seq.get(t, base - 1))
-                if seen < base - 1:
-                    seen = base - 1
-                start_seq = max(seen + 1, base)
-                start_idx = int(start_seq - base)
-                if start_idx < 0:
-                    start_idx = 0
-                if max_backlog:
-                    backlog = len(buf) - start_idx
-                    if backlog > max_backlog:
-                        start_idx = max(0, len(buf) - int(max_backlog))
-                        seen = base + start_idx - 1
-                for i in range(start_idx, len(buf)):
-                    line = buf[i]
-                    safe = _log_stream_text(line, plain)
-                    yield f"event: {t}\ndata: {safe}\n\n"
-                    last = time.time()
-                    seen = base + i
-                last_seq[t] = seen
+            last_seq, rows = _watch_log_snapshot(tags_sel, last_seq, max_backlog)
+            for _seq, tag, line in rows:
+                safe = _log_stream_text(line, plain)
+                yield f"event: {tag}\ndata: {safe}\n\n"
+                last = time.time()
 
             if time.time() - last > 15:
                 yield "event: ping\ndata: 1\n\n"

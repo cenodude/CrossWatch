@@ -2,7 +2,7 @@
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const label = (v) => ({ plex: "Plex", jellyfin: "Jellyfin", emby: "Emby", kodi: "Kodi", trakt: "Trakt", simkl: "SIMKL", mdblist: "MDBList", crosswatch: "CrossWatch", floppy: "Floppy", punchplay: "PunchPlay", bingebase: "BingeBase", flicklist: "FlickList", scrob: "Scrob" }[String(v || "").toLowerCase()] || String(v || "").toUpperCase());
 const sources = ["plex", "jellyfin", "emby", "kodi", "scrob"];
-const sinks = ["crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "bingebase", "flicklist", "scrob"];
+const sinks = ["plex", "jellyfin", "emby", "kodi", "crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "bingebase", "flicklist", "scrob"];
 const ratingSinks = ["crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "flicklist", "scrob"];
 
 function flashCopied(btn) {
@@ -89,9 +89,9 @@ function allSourceProfiles(provider) {
   return (group?.profiles || []).filter((x) => x.eligible);
 }
 
-function allSinkProfiles(sink) {
+function allSinkProfiles(sink, source = draft?.provider || "", instance = draft?.provider_instance || "default") {
   const group = (props.overview?.destination_availability || []).find((x) => x.provider === sink);
-  return (group?.profiles || []).filter((x) => x.configured);
+  return (group?.profiles || []).filter((x) => x.configured && !(sink === source && normInst(x.instance) === normInst(instance)));
 }
 
 function sourceProviders(selected = "") {
@@ -100,11 +100,11 @@ function sourceProviders(selected = "") {
   return current && sources.includes(current) && !available.includes(current) ? [current, ...available] : available;
 }
 
-function sinkProviders(selected = "", source = "") {
+function sinkProviders(selected = "", source = "", instance = draft?.provider_instance || "default") {
   const self = String(source || "").toLowerCase();
-  const available = sinks.filter((p) => p !== self && allSinkProfiles(p).length);
+  const available = sinks.filter((p) => allSinkProfiles(p, self, instance).length);
   const current = String(selected || "").toLowerCase();
-  if (current === self) return available;
+  if (current === self && !allSinkProfiles(current, self, instance).length) return available;
   return current && sinks.includes(current) && !available.includes(current) ? [current, ...available] : available;
 }
 
@@ -128,14 +128,15 @@ function nextId() {
 
 function defaultRoute() {
   const srcProvider = sourceProviders()[0] || "";
-  const sink = sinkProviders("", srcProvider)[0] || "";
+  const srcInstance = allSourceProfiles(srcProvider)[0]?.instance || "";
+  const sink = sinkProviders("", srcProvider, srcInstance)[0] || "";
   return {
     id: nextId(),
     enabled: true,
     provider: srcProvider,
-    provider_instance: allSourceProfiles(srcProvider)[0]?.instance || "",
+    provider_instance: srcInstance,
     sink,
-    sink_instance: allSinkProfiles(sink)[0]?.instance || "",
+    sink_instance: allSinkProfiles(sink, srcProvider, srcInstance)[0]?.instance || "",
     filters: {},
     options: { auto_remove_watchlist: "inherit", ratings: { mode: "off", targets: [] }, scrobble: {}, watch: {} },
   };
@@ -668,6 +669,10 @@ function busy(flag) {
 async function save(regenerate = false) {
   if (saving) return;
   syncDraftFromDom();
+  if (draft.provider === draft.sink && normInst(draft.provider_instance) === normInst(draft.sink_instance)) {
+    render([{ message: "Source and destination must use different providers or profiles" }]);
+    return;
+  }
   if (duplicateRoute(ensureDraft())) {
     render();
     return;
@@ -863,7 +868,7 @@ export async function mount(shell, incoming = {}) {
       syncDraftFromDom();
       if (e.target.id === "scr-provider") {
         draft.provider_instance = allSourceProfiles(draft.provider)[0]?.instance || "";
-        if (draft.sink === draft.provider) draft.sink = sinkProviders("", draft.provider)[0] || "";
+        if (!allSinkProfiles(draft.sink).length) draft.sink = sinkProviders("", draft.provider)[0] || "";
         draft.sink_instance = allSinkProfiles(draft.sink)[0]?.instance || "";
         const keptTargets = (draft.options.ratings?.targets || []).filter((t) => t !== draft.provider);
         if (draft.options.ratings) draft.options.ratings.targets = keptTargets;
@@ -879,6 +884,10 @@ export async function mount(shell, incoming = {}) {
     if (["scr-provider-instance", "scr-sink-instance", "scr-ratings-mode"].includes(e.target.id)) {
       const keepTab = currentActiveTab();
       syncDraftFromDom();
+      if (e.target.id === "scr-provider-instance" && draft.provider === draft.sink) {
+        if (!allSinkProfiles(draft.sink).length) draft.sink = sinkProviders("", draft.provider)[0] || "";
+        if (!allSinkProfiles(draft.sink).some((p) => normInst(p.instance) === normInst(draft.sink_instance))) draft.sink_instance = allSinkProfiles(draft.sink)[0]?.instance || "";
+      }
       render();
       preserveVisiblePanel(keepTab);
       return;

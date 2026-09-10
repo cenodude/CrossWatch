@@ -1,7 +1,7 @@
 /* CrossWatch - Scrobbler Webhook Modal */
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const label = (v) => window.CW?.ProviderMeta?.label?.(v) || ({ plex: "Plex", jellyfin: "Jellyfin", emby: "Emby", trakt: "Trakt", simkl: "SIMKL", mdblist: "MDBList", crosswatch: "CrossWatch", floppy: "Floppy", punchplay: "PunchPlay", bingebase: "BingeBase", flicklist: "FlickList", scrob: "Scrob" }[String(v || "").toLowerCase()] || String(v || "").toUpperCase());
-const sinks = ["crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "bingebase", "flicklist", "scrob"];
+const sinks = ["plex", "jellyfin", "emby", "kodi", "crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "bingebase", "flicklist", "scrob"];
 const ratingSinks = ["crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "flicklist", "scrob"];
 const webhookSources = new Set(["plex", "jellyfin", "emby"]);
 const animeMappingSinks = new Set(["crosswatch", "simkl"]);
@@ -91,7 +91,8 @@ function allProfiles() {
 
 function sinkProfiles(sink) {
   const group = (props.overview?.destination_availability || []).find((x) => x.provider === sink);
-  return (group?.profiles || []).filter((x) => x.configured);
+  const source = selectedWebhook();
+  return (group?.profiles || []).filter((x) => x.configured && !(sink === source.provider && normInst(x.instance) === normInst(source.provider_instance)));
 }
 
 function selectedWebhook() {
@@ -352,8 +353,7 @@ function sourceProviderKey() {
 }
 
 function availableSinks() {
-  const self = sourceProviderKey();
-  return sinks.filter((s) => s !== self && sinkProfiles(s).length > 0);
+  return sinks.filter((s) => sinkProfiles(s).length > 0);
 }
 
 function availableRatingSinks() {
@@ -379,7 +379,7 @@ function selectedSinkKey() {
 
 function selectedSinkInstance(sink) {
   const cur = selectedWebhook();
-  if (String(cur.sink || "").toLowerCase() === sink && cur.sink_instance) return String(cur.sink_instance);
+  if (String(cur.sink || "").toLowerCase() === sink && sinkProfiles(sink).some((p) => normInst(p.instance) === normInst(cur.sink_instance))) return String(cur.sink_instance);
   return String(sinkProfiles(sink)[0]?.instance || "");
 }
 

@@ -227,7 +227,7 @@
             <span class="sc2-logo sc2-add-logo"><span class="material-symbols-rounded">add</span></span>
             <div class="sc2-route-add-copy">
               <strong>Add watcher route</strong>
-              <span>Create a new source to tracker route.</span>
+              <span>Create a new source to destination route.</span>
             </div>
             <span class="material-symbols-rounded sc2-route-add-arrow">arrow_forward</span>
           </button>
