@@ -247,6 +247,59 @@ def test_media_server_episode_show_ids_and_specials(media_server):
     assert http.rows["ep"]["UserData"]["Played"] and not http.rows["show"]["UserData"]["Played"]
 
 
+@pytest.mark.parametrize("season", [0, 1])
+@pytest.mark.parametrize("action,progress", [("start", 20), ("stop", 95)])
+def test_episode_conflict_matches_verified_show_and_coordinates(media_server, season, action, progress):
+    provider, cls, http, _ = media_server
+    http.rows = {"show": row("show", "Series", {"Tmdb": "42", "Tvdb": "43"}),
+                 "ep": row("ep", "Episode", {"Imdb": "tt0000999", "Tvdb": "456"},
+                           SeriesId="show", ParentIndexNumber=season, IndexNumber=2)}
+    ev = event(action=action, progress=progress, media_type="episode", season=season, number=2,
+               ids={"imdb": "tt0000111", "tvdb": "456", "tmdb_show": "42", "tvdb_show": "43"})
+    assert cls().send(ev, config(provider))["ok"]
+    assert bool(http.rows["ep"]["UserData"]["Played"]) == (action == "stop")
+    assert not http.rows["show"]["UserData"]["Played"]
+    assert any(c[0] == "POST" for c in http.calls)
+
+
+@pytest.mark.parametrize("case", ["different_show", "conflicting_show_id", "wrong_season", "wrong_episode",
+                                  "no_show_ids", "missing_coordinates", "not_a_show", "library", "ambiguous"])
+def test_episode_conflict_fallback_still_rejects_invalid_matches(media_server, case):
+    provider, cls, http, _ = media_server
+    cfg = config(provider)
+    ids = {"imdb": "tt0000111", "tvdb": "456", "tmdb_show": "42", "tvdb_show": "43"}
+    http.rows = {"show": row("show", "Series", {"Tmdb": "42", "Tvdb": "43"}),
+                 "ep": row("ep", "Episode", {"Imdb": "tt0000999", "Tvdb": "456"},
+                           SeriesId="show", ParentIndexNumber=1, IndexNumber=2)}
+    if case == "different_show":
+        http.rows["show"]["ProviderIds"] = {"Tmdb": "999"}
+    elif case == "conflicting_show_id":
+        http.rows["show"]["ProviderIds"]["Tvdb"] = "999"
+    elif case == "wrong_season":
+        http.rows["ep"]["ParentIndexNumber"] = 2
+    elif case == "wrong_episode":
+        http.rows["ep"]["IndexNumber"] = 3
+    elif case == "no_show_ids":
+        ids = {"imdb": "tt0000111", "tvdb": "456"}
+    elif case == "not_a_show":
+        http.rows["show"]["Type"] = "Movie"
+    elif case == "library":
+        cfg[provider]["history"] = {"libraries": ["other"]}
+    elif case == "ambiguous":
+        http.rows["ep2"] = {**copy.deepcopy(http.rows["ep"]), "Id": "ep2"}
+    ev = event(media_type="episode", ids=ids, season=None if case == "missing_coordinates" else 1, number=2)
+    assert not cls().send(ev, cfg)["ok"]
+    assert not any(c[0] == "POST" for c in http.calls)
+
+
+def test_direct_episode_id_match_allows_different_numbering(media_server):
+    provider, cls, http, _ = media_server
+    http.rows = {"ep": row("ep", "Episode", {"Tmdb": "123"}, ParentIndexNumber=2, IndexNumber=3)}
+    ev = event(media_type="episode", ids={"tmdb": "123"}, season=1, number=2)
+    assert cls().send(ev, config(provider))["ok"]
+    assert http.rows["ep"]["UserData"]["Played"]
+
+
 def test_media_server_id_only_lookup_catalog_is_reused(media_server):
     provider, cls, http, _ = media_server
     if provider == "emby":
@@ -464,6 +517,50 @@ def test_kodi_episode_show_ids_and_specials(kodi):
     ev = event(media_type="episode", ids={"tmdb_show": "42", "tmdb": "42"}, season=0, number=1)
     assert cls().send(ev, config("kodi"))["ok"]
     assert client.rows["episode:20"]["playcount"] == 1 and client.rows["show:30"]["playcount"] == 0
+
+
+@pytest.mark.parametrize("season", [0, 1])
+@pytest.mark.parametrize("action,progress", [("start", 20), ("stop", 95)])
+def test_kodi_episode_conflict_accepts_verified_show_and_coordinates(kodi, season, action, progress):
+    cls, client, _ = kodi
+    client.rows = {"show:30": kodi_row(30, "show"),
+                   "episode:20": kodi_row(20, "episode", uniqueid={"imdb": "tt0000999", "tvdb": "456"}, tvshowid=30, season=season, episode=2)}
+    ev = event(action=action, progress=progress, media_type="episode", ids={"imdb": "tt0000111", "tvdb": "456", "tmdb_show": "42"}, season=season, number=2)
+    assert cls().send(ev, config("kodi"))["ok"]
+    assert client.rows["episode:20"]["playcount"] == (1 if action == "stop" else 0)
+    assert client.rows["show:30"]["playcount"] == 0
+    assert any(c[0].startswith("VideoLibrary.Set") for c in client.calls)
+
+
+@pytest.mark.parametrize("case", ["show", "season", "episode", "missing_show", "missing_coordinates", "library", "ambiguous"])
+def test_kodi_episode_conflict_fallback_rejects_invalid_matches(kodi, case):
+    cls, client, _ = kodi
+    cfg = config("kodi")
+    ids = {"imdb": "tt0000111", "tvdb": "456", "tmdb_show": "42", "tvdb_show": "43"}
+    client.rows = {"show:30": kodi_row(30, "show", uniqueid={"tmdb": "42", "tvdb": "43"}),
+                   "episode:20": kodi_row(20, "episode", uniqueid={"imdb": "tt0000999", "tvdb": "456"}, tvshowid=30, season=1, episode=2)}
+    if case == "show":
+        client.rows["show:30"]["uniqueid"]["tvdb"] = "999"
+    elif case == "season":
+        client.rows["episode:20"]["season"] = 2
+    elif case == "episode":
+        client.rows["episode:20"]["episode"] = 3
+    elif case == "missing_show":
+        ids = {"imdb": "tt0000111", "tvdb": "456"}
+    elif case == "library":
+        cfg["kodi"]["history"] = {"libraries": ["/somewhere/else"]}
+    elif case == "ambiguous":
+        client.rows["episode:21"] = {**copy.deepcopy(client.rows["episode:20"]), "episodeid": 21}
+    ev = event(media_type="episode", ids=ids, season=None if case == "missing_coordinates" else 1, number=2)
+    assert not cls().send(ev, cfg)["ok"]
+    assert not any(c[0].startswith("VideoLibrary.Set") for c in client.calls)
+
+
+def test_kodi_direct_episode_id_keeps_different_numbering_support(kodi):
+    cls, client, _ = kodi
+    client.rows = {"episode:20": kodi_row(20, "episode", uniqueid={"tmdb": "100"}, season=2, episode=3)}
+    assert cls().send(event(media_type="episode", ids={"tmdb": "100"}, season=1, number=2), config("kodi"))["ok"]
+    assert client.rows["episode:20"]["playcount"] == 1
 
 
 def test_kodi_id_only_catalog_reused_and_isolated_by_current_profile(kodi):

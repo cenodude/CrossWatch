@@ -228,6 +228,58 @@ def test_episode_matches_show_ids_and_coordinates(harness):
     assert episode.viewCount == 1 and show.viewCount == 0
 
 
+@pytest.mark.parametrize("season", [0, 1])
+@pytest.mark.parametrize("action,progress", [("start", 20), ("stop", 95)])
+def test_episode_conflicting_id_accepts_verified_show_and_coordinates(harness, season, action, progress):
+    server, _, _ = harness
+    episode = media("20", "episode", {"imdb": "tt0000999", "tvdb": "456"}, parentIndex=season, index=2, grandparentRatingKey="30")
+    show = media("30", "show", {"tmdb": "42"}, episodes=lambda **kw: [episode])
+    server.items = {"20": episode, "30": show}
+    ev = event(action=action, progress=progress, media_type="episode", ids={"imdb": "tt0000111", "tvdb": "456", "tmdb_show": "42"}, season=season, number=2)
+    assert plex.PlexSink().send(ev, config())["ok"]
+    assert episode.viewCount == (1 if action == "stop" else 0)
+    assert show.viewCount == 0
+    assert any(call[1] for call in server.calls)
+
+
+@pytest.mark.parametrize("case", ["show", "season", "episode", "missing_show", "missing_coordinates", "parent_type", "library", "ambiguous"])
+def test_episode_conflicting_id_fallback_rejects_invalid_matches(harness, case):
+    server, _, _ = harness
+    episode = media("20", "episode", {"imdb": "tt0000999", "tvdb": "456"}, parentIndex=1, index=2, grandparentRatingKey="30")
+    show = media("30", "show", {"tmdb": "42", "tvdb": "43"}, episodes=lambda **kw: [episode])
+    server.items = {"20": episode, "30": show}
+    cfg = config()
+    ids = {"imdb": "tt0000111", "tvdb": "456", "tmdb_show": "42", "tvdb_show": "43"}
+    if case == "show":
+        show.guids = [SimpleNamespace(id="tmdb://42"), SimpleNamespace(id="tvdb://999")]
+    elif case == "season":
+        episode.parentIndex = 2
+    elif case == "episode":
+        episode.index = 3
+    elif case == "missing_show":
+        ids = {"imdb": "tt0000111", "tvdb": "456"}
+    elif case == "parent_type":
+        show.type = "movie"
+    elif case == "library":
+        cfg["plex"]["history"] = {"libraries": [2]}
+    elif case == "ambiguous":
+        duplicate = copy.deepcopy(episode)
+        duplicate.ratingKey = "21"
+        server.items["21"] = duplicate
+        show.episodes = lambda **kw: [episode, duplicate]
+    ev = event(media_type="episode", ids=ids, season=None if case == "missing_coordinates" else 1, number=2)
+    assert not plex.PlexSink().send(ev, cfg)["ok"]
+    assert not any(call[1] for call in server.calls)
+
+
+def test_direct_episode_id_keeps_different_numbering_support(harness):
+    server, _, _ = harness
+    episode = media("20", "episode", {"tmdb": "100"}, parentIndex=2, index=3)
+    server.items = {"20": episode}
+    assert plex.PlexSink().send(event(media_type="episode", ids={"tmdb": "100"}, season=1, number=2), config())["ok"]
+    assert episode.viewCount == 1
+
+
 def test_duplicate_episode_coordinates_are_rejected(harness):
     server, _, _ = harness
     episodes = [media(key, "episode", {"tmdb": "100"}, parentIndex=1, index=2, grandparentRatingKey="30") for key in ("20", "21")]

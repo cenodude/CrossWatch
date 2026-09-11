@@ -91,15 +91,14 @@ class JellyfinEmbySink(MediaServerSink):
         if str(row.get("Type") or "").lower() != item["type"] or not self._in_scope(adapter, row, allowed):
             return False
         own, wanted = _ids(row), item.get("ids") or {}
-        if any(wanted[k] != own[k] for k in set(wanted) & set(own)):
-            return False
         if ids_match(wanted, own):
             return True
         show_ids = item.get("show_ids") or {}
         if (item["type"] != "episode" or not show_ids or item.get("season") is None or item.get("episode") is None
                 or row.get("ParentIndexNumber") != item["season"] or row.get("IndexNumber") != item["episode"] or not row.get("SeriesId")):
             return False
-        return ids_match(show_ids, _ids(self._fetch(adapter, str(row["SeriesId"]))))
+        show = self._fetch(adapter, str(row["SeriesId"]))
+        return show.get("Type") == "Series" and ids_match(show_ids, _ids(show))
 
     def _resolve(self, adapter: Any, item: dict, allowed: set[str]) -> dict:
         candidates: dict[str, dict] = {}

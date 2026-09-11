@@ -25,8 +25,6 @@ def _matches(server: Any, obj: Any, item: Mapping[str, Any], allowed: set[str]) 
         return False
     own = _object_ids(obj)
     wanted = item.get("ids") or {}
-    if any(str(wanted[k]) != str(own[k]) for k in set(wanted) & set(own)):
-        return False
     if item["type"] == "movie":
         return _id_match(wanted, own)
     if _id_match(wanted, own):
@@ -37,7 +35,10 @@ def _matches(server: Any, obj: Any, item: Mapping[str, Any], allowed: set[str]) 
     if getattr(obj, "parentIndex", None) != item["season"] or getattr(obj, "index", None) != item["episode"]:
         return False
     parent = getattr(obj, "grandparentRatingKey", None)
-    return bool(parent and _id_match(show_ids, _object_ids(server.fetchItem(int(parent)))))
+    if not parent:
+        return False
+    show = server.fetchItem(int(parent))
+    return getattr(show, "type", "") == "show" and _id_match(show_ids, _object_ids(show))
 
 
 def _resolve(adapter: Any, item: Mapping[str, Any], allowed: set[str]) -> Any:
