@@ -114,6 +114,10 @@ html[data-cw-theme="flat-light"] .cw-maint select { color-scheme:light; }
 .cw-maint .group-copy strong { font-size:14px; color:var(--maint-text); }
 .cw-maint .group-copy>span { font-size:12px; line-height:1.4; }
 .cw-maint .group-count { font-size:12px; padding:5px 12px; border:1px solid var(--maint-border); border-radius:20px; white-space:nowrap; }
+.cw-maint .group-run-btn { padding:6px 12px; gap:4px; border-radius:20px; font-size:12px; font-weight:650; color:var(--maint-accent); border-color:color-mix(in srgb,var(--maint-accent) 35%,transparent); background:color-mix(in srgb,var(--maint-accent) 10%,transparent); flex-shrink:0; }
+.cw-maint .group-run-btn .material-symbols-rounded { font-size:18px; }
+.cw-maint .group-run-btn:hover:not(:disabled) { background:color-mix(in srgb,var(--maint-accent) 20%,transparent); }
+@media(max-width:480px) { .cw-maint .maint-group summary { gap:8px; padding:10px; } .cw-maint .group-count { padding:4px 7px; font-size:11px; } .cw-maint .group-run-btn { padding:6px 8px; } }
 .cw-maint .maint-group summary>.material-symbols-rounded { font-size:20px; transition:transform .15s; }
 .cw-maint .maint-group[open] summary>.material-symbols-rounded { transform:rotate(180deg); }
 .cw-maint .maint-task { display:flex; align-items:center; gap:16px; padding:16px; border-top:1px solid var(--maint-border); }
