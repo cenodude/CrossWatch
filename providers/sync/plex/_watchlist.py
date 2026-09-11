@@ -509,9 +509,16 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
             )
     
             mc = (cont or {}).get("MediaContainer") if isinstance(cont, Mapping) else None
+            if not isinstance(mc, Mapping):
+                raise RuntimeError("plex_watchlist_invalid_response")
+            raw_rows = mc.get("Metadata")
+            if raw_rows is None and (mc.get("size") == 0 or mc.get("totalSize") == 0):
+                raw_rows = []
+            if not isinstance(raw_rows, list) or any(not isinstance(row, Mapping) for row in raw_rows):
+                raise RuntimeError("plex_watchlist_invalid_metadata")
             if total is None:
                 try:
-                    t = (mc or {}).get("totalSize") or (mc or {}).get("size")
+                    t = mc.get("totalSize")
                     total = int(t) if t is not None and str(t).isdigit() else None
                 except Exception:
                     total = None
@@ -526,10 +533,12 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
                     pass
     
             if not rows:
+                if total is not None and start < total:
+                    raise RuntimeError("plex_watchlist_incomplete_page")
                 break
             signature = tuple(str(row.get("ratingKey") or row.get("key") or row.get("guid") or "") for row in rows)
             if signature in seen_pages:
-                break
+                raise RuntimeError("plex_watchlist_repeated_page")
             seen_pages.add(signature)
     
             stop = False
@@ -554,7 +563,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
             if stop:
                 break
             start += len(rows)
-            if len(rows) < page_size or (total is not None and start >= total):
+            if (len(rows) < page_size and total is None) or (total is not None and start >= total):
                 break
     
         _info("index_done", count=len(out), raw=raw, collections=coll, types=typ)

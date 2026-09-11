@@ -1102,5 +1102,5 @@ def ensure_whitelist_defaults(
             changed = True
     if changed and persist:
         save_config(cfg)
-        _info("whitelist_defaults_ensured")
+        _dbg("whitelist_defaults_ensured")
     return changed

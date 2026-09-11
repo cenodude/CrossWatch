@@ -153,6 +153,7 @@ def test_history_catalog_respects_scope(monkeypatch, change):
 
 
 def test_history_catalog_keeps_live_state_ttl(monkeypatch):
+    log_run_id.set("")
     now = [100.0]
     monkeypatch.setattr(history.time, "monotonic", lambda: now[0])
     monkeypatch.setattr(history, "_build_history_catalog", lambda *args, **kwargs: history.HistoryCatalog())
@@ -162,6 +163,17 @@ def test_history_catalog_keeps_live_state_ttl(monkeypatch):
     second = history._get_history_catalog(ad, {"1"})
     assert second is not first
     assert history._get_history_catalog(ad, {"1"}, force=True) is not second
+
+
+def test_history_catalog_survives_long_run_but_refreshes_next_run(monkeypatch):
+    now = [100.0]
+    monkeypatch.setattr(history.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(history, "_build_history_catalog", lambda *args, **kwargs: history.HistoryCatalog())
+    first = history._get_history_catalog(adapter(), {"1"})
+    now[0] += 3600
+    assert history._get_history_catalog(adapter(), {"1"}) is first
+    log_run_id.set("run2")
+    assert history._get_history_catalog(adapter(), {"1"}) is not first
 
 
 def test_failed_page_never_leaves_partial_index(monkeypatch):

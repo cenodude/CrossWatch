@@ -52,6 +52,7 @@ SYNC_STATE_PATTERNS = (
     "*.unresolved*.json",
     "*history.cache*.json",
     "*_history.index*.json",
+    "plex_history.playback.*.json",
     "*watermark*.json",
     "tombstones.json",
     "*.tombstones.json",

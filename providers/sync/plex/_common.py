@@ -23,6 +23,7 @@ from urllib.parse import urlsplit, quote
 
 from .._log import log as cw_log
 from cw_platform.log_context import log_run_id
+from cw_platform.id_map import ids_from
 
 import requests
 
@@ -424,10 +425,10 @@ def active_pms_token(source: Any) -> str | None:
         seen.add(marker)
         candidates.append(obj)
 
+    add(getattr(getattr(source, "client", None), "server", None))
+    add(getattr(source, "server", None))
     add(source)
     add(getattr(source, "client", None))
-    add(getattr(source, "server", None))
-    add(getattr(getattr(source, "client", None), "server", None))
     add(getattr(source, "cfg", None))
     add(getattr(getattr(source, "client", None), "cfg", None))
 
@@ -473,6 +474,11 @@ def active_cloud_token(source: Any) -> str | None:
                 return str(tok).strip()
         except Exception:
             pass
+    for obj in (source, getattr(source, "client", None)):
+        cfg = getattr(obj, "cfg", None)
+        token = getattr(cfg, "token", None)
+        if token and str(token).strip():
+            return str(token).strip()
     return active_pms_token(source)
 
 
@@ -1358,7 +1364,41 @@ def section_allowed(obj: Any, allow: set[str]) -> bool:
     if not allow:
         return True
     sid = str(getattr(obj, "librarySectionID", "") or getattr(obj, "sectionID", "") or "").strip()
-    return not sid or sid in allow
+    return sid in allow
+
+
+def native_item_matches(obj: Any, item: Mapping[str, Any]) -> bool:
+    kind = str(item.get("type") or "movie").lower()
+    kind = "episode" if kind == "anime" else kind
+    if object_type(obj) != kind:
+        return False
+    namespaces = ("tmdb", "imdb", "tvdb", "mal", "anilist")
+
+    def matches(wanted: Mapping[str, Any], actual: Mapping[str, Any]) -> bool:
+        for key in namespaces:
+            want, have = str(wanted.get(key) or "").strip().lower(), str(actual.get(key) or "").strip().lower()
+            if want and have and (want == have or (want.isdigit() and have.isdigit() and int(want) == int(have))):
+                return True
+        return False
+
+    try:
+        if kind in ("episode", "season"):
+            season = item.get("season") if item.get("season") is not None else item.get("season_number")
+            episode = item.get("episode") if item.get("episode") is not None else item.get("episode_number")
+            if season is not None and int(getattr(obj, "parentIndex" if kind == "episode" else "index", -1)) != int(season):
+                return False
+            if kind == "episode" and episode is not None and int(getattr(obj, "index", -1)) != int(episode):
+                return False
+        ids = ids_from(item)
+        if any(ids.get(key) for key in namespaces) and not matches(ids, ids_from_obj(obj)):
+            return False
+        if kind in ("episode", "season"):
+            show_ids = extract_show_ids(item)
+            if any(show_ids.get(key) for key in namespaces) and not matches(show_ids, ids_from_obj(obj.show())):
+                return False
+        return True
+    except Exception:
+        return False
 
 
 def item_guid_candidates(ids: Mapping[str, Any], show_ids: Mapping[str, Any], item: Mapping[str, Any]) -> list[str]:
