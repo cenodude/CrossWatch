@@ -115,7 +115,8 @@ def test_resume_uses_destination_duration_stopped_timeline_and_throttles(harness
     server, _, _ = harness
     dest = plex.PlexSink()
     assert dest.send(event(action="start", progress=30, duration_ms=200_000), config())["ok"]
-    assert dest.send(event(action="start", progress=31), config())["reason"] == "duplicate"
+    assert dest.send(event(action="start", progress=30), config())["reason"] == "duplicate"
+    assert dest.send(event(action="start", progress=31), config())["reason"] == "progress_step_not_reached"
     assert dest.send(event(action="pause", progress=32), config())["ok"]
     writes = [x for x in server.calls if x[1]]
     assert [x[2]["time"] for x in writes] == [30_000, 32_000]

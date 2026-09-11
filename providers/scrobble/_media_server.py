@@ -184,8 +184,11 @@ class MediaServerSink:
                 now = time.monotonic()
                 sent = self._sent.get(session)
                 if sent and now - sent[0] < CACHE_TTL:
-                    if sent[1] == "complete" or (event.action == "start" and sent[1] == "start" and abs(progress - sent[2]) < step):
+                    if sent[1] == "complete":
                         return {"ok": True, "skipped": True, "reason": "duplicate"}
+                    if event.action == "start" and sent[1] == "start" and abs(progress - sent[2]) < step:
+                        reason = "duplicate" if progress == sent[2] else "progress_step_not_reached"
+                        return {"ok": True, "skipped": True, "reason": reason}
                 result = self._deliver(adapter, item, complete, progress)
                 if not result.get("ok") or result.get("skipped"):
                     return result
