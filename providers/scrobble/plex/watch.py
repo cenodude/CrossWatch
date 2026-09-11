@@ -277,13 +277,11 @@ def _as_set_str(v: Any) -> set[str]:
 
 def _ids_desc(ids: dict[str, Any] | None) -> str:
     d = ids or {}
-    for k in ("trakt", "tmdb", "imdb", "tvdb"):
-        if d.get(k):
-            return f"{k}:{d[k]}"
-    for k in ("trakt_show", "imdb_show", "tmdb_show", "tvdb_show"):
-        if d.get(k):
-            return f"{k.replace('_show', '')}:{d[k]}"
-    return "none"
+    return ", ".join(
+        f"{k}:{d[k]}"
+        for k in ("plex", "trakt", "tmdb", "imdb", "tvdb", "trakt_show", "imdb_show", "tmdb_show", "tvdb_show")
+        if d.get(k)
+    ) or "none"
 
 
 def _iter_guid_strings(value: Any) -> Iterable[str]:
@@ -651,7 +649,7 @@ class WatchService:
         self._max_seen[sk] = max(pct_i, self._max_seen.get(sk, 0))
         accepted = bool(self._dispatch.dispatch(ev2))
         if not accepted:
-            self._throttled_route_filtered_log(ev2, "seek update")
+            self._throttled_route_filtered_log(ev2, "seek update", dispatched=True)
             self._clear_currently_watching(ev2)
             return
         try:
@@ -1316,14 +1314,15 @@ class WatchService:
             self._dbg(f"event filtered: user={_mask_account(ev.account)} server={ev.server_uuid} sess={ev.session_key}")
             self._filtered_ts[key] = now
 
-    def _throttled_route_filtered_log(self, ev: ScrobbleEvent, kind: str = "event") -> None:
-        if not str(ev.account or "").strip():
+    def _throttled_route_filtered_log(self, ev: ScrobbleEvent, kind: str = "event", *, dispatched: bool = False) -> None:
+        if not dispatched and not str(ev.account or "").strip():
             return
-        key = f"{kind}|{ev.account}|{ev.server_uuid}|{ev.session_key or self._find_rating_key(ev.raw or {}) or '?'}"
+        outcome = "not delivered" if dispatched else "filtered"
+        key = f"{outcome}|{kind}|{ev.account}|{ev.server_uuid}|{ev.session_key or self._find_rating_key(ev.raw or {}) or '?'}"
         if key in self._route_filtered_ts:
             return
         self._route_filtered_ts[key] = time.time()
-        self._dbg(f"{kind} filtered by route dispatcher: user={_mask_account(ev.account)} server={ev.server_uuid} sess={ev.session_key}")
+        self._dbg(f"{kind} {outcome} by route dispatcher: user={_mask_account(ev.account)} server={ev.server_uuid} sess={ev.session_key}")
 
     def _clear_currently_watching(self, ev: ScrobbleEvent) -> None:
         try:
@@ -1416,11 +1415,11 @@ class WatchService:
                 if prev_acc:
                     ev = ScrobbleEvent(**{**ev.__dict__, "account": prev_acc})
 
-            if not str(ev.account or "").strip() and self._needs_user_resolution():
+            if not str(ev.account or "").strip():
                 shared = self._shared_instance_identity()
                 if shared:
                     ev = self._event_with_session_identity(ev, shared)
-                else:
+                elif self._needs_user_resolution():
                     ident = self._resolve_session_identity(ev.session_key)
                     ev = self._event_with_session_identity(ev, ident)
                     if not str(ev.account or "").strip() and getattr(self, "_no_sessions_access", False):
@@ -1552,17 +1551,17 @@ class WatchService:
                             self._dbg(f"suppress duplicate stop sess={sk} p={ev.progress}")
                         return
 
+            self._log(
+                f"incoming '{ev.action}' user='{_mask_account(ev.account)}' server='{ev.server_uuid}' media='{_media_name(ev)}' sess={ev.session_key}",
+                "DEBUG",
+            )
+            self._log(f"ids resolved: {_media_name(ev)} -> {_ids_desc(ev.ids)} sess={ev.session_key}", "DEBUG")
             accepted = bool(self._dispatch.dispatch(ev))
             if not accepted:
-                self._throttled_route_filtered_log(ev)
+                self._throttled_route_filtered_log(ev, dispatched=True)
                 self._clear_currently_watching(ev)
                 return
 
-            self._log(
-                f"incoming 'playing' user='{_mask_account(ev.account)}' server='{ev.server_uuid}' media='{_media_name(ev)}'",
-                "DEBUG",
-            )
-            self._log(f"ids resolved: {_media_name(ev)} -> {_ids_desc(ev.ids)}", "DEBUG")
             try:
                 _cw_update("plex", ev, duration_ms=d, provider_instance=str(self._instance_id or "default"))
             except Exception:

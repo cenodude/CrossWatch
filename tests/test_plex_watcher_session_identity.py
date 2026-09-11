@@ -767,6 +767,41 @@ def test_shared_instance_uses_plex_tv_identity_instead_of_the_fallback(monkeypat
     assert plex.queries == []
 
 
+@pytest.mark.parametrize("whitelist", [None, []])
+@pytest.mark.parametrize("state", ["playing", "paused", "stopped"])
+def test_shared_identity_without_user_filter_requires_no_requests(monkeypatch: pytest.MonkeyPatch, whitelist: list[str] | None, state: str) -> None:
+    from providers.scrobble.plex import watch
+
+    def unexpected(*args: Any, **kwargs: Any) -> Any:
+        pytest.fail("Known shared identity must not perform a network lookup")
+
+    monkeypatch.setattr(watch, "fetch_cloud_home_users", unexpected)
+    monkeypatch.setattr(watch, "fetch_cloud_account_users", unexpected)
+    cfg = _cfg(whitelist)
+    plex = FakePlex([])
+    service, sink = _service_with_account_ctx(monkeypatch, cfg, plex, {"owned": False, "name": "shared-user", "user_id": "12345"})
+    monkeypatch.setattr(service, "_resolve_session_identity", unexpected)
+    assert not service._needs_user_resolution()
+
+    service._handle_alert(_alert("s-known", state=state))
+
+    assert len(sink.events) == 1
+    assert sink.events[0].account == "shared-user"
+    assert sink.events[0].raw["_cw_session_identity"]["user_id"] == "12345"
+    assert plex.queries == []
+
+
+@pytest.mark.parametrize("ctx", [None, {"owned": True, "name": "owner"}])
+def test_no_user_filter_does_not_guess_an_owner_identity(monkeypatch: pytest.MonkeyPatch, ctx: dict[str, Any] | None) -> None:
+    service, sink = _service_with_account_ctx(monkeypatch, _cfg([]), FakePlex([]), ctx)
+
+    service._handle_alert(_alert("s-unknown"))
+
+    assert len(sink.events) == 1
+    assert not sink.events[0].account
+    assert service._plex.queries == []
+
+
 def test_owned_instance_never_probes_plex_tv(monkeypatch: pytest.MonkeyPatch) -> None:
     cfg = _cfg(["Carmen"])
     plex = FakePlex([_session_xml("41", user_name="Carmen", user_id="176467484")])
@@ -999,3 +1034,39 @@ def test_route_filtered_log_is_emitted_once_per_session(monkeypatch: pytest.Monk
 
     assert sink.events == []
     assert len([m for m in messages if m.startswith("event filtered by route dispatcher")]) == 1
+
+
+@pytest.mark.parametrize("whitelist", [["owner"], []])
+@pytest.mark.parametrize("media_type", ["movie", "episode"])
+def test_failed_delivery_logs_identity_before_dispatch(monkeypatch: pytest.MonkeyPatch, whitelist: list[str], media_type: str) -> None:
+    cfg = _cfg(whitelist)
+    service, sink = _service(monkeypatch, cfg, FakePlex([_session_xml("s-failed", user_name="owner", user_id="u1")]))
+    messages: list[str] = []
+    monkeypatch.setattr(service, "_log", lambda msg, *args: messages.append(str(msg)))
+    monkeypatch.setattr(service, "_dbg", lambda msg: messages.append(str(msg)))
+
+    def fail_delivery(event: Any, **kwargs: Any) -> dict[str, Any]:
+        messages.append("delivery attempted")
+        return {"ok": False, "retryable": False, "error": "unmatched_in_jellyfin"}
+
+    monkeypatch.setattr(sink, "send", fail_delivery)
+    service._handle_alert(_alert("s-failed", media_type=media_type))
+
+    attempt = messages.index("delivery attempted")
+    incoming = next(i for i, msg in enumerate(messages) if msg.startswith("incoming 'start'"))
+    ids = next(i for i, msg in enumerate(messages) if msg.startswith("ids resolved:"))
+    assert incoming < ids < attempt
+    assert "sess=s-failed" in messages[incoming]
+    assert "imdb:tt0000001" in messages[ids]
+    assert "sess=s-failed" in messages[ids]
+    assert any(msg.startswith("event not delivered by route dispatcher") for msg in messages)
+    assert not any("filtered by route dispatcher" in msg for msg in messages)
+    if not whitelist:
+        assert any("user=unknown" in msg for msg in messages if "not delivered" in msg)
+
+
+def test_id_diagnostics_preserve_episode_and_show_namespaces() -> None:
+    from providers.scrobble.plex.watch import _ids_desc
+
+    assert _ids_desc({"plex": "42", "tmdb": "123", "imdb": "tt0000001", "tmdb_show": "456"}) == "plex:42, tmdb:123, imdb:tt0000001, tmdb_show:456"
+    assert _ids_desc({}) == "none"

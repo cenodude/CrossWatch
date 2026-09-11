@@ -71,8 +71,6 @@ class KodiSink(MediaServerSink):
         if row.get("_kind") != item["type"] or not path_allowed(adapter.config, feature, row.get("file"), self._instance_id):
             return False
         own, wanted = _ids(row), item.get("ids") or {}
-        if any(wanted[k] != own[k] for k in set(wanted) & set(own)):
-            return False
         if ids_match(wanted, own):
             return True
         if (item["type"] != "episode" or not item.get("show_ids") or item.get("season") is None or item.get("episode") is None
