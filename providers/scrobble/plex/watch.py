@@ -33,6 +33,7 @@ from providers.scrobble.currently_watching import update_from_event as _cw_updat
 from providers.scrobble.media_filters import event_ignore_reason, log_media_filter_drop
 from providers.scrobble.sources import source_enabled
 from providers.sync.plex._common import stable_client_id
+from providers.sync.plex._utils import fetch_cloud_home_users, fetch_cloud_account_users
 from cw_platform.provider_instances import get_instance_block, sanitize_instance_label
 
 
@@ -401,6 +402,9 @@ class WatchService:
         self._tl_last: dict[str, tuple[int, int, int, float]] = {}
         self._last_seek_emit: dict[str, float] = {}
         self._sess_identity_cache: dict[str, dict[str, Any]] = {}
+        self._user_alias_scope: tuple[str, str] | None = None
+        self._user_alias_cache: dict[str, list[str]] = {}
+        self._user_alias_expires = 0.0
         self._offline = False
         self._offline_failures = 0
         self._offline_retry = OFFLINE_INITIAL_RETRY_SECONDS
@@ -944,6 +948,7 @@ class WatchService:
         return {
             "name": name,
             "user_name": name,
+            "user_username": name,
             "user_id": str(ctx.get("user_id") or ""),
             "account_name": "",
             "account_id": "",
@@ -1017,6 +1022,7 @@ class WatchService:
                 if not vk:
                     continue
                 user_name = ""
+                user_username = ""
                 user_id = ""
                 acc_name = ""
                 acc_id = ""
@@ -1025,6 +1031,7 @@ class WatchService:
                 u = v.find("User")
                 if u is not None:
                     user_id = str(u.get("id") or "").strip()
+                    user_username = str(u.get("username") or "").strip()
                     for attr in ("title", "name", "username"):
                         val = u.get(attr)
                         if val:
@@ -1044,6 +1051,7 @@ class WatchService:
                 row: dict[str, Any] = {
                     "name": user_name or acc_name,
                     "user_name": user_name,
+                    "user_username": user_username,
                     "user_id": user_id,
                     "account_name": acc_name,
                     "account_id": acc_id,
@@ -1109,10 +1117,41 @@ class WatchService:
             )
             return None
 
+    def _user_aliases(self, user_id: str) -> list[str]:
+        if not user_id.isdigit() or int(user_id) <= 0:
+            return []
+        plex_cfg = self._active_cfg().get("plex") or {}
+        token = str(plex_cfg.get("account_token") or plex_cfg.get("token") or "").strip()
+        scope = (str(plex_cfg.get("server_url") or ""), token)
+        if self._user_alias_scope != scope:
+            self._user_alias_scope = scope
+            self._user_alias_cache = {}
+            self._user_alias_expires = 0.0
+        if not token:
+            return []
+        now = time.monotonic()
+        if now >= self._user_alias_expires:
+            aliases: dict[str, list[str]] = {}
+            for fetch in (fetch_cloud_home_users, fetch_cloud_account_users):
+                try:
+                    rows = fetch(token, timeout=3.0)
+                except Exception:
+                    continue
+                for row in rows:
+                    uid = str(row.get("id") or "").strip()
+                    username = str(row.get("username") or "").strip()
+                    if uid.isdigit() and username:
+                        names = aliases.setdefault(str(int(uid)), [])
+                        if username not in names:
+                            names.append(username)
+            self._user_alias_cache = aliases
+            self._user_alias_expires = now + (300.0 if aliases else 60.0)
+        return list(self._user_alias_cache.get(str(int(user_id)), []))
+
     def _event_with_session_identity(self, ev: ScrobbleEvent, ident: dict[str, Any] | None) -> ScrobbleEvent:
         if not isinstance(ident, dict):
             return ev
-        clean_ident = {
+        clean_ident: dict[str, Any] = {
             "name": str(ident.get("name") or "").strip(),
             "user_name": str(ident.get("user_name") or "").strip(),
             "user_id": str(ident.get("user_id") or "").strip(),
@@ -1122,6 +1161,8 @@ class WatchService:
         }
         if not any(clean_ident.values()):
             return ev
+        username = str(ident.get("user_username") or "").strip()
+        clean_ident["user_aliases"] = [username] if username else self._user_aliases(clean_ident["user_id"])
         raw = dict(ev.raw or {})
         raw["_cw_session_identity"] = clean_ident
         account = clean_ident["name"] or ev.account

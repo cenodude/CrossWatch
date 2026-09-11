@@ -586,7 +586,15 @@ class Dispatcher:
             )
             return False
 
-        if not media_account_allowed(wl, account, account_id=acc_id, account_uuid=acc_uuid, user_id=user_id, default_allow=not scoped):
+        accounts = [account]
+        aliases = ident.get("user_aliases")
+        provider = str(((cfg.get("scrobble") or {}).get("watch") or {}).get("route_provider") or "plex").lower()
+        if provider == "plex" and isinstance(aliases, list):
+            accounts.extend(alias for alias in aliases if isinstance(alias, str) and alias.strip())
+        if not any(
+            media_account_allowed(wl, name, account_id=acc_id, account_uuid=acc_uuid, user_id=user_id, default_allow=not scoped)
+            for name in accounts
+        ):
             if resolved:
                 self._throttled_route_log(
                     f"username|{account}|{ev.session_key}",
