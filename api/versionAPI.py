@@ -22,7 +22,7 @@ __all__ = ["router"]
 router = APIRouter(prefix="/api", tags=["version"])
 
 VERSION_FILE = Path(__file__).resolve().parent.parent / "VERSION"
-FALLBACK_VERSION = "v0.12.0"
+FALLBACK_VERSION = "v0.12.1"
 
 
 def _usable_version(value: Any) -> str:
