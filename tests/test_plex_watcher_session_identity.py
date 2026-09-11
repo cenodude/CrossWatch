@@ -6,6 +6,138 @@ from typing import Any
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def no_cloud_user_requests(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.scrobble.plex import watch
+
+    monkeypatch.setattr(watch, "fetch_cloud_home_users", lambda *args, **kwargs: [])
+    monkeypatch.setattr(watch, "fetch_cloud_account_users", lambda *args, **kwargs: [])
+
+
+@pytest.mark.parametrize("whitelist", ["AccountName", "accountname", "Display Name", "id:12345"])
+@pytest.mark.parametrize("directory", ["fetch_cloud_home_users", "fetch_cloud_account_users"])
+def test_session_display_name_matches_username_by_user_id(monkeypatch: pytest.MonkeyPatch, whitelist: str, directory: str) -> None:
+    from providers.scrobble.plex import watch
+
+    monkeypatch.setattr(watch, directory, lambda *args, **kwargs: [{"id": 12345, "username": "AccountName", "title": "Display Name"}])
+    cfg = _cfg([whitelist])
+    service, sink = _service(monkeypatch, cfg, FakePlex([_session_xml("s-alias", user_name="Display Name", user_id="12345")]))
+
+    service._handle_alert(_alert("s-alias"))
+
+    assert len(sink.events) == 1
+    assert sink.events[0].account == "Display Name"
+
+
+@pytest.mark.parametrize("user_id", ["99999", ""])
+def test_same_display_name_does_not_link_different_users(monkeypatch: pytest.MonkeyPatch, user_id: str) -> None:
+    from providers.scrobble.plex import watch
+
+    monkeypatch.setattr(watch, "fetch_cloud_home_users", lambda *args, **kwargs: [{"id": 12345, "username": "AccountName", "title": "Display Name"}])
+    service, sink = _service(monkeypatch, _cfg(["AccountName"]), FakePlex([_session_xml("s-other", user_name="Display Name", user_id=user_id)]))
+
+    service._handle_alert(_alert("s-other"))
+
+    assert sink.events == []
+
+
+def test_session_username_is_used_without_cloud_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.scrobble.plex import watch
+
+    calls: list[str] = []
+    monkeypatch.setattr(watch, "fetch_cloud_home_users", lambda *args, **kwargs: calls.append("home") or [])
+    xml = '<MediaContainer><Video sessionKey="s-direct"><User id="12345" title="Display Name" username="AccountName" /></Video></MediaContainer>'
+    service, sink = _service(monkeypatch, _cfg(["AccountName"]), FakePlex([xml]))
+
+    service._handle_alert(_alert("s-direct"))
+
+    assert len(sink.events) == 1
+    assert calls == []
+
+
+@pytest.mark.parametrize("restriction", ["user", "server", "empty_profile"])
+def test_username_alias_preserves_route_restrictions(monkeypatch: pytest.MonkeyPatch, restriction: str) -> None:
+    from providers.scrobble.plex import watch
+
+    monkeypatch.setattr(watch, "fetch_cloud_home_users", lambda *args, **kwargs: [{"id": 12345, "username": "AccountName"}])
+    cfg = _cfg(["AccountName"])
+    filters = cfg["scrobble"]["watch"]["filters"]
+    if restriction == "user":
+        filters["user_id"] = "99999"
+    elif restriction == "server":
+        filters["server_uuid_whitelist"] = ["other-server"]
+    else:
+        filters["username_whitelist"] = []
+        cfg["scrobble"]["watch"]["route_profile_id"] = "profile-test"
+    service, sink = _service(monkeypatch, cfg, FakePlex([_session_xml("s-filter", user_name="Display Name", user_id="12345")]))
+
+    service._handle_alert(_alert("s-filter"))
+
+    assert sink.events == []
+
+
+def test_user_alias_cache_refreshes_and_isolates_profiles(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.scrobble.plex import watch
+
+    clock = [100.0]
+    calls: list[str] = []
+    rows = [{"id": 12345, "username": "AccountName"}]
+
+    def fetch(token: str, **kwargs: Any) -> list[dict[str, Any]]:
+        calls.append(token)
+        return list(rows)
+
+    monkeypatch.setattr(watch.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(watch, "fetch_cloud_home_users", fetch)
+    cfg = _cfg(["AccountName"])
+    service, _ = _service(monkeypatch, cfg, FakePlex([]))
+    assert service._user_aliases("12345") == ["AccountName"]
+    assert service._user_aliases("12345") == ["AccountName"]
+    assert len(calls) == 1
+    rows[0] = {"id": 12345, "username": "RenamedAccount"}
+    clock[0] += 301
+    assert service._user_aliases("12345") == ["RenamedAccount"]
+    assert len(calls) == 2
+    rows.clear()
+    cfg["plex"]["account_token"] = "other-test-token"
+    assert service._user_aliases("12345") == []
+    assert len(calls) == 3
+    rows.append({"id": 12345, "username": "NewProfileAccount"})
+    other, _ = _service(monkeypatch, cfg, FakePlex([]))
+    assert other._user_aliases("12345") == ["NewProfileAccount"]
+    assert service._user_aliases("12345") == []
+    clock[0] += 61
+    assert service._user_aliases("12345") == ["NewProfileAccount"]
+
+
+def test_cloud_failure_does_not_guess_username(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.scrobble.plex import watch
+
+    def failed(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        raise RuntimeError("unavailable")
+
+    monkeypatch.setattr(watch, "fetch_cloud_home_users", failed)
+    monkeypatch.setattr(watch, "fetch_cloud_account_users", failed)
+    service, sink = _service(monkeypatch, _cfg(["AccountName"]), FakePlex([_session_xml("s-failed", user_name="Display Name", user_id="12345")]))
+
+    service._handle_alert(_alert("s-failed"))
+
+    assert sink.events == []
+
+
+def test_plex_aliases_do_not_apply_to_other_source_providers(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.scrobble.scrobble import Dispatcher, from_plex_pssn
+
+    cfg = _cfg(["AccountName"])
+    cfg["scrobble"]["watch"]["route_provider"] = "jellyfin"
+    service, _ = _service(monkeypatch, cfg, FakePlex([]))
+    event = from_plex_pssn(_alert("s-source"))
+    assert event is not None
+    event = service._event_with_session_identity(event, {"name": "Display Name", "user_username": "AccountName", "user_id": "12345"})
+
+    assert Dispatcher([], cfg_provider=lambda: cfg)._identity_allowed(event, cfg) is False
+
+
 class CaptureSink:
     def __init__(self) -> None:
         self.events: list[Any] = []
