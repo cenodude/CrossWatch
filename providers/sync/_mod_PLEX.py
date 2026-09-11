@@ -75,10 +75,7 @@ from ._mod_common import (
     make_snapshot_progress,
 )
 
-try:  # type: ignore[name-defined]
-    ctx  # type: ignore
-except Exception:
-    ctx = None  # type: ignore
+ctx = globals().get("ctx")
 
 try:
     from .plex import _watchlist as feat_watchlist
@@ -940,7 +937,6 @@ class PLEXClient:
         try:
             user_token = _plex_tv_switch_user(token, client_id, user_id=user_id, pin=use_pin, timeout=float(self.cfg.timeout))
         except Exception as e:
-            hint = " (PIN?)" if use_pin else ""
             _warn("home_switch_failed", target=(picked.get("title") or target_username or user_id), hint=("PIN?" if use_pin else None), error=str(e))
             return False
 
@@ -1494,7 +1490,7 @@ class PLEXModule:
                             res[f] = hm[f]
             return res
         except Exception as e:
-            return {"ok": False, "error": str(e)}
+            return {"ok": False, "error": str(e), "count": 0, "errors": len(lst), "confirmed_keys": []}
 
     def remove(
         self,
@@ -1527,7 +1523,7 @@ class PLEXModule:
                 "results": list(getattr(self, "_progress_write_results", [])) if feature == "progress" else [],
             }
         except Exception as e:
-            return {"ok": False, "error": str(e)}
+            return {"ok": False, "error": str(e), "count": 0, "errors": len(lst), "confirmed_keys": []}
 
 
 class _PlexOPS:

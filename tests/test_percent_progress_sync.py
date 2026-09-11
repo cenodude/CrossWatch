@@ -133,8 +133,10 @@ def test_plex_progress_keeps_resume_item_with_view_count(monkeypatch) -> None:
     class Server:
         def query(self, path: str, params: dict[str, Any] | None = None):
             if path == "/library/sections":
-                return Element({}, [Element({"key": "3", "type": "show"})])
-            return Element(
+                result = Element({}, [Element({"key": "3", "type": "show"})])
+                result.tag = "MediaContainer"
+                return result
+            result = Element(
                 {"totalSize": "1"},
                 [
                     Element(
@@ -153,6 +155,8 @@ def test_plex_progress_keeps_resume_item_with_view_count(monkeypatch) -> None:
                     )
                 ],
             )
+            result.tag = "MediaContainer"
+            return result
 
     rows = _progress._fetch_resume_items(Server(), page_size=150, allowed_library_ids={"3"})
 

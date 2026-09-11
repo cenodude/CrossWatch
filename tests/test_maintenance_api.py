@@ -440,6 +440,7 @@ def test_clear_provider_cache_preserves_pair_scoped_history_mapping_state(tmp_pa
         "trakt_history.unresolved.pending.one-way_SIMKL_default-TRAKT_default_p1.json",
         "trakt.history.cache.one-way_SIMKL_default-TRAKT_default_p1.json",
         "simkl.history.cache.one-way_SIMKL_default-TRAKT_default_p1.json",
+        "plex_history.playback.owner.digest.cw2_test_pair.json",
         "watermarks.json",
         "tombstones.json",
     }
@@ -491,6 +492,7 @@ def _seed_rebuild_state(state_dir):
         "simkl_history.unresolved.one-way_SIMKL_default-TRAKT_default_p1.json",
         "trakt_history.unresolved.pending.one-way_SIMKL_default-TRAKT_default_p1.json",
         "trakt.history.cache.one-way_SIMKL_default-TRAKT_default_p1.json",
+        "plex_history.playback.owner.digest.cw2_test_pair.json",
         "watermarks.json",
         "tombstones.json",
     }

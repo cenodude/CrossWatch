@@ -215,10 +215,6 @@ def _truthy_attr(obj: Any, name: str) -> bool:
         return False
 
 
-def _fetch_resume_rating_keys(srv: Any, *, limit: int = 100) -> set[str]:
-    return set(_fetch_resume_items(srv, page_size=limit))
-
-
 def _library_id(value: Any) -> str | None:
     source = getattr(value, "attrib", None) if not isinstance(value, Mapping) else value
     source = source if isinstance(source, Mapping) else {}
@@ -231,7 +227,8 @@ def _library_id(value: Any) -> str | None:
 
 def _page_total(root: Any) -> int | None:
     attributes = getattr(root, "attrib", {}) or {}
-    return _to_int(attributes.get("totalSize") or attributes.get("totalRecordCount"))
+    value = attributes.get("totalSize")
+    return _to_int(value if value is not None else attributes.get("totalRecordCount"))
 
 
 def _library_sort_key(section: tuple[str, int]) -> tuple[int, str]:
@@ -241,6 +238,8 @@ def _library_sort_key(section: tuple[str, int]) -> tuple[int, str]:
 
 def _progress_sections(srv: Any, allowed: set[str]) -> list[tuple[str, int]]:
     root = srv.query("/library/sections")  # type: ignore[attr-defined]
+    if root is None or getattr(root, "tag", None) != "MediaContainer":
+        raise RuntimeError("plex_progress_invalid_libraries_response")
     rows = list(root) if root is not None else []
     sections: list[tuple[str, int]] = []
     found: set[str] = set()
@@ -256,7 +255,9 @@ def _progress_sections(srv: Any, allowed: set[str]) -> list[tuple[str, int]]:
         sections.append((library_id, 1 if library_type == "movie" else 4))
     missing = sorted(allowed - found)
     if missing:
-        raise RuntimeError(f"plex_progress_libraries_not_found:{','.join(missing)}")
+        _warn("progress_libraries_unavailable", library_ids=missing)
+        if not sections:
+            raise RuntimeError(f"plex_progress_libraries_not_found:{','.join(missing)}")
     return sorted(sections, key=_library_sort_key)
 
 
@@ -315,20 +316,24 @@ def _fetch_resume_items(
                     "includeGuids": 1,
                 },
             )
+            if root is None or getattr(root, "tag", None) != "MediaContainer":
+                raise RuntimeError("plex_progress_invalid_page")
             rows = list(root) if root is not None else []
+            total = _page_total(root)
+            if not rows and total is not None and start < total:
+                raise RuntimeError("plex_progress_incomplete_page")
             signature = tuple(
                 str((getattr(el, "attrib", {}) or {}).get("ratingKey") or (getattr(el, "attrib", {}) or {}).get("key") or "")
                 for el in rows
             )
             if rows and signature in seen_pages:
-                _warn("pagination_repeated_page", source=path, library_id=library_id, start_index=start)
-                break
+                raise RuntimeError("plex_progress_repeated_page")
             seen_pages.add(signature)
             for el in rows:
                 a = getattr(el, "attrib", {}) or {}
                 rk = a.get("ratingKey") or a.get("key")
                 if not rk:
-                    continue
+                    raise RuntimeError("plex_progress_missing_rating_key")
                 progress_ms = _to_int(a.get("viewOffset"))
                 if progress_ms is None or progress_ms <= 0:
                     continue
@@ -340,7 +345,7 @@ def _fetch_resume_items(
                 items[key_id] = (row, ids)
             start += len(rows)
             total = _page_total(root)
-            if not rows or len(rows) < page_size or (total is not None and start >= total):
+            if not rows or (len(rows) < page_size and total is None) or (total is not None and start >= total):
                 break
 
     for library_id, plex_type in sections:

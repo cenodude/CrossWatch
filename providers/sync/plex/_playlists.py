@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable as IterableABC, Mapping as MappingABC
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 from cw_platform.playlists import (

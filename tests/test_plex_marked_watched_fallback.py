@@ -34,6 +34,8 @@ class _Session:
     def get(self, url: str, params: Any = None, headers: Any = None, timeout: Any = None) -> _Resp:
         p = dict(params or {})
         self.requests.append(p)
+        if p.get("includeMeta"):
+            return _Resp([])
         return self._handler(p)
 
 
@@ -66,8 +68,6 @@ def _movie(rating_key: str, view_count: int, last_viewed: int | None = LAST_VIEW
 
 @pytest.fixture
 def scan(monkeypatch):
-    monkeypatch.setattr(history, "_load_marked_state", lambda: {})
-    monkeypatch.setattr(history, "_save_marked_state", lambda *_: None)
     monkeypatch.setattr(history, "plex_headers", lambda _t: {})
     monkeypatch.setattr(
         history,
