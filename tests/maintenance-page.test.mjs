@@ -140,3 +140,75 @@ test('unhealthy diagnostics show issues and failed requests release the operatio
   assert.equal(failed.context.operationBusy,false);
   assert.match(failed.messages.at(-1),/offline/);
 });
+
+function categoryRunner(options={}) {
+  const fixture=runner(options);
+  const {context}=fixture;
+  vm.runInNewContext('globalThis.categoryOps=OPS;',context);
+  context.rows=Array.from(context.categoryOps,op=>({hidden:false,dataset:{op:op.key,kind:op.kind},querySelector:()=>({dataset:{}})}));
+  context.batchRunning=false;
+  context.plural=(count,noun)=>`${count} ${noun}s`;
+  context.setArchiveOpen=value=>{context.archiveOpen=value;};
+  const label={textContent:'Run all'};
+  const details={open:false};
+  const button={closest:()=>details,querySelector:()=>label,setAttribute(){},removeAttribute(){}};
+  return {...fixture,label,details,runGroup:id=>context.runCategory(id,button)};
+}
+
+test('category batches run visible tasks sequentially and block another batch',async()=>{
+  const fixture=categoryRunner();
+  let release;
+  fixture.context.post=async url=>{
+    fixture.posts.push({url});
+    if(fixture.posts.length===1) await new Promise(resolve=>{release=resolve;});
+    return {ok:true};
+  };
+  const pending=fixture.runGroup('sync');
+  assert.equal(fixture.posts.length,1);
+  assert.equal(fixture.context.operationBusy,true);
+  assert.equal(fixture.context.batchRunning,true);
+  assert.equal(fixture.label.textContent,'1/2');
+  assert.equal(fixture.details.open,true);
+  await fixture.runGroup('playback');
+  assert.equal(fixture.posts.length,1);
+  release();
+  await pending;
+  assert.deepEqual(fixture.posts.map(item=>item.url),['/api/maintenance/clear-state','/api/maintenance/clear-cache']);
+  assert.equal(fixture.context.operationBusy,false);
+  assert.equal(fixture.context.batchRunning,false);
+  assert.equal(fixture.label.textContent,'Run all');
+  fixture.posts.length=0;
+  fixture.context.post=async url=>{fixture.posts.push({url});return {ok:true};};
+  fixture.context.rows.find(row=>row.dataset.op==='state').hidden=true;
+  await fixture.runGroup('sync');
+  assert.deepEqual(fixture.posts.map(item=>item.url),['/api/maintenance/clear-cache']);
+});
+
+test('category cancellation and unhealthy checks stop later tasks',async()=>{
+  const cancelled=categoryRunner({confirmed:false});
+  await cancelled.runGroup('sync');
+  assert.equal(cancelled.posts.length,0);
+  const unhealthy=categoryRunner({response:{ok:true,healthy:false}});
+  await unhealthy.runGroup('events');
+  assert.deepEqual(unhealthy.posts.map(item=>item.url),['/api/maintenance/events-health']);
+  assert.equal(unhealthy.context.operationBusy,false);
+  const failed=categoryRunner({reject:true});
+  await failed.runGroup('sync');
+  assert.equal(failed.posts.length,1);
+  assert.equal(failed.context.operationBusy,false);
+});
+
+test('category batches retain destructive task confirmation and archive configuration',async()=>{
+  const fixture=categoryRunner();
+  const prompts=[];
+  fixture.context.confirm=message=>{prompts.push(message);return prompts.length===1;};
+  await fixture.runGroup('events');
+  assert.match(prompts[0],/Clear event data/);
+  assert.match(prompts[1],/Clear all event data/);
+  assert.deepEqual(fixture.posts.map(item=>item.url),['/api/maintenance/events-health','/api/maintenance/events-optimize']);
+  assert.equal(fixture.context.operationBusy,false);
+  fixture.posts.length=0;
+  await fixture.runGroup('archive');
+  assert.equal(fixture.context.archiveOpen,true);
+  assert.equal(fixture.posts.length,0);
+});

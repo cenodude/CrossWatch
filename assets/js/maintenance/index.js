@@ -303,7 +303,7 @@ const renderActionRow = op => `<article class="maint-task" data-op="${op.key}" d
     ? `<button type="button" class="archive-configure" aria-controls="cxm-archive-panel" aria-expanded="false">${icon("tune")}Configure</button>`
     : `<button type="button" class="run-btn action-run-btn" data-label="${op.title}" data-idle-label="Run">${icon("play_arrow")}Run</button>`}<button type="button" class="details-btn" aria-label="Details for ${op.title}" title="Task details">${icon("info")}</button></div>
 </article>`;
-const renderCategory = group => `<details class="maint-group ${group.id === "danger" ? "danger-group" : ""}" data-group="${group.id}"><summary><span class="action-icon">${icon(group.icon)}</span><span class="group-copy"><strong>${group.title}</strong><span>${group.desc}</span></span><span class="group-count"></span>${icon("expand_more")}</summary><div class="group-tasks">${group.keys.map(key => renderActionRow(OPS_BY_KEY[key])).join("")}</div></details>`;
+const renderCategory = group => `<details class="maint-group ${group.id === "danger" ? "danger-group" : ""}" data-group="${group.id}"><summary><span class="action-icon">${icon(group.icon)}</span><span class="group-copy"><strong>${group.title}</strong><span>${group.desc}</span></span><span class="group-count"></span><button type="button" class="run-btn group-run-btn" data-run-group="${group.id}" aria-label="${group.id === "archive" ? "Configure" : "Run all tasks in"} ${group.title}">${icon(group.id === "archive" ? "tune" : "play_arrow")}<span>${group.id === "archive" ? "Configure" : "Run all"}</span></button>${icon("expand_more")}</summary><div class="group-tasks">${group.keys.map(key => renderActionRow(OPS_BY_KEY[key])).join("")}</div></details>`;
 let activeRoot, syncRoute;
 
 function injectCSS() {
@@ -1013,6 +1013,46 @@ const MaintenancePage = {
       }
     }
 
+    async function runCategory(groupId, button) {
+      if (operationBusy) return;
+      const group = GROUPS.find(item => item.id === groupId);
+      if (!group) return;
+      if (group.id === "archive") {
+        setArchiveOpen(true);
+        return;
+      }
+      const tasks = group.keys.map(key => rows.find(row => row.dataset.op === key))
+        .filter(row => row && !row.hidden && row.querySelector(".action-run-btn"));
+      if (!tasks.length) return;
+      const taskList = tasks.map(row => {
+        const op = OPS_BY_KEY[row.dataset.op];
+        return `${op.title}: ${op.desc}`;
+      }).join("\n\n");
+      if (!confirm(`Run ${tasks.length} ${tasks.length === 1 ? "task" : "tasks"} in ${group.title}?\n\n${taskList}`)) return;
+      const container = button.closest("details");
+      if (container) container.open = true;
+      const label = button.querySelector("span:last-child");
+      batchRunning = true;
+      setOperationBusy(true);
+      button.setAttribute("aria-busy", "true");
+      try {
+        const completed = [];
+        for (const row of tasks) {
+          if (!root.isConnected) return;
+          label.textContent = `${completed.length + 1}/${tasks.length}`;
+          const result = await runOp(row.dataset.kind, row.querySelector(".action-run-btn"), {manageLock:false});
+          if (!result || result.healthy === false) return;
+          completed.push(result);
+        }
+        setStatus(completionReceipt(group.title, completed, [plural(completed.length, "task")]), "ok");
+      } finally {
+        label.textContent = "Run all";
+        button.removeAttribute("aria-busy");
+        batchRunning = false;
+        setOperationBusy(false);
+      }
+    }
+
     OPS.forEach(({ key, kind }) => {
       const row = root.querySelector(`.maint-task[data-op="${key}"]`);
       const btn = row?.querySelector(".action-run-btn");
@@ -1026,6 +1066,14 @@ const MaintenancePage = {
         if (event.target !== row || !["Enter", " "].includes(event.key)) return;
         event.preventDefault();
         loadActionInsight(kind);
+      });
+    });
+
+    root.querySelectorAll("[data-run-group]").forEach(button => {
+      button.addEventListener("click", event => {
+        event.preventDefault();
+        event.stopPropagation();
+        void runCategory(button.dataset.runGroup, button);
       });
     });
 
