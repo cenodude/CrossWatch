@@ -1111,10 +1111,6 @@
     return String(option?.dataset?.cwProfileFullName || option?.textContent || option?.value || "").trim();
   }
 
-  function connectionProfileChipName(option) {
-    return profileDisplayName(connectionProfileFullName(option) || option?.value);
-  }
-
   function refreshConnectionProfileCreateState(select, newBtn) {
     if (!select || !newBtn) return;
     const raw = getCachedConfig()?.runtime?.max_profiles_per_provider;
@@ -1130,30 +1126,8 @@
     else newBtn.removeAttribute("title");
   }
 
-  function syncConnectionProfileChips(card) {
-    const select = card?.querySelector(".cw-profile-switcher select");
-    const chips = card?.querySelector(".cw-connection-profile-chips");
-    if (!select || !chips) return;
-    const current = String(select.value || "default");
-    const opts = Array.from(select.options || []).filter((option) => option.value && option.value !== current);
-    chips.replaceChildren(...opts.map((option) => {
-      const fullName = connectionProfileFullName(option);
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "cw-connection-profile-chip";
-      btn.textContent = connectionProfileChipName(option);
-      btn.title = `Switch to ${fullName || option.value}`;
-      btn.addEventListener("click", () => {
-        select.value = option.value;
-        select.dispatchEvent(new Event("change", { bubbles: true }));
-      });
-      return btn;
-    }));
-    chips.classList.toggle("hidden", !opts.length);
-  }
-
-  function decorateConnectionProfileToolbar(toolbar, card, info) {
-    if (!toolbar || !card) return;
+  function decorateConnectionProfileToolbar(toolbar, info) {
+    if (!toolbar) return;
     toolbar.classList.add("cw-connection-profile-toolbar");
     toolbar.style.removeProperty("margin-left");
     toolbar.querySelector("[data-cw-profile-label]")?.classList.add("cw-connection-profile-hidden-label");
@@ -1167,11 +1141,8 @@
         option.dataset.cwProfileFullName = fullName;
         option.title = fullName;
       });
-      if (!select.__cwConnectionProfileChipsBound) {
-        select.__cwConnectionProfileChipsBound = true;
-        select.addEventListener("change", () => {
-          syncConnectionProfileChips(card);
-        });
+      if (!select.__cwConnectionProfileToolbarBound) {
+        select.__cwConnectionProfileToolbarBound = true;
         if (typeof MutationObserver === "function") {
           const mo = new MutationObserver(() => {
             Array.from(select.options || []).forEach((option) => {
@@ -1180,10 +1151,9 @@
               option.title = fullName;
             });
             refreshConnectionProfileCreateState(select, newBtn);
-            syncConnectionProfileChips(card);
           });
           mo.observe(select, { childList: true, subtree: true, characterData: true });
-          select.__cwConnectionProfileChipsObserver = mo;
+          select.__cwConnectionProfileToolbarObserver = mo;
         }
       }
     }
@@ -1196,7 +1166,6 @@
       delBtn.__cwConnectionProfileDecorated = true;
       delBtn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">delete</span><span>Delete profile</span>`;
     }
-    syncConnectionProfileChips(card);
   }
 
   function findConnectionProfileToolbar(panel, info) {
@@ -1218,7 +1187,6 @@
         </div>
         <div class="cw-connection-profile-body">
           <div class="cw-connection-profile-slot"></div>
-          <div class="cw-connection-profile-chips hidden"></div>
         </div>`;
       nav.appendChild(card);
     }
@@ -1227,7 +1195,7 @@
     const toolbar = findConnectionProfileToolbar(panel, info);
     if (toolbar && slot) {
       if (toolbar.parentElement !== slot) slot.appendChild(toolbar);
-      decorateConnectionProfileToolbar(toolbar, card, info);
+      decorateConnectionProfileToolbar(toolbar, info);
     }
     card.classList.toggle("hidden", !toolbar);
 
