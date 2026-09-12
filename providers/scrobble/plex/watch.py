@@ -1345,6 +1345,8 @@ class WatchService:
             pass
 
     def _handle_alert(self, alert: dict[str, Any]) -> None:
+        if self._stop.is_set():
+            return
         try:
             t = (alert.get("type") or "").lower()
         except Exception:
@@ -1556,6 +1558,8 @@ class WatchService:
                 "DEBUG",
             )
             self._log(f"ids resolved: {_media_name(ev)} -> {_ids_desc(ev.ids)} sess={ev.session_key}", "DEBUG")
+            if self._stop.is_set():
+                return
             accepted = bool(self._dispatch.dispatch(ev))
             if not accepted:
                 self._throttled_route_filtered_log(ev, dispatched=True)
@@ -1576,6 +1580,9 @@ class WatchService:
             
     def start(self) -> None:
         self._stop.clear()
+        self._run()
+
+    def _run(self) -> None:
         cfg = self._cfg_provider() or {}
         if not source_enabled(cfg, "watcher"):
             self._log("Watcher disabled by config; not starting", "INFO")
@@ -1590,10 +1597,14 @@ class WatchService:
                     return
                 self._plex = PlexServer(base, token)
                 self._refresh_account_context()
+                if self._stop.is_set():
+                    break
                 self._listener = self._plex.startAlertListener(
                     callback=self._handle_alert,
                     callbackError=lambda e: self._mark_offline(e if isinstance(e, Exception) else RuntimeError(str(e))),
                 )
+                if self._stop.is_set():
+                    break
                 self._attempt = 0
                 self._mark_online()
                 self._log(f"Watcher connected; inst={self._instance_display()}", lvl)
@@ -1601,6 +1612,14 @@ class WatchService:
                     time.sleep(0.5)
             except Exception as e:
                 self._mark_offline(e)
+            finally:
+                listener = self._listener
+                self._listener = None
+                if listener is not None:
+                    try:
+                        listener.stop()
+                    except Exception:
+                        pass
             if self._stop.is_set():
                 break
             self._attempt += 1
@@ -1623,7 +1642,8 @@ class WatchService:
     def start_async(self) -> None:
         if self._bg and self._bg.is_alive():
             return
-        self._bg = threading.Thread(target=self.start, name="PlexWatch", daemon=True)
+        self._stop.clear()
+        self._bg = threading.Thread(target=self._run, name="PlexWatch", daemon=True)
         self._bg.start()
 
     def is_alive(self) -> bool:

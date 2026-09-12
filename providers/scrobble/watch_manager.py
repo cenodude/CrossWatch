@@ -260,7 +260,11 @@ def _route_cfg_provider(route_id: str) -> Callable[[], dict[str, Any]]:
     def _provider() -> dict[str, Any]:
         cfg = load_config() or {}
         built = build_route_cfg_by_id(cfg, rid)
-        return built if isinstance(built, dict) else {}
+        if not isinstance(built, dict):
+            return {"scrobble": {"watch": {"route_id": rid, "route_enabled": False}}}
+        if not source_enabled(cfg, "watcher"):
+            built["scrobble"]["watch"]["route_enabled"] = False
+        return built
 
     return _provider
 

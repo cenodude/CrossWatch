@@ -476,6 +476,8 @@ class Dispatcher:
             return False
 
     def _passes_filters(self, ev: ScrobbleEvent, cfg: dict[str, Any]) -> bool:
+        if not ((cfg.get("scrobble") or {}).get("watch") or {}).get("route_enabled", True):
+            return False
         cache_key: str | None = None
         if ev.session_key:
             cache_key = f"{ev.session_key}|{_norm_user(ev.account or '')}|{str(ev.server_uuid or '').strip().lower()}"
@@ -506,6 +508,8 @@ class Dispatcher:
             return True
 
     def _identity_allowed(self, ev: ScrobbleEvent, cfg: dict[str, Any]) -> bool:
+        if not ((cfg.get("scrobble") or {}).get("watch") or {}).get("route_enabled", True):
+            return False
         filt = (((cfg.get("scrobble") or {}).get("watch") or {}).get("filters") or {})
         if not isinstance(filt, dict):
             filt = {}

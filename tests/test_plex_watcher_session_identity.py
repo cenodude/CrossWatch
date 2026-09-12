@@ -496,6 +496,61 @@ def _identity_logs(monkeypatch: pytest.MonkeyPatch, service: Any) -> list[str]:
     return lines
 
 
+def test_stopped_watcher_ignores_late_alert(monkeypatch: pytest.MonkeyPatch) -> None:
+    service, sink = _service(monkeypatch, _cfg(["owner"]), FakePlex([_session_xml("late", user_name="owner", user_id="1")]))
+    service.stop()
+    service._handle_alert(_alert("late"))
+    assert sink.events == []
+
+
+def test_listener_created_during_stop_is_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.scrobble.plex import watch
+
+    service, _ = _service(monkeypatch, _cfg(["owner"]), FakePlex([]))
+    closed = []
+
+    class Listener:
+        def stop(self):
+            closed.append(True)
+
+    class Server:
+        def startAlertListener(self, **kwargs):
+            service.stop()
+            return Listener()
+
+    monkeypatch.setattr(watch, "PlexServer", lambda *args: Server())
+    monkeypatch.setattr(service, "_refresh_account_context", lambda: None)
+    service.start()
+    assert closed == [True]
+    assert service._listener is None
+
+
+def test_async_stop_before_thread_starts_is_preserved(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.scrobble.plex import watch
+
+    service, _ = _service(monkeypatch, _cfg(["owner"]), FakePlex([]))
+    targets = []
+    connections = []
+
+    class DeferredThread:
+        def __init__(self, *, target, **kwargs):
+            targets.append(target)
+
+        def start(self):
+            pass
+
+        def is_alive(self):
+            return False
+
+    monkeypatch.setattr(watch.threading, "Thread", DeferredThread)
+    monkeypatch.setattr(watch, "PlexServer", lambda *args: connections.append(args))
+    service.start_async()
+    service.stop()
+    targets[0]()
+    assert service.is_stopping()
+    assert connections == []
+
+
 def test_identity_log_reports_resolution_details(monkeypatch: pytest.MonkeyPatch) -> None:
     cfg = _cfg(["Carmen"])
     plex = FakePlex([_session_xml("31", user_name="Carmen", user_id="176467484")])
