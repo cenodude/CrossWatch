@@ -195,6 +195,7 @@
       if (!btn) return;
       btn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">${icon}</span><span>${label}</span>`;
       btn.setAttribute("aria-label", label);
+      btn.title = label;
     };
 
     setButtonIcon(ctx.addBtn, "add", "Add row");
@@ -204,7 +205,7 @@
       button.id = "cw-saved-mappings";
       button.type = "button";
       button.className = "cw-btn";
-      setButtonIcon(button, "compare_arrows", "Mappings & blocks");
+      setButtonIcon(button, "compare_arrows", "Mapping");
       ctx.addBtn.before(button);
       button.addEventListener("click", async () => {
         button.disabled = true;
