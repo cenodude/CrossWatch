@@ -104,7 +104,8 @@ class AnimeMappingAutoUpdater:
                     st = mapping_status(cfg=cfg)
                     last_checked = int(st.get("last_checked_at") or 0)
                     installed = bool(st.get("installed") and st.get("index_ready"))
-                    due_at = 0 if not last_checked or not installed else last_checked + interval
+                    retry_interval = MAX_SLEEP_SECONDS if st.get("error") else interval
+                    due_at = 0 if not last_checked or not installed else last_checked + retry_interval
 
                     self._set_status(enabled=True, last_check_at=last_checked, next_check_at=due_at)
 
@@ -122,12 +123,13 @@ class AnimeMappingAutoUpdater:
                         },
                     )
                     res = mapping_update(release_tag=tag, force=False)
-                    next_check = int(time.time()) + interval
+                    update_error = str(res.get("error") or "Update failed") if res.get("ok") is False else ""
+                    next_check = int(time.time()) + (MAX_SLEEP_SECONDS if update_error else interval)
                     self._set_status(
                         last_check_at=int(time.time()),
                         last_update_at=int(time.time()) if bool(res.get("updated")) else int(st.get("last_updated_at") or 0),
                         next_check_at=next_check,
-                        last_error="",
+                        last_error=update_error,
                     )
                     log(
                         "auto_update_finished",
