@@ -61,7 +61,7 @@
         </div>
       </div>
       <div class="pp-status" id="pp-status"></div>
-      <div class="pp-toolbar">
+      <div class="pp-toolbar cw-page-toolbar">
         <input class="pp-field" id="pp-search" type="search" placeholder="Search">
         <select class="pp-field hidden" id="pp-user-profile" aria-label="User profile"><option value="">All User Profiles</option></select>
         <select class="pp-field" id="pp-provider"><option value="">Loading providers...</option></select>

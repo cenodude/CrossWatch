@@ -63,8 +63,8 @@ header .tabs .cw-nav-profile-avatar {
   border-radius: 50%;
   overflow: hidden;
   background: rgba(255, 255, 255, .045);
-  color: #a9bcff;
-  -webkit-text-fill-color: #a9bcff;
+  color: var(--cw-theme-accent);
+  -webkit-text-fill-color: var(--cw-theme-accent);
   font-size: 21px !important;
   line-height: 1;
 }

@@ -1218,9 +1218,9 @@
             <div class="cw-editor-hero-summary cw-page-hero-actions"><div class="cw-editor-hero-seg"><strong role="status">Loading Editor...</strong><span>Please wait</span></div></div>
           </div>
           <div class="cw-wrap" aria-hidden="true"><div class="cw-main">
-            <div class="cw-controls"><span class="cw-skeleton-bar cw-skeleton-search"></span><span class="cw-skeleton-bar cw-skeleton-action"></span><span class="cw-skeleton-bar cw-skeleton-action"></span></div>
-            <div class="cw-table-wrap"><div class="cw-skeleton-table-head"><span class="cw-skeleton-bar"></span></div>${'<div class="cw-skeleton-table-row"><span class="cw-skeleton-bar"></span><span class="cw-skeleton-bar"></span><span class="cw-skeleton-bar"></span></div>'.repeat(6)}</div>
-          </div><aside class="cw-side"><div class="ins-card cw-skeleton-sidebar">${'<div><span class="cw-skeleton-bar cw-skeleton-label"></span><span class="cw-skeleton-bar cw-skeleton-field"></span></div>'.repeat(5)}</div></aside></div>
+            <div class="cw-controls cw-page-toolbar"><span class="cw-skeleton-bar cw-skeleton-search"></span><span class="cw-skeleton-bar cw-skeleton-action"></span><span class="cw-skeleton-bar cw-skeleton-action"></span></div>
+            <div class="cw-table-wrap cw-page-table"><div class="cw-skeleton-table-head"><span class="cw-skeleton-bar"></span></div>${'<div class="cw-skeleton-table-row"><span class="cw-skeleton-bar"></span><span class="cw-skeleton-bar"></span><span class="cw-skeleton-bar"></span></div>'.repeat(6)}</div>
+          </div><aside class="cw-side"><div class="ins-card cw-skeleton-sidebar cw-page-panel">${'<div><span class="cw-skeleton-bar cw-skeleton-label"></span><span class="cw-skeleton-bar cw-skeleton-field"></span></div>'.repeat(5)}</div></aside></div>
         </div>`;
       }
       try {

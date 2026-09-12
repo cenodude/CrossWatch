@@ -410,7 +410,7 @@ function bundleKey(s) {
       </div>
       <div class="ss-wrap">
         <div class="ss-col">
-          <div class="ss-card ss-accent">
+          <div class="ss-card ss-accent cw-page-panel">
             <div class="ss-card-head">
               <div class="ss-headcopy">
                 <h3>Create capture</h3>
@@ -452,14 +452,14 @@ function bundleKey(s) {
           </div>
         </div>
         <div class="ss-center-col">
-          <div class="ss-card ss-browser-card ss-lockable">
+          <div class="ss-card ss-browser-card ss-lockable cw-page-panel">
             <div class="ss-card-head ss-list-head">
               <div class="ss-headcopy">
                 <h3>Capture browser</h3>
                 <div class="ss-headsub">Tick a row to load it for restore and select it for compare and tools. Clicking a row loads it too.</div>
               </div>
             </div>
-            <div class="ss-toolbar">
+            <div class="ss-toolbar cw-page-toolbar">
               <div class="ss-filterbar">
                 <div id="ss-filter-provider-wrap" class="ss-filtermini"><select id="ss-filter-provider" class="input"></select></div>
                 <div id="ss-filter-feature-wrap" class="ss-filtermini"><select id="ss-filter-feature" class="input"></select></div>
@@ -473,7 +473,7 @@ function bundleKey(s) {
           </div>
         </div>
         <div class="ss-col">
-          <div class="ss-card ss-lockable" data-coll="restore">
+          <div class="ss-card ss-lockable cw-page-panel" data-coll="restore">
             <div class="ss-card-head">
               <div class="ss-headcopy">
                 <h3>Restore capture</h3>
@@ -495,7 +495,7 @@ function bundleKey(s) {
             <div id="ss-restore-progress" class="ss-progress hidden"><div class="ss-pbar"></div><div class="ss-plabel">Working...</div></div>
             <div id="ss-restore-out" class="ss-small ss-muted" style="margin-top:10px"></div>
           </div>
-          <div class="ss-card ss-lockable" data-coll="compare">
+          <div class="ss-card ss-lockable cw-page-panel" data-coll="compare">
             <div class="ss-card-head">
               <div class="ss-headcopy">
                 <h3>Compare captures</h3>
@@ -511,7 +511,7 @@ function bundleKey(s) {
               <div id="ss-diff-out" class="ss-muted ss-small"></div>
             </div>
           </div>
-          <div class="ss-card ss-lockable" data-coll="tools">
+          <div class="ss-card ss-lockable cw-page-panel" data-coll="tools">
             <div class="ss-card-head">
               <div class="ss-headcopy">
                 <h3>Tools</h3>
@@ -629,7 +629,7 @@ function bundleKey(s) {
   }
 
   function summaryCard(icon, label, value, sub, stat) {
-    return `<div class="ss-summary-card" data-stat="${escapeHtml(stat)}"><div class="ss-summary-icon"><span class="material-symbols-rounded">${escapeHtml(icon)}</span></div><div class="ss-summary-copy"><div class="ss-summary-label">${escapeHtml(label)}</div><div class="ss-summary-value"><strong>${escapeHtml(value)}</strong></div><div class="ss-summary-sub">${escapeHtml(sub)}</div></div></div>`;
+    return `<div class="ss-summary-card cw-page-panel" data-stat="${escapeHtml(stat)}"><div class="ss-summary-icon"><span class="material-symbols-rounded">${escapeHtml(icon)}</span></div><div class="ss-summary-copy"><div class="ss-summary-label">${escapeHtml(label)}</div><div class="ss-summary-value"><strong>${escapeHtml(value)}</strong></div><div class="ss-summary-sub">${escapeHtml(sub)}</div></div></div>`;
   }
 
   function setProgress(sel, on, label, tone) {
@@ -1439,7 +1439,7 @@ repopDiffSelects();
     }
 
     list.innerHTML = `
-      <div class="ss-table-wrap">
+      <div class="ss-table-wrap cw-page-table">
         <table class="ss-table">
           <thead>
             <tr>

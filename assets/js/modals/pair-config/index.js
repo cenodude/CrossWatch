@@ -1319,21 +1319,21 @@ function renderFeaturePanel(state){
       <div class="opt-row"><label for="gl-dry">Dry run</label><label class="switch"><input id="gl-dry" type="checkbox" ${g.dry_run?"checked":""}><span class="slider"></span></label></div>
       <div class="opt-row"><label for="gl-verify">Verify after write</label><label class="switch"><input id="gl-verify" type="checkbox" ${g.verify_after_write?"checked":""}><span class="slider"></span></label></div>
       <div class="opt-row"><label for="gl-drop">Drop guard</label><label class="switch"><input id="gl-drop" type="checkbox" ${g.drop_guard?"checked":""}><span class="slider"></span></label></div>
-      <div id="gl-drop-adv" class="prov-box" style="margin:8px 0 4px; ${g.drop_guard?"":"opacity:.5;pointer-events:none;"}">
+      <div id="gl-drop-adv" class="prov-box" style="margin:8px 0 4px; ${g.drop_guard?"":"opacity:var(--cw-disabled-opacity,.5);pointer-events:none;"}">
         <div class="panel-title small">Suspect guard (shrinking inventories)</div>
         <div class="grid2 compact">
           <div class="opt-row">
             <label for="gl-sus-min">Min</label>
             <div style="position:relative;width:100%">
               <input id="gl-sus-min" type="range" min="0" max="200" step="1" value="${minPrevVal}" style="width:100%">
-              <span id="gl-sus-min-val" style="position:absolute;right:6px;top:-6px;font-size:12px;opacity:.8;">${minPrevVal}</span>
+              <span id="gl-sus-min-val" style="position:absolute;right:6px;top:-6px;font-size:12px;opacity:var(--cw-content-opacity,.8);">${minPrevVal}</span>
             </div>
           </div>
           <div class="opt-row">
             <label for="gl-sus-pct-range">Shrink(%)</label>
             <div style="position:relative;width:100%">
               <input id="gl-sus-pct-range" type="range" min="1" max="50" step="1" value="${pct}" style="width:100%">
-              <span id="gl-sus-pct-val" style="position:absolute;right:6px;top:-6px;font-size:12px;opacity:.8;">${pct}</span>
+              <span id="gl-sus-pct-val" style="position:absolute;right:6px;top:-6px;font-size:12px;opacity:var(--cw-content-opacity,.8);">${pct}</span>
             </div>
           </div>
         </div>
@@ -2119,7 +2119,7 @@ function bindChangeHandlers(state,root){
 
     const adv = ID("gl-drop-adv");
     if (adv) {
-      adv.style.opacity = dropOn ? "" : "0.5";
+      adv.style.opacity = dropOn ? "" : "var(--cw-disabled-opacity,0.5)";
       adv.style.pointerEvents = dropOn ? "auto" : "none";
     }
   };
@@ -2151,7 +2151,7 @@ function bindChangeHandlers(state,root){
         blackbox:bb
       });
       const adv=ID("gl-drop-adv");
-      if(adv){adv.style.opacity=dropOn?"":"0.5";adv.style.pointerEvents=dropOn?"auto":"none"}
+      if(adv){adv.style.opacity=dropOn?"":"var(--cw-disabled-opacity,0.5)";adv.style.pointerEvents=dropOn?"auto":"none"}
     }
   });
 
@@ -2460,7 +2460,7 @@ function bindChangeHandlers(state,root){
       syncGlobalsUI();
       const dropOn=!!Q("#gl-drop")?.checked;
       const adv=ID("gl-drop-adv");
-      if(adv){adv.style.opacity=dropOn?"":"0.5";adv.style.pointerEvents=dropOn?"auto":"none"}
+      if(adv){adv.style.opacity=dropOn?"":"var(--cw-disabled-opacity,0.5)";adv.style.pointerEvents=dropOn?"auto":"none"}
 
       state.globals={
         dry_run:!!Q("#gl-dry")?.checked,
