@@ -10,6 +10,8 @@ import json
 import logging
 import time
 
+from ..history_events import history_epoch_from_item, history_event_key, is_history_event_key
+
 __all__ = [
     "load_unresolved_keys",
     "load_unresolved_map",
@@ -17,6 +19,9 @@ __all__ = [
     "load_unresolved_pending",
     "record_unresolved",
     "clear_unresolved",
+    "clear_matched_history_retries",
+    "is_remove_retry_reason",
+    "is_remove_retry",
 ]
 
 STATE_DIR = Path("/config/.cw_state")
@@ -381,6 +386,64 @@ def record_unresolved(
 
     ok, error = _atomic_write(path, data)
     return {"ok": ok, "count": added if ok else 0, "path": str(path), **({"error": error} if error else {})}
+
+
+def is_remove_retry_reason(reason: Any) -> bool:
+    r = str(reason or "").strip().lower()
+    return r.startswith("apply:remove") or r.startswith("two:apply:remove") or r.startswith("provider_down:remove")
+
+
+def is_remove_retry(record: Mapping[str, Any] | None) -> bool:
+    if not isinstance(record, Mapping):
+        return False
+    if str(record.get("action") or "").strip().lower() == "remove":
+        return True
+    reasons = [record.get(field) for field in ("reason", "hint", "error")]
+    if isinstance(record.get("reasons"), list):
+        reasons.extend(record["reasons"])
+    for reason in reasons:
+        if is_remove_retry_reason(reason):
+            return True
+        # Providers also emit codes such as simkl_remove_not_confirmed and
+        # trakt_history_remove_unconfirmed instead of orchestrator prefixes.
+        if "remove" in str(reason or "").strip().lower().replace(":", "_").split("_"):
+            return True
+    return False
+
+
+def clear_matched_history_retries(dst: str, matched_keys: Iterable[str]) -> dict[str, str]:
+    """Clear add failures already confirmed by a pair's history comparison.
+
+    A present watch does not confirm a pending deletion. Keep those failures,
+    and never broaden an event key into a title-wide retry cleanup.
+    Return retry keys mapped to confirmed event keys so callers can retain
+    the correct item metadata when recording resolutions.
+    """
+    records = load_unresolved_map(dst, "history", cross_features=False)
+    # Pending hints can shadow a provider's blocking row in the merged map.
+    blocking = _read_json(_blocking_path(dst, "history"))
+    matched = set(matched_keys)
+    pending_items = {row["key"]: row.get("item") for row in load_unresolved_pending(dst, "history")}
+    resolved: dict[str, str] = {}
+    for key, record in records.items():
+        if not isinstance(record, Mapping):
+            continue
+        if is_remove_retry(record) or is_remove_retry(blocking.get(key)):
+            continue
+        event_key = str(key)
+        if not is_history_event_key(event_key):
+            # Base-keyed retries retain the watch timestamp in the payload.
+            # Resolve only that specific viewing.
+            item = record.get("item") or pending_items.get(key)
+            if not isinstance(item, Mapping) or history_epoch_from_item(item) is None:
+                continue
+            event_key = history_event_key(item, key)
+        if event_key not in matched:
+            continue
+        resolved[str(key)] = event_key
+    if resolved:
+        clear_unresolved(dst, "history", resolved)
+    return resolved
 
 
 def clear_unresolved(

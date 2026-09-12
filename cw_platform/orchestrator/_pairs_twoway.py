@@ -103,7 +103,7 @@ from ._snapshots import (
 from ._applier import apply_add, apply_remove, apply_update
 from ._chunking import effective_chunk_size
 from ._tombstones import clear_items_for_feature, keys_for_feature
-from ._unresolved import load_unresolved_keys, load_unresolved_pending, record_unresolved, clear_unresolved
+from ._unresolved import load_unresolved_keys, load_unresolved_pending, record_unresolved, clear_unresolved, clear_matched_history_retries
 from ._phantoms import PhantomGuard  # type: ignore[attr-defined]
 
 from ._pairs_blocklist import apply_blocklist
@@ -112,8 +112,9 @@ from ._history_rewatches import (
     collapse_history_latest,
     config_with_history_rewatches,
     filter_history_events,
-    history_event_diff,
-    history_event_present,
+    compare_history_events,
+    history_event_matches,
+    history_timestamp_tolerance_seconds,
     history_rewatch_pair_enabled,
     history_rewatches_requested,
 )
@@ -354,6 +355,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
     import time as _t
 
     cfg, emit, info, dbg = ctx.config, ctx.emit, ctx.emit_info, ctx.dbg
+    history_tolerance = history_timestamp_tolerance_seconds(cfg)
     src_inst = normalize_instance_id(os.getenv("CW_PAIR_SRC_INSTANCE"))
     dst_inst = normalize_instance_id(os.getenv("CW_PAIR_DST_INSTANCE"))
     sync_cfg = (cfg.get("sync") or {})
@@ -811,11 +813,8 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         direct = idx.get(sk) if sk else None
         if isinstance(direct, Mapping):
             return direct
-        bucket_sec = _hist_bucket_sec(a, b, feature)
-        for dk, dv in (idx or {}).items():
-            if isinstance(dv, Mapping) and history_event_present(it, sk, {str(dk): dv}, _typed_tokens, bucket_sec=bucket_sec):
-                return dv
-        return None
+        matches = history_event_matches({sk: it}, idx, _typed_tokens, tolerance_seconds=history_tolerance)
+        return idx.get(matches[sk]) if sk in matches else None
 
     def _show_level_tokens(it: Mapping[str, Any]) -> set[str]:
         ids_raw = it.get("show_ids") if isinstance(it.get("show_ids"), Mapping) else it.get("ids")
@@ -1043,6 +1042,8 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
 
     add_to_A: list[dict[str, Any]] = []
     add_to_B: list[dict[str, Any]] = []
+    matched_history_to_A: set[str] = set()
+    matched_history_to_B: set[str] = set()
     upd_to_A: list[dict[str, Any]] = []
     upd_to_B: list[dict[str, Any]] = []
     rem_from_A: list[dict[str, Any]] = []
@@ -1533,9 +1534,11 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             B_eff = filter_history_events(B_eff, event_mode=True)
             A_alias = _alias_index(A_eff)
             B_alias = _alias_index(B_eff)
-            bucket_sec = _hist_bucket_sec(a, b, feature)
-            missing_for_B, _ = history_event_diff(A_eff, B_eff, typed_tokens=_typed_tokens, bucket_sec=bucket_sec)
-            missing_for_A, _ = history_event_diff(B_eff, A_eff, typed_tokens=_typed_tokens, bucket_sec=bucket_sec)
+            missing_for_B, missing_for_A, history_matches = compare_history_events(
+                A_eff, B_eff, typed_tokens=_typed_tokens, tolerance_seconds=history_tolerance,
+            )
+            matched_history_to_B = set(history_matches)
+            matched_history_to_A = set(history_matches.values())
 
             for v in missing_for_B:
                 tomb_blocks = _tomb_blocks_remove(v, prev_self=prevA, prev_self_alias=prevA_alias)
@@ -1901,6 +1904,14 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
          upd_to_A=len(upd_to_A), upd_to_B=len(upd_to_B),
          rem_from_A=len(rem_from_A), rem_from_B=len(rem_from_B))
     cancelled = cancelled or bool(cancel_requested())
+
+    if not (cancelled or dry_run_flag or a_down or b_down or A_suspect or B_suspect):
+        for provider, matched, items in ((a, matched_history_to_A, B_eff), (b, matched_history_to_B, A_eff)):
+            if matched:
+                resolved = clear_matched_history_retries(provider, matched)
+                if resolved:
+                    resolved_items = {key: items[event_key] for key, event_key in resolved.items()}
+                    _emit_item_resolutions(emit, provider, feature, pair_key, resolved, resolved_items)
 
     review = getattr(ctx, "interactive", None)
     if review is not None:

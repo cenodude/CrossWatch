@@ -143,6 +143,18 @@ def test_alias_ignored_when_destination_record_absent(cws) -> None:
     assert stats["synced"] == 0
 
 
+def test_rewatch_alias_requires_the_mapped_destination_even_if_original_exists(cws):
+    item = _episode(12971, 1, 40, series="Dragon Ball Z")
+    key = f"tmdb:12971#s01e40@{WATCHED_EPOCH}"
+    cfg = _cfg(rewatches=True)
+    _write_alias(cws, {key: {
+        "destination_key": "tmdb:12971#s02e01",
+        "destination_event_key": f"tmdb:12971#s02e01@{WATCHED_EPOCH}",
+        "watched_at": WATCHED,
+    }}, scope=pair_feature_scope(cfg, cfg["pairs"][0], "history") + "|SIMKL>TRAKT")
+    assert _synced(_state({key: item}, {key: item}), cfg)["synced"] == 0
+
+
 def test_alias_ignored_when_watched_at_differs_by_more_than_a_minute(cws) -> None:
     simkl = {"tmdb:12971#s01e40": _episode(12971, 1, 40, series="Dragon Ball Z")}
     trakt = {"tmdb:12971#s02e01": _episode(

@@ -1,4 +1,5 @@
 from copy import deepcopy
+import json
 
 import pytest
 
@@ -109,3 +110,86 @@ def test_retry_block_matches_exact_event_and_stays_in_its_scope(watch_pair, monk
     other = A._missing_peer_hints(index, "history", aliases, ["SIMKL"], False, peer_key)
     assert any(h.get("kind") == "blackbox" for h in exact)
     assert not any(h.get("kind") == "blackbox" for h in other)
+
+
+@pytest.mark.parametrize("source_time,target_time", [
+    ("2026-09-12T14:47:12Z", "2026-09-12T14:47:20Z"),
+    ("2026-09-12T14:47:58Z", "2026-09-12T14:48:06Z"),
+    ("2026-09-12T14:47:58Z", "2026-09-12T14:48:58Z"),
+])
+def test_nearby_watch_is_synchronized_in_analysis_attention_and_detail(watch_pair, source_time, target_time):
+    cfg, state, key, peer_key = watch_pair
+    state["providers"]["CROSSWATCH"]["history"]["baseline"]["items"][key]["watched_at"] = source_time
+    state["providers"]["SIMKL"]["history"]["baseline"]["items"][peer_key]["watched_at"] = target_time
+    before = deepcopy(state)
+    save_pair(cfg, state)
+    result = A._cached_analysis("cw-simkl", include_hints=True)
+    assert not any(p["type"] == "missing_peer" for p in result["problems"])
+    assert result["attention"]["counts"]["current_mismatch"] == 0
+    detail = A._detail_for_item("cw-simkl", "CROSSWATCH", "history", key)
+    assert not detail.get("watch_time_differences")
+    assert state == before
+
+
+def test_analyzer_does_not_reuse_a_peer_for_two_viewings(watch_pair):
+    cfg, state, key, peer_key = watch_pair
+    source = state["providers"]["CROSSWATCH"]["history"]["baseline"]["items"]
+    target = state["providers"]["SIMKL"]["history"]["baseline"]["items"]
+    source["extra"] = {**source[key], "watched_at": "2026-09-04T18:12:38Z"}
+    target[peer_key]["watched_at"] = source["extra"]["watched_at"]
+    ctx = A._analysis_context(state, cfg)
+    assert not A._target_has_peer(ctx, "CROSSWATCH", "history", key, source[key], "SIMKL")
+    assert A._target_has_peer(ctx, "CROSSWATCH", "history", "extra", source["extra"], "SIMKL")
+
+
+def test_runtime_tolerance_change_refreshes_cached_analysis_and_detail(watch_pair):
+    cfg, state, key, peer_key = watch_pair
+    save_pair(cfg, state)
+    before = deepcopy(state)
+    # This pair's timestamps differ by 294 seconds. Config changes alone must
+    # invalidate cached matches without fetching or rewriting provider history.
+    for tolerance, expected in ((60, 1), (300, 0), (0, 1)):
+        cfg["runtime"] = {"history_timestamp_tolerance_seconds": tolerance}
+        (A.CONFIG_DIR / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
+        result = A._cached_analysis("cw-simkl", include_hints=True)
+        assert result["attention"]["counts"]["current_mismatch"] == expected
+        assert A._cached_analysis("cw-simkl", include_hints=True)["timings_ms"]["cache_hit"]
+        detail = A._detail_for_item("cw-simkl", "CROSSWATCH", "history", key)
+        assert bool(detail.get("watch_time_differences")) == bool(expected)
+    assert state == before
+
+
+@pytest.mark.parametrize("reason,expected", [
+    ("apply:add:no_confirmations_fallback", 0),
+    ("apply:remove:unconfirmed", 1),
+])
+def test_confirmed_history_match_resolves_only_add_retry_attention(watch_pair, monkeypatch, reason, expected):
+    cfg, state, key, peer_key = watch_pair
+    item = state["providers"]["CROSSWATCH"]["history"]["baseline"]["items"][key]
+    state["providers"]["SIMKL"]["history"]["baseline"]["items"][peer_key]["watched_at"] = "2026-09-04T18:12:38Z"
+    record = dict(provider="SIMKL", feature="history", key=key.split("@")[0], event_key=key,
+                  item=item, alias_keys=A._alias_keys(item), reason=reason)
+    monkeypatch.setattr(A, "_unresolved_records", lambda _scopes: [record])
+    ctx = A._analysis_context(state, cfg)
+    result = A._attention_from_analysis([], set(), ctx)
+    assert result["counts"]["pending_retry"] == expected
+
+
+@pytest.mark.parametrize("metadata,expected", [
+    ({"action": "remove", "reasons": ["write_failed"]}, 1),
+    ({"reasons": ["write_failed", "two:apply:remove:unconfirmed"]}, 1),
+    ({"action": "add", "reasons": ["write_failed"]}, 0),
+    ({"reasons": ["simkl_remove_not_confirmed"]}, 1),
+])
+def test_provider_retry_metadata_is_preserved_in_history_attention(watch_pair, monkeypatch, metadata, expected):
+    cfg, state, key, peer_key = watch_pair
+    item = state["providers"]["CROSSWATCH"]["history"]["baseline"]["items"][key]
+    state["providers"]["SIMKL"]["history"]["baseline"]["items"][peer_key]["watched_at"] = "2026-09-04T18:12:38Z"
+    documents = {"SIMKL_history.unresolved.first.json": {key: {"item": item, **metadata}}}
+    monkeypatch.setattr(A, "_read_cw_state", lambda _scopes: documents)
+    ctx = A._analysis_context(state, cfg)
+    result = A._attention_from_analysis([], {"first"}, ctx)
+    assert result["counts"]["pending_retry"] == expected
+    record = A._unresolved_records({"first"})[0]
+    assert record["reasons"] == metadata["reasons"]
+    assert record.get("action") == metadata.get("action", "")

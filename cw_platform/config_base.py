@@ -728,6 +728,7 @@ DEFAULT_CFG: dict[str, Any] = {
         "state_dir": "",                                # Optional override for state dir (defaults to CONFIG/state)  - this will break container setups!
         "telemetry": {"enabled": True},                 # Usage stats
         "max_profiles_per_provider": 10,                # Total profiles per provider incl. default (1-100)
+        "history_timestamp_tolerance_seconds": 60,      # Same-viewing history match window; 0 requires exact timestamps
 
         # progress
         "snapshot_ttl_sec": 300,                        # Reuse snapshots within 5 min
