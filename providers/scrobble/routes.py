@@ -302,6 +302,7 @@ def build_route_cfg(cfg: dict[str, Any], route: dict[str, Any]) -> dict[str, Any
 
     w["filters"] = _deep_clone(r.get("filters") or {})
     w["route_id"] = r["id"]
+    w["route_enabled"] = r["enabled"]
     w["route_profile_id"] = route_assigned_profile_id(out, r)
     w["route_effective_profile_id"] = route_profile_id(out, r)
     w["route_provider"] = r["provider"]
