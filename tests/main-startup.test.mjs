@@ -11,8 +11,26 @@ const sources = ["helpers/core.js", "js/insights.js"].map(path =>
   readFileSync(new URL(`../assets/${path}`, import.meta.url), "utf8"));
 
 const shellSource = readFileSync(new URL("../ui_frontend.py", import.meta.url), "utf8");
-const mainRevealScript = [...shellSource.matchAll(/<script>([\s\S]*?)<\/script>/g)]
-  .map(match => match[1]).find(script => script.includes('root.dataset.cwMainPending = "1"'));
+// Extract trusted repository fixtures only; this is not an HTML sanitizer.
+function extractMainRevealScript(source) {
+  const script = [...source.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script\b[^>]*>/gi)]
+    .map(match => match[1]).find(body => body.includes('root.dataset.cwMainPending = "1"'));
+  assert.ok(script, "Main reveal script must be present in the shell");
+  return script;
+}
+const mainRevealScript = extractMainRevealScript(shellSource);
+
+test("Main reveal extraction accepts tag casing and attributes", () => {
+  for (const [open, close] of [
+    ["<script>", "</script>"],
+    ['<SCRIPT type="text/javascript">', "</SCRIPT>"],
+    ["<ScRiPt >", "</sCrIpT >"],
+    ["<script>", '</script ignored="value">'],
+  ]) {
+    assert.equal(extractMainRevealScript(`<script>unrelated()</script>${open}${mainRevealScript}${close}`), mainRevealScript);
+  }
+  assert.throws(() => extractMainRevealScript("<script>unrelated()</script>"), /Main reveal script must be present/);
+});
 
 function setupMainReveal(tab = "main") {
   const dataset = { tab }, listeners = new Map(), frames = [], timers = new Map();
