@@ -132,12 +132,22 @@ test("Removal failure retains the selection, shows the error and requires a fres
   assert.equal(f.node("[data-send-submit]").disabled, true);
 });
 
-test("History removal describes whole watched status and displays rejection of dated rows", async () => {
+test("History removal describes provider behavior and displays rejection of dated rows", async () => {
   const f = fixture("history"); await f.open();
   f.preview(() => {throw new Error("Individual watch dates cannot be removed here. Select a watched-status row.");});
   await f.click(f.modes[1]);
-  assert.match(f.node(".cw-editor-send-warning div").textContent, /watched status and all recorded viewings/);
+  assert.match(f.node(".cw-editor-send-warning div").textContent, /FLOPPY removes one watch entry/);
   assert.match(f.node("[data-send-status]").innerHTML, /Individual watch dates cannot be removed here/);
   assert.equal(f.node("[data-send-submit]").disabled, true);
   assert.equal(f.requests.filter(r => r.url.endsWith("/send")).length, 0);
+});
+
+test("A removed FLOPPY watch can succeed while other watches remain", async () => {
+  const f = fixture("history"); await f.open(); await f.click(f.modes[1]);
+  f.send(() => ({ok: true, operation: "remove", attempted: 1, confirmed: 1,
+    results: [{provider: "FLOPPY", display: "FLOPPY", ok: true, result: {confirmed: 1, still_watched: 1}}]}));
+  await f.click(f.node("TRAKT:family"));
+  await f.click(f.node("[data-send-submit]")); await f.click(f.node("[data-send-submit]"));
+  assert.match(f.node("[data-send-status]").innerHTML, /Removal complete/);
+  assert.match(f.node("[data-send-status]").innerHTML, /1 removed - 1 still watched \(other watches remain\)/);
 });

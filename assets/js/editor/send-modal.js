@@ -75,6 +75,7 @@
         Number(result.skipped || 0) ? `${Number(result.skipped || 0)} skipped` : "",
         Number(result.unresolved || 0) ? `${Number(result.unresolved || 0)} unresolved` : "",
         Number(result.errors || 0) ? `${Number(result.errors || 0)} errors` : "",
+        removing && Number(result.still_watched || 0) ? `${Number(result.still_watched)} still watched (other watches remain)` : "",
         r?.error ? String(r.error) : "",
       ].filter(Boolean).join(" - ");
       return `<div class="cw-editor-send-result-row ${r?.ok ? "ok" : "bad"}" style="${providerToneStyle(r, esc)}">
@@ -258,7 +259,7 @@
       summary[2].textContent = removing ? "Selective removal" : "Selective send";
       shell.querySelector(".cw-editor-send-warning div").textContent = removing
         ? (kind === "history"
-          ? "Removes watched status and all recorded viewings for each selected movie or episode. Individual watch dates are not supported. Other sync sources or saved additions can restore them."
+          ? "Removes history using each provider’s sync removal behavior. FLOPPY removes one watch entry per selected movie or episode; other watches can remain. Individual watch-date selection is not supported. Other sync sources or saved additions can restore removed records."
           : "Removes the selected records from the chosen profiles. Other sync sources or saved additions can restore them. Mappings and blocks stay in place.")
         : baseWarning;
       shell.querySelectorAll("[data-operation]").forEach(button => {
