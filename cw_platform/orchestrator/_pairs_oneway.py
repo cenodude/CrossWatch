@@ -179,11 +179,6 @@ def compute_effective_remove(
     }
 
 
-def is_remove_retry_reason(reason) -> bool:
-    r = str(reason or "").strip().lower()
-    return r.startswith("apply:remove") or r.startswith("two:apply:remove") or r.startswith("provider_down:remove")
-
-
 def resolve_baseline_writes(baseline_keys, key2item, result) -> list:
     dest_map = (result or {}).get("confirmed_destinations")
     dest_map = dest_map if isinstance(dest_map, Mapping) else {}
@@ -238,7 +233,7 @@ from ._snapshots import (
 )
 from ._applier import apply_add, apply_remove, apply_update
 from ._chunking import effective_chunk_size
-from ._unresolved import load_unresolved_keys, load_unresolved_map, load_unresolved_pending, record_unresolved, clear_unresolved
+from ._unresolved import load_unresolved_keys, load_unresolved_map, load_unresolved_pending, record_unresolved, clear_unresolved, clear_matched_history_retries, is_remove_retry_reason
 from ._planner import diff, diff_ratings, diff_progress, _pick_rating
 from ._phantoms import PhantomGuard
 from ._tombstones import clear_items_for_feature
@@ -262,8 +257,9 @@ from ._history_rewatches import (
     collapse_history_latest,
     config_with_history_rewatches,
     filter_history_events,
-    history_event_diff,
-    history_event_present,
+    compare_history_events,
+    history_event_matches,
+    history_timestamp_tolerance_seconds,
     history_rewatch_pair_enabled,
     history_rewatches_requested,
 )
@@ -770,6 +766,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
     health_map: Mapping[str, Any],
 ) -> dict[str, Any]:
     cfg, emit, dbg = ctx.config, ctx.emit, ctx.dbg
+    history_tolerance = history_timestamp_tolerance_seconds(cfg)
     src_inst = normalize_instance_id(os.getenv("CW_PAIR_SRC_INSTANCE"))
     dst_inst = normalize_instance_id(os.getenv("CW_PAIR_DST_INSTANCE"))
     sync_cfg = (cfg.get("sync") or {})
@@ -960,11 +957,8 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
         direct = idx.get(sk) if sk else None
         if isinstance(direct, Mapping):
             return direct
-        bucket_sec = _history_bucket_sec(src, dst, feature)
-        for dk, dv in (idx or {}).items():
-            if isinstance(dv, Mapping) and history_event_present(it, sk, {str(dk): dv}, _typed_tokens, bucket_sec=bucket_sec):
-                return dv
-        return None
+        matches = history_event_matches({sk: it}, idx, _typed_tokens, tolerance_seconds=history_tolerance)
+        return idx.get(matches[sk]) if sk in matches else None
 
     def _show_level_tokens(it: Mapping[str, Any]) -> set[str]:
         ids_raw = it.get("show_ids") if isinstance(it.get("show_ids"), Mapping) else it.get("ids")
@@ -1308,6 +1302,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
         remove_mode = "source_deletes"
 
     mirror_removes: list[dict[str, Any]] = []
+    matched_history_keys: set[str] = set()
     updates: list[dict[str, Any]] = []
     if feature == "ratings":
         src_idx  = _ratings_filter_index(src_idx,  fcfg)
@@ -1374,12 +1369,13 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
         if feature == "history" and history_event_mode:
             src_idx = filter_history_events(src_idx, event_mode=True)
             dst_full = filter_history_events(dst_full, event_mode=True)
-            adds, mirror_removes = history_event_diff(
+            adds, mirror_removes, history_matches = compare_history_events(
                 src_idx,
                 dst_full,
                 typed_tokens=_typed_tokens,
-                bucket_sec=_history_bucket_sec(src, dst, feature),
+                tolerance_seconds=history_tolerance,
             )
+            matched_history_keys = set(history_matches)
         elif feature == "history" and not history_event_mode:
             src_idx = {
                 k: dict(v) for k, v in src_idx.items()
@@ -1758,6 +1754,12 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
     verify_after_write = bool(sync_cfg.get("verify_after_write", False))
     post_apply_add_res: dict[str, Any] | None = None
     cancelled = cancelled or bool(cancel_requested())
+
+    if matched_history_keys and not (cancelled or dry_run_flag or src_down or dst_down or src_suspect or dst_suspect):
+        resolved = clear_matched_history_retries(dst, matched_history_keys)
+        if resolved:
+            resolved_items = {key: src_idx[event_key] for key, event_key in resolved.items()}
+            _emit_item_resolutions(emit, dst, feature, pair_key, resolved, resolved_items)
 
     if updates and not cancelled:
         if dst_down:

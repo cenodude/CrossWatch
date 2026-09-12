@@ -30,7 +30,8 @@ from cw_platform.anime_mapping.history_coords import (
 )
 from cw_platform.anime_mapping.storage import index_ready as anime_index_ready
 from cw_platform.config_base import CONFIG as CONFIG_DIR, load_config
-from cw_platform.orchestrator._history_rewatches import history_event_present
+from cw_platform.orchestrator._history_rewatches import history_event_matches, history_timestamp_tolerance_seconds
+from cw_platform.orchestrator._unresolved import is_remove_retry
 from cw_platform.local_db.legacy_files import DB_MANAGED_ARTIFACTS
 from cw_platform.modules_registry import get_sync_module_path_by_name, sync_provider_names
 from cw_platform.provider_instances import normalize_instance_id
@@ -2518,6 +2519,7 @@ class _AnalysisContext:
     history_pair_aliases: dict[tuple[str, str], dict[str, Any]] = field(default_factory=dict)
     history_keys: dict[str, dict[str, Any]] = field(default_factory=dict)
     history_rewatch_pairs: set[tuple[str, str]] = field(default_factory=set)
+    history_matches: dict[tuple[str, str], dict[str, str]] = field(default_factory=dict)
     history_identity_items: dict[str, dict[str, list[tuple[str, Mapping[str, Any]]]]] = field(default_factory=dict)
     anime_coords: _AnimeHistoryCoords | None = None
 
@@ -2547,6 +2549,40 @@ def _analysis_context(s: dict[str, Any], cfg: dict[str, Any] | None = None) -> _
     )
 
 
+def _history_peer_matches(ctx: _AnalysisContext, src: str, dst: str) -> dict[str, str]:
+    pair = (src, dst)
+    if pair in ctx.history_matches:
+        return ctx.history_matches[pair]
+    coords = ctx.anime_coords.pair(src, dst) if ctx.anime_coords else None
+
+    def prepared(provider: str, *, source: bool) -> dict[str, Any]:
+        out = {}
+        for key, item in ctx.history_keys.get(provider, {}).items():
+            if source and (
+                not _passes_pair_lib_filter(ctx.pair_libs, src, "history", dst, item)
+                or not _passes_pair_type_filter(ctx.pair_types, src, "history", dst, item)
+            ):
+                continue
+            alias = _alias_peer_key(ctx, src, dst, key, item) if source else None
+            tokens = _history_event_tokens(item)
+            if coords:
+                tokens |= set(coords.aliases.tokens(item)) | _history_coord_peer_tokens(item)
+            if alias:
+                tokens = {f"pair_alias:{alias}"}
+            elif not source:
+                tokens |= {f"pair_alias:{key}", f"pair_alias:{key.split('@', 1)[0]}"}
+            out[key] = {**item, "_cw_history_match_tokens": tokens}
+        return out
+
+    matches = history_event_matches(
+        prepared(src, source=True), prepared(dst, source=False),
+        lambda item: item["_cw_history_match_tokens"],
+        tolerance_seconds=history_timestamp_tolerance_seconds(ctx.cfg),
+    )
+    ctx.history_matches[pair] = matches
+    return matches
+
+
 def _target_peer_match(
     ctx: _AnalysisContext,
     prov: str,
@@ -2568,15 +2604,11 @@ def _target_peer_match(
     # For history episodes/seasons, exact show+season+episode identity wins over
     # generic alias overlap: provider episode IDs differ across Emby/Jellyfin.
     if feat_key == "history":
+        if (prov_key, dst_key) in ctx.history_rewatch_pairs:
+            return "history_event" if item_key in _history_peer_matches(ctx, prov_key, dst_key) else ""
         alias_dest = _alias_peer_key(ctx, prov_key, dst_key, item_key, item)
         if alias_dest:
             return "pair_alias" if _alias_peer_present(ctx, dst_key, alias_dest, item) else ""
-        rewatch = (prov_key, dst_key) in ctx.history_rewatch_pairs
-        if rewatch:
-            dest_items = (ctx.history_keys or {}).get(dst_key) or {}
-            if history_event_present(item, item_key, dest_items, _history_event_tokens, 0):
-                return "history_event"
-            return "anime_coords" if ctx.anime_history_match(prov_key, dst_key, item, require_minute=True) else ""
         exact_keys = _history_exact_keys(item)
         if exact_keys:
             if exact_keys & (ctx.history_exact.get(dst_key) or set()):
@@ -3472,16 +3504,24 @@ def _unresolved_records(allowed_scopes: set[str] | None) -> list[dict[str, Any]]
             if not aks:
                 continue
             reason = str(rec.get("reason") or rec.get("hint") or rec.get("error") or "").strip()
+            raw_reasons = rec.get("reasons")
+            reasons = [str(r) for r in raw_reasons if str(r or "").strip()] if isinstance(raw_reasons, list) else []
+            if reason and reason not in reasons:
+                reasons.insert(0, reason)
+            reason = reason or next(iter(reasons), "")
             records.append(
                 {
                     "provider": prov_key,
                     "feature": feat_key,
                     "key": alias_key,
+                    "event_key": uk,
                     "alias_keys": aks,
                     "ids": dict(item.get("ids") or {}) if isinstance(item, dict) else {},
                     "item": item if isinstance(item, dict) else {},
                     "reason": reason,
-                    "reason_message": _unresolved_reason_message(prov_key, feat_key, [reason]),
+                    "reasons": reasons,
+                    "action": str(rec.get("action") or "").strip().lower(),
+                    "reason_message": _unresolved_reason_message(prov_key, feat_key, reasons),
                     "pending": pending,
                     "retry_blocked": (prov_key, feat_key, uk) in blocked_keys,
                     "file": name,
@@ -3683,6 +3723,28 @@ def _attention_mismatch_rows(problems: Iterable[Mapping[str, Any]]) -> list[dict
     return rows
 
 
+def _history_resolved_unresolved(ctx: _AnalysisContext | None, rec: Mapping[str, Any]) -> bool:
+    if ctx is None or str(rec.get("feature") or "").lower() != "history":
+        return False
+    if is_remove_retry(rec):
+        return False
+    item = rec.get("item")
+    if not isinstance(item, Mapping) or not item:
+        return False
+    # Legacy retry files identify the destination provider, not its account.
+    # Only resolve them when this analysis has a single eligible route.
+    routes = [(src, dst) for src, dst in ctx.history_rewatch_pairs
+              if _provider_base(dst) == _provider_base(rec.get("provider"))]
+    if len(routes) != 1:
+        return False
+    src, dst = routes[0]
+    key = str(rec.get("event_key") or rec.get("key") or "")
+    source_matches = history_event_matches(
+        {key: item}, ctx.history_keys.get(src, {}), _history_event_tokens, tolerance_seconds=0,
+    )
+    return any(source_key in _history_peer_matches(ctx, src, dst) for source_key in source_matches.values())
+
+
 def _anime_resolved_unresolved(ctx: _AnalysisContext | None, rec: Mapping[str, Any]) -> bool:
     if ctx is None:
         return False
@@ -3703,6 +3765,8 @@ def _anime_resolved_unresolved(ctx: _AnalysisContext | None, rec: Mapping[str, A
         for dst_tok in targets:
             if _provider_base(dst_tok) != dst_base:
                 continue
+            if (src_tok, dst_tok) in ctx.history_rewatch_pairs:
+                continue  # Rewatch retries use the shared one-to-one event match.
             if coords.match(src_tok, dst_tok, item):
                 return True
     return False
@@ -3730,8 +3794,12 @@ def _attention_from_analysis(
         ]
 
     anime_resolved = 0
+    history_resolved = 0
     kept: list[dict[str, Any]] = []
     for rec in records:
+        if _history_resolved_unresolved(ctx, rec):
+            history_resolved += 1
+            continue
         if _anime_resolved_unresolved(ctx, rec):
             anime_resolved += 1
             continue
@@ -3740,6 +3808,8 @@ def _attention_from_analysis(
     out = _attention_model(mismatch_rows, kept)
     if anime_resolved:
         out["counts"]["anime_resolved"] = anime_resolved
+    if history_resolved:
+        out["counts"]["history_resolved"] = history_resolved
     return out
 
 

@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -12,8 +13,25 @@ from ..history_events import (
     history_epoch_from_key,
     history_event_key,
     history_sync_key,
+    is_history_event_key,
     minimal_history_item,
 )
+
+HISTORY_TIMESTAMP_TOLERANCE_SECONDS = 60
+
+
+def history_timestamp_tolerance_seconds(config: Mapping[str, Any]) -> int:
+    """Read the shared runtime window; malformed values use the default."""
+    runtime = config.get("runtime")
+    value = HISTORY_TIMESTAMP_TOLERANCE_SECONDS
+    if isinstance(runtime, Mapping):
+        value = runtime.get("history_timestamp_tolerance_seconds", value)
+    if isinstance(value, bool):
+        return HISTORY_TIMESTAMP_TOLERANCE_SECONDS
+    try:
+        return max(0, int(str(value).strip()))
+    except (TypeError, ValueError):
+        return HISTORY_TIMESTAMP_TOLERANCE_SECONDS
 
 
 def history_rewatches_requested(feature: str, fcfg: Mapping[str, Any]) -> bool:
@@ -112,33 +130,117 @@ def filter_history_events(idx: Mapping[str, Any], *, event_mode: bool) -> dict[s
     return out
 
 
-def history_event_present(
-    item: Mapping[str, Any],
-    fallback_key: Any,
-    other_idx: Mapping[str, Any],
+def history_event_matches(
+    src_idx: Mapping[str, Any],
+    dst_idx: Mapping[str, Any],
     typed_tokens: Callable[[Mapping[str, Any]], set[str]],
-    bucket_sec: int,
-) -> bool:
-    key = history_event_key(item, fallback_key)
-    if key and key in other_idx:
-        return True
-    ts = history_epoch_from_item(item) or history_epoch_from_key(key)
-    if ts is None:
-        return False
-    b = max(0, int(bucket_sec or 0))
-    ts_cmp = ts if b <= 1 else (ts // b) * b
-    for other_key, other_item in (other_idx or {}).items():
-        if not isinstance(other_item, Mapping):
-            continue
-        other_ts = history_epoch_from_item(other_item) or history_epoch_from_key(other_key)
-        if other_ts is None:
-            continue
-        other_cmp = other_ts if b <= 1 else (other_ts // b) * b
-        if other_cmp != ts_cmp:
-            continue
-        if typed_tokens(item) & typed_tokens(other_item):
-            return True
-    return False
+    *,
+    tolerance_seconds: int = HISTORY_TIMESTAMP_TOLERANCE_SECONDS,
+) -> dict[str, str]:
+    """Pair viewings without changing timestamps or reusing a destination row.
+
+    Prefer exact event identities, then the unique nearest timestamp on both
+    sides. Equally close alternatives remain unmatched. Index by identity and
+    time so unrelated library rows never require a pairwise comparison.
+    """
+    tolerance = max(0, int(tolerance_seconds))
+
+    def records(idx: Mapping[str, Any]) -> dict[str, tuple[int, str, set[str]]]:
+        out = {}
+        for key, item in idx.items():
+            if not isinstance(item, Mapping):
+                continue
+            epoch = history_epoch_from_item(item)
+            if epoch is None:
+                epoch = history_epoch_from_key(key)
+            if epoch is None:
+                continue
+            typ = str(item.get("type") or "").strip().lower()
+            typ = "show" if typ == "tv" else typ
+            event_key = history_event_key(item, key)
+            tokens = {f"{typ}|{token}" for token in typed_tokens(item)}
+            out[key] = (epoch, event_key, tokens)
+        return out
+
+    sources, targets = records(src_idx), records(dst_idx)
+    sparse_events = {event_key for _, event_key, tokens in (*sources.values(), *targets.values())
+                     if not tokens and is_history_event_key(event_key)}
+    for idx, rows in ((src_idx, sources), (dst_idx, targets)):
+        for key, (_, event_key, tokens) in rows.items():
+            if event_key in sparse_events:
+                # Only sparse records fall back to exact event identity.
+                # Explicit provider mappings remain authoritative.
+                typ = str(idx[key].get("type") or "").strip().lower()
+                typ = "show" if typ == "tv" else typ
+                tokens.add(f"{typ}|event:{event_key}")
+    postings: dict[str, list[tuple[int, str]]] = {}
+    for key, (epoch, _, tokens) in targets.items():
+        for token in tokens:
+            postings.setdefault(token, []).append((epoch, key))
+    for rows in postings.values():
+        rows.sort()
+
+    candidates: dict[str, dict[str, tuple[int, int]]] = {}
+    reverse: dict[str, dict[str, tuple[int, int]]] = {}
+    for key, (epoch, event_key, tokens) in sources.items():
+        peers = {}
+        for token in tokens:
+            rows = postings.get(token, [])
+            lo = bisect_left(rows, epoch - tolerance, key=lambda row: row[0])
+            hi = bisect_right(rows, epoch + tolerance, key=lambda row: row[0])
+            for other_epoch, other_key in rows[lo:hi]:
+                score = (int(event_key != targets[other_key][1]), abs(epoch - other_epoch))
+                peers[other_key] = score
+        if peers:
+            candidates[key] = peers
+            for other_key, score in peers.items():
+                reverse.setdefault(other_key, {})[key] = score
+
+    def nearest(peers: Mapping[str, tuple[int, int]]) -> str | None:
+        if not peers:
+            return None
+        score = min(peers.values())
+        best = [key for key, value in peers.items() if value == score]
+        return best[0] if len(best) == 1 else None
+
+    matches: dict[str, str] = {}
+    while candidates:
+        source_choices = {key: nearest(peers) for key, peers in candidates.items()}
+        target_choices = {key: nearest(peers) for key, peers in reverse.items()}
+        pairs = [(key, peer) for key, peer in source_choices.items()
+                 if peer is not None and target_choices.get(peer) == key]
+        if not pairs:
+            break
+        for key, peer in pairs:
+            matches[key] = peer
+            for other_key in candidates.pop(key):
+                reverse[other_key].pop(key, None)
+            for source_key in reverse.pop(peer):
+                candidates[source_key].pop(peer, None)
+        candidates = {key: peers for key, peers in candidates.items() if peers}
+        reverse = {key: peers for key, peers in reverse.items() if peers}
+    return matches
+
+
+def compare_history_events(
+    src_idx: Mapping[str, Any],
+    dst_idx: Mapping[str, Any],
+    typed_tokens: Callable[[Mapping[str, Any]], set[str]],
+    *,
+    tolerance_seconds: int = HISTORY_TIMESTAMP_TOLERANCE_SECONDS,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, str]]:
+    """Return missing viewings and the matched original source/target keys."""
+    adds: list[dict[str, Any]] = []
+    removes: list[dict[str, Any]] = []
+    matches = history_event_matches(src_idx, dst_idx, typed_tokens, tolerance_seconds=tolerance_seconds)
+    matched_targets = set(matches.values())
+    for key, value in (src_idx or {}).items():
+        if isinstance(value, Mapping) and key not in matches:
+            adds.append(minimal_history_item(value, key, event_mode=True))
+    for key, value in (dst_idx or {}).items():
+        if isinstance(value, Mapping) and key not in matched_targets:
+            removes.append(minimal_history_item(value, key, event_mode=True))
+    return adds, removes, matches
 
 
 def history_event_diff(
@@ -146,14 +248,9 @@ def history_event_diff(
     dst_idx: Mapping[str, Any],
     typed_tokens: Callable[[Mapping[str, Any]], set[str]],
     *,
-    bucket_sec: int = 0,
+    tolerance_seconds: int = HISTORY_TIMESTAMP_TOLERANCE_SECONDS,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    adds: list[dict[str, Any]] = []
-    removes: list[dict[str, Any]] = []
-    for key, value in (src_idx or {}).items():
-        if isinstance(value, Mapping) and not history_event_present(value, key, dst_idx, typed_tokens, bucket_sec):
-            adds.append(minimal_history_item(value, key, event_mode=True))
-    for key, value in (dst_idx or {}).items():
-        if isinstance(value, Mapping) and not history_event_present(value, key, src_idx, typed_tokens, bucket_sec):
-            removes.append(minimal_history_item(value, key, event_mode=True))
+    adds, removes, _ = compare_history_events(
+        src_idx, dst_idx, typed_tokens, tolerance_seconds=tolerance_seconds,
+    )
     return adds, removes
