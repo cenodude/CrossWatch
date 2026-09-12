@@ -67,3 +67,28 @@ test("webhook filters instances rather than excluding the whole source provider"
   assert.deepEqual(run('sinkProfiles("plex").map(p => p.instance)'), ["default"]);
   assert.equal(run('selectedSinkInstance("plex")'), "default");
 });
+
+test("watcher rewatch option defaults off, renders only for SIMKL and saves the selection", () => {
+  const run = modal("route");
+  run('props = {}; draft = {provider: "plex", sink: "simkl", options: {watch: {}, scrobble: {}}}; null');
+  let html = run('optionsPanel(draft)');
+  assert.match(html, /Track rewatches/);
+  assert.doesNotMatch(html, /id="scr-simkl-rewatches" checked/);
+  run('draft.options.watch.simkl_rewatches = true; null');
+  assert.match(run('optionsPanel(draft)'), /id="scr-simkl-rewatches" checked/);
+  run('root = {querySelector: (id) => id === "#scr-simkl-rewatches" ? {checked: true} : null, querySelectorAll: () => []}; null');
+  assert.equal(run('collect().options.watch.simkl_rewatches'), true);
+  run('draft.sink = "trakt"; null');
+  assert.doesNotMatch(run('optionsPanel(draft)'), /Track rewatches/);
+  assert.equal(run('Object.hasOwn(collect().options.watch, "simkl_rewatches")'), false);
+});
+
+test("webhook rewatch option defaults off and round trips the destination setting", () => {
+  const run = modal("webhook");
+  run('props = {mode: "edit", overview: {destination_availability: [{provider: "simkl", profiles: [{instance: "default", configured: true}]}]}, webhook: {provider: "plex", provider_instance: "default", sink: "simkl", effective_settings: {sinks: ["simkl"]}}}; null');
+  assert.doesNotMatch(run('optionsPanel()'), /id="scw-simkl-rewatches" checked/);
+  run('props.webhook.effective_settings.simkl_rewatches = true; null');
+  assert.match(run('optionsPanel()'), /id="scw-simkl-rewatches" checked/);
+  run('root = {querySelector: (id) => id === "#scw-sink" ? {value: "simkl"} : id === "#scw-simkl-rewatches" ? {checked: true} : null}; null');
+  assert.equal(run('payload().simkl_rewatches'), true);
+});

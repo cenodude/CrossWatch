@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+import hashlib
 import json, time
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,7 @@ except Exception:
 
 from providers.scrobble._auto_remove_watchlist import remove_across_providers_by_ids as _rm_across
 from providers.scrobble._watched_gate import resolve_stop_action
+from providers.scrobble.simkl import rewatches
 try:
     from api.watchlistAPI import remove_across_providers_by_ids as _rm_across_api
 except ImportError:
@@ -126,8 +128,11 @@ def _hdr(cfg: dict[str, Any]) -> dict[str, str]:
     return h
 
 
-def _post(path: str, body: dict[str, Any], cfg: dict[str, Any]) -> requests.Response:
-    return requests.post(f"{SIMKL_API}{path}", headers=_hdr(cfg), json=body, timeout=10)
+def _post(path: str, body: dict[str, Any], cfg: dict[str, Any], *, allow_rewatch: bool = False) -> requests.Response:
+    params = {"client_id": _hdr(cfg)["simkl-api-key"], "app-name": "CrossWatch", "app-version": _app_meta(cfg)["app_version"]}
+    if allow_rewatch and path == "/scrobble/stop" and float(body.get("progress") or 0) >= 80:
+        params["allow_rewatch"] = "yes"
+    return requests.post(f"{SIMKL_API}{path}", headers=_hdr(cfg), params=params, json=body, timeout=10)
 
 
 def _stop_pause_threshold(cfg: dict[str, Any]) -> int:
@@ -500,12 +505,36 @@ class SimklSink(ScrobbleSink):
         self._last_intent_prog: dict[str, int] = {}
         self._warn_no_token = False
         self._warn_no_key = False
+        self._rewatch_scope = ""
 
     def _route_source(self, cfg: dict[str, Any]) -> tuple[str, str]:
         watch = ((cfg.get("scrobble") or {}).get("watch") or {}) if isinstance(cfg, dict) else {}
         source = str(watch.get("route_provider") or "watcher").strip().lower() or "watcher"
         source_instance = str(watch.get("route_provider_instance") or "default").strip() or "default"
         return source, source_instance
+
+    def _rewatch_log(self, ev: Any, cfg: dict[str, Any], event: str, **fields: Any) -> None:
+        watch = (cfg.get("scrobble") or {}).get("watch") or {}
+        source, instance = self._route_source(cfg)
+        session = getattr(ev, "session_key", None) or getattr(ev, "session", None)
+        context = {
+            "route": watch.get("route_id") or "-",
+            "method": watch.get("event_method") or (getattr(ev, "raw", None) or {}).get("_cw_activity_method") or "watcher",
+            "source": source, "source_instance": instance, "destination_instance": self._instance_id,
+            "profile": watch.get("route_effective_profile_id") or "-",
+            "session_ref": hashlib.sha256(str(session).encode()).hexdigest()[:12] if session else "-",
+            "user": _mask_account(getattr(ev, "account", None)),
+            "media_type": getattr(ev, "media_type", None), "media": self._ckey(ev),
+            **fields,
+        }
+        secrets = [str((cfg.get("simkl") or {}).get(name) or "") for name in ("access_token", "api_key", "client_id")]
+        for field, value in context.items():
+            if isinstance(value, str):
+                for secret in secrets:
+                    if secret:
+                        value = value.replace(secret, "[redacted]")
+                context[field] = value
+        _log(f"rewatch.{event} " + json.dumps(context, ensure_ascii=True, separators=(",", ":")), "DEBUG")
 
     def _mkey(self, ev: Any) -> str:
         ids = getattr(ev, "ids", {}) or {}
@@ -564,7 +593,7 @@ class SimklSink(ScrobbleSink):
         except Exception:
             pass
 
-    def send(self, ev: Any, cfg: dict[str, Any] | None = None) -> None:
+    def send(self, ev: Any, cfg: dict[str, Any] | None = None) -> Any:
         cfg = cfg or (self._cfg_provider() if self._cfg_provider else None) or _cfg()
         if not isinstance(cfg, dict):
             cfg = {}
@@ -591,6 +620,17 @@ class SimklSink(ScrobbleSink):
         sess = getattr(ev, "session_key", None) or getattr(ev, "session", None)
         sk = str(sess or "?")
         mk = self._mkey(ev)
+        rewatch_mode = rewatches.enabled(cfg)
+        if rewatch_mode or action == "stop":
+            self._rewatch_log(ev, cfg, "event", enabled=rewatch_mode, action=action, progress=_clamp(getattr(ev, "progress", 0) or 0))
+        if rewatch_mode:
+            sk = json.dumps([sk, getattr(ev, "server_uuid", None), str(getattr(ev, "account", None) or "").casefold()])
+            mk = json.dumps([getattr(ev, "server_uuid", None), str(getattr(ev, "account", None) or "").casefold(), mk])
+            scope = rewatches.account_key(cfg) + json.dumps((cfg.get("scrobble") or {}).get("watch") or {}, sort_keys=True)
+            if scope != self._rewatch_scope:
+                for cache in (self._last_sent, self._p_sess, self._p_step, self._a_sess, self._p_glob, self._best, self._completed):
+                    cache.clear()
+                self._rewatch_scope = scope
 
         p_now = _clamp(getattr(ev, "progress", 0) or 0)
         force_seek = bool((getattr(ev, 'raw', None) or {}).get('_cw_seek'))
@@ -601,6 +641,11 @@ class SimklSink(ScrobbleSink):
 
         last_act = self._a_sess.get((sk, mk))
         last_bucket = self._p_step.get((sk, mk), -1)
+
+        if rewatch_mode and action == "start" and last_act == "start":
+            self._p_sess[(sk, mk)] = p_now
+            self._rewatch_log(ev, cfg, "skip", reason="unchanged_playback_state")
+            return {"ok": True, "skipped": True, "reason": "unchanged_playback_state"}
 
         if action == "start":
             self._note_watch(ev, "start", cfg, p_now)
@@ -638,9 +683,15 @@ class SimklSink(ScrobbleSink):
         thr = _stop_pause_threshold(cfg)
         last_sess = p_sess
         watched_at = _watched_at(cfg)
+        if rewatch_mode:
+            watched_at = max(80.0, watched_at)
+            if action_in == "stop":
+                p_send = p_now
         suppress_at = _watch_suppress_start_at(cfg)
 
         if action == "start" and p_send >= suppress_at:
+            if rewatch_mode:
+                self._rewatch_log(ev, cfg, "skip", reason="suppress_start", progress=p_send, threshold=suppress_at)
             _log(f"suppress start at {p_send}% (>= {suppress_at}%)", "DEBUG")
             if p_send > (p_glob if p_glob >= 0 else -1):
                 self._p_glob[mk] = p_send
@@ -656,6 +707,8 @@ class SimklSink(ScrobbleSink):
                 action = resolve_stop_action(p_send, watched_at)
                 if action == "pause":
                     _log(f"Hold STOP→PAUSE below watched_at ({p_send:.0f}% < {watched_at:.0f}%)", "DEBUG")
+            if rewatch_mode:
+                self._rewatch_log(ev, cfg, "threshold", progress=p_now, sent_progress=p_send, watched_at=watched_at, action=action)
 
         step = _progress_step(cfg)
         p_payload = int(float(p_send))
@@ -678,12 +731,36 @@ class SimklSink(ScrobbleSink):
 
         done_key = f"{sk}:{mk}"
         record_complete = action == "stop" and p_send >= watched_at
-        if record_complete and self._completed.get(done_key, -1.0) >= watched_at:
+        if not rewatch_mode and record_complete and self._completed.get(done_key, -1.0) >= watched_at:
             return
         if action_in != "stop":
             if self._debounced(sk, action, _watch_pause_debounce(cfg)):
+                if rewatch_mode:
+                    self._rewatch_log(ev, cfg, "skip", reason="debounce", action=action)
                 return
         path = {"start": "/scrobble/start", "pause": "/scrobble/pause", "stop": "/scrobble/stop"}[action]
+        completion_key = None
+        allow_rewatch = False
+        if rewatch_mode and record_complete:
+            plan, identity = rewatches.account(cfg, _post, lambda event, **fields: self._rewatch_log(ev, cfg, event, **fields))
+            if plan == "unknown":
+                self._rewatch_log(ev, cfg, "skip", reason="simkl_plan_unavailable", retryable=True)
+                return {"ok": False, "error": "simkl_plan_unavailable", "retryable": True}
+            completion_key = rewatches.completion_key(cfg, ev, identity, f"{getattr(ev, 'media_type', '')}:{self._ckey(ev)}")
+            if completion_key:
+                try:
+                    claimed = rewatches.claim(completion_key)
+                except Exception:
+                    self._rewatch_log(ev, cfg, "dedupe", decision="storage_error", retryable=False)
+                    return {"ok": False, "error": "rewatch_dedupe_unavailable", "retryable": False}
+                self._rewatch_log(ev, cfg, "dedupe", decision=claimed, retention_hours=48)
+                if claimed == "done":
+                    return {"ok": True, "skipped": True, "reason": "completion_already_processed"}
+                if claimed == "uncertain":
+                    return {"ok": False, "error": "rewatch_delivery_unconfirmed", "retryable": False}
+                allow_rewatch = plan in {"pro", "vip"}
+            reason = "eligible" if allow_rewatch else "missing_session" if not completion_key else "pro_required"
+            self._rewatch_log(ev, cfg, "eligibility", plan=plan, session_known=bool(completion_key), allow_rewatch=allow_rewatch, reason=reason)
 
         best = self._best.get(key)
         best_skel: dict[str, Any] | None = None
@@ -709,8 +786,30 @@ class SimklSink(ScrobbleSink):
                 intent_prog = int(float(body.get("progress") or p_send))
                 if self._should_log_intent(key, path, intent_prog):
                     _log(f"intent path={path} ids={_body_ids_desc(body)} p={body.get('progress')}", "DEBUG")
-            res = self._send_http(path, body, cfg)
+            if rewatch_mode:
+                self._rewatch_log(ev, cfg, "request", path=path, progress=body.get("progress"), allow_rewatch=allow_rewatch, representation=i + 1, ids=_body_ids_desc(body))
+            res = self._send_rewatch_http(path, body, cfg, allow_rewatch) if rewatch_mode else self._send_http(path, body, cfg)
+            if rewatch_mode:
+                self._rewatch_log(ev, cfg, "response", path=path, http_status=res.get("status"), outcome=res.get("diagnostic"), api_error=res.get("api_error"), elapsed_ms=res.get("elapsed_ms"))
             if res.get("ok"):
+                if rewatch_mode and record_complete:
+                    response = res.get("resp")
+                    response = response if isinstance(response, dict) else {}
+                    rewatch_status = response.get("rewatch_status")
+                    saved = response.get("action") == "scrobble" and (
+                        rewatch_status in {"active", "completed", "closed", "first_watch"}
+                        or (not allow_rewatch and rewatch_status is None)
+                    )
+                    if completion_key:
+                        self._finish_rewatch(ev, cfg, completion_key)
+                    self._rewatch_log(ev, cfg, "result", action=response.get("action"), rewatch_status=rewatch_status, saved=saved)
+                    if rewatch_status == "pro_required":
+                        rewatches.downgrade(cfg)
+                        self._rewatch_log(ev, cfg, "plan", cache="updated", plan="free", reason="pro_required")
+                    if not saved:
+                        reason = str(rewatch_status or ("pause" if response.get("action") == "pause" else "rewatch_unconfirmed"))
+                        self._note_watch(ev, action, cfg, p_send, status="skipped", reason=reason)
+                        return {"ok": True, "skipped": True, "reason": reason}
                 try:
                     act = (res.get("resp") or {}).get("action") or path.rsplit("/", 1)[-1]
                 except Exception:
@@ -752,6 +851,15 @@ class SimklSink(ScrobbleSink):
                 continue
             break
 
+        if rewatch_mode and last_err:
+            status = int(last_err.get("status") or 0)
+            reason = "duplicate_stop" if status == 409 else f"simkl_http_{status}" if status else "rewatch_delivery_unconfirmed"
+            if completion_key and 400 <= status < 500:
+                self._finish_rewatch(ev, cfg, completion_key, release=status in {400, 401, 403, 404, 423, 429})
+            self._rewatch_log(ev, cfg, "failure", path=path, reason=reason, cause=last_err.get("diagnostic"), http_status=status, retryable=False)
+            self._note_watch(ev, action, cfg, p_send, status="skipped" if status == 409 else "fail", reason=reason)
+            return {"ok": status == 409, "skipped": status == 409, "reason": reason, "error": reason, "retryable": False}
+
         if last_err and last_err.get("status") == 409 and action == "stop":
             _log("Treating 409 (duplicate stop) as watched; proceeding to auto-remove", "WARN")
             if record_complete:
@@ -775,6 +883,38 @@ class SimklSink(ScrobbleSink):
             _log(f"{path} {last_err.get('status')} err={last_err.get('resp')}", "ERROR")
             if action in ("start", "stop"):
                 self._note_watch(ev, action, cfg, p_send, status="fail", reason=str(last_err.get("status") or ""))
+
+    def _finish_rewatch(self, ev: Any, cfg: dict[str, Any], key: str, *, release: bool = False) -> None:
+        try:
+            rewatches.finish(key, release=release)
+        except Exception:
+            self._rewatch_log(ev, cfg, "dedupe", decision="storage_error", operation="release" if release else "finish")
+            raise
+        self._rewatch_log(ev, cfg, "dedupe", decision="released" if release else "finished")
+
+    def _send_rewatch_http(self, path: str, body: dict[str, Any], cfg: dict[str, Any], allow_rewatch: bool) -> dict[str, Any]:
+        started = time.monotonic()
+        try:
+            response = _post(path, body, cfg, allow_rewatch=allow_rewatch)
+            try:
+                payload = response.json()
+            except Exception:
+                payload = None
+            valid = isinstance(payload, dict) and payload.get("action") in ("start", "pause", "stop", "scrobble")
+            diagnostic = "http_error" if response.status_code >= 400 else "ok" if valid else "invalid_response"
+            error = payload.get("error") if isinstance(payload, dict) else None
+            code = error.get("code") if isinstance(error, dict) else error
+            api_error = code if code in ("RATE_LIMIT", "INVALID_TOKEN", "INVALID_CLIENT_ID", "NOT_FOUND") else None
+            return {"ok": 200 <= response.status_code < 300, "status": response.status_code, "resp": payload,
+                    "diagnostic": diagnostic, "api_error": api_error, "elapsed_ms": round((time.monotonic() - started) * 1000)}
+        except requests.Timeout:
+            diagnostic = "timeout"
+        except requests.ConnectionError:
+            diagnostic = "connection_error"
+        except Exception:
+            diagnostic = "request_error"
+        return {"ok": False, "status": 0, "resp": None, "diagnostic": diagnostic,
+                "elapsed_ms": round((time.monotonic() - started) * 1000)}
 
     def _send_http(self, path: str, body: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
         backoff = 1.0

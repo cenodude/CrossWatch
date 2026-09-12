@@ -23,7 +23,7 @@ ROUTE_WATCH_POLICY_RANGES = {
     "pause_debounce_seconds": (0, 3600),
     "suppress_start_at": (0, 100),
 }
-ROUTE_WATCH_BOOLEAN_KEYS = {"unresolved_user_fallback", "anime_mapping"}
+ROUTE_WATCH_BOOLEAN_KEYS = {"unresolved_user_fallback", "anime_mapping", "simkl_rewatches"}
 
 
 def same_scrobble_endpoint(provider: Any, provider_instance: Any, sink: Any, sink_instance: Any) -> bool:
@@ -142,7 +142,7 @@ def normalize_route_options(options: Any) -> dict[str, Any]:
             watch[key] = val
     for key in ROUTE_WATCH_BOOLEAN_KEYS:
         if key in watch_src:
-            watch[key] = bool(watch_src.get(key))
+            watch[key] = watch_src.get(key) is True if key == "simkl_rewatches" else bool(watch_src.get(key))
 
     return {
         "auto_remove_watchlist": auto_remove,

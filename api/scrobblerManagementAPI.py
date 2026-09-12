@@ -74,6 +74,7 @@ WEBHOOK_SETTING_KEYS = {
     "suppress_start_at",
     "anime_mapping_crosswatch",
     "anime_mapping_simkl",
+    "simkl_rewatches",
 }
 
 
@@ -303,6 +304,8 @@ def _normalize_webhook_settings(cfg: Mapping[str, Any], provider: str, body: Map
             if key in body:
                 out[key] = bool(body.get(key))
     selected_sinks = [str(s or "").strip().lower() for s in (out.get("sinks") or _as_list(body.get("sinks")) or current_sinks)]
+    if "simkl_rewatches" in body:
+        out["simkl_rewatches"] = body.get("simkl_rewatches") is True and "simkl" in selected_sinks
     for sink in ("crosswatch", "simkl"):
         key = f"anime_mapping_{sink}"
         if key in body:
@@ -671,6 +674,18 @@ def _normalize_route_profile_id(cfg: Mapping[str, Any], value: Any) -> str:
     return ""
 
 
+def _require_simkl_rewatches(cfg: Mapping[str, Any], instance: Any, field: str) -> None:
+    from providers.scrobble.simkl import rewatches
+    from providers.scrobble.simkl.sink import _merged_provider_block, _post
+
+    projected = dict(cfg)
+    projected["simkl"] = _merged_provider_block(cfg, "simkl", instance)
+    plan, _ = rewatches.account(projected, _post)
+    if plan not in {"pro", "vip"}:
+        message = "Could not verify the SIMKL plan. Try again later." if plan == "unknown" else "Track rewatches requires SIMKL Pro or VIP."
+        raise ValidationFailure([_err(field, "simkl_rewatch_plan", message)])
+
+
 def _validate_route(cfg: Mapping[str, Any], route: dict[str, Any]) -> dict[str, Any]:
     normalized = normalize_route(route, str(route.get("id") or "R1"))
     provider = str(normalized.get("provider") or "").strip().lower()
@@ -685,6 +700,8 @@ def _validate_route(cfg: Mapping[str, Any], route: dict[str, Any]) -> dict[str, 
     _require_sink_profile(cfg, sink, str(normalized.get("sink_instance") or "default"))
     normalized["filters"] = _normalize_filters(normalized.get("filters"), provider, "filters")
     normalized["options"] = normalize_route_options(normalized.get("options"))
+    if sink == "simkl" and normalized["options"]["watch"].get("simkl_rewatches") is True:
+        _require_simkl_rewatches(cfg, normalized.get("sink_instance"), "options.watch.simkl_rewatches")
     profile_id = _normalize_route_profile_id(cfg, route.get("profile_id") or route.get("profileId") or normalized.get("profile_id"))
     if profile_id:
         normalized["profile_id"] = profile_id
@@ -758,6 +775,9 @@ def api_profile_webhook_save(request: Request, payload: dict[str, Any] = Body(..
         instance = normalize_instance_id(payload.get("provider_instance"))
         _require_source_profile(after, provider, instance)
         settings = _normalize_webhook_settings(after, provider, payload)
+        if settings.get("simkl_rewatches") is True:
+            effective = {**webhook_settings(after, provider, instance), **settings}
+            _require_simkl_rewatches(after, webhook_sink_instance(effective, "simkl"), "simkl_rewatches")
         node = _profile_override_node(after, provider, instance)
         add_sinks = settings.pop("sinks", None)
         add_insts = settings.pop("sink_instances", None)
@@ -778,6 +798,8 @@ def api_profile_webhook_save(request: Request, payload: dict[str, Any] = Body(..
             node["sink_instances"] = {k: v for k, v in insts_now.items() if k in sinks_now}
             if prev_sink in {"crosswatch", "simkl"} and prev_sink not in sinks_now:
                 node.pop(f"anime_mapping_{prev_sink}", None)
+            if prev_sink == "simkl" and prev_sink not in sinks_now:
+                node.pop("simkl_rewatches", None)
         node.update(settings)
         effective = webhook_settings(after, provider, instance)
         for sink in webhook_sinks(after, provider, instance):

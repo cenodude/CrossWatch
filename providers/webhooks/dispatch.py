@@ -170,6 +170,8 @@ def _route_cfg(cfg: dict[str, Any], provider: str, provider_instance: str, sink:
     watch["route_effective_profile_id"] = effective_profile_id
     if sink in {"crosswatch", "simkl"}:
         watch["route_options"] = {"watch": {"anime_mapping": _anime_mapping_enabled(wh, sink)}}
+    if sink == "simkl":
+        watch["route_options"]["watch"]["simkl_rewatches"] = wh.get("simkl_rewatches") is True
     if provider == "plex":
         watch["filters"] = dict(wh.get("filters_plex") or {})
     elif provider == "emby":
