@@ -444,21 +444,21 @@
         </div>
         ${renderBanners()}
         <main class="pl-grid">
-          <section class="pl-section" id="pl-playlist-endpoints">
+          <section class="pl-section cw-page-panel" id="pl-playlist-endpoints">
             <div class="pl-section-head">
               <div><div class="pl-section-title">Playlist endpoints</div><div class="pl-section-sub">Connect provider playlists to use in CrossWatch.</div></div>
               <button class="pl-btn small accent" data-action="endpoint-new"><span class="material-symbols-rounded" aria-hidden="true">add</span>Add endpoint</button>
             </div>
             <div class="pl-section-body">${renderEndpoints()}</div>
           </section>
-          <section class="pl-section" id="pl-mappings-overview">
+          <section class="pl-section cw-page-panel" id="pl-mappings-overview">
             <div class="pl-section-head">
               <div><div class="pl-section-title">Mappings</div><div class="pl-section-sub">Sync relationships between playlist endpoints.</div></div>
               <button class="pl-btn small accent" data-action="mapping-new" ${mappingDisabled ? "disabled" : ""} title="${esc(mappingTitle)}"><span class="material-symbols-rounded" aria-hidden="true">add</span>New mapping</button>
             </div>
             <div class="pl-section-body">${renderMappings()}</div>
           </section>
-          <section class="pl-section" id="pl-activity-overview">
+          <section class="pl-section cw-page-panel" id="pl-activity-overview">
             <div class="pl-section-head">
               <div><div class="pl-section-title">Activity overview</div></div>
               <div class="pl-section-actions">
@@ -513,7 +513,7 @@
       `;
     }).join("");
     return `
-      <div class="pl-table-wrap">
+      <div class="pl-table-wrap cw-page-table">
         <table class="pl-endpoints-table">
           <thead><tr><th>Endpoint</th><th>Provider</th><th>Profile</th><th>Selected playlist</th><th>Type</th><th>Status</th><th>Last refresh</th><th aria-label="Actions">Actions</th></tr></thead>
           <tbody>${rows}</tbody>
@@ -557,7 +557,7 @@
       `;
     }).join("");
     return `
-      <div class="pl-table-wrap">
+      <div class="pl-table-wrap cw-page-table">
         <table class="pl-mappings-table">
           <thead><tr><th>Mapping</th><th>Source</th><th>Direction</th><th>Destination</th><th>Ruleset</th><th>Sync pair</th><th>Status</th><th>Result</th><th aria-label="Actions">Actions</th></tr></thead>
           <tbody>${rows}</tbody>
@@ -572,7 +572,7 @@
     const stats = activityStats(entries);
     const latest = entries.filter((row) => String(row.type || "").toLowerCase() === "run").slice(0, 8);
     const table = latest.length ? `
-      <div class="pl-table-wrap">
+      <div class="pl-table-wrap cw-page-table">
         <table class="pl-activity-table">
           <thead><tr><th>Time</th><th>Mapping</th><th>Result</th><th>Changes</th><th>Status</th></tr></thead>
           <tbody>${latest.map((row) => {
@@ -1875,7 +1875,7 @@
       `;
     }).join("");
     const body = `
-      <div class="pl-table-wrap">
+      <div class="pl-table-wrap cw-page-table">
         <table class="pl-ruleset-table">
           <thead><tr><th>Ruleset name</th><th>Type</th><th>Direction</th><th>Strategy</th><th>Capacity behaviour</th><th>Mappings</th><th>Actions</th></tr></thead>
           <tbody>${rows || `<tr><td colspan="7"><div class="pl-empty"><strong>No rulesets</strong><span>Create a custom ruleset for advanced mapping behavior.</span></div></td></tr>`}</tbody>
@@ -2328,7 +2328,7 @@
 
   function openActivityModal(trigger) {
     const body = state.activity.length ? `
-      <div class="pl-table-wrap">
+      <div class="pl-table-wrap cw-page-table">
         <table>
           <thead><tr><th>Time</th><th>Type</th><th>Mapping</th><th>Details</th><th>Status</th></tr></thead>
           <tbody>${state.activity.map((row) => `<tr><td>${esc(compactTime(row.ts))}</td><td>${esc(row.type || "-")}</td><td>${esc(row.label || "-")}</td><td>${esc(row.details || "-")}</td><td><span class="pl-pill ${row.status === "error" ? "err" : "ok"}">${esc(titleize(row.status || "completed"))}</span></td></tr>`).join("")}</tbody>

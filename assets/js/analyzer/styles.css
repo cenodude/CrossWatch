@@ -8,7 +8,7 @@
 .an-page [hidden]{display:none!important}
 .an-page button,.an-page input,.an-page select{font:inherit;letter-spacing:normal;text-transform:none}
 .an-page button{cursor:pointer}
-.an-page button:disabled{cursor:default;opacity:.4}
+.an-page button:disabled{cursor:not-allowed;opacity:var(--cw-disabled-opacity,.4)}
 .an-page :is(button,a,input,select,summary):focus-visible{outline:2px solid var(--an-accent);outline-offset:3px}
 .an-page h1,.an-page h2,.an-page h3,.an-page h4,.an-page p{margin:0}
 .an-page .an-muted{color:var(--an-muted);font-size:12px}

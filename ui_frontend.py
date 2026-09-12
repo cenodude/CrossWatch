@@ -320,10 +320,10 @@ def _managed_user_shell(html: str, user: dict | None = None) -> str:
         html = html.replace('    <button id="tab-playlists" class="tab" type="button" onclick="showTab(\'playlists\')">Playlists</button>\n', "")
         html = html.replace('    <button id="tab-editor" class="tab" type="button" onclick="showTab(\'editor\')">Editor</button>\n', "")
         for fragment in (
-            '  <section id="page-snapshots" class="card hidden tab-page"></section>\n\n',
+            '  <section id="page-snapshots" class="card hidden tab-page cw-themed-page"></section>\n\n',
             '  <section id="page-capture_compare" class="card hidden tab-page"></section>\n\n',
-            '  <section id="page-playlists" class="card hidden tab-page"></section>\n\n',
-            '  <section id="page-editor" class="card hidden tab-page"></section>\n\n',
+            '  <section id="page-playlists" class="card hidden tab-page cw-themed-page"></section>\n\n',
+            '  <section id="page-editor" class="card hidden tab-page cw-themed-page"></section>\n\n',
             '  <section id="page-analyzer" class="card hidden tab-page"></section>\n\n',
             '  <section id="page-events" class="card hidden tab-page"></section>\n\n',
             '  <section id="page-logs" class="card hidden tab-page"></section>\n\n',
@@ -338,10 +338,10 @@ def _managed_user_shell(html: str, user: dict | None = None) -> str:
         html = _remove_html_section(html, '  <section id="dashboard-widgets-card"')
     if not playback_allowed:
         html = _remove_line(html, '    <button id="tab-playback_progress" class="tab" type="button" onclick="showTab(\'playback_progress\')">Playback</button>')
-        html = html.replace('  <section id="page-playback_progress" class="card hidden tab-page">\n    <div id="playback-progress-root">\n      <div class="cw-page-loading">Loading Playback Progress...</div>\n    </div>\n  </section>\n\n', "")
+        html = html.replace('  <section id="page-playback_progress" class="card hidden tab-page cw-themed-page">\n    <div id="playback-progress-root">\n      <div class="cw-page-loading">Loading Playback Progress...</div>\n    </div>\n  </section>\n\n', "")
     if not watchlist_allowed:
         html = _remove_line(html, '    <button id="tab-watchlist" class="tab" type="button" onclick="showTab(\'watchlist\')">Watchlist</button>')
-        html = html.replace('  <section id="page-watchlist" class="card hidden tab-page"></section>\n\n', "")
+        html = html.replace('  <section id="page-watchlist" class="card hidden tab-page cw-themed-page"></section>\n\n', "")
     html = _remove_html_range(
         html,
         '    <div class="cw-tabmenu" id="tab-settings-menu">',
@@ -492,6 +492,7 @@ def _get_index_html_static() -> str:
 <link rel="stylesheet" href="/assets/css/layout.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/css/components.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/css/pages.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/css/page-theme.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/ui-shell.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/css/account-menu.css?v=__CW_VERSION__">
 <link id="cw-notifications-css" rel="stylesheet" href="/assets/css/notifications.css?v=__CW_VERSION__">
@@ -552,6 +553,10 @@ def _get_index_html_static() -> str:
 })();
 </script>
 <style>
+/* Keep Main's unfinished shell out of the first paint. */
+#cw-main-loading{display:none}
+html[data-cw-main-pending][data-tab="main"] #layout{visibility:hidden;pointer-events:none}
+html[data-cw-main-pending][data-tab="main"] #cw-main-loading{display:flex;position:fixed;inset:120px 0 auto;justify-content:center;color:var(--muted);padding:24px}
 /* Match the routed layout before the deferred router starts. */
 html[data-tab]:not([data-tab="main"]) #layout{grid-template-columns:minmax(0,1fr)}
 html[data-cw-initial-pane] #page-settings .cw-settings-pane{display:none!important}
@@ -584,8 +589,8 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
 <link rel="preload" href="/assets/fonts/material-symbols-rounded-full-v355.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/assets/fonts/material-symbols-rounded.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/js/modals/core/styles.css?v=__CW_VERSION__">
-<link id="cw-theme-flat-css" rel="stylesheet" href="/assets/themes/flat.css?v=__CW_VERSION__" media="not all" disabled>
-<link id="cw-theme-original-css" rel="stylesheet" href="/assets/themes/original-coverage.css?v=__CW_VERSION__" media="not all" disabled>
+<link id="cw-theme-flat-css" rel="stylesheet" href="/assets/themes/flat.css?v=__CW_VERSION__">
+<link id="cw-theme-original-css" rel="stylesheet" href="/assets/themes/original-coverage.css?v=__CW_VERSION__">
 <script>
 (() => {
   const original = document.documentElement.classList.contains("cw-theme-original");
@@ -595,6 +600,21 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
   flatLink.media = original ? "not all" : "all";
   originalLink.disabled = !original;
   originalLink.media = original ? "all" : "not all";
+})();
+</script>
+<script>
+(() => {
+  const root = document.documentElement;
+  if (root.dataset.tab !== "main") return;
+  root.dataset.cwMainPending = "1";
+  const reveal = () => {
+    delete root.dataset.cwMainPending;
+    clearTimeout(fallback);
+  };
+  // A failed or stalled script must not leave the page hidden.
+  const fallback = setTimeout(reveal, 5000);
+  // Let all deferred scripts and ready listeners build the dashboard first.
+  document.addEventListener("DOMContentLoaded", () => requestAnimationFrame(reveal), { once: true });
 })();
 </script>
 </head><body>
@@ -665,6 +685,7 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
   </div>
 </header>
 
+<div id="cw-main-loading" role="status">Loading dashboard...</div>
 <main id="layout">
   <section id="ops-card" class="card cw-main-card cw-main-card--sync">
     <div class="title">Sync Hub</div>
@@ -902,21 +923,21 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
     </article>
   </section>
 
-  <section id="page-watchlist" class="card hidden tab-page"></section>
+  <section id="page-watchlist" class="card hidden tab-page cw-themed-page"></section>
 
-  <section id="page-playback_progress" class="card hidden tab-page">
+  <section id="page-playback_progress" class="card hidden tab-page cw-themed-page">
     <div id="playback-progress-root">
       <div class="cw-page-loading">Loading Playback Progress...</div>
     </div>
   </section>
 
-  <section id="page-snapshots" class="card hidden tab-page"></section>
+  <section id="page-snapshots" class="card hidden tab-page cw-themed-page"></section>
 
   <section id="page-capture_compare" class="card hidden tab-page"></section>
 
-  <section id="page-playlists" class="card hidden tab-page"></section>
+  <section id="page-playlists" class="card hidden tab-page cw-themed-page"></section>
 
-  <section id="page-editor" class="card hidden tab-page"></section>
+  <section id="page-editor" class="card hidden tab-page cw-themed-page"></section>
 
   <section id="page-analyzer" class="card hidden tab-page"></section>
 
@@ -1407,11 +1428,11 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
                         <div>
                           <div class="cw-field-label-row">
                             <label for="ui_theme">Theme</label>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="Theme: Choose Flat dark, Flat light Experimental, or Original to use the classic CrossWatch styling." aria-label="Theme setting help">help</button>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="Theme: Choose Flat dark, Flat light, or Original to use the classic CrossWatch styling." aria-label="Theme setting help">help</button>
                           </div>
                           <select id="ui_theme" name="ui_theme">
                             <option value="flat-dark">Flat dark</option>
-                            <option value="flat-light">Flat light (Experimental)</option>
+                            <option value="flat-light">Flat light</option>
                             <option value="original">Original</option>
                           </select>
                         </div>
@@ -2061,6 +2082,7 @@ def get_profile_html(user: dict | None = None) -> str:
 <link rel="stylesheet" href="/assets/css/layout.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/css/components.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/css/pages.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/css/page-theme.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/ui-shell.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/css/account-menu.css?v=__CW_VERSION__">
 <link id="cw-notifications-css" rel="stylesheet" href="/assets/css/notifications.css?v=__CW_VERSION__">
@@ -2068,8 +2090,8 @@ def get_profile_html(user: dict | None = None) -> str:
 <link rel="preload" href="/assets/fonts/material-symbols-rounded-full-v355.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/assets/fonts/material-symbols-rounded.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/js/modals/core/styles.css?v=__CW_VERSION__">
-<link id="cw-theme-flat-css" rel="stylesheet" href="/assets/themes/flat.css?v=__CW_VERSION__" media="not all" disabled>
-<link id="cw-theme-original-css" rel="stylesheet" href="/assets/themes/original-coverage.css?v=__CW_VERSION__" media="not all" disabled>
+<link id="cw-theme-flat-css" rel="stylesheet" href="/assets/themes/flat.css?v=__CW_VERSION__">
+<link id="cw-theme-original-css" rel="stylesheet" href="/assets/themes/original-coverage.css?v=__CW_VERSION__">
 <script>
 (() => {{
   const original = document.documentElement.classList.contains("cw-theme-original");

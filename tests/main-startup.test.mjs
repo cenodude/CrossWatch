@@ -10,6 +10,49 @@ import { readFileSync } from "node:fs";
 const sources = ["helpers/core.js", "js/insights.js"].map(path =>
   readFileSync(new URL(`../assets/${path}`, import.meta.url), "utf8"));
 
+const shellSource = readFileSync(new URL("../ui_frontend.py", import.meta.url), "utf8");
+const mainRevealScript = [...shellSource.matchAll(/<script>([\s\S]*?)<\/script>/g)]
+  .map(match => match[1]).find(script => script.includes('root.dataset.cwMainPending = "1"'));
+
+function setupMainReveal(tab = "main") {
+  const dataset = { tab }, listeners = new Map(), frames = [], timers = new Map();
+  vm.runInNewContext(mainRevealScript, {
+    document: { documentElement: { dataset }, addEventListener: (name, fn) => listeners.set(name, fn) },
+    requestAnimationFrame: fn => frames.push(fn),
+    setTimeout: (fn, delay) => { timers.set(1, { fn, delay }); return 1; },
+    clearTimeout: id => timers.delete(id),
+  });
+  return { dataset, listeners, frames, timers };
+}
+
+test("Main waits for ready listeners before revealing, without waiting for API data", () => {
+  const app = setupMainReveal();
+  assert.equal(app.dataset.cwMainPending, "1");
+  app.listeners.get("DOMContentLoaded")();
+  assert.equal(app.dataset.cwMainPending, "1", "other ready listeners still need to run");
+  app.frames.shift()();
+  assert.equal(app.dataset.cwMainPending, undefined);
+  assert.equal(app.timers.size, 0);
+});
+
+test("Main reveals even when a startup script stalls", () => {
+  const app = setupMainReveal();
+  const timer = [...app.timers.values()][0];
+  assert.ok(timer.delay <= 5000);
+  timer.fn();
+  assert.equal(app.dataset.cwMainPending, undefined);
+  app.listeners.get("DOMContentLoaded")();
+  app.frames.shift()();
+  assert.equal(app.dataset.cwMainPending, undefined);
+});
+
+test("direct links to other pages do not wait for Main", () => {
+  const app = setupMainReveal("settings");
+  assert.equal(app.dataset.cwMainPending, undefined);
+  assert.equal(app.listeners.size, 0);
+  assert.equal(app.timers.size, 0);
+});
+
 function setup({ authPending = false } = {}) {
   const requests = [], calls = [], timers = new Map(), storage = new Map();
   let timerId = 0;

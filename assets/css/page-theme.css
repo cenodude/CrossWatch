@@ -1,0 +1,232 @@
+/* Shared page surfaces and controls. Theme values live in tokens.css.
+ * Page styles own layout, provider colours and media artwork.
+ */
+/* Legacy page aliases point to the shared palette while their layouts migrate. */
+html[data-cw-theme] :is(#page-watchlist, #page-editor .cw-root, #playback-progress-root, #page-snapshots, #page-playlists) {
+  --wl-shell-bg: var(--cw-theme-surface);
+  --wl-panel-bg: var(--cw-theme-surface-raised);
+  --wl-panel-bg-strong: var(--cw-theme-surface);
+  --wl-border: var(--cw-theme-border);
+  --wl-border-soft: var(--cw-theme-border);
+  --wl-fg: var(--cw-theme-text);
+  --wl-fg-soft: var(--cw-theme-muted);
+  --wl-shadow: none;
+  --cw-shell-bg: var(--cw-theme-surface);
+  --cw-panel-bg: var(--cw-theme-surface-raised);
+  --cw-panel-strong: var(--cw-theme-surface-strong);
+  --cw-border: var(--cw-theme-border);
+  --cw-border-soft: var(--cw-theme-border);
+  --cw-fg: var(--cw-theme-text);
+  --cw-fg-soft: var(--cw-theme-muted);
+  --cw-shadow: none;
+  --pp-shell-bg: var(--cw-theme-surface);
+  --pp-panel-bg: var(--cw-theme-surface-raised);
+  --pp-panel-bg-strong: var(--cw-theme-surface);
+  --pp-input-bg: var(--cw-theme-input);
+  --pp-border: var(--cw-theme-border);
+  --pp-border-soft: var(--cw-theme-border);
+  --pp-fg: var(--cw-theme-text);
+  --pp-soft: var(--cw-theme-muted);
+  --pp-shadow: none;
+  --ss-panel: var(--cw-theme-surface);
+  --ss-panel-strong: var(--cw-theme-surface-raised);
+  --ss-border: var(--cw-theme-border);
+  --ss-fg: var(--cw-theme-text);
+  --ss-muted-fg: var(--cw-theme-muted);
+  --ss-shadow: none;
+  --pl-bg: var(--cw-theme-bg);
+  --pl-panel: var(--cw-theme-surface);
+  --pl-panel2: var(--cw-theme-surface-raised);
+  --pl-shell-bg: var(--cw-theme-surface);
+  --pl-line: var(--cw-theme-border);
+  --pl-line2: var(--cw-theme-border-strong);
+  --pl-text: var(--cw-theme-text);
+  --pl-soft: var(--cw-theme-muted);
+  --pl-softer: var(--cw-theme-muted);
+  --pl-shell-shadow: none;
+}
+
+html[data-cw-theme] #layout > .cw-main-card {
+  background: var(--cw-theme-surface);
+  border-color: var(--cw-theme-border);
+  box-shadow: none;
+}
+
+html[data-cw-theme] .cw-icon-select-menu {
+  background: var(--cw-theme-surface-raised);
+  border-color: var(--cw-theme-border-strong);
+  color: var(--cw-theme-text);
+}
+html[data-cw-theme] .cw-icon-select-item {
+  color: var(--cw-theme-text);
+}
+html[data-cw-theme] .cw-icon-select-item:is(:hover, [aria-selected="true"]) {
+  background: var(--cw-page-selected-bg);
+  color: var(--cw-page-selected-text);
+}
+#layout .cw-themed-page :is(.cw-page-hero, .cw-page-panel, .cw-page-toolbar, .cw-page-table) {
+  border: 1px solid var(--cw-theme-border);
+  border-radius: var(--cw-page-panel-radius);
+  box-shadow: var(--cw-page-shadow);
+  color: var(--cw-theme-text);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+#layout .cw-themed-page .cw-page-hero {
+  background: var(--cw-page-header-bg);
+}
+#layout .cw-themed-page .cw-page-panel {
+  background: var(--cw-page-panel-bg);
+}
+#layout .cw-themed-page .cw-page-toolbar {
+  background: var(--cw-page-toolbar-bg);
+}
+#layout .cw-themed-page .cw-page-table {
+  background: var(--cw-theme-surface);
+}
+
+#layout .cw-themed-page :is(.cw-page-hero, .cw-page-panel, .cw-page-toolbar)::before,
+#layout .cw-themed-page :is(.cw-page-hero, .cw-page-panel, .cw-page-toolbar)::after {
+  display: var(--cw-page-decoration);
+}
+
+#layout .cw-themed-page .cw-page-hero-title {
+  color: var(--cw-theme-text);
+  -webkit-text-fill-color: currentColor;
+  font-size: var(--cw-page-title-size);
+  line-height: 1.2;
+}
+#layout .cw-themed-page :is(.cw-page-hero-kicker, .cw-page-hero-sub) {
+  color: var(--cw-theme-muted);
+  -webkit-text-fill-color: currentColor;
+}
+
+#layout .cw-themed-page :is(.wl-hero-summary, .pp-hero-summary, .ss-hero-summary, .cw-editor-hero-summary) {
+  background: var(--cw-page-toolbar-bg);
+  border: 1px solid var(--cw-theme-border);
+  border-color: var(--cw-theme-border);
+  border-radius: var(--cw-page-control-radius);
+  box-shadow: none;
+  color: var(--cw-theme-text);
+}
+#layout .cw-themed-page :is(.wl-hero-seg, .pp-hero-seg, .ss-hero-seg, .cw-editor-hero-seg, .pp-page-control, .wl-hero-refresh, .ss-hero-refresh, .cw-editor-refresh) {
+  background: transparent;
+  border-color: var(--cw-theme-border);
+  color: var(--cw-theme-text);
+}
+#layout .cw-themed-page :is(.wl-hero-seg, .pp-hero-seg, .ss-hero-seg, .cw-editor-hero-seg) strong {
+  color: var(--cw-theme-text);
+  -webkit-text-fill-color: currentColor;
+}
+#layout .cw-themed-page :is(.wl-hero-seg, .pp-hero-seg, .ss-hero-seg, .cw-editor-hero-seg) > span {
+  color: var(--cw-theme-muted);
+}
+
+#layout .cw-themed-page :is(.wl-btn, .wl-chip, .pl-btn, .cw-btn, .pp-field, .wl-input, .cw-input, .cw-select) {
+  background: var(--cw-control-bg, var(--cw-page-control-bg));
+  border: 1px solid var(--cw-control-border, var(--cw-theme-border-strong));
+  border-radius: var(--cw-page-control-radius);
+  color: var(--cw-control-text, var(--cw-theme-text));
+  -webkit-text-fill-color: currentColor;
+  min-height: var(--cw-page-control-height);
+  height: var(--cw-page-control-height);
+  box-shadow: none;
+  text-shadow: none;
+  font-size: 14px;
+}
+
+/* Generic form rules still serve legacy dialogs. Keep this boundary small. */
+#layout .cw-themed-page :is(.cw-page-panel, .cw-page-toolbar, .cw-page-hero, .cw-page-table) :is(.wl-btn, .wl-chip, .pl-btn, .cw-btn, .pp-field, .wl-input, .cw-input, .cw-select, .input, .cw-icon-select-btn, input[type="search"], input[type="text"], select) {
+  background: var(--cw-control-bg, var(--cw-page-control-bg)) !important;
+  border: 1px solid var(--cw-control-border, var(--cw-theme-border-strong)) !important;
+  border-radius: var(--cw-page-control-radius) !important;
+  color: var(--cw-control-text, var(--cw-theme-text)) !important;
+  -webkit-text-fill-color: currentColor !important;
+  min-height: var(--cw-page-control-height) !important;
+  height: var(--cw-page-control-height) !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+  font-size: 14px !important;
+}
+#layout .cw-themed-page :is(.cw-page-panel, .cw-page-toolbar, .cw-page-hero) :is(.wl-btn, .wl-chip, .pl-btn, .cw-btn, .cw-icon-select-btn):hover:not(:disabled):not([aria-disabled="true"]) {
+  --cw-control-bg: var(--cw-control-hover, var(--cw-page-hover-bg));
+}
+#layout .cw-themed-page :is(.wl-btn, .wl-chip, .pl-btn, .cw-btn, .cw-icon-select-btn):is(.active, .is-accent, [aria-pressed="true"]) {
+  --cw-control-bg: var(--cw-page-selected-bg);
+  --cw-control-hover: var(--cw-page-selected-bg);
+  --cw-control-border: var(--cw-page-selected-border);
+  --cw-control-text: var(--cw-page-selected-text);
+}
+#layout .cw-themed-page :is(.wl-btn, .pl-btn, .cw-btn):is(.primary, .accent) {
+  --cw-control-bg: var(--cw-page-primary-bg);
+  --cw-control-hover: var(--cw-page-primary-hover);
+  --cw-control-border: var(--cw-theme-accent);
+  --cw-control-text: var(--cw-page-primary-text);
+}
+#layout .cw-themed-page :is(.wl-btn, .pl-btn, .cw-btn).danger {
+  --cw-control-bg: var(--cw-page-danger-bg);
+  --cw-control-hover: var(--cw-page-danger-bg);
+  --cw-control-border: var(--cw-theme-danger);
+  --cw-control-text: var(--cw-page-danger-text);
+}
+#layout .cw-themed-page :is(.cw-page-panel, .cw-page-toolbar) :is(input, select, button):focus-visible {
+  outline: 2px solid var(--cw-theme-accent) !important;
+  outline-offset: 2px !important;
+}
+#layout .cw-themed-page :is(.cw-page-panel, .cw-page-toolbar) .cw-icon-select-caret {
+  color: var(--cw-theme-muted);
+}
+#layout .cw-themed-page :is(.cw-page-panel, .cw-page-toolbar) .cw-icon-select-caret::before {
+  border-color: currentColor;
+}
+#layout .cw-themed-page .cw-page-panel :is(.cw-import-help, .cw-icon-select-main .material-symbols-rounded) {
+  color: var(--cw-theme-muted);
+  -webkit-text-fill-color: currentColor;
+}
+
+#layout .cw-themed-page .cw-page-table :is(th, td) {
+  background: var(--cw-theme-surface);
+  border-color: var(--cw-theme-border);
+  color: var(--cw-theme-text);
+}
+#layout .cw-themed-page .cw-page-table th {
+  background: var(--cw-theme-surface-raised);
+  color: var(--cw-theme-muted);
+}
+#layout .cw-themed-page .cw-page-table tr:hover > td {
+  background: var(--cw-page-hover-bg);
+}
+#layout .cw-themed-page .cw-page-table tr:is(.selected, .is-selected) > td,
+#layout .cw-themed-page .cw-page-table tr:has(> td:first-child input[type="checkbox"]:checked) > td {
+  background: var(--cw-page-selected-bg);
+}
+
+#layout .cw-themed-page :is(.pl-section-head, .ss-card-head) {
+  background: transparent;
+  border-color: var(--cw-theme-border);
+}
+#layout .cw-themed-page :is(.ins-title, .pl-section-title, .ss-summary-label, .ss-summary-value) {
+  color: var(--cw-theme-text);
+  -webkit-text-fill-color: currentColor;
+}
+#layout .cw-themed-page :is(.pl-section-sub, .ss-muted, .ss-summary-sub, .ins-kv > label, .field-label, .wl-toolbar-field-label) {
+  color: var(--cw-theme-muted);
+  -webkit-text-fill-color: currentColor;
+}
+
+/* Secondary surfaces share the palette without changing media-card artwork. */
+html[data-cw-theme] #layout .cw-themed-page :is(.wl-empty, .pl-empty, .cw-empty, .wl-action-row, .wl-insight-score, .wl-insight-stat, .metric, .ss-selected-card, .ss-pick-card, .ss-modebtn) {
+  background: var(--cw-theme-surface-raised);
+  border-color: var(--cw-theme-border);
+  box-shadow: none;
+  color: var(--cw-theme-text);
+}
+html[data-cw-theme] #layout .cw-themed-page :is(.wl-action-row, .wl-insight-score, .wl-insight-stat, .metric)::before,
+html[data-cw-theme] #layout .cw-themed-page :is(.wl-action-row, .wl-insight-score, .wl-insight-stat, .metric)::after {
+  display: none;
+}
+html[data-cw-theme] #layout .cw-themed-page .ss-modebtn.active {
+  background: var(--cw-page-good-bg);
+  border-color: var(--cw-theme-good);
+}
