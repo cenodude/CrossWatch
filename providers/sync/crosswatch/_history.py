@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+from copy import copy
 import time
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -262,7 +263,10 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
 
     _maybe_restore(adapter, "history", _save_state)
 
-    state = _load_state(adapter)
+    # Preserve every stored viewing, including those of unselected media.
+    reader = copy(adapter)
+    reader.config = {**getattr(adapter, "config", {}), "_cw_history_rewatches": True}
+    state = _load_state(reader)
     cur: dict[str, dict[str, Any]] = dict(state.get("items") or {})
     unresolved_src: list[Mapping[str, Any]] = []
     changed = 0
@@ -279,8 +283,12 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         if not key:
             unresolved_src.append(obj)
             continue
-        if key in cur:
-            del cur[key]
+        matches = ([key] if key in cur else []) if _rewatches_enabled(adapter) else [
+            stored_key for stored_key, value in cur.items() if canonical_key(value) == key
+        ]
+        if matches:
+            for stored_key in matches:
+                del cur[stored_key]
             changed += 1
 
     if changed:

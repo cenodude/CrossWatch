@@ -712,6 +712,21 @@ def save_feature_baseline(
         _invalidate()
 
 
+def remove_baseline_items(base_path: str | Path, provider: str, instance: str, feature: str, keys: Iterable[str]) -> None:
+    """Refresh current inventory after a manual removal; retain pair comparison history."""
+    with _LOCK:
+        conn = get_conn(base_path)
+        if conn is None:
+            raise RuntimeError("State database is unavailable")
+        with conn:
+            conn.executemany(
+                "DELETE FROM baseline_items WHERE item_key=? AND provider_state_id IN "
+                "(SELECT id FROM provider_feature_state WHERE provider=? AND instance=? AND feature=?)",
+                [(key, provider, instance, feature) for key in set(keys)],
+            )
+        _invalidate()
+
+
 def save_feature_blocks(
     base_path: str | Path,
     blocks: Mapping[tuple[str, str, str], Mapping[str, Any]],

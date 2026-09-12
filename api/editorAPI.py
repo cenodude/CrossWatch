@@ -1357,7 +1357,7 @@ def api_editor_send_providers(kind: str = Query("watchlist"), request: Request =
     return {"ok": True, "kind": feature, "providers": _filter_targets_for_request(cfg, request, _editor_send_targets(cfg, feature))}
 
 
-def _normalize_send_item(raw: Any, feature: str) -> dict[str, Any] | None:
+def _normalize_send_item(raw: Any, feature: str, *, operation: str = "add") -> dict[str, Any] | None:
     if not isinstance(raw, Mapping):
         return None
     item = dict(raw)
@@ -1391,7 +1391,9 @@ def _normalize_send_item(raw: Any, feature: str) -> dict[str, Any] | None:
     if title:
         item["title"] = title
 
-    if feature == "ratings":
+    if operation == "remove":
+        item["key"] = key
+    elif feature == "ratings":
         rating = item.get("rating", item.get("user_rating", item.get("score")))
         try:
             rating_i = int(float(str(rating).strip()))
@@ -1475,8 +1477,31 @@ def _merge_sent_items_into_state(provider: str, instance: str, feature: Kind, it
     )
 
 
+@router.post("/send/preview")
+def api_editor_remove_preview(payload: dict[str, Any] = Body(...), request: Request = cast(Request, None)) -> dict[str, Any]:
+    from services.editor_removal import preview_removal
+    return preview_removal(payload, request)
+
+
+def _emit_editor_operation(event: str, **data: Any) -> None:
+    try:
+        import crosswatch as CW  # type: ignore
+        provider = data.get("dst") or data.get("provider") or ""
+        instance = data.get("instance")
+        label = f"{provider}[{instance}]" if instance else provider
+        CW._append_log("SYNC", f"[EDITOR] {event} {label} {data.get('feature') or ''} count={data.get('count', data.get('attempted', ''))}")
+    except Exception:
+        pass
+
+
 @router.post("/send")
 def api_editor_send(payload: dict[str, Any] = Body(...), request: Request = cast(Request, None)) -> dict[str, Any]:
+    operation = payload.get("operation", "add")
+    if operation == "remove":
+        from services.editor_removal import remove_selected
+        return remove_selected(payload, request)
+    if operation != "add":
+        raise HTTPException(400, "Unknown provider operation")
     feature = _normalize_kind(str(payload.get("kind") or "watchlist"))
     raw_items = payload.get("items")
     items_in = list(raw_items.values()) if isinstance(raw_items, dict) else raw_items
@@ -1507,12 +1532,7 @@ def api_editor_send(payload: dict[str, Any] = Body(...), request: Request = cast
     }
 
     def _emit(event: str, **data: Any) -> None:
-        try:
-            import crosswatch as CW  # type: ignore
-            msg = f"[EDITOR] {event} {data.get('dst') or data.get('provider') or ''} {data.get('feature') or feature} count={data.get('count', data.get('attempted', ''))}"
-            CW._append_log("SYNC", msg)
-        except Exception:
-            pass
+        _emit_editor_operation(event, **{**data, "feature": data.get("feature") or feature})
 
     results: list[dict[str, Any]] = []
     totals = {"attempted": 0, "confirmed": 0, "skipped": 0, "unresolved": 0, "errors": 0}

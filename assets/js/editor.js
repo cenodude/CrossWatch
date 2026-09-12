@@ -1082,9 +1082,10 @@
     setIconOnly(bulkClearBtn, "close", "Clear selection");
   }
 
-  function selectedRowsForSend() {
+  function selectedRowsForSend(operation = "add") {
     const sel = state.selected || new Set();
-    return (state.rows || []).filter(row => sel.has(row._rid) && !row.deleted);
+    return (state.rows || []).filter(row => sel.has(row._rid) &&
+      (!row.deleted || (operation === "remove" && row._origin === "baseline")));
   }
 
   function rowToSendItem(row) {
