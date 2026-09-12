@@ -136,9 +136,6 @@ def _can_remove(ops, feature, key, item):
         return False
     if feature == "history" and _event(key, item):
         return False
-    if feature == "history" and caps.get("remove_watched_status") is False:
-        # Some adapters support deleting one viewing but cannot clear all plays.
-        return False
     return True
 
 
@@ -251,11 +248,13 @@ def _remove_target(cfg, feature, target, *, dry_run):
     provider, instance = target["provider"], target["instance"]
     ops = load_sync_ops(provider)
     records = target["records"]
+    single_watch = provider == "FLOPPY" and feature == "history"
     if feature == "history" and any(_event(k, v) for k, v in records.items()):
         raise ValueError("Individual watch dates cannot be removed here")
     view = config_with_history_rewatches(build_provider_config_view(cfg, provider, instance), False)
     current = _RecordIndex(_read_current(ops, view, provider, instance, feature))
     removed_keys, absent_keys, unresolved_keys = [], [], []
+    still_watched = {}
     matched = {}
     for key, item in records.items():
         matches = current.matches(key, item, same_account=True)
@@ -266,7 +265,7 @@ def _remove_target(cfg, feature, target, *, dry_run):
         else:
             dest_key, dest = matches[0]
             dest = dict(dest)
-            if feature == "history":
+            if feature == "history" and not single_watch:
                 # A collapsed status can retain the newest play's native ID.
                 # Keep aggregate IDs needed to clear status, never one play's ID.
                 for field in (*EVENT_ID_FIELDS, "_mdblist_play_id", "play_id", "watched_at", "_cw_event_key", "_cw_rewatch_sync"):
@@ -291,20 +290,52 @@ def _remove_target(cfg, feature, target, *, dry_run):
             confirmed = set(decision["success_keys"])
             remaining = _RecordIndex(_read_current(ops, view, provider, instance, feature))
             for key, (dest_key, dest) in matched.items():
-                if write_keys[key] not in confirmed or remaining.matches(dest_key, dest, same_account=True):
+                survivors = remaining.matches(dest_key, dest, same_account=True)
+                deleted_watch = str(dest.get("_floppy_consumption_id") or "") if single_watch else ""
+                watch_changed = bool(deleted_watch) and len(survivors) == 1 and all(
+                    str(item.get("_floppy_consumption_id") or "") not in {"", deleted_watch}
+                    for _, item in survivors
+                )
+                if write_keys[key] not in confirmed or (survivors and not watch_changed):
                     unresolved_keys.append(key)
                 else:
                     removed_keys.append(key)
+                    if survivors:
+                        still_watched[key] = survivors[0][1]
             if not result.get("ok", True) and not removed_keys:
                 LOG.warning("Editor removal was not confirmed for %s/%s", provider, instance)
     if not dry_run and removed_keys:
         state = sqlite_state.load_state_features(api._STATE_BASE, {feature})
         current = _items(state, provider, instance, feature)
-        keys = [k for k, v in current.items() if any(
-            _matches(key, records[key], k, v, same_account=True, include_viewings=feature == "history") for key in removed_keys)]
-        sqlite_state.remove_baseline_items(api._STATE_BASE, provider, instance, feature, keys)
+        if single_watch:
+            # Refresh only affected inventory rows. Keep surviving watches and
+            # the pair baselines used by the next sync to compare providers.
+            updated = dict(current)
+            for key in removed_keys:
+                deleted_watch = str(matched[key][1].get("_floppy_consumption_id") or "")
+                for k, value in current.items():
+                    if not _matches(key, records[key], k, value, same_account=True, include_viewings=True):
+                        continue
+                    if key in still_watched:
+                        if not _event(k, value):
+                            updated[k] = still_watched[key]
+                        elif deleted_watch and str(value.get("_floppy_consumption_id") or "") == deleted_watch:
+                            updated.pop(k, None)
+                    else:
+                        updated.pop(k, None)
+            node = (state.get("providers") or {}).get(provider) or {}
+            if instance != "default":
+                node = (node.get("instances") or {}).get(instance) or {}
+            sqlite_state.save_feature_baseline(api._STATE_BASE, provider=provider, instance=instance,
+                                              feature=feature, items=updated,
+                                              checkpoint=(node.get(feature) or {}).get("checkpoint"))
+        else:
+            keys = [k for k, v in current.items() if any(
+                _matches(key, records[key], k, v, same_account=True, include_viewings=feature == "history") for key in removed_keys)]
+            sqlite_state.remove_baseline_items(api._STATE_BASE, provider, instance, feature, keys)
     return dict(ok=not unresolved_keys, attempted=len(records), confirmed=len(removed_keys),
                 removed=len(removed_keys), skipped=len(absent_keys), unresolved=len(unresolved_keys), errors=0,
+                still_watched=len(still_watched),
                 confirmed_keys=removed_keys, skipped_keys=absent_keys, unresolved_keys=unresolved_keys,
                 dry_run=dry_run)
 

@@ -167,23 +167,65 @@ def test_selective_removal_preserves_pair_history_checkpoint_and_policy(setup):
 
 
 @pytest.mark.parametrize("item", [movie(), episode(1)], ids=["movie", "episode"])
-def test_floppy_history_removal_is_unavailable(setup, item):
+@pytest.mark.parametrize("outcome", ["cleared", "still_watched", "unchanged", "failed", "read_failed"])
+@pytest.mark.parametrize("cached_dates", [False, True])
+def test_floppy_history_removal_reuses_adapter_and_preserves_remaining_watches(setup, monkeypatch, item, outcome, cached_dates):
     from providers.sync._mod_FLOPPY import OPS
+    from providers.sync.floppy import _history
+    from test_floppy_sync import AdapterStub, ResponseStub
     s = setup
     s.cfg["pairs"][0]["target"] = "FLOPPY"
     ops = s.ops["FLOPPY"] = Ops("FLOPPY")
     ops.capabilities = OPS.capabilities
-    s.seed("p1", "FLOPPY", "default", "history", {canonical_key(item): item})
+    latest = {**item, "watched_at": "2026-09-02T12:00:00Z", "_floppy_consumption_id": "42"}
+    earlier = {**item, "watched_at": "2026-09-01T12:00:00Z", "_floppy_consumption_id": "41"}
+    key = canonical_key(item)
+    rows = {key: latest, "tmdb:2": movie(2)}
+    s.seed("p1", "FLOPPY", "default", "history", rows)
+    if cached_dates:
+        database.save_feature_baseline(s.root, provider="FLOPPY", feature="history", checkpoint=123,
+                                       items={history_event_key(v): v for v in (earlier, latest)} | {"tmdb:2": movie(2)})
+    path = "media/movie/tmdb/1/history/42" if item["type"] == "movie" else "media/tv/tmdb/99/1/1/history/42"
+    def delete(call):
+        if outcome == "failed":
+            return ResponseStub(500, {})
+        if outcome == "cleared":
+            ops.live[("default", "history")].pop(key)
+        elif outcome == "still_watched":
+            ops.live[("default", "history")][key] = earlier
+        elif outcome == "read_failed":
+            def failed_read(*args, **kwargs):
+                raise RuntimeError("Provider unavailable")
+            ops.build_index = failed_read
+        return ResponseStub(204, {})
+    adapter = AdapterStub({("DELETE", path): delete})
+    def remove(cfg, items, *, feature, dry_run):
+        assert not cfg.get("_cw_history_rewatches")
+        assert items[0]["_floppy_consumption_id"] == "42"
+        adapter.config = cfg
+        return _history.remove(adapter, items, dry_run=dry_run)
+    monkeypatch.setattr(ops, "remove", remove)
     payload = dict(kind="history", items=[item], source_provider="FLOPPY")
     preview = api.api_editor_remove_preview(payload, request=None)
-    assert not preview["providers"]
-    # A stale or hand-crafted submission cannot bypass the preview restriction.
-    with pytest.raises(HTTPException) as exc:
-        api.api_editor_send({**payload, "operation": "remove", "confirmed": True,
-                             "preview_id": preview["preview_id"], "providers": [{"provider": "FLOPPY"}]}, request=None)
-    assert exc.value.status_code == 400
-    assert not ops.calls
-    assert canonical_key(item) in removal._items(database.load_state_features(s.root, {"history"}), "FLOPPY", "default", "history")
+    assert [p["provider"] for p in preview["providers"]] == ["FLOPPY"]
+    result = s.execute(payload)
+    success = outcome in {"cleared", "still_watched"}
+    assert result["ok"] is success
+    assert result["confirmed"] == int(success)
+    assert result["results"][0]["result"].get("still_watched", 0) == int(outcome == "still_watched")
+    assert [(c["method"], c["path"]) for c in adapter.client.session.calls] == [("DELETE", path)]
+    state = database.load_state_features(s.root, {"history"})
+    saved = removal._items(state, "FLOPPY", "default", "history")
+    assert saved["tmdb:2"] == movie(2)
+    assert state["providers"]["FLOPPY"]["history"]["checkpoint"] == 123
+    if outcome == "cleared":
+        assert set(saved) == {"tmdb:2"}
+    elif outcome == "still_watched":
+        assert list(v["_floppy_consumption_id"] for k, v in saved.items() if k != "tmdb:2") == ["41"]
+    else:
+        assert any(v.get("_floppy_consumption_id") == "42" for v in saved.values())
+    pair_state = database.load_pair_state(s.root, s.scopes[("p1", "history")], {"history"})
+    assert removal._items(pair_state, "FLOPPY", "default", "history")[key]["_floppy_consumption_id"] == "42"
 
 
 @pytest.mark.parametrize("feature", ["watchlist", "ratings", "progress", "collection"])
