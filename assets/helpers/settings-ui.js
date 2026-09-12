@@ -931,7 +931,7 @@ function _cwAnimeMappingSetBusy(on, label = "") {
 function cwAnimeMappingRenderStatus(st = {}) {
   const cfg = window._cfgCache || {};
   const block = cfg.anime_mapping || {};
-  const err = String(st.error || st.message || "").trim();
+  const err = String(st.error || st.message || (st.identity_error ? `animeApi update failed (${st.identity_error})` : "")).trim();
   const installed = !!st.installed;
   const ready = !!st.index_ready;
   const enabled = st.enabled !== undefined ? !!st.enabled : !!block.enabled;
@@ -940,18 +940,25 @@ function cwAnimeMappingRenderStatus(st = {}) {
   const index = ready ? "Index ready" : "Index missing";
   const sources = installed ? `${Number(st.source_count || 0).toLocaleString()} sources` : "-";
   const edges = installed ? `${Number(st.edge_count || 0).toLocaleString()} edges` : "-";
-  const generated = _cwFormatUtc(st.dataset_generated_on);
-  const generatedCompact = _cwFormatCompactUtc(st.dataset_generated_on);
+  const updatedSeconds = Number(st.last_updated_at || 0);
+  const updatedAt = updatedSeconds > 0 ? new Date(updatedSeconds * 1000).toISOString() : "";
+  const updated = _cwFormatUtc(updatedAt);
+  const updatedCompact = _cwFormatCompactUtc(updatedAt);
 
   _cwSetChecked("anime_mapping_enabled", enabled);
   _cwSetChecked("anime_mapping_auto_update", autoUpdate);
   _cwSetText("anime_mapping_dataset", dataset);
-  _cwSetStat("anime_mapping_generated", generatedCompact);
+  _cwSetStat("anime_mapping_generated", updatedCompact);
   _cwSetText("anime_mapping_index", index);
   _cwSetStat("anime_mapping_sources", sources);
   _cwSetStat("anime_mapping_edges", edges);
   _cwSetStat("anime_mapping_counts", installed ? `${sources} | ${edges}` : "-");
-  _cwSetText("anime_mapping_last_update", generated);
+  _cwSetText("anime_mapping_last_update", updated);
+  const sourceDate = value => value ? _cwFormatUtc(value).slice(0, 10) : "Date unavailable";
+  _cwSetStat("anime_mapping_episodes_version", installed ? `${st.release_tag || "v3"} · ${sourceDate(st.dataset_generated_on)}` : "Not installed");
+  _cwSetStat("anime_mapping_identity_version", st.identity_installed ? `${st.identity_release_tag || "v3"} · ${sourceDate(st.identity_generated_on)}` : "Not installed");
+  const identityVersion = document.getElementById("anime_mapping_identity_version");
+  if (identityVersion && st.identity_revision) identityVersion.title = `Installed animeApi revision: ${st.identity_revision}`;
   _cwSetText("anime_mapping_meta_status", err ? "Error" : (installed && ready ? "Up to date" : (installed ? "Needs index" : "Missing")));
   const statusPill = document.getElementById("anime_mapping_meta_status");
   if (statusPill) {
@@ -1050,7 +1057,10 @@ async function cwAnimeMappingRun(action) {
     const data = await r.json().catch(() => ({}));
     if (!r.ok || data.ok === false) throw new Error(data.message || data.error || `${update ? "Update" : "Rebuild"} failed (${r.status})`);
     cwAnimeMappingRenderStatus(data.status || data || {});
-    try { window.CW?.DOM?.showToast?.(update ? "Anime mapping updated" : "Anime mapping index rebuilt", true); } catch {}
+    const message = !update ? "Anime mapping index rebuilt"
+      : data.updated ? (data.identity_updated && !data.mappings_updated ? "Anime identity data updated" : "Anime mapping updated")
+      : data.rebuilt ? "Anime mapping index rebuilt" : "Anime mapping already up to date";
+    try { window.CW?.DOM?.showToast?.(message, true); } catch {}
   } catch (e) {
     cwAnimeMappingRenderStatus({ ...(window.__animeMappingStatus || {}), error: e?.message || "Action failed" });
     try { window.CW?.DOM?.showToast?.(e?.message || "Anime mapping action failed", false); } catch {}
@@ -1155,11 +1165,11 @@ function cwBuildAnimeMappingPanel() {
           <dl class="am-dataset-list">
             <div>
               <dt>Episodes</dt>
-              <dd><a href="https://github.com/anibridge/anibridge-mappings" target="_blank" rel="noopener noreferrer">aniBridge/anibridge-mappings<span class="material-symbols-rounded" aria-hidden="true">open_in_new</span></a></dd>
+              <dd><a href="https://github.com/anibridge/anibridge-mappings" target="_blank" rel="noopener noreferrer">aniBridge/anibridge-mappings<span class="material-symbols-rounded" aria-hidden="true">open_in_new</span></a><span class="am-dataset-version" id="anime_mapping_episodes_version">-</span></dd>
             </div>
             <div>
               <dt>Identity</dt>
-              <dd><a href="https://github.com/nattadasu/animeApi" target="_blank" rel="noopener noreferrer">nattadasu/animeApi<span class="material-symbols-rounded" aria-hidden="true">open_in_new</span></a></dd>
+              <dd><a href="https://github.com/nattadasu/animeApi" target="_blank" rel="noopener noreferrer">nattadasu/animeApi<span class="material-symbols-rounded" aria-hidden="true">open_in_new</span></a><span class="am-dataset-version" id="anime_mapping_identity_version">-</span></dd>
             </div>
           </dl>
           <p class="am-details-copy">AniBridge handles episode numbering across AniDB, MyAnimeList, AniList, TMDB and TVDB. animeApi adds SIMKL and Kitsu identity.</p>
