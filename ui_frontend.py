@@ -526,18 +526,42 @@ def _get_index_html_static() -> str:
 <script>
 (() => {
   try {
-    const route = String(window.location.hash || "").replace(/^#\/?/, "").split("?")[0].split("/")[0].trim().toLowerCase().replace(/-/g, "_");
+    const segment = (value) => {
+      try { value = decodeURIComponent(String(value || "")); } catch {}
+      return String(value || "").trim().toLowerCase().replace(/-/g, "_");
+    };
+    const [path, query = ""] = String(window.location.hash || "").replace(/^#\/?/, "").split("?");
+    const parts = path.split("/").filter(Boolean);
+    const route = segment(parts[0]);
     const tabs = new Set(["watchlist", "playback_progress", "snapshots", "capture_compare", "playlists", "editor", "analyzer", "events", "logs", "import_export", "interactive_sync", "maintenance", "settings"]);
     let tab = tabs.has(route) ? route : "main";
     if (document.documentElement.classList.contains("cw-compact") && tab !== "main") tab = "main";
     document.documentElement.dataset.cwInitialTab = tab;
     document.documentElement.dataset.tab = tab;
+    if (tab === "settings") {
+      const aliases = { pairs: "sync", automation: "scheduling", ui: "app", security: "app" };
+      const requested = segment(parts[1] || new URLSearchParams(query).get("pane"));
+      const pane = Object.hasOwn(aliases, requested) ? aliases[requested] : requested;
+      const panes = new Set(["overview", "providers", "sync", "scrobbler", "scheduling", "app", "maintenance"]);
+      window.__cwSettingsPane = panes.has(pane) ? pane : "overview";
+      document.documentElement.dataset.cwInitialPane = window.__cwSettingsPane;
+    }
   } catch {
     document.documentElement.dataset.cwInitialTab = "main";
   }
 })();
 </script>
 <style>
+/* Match the routed layout before the deferred router starts. */
+html[data-tab]:not([data-tab="main"]) #layout{grid-template-columns:minmax(0,1fr)}
+html[data-cw-initial-pane] #page-settings .cw-settings-pane{display:none!important}
+html[data-cw-initial-pane="overview"] #page-settings .cw-settings-pane[data-pane="overview"],
+html[data-cw-initial-pane="providers"] #page-settings .cw-settings-pane[data-pane="providers"],
+html[data-cw-initial-pane="sync"] #page-settings .cw-settings-pane[data-pane="sync"],
+html[data-cw-initial-pane="scrobbler"] #page-settings .cw-settings-pane[data-pane="scrobbler"],
+html[data-cw-initial-pane="scheduling"] #page-settings .cw-settings-pane[data-pane="scheduling"],
+html[data-cw-initial-pane="app"] #page-settings .cw-settings-pane[data-pane="app"],
+html[data-cw-initial-pane="maintenance"] #page-settings .cw-settings-pane[data-pane="maintenance"]{display:block!important}
 html[data-cw-initial-tab]:not([data-cw-initial-tab="main"]) #ops-card,
 html[data-cw-initial-tab]:not([data-cw-initial-tab="main"]) #stats-card,
 html[data-cw-initial-tab]:not([data-cw-initial-tab="main"]) #dashboard-widgets-card,
@@ -1697,7 +1721,7 @@ __CW_ASSET_BLOCK__
 <script>(()=>{const list=p=>[...p.querySelectorAll(':scope>.section')].filter(s=>s.dataset.accordion!=='off'),set=(s,on)=>{s.classList.toggle('open',!!on);s.querySelector('.head')?.setAttribute('aria-expanded',String(!!on));const c=s.querySelector('.chev');if(c)c.textContent=''},siblings=s=>s?.parentElement?list(s.parentElement):[];window.toggleSection=id=>{const s=document.getElementById(id);if(!s||s.dataset.accordion==='off')return;const on=!s.classList.contains('open');siblings(s).forEach(x=>set(x,x===s&&on))};window.openSection=id=>{const s=document.getElementById(id);if(!s||s.dataset.accordion==='off')return;siblings(s).forEach(x=>set(x,x===s))};document.addEventListener('click',e=>{const h=e.target?.closest?.('[data-toggle-section]');if(!h)return;e.preventDefault();window.toggleSection?.(h.dataset.toggleSection)},true);document.addEventListener('DOMContentLoaded',()=>[...new Set([...document.querySelectorAll('.section')].map(s=>s.parentElement).filter(Boolean))].forEach(p=>{const open=list(p).find(s=>s.classList.contains('open'));list(p).forEach(s=>set(s,s===open))}),{once:true})})();</script>
 
 
-<script>(()=>{const panes='#page-settings .cw-settings-pane',nav='#cw-settings-nav .cw-settings-nav-btn',norm=v=>String(v||'overview').trim().toLowerCase(),apply=p=>{const name=norm(p);let found=false;document.querySelectorAll(panes).forEach(n=>{const on=norm(n.dataset.pane)===name;n.classList.toggle('active',on);found=found||on});if(!found&&name!=='overview')return apply('overview');document.querySelectorAll(nav).forEach(b=>{const on=norm(b.dataset.pane)===name;b.classList.toggle('active',on);b.setAttribute('aria-current',on?'page':'false')});window.__cwSettingsPane=name;document.dispatchEvent(new CustomEvent('cw-settings-pane-changed',{detail:{pane:name}}))};window.cwSettingsSelect=p=>{apply(p);const main=document.getElementById('cw-settings-left');if(main&&window.innerWidth<1200)main.scrollIntoView({behavior:'smooth',block:'start'})};document.addEventListener('DOMContentLoaded',()=>apply(window.__cwSettingsPane||'overview'),{once:true});document.addEventListener('tab-changed',e=>((e?.detail?.id||e?.detail?.tab)==='settings')&&setTimeout(()=>apply(window.__cwSettingsPane||'overview'),0))})();</script>
+<script>(()=>{const panes='#page-settings .cw-settings-pane',nav='#cw-settings-nav .cw-settings-nav-btn',norm=v=>String(v||'overview').trim().toLowerCase(),apply=p=>{const name=norm(p);let found=false;document.querySelectorAll(panes).forEach(n=>{const on=norm(n.dataset.pane)===name;n.classList.toggle('active',on);found=found||on});if(!found&&name!=='overview')return apply('overview');document.querySelectorAll(nav).forEach(b=>{const on=norm(b.dataset.pane)===name;b.classList.toggle('active',on);b.setAttribute('aria-current',on?'page':'false')});window.__cwSettingsPane=name;delete document.documentElement.dataset.cwInitialPane;document.dispatchEvent(new CustomEvent('cw-settings-pane-changed',{detail:{pane:name}}))};window.cwSettingsSelect=p=>{apply(p);const main=document.getElementById('cw-settings-left');if(main&&window.innerWidth<1200)main.scrollIntoView({behavior:'smooth',block:'start'})};apply(window.__cwSettingsPane||'overview');document.addEventListener('DOMContentLoaded',()=>apply(window.__cwSettingsPane||'overview'),{once:true});document.addEventListener('tab-changed',e=>((e?.detail?.id||e?.detail?.tab)==='settings')&&setTimeout(()=>apply(window.__cwSettingsPane||'overview'),0))})();</script>
 <script>(()=>{const sync=e=>{const pane=String(e?.detail?.pane||window.__cwSettingsPane||'overview').toLowerCase();document.querySelectorAll('#cw-settings-menu .cw-menu-item[data-settings-pane]').forEach(item=>{const active=item.dataset.settingsPane===pane;item.classList.toggle('active',active);if(active)item.setAttribute('aria-current','page');else item.removeAttribute('aria-current')})};document.addEventListener('cw-settings-pane-changed',sync);document.addEventListener('DOMContentLoaded',sync,{once:true})})();</script>
 
 <script>(()=>{const ready=()=>{const input=document.querySelector('#cw-settings-nav .cw-settings-search input'),items=[...document.querySelectorAll('#cw-settings-nav .cw-settings-nav-btn')];if(!input||!items.length)return;const apply=()=>{const q=input.value.trim().toLowerCase();items.forEach(btn=>{btn.hidden=!!q&&!btn.textContent.toLowerCase().includes(q)})};input.addEventListener('input',apply);document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&String(e.key).toLowerCase()==='k'){e.preventDefault();window.showTab?.('settings');setTimeout(()=>input.focus(),0)}})};document.readyState==='loading'?document.addEventListener('DOMContentLoaded',ready,{once:true}):ready()})();</script>
