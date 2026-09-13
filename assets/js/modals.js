@@ -91,7 +91,19 @@ window.openEvents = (props = {}) => {
 window.openStatisticsModal = (props = {}) => ModalRegistry.open('statistics', props);
 if (document.readyState === 'complete') resumeEventsReturn();
 else window.addEventListener('load', resumeEventsReturn, {once:true});
-window.openExporter = () => window.showTab ? window.showTab('import_export') : (location.hash = 'import_export');
+window.openExporter = (props = {}) => {
+  const previous = location.hash.split('?')[0] === '#import_export'
+    ? new URLSearchParams(location.hash.split('?')[1] || '') : null;
+  const query = new URLSearchParams();
+  const returnTo = previous ? previous.get('returnTo') : location.pathname + location.search + location.hash;
+  if (returnTo) query.set('returnTo', returnTo);
+  if (props.recovery || previous?.has('recovery')) query.set('recovery', '1');
+  const hash = '#import_export' + (query.size ? `?${query}` : '');
+  ModalRegistry.close();
+  if (!document.getElementById('page-import_export') || !window.showTab) { location.href = '/?main=1' + hash; return; }
+  if (location.hash !== hash) history.pushState(null, '', hash);
+  return window.showTab('import_export');
+};
 
 window.openMaintenance = (props = {}) => {
   const previous = location.hash.split('?')[0] === '#maintenance'

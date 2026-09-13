@@ -137,7 +137,7 @@ _HELPER_SCRIPTS = (
     "restart_apply.js",
 )
 _APP_SCRIPTS = (
-    "syncbar.js", "run-summary-stream.js", "overview-profile.js", "sync-reviews.js", "main.js", "connections.overlay.js", "connections.pairs.overlay.js", "scheduler.js",
+    "syncbar.js", "run-summary-stream.js", "overview-profile.js", "sync-reviews.js", "plex-recovery-notifications.js", "main.js", "connections.overlay.js", "connections.pairs.overlay.js", "scheduler.js",
     "schedulerbanner.js", "playingcard.js", "insights.js", "activity.js", "dashboard-widgets.js", "auth-dots.js", "main-status.js",
     "scrobbler.js", "user-profiles.js", "app-users.js",
 )
@@ -146,7 +146,7 @@ _USER_HELPER_SCRIPTS = (
     "media-meta.js", "trailer.js", "playing-card.js", "watchlist-preview.js",
 )
 _USER_APP_SCRIPTS = (
-    "overview-profile.js", "sync-reviews.js", "main.js", "playingcard.js", "insights.js", "activity.js", "dashboard-widgets.js", "auth-dots.js", "main-status.js",
+    "overview-profile.js", "sync-reviews.js", "plex-recovery-notifications.js", "main.js", "playingcard.js", "insights.js", "activity.js", "dashboard-widgets.js", "auth-dots.js", "main-status.js",
 )
 _FULL_USER_HELPER_SCRIPTS = tuple(dict.fromkeys((*_USER_HELPER_SCRIPTS, "details-log.js")))
 _FULL_USER_APP_SCRIPTS = tuple(dict.fromkeys(("syncbar.js", "run-summary-stream.js", "schedulerbanner.js", *_USER_APP_SCRIPTS)))
@@ -2463,6 +2463,7 @@ def get_profile_html(user: dict | None = None) -> str:
 <script src="/assets/helpers/update-notifications.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/js/overview-profile.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/js/sync-reviews.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/js/plex-recovery-notifications.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/api.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/media-meta.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/trailer.js?v=__CW_VERSION__" defer></script>

@@ -26,7 +26,10 @@
     const filters = state.typeFilter || {};
     const hasTypeFilter = filters.movie || filters.show || filters.anime || filters.season || filters.episode;
 
+    const recovery = state.recoverySelection;
+    const recoveryScope = recovery && state.source === "state" && state.snapshot === "CROSSWATCH" && state.instance === recovery.instance && state.kind === "history";
     return (rows || []).filter(r => {
+      if (recoveryScope && !recovery.keys.has(r.key)) return false;
       if (hasTypeFilter) {
         const t = (r.type || "").toLowerCase();
         const known = t === "movie" || t === "show" || t === "anime" || t === "season" || t === "episode";

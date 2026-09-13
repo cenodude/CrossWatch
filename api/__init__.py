@@ -45,6 +45,7 @@ from .syncAPI import (
 from services.analyzer import router as analyzer_router
 from services.export import router as export_router
 from services.importer import router as importer_router
+from services.plex_history_recovery import router as plex_recovery_router
 
 __all__ = [
     "config_router",
@@ -111,6 +112,7 @@ def register(
     app.include_router(version_router)
     app.include_router(analyzer_router)
     app.include_router(export_router)
+    app.include_router(plex_recovery_router)
     app.include_router(importer_router)
     app.include_router(editor_router)
     app.include_router(interactive_sync_router)

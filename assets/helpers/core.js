@@ -179,6 +179,7 @@
   }
 
   function routeHash(tab, pane) {
+    if (tab === "import_export") return "#import_export" + (window.location.hash.startsWith("#import_export?") ? window.location.hash.slice(window.location.hash.indexOf("?")) : "");
     if (tab === "interactive_sync") return "#interactive_sync" + (window.location.hash.startsWith("#interactive_sync?") ? window.location.hash.slice(window.location.hash.indexOf("?")) : "");
     if (tab === "logs") return "#logs" + (window.location.hash.startsWith("#logs?") ? window.location.hash.slice(window.location.hash.indexOf("?")) : "");
     if (tab === "capture_compare") return "#capture_compare" + (window.location.hash.startsWith("#capture_compare?") ? window.location.hash.slice(window.location.hash.indexOf("?")) : "");

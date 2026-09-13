@@ -64,7 +64,8 @@ html[data-cw-theme] .cw-icon-select-item:is(:hover, [aria-selected="true"]) {
   background: var(--cw-page-selected-bg);
   color: var(--cw-page-selected-text);
 }
-#layout .cw-themed-page :is(.cw-page-hero, .cw-page-panel, .cw-page-toolbar, .cw-page-table) {
+#layout .cw-themed-page :is(.cw-page-hero, .cw-page-panel, .cw-page-toolbar, .cw-page-table),
+dialog.cw-page-panel {
   border: 1px solid var(--cw-theme-border);
   border-radius: var(--cw-page-panel-radius);
   box-shadow: var(--cw-page-shadow);
@@ -76,7 +77,8 @@ html[data-cw-theme] .cw-icon-select-item:is(:hover, [aria-selected="true"]) {
 #layout .cw-themed-page .cw-page-hero {
   background: var(--cw-page-header-bg);
 }
-#layout .cw-themed-page .cw-page-panel {
+#layout .cw-themed-page .cw-page-panel,
+dialog.cw-page-panel {
   background: var(--cw-page-panel-bg);
 }
 #layout .cw-themed-page .cw-page-toolbar {
