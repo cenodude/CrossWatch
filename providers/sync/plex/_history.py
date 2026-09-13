@@ -130,7 +130,7 @@ def _row_guids(row: Mapping[str, Any]) -> list[str]:
     return vals
 
 
-def _fetch_section_guid_rows(srv: Any, section_id: str, plex_type: int) -> tuple[list[Mapping[str, Any]], int]:
+def _fetch_section_guid_rows(srv: Any, section_id: str, plex_type: int, *, check_cancel=None, strict: bool = False) -> tuple[list[Mapping[str, Any]], int]:
     base = _as_base_url(srv)
     ses = getattr(srv, "_session", None)
     token = getattr(srv, "token", None) or getattr(srv, "_token", None) or ""
@@ -148,6 +148,8 @@ def _fetch_section_guid_rows(srv: Any, section_id: str, plex_type: int) -> tuple
     made = 0
 
     while True:
+        if check_cancel:
+            check_cancel()
         params = {
             "type": plex_type,
             "includeGuids": 1,
@@ -165,7 +167,13 @@ def _fetch_section_guid_rows(srv: Any, section_id: str, plex_type: int) -> tuple
             ctype = (r.headers.get("content-type") or "").lower()
             data = (r.json() or {}) if "application/json" in ctype else _xml_to_container(r.text or "")
             mc = data.get("MediaContainer") or {}
-            rows = [x for x in (mc.get("Metadata") or []) if isinstance(x, Mapping)]
+            metadata = mc.get("Metadata")
+            if strict:
+                if metadata is None and (mc.get("size") == 0 or mc.get("totalSize") == 0):
+                    metadata = []
+                if not isinstance(metadata, list) or any(not isinstance(x, Mapping) or not x.get("ratingKey") for x in metadata):
+                    raise ValueError("Incomplete Plex library metadata")
+            rows = [x for x in (metadata or []) if isinstance(x, Mapping)]
             total = mc.get("totalSize")
             total_i = int(total) if total is not None else None
         except Exception as exc:
@@ -1289,9 +1297,6 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
             return {}
         prog_mk = getattr(adapter, "progress_factory", None)
         prog: Any | None = prog_mk("history") if callable(prog_mk) else None
-        fallback_guid = bool(plex_cfg_get(adapter, "fallback_GUID", False) or plex_cfg_get(adapter, "fallback_guid", False))
-        if fallback_guid:
-            _emit({"event": "debug", "msg": "fallback_guid.enabled", "provider": "PLEX", "feature": "history"})
 
         def _int_or_zero(v: Any) -> int:
             try:
@@ -1486,8 +1491,6 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                 meta = _catalog_entry_to_minimal(catalog_entry)
             else:
                 meta = minimal_from_history_row(raw, token=None, allow_discover=False)
-            if not meta and fallback_guid:
-                meta = minimal_from_history_row(raw, token=None, allow_discover=True)
             if not meta:
                 return None
             if not _keep_in_snapshot(adapter, meta):

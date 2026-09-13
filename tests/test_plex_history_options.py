@@ -27,11 +27,12 @@ def isolated_state(monkeypatch, tmp_path):
     history._clear_guid_index()
 
 
-def test_fallback_guid_recovers_old_item_and_keeps_match_when_disabled(isolated_state, monkeypatch):
+@pytest.mark.parametrize("legacy_key", ["fallback_GUID", "fallback_guid"])
+def test_legacy_fallback_flag_is_ignored_but_saved_matches_remain(isolated_state, monkeypatch, legacy_key):
     raw = SimpleNamespace(type="movie", ratingKey="42", title="Old movie", year=1990, viewedAt=1787093918)
     server = SimpleNamespace(baseurl="http://plex", _token="token", machineIdentifier="server", history=lambda **kwargs: [raw])
     config = {"_cw_pair_scope": "cw2_history_options", "plex": {
-        "fallback_GUID": False, "history_workers": 1, "history": {"include_marked_watched": False},
+        legacy_key: False, "history_workers": 1, "history": {"include_marked_watched": False},
     }}
     ad = SimpleNamespace(client=SimpleNamespace(server=server), config=config, libraries=lambda **kwargs: [])
     searches = []
@@ -43,7 +44,11 @@ def test_fallback_guid_recovers_old_item_and_keeps_match_when_disabled(isolated_
     monkeypatch.setattr(common, "_discover_search_title", discover)
     assert history.build_index(ad) == {}
     assert not searches
-    config["plex"]["fallback_GUID"] = True
+    config["plex"][legacy_key] = True
+    assert history.build_index(ad) == {}
+    assert not searches
+    common.minimal_from_history_row(raw, allow_discover=True)
+    common._fb_cache_flush()
     recovered = history.build_index(ad)
     assert len(recovered) == 1
     assert next(iter(recovered.values()))["ids"]["tmdb"] == "123"
@@ -54,12 +59,38 @@ def test_fallback_guid_recovers_old_item_and_keeps_match_when_disabled(isolated_
     # Simulate another run/process, with recovery switched off. The persistent
     # fallback memo must survive retirement of the separate library GUID index.
     log_run_id.set("options-run2")
-    config["plex"]["fallback_GUID"] = False
+    config["plex"][legacy_key] = False
     common._FBGUID_MEMO.clear()
     monkeypatch.setattr(common, "_FBGUID_MEMO_PATH", None)
     history._clear_guid_index()
     assert history.build_index(ad) == recovered
     assert searches == [1]
+
+
+@pytest.mark.parametrize("legacy_enabled", [False, True])
+def test_ratings_reuse_saved_matches_without_discover_and_flush_memo(isolated_state, monkeypatch, legacy_enabled):
+    from providers.sync.plex import _ratings as ratings
+    raw = {"type":"movie", "ratingKey":"42", "title":"Old movie", "year":1990, "userRating":8}
+    def get(url, *, params=None, **kwargs):
+        rows = [raw] if (params or {}).get("type") == 1 else []
+        return SimpleNamespace(ok=True, status_code=200, headers={"Content-Type":"application/json"},
+                               json=lambda: {"MediaContainer":{"Metadata":rows,"totalSize":len(rows)}})
+    server = SimpleNamespace(baseurl="http://plex", _token="token", _session=SimpleNamespace(headers={},get=get))
+    adapter = SimpleNamespace(client=SimpleNamespace(server=server), libraries=lambda **kw: [],
+                              config={"plex":{"fallback_GUID":legacy_enabled,"rating_workers":1}})
+    monkeypatch.setattr(ratings,"home_scope_enter",lambda _: (False,False,None,None))
+    monkeypatch.setattr(ratings,"home_scope_exit",lambda *a: None)
+    monkeypatch.setattr(ratings,"normalize_discover_row",lambda *a,**kw: {"type":"movie","title":"Old movie","ids":{}})
+    calls=[]; flushed=[]
+    def cached(row, **kwargs):
+        calls.append(kwargs["allow_discover"])
+        return {"ids":{"tmdb":"123"}}
+    monkeypatch.setattr(ratings,"minimal_from_history_row",cached)
+    monkeypatch.setattr(ratings,"_fb_cache_flush",lambda:flushed.append(True))
+    result=ratings.build_index(adapter)
+    assert result["tmdb:123"]["rating"]==8
+    assert calls==[False]
+    assert flushed==[True]
 
 
 @pytest.mark.parametrize("timestamp", [1787093918, None])
