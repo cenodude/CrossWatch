@@ -58,11 +58,11 @@ def _log(msg: str, lvl: str = "INFO") -> None:
         return
     if BASE_LOG is not None:
         try:
-            BASE_LOG(msg, level=level, module="SCROBBLE")
+            BASE_LOG(msg, level=level, module="FLICKLIST-SINK")
             return
         except Exception:
             pass
-    print(f"[SCROBBLE] {level}: {msg}")
+    print(f"[FLICKLIST-SINK] {level}: {msg}")
 
 
 def _route_source(cfg: Mapping[str, Any]) -> tuple[str, str]:

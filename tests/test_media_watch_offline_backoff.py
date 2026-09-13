@@ -95,3 +95,19 @@ def test_plex_offline_backoff_is_quiet_and_recovers():
         ("WARNING", "Plex watcher offline: down; retrying with backoff"),
         ("INFO", "Plex watcher reconnected"),
     ]
+
+
+def test_plex_listener_error_ignored_while_stopping():
+    service = plex_watch.WatchService(dispatcher=FakeDispatcher(), cfg_provider=lambda: {}, quiet_startup=True)
+    logs: list[tuple[str, str]] = []
+    service._log = lambda msg, level="INFO": logs.append((level, msg))  # type: ignore[method-assign]
+
+    service._stop.set()
+    service._listener_error(AttributeError("'NoneType' object has no attribute 'sock'"))
+    assert service._offline is False
+    assert logs == []
+
+    service._stop.clear()
+    service._listener_error("closed")
+    assert service._offline is True
+    assert logs == [("WARNING", "Plex watcher offline: closed; retrying with backoff")]

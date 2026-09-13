@@ -78,11 +78,11 @@ def _log(msg: str, lvl: str = "INFO") -> None:
         return
     if BASE_LOG is not None:
         try:
-            BASE_LOG(str(msg), level=level, module="MDBLIST-SCROBBLE")
+            BASE_LOG(str(msg), level=level, module="MDBLIST-SINK")
             return
         except Exception:
             pass
-    print(f"[MDBLIST-SCROBBLE:{level}] {msg}")
+    print(f"[MDBLIST-SINK:{level}] {msg}")
 
 
 def _merged_provider_block(cfg: Mapping[str, Any], key: str, instance_id: Any = None) -> dict[str, Any]:

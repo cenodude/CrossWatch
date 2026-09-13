@@ -435,6 +435,11 @@ class WatchService:
             return
         self._offline_retry = min(OFFLINE_MAX_RETRY_SECONDS, max(OFFLINE_INITIAL_RETRY_SECONDS, self._offline_retry * 2.0))
 
+    def _listener_error(self, err: Any) -> None:
+        if self._stop.is_set():
+            return
+        self._mark_offline(err if isinstance(err, Exception) else RuntimeError(str(err)))
+
     def _mark_online(self) -> None:
         if self._offline:
             self._log("Plex watcher reconnected", "INFO")
@@ -1601,7 +1606,7 @@ class WatchService:
                     break
                 self._listener = self._plex.startAlertListener(
                     callback=self._handle_alert,
-                    callbackError=lambda e: self._mark_offline(e if isinstance(e, Exception) else RuntimeError(str(e))),
+                    callbackError=self._listener_error,
                 )
                 if self._stop.is_set():
                     break
