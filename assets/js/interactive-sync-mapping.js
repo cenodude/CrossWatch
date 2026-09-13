@@ -105,7 +105,7 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
     for (const [selector,label] of [["[data-catalog]","Search in"],["[data-language]","Metadata language"]]) {
       const select=$(selector);
       select.dataset.cwNativeSelect="true";
-      const wrap=window.CW?.IconSelect?.enhance(select,{className:"ie-select",menuClassName:"ie-select-menu"});
+      const wrap=window.CW?.IconSelect?.enhance(select,{className:"ie-select",menuClassName:"ie-select-menu",menuMinWidth:240});
       wrap?.querySelector("button")?.setAttribute("aria-label",label);
       wrap?.__cwMenu?.setAttribute("aria-label",label);
     }

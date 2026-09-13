@@ -97,13 +97,16 @@ def test_preview_exposes_provider_progress_while_index_is_being_read(config_base
         session.close()
 
 
-def test_active_review_does_not_expire_after_an_hour(api_client):
+@pytest.mark.parametrize("status", ["reading", "applying"])
+def test_running_session_does_not_expire_after_24_hours(api_client, status):
+    from services import interactive_sync as svc
+
     client, session, api = api_client
-    session.status = "reading"
-    session.touched -= 7200
+    session.status = status
+    session.touched -= svc.SESSION_TTL + 1
     result = client.get(f"/api/interactive-sync/{session.id}")
     assert result.status_code == 200
-    assert result.json()["status"] == "reading"
+    assert result.json()["status"] == status
 
 
 @pytest.mark.parametrize("verbose", [False, True])
