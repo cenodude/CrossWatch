@@ -497,6 +497,32 @@ def test_api_expires_reviews(api_client, monkeypatch):
     assert client.get(f"/api/interactive-sync/{session.id}").status_code == 404
 
 
+def test_review_retention_is_24_hours_and_activity_renews_it(api_client, monkeypatch):
+    from types import SimpleNamespace
+    from services import interactive_sync as svc
+
+    client, session, api = api_client
+    assert svc.SESSION_TTL == 24 * 60 * 60
+    clock = SimpleNamespace(now=100_000)
+    timer = SimpleNamespace(monotonic=lambda: clock.now)
+    monkeypatch.setattr(svc, "time", timer)
+    monkeypatch.setattr(api, "time", timer)
+    session.touched = clock.now
+    url = f"/api/interactive-sync/{session.id}"
+    clock.now += 23 * 60 * 60
+    svc.prune()
+    assert session.id in svc.SESSIONS
+    assert session.touched == 100_000
+    assert client.get(url).status_code == 200
+    assert session.touched == clock.now
+    clock.now += 23 * 60 * 60
+    svc.prune()
+    assert session.id in svc.SESSIONS
+    clock.now += 60 * 60 + 1
+    assert client.get(url).status_code == 404
+    assert session.id not in svc.SESSIONS
+
+
 @pytest.mark.parametrize("ruleset", [False, True])
 def test_pending_playlist_creates_only_selected_items(world, ruleset):
     from cw_platform import playlists_runner as runner

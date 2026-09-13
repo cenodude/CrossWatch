@@ -895,4 +895,8 @@ html[data-cw-theme="flat-light"] .cw-editor-send-card{--send-bg:#e9edf5;--send-p
 #ie-recovery .pr-actions { display: flex; gap: 12px; flex-wrap: wrap; margin-block: 16px; }
 #ie-recovery .pr-match { width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; }
 #ie-recovery .pr-match .ie-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.is-mapping-dialog .is-map-search-bar > label { flex: 0 1 220px; min-width: 0; max-width: 100%; }
+.is-mapping-dialog .is-map-search-bar > label:first-child { flex: 1 1 240px; }
+.is-mapping-dialog .is-map-search-bar :is(input, select, .cw-icon-select, .cw-icon-select-btn) { min-width: 0; max-width: 100%; box-sizing: border-box; }
+.is-mapping-dialog .is-map-search-bar > button { flex: 0 0 auto; }
 @media (max-width: 600px) { .ie-tabs { flex-wrap: wrap; gap: 8px 16px; } #ie-recovery .ie-fields, #ie-recovery .pr-match .ie-fields { grid-template-columns: 1fr; } }

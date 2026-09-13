@@ -137,7 +137,6 @@ html:has(dialog.is-mapping-dialog[open]) { overflow: hidden; }
 .is-map-bulk [data-search-status] { margin: 12px 0 0; }
 .is-map-bulk { border: 1px solid var(--is-line); border-radius: 10px; padding: 18px; }
 .is-map-search-bar, .is-map-numbering-fields, .is-map-row-tools { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; }
-.is-map-search-bar label:first-child { flex: 1; min-width: 200px; }
 .is-mapping-dialog label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--is-muted); }
 .is-mapping-dialog input:not([type=checkbox]), .is-mapping-dialog select { box-sizing: border-box; width: 100%; min-height: 38px; border: 1px solid var(--is-line); border-radius: 6px; padding: 7px 10px; background: var(--is-surface); color: var(--fg); }
 .is-map-candidates { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr)); gap: 8px; }

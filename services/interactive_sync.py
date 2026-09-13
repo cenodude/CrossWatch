@@ -19,7 +19,7 @@ from .interactive_sync_store import ReviewStore
 from .interactive_sync_progress import SyncProgress
 from .interactive_sync_report import SyncReport
 
-SESSION_TTL = 3600
+SESSION_TTL = 24 * 60 * 60
 MAX_SESSIONS = 24
 LOCK = threading.RLock()
 SESSIONS: dict[str, Session] = {}

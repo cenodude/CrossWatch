@@ -241,6 +241,67 @@ def test_saving_a_match_makes_a_guess_eligible_for_bulk_import(api):
     assert result.json()["applied"]==3
 
 
+def test_accept_title_matches_across_pages_without_importing(api):
+    from services import importer
+    template = api.job.raw[0]
+    api.job.raw = [dict(deepcopy(template), original_title=f"Guess {i}", recovery_requires_review=True,
+                        item=dict(template["item"], title=f"Guess {i}", ids={"tmdb":str(i+1)})) for i in range(65)]
+    service._shape(api.job, api.cfg)
+    url = f"/api/import/plex-recovery/{api.job.id}"
+    response = api.client.post(url+"/accept-title-matches", json=dict(revision=0))
+    assert response.status_code == 200, response.text
+    assert response.json()["accepted"] == 65
+    assert all(row["status"] == "ready" for row in api.job.rows)
+    assert not importer._existing_keys(api.cfg, "default")["history"]
+    assert not api.job.receipt
+    result = api.client.post(url+"/commit", json=dict(import_id=api.job.id, revision=1, mode="ready"))
+    assert result.json()["applied"] == 65
+
+
+def test_accept_title_matches_respects_search_and_skips_invalid_and_existing(api):
+    from services import importer
+    url = f"/api/import/plex-recovery/{api.job.id}"
+    api.client.post(url+"/commit", json=dict(import_id=api.job.id, revision=0, mode="selected", row_ids=["0"]))
+    for raw in api.job.raw:
+        raw["recovery_requires_review"] = True
+    missing = deepcopy(api.job.raw[2])
+    missing["item"].update(type="episode", title="Old missing", season=0, episode=None, show_ids={"tmdb":"5"})
+    missing["recovery_valid"] = False
+    invalid = deepcopy(api.job.raw[2])
+    invalid["original_title"] = "Old invalid"
+    invalid["item"].update(title="Old invalid", ids={"tmdb":"6"}, watched_at=None)
+    api.job.raw.extend([missing, invalid])
+    api.job.raw[1]["item"]["title"] = "Distinctive"
+    response = api.client.post(url+"/accept-title-matches", json=dict(revision=1, q="Distinctive"))
+    assert response.json()["accepted"] == 1
+    assert [row["status"] for row in api.job.rows][:3] == ["exists", "ready", "needs_review"]
+    assert api.job.raw[3]["recovery_requires_review"]
+    assert api.job.raw[4]["recovery_requires_review"]
+    response = api.client.post(url+"/accept-title-matches", json=dict(revision=2))
+    assert response.json()["accepted"] == 1
+    assert api.job.raw[0]["recovery_requires_review"]
+    assert api.job.raw[3]["recovery_requires_review"]
+    assert api.job.raw[4]["recovery_requires_review"]
+    assert len(importer._existing_keys(api.cfg, "default")["history"]) == 1
+
+
+@pytest.mark.parametrize("block", ["revision", "running", "settings", "owner", "closed"])
+def test_accept_title_matches_rejects_stale_or_unavailable_recovery(api, monkeypatch, block):
+    api.job.raw[1]["recovery_requires_review"] = True
+    if block == "running":
+        api.job.auto_thread = NS(is_alive=lambda:True)
+    elif block == "settings":
+        api.cfg["plex"]["baseurl"] = "http://different"
+    elif block == "owner":
+        api.job.owner = "someone-else"
+    elif block == "closed":
+        api.job.cancel.set()
+    response = api.client.post(f"/api/import/plex-recovery/{api.job.id}/accept-title-matches",
+                               json=dict(revision=99 if block == "revision" else 0))
+    assert response.status_code == (404 if block == "owner" else 409)
+    assert api.job.raw[1]["recovery_requires_review"]
+
+
 def test_preview_and_cancel_do_not_write_tracker(api):
     from services import importer
     url=f"/api/import/plex-recovery/{api.job.id}"
