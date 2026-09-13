@@ -98,6 +98,7 @@
       if (t === "friend") return "Friend";
       return "";
     }
+    if (p === "kodi") return u?.current === true ? "Current" : "";
     const isAdmin = u?.IsAdministrator === true || u?.Policy?.IsAdministrator === true || u?.is_admin === true || u?.admin === true;
     return isAdmin ? "Admin" : "";
   }

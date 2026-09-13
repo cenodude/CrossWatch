@@ -38,8 +38,10 @@ from providers.sync.jellyfin._auth_http import JellyfinAuthError
 from providers.auth._auth_KODI import KodiAuthError
 from providers.auth._auth_STREMIO import StremioAuthError, StremioClient
 from providers.sync.kodi._common import (
+    KodiClient,
     ensure_whitelist_defaults as kodi_ensure_whitelist_defaults,
     fetch_libraries_from_cfg as kodi_fetch_libraries_from_cfg,
+    make_config as kodi_make_config,
 )
 from providers.sync.plex._utils import (
     ensure_whitelist_defaults,
@@ -1318,6 +1320,33 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         _apply_media_overrides(cfg, "kodi", inst, server, verify_ssl)
         kodi_ensure_whitelist_defaults(cfg, instance_id=inst)
         return {"libraries": kodi_fetch_libraries_from_cfg(cfg, instance_id=inst), "instance": inst}
+
+    @app.get("/api/kodi/users", tags=["media providers"], response_model=None)
+    def api_kodi_users(instance: str | None = Query(None), server: str | None = Query(None), verify_ssl: bool | None = Query(None)) -> Any:
+        inst = normalize_instance_id(instance)
+        cfg = load_config()
+        _apply_media_overrides(cfg, "kodi", inst, server, verify_ssl)
+        kcfg = kodi_make_config(cfg, inst)
+        if not (kcfg.server and kcfg.connection_verified):
+            raise HTTPException(status_code=401, detail="Not connected to Kodi.")
+        client = KodiClient(kcfg)
+        try:
+            body = client.rpc("Profiles.GetProfiles")
+            current = client.rpc("Profiles.GetCurrentProfile")
+        except KodiAuthError as exc:
+            _safe_log(log_fn, "KODI", f"[KODI:{inst}] profiles fetch failed reason={getattr(exc, 'reason', '')}")
+            raise HTTPException(status_code=502, detail="Kodi server is unreachable") from exc
+        current_label = str((current or {}).get("label") or "").strip() if isinstance(current, dict) else ""
+        profiles = (body or {}).get("profiles") if isinstance(body, dict) else None
+        users: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for row in profiles if isinstance(profiles, list) else []:
+            name = str((row or {}).get("label") or "").strip() if isinstance(row, dict) else ""
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            users.append({"id": name, "name": name, "current": name == current_label})
+        return {"users": users, "instance": inst}
 
     @app.post("/api/kodi/disconnect", tags=["auth"])
     def api_kodi_disconnect(instance: str | None = Query(None)) -> Any:

@@ -373,7 +373,7 @@ def test_offline_reconnect_resets_backoff_and_logs_once(monkeypatch):
     assert service._offline_retry == 30.0
     assert disp.events[-1].action == "start"
     assert int(disp.events[-1].progress) == 33
-    lifecycle_logs = [row for row in logs if row[0] in {"WARNING", "INFO"}]
+    lifecycle_logs = [row for row in logs if row[0] in {"WARNING", "INFO"} and not row[1].startswith("event ")]
     assert lifecycle_logs == [
         ("WARNING", "Kodi watcher offline: Kodi server is unreachable: timeout; retrying with backoff"),
         ("INFO", "Kodi watcher reconnected"),

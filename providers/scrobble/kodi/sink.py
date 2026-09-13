@@ -105,8 +105,7 @@ class KodiSink(MediaServerSink):
         return row
 
     def _profile(self, adapter: Any) -> str:
-        body = adapter.client.rpc("Profiles.GetCurrentProfile")
-        profile = (body or {}).get("profile") or {}
+        profile = adapter.client.rpc("Profiles.GetCurrentProfile")
         if not isinstance(profile, dict) or not profile.get("label"):
             raise DeliveryError("unknown_destination_profile")
         return str(profile["label"])

@@ -47,6 +47,28 @@ def _log(msg: str, level: str = "INFO") -> None:
         pass
 
 
+def _ids_desc(ids: Mapping[str, Any] | None) -> str:
+    d = ids or {}
+    for k in ("tmdb", "tvdb", "imdb", "trakt"):
+        if d.get(k):
+            return f"{k}:{d[k]}"
+    for k in ("tmdb_show", "tvdb_show", "imdb_show", "trakt_show"):
+        if d.get(k):
+            return f"{k.replace('_show', '')}:{d[k]}"
+    return "none"
+
+
+def _media_name(ev: ScrobbleEvent) -> str:
+    if (ev.media_type or "").lower() == "episode":
+        s = ev.season if isinstance(ev.season, int) else None
+        n = ev.number if isinstance(ev.number, int) else None
+        base = ev.title or "?"
+        if s is not None and n is not None:
+            return f"{base} S{s:02}E{n:02}"
+        return base
+    return ev.title or "?"
+
+
 def _dict(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, Mapping) else {}
 
@@ -389,13 +411,20 @@ class KodiWatchService:
                 meta["year"] = _to_int(details.get("year"))
 
     def _dispatch_event(self, ev: ScrobbleEvent, duration_ms: int | None = None) -> bool:
+        _log(f"incoming '{ev.action}' user='{mask_account(ev.account)}' server='{ev.server_uuid}' media='{_media_name(ev)}' sess={ev.session_key}", "DEBUG")
+        _log(f"ids resolved: {_media_name(ev)} -> {_ids_desc(ev.ids)} sess={ev.session_key}", "DEBUG")
         accepted = bool(self._dispatch.dispatch(ev))
+        if not accepted:
+            self._log_filter_limited(
+                f"route|{ev.account}|{ev.session_key}",
+                f"event filtered by route dispatcher: user={mask_account(ev.account)} server={ev.server_uuid} sess={ev.session_key}",
+            )
         if accepted:
             try:
                 _cw_update("kodi", ev, duration_ms=duration_ms, provider_instance=self._instance_id)
             except Exception:
                 pass
-            _log(f"event {ev.action} {ev.media_type} user={mask_account(ev.account)} p={ev.progress:.1f} sess={ev.session_key}", "DEBUG")
+            _log(f"event {ev.action} {ev.media_type} user={mask_account(ev.account)} p={ev.progress:.1f} sess={ev.session_key}", "INFO")
         elif ev.action == "stop":
             try:
                 _cw_update_payload(

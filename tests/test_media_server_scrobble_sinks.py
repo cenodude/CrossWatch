@@ -376,7 +376,7 @@ class Kodi:
         self.calls.append((method, copy.deepcopy(params)))
         if method == "Profiles.GetCurrentProfile":
             self.probes += 1
-            return {"profile": {"label": "Changed" if self.switch and self.probes > 1 else self.profile}}
+            return {"label": "Changed" if self.switch and self.probes > 1 else self.profile}
         if method == "Player.GetActivePlayers":
             return [{"type": "video", "playerid": 1}] if self.playing else []
         if method == "Player.GetItem":
