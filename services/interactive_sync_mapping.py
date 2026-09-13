@@ -12,6 +12,12 @@ from cw_platform.id_map import coalesce_ids, ID_KEYS
 from services.interactive_sync_catalogs import destination_rows, provider_block, search_catalogs
 
 
+def _check_rate_limit(response):
+    if response.status_code == 429:
+        raise HTTPException(429, "The search provider rate limit was reached.",
+                            headers={"Retry-After": str(response.headers.get("Retry-After") or "60")})
+
+
 def _candidate_ids(item, source):
     raw = item.get("ids")
     ids = dict(raw) if isinstance(raw, dict) else {}
@@ -48,6 +54,7 @@ def _mdblist_metadata(client, cfg, instance, entity, body):
             response = request_with_auth(client, "POST", f"https://api.mdblist.com/{namespace}/{entity}/",
                                          cfg=cfg, instance_id=instance, timeout=10, max_retries=0,
                                          json={"ids": list(targets)})
+            _check_rate_limit(response)
             if response.status_code >= 400:
                 continue
             details = response.json()
@@ -70,6 +77,8 @@ def _mdblist_metadata(client, cfg, instance, entity, body):
                     if any(original[key] != resolved[key] for key in original.keys() & resolved.keys()):
                         continue
                     item["ids"] = {**original, **resolved}
+        except HTTPException:
+            raise
         except Exception:
             continue
     return rows
@@ -85,6 +94,7 @@ def search_candidates(cfg, row, query, *, catalog="destination"):
     source = provider if catalog == "destination" else "TMDB"
     block = provider_block(cfg, provider, instance)
     extra = []
+    body = {}
     try:
         with requests.Session() as client:
             if source == "MDBLIST":
@@ -99,8 +109,10 @@ def search_candidates(cfg, row, query, *, catalog="destination"):
                     raise HTTPException(409, "Configure SIMKL search credentials for this destination instance.")
                 response = client.get(f"https://api.simkl.com/search/{'movie' if entity == 'movie' else 'tv'}",
                                       params={"q": query, "client_id": key, "limit": 20}, timeout=10)
+                _check_rate_limit(response)
                 if entity == "show":
                     anime = client.get("https://api.simkl.com/search/anime", params={"q": query, "client_id": key, "limit": 20}, timeout=10)
+                    _check_rate_limit(anime)
                     if anime.status_code >= 400:
                         raise HTTPException(502, f"SIMKL anime search returned HTTP {anime.status_code}. Try again.")
                     extra = anime.json()
@@ -115,10 +127,13 @@ def search_candidates(cfg, row, query, *, catalog="destination"):
                 if not key:
                     raise HTTPException(409, "Add a TMDb API key in metadata settings to search this catalog.")
                 response = client.get(f"https://api.themoviedb.org/3/search/{'movie' if entity == 'movie' else 'tv'}",
-                                      params={"api_key": key, "query": query, "include_adult": False}, timeout=10)
+                                      params={"api_key": key, "query": query, "include_adult": False,
+                                              "language": row.get("metadata_language") or "en-US"}, timeout=10)
             else:
                 body = destination_rows(client, cfg, row, block, query, entity)
                 response = None
+            if response is not None:
+                _check_rate_limit(response)
             if response is not None and response.status_code >= 400:
                 raise HTTPException(502, f"{source} search returned HTTP {response.status_code}. Try again or use manual IDs.")
             if response is not None:
@@ -150,7 +165,11 @@ def search_candidates(cfg, row, query, *, catalog="destination"):
             continue
         seen.add(identity)
         year = str(item.get("year") or item.get("release_date") or item.get("first_air_date") or "")[:4]
-        exact = re.sub(r"\W+", "", title).casefold() == re.sub(r"\W+", "", query).casefold()
+        titles = [title]
+        if source == "TMDB":
+            titles.append(str(item.get("original_title" if entity == "movie" else "original_name") or ""))
+        normalized_query = re.sub(r"\W+", "", query).casefold()
+        exact = bool(normalized_query) and any(re.sub(r"\W+", "", name).casefold() == normalized_query for name in titles if name)
         results.append(dict(title=title, year=int(year) if year.isdigit() else None, ids=ids,
                             type=entity, exact_title=exact))
         if source == "MDBLIST" and not ids.get("tmdb"):

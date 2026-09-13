@@ -44,7 +44,7 @@ export function correctedEpisode(original, match) {
   return {...correctedItem(original, {...match, ids: sameShow ? {...ids, ...match.ids} : match.ids}), episode:match.episode};
 }
 
-export function openMappingWorkspace({rows, session = {}, json, post, onSaved, onClose, total, mappingApi, standalone = false, scope = "pair", scopes = [{id:"pair", label:"This sync pair"}, {id:"shared", label:"All pairs using this provider instance"}], staged = false}) {
+export function openMappingWorkspace({rows, session = {}, json, post, onSaved, onClose, total, mappingApi, standalone = false, scope = "pair", scopes = [{id:"pair", label:"This sync pair"}, {id:"shared", label:"All pairs using this provider instance"}], staged = false, recovery = false}) {
   const api = mappingApi || {
     catalogs: row => json(`/api/interactive-sync/${session.id}/mapping-catalogs?${new URLSearchParams({revision:session.revision, row_id:row.id})}`),
     search: (row, q, catalog, options) => json(`/api/interactive-sync/${session.id}/mapping-search?${new URLSearchParams({revision:session.revision, row_id:row.id, q, catalog})}`, options),
@@ -53,14 +53,17 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
   };
   const dialog = document.createElement("dialog");
   dialog.className = "is-page is-mapping-dialog";
-  dialog.setAttribute("aria-label", "Edit mappings");
+  dialog.setAttribute("aria-label", recovery ? "Match recovered history" : "Edit mappings");
   const drafts = rows.map(row => ({row, item: structuredClone(row.item), checked: true, dirty: false}));
+  const saveable = draft => draft.dirty && (!recovery || draft.checked);
   const cache = new Map();
   const catalogs = new Map();
   const episodeMatching = new Map();
   const routeKey = row => JSON.stringify([row.provider, row.instance || "default"]);
   let saving = false, searching = false, closed = false, searchController = null;
+  let background = false, backgroundTimer = null, backgroundRun = null;
   const groups = mappingGroups(rows);
+  const idFields = recovery ? ["tmdb", "tvdb", "imdb"] : ID_FIELDS;
   const first = rows[0];
   const endpoint = row => [row.provider, row.instance !== "default" ? row.instance : ""].filter(Boolean).join(" · ");
   const input = (name, value, type = "text", extra = "") => `<input data-field="${name}" type="${type}" value="${esc(value)}" ${extra}>`;
@@ -70,32 +73,63 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
     const {row, item} = drafts[index], episodic = ["episode", "season"].includes(item.type), ids = item.show_ids || item.ids || {};
     return `<article class="is-map-row" data-draft="${index}">
       <div class="is-map-row-preview"><input type="checkbox" data-edit checked aria-label="Select ${esc(itemLabel(item))}">
-        <div class="is-map-before"><strong>${esc(itemLabel(item))}</strong><small>${esc(endpoint(row))} · ${esc(row.feature)}</small></div>
+        <div class="is-map-before"><strong>${esc(itemLabel(item))}</strong><small>${recovery ? `${row.recovery_count} ${row.recovery_count === 1 ? "item" : "items"} · ${row.item.type === "show" ? "Series" : "Movie"}` : `${esc(endpoint(row))} · ${esc(row.feature)}`}</small></div>
         ${icon("arrow_forward")}<div class="is-map-after"><strong data-after>${esc(itemLabel(item))}</strong><span data-draft-status class="is-map-status">Unchanged</span></div>
         <div class="is-map-actions"><button class="is-btn is-map-action" data-edit-row aria-expanded="false" aria-controls="mapping-edit-${index}" aria-label="Edit ${esc(itemLabel(item))}" title="Edit">${icon("edit")}</button><button class="is-btn is-map-action" data-reset hidden aria-label="Undo changes to ${esc(itemLabel(item))}" title="Undo">${icon("undo")}</button></div>
       </div>
       <div class="is-map-row-editor" id="mapping-edit-${index}" hidden><p data-review-reason hidden></p>
         <div class="is-map-edit-fields"><label>Title${input("title", seriesTitle(item))}</label>${episodic ? `<label>Season${input("season", item.season, "number", 'min="0"')}</label>` : ""}${item.type === "episode" ? `<label>Episode${input("episode", item.episode, "number", 'min="1"')}</label>` : ""}</div>
         <button class="is-btn is-map-action" data-find-row hidden>${icon("search")}Find another title</button>
-        <details class="is-map-advanced"><summary>Advanced · Manual IDs</summary><div class="is-map-id-inputs">${ID_FIELDS.map(key => `<label>${key.toUpperCase()}${input(key, ids[key] || "")}</label>`).join("")}</div></details>
+        <details class="is-map-advanced"><summary>Advanced · Manual IDs</summary><div class="is-map-id-inputs">${idFields.map(key => `<label>${key.toUpperCase()}${input(key, ids[key] || "")}</label>`).join("")}</div></details>
       </div></article>`;
   };
-  dialog.innerHTML = `<header class="is-mapping-head"><div><div class="is-eyebrow">MAPPING</div><h2>Edit mappings</h2><p>Choose the correct title and review your changes.</p></div><button class="is-btn is-map-close" data-close aria-label="Close" title="Close">${icon("close")}</button></header>
+  dialog.innerHTML = `<header class="is-mapping-head"><div><div class="is-eyebrow">MAPPING</div><h2>${recovery ? "Match recovered history" : "Edit mappings"}</h2><p>Choose the correct title and review your changes.</p></div><button class="is-btn is-map-close" data-close aria-label="Close" title="Close">${icon("close")}</button></header>
     <div class="is-mapping-body">
-    <div class="is-map-intro"><span>${rows.length} item${rows.length === 1 ? "" : "s"}${total > rows.length ? ` from ${total} results` : ""}</span><details class="is-map-help"><summary aria-label="About saved mappings" title="About saved mappings">${icon("info")}</summary><p>Pair mappings override shared corrections for that pair. Shared corrections apply to every pair using the source provider instance. Watched dates and ratings are kept. ${standalone ? "Run the pair again to retry with your correction. Saving does not start a sync." : "Saving updates your sync review; it does not start a sync."}</p></details></div>
-    <label class="is-map-scope">Apply correction to<select data-mapping-scope ${scopes.length < 2 ? "disabled" : ""}>${scopes.map(option => `<option value="${esc(option.id)}" ${option.id === scope ? "selected" : ""}>${esc(option.label)}</option>`).join("")}</select><small data-scope-note></small></label>
+    <div class="is-map-intro"><span>${rows.length} ${recovery ? `title${rows.length === 1 ? "" : "s"}` : `item${rows.length === 1 ? "" : "s"}`}${total > rows.length ? ` from ${total} results` : ""}</span><details class="is-map-help" ${recovery ? "hidden" : ""}><summary aria-label="About saved mappings" title="About saved mappings">${icon("info")}</summary><p>Pair mappings override shared corrections for that pair. Shared corrections apply to every pair using the source provider instance. Watched dates and ratings are kept. ${standalone ? "Run the pair again to retry with your correction. Saving does not start a sync." : "Saving updates your sync review; it does not start a sync."}</p></details></div>
+    ${recovery ? "<p>Confirm a movie or series once for its unresolved items. Recovery keeps one record per movie or episode, using its most recent watch date. Episode numbers are kept. Review suggestions, then save the checked matches. Saving does not import history.</p><p><strong>API traffic warning:</strong> Auto match can generate heavy API traffic and consume your provider's request quota. Each distinct movie or show may require a separate search, plus extra requests for details or retries. Cached results are reused. Matching runs in the background; return through the notification bell.</p>" : ""}
+    <label class="is-map-scope" ${recovery ? "hidden" : ""}>Apply correction to<select data-mapping-scope ${scopes.length < 2 ? "disabled" : ""}>${scopes.map(option => `<option value="${esc(option.id)}" ${option.id === scope ? "selected" : ""}>${esc(option.label)}</option>`).join("")}</select><small data-scope-note></small></label>
     <section class="is-map-bulk" aria-label="Choose a title"><div class="is-map-search-heading"><h3>Choose a title</h3><div class="is-map-actions"><button class="is-btn" data-suggest hidden>${icon("auto_fix_high")}Auto match</button><button class="is-btn" data-stop-search hidden>Stop search</button></div></div>
       <div data-chosen hidden class="is-map-chosen"><span>${icon("check_circle")}<strong data-match></strong></span><button class="is-btn is-small" data-change-match>Change match</button></div>
-      <div data-search-panel><div class="is-map-search-bar" hidden><label>Search title<input data-search-query value="${esc(seriesTitle(first.item))}" maxlength="200"></label><label>Search in<select data-catalog></select></label><button class="is-btn" data-search>Find matches</button></div><div class="is-map-candidates"></div></div>
+      <div data-search-panel><div class="is-map-search-bar" hidden><label>Search title<input data-search-query value="${esc(seriesTitle(first.item))}" maxlength="200"></label><label>Search in<select data-catalog></select></label>${recovery ? `<label data-language-wrap hidden title="Match the language used for titles in Plex. Films and series from all countries are included.">Metadata language<select data-language>${Object.entries({"en-US":"English","nl-NL":"Dutch","de-DE":"German","fr-FR":"French","es-ES":"Spanish","it-IT":"Italian","pt-PT":"Portuguese","pt-BR":"Portuguese (Brazil)","pl-PL":"Polish","da-DK":"Danish","sv-SE":"Swedish","nb-NO":"Norwegian","fi-FI":"Finnish","cs-CZ":"Czech","tr-TR":"Turkish","ja-JP":"Japanese","ko-KR":"Korean","zh-CN":"Chinese (Simplified)","zh-TW":"Chinese (Traditional)"}).map(([value,label])=>`<option value="${value}">${label}</option>`).join("")}</select></label>` : ""}<button class="is-btn" data-search>Find matches</button></div><div class="is-map-candidates"></div></div>
       <p data-search-status role="status">Choose a match or try Auto match.</p>
     </section>
     <div class="is-map-row-tools"><strong data-selection-count></strong><button class="is-btn is-small" data-check-all>Select all</button><button class="is-btn is-small" data-check-none>Clear selection</button></div>
     <details class="is-map-numbering" hidden><summary>Adjust episode numbering</summary><div class="is-map-numbering-fields"><label>Season<input data-season type="number" min="0" placeholder="Keep current"></label><label>Shift episode numbers by<input data-offset type="number" value="0"></label><button class="is-btn" data-bulk>Apply numbering</button></div><p>Use 0 to keep episode numbers, or a shift such as −10 to change episode 11 to 1. Applies to selected episodes.</p></details>
     <div class="is-map-review">${groups.map((indices, groupIndex) => indices.length === 1 ? renderDraft(indices[0]) : `<details class="is-map-group" data-group="${groupIndex}"><summary><span><strong>${esc(seriesTitle(rows[indices[0]].item))} · Season ${esc(rows[indices[0]].item.season)}</strong><small>${indices.length} episodes · ${esc(endpoint(rows[indices[0]]))}</small></span><span data-group-after>Review episodes</span></summary><div class="is-map-group-tools"><button class="is-btn is-small" data-select-group="${groupIndex}">Select this season</button><span data-group-count></span></div>${indices.map(renderDraft).join("")}</details>`).join("")}</div>
-    </div><footer class="is-map-save"><div><strong data-count>No changes yet</strong><p data-error role="alert"></p></div><button class="is-btn is-primary" data-save disabled>${staged ? "Use correction" : "Save mappings"}</button></footer>`;
+    </div><footer class="is-map-save"><div><strong data-count>No changes yet</strong><p data-error role="alert"></p></div><button class="is-btn is-primary" data-save disabled>${recovery ? "Save checked matches" : staged ? "Use correction" : "Save mappings"}</button></footer>`;
   document.body.append(dialog);
   dialog.showModal();
   const $ = selector => dialog.querySelector(selector);
+  function refreshSearchSelects() {
+    if (!recovery) return;
+    for (const [selector,label] of [["[data-catalog]","Search in"],["[data-language]","Metadata language"]]) {
+      const select=$(selector);
+      select.dataset.cwNativeSelect="true";
+      const wrap=window.CW?.IconSelect?.enhance(select,{className:"ie-select",menuClassName:"ie-select-menu"});
+      wrap?.querySelector("button")?.setAttribute("aria-label",label);
+      wrap?.__cwMenu?.setAttribute("aria-label",label);
+    }
+  }
+  refreshSearchSelects();
+  function metadataLanguage() {
+    return recovery && !$("[data-language-wrap]").hidden ? $("[data-language]").value : "en-US";
+  }
+  function updateLanguage() {
+    if (!recovery) return;
+    const row = drafts.find(d => d.checked)?.row || first;
+    const choice = (catalogs.get(routeKey(row)) || []).find(option => option.id === $("[data-catalog]").value);
+    $("[data-language-wrap]").hidden = !choice?.supports_language;
+  }
+  if (recovery) {
+    const searchOptionsChanged = () => {
+      updateLanguage();
+      showSearch();
+      $(".is-map-candidates").replaceChildren();
+      status("Search again or run Auto match for unresolved titles.");
+    };
+    $("[data-catalog]").onchange = searchOptionsChanged;
+    $("[data-language]").onchange = searchOptionsChanged;
+  }
   function updateScopeNote() {
     const shared = $("[data-mapping-scope]").value === "shared";
     $("[data-scope-note]").textContent = (shared
@@ -111,6 +145,7 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
     const select = $("[data-catalog]"), previous = select.value;
     select.innerHTML = options.map(option => `<option value="${esc(option.id)}">${esc(option.label)}</option>`).join("");
     if (options.some(option => option.id === previous)) select.value = previous;
+    updateLanguage();
     $(".is-map-search-bar").hidden = !options.length;
     $("[data-suggest]").hidden = !options.length;
     $(".is-map-numbering").hidden = !drafts.some(d => d.checked && d.item.type === "episode");
@@ -123,15 +158,18 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
   }
   async function loadCatalogs() {
     const unique = new Map(rows.map(row => [routeKey(row), row]));
+    let recoveryState;
     const results = await Promise.allSettled([...unique].map(async ([key, row]) => {
       const data = await api.catalogs(row);
       catalogs.set(key, data.catalogs || []);
       episodeMatching.set(key, !!data.episode_matching);
+      if (recovery && api.autoStatus) recoveryState=data;
     }));
     if (closed) return;
     updateCatalogs();
     if (results.some(result => result.status === "rejected")) status("Could not check available catalogs. Reopen mapping to retry. Manual editing is available.");
     else if (![...catalogs.values()].some(options => options.length)) status("No configured search catalog is available. You can still edit IDs and episode numbers below.");
+    if(recoveryState) syncBackground(recoveryState);
   }
   loadCatalogs();
   function status(message) { $("[data-search-status]").textContent = message; }
@@ -143,6 +181,7 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
     dialog.querySelectorAll("[data-edit]").forEach(el => { el.checked = drafts[Number(el.closest("[data-draft]").dataset.draft)].checked; });
     showSearch();
     updateCatalogs();
+    if (recovery) drafts.forEach(changed);
   }
   function updateGroups() {
     groups.forEach((indices, groupIndex) => {
@@ -169,7 +208,7 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
   function changed(draft) {
     draft.dirty = JSON.stringify(draft.item) !== JSON.stringify(draft.row.item);
     draftStatus(draft);
-    const count = drafts.filter(d => d.dirty).length;
+    const count = drafts.filter(saveable).length;
     $("[data-count]").textContent = count ? `${count} change${count === 1 ? "" : "s"} ready to save` : "No changes yet";
     const row = $(`[data-draft="${drafts.indexOf(draft)}"]`);
     row.querySelector("[data-after]").textContent = itemLabel(draft.item);
@@ -185,17 +224,20 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
     changed(draft);
   }
   function lock(value) {
+    if (recovery && value) window.CW?.IconSelect?.closeAll();
     dialog.querySelectorAll("button,input,select").forEach(el => { el.disabled = value || el.hasAttribute("data-match-unavailable") || (el.hasAttribute("data-mapping-scope") && scopes.length < 2); });
     $("[data-stop-search]").hidden = !searching;
     $("[data-stop-search]").disabled = !searching;
-    if (!value) $("[data-save]").disabled = !drafts.some(d => d.dirty) || saving || searching;
+    if(background) $("[data-close]").disabled=false;
+    if (!value) $("[data-save]").disabled = !drafts.some(saveable) || saving || searching;
   }
   async function search(row, term) {
     const catalog = $("[data-catalog]").value;
     if (!(catalogs.get(routeKey(row)) || []).some(option => option.id === catalog)) return null;
-    const key = JSON.stringify([row.provider, row.instance, row.item.type === "movie" ? "movie" : "show", term, catalog]);
+    const language = metadataLanguage();
+    const key = JSON.stringify([row.provider, row.instance, row.item.type === "movie" ? "movie" : "show", term, catalog, language]);
     if (!cache.has(key)) {
-      const data = await api.search(row, term, catalog, {signal:searchController?.signal});
+      const data = await api.search(row, term, catalog, {signal:searchController?.signal, language});
       if (data.results.some(match => match.mapping_unavailable)) return data;
       cache.set(key, data);
     }
@@ -226,6 +268,10 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
           if (match.mapping_unavailable) { status(match.mapping_unavailable); return; }
           const selected = drafts.filter(d => d.checked);
           if (!selected.length) { status("Check the items you want to update first."); return; }
+          if (recovery && selected.length !== 1) {
+            status("Select one movie or series to choose its match, or use Auto match for multiple titles.");
+            return;
+          }
           if (selected.some(d => routeKey(d.row) !== routeKey(row)
             || (d.item.type === "movie" ? "movie" : "show") !== (row.item.type === "movie" ? "movie" : "show"))) {
             status("Choose rows with the same destination and media type for this match.");
@@ -234,6 +280,7 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
           selected.forEach(draft => {
             draft.review = "";
             draft.item = correctedItem(draft.item, {ids:match.ids, title:match.title});
+            if (recovery && match.year) draft.item.year = match.year;
             paint(draft);
           });
           $("[data-match]").textContent = [match.title, match.year].filter(Boolean).join(" · ");
@@ -307,7 +354,11 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
     }
   });
   $("[data-change-match]").onclick = () => { showSearch(); $("[data-search-query]").focus(); };
-  $("[data-stop-search]").onclick = () => searchController?.abort();
+  $("[data-stop-search]").onclick = async () => {
+    if(!background) {searchController?.abort();return;}
+    try {await api.autoStop();status("Stopping after the current provider request. Suggestions are kept.");}
+    catch(error) {status(error.message);}
+  };
   $("[data-search]").onclick = () => {
     const selected = drafts.find(d => d.checked);
     if (!selected) { status("Select an item to find a match for."); return; }
@@ -346,9 +397,51 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
       throw error;
     }
   }
+  function syncBackground(data) {
+    if(closed)return;
+    const state=data.auto_match || {};
+    if (state.id && state.id !== backgroundRun) {
+      backgroundRun=state.id;
+      $("[data-catalog]").value=state.catalog || $("[data-catalog]").value;
+      if (state.language) $("[data-language]").value=state.language;
+      updateLanguage();
+      refreshSearchSelects();
+    }
+    background=state.status === "running";searching=background;
+    for(const draft of drafts) {
+      const suggestion=data.suggestions?.[draft.row.id];
+      if(!suggestion || (draft.dirty && JSON.stringify(draft.item) !== draft.persisted))continue;
+      if(suggestion.match) {
+        draft.item=correctedItem(draft.row.item,suggestion.match);
+        if(suggestion.match.year)draft.item.year=suggestion.match.year;
+        draft.review="";
+        draft.persisted=JSON.stringify(draft.item);
+        paint(draft);
+      } else {draft.review=suggestion.reason;draftStatus(draft);}
+    }
+    lock(background);
+    if(state.id) status(`${state.message} ${state.done} / ${state.total} titles checked; ${state.matched} suggestions found.${state.current_title && background ? ` Current title: ${state.current_title}.` : ""}`);
+    clearTimeout(backgroundTimer);
+    if(background)backgroundTimer=setTimeout(pollBackground,1500);
+  }
+  async function pollBackground() {
+    try {syncBackground(await api.autoStatus());}
+    catch(error) {
+      if(closed)return;
+      status(`Could not refresh Auto match progress. ${error.message}`);
+      backgroundTimer=setTimeout(pollBackground,5000);
+    }
+  }
   $("[data-suggest]").onclick = async () => {
-    const selected = drafts.filter(d => d.checked);
-    if (!selected.length) { status("Select the items you want to match first."); return; }
+    const selected = drafts.filter(d => d.checked && (!recovery || !d.dirty || d.review));
+    if (!selected.length) { status(recovery ? "All checked titles already have suggestions. Review and save them, or edit a title to change its match." : "Select the items you want to match first."); return; }
+    if(recovery && api.autoStart) {
+      if(!window.confirm(`Auto match ${selected.length} movie/show titles? This can generate heavy API traffic and consume your provider's request quota. Extra detail requests and retries may increase traffic. Suggestions will be kept for review; nothing is imported.`))return;
+      background=true;searching=true;lock(true);
+      try {syncBackground(await api.autoStart(selected.map(d=>d.row.id),$("[data-catalog]").value,metadataLanguage()));}
+      catch(error) {status(error.message);backgroundTimer=setTimeout(pollBackground,1500);}
+      return;
+    }
     searchController = new AbortController(); searching = true; lock(true);
     const matched = [];
     try {
@@ -362,6 +455,7 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
         if (exact.length === 1 && !exact[0].mapping_unavailable) {
           draft.review = draft.item.type === "episode" ? "Episode numbering still needs to be checked." : "";
           draft.item = correctedItem(draft.item, {ids:exact[0].ids, title:exact[0].title});
+          if (recovery && exact[0].year) draft.item.year = exact[0].year;
           paint(draft); matched.push(draft);
         } else {
           draft.review = "Choose a title manually; no single reliable match was found.";
@@ -405,21 +499,28 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
     selectionChanged();
   };
   function close() {
-    if (saving || searching) return;
-    if (drafts.some(d => d.dirty) && !window.confirm("Discard unsaved mapping corrections?")) return;
+    if (saving || (searching && !background)) return;
+    if (drafts.some(d => d.dirty && JSON.stringify(d.item) !== d.persisted) && !window.confirm("Discard unsaved mapping corrections?")) return;
     dismiss();
   }
   function dismiss() {
     if (closed) return;
+    clearTimeout(backgroundTimer);
     closed = true; dialog.close(); dialog.remove(); onClose();
   }
-  const warnUnsaved = event => { if (drafts.some(d => d.dirty) && !closed) { event.preventDefault(); event.returnValue = ""; } };
+  const warnUnsaved = event => { if (drafts.some(d => d.dirty && JSON.stringify(d.item) !== d.persisted) && !closed) { event.preventDefault(); event.returnValue = ""; } };
   window.addEventListener("beforeunload", warnUnsaved);
-  dialog.addEventListener("close", () => window.removeEventListener("beforeunload", warnUnsaved));
+  dialog.addEventListener("close", () => {
+    window.removeEventListener("beforeunload", warnUnsaved);
+    if (recovery) {
+      window.CW?.IconSelect?.closeAll();
+      dialog.querySelectorAll("select").forEach(select=>select.__cwOptionsObserver?.disconnect());
+    }
+  });
   dialog.addEventListener("cancel", event => { event.preventDefault(); close(); });
   $("[data-close]").onclick = close;
   $("[data-save]").onclick = async () => {
-    for (const draft of drafts.filter(d => d.dirty)) {
+    for (const draft of drafts.filter(saveable)) {
       const row = $(`[data-draft="${drafts.indexOf(draft)}"]`);
       const invalid = Array.from(row.querySelectorAll("[data-field]")).find(el => !el.checkValidity());
       if (!invalid) continue;
@@ -431,7 +532,7 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
       invalid.reportValidity();
       return;
     }
-    const edits = drafts.filter(d => d.dirty).map(d => ({row_id:d.row.id, item:d.item, selected:true}));
+    const edits = drafts.filter(saveable).map(d => ({row_id:d.row.id, item:d.item, selected:true}));
     if (!edits.length) return;
     saving = true; lock(true); $("[data-error]").textContent = "";
     try {
