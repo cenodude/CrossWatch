@@ -82,7 +82,7 @@ And much more...such as:
 * CW Tracker Keeps snapshots/backups from your media servers and trackers.
 * Unified Watchlist: View all watchlist items in one place.
 * Player card: Shows what you are currently watching in real time.
-* Fallback GUID: Revives old items from  your Plex library.
+* Recover Plex history: Import history for removed Plex items into your CW tracker.
 
 ### Download
 [![Guide: Installation](https://img.shields.io/badge/Guide-INSTALLATION-0d6efd?style=for-the-badge)](https://wiki.crosswatch.app/getting-started/installation)
