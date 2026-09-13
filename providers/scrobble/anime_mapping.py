@@ -30,7 +30,7 @@ _CACHE_NOOP = object()
 def _log(msg: str, level: str = "DEBUG") -> None:
     if BASE_LOG is not None:
         try:
-            BASE_LOG(str(msg), level=level, module="WATCH-ANIME")
+            BASE_LOG(str(msg), level=level, module="ANIME-WATCH")
             return
         except Exception:
             pass

@@ -285,9 +285,17 @@ function _watchLogKnownTags() {
     "JELLYFIN-WATCH",
     "EMBY-WATCH",
     "KODI-WATCH",
-    "TRAKT-SCROBBLE",
-    "SIMKL-SCROBBLE",
-    "MDBLIST-SCROBBLE",
+    "SCROB-WATCH",
+    "ANIME-WATCH",
+    "TRAKT-SINK",
+    "SIMKL-SINK",
+    "MDBLIST-SINK",
+    "FLOPPY-SINK",
+    "CROSSWATCH-SINK",
+    "FLICKLIST-SINK",
+    "BINGEBASE-SINK",
+    "PUNCHPLAY-SINK",
+    "SCROB-SINK",
   ];
 }
 
@@ -302,7 +310,7 @@ function _isAppDebugMode(cfg) {
 function _isDetailsDebugExcluded(raw) {
   const provider = String(_parseLogParts(raw).provider || "").toUpperCase();
   if (["WATCH", "WATCHM", "WEBHOOK", "SCROBBLE"].includes(provider)) return true;
-  if (provider.endsWith("-WATCH") || provider.endsWith("-WATCHER") || provider.endsWith("-SCROBBLE")) return true;
+  if (provider.endsWith("-WATCH") || provider.endsWith("-WATCHER") || provider.endsWith("-SINK") || provider.endsWith("-SCROBBLE")) return true;
   return false;
 }
 

@@ -67,11 +67,11 @@ def _log(msg: str, level: str = "INFO") -> None:
         return
     if BASE_LOG is not None:
         try:
-            BASE_LOG(str(msg), level=lvl, module="TRAKT-SCROBBLE")
+            BASE_LOG(str(msg), level=lvl, module="TRAKT-SINK")
             return
         except Exception:
             pass
-    print(f"[TRAKT-SCROBBLE:{lvl}] {msg}")
+    print(f"[TRAKT-SINK:{lvl}] {msg}")
 
 
 def _mask_account(value: Any) -> str:

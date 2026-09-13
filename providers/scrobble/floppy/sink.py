@@ -32,11 +32,11 @@ def _log(msg: str, level: str = "INFO") -> None:
     lvl = (str(level) or "INFO").upper()
     if BASE_LOG is not None:
         try:
-            BASE_LOG(str(msg), level=lvl, module="FLOPPY-SCROBBLE")
+            BASE_LOG(str(msg), level=lvl, module="FLOPPY-SINK")
             return
         except Exception:
             pass
-    print(f"[FLOPPY-SCROBBLE:{lvl}] {msg}")
+    print(f"[FLOPPY-SINK:{lvl}] {msg}")
 
 
 def _int(value: Any) -> int | None:

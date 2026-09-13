@@ -140,11 +140,11 @@ def _log(msg: str, lvl: str = "INFO") -> None:
         return
     if BASE_LOG is not None:
         try:
-            BASE_LOG(msg, level=level, module="SCROBBLE")
+            BASE_LOG(msg, level=level, module="SCROB-SINK")
             return
         except Exception:
             pass
-    print(f"[SCROBBLE] {level}: {msg}")
+    print(f"[SCROB-SINK] {level}: {msg}")
 
 
 def _prune_sessions(now: float) -> None:

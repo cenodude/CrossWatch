@@ -72,11 +72,11 @@ def _log(msg: str, lvl: str = "INFO") -> None:
         return
     if BASE_LOG is not None:
         try:
-            BASE_LOG(msg, level=level, module="SCROBBLE")
+            BASE_LOG(msg, level=level, module="BINGEBASE-SINK")
             return
         except Exception:
             pass
-    print(f"[SCROBBLE] {level}: {msg}")
+    print(f"[BINGEBASE-SINK] {level}: {msg}")
 
 
 def _redact_url(url: Any) -> str:

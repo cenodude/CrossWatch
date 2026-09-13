@@ -45,11 +45,11 @@ def _log(msg: str, level: str = "INFO") -> None:
         return
     if BASE_LOG is not None:
         try:
-            BASE_LOG(str(msg), level=lvl, module="CW-SCROBBLE")
+            BASE_LOG(str(msg), level=lvl, module="CROSSWATCH-SINK")
             return
         except Exception:
             pass
-    print(f"[CW-SCROBBLE:{lvl}] {msg}")
+    print(f"[CROSSWATCH-SINK:{lvl}] {msg}")
 
 
 def _clamp(value: Any) -> float:
@@ -326,7 +326,7 @@ class CrossWatchSink(ScrobbleSink):
             if not result.get("ok"):
                 record_watch(ev, action="start", source_provider=src, source_instance=src_inst, destination_provider="crosswatch", destination_instance=self._instance_id, status="fail", progress=progress, reason="crosswatch_progress_failed")
                 return
-            _log(f"progress {action or 'update'} user='{mask_account(ev.account)}' p={progress:.1f}% media='{ev.title or '?'}'", "DEBUG")
+            _log(f"scrobble {action or 'update'} user='{mask_account(ev.account)}' p={progress:.1f}% media='{ev.title or '?'}'", "INFO")
 
 
 __all__ = ["CrossWatchSink"]
