@@ -209,7 +209,7 @@
     const cursor = focused ? document.activeElement.selectionStart : null;
     host.innerHTML = `<div class="is-page">
       <a class="is-back" href="#settings/sync"><span class="material-symbols-rounded" aria-hidden="true">arrow_back</span>Synchronization</a>
-      <header class="is-header"><div><div class="is-eyebrow">INTERACTIVE SYNC</div><h1>${session?.report ? "Sync report" : "Review your sync"}</h1></div><div class="is-header-actions">${session?.report ? "" : `<button class="is-btn" data-action="refresh" ${pending() || done || !session ? "disabled" : ""}><span class="material-symbols-rounded" aria-hidden="true">refresh</span>Refresh plan</button>`}<button class="is-btn" data-action="discard" ${pending() || !session ? "disabled" : ""}>${session?.report ? "Close report" : "Close review"}</button></div></header>
+      <header class="is-header"><div><div class="is-eyebrow">INTERACTIVE SYNC</div><h1>${session?.report ? "Sync report" : "Review your sync"}</h1></div><div class="is-header-actions">${[pair.source,pair.target].includes("PLEX") ? `<button class="is-btn" data-action="recover-plex" title="Open a separate recovery activity for titles no longer in your Plex libraries. Review matches and import selected history into the CrossWatch tracker. This does not run this sync pair." ${pending() ? "disabled" : ""}>Recover Plex history</button>` : ""}${session?.report ? "" : `<button class="is-btn" data-action="refresh" ${pending() || done || !session ? "disabled" : ""}><span class="material-symbols-rounded" aria-hidden="true">refresh</span>Refresh plan</button>`}<button class="is-btn" data-action="discard" ${pending() || !session ? "disabled" : ""}>${session?.report ? "Close report" : "Close review"}</button></div></header>
       <div class="is-route"><span class="material-symbols-rounded" aria-hidden="true">sync_alt</span><strong>${esc(endpoint(pair.source, pair.source_instance))}</strong><span>${pair.mode === "two-way" ? "↔" : "→"}</span><strong>${esc(endpoint(pair.target, pair.target_instance))}</strong><span class="is-route-mode">${pair.mode === "two-way" ? "Two-way" : "One-way"}</span></div>
       ${session?.report ? "" : `<div class="is-progress-host">${progressHTML()}</div>`}
       <div class="is-error" role="alert" hidden></div>
@@ -320,6 +320,12 @@
       document.body.append(link); link.click(); link.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
       button.disabled = false;
+      return;
+    }
+    if (name === "recover-plex") {
+      const pair = session?.pair || {};
+      (window.CW ||= {}).pendingPlexRecovery = {source_instance:pair.source === "PLEX" ? pair.source_instance || "default" : pair.target_instance || "default"};
+      window.openExporter({recovery:true});
       return;
     }
     if (name === "refresh") return action("refresh");

@@ -2,6 +2,9 @@
 /* CrossWatch - Import and Export Page */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
+import { mountPlexRecovery } from "./plex-recovery.js";
+import { pageBackLink } from "../page-return.js";
+
 const esc = value => String(value ?? "").replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
 const icon = name => `<span class="material-symbols-rounded" aria-hidden="true">${name}</span>`;
 const human = value => String(value || "").replace(/_/g, " ").replace(/^./, char => char.toUpperCase());
@@ -28,9 +31,10 @@ const template = `
 <div class="ie-page">
   <a class="ie-back" href="#main">${icon("arrow_back")}Main</a>
   <header class="ie-header"><div><span class="ie-eyebrow">YOUR DATA</span><h1>Import and Export</h1></div>${icon("import_export")}</header>
-  <nav class="ie-tabs" aria-label="Transfer direction"><button type="button" data-mode="import" aria-pressed="true">${icon("upload_file")}Import a file</button><button type="button" data-mode="export" aria-pressed="false">${icon("download")}Export your data</button></nav>
+  <nav class="ie-tabs" aria-label="Transfer direction"><button type="button" data-mode="import" aria-pressed="true">${icon("upload_file")}Import a file</button><button type="button" data-mode="export" aria-pressed="false">${icon("download")}Export your data</button><button type="button" data-mode="recovery" aria-pressed="false">${icon("history")}Recover Plex history</button></nav>
   <div id="ie-notice" class="ie-notice" role="status" hidden></div>
   <div id="ie-progress" class="ie-progress" role="status" hidden><div class="ie-progress-copy"><strong id="ie-activity"></strong><span id="ie-elapsed"></span></div><div class="ie-progress-track" role="progressbar" aria-label="Transfer in progress"><span></span></div><p id="ie-progress-note"></p></div>
+  <div id="ie-recovery" hidden></div>
   <fieldset id="ie-controls">
     <section id="ie-import-setup" class="ie-setup">
       <div id="ie-drop" class="ie-drop">
@@ -62,10 +66,24 @@ const template = `
   </fieldset>
 </div>`;
 
+function updateBackLink(host) {
+  const route = new URLSearchParams(window.location.hash.split("?")[1] || "");
+  const back = pageBackLink(route.get("returnTo"), window.location.href, "import_export");
+  const link = host.querySelector(".ie-back");
+  link.setAttribute("href", back.href);
+  link.innerHTML = `${icon("arrow_back")}${esc(back.label)}`;
+}
+
 let active;
 const ImportExport = {
   async mount(host) {
-    if (!host || active?.host === host) return;
+    if (!host) return;
+    if (new URLSearchParams(window.location.hash.split("?")[1] || "").has("recovery")) (window.CW ||= {}).pendingPlexRecovery ||= {};
+    if (active?.host === host) {
+      updateBackLink(host);
+      if (window.CW?.pendingPlexRecovery) await active.openRecovery();
+      return;
+    }
     this.unmount();
     if (!document.getElementById("ie-styles")) {
       const link = document.createElement("link");
@@ -75,15 +93,21 @@ const ImportExport = {
       document.head.appendChild(link);
     }
     host.innerHTML = template;
+    updateBackLink(host);
     const $ = selector => host.querySelector(selector);
     const $$ = selector => [...host.querySelectorAll(selector)];
     const lifetime = new AbortController();
+    let recoveryCleanup = null;
     let mode = "import", busy = false, loading = false, file = null, preview = null, scopeChanged = false;
     let importOptions = null, exportOptions = null, data = null, rows = [], offset = 0, pageSize = 50;
     let all = true, selected = new Set(), excluded = new Set(), pageController, pageSequence = 0, searchTimer, progressTimer;
     let exportMedia = ["movie"], importMedia = Object.keys(media);
     const on = (element, event, fn) => element.addEventListener(event, fn, {signal:lifetime.signal});
-    active = { host, cleanup() {
+    active = { host, async openRecovery() {
+      await setMode("recovery");
+      window.dispatchEvent(new CustomEvent("cw:open-plex-recovery"));
+    }, cleanup() {
+      recoveryCleanup?.();
       lifetime.abort(); pageController?.abort(); clearTimeout(searchTimer); clearInterval(progressTimer);
       window.CW?.IconSelect?.closeAll();
       $$("select").forEach(input => { input.__cwOptionsObserver?.disconnect(); input.nextElementSibling?.__cwMenu?.remove(); });
@@ -274,8 +298,15 @@ const ImportExport = {
       if (busy || mode===next) return;
       window.CW?.IconSelect?.closeAll();
       cancelRead();
-      if (isImport()) importMedia=checked("media"); else exportMedia=checked("media");
+      if (isImport()) importMedia=checked("media"); else if (mode === "export") exportMedia=checked("media");
       mode=next; data=null; rows=[]; resetSelection(); notice();
+      $("#ie-controls").hidden=mode === "recovery";
+      $("#ie-recovery").hidden=mode !== "recovery";
+      if (mode === "recovery") {
+        $$("[data-mode]").forEach(button => button.setAttribute("aria-pressed",String(button.dataset.mode===mode)));
+        recoveryCleanup ||= mountPlexRecovery($("#ie-recovery"));
+        return;
+      }
       $("#ie-search").value="";
       $("#ie-import-setup").hidden=!isImport();
       $("#ie-export-setup").hidden=isImport();
@@ -331,7 +362,7 @@ const ImportExport = {
     });
     on(host,"change",event=> {
       const input=event.target;
-      if (busy || input.id === "ie-search") return;
+      if (busy || input.id === "ie-search" || input.closest("#ie-recovery")) return;
       if (input.dataset.row != null) {
         if (loading) return;
         const row=rows[Number(input.dataset.row)];
@@ -386,6 +417,7 @@ const ImportExport = {
       if (!lifetime.signal.aborted) { notice("Could not load import/export options.","error",`${error.message} Refresh the page to try again.`); $("#ie-controls").dataset.unavailable="true"; }
     } finally {
       if (!lifetime.signal.aborted) { finishProgress(); if ($("#ie-controls").dataset.unavailable) $("#ie-controls").disabled=true; }
+      if (!lifetime.signal.aborted && (window.CW?.pendingPlexRecovery || new URLSearchParams(window.location.hash.split("?")[1] || "").has("recovery"))) await setMode("recovery");
     }
   },
   unmount() { active?.cleanup(); active=null; }

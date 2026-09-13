@@ -1762,6 +1762,10 @@
   }
 
   function renderRows() {
+    if (state.recoverySelection && (state.source !== "state" || state.snapshot !== "CROSSWATCH" || state.instance !== state.recoverySelection.instance || state.kind !== "history")) {
+      state.recoverySelection = null;
+      recoveryClear.hidden = true;
+    }
     return editorTableController.renderRows(tableControllerContext());
   }
 
@@ -2115,6 +2119,42 @@ if (importProviderSel) {
     await loadState();
   });
 
+  let recoveryReady = false;
+  const recoveryClear = document.createElement("button");
+  recoveryClear.className = "cw-btn";
+  recoveryClear.type = "button";
+  recoveryClear.textContent = "Showing recovered history. Show all items";
+  recoveryClear.hidden = true;
+  host.prepend(recoveryClear);
+  recoveryClear.addEventListener("click", () => {
+    state.recoverySelection = null; recoveryClear.hidden = true; clearSelection(); renderRows();
+  });
+  async function openRecoveredHistory() {
+    const receipt = window.CW?.pendingRecovery;
+    if (!recoveryReady || !receipt || state.loading || state.saving) return;
+    if (state.hasChanges && !window.confirm("Discard unsaved Editor changes and open recovered history?")) return;
+    window.CW.pendingRecovery = null;
+    try {
+      state.recoverySelection = null;
+      state.source = "state"; state.snapshot = "CROSSWATCH"; state.instance = receipt.instance;
+      state.kind = "history"; state.mappingPair = ""; state.filter = ""; state.blockedOnly = false;
+      Object.keys(state.typeFilter).forEach(key => { state.typeFilter[key] = true; });
+      if (filterInput) filterInput.value = "";
+      syncSourceUI(); syncTypeFilterUI();
+      await loadSnapshots(); await loadState();
+      if (state.loadError) throw new Error(state.loadError);
+      if (state.source !== "state" || state.snapshot !== "CROSSWATCH" || state.instance !== receipt.instance || state.kind !== "history") {
+        throw new Error("The imported tracker profile is unavailable. Select it in the Editor to review your history.");
+      }
+      state.recoverySelection = {instance:receipt.instance, keys:new Set(receipt.keys)};
+      state.selected = new Set(state.rows.filter(row => state.recoverySelection.keys.has(row.key) && !row.deleted).map(row => row._rid));
+      state.page = 0; recoveryClear.hidden = false;
+      renderRows(); syncBulkBar();
+      setStatus("Recovered history selected. Send this selection to a provider when ready.");
+    } catch (error) { setStatus(error.message || "Could not open recovered history."); }
+  }
+  window.addEventListener("cw:open-recovery", openRecoveredHistory);
+
   (async () => {
     const wanted = state.source;
     state.source = normalizeSource(wanted);
@@ -2136,6 +2176,8 @@ if (importProviderSel) {
     await loadSnapshots();
     await loadState();
     state.lastSyncAt = Date.now();
+    recoveryReady = true;
+    await openRecoveredHistory();
     syncHeaderPills();
     window.setInterval(() => syncHeaderPills(), 30000);
   })();
