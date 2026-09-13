@@ -18,7 +18,7 @@ import socket
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from threading import RLock, local
-from typing import Any, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 from urllib.parse import urlsplit, quote
 
 from .._log import log as cw_log
@@ -1669,7 +1669,8 @@ def _build_minimal_from_row(row: Any, ids: Mapping[str, Any]) -> dict[str, Any]:
         base["series_title"] = (
             _row_get(row, "grandparentTitle") or _row_get(row, "title") or _row_get(row, "parentTitle")
         )
-        base["season"] = _safe_int(_row_get(row, "parentIndex") or _row_get(row, "seasonNumber"))
+        season = _row_get(row, "parentIndex")
+        base["season"] = _safe_int(season if season is not None else _row_get(row, "seasonNumber"))
         base["episode"] = _safe_int(_row_get(row, "index"))
         gp = _row_get(row, "grandparentGuid")
         gp_rk = _row_get(row, "grandparentRatingKey")
@@ -1707,6 +1708,7 @@ def _discover_search_title(
     limit: int = 15,
     season: int | None = None,
     episode: int | None = None,
+    check_cancel: Callable[[], None] | None = None,
 ) -> Mapping[str, Any] | None:
     try:
         if not title or not token:
@@ -1843,6 +1845,8 @@ def _discover_search_title(
             }
             combos = [t for t in types if t] + [""]
             for st in combos:
+                if check_cancel:
+                    check_cancel()
                 params = dict(base_params)
                 if st:
                     params["searchTypes"] = st
@@ -1955,6 +1959,8 @@ def _discover_search_title(
         best_t: str | None = None
         tried: set[str] = set()
         for q in _variants(title):
+            if check_cancel:
+                check_cancel()
             if q in tried:
                 continue
             tried.add(q)
@@ -1981,6 +1987,8 @@ def _discover_search_title(
                 if yb is not None and abs(yb - year) > 1:
                     return None
         return best
+    except InterruptedError:
+        raise
     except Exception:
         return None
 
@@ -1990,12 +1998,15 @@ def minimal_from_history_row(
     *,
     token: str | None = None,
     allow_discover: bool = False,
+    memo: dict[str, Any] | None = None,
+    check_cancel: Callable[[], None] | None = None,
 ) -> dict[str, Any] | None:
     global _FBGUID_MEMO_DIRTY
     key = _metadata_cache_key(_fb_key_from_row(row), token)
-    memo = _fb_cache_load()
+    persistent = memo is None
+    memo = _fb_cache_load() if persistent else memo
     hit = memo.get(key, None)
-    if hit == _FBGUID_NOHIT and not allow_discover:
+    if hit == _FBGUID_NOHIT and (not allow_discover or not persistent):
         return None
     if isinstance(hit, dict) and hit:
         return dict(hit)
@@ -2079,6 +2090,7 @@ def minimal_from_history_row(
             year,
             season=m.get("season"),
             episode=m.get("episode"),
+            check_cancel=check_cancel,
         )
         _emit(
             {
@@ -2128,17 +2140,17 @@ def minimal_from_history_row(
                     
     if not (m.get("title") or m.get("series_title")):
         if allow_discover:
-            _FBGUID_MEMO[key] = _FBGUID_NOHIT
-            _FBGUID_MEMO_DIRTY = True
+            memo[key] = _FBGUID_NOHIT
+            _FBGUID_MEMO_DIRTY = _FBGUID_MEMO_DIRTY or persistent
         return None
 
     if not _has_ext_ids(m.get("ids", {})) and not _has_ext_ids(m.get("show_ids", {})):
         if allow_discover:
-            _FBGUID_MEMO[key] = _FBGUID_NOHIT
-            _FBGUID_MEMO_DIRTY = True
+            memo[key] = _FBGUID_NOHIT
+            _FBGUID_MEMO_DIRTY = _FBGUID_MEMO_DIRTY or persistent
         return None
-    _FBGUID_MEMO[key] = dict(m)
-    _FBGUID_MEMO_DIRTY = True
+    memo[key] = dict(m)
+    _FBGUID_MEMO_DIRTY = _FBGUID_MEMO_DIRTY or persistent
     return m
 
 

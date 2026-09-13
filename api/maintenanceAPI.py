@@ -124,7 +124,7 @@ def _clear_cw_state_files() -> list[str]:
                 continue
             continue
         if p.is_file():
-            if p.name in CW_STATE_KEEP_FILES or _is_sync_state_file(p.name):
+            if p.name in CW_STATE_KEEP_FILES or _is_sync_state_file(p.name) or p.name.startswith("plex_fallback_memo."):
                 continue
             try:
                 p.unlink(missing_ok=True)
@@ -922,7 +922,7 @@ def _scan_provider_cache() -> dict[str, Any]:
     except Exception:
         candidates = []
     for p in candidates:
-        if p.name in CW_STATE_KEEP_FILES or _is_sync_state_file(p.name):
+        if p.name in CW_STATE_KEEP_FILES or _is_sync_state_file(p.name) or p.name.startswith("plex_fallback_memo."):
             continue
         if p.is_file():
             files.append(_file_meta(p))

@@ -9,6 +9,7 @@ from threading import Lock
 from typing import Any, Iterable, Mapping, cast
 
 from ._common import (
+    _fb_cache_flush,
     _as_base_url,
     _xml_to_container,
     active_pms_token,
@@ -343,9 +344,6 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
         prog_mk = getattr(adapter, "progress_factory", None)
         prog: Any = prog_mk("ratings") if callable(prog_mk) else None
     
-        if plex_cfg_get(adapter, "fallback_GUID", False) or plex_cfg_get(adapter, "fallback_guid", False):
-            _emit({"event": "debug", "msg": "fallback_guid.enabled", "provider": "PLEX", "feature": "ratings"})
-        fallback_guid = bool(plex_cfg_get(adapter, "fallback_GUID", False) or plex_cfg_get(adapter, "fallback_guid", False))
     
         base = _as_base_url(srv)
         if not base:
@@ -554,10 +552,10 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
 
                 fb_try_local = 0
                 fb_ok_local = 0
-                if fallback_guid and not has_external_ids(m.get("ids") or {}):
+                if not has_external_ids(m.get("ids") or {}):
                     fb_try_local += 1
                     try:
-                        fb = minimal_from_history_row(row, token=tok, allow_discover=True)
+                        fb = minimal_from_history_row(row, token=tok, allow_discover=False)
                     except Exception:
                         fb = None
                     if isinstance(fb, Mapping):
@@ -670,6 +668,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
         _info("index_done", count=len(out), added=added, scanned=scanned, fb_try=fb_try, fb_ok=fb_ok, workers=workers, account_id=account_id, token_source=tok_source)
         return out
     finally:
+        _fb_cache_flush()
         home_scope_exit(adapter, did_switch)
 
 def _get_existing_rating(srv: Any, rating_key: Any) -> int | None:

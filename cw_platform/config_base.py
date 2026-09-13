@@ -252,7 +252,7 @@ DEFAULT_CFG: dict[str, Any] = {
         "home_pin": "",                                 # Plex Home PIN for the selected profile (optional).
         "timeout": 10.0,                                # Optional HTTP timeout (seconds).
         "max_retries": 3,                               # Optional retry budget.
-        "fallback_GUID": False,                         # Opt-in GUID/Discover fallback for missing library items (history/ratings)
+        "fallback_GUID": False,
 
         "scrobble": {
             "libraries": [],                            # Whitelist of library IDs for scrobble (webhook/watch); empty = all

@@ -49,7 +49,6 @@ export const HELP_TEXT = {
   "cx-jf-wl-mode": "Jellyfin: Watchlist mode\nJellyfin has no native Watchlist. CrossWatch maps it to:\n• Favorites: sets the Favorite flag\n• Playlist: writes to a named playlist (episodes only; no shows)\n• Collections: writes to a named collection\nChanging mode does not move existing items.\nTip: Favorites or Collections are the most compatible.",
   "cx-em-wl-mode": "Emby: Watchlist mode\nEmby has no native Watchlist. CrossWatch maps it to:\n• Favorites: sets the Favorite flag\n• Playlist: writes to a named playlist (episodes only; no shows)\n• Collections: writes to a named collection\nChanging mode does not move existing items.\nTip: Favorites or Collections are the most compatible.",
 
-  "plx-fallback-guid": "Plex: Fallback GUID\nAlso searches Plex's database beyond your visible libraries (including hidden/old items) to recover older matches.\nWarning: enable only for a single run, it increases duration and resource usage.",
   "plx-marked-watched": "Plex: Marked watched\nInclude items you manually marked as watched in Plex when syncing history.\nDisable if you only want actual play history.",
   "plx-strict-ids": "Plex: Strict ID matching\nWhen enabled, CrossWatch only matches by IDs (Plex IDs + external IDs). Title/year searches are disabled.",
   "jf-strict-ids": "Jellyfin: Strict ID matching\nRequire Jellyfin or external IDs to confirm matches. Title searches and path matching are disabled. Episodes can match by series ID plus season and episode numbers.",
