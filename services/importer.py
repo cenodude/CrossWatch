@@ -189,7 +189,7 @@ SOURCE_GUIDES: dict[str, dict[str, Any]] = {
 }
 
 
-class ImportCommitRequest(BaseModel):
+class ImportCommitFields(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     import_id: str = Field(min_length=8, max_length=80)
@@ -198,10 +198,13 @@ class ImportCommitRequest(BaseModel):
     row_ids: list[str] = Field(default_factory=list, max_length=MAX_ROWS)
     excluded_row_ids: list[str] = Field(default_factory=list, max_length=MAX_ROWS)
     q: str = Field(default="", max_length=1000)
-    status: Literal["all", "ready", "exists", "duplicate", "missing_identity", "unsupported", "invalid"] = "all"
     features: list[str] = Field(default_factory=lambda: ["history", "ratings", "watchlist"])
     media_types: list[str] = Field(default_factory=lambda: list(DEFAULT_MEDIA_TYPES))
     include_existing: bool = False
+
+
+class ImportCommitRequest(ImportCommitFields):
+    status: Literal["all", "ready", "exists", "duplicate", "missing_identity", "unsupported", "invalid"] = "all"
 
 
 def _clean_cache() -> None:

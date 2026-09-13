@@ -141,6 +141,9 @@ def destination_rows(client, cfg, row, block, query, entity):
 
 
 def checked_json(response, provider):
+    if response.status_code == 429:
+        raise HTTPException(429, f"{provider} search rate limit reached.",
+                            headers={"Retry-After": str(response.headers.get("Retry-After") or "60")})
     if response.status_code >= 400:
         raise HTTPException(502, f"{provider} search returned HTTP {response.status_code}. Try again or use manual IDs.")
     return response.json()

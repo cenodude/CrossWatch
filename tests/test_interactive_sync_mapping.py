@@ -219,6 +219,34 @@ def test_destination_search_normalizes_and_uses_instance(monkeypatch, provider, 
     if provider == "PLEX": assert calls[0][1]["headers"]["X-Plex-Token"] == "plex-second-token"
 
 
+@pytest.mark.parametrize("kind", ["movie", "show"])
+@pytest.mark.parametrize("query,exact", [("De verborgen tuin", True), ("The Hidden Garden", True), ("Hidden Gardener", False)])
+def test_tmdb_matches_localized_and_original_titles_without_country_filter(monkeypatch, kind, query, exact):
+    import requests
+    from services.interactive_sync_mapping import search_candidates
+
+    calls = []
+    item = {"id": 123, "title" if kind == "movie" else "name": "De verborgen tuin",
+            "original_title" if kind == "movie" else "original_name": "The Hidden Garden",
+            "release_date" if kind == "movie" else "first_air_date": "2001-01-01"}
+    class Response:
+        status_code = 200
+        def json(self): return {"results": [item]}
+    def get(self, url, **kwargs):
+        calls.append((url, kwargs["params"]))
+        return Response()
+    monkeypatch.setattr(requests.Session, "get", get)
+    cfg = {"tmdb": {"api_key": "test"}}
+    route = dict(provider="TMDB", metadata_only=True, metadata_language="nl-NL", item=dict(type=kind))
+    result = search_candidates(cfg, route, query, catalog="tmdb")
+    candidate = result["results"][0]
+    assert candidate["title"] == "De verborgen tuin"
+    assert candidate["exact_title"] is exact
+    assert candidate["year"] == 2001
+    assert calls == [(f"https://api.themoviedb.org/3/search/{'movie' if kind == 'movie' else 'tv'}",
+                      dict(api_key="test", query=query, include_adult=False, language="nl-NL"))]
+
+
 def test_search_failure_does_not_expose_credentials(monkeypatch):
     import requests
     from fastapi import HTTPException
@@ -276,7 +304,7 @@ def test_mdblist_incomplete_matches_cannot_replace_mapping(monkeypatch, failure)
             return Response({"search": [{"title": "Monster", "ids": {"mdblist": "o6b1"}}]})
         if failure == "timeout": raise requests.Timeout("SECRET")
         if failure == "http":
-            response = Response({}); response.status_code = 429; return response
+            response = Response({}); response.status_code = 503; return response
         if failure == "wrong_id": return Response([{"mdblist_id": "other", "tmdbid": 11}])
         if failure == "ambiguous": return Response([{"mdblist_id": "o6b1", "tmdbid": n} for n in (11, 22)])
         if failure == "malformed": return Response({"error": "SECRET"})
@@ -287,3 +315,20 @@ def test_mdblist_incomplete_matches_cannot_replace_mapping(monkeypatch, failure)
     assert result["results"][0]["ids"] == {"mdblist": "o6b1"}
     assert "TMDb ID" in result["results"][0]["mapping_unavailable"]
     assert "SECRET" not in str(result)
+
+
+@pytest.mark.parametrize("stage", ["search", "metadata"])
+def test_mdblist_rate_limit_preserves_retry_after(monkeypatch, stage):
+    from fastapi import HTTPException
+    from types import SimpleNamespace as NS
+    from providers.sync.mdblist import _auth
+    from services.interactive_sync_mapping import search_candidates
+    def request(client,method,url,**kw):
+        if method == "GET" and stage == "metadata":
+            return NS(status_code=200,json=lambda:{"search":[{"title":"Movie","ids":{"mdblist":"abc"}}]})
+        return NS(status_code=429,headers={"Retry-After":"45"})
+    monkeypatch.setattr(_auth,"request_with_auth",request)
+    with pytest.raises(HTTPException) as caught:
+        search_candidates({"mdblist":{"api_key":"test"}}, {"provider":"MDBLIST","item":{"type":"movie"}}, "Movie")
+    assert caught.value.status_code == 429
+    assert caught.value.headers == {"Retry-After":"45"}
