@@ -97,6 +97,9 @@ def test_tmdb_image_proxy_only_accepts_tmdb_paths(tmp_path, monkeypatch) -> None
     assert downloads == ["https://image.tmdb.org/t/p/w185/pdAbC12.jpg"]
     assert mime == "image/jpeg"
     assert local.endswith(".jpg")
+    png, _ = metaAPI.get_tmdb_image_file("/logoXyZ9.PNG", "w92", tmp_path)
+    assert png.endswith(".png")
+    assert downloads[-1] == "https://image.tmdb.org/t/p/w92/logoXyZ9.PNG"
     for bad in ("../etc/passwd", "/a/../bcdef.jpg", "https://x.y/zzzz.jpg", "/abcdef.gif", "abcdef.jpg"):
         with pytest.raises(ValueError):
             metaAPI.get_tmdb_image_file(bad, "w185", tmp_path)

@@ -1216,12 +1216,14 @@ _TMDB_IMAGE_PATH_RE = re.compile(r"^/[A-Za-z0-9_-]{4,64}\.(jpg|jpeg|png)$", re.I
 
 def get_tmdb_image_file(path: str, size: str, cache_dir: Path | str) -> tuple[str, str]:
     raw = str(path or "").strip()
-    if not _TMDB_IMAGE_PATH_RE.fullmatch(raw):
+    match = _TMDB_IMAGE_PATH_RE.fullmatch(raw)
+    if not match:
         raise ValueError("Invalid image path")
+    extension = ".png" if match.group(1).lower() == "png" else ".jpg"
     size_tag = _sanitize_tmdb_size(size, default="w185")
     cache_root = _cache_subdir(cache_dir, "art")
     base = _cache_base_path(cache_root, _safe_cache_digest_stem("tmdb_path", raw, size_tag))
-    dest = _ensure_under_root(cache_root, base.with_suffix(Path(raw).suffix.lower()))
+    dest = _ensure_under_root(cache_root, base.with_suffix(extension))
     local, mime = _cache_download(f"https://image.tmdb.org/t/p/{size_tag}{raw}", dest)
     return str(local), mime
 
@@ -1237,8 +1239,12 @@ def api_tmdb_image(
     try:
         _, base, _ = _env()
         local_path, mime = get_tmdb_image_file(path, size, base)
+        cache_root = os.path.realpath(os.fspath(_cache_subdir(base, "art")))
+        safe_path = os.path.realpath(local_path)
+        if not safe_path.startswith(cache_root + os.sep):
+            raise ValueError("Invalid image path")
         return FileResponse(
-            _safe_tmdb_art_response_path(base, local_path),
+            safe_path,
             media_type=mime,
             headers={"Cache-Control": "public, max-age=31536000, immutable"},
         )
