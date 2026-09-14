@@ -54,6 +54,13 @@ from cw_platform.config_base import CONFIG as CONFIG_DIR, load_config, update_co
 from cw_platform.id_map import canonical_key
 from cw_platform.orchestrator._state_store import StateStore
 from cw_platform.provider_instances import instances_for_user_profile, list_user_profiles, normalize_instance_id, provider_display_key
+from api.dashboardAPI import _dashboard_widgets_version
+from api.watchlistAPI import _item_for_user_filter as _watchlist_item_for_user_filter
+from api.watchlistAPI import _load_watchlist_state, _tmdb_api_key, _watchlist_version
+from cw_platform.access_policy import clean_managed_permissions
+from services import profile_history
+from services.dashboard_widgets import _tracker_feature_items
+from services.watchlist import build_watchlist
 
 router = APIRouter(prefix="/api/profile", tags=["profile"])
 
@@ -496,7 +503,8 @@ def _collection_merge_group(group: dict[str, Any], item: dict[str, Any], *, raw_
 def _collection_finalize_group(key: str, group: dict[str, Any]) -> dict[str, Any]:
     dates = [d for d in group.pop("_collection_dates", []) if d]
     dates_sorted = sorted(dates, key=_collection_date_sort)
-    sources = group.get("collection_sources") if isinstance(group.get("collection_sources"), list) else []
+    raw_sources = group.get("collection_sources")
+    sources: list[Any] = raw_sources if isinstance(raw_sources, list) else []
     providers = sorted({str(src.get("provider") or "").lower() for src in sources if isinstance(src, dict) and src.get("provider")})
     instances = sorted({
         f"{str(src.get('provider') or '').lower()}:{normalize_instance_id(src.get('instance'))}"
@@ -570,11 +578,11 @@ def _collection_index(
     cache_key: tuple | None,
 ) -> tuple[list[dict[str, Any]], dict[str, int], dict[str, int]]:
     if cache_key is None:
-        return _build_collection_index(state() if callable(state) else state, cfg, profile_id)
+        return _build_collection_index(_as_dict(state() if callable(state) else state), cfg, profile_id)
     key = (profile_id, *cache_key)
     hit = _COLLECTION_INDEX_CACHE.get(key)
     if hit is None:
-        hit = _build_collection_index(state() if callable(state) else state, cfg, profile_id)
+        hit = _build_collection_index(_as_dict(state() if callable(state) else state), cfg, profile_id)
         _COLLECTION_INDEX_CACHE[key] = hit
         while len(_COLLECTION_INDEX_CACHE) > _COLLECTION_INDEX_CACHE_MAX:
             _COLLECTION_INDEX_CACHE.popitem(last=False)
@@ -611,6 +619,13 @@ def collection_cache_fingerprint() -> tuple:
     return (epoch, round(stamp, 3), round(cfg_stamp, 3))
 
 
+def _collection_month(item: dict[str, Any]) -> str:
+    ts = _collection_date_sort(item.get("last_collected_at"))
+    if not ts:
+        return ""
+    return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m")
+
+
 def build_profile_collection_payload(
     state: dict[str, Any] | Any,
     cfg: dict[str, Any],
@@ -623,6 +638,8 @@ def build_profile_collection_payload(
     page: int = 1,
     page_size: int = 48,
     cache_key: tuple | None = None,
+    include_keys: bool = False,
+    month: str = "",
 ) -> dict[str, Any]:
     items, counts, provider_counts = _collection_index(state, cfg, profile_id, cache_key)
     wanted_type = str(media_type or "all").strip().lower()
@@ -672,10 +689,25 @@ def build_profile_collection_payload(
         items.sort(key=lambda item: (_collection_date_sort(item.get("last_collected_at")), _title_key(item)), reverse=True)
     page = max(1, int(page or 1))
     page_size = min(120, max(1, int(page_size or 48)))
+    months: list[dict[str, Any]] = []
+    if wanted_sort in {"collected_at", "collected_at_asc"}:
+        month_counts: dict[str, int] = {}
+        for item in items:
+            key = _collection_month(item)
+            if key:
+                month_counts[key] = month_counts.get(key, 0) + 1
+        months = [{"month": key, "count": month_counts[key]} for key in sorted(month_counts, reverse=True)]
+        wanted_month = str(month or "").strip()
+        if wanted_month:
+            for position, item in enumerate(items):
+                key = _collection_month(item)
+                if key and (key <= wanted_month if wanted_sort == "collected_at" else key >= wanted_month):
+                    page = position // page_size + 1
+                    break
     total = len(items)
     start = (page - 1) * page_size
     end = start + page_size
-    return {
+    payload: dict[str, Any] = {
         "ok": True,
         "items": items[start:end],
         "total": total,
@@ -683,8 +715,31 @@ def build_profile_collection_payload(
         "page_size": page_size,
         "has_more": end < total,
         "counts": counts,
+        "months": months,
         "providers": [{"provider": key, "count": count} for key, count in sorted(provider_counts.items())],
     }
+    if include_keys:
+        limit = profile_history.SELECTION_MAX
+        payload["selection"] = [_collection_selection_entry(item) for item in items[:limit] if item.get("key")]
+        payload["selection_truncated"] = total > limit
+    return payload
+
+
+def _collection_selection_entry(item: dict[str, Any]) -> dict[str, Any]:
+    raw_by_provider = item.get("sources_by_provider")
+    by_provider: dict[str, Any] = raw_by_provider if isinstance(raw_by_provider, dict) else {}
+    entry: dict[str, Any] = {
+        "key": item["key"],
+        "present": [
+            {"provider": str(provider).upper(), "instance": str(instance or "default")}
+            for provider, instances in by_provider.items()
+            for instance in (instances if isinstance(instances, list) and instances else ["default"])
+        ],
+    }
+    for field in ("type", "title", "year", "season", "episode", "ids", "show_ids"):
+        if item.get(field) not in (None, "", [], {}):
+            entry[field] = item[field]
+    return entry
 
 
 @router.get("/collection")
@@ -697,6 +752,8 @@ def api_profile_collection(
     page: int = Query(1, ge=1),
     page_size: int = Query(48, ge=1, le=120),
     user_profile: str = Query(""),
+    include_keys: bool = Query(False),
+    month: str = Query(""),
 ) -> JSONResponse:
     ctx = _profile_context(request)
     if isinstance(ctx, JSONResponse):
@@ -714,6 +771,291 @@ def api_profile_collection(
         page=page,
         page_size=page_size,
         cache_key=collection_cache_fingerprint(),
+        include_keys=include_keys,
+        month=month,
+    )
+    return JSONResponse(payload, headers={"Cache-Control": "no-store"})
+
+
+def _feature_state(feature: str) -> dict[str, Any]:
+    try:
+        state = StateStore(CONFIG_DIR).load_state_features({feature}) or {}
+        return state if isinstance(state, dict) else {}
+    except Exception:
+        return {}
+
+
+def _history_state() -> dict[str, Any]:
+    return _feature_state("history")
+
+
+def _ratings_state() -> dict[str, Any]:
+    return _feature_state("ratings")
+
+
+def _history_user_filter(cfg: dict[str, Any], profile_id: str) -> dict[str, Any]:
+    if not profile_id:
+        return {}
+    return instances_for_user_profile(cfg, profile_id) or {"__NONE__": ["__NONE__"]}
+
+
+def _watchlist_items(cfg: dict[str, Any], user_filter: dict[str, Any]) -> list[dict[str, Any]]:
+    try:
+        items = build_watchlist(_load_watchlist_state(), tmdb_ok=bool(_tmdb_api_key(cfg))) or []
+    except Exception:
+        return []
+    if not user_filter:
+        return items
+    return [
+        scoped
+        for item in items
+        if isinstance(item, dict)
+        for scoped in [_watchlist_item_for_user_filter(item, user_filter)]
+        if scoped is not None
+    ]
+
+
+def history_cache_version(cfg: dict[str, Any], source: str, profile_id: str) -> str:
+    if source == "watchlist":
+        try:
+            return _watchlist_version(requested_profile=profile_id)
+        except Exception:
+            return ""
+    feature = {"scrobble": "scrobble", "ratings": "ratings"}.get(source, "history")
+    try:
+        return _dashboard_widgets_version(
+            CONFIG_DIR,
+            cfg=cfg,
+            requested={feature},
+            state_features=set() if feature == "scrobble" else {feature},
+            profile=profile_id,
+            limits={},
+        )
+    except Exception:
+        return ""
+
+
+def _profile_history_index(cfg: dict[str, Any], profile_id: str, source: str) -> tuple[dict[str, Any], str]:
+    wanted = profile_history.normalize_source(source)
+    ratings = wanted == "ratings"
+    user_filter = _history_user_filter(cfg, profile_id)
+    version = history_cache_version(cfg, wanted, profile_id)
+    if wanted == "watchlist":
+        state_source: Any = lambda: _watchlist_items(cfg, user_filter)
+    else:
+        state_source = _ratings_state if ratings else _history_state
+    index = profile_history.cached_history_index(
+        (wanted, profile_id, version) if version else None,
+        lambda: profile_history.build_history_index(
+            wanted,
+            state=state_source,
+            tracker_items=lambda: _tracker_feature_items("ratings" if ratings else "history"),
+            user_filter=user_filter,
+        ),
+    )
+    return index, version
+
+
+def _collection_presence(items: list[dict[str, Any]], media: str, tmdb: Any) -> dict[str, Any] | None:
+    wanted = str(tmdb or "").strip()
+    present: list[dict[str, str]] = []
+    count = 0
+    for item in items:
+        typ = _collection_media_type(item)
+        raw_ids = item.get("ids")
+        ids: dict[str, Any] = raw_ids if isinstance(raw_ids, dict) else {}
+        raw_show_ids = item.get("show_ids")
+        show_ids: dict[str, Any] = raw_show_ids if isinstance(raw_show_ids, dict) else {}
+        if media == "movie":
+            match = typ == "movie" and str(ids.get("tmdb") or "") == wanted
+        else:
+            candidates = {str(show_ids.get("tmdb") or ""), str(ids.get("tmdb_show") or "")}
+            if typ == "show":
+                candidates.add(str(ids.get("tmdb") or ""))
+            match = typ != "movie" and wanted in candidates
+        if not match:
+            continue
+        count += 1
+        for ref in _collection_selection_entry(item)["present"]:
+            if ref not in present:
+                present.append(ref)
+    return {"count": count, "present": present} if count else None
+
+
+def build_profile_title_payload(
+    cfg: dict[str, Any],
+    *,
+    profile_id: str = "",
+    media: str = "movie",
+    tmdb: Any = "",
+    watchlist: bool = True,
+) -> dict[str, Any]:
+    media = "movie" if str(media or "").strip().lower() == "movie" else "show"
+    out: dict[str, Any] = {"ok": True, "type": media, "tmdb": str(tmdb)}
+    sources = ["synced", "scrobble", "ratings"] + (["watchlist"] if watchlist else [])
+    for source in sources:
+        try:
+            index, _version = _profile_history_index(cfg, profile_id, source)
+            out[source] = profile_history.title_presence(index, media, tmdb)
+        except Exception:
+            out[source] = None
+    try:
+        items, _counts, _providers = _collection_index(_collection_state, cfg, profile_id, collection_cache_fingerprint())
+        out["collection"] = _collection_presence(items, media, tmdb)
+    except Exception:
+        out["collection"] = None
+    return out
+
+
+@router.get("/title")
+def api_profile_title(
+    request: Request,
+    media_type: str = Query("movie", alias="type"),
+    tmdb: int = Query(..., ge=1),
+    user_profile: str = Query(""),
+) -> JSONResponse:
+    ctx = _profile_context(request)
+    if isinstance(ctx, JSONResponse):
+        return ctx
+    cfg, _a, uid, _raw, user, token = ctx
+    profile_id = str(effective_user_profile_id(cfg, token, user_profile) or "").strip()
+    can_watchlist = uid == ADMIN_USER_ID or bool(clean_managed_permissions(user.get("permissions")).get("watchlist"))
+    payload = build_profile_title_payload(cfg, profile_id=profile_id, media=media_type, tmdb=tmdb, watchlist=can_watchlist)
+    return JSONResponse(payload, headers={"Cache-Control": "no-store"})
+
+
+def build_profile_history_payload(
+    cfg: dict[str, Any],
+    *,
+    profile_id: str = "",
+    source: str = "synced",
+    media_type: str = "all",
+    provider: str = "",
+    coverage: str = "all",
+    rating: str = "",
+    search: str = "",
+    month: str = "",
+    page: int = 1,
+    page_size: int = 48,
+    include_keys: bool = False,
+) -> dict[str, Any]:
+    wanted = profile_history.normalize_source(source)
+    index, version = _profile_history_index(cfg, profile_id, wanted)
+    payload = profile_history.build_history_payload(
+        index,
+        media_type=media_type,
+        provider=provider,
+        coverage=coverage,
+        rating=rating,
+        search=search,
+        month=month,
+        page=page,
+        page_size=page_size,
+        include_keys=include_keys,
+    )
+    payload["version"] = version
+    return payload
+
+
+@router.get("/history")
+def api_profile_history(
+    request: Request,
+    source: str = Query("synced"),
+    media_type: str = Query("all", alias="type"),
+    provider: str = Query(""),
+    coverage: str = Query("all"),
+    search: str = Query(""),
+    month: str = Query(""),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(48, ge=1, le=profile_history.PAGE_SIZE_MAX),
+    user_profile: str = Query(""),
+) -> JSONResponse:
+    ctx = _profile_context(request)
+    if isinstance(ctx, JSONResponse):
+        return ctx
+    cfg, _a, _uid, _raw, _user, token = ctx
+    profile_id = str(effective_user_profile_id(cfg, token, user_profile) or "").strip()
+    payload = build_profile_history_payload(
+        cfg,
+        profile_id=profile_id,
+        source=source,
+        media_type=media_type,
+        provider=provider,
+        coverage=coverage,
+        search=search,
+        month=month,
+        page=page,
+        page_size=page_size,
+    )
+    return JSONResponse(payload, headers={"Cache-Control": "no-store"})
+
+
+@router.get("/watchlist")
+def api_profile_watchlist(
+    request: Request,
+    media_type: str = Query("all", alias="type"),
+    provider: str = Query(""),
+    coverage: str = Query("all"),
+    search: str = Query(""),
+    month: str = Query(""),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(48, ge=1, le=profile_history.PAGE_SIZE_MAX),
+    include_keys: bool = Query(False),
+    user_profile: str = Query(""),
+) -> JSONResponse:
+    ctx = _profile_context(request)
+    if isinstance(ctx, JSONResponse):
+        return ctx
+    cfg, _a, uid, _raw, user, token = ctx
+    if uid != ADMIN_USER_ID and not clean_managed_permissions(user.get("permissions")).get("watchlist"):
+        return _json_error("Watchlist access required", 403)
+    profile_id = str(effective_user_profile_id(cfg, token, user_profile) or "").strip()
+    payload = build_profile_history_payload(
+        cfg,
+        profile_id=profile_id,
+        source="watchlist",
+        media_type=media_type,
+        provider=provider,
+        coverage=coverage,
+        search=search,
+        month=month,
+        page=page,
+        page_size=page_size,
+        include_keys=include_keys,
+    )
+    return JSONResponse(payload, headers={"Cache-Control": "no-store"})
+
+
+@router.get("/ratings")
+def api_profile_ratings(
+    request: Request,
+    media_type: str = Query("all", alias="type"),
+    provider: str = Query(""),
+    coverage: str = Query("all"),
+    rating: str = Query(""),
+    search: str = Query(""),
+    month: str = Query(""),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(48, ge=1, le=profile_history.PAGE_SIZE_MAX),
+    user_profile: str = Query(""),
+) -> JSONResponse:
+    ctx = _profile_context(request)
+    if isinstance(ctx, JSONResponse):
+        return ctx
+    cfg, _a, _uid, _raw, _user, token = ctx
+    profile_id = str(effective_user_profile_id(cfg, token, user_profile) or "").strip()
+    payload = build_profile_history_payload(
+        cfg,
+        profile_id=profile_id,
+        source="ratings",
+        media_type=media_type,
+        provider=provider,
+        coverage=coverage,
+        rating=rating,
+        search=search,
+        month=month,
+        page=page,
+        page_size=page_size,
     )
     return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 

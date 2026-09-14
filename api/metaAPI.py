@@ -505,6 +505,10 @@ def _need_satisfied(meta: dict[str, Any], need: dict[str, Any] | None) -> bool:
             )
         if k == "videos":
             return "videos" in meta
+        if k in {"credits", "recommendations"}:
+            return k in meta
+        if k == "seasons":
+            return "seasons" in det or str(meta.get("type") or "").lower() == "movie"
         if k == "vote_count":
             return "vote_count" in meta or "vote_count" in det
         if k == "series_info":
@@ -1207,6 +1211,89 @@ def api_tmdb_art(
         return PlainTextResponse("Art not available", status_code=404)
 
 
+_TMDB_IMAGE_PATH_RE = re.compile(r"^/[A-Za-z0-9_-]{4,64}\.(jpg|jpeg|png)$", re.IGNORECASE)
+
+
+def get_tmdb_image_file(path: str, size: str, cache_dir: Path | str) -> tuple[str, str]:
+    raw = str(path or "").strip()
+    if not _TMDB_IMAGE_PATH_RE.fullmatch(raw):
+        raise ValueError("Invalid image path")
+    size_tag = _sanitize_tmdb_size(size, default="w185")
+    cache_root = _cache_subdir(cache_dir, "art")
+    base = _cache_base_path(cache_root, _safe_cache_digest_stem("tmdb_path", raw, size_tag))
+    dest = _ensure_under_root(cache_root, base.with_suffix(Path(raw).suffix.lower()))
+    local, mime = _cache_download(f"https://image.tmdb.org/t/p/{size_tag}{raw}", dest)
+    return str(local), mime
+
+
+@router.get("/art/tmdb/image", tags=["metadata"])
+def api_tmdb_image(
+    path: str = Query(..., max_length=80),
+    size: str = Query("w185"),
+):
+    cfg = load_config() or {}
+    if not str(((cfg.get("tmdb") or {}).get("api_key") or "")).strip():
+        return PlainTextResponse("TMDb key missing", status_code=404)
+    try:
+        _, base, _ = _env()
+        local_path, mime = get_tmdb_image_file(path, size, base)
+        return FileResponse(
+            _safe_tmdb_art_response_path(base, local_path),
+            media_type=mime,
+            headers={"Cache-Control": "public, max-age=31536000, immutable"},
+        )
+    except ValueError:
+        return PlainTextResponse("Invalid image", status_code=400)
+    except Exception:
+        LOG.warning("TMDb image fetch failed")
+        return PlainTextResponse("Image not available", status_code=404)
+
+
+@router.get("/api/metadata/tmdb/season", tags=["metadata"])
+def api_tmdb_season(
+    tmdb: int = Query(..., ge=1),
+    season: int = Query(..., ge=0),
+    locale: str | None = Query(None),
+) -> JSONResponse:
+    provider = _tmdb_provider()
+    if provider is None:
+        return JSONResponse({"ok": False, "error": "metadata_unavailable"})
+    eff_locale = locale or _cfg_ui_locale() or "en-US"
+    try:
+        data = provider._get(
+            f"https://api.themoviedb.org/3/tv/{tmdb}/season/{season}",
+            {"language": eff_locale},
+            quiet_404=True,
+        ) or {}
+    except Exception:
+        return JSONResponse({"ok": False, "error": "season_unavailable"})
+    episodes = [
+        {
+            "episode": row.get("episode_number"),
+            "name": row.get("name") or "",
+            "air_date": row.get("air_date") or "",
+            "runtime": row.get("runtime"),
+            "overview": _shorten(row.get("overview") or "", 260),
+            "vote_average": row.get("vote_average"),
+            "has_still": bool(row.get("still_path")),
+        }
+        for row in data.get("episodes") or []
+        if isinstance(row, dict) and row.get("episode_number") is not None
+    ]
+    return JSONResponse(
+        {
+            "ok": True,
+            "tmdb": tmdb,
+            "season": season,
+            "name": data.get("name") or "",
+            "air_date": data.get("air_date") or "",
+            "overview": _shorten(data.get("overview") or "", 400),
+            "episodes": episodes,
+        },
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
+
+
 class MetadataResolveIn(BaseModel):
     entity: str | None = None
     ids: dict[str, Any]
@@ -1468,6 +1555,8 @@ def api_metadata_bulk(
             "certification",
             "release",
             "detail",
+            "credits",
+            "recommendations",
         }
         out: dict[str, Any] = {"type": meta.get("type") or typ}
         for k in keep:
