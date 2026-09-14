@@ -65,9 +65,11 @@ def api_playback_progress_items(
     page_size: int = Query(50, ge=1, le=250),
     force_refresh: bool = Query(False),
     user_profile: str = Query(""),
+    month: str = Query(""),
 ) -> dict[str, Any]:
     service = get_service()
     return service.items(
+        month=month,
         provider=provider,
         instance_id=instance_id,
         media_type=media_type,

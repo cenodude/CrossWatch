@@ -10,7 +10,13 @@
       overview: 1, runtime_minutes: 1, ids: 1, videos: 1, genres: 1,
       certification: 1, score: 1, vote_count: 1, release: 1, backdrop: 1,
     }),
+    media: Object.freeze({
+      overview: 1, tagline: 1, runtime_minutes: 1, ids: 1, videos: 1, genres: 1,
+      certification: 1, score: 1, vote_count: 1, release: 1, backdrop: 1,
+      credits: 1, recommendations: 1,
+    }),
   });
+  const profileOf = (profile) => (profile === "detail" || profile === "media" ? profile : "row");
 
   const cache = new Map();
   const inflight = new Map();
@@ -51,20 +57,22 @@
     merged.detail = { ...(prev.detail || {}), ...(next.detail || {}) };
     merged.images = { ...(prev.images || {}), ...(next.images || {}) };
     merged.__kind = kind || prev.__kind || "";
-    merged.__rowLoaded = !!(prev.__rowLoaded || profile === "row" || profile === "detail");
-    merged.__detailLoaded = !!(prev.__detailLoaded || profile === "detail");
+    merged.__rowLoaded = true;
+    merged.__detailLoaded = !!(prev.__detailLoaded || profile === "detail" || profile === "media");
+    merged.__mediaLoaded = !!(prev.__mediaLoaded || profile === "media");
     merged.__videosLoaded = !!(
       prev.__videosLoaded
-      || (profile === "detail" && Object.prototype.hasOwnProperty.call(next, "videos"))
+      || (profile !== "row" && Object.prototype.hasOwnProperty.call(next, "videos"))
     );
-    merged.__seriesLoaded = !!(prev.__seriesLoaded || (wantsSeries && profile === "detail"));
+    merged.__seriesLoaded = !!(prev.__seriesLoaded || (wantsSeries && profile !== "row"));
     return merged;
   };
 
   const satisfies = (meta, profile, wantsSeries) => {
     if (!meta || typeof meta !== "object") return false;
-    if (profile !== "detail") return !!meta.__rowLoaded;
+    if (profile === "row") return !!meta.__rowLoaded;
     if (wantsSeries && meta.__kind === "show" && !meta.__seriesLoaded) return false;
+    if (profile === "media") return !!meta.__mediaLoaded && !!meta.__videosLoaded;
     return !!meta.__detailLoaded
       && !!meta.__videosLoaded
       && !!(meta.overview || meta.detail?.overview || meta.detail?.tagline);
@@ -84,9 +92,10 @@
 
   async function fetchGroup(descriptors, profile, wantsSeries) {
     const kind = descriptors[0].type;
-    const need = { ...NEED[profile === "detail" ? "detail" : "row"] };
-    if (wantsSeries && kind === "show" && profile === "detail") need.series_info = 1;
-    const overview = profile === "detail" ? "full" : "none";
+    const need = { ...NEED[profileOf(profile)] };
+    if (wantsSeries && kind === "show" && profile !== "row") need.series_info = 1;
+    if (kind === "show" && profile === "media") need.seasons = 1;
+    const overview = profile === "row" ? "none" : "full";
 
     try {
       const res = await fetch(`/api/metadata/bulk?overview=${encodeURIComponent(overview)}`, {
@@ -119,7 +128,7 @@
   async function batch(items, profile = "row", options = {}) {
     if (authSetupPending()) return false;
     const wantsSeries = !!options.seriesInfo;
-    const profileKey = profile === "detail" ? "detail" : "row";
+    const profileKey = profileOf(profile);
     const groups = new Map();
     const pending = [];
     const seen = new Set();
@@ -158,7 +167,7 @@
     const cacheKey = keyOf(item);
     if (!cacheKey) return null;
     const cached = cache.get(cacheKey);
-    if (satisfies(cached, profile === "detail" ? "detail" : "row", !!options.seriesInfo)) return cached;
+    if (satisfies(cached, profileOf(profile), !!options.seriesInfo)) return cached;
     await batch([item], profile, options);
     return cache.get(cacheKey) || null;
   }
@@ -169,7 +178,7 @@
   }
 
   function has(item, profile = "row", options = {}) {
-    return satisfies(peek(item), profile === "detail" ? "detail" : "row", !!options.seriesInfo);
+    return satisfies(peek(item), profileOf(profile), !!options.seriesInfo);
   }
 
   function invalidate(item) {

@@ -665,6 +665,33 @@ def _group_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
+def _paused_month(item: Mapping[str, Any]) -> str:
+    dt = _parse_iso(item.get("updated_at") or item.get("progress_at"))
+    return dt.strftime("%Y-%m") if dt else ""
+
+
+def _playback_summary(rows: list[dict[str, Any]]) -> dict[str, int]:
+    stale_before = datetime.now(timezone.utc) - timedelta(days=30)
+    summary = {"total": len(rows), "movies": 0, "episodes": 0, "anime": 0, "almost_done": 0, "stale": 0}
+    for row in rows:
+        media = str(row.get("media_type") or "").lower()
+        if media == "movie":
+            summary["movies"] += 1
+        elif media == "anime_episode":
+            summary["anime"] += 1
+        elif media:
+            summary["episodes"] += 1
+        try:
+            if row.get("progress_percent") is not None and float(row["progress_percent"]) >= 90:
+                summary["almost_done"] += 1
+        except (TypeError, ValueError):
+            pass
+        paused = _parse_iso(row.get("updated_at") or row.get("progress_at"))
+        if paused and paused < stale_before:
+            summary["stale"] += 1
+    return summary
+
+
 def _duration_seconds_from_record(record: Mapping[str, Any]) -> int | None:
     try:
         duration = record.get("duration_seconds")
@@ -1074,6 +1101,7 @@ class PlaybackProgressService:
         page_size: int = 50,
         force_refresh: bool = False,
         user_filter: Mapping[str, Any] | None = None,
+        month: str | None = None,
     ) -> dict[str, Any]:
         cfg = load_config()
         provider_filter = str(provider or "").strip().lower()
@@ -1138,12 +1166,29 @@ class PlaybackProgressService:
         items = [_with_remaining_fallback(item.to_dict()) for result in results if result.ok for item in result.items]
         _share_artwork_metadata(items)
         _overlay_live_streams(items)
+        summary_rows = [dict(item) for item in items]
+        summary = _playback_summary(summary_rows if provider_filter else _group_records(summary_rows))
         filtered = self._apply_filters(items, media_type=media_type, progress_min=progress_min, progress_max=progress_max, age=age, rating_min=rating_min, search=search)
         if not provider_filter:
             filtered = _group_records(filtered)
         sorted_items = self._sort(filtered, sort)
         page = max(1, int(page or 1))
         page_size = max(1, min(250, int(page_size or 50)))
+        months: list[dict[str, Any]] = []
+        if (sort if sort in SORT_VALUES else "last_updated") == "last_updated":
+            month_counts: dict[str, int] = {}
+            for item in sorted_items:
+                key = _paused_month(item)
+                if key:
+                    month_counts[key] = month_counts.get(key, 0) + 1
+            months = [{"month": key, "count": month_counts[key]} for key in sorted(month_counts, reverse=True)]
+            wanted_month = str(month or "").strip()
+            if wanted_month:
+                for position, item in enumerate(sorted_items):
+                    key = _paused_month(item)
+                    if key and key <= wanted_month:
+                        page = position // page_size + 1
+                        break
         total = len(sorted_items)
         start = (page - 1) * page_size
         end = start + page_size
@@ -1153,8 +1198,10 @@ class PlaybackProgressService:
             "page": page,
             "page_size": page_size,
             "total": total,
+            "months": months,
             "providers": [cap.to_dict() for cap in capabilities],
             "errors": errors,
+            "summary": summary,
             "partial": bool(errors and items),
             "refreshed_at": utc_now_iso(),
         }

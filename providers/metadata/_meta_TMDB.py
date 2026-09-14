@@ -629,6 +629,90 @@ class TmdbProvider:
 
         return None, None
 
+    CREW_PRIORITY = ("Creator", "Director", "Screenplay", "Writer", "Novel", "Producer", "Original Music Composer", "Director of Photography")
+
+    @staticmethod
+    def _seasons(det: Mapping[str, Any]) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for row in det.get("seasons") or []:
+            if not isinstance(row, Mapping) or row.get("season_number") is None:
+                continue
+            out.append(
+                {
+                    "season": row.get("season_number"),
+                    "name": row.get("name") or "",
+                    "episode_count": row.get("episode_count"),
+                    "air_date": row.get("air_date") or "",
+                    "poster_path": row.get("poster_path") or "",
+                }
+            )
+        return out
+
+    @classmethod
+    def _credits(cls, det: Mapping[str, Any], kind: str) -> dict[str, list[dict[str, Any]]]:
+        raw_credits = det.get("credits")
+        credits: Mapping[str, Any] = raw_credits if isinstance(raw_credits, Mapping) else {}
+        cast: list[dict[str, Any]] = []
+        for person in credits.get("cast") or []:
+            if not isinstance(person, Mapping) or not person.get("name"):
+                continue
+            cast.append(
+                {
+                    "id": person.get("id"),
+                    "name": person.get("name"),
+                    "character": person.get("character") or "",
+                    "profile_path": person.get("profile_path") or "",
+                }
+            )
+            if len(cast) >= 18:
+                break
+        crew: list[dict[str, Any]] = []
+        seen: set[tuple[Any, str]] = set()
+
+        def add(person: Any, job: str) -> None:
+            if not isinstance(person, Mapping) or not person.get("name") or job not in cls.CREW_PRIORITY:
+                return
+            key = (person.get("id"), job)
+            if key in seen:
+                return
+            seen.add(key)
+            crew.append({"id": person.get("id"), "name": person.get("name"), "job": job, "profile_path": person.get("profile_path") or ""})
+
+        if kind == "tv":
+            for person in det.get("created_by") or []:
+                add(person, "Creator")
+        for person in credits.get("crew") or []:
+            if isinstance(person, Mapping):
+                add(person, str(person.get("job") or ""))
+        crew.sort(key=lambda row: cls.CREW_PRIORITY.index(row["job"]))
+        return {"cast": cast, "crew": crew[:12]}
+
+    @staticmethod
+    def _recommendations(det: Mapping[str, Any], kind: str) -> list[dict[str, Any]]:
+        raw = det.get("recommendations")
+        block: Mapping[str, Any] = raw if isinstance(raw, Mapping) else {}
+        out: list[dict[str, Any]] = []
+        for row in block.get("results") or []:
+            if not isinstance(row, Mapping) or not row.get("id"):
+                continue
+            media = str(row.get("media_type") or kind)
+            if media not in {"movie", "tv"}:
+                continue
+            out.append(
+                {
+                    "id": row.get("id"),
+                    "type": media,
+                    "title": row.get("title") or row.get("name") or "",
+                    "year": TmdbProvider._safe_int_year(row.get("release_date") or row.get("first_air_date")),
+                    "poster_path": row.get("poster_path") or "",
+                    "backdrop_path": row.get("backdrop_path") or "",
+                    "vote_average": row.get("vote_average"),
+                }
+            )
+            if len(out) >= 18:
+                break
+        return out
+
     def fetch(
         self,
         *,
@@ -717,8 +801,17 @@ class TmdbProvider:
         det: dict[str, Any] | None = None
         kind = "movie" if ent_in == "movie" else "tv"
 
+        appends = [
+            part
+            for flag, part in (("credits", "credits"), ("recommendations", "recommendations"))
+            if need.get(flag)
+        ]
+
         def _get_details(k: str) -> dict[str, Any]:
-            return self._get(f"{base}/{k}/{tmdb_id}", {"language": lang})
+            params: dict[str, Any] = {"language": lang}
+            if appends:
+                params["append_to_response"] = ",".join(appends)
+            return self._get(f"{base}/{k}/{tmdb_id}", params)
 
         try:
             det = _get_details(kind)
@@ -774,7 +867,7 @@ class TmdbProvider:
             )
             vote_avg = det.get("vote_average")
             score = round(float(vote_avg) * 10) if isinstance(vote_avg, (int, float)) else None
-            detail: dict[str, Any] = {"release_date": det.get("release_date")}
+            detail: dict[str, Any] = {"release_date": det.get("release_date"), "vote_average": det.get("vote_average")}
         else:
             title_out = det.get("name") or det.get("original_name")
             year = self._safe_int_year(det.get("first_air_date"))
@@ -797,6 +890,9 @@ class TmdbProvider:
                 "number_of_seasons": det.get("number_of_seasons"),
                 "number_of_episodes": det.get("number_of_episodes"),
                 "next_episode_to_air": det.get("next_episode_to_air"),
+                "last_episode_to_air": det.get("last_episode_to_air"),
+                "vote_average": det.get("vote_average"),
+                "seasons": self._seasons(det),
             }
 
         images: dict[str, list[dict[str, Any]]] = {}
@@ -865,6 +961,10 @@ class TmdbProvider:
             out["certification"] = certification
         if release_iso:
             out["release"] = {"date": release_iso, "country": release_cc}
+        if need.get("credits"):
+            out["credits"] = self._credits(det, kind)
+        if need.get("recommendations"):
+            out["recommendations"] = self._recommendations(det, kind)
 
         return out
 
