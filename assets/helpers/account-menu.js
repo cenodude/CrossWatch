@@ -73,16 +73,16 @@
     setOpen(m.classList.contains("hidden"));
   }
 
-  function openCollections() {
+  function openProfileTab(tab) {
     if (window.location?.pathname === "/profile") {
-      if (window.location.hash !== "#collection") window.location.hash = "collection";
+      if (window.location.hash !== `#${tab}`) window.location.hash = tab;
       else {
         try { window.dispatchEvent(new HashChangeEvent("hashchange")); }
         catch { window.dispatchEvent(new Event("hashchange")); }
       }
       return;
     }
-    window.location.href = "/profile#collection";
+    window.location.href = `/profile#${tab}`;
   }
 
   async function logout() {
@@ -109,7 +109,11 @@
       close();
       const value = String(action.dataset.cwProfileMenuAction || "");
       if (value === "profile") window.location.href = "/profile";
-      else if (value === "collections") openCollections();
+      else if (value === "watchlist") openProfileTab("watchlist");
+      else if (value === "history") openProfileTab("history");
+      else if (value === "ratings") openProfileTab("ratings");
+      else if (value === "collections") openProfileTab("collection");
+      else if (value === "playback") openProfileTab("playback");
       else if (value === "logout") void logout();
       return;
     }
