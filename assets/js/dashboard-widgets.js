@@ -1607,6 +1607,21 @@
     return () => window.clearTimeout(timer);
   }
 
+  const HISTORY_PAGE_LINKS = {
+    history: { href: "/profile#history/synced", label: "Open synced history" },
+    scrobble: { href: "/profile#history/scrobble", label: "Open all scrobbles" },
+    ratings: { href: "/profile#ratings", label: "Open all ratings" },
+  };
+
+  function historyPageLink(kind) {
+    const link = HISTORY_PAGE_LINKS[kind];
+    if (!link || !(ON_PROFILE_PAGE || document.getElementById("cw-nav-profile-link"))) return "";
+    return `<a class="cw-dash-see-more cw-dash-history-link" href="${esc(link.href)}">
+        <span class="cw-dash-see-more-label">${esc(link.label)}</span>
+        <span class="material-symbols-rounded" aria-hidden="true">arrow_forward</span>
+      </a>`;
+  }
+
   function renderCarousel(host, items, count, cardFn, kind) {
     const maxItems = widgetMaxItems(kind);
     const visible = Math.min(count, items.length, maxItems);
@@ -1634,6 +1649,7 @@
     setWidgetEmpty(kind, false);
     if (horizontal) {
       renderCarousel(host, items, count, cardFn, kind);
+      host.insertAdjacentHTML("beforeend", historyPageLink(kind));
       scheduleMasonry();
       return;
     }
@@ -1648,7 +1664,7 @@
           ${moreContent}
         </button>`
       : "";
-    host.innerHTML = `${items.slice(0, visible).map(cardFn).join("")}${button}`;
+    host.innerHTML = `${items.slice(0, visible).map(cardFn).join("")}${button}${historyPageLink(kind)}`;
     scheduleMasonry();
   }
 

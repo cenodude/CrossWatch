@@ -623,10 +623,10 @@ def test_captures_scheduler_queue_is_hidden_from_managed_users() -> None:
 def test_playback_ui_splits_write_actions_from_admin_settings() -> None:
     import pathlib
 
-    src = pathlib.Path("assets/js/playback_progress.js").read_text(encoding="utf-8")
-    assert "const isReadOnly = () => isManagedUser() && !canWrite();" in src
-    assert "const canEditSettings = () => !isManagedUser();" in src
-    assert 'document.getElementById("pp-settings")?.classList.toggle("hidden", !canEditSettings());' in src
+    src = pathlib.Path("assets/js/profile-page.js").read_text(encoding="utf-8")
+    assert 'const canAct = () => !isManaged() || doc?.dataset?.cwPermWrite === "on";' in src
+    assert "const canConfigure = () => !isManaged();" in src
+    assert 'q("settings")?.toggleAttribute("hidden", !canConfigure());' in src
 
 
 def test_insights_snapshot_picker_is_admin_only() -> None:
