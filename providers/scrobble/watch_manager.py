@@ -119,6 +119,16 @@ class MultiDispatcher:
                 _log(f"Route user resolution check error: {e}", "ERROR")
         return False
 
+    def needs_pkc_support(self) -> bool:
+        for d in self._dispatchers:
+            try:
+                fn = getattr(d, "needs_pkc_support", None)
+                if callable(fn) and bool(fn()):
+                    return True
+            except Exception as e:
+                _log(f"Route PlexKodiConnect support check error: {e}", "ERROR")
+        return False
+
 
 class _SchedulerEventSink:
     log_delivery = False
