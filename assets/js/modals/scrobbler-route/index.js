@@ -4,6 +4,7 @@ const label = (v) => ({ plex: "Plex", jellyfin: "Jellyfin", emby: "Emby", kodi: 
 const sources = ["plex", "jellyfin", "emby", "kodi", "scrob"];
 const sinks = ["plex", "jellyfin", "emby", "kodi", "crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "bingebase", "flicklist", "scrob"];
 const ratingSinks = ["crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "flicklist", "scrob"];
+const mediaSinks = ["plex", "jellyfin", "emby", "kodi"];
 
 function flashCopied(btn) {
   if (!btn) return;
@@ -33,6 +34,7 @@ let clickHandler = null;
 let changeHandler = null;
 let userProfiles = [];
 let selectedUserProfileId = "";
+const destinationLibraries = new Map();
 
 function detachHandlers() {
   if (boundRoot?.__cwScrobblerRouteAbort) {
@@ -449,6 +451,58 @@ function filtersPanel(r, f) {
   `;
 }
 
+function destinationKey(sink, instance) {
+  return `${String(sink || "").toLowerCase()}|${normInst(instance)}`;
+}
+
+function librariesPanel(r) {
+  if (!mediaSinks.includes(r.sink)) return "";
+  const dest = r.options.destination || {};
+  return `
+    <section class="scrm-panel ${activeTab === "libraries" ? "active" : ""}" data-panel="libraries">
+      <div class="scrm-journey scrm-journey-compact">
+        <span class="material-symbols-rounded scrm-journey-icon">video_library</span>
+        <div><strong>${esc(label(r.sink))} libraries</strong><p>Only update items in the selected libraries. Leave empty to use the Whitelist libraries of ${esc(label(r.sink))} connection.</p></div>
+      </div>
+      <div id="scr-destination-libraries"></div>
+      <label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">library_add_check</span><span><strong>Update all copies</strong><small>When the same title exists more than once, for example in a regular and a 4K library, update every copy instead of skipping.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-update-all-copies" ${dest.update_all_copies === false ? "" : "checked"}><span class="scrm-switch-track"></span></span></label>
+    </section>
+  `;
+}
+
+async function fetchDestinationLibraries(sink, instance) {
+  try {
+    const res = await fetch(`/api/${encodeURIComponent(sink)}/libraries?instance=${encodeURIComponent(instance || "default")}`, { cache: "no-store", credentials: "same-origin" });
+    const data = res.ok ? await res.json() : {};
+    return Array.isArray(data?.libraries) ? data.libraries : [];
+  } catch {
+    return [];
+  }
+}
+
+function mountDestinationTable() {
+  const host = root?.querySelector("#scr-destination-libraries");
+  const r = ensureDraft();
+  if (!host || !window.cwWhitelistTable || !mediaSinks.includes(r.sink)) return;
+  const key = destinationKey(r.sink, r.sink_instance);
+  const selected = () => new Set((ensureDraft().options.destination?.libraries || []).map(String));
+  window.cwWhitelistTable.mount({
+    host,
+    features: [{ key: "scr", label: "Scrobble", icon: "sensors", title: "Scrobbles from this route only update the selected libraries." }],
+    note: "Empty = use the connection History and Progress libraries.",
+    getLibs: () => destinationLibraries.get(key) || [],
+    isOn: (_feature, id) => selected().has(String(id)),
+    setOn: (_feature, id, on) => {
+      const next = selected();
+      if (on) next.add(String(id));
+      else next.delete(String(id));
+      const current = ensureDraft();
+      current.options.destination = { ...(current.options.destination || {}), libraries: [...next] };
+    },
+    load: async () => { destinationLibraries.set(key, await fetchDestinationLibraries(r.sink, r.sink_instance)); },
+  });
+}
+
 function optionsPanel(r) {
   const unresolvedFallback = r.provider === "plex"
     ? `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">person_alert</span><span><strong>Unresolved user fallback</strong><small>Use the configured Plex username when Plex omits the playback user and the session cannot be resolved.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-unresolved-user-fallback" ${r.options.watch?.unresolved_user_fallback ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`
@@ -532,7 +586,7 @@ function enableSelectedUnavailableRatingTargets() {
 
 function normalizeActiveTab(tab = activeTab) {
   const next = String(tab || "route");
-  return ["route", "filters", "options", "ratings"].includes(next) ? next : "route";
+  return ["route", "filters", "options", "libraries", "ratings"].includes(next) ? next : "route";
 }
 
 function currentActiveTab() {
@@ -570,6 +624,7 @@ function render(errors = []) {
   activeTab = normalizeActiveTab(root?.dataset.scrmTab || activeTab);
   const r = ensureDraft();
   if (r.provider !== "plex" && activeTab === "ratings") activeTab = "route";
+  if (!mediaSinks.includes(r.sink) && activeTab === "libraries") activeTab = "route";
   const f = r.filters || {};
   const ratings = r.options?.ratings || {};
   const ratingTargets = new Set(ratings.targets || []);
@@ -587,12 +642,14 @@ function render(errors = []) {
             ${navButton("route", "route", "Route", "Source and destination")}
             ${navButton("filters", "filter_alt", "Filters", "Users and media")}
             ${navButton("options", "tune", "Options", "Watchlist and thresholds")}
+            ${mediaSinks.includes(r.sink) ? navButton("libraries", "video_library", "Libraries", "Destination scope") : ""}
             ${r.provider === "plex" ? navButton("ratings", "star", "Ratings", "Plex webhook") : ""}
           </nav>
           <div class="scrm-content">
             ${routePanel(r)}
             ${filtersPanel(r, f)}
             ${optionsPanel(r)}
+            ${librariesPanel(r)}
             ${ratingsPanel(r, ratings, ratingTargets)}
           </div>
           <div class="cw-connection-modal-footer scrm-footer">
@@ -609,6 +666,7 @@ function render(errors = []) {
   `;
   ensureVisiblePanel();
   enableSelectedUnavailableRatingTargets();
+  mountDestinationTable();
 }
 
 function collect() {
@@ -646,6 +704,13 @@ function collect() {
   if (["crosswatch", "simkl"].includes(String(root.querySelector("#scr-sink")?.value || draft.sink || "").toLowerCase())) watch.anime_mapping = !!root.querySelector("#scr-anime-mapping")?.checked;
   if (String(root.querySelector("#scr-sink")?.value || draft.sink || "").toLowerCase() === "simkl") watch.simkl_rewatches = !!root.querySelector("#scr-simkl-rewatches")?.checked;
   const ratingsMode = root.querySelector("#scr-ratings-mode")?.value || "off";
+  const sinkValue = String(sinkEl?.value || draft.sink || "").toLowerCase();
+  const previousDestination = draft?.options?.destination || {};
+  const copiesEl = root.querySelector("#scr-update-all-copies");
+  const destination = mediaSinks.includes(sinkValue) ? {
+    libraries: [...(previousDestination.libraries || [])],
+    update_all_copies: copiesEl ? !!copiesEl.checked : previousDestination.update_all_copies !== false,
+  } : null;
   return {
     id: draft.id,
     enabled: props.mode === "create" ? true : draft.enabled !== false,
@@ -659,6 +724,7 @@ function collect() {
       auto_remove_watchlist: root.querySelector("#scr-auto")?.value || "inherit",
       scrobble,
       watch,
+      ...(destination ? { destination } : {}),
       ratings: provider === "plex" ? {
         mode: ratingsMode,
         targets: [...root.querySelectorAll("[data-rating-target]:checked")].map((x) => x.dataset.ratingTarget),
@@ -774,6 +840,7 @@ export async function mount(shell, incoming = {}) {
   saving = false;
   confirmDelete = false;
   selectedUserProfileId = "";
+  destinationLibraries.clear();
   modalKey = String(props.mode === "create" ? "__new__" : (props.route?.id || "__new__"));
   activeTab = normalizeActiveTab("route");
   if (root) root.dataset.scrmTab = activeTab;
@@ -869,9 +936,14 @@ export async function mount(shell, incoming = {}) {
     }
     e.stopPropagation();
   };
+  const resetDestinationLibraries = (beforeKey) => {
+    if (destinationKey(draft.sink, draft.sink_instance) === beforeKey) return;
+    draft.options.destination = { ...(draft.options.destination || {}), libraries: [] };
+  };
   changeHandler = (e) => {
     if (["scr-provider", "scr-sink"].includes(e.target.id)) {
       const keepTab = currentActiveTab();
+      const beforeKey = destinationKey(ensureDraft().sink, ensureDraft().sink_instance);
       syncDraftFromDom();
       if (e.target.id === "scr-provider") {
         draft.provider_instance = allSourceProfiles(draft.provider)[0]?.instance || "";
@@ -884,17 +956,20 @@ export async function mount(shell, incoming = {}) {
       if (e.target.id === "scr-sink") {
         draft.sink_instance = allSinkProfiles(draft.sink)[0]?.instance || "";
       }
+      resetDestinationLibraries(beforeKey);
       render();
       preserveVisiblePanel(keepTab);
       return;
     }
     if (["scr-provider-instance", "scr-sink-instance", "scr-ratings-mode"].includes(e.target.id)) {
       const keepTab = currentActiveTab();
+      const beforeKey = destinationKey(ensureDraft().sink, ensureDraft().sink_instance);
       syncDraftFromDom();
       if (e.target.id === "scr-provider-instance" && draft.provider === draft.sink) {
         if (!allSinkProfiles(draft.sink).length) draft.sink = sinkProviders("", draft.provider)[0] || "";
         if (!allSinkProfiles(draft.sink).some((p) => normInst(p.instance) === normInst(draft.sink_instance))) draft.sink_instance = allSinkProfiles(draft.sink)[0]?.instance || "";
       }
+      resetDestinationLibraries(beforeKey);
       render();
       preserveVisiblePanel(keepTab);
       return;

@@ -118,7 +118,7 @@
         { key: "rate", label: "Ratings" },
         { key: "prog", label: "Progress" },
         { key: "coll", label: "Collections" },
-        { key: "scr", label: "Scrobble" },
+        { key: "scr", label: "Scrobble", title: "Libraries watchers and webhooks read from. Scrobble destinations use History and Progress, or the libraries set on the route." },
       ],
       getLibs: () => lastLibraries,
       isOn: (fk, id) => setFor(fk).has(String(id)),

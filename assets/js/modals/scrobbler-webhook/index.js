@@ -5,6 +5,7 @@ const sinks = ["plex", "jellyfin", "emby", "kodi", "crosswatch", "trakt", "simkl
 const ratingSinks = ["crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "flicklist", "scrob"];
 const webhookSources = new Set(["plex", "jellyfin", "emby"]);
 const animeMappingSinks = new Set(["crosswatch", "simkl"]);
+const mediaSinks = new Set(["plex", "jellyfin", "emby", "kodi"]);
 
 function flashCopied(btn) {
   if (!btn) return;
@@ -34,6 +35,8 @@ let clickHandler = null;
 let changeHandler = null;
 let userProfiles = [];
 let selectedUserProfileId = "";
+let destinationState = null;
+const destinationLibraries = new Map();
 
 function detachHandlers() {
   if (boundRoot?.__cwScrobblerWebhookAbort) {
@@ -556,6 +559,64 @@ function optionsPanel() {
   `;
 }
 
+function destinationFor(sink) {
+  const instance = selectedSinkInstance(sink);
+  const key = `${sink}|${normInst(instance)}`;
+  if (!destinationState || destinationState.key !== key) {
+    const s = settings();
+    const sameInstance = normInst((s.sink_instances || {})[sink]) === normInst(instance);
+    const libs = sameInstance ? (s.destination_libraries || {})[sink] : [];
+    const copies = sameInstance ? (s.update_all_copies || {})[sink] : undefined;
+    destinationState = { key, sink, instance, libraries: new Set((Array.isArray(libs) ? libs : []).map(String)), allCopies: copies !== false };
+  }
+  return destinationState;
+}
+
+function librariesPanel() {
+  const sink = selectedSinkKey();
+  if (!mediaSinks.has(sink)) return "";
+  const dest = destinationFor(sink);
+  return `
+    <section class="scrm-panel ${activeTab === "libraries" ? "active" : ""}" data-panel="libraries">
+      <div class="scrm-journey scrm-journey-compact">
+        <span class="material-symbols-rounded scrm-journey-icon">video_library</span>
+        <div><strong>${esc(label(sink))} libraries</strong><p>Only update items in the selected libraries. Leave empty to use the Whitelist libraries of ${esc(label(sink))} connection.</p></div>
+      </div>
+      <div id="scw-destination-libraries"></div>
+      <label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">library_add_check</span><span><strong>Update all copies</strong><small>When the same title exists more than once, for example in a regular and a 4K library, update every copy instead of skipping.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scw-update-all-copies" ${dest.allCopies ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>
+    </section>
+  `;
+}
+
+async function fetchDestinationLibraries(sink, instance) {
+  try {
+    const res = await fetch(`/api/${encodeURIComponent(sink)}/libraries?instance=${encodeURIComponent(instance || "default")}`, { cache: "no-store", credentials: "same-origin" });
+    const data = res.ok ? await res.json() : {};
+    return Array.isArray(data?.libraries) ? data.libraries : [];
+  } catch {
+    return [];
+  }
+}
+
+function mountDestinationTable() {
+  const host = root?.querySelector("#scw-destination-libraries");
+  const sink = selectedSinkKey();
+  if (!host || !window.cwWhitelistTable || !mediaSinks.has(sink)) return;
+  const dest = destinationFor(sink);
+  window.cwWhitelistTable.mount({
+    host,
+    features: [{ key: "scr", label: "Scrobble", icon: "sensors", title: "Scrobbles from this webhook only update the selected libraries." }],
+    note: "Empty = use the connection History and Progress libraries.",
+    getLibs: () => destinationLibraries.get(dest.key) || [],
+    isOn: (_feature, id) => dest.libraries.has(String(id)),
+    setOn: (_feature, id, on) => {
+      if (on) dest.libraries.add(String(id));
+      else dest.libraries.delete(String(id));
+    },
+    load: async () => { destinationLibraries.set(dest.key, await fetchDestinationLibraries(dest.sink, dest.instance)); },
+  });
+}
+
 function switchTab(tab) {
   activeTab = normalizeActiveTab(tab || "source");
   ensureVisiblePanel();
@@ -563,7 +624,7 @@ function switchTab(tab) {
 
 function normalizeActiveTab(tab = activeTab) {
   const next = String(tab || "source");
-  return ["source", "filters", "ratings", "options"].includes(next) ? next : "source";
+  return ["source", "filters", "ratings", "options", "libraries"].includes(next) ? next : "source";
 }
 
 function currentActiveTab() {
@@ -606,6 +667,7 @@ function render(errs = []) {
   const filt = effective[fKey] || {};
   const ratingsTargets = ratingSinks.filter((sink) => effective[`plex_${sink}_ratings`]);
   if (provider !== "plex" && activeTab === "ratings") activeTab = "source";
+  if (!mediaSinks.has(selectedSinkKey()) && activeTab === "libraries") activeTab = "source";
   const dup = duplicateWebhook(current);
   root.innerHTML = `
     <div ${modalAttrs(provider)}>
@@ -620,12 +682,14 @@ function render(errs = []) {
             ${navButton("source", "webhook", "Source", "Profile, destinations, URL")}
             ${navButton("filters", "filter_alt", "Filters", "Users and media")}
             ${navButton("options", "tune", "Options", "Thresholds")}
+            ${mediaSinks.has(selectedSinkKey()) ? navButton("libraries", "video_library", "Libraries", "Destination scope") : ""}
             ${provider === "plex" ? navButton("ratings", "star", "Ratings", "Plex ratings") : ""}
           </nav>
           <div class="scrm-content">
             ${sourcePanel(current)}
             ${filtersPanel(provider, filt)}
             ${optionsPanel()}
+            ${librariesPanel()}
             ${ratingsPanel(provider, ratingsTargets)}
           </div>
           <div class="cw-connection-modal-footer scrm-footer">
@@ -641,6 +705,7 @@ function render(errs = []) {
     </div>
   `;
   ensureVisiblePanel();
+  mountDestinationTable();
 }
 
 function setBusy(flag) {
@@ -683,6 +748,12 @@ function payload() {
   }
   if (animeMappingSinks.has(sink)) body[`anime_mapping_${sink}`] = !!root.querySelector("#scw-anime-mapping")?.checked;
   if (sink === "simkl") body.simkl_rewatches = !!root.querySelector("#scw-simkl-rewatches")?.checked;
+  if (mediaSinks.has(sink)) {
+    const dest = destinationFor(sink);
+    const copiesEl = root.querySelector("#scw-update-all-copies");
+    body.destination_libraries = { [sink]: [...dest.libraries] };
+    body.update_all_copies = { [sink]: copiesEl ? !!copiesEl.checked : dest.allCopies };
+  }
   return body;
 }
 
@@ -826,6 +897,8 @@ export async function mount(shell, incoming = {}) {
   saving = false;
   destructive = "";
   selectedUserProfileId = "";
+  destinationState = null;
+  destinationLibraries.clear();
   modalKey = String(props.mode === "create" ? "__new__" : `${props.webhook?.provider || ""}:${props.webhook?.provider_instance || ""}`);
   activeTab = normalizeActiveTab("source");
   if (root) root.dataset.scrmTab = activeTab;
@@ -936,7 +1009,10 @@ export async function mount(shell, incoming = {}) {
     }
     if (e.target.id === "scw-sink-instance") {
       selectedUserProfileId = "";
+      const keepTab = currentActiveTab();
       props.webhook = { ...selectedWebhook(), sink: selectedSinkKey(), sink_instance: e.target.value || "default" };
+      render();
+      preserveVisiblePanel(keepTab);
       return;
     }
     if (e.target.closest(".scrm-content input, .scrm-content select, .scrm-content textarea")) {
