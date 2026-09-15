@@ -70,7 +70,6 @@ def _matches(key, item, other_key, other, *, same_account=False, include_viewing
                   not in {"plex", "jellyfin", "emby", "guid", "slug"}}
     if not tokens:
         return False
-    # Dated selections must never silently turn into whole-status removals.
     # Confirmed status removal also clears that item's locally cached dates.
     return not _event(key, item) and (include_viewings or not _event(other_key, other))
 
@@ -112,17 +111,30 @@ def _selection(payload, request):
     if not isinstance(raw, list) or not raw or len(raw) > 1000:
         raise HTTPException(400, "Select between 1 and 1000 rows")
     selected = []
+    seen = set()
     for row in raw:
         item = api._normalize_send_item(row, feature, operation="remove")
         if not item:
             raise HTTPException(400, "Invalid removal selection")
         key = str(item.get("key") or item.get("_cw_event_key") or canonical_key(item))
         if feature == "history" and _event(key, item):
-            raise HTTPException(400, "Individual watch dates cannot be removed here. Select a watched-status row.")
+            key = base_key_from_history_event(item.get("_cw_event_key") or key)
+            item = _status_item(item)
+            item["key"] = key
         if not _tokens(key, item):
             raise HTTPException(400, "Selected rows need an identifiable movie, show or episode")
+        if key in seen:
+            continue
+        seen.add(key)
         selected.append((key, item))
     return feature, selected
+
+
+def _status_item(item):
+    out = dict(item)
+    for field in (*EVENT_ID_FIELDS, "_mdblist_play_id", "play_id", "watched_at", "_cw_event_key", "_cw_rewatch_sync"):
+        out.pop(field, None)
+    return out
 
 
 def _can_remove(ops, feature, key, item):
@@ -177,7 +189,10 @@ def _plan(payload, request):
                 missing_baselines.add((scope, provider, instance))
                 continue
             ops = load_sync_ops(provider)
-            baseline = _RecordIndex(_items(state, provider, instance, feature))
+            records = _items(state, provider, instance, feature)
+            if feature == "history" and any(is_history_event_key(k) for k in records):
+                records = collapse_history_latest(records)
+            baseline = _RecordIndex(records)
             for row_index, (key, item) in enumerate(selected):
                 matches = baseline.matches(key, item, same_account=(provider == source and instance == source_instance))
                 # Ambiguous identities must not become bulk deletions.

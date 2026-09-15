@@ -279,20 +279,34 @@ def test_removal_confirmation_uses_the_provider_write_identity(setup, provider, 
 
 @pytest.mark.parametrize("event_field", ["key", "_cw_event_key"])
 @pytest.mark.parametrize("item", [movie(), episode(1)], ids=["movie", "episode"])
-def test_dated_history_selection_is_rejected_without_clearing_watched_status(setup, item, event_field):
+def test_dated_history_selection_removes_the_whole_title(setup, item, event_field):
     s = setup
     dated = {**item, "watched_at": "2026-09-01T12:00:00Z", "_trakt_history_id": "101"}
     s.seed("p1", "TRAKT", "default", "history", {canonical_key(item): dated, "tmdb:2": movie(2)})
     selected = {**dated, event_field: history_event_key(dated)}
-    payload = dict(kind="history", items=[movie(2), selected], source_provider="TRAKT")
-    for action in (api.api_editor_remove_preview, api.api_editor_send):
-        with pytest.raises(HTTPException) as exc:
-            action({**payload, "operation": "remove", "confirmed": True,
-                    "preview_id": "stale", "providers": [{"provider": "TRAKT"}]}, request=None)
-        assert exc.value.status_code == 400
-        assert "Individual watch dates" in exc.value.detail
-    assert not s.ops["TRAKT"].calls
-    assert len(removal._items(database.load_state_features(s.root, {"history"}), "TRAKT", "default", "history")) == 2
+    result = s.execute(dict(kind="history", items=[selected, selected], source_provider="TRAKT"))
+    assert result["selected"] == 1
+    assert result["confirmed"] == 1
+    sent = s.ops["TRAKT"].calls[0][2][0]
+    assert "_trakt_history_id" not in sent
+    assert "watched_at" not in sent
+    assert list(s.ops["TRAKT"].live[("default", "history")]) == ["tmdb:2"]
+
+
+def test_rewatch_baseline_offers_the_title_and_clears_every_watch(setup):
+    s = setup
+    first = movie(watched_at="2026-09-01T12:00:00Z", _trakt_history_id="101")
+    second = movie(watched_at="2026-09-02T12:00:00Z", _trakt_history_id="102")
+    baseline = {history_event_key(v): v for v in (first, second)}
+    assert all("@" in key for key in baseline)
+    s.seed("p1", "TRAKT", "default", "history", baseline)
+    s.ops["TRAKT"].live[("default", "history")] = {"tmdb:1": second}
+    database.save_feature_baseline(s.root, provider="TRAKT", feature="history", items=deepcopy(baseline))
+    preview = api.api_editor_remove_preview(dict(kind="history", items=[movie()]), request=None)
+    assert [(p["provider"], p["count"]) for p in preview["providers"]] == [("TRAKT", 1)]
+    result = s.execute(dict(kind="history", items=[movie()]))
+    assert result["confirmed"] == 1
+    assert not removal._items(database.load_state_features(s.root, {"history"}), "TRAKT", "default", "history")
 
 
 def test_server_rechecks_scope_confirmation_and_preview(setup):
