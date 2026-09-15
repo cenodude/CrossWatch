@@ -856,30 +856,50 @@ def _profile_history_index(cfg: dict[str, Any], profile_id: str, source: str) ->
     return index, version
 
 
-def _collection_presence(items: list[dict[str, Any]], media: str, tmdb: Any) -> dict[str, Any] | None:
-    wanted = str(tmdb or "").strip()
-    present: list[dict[str, str]] = []
-    count = 0
+_COLLECTION_LOOKUP_CACHE: "OrderedDict[tuple, dict[str, list[dict[str, Any]]]]" = OrderedDict()
+
+
+def _collection_tmdb_keys(item: dict[str, Any]) -> set[str]:
+    typ = _collection_media_type(item)
+    raw_ids = item.get("ids")
+    ids: dict[str, Any] = raw_ids if isinstance(raw_ids, dict) else {}
+    raw_show_ids = item.get("show_ids")
+    show_ids: dict[str, Any] = raw_show_ids if isinstance(raw_show_ids, dict) else {}
+    if typ == "movie":
+        prefix, values = "movie", (ids.get("tmdb"),)
+    elif typ == "show":
+        prefix, values = "show", (ids.get("tmdb"), show_ids.get("tmdb"), ids.get("tmdb_show"))
+    else:
+        prefix, values = "show", (show_ids.get("tmdb"), ids.get("tmdb_show"))
+    return {f"{prefix}:{str(value).strip()}" for value in values if value not in (None, "") and str(value).strip()}
+
+
+def _collection_lookup(cfg: dict[str, Any], profile_id: str, cache_key: tuple) -> dict[str, list[dict[str, Any]]]:
+    key = (profile_id, *cache_key)
+    hit = _COLLECTION_LOOKUP_CACHE.get(key)
+    if hit is not None:
+        _COLLECTION_LOOKUP_CACHE.move_to_end(key)
+        return hit
+    items, _counts, _providers = _collection_index(_collection_state, cfg, profile_id, cache_key)
+    lookup: dict[str, list[dict[str, Any]]] = {}
     for item in items:
-        typ = _collection_media_type(item)
-        raw_ids = item.get("ids")
-        ids: dict[str, Any] = raw_ids if isinstance(raw_ids, dict) else {}
-        raw_show_ids = item.get("show_ids")
-        show_ids: dict[str, Any] = raw_show_ids if isinstance(raw_show_ids, dict) else {}
-        if media == "movie":
-            match = typ == "movie" and str(ids.get("tmdb") or "") == wanted
-        else:
-            candidates = {str(show_ids.get("tmdb") or ""), str(ids.get("tmdb_show") or "")}
-            if typ == "show":
-                candidates.add(str(ids.get("tmdb") or ""))
-            match = typ != "movie" and wanted in candidates
-        if not match:
-            continue
-        count += 1
+        for token in _collection_tmdb_keys(item):
+            lookup.setdefault(token, []).append(item)
+    _COLLECTION_LOOKUP_CACHE[key] = lookup
+    while len(_COLLECTION_LOOKUP_CACHE) > _COLLECTION_INDEX_CACHE_MAX:
+        _COLLECTION_LOOKUP_CACHE.popitem(last=False)
+    return lookup
+
+
+def _collection_presence(items: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not items:
+        return None
+    present: list[dict[str, str]] = []
+    for item in items:
         for ref in _collection_selection_entry(item)["present"]:
             if ref not in present:
                 present.append(ref)
-    return {"count": count, "present": present} if count else None
+    return {"count": len(items), "present": present}
 
 
 def build_profile_title_payload(
@@ -900,8 +920,8 @@ def build_profile_title_payload(
         except Exception:
             out[source] = None
     try:
-        items, _counts, _providers = _collection_index(_collection_state, cfg, profile_id, collection_cache_fingerprint())
-        out["collection"] = _collection_presence(items, media, tmdb)
+        lookup = _collection_lookup(cfg, profile_id, collection_cache_fingerprint())
+        out["collection"] = _collection_presence(lookup.get(f"{media}:{str(tmdb).strip()}") or [])
     except Exception:
         out["collection"] = None
     return out

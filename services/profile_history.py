@@ -46,7 +46,7 @@ _ROW_FIELDS = (
     "event",
 )
 _INDEX_CACHE: "OrderedDict[tuple[Any, ...], dict[str, Any]]" = OrderedDict()
-_INDEX_CACHE_MAX = 4
+_INDEX_CACHE_MAX = 12
 _CACHE_LOCK = threading.Lock()
 _BUILD_LOCK = threading.Lock()
 

@@ -66,10 +66,12 @@ def api_playback_progress_items(
     force_refresh: bool = Query(False),
     user_profile: str = Query(""),
     month: str = Query(""),
+    tmdb: str = Query("", max_length=20),
 ) -> dict[str, Any]:
     service = get_service()
     return service.items(
         month=month,
+        tmdb=tmdb,
         provider=provider,
         instance_id=instance_id,
         media_type=media_type,
