@@ -7,6 +7,7 @@ import copy
 from dataclasses import replace
 from importlib import import_module
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
@@ -24,6 +25,11 @@ def config(provider):
 def event(**kwargs):
     return replace(ScrobbleEvent("stop", "movie", {"tmdb": "42"}, "Movie", 2020, None, None, 95,
                                 "source-user", "source-server", "session", {}), **kwargs)
+
+
+def destination(cfg, **values):
+    cfg["scrobble"]["watch"]["route_options"] = {"destination": values}
+    return cfg
 
 
 def row(iid="10", kind="Movie", ids=None, **kwargs):
@@ -164,6 +170,7 @@ def test_media_server_guards(media_server, case):
         http.rows["10"]["ProviderIds"]["Imdb"] = "tt0000999"
     elif case == "ambiguous":
         http.rows["11"] = row("11")
+        destination(cfg, update_all_copies=False)
     elif case == "library":
         cfg[provider]["history"] = {"libraries": ["other"]}
     elif case == "active":
@@ -464,6 +471,7 @@ def test_kodi_guards(kodi, case):
         client.rows["movie:10"]["uniqueid"]["imdb"] = "tt0000999"
     elif case == "ambiguous":
         client.rows["movie:11"] = kodi_row(11)
+        destination(cfg, update_all_copies=False)
     elif case == "library":
         cfg["kodi"]["history"] = {"libraries": ["/somewhere/else"]}
     elif case == "active":
@@ -629,3 +637,82 @@ def test_catalog_survives_connection_renewal_but_refreshes_after_six_hours(kodi,
     current[0] += 21600
     assert sink.send(ev, cfg)["ok"]
     assert len([c for c in client.calls if c[0] == "VideoLibrary.GetMovies"]) == 2
+
+
+def test_media_server_identical_copies_are_all_updated(media_server):
+    provider, cls, http, _ = media_server
+    http.rows["11"] = row("11", LibraryId="L2")
+    assert cls().send(event(), config(provider)) == {"ok": True, "copies": 2}
+    assert http.rows["10"]["UserData"]["Played"] and http.rows["11"]["UserData"]["Played"]
+    stamps = {http.rows[iid]["UserData"]["LastPlayedDate"] for iid in ("10", "11")}
+    assert len(stamps) == 1 and "2020-01-01T00:00:00Z" not in stamps
+
+
+def test_media_server_copies_with_conflicting_ids_stay_ambiguous(media_server):
+    provider, cls, http, _ = media_server
+    http.rows["10"]["ProviderIds"]["Imdb"] = "tt0000001"
+    http.rows["11"] = row("11", ids={"Tmdb": "42", "Imdb": "tt0000002"})
+    assert cls().send(event(), config(provider))["error"] == "ambiguous_ids"
+    assert not any(c[0] == "POST" for c in http.calls)
+
+
+def test_media_server_route_libraries_replace_connection_selection(media_server):
+    provider, cls, http, _ = media_server
+    http.rows["11"] = row("11", LibraryId="L2")
+    cfg = destination(config(provider), libraries=["L2"])
+    cfg[provider]["history"] = {"libraries": ["L1"]}
+    assert cls().send(event(), cfg) == {"ok": True}
+    assert http.rows["11"]["UserData"]["Played"] and not http.rows["10"]["UserData"]["Played"]
+
+
+def test_kodi_identical_copies_are_all_updated(kodi):
+    cls, client, _ = kodi
+    client.rows["movie:11"] = kodi_row(11, file="/media4k/movie.mkv")
+    assert cls().send(event(), config("kodi")) == {"ok": True, "copies": 2}
+    assert client.rows["movie:10"]["playcount"] == 1 and client.rows["movie:11"]["playcount"] == 1
+    assert client.rows["movie:10"]["lastplayed"] == client.rows["movie:11"]["lastplayed"]
+
+
+def test_kodi_route_libraries_replace_connection_selection(kodi):
+    cls, client, _ = kodi
+    client.rows["movie:11"] = kodi_row(11, file="/media4k/movie.mkv")
+    cfg = destination(config("kodi"), libraries=["/media4k"])
+    cfg["kodi"]["history"] = {"libraries": ["/media"]}
+    assert cls().send(event(), cfg) == {"ok": True}
+    assert client.rows["movie:11"]["playcount"] == 1 and client.rows["movie:10"]["playcount"] == 0
+
+
+def test_webhook_route_cfg_passes_destination_scope():
+    from providers.webhooks.dispatch import _route_cfg
+    cfg = {"scrobble": {"webhook": {"profiles": {"plex": {"default": {
+        "destination_libraries": {"jellyfin": ["L2"]}, "update_all_copies": {"jellyfin": False}}}}}}}
+    view = _route_cfg(cfg, "plex", "default", "jellyfin", "default")
+    assert view["scrobble"]["watch"]["route_options"]["destination"] == {"libraries": ["L2"], "update_all_copies": False}
+    other = _route_cfg(cfg, "plex", "default", "emby", "default")
+    assert other["scrobble"]["watch"]["route_options"]["destination"] == {"libraries": []}
+    assert "route_options" not in _route_cfg(cfg, "plex", "default", "trakt", "default")["scrobble"]["watch"]
+
+
+def test_webhook_destination_scope_is_saved_per_destination(monkeypatch):
+    from api import scrobblerManagementAPI as api
+    cfg = config("jellyfin")
+    cfg["plex"] = {"server_url": "http://plex", "pms_token": "token"}
+    cfg["scrobble"]["webhook"] = {"profiles": {"plex": {"default": {"destination_libraries": {"emby": ["E1"]}}}}}
+    saved = []
+    monkeypatch.setattr(api, "load_config", lambda: cfg)
+    monkeypatch.setattr(api, "_ensure_media_profile_webhook_ids", lambda *a, **k: [])
+    monkeypatch.setattr(api, "_save_and_runtime", lambda request, before, after: saved.append(after) or {"ok": True})
+    body = {"provider": "plex", "sinks": ["jellyfin"], "sink_instances": {"jellyfin": "P01"},
+            "destination_libraries": {"jellyfin": [" L2 ", "L2"], "trakt": ["x"]}, "update_all_copies": {"jellyfin": False}}
+    assert api.api_profile_webhook_save(cast(Any, None), body).status_code == 200
+    node = saved[0]["scrobble"]["webhook"]["profiles"]["plex"]["default"]
+    assert node["destination_libraries"] == {"emby": ["E1"], "jellyfin": ["L2"]}
+    assert node["update_all_copies"] == {"jellyfin": False}
+
+
+def test_route_destination_options_are_kept_for_media_sinks_only():
+    from providers.scrobble.routes import normalize_route
+    raw = {"destination": {"libraries": [" L1 ", "L1", "", 7], "update_all_copies": False}}
+    assert normalize_route({"provider": "plex", "sink": "jellyfin", "options": raw}, "R1")["options"]["destination"] == {"libraries": ["L1", "7"], "update_all_copies": False}
+    assert "destination" not in normalize_route({"provider": "plex", "sink": "trakt", "options": raw}, "R1")["options"]
+    assert "destination" not in normalize_route({"provider": "plex", "sink": "jellyfin"}, "R1")["options"]

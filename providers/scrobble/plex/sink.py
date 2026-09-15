@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from typing import Any
 from urllib.parse import urlencode
 
-from providers.scrobble._media_server import DeliveryError, MediaServerSink, PUBLIC_IDS as _PUBLIC_IDS, ids_match as _id_match
+from providers.scrobble._media_server import DeliveryError, MediaServerSink, PUBLIC_IDS as _PUBLIC_IDS, combine_results, identical_copies, ids_match as _id_match
 from providers.scrobble.scrobble import ScrobbleEvent
 from providers.sync.plex._common import configure_plex_context, home_scope_enter, home_scope_exit, ids_from_obj, isolated_plex_context, plex_feature_library_ids
 from providers.sync.plex._progress import _currently_playing, _timeline_progress
@@ -41,7 +41,12 @@ def _matches(server: Any, obj: Any, item: Mapping[str, Any], allowed: set[str]) 
     return getattr(show, "type", "") == "show" and _id_match(show_ids, _object_ids(show))
 
 
-def _resolve(adapter: Any, item: Mapping[str, Any], allowed: set[str]) -> Any:
+def _library_key(value: Any) -> str:
+    text = str(value).strip()
+    return str(int(text)) if text.isdigit() else text
+
+
+def _resolve(adapter: Any, item: Mapping[str, Any], allowed: set[str], all_copies: bool) -> list[Any]:
     server = adapter.client.server
     candidates: dict[str, Any] = {}
     groups = [(item.get("ids") or {}, 4 if item["type"] == "episode" else 1)]
@@ -76,9 +81,11 @@ def _resolve(adapter: Any, item: Mapping[str, Any], allowed: set[str]) -> Any:
             continue
         if _matches(server, obj, item, allowed):
             matches[str(obj.ratingKey)] = obj
-    if len(matches) != 1:
-        raise DeliveryError("ambiguous_ids" if matches else "unmatched_in_plex")
-    return next(iter(matches.values()))
+    if not matches:
+        raise DeliveryError("unmatched_in_plex")
+    if len(matches) > 1 and not (all_copies and identical_copies(item.get("ids") or {}, [_object_ids(obj) for obj in matches.values()])):
+        raise DeliveryError("ambiguous_ids")
+    return list(matches.values())
 
 
 class PlexSink(MediaServerSink):
@@ -104,7 +111,7 @@ class PlexSink(MediaServerSink):
         with isolated_plex_context():
             return PLEXModule(cfg)
 
-    def _deliver(self, adapter: Any, item: dict[str, Any], complete: bool, progress: float) -> dict[str, Any]:
+    def _deliver(self, adapter: Any, item: dict[str, Any], complete: bool, progress: float, destination: dict[str, Any], played_at: int) -> dict[str, Any]:
         switched = False
         try:
             server = adapter.client.server
@@ -116,33 +123,37 @@ class PlexSink(MediaServerSink):
             if account_id is None and not username:
                 account_id = getattr(adapter.client, "user_account_id", None) or getattr(adapter.client, "token_account_id", None)
                 username = getattr(adapter.client, "user_username", None) or getattr(adapter.client, "token_username", None)
-            allowed = plex_feature_library_ids(adapter, "history" if complete else "progress")
-            obj = self._cached_target(
-                item, sorted(allowed), fetch=lambda rk: server.fetchItem(int(rk)),
+            allowed = {_library_key(value) for value in destination["libraries"]} or plex_feature_library_ids(adapter, "history" if complete else "progress")
+            all_copies = destination["all_copies"]
+            objs = self._cached_targets(
+                item, [sorted(allowed), all_copies], fetch=lambda rk: server.fetchItem(int(rk)),
                 matches=lambda row: _matches(server, row, item, allowed),
-                resolve=lambda: _resolve(adapter, item, allowed), key_of=lambda row: row.ratingKey,
+                resolve=lambda: _resolve(adapter, item, allowed, all_copies), key_of=lambda row: row.ratingKey,
             )
-            rk = str(obj.ratingKey)
-            if _currently_playing(server, rk, account_id=account_id, username=username, fail_on_error=True):
+            if any(_currently_playing(server, str(obj.ratingKey), account_id=account_id, username=username, fail_on_error=True) for obj in objs):
                 return {"ok": False, "retryable": True, "error": "active_destination_session"}
-            watched = bool(getattr(obj, "viewCount", 0))
-            if complete:
-                if not watched:
-                    server.query("/:/scrobble", method=server._session.put,
-                                 params={"key": rk, "identifier": "com.plexapp.plugins.library"})
-                if int(getattr(obj, "viewOffset", 0) or 0) > 0:
-                    _timeline_progress(adapter, server, rk, 0, int(getattr(obj, "duration", 0) or 0))
-            else:
-                if watched:
-                    return {"ok": True, "skipped": True, "reason": "destination_already_watched"}
-                duration = int(getattr(obj, "duration", 0) or 0)
-                if duration <= 0:
-                    raise DeliveryError("missing_destination_duration")
-                position = round(duration * progress / 100.0)
-                if position <= 0:
-                    return {"ok": True, "skipped": True, "reason": "no_progress"}
-                if abs(position - int(getattr(obj, "viewOffset", 0) or 0)) >= 1000:
-                    _timeline_progress(adapter, server, rk, position, duration)
-            return {"ok": True}
+            return combine_results([self._deliver_row(adapter, server, obj, complete, progress, played_at) for obj in objs])
         finally:
             home_scope_exit(adapter, switched)
+
+    def _deliver_row(self, adapter: Any, server: Any, obj: Any, complete: bool, progress: float, played_at: int) -> dict[str, Any]:
+        rk = str(obj.ratingKey)
+        watched = bool(getattr(obj, "viewCount", 0))
+        if complete:
+            if not watched:
+                server.query("/:/scrobble", method=server._session.put,
+                             params={"key": rk, "identifier": "com.plexapp.plugins.library", "viewedAt": played_at})
+            if int(getattr(obj, "viewOffset", 0) or 0) > 0:
+                _timeline_progress(adapter, server, rk, 0, int(getattr(obj, "duration", 0) or 0))
+            return {"ok": True}
+        if watched:
+            return {"ok": True, "skipped": True, "reason": "destination_already_watched"}
+        duration = int(getattr(obj, "duration", 0) or 0)
+        if duration <= 0:
+            raise DeliveryError("missing_destination_duration")
+        position = round(duration * progress / 100.0)
+        if position <= 0:
+            return {"ok": True, "skipped": True, "reason": "no_progress"}
+        if abs(position - int(getattr(obj, "viewOffset", 0) or 0)) >= 1000:
+            _timeline_progress(adapter, server, rk, position, duration)
+        return {"ok": True}

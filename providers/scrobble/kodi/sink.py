@@ -3,10 +3,11 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
-from providers.scrobble._media_server import DeliveryError, MediaServerSink, ids_match
-from providers.sync.kodi._common import normalize_uniqueids, path_allowed, watched_at_to_kodi
+from providers.scrobble._media_server import DeliveryError, MediaServerSink, combine_results, identical_copies, ids_match
+from providers.sync.kodi._common import _path_matches, normalize_uniqueids, path_allowed, watched_at_to_kodi
 
 _PROPS = {
     "movie": ["title", "uniqueid", "file", "playcount", "resume", "runtime"],
@@ -67,8 +68,13 @@ class KodiSink(MediaServerSink):
             raise DeliveryError("destination_catalog_limit")
         return out
 
-    def _matches(self, adapter: Any, row: dict, item: dict, feature: str) -> bool:
-        if row.get("_kind") != item["type"] or not path_allowed(adapter.config, feature, row.get("file"), self._instance_id):
+    def _in_scope(self, adapter: Any, feature: str, path: Any, libraries: list[str]) -> bool:
+        if libraries:
+            return _path_matches(path, libraries)
+        return path_allowed(adapter.config, feature, path, self._instance_id)
+
+    def _matches(self, adapter: Any, row: dict, item: dict, feature: str, libraries: list[str]) -> bool:
+        if row.get("_kind") != item["type"] or not self._in_scope(adapter, feature, row.get("file"), libraries):
             return False
         own, wanted = _ids(row), item.get("ids") or {}
         if ids_match(wanted, own):
@@ -78,7 +84,7 @@ class KodiSink(MediaServerSink):
             return False
         return ids_match(item["show_ids"], _ids(self._fetch(adapter, f"show:{row['tvshowid']}")))
 
-    def _resolve(self, adapter: Any, item: dict, feature: str, profile: str) -> dict:
+    def _resolve(self, adapter: Any, item: dict, feature: str, profile: str, libraries: list[str], all_copies: bool) -> list[dict]:
         candidates = []
         title = item.get("series_title") or item.get("title")
         if title:
@@ -89,20 +95,22 @@ class KodiSink(MediaServerSink):
                 for show in shows:
                     if ids_match(item.get("show_ids") or {}, _ids(show)):
                         candidates.extend(self._query(adapter, "episode", {"tvshowid": show["tvshowid"], "season": item["season"]}))
-        found = {_key(r): r for r in candidates if self._matches(adapter, r, item, feature)}
+        found = {_key(r): r for r in candidates if self._matches(adapter, r, item, feature, libraries)}
         if not found:
             rows = self._catalog(profile, lambda: [r for kind in ("movie", "show", "episode") for r in self._query(adapter, kind, {}, catalog=True)])
             shows = {r["tvshowid"] for r in rows if r["_kind"] == "show" and ids_match(item.get("show_ids") or {}, _ids(r))}
             candidates = [r for r in rows if r["_kind"] == item["type"] and (ids_match(item.get("ids") or {}, _ids(r))
                           or (item["type"] == "episode" and r.get("tvshowid") in shows
                               and r.get("season") == item.get("season") and r.get("episode") == item.get("episode")))]
-            found = {_key(r): r for r in candidates if self._matches(adapter, r, item, feature)}
-        if len(found) != 1:
-            raise DeliveryError("ambiguous_ids" if found else "unmatched_in_kodi")
-        row = self._fetch(adapter, next(iter(found)))
-        if not self._matches(adapter, row, item, feature):
+            found = {_key(r): r for r in candidates if self._matches(adapter, r, item, feature, libraries)}
+        if not found:
             raise DeliveryError("unmatched_in_kodi")
-        return row
+        if len(found) > 1 and not (all_copies and identical_copies(item.get("ids") or {}, [_ids(r) for r in found.values()])):
+            raise DeliveryError("ambiguous_ids")
+        rows = [self._fetch(adapter, key) for key in found]
+        if not all(self._matches(adapter, row, item, feature, libraries) for row in rows):
+            raise DeliveryError("unmatched_in_kodi")
+        return rows
 
     def _profile(self, adapter: Any) -> str:
         profile = adapter.client.rpc("Profiles.GetCurrentProfile")
@@ -114,27 +122,34 @@ class KodiSink(MediaServerSink):
         adapter._cw_sink_profile = self._profile(adapter)
         return adapter._cw_sink_profile
 
-    def _deliver(self, adapter: Any, item: dict[str, Any], complete: bool, progress: float) -> dict[str, Any]:
+    def _deliver(self, adapter: Any, item: dict[str, Any], complete: bool, progress: float, destination: dict[str, Any], played_at: int) -> dict[str, Any]:
         profile = adapter._cw_sink_profile
         feature = "history" if complete else "progress"
-        row = self._cached_target(item, [feature, profile], fetch=lambda key: self._fetch(adapter, key),
-                                 matches=lambda r: self._matches(adapter, r, item, feature),
-                                 resolve=lambda: self._resolve(adapter, item, feature, profile), key_of=_key)
+        libraries = destination["libraries"]
+        all_copies = destination["all_copies"]
+        scope = [libraries, all_copies, profile] if libraries else [feature, all_copies, profile]
+        rows = self._cached_targets(item, scope, fetch=lambda key: self._fetch(adapter, key),
+                                    matches=lambda r: self._matches(adapter, r, item, feature, libraries),
+                                    resolve=lambda: self._resolve(adapter, item, feature, profile, libraries, all_copies), key_of=_key)
         players = adapter.client.rpc("Player.GetActivePlayers")
         if not isinstance(players, list):
             raise DeliveryError("invalid_destination_sessions")
+        targets = {(row["_kind"], int(row[_ID[row["_kind"]]])) for row in rows}
         for player in players:
             if player.get("type") != "video":
                 continue
             playing = (adapter.client.rpc("Player.GetItem", {"playerid": player["playerid"]}) or {}).get("item") or {}
-            if playing.get("id") is not None and playing.get("type") == row["_kind"] and int(playing["id"]) == int(row[_ID[row["_kind"]]]):
+            if playing.get("id") is not None and (playing.get("type"), int(playing["id"])) in targets:
                 return {"ok": False, "retryable": True, "error": "active_destination_session"}
+        return combine_results([self._deliver_row(adapter, item, row, complete, progress, profile, played_at) for row in rows])
+
+    def _deliver_row(self, adapter: Any, item: dict[str, Any], row: dict, complete: bool, progress: float, profile: str, played_at: int) -> dict[str, Any]:
         watched = int(row.get("playcount") or 0) > 0
         total = float((row.get("resume") or {}).get("total") or row.get("runtime") or 0)
         if complete:
             payload: dict[str, Any] = {"resume": {"position": 0.0, "total": max(0.0, total)}}
             if not watched:
-                payload.update(playcount=1, lastplayed=watched_at_to_kodi(None))
+                payload.update(playcount=1, lastplayed=watched_at_to_kodi(datetime.fromtimestamp(played_at, timezone.utc).isoformat()))
         else:
             if watched:
                 return {"ok": True, "skipped": True, "reason": "destination_already_watched"}

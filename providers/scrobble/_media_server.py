@@ -39,6 +39,33 @@ def ids_match(wanted: dict, actual: dict) -> bool:
     return bool(common) and all(str(wanted[key]) == str(actual[key]) for key in common)
 
 
+def identical_copies(wanted: dict, copies: list[dict]) -> bool:
+    if len(copies) < 2 or not all(ids_match(wanted, own) for own in copies):
+        return False
+    return all(str(a[key]) == str(b[key])
+               for i, a in enumerate(copies) for b in copies[i + 1:]
+               for key in set(a) & set(b) & set(PUBLIC_IDS))
+
+
+def route_destination(cfg: dict[str, Any]) -> dict[str, Any]:
+    scrobble = cfg.get("scrobble") if isinstance(cfg, dict) else None
+    watch = scrobble.get("watch") if isinstance(scrobble, dict) else None
+    options = watch.get("route_options") if isinstance(watch, dict) else None
+    found = options.get("destination") if isinstance(options, dict) else None
+    destination: dict[str, Any] = found if isinstance(found, dict) else {}
+    raw = destination.get("libraries")
+    libraries = sorted({str(value).strip() for value in raw if str(value).strip()}) if isinstance(raw, list) else []
+    return {"libraries": libraries, "all_copies": destination.get("update_all_copies") is not False}
+
+
+def combine_results(results: list[dict[str, Any]]) -> dict[str, Any]:
+    written = [result for result in results if result.get("ok") and not result.get("skipped")]
+    combined = dict(written[0] if written else results[0])
+    if len(results) > 1:
+        combined["copies"] = len(results)
+    return combined
+
+
 def auto_remove(event: ScrobbleEvent, cfg: dict[str, Any], provider: str, instance: str) -> None:
     sc = cfg.get("scrobble") or {}
     mode = str(((sc.get("watch") or {}).get("route_options") or {}).get("auto_remove_watchlist") or "inherit").lower()
@@ -67,7 +94,7 @@ class MediaServerSink:
         self._adapter: Any = None
         self._identity = ""
         self._connected_at = 0.0
-        self._resolved: OrderedDict[str, tuple[float, str]] = OrderedDict()
+        self._resolved: OrderedDict[str, tuple[float, list[str]]] = OrderedDict()
         self._sent: OrderedDict[str, tuple[float, str, float]] = OrderedDict()
         self._catalogs: OrderedDict[str, tuple[float, Any]] = OrderedDict()
         self._misses: OrderedDict[str, tuple[float, str]] = OrderedDict()
@@ -75,7 +102,7 @@ class MediaServerSink:
     def _new_adapter(self, cfg: dict[str, Any]) -> Any:
         raise NotImplementedError
 
-    def _deliver(self, adapter: Any, item: dict[str, Any], complete: bool, progress: float) -> dict[str, Any]:
+    def _deliver(self, adapter: Any, item: dict[str, Any], complete: bool, progress: float, destination: dict[str, Any], played_at: int) -> dict[str, Any]:
         raise NotImplementedError
 
     def _delivery_context(self, adapter: Any) -> Any:
@@ -116,7 +143,7 @@ class MediaServerSink:
             self._catalogs.popitem(last=False)
         return rows
 
-    def _cached_target(self, item: dict, scope: Any, *, fetch: Callable, matches: Callable, resolve: Callable, key_of: Callable) -> Any:
+    def _cached_targets(self, item: dict, scope: Any, *, fetch: Callable, matches: Callable, resolve: Callable, key_of: Callable) -> list[Any]:
         key = json.dumps([item, scope], sort_keys=True)
         now = time.monotonic()
         miss = self._misses.get(key)
@@ -127,24 +154,24 @@ class MediaServerSink:
         cached = self._resolved.get(key)
         if cached and now - cached[0] < CACHE_TTL:
             try:
-                row = fetch(cached[1])
-                if matches(row):
-                    return row
+                rows = [fetch(target) for target in cached[1]]
+                if rows and all(matches(row) for row in rows):
+                    return rows
             except Exception:
                 pass
             self._resolved.pop(key, None)
         try:
-            row = resolve()
+            rows = resolve()
         except DeliveryError as exc:
             if str(exc).startswith("unmatched_in_") or str(exc) == "ambiguous_ids":
                 self._misses[key] = (now, str(exc))
                 if len(self._misses) > CACHE_MAX:
                     self._misses.popitem(last=False)
             raise
-        self._resolved[key] = (now, str(key_of(row)))
+        self._resolved[key] = (now, [str(key_of(row)) for row in rows])
         if len(self._resolved) > CACHE_MAX:
             self._resolved.popitem(last=False)
-        return row
+        return rows
 
     def send(self, event: ScrobbleEvent, cfg: dict[str, Any] | None = None) -> dict[str, Any]:
         cfg = cfg if isinstance(cfg, dict) else (self._cfg_provider() if self._cfg_provider else {})
@@ -189,7 +216,7 @@ class MediaServerSink:
                     if event.action == "start" and sent[1] == "start" and abs(progress - sent[2]) < step:
                         reason = "duplicate" if progress == sent[2] else "progress_step_not_reached"
                         return {"ok": True, "skipped": True, "reason": reason}
-                result = self._deliver(adapter, item, complete, progress)
+                result = self._deliver(adapter, item, complete, progress, route_destination(cfg), int(time.time()))
                 if not result.get("ok") or result.get("skipped"):
                     return result
                 self._sent[session] = (now, "complete" if complete else event.action, progress)

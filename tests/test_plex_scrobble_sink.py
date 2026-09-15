@@ -107,7 +107,8 @@ def test_completion_writes_put_once_and_never_uses_source_rating_key(harness):
     assert dest.send(ev, config()) == {"ok": True}
     assert dest.send(ev, config())["reason"] == "duplicate"
     writes = [x for x in server.calls if x[1]]
-    assert writes == [("/:/scrobble", "PUT", {"key": "10", "identifier": "com.plexapp.plugins.library"})]
+    assert len(writes) == 1 and isinstance(writes[0][2]["viewedAt"], int)
+    assert writes == [("/:/scrobble", "PUT", {"key": "10", "identifier": "com.plexapp.plugins.library", "viewedAt": writes[0][2]["viewedAt"]})]
     assert records[0]["destination_provider"] == "plex"
 
 
@@ -192,6 +193,7 @@ def test_rejects_unsafe_or_unresolved_writes(harness, monkeypatch, reason):
         server.items["10"].guids.append(SimpleNamespace(id="imdb://tt999"))
     elif reason == "ambiguous":
         server.items["11"] = media("11")
+        cfg["scrobble"]["watch"]["route_options"] = {"destination": {"update_all_copies": False}}
     elif reason == "outside_library":
         cfg["plex"]["history"] = {"libraries": [2]}
     result = plex.PlexSink().send(ev, cfg)
@@ -655,6 +657,26 @@ def test_existing_watched_item_is_not_unwatched_by_partial_scrobble(harness):
     result = plex.PlexSink().send(event(action="pause", progress=30), config())
     assert result["reason"] == "destination_already_watched"
     assert not any(x[1] for x in server.calls)
+
+
+def test_identical_copies_are_all_updated(harness):
+    server, _, _ = harness
+    server.items["11"] = media("11")
+    server.items["11"].librarySectionID = "2"
+    assert plex.PlexSink().send(event(), config()) == {"ok": True, "copies": 2}
+    assert server.items["10"].viewCount == 1 and server.items["11"].viewCount == 1
+    assert len({x[2]["viewedAt"] for x in server.calls if x[0] == "/:/scrobble"}) == 1
+
+
+def test_route_libraries_replace_connection_selection(harness):
+    server, _, _ = harness
+    server.items["11"] = media("11")
+    server.items["11"].librarySectionID = "2"
+    cfg = config()
+    cfg["plex"]["history"] = {"libraries": [1]}
+    cfg["scrobble"]["watch"]["route_options"] = {"destination": {"libraries": ["2"]}}
+    assert plex.PlexSink().send(event(), cfg) == {"ok": True}
+    assert server.items["11"].viewCount == 1 and server.items["10"].viewCount == 0
 
 
 def test_scrobbler_instance_dropdowns():

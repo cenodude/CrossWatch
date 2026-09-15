@@ -10,6 +10,7 @@ from cw_platform.provider_instances import get_provider_block, normalize_instanc
 DEFAULT_INSTANCE_ID = "default"
 ROUTE_PROVIDERS = {"plex", "emby", "jellyfin", "kodi", "scrob"}
 ROUTE_SINKS = {"plex", "jellyfin", "emby", "kodi", "trakt", "simkl", "mdblist", "crosswatch", "floppy", "punchplay", "bingebase", "flicklist", "scrob"}
+ROUTE_MEDIA_SINKS = {"plex", "jellyfin", "emby", "kodi"}
 ROUTE_RATING_SINKS = {"trakt", "simkl", "mdblist", "crosswatch", "floppy", "punchplay", "flicklist", "scrob"}
 ROUTE_OPTION_STATES = {"inherit", "on", "off"}
 ROUTE_RATINGS_MODES = {"off", "custom"}
@@ -145,7 +146,7 @@ def normalize_route_options(options: Any) -> dict[str, Any]:
         if key in watch_src:
             watch[key] = watch_src.get(key) is True if key in ROUTE_WATCH_STRICT_BOOLEAN_KEYS else bool(watch_src.get(key))
 
-    return {
+    out: dict[str, Any] = {
         "auto_remove_watchlist": auto_remove,
         "ratings": {
             "mode": ratings_mode,
@@ -156,6 +157,19 @@ def normalize_route_options(options: Any) -> dict[str, Any]:
         "scrobble": scrobble,
         "watch": watch,
     }
+    destination_raw = raw.get("destination")
+    if isinstance(destination_raw, dict):
+        libraries_raw = destination_raw.get("libraries")
+        libraries: list[str] = []
+        for value in libraries_raw if isinstance(libraries_raw, list) else []:
+            text = str(value if value is not None else "").strip()
+            if text and text not in libraries:
+                libraries.append(text)
+        destination: dict[str, Any] = {"libraries": libraries}
+        if "update_all_copies" in destination_raw:
+            destination["update_all_copies"] = destination_raw.get("update_all_copies") is not False
+        out["destination"] = destination
+    return out
 
 
 def route_options_has_watch_key(options: Any, key: str) -> bool:
@@ -189,6 +203,8 @@ def normalize_route(route: dict[str, Any], fallback_id: str) -> dict[str, Any]:
     options = normalize_route_options(raw_options)
     if prov == "plex" and not route_options_has_watch_key(raw_options, "unresolved_user_fallback"):
         options["watch"]["unresolved_user_fallback"] = True
+    if sink not in ROUTE_MEDIA_SINKS:
+        options.pop("destination", None)
     profile_id = normalize_user_profile_id(r.get("profile_id") or r.get("profileId"))
 
     out = {

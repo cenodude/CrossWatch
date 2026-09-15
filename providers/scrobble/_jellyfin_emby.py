@@ -3,15 +3,23 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from importlib import import_module
 from typing import Any
 from urllib.parse import quote
 
-from providers.scrobble._media_server import DeliveryError, MediaServerSink, PUBLIC_IDS, ids_match
+from providers.scrobble._media_server import DeliveryError, MediaServerSink, PUBLIC_IDS, combine_results, identical_copies, ids_match
 from providers.sync.jellyfin import _routes as jf_routes
 from providers.sync.jellyfin._common import _ids_from_provider_ids
 
 _FIELDS = "ProviderIds,ParentId"
+
+
+def _epoch(value: Any) -> int | None:
+    try:
+        return int(datetime.strptime(str(value or "")[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc).timestamp())
+    except ValueError:
+        return None
 
 
 def _ids(row: dict) -> dict[str, str]:
@@ -100,7 +108,7 @@ class JellyfinEmbySink(MediaServerSink):
         show = self._fetch(adapter, str(row["SeriesId"]))
         return show.get("Type") == "Series" and ids_match(show_ids, _ids(show))
 
-    def _resolve(self, adapter: Any, item: dict, allowed: set[str]) -> dict:
+    def _resolve(self, adapter: Any, item: dict, allowed: set[str], all_copies: bool) -> list[dict]:
         candidates: dict[str, dict] = {}
         groups = [(item.get("ids") or {}, "Episode" if item["type"] == "episode" else "Movie")]
         if item["type"] == "episode":
@@ -139,34 +147,45 @@ class JellyfinEmbySink(MediaServerSink):
                                       and str(r.get("SeriesId")) in shows
                                       and r.get("ParentIndexNumber") == item.get("season") and r.get("IndexNumber") == item.get("episode"))]
             found = matches(catalog_candidates)
-        if len(found) != 1:
-            raise DeliveryError("ambiguous_ids" if found else f"unmatched_in_{self.name}")
-        row = self._fetch(adapter, next(iter(found)))
-        if not self._matches(adapter, row, item, allowed):
+        if not found:
             raise DeliveryError(f"unmatched_in_{self.name}")
-        return row
+        if len(found) > 1 and not (all_copies and identical_copies(item.get("ids") or {}, [_ids(r) for r in found.values()])):
+            raise DeliveryError("ambiguous_ids")
+        rows = [self._fetch(adapter, iid) for iid in found]
+        if not all(self._matches(adapter, row, item, allowed) for row in rows):
+            raise DeliveryError(f"unmatched_in_{self.name}")
+        return rows
 
-    def _deliver(self, adapter: Any, item: dict[str, Any], complete: bool, progress: float) -> dict[str, Any]:
+    def _deliver(self, adapter: Any, item: dict[str, Any], complete: bool, progress: float, destination: dict[str, Any], played_at: int) -> dict[str, Any]:
         helpers = import_module(f"providers.sync.{self.name}._common")
         scope = getattr(helpers, "jf_selected_library_ids" if self.name == "jellyfin" else "emby_selected_library_ids")
-        allowed = scope(adapter.cfg, "history" if complete else "progress")
-        row = self._cached_target(item, sorted(allowed), fetch=lambda iid: self._fetch(adapter, iid),
-                                 matches=lambda r: self._matches(adapter, r, item, allowed),
-                                 resolve=lambda: self._resolve(adapter, item, allowed), key_of=lambda r: r["Id"])
+        allowed = set(destination["libraries"]) or scope(adapter.cfg, "history" if complete else "progress")
+        all_copies = destination["all_copies"]
+        rows = self._cached_targets(item, [sorted(allowed), all_copies], fetch=lambda iid: self._fetch(adapter, iid),
+                                    matches=lambda r: self._matches(adapter, r, item, allowed),
+                                    resolve=lambda: self._resolve(adapter, item, allowed, all_copies), key_of=lambda r: r["Id"])
         sessions = self._body(adapter.client.get("/Sessions"))
         if not isinstance(sessions, list):
             raise DeliveryError("invalid_destination_sessions")
-        if any(str(s.get("UserId") or "") == str(adapter.cfg.user_id)
-               and str((s.get("NowPlayingItem") or {}).get("Id") or "") == str(row["Id"]) for s in sessions if isinstance(s, dict)):
+        playing = {str((s.get("NowPlayingItem") or {}).get("Id") or "") for s in sessions
+                   if isinstance(s, dict) and str(s.get("UserId") or "") == str(adapter.cfg.user_id)}
+        if any(str(row["Id"]) in playing for row in rows):
             return {"ok": False, "retryable": True, "error": "active_destination_session"}
+        return combine_results([self._deliver_row(adapter, row, complete, progress, played_at) for row in rows])
+
+    def _deliver_row(self, adapter: Any, row: dict, complete: bool, progress: float, played_at: int) -> dict[str, Any]:
         data = row.get("UserData")
         if not isinstance(data, dict):
             raise DeliveryError("missing_destination_user_data")
         watched = bool(data.get("Played") or data.get("IsPlayed") or int(data.get("PlayCount") or 0) > 0)
+        moment = datetime.fromtimestamp(played_at, timezone.utc)
+        marked = False
         if complete and not watched:
             path, params = self._path(adapter, row["Id"], "played")
-            self._body(adapter.client.post(path, params=params), read=False)
+            date_played = moment.strftime("%Y%m%d%H%M%S") if self.name == "emby" else moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+            self._body(adapter.client.post(path, params={**params, "DatePlayed": date_played}), read=False)
             data = self._fetch(adapter, row["Id"]).get("UserData") or {}
+            marked = True
         elif not complete and watched:
             return {"ok": True, "skipped": True, "reason": "destination_already_watched"}
         if complete:
@@ -178,10 +197,14 @@ class JellyfinEmbySink(MediaServerSink):
             ticks = round(duration * progress / 100.0)
             if ticks <= 0:
                 return {"ok": True, "skipped": True, "reason": "no_progress"}
-        if int(data.get("PlaybackPositionTicks") or 0) != ticks:
-            if self.name == "jellyfin" and not adapter.client.progress_write_supported()[0]:
+        ticks_changed = int(data.get("PlaybackPositionTicks") or 0) != ticks
+        date_stale = marked and _epoch(data.get("LastPlayedDate")) != played_at
+        if ticks_changed or date_stale:
+            if ticks_changed and self.name == "jellyfin" and not adapter.client.progress_write_supported()[0]:
                 raise DeliveryError("jellyfin_progress_write_unsupported")
-            payload = {"PlaybackPositionTicks": ticks}
+            payload: dict[str, Any] = {"PlaybackPositionTicks": ticks}
+            if date_stale:
+                payload["LastPlayedDate"] = moment.strftime("%Y-%m-%dT%H:%M:%S.0000000Z")
             if self.name == "emby":
                 payload = {**{k: data[k] for k in ("Played", "PlayCount", "IsFavorite", "LastPlayedDate", "Rating") if k in data}, **payload}
             path, params = self._path(adapter, row["Id"], "data")

@@ -17,6 +17,7 @@ from cw_platform.user_profile_resources import webhook_assigned_profile_id, webh
 from cw_platform.provider_usage import WEBHOOK_SOURCE_PROVIDERS, provider_label, webhook_source_enabled
 from providers.auth import runtime as auth_runtime
 from providers.scrobble.routes import (
+    ROUTE_MEDIA_SINKS,
     ROUTE_PROVIDERS,
     ROUTE_SINKS,
     normalize_route,
@@ -75,6 +76,8 @@ WEBHOOK_SETTING_KEYS = {
     "anime_mapping_crosswatch",
     "anime_mapping_simkl",
     "simkl_rewatches",
+    "destination_libraries",
+    "update_all_copies",
 }
 
 
@@ -266,6 +269,26 @@ def _normalize_filters(value: Any, provider: str, field: str = "filters") -> dic
     return out
 
 
+def _library_list(value: Any) -> list[str]:
+    out: list[str] = []
+    for item in value if isinstance(value, list) else []:
+        text = str(item if item is not None else "").strip()
+        if text and text not in out:
+            out.append(text)
+    return out
+
+
+def _webhook_sink_map(value: Any, field: str, convert: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValidationFailure([_err(field, "invalid_structure", "Value must be an object keyed by destination")])
+    out: dict[str, Any] = {}
+    for sink, item in value.items():
+        key = _sink_provider(sink, f"{field}.{sink}")
+        if key in ROUTE_MEDIA_SINKS:
+            out[key] = convert(item)
+    return out
+
+
 def _normalize_webhook_settings(cfg: Mapping[str, Any], provider: str, body: Mapping[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
     allowed = WEBHOOK_SETTING_KEYS | {"filters"}
@@ -310,6 +333,10 @@ def _normalize_webhook_settings(cfg: Mapping[str, Any], provider: str, body: Map
         key = f"anime_mapping_{sink}"
         if key in body:
             out[key] = bool(body.get(key)) if sink in selected_sinks else False
+    if "destination_libraries" in body:
+        out["destination_libraries"] = _webhook_sink_map(body.get("destination_libraries"), "destination_libraries", _library_list)
+    if "update_all_copies" in body:
+        out["update_all_copies"] = _webhook_sink_map(body.get("update_all_copies"), "update_all_copies", lambda value: value is not False)
     for key in ("pause_debounce_seconds", "suppress_start_at"):
         if key in body:
             val = _coerce_int(body.get(key), key)
@@ -800,6 +827,13 @@ def api_profile_webhook_save(request: Request, payload: dict[str, Any] = Body(..
                 node.pop(f"anime_mapping_{prev_sink}", None)
             if prev_sink == "simkl" and prev_sink not in sinks_now:
                 node.pop("simkl_rewatches", None)
+            if prev_sink and prev_sink not in sinks_now:
+                for key in ("destination_libraries", "update_all_copies"):
+                    if isinstance(node.get(key), dict):
+                        node[key].pop(prev_sink, None)
+        for key in ("destination_libraries", "update_all_copies"):
+            if key in settings:
+                node[key] = {**_dict(node.get(key)), **settings.pop(key)}
         node.update(settings)
         effective = webhook_settings(after, provider, instance)
         for sink in webhook_sinks(after, provider, instance):
