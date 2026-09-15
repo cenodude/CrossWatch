@@ -1082,6 +1082,12 @@ async def _lifespan(app: Any) -> AsyncIterator[None]:
             _wm_stop(app)
         except Exception:
             pass
+        try:
+            from services.log_archive import archive as _log_archive
+
+            _log_archive().flush()
+        except Exception:
+            pass
 
 app.router.lifespan_context = _lifespan
 
@@ -1610,6 +1616,7 @@ def main(host: str = "0.0.0.0", port: int = 8787) -> None:
         "port": port,
         "log_level": ("debug" if debug else "warning"),
         "access_log": debug_http,
+        "timeout_graceful_shutdown": 5,
     }
 
     if protocol == "https":
