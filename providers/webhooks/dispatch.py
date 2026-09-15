@@ -13,7 +13,7 @@ from cw_platform.user_profile_resources import webhook_assigned_profile_id, webh
 from providers.scrobble.anime_mapping import maybe_enrich_event_for_sink
 from providers.scrobble.media_filters import event_ignore_reason, log_media_filter_drop
 from providers.scrobble.scrobble import ScrobbleAction, ScrobbleEvent
-from providers.scrobble.routes import same_scrobble_endpoint
+from providers.scrobble.routes import ROUTE_MEDIA_SINKS, same_scrobble_endpoint
 from providers.webhooks.config import sink_configured, webhook_settings, webhook_sink_instance, webhook_sinks
 
 
@@ -172,6 +172,14 @@ def _route_cfg(cfg: dict[str, Any], provider: str, provider_instance: str, sink:
         watch["route_options"] = {"watch": {"anime_mapping": _anime_mapping_enabled(wh, sink)}}
     if sink == "simkl":
         watch["route_options"]["watch"]["simkl_rewatches"] = wh.get("simkl_rewatches") is True
+    if sink in ROUTE_MEDIA_SINKS:
+        libraries = wh.get("destination_libraries")
+        copies = wh.get("update_all_copies")
+        selected = libraries.get(sink) if isinstance(libraries, Mapping) else None
+        destination: dict[str, Any] = {"libraries": [str(x) for x in selected] if isinstance(selected, list) else []}
+        if isinstance(copies, Mapping) and copies.get(sink) is False:
+            destination["update_all_copies"] = False
+        watch["route_options"] = {"destination": destination}
     if provider == "plex":
         watch["filters"] = dict(wh.get("filters_plex") or {})
     elif provider == "emby":
