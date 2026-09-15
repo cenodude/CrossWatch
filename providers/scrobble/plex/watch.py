@@ -397,6 +397,7 @@ class WatchService:
         self._best_offset: dict[str, tuple[int, int, float]] = {}
         self._dur_cache: dict[int, tuple[int, float]] = {}
         self._last_event: dict[str, ScrobbleEvent] = {}
+        self._pkc_pending: dict[str, dict[str, Any]] = {}
         self._tl_last: dict[str, tuple[int, int, int, float]] = {}
         self._last_seek_emit: dict[str, float] = {}
         self._sess_identity_cache: dict[str, dict[str, Any]] = {}
@@ -1180,6 +1181,59 @@ class WatchService:
         raw["_cw_sessions_access_unavailable"] = True
         return ScrobbleEvent(**{**ev.__dict__, "raw": raw})
 
+    def _needs_pkc_support(self) -> bool:
+        try:
+            fn = getattr(self._dispatch, "needs_pkc_support", None)
+            return bool(fn()) if callable(fn) else False
+        except Exception:
+            return False
+
+    @staticmethod
+    def _psn_has_item(entry: dict[str, Any]) -> bool:
+        return any(str(entry.get(k) or "").strip() for k in ("ratingKey", "ratingkey", "key", "guid"))
+
+    def _drop_itemless_event(self, ev: ScrobbleEvent, entry: dict[str, Any]) -> None:
+        sk = str(ev.session_key or "").strip()
+        prev = self._last_event.get(sk) if sk else None
+        if ev.action == "stop" and isinstance(prev, ScrobbleEvent):
+            client = str(entry.get("clientIdentifier") or "").strip()
+            if client and self._needs_pkc_support():
+                self._pkc_pending[client] = {
+                    "session_key": sk,
+                    "view_offset": _safe_int(entry.get("viewOffset")),
+                    "event": prev,
+                    "ts": time.time(),
+                }
+            self._clear_currently_watching(prev)
+        self._dbg(f"drop '{ev.action}' without item sess={sk or '?'}")
+
+    def _pkc_merged_stop(self, ev: ScrobbleEvent, entry: dict[str, Any]) -> ScrobbleEvent:
+        client = str(entry.get("clientIdentifier") or "").strip()
+        pending = self._pkc_pending.pop(client, None) if client else None
+        if not isinstance(pending, dict):
+            return ev
+        sk = str(ev.session_key or "").strip()
+        origin = str(pending.get("session_key") or "")
+        prev = pending.get("event")
+        offset = pending.get("view_offset")
+        if (
+            not isinstance(prev, ScrobbleEvent)
+            or not sk
+            or sk == origin
+            or sk in self._last_emit
+            or offset is None
+            or _safe_int(entry.get("viewOffset")) != offset
+            or time.time() - float(pending.get("ts") or 0.0) > 2.0
+        ):
+            return ev
+        raw = dict(ev.raw or {})
+        ident = (prev.raw or {}).get("_cw_session_identity")
+        if isinstance(ident, dict):
+            raw["_cw_session_identity"] = dict(ident)
+        raw["_cw_pkc_merge"] = {"session_key": origin, "stop_session_key": sk}
+        self._dbg(f"PlexKodiConnect stop merged sess={origin} from sess={sk} user={_mask_account(prev.account)}")
+        return ScrobbleEvent(**{**ev.__dict__, "account": prev.account, "session_key": origin, "raw": raw})
+
     def _enrich_event_with_plex(self, ev: ScrobbleEvent) -> ScrobbleEvent | None:
         try:
             if not self._plex:
@@ -1412,6 +1466,12 @@ class WatchService:
             if not isinstance(ev, ScrobbleEvent):
                 self._dbg("alert parsed but no event produced (unknown shape)")
                 return
+            if isinstance(best_psn, dict):
+                if not self._psn_has_item(best_psn):
+                    self._drop_itemless_event(ev, best_psn)
+                    return
+                if ev.action == "stop":
+                    ev = self._pkc_merged_stop(ev, best_psn)
 
             # Ignore idle/incomplete Plex alerts with no user and no session.
             if not str(ev.account or "").strip() and not str(ev.session_key or "").strip():

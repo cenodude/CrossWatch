@@ -355,6 +355,16 @@ def from_plex_flat_playing(payload: dict[str, Any], defaults: dict[str, Any] | N
     return _event_from_meta(meta, payload)
 
 
+def plexkodiconnect_support_enabled(cfg: dict[str, Any]) -> bool:
+    try:
+        watch_cfg = ((cfg.get("scrobble") or {}).get("watch") or {})
+        route_options = watch_cfg.get("route_options") or {}
+        watch_options = route_options.get("watch") if isinstance(route_options, dict) else {}
+        return bool(isinstance(watch_options, dict) and watch_options.get("plexkodiconnect_support") is True)
+    except Exception:
+        return False
+
+
 class Dispatcher:
     def __init__(self, sinks: Iterable[ScrobbleSink], cfg_provider=None) -> None:
         self._sinks = list(sinks or [])
@@ -446,7 +456,25 @@ class Dispatcher:
                 fallback_account = str(plex_cfg.get("username") or "").strip()
         return fallback_account
 
+    def needs_pkc_support(self) -> bool:
+        try:
+            return plexkodiconnect_support_enabled(self._cfg_provider() or {})
+        except Exception:
+            return False
+
+    def _pkc_route_event(self, ev: ScrobbleEvent, cfg: dict[str, Any]) -> ScrobbleEvent:
+        raw = ev.raw if isinstance(ev.raw, dict) else {}
+        merge = raw.get("_cw_pkc_merge")
+        if not isinstance(merge, dict) or plexkodiconnect_support_enabled(cfg):
+            return ev
+        raw2 = dict(raw)
+        raw2.pop("_cw_pkc_merge", None)
+        raw2.pop("_cw_session_identity", None)
+        session_key = str(merge.get("stop_session_key") or "").strip() or ev.session_key
+        return ScrobbleEvent(**{**ev.__dict__, "account": None, "session_key": session_key, "raw": raw2})
+
     def _route_event(self, ev: ScrobbleEvent, cfg: dict[str, Any]) -> ScrobbleEvent:
+        ev = self._pkc_route_event(ev, cfg)
         fallback_account = self._fallback_account(ev, cfg)
         if not fallback_account:
             return ev
@@ -500,6 +528,7 @@ class Dispatcher:
     def accepts_user(self, ev: ScrobbleEvent) -> bool:
         try:
             cfg = self._cfg_provider() or {}
+            ev = self._pkc_route_event(ev, cfg)
             acct = self._fallback_account(ev, cfg)
             if acct:
                 ev = ScrobbleEvent(**{**ev.__dict__, "account": acct})
