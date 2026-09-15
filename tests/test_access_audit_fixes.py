@@ -873,11 +873,14 @@ def test_profile_overview_uses_the_new_pair_layout() -> None:
     assert 'id="dashboard-widgets-card"' in html
 
 
-def test_profile_preferences_tab_and_panel_exist() -> None:
+def test_profile_settings_tab_and_panel_exist() -> None:
     html = _profile_html()
 
-    assert 'data-profile-tab="preferences"' in html
-    assert 'id="profile-panel-preferences"' in html
+    assert 'data-profile-tab="account"' in html
+    assert 'id="profile-panel-account"' in html
+    assert 'data-profile-tab="security"' not in html
+    assert 'data-profile-tab="preferences"' not in html
+    assert 'id="settings-interface"' in html
     assert 'id="profile-pref-playing-card"' in html
     assert 'id="profile-pref-quick-add"' in html
     assert html.count('id="profile-pref-playing-card" type="checkbox" checked') == 1
@@ -1136,7 +1139,7 @@ def test_main_dashboard_styles_are_not_touched() -> None:
     assert "cw-profile-page" not in main_css
 
 
-def test_preferences_tab_is_hidden_from_read_only_users() -> None:
+def test_settings_interface_is_hidden_from_read_only_users() -> None:
     import ui_frontend
 
     def page(**kw: Any) -> str:
@@ -1147,11 +1150,14 @@ def test_preferences_tab_is_hidden_from_read_only_users() -> None:
 
     for html in (page(is_admin=True, username="a"),
                  page(is_admin=False, username="f", permissions=full)):
-        assert 'data-profile-tab="preferences"' in html
-        assert 'id="profile-panel-preferences"' in html
+        assert 'data-profile-tab="account"' in html
+        assert 'id="settings-interface"' in html
+        assert 'data-settings-nav="interface"' in html
 
     ro = page(is_admin=False, username="r", permissions=readonly)
-    assert 'data-profile-tab="preferences"' not in ro
-    assert 'id="profile-panel-preferences"' not in ro
+    assert 'data-profile-tab="account"' in ro
+    assert 'id="settings-security"' in ro
+    assert 'id="settings-interface"' not in ro
+    assert 'data-settings-nav="interface"' not in ro
     assert 'id="profile-pref-playing-card"' not in ro
     assert ro.count("<section") == ro.count("</section>")
