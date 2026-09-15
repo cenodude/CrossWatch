@@ -501,7 +501,6 @@ def test_discovery_branding_and_frontend_wiring() -> None:
     assert "punchplay:" in links
     assert "#sec-punchplay>.head" in providers_css
     assert "#page-settings #sec-punchplay>.head" in providers_css
-    assert ".wl-provider-card.provider-punchplay" in providers_css
 
     core = (ROOT / "assets" / "helpers" / "core.js").read_text(encoding="utf-8")
     assert 'key: "PUNCHPLAY", paths: [["punchplay"], ["auth", "punchplay"]], keys: ["access_token"]' in core

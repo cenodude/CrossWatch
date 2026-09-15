@@ -11,7 +11,7 @@ export function pageBackLink(returnTo, currentHref, source = 'logs') {
     const path = target.hash.slice(1).split('?')[0];
     if (path === source) return fallback;
     const labels = new Map([
-      ['', 'Main'], ['main', 'Main'], ['watchlist', 'Watchlist'], ['playback_progress', 'Playback'],
+      ['', 'Main'], ['main', 'Main'],
       ['snapshots', 'Captures'], ['playlists', 'Playlists'], ['editor', 'Editor'], ['analyzer', 'Sync Analyzer'],
       ['maintenance', 'Maintenance tools'], ['events', 'Events'], ['logs', 'Logs'], ['import_export', 'Import and Export'], ['interactive_sync', 'Interactive Sync'],
       ['settings', 'Settings'], ['settings/overview', 'Settings'], ['settings/providers', 'Connections'],

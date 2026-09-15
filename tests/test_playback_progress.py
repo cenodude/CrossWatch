@@ -59,29 +59,8 @@ def _record(**overrides):
     return record
 
 
-def test_playback_bulk_footer_uses_wide_management_layout():
-    js = (ROOT / "assets" / "js" / "playback_progress.js").read_text(encoding="utf-8")
-    css = (ROOT / "assets" / "css" / "pages.css").read_text(encoding="utf-8")
-    shell = js[js.index("function shell()") : js.index('      <div class="pp-modal hidden" id="pp-progress-dialog"')]
-
-    assert 'class="pp-bulk-summary"' in shell
-    assert 'id="pp-selected-count" class="pp-selected-number">0</span>' in shell
-    assert 'class="pp-selected-copy"><strong>selected</strong><span>Select items to manage</span>' in shell
-    assert 'class="pp-btn pp-bulk-choice" id="pp-select-visible">${icon("visibility")}<span>Select Visible</span>' in shell
-    assert 'class="pp-btn pp-bulk-choice" id="pp-select-all">${icon("format_list_bulleted")}<span>Select All Filtered Results</span>' in shell
-    assert 'class="pp-btn pp-bulk-choice pp-bulk-clear" id="pp-clear-selection">${icon("cancel")}<span>Clear Selection</span>' in shell
-    assert 'class="pp-selected-pill"' not in shell
-    assert 'class="pp-bulk-divider"' not in shell
-    assert "#playback-progress-root .pp-bulk{position:sticky;bottom:12px;z-index:20;display:grid;grid-template-columns:minmax(220px,1fr)auto minmax(170px,1fr)" in css
-    assert "#playback-progress-root .pp-bulk-actions .pp-bulk-icon{width:48px;min-width:48px;height:48px;min-height:48px" in css
-    assert "#playback-progress-root .pp-bulk-actions #pp-bulk-edit{background:linear-gradient(180deg,rgba(63,126,255,0.56)" in css
-    assert "#playback-progress-root .pp-bulk-actions #pp-bulk-watch{background:linear-gradient(180deg,rgba(64,166,105,0.48)" in css
-    assert "#playback-progress-root .pp-bulk-actions #pp-bulk-remove{background:linear-gradient(180deg,rgba(181,48,68,0.58)" in css
-    assert "#playback-progress-root .pp-card.selected:before,#playback-progress-root .pp-card.selected:after{content:none !important;display:none !important}" in css
-
-
 def test_playback_progress_frontend_includes_kodi_provider_key():
-    js = (ROOT / "assets" / "js" / "playback_progress.js").read_text(encoding="utf-8")
+    js = (ROOT / "assets" / "js" / "profile-page.js").read_text(encoding="utf-8")
 
     keys = js.split("PLAYBACK_PROVIDER_KEYS")[1].split("]")[0]
     for provider in ("crosswatch", "trakt", "simkl", "mdblist", "publicmetadb", "punchplay", "flicklist", "plex", "emby", "jellyfin", "nuvio", "kodi", "stremio", "floppy"):
@@ -89,14 +68,11 @@ def test_playback_progress_frontend_includes_kodi_provider_key():
 
 
 def test_playback_progress_frontend_is_readonly_for_managed_users():
-    js = (ROOT / "assets" / "js" / "playback_progress.js").read_text(encoding="utf-8")
+    js = (ROOT / "assets" / "js" / "profile-page.js").read_text(encoding="utf-8")
 
-    assert 'document.documentElement?.dataset?.cwRole === "user"' in js
-    assert "if (isReadOnly()) return;" in js
-    assert "user_profile" in js
-    assert "window.CW?.OverviewProfile?.id" in js
-    assert 'window.addEventListener("cw:overview-profile-changed"' in js
-    assert "CARD.cacheScope" not in js
+    assert 'const isManaged = () => doc?.dataset?.cwRole === "user";' in js
+    assert 'const canAct = () => !isManaged() || doc?.dataset?.cwPermWrite === "on";' in js
+    assert "if (!canAct() || !items.length) return;" in js
 
 
 def test_playback_progress_provider_instances_respect_user_filter():
@@ -666,7 +642,7 @@ def test_playback_progress_uses_crosswatch_profiles(monkeypatch, tmp_path):
 
 
 def test_playback_progress_settings_use_short_crosswatch_profile_ids() -> None:
-    js = (ROOT / "assets" / "js" / "playback_progress.js").read_text(encoding="utf-8")
+    js = (ROOT / "assets" / "js" / "profile-page.js").read_text(encoding="utf-8")
 
     assert 'String(p.provider || "").toLowerCase() === "crosswatch"' in js
     assert "/^CW-P\\d+$/i.test(id)" in js
@@ -1369,30 +1345,9 @@ def test_tmdb_cache_is_bounded(monkeypatch):
     assert "fresh11" in provider._cache
 
 
-def test_provider_filter_uses_friendly_instance_labels() -> None:
-    js = Path("assets/js/playback_progress.js").read_text("utf-8")
-    block = js.split("function providerOptions(", 1)[1].split("function loadingCard(", 1)[0]
-
-    assert 'String(p.instance_label || "").trim() || profileLabel(p)' in block
-    assert "compactProfileLabel(p)" not in block
-    assert 'label: label || providerLabel(provider)' in block
-    assert 'label: label || "Default"' not in block
-
-
-def test_provider_pills_use_friendly_instance_labels() -> None:
-    js = Path("assets/js/playback_progress.js").read_text("utf-8")
-    pills = js.split("const providerPills = (it)", 1)[1].split("const profileLabel = (p)", 1)[0]
-    compact = js.split("const compactProfileLabel = (p)", 1)[1].split("const settingsProviderOrder", 1)[0]
-
-    assert "compactProfileLabel(p)" in pills
-    assert "return profileLabel(p);" in compact
-    assert "padStart(2" not in compact
-    assert 'if (id.toLowerCase() === "default") return "";' in compact
-
-
 def test_profile_label_drops_the_separator_left_by_the_prefix() -> None:
-    js = Path("assets/js/playback_progress.js").read_text("utf-8")
-    block = js.split("const profileLabel = (p)", 1)[1].split("const compactProfileLabel", 1)[0]
+    js = Path("assets/js/profile-page.js").read_text("utf-8")
+    block = js.split("const profileLabel = (p) =>", 1)[1].split("const settingsLabel", 1)[0]
 
     assert r'replace(/^[\s_-]+/, "")' in block
 
@@ -1419,61 +1374,9 @@ def test_user_profile_filter_narrows_the_provider_instances() -> None:
     assert scoped == {("plex", "PLEX-P01")}
 
 
-def test_playback_page_has_a_hidden_user_profile_filter() -> None:
-    js = Path("assets/js/playback_progress.js").read_text("utf-8")
-
-    assert '<select class="pp-field hidden" id="pp-user-profile"' in js
-    assert '<option value="">All User Profiles</option>' in js
-
-
-def test_user_profile_filter_is_admin_only_and_hides_without_profiles() -> None:
-    js = Path("assets/js/playback_progress.js").read_text("utf-8")
-    rows = js.split("function userProfiles(", 1)[1].split("function userProfileOptions(", 1)[0]
-    opts = js.split("function userProfileOptions(", 1)[1].split("function providerOptions(", 1)[0]
-
-    assert "if (!op?.isAdmin) return [];" in rows
-    assert 'select.classList.toggle("hidden", !rows.length);' in opts
-    assert "if (!rows.length) return;" in opts
-
-
-def test_user_profile_filter_overrides_the_global_picker() -> None:
-    js = Path("assets/js/playback_progress.js").read_text("utf-8")
-    block = js.split("function query(", 1)[1].split("async function load(", 1)[0]
-
-    assert 'const scoped = String(state.filters.user_profile || "").trim();' in block
-    assert "state.userProfileTouched" in block
-    assert 'params.set("user_profile", profileId)' in block
-
-
-def test_user_profile_filter_mirrors_the_global_picker_until_touched() -> None:
-    js = Path("assets/js/playback_progress.js").read_text("utf-8")
-    block = js.split("function userProfileOptions(", 1)[1].split("function providerOptions(", 1)[0]
-
-    assert "state.userProfileTouched" in block
-    assert 'String(window.CW?.OverviewProfile?.id || "")' in block
-
-
 def test_settings_modal_shows_profile_names_without_the_provider() -> None:
-    js = Path("assets/js/playback_progress.js").read_text("utf-8")
-    block = js.split("const settingsProfileLabel = (p)", 1)[1].split("const settingsProviderCard", 1)[0]
+    js = Path("assets/js/profile-page.js").read_text("utf-8")
+    block = js.split("const settingsLabel = (p) =>", 1)[1].split("const providerOrder", 1)[0]
 
     assert "return profileLabel(p);" in block
-    assert "String(p.instance_label || id)" not in block
     assert 'if (id === "default") return "Default";' in block
-
-
-def test_provider_menu_is_wide_enough_for_qualified_labels() -> None:
-    js = Path("assets/js/playback_progress.js").read_text("utf-8")
-    block = js.split("function providerOptions(", 1)[1].split("function loadingCard(", 1)[0]
-
-    assert "menuMinWidth:" in block
-
-
-def test_late_shown_filters_are_enhanced_like_the_rest() -> None:
-    js = Path("assets/js/playback_progress.js").read_text("utf-8")
-    profile = js.split("function userProfileOptions(", 1)[1].split("function providerOptions(", 1)[0]
-    rating = js.split("function renderItems(", 1)[1].split("const markup =", 1)[0]
-
-    assert "ProfileSelect?.enhanceUserProfile?.(select" in profile
-    assert "IconSelect?.enhance?.(ratingFilter" in rating
-    assert "if (showRating)" in rating
