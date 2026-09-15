@@ -470,6 +470,16 @@ function bundleKey(s) {
             </div>
             <div id="ss-list" class="ss-list"></div>
             <div id="ss-list-footer" class="ss-row" style="justify-content:space-between;margin:10px 0 14px"></div>
+            <div id="ss-bulk" class="ss-bulk" hidden>
+              <span class="ss-bulk-count"><strong data-ss-count>0</strong><span>selected</span></span>
+              <button class="ss-bulk-btn" type="button" data-ss-bulk="visible"><span class="material-symbols-rounded" aria-hidden="true">select_all</span>Visible</button>
+              <button class="ss-bulk-btn" type="button" data-ss-bulk="none"><span class="material-symbols-rounded" aria-hidden="true">close</span>Clear</button>
+              <span class="ss-bulk-actions">
+                <button class="ss-bulk-btn" type="button" data-ss-bulk="compare" title="Compare two captures"><span class="material-symbols-rounded" aria-hidden="true">compare_arrows</span>Compare</button>
+                <button class="ss-bulk-btn" type="button" data-ss-bulk="export"><span class="material-symbols-rounded" aria-hidden="true">download</span>Export</button>
+                <button class="ss-bulk-btn danger" type="button" data-ss-bulk="delete"><span class="material-symbols-rounded" aria-hidden="true">delete</span>Delete</button>
+              </span>
+            </div>
           </div>
         </div>
         <div class="ss-col">
@@ -611,6 +621,12 @@ function bundleKey(s) {
     $("#ss-export-selected", page)?.addEventListener("click", () => onExportSelected());
     $("#ss-cleanup-old", page)?.addEventListener("click", () => onCleanupOldCaptures());
     $("#ss-view-details", page)?.addEventListener("click", () => onViewDetails());
+    const bulkBar = $("#ss-bulk", page);
+    if (bulkBar && bulkBar.parentElement !== page) page.appendChild(bulkBar);
+    bulkBar?.addEventListener("click", (ev) => {
+      const btn = ev.target?.closest?.("[data-ss-bulk]");
+      if (btn && !btn.disabled) onCaptureBulk(btn.dataset.ssBulk);
+    });
     $("#ss-restore-inst", page)?.addEventListener("change", () => { resetRestoreConfirm(); updateRestoreAvailability(); });
     $("#ss-restore-mode", page)?.addEventListener("change", () => updateRestoreModeUI());
     $$("[data-restore-mode]", page).forEach((btn) => btn.addEventListener("click", () => {
@@ -921,6 +937,61 @@ function bundleKey(s) {
     set("#ss-export-selected", selected.length > 0, "Select at least one capture");
     set("#ss-delete", selected.length > 0, "Select or load a capture");
     set("#ss-view-details", !!state.selectedSnap || selected.length > 0, "Select or load a capture");
+    syncCaptureBulkBar(page);
+  }
+
+  function syncCaptureBulkBar(page) {
+    const bar = $("#ss-bulk", page);
+    if (!bar) return;
+    const picks = Array.isArray(state.diffPick) ? state.diffPick.filter(Boolean) : [];
+    bar.hidden = picks.length === 0;
+    const label = $("[data-ss-count]", bar);
+    if (label) label.textContent = String(picks.length);
+    const compare = compareSelectionState();
+    $$("[data-ss-bulk]", bar).forEach((btn) => {
+      const isCompare = btn.dataset.ssBulk === "compare";
+      btn.disabled = !!state.busy || (isCompare && !compare.ok);
+      if (isCompare) btn.title = compare.reason || "Compare two captures";
+    });
+  }
+
+  function applyCapturePicks(picks) {
+    state.diffPick = picks;
+    if (picks.length !== 2) state.diffResult = null;
+    renderList();
+    renderDiffPicked();
+    renderDiff();
+    updateDiffAvailability();
+  }
+
+  function onCaptureBulk(action) {
+    const page = document.getElementById("page-snapshots");
+    if (!page || state.busy) return;
+    if (action === "visible") {
+      const picks = Array.isArray(state.diffPick) ? state.diffPick.filter(Boolean) : [];
+      $$("#ss-list tr[data-path]", page).forEach((row) => {
+        const path = row.dataset.path;
+        if (path && !picks.includes(path)) picks.push(path);
+      });
+      applyCapturePicks(picks);
+      return;
+    }
+    if (action === "none") {
+      state.selectedPath = "";
+      state.selectedSnap = null;
+      applyCapturePicks([]);
+      renderSelected();
+      updateRestoreAvailability();
+      return;
+    }
+    if (action === "compare") {
+      if (!compareSelectionState().ok) return;
+      page.querySelector('.ss-card[data-coll="compare"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
+      void onDiffRun();
+      return;
+    }
+    if (action === "export") void onExportSelected();
+    if (action === "delete") void onDeleteSelected();
   }
 
   function wireDiffControls() {
