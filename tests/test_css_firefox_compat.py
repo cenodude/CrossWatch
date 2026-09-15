@@ -79,4 +79,3 @@ def test_disabled_and_locked_controls_use_block_cursor() -> None:
 
     assert ".btn:disabled,.iconbtn:disabled{opacity:var(--cw-disabled-opacity,0.55);cursor:not-allowed;box-shadow:none}" in crosswatch_css
     assert "#page-snapshots .ss-capture-running .ss-item{cursor:not-allowed}" in pages_css
-    assert "#page-watchlist #wl-filter-state:disabled{opacity:var(--cw-disabled-opacity,.52);cursor:not-allowed}" in pages_css

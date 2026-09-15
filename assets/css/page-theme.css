@@ -2,15 +2,8 @@
  * Page styles own layout, provider colours and media artwork.
  */
 /* Legacy page aliases point to the shared palette while their layouts migrate. */
-html[data-cw-theme] :is(#page-watchlist, #page-editor .cw-root, #playback-progress-root, #page-snapshots, #page-playlists) {
-  --wl-shell-bg: var(--cw-theme-surface);
-  --wl-panel-bg: var(--cw-theme-surface-raised);
-  --wl-panel-bg-strong: var(--cw-theme-surface);
-  --wl-border: var(--cw-theme-border);
-  --wl-border-soft: var(--cw-theme-border);
+html[data-cw-theme] :is(#page-editor .cw-root, #page-snapshots, #page-playlists) {
   --wl-fg: var(--cw-theme-text);
-  --wl-fg-soft: var(--cw-theme-muted);
-  --wl-shadow: none;
   --cw-shell-bg: var(--cw-theme-surface);
   --cw-panel-bg: var(--cw-theme-surface-raised);
   --cw-panel-strong: var(--cw-theme-surface-strong);
@@ -19,15 +12,6 @@ html[data-cw-theme] :is(#page-watchlist, #page-editor .cw-root, #playback-progre
   --cw-fg: var(--cw-theme-text);
   --cw-fg-soft: var(--cw-theme-muted);
   --cw-shadow: none;
-  --pp-shell-bg: var(--cw-theme-surface);
-  --pp-panel-bg: var(--cw-theme-surface-raised);
-  --pp-panel-bg-strong: var(--cw-theme-surface);
-  --pp-input-bg: var(--cw-theme-input);
-  --pp-border: var(--cw-theme-border);
-  --pp-border-soft: var(--cw-theme-border);
-  --pp-fg: var(--cw-theme-text);
-  --pp-soft: var(--cw-theme-muted);
-  --pp-shadow: none;
   --ss-panel: var(--cw-theme-surface);
   --ss-panel-strong: var(--cw-theme-surface-raised);
   --ss-border: var(--cw-theme-border);
@@ -104,7 +88,7 @@ dialog.cw-page-panel {
   -webkit-text-fill-color: currentColor;
 }
 
-#layout .cw-themed-page :is(.wl-hero-summary, .pp-hero-summary, .ss-hero-summary, .cw-editor-hero-summary) {
+#layout .cw-themed-page :is(.ss-hero-summary, .cw-editor-hero-summary) {
   background: var(--cw-page-toolbar-bg);
   border: 1px solid var(--cw-theme-border);
   border-color: var(--cw-theme-border);
@@ -112,20 +96,20 @@ dialog.cw-page-panel {
   box-shadow: none;
   color: var(--cw-theme-text);
 }
-#layout .cw-themed-page :is(.wl-hero-seg, .pp-hero-seg, .ss-hero-seg, .cw-editor-hero-seg, .pp-page-control, .wl-hero-refresh, .ss-hero-refresh, .cw-editor-refresh) {
+#layout .cw-themed-page :is(.ss-hero-seg, .cw-editor-hero-seg, .ss-hero-refresh, .cw-editor-refresh) {
   background: transparent;
   border-color: var(--cw-theme-border);
   color: var(--cw-theme-text);
 }
-#layout .cw-themed-page :is(.wl-hero-seg, .pp-hero-seg, .ss-hero-seg, .cw-editor-hero-seg) strong {
+#layout .cw-themed-page :is(.ss-hero-seg, .cw-editor-hero-seg) strong {
   color: var(--cw-theme-text);
   -webkit-text-fill-color: currentColor;
 }
-#layout .cw-themed-page :is(.wl-hero-seg, .pp-hero-seg, .ss-hero-seg, .cw-editor-hero-seg) > span {
+#layout .cw-themed-page :is(.ss-hero-seg, .cw-editor-hero-seg) > span {
   color: var(--cw-theme-muted);
 }
 
-#layout .cw-themed-page :is(.wl-btn, .wl-chip, .pl-btn, .cw-btn, .pp-field, .wl-input, .cw-input, .cw-select) {
+#layout .cw-themed-page :is(.pl-btn, .cw-btn, .cw-input, .cw-select) {
   background: var(--cw-control-bg, var(--cw-page-control-bg));
   border: 1px solid var(--cw-control-border, var(--cw-theme-border-strong));
   border-radius: var(--cw-page-control-radius);
@@ -139,7 +123,7 @@ dialog.cw-page-panel {
 }
 
 /* Generic form rules still serve legacy dialogs. Keep this boundary small. */
-#layout .cw-themed-page :is(.cw-page-panel, .cw-page-toolbar, .cw-page-hero, .cw-page-table) :is(.wl-btn, .wl-chip, .pl-btn, .cw-btn, .pp-field, .wl-input, .cw-input, .cw-select, .input, .cw-icon-select-btn, input[type="search"], input[type="text"], select) {
+#layout .cw-themed-page :is(.cw-page-panel, .cw-page-toolbar, .cw-page-hero, .cw-page-table) :is(.pl-btn, .cw-btn, .cw-input, .cw-select, .input, .cw-icon-select-btn, input[type="search"], input[type="text"], select) {
   background: var(--cw-control-bg, var(--cw-page-control-bg)) !important;
   border: 1px solid var(--cw-control-border, var(--cw-theme-border-strong)) !important;
   border-radius: var(--cw-page-control-radius) !important;
@@ -151,22 +135,22 @@ dialog.cw-page-panel {
   text-shadow: none !important;
   font-size: 14px !important;
 }
-#layout .cw-themed-page :is(.cw-page-panel, .cw-page-toolbar, .cw-page-hero) :is(.wl-btn, .wl-chip, .pl-btn, .cw-btn, .cw-icon-select-btn):hover:not(:disabled):not([aria-disabled="true"]) {
+#layout .cw-themed-page :is(.cw-page-panel, .cw-page-toolbar, .cw-page-hero) :is(.pl-btn, .cw-btn, .cw-icon-select-btn):hover:not(:disabled):not([aria-disabled="true"]) {
   --cw-control-bg: var(--cw-control-hover, var(--cw-page-hover-bg));
 }
-#layout .cw-themed-page :is(.wl-btn, .wl-chip, .pl-btn, .cw-btn, .cw-icon-select-btn):is(.active, .is-accent, [aria-pressed="true"]) {
+#layout .cw-themed-page :is(.pl-btn, .cw-btn, .cw-icon-select-btn):is(.active, .is-accent, [aria-pressed="true"]) {
   --cw-control-bg: var(--cw-page-selected-bg);
   --cw-control-hover: var(--cw-page-selected-bg);
   --cw-control-border: var(--cw-page-selected-border);
   --cw-control-text: var(--cw-page-selected-text);
 }
-#layout .cw-themed-page :is(.wl-btn, .pl-btn, .cw-btn):is(.primary, .accent) {
+#layout .cw-themed-page :is(.pl-btn, .cw-btn):is(.primary, .accent) {
   --cw-control-bg: var(--cw-page-primary-bg);
   --cw-control-hover: var(--cw-page-primary-hover);
   --cw-control-border: var(--cw-theme-accent);
   --cw-control-text: var(--cw-page-primary-text);
 }
-#layout .cw-themed-page :is(.wl-btn, .pl-btn, .cw-btn).danger {
+#layout .cw-themed-page :is(.pl-btn, .cw-btn).danger {
   --cw-control-bg: var(--cw-page-danger-bg);
   --cw-control-hover: var(--cw-page-danger-bg);
   --cw-control-border: var(--cw-theme-danger);
@@ -212,20 +196,20 @@ dialog.cw-page-panel {
   color: var(--cw-theme-text);
   -webkit-text-fill-color: currentColor;
 }
-#layout .cw-themed-page :is(.pl-section-sub, .ss-muted, .ss-summary-sub, .ins-kv > label, .field-label, .wl-toolbar-field-label) {
+#layout .cw-themed-page :is(.pl-section-sub, .ss-muted, .ss-summary-sub, .ins-kv > label, .field-label) {
   color: var(--cw-theme-muted);
   -webkit-text-fill-color: currentColor;
 }
 
 /* Secondary surfaces share the palette without changing media-card artwork. */
-html[data-cw-theme] #layout .cw-themed-page :is(.wl-empty, .pl-empty, .cw-empty, .wl-action-row, .wl-insight-score, .wl-insight-stat, .metric, .ss-selected-card, .ss-pick-card, .ss-modebtn) {
+html[data-cw-theme] #layout .cw-themed-page :is(.pl-empty, .cw-empty, .metric, .ss-selected-card, .ss-pick-card, .ss-modebtn) {
   background: var(--cw-theme-surface-raised);
   border-color: var(--cw-theme-border);
   box-shadow: none;
   color: var(--cw-theme-text);
 }
-html[data-cw-theme] #layout .cw-themed-page :is(.wl-action-row, .wl-insight-score, .wl-insight-stat, .metric)::before,
-html[data-cw-theme] #layout .cw-themed-page :is(.wl-action-row, .wl-insight-score, .wl-insight-stat, .metric)::after {
+html[data-cw-theme] #layout .cw-themed-page :is(.metric)::before,
+html[data-cw-theme] #layout .cw-themed-page :is(.metric)::after {
   display: none;
 }
 html[data-cw-theme] #layout .cw-themed-page .ss-modebtn.active {
