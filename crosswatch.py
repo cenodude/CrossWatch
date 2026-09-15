@@ -21,6 +21,7 @@ import threading
 import time
 import uvicorn
 import asyncio
+import logging
 
 # Mute Unverified HTTPS request warnings from requests/urllib3
 import urllib3
@@ -1652,7 +1653,14 @@ def main(host: str = "0.0.0.0", port: int = 8787) -> None:
         uv_args["ssl_certfile"] = str(cert_path)
         uv_args["ssl_keyfile"] = str(key_path)
 
+    logging.getLogger("uvicorn.error").addFilter(_ShutdownCancelFilter())
     uvicorn.run(app, **uv_args)
+
+
+class _ShutdownCancelFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        exc = record.exc_info[1] if record.exc_info else None
+        return not (isinstance(exc, asyncio.CancelledError) and str(record.msg).startswith("Exception in ASGI application"))
 
 
 if __name__ == "__main__":
