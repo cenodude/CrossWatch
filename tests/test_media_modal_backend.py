@@ -161,10 +161,21 @@ def test_title_presence_reports_each_provider_rating() -> None:
     assert result["present"] == [{**PLEX, "rating": 8}, {**TRAKT, "rating": 7}]
 
 
+def test_collection_lookup_keys_match_movies_shows_and_episodes() -> None:
+    movie = {"type": "movie", "ids": {"tmdb": 11}}
+    show = {"type": "show", "ids": {"tmdb": 1399}}
+    episode = {"type": "episode", "ids": {"tmdb": 63056}, "show_ids": {"tmdb": 1399}}
+
+    assert profileAPI._collection_tmdb_keys(movie) == {"movie:11"}
+    assert profileAPI._collection_tmdb_keys(show) == {"show:1399"}
+    assert profileAPI._collection_tmdb_keys(episode) == {"show:1399"}
+    assert profileAPI._collection_presence([]) is None
+
+
 def test_profile_title_payload_hides_watchlist_without_permission(monkeypatch) -> None:
     index = _watchlist_index()
     monkeypatch.setattr(profileAPI, "_profile_history_index", lambda _cfg, _profile, _source: (index, ""))
-    monkeypatch.setattr(profileAPI, "_collection_index", lambda *_a, **_k: ([], {}, {}))
+    monkeypatch.setattr(profileAPI, "_collection_lookup", lambda *_a, **_k: {})
 
     hidden = profileAPI.build_profile_title_payload({}, media="movie", tmdb=11, watchlist=False)
     shown = profileAPI.build_profile_title_payload({}, media="movie", tmdb=11, watchlist=True)

@@ -1102,6 +1102,7 @@ class PlaybackProgressService:
         force_refresh: bool = False,
         user_filter: Mapping[str, Any] | None = None,
         month: str | None = None,
+        tmdb: str | None = None,
     ) -> dict[str, Any]:
         cfg = load_config()
         provider_filter = str(provider or "").strip().lower()
@@ -1169,6 +1170,9 @@ class PlaybackProgressService:
         summary_rows = [dict(item) for item in items]
         summary = _playback_summary(summary_rows if provider_filter else _group_records(summary_rows))
         filtered = self._apply_filters(items, media_type=media_type, progress_min=progress_min, progress_max=progress_max, age=age, rating_min=rating_min, search=search)
+        wanted_tmdb = str(tmdb or "").strip()
+        if wanted_tmdb:
+            filtered = [item for item in filtered if str((item.get("ids") or {}).get("tmdb") or "").strip() == wanted_tmdb]
         if not provider_filter:
             filtered = _group_records(filtered)
         sorted_items = self._sort(filtered, sort)
