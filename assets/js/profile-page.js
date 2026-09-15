@@ -223,6 +223,25 @@
     el.__timer = setTimeout(() => el.classList.add("hidden"), 3200);
   };
   const empty = (text) => `<div class="cw-profile-empty">${esc(text)}</div>`;
+  const SETTINGS_CONFIRM_MS = 4200;
+  const armConfirm = (btn, label) => {
+    if (!btn) return false;
+    const reset = () => {
+      clearTimeout(btn.__cwConfirmTimer);
+      btn.classList.remove("is-confirming");
+      if (btn.__cwConfirmIdle !== undefined) btn.innerHTML = btn.__cwConfirmIdle;
+      btn.__cwConfirmIdle = undefined;
+    };
+    if (btn.classList.contains("is-confirming")) {
+      reset();
+      return true;
+    }
+    btn.__cwConfirmIdle = btn.innerHTML;
+    btn.classList.add("is-confirming");
+    btn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">warning</span><span>${esc(label)}</span>`;
+    btn.__cwConfirmTimer = setTimeout(reset, SETTINGS_CONFIRM_MS);
+    return false;
+  };
   const canWriteRecords = () => document.documentElement?.dataset?.cwRole !== "user" || document.documentElement?.dataset?.cwPermWrite === "on";
   const RECORD_SELECTION_MAX = 1000;
   const selectionFields = (item) => {
@@ -484,7 +503,7 @@
 
   function setAvatar(url) {
     const normalized = window.CW?.AccountMenu?.normalizeAvatarUrl?.(url) || String(url || "").trim();
-    const nodes = [$("#profile-avatar-button"), $("#cw-nav-profile-avatar")].filter(Boolean);
+    const nodes = [$("#profile-avatar-button"), $("#cw-nav-profile-avatar"), $("#profile-settings-avatar")].filter(Boolean);
     for (const node of nodes) {
       if (window.CW?.AccountMenu?.setAvatarNode) {
         window.CW.AccountMenu.setAvatarNode(node, normalized);
@@ -601,8 +620,7 @@
     $("#profile-username").textContent = `@${profile.username || ""}`;
     $("#profile-role").textContent = profile.is_admin ? "Administrator" : "Managed User";
     $("#profile-display-input").value = display;
-    $("#profile-2fa-state").textContent = profile.totp_enabled ? "Enabled" : "Off";
-    $("#profile-2fa-state").classList.toggle("is-enabled", !!profile.totp_enabled);
+    renderTwoFactor(!!profile.totp_enabled);
     setAvatar(profile.avatar_url || "");
     renderMemberSince(profile);
     renderPreferences(profile);
@@ -653,18 +671,62 @@
     if (quick) quick.checked = prefs.quick_add !== false;
   }
 
+  function renderTwoFactor(enabled) {
+    const state = $("#profile-2fa-state");
+    if (state) {
+      state.textContent = enabled ? "On" : "Off";
+      state.classList.toggle("is-enabled", enabled);
+    }
+    const copy = $("#profile-2fa-copy");
+    if (copy) copy.textContent = enabled ? "You enter a code from your phone when you sign in." : "Ask for a code from your phone when you sign in.";
+    for (const [sel, hide] of [["#profile-2fa-setup-btn", enabled], ["#profile-recovery-btn", !enabled], ["#profile-2fa-disable-btn", !enabled]]) {
+      const node = $(sel);
+      if (node) node.hidden = hide;
+    }
+  }
+
+  function friendlyAgo(value) {
+    let ts = Number(value || 0);
+    if (!Number.isFinite(ts) || ts <= 0) return "";
+    if (ts > 100000000000) ts = Math.floor(ts / 1000);
+    const delta = Math.max(0, Math.floor(Date.now() / 1000) - ts);
+    const units = [["year", 31536000], ["month", 2592000], ["week", 604800], ["day", 86400], ["hour", 3600], ["minute", 60]];
+    for (const [name, seconds] of units) {
+      const count = Math.floor(delta / seconds);
+      if (count >= 1) return `${count} ${name}${count === 1 ? "" : "s"} ago`;
+    }
+    return "just now";
+  }
+
+  function describeAgent(value) {
+    const ua = String(value || "").trim();
+    if (!ua) return { name: "Unknown device", icon: "devices" };
+    if (!/mozilla\//i.test(ua)) return { name: "App or script", icon: "apps" };
+    const browsers = [[/edg(?:e|a|ios)?\//i, "Edge"], [/opr\/|opera/i, "Opera"], [/firefox\/|fxios/i, "Firefox"], [/chrome\/|crios/i, "Chrome"], [/safari\//i, "Safari"]];
+    const systems = [[/iphone|ipad|ipod/i, "iOS"], [/android/i, "Android"], [/windows nt/i, "Windows"], [/cros/i, "ChromeOS"], [/mac os x|macintosh/i, "macOS"], [/linux/i, "Linux"]];
+    const browser = browsers.find(([re]) => re.test(ua))?.[1] || "Browser";
+    const os = systems.find(([re]) => re.test(ua))?.[1] || "";
+    const icon = /ipad|tablet/i.test(ua) ? "tablet" : /mobi|iphone|android/i.test(ua) ? "smartphone" : "computer";
+    return { name: os ? `${browser} on ${os}` : browser, icon };
+  }
+
   function renderSessions(user) {
     const host = $("#profile-sessions");
+    if (!host) return;
     const current = user?.current_session;
-    const others = Array.isArray(user?.other_sessions) ? user.other_sessions : [];
-    const rows = [];
-    if (current) rows.push({ ...current, current: true });
-    rows.push(...others);
+    const others = (Array.isArray(user?.other_sessions) ? user.other_sessions : [])
+      .slice()
+      .sort((a, b) => Number(b?.created_at || 0) - Number(a?.created_at || 0));
+    const rows = current ? [{ ...current, current: true }, ...others] : others;
+    const revokeAll = $("#profile-revoke-sessions");
+    if (revokeAll) revokeAll.hidden = !others.length;
     host.innerHTML = rows.length ? rows.map((row) => {
-      const ua = String(row.ua || "Browser").split(" ").slice(0, 5).join(" ");
-      const when = relTime(row.created_at);
-      const action = row.current ? `<span>Current</span>` : `<button class="cw-profile-session-kill" type="button" data-session-id="${esc(row.id)}" title="Revoke session" aria-label="Revoke session"><span class="material-symbols-rounded" aria-hidden="true">logout</span></button>`;
-      return `<div class="cw-profile-row"><span class="material-symbols-rounded" aria-hidden="true">devices</span><div><strong>${esc(row.current ? "This session" : ua)}</strong><span>${esc([row.ip, when].filter(Boolean).join(" - "))}</span></div>${action}</div>`;
+      const agent = describeAgent(row.ua);
+      const since = friendlyAgo(row.created_at);
+      const meta = [since ? `Signed in ${since}` : "", row.ip].filter(Boolean).join(" · ");
+      const badge = row.current ? `<em class="cw-set-badge">This device</em>` : "";
+      const action = row.current ? "" : `<button class="cw-set-btn cw-set-btn--danger cw-danger-confirm" type="button" data-session-kill="${esc(row.id)}"><span class="material-symbols-rounded" aria-hidden="true">logout</span><span>Sign out</span></button>`;
+      return `<div class="cw-set-session${row.current ? " is-current" : ""}"><span class="cw-set-device material-symbols-rounded" aria-hidden="true">${esc(agent.icon)}</span><span class="cw-set-copy"><strong title="${esc(row.ua || "")}"><span>${esc(agent.name)}</span>${badge}</strong><small>${esc(meta)}</small></span>${action}</div>`;
     }).join("") : empty("No active sessions.");
   }
 
@@ -1159,6 +1221,13 @@
     return `${libraries[0]} +${libraries.length - 1}`;
   }
 
+  function collectionProviderStrip(item) {
+    const entries = collectionSourceProviders(item)
+      .map((provider) => ({ html: providerIconHtml(provider), title: visibleProviderLabel(provider) || String(provider), missing: false }))
+      .filter((entry) => entry.html);
+    return providerChipStrip(entries, "cw-profile-provider-badge cw-profile-provider-badge--icon");
+  }
+
   function collectionCard(item) {
     const key = storePosterItem(item);
     const [icon, kind] = collectionKind(item);
@@ -1168,7 +1237,7 @@
     const added = epochOf(item?.last_collected_at || item?.collected_at || item?.first_collected_at);
     const when = added ? relTime(added) : "";
     const art = poster(item, "w342");
-    const providerStrip = collectionSourceProviders(item).map(providerIconHtml).filter(Boolean).join("");
+    const providerStrip = collectionProviderStrip(item);
     const meta = [kind, episode || year, when, collectionLibrarySummary(item)].filter(Boolean).join(" · ");
     const inner = `<span class="cw-collection-poster">
         <img src="${esc(art)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'">
@@ -1349,7 +1418,7 @@
     const episode = episodeOf(item);
     const added = epochOf(item?.last_collected_at || item?.collected_at || item?.first_collected_at);
     const art = poster(item, "w342");
-    const providerStrip = collectionSourceProviders(item).map(providerIconHtml).filter(Boolean).join("");
+    const providerStrip = collectionProviderStrip(item);
     const stamp = episode || year;
     const stored = recallCollectionMeta(item);
     const release = collectionIsoFmt(collectionReleaseIso(item, null)) || stored?.r || "";
@@ -1906,12 +1975,32 @@
     return out;
   }
 
-  function timelineProviderChip(ref, role, options = {}) {
+  function timelineChipTitle(ref, role, rating = null) {
     const name = visibleProviderLabel(ref.provider) || ref.provider;
     const label = String(ref.instance || "default").toLowerCase() === "default" ? name : `${name} (${ref.instance})`;
     const verbs = { present: "On", missing: "Not on", source: "Played on", sink: "Sent to" };
+    return `${verbs[role] || ""} ${label}${rating != null ? ` · ${rating}/10` : ""}`.trim();
+  }
+
+  const PROVIDER_CHIP_MAX = 6;
+
+  function providerChipStrip(entries, moreClass) {
+    if (entries.length <= PROVIDER_CHIP_MAX) return entries.map((entry) => entry.html).join("");
+    const ordered = entries.filter((entry) => entry.missing).concat(entries.filter((entry) => !entry.missing));
+    const shown = ordered.slice(0, PROVIDER_CHIP_MAX - 1);
+    const hidden = ordered.slice(PROVIDER_CHIP_MAX - 1);
+    const names = hidden.map((entry) => entry.title);
+    return `${shown.map((entry) => entry.html).join("")}<span class="${esc(moreClass)} cw-provider-more" title="${esc(names.join("\n"))}" aria-label="${esc(`${hidden.length} more: ${names.join(", ")}`)}">+${hidden.length}</span>`;
+  }
+
+  function timelineChipEntry(ref, role, options = {}) {
+    return { html: timelineProviderChip(ref, role, options), title: timelineChipTitle(ref, role, options.rating ?? null), missing: role === "missing" };
+  }
+
+  function timelineProviderChip(ref, role, options = {}) {
+    const name = visibleProviderLabel(ref.provider) || ref.provider;
     const rating = options.rating ?? null;
-    const title = `${verbs[role] || ""} ${label}${rating != null ? ` · ${rating}/10` : ""}`.trim();
+    const title = timelineChipTitle(ref, role, rating);
     const logo = providerLogo(ref.provider);
     const mark = logo ? `<img src="${esc(logo)}" alt="" loading="lazy">` : `<span>${esc(name.slice(0, 2))}</span>`;
     const value = rating != null ? `<b>${esc(rating)}</b>` : "";
@@ -1926,10 +2015,9 @@
     const full = total > 0 && !missing.length;
     const base = Number(item?.rating);
     const conflict = withRatings && item?.agree === false;
-    const chips = present
-      .map((ref) => timelineProviderChip(ref, "present", withRatings ? { rating: ref.rating, differs: ref.rating != null && ref.rating !== base } : {}))
-      .concat(missing.map((ref) => timelineProviderChip(ref, "missing")))
-      .join("");
+    const chips = providerChipStrip(present
+      .map((ref) => timelineChipEntry(ref, "present", withRatings ? { rating: ref.rating, differs: ref.rating != null && ref.rating !== base } : {}))
+      .concat(missing.map((ref) => timelineChipEntry(ref, "missing"))), "cw-hist-provider");
     const label = conflict
       ? "Scores differ"
       : full
@@ -1954,7 +2042,7 @@
     const sinks = timelineEndpoints(item?.targets).filter((ref) => `${ref.provider}:${ref.instance}` !== sourceKey);
     const from = source ? timelineProviderChip(source, "source") : "";
     const to = sinks.length
-      ? `<span class="material-symbols-rounded cw-hist-route-arrow" aria-hidden="true">arrow_forward</span><span class="cw-hist-providers">${sinks.map((ref) => timelineProviderChip(ref, "sink")).join("")}</span>`
+      ? `<span class="material-symbols-rounded cw-hist-route-arrow" aria-hidden="true">arrow_forward</span><span class="cw-hist-providers">${providerChipStrip(sinks.map((ref) => timelineChipEntry(ref, "sink")), "cw-hist-provider")}</span>`
       : "";
     const label = sinks.length ? `Sent to ${numberFmt.format(sinks.length)}` : "Not sent";
     return `<span class="cw-hist-route${sinks.length ? "" : " is-unsent"}">${from}${to}<span class="cw-hist-coverage-label">${esc(label)}</span></span>`;
@@ -3498,10 +3586,10 @@
     };
     const providerChips = (item) => {
       const rows = Array.isArray(item?.providers) && item.providers.length ? item.providers : [item];
-      return timelineEndpoints(rows.map((row) => ({
+      return providerChipStrip(timelineEndpoints(rows.map((row) => ({
         provider: row?.provider,
         instance: String(row?.instance_id || "default").toLowerCase() === "default" ? "default" : profileLabel(row),
-      }))).map((ref) => timelineProviderChip(ref, "source")).join("");
+      }))).map((ref) => timelineChipEntry(ref, "source")), "cw-hist-provider");
     };
     const errorName = (error) => {
       const provider = String(error?.provider || "").trim();
@@ -4234,8 +4322,9 @@
 
   function wireTabs() {
     const tabFromHash = () => {
-      const key = profileRouteSegment(String(window.location?.hash || "").replace(/^#\/?/, "").split("?")[0].split("/")[0]);
-      return ["overview", "collection", "history", "ratings", "playback", "watchlist", "security", "preferences"].includes(key) ? key : "";
+      const raw = profileRouteSegment(String(window.location?.hash || "").replace(/^#\/?/, "").split("?")[0].split("/")[0]);
+      const key = raw === "security" || raw === "preferences" ? "account" : raw;
+      return ["overview", "collection", "history", "ratings", "playback", "watchlist", "account"].includes(key) ? key : "";
     };
     const selectTab = (key, opts = {}) => {
       const btn = document.querySelector(`[data-profile-tab="${key}"]`);
@@ -4267,7 +4356,8 @@
     const pick = () => input?.click();
     $("#profile-avatar-button")?.addEventListener("click", pick);
     $("#profile-avatar-replace")?.addEventListener("click", pick);
-    $("#profile-avatar-remove")?.addEventListener("click", async () => {
+    $("#profile-avatar-remove")?.addEventListener("click", async (event) => {
+      if (!armConfirm(event.currentTarget, "Confirm remove")) return;
       try {
         const data = await del("/api/profile/avatar");
         renderProfile(data);
@@ -4328,7 +4418,20 @@
         toast(e.message || "Could not save profile", true);
       }
     });
-    $("#profile-password-form")?.addEventListener("submit", async (event) => {
+    const passwordForm = $("#profile-password-form");
+    const passwordToggle = $("#profile-password-toggle");
+    const showPasswordForm = (open) => {
+      if (passwordForm) passwordForm.hidden = !open;
+      if (passwordToggle) {
+        passwordToggle.hidden = open;
+        passwordToggle.setAttribute("aria-expanded", String(open));
+      }
+      if (open) $("#profile-current-password")?.focus();
+      else passwordForm?.reset();
+    };
+    passwordToggle?.addEventListener("click", () => showPasswordForm(true));
+    $("#profile-password-cancel")?.addEventListener("click", () => showPasswordForm(false));
+    passwordForm?.addEventListener("submit", async (event) => {
       event.preventDefault();
       try {
         const data = await post("/api/profile/password", {
@@ -4336,8 +4439,7 @@
           new_password: $("#profile-new-password")?.value || "",
         });
         renderProfile(data);
-        $("#profile-current-password").value = "";
-        $("#profile-new-password").value = "";
+        showPasswordForm(false);
         toast("Password changed");
       } catch (e) {
         toast(e.message || "Could not change password", true);
@@ -4349,7 +4451,7 @@
     const wrap = document.createElement("div");
     wrap.className = "cw-profile-codes";
     const title = document.createElement("strong");
-    title.textContent = "Recovery codes";
+    title.textContent = "Backup codes";
     wrap.appendChild(title);
     for (const value of codes) {
       const code = document.createElement("code");
@@ -4367,17 +4469,17 @@
     const wrap = document.createElement("div");
     wrap.className = "cw-profile-codes cw-profile-codes--locked";
     const title = document.createElement("strong");
-    title.textContent = values.length ? "Recovery codes ready" : "No recovery codes available";
+    title.textContent = values.length ? "Backup codes ready" : "No backup codes available";
     const copy = document.createElement("span");
     copy.textContent = values.length
-      ? "These one-time codes are hidden until you reveal them."
-      : "No new recovery codes were returned.";
+      ? "Each code works once if you lose your phone. Keep them somewhere safe."
+      : "No new backup codes were created.";
     wrap.append(title, copy);
     if (values.length) {
       const reveal = document.createElement("button");
       reveal.className = "btn";
       reveal.type = "button";
-      reveal.textContent = "Show recovery codes";
+      reveal.textContent = "Show backup codes";
       reveal.addEventListener("click", () => {
         host.replaceChildren(recoveryCodesList(values));
       }, { once: true });
@@ -4396,13 +4498,26 @@
       state.textContent = linked ? "Linked" : "Off";
       state.classList.toggle("is-enabled", linked);
     }
-    if (summary) {
-      const name = String(status?.linked_username || status?.linked_email || "").trim();
-      const email = String(status?.linked_email || "").trim();
-      summary.innerHTML = linked ? `<strong>${esc(name || "Plex account")}</strong>${email && email !== name ? esc(email) : ""}` : "No Plex account linked.";
+    if (summary) summary.textContent = linked ? linkedAccountLabel(status, "Plex account") : "Not linked";
+    if (link) link.textContent = linked ? "Replace" : "Link";
+    if (unlink) unlink.hidden = !linked;
+    const logo = $("#profile-plex-logo");
+    const path = providerLogo("PLEX");
+    if (logo && path && !logo.getAttribute("src")) {
+      logo.onerror = () => {
+        logo.hidden = true;
+        if (logo.nextElementSibling) logo.nextElementSibling.hidden = false;
+      };
+      logo.src = path;
+      logo.hidden = false;
+      if (logo.nextElementSibling) logo.nextElementSibling.hidden = true;
     }
-    if (link) link.textContent = linked ? "Replace Plex account" : "Link Plex account";
-    if (unlink) unlink.classList.toggle("hidden", !linked);
+  }
+
+  function linkedAccountLabel(status, fallback) {
+    const name = String(status?.linked_username || status?.linked_email || "").trim();
+    const email = String(status?.linked_email || "").trim();
+    return [name || fallback, email && email !== name ? email : ""].filter(Boolean).join(" · ");
   }
 
   async function refreshPlexStatus() {
@@ -4435,7 +4550,8 @@
         toast(e.message || "Could not link Plex account", true);
       }
     });
-    $("#profile-plex-unlink")?.addEventListener("click", async () => {
+    $("#profile-plex-unlink")?.addEventListener("click", async (event) => {
+      if (!armConfirm(event.currentTarget, "Confirm unlink")) return;
       try {
         renderPlexStatus(await post("/api/app-auth/plex/unlink", {}));
         toast("Plex account unlinked");
@@ -4457,19 +4573,17 @@
       state.classList.toggle("is-enabled", linked);
     }
     if (summary) {
-      const name = String(status?.linked_username || status?.linked_email || "").trim();
-      const email = String(status?.linked_email || "").trim();
-      summary.innerHTML = !configured
-        ? "OIDC is not configured by the administrator."
+      summary.textContent = !configured
+        ? "Not available on this server"
         : linked
-          ? `<strong>${esc(name || "OIDC account")}</strong>${email && email !== name ? esc(email) : ""}`
-          : "No OIDC account linked.";
+          ? linkedAccountLabel(status, "OIDC account")
+          : "Not linked";
     }
     if (link) {
-      link.textContent = linked ? "Replace OIDC account" : "Link OIDC account";
+      link.textContent = linked ? "Replace" : "Link";
       link.disabled = !configured;
     }
-    if (unlink) unlink.classList.toggle("hidden", !linked);
+    if (unlink) unlink.hidden = !linked;
   }
 
   async function refreshOidcStatus() {
@@ -4502,7 +4616,8 @@
         toast(e.message || "Could not link OIDC account", true);
       }
     });
-    $("#profile-oidc-unlink")?.addEventListener("click", async () => {
+    $("#profile-oidc-unlink")?.addEventListener("click", async (event) => {
+      if (!armConfirm(event.currentTarget, "Confirm unlink")) return;
       try {
         renderOidcStatus(await post("/api/app-auth/oidc/unlink", {}));
         toast("OIDC account unlinked");
@@ -4514,17 +4629,76 @@
 
   function wireSecurity() {
     $("#profile-sessions")?.addEventListener("click", async (event) => {
-      const btn = event.target?.closest?.(".cw-profile-session-kill");
-      if (!btn) return;
+      const btn = event.target?.closest?.("[data-session-kill]");
+      if (!btn || !armConfirm(btn, "Confirm")) return;
+      btn.disabled = true;
       try {
-        const data = await del(`/api/profile/sessions/${encodeURIComponent(btn.dataset.sessionId || "")}`);
+        const data = await del(`/api/profile/sessions/${encodeURIComponent(btn.dataset.sessionKill || "")}`);
         renderProfile(data);
-        toast("Session revoked");
+        toast("Session signed out");
       } catch (e) {
-        toast(e.message || "Could not revoke session", true);
+        btn.disabled = false;
+        toast(e.message || "Could not sign out session", true);
+      }
+    });
+    const confirmBox = $("#profile-2fa-confirm");
+    const confirmInput = $("#profile-2fa-confirm-password");
+    const confirmGo = $("#profile-2fa-confirm-go");
+    let confirmAction = "";
+    const closeConfirm = () => {
+      confirmAction = "";
+      if (confirmBox) confirmBox.hidden = true;
+      if (confirmInput) confirmInput.value = "";
+    };
+    const askPassword = (action, label, go) => {
+      confirmAction = action;
+      const text = $("#profile-2fa-confirm-label");
+      if (text) text.textContent = label;
+      if (confirmGo) confirmGo.textContent = go;
+      if (confirmBox) confirmBox.hidden = false;
+      confirmInput?.focus();
+    };
+    const runConfirm = async () => {
+      const current = confirmInput?.value || "";
+      if (!current || !confirmAction) {
+        confirmInput?.focus();
+        return;
+      }
+      const action = confirmAction;
+      if (confirmGo) confirmGo.disabled = true;
+      try {
+        if (action === "disable") {
+          const data = await post("/api/profile/totp/disable", { current_password: current });
+          renderProfile(data);
+          const host = $("#profile-2fa-setup");
+          if (host) host.innerHTML = "";
+          closeConfirm();
+          toast("Two-step verification turned off");
+        } else {
+          const data = await post("/api/profile/recovery-codes", { current_password: current });
+          renderProfile(data);
+          closeConfirm();
+          showRecoveryCodes(data.recovery_codes || []);
+          toast("New backup codes created");
+        }
+      } catch (e) {
+        toast(e.message || (action === "disable" ? "Could not disable 2FA" : "Could not generate recovery codes"), true);
+      } finally {
+        if (confirmGo) confirmGo.disabled = false;
+      }
+    };
+    confirmGo?.addEventListener("click", () => void runConfirm());
+    $("#profile-2fa-confirm-cancel")?.addEventListener("click", closeConfirm);
+    confirmInput?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        void runConfirm();
+      } else if (event.key === "Escape") {
+        closeConfirm();
       }
     });
     $("#profile-2fa-setup-btn")?.addEventListener("click", async () => {
+      closeConfirm();
       try {
         const data = await post("/api/profile/totp/setup", {});
         $("#profile-2fa-setup").innerHTML = `<div class="cw-profile-qr"><div class="cw-profile-qr-code">${data.qr_svg || '<span class="material-symbols-rounded" aria-hidden="true">qr_code_2</span>'}</div><div class="cw-profile-qr-copy"><strong>Scan with your authenticator app</strong><span>Or enter this setup key manually.</span><code>${esc(data.secret || "")}</code><div class="cw-profile-qr-verify"><input id="profile-2fa-code" placeholder="123456" inputmode="numeric" autocomplete="one-time-code"><button id="profile-2fa-verify-now" class="btn primary" type="button">Verify</button></div></div></div>`;
@@ -4533,7 +4707,7 @@
             const done = await post("/api/profile/totp/verify", { code: $("#profile-2fa-code")?.value || "" });
             renderProfile(done);
             if (Array.isArray(done.recovery_codes)) showRecoveryCodes(done.recovery_codes);
-            toast("Two-factor authentication enabled");
+            toast("Two-step verification turned on");
           } catch (e) {
             toast(e.message || "Invalid verification code", true);
           }
@@ -4542,37 +4716,16 @@
         toast(e.message || "Could not start 2FA setup", true);
       }
     });
-    $("#profile-2fa-disable-btn")?.addEventListener("click", async () => {
-      const current = prompt("Current password");
-      if (!current) return;
-      try {
-        const data = await post("/api/profile/totp/disable", { current_password: current });
-        renderProfile(data);
-        $("#profile-2fa-setup").innerHTML = "";
-        toast("Two-factor authentication disabled");
-      } catch (e) {
-        toast(e.message || "Could not disable 2FA", true);
-      }
-    });
-    $("#profile-recovery-btn")?.addEventListener("click", async () => {
-      const current = prompt("Current password");
-      if (!current) return;
-      try {
-        const data = await post("/api/profile/recovery-codes", { current_password: current });
-        renderProfile(data);
-        showRecoveryCodes(data.recovery_codes || []);
-        toast("Recovery codes generated");
-      } catch (e) {
-        toast(e.message || "Could not generate recovery codes", true);
-      }
-    });
-    $("#profile-revoke-sessions")?.addEventListener("click", async () => {
+    $("#profile-2fa-disable-btn")?.addEventListener("click", () => askPassword("disable", "Enter your password to turn off two-step verification", "Turn off"));
+    $("#profile-recovery-btn")?.addEventListener("click", () => askPassword("recovery", "Enter your password to create new backup codes", "Create codes"));
+    $("#profile-revoke-sessions")?.addEventListener("click", async (event) => {
+      if (!armConfirm(event.currentTarget, "Confirm sign out")) return;
       try {
         const data = await post("/api/profile/sessions/revoke-others", {});
         renderProfile(data);
-        toast("Other sessions revoked");
+        toast("Other sessions signed out");
       } catch (e) {
-        toast(e.message || "Could not revoke sessions", true);
+        toast(e.message || "Could not sign out other sessions", true);
       }
     });
   }
@@ -4607,29 +4760,53 @@
     });
   }
 
-  function wirePreferences() {
-    $("#profile-pref-save")?.addEventListener("click", async (event) => {
-      const btn = event.currentTarget;
-      btn.disabled = true;
-      try {
-        const data = await api("/api/profile", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            preferences: {
-              playing_card: $("#profile-pref-playing-card")?.checked !== false,
-              quick_add: $("#profile-pref-quick-add")?.checked !== false,
-            },
-          }),
-        });
-        renderProfile(data);
-        toast("Preferences saved");
-      } catch (e) {
-        toast(e.message || "Preferences could not be saved", true);
-      } finally {
-        btn.disabled = false;
-      }
+  function wireSettingsNav() {
+    const nav = $(".cw-set-nav");
+    if (!nav) return;
+    const buttons = [...nav.querySelectorAll("[data-settings-nav]")];
+    const mark = (key) => buttons.forEach((btn) => btn.classList.toggle("active", btn.dataset.settingsNav === key));
+    nav.addEventListener("click", (event) => {
+      const btn = event.target?.closest?.("[data-settings-nav]");
+      if (!btn) return;
+      mark(btn.dataset.settingsNav);
+      document.getElementById(`settings-${btn.dataset.settingsNav}`)?.scrollIntoView({ block: "start", behavior: "smooth" });
     });
+    if (!("IntersectionObserver" in window)) return;
+    const observer = new IntersectionObserver((entries) => {
+      const hit = entries
+        .filter((entry) => entry.isIntersecting)
+        .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+      if (hit) mark(hit.target.dataset.settingsSection);
+    }, { rootMargin: "-20% 0px -65% 0px" });
+    document.querySelectorAll("[data-settings-section]").forEach((section) => observer.observe(section));
+  }
+
+  function wirePreferences() {
+    const inputs = [$("#profile-pref-playing-card"), $("#profile-pref-quick-add")].filter(Boolean);
+    for (const input of inputs) {
+      input.addEventListener("change", async () => {
+        inputs.forEach((node) => { node.disabled = true; });
+        try {
+          const data = await api("/api/profile", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              preferences: {
+                playing_card: $("#profile-pref-playing-card")?.checked !== false,
+                quick_add: $("#profile-pref-quick-add")?.checked !== false,
+              },
+            }),
+          });
+          renderProfile(data);
+          toast("Preferences saved");
+        } catch (e) {
+          input.checked = !input.checked;
+          toast(e.message || "Preferences could not be saved", true);
+        } finally {
+          inputs.forEach((node) => { node.disabled = false; });
+        }
+      });
+    }
   }
 
   let nowTimer = null;
@@ -4657,6 +4834,7 @@
     wireAvatar();
     wireForms();
     wireSecurity();
+    wireSettingsNav();
     wirePlexSso();
     wireOidcSso();
     wirePosterOverlay();

@@ -2206,29 +2206,21 @@ def get_profile_html(user: dict | None = None) -> str:
     display_name = esc((user or {}).get("display_name") or (user or {}).get("label") or (user or {}).get("username") or ("Administrator" if is_admin else "Profile"))
     write = "on" if perms.get("write") else "off"
     preferences_allowed = is_admin or bool(perms.get("write"))
-    preferences_tab = (
-        '    <button id="profile-tab-preferences" type="button" data-profile-tab="preferences">Preferences</button>'
+    settings_interface_nav = (
+        '        <button type="button" data-settings-nav="interface"><span class="material-symbols-rounded" aria-hidden="true">tune</span><span>Display</span></button>'
         if preferences_allowed else ""
     )
-    preferences_panel = """  <section id="profile-panel-preferences" class="cw-profile-panel">
-    <div class="cw-profile-security-grid">
-      <article class="cw-profile-widget">
-        <div class="cw-profile-widget-head"><h2>Interface</h2></div>
-        <p class="cw-profile-pref-intro">Choose which optional surfaces appear while you browse.</p>
-        <label class="cw-profile-pref">
-          <span><strong>Playing card</strong><small>Show the floating now-playing card while something is streaming.</small></span>
-          <input id="profile-pref-playing-card" type="checkbox" checked>
-        </label>
-        <label class="cw-profile-pref">
-          <span><strong>Quick add</strong><small>Show the quick add shortcut for logging watched items by hand.</small></span>
-          <input id="profile-pref-quick-add" type="checkbox" checked>
-        </label>
-        <div class="cw-profile-actions">
-          <button id="profile-pref-save" class="btn primary" type="button">Save preferences</button>
-        </div>
-      </article>
-    </div>
-  </section>""" if preferences_allowed else ""
+    settings_interface = """        <section id="settings-interface" class="cw-set-card" data-settings-section="interface">
+          <header class="cw-set-head"><div><h2>Display</h2><p>Choose what shows up while you browse.</p></div></header>
+          <label class="cw-set-row cw-set-toggle">
+            <span class="cw-set-copy"><strong>Now playing card</strong><small>Show a small card with what you are watching.</small></span>
+            <input id="profile-pref-playing-card" type="checkbox" checked role="switch"><span class="cw-set-switch" aria-hidden="true"></span>
+          </label>
+          <label class="cw-set-row cw-set-toggle">
+            <span class="cw-set-copy"><strong>Quick add button</strong><small>Show a shortcut to add something you watched by hand.</small></span>
+            <input id="profile-pref-quick-add" type="checkbox" checked role="switch"><span class="cw-set-switch" aria-hidden="true"></span>
+          </label>
+        </section>""" if preferences_allowed else ""
     dashboard = "on" if perms.get("dashboard") else "off"
     watchlist = "on" if perms.get("watchlist") else "off"
     playback = "on" if perms.get("playback") else "off"
@@ -2439,8 +2431,7 @@ def get_profile_html(user: dict | None = None) -> str:
     <button id="profile-tab-ratings" type="button" data-profile-tab="ratings">Ratings</button>
     <button id="profile-tab-collection" type="button" data-profile-tab="collection">Collections</button>
 {playback_tab}
-    <button id="profile-tab-security" type="button" data-profile-tab="security">Security</button>
-{preferences_tab}
+    <button id="profile-tab-account" class="cw-profile-tab-settings" type="button" data-profile-tab="account"><span class="material-symbols-rounded" aria-hidden="true">settings</span><span>Settings</span></button>
   </div>
   <section id="profile-panel-overview" class="cw-profile-panel active">
     <div class="cw-profile-pair-grid">
@@ -2587,65 +2578,99 @@ def get_profile_html(user: dict | None = None) -> str:
 {playback_panel}
 {watchlist_panel}
 {remove_dialog}
-  <section id="profile-panel-security" class="cw-profile-panel">
-    <div class="cw-profile-security-grid">
-      <article class="cw-profile-widget">
-        <div class="cw-profile-widget-head"><h2>Account</h2></div>
-        <form id="profile-name-form" class="cw-profile-form">
-          <label>Display name<input id="profile-display-input" maxlength="64" autocomplete="name"></label>
-          <button class="btn primary" type="submit">Save profile</button>
-        </form>
-        <div class="cw-profile-avatar-actions">
-          <button id="profile-avatar-replace" class="btn" type="button">Replace picture</button>
-          <button id="profile-avatar-remove" class="btn danger" type="button">Remove picture</button>
+  <section id="profile-panel-account" class="cw-profile-panel">
+    <div class="cw-set">
+      <nav class="cw-set-nav" aria-label="Settings sections">
+        <button type="button" class="active" data-settings-nav="profile"><span class="material-symbols-rounded" aria-hidden="true">person</span><span>Profile</span></button>
+        <button type="button" data-settings-nav="security"><span class="material-symbols-rounded" aria-hidden="true">lock</span><span>Security</span></button>
+        <button type="button" data-settings-nav="linked"><span class="material-symbols-rounded" aria-hidden="true">link</span><span>Linked accounts</span></button>
+        <button type="button" data-settings-nav="sessions"><span class="material-symbols-rounded" aria-hidden="true">devices</span><span>Devices</span></button>
+{settings_interface_nav}
+      </nav>
+      <div class="cw-set-main">
+        <div class="cw-set-col">
+        <section id="settings-profile" class="cw-set-card" data-settings-section="profile">
+          <header class="cw-set-head"><div><h2>Profile</h2><p>How you appear in CrossWatch.</p></div></header>
+          <div class="cw-set-row">
+            <span id="profile-settings-avatar" class="cw-set-avatar" aria-hidden="true">{profile_avatar_inner}</span>
+            <span class="cw-set-copy"><strong>Profile picture</strong><small>Shown on your profile and in the menu.</small></span>
+            <span class="cw-set-actions">
+              <button id="profile-avatar-replace" class="cw-set-btn" type="button">Change</button>
+              <button id="profile-avatar-remove" class="cw-set-btn cw-set-btn--danger cw-danger-confirm" type="button">Remove</button>
+            </span>
+          </div>
+          <div id="profile-avatar-upload-status" class="cw-profile-upload hidden" role="status" aria-live="polite">
+            <div class="cw-profile-upload-head"><span id="profile-avatar-upload-label">Uploading picture</span><strong id="profile-avatar-upload-percent">0%</strong></div>
+            <div class="cw-profile-upload-bar"><span id="profile-avatar-upload-bar"></span></div>
+          </div>
+          <form id="profile-name-form" class="cw-set-row">
+            <label class="cw-set-copy" for="profile-display-input"><strong>Display name</strong><small>The name other people see.</small></label>
+            <span class="cw-set-inline"><input id="profile-display-input" class="cw-set-input" maxlength="64" autocomplete="name"><button class="cw-set-btn cw-set-btn--primary" type="submit">Save</button></span>
+          </form>
+          <div class="cw-set-row">
+            <span class="cw-set-copy"><strong>Username</strong><small>@{username}</small></span>
+            <span class="cw-set-tag">{role_label}</span>
+          </div>
+        </section>
+        <section id="settings-security" class="cw-set-card" data-settings-section="security">
+          <header class="cw-set-head"><div><h2>Security</h2><p>Keep your account safe.</p></div></header>
+          <div class="cw-set-row">
+            <span class="cw-set-copy"><strong>Password</strong><small>Change the password you use to sign in.</small></span>
+            <span class="cw-set-actions"><button id="profile-password-toggle" class="cw-set-btn" type="button" aria-expanded="false" aria-controls="profile-password-form">Change</button></span>
+          </div>
+          <form id="profile-password-form" class="cw-set-drawer" hidden>
+            <input type="text" name="username" value="{username}" autocomplete="username" hidden>
+            <label class="cw-set-field"><span>Current password</span><input id="profile-current-password" class="cw-set-input" type="password" autocomplete="current-password"></label>
+            <label class="cw-set-field"><span>New password</span><input id="profile-new-password" class="cw-set-input" type="password" autocomplete="new-password"></label>
+            <span class="cw-set-drawer-actions"><button id="profile-password-cancel" class="cw-set-btn" type="button">Cancel</button><button class="cw-set-btn cw-set-btn--primary" type="submit">Save password</button></span>
+          </form>
+          <div class="cw-set-row">
+            <span class="cw-set-copy"><strong>Two-step verification</strong><small id="profile-2fa-copy">Ask for a code from your phone when you sign in.</small></span>
+            <span class="cw-set-actions">
+              <span id="profile-2fa-state" class="cw-set-status">Off</span>
+              <button id="profile-2fa-setup-btn" class="cw-set-btn cw-set-btn--primary" type="button">Turn on</button>
+              <button id="profile-recovery-btn" class="cw-set-btn" type="button" hidden>Backup codes</button>
+              <button id="profile-2fa-disable-btn" class="cw-set-btn cw-set-btn--danger" type="button" hidden>Turn off</button>
+            </span>
+          </div>
+          <div id="profile-2fa-confirm" class="cw-set-drawer" hidden>
+            <label class="cw-set-field"><span id="profile-2fa-confirm-label">Enter your password</span><input id="profile-2fa-confirm-password" class="cw-set-input" type="password" autocomplete="current-password"></label>
+            <span class="cw-set-drawer-actions"><button id="profile-2fa-confirm-cancel" class="cw-set-btn" type="button">Cancel</button><button id="profile-2fa-confirm-go" class="cw-set-btn cw-set-btn--primary" type="button">Continue</button></span>
+          </div>
+          <div id="profile-2fa-setup" class="cw-profile-2fa"></div>
+        </section>
+        <section id="settings-linked" class="cw-set-card" data-settings-section="linked">
+          <header class="cw-set-head"><div><h2>Linked accounts</h2><p>Sign in with another account. Your password keeps working.</p></div></header>
+          <div class="cw-set-row">
+            <span class="cw-set-logo"><img id="profile-plex-logo" alt="" hidden><span class="material-symbols-rounded" aria-hidden="true">play_circle</span></span>
+            <span class="cw-set-copy"><strong>Plex</strong><small id="profile-plex-summary">Not linked</small></span>
+            <span class="cw-set-actions">
+              <span id="profile-plex-state" class="cw-set-status">Off</span>
+              <button id="profile-plex-link" class="cw-set-btn cw-set-btn--primary" type="button">Link</button>
+              <button id="profile-plex-unlink" class="cw-set-btn cw-set-btn--danger cw-danger-confirm" type="button" hidden>Unlink</button>
+            </span>
+          </div>
+          <div class="cw-set-row">
+            <span class="cw-set-logo"><span class="material-symbols-rounded" aria-hidden="true">key</span></span>
+            <span class="cw-set-copy"><strong>Single sign-on</strong><small id="profile-oidc-summary">Not linked</small></span>
+            <span class="cw-set-actions">
+              <span id="profile-oidc-state" class="cw-set-status">Off</span>
+              <button id="profile-oidc-link" class="cw-set-btn cw-set-btn--primary" type="button">Link</button>
+              <button id="profile-oidc-unlink" class="cw-set-btn cw-set-btn--danger cw-danger-confirm" type="button" hidden>Unlink</button>
+            </span>
+          </div>
+        </section>
         </div>
-        <div id="profile-avatar-upload-status" class="cw-profile-upload hidden" role="status" aria-live="polite">
-          <div class="cw-profile-upload-head"><span id="profile-avatar-upload-label">Uploading picture</span><strong id="profile-avatar-upload-percent">0%</strong></div>
-          <div class="cw-profile-upload-bar"><span id="profile-avatar-upload-bar"></span></div>
+        <div class="cw-set-col">
+{settings_interface}
+        <section id="settings-sessions" class="cw-set-card" data-settings-section="sessions">
+          <header class="cw-set-head"><div><h2>Devices</h2><p>Where you are signed in right now.</p></div><button id="profile-revoke-sessions" class="cw-set-btn cw-set-btn--danger cw-danger-confirm" type="button" hidden>Sign out everywhere else</button></header>
+          <div id="profile-sessions" class="cw-set-sessions"></div>
+        </section>
         </div>
-      </article>
-      <article class="cw-profile-widget">
-        <div class="cw-profile-widget-head"><h2>Password</h2></div>
-        <form id="profile-password-form" class="cw-profile-form">
-          <input type="text" name="username" value="{username}" autocomplete="username" hidden>
-          <label>Current password<input id="profile-current-password" type="password" autocomplete="current-password"></label>
-          <label>New password<input id="profile-new-password" type="password" autocomplete="new-password"></label>
-          <button class="btn primary" type="submit">Change password</button>
-        </form>
-      </article>
-      <article class="cw-profile-widget">
-        <div class="cw-profile-widget-head"><h2>Two-factor authentication</h2><span id="profile-2fa-state" class="cw-profile-pill">Off</span></div>
-        <div id="profile-2fa-setup" class="cw-profile-2fa"></div>
-        <div class="cw-profile-actions">
-          <button id="profile-2fa-setup-btn" class="btn primary" type="button">Set up 2FA</button>
-          <button id="profile-2fa-disable-btn" class="btn danger" type="button">Disable 2FA</button>
-          <button id="profile-recovery-btn" class="btn" type="button">Recovery codes</button>
-        </div>
-      </article>
-      <article class="cw-profile-widget">
-        <div class="cw-profile-widget-head"><h2>Linked Plex account</h2><span id="profile-plex-state" class="cw-profile-pill">Off</span></div>
-        <div id="profile-plex-summary" class="cw-profile-linked">No Plex account linked.</div>
-        <div class="cw-profile-actions">
-          <button id="profile-plex-link" class="btn primary" type="button">Link Plex account</button>
-          <button id="profile-plex-unlink" class="btn" type="button">Unlink</button>
-        </div>
-      </article>
-      <article class="cw-profile-widget">
-        <div class="cw-profile-widget-head"><h2>Linked OIDC account</h2><span id="profile-oidc-state" class="cw-profile-pill">Off</span></div>
-        <div id="profile-oidc-summary" class="cw-profile-linked">No OIDC account linked.</div>
-        <div class="cw-profile-actions">
-          <button id="profile-oidc-link" class="btn primary" type="button">Link OIDC account</button>
-          <button id="profile-oidc-unlink" class="btn" type="button">Unlink</button>
-        </div>
-      </article>
-      <article class="cw-profile-widget">
-        <div class="cw-profile-widget-head"><h2>Active Sessions</h2></div>
-        <div id="profile-sessions" class="cw-profile-list"></div>
-        <button id="profile-revoke-sessions" class="btn" type="button">Revoke other sessions</button>
-      </article>
+      </div>
     </div>
   </section>
-{preferences_panel}
 </main>
 <div id="profile-toast" class="cw-profile-toast hidden" role="status" aria-live="polite"></div>
 <div id="cw-help-overlay" class="hidden" aria-hidden="true">
