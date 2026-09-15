@@ -249,6 +249,12 @@
       const votes = Number(meta?.vote_count) || 0;
       out.push(`<span class="cw-mm-score" title="TMDB score${votes ? ` from ${numberFmt.format(votes)} votes` : ""}">${ring(score.toFixed(1), score * 10, "blue")}<span><strong>TMDB</strong><small>${votes ? `${compactFmt.format(votes)} votes` : "Score"}</small></span></span>`);
     }
+    const rating = state.presence?.ratings;
+    const userScore = Number(rating?.rating);
+    if (rating?.rating != null && Number.isFinite(userScore)) {
+      const hint = rating.agree === false ? "Scores differ" : "Same everywhere";
+      out.push(`<span class="cw-mm-score" title="Your rating · ${esc(hint)}">${ring(rating.rating, userScore * 10, "amber")}<span><strong>Your rating</strong><small>${esc(hint)}</small></span></span>`);
+    }
     return out.join("");
   }
 
