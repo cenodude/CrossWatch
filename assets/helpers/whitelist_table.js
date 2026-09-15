@@ -47,7 +47,7 @@
     }
 
     function colHeadHTML() {
-      return features.map((f) => `<button type="button" class="cw-wl-colhead cw-wl-${f.key}" data-col="${f.key}"><span class="material-symbols-rounded cw-wl-cico" aria-hidden="true">${f.icon || FEATURE_ICON[f.key] || "check_circle"}</span><span>${esc(f.label)}</span></button>`).join("");
+      return features.map((f) => `<button type="button" class="cw-wl-colhead cw-wl-${f.key}" data-col="${f.key}"${f.title ? ` title="${esc(f.title)}"` : ""}><span class="material-symbols-rounded cw-wl-cico" aria-hidden="true">${f.icon || FEATURE_ICON[f.key] || "check_circle"}</span><span>${esc(f.label)}</span></button>`).join("");
     }
 
     function rowsHTML(libs) {
@@ -84,7 +84,7 @@
             <div class="cw-wl-rows">${rowsHTML(libs)}</div>
           </div>
           <div class="cw-wl-foot">
-            <div class="cw-wl-note">Empty = all libraries.</div>
+            <div class="cw-wl-note">${esc(opts.note || "Empty = all libraries.")}</div>
             <div class="cw-wl-foot-r">
               <span class="cw-wl-stamp">${stampText()}</span>
               <button type="button" class="cw-wl-load" data-act="load"><span class="material-symbols-rounded" aria-hidden="true">sync</span>Load libraries</button>
