@@ -274,6 +274,6 @@ def test_playback_ui_list_includes_punchplay() -> None:
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
-    js = (root / "assets" / "js" / "playback_progress.js").read_text(encoding="utf-8")
+    js = (root / "assets" / "js" / "profile-page.js").read_text(encoding="utf-8")
     keys = js.split("PLAYBACK_PROVIDER_KEYS")[1].split("]")[0]
     assert '"punchplay"' in keys

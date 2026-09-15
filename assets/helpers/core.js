@@ -113,7 +113,7 @@
   const statusCacheKey = () => `${STATUS_CACHE_KEY}.${String(window.CW?.OverviewProfile?.id || "").trim() || "all"}`;
   const DETAILS_MAX_LINES = 300;
   const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
-  const ROUTE_TABS = new Set(["main", "watchlist", "playback_progress", "snapshots", "capture_compare", "playlists", "editor", "analyzer", "events", "logs", "import_export", "interactive_sync", "maintenance", "settings"]);
+  const ROUTE_TABS = new Set(["main", "snapshots", "capture_compare", "playlists", "editor", "analyzer", "events", "logs", "import_export", "interactive_sync", "maintenance", "settings"]);
   const SETTINGS_PANES = new Set(["overview", "providers", "sync", "scrobbler", "scheduling", "app", "maintenance"]);
   let routeSyncing = false;
 
@@ -138,8 +138,6 @@
     if (!managed) return true;
     const perms = auth?.permissions || {};
     if (normalized === "main") return perms.dashboard !== false;
-    if (normalized === "playback_progress") return perms.playback !== false;
-    if (normalized === "watchlist") return perms.watchlist !== false;
     if (["snapshots", "capture_compare", "playlists", "editor", "analyzer", "events", "logs", "import_export", "interactive_sync"].includes(normalized)) return perms.write === true;
     return false;
   }
@@ -148,8 +146,6 @@
     const tab = normalizeRouteTab(value);
     if (canUseRouteTab(tab)) return tab;
     if (canUseRouteTab("main")) return "main";
-    if (canUseRouteTab("watchlist")) return "watchlist";
-    if (canUseRouteTab("playback_progress")) return "playback_progress";
     if (canUseRouteTab("snapshots")) return "snapshots";
     if (canUseRouteTab("playlists")) return "playlists";
     if (canUseRouteTab("editor")) return "editor";
@@ -939,7 +935,7 @@
   }
 
   function setTabHeaderState(tab) {
-    ["main", "watchlist", "playback_progress", "snapshots", "capture_compare", "playlists", "editor", "analyzer", "events", "logs", "import_export", "maintenance", "settings"].forEach((name) => {
+    ["main", "snapshots", "capture_compare", "playlists", "editor", "analyzer", "events", "logs", "import_export", "maintenance", "settings"].forEach((name) => {
       byId(`tab-${name}`)?.classList.toggle("active", name === tab || (name === "snapshots" && tab === "capture_compare"));
     });
   }
@@ -949,8 +945,6 @@
     byId("stats-card")?.classList.toggle("hidden", tab !== "main");
     if (tab !== "main") byId("placeholder-card")?.classList.add("hidden");
 
-    byId("page-watchlist")?.classList.toggle("hidden", tab !== "watchlist");
-    byId("page-playback_progress")?.classList.toggle("hidden", tab !== "playback_progress");
     byId("page-snapshots")?.classList.toggle("hidden", tab !== "snapshots");
     byId("page-capture_compare")?.classList.toggle("hidden", tab !== "capture_compare");
     byId("page-playlists")?.classList.toggle("hidden", tab !== "playlists");
@@ -1002,10 +996,8 @@
     if (managed) {
       const perms = auth?.permissions || {};
       const dashboardAllowed = perms.dashboard !== false;
-      const watchlistAllowed = perms.watchlist !== false;
-      const playbackAllowed = perms.playback !== false;
       const writeAllowed = perms.write === true;
-      if (!(tab === "main" && dashboardAllowed) && !(tab === "watchlist" && watchlistAllowed) && !(tab === "playback_progress" && playbackAllowed) && !(["snapshots", "capture_compare", "playlists", "editor", "analyzer", "events", "logs", "import_export"].includes(tab) && writeAllowed)) tab = allowedRouteTab(tab);
+      if (!(tab === "main" && dashboardAllowed) && !(["snapshots", "capture_compare", "playlists", "editor", "analyzer", "events", "logs", "import_export"].includes(tab) && writeAllowed)) tab = allowedRouteTab(tab);
     }
     writeRouteHash(tab);
 
@@ -1053,33 +1045,6 @@
     layout?.classList.add("single");
     layout?.classList.remove("full");
     logPanel?.classList.add("hidden");
-
-    if (tab === "watchlist") {
-      try {
-        await ensurePageModule("watchlist", "/assets/js/watchlist.js", "Watchlist", {
-          refreshEvent: "watchlist:refresh",
-        });
-      } catch (e) {
-        console.warn("Watchlist load/refresh failed:", e);
-      }
-      if (!isCurrentNavigation()) return;
-      return;
-    }
-
-    if (tab === "playback_progress") {
-      try {
-        await ensurePageModule("playback_progress", "/assets/js/playback_progress.js", "PlaybackProgress");
-        window.PlaybackProgress?.mount?.(byId("page-playback_progress"));
-      } catch (e) {
-        console.warn("Playback Progress load/refresh failed:", e);
-        const root = byId("playback-progress-root");
-        if (root && (!root.children.length || root.querySelector(".cw-page-loading"))) {
-          root.innerHTML = '<div class="cw-page-load-error">Playback Progress failed to load. Refresh the page and try again.</div>';
-        }
-      }
-      if (!isCurrentNavigation()) return;
-      return;
-    }
 
     if (tab === "snapshots") {
       try {

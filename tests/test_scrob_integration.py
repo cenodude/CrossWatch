@@ -227,7 +227,6 @@ def test_branding_assets_and_frontend_wiring():
     assert '#stats-card #stat-providers .tile[data-provider="scrob"]' in providers_css
     assert '#page-snapshots .ss-badge[data-provider="scrob"]' in providers_css
     assert '#details .det-structured-line[data-provider="SCROB"]' in providers_css
-    assert ".wl-provider-card.provider-scrob" in providers_css
     assert providers_css.count("{") == providers_css.count("}")
 
     assert "#scrob_disconnect" in read("assets/css/auth-providers.css")
