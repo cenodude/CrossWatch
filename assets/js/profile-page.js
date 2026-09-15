@@ -4634,6 +4634,18 @@
 
   let nowTimer = null;
 
+  async function openUpgradeNotice() {
+    if (document.documentElement?.dataset?.cwRole !== "admin") return;
+    try {
+      const meta = await api("/api/config/meta");
+      if (!meta?.needs_upgrade) return;
+      for (let i = 0; i < 100 && typeof window.openUpgradeWarning !== "function"; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      if (typeof window.openUpgradeWarning === "function") await window.openUpgradeWarning(meta);
+    } catch {}
+  }
+
   async function init() {
     historyPanel.wire();
     ratingsPanel.wire();
@@ -4649,6 +4661,7 @@
     wireOidcSso();
     wirePosterOverlay();
     wireProfileActivity();
+    void openUpgradeNotice();
     const [profileResult, overviewResult, activityResult] = await Promise.allSettled([
       refreshProfile(),
       loadOverview(),

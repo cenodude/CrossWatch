@@ -1966,7 +1966,7 @@ def test_profile_nav_uses_full_user_links_for_write_managed_user() -> None:
         user={"is_admin": False, "profile_id": ALICE_PROFILE_ID, "username": "pascal", "permissions": {"dashboard": True, "watchlist": True, "playback": True, "write": True}},
     )
 
-    assert """<button class="tab active" type="button" onclick="location.href='/?main=1#main'">Main</button>""" in html
+    assert """<button class="tab" type="button" onclick="location.href='/?main=1#main'">Main</button>""" in html
     assert """location.href='/profile#watchlist'">Watchlist</button>""" not in html
     assert """location.href='/profile#playback'">Playback</button>""" not in html
     assert """<button class="tab" type="button" onclick="location.href='/?main=1#snapshots'">Captures</button>""" in html
@@ -1997,7 +1997,7 @@ def test_profile_page_supports_admin_account() -> None:
     assert 'data-cw-role="admin"' in html
     assert 'data-cw-profile-id=""' in html
     assert 'id="profile-role" class="cw-profile-role">Administrator</span>' in html
-    assert """<button class="tab active" type="button" onclick="location.href='/'">Main</button>""" in html
+    assert """<button class="tab" type="button" onclick="location.href='/'">Main</button>""" in html
     assert """location.href='/profile#watchlist'">Watchlist</button>""" not in html
     assert """location.href='/profile#playback'">Playback</button>""" not in html
     assert """<button class="tab" type="button" onclick="location.href='/#snapshots'">Captures</button>""" in html

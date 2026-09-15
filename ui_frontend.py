@@ -2262,7 +2262,7 @@ def get_profile_html(user: dict | None = None) -> str:
     nav_items: list[str] = []
     if is_admin:
         nav_items.extend([
-            _profile_nav_tab("Main", "/", active=True),
+            _profile_nav_tab("Main", "/"),
             _profile_nav_tab("Captures", "/#snapshots"),
             _profile_nav_tab("Playlists", "/#playlists"),
             _profile_nav_tab("Editor", "/#editor"),
@@ -2271,7 +2271,7 @@ def get_profile_html(user: dict | None = None) -> str:
         ])
     elif write_nav:
         nav_items.extend([
-            _profile_nav_tab("Main", "/?main=1#main", active=True),
+            _profile_nav_tab("Main", "/?main=1#main"),
             _profile_nav_tab("Captures", "/?main=1#snapshots"),
             _profile_nav_tab("Playlists", "/?main=1#playlists"),
             _profile_nav_tab("Editor", "/?main=1#editor"),
