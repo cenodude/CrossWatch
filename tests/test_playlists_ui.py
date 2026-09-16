@@ -46,9 +46,9 @@ def test_playlists_page_is_modal_first_overview():
     assert '<header class="pl-header">' not in js
     assert "#page-playlists .pl-header{display:flex;" in css
     assert "padding:18px 20px" in css
-    assert "#page-playlists .pl-title{margin:0;font-weight:850}" in css
+    assert "#page-playlists .pl-title{margin:0;font-weight:800}" in css
     assert "#page-playlists .pl-sub{margin-top:6px;font-size:16px" in css
-    assert "#page-playlists .pl-header .pl-btn{padding:10px 14px;font-weight:850;gap:8px" in css
+    assert "#page-playlists .pl-header .pl-btn{padding:10px 14px;font-weight:800;gap:8px" in css
     assert '<button class="pl-btn" id="pl-new-endpoint"><span class="material-symbols-rounded" aria-hidden="true">add</span>New endpoint</button>' in js
     assert '<button class="pl-btn" id="pl-new-mapping"' in js
     assert "--pl-shell-bg" in css

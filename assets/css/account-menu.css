@@ -116,7 +116,7 @@ header .tabs .cw-nav-profile-avatar img {
   background: transparent !important;
   color: color-mix(in srgb, var(--cw-theme-text, var(--fg)) 68%, var(--cw-theme-muted, var(--muted)));
   font-size: 13px;
-  font-weight: 750;
+  font-weight: 800;
   line-height: 1.15;
   text-align: left;
   cursor: pointer;

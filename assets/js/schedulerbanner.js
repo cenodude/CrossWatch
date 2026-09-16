@@ -91,11 +91,11 @@
 #ops-card #sched-inline-log #chip-watch.has-copy,#ops-card #sched-inline-log #chip-hook.has-copy{min-width:150px!important;}
 #ops-card #sched-inline-log .sched.has-copy .copy{position:static!important;display:grid!important;grid-template-columns:auto auto auto!important;grid-template-rows:auto auto!important;align-items:center!important;column-gap:7px!important;row-gap:2px!important;width:auto!important;height:auto!important;padding:0!important;margin:0!important;overflow:visible!important;clip:auto!important;white-space:nowrap!important;border:0!important;}
 #ops-card #sched-inline-log .sched.has-copy .label,#ops-card #sched-inline-log .sched.has-copy .value,#ops-card #sched-inline-log .sched.has-copy .meta,#ops-card #sched-inline-log .sched.has-copy .badges{position:static!important;top:auto!important;transform:none!important;margin:0!important;padding:0!important;height:auto!important;line-height:1.15!important;}
-#ops-card #sched-inline-log .sched.has-copy .label{grid-column:1!important;grid-row:1!important;font-size:10px!important;font-weight:850!important;letter-spacing:.11em!important;color:var(--hub-muted)!important;}
-#ops-card #sched-inline-log .sched.has-copy .value{grid-column:2!important;grid-row:1!important;font-size:11px!important;font-weight:850!important;color:var(--service-state)!important;}
+#ops-card #sched-inline-log .sched.has-copy .label{grid-column:1!important;grid-row:1!important;font-size:10px!important;font-weight:800!important;letter-spacing:.11em!important;color:var(--hub-muted)!important;}
+#ops-card #sched-inline-log .sched.has-copy .value{grid-column:2!important;grid-row:1!important;font-size:11px!important;font-weight:800!important;color:var(--service-state)!important;}
 #ops-card #sched-inline-log #chip-sched .cw-sched-warning-icon{display:inline-flex!important;align-items:center!important;justify-content:center!important;font-size:15px!important;line-height:1!important;font-variation-settings:"FILL" 1,"wght" 500,"GRAD" 0,"opsz" 20;}
 #ops-card #sched-inline-log .sched.has-copy .value:empty{display:none!important;}
-#ops-card #sched-inline-log .sched.has-copy .meta{grid-column:1 / -1!important;grid-row:2!important;font-size:10px!important;font-weight:650!important;color:var(--hub-muted)!important;overflow:hidden!important;text-overflow:ellipsis!important;}
+#ops-card #sched-inline-log .sched.has-copy .meta{grid-column:1 / -1!important;grid-row:2!important;font-size:10px!important;font-weight:700!important;color:var(--hub-muted)!important;overflow:hidden!important;text-overflow:ellipsis!important;}
 #ops-card #sched-inline-log .sched.has-copy .badges{grid-column:3!important;grid-row:1!important;display:inline-flex!important;gap:4px!important;}
 #ops-card #sched-inline-log .sched.has-copy .meta:empty,#ops-card #sched-inline-log .sched.has-copy .badges:empty{display:none!important;}
 #ops-card #sched-inline-log .sched[data-tip]{cursor:help!important;}
@@ -110,7 +110,7 @@
 #ops-card #sched-inline-log .sched[data-tip]::after{display:none!important;}
 #ops-card #sched-inline-log .cw-hub-tip{position:absolute;z-index:40;left:50%;bottom:calc(100% + 11px);display:grid;gap:2px;width:max-content;min-width:280px;max-width:min(760px,calc(100vw - 32px));padding:10px 12px;border-radius:10px;background:var(--hub-card-bg);border:1px solid color-mix(in srgb,var(--service-state) 34%,var(--hub-card-border));box-shadow:0 14px 32px rgba(0,0,0,.34);color:var(--hub-text);font-size:11px;line-height:1.5;letter-spacing:.01em;text-align:left;white-space:normal;opacity:0;pointer-events:none;transform:translateX(-50%) translateY(4px);transition:opacity .16s ease,transform .16s ease;}
 #ops-card #sched-inline-log .sched[data-tip]:hover>.cw-hub-tip,#ops-card #sched-inline-log .sched[data-tip]:focus-visible>.cw-hub-tip{opacity:1;transform:translateX(-50%) translateY(0);}
-#ops-card #sched-inline-log .cw-hub-tip-line{display:block;font-weight:750;overflow:visible;text-overflow:clip;white-space:normal;}
+#ops-card #sched-inline-log .cw-hub-tip-line{display:block;font-weight:800;overflow:visible;text-overflow:clip;white-space:normal;}
 #ops-card #sched-inline-log .cw-hub-tip-action{display:block;margin-top:5px;padding-top:6px;border-top:1px solid color-mix(in srgb,var(--hub-muted) 24%,transparent);color:color-mix(in srgb,var(--service-state) 72%,var(--hub-text));font-weight:500;}
 #ops-card #sched-inline-log .hub-status-group:first-child .sched:first-child .cw-hub-tip{left:0;transform:translateX(0) translateY(4px);}
 #ops-card #sched-inline-log .hub-status-group:first-child .sched:first-child[data-tip]:hover>.cw-hub-tip,#ops-card #sched-inline-log .hub-status-group:first-child .sched:first-child[data-tip]:focus-visible>.cw-hub-tip{transform:translateX(0) translateY(0);}

@@ -84,7 +84,7 @@ html :is(.ie-page .ie-select,.ie-select-menu) .cw-icon-select-label{font-weight:
 .ie-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));border:1px solid var(--ie-border);border-radius:10px;margin-bottom:22px;background:var(--ie-panel);overflow:hidden}
 .ie-metrics>div{padding:18px 22px;border-right:1px solid var(--ie-border)}
 .ie-metrics>div:last-child{border:0}
-.ie-metrics strong{display:block;font-size:26px;letter-spacing:-.025em;font-weight:650}
+.ie-metrics strong{display:block;font-size:26px;letter-spacing:-.025em;font-weight:700}
 .ie-metrics span{display:block;font-size:12px;color:var(--ie-muted);margin-top:3px}
 .ie-filters{display:flex;align-items:end;gap:16px;margin-bottom:16px}
 .ie-search{flex:1;display:flex;align-items:center;gap:10px;padding:0 13px;border:1px solid var(--ie-border);border-radius:8px;background:var(--ie-panel);min-width:0;color:var(--ie-muted)}

@@ -15,7 +15,7 @@
 .an-page .an-back{display:inline-flex;align-items:center;gap:8px;color:var(--an-muted);text-decoration:none;font-size:13px}
 .an-page .an-back:hover{color:var(--an-text)}
 .an-page .an-header{position:static;top:auto;z-index:auto;display:flex;align-items:center;justify-content:space-between;gap:16px;margin:0;padding:14px 0;border:0;background:transparent;box-shadow:none}
-.an-page .an-eyebrow{color:var(--an-accent);font-size:10px;font-weight:750;letter-spacing:.16em}
+.an-page .an-eyebrow{color:var(--an-accent);font-size:10px;font-weight:800;letter-spacing:.16em}
 .an-page .an-header h1{font-size:32px;line-height:1.2;letter-spacing:-.035em;font-weight:800;margin:5px 0 0}
 
 .an-page .an-button{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:38px;padding:8px 13px;border:1px solid var(--an-border);border-radius:9px;background:var(--an-card);color:var(--an-text);font-size:12px;font-weight:600;text-decoration:none;white-space:nowrap;box-shadow:none}
@@ -55,7 +55,7 @@
 .an-page .an-count{font-size:11px;min-width:25px;padding:2px 7px;border-radius:6px;background:var(--an-card);font-variant-numeric:tabular-nums}
 .an-page .an-tab.has-errors .an-count{background:color-mix(in srgb,var(--an-error) 16%,var(--an-panel));color:var(--an-error)}
 .an-page .an-results-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;margin-bottom:14px}
-.an-page .an-results-heading h2{font-size:19px;font-weight:750;letter-spacing:-.02em}
+.an-page .an-results-heading h2{font-size:19px;font-weight:800;letter-spacing:-.02em}
 .an-page .an-results-heading p{color:var(--an-muted);font-size:12px;margin-top:6px;max-width:780px}
 .an-page #an-checked{white-space:nowrap;margin-top:6px}
 .an-page .an-toolbar{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap}
@@ -85,7 +85,7 @@
 .an-page .an-table .is-selected td{background:color-mix(in srgb,var(--an-accent) 9%,var(--an-panel))}
 .an-page .an-table .is-selected td:first-child{box-shadow:inset 3px 0 var(--an-accent)}
 .an-page .an-item-button{display:block;width:100%;padding:0;border:0;background:transparent;color:var(--an-text);text-align:left;white-space:normal}
-.an-page .an-item-button strong{display:block;font-size:13px;font-weight:650;line-height:1.5;letter-spacing:0;text-transform:none}
+.an-page .an-item-button strong{display:block;font-size:13px;font-weight:700;line-height:1.5;letter-spacing:0;text-transform:none}
 .an-page .an-item-button span{display:block;color:var(--an-muted);font-size:11px;margin-top:3px}
 .an-page .an-feature-badge{font-size:11px;color:var(--an-muted)}
 .an-page .an-result-badge{font-size:11px;line-height:1.5}
@@ -111,7 +111,7 @@
 .an-page .an-item-key{font:10px ui-monospace,monospace;color:var(--an-muted);margin-top:18px}
 .an-page .an-empty{padding:50px 24px;text-align:center;min-height:240px;display:flex;flex-direction:column;align-items:center;justify-content:center}
 .an-page .an-empty>.material-symbols-rounded{font-size:34px;color:var(--an-accent);margin-bottom:16px}
-.an-page .an-empty h3{font-size:16px;font-weight:650}
+.an-page .an-empty h3{font-size:16px;font-weight:700}
 .an-page .an-empty p{font-size:12px;max-width:440px;color:var(--an-muted);margin-top:8px}
 .an-page .an-list-retry{display:flex;margin:0 auto 24px}
 .an-page .an-pagination{display:flex;justify-content:center;align-items:center;flex-wrap:wrap;gap:8px;padding-top:18px;font-size:12px;color:var(--an-muted)}
@@ -123,7 +123,7 @@
 .an-page .an-finding-content{min-width:0;flex:1}
 .an-page .an-finding-icon{display:flex;padding:9px;border-radius:10px;background:var(--an-card);color:var(--an-muted)}
 .an-page .an-finding-top{display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--an-muted);margin-bottom:8px}
-.an-page .an-severity-badge{border-radius:5px;background:var(--an-card);padding:3px 8px;font-weight:650;color:var(--an-text)}
+.an-page .an-severity-badge{border-radius:5px;background:var(--an-card);padding:3px 8px;font-weight:700;color:var(--an-text)}
 .an-page .an-severity-error{border-left:3px solid var(--an-error)}
 .an-page .an-severity-error .an-finding-icon,.an-page .an-severity-error .an-severity-badge{color:var(--an-error);background:color-mix(in srgb,var(--an-error) 9%,var(--an-panel))}
 .an-page .an-severity-warn{border-left:3px solid var(--an-warning)}

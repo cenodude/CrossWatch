@@ -35,7 +35,7 @@ const ABOUT_CSS = `
 .about-logo-wrap{display:grid;place-items:center;width:48px;height:48px;border:1px solid var(--border);border-radius:14px;background:var(--panel);flex-shrink:0}
 .about-logo{width:34px;height:34px;object-fit:contain}
 .about-heading{min-width:0}
-.about-title{font-size:20px;line-height:1.2;font-weight:850;text-transform:uppercase;letter-spacing:.01em}
+.about-title{font-size:20px;line-height:1.2;font-weight:800;text-transform:uppercase;letter-spacing:.01em}
 .about-sub{margin-top:4px;font-size:13px;color:var(--muted)}
 .about-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-left:auto;flex-wrap:wrap}
 .chip,.about-link{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:34px;padding:7px 12px;border:1px solid var(--border);border-radius:10px;background:var(--panel);color:var(--text);text-decoration:none;white-space:nowrap;font-size:12px;line-height:1.2;font-weight:700}
@@ -56,17 +56,17 @@ const ABOUT_CSS = `
 .lede-card{display:grid;grid-template-columns:260px minmax(0,1fr);align-items:center;gap:28px;padding:24px}
 .lede-brand{display:grid;grid-template-columns:48px auto;grid-template-areas:"logo wordmark" "motto motto" "coffee coffee";align-items:center;gap:12px;min-width:0}
 .lede-logo{grid-area:logo;width:48px;height:48px;object-fit:contain}
-.lede-wordmark{grid-area:wordmark;font-size:28px;line-height:1;font-weight:850;white-space:nowrap}
+.lede-wordmark{grid-area:wordmark;font-size:28px;line-height:1;font-weight:800;white-space:nowrap}
 .lede-wordmark span{color:#997bff}
 .lede-motto{grid-area:motto;margin:0 0 4px;color:#b4acd3;font:italic 17px/1.5 "Segoe Print","Bradley Hand","Comic Sans MS",cursive}
-.coffee-link{grid-area:coffee;display:inline-flex;align-items:center;justify-content:center;gap:8px;width:max-content;min-height:38px;padding:8px 14px;border:1px solid #4db888;border-radius:11px;background:#1f6b50;color:#f0fff7;text-decoration:none;font-size:13px;font-weight:750}
+.coffee-link{grid-area:coffee;display:inline-flex;align-items:center;justify-content:center;gap:8px;width:max-content;min-height:38px;padding:8px 14px;border:1px solid #4db888;border-radius:11px;background:#1f6b50;color:#f0fff7;text-decoration:none;font-size:13px;font-weight:800}
 .coffee-link:hover{background:#277e5e;border-color:#68d7a4}
 .coffee-link .material-symbols-rounded{font-size:18px}
 .lede-copy{display:grid;gap:14px;min-width:0;border-left:1px solid var(--border);padding-left:28px}
 .lede{color:var(--muted);font-size:14px;line-height:1.55}
-.lede strong{color:var(--text);font-weight:750}
+.lede strong{color:var(--text);font-weight:800}
 .about-fold{overflow:hidden}
-.about-fold summary{display:grid;grid-template-columns:28px minmax(0,1fr) auto;align-items:center;gap:12px;min-height:50px;padding:12px 18px;list-style:none;cursor:pointer;font-size:14px;font-weight:750}
+.about-fold summary{display:grid;grid-template-columns:28px minmax(0,1fr) auto;align-items:center;gap:12px;min-height:50px;padding:12px 18px;list-style:none;cursor:pointer;font-size:14px;font-weight:800}
 .about-fold summary::-webkit-details-marker{display:none}
 .about-fold summary:hover{background:rgba(124,92,255,.06)}
 .about-fold-icon{color:#aa91ff;font-size:22px}
@@ -81,7 +81,7 @@ const ABOUT_CSS = `
 ul{display:grid;gap:6px;margin:2px 0 0;padding-left:18px}
 li::marker{color:#997bff}
 .help-section{margin-top:16px}
-.help-label{margin-bottom:10px;font-size:14px;font-weight:750}
+.help-label{margin-bottom:10px;font-size:14px;font-weight:800}
 .help-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .helpLink{display:grid;grid-template-columns:44px minmax(0,1fr) auto;align-items:center;gap:14px;padding:16px;border:1px solid var(--border);border-radius:16px;background:var(--panel);color:var(--text);text-decoration:none}
 .helpLink:hover{border-color:var(--accent)}
@@ -89,7 +89,7 @@ li::marker{color:#997bff}
 .support-card .helpIcon{background:#203b32;border-color:rgba(77,184,136,.35);color:#66d1a0}
 .helpIcon .material-symbols-rounded{font-size:25px}
 .helpCopy{display:grid;gap:4px;min-width:0}
-.helpEyebrow{color:var(--muted);font-size:10px;font-weight:750;letter-spacing:.07em;text-transform:uppercase}
+.helpEyebrow{color:var(--muted);font-size:10px;font-weight:800;letter-spacing:.07em;text-transform:uppercase}
 .helpTitle{font-size:15px;font-weight:800;line-height:1.3}
 .helpSub{color:var(--muted);font-size:12px;line-height:1.45}
 .helpArrow{color:var(--muted);font-size:21px}

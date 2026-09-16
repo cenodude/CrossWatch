@@ -313,7 +313,7 @@
   white-space: nowrap;
   color: rgba(235, 240, 255, .96);
   font-size: 12px;
-  font-weight: 950;
+  font-weight: 900;
   letter-spacing: .07em;
   text-transform: uppercase;
 }
@@ -359,7 +359,7 @@
 .cw-upm-floating-host .cw-upm-provider-fallback {
   color: #dfe7f8;
   font-size: 10px;
-  font-weight: 950;
+  font-weight: 900;
 }
 
 .cw-upm-floating-host .cw-upm-instance-grid {
@@ -438,7 +438,7 @@
   white-space: nowrap;
   color: #f1f5ff;
   font-size: 12px;
-  font-weight: 850;
+  font-weight: 800;
 }
 
 .cw-upm-floating-host .cw-upm-instance-copy code {
@@ -450,7 +450,7 @@
   background: transparent;
   color: rgba(188, 199, 222, .68);
   font-size: 10px;
-  font-weight: 750;
+  font-weight: 800;
   text-overflow: ellipsis;
 }
 

@@ -6,9 +6,9 @@
 .cw-provider-cleanup .cc-head-icon,.cw-provider-cleanup .cc-card-head>.material-symbols-rounded{display:grid;place-items:center;border:1px solid color-mix(in srgb,var(--cc-accent) 38%,var(--cc-border));background:color-mix(in srgb,var(--cc-accent) 15%,var(--cc-card));color:var(--cc-accent)}
 .cw-provider-cleanup .cc-head-icon{width:46px;height:46px;flex:0 0 46px;border-radius:14px}
 .cw-provider-cleanup .cc-head-icon .material-symbols-rounded{font-size:25px}
-.cw-provider-cleanup .cc-title{font-size:22px;font-weight:950;color:var(--cc-text);line-height:1.05}
+.cw-provider-cleanup .cc-title{font-size:22px;font-weight:900;color:var(--cc-text);line-height:1.05}
 .cw-provider-cleanup .cc-sub{margin-top:5px;font-size:13px;color:var(--cc-muted)}
-.cw-provider-cleanup .cc-close,.cw-provider-cleanup .cc-btn{min-height:42px;border:1px solid var(--cc-border);border-radius:10px;background:color-mix(in srgb,var(--cc-panel) 86%,#0b1321);color:var(--cc-text);font:inherit;font-size:14px;font-weight:850;cursor:pointer}
+.cw-provider-cleanup .cc-close,.cw-provider-cleanup .cc-btn{min-height:42px;border:1px solid var(--cc-border);border-radius:10px;background:color-mix(in srgb,var(--cc-panel) 86%,#0b1321);color:var(--cc-text);font:inherit;font-size:14px;font-weight:800;cursor:pointer}
 .cw-provider-cleanup .cc-close{display:inline-flex;align-items:center;justify-content:center;width:42px;min-width:42px;padding:0;border-radius:12px}
 .cw-provider-cleanup .cc-close .material-symbols-rounded{font-size:22px}
 .cw-provider-cleanup .cc-body{min-height:0;display:grid;gap:10px;padding:8px 22px 14px;overflow:auto}
