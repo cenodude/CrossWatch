@@ -6,7 +6,7 @@
 .cw-anime-overrides .ao-head-left{min-width:0;display:flex;align-items:center;gap:14px}
 .cw-anime-overrides .ao-head-icon{width:46px;height:46px;flex:0 0 46px;border-radius:14px;display:grid;place-items:center;border:1px solid color-mix(in srgb,var(--ao-accent) 38%,var(--ao-border));background:color-mix(in srgb,var(--ao-accent) 15%,var(--ao-card));color:var(--ao-accent)}
 .cw-anime-overrides .ao-head-icon .material-symbols-rounded{font-size:25px}
-.cw-anime-overrides .ao-title{font-size:22px;font-weight:950;line-height:1.05}
+.cw-anime-overrides .ao-title{font-size:22px;font-weight:900;line-height:1.05}
 .cw-anime-overrides .ao-sub{margin-top:5px;font-size:13px;color:var(--ao-muted)}
 .cw-anime-overrides .ao-close{display:inline-flex;align-items:center;justify-content:center;width:42px;min-width:42px;height:42px;padding:0;border:1px solid var(--ao-border);border-radius:12px;background:color-mix(in srgb,var(--ao-panel) 78%,#000);color:var(--ao-text);cursor:pointer}
 .cw-anime-overrides .ao-close .material-symbols-rounded{font-size:22px}
@@ -53,7 +53,7 @@
 .cw-anime-overrides .ao-finder-list{display:grid;gap:6px;margin-top:6px;max-height:260px;overflow:auto}
 .cw-anime-overrides .ao-finder-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px;padding:9px 11px;border:1px solid var(--ao-border);border-radius:10px;background:color-mix(in srgb,var(--ao-panel) 82%,#000)}
 .cw-anime-overrides .ao-finder-main{min-width:0;display:grid;gap:3px}
-.cw-anime-overrides .ao-finder-title{font-size:14px;font-weight:850;word-break:break-word}
+.cw-anime-overrides .ao-finder-title{font-size:14px;font-weight:800;word-break:break-word}
 .cw-anime-overrides .ao-finder-meta{font-size:12px;color:var(--ao-muted)}
 .cw-anime-overrides .ao-finder-actions{display:flex;align-items:center;gap:6px}
 .cw-anime-overrides .ao-finder-actions .ao-btn{min-height:34px;padding:0 12px;font-size:12.5px}
@@ -67,7 +67,7 @@
 .cw-anime-overrides .ao-status{margin-right:auto;font-size:13px;color:var(--ao-muted)}
 .cw-anime-overrides .ao-status[data-tone="ok"]{color:var(--ao-good)}
 .cw-anime-overrides .ao-status[data-tone="err"]{color:var(--ao-danger)}
-.cw-anime-overrides .ao-btn{min-height:42px;padding:0 18px;border:1px solid var(--ao-border);border-radius:10px;background:color-mix(in srgb,var(--ao-panel) 78%,#000);color:var(--ao-text);font:inherit;font-size:14px;font-weight:850;cursor:pointer}
+.cw-anime-overrides .ao-btn{min-height:42px;padding:0 18px;border:1px solid var(--ao-border);border-radius:10px;background:color-mix(in srgb,var(--ao-panel) 78%,#000);color:var(--ao-text);font:inherit;font-size:14px;font-weight:800;cursor:pointer}
 .cw-anime-overrides .ao-btn.primary{border-color:color-mix(in srgb,var(--ao-accent) 46%,var(--ao-border));background:color-mix(in srgb,var(--ao-accent) 24%,var(--ao-card))}
 .cw-anime-overrides .ao-btn:disabled{opacity:.55;cursor:default}
 

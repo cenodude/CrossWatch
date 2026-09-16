@@ -10,13 +10,13 @@
 .is-back { display: inline-flex; align-items: center; gap: 8px; color: var(--is-muted); text-decoration: none; margin-bottom: 26px; }
 .is-back:hover { color: var(--fg); }
 .is-header { position: static; top: auto; z-index: auto; display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 26px; padding: 0; border: 0; background: transparent; box-shadow: none; }
-.is-eyebrow { font-size: 10px; letter-spacing: .2em; color: var(--is-accent); font-weight: 750; }
+.is-eyebrow { font-size: 10px; letter-spacing: .2em; color: var(--is-accent); font-weight: 800; }
 .is-header h1 { font-size: clamp(26px, 3vw, 36px); line-height: 1.2; letter-spacing: -.04em; margin: 7px 0 10px; }
 .is-header p { color: var(--is-muted); margin: 0; }
 .is-header-actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .is-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid var(--is-line); background: var(--is-surface); color: inherit; border-radius: 10px; padding: 10px 15px; cursor: pointer; text-decoration: none; transition: border-color .15s, background .15s; white-space: nowrap; }
 .is-btn:hover:not(:disabled) { border-color: var(--is-accent); background: color-mix(in srgb, var(--is-accent) 10%, var(--is-surface)); }
-.is-btn.is-primary { background: var(--is-accent); border-color: var(--is-accent); color: #fff; font-weight: 650; }
+.is-btn.is-primary { background: var(--is-accent); border-color: var(--is-accent); color: #fff; font-weight: 700; }
 .is-btn.is-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--is-accent) 82%, #fff); }
 .is-page button:disabled { opacity: var(--cw-disabled-opacity, .4); cursor: not-allowed; }
 .is-small { padding: 6px 10px; font-size: 12px; border-radius: 8px; }
@@ -38,7 +38,7 @@
 .is-progress-stages { display: flex; flex-wrap: wrap; gap: 12px 24px; list-style: none; padding: 0; margin: 26px 0; color: var(--is-muted); font-size: 12px; }
 .is-progress-stages li { display: flex; align-items: center; gap: 8px; }
 .is-progress-stages li > span { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border: 1px solid var(--is-line); border-radius: 50%; }
-.is-progress-stages li.current { color: var(--fg); font-weight: 650; }
+.is-progress-stages li.current { color: var(--fg); font-weight: 700; }
 .is-progress-stages li.current > span { background: var(--is-accent); color: #fff; border-color: var(--is-accent); }
 .is-progress-stages li.finished { color: var(--cw-theme-good); }
 .is-progress-caption { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 13px; margin-bottom: 10px; font-variant-numeric: tabular-nums; }
@@ -79,7 +79,7 @@
 .is-link { color: var(--fg); background: transparent; border: 0; padding: 4px 0; cursor: pointer; }
 .is-table-wrap { border: 1px solid var(--is-line); border-radius: 12px; background: var(--is-surface); overflow: auto; }
 .is-table { width: 100%; border-collapse: collapse; text-align: left; }
-.is-table th { font-size: 11px; font-weight: 550; color: var(--is-muted); padding: 14px 16px; border-bottom: 1px solid var(--is-line); white-space: nowrap; }
+.is-table th { font-size: 11px; font-weight: 600; color: var(--is-muted); padding: 14px 16px; border-bottom: 1px solid var(--is-line); white-space: nowrap; }
 .is-table td { border-bottom: 1px solid var(--is-line); padding: 16px; font-size: 12px; vertical-align: middle; }
 .is-table tr:last-child td { border: 0; }
 .is-table td:first-child { width: 40px; padding-right: 4px; }
@@ -87,7 +87,7 @@
 .is-table td:nth-child(2) strong { display: block; font-size: 13px; font-weight: 600; }
 .is-table small { display: block; color: var(--is-muted); margin-top: 4px; font-size: 11px; overflow-wrap: anywhere; }
 .is-page input[type="checkbox"] { accent-color: var(--is-accent); width: 16px; height: 16px; cursor: pointer; }
-.is-badge { display: inline-block; border-radius: 5px; padding: 2px 7px; font-size: 10px; font-weight: 650; background: #8590a51f; color: #b9c1d1; }
+.is-badge { display: inline-block; border-radius: 5px; padding: 2px 7px; font-size: 10px; font-weight: 700; background: #8590a51f; color: #b9c1d1; }
 .is-badge.add { background: #61ba8819; color: #78c79b; }
 .is-badge.remove { background: #eb78851c; color: #ed9aa4; }
 .is-badge.update { background: #81a7ff1f; color: #a2bfff; }
@@ -195,7 +195,7 @@ html:has(dialog.is-mapping-dialog[open]) { overflow: hidden; }
 .is-report-outcome.incomplete > .material-symbols-rounded { color: var(--is-danger); }
 .is-report h2 { font-size: 19px; margin: 0 0 8px; letter-spacing: -.02em; }
 .is-report p { color: var(--is-muted); font-size: 13px; line-height: 1.7; margin: 0; }
-.is-report-duration { margin-left: auto; white-space: nowrap; font-size: 17px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.is-report-duration { margin-left: auto; white-space: nowrap; font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .is-report .is-report-metrics { margin-bottom: 14px; }
 .is-report-distribution { display: flex; height: 7px; gap: 3px; overflow: hidden; border-radius: 6px; }
 .is-report .added { background: var(--is-good); }

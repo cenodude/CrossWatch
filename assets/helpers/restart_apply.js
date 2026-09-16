@@ -160,7 +160,7 @@
 #${OVERLAY_ID} .cw-ao-count{
   position:relative; z-index:1;
   font-size:48px;
-  font-weight:950;
+  font-weight:900;
   letter-spacing:-1px;
   line-height:1;
   text-shadow:0 10px 28px rgba(0,0,0,.55);

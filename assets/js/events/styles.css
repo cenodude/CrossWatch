@@ -22,7 +22,7 @@ html[data-cw-theme=flat-light] #page-events{--ev-color-scheme:light}
 .ev-back{display:inline-flex;align-items:center;gap:8px;align-self:flex-start;color:var(--ev-muted);text-decoration:none;font-size:13px}
 .ev-back:hover{color:var(--ev-text)}
 .ev-header{position:static;z-index:auto;display:flex;justify-content:space-between;align-items:center;gap:16px;margin:0;padding:14px 0 0;border:0;background:transparent;box-shadow:none}
-.ev-eyebrow{font-size:10px;font-weight:750;letter-spacing:.16em;color:var(--ev-accent)}
+.ev-eyebrow{font-size:10px;font-weight:800;letter-spacing:.16em;color:var(--ev-accent)}
 .ev-header h1{font-size:32px;line-height:1.2;letter-spacing:-.035em;font-weight:800;margin:5px 0 0}
 .ev-header p{margin:0;color:var(--ev-muted);font-size:14px}
 .ev-header-icon{font-size:32px;color:var(--ev-accent);opacity:var(--cw-content-opacity,.6);margin-right:8px}
@@ -133,7 +133,7 @@ html[data-cw-theme=flat-light] .ev-date input::-webkit-calendar-picker-indicator
 .ev-ic.error{border-color:color-mix(in srgb,var(--ev-err) 30%,transparent)}.ev-ic.rating,.ev-ic.info{border-color:color-mix(in srgb,var(--ev-info) 30%,transparent)}
 .ev-line,.ev-tl-body{min-width:0;display:flex;flex-direction:column;gap:2px}
 .ev-primary{font-size:13px;line-height:1.3;display:flex;align-items:center;gap:7px;min-width:0}
-.ev-ptext,.ev-tl-title,.ev-rel-title{min-width:0}.ev-ptext{font-weight:650}.ev-meta{font-size:11.5px;opacity:.6}.ev-item{font-size:12px;opacity:.82}.ev-summary{font-size:12px;opacity:.78}
+.ev-ptext,.ev-tl-title,.ev-rel-title{min-width:0}.ev-ptext{font-weight:700}.ev-meta{font-size:11.5px;opacity:.6}.ev-item{font-size:12px;opacity:.82}.ev-summary{font-size:12px;opacity:.78}
 .ev-meta-ic{font-size:13px;opacity:.7;vertical-align:-2px;margin-right:3px}
 .ev-time{font-size:11px;opacity:.5;white-space:nowrap;text-align:right;margin-top:1px}
 .ev-badge,.ev-rel-badge{border-radius:999px;background:var(--ev-fill-2);text-transform:uppercase;font-weight:600;white-space:nowrap}
@@ -153,7 +153,7 @@ html[data-cw-theme=flat-light] .ev-date input::-webkit-calendar-picker-indicator
 .ev-dhead{border:1px solid var(--ev-border-soft);border-radius:12px;padding:12px 13px;background:var(--ev-fill)}
 .ev-dhead-row{gap:8px}.ev-dhead-spacer{flex:1}.ev-dtime{font-size:11.5px;opacity:.6;white-space:nowrap}
 .ev-icon-btn{width:28px;height:28px;border-radius:8px;color:var(--ev-text)}.ev-icon-btn .material-symbols-rounded{font-size:17px}
-.ev-dtitle{font-size:15px;font-weight:650;margin-top:9px;line-height:1.3}.ev-ditem{font-size:12.5px;opacity:.72;margin-top:3px}
+.ev-dtitle{font-size:15px;font-weight:700;margin-top:9px;line-height:1.3}.ev-ditem{font-size:12.5px;opacity:.72;margin-top:3px}
 .ev-detail h4{margin:16px 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;opacity:.55;font-weight:700;display:flex;align-items:baseline;gap:8px}
 .ev-h4-note{font-size:9.5px;font-weight:600;letter-spacing:.2px;text-transform:none;opacity:.7}
 .ev-kv{display:grid;grid-template-columns:minmax(88px,auto) 1fr;gap:5px 14px;font-size:13px;padding:2px}
@@ -286,7 +286,7 @@ html[data-cw-theme=flat-light] .ev-date input::-webkit-calendar-picker-indicator
 .stat-tile.ok .stat-tile-ic{background:var(--ev-ok-bg);color:var(--ev-ok)}
 .stat-tile.warn .stat-tile-ic{background:var(--ev-warn-bg);color:var(--ev-warn)}
 .stat-tile-lb{font-size:12px;color:var(--ev-muted);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.stat-tile-val{font-size:25px;font-weight:850;line-height:1;letter-spacing:-.02em;color:var(--ev-text)}
+.stat-tile-val{font-size:25px;font-weight:800;line-height:1;letter-spacing:-.02em;color:var(--ev-text)}
 .stat-tile-foot{display:flex;align-items:center;gap:6px;font-size:11.5px}
 .stat-tile-cmp{color:var(--ev-muted)}
 .stat-delta{display:inline-flex;align-items:center;gap:2px;font-weight:800;font-size:11.5px;padding:1px 5px;border-radius:6px}
@@ -324,7 +324,7 @@ html[data-cw-theme=flat-light] .ev-date input::-webkit-calendar-picker-indicator
 
 .stat-donut{display:flex;align-items:center;gap:14px}
 .stat-svg-donut{width:150px;height:150px;flex:none}
-.stat-donut-num{text-anchor:middle;fill:var(--ev-text);font-size:30px;font-weight:850}
+.stat-donut-num{text-anchor:middle;fill:var(--ev-text);font-size:30px;font-weight:800}
 .stat-donut-cap{text-anchor:middle;fill:var(--ev-muted);font-size:12px}
 
 .stat-table{width:100%;border-collapse:collapse;font-size:12.5px}
