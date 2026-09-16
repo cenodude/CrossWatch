@@ -855,7 +855,7 @@ def test_profile_hero_has_both_art_layers_and_now_playing_readout() -> None:
                    'class="cw-profile-last-poster"'):
         assert marker in html, marker
     assert "profile-last-details" not in html
-    assert ".cw-profile-shell{width:calc(100vw - 40px);max-width:none;" in css
+    assert ".cw-profile-shell{width:100%;max-width:none;" in css
     assert "width:min(1380px,calc(100vw - 40px))" not in css
 
 

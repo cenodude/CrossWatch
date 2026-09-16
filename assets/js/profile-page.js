@@ -1857,6 +1857,17 @@
         renderCollectionTimeline();
         return;
       }
+      const collectionRefresh = event.target?.closest?.("[data-collection-refresh]");
+      if (collectionRefresh) {
+        if (collectionRefresh.disabled) return;
+        collectionRefresh.disabled = true;
+        collectionRefresh.classList.add("is-spinning");
+        void Promise.all([loadCollection({ reset: true }), new Promise((done) => setTimeout(done, 450))]).finally(() => {
+          collectionRefresh.disabled = false;
+          collectionRefresh.classList.remove("is-spinning");
+        });
+        return;
+      }
       if (event.target?.closest?.("[data-collection-remove]")) removeCollectionSelection();
     });
     collectionPanel?.addEventListener("change", (event) => {
@@ -3250,6 +3261,17 @@
           renderTimeline(state.months);
           return;
         }
+        const refreshBtn = target?.closest?.("[data-timeline-refresh]");
+        if (refreshBtn) {
+          if (refreshBtn.disabled) return;
+          refreshBtn.disabled = true;
+          refreshBtn.classList.add("is-spinning");
+          void Promise.all([load({ reset: true }), new Promise((done) => setTimeout(done, 450))]).finally(() => {
+            refreshBtn.disabled = false;
+            refreshBtn.classList.remove("is-spinning");
+          });
+          return;
+        }
         const viewBtn = target?.closest?.("[data-timeline-view]");
         if (viewBtn) {
           const next = viewBtn.dataset.timelineView === "list" ? "list" : "grid";
@@ -3788,6 +3810,7 @@
       if (![...select.options].some((option) => option.value === state.filters.provider)) state.filters.provider = "";
       select.value = state.filters.provider;
       enhanceCollectionProviderSelect(select);
+      syncFilterChrome();
     }
 
     function enhanceSelects() {
@@ -3977,6 +4000,41 @@
       }
     }
 
+    const FILTER_DEFAULTS = { provider: "", progress: "", age: "", sort: "last_updated" };
+
+    function activeFilterCount() {
+      return Object.entries(FILTER_DEFAULTS).filter(([key, fallback]) => (state.filters[key] || "") !== fallback).length;
+    }
+
+    function syncFilterChrome() {
+      const badge = q("filters-count");
+      if (!badge) return;
+      const total = activeFilterCount();
+      badge.textContent = String(total);
+      badge.hidden = !total;
+    }
+
+    function toggleFilters(force) {
+      const panel = q("filters-panel");
+      const btn = q("filters-btn");
+      if (!panel || !btn) return;
+      const open = typeof force === "boolean" ? force : panel.hidden;
+      panel.hidden = !open;
+      btn.setAttribute("aria-expanded", String(open));
+    }
+
+    function clearFilters() {
+      Object.entries(FILTER_DEFAULTS).forEach(([key, fallback]) => {
+        state.filters[key] = fallback;
+        const select = selects()[key];
+        if (select) select.value = fallback;
+      });
+      enhanceSelects();
+      syncFilterChrome();
+      state.page = 1;
+      void load();
+    }
+
     function setFilter(key, value) {
       state.filters[key] = value;
       const select = selects()[key];
@@ -3984,6 +4042,7 @@
         select.value = value;
         enhanceSelects();
       }
+      syncFilterChrome();
       state.page = 1;
       void load();
     }
@@ -4174,7 +4233,20 @@
       q("settings")?.toggleAttribute("hidden", !canConfigure());
       enhanceSelects();
       syncViewButtons();
+      syncFilterChrome();
       renderSync();
+      document.addEventListener("click", (event) => {
+        const panel = q("filters-panel");
+        if (!panel || panel.hidden) return;
+        const target = event.target;
+        if (panel.contains(target)) return;
+        if (target?.closest?.("[data-playback-filters-toggle]")) return;
+        if (target?.closest?.(".cw-icon-select-menu")) return;
+        toggleFilters(false);
+      });
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") toggleFilters(false);
+      });
       host.addEventListener("click", (event) => {
         const target = event.target;
         const actionBtn = target?.closest?.("[data-playback-action]");
@@ -4202,6 +4274,14 @@
         }
         if (target?.closest?.("[data-playback-retry]")) {
           void load({ force: true });
+          return;
+        }
+        if (target?.closest?.("[data-playback-filters-toggle]")) {
+          toggleFilters();
+          return;
+        }
+        if (target?.closest?.("[data-playback-filters-clear]")) {
+          clearFilters();
           return;
         }
         if (target?.closest?.("[data-playback-open-settings]")) {

@@ -323,6 +323,7 @@ def _profile_timeline_panel(
 {timeline_button}          <button class="active" type="button" data-timeline-view="grid" title="Grid view" aria-label="Grid view" aria-pressed="true"><span class="material-symbols-rounded" aria-hidden="true">grid_view</span></button>
           <button type="button" data-timeline-view="list" title="List view" aria-label="List view" aria-pressed="false"><span class="material-symbols-rounded" aria-hidden="true">view_list</span></button>
         </div>
+        <button id="profile-{key}-refresh" class="cw-tl-ghost cw-collection-refresh" type="button" data-timeline-refresh title="Refresh {title}" aria-label="Refresh {title}"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
       </div>
     </div>
     <div id="profile-{key}-list" class="cw-hist-list" data-view="grid" aria-live="polite"></div>
@@ -351,12 +352,7 @@ def _profile_playback_panel() -> str:
       <div class="cw-collection-tiles" id="profile-playback-metrics"></div>
     </div>
     <div id="profile-playback-status" class="cw-play-status">
-      <span id="profile-playback-sync" class="cw-play-sync" data-state="ready" aria-live="polite"><span class="cw-play-sync-dot" aria-hidden="true"></span><span>Updated <strong>not yet</strong></span></span>
       <span id="profile-playback-errors" class="cw-play-issues" role="status" hidden></span>
-      <span class="cw-play-status-actions">
-        <button id="profile-playback-settings" class="cw-tl-ghost" type="button" data-playback-open-settings hidden><span class="material-symbols-rounded" aria-hidden="true">tune</span>Providers</button>
-        <button id="profile-playback-refresh" class="cw-tl-ghost" type="button" data-playback-retry><span class="material-symbols-rounded" aria-hidden="true">refresh</span>Refresh</button>
-      </span>
     </div>
     <div id="profile-playback-timeline" class="cw-hist-timeline" aria-label="Progress per month" hidden></div>
     <div class="cw-collection-toolbar">
@@ -366,36 +362,55 @@ def _profile_playback_panel() -> str:
       </label>
       <div class="cw-collection-chips" id="profile-playback-types" aria-label="Playback type filters"></div>
       <div class="cw-collection-controls">
-        <select id="profile-playback-provider" aria-label="Provider filter"><option value="">All providers</option></select>
-        <select id="profile-playback-progress" aria-label="Progress filter">
-          <option value="">Any progress</option>
-          <option value="0:24.99">Under 25%</option>
-          <option value="25:50">25 to 50%</option>
-          <option value="50:75">50 to 75%</option>
-          <option value="75:100">Over 75%</option>
-          <option value="90:100">Almost done</option>
-        </select>
-        <select id="profile-playback-age" aria-label="Paused filter">
-          <option value="">Any time</option>
-          <option value="today">Today</option>
-          <option value="7d">Last 7 days</option>
-          <option value="30d">Last 30 days</option>
-          <option value="older_30d">Older than 30 days</option>
-        </select>
-        <select id="profile-playback-sort" aria-label="Sort">
-          <option value="last_updated">Recently paused</option>
-          <option value="progress_high">Most watched</option>
-          <option value="progress_low">Least watched</option>
-          <option value="remaining_time">Shortest remaining</option>
-          <option value="rating_high">Highest rated</option>
-          <option value="title">Title A-Z</option>
-          <option value="provider">Provider</option>
-        </select>
+        <div class="cw-play-filters">
+          <button id="profile-playback-filters-btn" class="cw-tl-ghost cw-play-filterbtn" type="button" data-playback-filters-toggle aria-expanded="false" aria-haspopup="true" aria-controls="profile-playback-filters-panel" title="Filter playback" aria-label="Filter playback"><span class="material-symbols-rounded" aria-hidden="true">filter_list</span><span>Filters</span><span id="profile-playback-filters-count" class="cw-play-filtercount" aria-live="polite" hidden>0</span></button>
+          <div id="profile-playback-filters-panel" class="cw-play-filterpanel" role="group" aria-labelledby="profile-playback-filters-btn" hidden>
+            <label class="cw-play-filterrow"><span>Provider</span>
+              <select id="profile-playback-provider" aria-label="Provider filter"><option value="">All providers</option></select>
+            </label>
+            <label class="cw-play-filterrow"><span>Progress</span>
+              <select id="profile-playback-progress" aria-label="Progress filter">
+                <option value="">Any progress</option>
+                <option value="0:24.99">Under 25%</option>
+                <option value="25:50">25 to 50%</option>
+                <option value="50:75">50 to 75%</option>
+                <option value="75:100">Over 75%</option>
+                <option value="90:100">Almost done</option>
+              </select>
+            </label>
+            <label class="cw-play-filterrow"><span>Paused</span>
+              <select id="profile-playback-age" aria-label="Paused filter">
+                <option value="">Any time</option>
+                <option value="today">Today</option>
+                <option value="7d">Last 7 days</option>
+                <option value="30d">Last 30 days</option>
+                <option value="older_30d">Older than 30 days</option>
+              </select>
+            </label>
+            <label class="cw-play-filterrow"><span>Sort</span>
+              <select id="profile-playback-sort" aria-label="Sort">
+                <option value="last_updated">Recently paused</option>
+                <option value="progress_high">Most watched</option>
+                <option value="progress_low">Least watched</option>
+                <option value="remaining_time">Shortest remaining</option>
+                <option value="rating_high">Highest rated</option>
+                <option value="title">Title A-Z</option>
+                <option value="provider">Provider</option>
+              </select>
+            </label>
+            <div class="cw-play-filterfoot">
+              <button class="cw-tl-ghost" type="button" data-playback-filters-clear>Clear all</button>
+            </div>
+          </div>
+        </div>
         <div class="cw-collection-views" role="group" aria-label="View mode">
           <button class="active cw-view-timeline" type="button" data-playback-timeline title="Show timeline" aria-label="Show timeline" aria-pressed="true"><span class="material-symbols-rounded" aria-hidden="true">timeline</span></button>
           <button class="active" type="button" data-playback-view="grid" title="Grid view" aria-label="Grid view" aria-pressed="true"><span class="material-symbols-rounded" aria-hidden="true">grid_view</span></button>
           <button type="button" data-playback-view="list" title="List view" aria-label="List view" aria-pressed="false"><span class="material-symbols-rounded" aria-hidden="true">view_list</span></button>
         </div>
+        <span id="profile-playback-sync" class="cw-play-sync" data-state="ready" aria-live="polite"><span class="cw-play-sync-dot" aria-hidden="true"></span><span>Updated <strong>not yet</strong></span></span>
+        <button id="profile-playback-settings" class="cw-tl-ghost cw-play-toolbtn" type="button" data-playback-open-settings hidden title="Choose playback providers" aria-label="Choose playback providers"><span class="material-symbols-rounded" aria-hidden="true">tune</span></button>
+        <button id="profile-playback-refresh" class="cw-tl-ghost cw-play-toolbtn" type="button" data-playback-retry title="Refresh Progress" aria-label="Refresh Progress"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
       </div>
     </div>
     <div id="profile-playback-list" class="cw-hist-list" data-view="grid" aria-live="polite"></div>
@@ -1092,8 +1107,8 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
       <div class="wall-wrap">
         <div id="edgeL" class="edge left"></div><div id="edgeR" class="edge right"></div>
         <div id="poster-row" class="row-scroll" aria-label="Watchlist"></div>
-        <button class="nav prev" type="button" onclick="scrollWall(-1)" aria-label="Scroll left"><</button>
-        <button class="nav next" type="button" onclick="scrollWall(1)" aria-label="Scroll right">></button>
+        <button class="nav prev" type="button" onclick="scrollWall(-1)" aria-label="Scroll left"><span class="material-symbols-rounded" aria-hidden="true">chevron_left</span></button>
+        <button class="nav next" type="button" onclick="scrollWall(1)" aria-label="Scroll right"><span class="material-symbols-rounded" aria-hidden="true">chevron_right</span></button>
       </div>
     </article>
 
@@ -2557,6 +2572,7 @@ def get_profile_html(user: dict | None = None) -> str:
           <button class="active" type="button" data-collection-view="grid" title="Grid view" aria-label="Grid view" aria-pressed="true"><span class="material-symbols-rounded" aria-hidden="true">grid_view</span></button>
           <button type="button" data-collection-view="list" title="List view" aria-label="List view" aria-pressed="false"><span class="material-symbols-rounded" aria-hidden="true">view_list</span></button>
         </div>
+        <button id="profile-collection-refresh" class="cw-tl-ghost cw-collection-refresh" type="button" data-collection-refresh title="Refresh Collections" aria-label="Refresh Collections"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
       </div>
     </div>
     <div id="profile-collection-grid" class="cw-collection-grid" data-view="grid" aria-live="polite"></div>
