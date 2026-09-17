@@ -178,14 +178,16 @@ def test_floppy_history_removal_reuses_adapter_and_preserves_remaining_watches(s
     ops = s.ops["FLOPPY"] = Ops("FLOPPY")
     ops.capabilities = OPS.capabilities
     latest = {**item, "watched_at": "2026-09-02T12:00:00Z", "_floppy_consumption_id": "42"}
-    earlier = {**item, "watched_at": "2026-09-01T12:00:00Z", "_floppy_consumption_id": "41"}
+    earlier_id = "42" if item["type"] == "movie" else "41"
+    earlier = {**item, "watched_at": "2026-09-01T12:00:00Z", "_floppy_consumption_id": earlier_id}
     key = canonical_key(item)
     rows = {key: latest, "tmdb:2": movie(2)}
     s.seed("p1", "FLOPPY", "default", "history", rows)
     if cached_dates:
         database.save_feature_baseline(s.root, provider="FLOPPY", feature="history", checkpoint=123,
                                        items={history_event_key(v): v for v in (earlier, latest)} | {"tmdb:2": movie(2)})
-    path = "media/movie/tmdb/1/history/42" if item["type"] == "movie" else "media/tv/tmdb/99/1/1/history/42"
+    is_movie = item["type"] == "movie"
+    path = "media/movie/tmdb/1/watch" if is_movie else "media/tv/tmdb/99/1/1/history/42"
     def delete(call):
         if outcome == "failed":
             return ResponseStub(500, {})
@@ -198,7 +200,12 @@ def test_floppy_history_removal_reuses_adapter_and_preserves_remaining_watches(s
                 raise RuntimeError("Provider unavailable")
             ops.build_index = failed_read
         return ResponseStub(204, {})
-    adapter = AdapterStub({("DELETE", path): delete})
+    remaining = [] if outcome == "cleared" else [{"consumption_id": 41, "end_date": earlier["watched_at"]}]
+    adapter = AdapterStub({
+        ("DELETE", path): delete,
+        ("GET", "media/movie/tmdb/1/history"): {"results": remaining, "count": len(remaining)},
+        ("PATCH", "media/movie/tmdb/1"): {"id": 1},
+    })
     def remove(cfg, items, *, feature, dry_run):
         assert not cfg.get("_cw_history_rewatches")
         assert items[0]["_floppy_consumption_id"] == "42"
@@ -213,7 +220,12 @@ def test_floppy_history_removal_reuses_adapter_and_preserves_remaining_watches(s
     assert result["ok"] is success
     assert result["confirmed"] == int(success)
     assert result["results"][0]["result"].get("still_watched", 0) == int(outcome == "still_watched")
-    assert [(c["method"], c["path"]) for c in adapter.client.session.calls] == [("DELETE", path)]
+    expected = [("DELETE", path)]
+    if is_movie and outcome != "failed":
+        expected.append(("GET", "media/movie/tmdb/1/history"))
+        if outcome == "cleared":
+            expected.append(("PATCH", "media/movie/tmdb/1"))
+    assert [(c["method"], c["path"]) for c in adapter.client.session.calls] == expected
     state = database.load_state_features(s.root, {"history"})
     saved = removal._items(state, "FLOPPY", "default", "history")
     assert saved["tmdb:2"] == movie(2)
@@ -221,9 +233,9 @@ def test_floppy_history_removal_reuses_adapter_and_preserves_remaining_watches(s
     if outcome == "cleared":
         assert set(saved) == {"tmdb:2"}
     elif outcome == "still_watched":
-        assert list(v["_floppy_consumption_id"] for k, v in saved.items() if k != "tmdb:2") == ["41"]
+        assert [v["watched_at"] for k, v in saved.items() if k != "tmdb:2"] == [earlier["watched_at"]]
     else:
-        assert any(v.get("_floppy_consumption_id") == "42" for v in saved.values())
+        assert any(v.get("watched_at") == latest["watched_at"] for v in saved.values())
     pair_state = database.load_pair_state(s.root, s.scopes[("p1", "history")], {"history"})
     assert removal._items(pair_state, "FLOPPY", "default", "history")[key]["_floppy_consumption_id"] == "42"
 
