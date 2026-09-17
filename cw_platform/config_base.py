@@ -527,7 +527,7 @@ DEFAULT_CFG: dict[str, Any] = {
         "watchlist_freeze_details": True,               # Persist last status & ids in freeze store for debugging
 
         # Ratings
-        "ratings_per_page": 100,                        # Items per page when indexing (10–100; clamped to 100)
+        "ratings_per_page": 100,                        # Items per page when indexing (10–250; clamped to 250)
         "ratings_max_pages": 50,                        # Max pages per type; raise if you have >2k ratings/type
         "ratings_chunk_size": 100,                      # Batch size for POST/REMOVE
 

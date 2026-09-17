@@ -177,8 +177,12 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     )
     update_watermarks_from_last_activities(acts)
 
+    per_page = max(1, min(100, _cfg_int(cfg, "watchlist_per_page", 100)))
+    max_pages = max(1, _cfg_int(cfg, "watchlist_max_pages", 1000))
+
     sh = _shadow_load()
-    if use_etag and sh.get("etag"):
+    base_headers = dict(headers)
+    if use_etag and sh.get("etag") and len(sh.get("items") or {}) < per_page:
         fresh = True
         if ttl_h > 0 and sh.get("ts"):
             age = int(time.time()) - int(sh.get("ts", 0))
@@ -191,6 +195,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         "GET",
         URL_ALL,
         headers=headers,
+        params={"page": 1, "limit": per_page},
         timeout=adapter.cfg.timeout,
         max_retries=adapter.cfg.max_retries,
     )
@@ -216,9 +221,47 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         _info("index_done", count=len(idx), source="shadow_fallback")
         return idx
 
-    data = r.json() if (r.text or "").strip() else []
-    items = [normalize_watchlist_row(x) for x in (data or []) if isinstance(x, dict)]
-    idx: dict[str, dict[str, Any]] = {key_of(m): m for m in items}
+    try:
+        page_count = int(r.headers.get("X-Pagination-Page-Count") or 0)
+    except Exception:
+        page_count = 0
+
+    idx: dict[str, dict[str, Any]] = {}
+    page = 1
+    while True:
+        data = r.json() if (r.text or "").strip() else []
+        rows = [x for x in (data if isinstance(data, list) else []) if isinstance(x, dict)]
+        for x in rows:
+            m = normalize_watchlist_row(x)
+            idx[key_of(m)] = m
+        if not rows or page >= max_pages:
+            break
+        if page_count:
+            if page >= page_count:
+                break
+        elif len(rows) < per_page:
+            break
+        page += 1
+        r = request_with_retries(
+            sess,
+            "GET",
+            URL_ALL,
+            headers=base_headers,
+            params={"page": page, "limit": per_page},
+            timeout=adapter.cfg.timeout,
+            max_retries=adapter.cfg.max_retries,
+        )
+        if log_rates:
+            _log_rate_headers(r)
+        if r.status_code != 200:
+            _warn("http_failed", op="index", method="GET", url=URL_ALL, page=page, status=r.status_code)
+            idx = dict(sh.get("items") or {})
+            total = len(idx)
+            _tick(prog, 0, total=total, force=True)
+            _tick(prog, total, total=total)
+            _info("index_done", count=len(idx), source="shadow_fallback")
+            return idx
+
     if use_etag:
         _shadow_save(etag, idx)
 
@@ -226,7 +269,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     _tick(prog, 0, total=total, force=True)
     _tick(prog, total, total=total)
 
-    _info("index_done", count=len(idx), source="live")
+    _info("index_done", count=len(idx), source="live", pages=page)
     return idx
 
 

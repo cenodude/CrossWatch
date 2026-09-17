@@ -533,6 +533,15 @@ def _trakt_limits_used(
     base = "https://api.trakt.tv"
 
     def _count_items(url: str) -> int:
+        code, body, hdrs = _http_get_with_headers(f"{url}?page=1&limit=1", headers=headers, timeout=timeout)
+        if code != 200:
+            return 0
+        try:
+            total = int(hdrs.get("x-pagination-item-count") or -1)
+        except Exception:
+            total = -1
+        if total >= 0:
+            return total
         code, body = _http_get(url, headers=headers, timeout=timeout)
         if code != 200:
             return 0
