@@ -14,7 +14,7 @@ from fastapi import HTTPException
 
 from cw_platform.access_policy import request_user, user_can_access_instance, user_can_access_pair
 from cw_platform.history_events import (
-    EVENT_ID_FIELDS, base_key_from_history_event, is_history_event_key,
+    EVENT_ID_FIELDS, base_key_from_history_event, history_epoch_from_item, is_history_event_key,
 )
 from cw_platform.id_map import canonical_key, unified_keys_from_ids
 from cw_platform.local_db import state as sqlite_state
@@ -33,6 +33,19 @@ FEATURES = {"watchlist", "history", "ratings", "progress", "collection"}
 
 def _event(key, item):
     return is_history_event_key(key) or is_history_event_key(item.get("_cw_event_key"))
+
+
+def _floppy_watch(item):
+    return str(item.get("_floppy_consumption_id") or ""), history_epoch_from_item(item)
+
+
+def _same_floppy_watch(item, deleted):
+    watch_id, epoch = _floppy_watch(item)
+    if not deleted[0]:
+        return False
+    if str(item.get("type") or "").lower() == "movie":
+        return epoch is not None and epoch == deleted[1]
+    return watch_id == deleted[0]
 
 
 def _tokens(key, item):
@@ -306,9 +319,9 @@ def _remove_target(cfg, feature, target, *, dry_run):
             remaining = _RecordIndex(_read_current(ops, view, provider, instance, feature))
             for key, (dest_key, dest) in matched.items():
                 survivors = remaining.matches(dest_key, dest, same_account=True)
-                deleted_watch = str(dest.get("_floppy_consumption_id") or "") if single_watch else ""
-                watch_changed = bool(deleted_watch) and len(survivors) == 1 and all(
-                    str(item.get("_floppy_consumption_id") or "") not in {"", deleted_watch}
+                deleted_watch = _floppy_watch(dest) if single_watch else ("", None)
+                watch_changed = bool(deleted_watch[0]) and len(survivors) == 1 and all(
+                    _floppy_watch(item)[0] and _floppy_watch(item) != deleted_watch
                     for _, item in survivors
                 )
                 if write_keys[key] not in confirmed or (survivors and not watch_changed):
@@ -327,14 +340,14 @@ def _remove_target(cfg, feature, target, *, dry_run):
             # the pair baselines used by the next sync to compare providers.
             updated = dict(current)
             for key in removed_keys:
-                deleted_watch = str(matched[key][1].get("_floppy_consumption_id") or "")
+                deleted_watch = _floppy_watch(matched[key][1])
                 for k, value in current.items():
                     if not _matches(key, records[key], k, value, same_account=True, include_viewings=True):
                         continue
                     if key in still_watched:
                         if not _event(k, value):
                             updated[k] = still_watched[key]
-                        elif deleted_watch and str(value.get("_floppy_consumption_id") or "") == deleted_watch:
+                        elif _same_floppy_watch(value, deleted_watch):
                             updated.pop(k, None)
                     else:
                         updated.pop(k, None)

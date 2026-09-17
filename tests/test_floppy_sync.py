@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 
 @dataclass
 class ResponseStub:
@@ -626,15 +628,87 @@ def test_floppy_episode_history_add_prevents_duplicate_play() -> None:
     assert not any(c["method"] == "POST" for c in adapter.client.session.calls)
 
 
-def test_floppy_history_remove_uses_exact_consumption_id() -> None:
+def test_floppy_history_rewatch_remove_uses_exact_consumption_id() -> None:
     from providers.sync.floppy import _history
 
-    adapter = AdapterStub({("DELETE", "media/movie/tmdb/11/history/41"): ResponseStub(204, {})})
+    adapter = AdapterStub({("DELETE", "media/movie/tmdb/11/history/41"): ResponseStub(204, {})}, {"_cw_history_rewatches": True, "floppy": {}})
 
     res = _history.remove(adapter, [{"type": "movie", "ids": {"tmdb": "11"}, "_floppy_consumption_id": 41}])
 
     assert res["count"] == 1
     assert adapter.client.session.calls[0]["path"] == "media/movie/tmdb/11/history/41"
+
+
+@pytest.mark.parametrize(
+    ("watch_status", "remaining", "patched"),
+    [
+        (204, [{"consumption_id": 52, "end_date": "2026-01-01T00:00:00Z"}], False),
+        (204, [{"consumption_id": 1114, "status": 3, "end_date": None}], True),
+        (404, None, True),
+    ],
+    ids=["plays_left", "last_play", "no_plays"],
+)
+def test_floppy_movie_history_remove_never_deletes_the_movie_entry(watch_status: int, remaining: Any, patched: bool) -> None:
+    from providers.sync.floppy import _history
+
+    routes: dict[tuple[str, str], Any] = {
+        ("DELETE", "media/movie/tmdb/11/watch"): ResponseStub(watch_status, {}),
+        ("PATCH", "media/movie/tmdb/11"): {"id": 1},
+    }
+    if remaining is not None:
+        routes[("GET", "media/movie/tmdb/11/history")] = {"results": remaining, "count": len(remaining)}
+    adapter = AdapterStub(routes)
+
+    res = _history.remove(adapter, [{"type": "movie", "ids": {"tmdb": "11"}, "_floppy_consumption_id": 1114}])
+
+    assert res["count"] == 1
+    calls = [(c["method"], c["path"]) for c in adapter.client.session.calls]
+    assert calls[0] == ("DELETE", "media/movie/tmdb/11/watch")
+    assert not any("history/" in path for _, path in calls)
+    assert (("PATCH", "media/movie/tmdb/11") in calls) is patched
+    if patched:
+        assert adapter.client.session.calls[-1]["json"] == {"status": 0, "end_date": None}
+
+
+def test_floppy_movie_history_remove_keeps_status_when_readback_fails() -> None:
+    from providers.sync.floppy import _history
+
+    adapter = AdapterStub(
+        {
+            ("DELETE", "media/movie/tmdb/11/watch"): ResponseStub(204, {}),
+            ("GET", "media/movie/tmdb/11/history"): ResponseStub(500, {}),
+            ("PATCH", "media/movie/tmdb/11"): {"id": 1},
+        }
+    )
+
+    res = _history.remove(adapter, [{"type": "movie", "ids": {"tmdb": "11"}}])
+
+    assert res["count"] == 0
+    assert res["unresolved"]
+    assert not any(c["method"] == "PATCH" for c in adapter.client.session.calls)
+
+
+def test_floppy_history_index_keeps_watched_movies_in_any_status() -> None:
+    from providers.sync.floppy import _history
+
+    adapter = AdapterStub(
+        {
+            ("GET", "media/movie"): {
+                "results": [
+                    {"item_id": "movie/tmdb/11", "status": 1, "end_date": "2026-01-03T00:00:00Z"},
+                    {"item_id": "movie/tmdb/12", "status": 1, "end_date": None},
+                    {"item_id": "movie/tmdb/13", "status": 4, "end_date": None},
+                ],
+                "count": 3,
+            },
+            ("GET", "media/episode"): {"results": [], "count": 0},
+        }
+    )
+
+    out = _history.build_index(adapter)
+
+    assert sorted(out) == ["tmdb:11"]
+    assert "status" not in adapter.client.session.calls[0]["params"]
 
 
 def test_floppy_cleanup_after_all_features_purges_tracked_media() -> None:

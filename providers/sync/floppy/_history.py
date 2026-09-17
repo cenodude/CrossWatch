@@ -15,9 +15,10 @@ from cw_platform.anime_mapping.service import PAIR_FEATURE_OPTIONS_KEY, mapping_
 from cw_platform.anime_mapping.storage import query_edges
 from cw_platform.history_events import history_epoch_from_value, history_sync_key, minimal_history_item
 from cw_platform.id_map import minimal as id_minimal
+from providers.auth._auth_FLOPPY import FloppyAuthError
 from providers.sync._mod_common import build_op_result, unresolved_keys
 
-from ._common import COMPLETED, absolute_to_coord, api_delete, api_patch, api_post, canonical_item_key, confirmed_destination, failure_reason, has_coord, int_or_none, item_from_row, media_parts_from_item_id, paged, reset_layout_cache, show_layout, tmdb_enriched_item, tmdb_id_for_item, track_media, unresolved
+from ._common import COMPLETED, absolute_to_coord, api_delete, api_patch, api_post, api_request, canonical_item_key, confirmed_destination, failure_reason, has_coord, int_or_none, item_from_row, media_parts_from_item_id, paged, reset_layout_cache, show_layout, tmdb_enriched_item, tmdb_id_for_item, track_media, unresolved
 
 _SRC_SNAPSHOT: dict[str, Any] = {"scope": None, "shows": {}}
 _SEASON_EPISODE_CACHE: dict[tuple[str, int], set[int] | None] = {}
@@ -429,13 +430,15 @@ def _rekey_to_source_numbering(adapter: Any, out: dict[str, dict[str, Any]]) -> 
                 old_show = str((existing.get("show_ids") or {}).get("tmdb") or "").strip()
                 old_season, old_episode = _episode_numbers(existing)
                 old_owned = owned_by_show.get(old_show) or {}
-                old_keys = old_owned.get((old_season, old_episode)) or []
-                if new_key in old_keys:
-                    old_keys.remove(new_key)
-                if old_keys:
-                    old_owned[(old_season, old_episode)] = old_keys
-                else:
-                    old_owned.pop((old_season, old_episode), None)
+                if old_season is not None and old_episode is not None:
+                    old_coord = (old_season, old_episode)
+                    old_keys = old_owned.get(old_coord) or []
+                    if new_key in old_keys:
+                        old_keys.remove(new_key)
+                    if old_keys:
+                        old_owned[old_coord] = old_keys
+                    else:
+                        old_owned.pop(old_coord, None)
                 out.pop(new_key, None)
             out.pop(key, None)
             out[new_key] = rekeyed
@@ -668,7 +671,7 @@ def _augment_absolute_episode_history(adapter: Any, out: dict[str, dict[str, Any
 def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     event_mode = _rewatches_enabled(adapter)
-    for row in paged(adapter, "media/movie", params={"status": COMPLETED}):
+    for row in paged(adapter, "media/movie"):
         if int_or_none(row.get("status")) != COMPLETED and not row.get("end_date"):
             continue
         item = item_from_row(row, force_type="movie")
@@ -800,6 +803,22 @@ def _write_movie_history(adapter: Any, tmdb_id: str, watched_at: str, item: Mapp
     track_media(adapter, "movie", tmdb_id, payload={"status": COMPLETED, "end_date": watched_at})
 
 
+def _remove_latest_movie_watch(adapter: Any, tmdb_id: str) -> None:
+    try:
+        api_request(adapter, "DELETE", f"media/movie/tmdb/{tmdb_id}/watch", ok=(200, 204))
+    except FloppyAuthError as exc:
+        if getattr(exc, "status_code", None) != 404:
+            raise
+    else:
+        if any(row.get("end_date") for row in paged(adapter, f"media/movie/tmdb/{tmdb_id}/history")):
+            return
+    try:
+        api_patch(adapter, f"media/movie/tmdb/{tmdb_id}", json={"status": 0, "end_date": None})
+    except FloppyAuthError as exc:
+        if getattr(exc, "status_code", None) != 404:
+            raise
+
+
 def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = False) -> dict[str, Any]:
     confirmed: list[str] = []
     confirmed_destinations: dict[str, dict[str, Any]] = {}
@@ -819,16 +838,13 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
                 tmdb_id = tmdb_id_for_item(item)
                 if not tmdb_id:
                     raise ValueError("missing tmdb")
-                history_id = _history_id(item)
-                if not history_id and _rewatches_enabled(adapter):
-                    raise ValueError("missing history id")
-                if not history_id:
-                    rows = _movie_history(adapter, tmdb_id)
-                    history_id = str((rows[0] if rows else {}).get("consumption_id") or "").strip()
-                if history_id:
+                if _rewatches_enabled(adapter):
+                    history_id = _history_id(item)
+                    if not history_id:
+                        raise ValueError("missing history id")
                     api_delete(adapter, f"media/movie/tmdb/{tmdb_id}/history/{history_id}")
                 else:
-                    api_patch(adapter, f"media/movie/tmdb/{tmdb_id}", json={"status": 0, "end_date": None})
+                    _remove_latest_movie_watch(adapter, tmdb_id)
             elif typ == "episode":
                 tmdb_id = tmdb_id_for_item(item, episode_show=True)
                 season, episode = _episode_numbers(item)
