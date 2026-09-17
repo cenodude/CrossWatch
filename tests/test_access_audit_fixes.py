@@ -624,7 +624,7 @@ def test_playback_ui_splits_write_actions_from_admin_settings() -> None:
     import pathlib
 
     src = pathlib.Path("assets/js/profile-page.js").read_text(encoding="utf-8")
-    assert 'const canAct = () => !isManaged() || doc?.dataset?.cwPermWrite === "on";' in src
+    assert 'const canAct = () => !viewingAs() && (!isManaged() || doc?.dataset?.cwPermWrite === "on");' in src
     assert "const canConfigure = () => !isManaged();" in src
     assert 'q("settings")?.toggleAttribute("hidden", !canConfigure());' in src
 
@@ -1161,3 +1161,17 @@ def test_settings_interface_is_hidden_from_read_only_users() -> None:
     assert 'data-settings-nav="interface"' not in ro
     assert 'id="profile-pref-playing-card"' not in ro
     assert ro.count("<section") == ro.count("</section>")
+
+
+def test_profile_view_as_is_admin_only() -> None:
+    import ui_frontend
+
+    full = {"dashboard": True, "watchlist": True, "playback": True, "write": True}
+    admin = ui_frontend.get_profile_html({"is_admin": True, "username": "a"})
+    user = ui_frontend.get_profile_html({"is_admin": False, "username": "u", "permissions": full})
+
+    assert 'id="cw-view-as-select"' in admin
+    assert 'id="profile-view-as-banner"' in admin
+    assert "/assets/helpers/profile-select.js" in admin
+    assert 'id="cw-view-as-select"' not in user
+    assert 'id="profile-view-as-banner"' not in user
