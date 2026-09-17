@@ -41,7 +41,7 @@ def _cache_path() -> Path:
 
 _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 _MAX_BACKOFF_SECONDS = 30
-_MAX_PAGE_SIZE = 1000
+_MAX_PAGE_SIZE = 250
 _PROVIDER = "TRAKT"
 _FEATURE = "ratings"
 
@@ -247,6 +247,14 @@ def _fetch_bucket(
                     rows = r.json() or []
                     if not rows:
                         return out
+                    try:
+                        applied = int(r.headers.get("X-Pagination-Limit") or per_page)
+                    except Exception:
+                        applied = per_page
+                    try:
+                        page_count = int(r.headers.get("X-Pagination-Page-Count") or 0)
+                    except Exception:
+                        page_count = 0
                     for row in rows:
                         val = _valid_rating(row.get("rating"))
                         if not val:
@@ -308,7 +316,10 @@ def _fetch_bucket(
                             m["rated_at"] = ra
                         out.append(m)
 
-                    if len(rows) < per_page:
+                    if page_count:
+                        if page >= page_count:
+                            return out
+                    elif len(rows) < min(per_page, applied):
                         return out
                     break
 
