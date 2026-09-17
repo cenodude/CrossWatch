@@ -7,7 +7,7 @@ const STEPS = [
   ["Search", "Find your movie or show"],
   ["Actions", "Choose what to do"],
   ["Providers", "Select where to send it"],
-  ["Details", "Dates and rating"],
+  ["Details", "Episodes, date and rating"],
   ["Review", "Confirm and send"],
 ];
 const ACTIONS = [
@@ -116,6 +116,15 @@ export default {
       watchedOn: todayLocal(),
       actions: { history: true, watchlist: false, rating: false },
       rating: 8,
+      scope: "show",
+      listSource: "tmdb",
+      lists: new Map(),
+      seasonEps: new Map(),
+      activeSeason: null,
+      picked: new Map(),
+      extraSeason: "",
+      extraEpisode: "",
+      resetListScroll: false,
       saving: false,
       status: "",
       statusTone: "",
@@ -162,6 +171,45 @@ export default {
         if (!item || !providerCompatible(item)) state.selectedProviders.delete(key);
       }
       if (!state.actions.rating) state.rating = 8;
+      if (state.providers.length && !listSources().some((row) => row.key === state.listSource)) {
+        state.listSource = "tmdb";
+        state.picked = new Map();
+        state.activeSeason = null;
+      }
+    };
+    const pad2 = (n) => String(n).padStart(2, "0");
+    const epKey = (season, episode) => `${season}:${episode}`;
+    const epCode = (season, episode) => `S${pad2(season)}E${pad2(episode)}`;
+    const seasonName = (season) => Number(season) === 0 ? "Specials" : `Season ${season}`;
+    const isShow = () => String(state.selectedItem?.type || "").toLowerCase() === "show";
+    const episodeChoice = () => isShow() && !!state.actions.history;
+    const pickingEpisodes = () => episodeChoice() && state.scope === "episodes";
+    const listSources = () => [
+      { key: "tmdb", label: "TMDB" },
+      ...selectedTargets().filter((p) => p.episode_list).map((p) => ({ key: providerKey(p), label: p.display || p.label || p.provider })),
+    ];
+    const sourceLabel = () => listSources().find((row) => row.key === state.listSource)?.label || "TMDB";
+    const listKey = () => `${state.listSource}|${state.selectedItem?.tmdb}`;
+    const listState = () => state.lists.get(listKey()) || null;
+    const seasonState = (season) => state.seasonEps.get(`${listKey()}|${season}`) || null;
+    const activeSeasonNumber = () => {
+      const seasons = listState()?.seasons || [];
+      const row = seasons.find((s) => s.season === state.activeSeason) || seasons.find((s) => s.season > 0) || seasons[0];
+      return row ? row.season : state.activeSeason;
+    };
+    const pickedRows = () => [...state.picked.values()].sort((a, b) => a.season - b.season || a.episode - b.episode);
+    const episodeSummary = () => {
+      const rows = pickedRows();
+      const codes = rows.slice(0, 6).map((row) => epCode(row.season, row.episode)).join(", ");
+      return rows.length > 6 ? `${codes} +${rows.length - 6} more` : codes;
+    };
+    const resetEpisodes = () => {
+      state.scope = "show";
+      state.listSource = "tmdb";
+      state.activeSeason = null;
+      state.picked = new Map();
+      state.extraSeason = "";
+      state.extraEpisode = "";
     };
     const dateText = () => state.dateMode === "custom" ? (state.watchedOn || "Choose date") : state.dateMode === "release" ? "Release date" : "Today";
     const validation = () => {
@@ -169,6 +217,11 @@ export default {
       if (!selectedActionKeys().length) return "Select at least one action.";
       if (!selectedCompatibleTargets().length) return "Select at least one compatible provider.";
       if (state.actions.history && state.dateMode === "custom" && !state.watchedOn) return "Choose a watched date.";
+      if (pickingEpisodes() && !state.picked.size) return "Pick at least one episode.";
+      if (pickingEpisodes() && state.listSource !== "tmdb") {
+        const targets = selectedCompatibleTargets();
+        if (targets.length !== 1 || providerKey(targets[0]) !== state.listSource) return `Episodes from the ${sourceLabel()} list can only be sent to ${sourceLabel()}.`;
+      }
       if (state.actions.rating && !(Number(state.rating) >= 1 && Number(state.rating) <= 10)) return "Choose a rating from 1 to 10.";
       return "";
     };
@@ -289,10 +342,93 @@ export default {
       </button>`;
     };
 
+    const episodeRow = (season, ep) => {
+      const on = state.picked.has(epKey(season, ep.episode));
+      return `<button type="button" class="cw-mw-ep ${on ? "active" : ""}" data-ep="${season}:${ep.episode}" aria-pressed="${on ? "true" : "false"}">
+        <span class="cw-mw-ep-check material-symbols-rounded" aria-hidden="true">check</span>
+        <span class="cw-mw-ep-num">E${pad2(ep.episode)}</span>
+        <span class="cw-mw-ep-name">${esc(ep.name || `Episode ${ep.episode}`)}</span>
+        <span class="cw-mw-ep-date">${esc(ep.air_date || "")}</span>
+      </button>`;
+    };
+
+    const seasonBlock = () => {
+      const list = listState();
+      if (!list || list.loading) return `<div class="cw-mw-eps-state">Loading episodes...</div>`;
+      if (list.error) return `<div class="cw-mw-eps-state">${esc(list.error)}</div>`;
+      const seasons = list.seasons || [];
+      if (!seasons.length) return `<div class="cw-mw-eps-state">No episodes found in this list.</div>`;
+      const current = activeSeasonNumber();
+      const active = seasons.find((row) => row.season === current) || seasons[0];
+      const picked = pickedRows();
+      const tabs = seasons.map((row) => {
+        const count = picked.filter((p) => p.season === row.season).length;
+        return `<button type="button" class="cw-mw-season ${row.season === active.season ? "active" : ""} ${count ? "has-picks" : ""}" data-season-tab="${row.season}">${esc(row.name || seasonName(row.season))}<em>${count ? `${count}/${row.episode_count}` : row.episode_count}</em></button>`;
+      }).join("");
+      const eps = seasonState(active.season);
+      const episodes = Array.isArray(eps?.episodes) ? eps.episodes : [];
+      let body;
+      if (!eps || eps.loading) body = `<div class="cw-mw-eps-state">Loading ${esc(active.name || seasonName(active.season))}...</div>`;
+      else if (eps.error) body = `<div class="cw-mw-eps-state">${esc(eps.error)}</div>`;
+      else if (!episodes.length) body = `<div class="cw-mw-eps-state">No episodes in this season.</div>`;
+      else body = `<div class="cw-mw-eplist">${episodes.map((ep) => episodeRow(active.season, ep)).join("")}</div>`;
+      const all = episodes.length && episodes.every((ep) => state.picked.has(epKey(active.season, ep.episode)));
+      const toggle = episodes.length ? `<button type="button" class="cw-mw-link" data-role="eps-season-all">${all ? "Clear season" : "Select season"}</button>` : "";
+      return `<div class="cw-mw-seasons">${tabs}</div>
+        <div class="cw-mw-eps-season-head"><b>${esc(active.name || seasonName(active.season))}</b><span class="cw-mw-muted">${esc(active.episode_count)} episodes</span>${toggle}</div>
+        ${body}`;
+    };
+
+    const extraBlock = () => {
+      const known = new Set();
+      const prefix = `${listKey()}|`;
+      for (const [key, value] of state.seasonEps) {
+        if (!key.startsWith(prefix) || !Array.isArray(value?.episodes)) continue;
+        const season = Number(key.slice(prefix.length));
+        value.episodes.forEach((ep) => known.add(epKey(season, ep.episode)));
+      }
+      const extras = pickedRows().filter((row) => !known.has(epKey(row.season, row.episode)));
+      const tags = extras.map((row) => `<button type="button" class="cw-mw-eps-tag" data-remove-ep="${row.season}:${row.episode}" aria-label="Remove ${epCode(row.season, row.episode)}">${epCode(row.season, row.episode)}<span class="material-symbols-rounded" aria-hidden="true">close</span></button>`).join("");
+      return `<div class="cw-mw-eps-extra">
+        <span>Missing an episode? Add it by number</span>
+        <label>S <input type="number" min="0" inputmode="numeric" data-role="extra-season" value="${esc(state.extraSeason)}" aria-label="Season number"></label>
+        <label>E <input type="number" min="1" inputmode="numeric" data-role="extra-episode" value="${esc(state.extraEpisode)}" aria-label="Episode number"></label>
+        <button type="button" class="cw-mw-chip" data-role="extra-add">Add</button>
+      </div>
+      ${tags ? `<div class="cw-mw-eps-tags">${tags}</div>` : ""}`;
+    };
+
+    const episodesCard = () => {
+      const sources = listSources();
+      const sourceSelect = sources.length > 1
+        ? `<label class="cw-mw-eps-source">Episode list<select data-role="episode-source">${sources.map((row) => `<option value="${esc(row.key)}" ${row.key === state.listSource ? "selected" : ""}>${esc(row.label)}</option>`).join("")}</select></label>`
+        : "";
+      const count = state.picked.size;
+      const note = state.listSource !== "tmdb"
+        ? `<div class="cw-mw-eps-note"><span class="material-symbols-rounded" aria-hidden="true">info</span><span>Episode numbers follow ${esc(sourceLabel())}, so these episodes are only sent to ${esc(sourceLabel())}.</span></div>`
+        : "";
+      const picker = state.scope === "episodes" ? `
+        <div class="cw-mw-eps-bar">${sourceSelect}<span class="cw-mw-eps-count">${count} selected</span>${count ? `<button type="button" class="cw-mw-link" data-role="eps-clear">Clear</button>` : ""}</div>
+        ${note}
+        ${seasonBlock()}
+        ${extraBlock()}` : "";
+      return `<div class="cw-mw-card cw-mw-eps">
+        <div class="cw-mw-eps-head">
+          <label class="cw-mw-label">What did you watch</label>
+          <div class="cw-mw-row">
+            <button type="button" class="cw-mw-chip ${state.scope === "show" ? "active" : ""}" data-scope="show">Whole show</button>
+            <button type="button" class="cw-mw-chip ${state.scope === "episodes" ? "active" : ""}" data-scope="episodes">Pick episodes</button>
+          </div>
+        </div>
+        ${picker}
+      </div>`;
+    };
+
     const detailsStep = () => `
       <div class="cw-mw-form">
-        <div><div class="cw-mw-headline"><span>4.</span><b>Details</b></div><div class="cw-mw-copy">Configure watched date and rating only when relevant.</div></div>
+        <div><div class="cw-mw-headline"><span>4.</span><b>Details</b></div><div class="cw-mw-copy">Choose what you watched, the date and a rating.</div></div>
         ${selectedItemHtml()}
+        ${episodeChoice() ? episodesCard() : ""}
         <div class="cw-mw-details-grid">
           ${state.actions.history ? `<div class="cw-mw-card">
             <label class="cw-mw-label">Watched date</label>
@@ -320,6 +456,7 @@ export default {
         <div class="cw-mw-review">
           <div class="cw-mw-review-row"><div class="cw-mw-review-k">Actions</div><div class="cw-mw-review-v">${actionLabels().map((x) => `<span class="cw-mw-badge">${esc(x)}</span>`).join("")}</div></div>
           <div class="cw-mw-review-row"><div class="cw-mw-review-k">Providers</div><div class="cw-mw-review-v">${selectedCompatibleTargets().map((p) => `<span class="cw-mw-badge">${esc(p.display || p.label || p.provider)}</span>`).join("")}</div></div>
+          ${episodeChoice() ? `<div class="cw-mw-review-row"><div class="cw-mw-review-k">Watched</div><div class="cw-mw-review-v">${pickingEpisodes() ? `${esc(episodeSummary())}${state.listSource !== "tmdb" ? ` <span class="cw-mw-badge">${esc(sourceLabel())} list</span>` : ""}` : "Whole show"}</div></div>` : ""}
           <div class="cw-mw-review-row"><div class="cw-mw-review-k">Dates</div><div class="cw-mw-review-v">${state.actions.history ? esc(dateText()) : "Not needed"}</div></div>
           <div class="cw-mw-review-row"><div class="cw-mw-review-k">Rating</div><div class="cw-mw-review-v">${state.actions.rating ? esc(`${state.rating}/10`) : "Not included"}</div></div>
         </div>
@@ -333,6 +470,15 @@ export default {
       const allowed = maxStep();
       if (state.step > allowed) state.step = allowed;
       const err = validation();
+      const prevStage = root.querySelector(".cw-mw-stage");
+      const keep = prevStage && root.querySelector(".cw-mw")?.dataset.step === String(state.step)
+        ? {
+          stage: prevStage.scrollTop,
+          list: state.resetListScroll ? 0 : (root.querySelector(".cw-mw-eplist")?.scrollTop || 0),
+          seasons: root.querySelector(".cw-mw-seasons")?.scrollLeft || 0,
+        }
+        : null;
+      state.resetListScroll = false;
       root.innerHTML = `<div class="cw-mw" data-step="${state.step}">
         <div class="cx-head">
           <div class="cw-mw-head">
@@ -359,11 +505,20 @@ export default {
           </div>
         </footer>
       </div>`;
+      if (keep) {
+        const stage = root.querySelector(".cw-mw-stage");
+        const list = root.querySelector(".cw-mw-eplist");
+        const seasons = root.querySelector(".cw-mw-seasons");
+        if (stage) stage.scrollTop = keep.stage;
+        if (list) list.scrollTop = keep.list;
+        if (seasons) seasons.scrollLeft = keep.seasons;
+      }
       if (focusQuery) {
         const q = root.querySelector("[data-role=query]");
         q?.focus?.({ preventScroll: true });
         try { q?.setSelectionRange?.(q.value.length, q.value.length); } catch {}
       }
+      if (state.step === 3 && pickingEpisodes()) void loadEpisodeData();
     };
 
     const syncFooter = () => {
@@ -436,6 +591,68 @@ export default {
       searchTimer = window.setTimeout(search, 260);
     };
 
+    const episodeError = (code) => ({
+      tmdb_unavailable: "TMDB is not set up, so episodes cannot be listed.",
+      episode_list_not_found: "This provider has no episode list for this show.",
+      episode_list_not_available: "This provider cannot list episodes.",
+    }[code] || "Episodes could not be loaded.");
+
+    const loadEpisodeData = async () => {
+      const tmdb = state.selectedItem?.tmdb;
+      const source = state.listSource;
+      const key = listKey();
+      if (!tmdb) return;
+      const base = `/api/manual/episodes?tmdb=${encodeURIComponent(tmdb)}&source=${encodeURIComponent(source)}`;
+      if (!state.lists.has(key)) {
+        state.lists.set(key, { loading: true });
+        let next;
+        try {
+          const data = await fjson(base);
+          if (data?.ok === false) throw new Error(data.error || "");
+          next = { seasons: Array.isArray(data.seasons) ? data.seasons : [] };
+          next.seasons.forEach((row) => {
+            if (Array.isArray(row.episodes)) state.seasonEps.set(`${key}|${row.season}`, { episodes: row.episodes });
+          });
+        } catch (err) {
+          next = { error: episodeError(String(err?.message || "")) };
+        }
+        state.lists.set(key, next);
+        render();
+        return;
+      }
+      if (!listState()?.seasons?.length) return;
+      const season = activeSeasonNumber();
+      state.activeSeason = season;
+      const seasonKey = `${key}|${season}`;
+      if (state.seasonEps.has(seasonKey)) return;
+      state.seasonEps.set(seasonKey, { loading: true });
+      let next;
+      try {
+        const data = await fjson(`${base}&season=${encodeURIComponent(season)}`);
+        if (data?.ok === false) throw new Error(data.error || "");
+        next = { episodes: Array.isArray(data.episodes) ? data.episodes : [] };
+      } catch (err) {
+        next = { error: episodeError(String(err?.message || "")) };
+      }
+      state.seasonEps.set(seasonKey, next);
+      render();
+    };
+
+    const addExtra = () => {
+      const season = Number.parseInt(state.extraSeason, 10);
+      const episode = Number.parseInt(state.extraEpisode, 10);
+      if (!(season >= 0) || !(episode >= 1)) {
+        setStatus("Enter a season and episode number.", "error");
+        return;
+      }
+      state.picked.set(epKey(season, episode), { season, episode, air_date: "" });
+      state.extraEpisode = "";
+      state.status = "";
+      state.statusTone = "";
+      render();
+      root.querySelector("[data-role=extra-episode]")?.focus?.({ preventScroll: true });
+    };
+
     const loadProviders = async () => {
       try {
         const data = await fjson("/api/manual/providers");
@@ -478,6 +695,8 @@ export default {
             },
             rating: state.actions.rating ? state.rating : null,
             providers,
+            episodes: pickingEpisodes() ? pickedRows().map((row) => ({ season: row.season, episode: row.episode, air_date: row.air_date || null })) : undefined,
+            episode_source: pickingEpisodes() ? state.listSource : undefined,
           }),
         });
         saveSelection();
@@ -498,6 +717,10 @@ export default {
       } else if (e.target.matches("[data-role=custom-date]")) {
         state.watchedOn = e.target.value || "";
         render();
+      } else if (e.target.matches("[data-role=extra-season]")) {
+        state.extraSeason = e.target.value || "";
+      } else if (e.target.matches("[data-role=extra-episode]")) {
+        state.extraEpisode = e.target.value || "";
       } else if (e.target.matches("[data-role=rating]")) {
         state.rating = Math.max(1, Math.min(10, Number(e.target.value || 8)));
         render();
@@ -508,12 +731,26 @@ export default {
       if (e.key === "Enter" && e.target.matches("[data-role=query]")) {
         e.preventDefault();
         search();
+      } else if (e.key === "Enter" && e.target.matches("[data-role=extra-season],[data-role=extra-episode]")) {
+        e.preventDefault();
+        addExtra();
       }
+    });
+
+    root.addEventListener("change", (e) => {
+      if (!e.target.matches("[data-role=episode-source]")) return;
+      state.listSource = e.target.value || "tmdb";
+      state.picked = new Map();
+      state.activeSeason = null;
+      if (state.listSource !== "tmdb") state.selectedProviders = new Set([state.listSource]);
+      render();
     });
 
     const selectResult = (resultBtn) => {
       const tmdb = String(resultBtn.getAttribute("data-result-tmdb") || "");
+      const previous = state.selectedItem;
       state.selectedItem = state.results.find((item) => String(item.tmdb) === tmdb) || null;
+      if (String(previous?.tmdb || "") !== String(state.selectedItem?.tmdb || "") || previous?.type !== state.selectedItem?.type) resetEpisodes();
       if (state.selectedItem) state.step = 1;
       render();
     };
@@ -534,6 +771,13 @@ export default {
       "[data-role=use-last]",
       "[data-role=select-all]",
       "[data-role=clear-providers]",
+      "[data-scope]",
+      "[data-season-tab]",
+      "[data-ep]",
+      "[data-role=eps-clear]",
+      "[data-role=eps-season-all]",
+      "[data-role=extra-add]",
+      "[data-remove-ep]",
     ].join(",");
     const tapTarget = (target) => target?.closest?.(tapTargetSelector);
     let pointerTap = null;
@@ -558,6 +802,7 @@ export default {
         state.type = typeBtn.getAttribute("data-type") || "movie";
         state.selectedItem = null;
         state.results = [];
+        resetEpisodes();
         if (state.query.trim().length >= 2) queueSearch();
         render(true);
         return true;
@@ -601,6 +846,57 @@ export default {
       }
       if (target.closest("[data-role=clear-providers]")) {
         state.selectedProviders = new Set();
+        render();
+        return true;
+      }
+      const scopeBtn = target.closest("[data-scope]");
+      if (scopeBtn) {
+        state.scope = scopeBtn.getAttribute("data-scope") === "episodes" ? "episodes" : "show";
+        render();
+        return true;
+      }
+      const seasonBtn = target.closest("[data-season-tab]");
+      if (seasonBtn) {
+        state.activeSeason = Number(seasonBtn.getAttribute("data-season-tab"));
+        state.resetListScroll = true;
+        render();
+        return true;
+      }
+      const epBtn = target.closest("[data-ep]");
+      if (epBtn) {
+        const [season, episode] = String(epBtn.getAttribute("data-ep") || "").split(":").map(Number);
+        const key = epKey(season, episode);
+        if (state.picked.has(key)) state.picked.delete(key);
+        else {
+          const ep = (seasonState(season)?.episodes || []).find((row) => row.episode === episode);
+          state.picked.set(key, { season, episode, air_date: ep?.air_date || "" });
+        }
+        render();
+        return true;
+      }
+      if (target.closest("[data-role=eps-season-all]")) {
+        const season = activeSeasonNumber();
+        const episodes = seasonState(season)?.episodes || [];
+        const all = episodes.every((ep) => state.picked.has(epKey(season, ep.episode)));
+        episodes.forEach((ep) => {
+          if (all) state.picked.delete(epKey(season, ep.episode));
+          else state.picked.set(epKey(season, ep.episode), { season, episode: ep.episode, air_date: ep.air_date || "" });
+        });
+        render();
+        return true;
+      }
+      if (target.closest("[data-role=eps-clear]")) {
+        state.picked = new Map();
+        render();
+        return true;
+      }
+      if (target.closest("[data-role=extra-add]")) {
+        addExtra();
+        return true;
+      }
+      const removeBtn = target.closest("[data-remove-ep]");
+      if (removeBtn) {
+        state.picked.delete(String(removeBtn.getAttribute("data-remove-ep") || ""));
         render();
         return true;
       }
