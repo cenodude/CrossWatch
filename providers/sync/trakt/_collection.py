@@ -105,8 +105,7 @@ def _shadow_save(etags: Mapping[str, str | None], items: Mapping[str, Any], buck
             json.dumps(
                 {
                     "schema": _SHADOW_SCHEMA,
-                    "etag": None,
-                    "etags": dict(etags or {}),
+                    "etags": {str(k): v for k, v in dict(etags or {}).items() if isinstance(v, str) and v.strip()},
                     "ts": int(time.time()),
                     "items": dict(items),
                     "bucket_items": {str(k): dict(v or {}) for k, v in dict(bucket_items or {}).items()},

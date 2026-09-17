@@ -135,8 +135,11 @@ def _shadow_save(etag: str | None, items: Mapping[str, Any]) -> None:
     try:
         _shadow_path().parent.mkdir(parents=True, exist_ok=True)
         tmp = _shadow_path().with_suffix(".tmp")
+        payload: dict[str, Any] = {"ts": int(time.time()), "items": dict(items)}
+        if isinstance(etag, str) and etag.strip():
+            payload["etag"] = etag
         tmp.write_text(
-            json.dumps({"etag": etag, "ts": int(time.time()), "items": dict(items)}, ensure_ascii=False),
+            json.dumps(payload, ensure_ascii=False),
             "utf-8",
         )
         os.replace(tmp, _shadow_path())
