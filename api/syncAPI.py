@@ -19,6 +19,7 @@ from cw_platform.modules_registry import get_sync_module_path_by_name, sync_prov
 from cw_platform.access_policy import filter_pairs_for_user, managed_profile_id, managed_profile_instances, pair_ids_for_user, request_user, user_can_access_pair
 from cw_platform.provider_instances import list_user_profiles, normalize_user_profile_id
 from cw_platform.local_db.legacy_files import LAST_SYNC_JSON
+from cw_platform.memory_release import clear_caches, release_memory
 from cw_platform.reason_labels import friendly_reason
 from cw_platform.run_control import (
     SyncCancelled,
@@ -770,6 +771,13 @@ def _emit_unresolved_details(total_unresolved: int | None = None) -> None:
         _sync_progress_ui(f"[i] Unresolved items ({len(shown)}):")
         for line in shown:
             _sync_progress_ui(f"[i] {line}")
+
+def _run_pairs_thread_entry(run_id: str, overrides: dict | None = None, *, interactive: Any = None) -> None:
+    try:
+        _run_pairs_thread(run_id, overrides, interactive=interactive)
+    finally:
+        clear_caches()
+        release_memory()
 
 def _run_pairs_thread(run_id: str, overrides: dict | None = None, *, interactive: Any = None) -> None:
     rt = _rt()
@@ -2805,7 +2813,7 @@ def api_run_sync(payload: dict | None = Body(None), request: Request = cast(Requ
         if user and not user.get("is_admin"):
             overrides["pair_scope_ids"] = [str(pair.get("id") or "") for pair in pairs if str(pair.get("id") or "")]
         th = threading.Thread(
-            target=_run_pairs_thread,
+            target=_run_pairs_thread_entry,
             args=(run_id,),
             kwargs={"overrides": overrides},
             daemon=True,

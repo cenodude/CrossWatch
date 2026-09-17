@@ -33,6 +33,7 @@ from cw_platform.config_base import CONFIG as CONFIG_DIR, load_config
 from cw_platform.orchestrator._history_rewatches import history_event_matches, history_timestamp_tolerance_seconds
 from cw_platform.orchestrator._unresolved import is_remove_retry
 from cw_platform.local_db.legacy_files import DB_MANAGED_ARTIFACTS
+from cw_platform.memory_release import register_cache
 from cw_platform.modules_registry import get_sync_module_path_by_name, sync_provider_names
 from cw_platform.provider_instances import normalize_instance_id
 from cw_platform.reason_labels import TRACKER_TO_MEDIA_SERVER_MESSAGE, reason_message
@@ -56,6 +57,16 @@ _SYSTEM_CACHE_LOCK = threading.Lock()
 _SYSTEM_CACHE: dict[tuple[Any, ...], dict[str, Any]] = {}
 _INFLIGHT_LOCK = threading.Lock()
 _INFLIGHT_LOCKS: dict[tuple[Any, ...], threading.Lock] = {}
+
+
+def _clear_analyzer_caches() -> None:
+    for lock, cache in ((_ANALYSIS_CACHE_LOCK, _ANALYSIS_CACHE), (_STATE_CACHE_LOCK, _STATE_CACHE), (_SCOPED_ROWS_CACHE_LOCK, _SCOPED_ROWS_CACHE), (_SYSTEM_CACHE_LOCK, _SYSTEM_CACHE)):
+        with lock:
+            cache.clear()
+
+
+register_cache("analyzer", _clear_analyzer_caches)
+
 _LOG = logging.getLogger("crosswatch.analyzer")
 _TRACKER_PROVIDER_BASES = {"CROSSWATCH", "TRAKT", "SIMKL", "MDBLIST", "ANILIST"}
 _MEDIA_SERVER_PROVIDER_BASES = {"PLEX", "EMBY", "JELLYFIN"}

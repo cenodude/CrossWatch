@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Callable
 from typing import Any
 import importlib
+import threading
 from collections.abc import Mapping as _Mapping
 from ..id_map import canonical_key as _ck, keys_for_item, ID_KEYS
 
@@ -118,10 +119,22 @@ def rate_remaining(h: Mapping[str, Any] | None) -> int | None:
     except Exception:
         return None
 
+_CTX_MISSING = object()
+_CTX_TARGETS: dict[int, tuple[Any, Any]] = {}
+_CTX_TARGETS_LOCK = threading.Lock()
+
+
+def _set_ctx(target: Any, ctx: Any) -> None:
+    with _CTX_TARGETS_LOCK:
+        if id(target) not in _CTX_TARGETS:
+            _CTX_TARGETS[id(target)] = (target, getattr(target, "ctx", _CTX_MISSING))
+    setattr(target, "ctx", ctx)
+
+
 def inject_ctx_into_provider(ops, ctx) -> None:
     try:
         try:
-            setattr(ops, "ctx", ctx)
+            _set_ctx(ops, ctx)
         except Exception:
             pass
 
@@ -131,7 +144,7 @@ def inject_ctx_into_provider(ops, ctx) -> None:
 
         try:
             mod = importlib.import_module(modname)
-            setattr(mod, "ctx", ctx)
+            _set_ctx(mod, ctx)
         except Exception:
             pass
 
@@ -147,13 +160,28 @@ def inject_ctx_into_provider(ops, ctx) -> None:
                     continue
                 try:
                     cmod = importlib.import_module(cname)
-                    setattr(cmod, "ctx", ctx)
+                    _set_ctx(cmod, ctx)
                 except Exception:
                     continue
         except Exception:
             pass
     except Exception:
         pass
+
+
+def release_ctx_from_providers(ctx) -> None:
+    with _CTX_TARGETS_LOCK:
+        for key, (target, original) in list(_CTX_TARGETS.items()):
+            try:
+                if getattr(target, "ctx", None) is not ctx:
+                    continue
+                if original is _CTX_MISSING:
+                    delattr(target, "ctx")
+                else:
+                    setattr(target, "ctx", original)
+                _CTX_TARGETS.pop(key, None)
+            except Exception:
+                continue
 
 def pair_key(a: str, b: str, *, mode: str = "two-way", src: str | None = None, dst: str | None = None) -> str:
     try:

@@ -5,11 +5,13 @@ from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
 from .db import get_conn
+
+_WRITE_BATCH = 2000
 
 _LOCK = threading.RLock()
 
@@ -444,24 +446,45 @@ def save_statistics(base_path: str | Path, data: Mapping[str, Any]) -> None:
                         for row in samples
                     ],
                 )
-            for feature, rows in current_maps.items():
-                for item_key, item_any in rows.items():
-                    if not isinstance(item_any, Mapping):
-                        continue
-                    item = dict(item_any)
-                    key = str(item_key or "")
-                    if not key:
-                        continue
-                    conn.execute(
-                        "INSERT INTO statistics_current_items(feature,item_key,src,title,media_type,updated_at) VALUES(?,?,?,?,?,?)",
-                        (feature, key, _s(item.get("src")), _s(item.get("title")), _s(item.get("type")), ts),
-                    )
-                    providers = item.get("providers")
-                    if isinstance(providers, (list, tuple, set)):
-                        conn.executemany(
-                            "INSERT OR IGNORE INTO statistics_current_providers(feature,item_key,provider) VALUES(?,?,?)",
-                            [(feature, key, str(p or "").lower()) for p in providers if str(p or "").strip()],
+            def _current_rows() -> Iterator[tuple[tuple[Any, ...], list[tuple[Any, ...]]]]:
+                for feature, rows in current_maps.items():
+                    for item_key, item_any in rows.items():
+                        if not isinstance(item_any, Mapping):
+                            continue
+                        key = str(item_key or "")
+                        if not key:
+                            continue
+                        providers = item_any.get("providers")
+                        provider_rows = (
+                            [(feature, key, str(p or "").lower()) for p in providers if str(p or "").strip()]
+                            if isinstance(providers, (list, tuple, set))
+                            else []
                         )
+                        yield (feature, key, _s(item_any.get("src")), _s(item_any.get("title")), _s(item_any.get("type")), ts), provider_rows
+
+            item_batch: list[tuple[Any, ...]] = []
+            provider_batch: list[tuple[Any, ...]] = []
+
+            def _flush_current() -> None:
+                if item_batch:
+                    conn.executemany(
+                        "INSERT INTO statistics_current_items(feature,item_key,src,title,media_type,updated_at) VALUES(?,?,?,?,?,?)",
+                        item_batch,
+                    )
+                    item_batch.clear()
+                if provider_batch:
+                    conn.executemany(
+                        "INSERT OR IGNORE INTO statistics_current_providers(feature,item_key,provider) VALUES(?,?,?)",
+                        provider_batch,
+                    )
+                    provider_batch.clear()
+
+            for item_row, provider_rows in _current_rows():
+                item_batch.append(item_row)
+                provider_batch.extend(provider_rows)
+                if len(item_batch) >= _WRITE_BATCH:
+                    _flush_current()
+            _flush_current()
             counters = payload.get("counters")
             if isinstance(counters, Mapping):
                 conn.executemany(
