@@ -94,7 +94,7 @@
 
   async function loadPresence(item) {
     try {
-      const res = await fetch(`/api/profile/title?type=${kindOf(item)}&tmdb=${encodeURIComponent(tmdbOf(item))}`, { credentials: "same-origin", cache: "no-store" });
+      const res = await fetch((window.CW?.ProfileViewAs?.scope || String)(`/api/profile/title?type=${kindOf(item)}&tmdb=${encodeURIComponent(tmdbOf(item))}`), { credentials: "same-origin", cache: "no-store" });
       const data = await res.json().catch(() => null);
       return res.ok && data?.ok ? data : null;
     } catch {
@@ -115,7 +115,7 @@
     if (document.documentElement?.dataset?.cwPermPlayback !== "off") {
       try {
         const tmdb = tmdbOf(item);
-        const res = await fetch(`/api/playback_progress/items?tmdb=${encodeURIComponent(tmdb)}&page=1&page_size=50`, { credentials: "same-origin", cache: "no-store" });
+        const res = await fetch((window.CW?.ProfileViewAs?.scope || String)(`/api/playback_progress/items?tmdb=${encodeURIComponent(tmdb)}&page=1&page_size=50`), { credentials: "same-origin", cache: "no-store" });
         const data = await res.json().catch(() => null);
         const match = (Array.isArray(data?.items) ? data.items : []).find((entry) => {
           if (String(entry?.media_type || "").toLowerCase() !== "movie") return false;

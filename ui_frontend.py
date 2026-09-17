@@ -2329,6 +2329,15 @@ def get_profile_html(user: dict | None = None) -> str:
     ) if watchlist_allowed else ""
     collection_bulk = _profile_bulk_bar("profile-collection-bulk", "collection")
     remove_dialog = _profile_remove_dialog()
+    view_as_picker = (
+        '<div id="cw-view-as" class="cw-view-as hidden"><select id="cw-view-as-select" aria-label="View profile as"></select></div>'
+        if is_admin else ""
+    )
+    view_as_banner = """  <div id="profile-view-as-banner" class="cw-profile-viewas" role="status" hidden>
+    <span class="material-symbols-rounded" aria-hidden="true">visibility</span>
+    <span class="cw-profile-viewas-copy">Viewing <strong id="profile-view-as-name"></strong> as read-only</span>
+    <button id="profile-view-as-exit" class="cw-profile-viewas-exit" type="button">Back to my profile</button>
+  </div>""" if is_admin else ""
     html = f"""<!DOCTYPE html>
 <html lang="en" data-cw-role="{role}" data-cw-page="profile" data-cw-perm-dashboard="{dashboard}" data-cw-perm-watchlist="{watchlist}" data-cw-perm-playback="{playback}" data-cw-perm-write="{write}" data-cw-profile-id="{profile_id}">
 <head>
@@ -2407,7 +2416,7 @@ def get_profile_html(user: dict | None = None) -> str:
         <input id="profile-avatar-input" type="file" accept="image/png,image/jpeg,image/webp" hidden>
       </div>
       <div class="cw-profile-nameblock">
-        <span id="profile-role" class="cw-profile-role">{role_label}</span>
+        <div class="cw-profile-rolebar"><span id="profile-role" class="cw-profile-role">{role_label}</span>{view_as_picker}</div>
         <h1 id="profile-display-name">{display_name}</h1>
         <div id="profile-username" class="cw-profile-username">@{username}</div>
         <div id="profile-member-since" class="cw-profile-since hidden"><span class="material-symbols-rounded" aria-hidden="true">person</span><span></span></div>
@@ -2439,6 +2448,7 @@ def get_profile_html(user: dict | None = None) -> str:
       <img id="profile-now-poster" class="cw-profile-now-poster" src="/assets/img/placeholder_poster.svg" alt="">
     </div>
   </section>
+{view_as_banner}
   <div class="cw-profile-tabs" role="tablist" aria-label="Profile tabs">
     <button id="profile-tab-overview" class="active" type="button" data-profile-tab="overview">Overview</button>
 {watchlist_tab}
@@ -2782,6 +2792,7 @@ def get_profile_html(user: dict | None = None) -> str:
 <script type="module" src="/assets/js/modals.js?v=__CW_VERSION__"></script>
 <script src="/assets/helpers/provider-meta.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/icon-select.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/helpers/profile-select.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/account-menu.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/notifications.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/update-notifications.js?v=__CW_VERSION__" defer></script>

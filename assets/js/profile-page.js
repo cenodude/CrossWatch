@@ -5,13 +5,35 @@
   const $ = (sel, root = document) => root.querySelector(sel);
   const esc = (value) => String(value ?? "").replace(/[&<>"]/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[m]));
   const API_TIMEOUT_MS = 60 * 1000;
+  const VIEW_AS_PARAM = "as";
+  const VIEW_AS_PATHS = [
+    "/api/profile/collection", "/api/profile/history", "/api/profile/ratings", "/api/profile/watchlist", "/api/profile/title",
+    "/api/playback_progress/", "/api/watch/currently_watching", "/api/state/wall", "/api/insights", "/api/status",
+    "/api/dashboard/widgets", "/api/events/feed",
+  ];
+  const viewAsState = { id: "", label: "" };
+  const viewingAs = () => !!viewAsState.id;
+  const scopeUrl = (url) => {
+    const text = String(url || "");
+    if (!viewAsState.id || !VIEW_AS_PATHS.some((path) => text.startsWith(path))) return text;
+    const parsed = new URL(text, window.location.origin);
+    if (!parsed.searchParams.has("user_profile")) parsed.searchParams.set("user_profile", viewAsState.id);
+    return `${parsed.pathname}${parsed.search}`;
+  };
+  window.CW = window.CW || {};
+  window.CW.ProfileViewAs = {
+    get id() { return viewAsState.id; },
+    get active() { return viewingAs(); },
+    scope: scopeUrl,
+  };
 
   const api = async (url, opt = {}, ms = API_TIMEOUT_MS) => {
     const controller = typeof AbortController === "function" ? new AbortController() : null;
     const timer = controller ? window.setTimeout(() => controller.abort("timeout"), ms) : 0;
     let res;
     try {
-      res = await fetch(url, { cache: "no-store", credentials: "same-origin", signal: controller?.signal, ...opt });
+      const method = String(opt.method || "GET").toUpperCase();
+      res = await fetch(method === "GET" ? scopeUrl(url) : url, { cache: "no-store", credentials: "same-origin", signal: controller?.signal, ...opt });
     } finally {
       if (timer) window.clearTimeout(timer);
     }
@@ -23,7 +45,7 @@
   const profileCacheKey = (name) => {
     const shell = $(".cw-profile-shell");
     const id = shell?.dataset?.profileId || shell?.dataset?.username || document.documentElement?.dataset?.cwProfileId || "self";
-    return `cw.profile.${id}.${name}.v1`;
+    return `cw.profile.${id}${viewAsState.id ? `.as-${viewAsState.id}` : ""}.${name}.v1`;
   };
   const readCache = (key, ttl = OVERVIEW_CACHE_TTL_MS) => {
     try {
@@ -242,7 +264,7 @@
     btn.__cwConfirmTimer = setTimeout(reset, SETTINGS_CONFIRM_MS);
     return false;
   };
-  const canWriteRecords = () => document.documentElement?.dataset?.cwRole !== "user" || document.documentElement?.dataset?.cwPermWrite === "on";
+  const canWriteRecords = () => !viewingAs() && (document.documentElement?.dataset?.cwRole !== "user" || document.documentElement?.dataset?.cwPermWrite === "on");
   const RECORD_SELECTION_MAX = 1000;
   const selectionFields = (item) => {
     const out = { key: String(item?.key || ""), aliases: Array.isArray(item?.aliases) ? item.aliases : [], present: Array.isArray(item?.present) ? item.present : [] };
@@ -503,7 +525,7 @@
 
   function setAvatar(url) {
     const normalized = window.CW?.AccountMenu?.normalizeAvatarUrl?.(url) || String(url || "").trim();
-    const nodes = [$("#profile-avatar-button"), $("#cw-nav-profile-avatar"), $("#profile-settings-avatar")].filter(Boolean);
+    const nodes = [viewingAs() ? null : $("#profile-avatar-button"), $("#cw-nav-profile-avatar"), $("#profile-settings-avatar")].filter(Boolean);
     for (const node of nodes) {
       if (window.CW?.AccountMenu?.setAvatarNode) {
         window.CW.AccountMenu.setAvatarNode(node, normalized);
@@ -616,13 +638,14 @@
   function renderProfile(data) {
     profile = data?.user || profile || {};
     const display = String(profile.display_name || profile.label || profile.username || "Profile");
-    $("#profile-display-name").textContent = display;
-    $("#profile-username").textContent = `@${profile.username || ""}`;
-    $("#profile-role").textContent = profile.is_admin ? "Administrator" : "Managed User";
+    const viewed = viewingAs();
+    $("#profile-display-name").textContent = viewed ? (viewAsState.label || viewAsState.id) : display;
+    $("#profile-username").textContent = viewed ? `Opened by @${profile.username || ""}` : `@${profile.username || ""}`;
+    $("#profile-role").textContent = viewed ? "User profile" : (profile.is_admin ? "Administrator" : "Managed User");
     $("#profile-display-input").value = display;
     renderTwoFactor(!!profile.totp_enabled);
     setAvatar(profile.avatar_url || "");
-    renderMemberSince(profile);
+    renderMemberSince(viewingAs() ? {} : profile);
     renderPreferences(profile);
     renderSessions(profile);
     updateSharedProfile(profile);
@@ -652,7 +675,7 @@
     const host = $("#profile-hero-chips");
     if (!host) return;
     const chips = [];
-    const days = daysTracked(profile);
+    const days = viewingAs() ? 0 : daysTracked(profile);
     if (days > 0) chips.push(["calendar_month", numberFmt.format(days), "Days tracked"]);
     chips.push(["visibility", numberFmt.format(itemsWatched || 0), "Items watched"]);
     chips.push(["hub", numberFmt.format(services || 0), "Services connected"]);
@@ -3471,7 +3494,7 @@
     const PAGE_SIZES = [24, 48, 96];
     const doc = document.documentElement;
     const isManaged = () => doc?.dataset?.cwRole === "user";
-    const canAct = () => !isManaged() || doc?.dataset?.cwPermWrite === "on";
+    const canAct = () => !viewingAs() && (!isManaged() || doc?.dataset?.cwPermWrite === "on");
     const canConfigure = () => !isManaged();
     const q = (suffix) => $(`#profile-playback-${suffix}`);
     const panel = () => $("#profile-panel-playback");
@@ -3516,7 +3539,8 @@
 
     async function request(url, options = {}) {
       try {
-        const res = await fetch(url, { credentials: "same-origin", cache: "no-store", ...options });
+        const method = String(options.method || "GET").toUpperCase();
+        const res = await fetch(method === "GET" ? scopeUrl(url) : url, { credentials: "same-origin", cache: "no-store", ...options });
         const data = await res.json().catch(() => ({}));
         const payload = data && typeof data === "object" ? data : {};
         if (!res.ok) payload.ok = false;
@@ -4407,6 +4431,7 @@
       return ["overview", "collection", "history", "ratings", "playback", "watchlist", "account"].includes(key) ? key : "";
     };
     const selectTab = (key, opts = {}) => {
+      if (key === "account" && viewingAs()) return false;
       const btn = document.querySelector(`[data-profile-tab="${key}"]`);
       if (!btn) return false;
       document.querySelectorAll("[data-profile-tab]").forEach((tab) => tab.classList.toggle("active", tab === btn));
@@ -4433,7 +4458,9 @@
 
   function wireAvatar() {
     const input = $("#profile-avatar-input");
-    const pick = () => input?.click();
+    const pick = () => {
+      if (!viewingAs()) input?.click();
+    };
     $("#profile-avatar-button")?.addEventListener("click", pick);
     $("#profile-avatar-replace")?.addEventListener("click", pick);
     $("#profile-avatar-remove")?.addEventListener("click", async (event) => {
@@ -4903,7 +4930,57 @@
     } catch {}
   }
 
+  function syncViewAsUrl() {
+    try {
+      const url = new URL(window.location.href);
+      if (viewAsState.id) url.searchParams.set(VIEW_AS_PARAM, viewAsState.id);
+      else url.searchParams.delete(VIEW_AS_PARAM);
+      window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+    } catch {}
+  }
+
+  function renderViewAs() {
+    const on = viewingAs();
+    document.documentElement.dataset.profileViewAs = on ? "on" : "off";
+    const banner = $("#profile-view-as-banner");
+    if (banner) banner.hidden = !on;
+    const name = $("#profile-view-as-name");
+    if (name) name.textContent = viewAsState.label || viewAsState.id;
+    const settingsTab = $("#profile-tab-account");
+    if (settingsTab) settingsTab.hidden = on;
+    const hero = $("#profile-avatar-button");
+    if (on && hero) {
+      hero.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">person</span>`;
+      hero.title = "Profile picture";
+      hero.setAttribute("aria-label", "Profile picture");
+    }
+  }
+
+  async function resolveViewAs() {
+    const overview = window.CW?.OverviewProfile;
+    if (document.documentElement?.dataset?.cwRole !== "admin" || !overview) return;
+    const ready = overview.ready;
+    if (ready && typeof ready.then === "function") {
+      await Promise.race([ready.catch(() => {}), new Promise((resolve) => setTimeout(resolve, 3000))]);
+    }
+    const wanted = new URLSearchParams(window.location.search).get(VIEW_AS_PARAM);
+    if (wanted !== null) overview.setActive(wanted);
+    viewAsState.id = String(overview.id || "");
+    viewAsState.label = String(overview.label || "");
+    syncViewAsUrl();
+    renderViewAs();
+    $("#profile-view-as-exit")?.addEventListener("click", () => overview.setActive(""));
+    window.addEventListener("cw:overview-profile-changed", (event) => {
+      const next = String(event?.detail?.id || "");
+      if (next === viewAsState.id) return;
+      viewAsState.id = next;
+      syncViewAsUrl();
+      window.location.reload();
+    });
+  }
+
   async function init() {
+    await resolveViewAs();
     historyPanel.wire();
     ratingsPanel.wire();
     playbackPanel.wire();
