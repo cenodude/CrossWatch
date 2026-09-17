@@ -213,7 +213,7 @@ def apply(session: Session, cfg: dict[str, Any], selected: set[str]):
     execution.valid = lambda: mapping_version(cfg) == session.mapping_version
     execution.config_hash = fingerprint(cfg)
     try:
-        syncAPI._run_pairs_thread("interactive-" + session.id, {"pair_id": session.pair_id}, interactive=execution)
+        syncAPI._run_pairs_thread_entry("interactive-" + session.id, {"pair_id": session.pair_id}, interactive=execution)
     finally:
         with LOCK:
             session.report = report.finish(session, execution, execution.result)

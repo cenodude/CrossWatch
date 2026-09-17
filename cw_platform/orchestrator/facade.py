@@ -14,6 +14,7 @@ from ._state_store import StateStore
 from ._logging import Emitter
 from ._telemetry import Stats, maybe_emit_rate_warnings
 from ._pairs import run_pairs as _run_pairs
+from ._pairs_utils import release_ctx_from_providers as _release_ctx
 from ._tombstones import (
     prune as _tomb_prune,
     keys_for_feature as _tomb_keys_for_feature,
@@ -168,6 +169,7 @@ class Orchestrator:
     ) -> dict[str, Any]:
         prev_cb = self.emitter.cb
         prev_on = self.on_progress
+        run_ctx: Any = None
         try:
             if progress is not None:
                 if callable(progress):
@@ -192,7 +194,8 @@ class Orchestrator:
             self.write_state_json = bool(write_state_json)
             self.state_path = Path(state_path) if state_path else None
 
-            summary = _run_pairs(self.context)
+            run_ctx = self.context
+            summary = _run_pairs(run_ctx)
 
             if self.interactive is not None and self.interactive.preview:
                 return summary
@@ -233,6 +236,9 @@ class Orchestrator:
         finally:
             self.emitter.cb = prev_cb
             self.on_progress = prev_on
+            if run_ctx is not None:
+                _release_ctx(run_ctx)
+            self.snap_cache.clear()
 
     def run_pairs(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return self.run(*args, **kwargs)

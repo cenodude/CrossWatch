@@ -20,6 +20,7 @@ from fastapi import APIRouter, Body, File, Query, UploadFile
 from fastapi.responses import StreamingResponse
 
 from cw_platform.local_db import crosswatch_db_path
+from cw_platform.memory_release import clear_caches, release_memory
 from cw_platform.local_db.currently_watching import clear_streams as clear_currently_watching_streams
 from cw_platform.local_db.currently_watching import stream_count as currently_watching_stream_count
 from cw_platform.local_db.diagnostics import diagnostics as local_db_diagnostics
@@ -1098,6 +1099,8 @@ def clear_state_minimal() -> dict[str, Any]:
             if _safe_remove_path(p):
                 removed_scoped.append(p.name)
         after_usage = _paths_usage(_sync_state_storage_paths(CONFIG_DIR))
+        clear_caches()
+        release_memory()
         return {
             "ok": True,
             "path": str(state_path),
@@ -1332,6 +1335,8 @@ def crosswatch_tracker_clear(
     if clear_snapshots:
         selected_after_paths.extend(_json_files_in_dir(_cw_tracker_snapshot_dir(root)))
     after_usage = _paths_usage(list(selected_after_paths))
+    clear_caches()
+    release_memory()
 
     return {
         "ok": True,
@@ -1358,6 +1363,8 @@ def clear_cache() -> dict[str, Any]:
         "modified": None,
     }
     removed = _clear_cw_state_files()
+    clear_caches()
+    release_memory()
     after = _scan_provider_cache()
     after_usage = {
         "files": len(after.get("files") or []),

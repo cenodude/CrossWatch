@@ -16,6 +16,7 @@ from typing import Any, Callable
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 
+from cw_platform.memory_release import register_cache
 from cw_platform.modules_registry import sync_provider_names
 from cw_platform.provider_instances import (
     ensure_instance_block,
@@ -181,6 +182,17 @@ def _lru_put(cache: "OrderedDict[Any, Any]", limit: int, key: Any, value: Any) -
         cache.move_to_end(key)
         while len(cache) > limit:
             cache.popitem(last=False)
+
+
+def _clear_insight_caches() -> None:
+    with _DERIVED_LOCK:
+        _DERIVED_CACHE.clear()
+        _TITLEMAP_CACHE.clear()
+    with _SHADOW_CACHE_LOCK:
+        _SHADOW_CACHE.clear()
+
+
+register_cache("insights", _clear_insight_caches)
 
 
 def _derived_cache_get(key: Any) -> Any:

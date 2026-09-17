@@ -14,6 +14,7 @@ from cw_platform.config_base import CONFIG, config_path, load_config
 from cw_platform.local_db import manual_policy as sqlite_manual_policy
 from cw_platform.local_db import state as sqlite_state
 from cw_platform.local_db import watchlist_hide as sqlite_watchlist_hide
+from cw_platform.memory_release import register_cache
 from cw_platform.orchestrator._state_store import StateStore
 from cw_platform.provider_instances import instances_for_user_profile, normalize_instance_id, provider_display_key
 from services.watchlist import build_watchlist, detect_available_watchlist_providers
@@ -44,6 +45,9 @@ def _wall_cache_put(key: tuple[Any, ...], data: dict[str, Any]) -> None:
 def clear_wall_cache() -> None:
     with _WALL_CACHE_LOCK:
         _WALL_CACHE.clear()
+
+
+register_cache("wall", clear_wall_cache)
 
 
 def _path_key(path: Any) -> tuple[str, int, int]:

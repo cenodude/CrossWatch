@@ -59,6 +59,11 @@ DEFAULT_SCHEDULER_WEBHOOKS: dict[str, Any] = {
 _ENC_PREFIX = "enc:v1:"
 _CONFIG_LOCK = threading.RLock()
 _CONFIG_FILE_LOCK_STATE = threading.local()
+_KEY_CACHE_LOCK = threading.Lock()
+_KEY_CACHE: dict[tuple[Any, ...], bytes] = {}
+_CIPHER_CACHE: dict[bytes, Any] = {}
+_CFG_CACHE_LOCK = threading.Lock()
+_CFG_CACHE: dict[tuple[Any, ...], dict[str, Any]] = {}
 
 def _config_key_file() -> Path:
     return CONFIG / ".cw_master_key"
@@ -86,10 +91,23 @@ def _load_config_key(*, create: bool) -> bytes | None:
             return _normalize_fernet_key(raw)
 
     key_path = _config_key_file()
-    if key_path.exists():
+    try:
+        st = key_path.stat()
+        stamp: tuple[Any, ...] | None = (str(key_path), st.st_mtime_ns, st.st_size)
+    except OSError:
+        stamp = None
+    if stamp is not None:
+        with _KEY_CACHE_LOCK:
+            cached = _KEY_CACHE.get(stamp)
+        if cached is not None:
+            return cached
         raw = key_path.read_text(encoding="utf-8")
         _apply_owner_mode(key_path, _ownership_reference(_cfg_file()), mode=0o600)
-        return _normalize_fernet_key(raw)
+        key = _normalize_fernet_key(raw)
+        with _KEY_CACHE_LOCK:
+            _KEY_CACHE.clear()
+            _KEY_CACHE[stamp] = key
+        return key
 
     if not create:
         return None
@@ -110,11 +128,19 @@ def _get_cipher(*, create: bool):
     key = _load_config_key(create=create)
     if not key:
         return None
+    with _KEY_CACHE_LOCK:
+        cipher = _CIPHER_CACHE.get(key)
+    if cipher is not None:
+        return cipher
     try:
         from cryptography.fernet import Fernet
     except Exception as e:
         raise RuntimeError("Missing dependency: cryptography is required for encrypted config support") from e
-    return Fernet(key)
+    cipher = Fernet(key)
+    with _KEY_CACHE_LOCK:
+        _CIPHER_CACHE.clear()
+        _CIPHER_CACHE[key] = cipher
+    return cipher
 
 
 def _encrypt_secret(value: str) -> str:
@@ -1215,6 +1241,8 @@ def _write_json_atomic(p: Path, data: dict[str, Any]) -> None:
         _apply_owner_mode(tmp, ref, mode=mode)
         tmp.replace(p)
         _apply_owner_mode(p, ref, mode=mode)
+        if p == _cfg_file():
+            invalidate_config_cache()
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -2805,8 +2833,27 @@ def _ensure_webhook_ids(cfg: dict[str, Any]) -> tuple[dict[str, Any], bool]:
 
     return cfg, changed
 
+def invalidate_config_cache() -> None:
+    with _CFG_CACHE_LOCK:
+        _CFG_CACHE.clear()
+
+
+def _config_stamp(p: Path) -> tuple[Any, ...] | None:
+    try:
+        st = p.stat()
+    except OSError:
+        return None
+    return (str(p), st.st_mtime_ns, st.st_size)
+
+
 def load_config() -> dict[str, Any]:
     p = _cfg_file()
+    stamp = _config_stamp(p)
+    if stamp is not None:
+        with _CFG_CACHE_LOCK:
+            cached = _CFG_CACHE.get(stamp)
+        if cached is not None:
+            return copy.deepcopy(cached)
     first_run = not p.exists()
     user_cfg: dict[str, Any] = {}
     if p.exists():
@@ -2881,6 +2928,11 @@ def load_config() -> dict[str, Any]:
         cfg, _ = _ensure_webhook_ids(cfg)
     except Exception:
         pass
+
+    if stamp is not None and stamp == _config_stamp(p):
+        with _CFG_CACHE_LOCK:
+            _CFG_CACHE.clear()
+            _CFG_CACHE[stamp] = copy.deepcopy(cfg)
 
     return cfg
 

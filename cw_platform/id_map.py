@@ -103,6 +103,9 @@ def _norm_type(t: Any) -> str:
     return x or "movie"
 
 
+_NUMERIC_ID_KEYS = frozenset({"tmdb", "tvdb", "trakt", "simkl", "mal", "anilist", "kitsu", "anidb", "plex", "jellyfin", "emby"})
+
+
 def _normalize_id(key: str, val: Any) -> str | None:
     k = (key or "").lower().strip()
     s = _norm_str(val)
@@ -114,12 +117,16 @@ def _normalize_id(key: str, val: Any) -> str | None:
     if k == "mdblist":
         return s.lower()
 
-    if k in ("tmdb", "tvdb", "trakt", "simkl", "mal", "anilist", "kitsu", "anidb", "plex", "jellyfin", "emby"):
+    if k in _NUMERIC_ID_KEYS:
+        if s.isdigit():
+            return s
         digits = re.sub(r"\D+", "", s)
         return digits or None
 
     if k == "imdb":
         s = s.lower()
+        if s.startswith("tt") and s[2:].isdigit():
+            return s
         m = re.search(r"(tt\d+)", s)
         if m:
             return m.group(1)
@@ -184,21 +191,32 @@ def ids_from_jellyfin_providerids(provider_ids: Mapping[str, Any] | None) -> dic
 def coalesce_ids(*many: Mapping[str, Any]) -> dict[str, str]:
     out: dict[str, str] = {}
     for ids in many:
-        if not isinstance(ids, Mapping):
+        if not ids:
+            continue
+        if type(ids) is not dict and not isinstance(ids, Mapping):
             continue
         for k in ID_KEYS:
-            n = _normalize_id(k, ids.get(k))
+            v = ids.get(k)
+            if v is None or v == "":
+                continue
+            n = _normalize_id(k, v)
             if n:
                 out[k] = n
     return out
 
 
 def ids_from(item: Mapping[str, Any]) -> dict[str, str]:
-    base = item.get("ids") if isinstance(item.get("ids"), Mapping) else {}
-    top = {k: item.get(k) for k in ID_KEYS if item.get(k) is not None}
-    guid_val = item.get("guid") or (base.get("guid") if isinstance(base, Mapping) else None)
+    base = item.get("ids")
+    if type(base) is not dict and not isinstance(base, Mapping):
+        base = {}
+    top: dict[str, Any] = {}
+    for k in ID_KEYS:
+        v = item.get(k)
+        if v is not None:
+            top[k] = v
+    guid_val = item.get("guid") or base.get("guid")
     from_guid = ids_from_guid(str(guid_val)) if guid_val else {}
-    return coalesce_ids(top, base or {}, from_guid)
+    return coalesce_ids(top, base, from_guid)
 
 
 def merge_ids(old: Mapping[str, Any] | None, new: Mapping[str, Any] | None) -> dict[str, str]:
