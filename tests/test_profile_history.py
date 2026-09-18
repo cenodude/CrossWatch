@@ -95,13 +95,30 @@ def test_synced_history_reports_where_each_play_lives() -> None:
     assert kusama["present"] == [{"provider": "TRAKT", "instance": "default"}]
     assert {ref["provider"] for ref in kusama["missing"]} == {"PLEX", "SIMKL"}
     assert payload["counts"] == {"all": 3, "movie": 2, "episode": 1}
-    assert payload["stats"] == {"plays": 3, "movies": 2, "episodes": 1, "endpoints": 3, "full": 1, "partial": 2}
+    assert payload["stats"] == {"plays": 3, "movies": 2, "episodes": 1, "endpoints": 3, "watches": 3, "full": 1, "partial": 2}
     assert payload["providers"] == [
         {"provider": "plex", "count": 1},
         {"provider": "simkl", "count": 2},
         {"provider": "trakt", "count": 2},
     ]
     assert payload["months"] == [{"month": "2026-09", "count": 2}, {"month": "2026-08", "count": 1}]
+
+
+def test_synced_history_counts_rewatches_once_per_viewing() -> None:
+    watches = {1704916800: "2024-01-10T20:00:00Z", 1739566800: "2025-02-14T21:00:00Z", 1772393400: "2026-03-01T19:30:00Z"}
+    trakt = {f"tmdb:603@{epoch}": _movie(603, "The Matrix", 1999, value) for epoch, value in watches.items()}
+    simkl = {"tmdb:603": _movie(603, "The Matrix", 1999, "2026-03-01T19:32:00Z")}
+    state = {"providers": {"TRAKT": _history(trakt), "SIMKL": _history(simkl), "PLEX": _history({"tmdb:20": KUSAMA})}}
+    payload = profile_history.build_history_payload(
+        profile_history.build_history_index("synced", state=state, tracker_items={}), resolve_art=False)
+
+    kusama, matrix = payload["items"]
+    assert matrix["watch_count"] == 3
+    assert len(matrix["watch_epochs"]) == 3
+    assert kusama["watch_count"] == 1
+    assert "watch_epochs" not in kusama
+    assert payload["stats"]["plays"] == 2
+    assert payload["stats"]["watches"] == 4
 
 
 def test_synced_history_filters_and_jumps_to_month() -> None:

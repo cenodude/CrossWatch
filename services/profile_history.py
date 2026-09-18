@@ -44,6 +44,8 @@ _ROW_FIELDS = (
     "targets",
     "method",
     "event",
+    "watch_count",
+    "watch_epochs",
 )
 _INDEX_CACHE: "OrderedDict[tuple[Any, ...], dict[str, Any]]" = OrderedDict()
 _INDEX_CACHE_MAX = 12
@@ -236,7 +238,9 @@ def build_history_index(
     rating_total = 0
     full = 0
     mismatch = 0
+    watches = 0
     for row in rows:
+        watches += max(1, dw._as_int(row.get("watch_count")) or 1)
         if row["_type"] in counts:
             counts[row["_type"]] += 1
         for provider in {endpoint[0] for endpoint in row["_endpoints"]}:
@@ -262,6 +266,7 @@ def build_history_index(
         "mismatch": mismatch,
         "rating_total": rating_total,
         "minutes": minutes,
+        "watches": watches,
     }
 
 
@@ -387,6 +392,8 @@ def build_history_payload(
         "episodes": counts.get("episode", 0),
         "endpoints": endpoint_total,
     }
+    if source == "synced":
+        stats["watches"] = int(index.get("watches") or plays)
     if source in _COVERAGE_SOURCES:
         stats["full"] = int(index.get("full") or 0)
         stats["partial"] = max(0, plays - stats["full"])
