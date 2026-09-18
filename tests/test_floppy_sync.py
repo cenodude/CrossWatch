@@ -628,6 +628,29 @@ def test_floppy_episode_history_add_prevents_duplicate_play() -> None:
     assert not any(c["method"] == "POST" for c in adapter.client.session.calls)
 
 
+@pytest.mark.parametrize("rewatches", [True, False], ids=["rewatches", "plain"])
+def test_floppy_episode_history_add_sends_external_id_only_for_rewatches(rewatches: bool) -> None:
+    from providers.sync.floppy import _history
+
+    cfg = {"_cw_history_rewatches": True, "floppy": {}} if rewatches else {"floppy": {}}
+    adapter = AdapterStub(
+        {
+            ("GET", "media/tv/tmdb/22/1/2/history"): {"results": [], "count": 0},
+            ("POST", "media/tv/tmdb/22/1/episodes/2/watch"): {"consumption_id": 43},
+        },
+        cfg,
+    )
+
+    res = _history.add(adapter, [{"type": "episode", "show_ids": {"tmdb": "22"}, "season": 1, "episode": 2, "watched_at": "2026-01-03T00:00:00Z"}])
+
+    assert res["count"] == 1
+    post = next(c for c in adapter.client.session.calls if c["method"] == "POST")
+    expected = {"end_date": "2026-01-03T00:00:00Z"}
+    if rewatches:
+        expected["external_id"] = "cw:tmdb:22#s01e02@1767398400"
+    assert post["json"] == expected
+
+
 def test_floppy_history_rewatch_remove_uses_exact_consumption_id() -> None:
     from providers.sync.floppy import _history
 

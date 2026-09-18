@@ -602,7 +602,7 @@ def _movie_history_item(tmdb_id: str, row: Mapping[str, Any]) -> dict[str, Any] 
     return item
 
 
-def _movie_external_id(adapter: Any, item: Mapping[str, Any], key: str) -> str | None:
+def _external_id(adapter: Any, item: Mapping[str, Any], key: str) -> str | None:
     if not _rewatches_enabled(adapter):
         return None
     for field in (
@@ -771,7 +771,11 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
                 tmdb_id, season, episode, verify_after_write = _write_target_result(adapter, tmdb_id, item, season, episode)
                 existing_history = _episode_history(adapter, tmdb_id, season, episode)
                 if _rewatches_enabled(adapter) or not existing_history:
-                    api_post(adapter, f"media/tv/tmdb/{tmdb_id}/{season}/episodes/{episode}/watch", json={"end_date": _watched_at(item)})
+                    payload = {"end_date": _watched_at(item)}
+                    external_id = _external_id(adapter, item, key)
+                    if external_id:
+                        payload["external_id"] = external_id
+                    api_post(adapter, f"media/tv/tmdb/{tmdb_id}/{season}/episodes/{episode}/watch", json=payload)
                 if verify_after_write and not _history_rows_include_write(adapter, item, _episode_history(adapter, tmdb_id, season, episode), exact_time=True):
                     entry = unresolved(item, "floppy_history_write_not_readable")
                     unresolved_rows.append(entry)
@@ -795,7 +799,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
 def _write_movie_history(adapter: Any, tmdb_id: str, watched_at: str, item: Mapping[str, Any], key: str) -> None:
     if _rewatches_enabled(adapter):
         payload = {"end_date": watched_at}
-        external_id = _movie_external_id(adapter, item, key)
+        external_id = _external_id(adapter, item, key)
         if external_id:
             payload["external_id"] = external_id
         api_post(adapter, f"media/movie/tmdb/{tmdb_id}/watch", json=payload)
