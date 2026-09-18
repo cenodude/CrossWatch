@@ -259,7 +259,7 @@
       summary[2].textContent = removing ? "Selective removal" : "Selective send";
       shell.querySelector(".cw-editor-send-warning div").textContent = removing
         ? (kind === "history"
-          ? "Removes history using each provider’s sync removal behavior. Selecting a watch date removes every watch of that movie or episode. FLOPPY removes one watch entry per selected movie or episode; other watches can remain. Other sync sources or saved additions can restore removed records."
+          ? "Removes history using each provider’s sync removal behavior. Selecting a whole title removes that movie or episode; FLOPPY removes its latest watch. Selecting single watches removes only those watches, and only on profiles that keep separate watches; other profiles are skipped for them. Other sync sources or saved additions can restore removed records."
           : "Removes the selected records from the chosen profiles. Other sync sources or saved additions can restore them. Mappings and blocks stay in place.")
         : baseWarning;
       shell.querySelectorAll("[data-operation]").forEach(button => {

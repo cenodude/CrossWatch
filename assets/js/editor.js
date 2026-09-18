@@ -45,6 +45,7 @@
     items: {},
     rows: [],
     selected: new Set(),
+    expandedViewings: new Set(),
     pageRids: [],
     ridSeq: 1,
     filter: "",
@@ -1084,8 +1085,34 @@
 
   function selectedRowsForSend(operation = "add") {
     const sel = state.selected || new Set();
-    return (state.rows || []).filter(row => sel.has(row._rid) &&
+    const picked = (state.rows || []).filter(row => sel.has(row._rid) &&
       (!row.deleted || (operation === "remove" && row._origin === "baseline")));
+    if (operation !== "remove" || state.kind !== "history") return picked;
+    const groups = new Map();
+    for (const row of state.rows || []) {
+      const base = editorRows.viewingBaseKey(row.key);
+      if (!base) continue;
+      if (!groups.has(base)) groups.set(base, []);
+      groups.get(base).push(row);
+    }
+    const out = [];
+    const titles = new Set();
+    for (const row of picked) {
+      const base = editorRows.viewingBaseKey(row.key);
+      const members = base ? groups.get(base) : null;
+      if (!members || !members.every(member => sel.has(member._rid))) {
+        out.push(row);
+        continue;
+      }
+      if (titles.has(base)) continue;
+      titles.add(base);
+      const raw = JSON.parse(JSON.stringify(row.raw || {}));
+      delete raw._cw_event_key;
+      delete raw._cw_rewatch_sync;
+      delete raw.watched_at;
+      out.push({ ...row, key: base, raw });
+    }
+    return out;
   }
 
   function rowToSendItem(row) {

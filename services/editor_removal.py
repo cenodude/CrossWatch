@@ -20,7 +20,10 @@ from cw_platform.id_map import canonical_key, unified_keys_from_ids
 from cw_platform.local_db import state as sqlite_state
 from cw_platform.modules_registry import load_sync_ops
 from cw_platform.orchestrator._applier import apply_remove
-from cw_platform.orchestrator._history_rewatches import collapse_history_latest, config_with_history_rewatches
+from cw_platform.orchestrator._history_rewatches import (
+    collapse_history_latest, config_with_history_rewatches, history_event_matches, history_rewatch_supported,
+    history_timestamp_tolerance_seconds,
+)
 from cw_platform.orchestrator._pairs_oneway import compute_effective_remove
 from cw_platform.orchestrator._pairs import _feature_list_for_pair
 from cw_platform.pair_scope import pair_feature_scope
@@ -29,6 +32,7 @@ from services.snapshots import _capture_mode_env, _cleanup_feature_enabled, _cro
 
 LOG = logging.getLogger(__name__)
 FEATURES = {"watchlist", "history", "ratings", "progress", "collection"}
+LOCAL_ID_NAMESPACES = {"plex", "jellyfin", "emby", "guid", "slug"}
 
 
 def _event(key, item):
@@ -80,11 +84,39 @@ def _matches(key, item, other_key, other, *, same_account=False, include_viewing
     if not same_account:
         # Server-local IDs are only meaningful within their own account.
         tokens = {token for token in tokens if token.split("|", 1)[1].split(":", 1)[0]
-                  not in {"plex", "jellyfin", "emby", "guid", "slug"}}
+                  not in LOCAL_ID_NAMESPACES}
     if not tokens:
         return False
     # Confirmed status removal also clears that item's locally cached dates.
     return not _event(key, item) and (include_viewings or not _event(other_key, other))
+
+
+def _viewing_tokens(*, same_account):
+    def tokens(item):
+        out = set()
+        for token in _tokens(str(item.get("_cw_event_key") or ""), item):
+            raw = token.split("|", 1)[1]
+            if same_account or raw.split(":", 1)[0] not in LOCAL_ID_NAMESPACES:
+                out.add(raw)
+        return out
+    return tokens
+
+
+def _viewings(records):
+    return {str(k): {**v, "_cw_event_key": v.get("_cw_event_key") or k}
+            for k, v in records.items() if isinstance(v, Mapping) and _event(k, v)}
+
+
+def _match_viewings(selected, records, cfg, *, same_account, tolerance=None):
+    if not selected or not records:
+        return {}
+    window = history_timestamp_tolerance_seconds(cfg) if tolerance is None else tolerance
+    return history_event_matches(selected, records, _viewing_tokens(same_account=same_account),
+                                 tolerance_seconds=window)
+
+
+def _supports_viewings(provider, ops):
+    return history_rewatch_supported(provider, ops, "read") and history_rewatch_supported(provider, ops, "write")
 
 
 class _RecordIndex:
@@ -130,10 +162,14 @@ def _selection(payload, request):
         if not item:
             raise HTTPException(400, "Invalid removal selection")
         key = str(item.get("key") or item.get("_cw_event_key") or canonical_key(item))
-        if feature == "history" and _event(key, item):
-            key = base_key_from_history_event(item.get("_cw_event_key") or key)
-            item = _status_item(item)
-            item["key"] = key
+        if _event(key, item):
+            if feature != "history":
+                key = base_key_from_history_event(item.get("_cw_event_key") or key)
+                item = _status_item(item)
+                item["key"] = key
+            else:
+                key = str(item.get("_cw_event_key") or key).strip().lower()
+                item["_cw_event_key"] = key
         if not _tokens(key, item):
             raise HTTPException(400, "Selected rows need an identifiable movie, show or episode")
         if key in seen:
@@ -150,7 +186,7 @@ def _status_item(item):
     return out
 
 
-def _can_remove(ops, feature, key, item):
+def _can_remove(ops, feature, key, item, *, viewing=False):
     if not _cleanup_feature_enabled(ops, feature):
         return False
     caps = (ops.capabilities() or {}).get(feature) or {}
@@ -159,7 +195,7 @@ def _can_remove(ops, feature, key, item):
     type_key = {"movie": "movies", "show": "shows", "tv": "shows", "season": "seasons", "episode": "episodes"}.get(typ)
     if type_key in types and not types[type_key]:
         return False
-    if feature == "history" and _event(key, item):
+    if feature == "history" and _event(key, item) != viewing:
         return False
     return True
 
@@ -202,25 +238,43 @@ def _plan(payload, request):
                 missing_baselines.add((scope, provider, instance))
                 continue
             ops = load_sync_ops(provider)
-            records = _items(state, provider, instance, feature)
+            same_account = provider == source and instance == source_instance
+            raw_records = _items(state, provider, instance, feature)
+            records = raw_records
             if feature == "history" and any(is_history_event_key(k) for k in records):
                 records = collapse_history_latest(records)
             baseline = _RecordIndex(records)
+            viewing_rows = {}
             for row_index, (key, item) in enumerate(selected):
-                matches = baseline.matches(key, item, same_account=(provider == source and instance == source_instance))
+                if _event(key, item):
+                    viewing_rows[key] = (row_index, item)
+                    continue
+                matches = baseline.matches(key, item, same_account=same_account)
                 # Ambiguous identities must not become bulk deletions.
                 if len(matches) != 1:
                     continue
                 dest_key, dest = matches[0]
                 if not _can_remove(ops, feature, dest_key, dest):
                     continue
-                target = targets.setdefault(identity, {**available[identity], "records": {}, "rows": set()})
+                target = targets.setdefault(identity, {**available[identity], "records": {}, "viewings": {}, "rows": set()})
                 target["rows"].add(row_index)
                 target["records"].setdefault(dest_key, dest)
+            if not viewing_rows or not _supports_viewings(provider, ops):
+                continue
+            recorded = _viewings(raw_records)
+            matched = _match_viewings({k: item for k, (_, item) in viewing_rows.items()}, recorded, cfg,
+                                      same_account=same_account)
+            for key, dest_key in matched.items():
+                dest = recorded[dest_key]
+                if not _can_remove(ops, feature, dest_key, dest, viewing=True):
+                    continue
+                target = targets.setdefault(identity, {**available[identity], "records": {}, "viewings": {}, "rows": set()})
+                target["rows"].add(viewing_rows[key][0])
+                target["viewings"].setdefault(dest_key, dest)
     if not found_pair:
         raise HTTPException(404, "Sync pair not found for this feature")
     rows = sorted(targets.values(), key=lambda t: (t["display"].casefold(), t["instance"]))
-    signature = [(t["provider"], t["instance"], t["records"]) for t in rows]
+    signature = [(t["provider"], t["instance"], t["records"], t["viewings"]) for t in rows]
     digest = hashlib.sha256(json.dumps([feature, pair_id, signature], sort_keys=True, default=str).encode()).hexdigest()
     return cfg, feature, selected, rows, digest, len(missing_baselines)
 
@@ -229,9 +283,10 @@ def preview_removal(payload, request=None):
     _, feature, selected, targets, digest, missing = _plan(payload, request)
     public = []
     for target in targets:
-        row = {k: v for k, v in target.items() if k not in {"records", "rows"}}
+        row = {k: v for k, v in target.items() if k not in {"records", "viewings", "rows"}}
         row["matched"] = len(target["rows"])
-        row["count"] = len(target["records"])
+        row["count"] = len(target["records"]) + len(target["viewings"])
+        row["viewings"] = len(target["viewings"])
         public.append(row)
     return dict(ok=True, operation="remove", kind=feature, selected=len(selected), providers=public, preview_id=digest,
                 missing_baselines=missing,
@@ -271,6 +326,74 @@ def _emit(event, **data):
 
 
 def _remove_target(cfg, feature, target, *, dry_run):
+    parts = []
+    if target["records"]:
+        parts.append(_remove_titles(cfg, feature, target, dry_run=dry_run))
+    if target.get("viewings"):
+        parts.append(_remove_viewings(cfg, feature, target, dry_run=dry_run))
+    out: dict[str, Any] = dict(ok=all(p["ok"] for p in parts), dry_run=dry_run)
+    for field in ("attempted", "confirmed", "removed", "skipped", "unresolved", "errors", "still_watched"):
+        out[field] = sum(int(p.get(field, 0)) for p in parts)
+    for field in ("confirmed_keys", "skipped_keys", "unresolved_keys"):
+        out[field] = [key for p in parts for key in p.get(field, [])]
+    return out
+
+
+def _read_viewings(ops, config, provider, instance, feature):
+    with _capture_mode_env(pid=provider, instance=instance, feat=feature):
+        result = ops.build_index(config, feature=feature)
+    if not isinstance(result, Mapping):
+        raise RuntimeError("Provider returned no usable inventory")
+    return _viewings({str(k): dict(v) for k, v in result.items() if isinstance(v, Mapping)})
+
+
+def _remove_viewings(cfg, feature, target, *, dry_run):
+    from api import editorAPI as api
+
+    provider, instance = target["provider"], target["instance"]
+    ops = load_sync_ops(provider)
+    viewings = target["viewings"]
+    view = config_with_history_rewatches(build_provider_config_view(cfg, provider, instance), True)
+    live = _read_viewings(ops, view, provider, instance, feature)
+    if not live:
+        return dict(ok=False, attempted=len(viewings), confirmed=0, removed=0, skipped=0,
+                    unresolved=len(viewings), errors=0, still_watched=0, confirmed_keys=[],
+                    skipped_keys=[], unresolved_keys=list(viewings), dry_run=dry_run)
+    matched = _match_viewings(viewings, live, cfg, same_account=True)
+    skipped_keys = [key for key in viewings if key not in matched]
+    removed_keys, unresolved_keys = [], []
+    if matched:
+        with _crosswatch_write_env() if provider == "CROSSWATCH" else _capture_mode_env(pid=provider, instance=instance, feat=feature):
+            result = apply_remove(dst_ops=ops, cfg=view, dst_name=provider, feature=feature,
+                                  items=[live[key] for key in matched.values()], dry_run=dry_run,
+                                  emit=lambda event, **data: _emit(event, instance=instance, **data),
+                                  dbg=lambda *a, **k: None, chunk_size=100, chunk_pause_ms=0)
+        if not dry_run:
+            remaining = _read_viewings(ops, view, provider, instance, feature)
+            gone = {key: live[key] for key in matched.values()}
+            survivors = _match_viewings(gone, remaining, cfg, same_account=True, tolerance=0)
+            for key, live_key in matched.items():
+                if live_key in survivors:
+                    unresolved_keys.append(key)
+                else:
+                    removed_keys.append(key)
+            if not result.get("ok", True) and not removed_keys:
+                LOG.warning("Editor viewing removal was not confirmed for %s/%s", provider, instance)
+    if not dry_run and removed_keys:
+        state = sqlite_state.load_state_features(api._STATE_BASE, {feature})
+        cached = _viewings(_items(state, provider, instance, feature))
+        removed = {key: live[matched[key]] for key in removed_keys}
+        stale = _match_viewings(removed, cached, cfg, same_account=True)
+        keys = sorted(set(stale.values()) | {key for key in removed_keys if key in cached})
+        if keys:
+            sqlite_state.remove_baseline_items(api._STATE_BASE, provider, instance, feature, keys)
+    return dict(ok=not unresolved_keys, attempted=len(viewings), confirmed=len(removed_keys),
+                removed=len(removed_keys), skipped=len(skipped_keys), unresolved=len(unresolved_keys), errors=0,
+                still_watched=0, confirmed_keys=removed_keys, skipped_keys=skipped_keys,
+                unresolved_keys=unresolved_keys, dry_run=dry_run)
+
+
+def _remove_titles(cfg, feature, target, *, dry_run):
     from api import editorAPI as api
 
     provider, instance = target["provider"], target["instance"]

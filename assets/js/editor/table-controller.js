@@ -117,6 +117,39 @@
     });
   }
 
+  function viewingUnits(rows, ctx = {}) {
+    const helpers = Editor.Rows || {};
+    if (ctx.state?.kind !== "history" || typeof helpers.viewingBaseKey !== "function") {
+      return rows.map(row => ({ row }));
+    }
+    const units = [];
+    const groups = new Map();
+    for (const row of rows) {
+      const base = helpers.viewingBaseKey(row.key);
+      if (!base) {
+        units.push({ row });
+        continue;
+      }
+      let unit = groups.get(base);
+      if (!unit) {
+        unit = { base, rows: [] };
+        groups.set(base, unit);
+        units.push(unit);
+      }
+      unit.rows.push(row);
+    }
+    return units.map(unit => {
+      if (!unit.rows) return unit;
+      if (unit.rows.length === 1) return { row: unit.rows[0] };
+      unit.rows.sort((a, b) => helpers.viewingTime(b) - helpers.viewingTime(a));
+      return unit;
+    });
+  }
+
+  function unitRows(unit) {
+    return unit.rows || [unit.row];
+  }
+
   function tableRowContext(ctx = {}, anilistMode, wideActions) {
     return {
       state: ctx.state,
@@ -213,47 +246,65 @@
       if (main) main.classList.remove("cw-main-empty");
     }
 
+    const units = viewingUnits(filtered, ctx);
+    const totalUnits = units.length;
     const pageSize = ctx.pageSize || 50;
-    const pageCount = Math.max(1, Math.ceil(totalFiltered / pageSize));
+    const pageCount = Math.max(1, Math.ceil(totalUnits / pageSize));
     if (state.page >= pageCount) state.page = pageCount - 1;
     if (state.page < 0) state.page = 0;
 
     const start = state.page * pageSize;
     const end = start + pageSize;
-    const rows = filtered.slice(start, end);
+    const pageUnits = units.slice(start, end);
+    const rows = pageUnits.flatMap(unitRows);
 
     state.pageRids = rows.map(r => r._rid);
     ctx.syncSelectPageCheckbox();
     ctx.syncBulkBar();
 
+    if (!state.expandedViewings) state.expandedViewings = new Set();
     const frag = document.createDocumentFragment();
     const rowCtx = tableRowContext(ctx, ctx.isAnilistMode(), wideActions);
-    rows.forEach(row => {
-      const tr = ctx.editorTable.createRowElement(row, rowCtx);
-      if (tr) frag.appendChild(tr);
+    pageUnits.forEach(unit => {
+      if (!unit.rows) {
+        const tr = ctx.editorTable.createRowElement(unit.row, rowCtx);
+        if (tr) frag.appendChild(tr);
+        return;
+      }
+      const expanded = state.expandedViewings.has(unit.base);
+      const head = ctx.editorTable.createViewingGroupElement?.(unit, rowCtx, expanded);
+      if (head) frag.appendChild(head);
+      if (!expanded && head) return;
+      unit.rows.forEach(row => {
+        const tr = ctx.editorTable.createRowElement(row, rowCtx);
+        if (!tr) return;
+        tr.classList.add("cw-row-viewing");
+        frag.appendChild(tr);
+      });
     });
     if (ctx.tbody) ctx.tbody.appendChild(frag);
     ctx.applyColumnWidths?.();
 
-    const vis = rows.length;
+    const vis = pageUnits.length;
     const first = start + 1;
     const last = start + vis;
+    const unitLabel = totalUnits === totalFiltered ? "rows" : "titles";
 
     if (ctx.summaryVisible) ctx.summaryVisible.textContent = String(vis);
     if (ctx.summaryTotal) ctx.summaryTotal.textContent = String(totalAll);
 
-    if (ctx.pageInfo) ctx.pageInfo.textContent = `Page ${state.page + 1} of ${pageCount} • Rows ${first}-${last} of ${totalFiltered}`;
+    if (ctx.pageInfo) ctx.pageInfo.textContent = `Page ${state.page + 1} of ${pageCount} • ${unitLabel === "rows" ? "Rows" : "Titles"} ${first}-${last} of ${totalUnits}`;
     if (ctx.pager) ctx.pager.style.display = pageCount > 1 ? "flex" : "none";
     if (ctx.prevBtn) ctx.prevBtn.disabled = state.page <= 0;
     if (ctx.nextBtn) ctx.nextBtn.disabled = state.page >= pageCount - 1;
 
-    if (totalFiltered > vis) {
-      ctx.setRowsStatus(`${vis} rows visible (rows ${first}-${last} of ${totalFiltered} filtered, ${totalAll} total)`);
+    if (totalUnits > vis) {
+      ctx.setRowsStatus(`${vis} ${unitLabel} visible (${unitLabel} ${first}-${last} of ${totalUnits} filtered, ${totalAll} rows total)`);
     } else {
-      ctx.setRowsStatus(`${vis} rows visible, ${totalAll} total`);
+      ctx.setRowsStatus(`${vis} ${unitLabel} visible, ${totalAll} rows total`);
     }
   }
 
-  Editor.TableController = { applyFilter, sortRows, updateSortUI, renderRows };
+  Editor.TableController = { applyFilter, sortRows, updateSortUI, renderRows, viewingUnits };
   window.CrossWatchEditorTableController = Editor.TableController;
 })();

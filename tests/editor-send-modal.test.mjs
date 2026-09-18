@@ -136,7 +136,7 @@ test("History removal describes provider behavior and displays rejection of date
   const f = fixture("history"); await f.open();
   f.preview(() => {throw new Error("Individual watch dates cannot be removed here. Select a watched-status row.");});
   await f.click(f.modes[1]);
-  assert.match(f.node(".cw-editor-send-warning div").textContent, /FLOPPY removes one watch entry/);
+  assert.match(f.node(".cw-editor-send-warning div").textContent, /Selecting single watches removes only those watches/);
   assert.match(f.node("[data-send-status]").innerHTML, /Individual watch dates cannot be removed here/);
   assert.equal(f.node("[data-send-submit]").disabled, true);
   assert.equal(f.requests.filter(r => r.url.endsWith("/send")).length, 0);

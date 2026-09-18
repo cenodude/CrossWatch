@@ -291,18 +291,59 @@ def test_removal_confirmation_uses_the_provider_write_identity(setup, provider, 
 
 @pytest.mark.parametrize("event_field", ["key", "_cw_event_key"])
 @pytest.mark.parametrize("item", [movie(), episode(1)], ids=["movie", "episode"])
-def test_dated_history_selection_removes_the_whole_title(setup, item, event_field):
+def test_dated_history_selection_never_clears_a_status_only_title(setup, item, event_field):
     s = setup
     dated = {**item, "watched_at": "2026-09-01T12:00:00Z", "_trakt_history_id": "101"}
     s.seed("p1", "TRAKT", "default", "history", {canonical_key(item): dated, "tmdb:2": movie(2)})
     selected = {**dated, event_field: history_event_key(dated)}
-    result = s.execute(dict(kind="history", items=[selected, selected], source_provider="TRAKT"))
-    assert result["selected"] == 1
+    preview = api.api_editor_remove_preview(dict(kind="history", items=[selected, selected], source_provider="TRAKT"), request=None)
+    assert preview["selected"] == 1
+    assert not preview["providers"]
+
+
+def _viewing_setup(s, provider="TRAKT"):
+    first = movie(watched_at="2026-09-01T12:00:00Z", _trakt_history_id="101")
+    second = movie(watched_at="2026-09-02T12:00:00Z", _trakt_history_id="102")
+    baseline = {history_event_key(v): v for v in (first, second)}
+    s.seed("p1", provider, "default", "history", baseline)
+    database.save_feature_baseline(s.root, provider=provider, feature="history", items=deepcopy(baseline))
+    return first, second, baseline
+
+
+@pytest.mark.parametrize("offset", ["00", "30"], ids=["exact", "within_tolerance"])
+def test_selected_viewing_removes_only_that_watch(setup, offset):
+    s = setup
+    first, second, baseline = _viewing_setup(s)
+    selected = {**first, "watched_at": f"2026-09-01T12:00:{offset}Z", "key": history_event_key(first)}
+    preview = api.api_editor_remove_preview(dict(kind="history", items=[selected], source_provider="TRAKT"), request=None)
+    assert [(p["provider"], p["count"], p["viewings"]) for p in preview["providers"]] == [("TRAKT", 1, 1)]
+    result = s.execute(dict(kind="history", items=[selected], source_provider="TRAKT"))
     assert result["confirmed"] == 1
-    sent = s.ops["TRAKT"].calls[0][2][0]
-    assert "_trakt_history_id" not in sent
-    assert "watched_at" not in sent
-    assert list(s.ops["TRAKT"].live[("default", "history")]) == ["tmdb:2"]
+    sent = s.ops["TRAKT"].calls[0][2]
+    assert [v["_trakt_history_id"] for v in sent] == ["101"]
+    assert list(s.ops["TRAKT"].live[("default", "history")]) == [history_event_key(second)]
+    saved = removal._items(database.load_state_features(s.root, {"history"}), "TRAKT", "default", "history")
+    assert list(saved) == [history_event_key(second)]
+
+
+def test_selected_viewing_skips_providers_without_rewatch_writes(setup):
+    s = setup
+    first, _, _ = _viewing_setup(s, provider="PLEX")
+    selected = {**first, "key": history_event_key(first)}
+    preview = api.api_editor_remove_preview(dict(kind="history", items=[selected], source_provider="PLEX"), request=None)
+    assert not preview["providers"]
+
+
+def test_selected_viewing_is_unresolved_when_the_provider_reads_no_viewings(setup):
+    s = setup
+    first, second, _ = _viewing_setup(s)
+    s.ops["TRAKT"].live[("default", "history")] = {"tmdb:1": second}
+    selected = {**first, "key": history_event_key(first)}
+    result = s.execute(dict(kind="history", items=[selected], source_provider="TRAKT"))
+    assert result["confirmed"] == 0
+    assert result["unresolved"] == 1
+    assert not s.ops["TRAKT"].calls
+    assert s.ops["TRAKT"].live[("default", "history")] == {"tmdb:1": second}
 
 
 def test_rewatch_baseline_offers_the_title_and_clears_every_watch(setup):
