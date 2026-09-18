@@ -16,6 +16,18 @@
     return typeof options.nextRid === "function" ? options.nextRid() : 0;
   }
 
+  const VIEWING_KEY = /^(.+?)@(\d{7,}(?:~.+)?|id:.+)$/i;
+
+  function viewingBaseKey(key) {
+    const match = VIEWING_KEY.exec(String(key || "").trim());
+    return match ? match[1].toLowerCase() : "";
+  }
+
+  function viewingTime(row) {
+    const value = Date.parse(row?.raw?.watched_at || "");
+    return Number.isFinite(value) ? value : 0;
+  }
+
   function imdbFromKey(key) {
     const s = (key || "") + "";
     if (!s.startsWith("imdb:")) return "";
@@ -84,6 +96,8 @@
   }
 
   Editor.Rows = {
+    viewingBaseKey,
+    viewingTime,
     imdbFromKey,
     applyManualRow,
     buildManualRow,

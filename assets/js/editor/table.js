@@ -281,8 +281,86 @@
     return tr;
   }
 
+  function createViewingGroupElement(unit, ctx = {}, expanded = false) {
+    const state = ctx.state || {};
+    const rows = (unit && unit.rows) || [];
+    const latest = rows[0];
+    if (!latest) return null;
+    const tr = document.createElement("tr");
+    tr.className = "cw-row-viewing-group";
+    if (latest.episode) tr.classList.add("cw-row-episode");
+
+    const selected = state.selected || new Set();
+    const picked = rows.filter(row => selected.has(row._rid)).length;
+    const selCb = document.createElement("input");
+    selCb.type = "checkbox";
+    selCb.name = `cw-group-${latest._rid || "new"}-selected`;
+    selCb.className = "cw-checkbox";
+    selCb.checked = picked === rows.length;
+    selCb.indeterminate = picked > 0 && picked < rows.length;
+    selCb.title = "Select every watch of this title";
+    selCb.setAttribute("aria-label", selCb.title);
+    selCb.onchange = () => {
+      if (!state.selected) state.selected = new Set();
+      rows.forEach(row => {
+        if (selCb.checked) state.selected.add(row._rid);
+        else state.selected.delete(row._rid);
+      });
+      call(ctx, "syncBulkBar");
+      call(ctx, "syncSelectPageCheckbox");
+      call(ctx, "renderRows");
+    };
+    tr.appendChild(cell(selCb));
+
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "cw-btn cw-btn-del cw-viewing-toggle";
+    toggle.innerHTML = `<span class="material-symbol">${expanded ? "expand_less" : "expand_more"}</span>`;
+    toggle.title = expanded ? "Hide watches" : "Show watches";
+    toggle.setAttribute("aria-label", toggle.title);
+    toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+    toggle.onclick = () => {
+      if (!state.expandedViewings) state.expandedViewings = new Set();
+      if (state.expandedViewings.has(unit.base)) state.expandedViewings.delete(unit.base);
+      else state.expandedViewings.add(unit.base);
+      call(ctx, "renderRows");
+    };
+    const actionWrap = document.createElement("div");
+    actionWrap.className = "cw-action-buttons";
+    actionWrap.appendChild(toggle);
+    const actionTd = cell(actionWrap, "cw-action-cell");
+    if (ctx.wideActions) actionTd.classList.add("cw-action-wide");
+    tr.appendChild(actionTd);
+
+    const summary = document.createElement("div");
+    summary.className = "cw-viewing-summary";
+    const title = document.createElement("strong");
+    title.textContent = call(ctx, "formatEpisodeVisualTitle", latest) || latest.title || latest.key || "";
+    summary.appendChild(title);
+    if (latest.year) {
+      const year = document.createElement("span");
+      year.className = "cw-viewing-year";
+      year.textContent = latest.year;
+      summary.appendChild(year);
+    }
+    const count = document.createElement("span");
+    count.className = "cw-viewing-count";
+    count.textContent = `${rows.length} watches`;
+    summary.appendChild(count);
+    const last = document.createElement("span");
+    last.className = "cw-viewing-latest";
+    call(ctx, "updateExtraDisplay", latest, last);
+    summary.appendChild(last);
+
+    const summaryTd = cell(summary, "cw-viewing-summary-cell");
+    summaryTd.colSpan = dataColumnOrder(ctx).length;
+    tr.appendChild(summaryTd);
+    return tr;
+  }
+
   Editor.Table = {
     createRowElement,
+    createViewingGroupElement,
   };
   window.CrossWatchEditorTable = Editor.Table;
 })();
