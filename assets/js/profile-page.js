@@ -2815,6 +2815,18 @@
       return `<span class="cw-collection-pill cw-collection-pill--type"><span class="material-symbols-rounded" aria-hidden="true">${esc(icon)}</span>${esc(label)}</span>`;
     }
 
+    const watchDateFmt = timelineFormatter({ day: "numeric", month: "short", year: "numeric" });
+
+    function rewatchPill(item, inline = false) {
+      const watches = Number(item?.watch_count) || 0;
+      if (watches < 2) return "";
+      const dates = (Array.isArray(item.watch_epochs) ? item.watch_epochs : [])
+        .map((value) => watchDateFmt(epochOf(value)))
+        .filter(Boolean);
+      const tip = `Watched ${watches} times${dates.length ? `: ${dates.join(", ")}` : ""}`;
+      return `<span class="cw-hist-rewatch${inline ? " cw-hist-rewatch--inline" : ""}" title="${esc(tip)}" aria-label="${esc(tip)}"><span class="material-symbols-rounded" aria-hidden="true">replay</span>×${esc(count(watches))}</span>`;
+    }
+
     function selectBox(key) {
       const checked = state.selected.has(key) ? " checked" : "";
       return `<label class="cw-tl-select" title="Select"><input type="checkbox" data-timeline-select-item="${esc(key)}"${checked} aria-label="Select"><span class="material-symbols-rounded" aria-hidden="true">check</span></label>`;
@@ -2827,6 +2839,7 @@
       const code = timelineCode(item);
       const art = `${timelineArt(item)}
           ${badge(item)}
+          ${rewatchPill(item)}
           ${epoch ? `<span class="cw-hist-time">${esc(timeFmt(epoch))}</span>` : ""}
           ${code ? `<span class="cw-hist-episode">${esc(code)}</span>` : ""}`;
       const info = `<strong class="cw-hist-name">${esc(title)}</strong>
@@ -2852,7 +2865,7 @@
       const title = titleOf(item);
       const code = timelineCode(item);
       const key = selectable() ? selectionKey(item) : "";
-      const titleCell = `${key ? selectBox(key) : ""}<span class="cw-tl-title-stack"><span class="cw-tl-title-line"><strong>${esc(title)}</strong>${code ? `<span class="cw-collection-pill">${esc(code)}</span>` : ""}</span>${cfg.showIds ? timelineIds(item) : ""}</span>`;
+      const titleCell = `${key ? selectBox(key) : ""}<span class="cw-tl-title-stack"><span class="cw-tl-title-line"><strong>${esc(title)}</strong>${code ? `<span class="cw-collection-pill">${esc(code)}</span>` : ""}${rewatchPill(item, true)}</span>${cfg.showIds ? timelineIds(item) : ""}</span>`;
       const cells = `<span class="cw-hist-cell cw-hist-cell--when"><strong>${esc(timeFmt(epoch) || "—")}</strong><small>${esc(relTime(epoch))}</small></span>
         <span class="cw-hist-cell cw-hist-cell--type">${pill(item)}</span>
         <span class="cw-hist-cell cw-hist-cell--where">${detail(item)}</span>`;
@@ -3399,7 +3412,7 @@
         empty: "No synced plays match this view.",
         types: [["all", "apps", "All"], ["movie", "movie", "Movies"], ["episode", "play_circle", "Episodes"]],
         tiles: (stats, tile, count) => [
-          tile("violet", "history", "Plays", "Synced history", count(stats.plays)),
+          tile("violet", "history", "Plays", `${count(stats.plays)} ${Number(stats.plays) === 1 ? "title" : "titles"}`, count(stats.watches ?? stats.plays)),
           ...coverageTiles(stats, tile, count),
           tile("amber", "hub", "Providers", "Holding history", count(stats.endpoints)),
         ],

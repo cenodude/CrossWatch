@@ -1250,6 +1250,7 @@ def _merge_history_rows(
 ) -> list[dict[str, Any]]:
     rows: dict[str, dict[str, Any]] = {}
     aliases: dict[str, str] = {}
+    epochs: dict[str, list[int]] = {}
     for group in groups:
         for raw in group:
             row = dict(raw)
@@ -1266,12 +1267,31 @@ def _merge_history_rows(
                 rows[match_key] = row
             else:
                 rows[match_key] = _merge_media_row(prev, row, sort_key="sort_epoch")
+            epoch = int(row.get("sort_epoch") or row.get("watched_at") or 0)
+            if epoch > 0:
+                epochs.setdefault(match_key, []).append(epoch)
             for alias in _history_aliases(rows[match_key], alias_map):
                 aliases[alias] = match_key
             for alias in _history_aliases(row, alias_map):
                 aliases.setdefault(alias, match_key)
-    dated_rows = [row for row in rows.values() if int(row.get("sort_epoch") or row.get("watched_at") or 0) > 0]
+    dated_rows = []
+    for match_key, row in rows.items():
+        if int(row.get("sort_epoch") or row.get("watched_at") or 0) <= 0:
+            continue
+        watches = _distinct_watches(epochs.get(match_key) or [])
+        row["watch_count"] = len(watches)
+        if len(watches) > 1:
+            row["watch_epochs"] = watches
+        dated_rows.append(row)
     return sorted(dated_rows, key=lambda x: int(x.get("sort_epoch") or 0), reverse=True)
+
+
+def _distinct_watches(epochs: Iterable[int]) -> list[int]:
+    watches: list[int] = []
+    for epoch in sorted(set(epochs), reverse=True):
+        if not watches or watches[-1] - epoch > _HISTORY_BUCKET_SECONDS:
+            watches.append(epoch)
+    return watches
 
 
 def recent_history_widget(
