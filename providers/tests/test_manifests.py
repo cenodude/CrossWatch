@@ -71,6 +71,12 @@ CASES: tuple[ProviderCase, ...] = (
         minimal_cfg={"tautulli": {"server_url": "http://localhost", "api_key": "k"}},
         empty_configured=False,
     ),
+    ProviderCase(
+        module_path="sync._mod_TRACEARR",
+        expected_name="TRACEARR",
+        minimal_cfg={"tracearr": {"server_url": "http://localhost", "api_key": "k"}},
+        empty_configured=False,
+    ),
     # TRAKT's connect() performs a network preflight
     ProviderCase(
         module_path="sync._mod_TRAKT",

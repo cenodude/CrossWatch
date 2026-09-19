@@ -528,6 +528,23 @@ DEFAULT_CFG: dict[str, Any] = {
          },
      },
 
+    "tracearr": {
+        "server_url": "",                               # http(s)://host:3000
+        "api_key": "",                                  # Tracearr public API key (trr_pub_...)
+        "verify_ssl": False,                            # Verify TLS certificates
+        "timeout": 10.0,                                # HTTP timeout (seconds)
+        "max_retries": 3,                               # Retry budget
+        "history": {
+            "user_id": "",                              # Optional Tracearr user id filter
+            "server_id": "",                            # Optional Tracearr server id filter
+            "per_page": 100,                            # Tracearr history page size (max 100)
+            "max_pages": 5000,                          # Safety cap
+            "watched_only": True,                       # Skip partial plays (uses the Tracearr watched flag)
+            "min_percent_movie": 85,                    # Completion fallback when the watched flag is absent
+            "min_percent_episode": 85                   # Completion fallback when the watched flag is absent
+        },
+    },
+
     "trakt": {
         "client_id": "",                                # From your Trakt app
         "client_secret": "",                            # From your Trakt app
@@ -939,6 +956,7 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
         "floppy": {"api_token"},
         "scrob": {"api_key", "password", "access_token"},
         "tautulli": {"api_key"},
+        "tracearr": {"api_key"},
         "trakt": {"access_token", "refresh_token", "client_secret"},
         "jellyfin": {"access_token", "api_key", "password"},
         "emby": {"access_token", "api_key", "password"},
@@ -1046,6 +1064,7 @@ CONFIG_TOP_LEVEL_ORDER: tuple[str, ...] = (
     "emby",
     "kodi",
     "tautulli",
+    "tracearr",
     "trakt",
     "simkl",
     "mdblist",

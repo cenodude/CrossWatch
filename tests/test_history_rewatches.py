@@ -65,7 +65,7 @@ def test_emby_and_jellyfin_do_not_source_rewatches() -> None:
 
 
 def test_event_history_providers_can_source_rewatches() -> None:
-    from providers.sync import _mod_FLICKLIST, _mod_PUNCHPLAY, _mod_TAUTULLI
+    from providers.sync import _mod_FLICKLIST, _mod_PUNCHPLAY, _mod_TAUTULLI, _mod_TRACEARR
 
     target = _Ops(True, True)
 
@@ -73,6 +73,7 @@ def test_event_history_providers_can_source_rewatches() -> None:
         ("FLICKLIST", _mod_FLICKLIST.OPS),
         ("PUNCHPLAY", _mod_PUNCHPLAY.OPS),
         ("TAUTULLI", _mod_TAUTULLI.OPS),
+        ("TRACEARR", _mod_TRACEARR.OPS),
     ):
         assert history_rewatch_pair_enabled("history", {"rewatches": True}, name, ops, "TARGET", target)
 
