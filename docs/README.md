@@ -153,6 +153,12 @@
     <span>Tracker and metadata</span>
     <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
   </article>
+  <article class="cw-provider-card is-tracearr">
+    <img class="cw-provider-mark" src="images/providers/TRACEARR.png" alt="" aria-hidden="true">
+    <strong>Tracearr</strong>
+    <span>Tracker</span>
+    <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
+  </article>
   <article class="cw-provider-card is-trakt">
     <img class="cw-provider-mark" src="images/providers/TRAKT.svg" alt="" aria-hidden="true">
     <strong>Trakt</strong>
