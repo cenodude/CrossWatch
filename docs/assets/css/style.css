@@ -364,7 +364,8 @@ a[href="#content"],
 
 .cw-provider-card.is-jellyfin,
 .cw-provider-card.is-publicmetadb,
-.cw-provider-card.is-tautulli {
+.cw-provider-card.is-tautulli,
+.cw-provider-card.is-tracearr {
   border-color: rgba(98, 220, 198, .28);
 }
 
