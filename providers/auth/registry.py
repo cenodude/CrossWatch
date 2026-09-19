@@ -140,7 +140,7 @@ def auth_providers_html() -> str:
         ("sec-auth-media", "Media servers", ["plex", "jellyfin", "emby"]),
         ("sec-auth-trackers", "Trackers", ["crosswatch", "trakt", "simkl", "tmdb", "mdblist", "publicmetadb", "anilist", "punchplay", "bingebase", "flicklist", "floppy", "scrob"]),
         ("sec-auth-clients", "Media clients", ["nuvio", "kodi", "stremio"]),
-        ("sec-auth-others", "Others", ["tautulli"]),
+        ("sec-auth-others", "Others", ["tautulli", "tracearr"]),
     ]
 
     by_key: dict[str, str] = {}

@@ -36,6 +36,7 @@ _PROVIDER_LABELS = {
     "bingebase": "BingeBase",
     "flicklist": "FlickList",
     "scrob": "Scrob",
+    "tracearr": "Tracearr",
 }
 
 

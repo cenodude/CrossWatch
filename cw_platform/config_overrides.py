@@ -43,6 +43,10 @@ MIGRATION_OVERRIDE_KEYS: tuple[str, ...] = (
     "tautulli.history.per_page",
     "tautulli.history.max_pages",
 
+    # Tracearr
+    "tracearr.history.per_page",
+    "tracearr.history.max_pages",
+
     # Trakt
     "trakt.rate_limit.get_per_sec",
     "trakt.rate_limit.post_per_sec",

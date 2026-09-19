@@ -23,6 +23,7 @@ PROVIDER_BLOCKS: dict[str, dict[str, Any]] = {
     "scrob": {"server_url": "http://scrob:7330", "api_key": "K", "username": "u", "password": "p"},
     "stremio": {"auth_key": "K"},
     "tautulli": {"server_url": "http://tautulli:8181", "api_key": "K"},
+    "tracearr": {"server_url": "http://tracearr:3000", "api_key": "K"},
 }
 
 
@@ -63,7 +64,7 @@ def test_resolve_provider_block_never_falls_back_to_another_profile(provider: st
 
 
 def test_auth_modules_resolve_profile_credentials_from_a_narrowed_view() -> None:
-    from providers.auth import _auth_KODI, _auth_MDBLIST, _auth_PUBLICMETADB, _auth_SCROB, _auth_STREMIO, _auth_TAUTULLI
+    from providers.auth import _auth_KODI, _auth_MDBLIST, _auth_PUBLICMETADB, _auth_SCROB, _auth_STREMIO, _auth_TAUTULLI, _auth_TRACEARR
     from providers.auth._auth_FLOPPY import provider_block as floppy_block
 
     checks = (
@@ -73,6 +74,7 @@ def test_auth_modules_resolve_profile_credentials_from_a_narrowed_view() -> None
         (_auth_MDBLIST._block, "mdblist", "api_key"),
         (_auth_PUBLICMETADB._block, "publicmetadb", "api_key"),
         (_auth_TAUTULLI._block, "tautulli", "api_key"),
+        (_auth_TRACEARR._block, "tracearr", "api_key"),
         (floppy_block, "floppy", "api_token"),
     )
     for resolver, provider, field in checks:
