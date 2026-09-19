@@ -489,3 +489,39 @@ def clear_unresolved(
             _atomic_write(blk, bdata)
 
     return {"ok": True, "count": removed}
+
+
+def clear_unresolved_all_scopes(dst: str, feature: str, keys: Iterable[str]) -> dict[str, Any]:
+    key_set = {str(k) for k in (keys or []) if k}
+    if not dst or not feature or not key_set or not STATE_DIR.exists():
+        return {"ok": True, "count": 0}
+    prefix = f"{str(dst).strip().lower()}_{str(feature).strip().lower()}."
+    removed = 0
+    for path in STATE_DIR.iterdir():
+        name = path.name
+        if not (path.is_file() and name.startswith(prefix) and ".unresolved" in name and name.endswith(".json")):
+            continue
+        data = _read_json(path)
+        if not data:
+            continue
+        changed = False
+        if isinstance(data.get("keys"), list):
+            kept = [k for k in data["keys"] if str(k) not in key_set]
+            if len(kept) != len(data["keys"]):
+                removed += len(data["keys"]) - len(kept)
+                data["keys"] = kept
+                changed = True
+            for bucket in ("items", "hints"):
+                sub = data.get(bucket)
+                if isinstance(sub, dict):
+                    for k in [k for k in sub if str(k) in key_set]:
+                        sub.pop(k, None)
+                        changed = True
+        else:
+            for k in [k for k in data if str(k) in key_set]:
+                data.pop(k, None)
+                removed += 1
+                changed = True
+        if changed:
+            _atomic_write(path, data)
+    return {"ok": True, "count": removed}

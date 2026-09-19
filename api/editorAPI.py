@@ -20,6 +20,8 @@ from cw_platform.id_map import canonical_key, merge_ids, minimal
 from cw_platform.local_db import crosswatch_db_path, manual_policy as sqlite_manual_policy
 from cw_platform.modules_registry import load_sync_ops, state_read_features, sync_provider_names
 from cw_platform.orchestrator._applier import apply_add
+from cw_platform.orchestrator._blackbox import clear_keys as clear_blackbox_keys
+from cw_platform.orchestrator._unresolved import clear_unresolved_all_scopes
 from cw_platform.orchestrator._snapshots import module_checkpoint
 from cw_platform.orchestrator._state_store import StateStore
 from cw_platform.playlists import PlaylistSnapshot, supports_playlists
@@ -1580,6 +1582,12 @@ def api_editor_send(payload: dict[str, Any] = Body(...), request: Request = cast
         if not dry_run and bool(res.get("ok", True)) and int(res.get("confirmed", res.get("count", 0)) or 0) > 0:
             try:
                 _merge_sent_items_into_state(provider, instance, feature, _items_confirmed_by_send(feature, items, res))
+            except Exception:
+                pass
+            confirmed_keys = [str(k) for k in (res.get("confirmed_keys") or []) if k]
+            try:
+                clear_blackbox_keys(provider, feature, confirmed_keys)
+                clear_unresolved_all_scopes(provider, feature, confirmed_keys)
             except Exception:
                 pass
 

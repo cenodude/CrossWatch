@@ -1088,6 +1088,31 @@ def _active_pairs_by_scope(cfg: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return out
 
 
+def _active_feature_scopes(cfg: Mapping[str, Any]) -> set[str]:
+    out: set[str] = set()
+    for index, pair in enumerate(cfg.get("pairs") or [], 1):
+        if not isinstance(pair, dict) or pair.get("enabled") is False:
+            continue
+        feats = pair.get("features")
+        if not isinstance(feats, dict) or not feats:
+            feats = {feature: {} for feature in _ANALYZER_FEATURES}
+        for feature, fcfg in feats.items():
+            if isinstance(fcfg, dict) and fcfg.get("enable", True) is False:
+                continue
+            try:
+                out.add(pair_feature_scope(cfg, pair, str(feature).lower(), index).lower())
+            except Exception:
+                continue
+    return out
+
+
+def _orphaned_unresolved_scope(meta: Mapping[str, Any], active_scopes: set[str]) -> bool:
+    scope = str(meta.get("scope") or "").lower()
+    if scope.startswith("pending."):
+        scope = scope[len("pending."):]
+    return bool(scope) and scope not in active_scopes
+
+
 def _cw_state_meta(path: Path) -> dict[str, Any]:
     name = path.name
     lower = name.lower()
@@ -1460,13 +1485,21 @@ def _cw_state_unresolved_problems(
     return probs
 
 
-def _cw_state_flap_problems(path: Path, data: Any, meta: Mapping[str, Any], *, promote_after: int) -> list[dict[str, Any]]:
+def _cw_state_flap_problems(
+    s: Mapping[str, Any] | None,
+    path: Path,
+    data: Any,
+    meta: Mapping[str, Any],
+    *,
+    promote_after: int,
+) -> list[dict[str, Any]]:
     probs: list[dict[str, Any]] = []
     if not isinstance(data, dict):
         return [_artifact_meta_problem("error", "cw_state_flap_invalid", path, "Flap file must be an object.", meta)]
     hot = 0
     active = 0
-    for row in data.values():
+    preview: list[dict[str, Any]] = []
+    for raw_key, row in data.items():
         if not isinstance(row, dict):
             continue
         try:
@@ -1477,8 +1510,12 @@ def _cw_state_flap_problems(path: Path, data: Any, meta: Mapping[str, Any], *, p
             active += 1
         if cons >= promote_after:
             hot += 1
+            if len(preview) < 5:
+                rec = _state_preview_for_key(s, str(meta.get("provider") or ""), str(meta.get("feature") or ""), str(raw_key or "").strip(), None)
+                rec["reason"] = f"{cons} failed writes in a row" + (f" ({row.get('last_reason')})" if row.get("last_reason") else "")
+                preview.append(rec)
     if hot:
-        probs.append(_artifact_meta_problem("warn", "cw_state_flap_hot", path, "Some flap counters have reached blackbox promotion threshold.", meta, hot=hot, promote_after=promote_after))
+        probs.append(_artifact_meta_problem("warn", "cw_state_flap_hot", path, "Some flap counters have reached blackbox promotion threshold.", meta, count=hot, hot=hot, promote_after=promote_after, affected_items=preview))
     elif active:
         probs.append(_artifact_meta_problem("info", "cw_state_flap_active", path, "Flap counters show recent repeated sync friction.", meta, active=active))
     return probs
@@ -1579,6 +1616,7 @@ def _cw_state_semantic_diagnostics() -> list[dict[str, Any]]:
     except Exception:
         cooldown_days = 30
     active_pairs = _active_pairs_by_scope(cfg)
+    active_scopes = _active_feature_scopes(cfg)
     for path in sorted(CWS_DIR.glob("*.json")):
         data, err = _json_load_file(path)
         if err:
@@ -1591,10 +1629,18 @@ def _cw_state_semantic_diagnostics() -> list[dict[str, Any]]:
                 probs.extend(_cw_state_watermark_problems(path, data, meta, now_epoch=now_epoch))
             elif kind == "shadow":
                 probs.extend(_cw_state_shadow_problems(path, data, meta, now_epoch=now_epoch))
+            elif kind == "unresolved" and _orphaned_unresolved_scope(meta, active_scopes):
+                if isinstance(data, dict) and data:
+                    count = len(data["keys"]) if isinstance(data.get("keys"), list) else len(data)
+                    if count:
+                        probs.append(_artifact_meta_problem("info", "cw_state_unresolved_orphaned", path, "Unresolved file belongs to an old or removed pair setup and is not used by sync.", meta, count=count))
             elif kind == "unresolved":
                 probs.extend(_cw_state_unresolved_problems(state, path, data, meta, now_epoch=now_epoch))
+            elif kind in ("flap", "blackbox") and str(meta.get("scope") or "").lower() not in active_scopes:
+                if kind == "blackbox" and isinstance(data, dict) and data:
+                    probs.append(_artifact_meta_problem("info", "cw_state_blackbox_orphaned", path, "Blackbox file belongs to an old or removed pair setup and is not used by sync.", meta, count=len(data)))
             elif kind == "flap":
-                probs.extend(_cw_state_flap_problems(path, data, meta, promote_after=promote_after))
+                probs.extend(_cw_state_flap_problems(state, path, data, meta, promote_after=promote_after))
             elif kind == "blackbox":
                 probs.extend(_cw_state_blackbox_problems(state, path, data, meta, now_epoch=now_epoch, cooldown_days=cooldown_days))
             elif kind == "pair_state":
