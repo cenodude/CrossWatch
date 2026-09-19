@@ -459,6 +459,7 @@ DEFAULT_CFG: dict[str, Any] = {
     },
 
     "nuvio": {
+        "server_mode": "cloud",                         # "cloud" or "self_hosted"
         "base_url": "https://api.nuvio.tv",
         "access_token": "",
         "refresh_token": "",
@@ -1754,8 +1755,15 @@ def _normalize_nuvio(cfg: dict[str, Any]) -> None:
         cfg["nuvio"] = n
 
     def _block(block: dict[str, Any]) -> None:
+        mode = str(block.get("server_mode") or "").strip().lower()
+        block["server_mode"] = "self_hosted" if mode == "self_hosted" else "cloud"
         block["base_url"] = str(block.get("base_url") or "https://api.nuvio.tv").strip().rstrip("/") or "https://api.nuvio.tv"
         block.pop("public_client_key", None)
+        key = str(block.get("publishable_key") or "").strip()
+        if block["server_mode"] == "self_hosted" and key:
+            block["publishable_key"] = key
+        else:
+            block.pop("publishable_key", None)
         block["access_token"] = str(block.get("access_token") or "").strip()
         block["refresh_token"] = str(block.get("refresh_token") or "").strip()
         try:

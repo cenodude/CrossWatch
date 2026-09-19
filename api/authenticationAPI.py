@@ -2383,17 +2383,59 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return code if code in allowed else "invalid_response"
         if name == "NuvioServiceUnavailable":
             return "service_unavailable"
+        if name == "NuvioDiscoveryError":
+            return _nuvio_discovery_error(e)
         return "internal"
+
+    _NUVIO_DISCOVERY_ERRORS: dict[str, str] = {
+        "connection_failed": "connection_failed",
+        "disconnect_first": "disconnect_first",
+        "http_error": "http_error",
+        "invalid_document": "invalid_document",
+        "invalid_url": "invalid_url",
+        "missing_configuration": "missing_configuration",
+        "not_self_hosted": "not_self_hosted",
+        "official_server": "official_server",
+        "response_too_large": "response_too_large",
+        "tv_login_unsupported": "tv_login_unsupported",
+        "unsupported_version": "unsupported_version",
+        "wrong_service": "wrong_service",
+    }
+
+    def _nuvio_discovery_error(e: Exception) -> str:
+        return _NUVIO_DISCOVERY_ERRORS.get(str(e or "").strip(), "discovery_failed")
 
     def _nuvio_public_error() -> str:
         return "nuvio_request_failed"
+
+    @app.post("/api/nuvio/server", tags=["auth"])
+    def api_nuvio_server(payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
+        from providers.auth._auth_NUVIO import NuvioDiscoveryError, configure_server
+
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            res = configure_server(
+                cfg,
+                instance_id=inst,
+                server_mode=(payload or {}).get("server_mode"),
+                base_url=(payload or {}).get("base_url"),
+            )
+            _probe_bust("nuvio")
+            _safe_log(log_fn, "NUVIO", f"[NUVIO] server set instance={inst} mode={res.get('server_mode')}")
+            return res
+        except Exception as e:
+            _safe_log(log_fn, "NUVIO", f"[NUVIO] server set failed reason={_nuvio_error(e)} instance={inst}")
+            if isinstance(e, NuvioDiscoveryError):
+                return {"ok": False, "error": _nuvio_discovery_error(e), "instance": inst}
+            return {"ok": False, "error": _nuvio_public_error(), "instance": inst}
 
     @app.post("/api/nuvio/device/start", tags=["auth"])
     def api_nuvio_device_start(payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
         inst = normalize_instance_id(instance)
         try:
             cfg = load_config()
-            redirect = str((payload or {}).get("redirect_base_url") or "https://nuvio.tv/tv-login").strip() or "https://nuvio.tv/tv-login"
+            redirect = str((payload or {}).get("redirect_base_url") or "").strip() or None
             res = _provider_auth().start_device_code("nuvio", cfg, instance_id=inst, redirect_base_url=redirect)
             _safe_log(log_fn, "NUVIO", f"[NUVIO] device login started instance={inst}")
             return res
