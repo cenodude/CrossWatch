@@ -69,6 +69,7 @@ body:
         - label: SIMKL
         - label: Stremio
         - label: Tautulli
+        - label: Tracearr
         - label: TMDb
         - label: Trakt
 
