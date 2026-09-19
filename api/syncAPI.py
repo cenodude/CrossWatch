@@ -2094,6 +2094,8 @@ def api_sync_providers(request: Request = cast(Request, None)) -> JSONResponse:
     def _norm_caps(caps: dict | None) -> dict:
         caps = dict(caps or {})
         out: dict[str, Any] = {"bidirectional": bool(caps.get("bidirectional", False))}
+        if caps.get("can_target") is False:
+            out["can_target"] = False
         progress = _norm_progress_caps(caps.get("progress"))
         if progress:
             out["progress"] = progress

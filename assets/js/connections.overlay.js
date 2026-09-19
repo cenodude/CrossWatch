@@ -77,8 +77,9 @@
       const cls = providerClass(providerKey);
       const isSource = providerKey === source;
       const isTarget = providerKey === target;
+      const sourceOnly = !isSource && !!source && item?.capabilities?.can_target === false;
       const btnClass = isSource ? "selected" : (source && !isTarget ? "target" : "");
-      const btnText = isSource ? "Clear Source" : (source ? "Set as Target" : "Set as Source");
+      const btnText = isSource ? "Clear Source" : (sourceOnly ? "Source only" : (source ? "Set as Target" : "Set as Source"));
       const logo = providerLogo(providerKey);
       const watermarkStyle = logo ? ` style="--wm:url('${logo}')"` : "";
       const badge = isSource
@@ -92,7 +93,7 @@
             <div class="prov-title">${label}</div>
             <div class="prov-features" aria-label="Supported features">${featureDots(item.features || {})}</div>
             <div class="prov-actions">
-              <button type="button" class="prov-btn ${btnClass}" data-action="pick" data-prov="${providerKey}">${btnText}</button>
+              <button type="button" class="prov-btn ${btnClass}" data-action="pick" data-prov="${providerKey}"${sourceOnly ? ' disabled title="This provider can only be used as a source"' : ""}>${btnText}</button>
               ${badge}
             </div>
           </div>

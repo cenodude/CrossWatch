@@ -12,7 +12,7 @@
   const Meta = () => w.CW?.ProviderMeta || null;
   const $ = (s, r = d) => r.querySelector(s);
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const PROVIDERS = ['plex', 'emby', 'jellyfin', 'trakt', 'simkl', 'mdblist', 'publicmetadb', 'anilist', 'tmdb', 'tautulli'];
+  const PROVIDERS = ['plex', 'emby', 'jellyfin', 'trakt', 'simkl', 'mdblist', 'publicmetadb', 'anilist', 'tmdb', 'tautulli', 'tracearr'];
 
   const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
   const has = (v) => typeof v === 'string' ? v.trim().length > 0 : !!v;
@@ -76,6 +76,7 @@
     if (p === 'trakt' || p === 'simkl') return has(b.access_token) || has(b.refresh_token);
     if (p === 'anilist') return has(b.access_token) || has(b.token);
     if (p === 'mdblist') return has(b.api_key) || has(b.access_token);
+    if (p === 'tracearr') return has(b.server_url || b.server) && has(b.api_key);
     if (p === 'tautulli') return has((b || cfg?.tautulli || cfg?.auth?.tautulli || {}).server_url || (b || cfg?.tautulli || cfg?.auth?.tautulli || {}).server);
     if (p === 'tmdb') return has(b.api_key) && has(b.session_id || b.session);
     return has(b.access_token) || has(b.api_key) || has(b.token);

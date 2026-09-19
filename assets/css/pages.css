@@ -580,7 +580,7 @@ body :is(#page-snapshots,#page-playlists,#page-editor) .cw-page-hero::after{tran
 #page-snapshots .ss-badge[data-provider="publicmetadb"]{--brand:var(--publicmetadb-rgb)}
 #page-snapshots .ss-badge[data-provider="nuvio"]{--brand:var(--nuvio-rgb)}
 #page-snapshots .ss-badge[data-provider="tmdb"]{--brand:var(--tmdb-rgb)}
-#page-snapshots .ss-badge[data-provider="tautulli"]{--brand:var(--tautulli-rgb)}
+#page-snapshots .ss-badge[data-provider="tautulli"]{--brand:var(--tautulli-rgb)}#page-snapshots .ss-badge[data-provider="tracearr"]{--brand:var(--tracearr-rgb)}
 #page-snapshots .ss-badge[data-provider="crosswatch"]{--brand:124,92,255}
 
 #page-snapshots .ss-badge[data-provider]{background:rgba(var(--brand,124,92,255),0.16)!important;border-color:rgba(var(--brand,124,92,255),0.46)!important;color:#f4f7ff !important}

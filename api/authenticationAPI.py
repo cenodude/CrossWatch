@@ -2630,6 +2630,113 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return {"ok": False, "error": "disconnect_failed", "instance": inst}
 
 
+    # TRACEARR
+    @app.post("/api/tracearr/save", tags=["auth"])
+    def api_tracearr_save(payload: dict[str, Any] = Body(...), instance: str | None = Query(None)) -> dict[str, Any]:
+        from providers.auth import _auth_TRACEARR as tracearr_auth
+
+        inst = normalize_instance_id(instance)
+        raw = payload or {}
+        server = tracearr_auth.normalize_server_url(raw.get("server_url") or raw.get("server") or "")
+        key_in = str(raw.get("api_key") or raw.get("key") or "").strip()
+        history_raw = raw.get("history")
+        history_in: dict[str, Any] = history_raw if isinstance(history_raw, dict) else {}
+        user_touched = "user_id" in raw or "user_id" in history_in
+        user_id = str(raw.get("user_id") or history_in.get("user_id") or "").strip()
+
+        cfg = load_config()
+        t = ensure_instance_block(cfg, "tracearr", inst)
+
+        if server:
+            t["server_url"] = server
+        if key_in and not set(key_in) <= {"*", "•"}:
+            t["api_key"] = key_in
+        if user_touched:
+            t.setdefault("history", {})
+            t["history"]["user_id"] = user_id
+
+        final_server = str(t.get("server_url") or "").strip()
+        final_key = str(t.get("api_key") or "").strip()
+
+        if not final_server:
+            return {"ok": False, "error": "server_url_required", "instance": inst}
+        if not final_key:
+            return {"ok": False, "error": "api_key_required", "instance": inst}
+        ok, reason = tracearr_auth.validate_credentials(
+            final_server,
+            final_key,
+            timeout=float(t.get("timeout", 12.0) or 12.0),
+            verify_ssl=coerce_bool(t.get("verify_ssl", True), True),
+        )
+        if not ok:
+            _safe_log(log_fn, "TRACEARR", f"[TRACEARR] validation failed reason={reason} instance={inst}")
+            return {"ok": False, "error": reason, "instance": inst}
+
+        save_config(cfg)
+        _safe_log(log_fn, "TRACEARR", f"[TRACEARR] saved instance={inst}")
+        if isinstance(probe_cache, dict):
+            probe_cache["tracearr"] = (0.0, False)
+        return {"ok": True, "server_url": final_server, "has_key": True, "instance": inst}
+
+    @app.get("/api/tracearr/status", tags=["auth"])
+    def api_tracearr_status(instance: str | None = Query(None), verify: int | None = Query(None)) -> dict[str, Any]:
+        from providers.auth import _auth_TRACEARR as tracearr_auth
+
+        inst = normalize_instance_id(instance)
+        cfg = load_config()
+        t = ensure_instance_block(cfg, "tracearr", inst)
+        if not tracearr_auth.is_configured(t):
+            return {"connected": False, "instance": inst}
+        if not verify:
+            return {"connected": True, "instance": inst}
+
+        ok, reason = tracearr_auth.validate_credentials(
+            str(t.get("server_url") or ""),
+            str(t.get("api_key") or ""),
+            timeout=float(t.get("timeout", 10) or 10),
+            verify_ssl=coerce_bool(t.get("verify_ssl", True), True),
+        )
+        return {"connected": bool(ok), "instance": inst, **({} if ok else {"reason": reason})}
+
+    @app.get("/api/tracearr/users", tags=["auth"])
+    def api_tracearr_users(instance: str | None = Query(None)) -> dict[str, Any]:
+        from providers.auth import _auth_TRACEARR as tracearr_auth
+
+        inst = normalize_instance_id(instance)
+        cfg = load_config()
+        t = ensure_instance_block(cfg, "tracearr", inst)
+        if not tracearr_auth.is_configured(t):
+            return {"ok": False, "error": "not_configured", "users": [], "instance": inst}
+        users, reason = tracearr_auth.list_users(
+            str(t.get("server_url") or ""),
+            str(t.get("api_key") or ""),
+            timeout=float(t.get("timeout", 10) or 10),
+            verify_ssl=coerce_bool(t.get("verify_ssl", True), True),
+        )
+        selected = str(((t.get("history") or {}) if isinstance(t.get("history"), dict) else {}).get("user_id") or "")
+        return {"ok": not reason, **({"error": reason} if reason else {}), "users": users, "selected": selected, "instance": inst}
+
+    @app.post("/api/tracearr/disconnect", tags=["auth"])
+    def api_tracearr_disconnect(instance: str | None = Query(None)) -> Any:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            conflict = usage_conflict_response(cfg, "tracearr", inst)
+            if conflict is not None:
+                return conflict
+            t = ensure_instance_block(cfg, "tracearr", inst)
+            t["server_url"] = ""
+            t["api_key"] = ""
+            save_config(cfg)
+            _safe_log(log_fn, "TRACEARR", f"[TRACEARR] disconnected instance={inst}")
+            if isinstance(probe_cache, dict):
+                probe_cache["tracearr"] = (0.0, False)
+            return {"ok": True, "instance": inst}
+        except Exception as e:
+            _safe_log(log_fn, "TRACEARR", f"[TRACEARR] ERROR disconnect: {e}")
+            return {"ok": False, "error": "disconnect_failed", "instance": inst}
+
+
     # FLOPPY
     @app.post("/api/floppy/save", tags=["auth"])
     def api_floppy_save(payload: dict[str, Any] = Body(...), instance: str | None = Query(None)) -> dict[str, Any]:

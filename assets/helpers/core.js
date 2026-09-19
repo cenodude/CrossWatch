@@ -340,6 +340,7 @@
     if ([cfg?.scrob, cfg?.auth?.scrob].some(hasScrobConfig)) set.add("SCROB");
     if ([cfg?.tmdb_sync, cfg?.auth?.tmdb_sync].some(hasTmdbConfig)) set.add("TMDB");
     if ([cfg?.tautulli, cfg?.auth?.tautulli].some((block) => hasAnyConfigValue(block, ["api_key", "server_url", "server"]))) set.add("TAUTULLI");
+    if ([cfg?.tracearr, cfg?.auth?.tracearr].some((block) => hasAnyConfigValue(block, ["api_key", "server_url", "server"]))) set.add("TRACEARR");
 
     if ([cfg?.crosswatch, cfg?.CrossWatch].some(hasCrosswatchConfig)) set.add("CROSSWATCH");
     return set;

@@ -177,6 +177,7 @@ const getAllowedProviders = (cfg = window._cfgCache || {}) => {
   if ([cfg?.nuvio, cfg?.auth?.nuvio].some(hasNuvioConfig)) set.add("NUVIO");
   if ([cfg?.tmdb_sync, cfg?.tmdb, cfg?.auth?.tmdb_sync].some(hasTmdbConfig)) set.add("TMDB");
   if ([cfg?.tautulli, cfg?.auth?.tautulli].some((block) => hasAnyConfigValue(block, ["api_key", "server_url", "server"]))) set.add("TAUTULLI");
+  if ([cfg?.tracearr, cfg?.auth?.tracearr].some((block) => hasAnyConfigValue(block, ["api_key", "server_url", "server"]))) set.add("TRACEARR");
   if ((cfg?.crosswatch || cfg?.CrossWatch || {}).enabled !== false) set.add("CROSSWATCH");
   return set;
 };

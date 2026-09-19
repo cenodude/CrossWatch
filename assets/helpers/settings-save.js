@@ -6,12 +6,13 @@ const _cwJSONHeaders = { "Content-Type": "application/json" };
 const _cwSecretIds = [
   "plex_home_pin", "simkl_client_id", "simkl_client_secret",
   "trakt_client_id", "trakt_client_secret", "anilist_client_id", "anilist_client_secret",
-  "tmdb_api_key", "tmdb_sync_api_key", "tmdb_sync_session_id", "mdblist_key", "publicmetadb_key", "tautulli_key", "floppy_token",
+  "tmdb_api_key", "tmdb_sync_api_key", "tmdb_sync_session_id", "mdblist_key", "publicmetadb_key", "tautulli_key", "tracearr_key", "floppy_token",
   "scrob_key", "scrob_password", "kodi_password"
 ];
 const _cwTouchedIds = [
   ..._cwSecretIds,
   "tautulli_server", "tautulli_user_id",
+  "tracearr_server", "tracearr_user_id",
   "floppy_server", "floppy_verify_ssl",
   "scrob_server", "scrob_username", "scrob_verify_ssl", "scrob_totp",
   "cw_tracker_label", "cw_tracker_retention_days", "cw_tracker_auto_snapshot", "cw_tracker_max_snapshots",
@@ -305,6 +306,17 @@ function _cwProviderAuthError(provider, code) {
     if (key.startsWith("validation_http_")) return "Tautulli validation failed";
     return "Saving Tautulli failed";
   }
+  if (provider === "tracearr") {
+    if (key === "server_url_required") return "Enter Tracearr server URL";
+    if (key === "api_key_required") return "Enter your Tracearr API key";
+    if (key === "invalid_api_key") return "Invalid Tracearr API key";
+    if (key === "api_v2_unavailable") return "Tracearr 2.0 or later is required";
+    if (key === "validation_timeout") return "Tracearr validation timed out";
+    if (key === "validation_failed") return "Could not connect to Tracearr";
+    if (key === "validation_bad_response") return "Tracearr validation returned an unexpected response";
+    if (key.startsWith("validation_http_")) return "Tracearr validation failed";
+    return "Saving Tracearr failed";
+  }
   if (provider === "floppy") {
     if (key === "server_url_required") return "Enter Floppy server URL";
     if (key === "api_token_required") return "Enter your Floppy API token";
@@ -402,6 +414,22 @@ async function _cwValidateTautulliSecret(inst, payload) {
   const body = await _cwReadBody(resp);
   if (!resp?.ok || body?.ok === false) {
     _cwAbortSave(_cwProviderAuthError("tautulli", body?.error || body?.detail || `http_${resp?.status || 0}`));
+  }
+}
+
+async function _cwValidateTracearrSecret(inst, payload) {
+  const server = _cwNorm(payload?.server_url);
+  const apiKey = _cwNorm(payload?.api_key);
+  if (!server && !apiKey) return;
+  const url = `/api/tracearr/save?instance=${encodeURIComponent(_cwNormInst(inst))}`;
+  const resp = await _cwRequest(url, {
+    method: "POST",
+    headers: _cwJSONHeaders,
+    body: JSON.stringify(payload || {})
+  }, 15000);
+  const body = await _cwReadBody(resp);
+  if (!resp?.ok || body?.ok === false) {
+    _cwAbortSave(_cwProviderAuthError("tracearr", body?.error || body?.detail || `http_${resp?.status || 0}`));
   }
 }
 
@@ -827,6 +855,34 @@ async function saveSettings() {
         if (tautulliUserTouched) {
           ttarget.history = ttarget.history && typeof ttarget.history === "object" ? ttarget.history : {};
           ttarget.history.user_id = tautulliUser;
+        }
+        mark();
+      }
+
+      const tracearrInst = _cwSelectedInst("tracearr", "cw.ui.tracearr.auth.instance.v1");
+      const tracearrPrev = _cwInstBlock(serverCfg?.tracearr, tracearrInst);
+      const tracearrServer = _cwNorm(_cwEl("tracearr_server")?.value || "");
+      const tracearrServerTouched = _cwTouched("tracearr_server");
+      const tracearrKey = _cwReadSecret("tracearr_key", _cwNorm(tracearrPrev?.api_key));
+      const tracearrUserEl = _cwEl("tracearr_user_id");
+      const tracearrUser = _cwNorm(tracearrUserEl?.value || "");
+      const tracearrUserTouched = !!tracearrUserEl?.dataset?.touched;
+      const tracearrPayload = {};
+      const tracearrServerChanged = tracearrServerTouched && !!tracearrServer && tracearrServer !== _cwNorm(tracearrPrev?.server_url);
+      if (tracearrServer && (tracearrServerChanged || (tracearrKey.changed && tracearrKey.set))) tracearrPayload.server_url = tracearrServer;
+      if (tracearrKey.changed && tracearrKey.set) tracearrPayload.api_key = tracearrKey.set;
+      if (tracearrUserTouched) tracearrPayload.user_id = tracearrUser;
+      if (tracearrServerChanged || (tracearrKey.changed && tracearrKey.set)) {
+        await _cwValidateTracearrSecret(tracearrInst, tracearrPayload);
+      }
+      if (tracearrServerChanged || tracearrKey.changed || tracearrUserTouched) {
+        cfg.tracearr = cfg.tracearr && typeof cfg.tracearr === "object" ? cfg.tracearr : {};
+        const trtarget = _cwEnsureInstBlock(cfg.tracearr, tracearrInst);
+        if (tracearrServerChanged) trtarget.server_url = tracearrServer;
+        if (tracearrKey.changed) _cwApplySecret(trtarget, "api_key", tracearrKey);
+        if (tracearrUserTouched) {
+          trtarget.history = trtarget.history && typeof trtarget.history === "object" ? trtarget.history : {};
+          trtarget.history.user_id = tracearrUser;
         }
         mark();
       }
