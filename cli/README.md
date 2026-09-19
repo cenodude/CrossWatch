@@ -174,7 +174,7 @@ cw auth logout simkl
 
 Plex, Trakt, SIMKL, MDBList, PunchPlay, BingeBase and Nuvio give you a code and a URL, then poll until they report connected or `--timeout` runs out.
 
-Jellyfin, Emby, Kodi, Stremio, Floppy, Scrob, Tautulli, PublicMetaDB and TMDb ask for fields. Trakt, SIMKL and AniList want a client id and secret first. Pass them instead of typing them if you are scripting:
+Jellyfin, Emby, Kodi, Stremio, Floppy, Scrob, Tautulli, Tracearr, PublicMetaDB and TMDb ask for fields. Trakt, SIMKL and AniList want a client id and secret first. Pass them instead of typing them if you are scripting:
 
 ```
 cw auth login jellyfin \

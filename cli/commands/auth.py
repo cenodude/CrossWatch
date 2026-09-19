@@ -89,6 +89,7 @@ ENDPOINTS: dict[str, Endpoints] = {
     "FLOPPY": Endpoints(submit="/api/floppy/save", disconnect="/api/floppy/disconnect"),
     "SCROB": Endpoints(submit="/api/scrob/save", disconnect="/api/scrob/disconnect"),
     "TAUTULLI": Endpoints(submit="/api/tautulli/save", disconnect="/api/tautulli/disconnect"),
+    "TRACEARR": Endpoints(submit="/api/tracearr/save", disconnect="/api/tracearr/disconnect"),
     "PUBLICMETADB": Endpoints(submit="/api/publicmetadb/save", disconnect="/api/publicmetadb/disconnect"),
     "TMDB": Endpoints(submit="/api/tmdb_sync/save", disconnect="/api/tmdb_sync/disconnect"),
     "CROSSWATCH": Endpoints(submit="/api/crosswatch/connect", disconnect="/api/crosswatch/disconnect"),
