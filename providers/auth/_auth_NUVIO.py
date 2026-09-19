@@ -3,12 +3,14 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import json
 import secrets
 import threading
 import time
 from collections.abc import Mapping, MutableMapping
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
@@ -29,6 +31,10 @@ SHARED_PUBLIC_CLIENT_KEY = (
     "eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzgxNTIxMzQ2LCJleHAiOjE5MzkyMDEzNDZ9."
     "tmQaj682pwzehpqlgCDMnySOqiUvpgRbrE43T4VJpDI"
 )
+SERVER_CLOUD = "cloud"
+SERVER_SELF_HOSTED = "self_hosted"
+DISCOVERY_PATH = "/.well-known/nuvio"
+DISCOVERY_MAX_BYTES = 64 * 1024
 REFRESH_SKEW_SEC = 300
 UA = "CrossWatch/NuvioAuth"
 DEFAULT_PROFILE: dict[str, Any] = {
@@ -67,6 +73,10 @@ class NuvioProfileUnavailable(NuvioError):
     pass
 
 
+class NuvioDiscoveryError(NuvioError):
+    pass
+
+
 def _public_log_message(msg: Any) -> str:
     text = str(msg or "")
     allowed = {
@@ -82,6 +92,8 @@ def _public_log_message(msg: Any) -> str:
         "NUVIO: refresh token ok",
         "NUVIO: profile selected",
         "NUVIO: disconnected",
+        "NUVIO: discovery ok",
+        "NUVIO: server changed",
     }
     if text in allowed:
         return text
@@ -131,8 +143,114 @@ def normalize_base_url(value: Any) -> str:
     return raw.rstrip("/")
 
 
+def normalize_server_mode(value: Any) -> str:
+    raw = str(value or "").strip().lower().replace("-", "_")
+    return SERVER_SELF_HOSTED if raw in {"self_hosted", "selfhosted", "custom"} else SERVER_CLOUD
+
+
+def is_self_hosted(block: Mapping[str, Any] | None) -> bool:
+    return normalize_server_mode((block or {}).get("server_mode")) == SERVER_SELF_HOSTED
+
+
 def app_public_client_key(block: Mapping[str, Any] | None = None) -> str:
+    if is_self_hosted(block):
+        return str((block or {}).get("publishable_key") or "").strip()
     return SHARED_PUBLIC_CLIENT_KEY.strip()
+
+
+def tv_login_web_base_url(block: Mapping[str, Any] | None) -> str:
+    if is_self_hosted(block):
+        return f"{normalize_base_url((block or {}).get('base_url'))}/tv-login"
+    return TV_LOGIN_WEB_BASE_URL
+
+
+def discovery_url(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        raise NuvioDiscoveryError("invalid_url")
+    if "://" not in raw:
+        raw = f"https://{raw}"
+    parts = urlsplit(raw)
+    if parts.scheme not in ("http", "https") or not parts.hostname or parts.username or parts.password:
+        raise NuvioDiscoveryError("invalid_url")
+    path = parts.path
+    if path.endswith(DISCOVERY_PATH):
+        path = path[: -len(DISCOVERY_PATH)]
+    path = path.rstrip("/")
+    return urlunsplit((parts.scheme, parts.netloc, f"{path}{DISCOVERY_PATH}", "", ""))
+
+
+def _same_host(url_a: str, url_b: str) -> bool:
+    a, b = urlsplit(url_a), urlsplit(url_b)
+    return (a.hostname or "").lower() == (b.hostname or "").lower() and (a.port or 0) == (b.port or 0)
+
+
+def _discovered_backend_url(value: Any) -> str:
+    raw = str(value or "").strip()
+    parts = urlsplit(raw)
+    if parts.scheme not in ("http", "https") or not parts.hostname or parts.username or parts.password or parts.query or parts.fragment:
+        raise NuvioDiscoveryError("missing_configuration")
+    return raw.rstrip("/")
+
+
+def parse_discovery(document: Any) -> dict[str, Any]:
+    if not isinstance(document, Mapping):
+        raise NuvioDiscoveryError("invalid_document")
+    raw_version = document.get("version")
+    if isinstance(raw_version, bool) or not isinstance(raw_version, (int, str)):
+        raise NuvioDiscoveryError("invalid_document")
+    try:
+        version = int(raw_version)
+    except ValueError as exc:
+        raise NuvioDiscoveryError("invalid_document") from exc
+    if version != 1:
+        raise NuvioDiscoveryError("unsupported_version")
+    if str(document.get("service") or "").strip().lower() != "nuvio":
+        raise NuvioDiscoveryError("wrong_service")
+    if document.get("self_hosted") is not True:
+        raise NuvioDiscoveryError("not_self_hosted")
+    backend_url = _discovered_backend_url(document.get("backend_url"))
+    key = str(document.get("publishable_key") or "").strip()
+    if not key:
+        raise NuvioDiscoveryError("missing_configuration")
+    raw_caps = document.get("capabilities")
+    caps: Mapping[str, Any] = raw_caps if isinstance(raw_caps, Mapping) else {}
+    if caps.get("tv_login") is not True:
+        raise NuvioDiscoveryError("tv_login_unsupported")
+    return {"backend_url": backend_url, "publishable_key": key}
+
+
+def discover_server(value: Any, *, session: requests.Session | None = None, timeout: float = 15.0) -> dict[str, Any]:
+    url = discovery_url(value)
+    if _same_host(url, API_BASE):
+        raise NuvioDiscoveryError("official_server")
+    sess = session or requests.Session()
+    try:
+        resp = sess.get(url, headers={"Accept": "application/json", "User-Agent": UA}, timeout=timeout, stream=True)
+    except requests.RequestException as exc:
+        raise NuvioDiscoveryError("connection_failed") from exc
+    try:
+        if resp.status_code != 200:
+            raise NuvioDiscoveryError("http_error")
+        if url.startswith("https://") and not str(getattr(resp, "url", "") or url).startswith("https://"):
+            raise NuvioDiscoveryError("connection_failed")
+        body = b""
+        for chunk in resp.iter_content(8192):
+            body += chunk
+            if len(body) > DISCOVERY_MAX_BYTES:
+                raise NuvioDiscoveryError("response_too_large")
+    finally:
+        try:
+            resp.close()
+        except Exception:
+            pass
+    try:
+        document = json.loads(body.decode("utf-8"))
+    except Exception as exc:
+        raise NuvioDiscoveryError("invalid_document") from exc
+    out = parse_discovery(document)
+    log("NUVIO: discovery ok", level="INFO", module="AUTH")
+    return out
 
 
 def provider_block(cfg: Mapping[str, Any] | None, instance_id: Any = None) -> dict[str, Any]:
@@ -173,15 +291,18 @@ def has_auth(block: Mapping[str, Any] | None) -> bool:
 
 def is_configured(block: Mapping[str, Any] | None) -> bool:
     b = block or {}
-    return bool(normalize_base_url(b.get("base_url")) and has_auth(b) and profile_id_value(b) is not None)
+    return bool(normalize_base_url(b.get("base_url")) and app_public_client_key(b) and has_auth(b) and profile_id_value(b) is not None)
 
 
 def status_for_block(block: Mapping[str, Any] | None) -> dict[str, Any]:
     b = block or {}
     pid = profile_id_value(b)
+    self_hosted = is_self_hosted(b)
     return {
         "connected": is_configured(b),
         "authenticated": has_auth(b),
+        "server_mode": SERVER_SELF_HOSTED if self_hosted else SERVER_CLOUD,
+        "base_url": normalize_base_url(b.get("base_url")) if self_hosted else "",
         "base_url_configured": bool(normalize_base_url(b.get("base_url"))),
         "client_key_configured": bool(app_public_client_key(b)),
         "profile_id": pid,
@@ -211,6 +332,47 @@ def clear_oauth(block: MutableMapping[str, Any]) -> None:
             block.pop(key, None)
         else:
             block[key] = ""
+
+
+def configure_server(
+    cfg: dict[str, Any],
+    *,
+    instance_id: Any = None,
+    server_mode: Any = SERVER_CLOUD,
+    base_url: Any = None,
+    session: requests.Session | None = None,
+) -> dict[str, Any]:
+    mode = normalize_server_mode(server_mode)
+    if mode == SERVER_SELF_HOSTED:
+        found = discover_server(base_url, session=session)
+        new_base, new_key = found["backend_url"], found["publishable_key"]
+    else:
+        new_base, new_key = API_BASE, ""
+    block = writable_block(cfg, instance_id)
+    old_mode = normalize_server_mode(block.get("server_mode"))
+    old_base = normalize_base_url(block.get("base_url"))
+    old_key = str(block.get("publishable_key") or "").strip()
+    changed = (old_mode, old_base, old_key) != (mode, normalize_base_url(new_base), new_key)
+    if changed and has_auth(block):
+        raise NuvioDiscoveryError("disconnect_first")
+    if changed:
+        clear_oauth(block)
+    block["server_mode"] = mode
+    block["base_url"] = normalize_base_url(new_base)
+    if new_key:
+        block["publishable_key"] = new_key
+    else:
+        block.pop("publishable_key", None)
+    save_config(cfg)
+    if changed:
+        log("NUVIO: server changed", level="INFO", module="AUTH")
+    return {
+        "ok": True,
+        "instance": normalize_instance_id(instance_id),
+        "server_mode": mode,
+        "base_url": block["base_url"] if mode == SERVER_SELF_HOSTED else "",
+        "changed": changed,
+    }
 
 
 def about_to_expire(block: Mapping[str, Any], skew_sec: int = REFRESH_SKEW_SEC) -> bool:
@@ -408,17 +570,21 @@ class NuvioClient:
         log("NUVIO: anonymous session ok", level="INFO", module="AUTH")
         return {"access_token": tok["access_token"], "refresh_token": tok["refresh_token"]}
 
-    def start_tv_login_session(self, cfg: dict[str, Any], *, redirect_base_url: str = TV_LOGIN_WEB_BASE_URL, device_name: str = "CrossWatch") -> dict[str, Any]:
+    def start_tv_login_session(self, cfg: dict[str, Any], *, redirect_base_url: str | None = None, device_name: str = "CrossWatch") -> dict[str, Any]:
         log("NUVIO: start TV login request", level="INFO", module="AUTH")
         block = writable_block(cfg, self.instance_id)
         self.block = dict(block)
         self.base_url = normalize_base_url(block.get("base_url"))
         self.public_client_key = app_public_client_key(block)
+        if is_self_hosted(block):
+            redirect = tv_login_web_base_url(block)
+        else:
+            redirect = str(redirect_base_url or "").strip() or TV_LOGIN_WEB_BASE_URL
         caller = self.anonymous_session(cfg, block)
         device_nonce = secrets.token_urlsafe(24)
         payload: dict[str, Any] = {
             "p_device_nonce": device_nonce,
-            "p_redirect_base_url": str(redirect_base_url or TV_LOGIN_WEB_BASE_URL).strip() or TV_LOGIN_WEB_BASE_URL,
+            "p_redirect_base_url": redirect,
             "p_device_name": str(device_name or "CrossWatch").strip() or "CrossWatch",
         }
 
@@ -651,7 +817,7 @@ def start_device_code(
     cfgd = cfg if isinstance(cfg, dict) else _load_config()
     return NuvioClient(cfgd, instance_id=instance_id).start_tv_login_session(
         cfgd,
-        redirect_base_url=redirect_uri or redirect_base_url or TV_LOGIN_WEB_BASE_URL,
+        redirect_base_url=redirect_uri or redirect_base_url,
         device_name=device_name,
     )
 
@@ -762,6 +928,7 @@ class NuvioAuth(AuthProvider):
             "profile_id": raw.get("profile_id"),
             "profile_name": raw.get("profile_name") or "",
             "client_key_configured": bool(app_public_client_key(block)),
+            "server_mode": raw.get("server_mode"),
         }
         return AuthStatus(
             connected=connected,
@@ -773,7 +940,7 @@ class NuvioAuth(AuthProvider):
 
     def start(self, cfg: MutableMapping[str, Any] | None = None, *, redirect_uri: str | None = None, instance_id: Any = None) -> dict[str, Any]:
         cfgd = cfg if isinstance(cfg, dict) else _load_config()
-        return NuvioClient(cfgd, instance_id=instance_id).start_tv_login_session(cfgd, redirect_base_url=redirect_uri or "https://nuvio.tv/tv-login")
+        return NuvioClient(cfgd, instance_id=instance_id).start_tv_login_session(cfgd, redirect_base_url=redirect_uri)
 
     def finish(self, cfg: MutableMapping[str, Any] | None = None, *, instance_id: Any = None, **payload: Any) -> AuthStatus | Mapping[str, Any]:
         cfgd = cfg if isinstance(cfg, dict) else _load_config()
@@ -825,6 +992,10 @@ def html() -> str:
     #sec-nuvio .nuvio-qc-copy svg{width:16px;height:16px;display:block}
     #sec-nuvio .nuvio-qc-line{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap;margin-top:6px}
     #sec-nuvio .nuvio-qc-meta{display:flex;justify-content:space-between;gap:12px;margin-top:6px}
+    #sec-nuvio .nuvio-server-row{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin-top:12px}
+    #sec-nuvio .nuvio-server-row select{width:200px}
+    #sec-nuvio .nuvio-server-url{width:min(360px,100%)}
+    #sec-nuvio .nuvio-server-url input{width:100%}
     #sec-nuvio .nuvio-profile-row{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin-top:12px}
     #sec-nuvio .nuvio-profile-row>div{width:min(320px,100%)}
     #sec-nuvio .nuvio-profile-row select{width:320px;min-width:280px}
@@ -856,6 +1027,20 @@ def html() -> str:
                 <div class="cw-auth-journey-copy">Use Nuvio TV login, approve the temporary code, then choose a profile. Nuvio API contracts may change.</div>
               </div>
             </div>
+            <div class="nuvio-server-row">
+              <div>
+                <label for="nuvio_server_mode">Nuvio server</label>
+                <select id="nuvio_server_mode" autocomplete="off">
+                  <option value="cloud">Nuvio cloud</option>
+                  <option value="self_hosted">Self-hosted</option>
+                </select>
+              </div>
+              <div id="nuvio_server_url_wrap" class="nuvio-server-url hidden">
+                <label for="nuvio_server_url">Backend URL</label>
+                <input id="nuvio_server_url" type="text" placeholder="https://nuvio.example.com" autocomplete="off" spellcheck="false" autocapitalize="off">
+              </div>
+              <button id="nuvio_server_check" class="btn hidden" type="button">Check server</button>
+            </div>
             <div class="nuvio-actions">
               <button id="nuvio_connect" class="btn" type="button">Connect Nuvio</button>
               <button id="nuvio_disconnect" class="hidden" type="button">Disconnect Nuvio</button>
@@ -880,6 +1065,10 @@ def html() -> str:
                 <a id="nuvio_login_url" href="#" target="_blank" rel="noopener">Open Nuvio approval page</a>
                 <span id="nuvio_polling">Waiting for approval...</span>
               </div>
+              <div id="nuvio_local_hint" class="muted nuvio-qc-line hidden">
+                <span>Nuvio local mode (setup without --domain) serves the approval page on the account dashboard.</span>
+                <a id="nuvio_local_url" href="#" target="_blank" rel="noopener">Open it on port 3000</a>
+              </div>
               <div class="nuvio-qc-meta">
                 <span></span>
                 <span class="muted" id="nuvio_expiry"></span>
@@ -902,7 +1091,10 @@ __all__ = [
     "__VERSION__",
     "active_method",
     "clear_oauth",
+    "configure_server",
+    "discover_server",
     "is_configured",
+    "is_self_hosted",
     "normalize_auth_method",
     "poll_device_code",
     "refresh_token",

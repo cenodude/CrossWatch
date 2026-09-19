@@ -740,7 +740,7 @@
       copy: { auth: ["Nuvio Authentication", "Connect Nuvio with TV login and select a profile."] },
       journey: ["Connect to Nuvio", "Use Nuvio TV login, approve the temporary code, then choose a profile. Nuvio API contracts may change.", "176,72,240", "64,208,232", "NUVIO"],
       steps: [["1", "Start login", "Open the Nuvio approval URL"], ["2", "Approve code", "Approve the temporary TV login code"], ["3", "Select profile", "Choose the Nuvio profile for this instance"]],
-      order: [".nuvio-actions", "#nuvio_profile_state", "#nuvio_login_state"],
+      order: [".nuvio-server-row", ".nuvio-actions", "#nuvio_profile_state", "#nuvio_login_state"],
       code: ["#nuvio_login_state"],
       actions: [{ row: ".nuvio-actions", status: "#nuvio_msg", buttons: "#nuvio_connect" }]
     },

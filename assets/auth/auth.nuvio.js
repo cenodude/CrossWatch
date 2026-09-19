@@ -94,7 +94,23 @@
       a.href = url || "#";
       a.textContent = url ? "Open Nuvio approval page" : "";
     }
+    const localUrl = localDashboardUrl(url);
+    el("nuvio_local_hint")?.classList.toggle("hidden", !localUrl);
+    const localLink = el("nuvio_local_url");
+    if (localLink) localLink.href = localUrl || "#";
     startExpiryTimer(data?.expires_at);
+  }
+
+  function localDashboardUrl(url) {
+    if (selectedServerMode() !== "self_hosted" || !url) return "";
+    try {
+      const u = new URL(url);
+      if (!["localhost", "127.0.0.1", "[::1]"].includes(u.hostname) || u.port === "3000") return "";
+      u.port = "3000";
+      return u.toString();
+    } catch {
+      return "";
+    }
   }
 
   function normalizeExpiryEpoch(value) {
@@ -135,6 +151,59 @@
       updateExpiry(exp);
       if (exp <= Math.floor(Date.now() / 1000)) stopExpiryTimer();
     }, 1000);
+  }
+
+  function selectedServerMode() {
+    return txt(el("nuvio_server_mode")?.value) === "self_hosted" ? "self_hosted" : "cloud";
+  }
+
+  function syncServerUI() {
+    const selfHosted = selectedServerMode() === "self_hosted";
+    const locked = connected || authenticated;
+    el("nuvio_server_url_wrap")?.classList.toggle("hidden", !selfHosted);
+    el("nuvio_server_check")?.classList.toggle("hidden", !selfHosted || locked);
+    const mode = el("nuvio_server_mode");
+    if (mode) {
+      mode.disabled = locked;
+      mode.title = locked ? "Disconnect Nuvio to change the server." : "";
+    }
+    const url = el("nuvio_server_url");
+    if (url) url.disabled = locked;
+  }
+
+  function renderServer(data) {
+    const mode = el("nuvio_server_mode");
+    if (mode) mode.value = txt(data?.server_mode) === "self_hosted" ? "self_hosted" : "cloud";
+    const url = el("nuvio_server_url");
+    if (url) url.value = txt(data?.base_url);
+    syncServerUI();
+  }
+
+  async function applyServer() {
+    const mode = selectedServerMode();
+    const baseUrl = txt(el("nuvio_server_url")?.value).trim();
+    if (mode === "self_hosted" && !baseUrl) throw new Error("invalid_url");
+    const r = await fetchJSON(api("/api/nuvio/server"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ server_mode: mode, base_url: baseUrl }),
+    });
+    if (!r.ok || !r.data?.ok) throw new Error(String(r.data?.error || "server_failed"));
+    renderServer(r.data);
+    return r.data;
+  }
+
+  async function checkServer() {
+    const btn = el("nuvio_server_check");
+    if (btn) btn.disabled = true;
+    try {
+      await applyServer();
+      setStatus(true, "Nuvio server found");
+    } catch (e) {
+      setStatus(false, friendlyError(e?.message));
+    } finally {
+      if (btn) btn.disabled = false;
+    }
   }
 
   function setPolling(text) {
@@ -221,6 +290,7 @@
       savedProfileName = txt(data.profile_name);
       profileSelectionReady = connected || authenticated || profileSelectionReady;
       syncConnectLocked();
+      renderServer(data);
       if (connected) setStatus(true, "Nuvio connected");
       else if (data.authenticated) setStatus(false, "Choose a Nuvio profile to finish setup");
       else hideStatus();
@@ -297,6 +367,18 @@
       case "invalid_response": return "Nuvio returned an unexpected response";
       case "service_unavailable": return "Nuvio service unavailable";
       case "profile_unavailable": return "Selected Nuvio profile is unavailable";
+      case "invalid_url": return "Enter a valid Nuvio backend URL";
+      case "official_server": return "That is the Nuvio cloud server - choose Nuvio cloud instead";
+      case "connection_failed": return "Could not reach the Nuvio server";
+      case "http_error": return "Nuvio server did not return a discovery document";
+      case "invalid_document":
+      case "wrong_service":
+      case "not_self_hosted":
+      case "missing_configuration": return "Not a valid self-hosted Nuvio server";
+      case "unsupported_version": return "Nuvio server version is not supported";
+      case "response_too_large": return "Nuvio discovery response is too large";
+      case "tv_login_unsupported": return "This Nuvio server does not support TV login";
+      case "disconnect_first": return "Disconnect Nuvio before changing the server";
       default: return "Nuvio request failed";
     }
   }
@@ -308,6 +390,16 @@
     let win = null;
     try { win = window.open("about:blank", "_blank"); } catch {}
     try {
+      win.document.write(
+        '<!doctype html><meta charset="utf-8"><title>CrossWatch -> Nuvio</title>' +
+        '<body style="margin:0;height:100vh;display:flex;align-items:center;justify-content:center;background:#0b0d12;color:#e9eefb;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif">' +
+        '<div style="font-size:14px;opacity:.7">Checking Nuvio server...</div></body>'
+      );
+      win.document.close();
+    } catch {}
+    try {
+      setStatus(false, "Checking Nuvio server...");
+      await applyServer();
       const r = await fetchJSON(api("/api/nuvio/device/start"), { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
       const data = r.data || {};
       if (!r.ok || !data.ok) throw new Error(String(data.error || "start_failed"));
@@ -352,6 +444,7 @@
     authenticated = false;
     profileSelectionReady = false;
     syncConnectLocked();
+    syncServerUI();
     stopPendingLogin(false);
     renderProfiles([], null, "", false);
       setStatus(false, "Nuvio disconnected");
@@ -418,6 +511,16 @@
     }
     const del = el("nuvio_disconnect");
     if (del && !del.__wired) { del.addEventListener("click", disconnect); del.__wired = true; }
+    const mode = el("nuvio_server_mode");
+    if (mode && !mode.__wired) {
+      mode.addEventListener("change", () => {
+        syncServerUI();
+        if (!connected) hideStatus();
+      });
+      mode.__wired = true;
+    }
+    const check = el("nuvio_server_check");
+    if (check && !check.__wired) { check.addEventListener("click", checkServer); check.__wired = true; }
   }
 
   function wireDelegates() {
