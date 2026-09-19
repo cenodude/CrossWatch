@@ -474,6 +474,36 @@ def test_server_change_requires_disconnect_and_switch_back_to_cloud(monkeypatch:
     assert common.app_public_client_key(cfg["nuvio"]) == common.SHARED_PUBLIC_CLIENT_KEY
 
 
+@pytest.mark.parametrize(
+    "exc,expected",
+    [
+        ("official_server", "official_server"),
+        ("Traceback (most recent call last): secret", "discovery_failed"),
+        (RuntimeError("boom at /app/providers/auth/_auth_NUVIO.py"), "nuvio_request_failed"),
+    ],
+)
+def test_server_endpoint_returns_only_fixed_error_codes(monkeypatch: pytest.MonkeyPatch, exc: Any, expected: str) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    import api.authenticationAPI as auth_api
+    from providers.auth import _auth_NUVIO as common
+
+    error = common.NuvioDiscoveryError(exc) if isinstance(exc, str) else exc
+
+    def fail(*_args: Any, **_kwargs: Any) -> Any:
+        raise error
+
+    monkeypatch.setattr(auth_api, "load_config", lambda: _cfg())
+    monkeypatch.setattr(common, "configure_server", fail)
+    app = FastAPI()
+    auth_api.register_auth(app)
+
+    res = TestClient(app).post("/api/nuvio/server", json={"server_mode": "self_hosted", "base_url": "https://nuvio.example.com"}).json()
+
+    assert res == {"ok": False, "error": expected, "instance": "default"}
+
+
 def test_self_hosted_without_key_is_not_configured() -> None:
     from providers.auth import _auth_NUVIO as common
 
