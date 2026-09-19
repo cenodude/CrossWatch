@@ -62,6 +62,7 @@ PROVIDERS: tuple[str, ...] = (
     "mdblist",
     "publicmetadb",
     "tautulli",
+    "tracearr",
     "nuvio",
     "kodi",
     "stremio",
@@ -149,6 +150,7 @@ PROBE_CFG_KEY: dict[str, str] = {
     "MDBLIST": "mdblist",
     "PUBLICMETADB": "publicmetadb",
     "TAUTULLI": "tautulli",
+    "TRACEARR": "tracearr",
     "NUVIO": "nuvio",
     "KODI": "kodi",
     "STREMIO": "stremio",
@@ -335,6 +337,12 @@ def _probe_key(provider_id: str, cfg: Mapping[str, Any]) -> str:
         base = _norm_url(t.get("server_url"))
         key = str((t.get("api_key") or "")).strip()
         return f"tautulli|srv:{_secret_cache_tag(base)}|key:{_secret_cache_tag(key)}" if (base and key) else "tautulli|unconfigured"
+
+    if p == "tracearr":
+        t = cfg.get("tracearr") or {}
+        base = _norm_url(t.get("server_url"))
+        key = str((t.get("api_key") or "")).strip()
+        return f"tracearr|srv:{_secret_cache_tag(base)}|key:{_secret_cache_tag(key)}" if (base and key) else "tracearr|unconfigured"
 
     if p == "jellyfin":
         jf = cfg.get("jellyfin") or {}
@@ -1127,6 +1135,41 @@ def _probe_tautulli_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) ->
     with _CACHE_LOCK:
         PROBE_DETAIL_CACHE[key] = (now, False, rsn)
     return False, rsn
+
+def _probe_tracearr_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
+    key = _probe_key("tracearr", cfg)
+    bust_ts = _consume_bust("tracearr")
+    now = time.time()
+    cached = PROBE_DETAIL_CACHE.get(key)
+    if cached and (now - cached[0]) < max_age_sec and (not bust_ts or cached[0] >= bust_ts):
+        return cached[1], cached[2]
+
+    t = cfg.get("tracearr") or {}
+    base = _norm_url(t.get("server_url"))
+    apikey = str(t.get("api_key") or "").strip()
+    if not base or not apikey:
+        with _CACHE_LOCK:
+            PROBE_DETAIL_CACHE[key] = (now, False, "not configured")
+        return False, "not configured"
+    if not base.startswith(("http://", "https://")):
+        base = "http://" + base
+
+    headers = {**UA, "Authorization": f"Bearer {apikey}"}
+    code, body = _http_get(f"{base}/api/v2/public/users?pageSize=1", headers=headers, timeout=HTTP_TIMEOUT)
+    if code in (401, 403):
+        rsn = "invalid API key - reconnect required"
+    elif code == 404:
+        rsn = "API v2 not found - requires Tracearr 2.0 or later"
+    elif code != 200:
+        rsn = f"HTTP {code}" if code else "HTTP 0"
+    else:
+        j = _json_loads(body) or {}
+        rsn = "" if isinstance(j, dict) and isinstance(j.get("data"), list) else "invalid response"
+
+    ok = not rsn
+    with _CACHE_LOCK:
+        PROBE_DETAIL_CACHE[key] = (now, ok, rsn)
+    return ok, rsn
 
 def _probe_jellyfin_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
     key = _probe_key("jellyfin", cfg)
@@ -2142,6 +2185,9 @@ def _prov_configured(cfg: dict[str, Any], name: str, instance_id: Any = "default
     if ck == "tautulli":
         return bool(str(blk.get("server_url") or "").strip() and str(blk.get("api_key") or "").strip())
 
+    if ck == "tracearr":
+        return bool(str(blk.get("server_url") or "").strip() and str(blk.get("api_key") or "").strip())
+
     return False
 
 def _pair_ready(cfg: dict[str, Any], pair: dict[str, Any]) -> bool:
@@ -2210,6 +2256,7 @@ DETAIL_PROBES: dict[str, Callable[..., tuple[bool, str]]] = {
     "MDBLIST": _probe_mdblist_detail,
     "PUBLICMETADB": _probe_publicmetadb_detail,
     "TAUTULLI": _probe_tautulli_detail,
+    "TRACEARR": _probe_tracearr_detail,
     "NUVIO": _probe_nuvio_detail,
     "STREMIO": _probe_stremio_detail,
     "FLOPPY": _probe_floppy_detail,
@@ -2523,6 +2570,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
             flicklist_ok, flicklist_reason, cfg_flicklist = _provider_tuple("FLICKLIST")
             scrob_ok, scrob_reason, cfg_scrob = _provider_tuple("SCROB")
             taut_ok, taut_reason, cfg_taut = _provider_tuple("TAUTULLI")
+            tracearr_ok, tracearr_reason, cfg_tracearr = _provider_tuple("TRACEARR")
             anilist_ok, anilist_reason, cfg_anilist = _provider_tuple("ANILIST")
 
             userinfo_jobs: dict[str, tuple[Callable[..., dict[str, Any]], dict[str, Any]]] = {}
@@ -2741,6 +2789,15 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                     "instances_summary": inst_sum,
                     "rep_instance": inst_sum.get("rep"),
                 }
+            if "TRACEARR" in active_providers:
+                inst_map, inst_sum = _instances_payload("TRACEARR")
+                providers_out["TRACEARR"] = {
+                    "connected": tracearr_ok,
+                    **({} if tracearr_ok else {"reason": tracearr_reason}),
+                    "instances": inst_map,
+                    "instances_summary": inst_sum,
+                    "rep_instance": inst_sum.get("rep"),
+                }
             if "MDBLIST" in active_providers:
                 inst_map, inst_sum = _instances_payload("MDBLIST")
                 providers_out["MDBLIST"] = {
@@ -2943,6 +3000,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 "flicklist_connected": flicklist_ok,
                 "scrob_connected": scrob_ok,
                 "tautulli_connected": taut_ok,
+                "tracearr_connected": tracearr_ok,
                 "debug": debug,
                 "can_run": bool(any_pair_ready),
                 "ts": int(now),

@@ -49,7 +49,7 @@
     { id: "sec-auth-media", title: "Media servers", keys: ["PLEX", "JELLYFIN", "EMBY"] },
     { id: "sec-auth-trackers", title: "Trackers", keys: ["CROSSWATCH", "TRAKT", "SIMKL", "TMDB", "MDBLIST", "PUBLICMETADB", "ANILIST", "PUNCHPLAY", "BINGEBASE", "FLICKLIST", "FLOPPY", "SCROB"] },
     { id: "sec-auth-clients", title: "Media clients", keys: ["NUVIO", "KODI", "STREMIO"] },
-    { id: "sec-auth-others", title: "Others", keys: ["TAUTULLI"] },
+    { id: "sec-auth-others", title: "Others", keys: ["TAUTULLI", "TRACEARR"] },
   ]);
   const AUTH_GROUP_BY_KEY = Object.freeze(Object.fromEntries(AUTH_GROUPS.flatMap((group) => group.keys.map((key) => [key, group.id]))));
   const META_GROUP = Object.freeze({ id: "sec-auth-metadata", title: "Metadata", keys: ["TMDB_METADATA", "ANIME_MAPPING"] });
@@ -233,6 +233,7 @@
     if (p === "nuvio") return (hasConfiguredValue(b.access_token) || hasConfiguredValue(b.refresh_token)) && hasConfiguredValue(b.profile_id);
     if (p === "kodi") return hasConfiguredValue(b.server) && b.connection_verified === true;
     if (p === "stremio") return hasConfiguredValue(b.auth_key) || hasConfiguredValue(b.authKey);
+    if (p === "tracearr") return hasConfiguredValue(b.server_url || b.server) && hasConfiguredValue(b.api_key);
     if (p === "tautulli") return hasConfiguredValue((b || cfg?.tautulli || cfg?.auth?.tautulli || {}).server_url || (b || cfg?.tautulli || cfg?.auth?.tautulli || {}).server);
     if (p === "tmdb") return hasConfiguredValue(b.account_id) || (hasConfiguredValue(b.api_key) && hasConfiguredValue(b.session_id || b.session));
     if (p === "crosswatch") return !!(cfg?.crosswatch || cfg?.CrossWatch) && b.connected === true && b.enabled !== false;
@@ -473,6 +474,7 @@
       "sec-auth-trackers": "Manage tracker connections.",
       "sec-auth-clients": "Manage media client connections.",
       "sec-auth-metadata": "Manage metadata providers and mappings.",
+      "sec-auth-others": "Manage monitoring connections.",
     };
     const summaryIcon = {
       "sec-auth-media": "dns",
@@ -481,7 +483,7 @@
       "sec-auth-metadata": "database",
       "sec-user-profiles": "groups",
     };
-    const groupData = AUTH_GROUPS.filter((group) => group.id !== "sec-auth-others").map((group) => {
+    const groupData = AUTH_GROUPS.map((group) => {
       const supported = group.keys.filter((key) => !!authProviderInfo(key).sectionId);
       const visible = supported.filter((key) => configured.has(key));
       const cards = visible.map((key) => {
@@ -491,7 +493,7 @@
       });
       const okCount = cards.filter((card) => card.status.ok).length;
       return { ...group, supported, cards, okCount, total: supported.length, copy: sectionCopy[group.id] || "" };
-    });
+    }).filter((group) => group.id !== "sec-auth-others" || group.cards.length);
     const metadataVisible = META_GROUP.keys.filter((key) => metadataConfigured(key, cfg));
     const metadataCards = metadataVisible.map((key) => {
       const info = metadataProviderInfo(key);
@@ -499,13 +501,14 @@
       return { type: "metadata", key: info.key, label: info.label, status, logo: metadataProviderLogo(info) };
     });
     const sections = [
-      ...groupData,
+      ...groupData.filter((group) => group.id !== "sec-auth-others"),
       { ...META_GROUP, cards: metadataCards, okCount: metadataCards.filter((card) => card.status.ok).length, total: META_GROUP.keys.length, copy: sectionCopy[META_GROUP.id] },
+      ...groupData.filter((group) => group.id === "sec-auth-others"),
     ];
     const userProfilesRaw = cfg?.user_profiles;
     const userProfileCount = userProfilesRaw && typeof userProfilesRaw === "object" ? Object.keys(userProfilesRaw).length : 0;
     const summarySections = [
-      ...sections,
+      ...sections.filter((section) => section.id !== "sec-auth-others"),
       { id: "sec-user-profiles", title: "User profiles", okCount: userProfileCount, total: userProfileCount || 0 },
     ];
     const summaryCards = summarySections.map((section) => `<div class="cw-auth-summary-card ${section.okCount ? "" : "is-empty"}" data-cw-auth-summary="${section.id}">
@@ -532,7 +535,7 @@
     };
     const renderAddCard = (section) => {
       const mode = section.id === META_GROUP.id ? "metadata" : "provider";
-      const label = section.id === META_GROUP.id ? "Add metadata" : section.id === "sec-auth-media" ? "Add media server" : section.id === "sec-auth-clients" ? "Add media client" : "Add tracker";
+      const label = section.id === META_GROUP.id ? "Add metadata" : section.id === "sec-auth-media" ? "Add media server" : section.id === "sec-auth-clients" ? "Add media client" : section.id === "sec-auth-others" ? "Add provider" : "Add tracker";
       const copy = section.id === META_GROUP.id ? "Connect another metadata source." : "Connect another service.";
       return `<button type="button" class="cw-auth-service-card cw-auth-add-card" data-cw-auth-empty-add="${mode}">
         <span class="cw-auth-add-mark"><span class="material-symbols-rounded" aria-hidden="true">add</span></span>
@@ -779,6 +782,15 @@
       steps: [["1", "Enter server", "Add your Tautulli URL and API key"], ["2", "Choose user", "Optionally limit to one user ID"], ["3", "Validate server", "CrossWatch confirms Tautulli access"]],
       order: [".grid2", "#tautulli_hint", "#tautulli_actions_row"],
       actions: [{ row: "#tautulli_actions_row", status: "#tautulli_msg", buttons: "#tautulli_save" }]
+    },
+    TRACEARR: {
+      provider: "tracearr", logo: "TRACEARR", help: window.CW.HelpLinks.url("tracearr"), deleteSelector: "#tracearr_disconnect",
+      tabs: { auth: ["lock", "Authentication", "Connect your Tracearr server"] },
+      copy: { auth: ["Tracearr Authentication", "Connect Tracearr with server URL and public API key."] },
+      journey: ["Connect to Tracearr", "Enter your Tracearr server URL and public API key, optionally choose a user, then connect. CrossWatch imports Tracearr watch history one way. Requires Tracearr 2.0 or later.", "24,209,231", "14,143,166", "TRACEARR"],
+      steps: [["1", "Enter server", "Add your Tracearr URL and API key"], ["2", "Choose user", "Optionally limit to one user"], ["3", "Validate server", "CrossWatch confirms Tracearr access"]],
+      order: ["#tracearr_hint", ".grid2", "#tracearr_actions_row"],
+      actions: [{ row: "#tracearr_actions_row", status: "#tracearr_msg", buttons: "#tracearr_save" }]
     },
     CROSSWATCH: {
       provider: "crosswatch", logo: "CROSSWATCH", help: window.CW.HelpLinks.url("crosswatch"), deleteSelector: "#cw_crosswatch_disconnect",
@@ -1532,12 +1544,13 @@
   }
 
   function normalizeConnectionModalFields(panel, info) {
-    if (info?.provider !== "tautulli") return;
-    const userInput = panel.querySelector("#tautulli_user_id");
+    const provider = info?.provider;
+    if (provider !== "tautulli" && provider !== "tracearr") return;
+    const userInput = panel.querySelector(`#${provider}_user_id`);
     const userField = userInput?.closest("div");
-    const grid = panel.querySelector("#tautulli_server")?.closest(".grid2");
+    const grid = panel.querySelector(`#${provider}_server`)?.closest(".grid2");
     if (!userField || !grid || userField.parentElement === grid) return;
-    userField.classList.add("cw-tautulli-user-field");
+    userField.classList.add(`cw-${provider}-user-field`);
     setConnectionStyle(userField, "margin-top", "0");
     setConnectionStyle(userField, "max-width", "none");
     grid.appendChild(userField);
@@ -2083,6 +2096,7 @@
         window.cwAuth?.floppy?.init?.();
         window.initNuvioAuthUI?.();
         window.initTautulliAuthUI?.();
+        window.initTracearrAuthUI?.();
         window.initAniListAuthUI?.();
 
         await refreshAuthPresentation(slot, !!force);

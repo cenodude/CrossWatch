@@ -222,7 +222,7 @@ _AUTH_KEYS = {
     "publicmetadb": ("api_key",),
     "nuvio": ("access_token", "refresh_token", "profile_id"),
 }
-_SETTINGS_PROVIDERS = [*_AUTH_KEYS, "tmdb", "tautulli"]
+_SETTINGS_PROVIDERS = [*_AUTH_KEYS, "tmdb", "tautulli", "tracearr"]
 
 
 def _txt(v: Any) -> str:
@@ -257,6 +257,9 @@ def _settings_auth_summary(cfg: dict[str, Any]) -> dict[str, Any]:
         if provider == "tautulli":
             tb = _dict(block) or _dict(cfg.get("tautulli")) or _dict(_dict(cfg.get("auth")).get("tautulli"))
             return bool(_txt(tb.get("server_url") or tb.get("server")))
+        if provider == "tracearr":
+            b = _dict(block)
+            return bool(_txt(b.get("server_url") or b.get("server"))) and _has(b, "api_key")
         if provider == "nuvio":
             b = _dict(block)
             return bool(_txt(b.get("profile_id"))) and _has(b, "access_token", "refresh_token")

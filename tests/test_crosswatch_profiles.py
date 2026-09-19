@@ -2680,6 +2680,7 @@ def test_status_probes_resolve_provider_without_configured_default() -> None:
         ("SIMKL", "simkl", "SIMKL-P01", {"access_token": "t", "client_id": "c"}),
         ("MDBLIST", "mdblist", "MDBLIST-P01", {"api_key": "k"}),
         ("TAUTULLI", "tautulli", "TAUTULLI-P01", {"server_url": "http://t:8181", "api_key": "k"}),
+        ("TRACEARR", "tracearr", "TRACEARR-P01", {"server_url": "http://t:3000", "api_key": "k"}),
     ]
 
     for prov, ck, inst, blk in cases:

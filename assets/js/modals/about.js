@@ -228,7 +228,7 @@ function view(info, mods, logo) {
                   <a class="coffee-link" href="${SUPPORT_URL}" target="_blank" rel="noopener noreferrer"><span class="material-symbols-rounded" aria-hidden="true">local_cafe</span>Buy me a coffee ${externalIcon}</a>
                 </div>
                 <div class="lede-copy">
-                  <div class="lede"><strong>CrossWatch (CW)</strong> is a synchronization engine that acts as a bridge and keeps your <strong>Plex, Jellyfin, Emby, SIMKL, Floppy, FlickList, Trakt, AniList, TMDb, MDBList, PublicMetaDB, PunchPlay, BingeBase, Scrob, Tautulli, Kodi, Nuvio, Stremio and CW local tracker</strong> in sync.</div>
+                  <div class="lede"><strong>CrossWatch (CW)</strong> is a synchronization engine that acts as a bridge and keeps your <strong>Plex, Jellyfin, Emby, SIMKL, Floppy, FlickList, Trakt, AniList, TMDb, MDBList, PublicMetaDB, PunchPlay, BingeBase, Scrob, Tautulli, Tracearr, Kodi, Nuvio, Stremio and CW local tracker</strong> in sync.</div>
                   <div class="lede"><strong>Please note:</strong> this software is still beta/experimental and may behave unpredictably. Make sure you have solid, tested backups before using it.</div>
                 </div>
               </section>
@@ -236,7 +236,7 @@ function view(info, mods, logo) {
               <details class="about-fold disclaimer">
                 <summary><span class="material-symbols-rounded about-fold-icon" aria-hidden="true">info</span><span>Disclaimer &amp; credits</span><span class="material-symbols-rounded about-fold-chevron" aria-hidden="true">expand_more</span></summary>
                 <div class="discBody">
-                  <div>CrossWatch is an independent community project. It is not affiliated with, endorsed by, or sponsored by Plex, Jellyfin, Emby, SIMKL, Floppy, FlickList, Trakt, AniList, TMDb, MDBList, PublicMetaDB, PunchPlay, BingeBase, Scrob, Tautulli, Kodi, Nuvio, Stremio, CW local tracker, or their owners.</div>
+                  <div>CrossWatch is an independent community project. It is not affiliated with, endorsed by, or sponsored by Plex, Jellyfin, Emby, SIMKL, Floppy, FlickList, Trakt, AniList, TMDb, MDBList, PublicMetaDB, PunchPlay, BingeBase, Scrob, Tautulli, Tracearr, Kodi, Nuvio, Stremio, CW local tracker, or their owners.</div>
                   <div>CrossWatch uses the AniBridge mappings dataset and the animeApi dataset for anime identifier and episode translation.</div>
                   <ul>
                     <li>Names, logos, trademarks, and brands belong to their respective owners and are used for identification only.</li>

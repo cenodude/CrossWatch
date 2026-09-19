@@ -24,6 +24,7 @@
     kodi: "crosswatch/settings/connections/media-clients/kodi",
     stremio: "crosswatch/settings/connections/media-clients/stremio",
     tautulli: "crosswatch/settings/connections/others/tautulli",
+    tracearr: "crosswatch/settings/connections/others/tracearr",
     "tmdb-metadata": "crosswatch/settings/connections/metadata/tmdb-metadata",
     "anime-mapping": "crosswatch/settings/connections/metadata/anime-id-mapping",
     "connection-profiles": "crosswatch/settings/connections/profiles",

@@ -724,7 +724,7 @@ function renderWarnings(state){
   if(HIDE.has(state.feature)) return;
   const src=byName(state,state.src),dst=byName(state,state.dst);
   const isExp=v=>(parseInt(String(v||"0").split(".")[0],10)||0)<1;
-  const html=[src,dst].reduce((a,p)=>a+(p&&isExp(p.version)?`<div class="module-alert experimental-alert"><div class="title"><span class="ic">⚠</span> Experimental Module: ${p.label||p.name||"Provider"}</div><div class="body"><div class="mini">Not stable yet. Limited functionality. Prefer Dry run and verify results.</div></div></div>`:""),"");
+  const html=[src,dst].reduce((a,p)=>a+(p&&isExp(p.version)?`<div class="module-alert experimental-alert"><div class="title"><span class="ic">⚠</span> Experimental Module: ${p.label||p.name||"Provider"}</div><div class="body"><div class="mini">Not yet stable, with limited functionality. Use interactive sync and verify the results. Syncing in one direction only is strongly recommended.</div></div></div>`:""),"");
   if(!html) return;
   if(BOTTOM.has(state.feature)){
     const host=document.createElement("div");
@@ -771,13 +771,14 @@ const {
 function renderProviderSelects(state){
   const srcSel=ID("cx-src"),dstSel=ID("cx-dst");
   const opts=state.providers.map(p=>`<option value="${p.name}">${p.label}</option>`).join("");
-  srcSel.innerHTML=`<option value="">Select…</option>${opts}`;dstSel.innerHTML=`<option value="">Select…</option>${opts}`;
+  const dstOpts=state.providers.filter(p=>p.capabilities?.can_target!==false).map(p=>`<option value="${p.name}">${p.label}</option>`).join("");
+  srcSel.innerHTML=`<option value="">Select…</option>${opts}`;dstSel.innerHTML=`<option value="">Select…</option>${dstOpts}`;
   if(state.src) srcSel.value=state.src;if(state.dst) dstSel.value=state.dst;
   const providerKind=(name)=>{
     if(isMedia(name)) return "Media server";
     if(isKodi(name)) return "Media client";
     if(isCrossWatch(name)) return "Tracker";
-    if(isTrakt(name)||isSimkl(name)||same(name,"mdblist")||same(name,"publicmetadb")||same(name,"floppy")||same(name,"punchplay")||same(name,"tautulli")) return "Tracker";
+    if(isTrakt(name)||isSimkl(name)||same(name,"mdblist")||same(name,"publicmetadb")||same(name,"floppy")||same(name,"punchplay")||same(name,"tautulli")||same(name,"tracearr")) return "Tracker";
     if(same(name,"tmdb")||same(name,"anilist")) return "Metadata";
     return "Provider";
   };
