@@ -1,7 +1,4 @@
-
-<img width="1672" height="941" alt="59d12c86-1022-4b0e-92a0-70474db3ef41" src="https://github.com/user-attachments/assets/88602f46-8974-44f9-afca-5c9f977452db" />
-
-
+<img width="1672" height="941" alt="crosswatch_overview" src="https://github.com/user-attachments/assets/06355278-8cdc-4a13-95ae-89f924fd0975" />
 </center>
 
 <p align="center" style="font-size:14px;">
