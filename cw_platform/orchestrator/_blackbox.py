@@ -191,11 +191,13 @@ def record_attempts(
             should_promote = True
             promote_reason = f"flapper:consecutive>={promote_after}"
 
-        if should_promote and key not in bb_data:
-            bb_data[key] = {"reason": promote_reason or str(reason or "flapper"), "since": int(ts)}
-            bb_changed = True
-            promoted += 1
-            promoted_keys.append(key)
+        if should_promote:
+            flap_data.pop(key, None)
+            if key not in bb_data:
+                bb_data[key] = {"reason": promote_reason or str(reason or "flapper"), "since": int(ts)}
+                bb_changed = True
+                promoted += 1
+                promoted_keys.append(key)
 
     if flap_changed:
         _write_json(flap_path, flap_data)
@@ -203,6 +205,35 @@ def record_attempts(
         _write_json(bb_path, bb_data)
 
     return {"ok": True, "count": len(ordered_keys), "promoted": promoted, "promoted_keys": promoted_keys, "pair": scoped_pair or "global"}
+
+
+def _feature_files(dst: str, feature: str, suffix: str) -> list[Path]:
+    prefix = f"{str(dst).strip().lower()}_{str(feature).strip().lower()}."
+    try:
+        if not STATE_DIR.exists():
+            return []
+        return [p for p in STATE_DIR.glob(f"{prefix}*") if p.is_file() and p.name.endswith(suffix)]
+    except Exception:
+        return []
+
+
+def clear_keys(dst: str, feature: str, keys: Iterable[str]) -> dict[str, Any]:
+    _, unique_keys = _normalize_keys(keys)
+    key_set = set(unique_keys)
+    if not key_set:
+        return {"ok": True, "blackbox_removed": 0, "flap_removed": 0}
+    removed = {".blackbox.json": 0, ".flap.json": 0}
+    for suffix in removed:
+        for path in _feature_files(dst, feature, suffix):
+            data = _read_json(path)
+            hits = [k for k in data if k in key_set]
+            if not hits:
+                continue
+            for k in hits:
+                data.pop(k, None)
+            removed[suffix] += len(hits)
+            _write_json(path, data)
+    return {"ok": True, "blackbox_removed": removed[".blackbox.json"], "flap_removed": removed[".flap.json"]}
 
 
 def record_success(
@@ -213,27 +244,31 @@ def record_success(
     pair: str | None = None,
     cfg: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    ts = int(time.time())
     ordered_keys, unique_keys = _normalize_keys(keys)
     if not unique_keys:
         return {"ok": True, "count": 0}
+    cleared = clear_keys(dst, feature, unique_keys)
+    return {"ok": True, "count": len(ordered_keys), "blackbox_removed": cleared["blackbox_removed"]}
 
-    flap_path = _flap_path(dst, feature)
-    flap_data = _read_json(flap_path)
-    changed = False
+def _prune_flap_file(p: Path, *, now: int, cooldown_days: int) -> int:
+    data = _read_json(p)
+    if not data:
+        return 0
+    blocked = set(_read_json(p.with_name(p.name[: -len(".flap.json")] + ".blackbox.json")).keys())
+    removed = 0
+    for k in list(data.keys()):
+        raw = data.get(k)
+        row: dict[str, Any] = raw if isinstance(raw, dict) else {}
+        cons = int(row.get("consecutive") or 0)
+        last = int(row.get("last_attempt_ts") or 0)
+        stale = not last or (now - last) > (cooldown_days * 86400)
+        if cons <= 0 or stale or k in blocked:
+            data.pop(k, None)
+            removed += 1
+    if removed:
+        _write_json(p, data)
+    return removed
 
-    for key in unique_keys:
-        row = flap_data.setdefault(key, {})
-        row["consecutive"] = 0
-        row["last_reason"] = "ok"
-        row["last_op"] = str(row.get("last_op") or "")
-        row["last_success_ts"] = ts
-        changed = True
-
-    if changed:
-        _write_json(flap_path, flap_data)
-
-    return {"ok": True, "count": len(ordered_keys)}
 
 def prune_blackbox(*, cooldown_days: int = 30) -> tuple[int, int]:
     scanned = 0
@@ -258,4 +293,7 @@ def prune_blackbox(*, cooldown_days: int = 30) -> tuple[int, int]:
                 removed += 1
         if changed:
             _write_json(p, data)
+    for p in STATE_DIR.iterdir():
+        if p.is_file() and p.name.endswith(".flap.json"):
+            _prune_flap_file(p, now=now, cooldown_days=cooldown_days)
     return (scanned, removed)
