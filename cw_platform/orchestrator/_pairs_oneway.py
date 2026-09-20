@@ -234,7 +234,7 @@ from ._snapshots import (
 from ._applier import apply_add, apply_remove, apply_update
 from ._chunking import effective_chunk_size
 from ._unresolved import load_unresolved_keys, load_unresolved_map, load_unresolved_pending, record_unresolved, clear_unresolved, clear_matched_history_retries, is_remove_retry_reason
-from ._planner import diff, diff_ratings, diff_progress, _pick_rating
+from ._planner import diff, diff_ratings, diff_progress, _pick_rating, _pick_rated_at, _ts_epoch
 from ._phantoms import PhantomGuard
 from ._tombstones import clear_items_for_feature
 
@@ -1313,6 +1313,31 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
         dst_alias_tmp = _alias_index(dst_full)
         updates = [it for it in adds if _present(dst_full, dst_alias_tmp, it)]
         adds = [it for it in adds if not _present(dst_full, dst_alias_tmp, it)]
+
+        def _dst_rating_entry(it: Mapping[str, Any]) -> Mapping[str, Any] | None:
+            entry = (dst_full or {}).get(_ck(it))
+            if isinstance(entry, Mapping):
+                return entry
+            for tok in _typed_tokens(it):
+                key = dst_alias_tmp.get(tok)
+                entry = (dst_full or {}).get(key) if key else None
+                if isinstance(entry, Mapping):
+                    return entry
+            return None
+
+        def _dst_rating_is_newer(it: Mapping[str, Any]) -> bool:
+            entry = _dst_rating_entry(it)
+            if entry is None:
+                return False
+            ts_src = _ts_epoch(_pick_rated_at(it))
+            ts_dst = _ts_epoch(_pick_rated_at(entry))
+            return ts_src is not None and ts_dst is not None and ts_dst > ts_src
+
+        if updates:
+            kept = [it for it in updates if not _dst_rating_is_newer(it)]
+            if len(kept) != len(updates):
+                dbg("ratings.destination_newer", feature=feature, dst=dst, skipped=len(updates) - len(kept))
+            updates = kept
 
     elif feature == "progress":
         if manual_adds:
