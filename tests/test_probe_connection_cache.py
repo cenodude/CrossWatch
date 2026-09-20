@@ -217,3 +217,79 @@ def test_failed_startup_verification_is_not_retried_by_status_reads(monkeypatch)
     assert verify(cfg) == (False, "unreachable")
     assert verify(cfg) == (False, "unreachable")
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("provider", [
+    "../escape", "..\\escape", "simkl/../../escape", "simkl\\..\\..\\escape",
+    "/tmp/escape", "C:\\temp\\escape", "C:escape", "\\\\server\\share\\escape",
+    "%2e%2e%2fescape", "simkl:stream", "simkl\x00", "CON", "", "unknown",
+])
+@pytest.mark.parametrize("operation", ["identity", "lock_for", "read", "update", "invalidate"])
+def test_connection_cache_rejects_unsafe_providers_before_file_access(monkeypatch, provider, operation):
+    monkeypatch.setattr(connections, "_read", lambda *a: pytest.fail("invalid provider reached a file read"))
+    monkeypatch.setattr(connections, "_write", lambda *a: pytest.fail("invalid provider reached a file write"))
+    monkeypatch.setattr(connections, "_LOCKS", {})
+    call = getattr(connections, operation)
+    with pytest.raises(ValueError, match="Unsupported connection status provider"):
+        if operation == "invalidate":
+            call(provider)
+        else:
+            call(provider, {})
+    assert connections._LOCKS == {}
+
+
+@pytest.mark.parametrize("provider", [*probes.PROVIDERS, "CW"])
+def test_known_provider_names_keep_compatible_cache_paths(provider):
+    cfg = {"simkl": {"access_token": "token"}}
+    canonical = connections.provider_key(provider)
+    if canonical == "tmdb_sync":
+        canonical = "tmdb"
+    normalized = f" {provider.upper()} "
+    key = connections.identity(normalized, cfg)
+    assert key.startswith(f"{canonical}.")
+    assert key == connections.identity(canonical, cfg)
+    connections.update(normalized, cfg, connected=True, checked_at=time.time())
+    assert connections.read(canonical, cfg)["connected"] is True
+    assert (connections._root() / f"{key}.json").is_file()
+    connections.invalidate(normalized)
+    assert (connections._root() / f"{canonical}.invalidated.json").is_file()
+    assert connections.read(canonical, cfg) == {}
+
+
+def test_credential_values_cannot_change_the_cache_directory():
+    cfg = {"simkl": {"access_token": "../../token", "root_dir": "C:\\escape", "username": "../user"}}
+    connections.update("simkl", cfg, connected=True, checked_at=time.time())
+    files = list(connections._root().iterdir())
+    assert len(files) == 1
+    assert files[0].parent == connections._root()
+    assert files[0].name == f"{connections.identity('simkl', cfg)}.json"
+
+
+def test_instance_api_invalidation_rejects_path_traversal(monkeypatch):
+    from api.providerInstancesAPI import _invalidate_provider_cache
+
+    monkeypatch.setattr(connections, "_write", lambda *a: pytest.fail("instance API wrote an unsafe cache path"))
+    _invalidate_provider_cache("..\\escape")
+
+
+@pytest.mark.parametrize("group,prefix", [("AUTH", "_auth_"), ("SYNC", "_mod_")])
+def test_connection_cache_accepts_new_registry_providers(monkeypatch, group, prefix):
+    from cw_platform.modules_registry import MODULES, provider_names
+
+    monkeypatch.setitem(MODULES[group], f"{prefix}NEWPROVIDER", "providers.example")
+    assert "NEWPROVIDER" in provider_names()
+    cfg = {"newprovider": {"access_token": "token"}}
+    connections.update("NEWPROVIDER", cfg, connected=True, checked_at=time.time())
+    assert connections.read("newprovider", cfg)["connected"] is True
+    connections.invalidate("newprovider")
+    assert connections.read("NEWPROVIDER", cfg) == {}
+
+
+@pytest.mark.parametrize("provider", ["../escape", "..\\escape", "/tmp/escape", "c:escape"])
+def test_registry_entries_must_still_be_safe_filename_components(monkeypatch, provider):
+    from cw_platform.modules_registry import MODULES
+
+    monkeypatch.setitem(MODULES["AUTH"], f"_auth_{provider.upper()}", "providers.example")
+    monkeypatch.setattr(connections, "_write", lambda *a: pytest.fail("unsafe registry entry reached a file write"))
+    with pytest.raises(ValueError, match="Unsupported connection status provider"):
+        connections.invalidate(provider)

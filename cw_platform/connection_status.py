@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import secrets
 import sys
 import threading
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from cw_platform.config_base import CONFIG_BASE
+from cw_platform.modules_registry import provider_names
 from cw_platform.provider_instances import provider_key
 
 _GUARD = threading.Lock()
@@ -28,8 +30,13 @@ _FIELDS = (
 
 
 def _name(provider: str) -> str:
-    name = provider_key(provider)
-    return "tmdb" if name == "tmdb_sync" else name
+    requested = provider_key(provider)
+    if requested == "tmdb_sync":
+        requested = "tmdb"
+    for name in provider_names(upper=False):
+        if name == requested and re.fullmatch(r"[a-z][a-z0-9_]*", name):
+            return name
+    raise ValueError("Unsupported connection status provider")
 
 
 def identity(provider: str, cfg: Mapping[str, Any]) -> str:
