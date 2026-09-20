@@ -302,7 +302,14 @@
         const plan = txt(data?.account_type || data?.plan_type || data?.account?.type).toLowerCase();
         const premium = plan === "pro" || plan === "vip";
         const label = plan ? (plan === "vip" ? "VIP" : titleCase(plan)) : "";
-        return { vip: premium, detail: label ? `Plan: ${label}` : "" };
+        const lines = label ? [`Plan: ${label}`] : [];
+        const left = Number(data?.daily_remaining);
+        if (data?.daily_remaining != null && Number.isFinite(left)) {
+          const limit = Number(data?.daily_limit);
+          lines.push(`API calls left today: ${left}${Number.isFinite(limit) && limit > 0 ? ` / ${limit}` : ""}`);
+          if (data?.daily_resets_label) lines.push(`Resets: ${txt(data.daily_resets_label)}`);
+        }
+        return { vip: premium, detail: lines.join("\n") };
       }
       case "EMBY":
         return { vip: !!data?.premiere, detail: data?.premiere ? "Plan: Premiere" : "" };

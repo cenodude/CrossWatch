@@ -12,9 +12,12 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import wraps
 from typing import Any, Callable, Mapping
 
 import requests
+from cw_platform import connection_status
+from cw_platform.simkl_http import last_outcome, paced_request
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 
@@ -23,7 +26,17 @@ from cw_platform.config_base import load_config as _load_config
 
 from cw_platform.provider_instances import get_provider_block, list_instance_ids, normalize_instance_id, provider_key
 from providers.auth._auth_KODI import KodiAuthError, verify_connection as verify_kodi_connection
-from providers.sync.simkl._common import simkl_api_params, simkl_user_agent
+from providers.sync.simkl._common import (
+    account_cache_key,
+    SIMKLQuotaError,
+    account_settings_cached,
+    account_settings_store,
+    latest_quota,
+    quota_account_key,
+    record_quota,
+    simkl_api_params,
+    simkl_user_agent,
+)
 from providers.sync.plex._common import stable_client_id as plex_stable_client_id
 
 
@@ -38,6 +51,11 @@ except Exception:
     TRAKT_AUTH_PROVIDER = None
 
 try:
+    from providers.auth import _auth_SIMKL as SIMKL_AUTH
+except Exception:
+    SIMKL_AUTH = None
+
+try:
     from plexapi.myplex import MyPlexAccount
     HAVE_PLEXAPI = True
 except Exception:
@@ -49,6 +67,7 @@ HTTP_RETRIES = int(os.environ.get("CW_PROBE_HTTP_RETRIES", "1"))
 STATUS_TTL = int(os.environ.get("CW_STATUS_TTL", "60"))
 PROBE_TTL = int(os.environ.get("CW_PROBE_TTL", "15"))
 USERINFO_TTL = int(os.environ.get("CW_USERINFO_TTL", "600"))
+SIMKL_SETTINGS_TTL = int(os.environ.get("CW_SIMKL_SETTINGS_TTL", "3600"))
 PROVIDERS: tuple[str, ...] = (
     "crosswatch",
     "plex",
@@ -75,12 +94,15 @@ PROVIDERS: tuple[str, ...] = (
 
 # Caches
 STATUS_CACHE: dict[str, Any] = {"ts": 0.0, "data": None}
+STATUS_SCOPE_CACHE: dict[str, tuple[float, Any]] = {}
 STATUS_LOCK = threading.Lock()
 PROBE_CACHE: dict[str, tuple[float, bool]] = {k: (0.0, False) for k in PROVIDERS}
 
 # Keyed by per-credential probe key 
 PROBE_DETAIL_CACHE: dict[str, tuple[float, bool, str]] = {}
 _USERINFO_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_SIMKL_VERIFY_AFTER = 0.0
+_SIMKL_SETTINGS_CACHE: dict[str, tuple[float, int, dict[str, Any]]] = {}
 _SECRET_CACHE_TAGS: dict[str, str] = {}
 
 _CACHE_LOCK = threading.Lock()
@@ -104,9 +126,13 @@ _HTTP_TL = threading.local()
 
 
 def invalidate_provider_caches(provider_id: str) -> None:
+    global _SIMKL_VERIFY_AFTER
     p = str(provider_id or "").strip().lower()
     if not p:
         return
+    connection_status.invalidate(p)
+    if p == "simkl":
+        _SIMKL_VERIFY_AFTER = time.time()
     with _CACHE_LOCK:
         if p in PROBE_CACHE:
             PROBE_CACHE[p] = (0.0, False)
@@ -115,9 +141,92 @@ def invalidate_provider_caches(provider_id: str) -> None:
             PROBE_DETAIL_CACHE.pop(key, None)
         for key in [key for key in _USERINFO_CACHE.keys() if str(key).startswith(pref)]:
             _USERINFO_CACHE.pop(key, None)
+        for key in [key for key in _SIMKL_SETTINGS_CACHE.keys() if str(key).startswith(pref)]:
+            _SIMKL_SETTINGS_CACHE.pop(key, None)
         _BUST_SEEN.discard(p)
     STATUS_CACHE["ts"] = 0.0
     STATUS_CACHE["data"] = None
+    STATUS_SCOPE_CACHE.clear()
+
+
+def _persistent_probe(provider: str):
+    def decorate(fn):
+        @wraps(fn)
+        def wrapped(cfg, max_age_sec=PROBE_TTL):
+            with connection_status.lock_for(provider, cfg):
+                if provider in _BUST_SEEN and PROBE_CACHE.get(provider, (0, False))[0] == 0:
+                    connection_status.invalidate(provider)
+                cached = connection_status.read(provider, cfg)
+                PROBE_CACHE[provider] = (time.time(), bool(cached.get("connected")))
+                _BUST_SEEN.add(provider)
+                if max_age_sec > 0 and "connected" in cached and connection_status.checked_this_boot(cached):
+                    block = cfg.get(_cfg_key(provider)) or {}
+                    if block.get("auth_error") == "reconnect_required" or block.get("reauth_required") is True:
+                        return False, f"{provider}: reconnect required"
+                    expires = block.get("expires_at") or block.get("token_expires_at")
+                    if block.get("api_key") and str(block.get("auth_method") or "api_key") == "api_key":
+                        expires = None
+                    try:
+                        if expires and float(expires) <= time.time():
+                            return False, f"{provider}: access token expired"
+                    except (TypeError, ValueError):
+                        pass
+                    return bool(cached["connected"]), str(cached.get("reason") or "")
+                previous = getattr(_HTTP_TL, "account_responses", None)
+                _HTTP_TL.account_responses = {}
+                try:
+                    ok, reason = fn(cfg, max_age_sec=0)
+                    connection_status.update(provider, cfg, connected=ok, reason=reason, checked_at=time.time())
+                    info_fn = USERINFO_FNS.get(provider.upper())
+                    if ok and info_fn is not None:
+                        _safe_userinfo(info_fn, cfg, max_age_sec=0)
+                    return ok, reason
+                finally:
+                    _HTTP_TL.account_responses = previous
+        return wrapped
+    return decorate
+
+
+def _persistent_userinfo(provider: str):
+    def decorate(fn):
+        @wraps(fn)
+        def wrapped(cfg, max_age_sec=USERINFO_TTL):
+            with connection_status.lock_for(provider, cfg):
+                cached = connection_status.read(provider, cfg)
+                if max_age_sec > 0:
+                    return dict(cached.get("userinfo") or {})
+                info = fn(cfg, max_age_sec=0) or {}
+                connection_status.update(provider, cfg, userinfo=info)
+                return info
+        return wrapped
+    return decorate
+
+
+def _account_fetch(provider: str, cfg: Mapping[str, Any], fetch: Callable, *, refresh: bool = False):
+    cache = getattr(_HTTP_TL, "account_responses", None)
+    key = _probe_key(provider, cfg)
+    if cache is None:
+        return fetch()
+    if refresh or key not in cache:
+        cache[key] = fetch()
+    return cache[key]
+
+
+def _authenticated_account(provider: str, cfg: dict[str, Any], url: str) -> tuple[int, str]:
+    def fetch():
+        try:
+            hint = cfg.get("_cw_probe") or {}
+            with requests.Session() as sess:
+                r = _provider_auth().request_with_auth(
+                    provider, sess, "GET", url, cfg=cfg,
+                    instance_id=normalize_instance_id(hint.get("instance")), headers=UA,
+                    timeout=max(int(HTTP_TIMEOUT), 6), max_retries=1,
+                )
+                return int(r.status_code), r.text or ""
+        except Exception as exc:
+            _set_http_error(str(exc))
+            return 0, ""
+    return _account_fetch(provider, cfg, fetch)
 
 
 def _set_http_error(msg: str) -> None:
@@ -497,7 +606,12 @@ def _hdr_int(headers: Mapping[str, str], key: str) -> int | None:
         return None
 
 
-def _simkl_settings_post(client_id: str, token: str, timeout: int = HTTP_TIMEOUT) -> tuple[int, bytes]:
+def _simkl_settings_post(
+    client_id: str,
+    token: str,
+    timeout: int = HTTP_TIMEOUT,
+    quota_key: str = "",
+) -> tuple[int, bytes]:
     cid = str(client_id or "").strip()
     tok = str(token or "").strip()
     url = "https://api.simkl.com/users/settings"
@@ -510,7 +624,16 @@ def _simkl_settings_post(client_id: str, token: str, timeout: int = HTTP_TIMEOUT
         "Authorization": f"Bearer {tok}",
         "simkl-api-key": cid,
     }
-    return _http_post(url, headers=headers, data=b"{}", timeout=timeout)
+    try:
+        response = paced_request(requests.post, "POST", url, headers=headers, data=b"{}", timeout=timeout)
+    except SIMKLQuotaError:
+        return 429, b'{"error":"user_limit_exceeded"}'
+    except requests.RequestException as exc:
+        _set_http_error(f"{type(exc).__name__}: {exc}")
+        return 0, b""
+    record_quota(quota_key, response.headers)
+    return response.status_code, response.content
+
 
 
 def _load_trakt_last_limit_error(
@@ -591,167 +714,38 @@ def _reason_http(code: int, provider: str) -> str:
 
 # Probes
 def probe_plex(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> bool:
-    ts, ok = PROBE_CACHE["plex"]
-    now = time.time()
-    if now - ts < max_age_sec:
-        return ok
-
-    token = ((cfg.get("plex") or {}).get("account_token") or "").strip()
-    if not token:
-        PROBE_CACHE["plex"] = (now, False)
-        return False
-
-    headers = {
-        "X-Plex-Token": token,
-        "X-Plex-Client-Identifier": _plex_client_identifier(cfg),
-        "X-Plex-Product": "CrossWatch",
-        "X-Plex-Version": "1.0",
-        "Accept": "application/xml",
-        "User-Agent": "CrossWatch/1.0",
-    }
-    code, _ = _http_get("https://plex.tv/users/account", headers=headers)
-    ok = code == 200
-    PROBE_CACHE["plex"] = (now, ok)
-    return ok
+    return _probe_plex_detail(cfg, max_age_sec=max_age_sec)[0]
 
 
 def probe_simkl(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> bool:
-    ts, ok = PROBE_CACHE["simkl"]
-    now = time.time()
-    if now - ts < max_age_sec:
-        return ok
-
-    sk = (cfg.get("simkl") or cfg.get("SIMKL") or {}) or {}
-    cid = (sk.get("client_id") or "").strip()
-    tok = (sk.get("access_token") or sk.get("token") or "").strip()
-    if not cid or not tok:
-        PROBE_CACHE["simkl"] = (now, False)
-        return False
-
-    code, _ = _simkl_settings_post(cid, tok)
-    ok = code == 200
-    PROBE_CACHE["simkl"] = (now, ok)
-    return ok
+    return _probe_simkl_detail(cfg, max_age_sec=max_age_sec)[0]
 
 
 def probe_trakt(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> bool:
-    ts, ok = PROBE_CACHE["trakt"]
-    now = time.time()
-    if now - ts < max_age_sec:
-        return ok
-
-    tr = (cfg.get("trakt") or cfg.get("TRAKT") or {}) or {}
-    auth_tr = (cfg.get("auth") or {}).get("trakt") or (cfg.get("auth") or {}).get("TRAKT") or {}
-    cid = (tr.get("client_id") or auth_tr.get("client_id") or "").strip()
-    tok = (auth_tr.get("access_token") or tr.get("access_token") or tr.get("token") or "").strip()
-    if not cid or not tok:
-        PROBE_CACHE["trakt"] = (now, False)
-        return False
-
-    headers = {
-        **UA,
-        "Authorization": f"Bearer {tok}",
-        "trakt-api-key": cid,
-        "trakt-api-version": "2",
-    }
-    code, _ = _http_get("https://api.trakt.tv/users/settings", headers=headers)
-    ok = code == 200
-    PROBE_CACHE["trakt"] = (now, ok)
-    return ok
-
+    return _probe_trakt_detail(cfg, max_age_sec=max_age_sec)[0]
 
 
 def probe_anilist(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> bool:
-    ts, ok = PROBE_CACHE["anilist"]
-    now = time.time()
-    if now - ts < max_age_sec:
-        return ok
-
-    an = (cfg.get("anilist") or cfg.get("ANILIST") or {}) or {}
-    auth_an = (cfg.get("auth") or {}).get("anilist") or (cfg.get("auth") or {}).get("ANILIST") or {}
-    tok = str(
-        an.get("access_token")
-        or an.get("token")
-        or (an.get("oauth") or {}).get("access_token")
-        or (auth_an.get("access_token") if isinstance(auth_an, dict) else "")
-        or (auth_an.get("token") if isinstance(auth_an, dict) else "")
-        or ((auth_an.get("oauth") or {}).get("access_token") if isinstance(auth_an, dict) else "")
-        or ""
-    ).strip()
-
-    if not tok:
-        PROBE_CACHE["anilist"] = (now, False)
-        return False
-
-    headers = {**UA, "Authorization": f"Bearer {tok}"}
-    code, body, _ = _http_post_json(
-        "https://graphql.anilist.co",
-        headers=headers,
-        payload={"query": "query { Viewer { id } }"},
-        timeout=HTTP_TIMEOUT,
-    )
-    j = _json_loads(body) or {}
-    data = j.get("data") if isinstance(j, dict) else None
-    viewer = (data or {}).get("Viewer") if isinstance(data, dict) else None
-    ok = code == 200 and isinstance(viewer, dict) and bool(viewer.get("id"))
-    PROBE_CACHE["anilist"] = (now, ok)
-    return ok
+    return _probe_anilist_detail(cfg, max_age_sec=max_age_sec)[0]
 
 
 def probe_mdblist(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> bool:
-    ts, ok = PROBE_CACHE["mdblist"]
-    now = time.time()
-    if now - ts < max_age_sec:
-        return ok
-
-    info = mdblist_user_info(cfg, max_age_sec=max_age_sec)
-    ok = bool(info)
-    PROBE_CACHE["mdblist"] = (now, ok)
-    return ok
+    return _probe_mdblist_detail(cfg, max_age_sec=max_age_sec)[0]
 
 
 def probe_jellyfin(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> bool:
-    ts, ok = PROBE_CACHE["jellyfin"]
-    now = time.time()
-    if now - ts < max_age_sec:
-        return ok
-
-    jf = (cfg.get("jellyfin") or cfg.get("JELLYFIN") or {}) or {}
-    ok = bool(
-        (jf.get("server") or "").strip()
-        and (jf.get("access_token") or jf.get("token") or "").strip()
-    )
-    PROBE_CACHE["jellyfin"] = (now, ok)
-    return ok
+    return _probe_jellyfin_detail(cfg, max_age_sec=max_age_sec)[0]
 
 
 def probe_emby(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> bool:
-    ts, ok = PROBE_CACHE["emby"]
-    now = time.time()
-    if now - ts < max_age_sec:
-        return ok
-
-    em = (cfg.get("emby") or cfg.get("EMBY") or {}) or {}
-    ok = bool(
-        (em.get("server") or "").strip()
-        and (em.get("access_token") or em.get("token") or em.get("api_key") or "").strip()
-    )
-    PROBE_CACHE["emby"] = (now, ok)
-    return ok
+    return _probe_emby_detail(cfg, max_age_sec=max_age_sec)[0]
 
 
 def probe_kodi(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> bool:
-    ts, ok = PROBE_CACHE["kodi"]
-    now = time.time()
-    if now - ts < max_age_sec:
-        return ok
-
-    ok, _ = _probe_kodi_detail(cfg, max_age_sec=max_age_sec)
-    PROBE_CACHE["kodi"] = (now, ok)
-    return ok
+    return _probe_kodi_detail(cfg, max_age_sec=max_age_sec)[0]
 
 
-# Detailed probes
+@_persistent_probe("plex")
 def _probe_plex_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
     key = _probe_key("plex", cfg)
     bust_ts = _consume_bust("plex")
@@ -774,41 +768,112 @@ def _probe_plex_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tup
         "X-Plex-Product": "CrossWatch",
         "X-Plex-Version": "1.0",
     }
-    code, _ = _http_get(url, headers=headers)
+    code, _ = _account_fetch("plex", cfg, lambda: _http_get(url, headers=headers))
     ok = code == 200
     rsn = "" if ok else _reason_http(code, "Plex")
     with _CACHE_LOCK:
         PROBE_DETAIL_CACHE[key] = (now, ok, rsn)
     return ok, rsn
 
-def _probe_simkl_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
+
+def _simkl_settings(
+    cfg: Mapping[str, Any],
+    *,
+    max_age_sec: float,
+    bust_ts: float = 0.0,
+) -> tuple[int, dict[str, Any]]:
     key = _probe_key("simkl", cfg)
-    bust_ts = _consume_bust("simkl")
     now = time.time()
-    cached = PROBE_DETAIL_CACHE.get(key)
-    if cached and (now - cached[0]) < max_age_sec and (not bust_ts or cached[0] >= bust_ts):
-        return cached[1], cached[2]
+    effective_age = max(float(max_age_sec), float(SIMKL_SETTINGS_TTL)) if max_age_sec > 0 else 0.0
+    if effective_age > 0:
+        with _CACHE_LOCK:
+            hit = _SIMKL_SETTINGS_CACHE.get(key)
+        if hit and (now - hit[0]) < effective_age and (not bust_ts or hit[0] >= bust_ts):
+            return hit[1], hit[2]
 
     s: Mapping[str, Any] = (cfg.get("simkl") or {}) if isinstance(cfg.get("simkl"), Mapping) else {}
-    cid = str((s.get("client_id") or "")).strip()
+    cid = str((s.get("client_id") or s.get("api_key") or "")).strip()
     tok = str((s.get("access_token") or s.get("token") or "")).strip()
-    if not cid:
-        with _CACHE_LOCK:
-            PROBE_DETAIL_CACHE[key] = (now, False, "SIMKL: missing client_id")
+    if not cid or not tok:
+        return 0, {}
+
+    shared_key = account_cache_key(tok)
+    if effective_age > 0 and not bust_ts:
+        shared = account_settings_cached(shared_key, effective_age)
+        if shared is not None:
+            with _CACHE_LOCK:
+                _SIMKL_SETTINGS_CACHE[key] = (now, 200, shared)
+            return 200, shared
+
+    inst = "default"
+    try:
+        hint = cfg.get("_cw_probe") if isinstance(cfg.get("_cw_probe"), dict) else None
+        inst = normalize_instance_id((hint or {}).get("instance"))
+    except Exception:
+        inst = "default"
+
+    if SIMKL_AUTH is not None and SIMKL_AUTH.needs_refresh(s, SIMKL_AUTH.USE_REFRESH_MARGIN_S):
+        fresh_tok = SIMKL_AUTH.ensure_fresh(inst, margin_s=SIMKL_AUTH.USE_REFRESH_MARGIN_S)
+        if fresh_tok:
+            tok = fresh_tok
+
+    qkey = quota_account_key(s)
+    code, body = _simkl_settings_post(cid, tok, timeout=HTTP_TIMEOUT, quota_key=qkey)
+
+    if code == 401 and SIMKL_AUTH is not None and SIMKL_AUTH.auth_version(s) == 2:
+        res = SIMKL_AUTH.PROVIDER.refresh(None, instance_id=inst)
+        if isinstance(res, dict) and res.get("ok"):
+            fresh_tok = SIMKL_AUTH.ensure_fresh(inst)
+            if fresh_tok and fresh_tok != tok:
+                tok = fresh_tok
+                code, body = _simkl_settings_post(cid, tok, timeout=HTTP_TIMEOUT, quota_key=qkey)
+
+    data = (_json_loads(body) or {}) if code == 200 else {}
+    if not isinstance(data, dict):
+        data = {}
+    with _CACHE_LOCK:
+        _SIMKL_SETTINGS_CACHE[key] = (now, int(code), data)
+    if code == 200:
+        account_settings_store(account_cache_key(tok), data)
+    return int(code), data
+
+
+def _simkl_local_verdict(s: Mapping[str, Any]) -> tuple[bool, str]:
+    tok = str(s.get("access_token") or s.get("token") or "").strip()
+    if not str(s.get("client_id") or s.get("api_key") or "").strip():
         return False, "SIMKL: missing client_id"
     if not tok:
-        with _CACHE_LOCK:
-            PROBE_DETAIL_CACHE[key] = (now, False, "SIMKL: missing access token")
         return False, "SIMKL: missing access token"
+    if str(s.get("auth_error") or "") == "reconnect_required" or last_outcome(tok) is False:
+        return False, "SIMKL: login expired, reconnect SIMKL"
+    if SIMKL_AUTH is not None and SIMKL_AUTH.auth_version(s) == 2:
+        expires_at = SIMKL_AUTH.token_expires_at(s)
+        if expires_at and expires_at <= time.time():
+            return False, "SIMKL: access token expired"
+    if last_outcome(tok) is True or account_settings_cached(account_cache_key(tok), float("inf")) is not None:
+        return True, ""
+    return False, "SIMKL: connection not verified; refresh to check"
 
-    code, _ = _simkl_settings_post(cid, tok, timeout=HTTP_TIMEOUT)
 
-    ok = code == 200
-    rsn = "" if ok else _reason_http(code, "SIMKL")
-    with _CACHE_LOCK:
-        PROBE_DETAIL_CACHE[key] = (now, ok, rsn)
-    return ok, rsn
+def _probe_simkl_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
+    with connection_status.lock_for("simkl", cfg):
+        key = _probe_key("simkl", cfg)
+        s = cfg.get("simkl") or {}
+        cached = _SIMKL_SETTINGS_CACHE.get(key)
+        startup = not connection_status.checked_this_boot(connection_status.read("simkl", cfg))
+        verify = startup or max_age_sec <= 0 or (_SIMKL_VERIFY_AFTER > 0 and (not cached or cached[0] < _SIMKL_VERIFY_AFTER))
+        if not verify or not (s.get("access_token") and (s.get("client_id") or s.get("api_key"))):
+            return _simkl_local_verdict(s)
+        code, _ = _simkl_settings(cfg, max_age_sec=0)
+        ok = code == 200
+        reason = "" if ok else _reason_http(code, "SIMKL")
+        connection_status.update("simkl", cfg, connected=ok, reason=reason, checked_at=time.time())
+        with _CACHE_LOCK:
+            PROBE_DETAIL_CACHE[key] = (time.time(), ok, reason)
+        return ok, reason
 
+
+@_persistent_probe("trakt")
 def _probe_trakt_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
     inst = "default"
     try:
@@ -868,7 +933,7 @@ def _probe_trakt_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tu
             res = TRAKT_AUTH_PROVIDER.refresh(None, instance_id=inst)
             if isinstance(res, dict) and res.get("ok"):
                 fresh_cfg = dict(_load_config() or {})
-                cfg = _cfg_view_for(fresh_cfg, "TRAKT", inst)
+                cfg["trakt"] = _cfg_view_for(fresh_cfg, "TRAKT", inst).get("trakt") or {}
                 key = _probe_key("trakt", cfg)
                 cid, tok, rt, exp = _extract_tokens(cfg)
     except Exception:
@@ -876,7 +941,7 @@ def _probe_trakt_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tu
 
     url = "https://api.trakt.tv/users/settings"
     headers = {**UA, "Content-Type": "application/json", "trakt-api-version": "2", "trakt-api-key": cid, "Authorization": f"Bearer {tok}"}
-    code, _ = _http_get(url, headers=headers, timeout=HTTP_TIMEOUT)
+    code, _ = _account_fetch("trakt", cfg, lambda: _http_get(url, headers=headers, timeout=HTTP_TIMEOUT))
 
     # One retry after refresh if token expired/revoked.
     if code in (401, 403):
@@ -889,7 +954,9 @@ def _probe_trakt_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tu
                     cid2, tok2, _, _ = _extract_tokens(cfg2)
                     if cid2 and tok2:
                         headers = {**UA, "Content-Type": "application/json", "trakt-api-version": "2", "trakt-api-key": cid2, "Authorization": f"Bearer {tok2}"}
-                        code, _ = _http_get(url, headers=headers, timeout=HTTP_TIMEOUT)
+                        cfg["trakt"] = cfg2["trakt"]
+                        key = _probe_key("trakt", cfg)
+                        code, _ = _account_fetch("trakt", cfg, lambda: _http_get(url, headers=headers, timeout=HTTP_TIMEOUT), refresh=True)
         except Exception:
             pass
 
@@ -899,6 +966,7 @@ def _probe_trakt_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tu
         PROBE_DETAIL_CACHE[key] = (now, ok, rsn)
     return ok, rsn
 
+@_persistent_probe("anilist")
 def _probe_anilist_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
     key = _probe_key("anilist", cfg)
     bust_ts = _consume_bust("anilist")
@@ -918,7 +986,7 @@ def _probe_anilist_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> 
     q = {"query": "query { Viewer { id name } }"}
     payload = json.dumps(q).encode("utf-8")
     headers = {**UA, "Content-Type": "application/json", "Authorization": f"Bearer {tok}"}
-    code, body = _http_post(url, headers=headers, data=payload, timeout=HTTP_TIMEOUT)
+    code, body = _account_fetch("anilist", cfg, lambda: _http_post(url, headers=headers, data=payload, timeout=HTTP_TIMEOUT))
 
     ok = code == 200
     rsn = "" if ok else _reason_http(code, "AniList")
@@ -933,6 +1001,7 @@ def _probe_anilist_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> 
         PROBE_DETAIL_CACHE[key] = (now, ok, rsn)
     return ok, rsn
 
+@_persistent_probe("tmdb")
 def _probe_tmdb_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
     key = _probe_key("tmdb_sync", cfg)
     bust_ts = _consume_bust("tmdb_sync")
@@ -961,6 +1030,7 @@ def _probe_tmdb_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tup
         PROBE_DETAIL_CACHE[key] = (now, ok, rsn)
     return ok, rsn
 
+@_persistent_probe("mdblist")
 def _probe_mdblist_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
     key = _probe_key("mdblist", cfg)
     bust_ts = _consume_bust("mdblist")
@@ -975,28 +1045,7 @@ def _probe_mdblist_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> 
             PROBE_DETAIL_CACHE[key] = (now, False, "MDBList: missing authentication")
         return False, "MDBList: missing authentication"
 
-    timeout = max(int(HTTP_TIMEOUT), 6)
-    try:
-        sess = requests.Session()
-        hint = cfg.get("_cw_probe") if isinstance(cfg.get("_cw_probe"), Mapping) else {}
-        inst = normalize_instance_id((hint or {}).get("instance"))
-        r = _provider_auth().request_with_auth(
-            "mdblist",
-            sess,
-            "GET",
-            "https://api.mdblist.com/user",
-            cfg=cfg,
-            instance_id=inst,
-            headers=UA,
-            timeout=timeout,
-            max_retries=1,
-        )
-        code = int(r.status_code)
-        body = r.text or ""
-    except Exception as e:
-        code = 0
-        body = ""
-        _set_http_error(str(e))
+    code, body = _authenticated_account("mdblist", cfg, "https://api.mdblist.com/user")
 
     if code != 200:
         rsn = _reason_http(code, "MDBList")
@@ -1011,6 +1060,7 @@ def _probe_mdblist_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> 
         PROBE_DETAIL_CACHE[key] = (now, ok, rsn)
     return ok, rsn
 
+@_persistent_probe("publicmetadb")
 def _probe_publicmetadb_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
     key = _probe_key("publicmetadb", cfg)
     bust_ts = _consume_bust("publicmetadb")
@@ -1044,6 +1094,7 @@ def _probe_publicmetadb_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL
         PROBE_DETAIL_CACHE[key] = (now, ok, rsn)
     return ok, rsn
 
+@_persistent_probe("nuvio")
 def _probe_nuvio_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
     key = _probe_key("nuvio", cfg)
     bust_ts = _consume_bust("nuvio")
@@ -1100,6 +1151,7 @@ def _probe_nuvio_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tu
         PROBE_DETAIL_CACHE[key] = (now, ok, rsn)
     return ok, rsn
 
+@_persistent_probe("tautulli")
 def _probe_tautulli_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
     key = _probe_key("tautulli", cfg)
     bust_ts = _consume_bust("tautulli")
@@ -1136,6 +1188,7 @@ def _probe_tautulli_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) ->
         PROBE_DETAIL_CACHE[key] = (now, False, rsn)
     return False, rsn
 
+@_persistent_probe("tracearr")
 def _probe_tracearr_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
     key = _probe_key("tracearr", cfg)
     bust_ts = _consume_bust("tracearr")
@@ -1171,6 +1224,7 @@ def _probe_tracearr_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) ->
         PROBE_DETAIL_CACHE[key] = (now, ok, rsn)
     return ok, rsn
 
+@_persistent_probe("jellyfin")
 def _probe_jellyfin_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
     key = _probe_key("jellyfin", cfg)
     bust_ts = _consume_bust("jellyfin")
@@ -1206,6 +1260,7 @@ def _probe_jellyfin_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) ->
         PROBE_DETAIL_CACHE[key] = (now, ok, rsn)
     return ok, rsn
 
+@_persistent_probe("emby")
 def _probe_emby_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
     key = _probe_key("emby", cfg)
     bust_ts = _consume_bust("emby")
@@ -1230,7 +1285,7 @@ def _probe_emby_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tup
 
     url = f"{server.rstrip('/')}/System/Info"
     headers = {**UA, "X-Emby-Token": token}
-    code, _ = _http_get(url, headers=headers, timeout=HTTP_TIMEOUT)
+    code, _ = _account_fetch("emby", cfg, lambda: _http_get(url, headers=headers, timeout=HTTP_TIMEOUT))
     ok = code == 200
     rsn = "" if ok else _reason_http(code, "Emby")
     with _CACHE_LOCK:
@@ -1238,6 +1293,7 @@ def _probe_emby_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tup
     return ok, rsn
 
 
+@_persistent_probe("stremio")
 def _probe_stremio_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
     key = _probe_key("stremio", cfg)
     bust_ts = _consume_bust("stremio")
@@ -1280,6 +1336,7 @@ def _probe_stremio_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> 
     return ok, rsn
 
 
+@_persistent_probe("floppy")
 def _probe_floppy_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
     key = _probe_key("floppy", cfg)
     bust_ts = _consume_bust("floppy")
@@ -1321,6 +1378,7 @@ def _probe_floppy_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> t
     return ok, rsn
 
 
+@_persistent_probe("scrob")
 def _probe_scrob_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
     key = _probe_key("scrob", cfg)
     bust_ts = _consume_bust("scrob")
@@ -1351,7 +1409,7 @@ def _probe_scrob_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tu
             reason = "" if ok else "validation_bad_response"
         else:
             client.access_token = scrob.access_token_for(cfg, instance_id=inst, session=client.session)
-            payload = client.request_json("GET", scrob.ME_PATH)
+            payload = _account_fetch("scrob", cfg, lambda: client.request_json("GET", scrob.ME_PATH))
             ok = isinstance(payload, Mapping) and bool(payload.get("id"))
             reason = "" if ok else "validation_bad_response"
     except scrob.ScrobAuthError as exc:
@@ -1385,6 +1443,7 @@ def _probe_scrob_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tu
     return ok, rsn
 
 
+@_persistent_probe("punchplay")
 def _probe_punchplay_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
     key = _probe_key("punchplay", cfg)
     bust_ts = _consume_bust("punchplay")
@@ -1402,27 +1461,7 @@ def _probe_punchplay_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -
             PROBE_DETAIL_CACHE[key] = (now, False, rsn)
         return False, rsn
 
-    try:
-        sess = requests.Session()
-        hint = cfg.get("_cw_probe") if isinstance(cfg.get("_cw_probe"), Mapping) else {}
-        inst = normalize_instance_id((hint or {}).get("instance"))
-        r = _provider_auth().request_with_auth(
-            "punchplay",
-            sess,
-            "GET",
-            punchplay.ME_URL,
-            cfg=cfg,
-            instance_id=inst,
-            headers=UA,
-            timeout=max(int(HTTP_TIMEOUT), 6),
-            max_retries=1,
-        )
-        code = int(r.status_code)
-        body = r.text or ""
-    except Exception as e:
-        code = 0
-        body = ""
-        _set_http_error(str(e))
+    code, body = _authenticated_account("punchplay", cfg, punchplay.ME_URL)
 
     if code != 200:
         rsn = "PunchPlay: reconnect required" if code == 401 else _reason_http(code, "PunchPlay")
@@ -1438,6 +1477,7 @@ def _probe_punchplay_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -
     return ok, rsn
 
 
+@_persistent_probe("bingebase")
 def _probe_bingebase_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
     key = _probe_key("bingebase", cfg)
     bust_ts = _consume_bust("bingebase")
@@ -1464,6 +1504,7 @@ def _probe_bingebase_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -
     return ok, rsn
 
 
+@_persistent_probe("flicklist")
 def _probe_flicklist_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
     key = _probe_key("flicklist", cfg)
     bust_ts = _consume_bust("flicklist")
@@ -1481,27 +1522,7 @@ def _probe_flicklist_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -
             PROBE_DETAIL_CACHE[key] = (now, False, rsn)
         return False, rsn
 
-    try:
-        sess = requests.Session()
-        hint = cfg.get("_cw_probe") if isinstance(cfg.get("_cw_probe"), Mapping) else {}
-        inst = normalize_instance_id((hint or {}).get("instance"))
-        r = _provider_auth().request_with_auth(
-            "flicklist",
-            sess,
-            "GET",
-            flicklist.ME_URL,
-            cfg=cfg,
-            instance_id=inst,
-            headers=UA,
-            timeout=max(int(HTTP_TIMEOUT), 6),
-            max_retries=1,
-        )
-        code = int(r.status_code)
-        body = r.text or ""
-    except Exception as e:
-        code = 0
-        body = ""
-        _set_http_error(str(e))
+    code, body = _authenticated_account("flicklist", cfg, flicklist.ME_URL)
 
     if code != 200:
         rsn = "FlickList: reconnect required" if code in (401, 403) else _reason_http(code, "FlickList")
@@ -1517,6 +1538,7 @@ def _probe_flicklist_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -
     return ok, rsn
 
 
+@_persistent_probe("kodi")
 def _probe_kodi_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
     key = _probe_key("kodi", cfg)
     bust_ts = _consume_bust("kodi")
@@ -1600,6 +1622,7 @@ def _probe_crosswatch_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) 
         PROBE_DETAIL_CACHE[key] = (now, ok, rsn)
     return ok, rsn
 
+@_persistent_userinfo("plex")
 def plex_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict[str, Any]:
     key = _probe_key("plex", cfg)
     bust_ts = _consume_bust("plex")
@@ -1618,15 +1641,6 @@ def plex_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict
     plan: str | None = None
     status: str | None = None
 
-    if HAVE_PLEXAPI:
-        try:
-            acc = MyPlexAccount(token=token)  # type: ignore[call-arg]
-            plexpass = bool(getattr(acc, "subscriptionActive", None) or getattr(acc, "hasPlexPass", None))
-            plan = getattr(acc, "subscriptionPlan", None) or None
-            status = getattr(acc, "subscriptionStatus", None) or None
-        except Exception:
-            pass
-
     if plexpass is None:
         headers = {
             **UA,
@@ -1635,7 +1649,7 @@ def plex_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict
             "X-Plex-Product": "CrossWatch",
             "X-Plex-Version": "1.0",
         }
-        code, body = _http_get("https://plex.tv/api/v2/user", headers=headers)
+        code, body = _account_fetch("plex", cfg, lambda: _http_get("https://plex.tv/api/v2/user", headers=headers))
         if code == 200:
             j = _json_loads(body)
             sub = j.get("subscription") or {}
@@ -1652,6 +1666,7 @@ def plex_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict
         _USERINFO_CACHE[key] = (now, out)
     return out
 
+@_persistent_userinfo("mdblist")
 def mdblist_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict[str, Any]:
     key = _probe_key("mdblist", cfg)
     bust_ts = _consume_bust("mdblist")
@@ -1666,24 +1681,7 @@ def mdblist_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> d
             _USERINFO_CACHE[key] = (now, {})
         return {}
 
-    try:
-        sess = requests.Session()
-        hint = cfg.get("_cw_probe") if isinstance(cfg.get("_cw_probe"), Mapping) else {}
-        inst = normalize_instance_id((hint or {}).get("instance"))
-        r = _provider_auth().request_with_auth(
-            "mdblist",
-            sess,
-            "GET",
-            "https://api.mdblist.com/user",
-            cfg=cfg,
-            instance_id=inst,
-            headers=UA,
-            timeout=6,
-            max_retries=1,
-        )
-        code, body = int(r.status_code), r.text or ""
-    except Exception:
-        code, body = 0, ""
+    code, body = _authenticated_account("mdblist", cfg, "https://api.mdblist.com/user")
 
     out: dict[str, Any] = {}
     if code == 200:
@@ -1713,6 +1711,7 @@ def mdblist_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> d
         _USERINFO_CACHE[key] = (now, out)
     return out
 
+@_persistent_userinfo("scrob")
 def scrob_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict[str, Any]:
     key = _probe_key("scrob", cfg)
     bust_ts = _consume_bust("scrob")
@@ -1734,7 +1733,7 @@ def scrob_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dic
     try:
         client = scrob.client_from_block(s)
         client.access_token = scrob.access_token_for(cfg, instance_id=inst, session=client.session)
-        payload = client.request_json("GET", scrob.ME_PATH)
+        payload = _account_fetch("scrob", cfg, lambda: client.request_json("GET", scrob.ME_PATH))
         if isinstance(payload, Mapping):
             username = str(payload.get("display_name") or payload.get("username") or "").strip()
             if username:
@@ -1750,6 +1749,7 @@ def scrob_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dic
     return dict(out)
 
 
+@_persistent_userinfo("punchplay")
 def punchplay_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict[str, Any]:
     key = _probe_key("punchplay", cfg)
     bust_ts = _consume_bust("punchplay")
@@ -1766,24 +1766,7 @@ def punchplay_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) ->
             _USERINFO_CACHE[key] = (now, {})
         return {}
 
-    try:
-        sess = requests.Session()
-        hint = cfg.get("_cw_probe") if isinstance(cfg.get("_cw_probe"), Mapping) else {}
-        inst = normalize_instance_id((hint or {}).get("instance"))
-        r = _provider_auth().request_with_auth(
-            "punchplay",
-            sess,
-            "GET",
-            punchplay.ME_URL,
-            cfg=cfg,
-            instance_id=inst,
-            headers=UA,
-            timeout=6,
-            max_retries=1,
-        )
-        code, body = int(r.status_code), r.text or ""
-    except Exception:
-        code, body = 0, ""
+    code, body = _authenticated_account("punchplay", cfg, punchplay.ME_URL)
 
     out: dict[str, Any] = {}
     if code == 200:
@@ -1803,6 +1786,7 @@ def punchplay_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) ->
     return out
 
 
+@_persistent_userinfo("bingebase")
 def bingebase_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict[str, Any]:
     key = _probe_key("bingebase", cfg)
     bust_ts = _consume_bust("bingebase")
@@ -1834,6 +1818,7 @@ def bingebase_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) ->
     return out
 
 
+@_persistent_userinfo("flicklist")
 def flicklist_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict[str, Any]:
     key = _probe_key("flicklist", cfg)
     bust_ts = _consume_bust("flicklist")
@@ -1860,22 +1845,9 @@ def flicklist_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) ->
 
     if not out.get("user_id"):
         try:
-            sess = requests.Session()
-            hint = cfg.get("_cw_probe") if isinstance(cfg.get("_cw_probe"), Mapping) else {}
-            inst = normalize_instance_id((hint or {}).get("instance"))
-            r = _provider_auth().request_with_auth(
-                "flicklist",
-                sess,
-                "GET",
-                flicklist.ME_URL,
-                cfg=cfg,
-                instance_id=inst,
-                headers=UA,
-                timeout=6,
-                max_retries=1,
-            )
-            if int(r.status_code) == 200:
-                j = _json_loads(r.text or "") or {}
+            code, body = _authenticated_account("flicklist", cfg, flicklist.ME_URL)
+            if code == 200:
+                j = _json_loads(body) or {}
                 user = j.get("user") if isinstance(j.get("user"), Mapping) else j
                 if isinstance(user, Mapping):
                     out["username"] = user.get("username") or out.get("username")
@@ -1892,25 +1864,17 @@ def flicklist_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) ->
 
 def simkl_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict[str, Any]:
     key = _probe_key("simkl", cfg)
-    bust_ts = _consume_bust("simkl")
     now = time.time()
-    cached = _USERINFO_CACHE.get(key)
-    if cached and (now - cached[0]) < max_age_sec and (not bust_ts or cached[0] >= bust_ts) and isinstance(cached[1], dict):
-        return cached[1]
-
-    sk = (cfg.get("simkl") or cfg.get("SIMKL") or {}) or {}
-    cid = str((sk.get("client_id") or "")).strip()
-    tok = str((sk.get("access_token") or sk.get("token") or "")).strip()
-    if not cid or not tok:
-        with _CACHE_LOCK:
-            _USERINFO_CACHE[key] = (now, {})
-        return {}
-
-    code, body = _simkl_settings_post(cid, tok, timeout=HTTP_TIMEOUT)
+    sk = cfg.get("simkl") or cfg.get("SIMKL") or {}
+    tok = str(sk.get("access_token") or sk.get("token") or "").strip()
+    j = account_settings_cached(account_cache_key(tok), float("inf"))
+    if j is None:
+        cached = _SIMKL_SETTINGS_CACHE.get(key)
+        j = cached[2] if cached and cached[1] == 200 else {}
+    code = 200 if j else 0
 
     out: dict[str, Any] = {}
     if code == 200:
-        j = _json_loads(body) or {}
         account = j.get("account") if isinstance(j, dict) else {}
         user = j.get("user") if isinstance(j, dict) else {}
         if isinstance(account, Mapping):
@@ -1931,6 +1895,7 @@ def simkl_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dic
         _USERINFO_CACHE[key] = (now, out)
     return out
 
+@_persistent_userinfo("trakt")
 def trakt_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict[str, Any]:
     key = _probe_key("trakt", cfg)
     bust_ts = _consume_bust("trakt")
@@ -1949,7 +1914,7 @@ def trakt_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dic
         return {}
 
     headers = {**UA, "Authorization": f"Bearer {tok}", "trakt-api-key": cid, "trakt-api-version": "2"}
-    code, body = _http_get("https://api.trakt.tv/users/settings", headers=headers)
+    code, body = _account_fetch("trakt", cfg, lambda: _http_get("https://api.trakt.tv/users/settings", headers=headers))
 
     out: dict[str, Any] = {}
     if code == 200:
@@ -1967,20 +1932,11 @@ def trakt_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dic
             except Exception:
                 return None
 
-        used_counts = _trakt_limits_used(cid, tok)
         limits_out: dict[str, Any] = {}
-
-        wl_raw = limits_raw.get("watchlist") or {}
-        wl_limit = _int_or_none(wl_raw.get("item_count"))
-        wl_used = used_counts.get("watchlist") if isinstance(used_counts.get("watchlist"), int) else None
-        if wl_limit is not None or wl_used is not None:
-            limits_out["watchlist"] = {"item_count": wl_limit if wl_limit is not None else int(wl_used or 0), "used": int(wl_used or 0)}
-
-        coll_raw = limits_raw.get("collection") or {}
-        coll_limit = _int_or_none(coll_raw.get("item_count"))
-        coll_used = used_counts.get("collection") if isinstance(used_counts.get("collection"), int) else None
-        if coll_limit is not None or coll_used is not None:
-            limits_out["collection"] = {"item_count": coll_limit if coll_limit is not None else int(coll_used or 0), "used": int(coll_used or 0)}
+        for feature in ("watchlist", "collection"):
+            limit = _int_or_none((limits_raw.get(feature) or {}).get("item_count"))
+            if limit is not None:
+                limits_out[feature] = {"item_count": limit}
 
         out = {"vip": vip, "vip_type": vip_type}
         if limits_out:
@@ -1994,6 +1950,7 @@ def trakt_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dic
         _USERINFO_CACHE[key] = (now, out)
     return out
 
+@_persistent_userinfo("emby")
 def emby_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict[str, Any]:
     key = _probe_key("emby", cfg)
     bust_ts = _consume_bust("emby")
@@ -2012,7 +1969,7 @@ def emby_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict
 
     url = f"{server.rstrip('/')}/System/Info"
     headers = {**UA, "X-Emby-Token": token}
-    code, body = _http_get(url, headers=headers)
+    code, body = _account_fetch("emby", cfg, lambda: _http_get(url, headers=headers))
 
     out: dict[str, Any] = {}
     if code == 200:
@@ -2051,6 +2008,7 @@ def emby_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict
         _USERINFO_CACHE[key] = (now, out)
     return out
 
+@_persistent_userinfo("anilist")
 def anilist_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict[str, Any]:
     key = _probe_key("anilist", cfg)
     bust_ts = _consume_bust("anilist")
@@ -2077,12 +2035,12 @@ def anilist_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> d
         return {}
 
     headers = {**UA, "Authorization": f"Bearer {tok}"}
-    code, body, _ = _http_post_json(
+    code, body = _account_fetch("anilist", cfg, lambda: _http_post(
         "https://graphql.anilist.co",
-        headers=headers,
-        payload={"query": "query { Viewer { id name } }"},
+        headers={**headers, "Content-Type": "application/json"},
+        data=json.dumps({"query": "query { Viewer { id name } }"}).encode("utf-8"),
         timeout=HTTP_TIMEOUT,
-    )
+    ))
 
     out: dict[str, Any] = {}
     if code == 200:
@@ -2296,17 +2254,37 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
         scope_profile = _status_scope_profile(cfg0, request, user_profile)
         managed_scope = bool(scope_profile) or bool(scoped_user and not scoped_user.get("is_admin"))
         now = time.time()
+        scope_key = ""
+        if managed_scope:
+            scope_key = f"{scope_profile or ''}|{(scoped_user or {}).get('id') or (scoped_user or {}).get('username') or ''}"
+
+        def _scoped_hit(at: float) -> Any:
+            if not scope_key:
+                return None
+            entry = STATUS_SCOPE_CACHE.get(scope_key)
+            if entry and (at - entry[0]) < STATUS_TTL:
+                return entry[1]
+            return None
+
         cached = STATUS_CACHE["data"]
         age = (now - STATUS_CACHE["ts"]) if cached else 1e9
-        if not managed_scope and not fresh and cached and age < STATUS_TTL:
-            return JSONResponse(cached, headers={"Cache-Control": "no-store"})
+        if not fresh:
+            if not managed_scope and cached and age < STATUS_TTL:
+                return JSONResponse(cached, headers={"Cache-Control": "no-store"})
+            hit = _scoped_hit(now)
+            if hit is not None:
+                return JSONResponse(hit, headers={"Cache-Control": "no-store"})
 
         with STATUS_LOCK:
             now = time.time()
             cached = STATUS_CACHE["data"]
             age = (now - STATUS_CACHE["ts"]) if cached else 1e9
-            if not managed_scope and not fresh and cached and age < STATUS_TTL:
-                return JSONResponse(cached, headers={"Cache-Control": "no-store"})
+            if not fresh:
+                if not managed_scope and cached and age < STATUS_TTL:
+                    return JSONResponse(cached, headers={"Cache-Control": "no-store"})
+                hit = _scoped_hit(now)
+                if hit is not None:
+                    return JSONResponse(hit, headers={"Cache-Control": "no-store"})
 
             cfg = cfg0 if managed_scope else (load_config_fn() or {})
             pairs = cfg.get("pairs") or []
@@ -2317,7 +2295,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
             enabled_pairs = [p for p in pairs if isinstance(p, dict) and p.get("enabled", True) is not False]
             any_pair_ready = any(_pair_ready(cfg, p) for p in enabled_pairs)
 
-            probe_age = PROBE_TTL
+            probe_age = 0 if fresh else PROBE_TTL
             user_age = USERINFO_TTL
 
             def _pair_targets() -> set[tuple[str, str]]:
@@ -2494,7 +2472,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
             per: dict[str, dict[str, tuple[bool, str, dict[str, Any]]]] = {}
             for (prov, inst), pkey in refs.items():
                 ok, rsn = results_by_key.get(pkey, (False, ""))
-                per.setdefault(prov, {})[inst] = (ok, rsn, _cfg_view_for(cfg, prov, inst))
+                per.setdefault(prov, {})[inst] = (ok, rsn, jobs_by_key[pkey][1])
 
             def _rep_instance(prov: str) -> str:
                 items = per.get(prov) or {}
@@ -2718,6 +2696,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                             **({"username": info_simkl.get("username")} if info_simkl.get("username") else {}),
                         }
                     ),
+                    **latest_quota(quota_account_key((cfg_simkl or {}).get("simkl") or {})),
                     "instances": inst_map,
                     "instances_summary": inst_sum,
                     "rep_instance": inst_sum.get("rep"),
@@ -3010,6 +2989,8 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
             if not managed_scope:
                 STATUS_CACHE["ts"] = now
                 STATUS_CACHE["data"] = data
+            elif scope_key:
+                STATUS_SCOPE_CACHE[scope_key] = (now, data)
             return JSONResponse(data, headers={"Cache-Control": "no-store"})
 
     @app.post("/api/debug/clear_probe_cache", tags=["Probes"])
@@ -3020,10 +3001,12 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
             with _CACHE_LOCK:
                 PROBE_DETAIL_CACHE.clear()
                 _USERINFO_CACHE.clear()
+                _SIMKL_SETTINGS_CACHE.clear()
                 _SECRET_CACHE_TAGS.clear()
                 _BUST_SEEN.clear()
             STATUS_CACHE["ts"] = 0.0
             STATUS_CACHE["data"] = None
+            STATUS_SCOPE_CACHE.clear()
         return {"ok": True}
 
     app.state.PROBE_CACHE = PROBE_CACHE
