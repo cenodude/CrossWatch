@@ -16,7 +16,10 @@ from test_orchestrator_oneway_watchlist import FakeOps
 
 
 @pytest.mark.parametrize("metadata", [False, True])
-def test_one_way_removal_uses_nuvio_stored_identity(config_base: Any, monkeypatch: Any, metadata: bool) -> None:
+@pytest.mark.parametrize("mode,deleted_side", [("one-way", "source"), ("two-way", "source"), ("two-way", "target")])
+def test_removal_uses_nuvio_stored_identity(
+    config_base: Any, monkeypatch: Any, metadata: bool, mode: str, deleted_side: str,
+) -> None:
     class NuvioAdapter(FakeAdapter):
         def health(self) -> dict[str, Any]:
             return {"ok": True, "status": "ok", "features": {"watchlist": True}}
@@ -50,7 +53,7 @@ def test_one_way_removal_uses_nuvio_stored_identity(config_base: Any, monkeypatc
         "runtime": {"snapshot_ttl_sec": 0, "apply_chunk_pause_ms": 0},
         "sync": {"enable_add": True, "enable_remove": True, "include_observed_deletes": True, "allow_mass_delete": True},
         "pairs": [{
-            "id": "nuvio-removal", "enabled": True, "source": "MDBLIST", "target": "NUVIO", "mode": "one-way",
+            "id": "nuvio-removal", "enabled": True, "source": "MDBLIST", "target": "NUVIO", "mode": mode,
             "features": {"watchlist": {"enable": True, "add": True, "remove": True}},
         }],
     }
@@ -58,11 +61,20 @@ def test_one_way_removal_uses_nuvio_stored_identity(config_base: Any, monkeypatc
     assert not Orchestrator(cfg).run()["errors"]
     assert adapter.client.rows
     assert not any(name == "sync_push_library" for name, _ in adapter.client.calls)
-    source.index.clear()
+    if deleted_side == "source":
+        source.index.clear()
+    else:
+        adapter.client.rows.clear()
 
     assert not Orchestrator(cfg).run()["errors"]
 
     assert adapter.client.rows == []
-    assert sum(name == "sync_push_library" for name, _ in adapter.client.calls) == 1
+    assert not source.index
+    assert not source.add_calls
+    assert len(source.remove_calls) == (1 if deleted_side == "target" else 0)
+    expected_pushes = 1 if deleted_side == "source" else 0
+    assert sum(name == "sync_push_library" for name, _ in adapter.client.calls) == expected_pushes
     assert not Orchestrator(cfg).run()["errors"]
-    assert sum(name == "sync_push_library" for name, _ in adapter.client.calls) == 1
+    assert sum(name == "sync_push_library" for name, _ in adapter.client.calls) == expected_pushes
+    assert not source.index and not source.add_calls
+    assert len(source.remove_calls) == (1 if deleted_side == "target" else 0)

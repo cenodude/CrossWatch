@@ -1686,7 +1686,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                         coord_pruned_to_B += 1
                     continue
                 tomb_blocks = _tomb_blocks_remove(v, prev_self=prevA, prev_self_alias=prevA_alias)
-                if allow_removals and (tomb_blocks or (_ck(v) in obsB) or (_ck(v) in shrinkB)) and (_prev_had(prevB, prevB_alias, v) or tomb_blocks):
+                if allow_removals and (tomb_blocks or (b_sem == "present" and capB is not False and _deleted_on_B(v)) or (_ck(v) in shrinkB)) and (_prev_had(prevB, prevB_alias, v) or tomb_blocks):
                     rem_from_A.append(_minimal(v))
                 else:
                     add_to_B.append(_minimal(v))
@@ -1699,7 +1699,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                         coord_pruned_to_A += 1
                     continue
                 tomb_blocks = _tomb_blocks_remove(v, prev_self=prevB, prev_self_alias=prevB_alias)
-                if allow_removals and (tomb_blocks or (_ck(v) in obsA) or (_ck(v) in shrinkA)) and (_prev_had(prevA, prevA_alias, v) or tomb_blocks):
+                if allow_removals and (tomb_blocks or (a_sem == "present" and capA is not False and _deleted_on_A(v)) or (_ck(v) in shrinkA)) and (_prev_had(prevA, prevA_alias, v) or tomb_blocks):
                     rem_from_B.append(_minimal(v))
                 else:
                     add_to_A.append(_minimal(v))
