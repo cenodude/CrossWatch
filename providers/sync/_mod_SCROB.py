@@ -110,7 +110,7 @@ def _feature_label(method: str, url: str, kw: Mapping[str, Any]) -> str:
 
 class SCROBModule:
     def __init__(self, cfg: Mapping[str, Any], *, instance_id: Any = None):
-        self.instance_id = normalize_instance_id(instance_id)
+        self.instance_id = normalize_instance_id(instance_id if instance_id is not None else (cfg or {}).get("_cw_provider_instance"))
         block = resolve_provider_block(cfg or {}, "scrob", self.instance_id) or {}
         if not auth_configured(block):
             _log("error", "missing config", instance=self.instance_id)

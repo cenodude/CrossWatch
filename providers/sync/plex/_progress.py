@@ -780,6 +780,7 @@ def _resolve_rating_key_in_scope(adapter: Any, it: Mapping[str, Any]) -> str | N
 
 
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
+    instance = (getattr(adapter, "config", None) or {}).get("_cw_provider_instance") or os.getenv("CW_PAIR_DST_INSTANCE") or "default"
     srv = getattr(getattr(adapter, "client", None), "server", None)
     if not srv:
         return 0, [{"item": dict(x), "hint": "not_configured"} for x in (items or [])]
@@ -852,7 +853,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                     timestamp_tolerance_seconds=drift,
                 )
                 context = {
-                    "provider": "plex", "provider_instance": os.getenv("CW_PAIR_DST_INSTANCE") or "default",
+                    "provider": "plex", "provider_instance": instance,
                     "key": str(canonical_key(id_minimal(it0)) or ""),
                     "remote_item_id": str(rk), "library_id": _library_id(obj) or it0.get("library_id"),
                     "source_timestamp": source_timestamp, "target_timestamp": target_timestamp,
@@ -886,6 +887,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
 
 
 def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
+    instance = (getattr(adapter, "config", None) or {}).get("_cw_provider_instance") or os.getenv("CW_PAIR_DST_INSTANCE") or "default"
     srv = getattr(getattr(adapter, "client", None), "server", None)
     if not srv:
         return 0, [{"item": dict(x), "hint": "not_configured"} for x in (items or [])]
@@ -930,7 +932,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
 
                 context = {
                     "provider": "plex",
-                    "provider_instance": os.getenv("CW_PAIR_DST_INSTANCE") or "default",
+                    "provider_instance": instance,
                     "remote_item_id": str(rk),
                     "library_id": library_id,
                     "source_progress": 0,

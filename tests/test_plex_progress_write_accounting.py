@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from typing import Any
+from types import SimpleNamespace
+
+import pytest
 
 from providers.sync._mod_PLEX import _progress_skipped_keys
 
@@ -64,3 +67,40 @@ def test_issue_790_run_no_longer_reports_skipped_writes_as_added() -> None:
     assert out["confirmed"] == 0
     assert out["skipped"] == 10
     assert out["unresolved"] == 2
+
+
+@pytest.mark.parametrize("operation", ["add", "remove"])
+@pytest.mark.parametrize("instance,destination,expected", [
+    ("default", "P01", "default"),
+    ("P01", "P01", "P01"),
+    (None, "P01", "P01"),
+    (None, None, "default"),
+])
+def test_progress_results_use_the_endpoint_instance(monkeypatch, operation, instance, destination, expected):
+    from providers.sync.plex import _progress as progress
+
+    monkeypatch.setenv("CW_PAIR_SRC", "PLEX" if instance is not None else "SIMKL")
+    monkeypatch.setenv("CW_PAIR_DST", "PLEX")
+    monkeypatch.setenv("CW_PAIR_SRC_INSTANCE", "default")
+    if destination is None:
+        monkeypatch.delenv("CW_PAIR_DST_INSTANCE", raising=False)
+    else:
+        monkeypatch.setenv("CW_PAIR_DST_INSTANCE", destination)
+    writes = []
+    obj = SimpleNamespace(viewOffset=0, duration=600000, markUnplayed=lambda: writes.append("remove"))
+    server = SimpleNamespace(fetchItem=lambda key: obj, sessions=lambda: [])
+    config = {} if instance is None else {"_cw_provider_instance": instance}
+    adapter = SimpleNamespace(config=config, client=SimpleNamespace(server=server))
+    monkeypatch.setattr(progress, "home_scope_enter", lambda adapter: (False, False, None, None))
+    monkeypatch.setattr(progress, "home_scope_exit", lambda adapter, switched: None)
+    monkeypatch.setattr(progress, "_resolve_rating_key", lambda adapter, item: "11")
+    monkeypatch.setattr(progress, "_timeline_progress", lambda adapter, srv, key, ms, duration: writes.append("add"))
+    item = {"type": "movie", "ids": {"tmdb": "1"}, "progress_ms": 60000, "duration_ms": 600000,
+            "progress_at": "2026-09-20T12:00:00Z"}
+
+    count, unresolved = getattr(progress, operation)(adapter, [item])
+
+    assert count == 1 and not unresolved
+    assert writes == [operation]
+    assert len(adapter._progress_write_results) == 1
+    assert adapter._progress_write_results[0]["provider_instance"] == expected

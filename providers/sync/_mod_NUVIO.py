@@ -56,7 +56,10 @@ def _rate_limit_settings(block: Mapping[str, Any]) -> dict[str, float]:
     return {"get_per_sec": _rate("get_per_sec", 100.0), "post_per_sec": _rate("post_per_sec", 100.0)}
 
 
-def _current_instance_id() -> str:
+def _current_instance_id(cfg: Mapping[str, Any] | None = None) -> str:
+    explicit_instance = (cfg or {}).get("_cw_provider_instance")
+    if explicit_instance is not None:
+        return normalize_instance_id(explicit_instance)
     probe = str(os.getenv("CW_PROBE_PROVIDER") or "").upper().strip()
     if probe == "NUVIO":
         return normalize_instance_id(os.getenv("CW_PROBE_INSTANCE"))
@@ -120,7 +123,7 @@ def get_manifest() -> Mapping[str, Any]:
 class NUVIOModule:
     def __init__(self, cfg: Mapping[str, Any]):
         self.config = cfg or {}
-        self.instance_id = _current_instance_id()
+        self.instance_id = _current_instance_id(cfg)
         block = provider_block(self.config, self.instance_id)
         rate = _rate_limit_settings(block)
         session = build_session("NUVIO", ctx)

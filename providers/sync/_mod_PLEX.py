@@ -286,6 +286,7 @@ def _adapter_identity(cfg: Mapping[str, Any]) -> str:
 
     behavior = {
         "pair_scope": cfg.get("_cw_pair_scope"),
+        "provider_instance": cfg.get("_cw_provider_instance"),
         "readonly": cfg.get("_cw_readonly"),
         "planned_at": cfg.get("_cw_interactive_planned_at"),
         "fallback_GUID": pl.get("fallback_GUID") if "fallback_GUID" in pl else pl.get("fallback_guid"),
