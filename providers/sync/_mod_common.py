@@ -698,6 +698,8 @@ def request_with_retries(
                 continue
             return resp
         except Exception as e:
+            if getattr(e, "cw_no_retry", False):
+                raise
             dur_ms: int | None = None
             try:
                 dur_ms = int((time.monotonic() - t0) * 1000)

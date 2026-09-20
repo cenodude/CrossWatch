@@ -314,6 +314,8 @@ DEFAULT_CFG: dict[str, Any] = {
 
     "simkl": {
         "access_token": "",                             # OAuth2 / PIN access token
+        "refresh_token": "",
+        "token_expires_at": 0,
         "auth_method": "",                              # "pin" | "oauth" (metadata; runtime uses access_token + client_id)
         "client_id": "",                                # From your Simkl app (OAuth); baked app id when connected via PIN
         "client_secret": "",                            # From your Simkl app
@@ -325,7 +327,7 @@ DEFAULT_CFG: dict[str, Any] = {
         # Rate limits
         "rate_limit": {
             "post_per_sec": 1,
-            "get_per_sec": 10,
+            "get_per_sec": 2,
         },
     },
     
@@ -875,6 +877,7 @@ DEFAULT_CFG: dict[str, Any] = {
         "every_n_hours": 12,                            # When mode=every_n_hours, run every N hours (2+ recommended)
         "daily_time": "03:30",                          # When mode=daily_time, run at this time (HH:MM, 24h)
         "custom_interval_minutes": 60,                  # When mode=custom_interval, run every N minutes (minimum 15)
+        "jitter_seconds": 300,                          # Random delay added to each scheduled run so installs do not all fire at once
         "webhooks": dict(DEFAULT_SCHEDULER_WEBHOOKS),    # Optional outbound scheduler lifecycle callbacks
         "advanced": {
             "enabled": False,                           # Advanced scheduler master toggle
@@ -944,7 +947,7 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
     # Provider-specific secret fields
     provider_secret_keys: dict[str, set[str]] = {
         "plex": {"account_token", "pms_token", "home_pin", "webhook_secret"},
-        "simkl": {"access_token", "client_secret", "_pending_pin"},
+        "simkl": {"access_token", "refresh_token", "client_secret", "_pending_pin"},
         "anilist": {"access_token", "client_secret"},
         "mdblist": {"api_key", "access_token", "refresh_token", "_pending_device"},
         "publicmetadb": {"api_key"},

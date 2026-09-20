@@ -5,12 +5,15 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
+from cw_platform import config_base
 from cw_platform.id_map import canonical_key, minimal as id_minimal
+from cw_platform.simkl_http import token_key
 
 START_OF_TIME_ISO = "1900-01-01T00:00:00Z"
 DEFAULT_DATE_FROM = START_OF_TIME_ISO
@@ -19,11 +22,190 @@ SIMKL_BASE = "https://api.simkl.com"
 URL_USER_SETTINGS = f"{SIMKL_BASE}/users/settings"
 REWATCH_ACCOUNT_TYPES = frozenset({"pro", "vip"})
 _SETTINGS_TTL = 300.0
-_SETTINGS_MEMO: tuple[float, dict[str, Any] | None] = (0.0, None)
+_SETTINGS_MEMO: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+def account_settings_ttl() -> float:
+    try:
+        return float(os.getenv("CW_SIMKL_ACCOUNT_TTL") or "3600")
+    except Exception:
+        return 3600.0
+
+
+def account_cache_key(token: Any) -> str:
+    return token_key(token)
+
+
+def _account_cache_path(key: str) -> Path:
+    return STATE_DIR / f"simkl.account.{key}.json"
+
+
+def account_settings_cached(key: str, max_age: float) -> dict[str, Any] | None:
+    if not key or max_age <= 0:
+        return None
+    try:
+        raw = json.loads(_account_cache_path(key).read_text("utf-8"))
+    except Exception:
+        return None
+    if not isinstance(raw, Mapping):
+        return None
+    try:
+        age = time.time() - float(raw.get("ts") or 0.0)
+    except (TypeError, ValueError):
+        return None
+    data = raw.get("data")
+    if age > max_age or not isinstance(data, str):
+        return None
+    try:
+        cipher = config_base._get_cipher(create=False)
+        if cipher is None:
+            return None
+        decoded = json.loads(cipher.decrypt(data.encode("ascii")))
+    except Exception:
+        return None
+    return dict(decoded) if isinstance(decoded, Mapping) else None
+
+
+def account_settings_store(key: str, data: Mapping[str, Any] | None) -> None:
+    if not key or not isinstance(data, Mapping):
+        return
+    path = _account_cache_path(key)
+    try:
+        with config_base._CONFIG_LOCK:
+            cipher = config_base._get_cipher(create=True)
+        if cipher is None:
+            return
+        encrypted = cipher.encrypt(json.dumps(dict(data)).encode("utf-8")).decode("ascii")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f"{path.name}.tmp")
+        tmp.write_text(json.dumps({"ts": time.time(), "data": encrypted}), "utf-8")
+        os.replace(tmp, path)
+    except Exception:
+        pass
 
 
 class SIMKLFetchError(RuntimeError):
     """Raised when a SIMKL read cannot produce a good snapshot"""
+
+
+class SIMKLQuotaError(SIMKLFetchError):
+    cw_no_retry = True
+
+    def __init__(self, until: float):
+        self.until = float(until)
+        super().__init__(f"SIMKL daily request limit reached, resets at {quota_reset_label(self.until)}")
+
+
+_QUOTA_BLOCKS: dict[str, float] = {}
+_QUOTA_LOCK = threading.Lock()
+QUOTA_LOW_WATERMARK = 50
+
+
+def quota_account_key(block: Mapping[str, Any] | None) -> str:
+    blk = block if isinstance(block, Mapping) else {}
+    seed = str(blk.get("access_token") or blk.get("refresh_token") or "").strip()
+    return token_key(seed)
+
+
+def _next_eastern_midnight(now: float) -> float:
+    try:
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo("America/New_York")
+        local = datetime.fromtimestamp(now, tz)
+        nxt = (local + timedelta(days=1)).replace(hour=0, minute=0, second=5, microsecond=0)
+        return nxt.timestamp()
+    except Exception:
+        return now + 3600.0
+
+
+def block_quota(key: str, retry_after: Any = None) -> float:
+    now = time.time()
+    try:
+        secs = float(retry_after)
+    except (TypeError, ValueError):
+        secs = 0.0
+    until = now + secs if secs > 0 else _next_eastern_midnight(now)
+    if key:
+        with _QUOTA_LOCK:
+            _QUOTA_BLOCKS[key] = max(until, _QUOTA_BLOCKS.get(key, 0.0))
+    return until
+
+
+def quota_blocked_until(key: str) -> float:
+    if not key:
+        return 0.0
+    with _QUOTA_LOCK:
+        until = _QUOTA_BLOCKS.get(key, 0.0)
+        if until and until <= time.time():
+            _QUOTA_BLOCKS.pop(key, None)
+            return 0.0
+        return until
+
+
+_QUOTA_SEEN: dict[str, tuple[float, int | None, int | None]] = {}
+
+
+def _int_or_none(value: Any) -> int | None:
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def record_quota(key: str, headers: Mapping[str, Any] | None) -> None:
+    if not key or not headers:
+        hdrs: Mapping[str, Any] = {}
+    else:
+        hdrs = {str(k).lower(): v for k, v in headers.items()}
+    remaining = _int_or_none(hdrs.get("x-ratelimit-remaining"))
+    if not key or remaining is None:
+        return
+    with _QUOTA_LOCK:
+        _QUOTA_SEEN[key] = (time.time(), _int_or_none(hdrs.get("x-ratelimit-limit")), remaining)
+
+
+def latest_quota(key: str) -> dict[str, Any]:
+    if not key:
+        return {}
+    with _QUOTA_LOCK:
+        seen = _QUOTA_SEEN.get(key)
+    blocked = quota_blocked_until(key)
+    if not seen and not blocked:
+        return {}
+    now = time.time()
+    seen_at, limit, remaining = seen if seen else (0.0, None, None)
+    resets_at = blocked or _next_eastern_midnight(seen_at or now)
+    if seen and not blocked and resets_at <= now:
+        return {}
+    out: dict[str, Any] = {
+        "daily_limit": limit,
+        "daily_remaining": 0 if blocked else remaining,
+        "daily_resets_at": int(resets_at),
+        "daily_resets_label": quota_reset_label(resets_at),
+    }
+    if seen_at:
+        out["daily_seen_at"] = int(seen_at)
+    return out
+
+
+def quota_reset_label(until: float) -> str:
+    try:
+        return datetime.fromtimestamp(float(until)).astimezone().strftime("%Y-%m-%d %H:%M %Z").strip()
+    except Exception:
+        return "later"
+
+
+def is_user_limit_response(resp: Any) -> bool:
+    if getattr(resp, "status_code", 0) != 429:
+        return False
+    try:
+        body = resp.json()
+    except Exception:
+        body = None
+    if isinstance(body, Mapping):
+        return str(body.get("error") or "").strip().lower() == "user_limit_exceeded"
+    return "user_limit_exceeded" in str(getattr(resp, "text", "") or "")
 
 
 def simkl_user_agent() -> str:
@@ -460,12 +642,14 @@ def sync_date_from(
     return START_OF_TIME_ISO if shadow_has_data else None
 
 
-_ACT_MEMO: tuple[float, dict[str, Any] | None, dict[str, Any]] = (0.0, None, {})
+_ACT_MEMO: dict[str, tuple[float, dict[str, Any], dict[str, Any]]] = {}
 
 
 def memoize_activities(
     data: Mapping[str, Any] | None,
     rate: Mapping[str, Any] | None = None,
+    *,
+    token: str = "",
 ) -> None:
     global _ACT_MEMO
     if not isinstance(data, Mapping):
@@ -478,18 +662,19 @@ def memoize_activities(
         cached_rate = dict(rate or {})
     except Exception:
         cached_rate = {}
-    _ACT_MEMO = (time.time(), cached, cached_rate)
+    _ACT_MEMO[account_cache_key(token)] = (time.time(), cached, cached_rate)
 
 
 def fetch_activities(
     session: Any,
-    headers: Mapping[str, str],
+    headers: Mapping[str, str | bytes],
     *,
     timeout: float = 8.0,
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     global _ACT_MEMO
     now = time.time()
-    ts, cached, rate_cached = _ACT_MEMO
+    key = account_cache_key(headers.get("Authorization"))
+    ts, cached, rate_cached = _ACT_MEMO.get(key, (0.0, None, {}))
     if cached is not None and (now - ts) < 10.0:
         return cached, rate_cached
 
@@ -505,8 +690,10 @@ def fetch_activities(
         rate = parse_rate_limit(resp.headers)
         if 200 <= resp.status_code < 300:
             data = resp.json() if (resp.text or "").strip() else {}
-            _ACT_MEMO = (now, data, rate)
-            return data, rate
+            if isinstance(data, Mapping):
+                out = dict(data)
+                _ACT_MEMO[key] = (now, out, rate)
+                return out, rate
         return None, rate
     except Exception:
         return None, rate
@@ -514,21 +701,45 @@ def fetch_activities(
 
 def reset_user_settings_memo() -> None:
     global _SETTINGS_MEMO
-    _SETTINGS_MEMO = (0.0, None)
+    _SETTINGS_MEMO.clear()
+
+
+def refresh_user_settings_from_activities(
+    session: Any,
+    headers: Mapping[str, str | bytes],
+    activities: Mapping[str, Any] | None,
+    *,
+    timeout: float = 15.0,
+) -> dict[str, Any] | None:
+    latest = extract_latest_ts(activities or {}, (("settings", "all"),))
+    max_age = float("inf")
+    if latest:
+        changed_at = datetime.fromisoformat(latest.replace("Z", "+00:00")).timestamp()
+        max_age = max(0.0, time.time() - changed_at)
+    cached = account_settings_cached(account_cache_key(headers.get("Authorization")), max_age)
+    if cached is not None:
+        return cached
+    return fetch_user_settings(session, headers, timeout=timeout, force_refresh=True)
 
 
 def fetch_user_settings(
     session: Any,
-    headers: Mapping[str, str],
+    headers: Mapping[str, str | bytes],
     *,
     timeout: float = 15.0,
     force_refresh: bool = False,
 ) -> dict[str, Any] | None:
     global _SETTINGS_MEMO
     now = time.time()
-    ts, cached = _SETTINGS_MEMO
+    key = account_cache_key((headers or {}).get("Authorization"))
+    ts, cached = _SETTINGS_MEMO.get(key, (0.0, None))
     if cached is not None and not force_refresh and (now - ts) < _SETTINGS_TTL:
         return cached
+    if not force_refresh:
+        shared = account_settings_cached(key, float("inf"))
+        if shared is not None:
+            _SETTINGS_MEMO[key] = (now, shared)
+            return shared
     try:
         resp = session.post(
             URL_USER_SETTINGS,
@@ -544,7 +755,8 @@ def fetch_user_settings(
     if not isinstance(data, Mapping):
         return None
     out = dict(data)
-    _SETTINGS_MEMO = (now, out)
+    _SETTINGS_MEMO[key] = (now, out)
+    account_settings_store(key, out)
     return out
 
 

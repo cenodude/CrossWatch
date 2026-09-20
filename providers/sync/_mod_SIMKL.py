@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
 
 import requests
+from cw_platform.simkl_http import pace_session
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 from ._log import log as cw_log
@@ -27,11 +28,21 @@ from .simkl._common import (
     _pair_scope as simkl_pair_scope,
     _is_capture_mode as simkl_capture_mode,
     build_headers,
+    fetch_activities,
+    refresh_user_settings_from_activities,
     memoize_activities,
     normalize as simkl_normalize,
     key_of as simkl_key_of,
     simkl_api_params,
     state_file,
+    QUOTA_LOW_WATERMARK,
+    SIMKLQuotaError,
+    block_quota,
+    is_user_limit_response,
+    quota_account_key,
+    quota_blocked_until,
+    quota_reset_label,
+    record_quota,
 )
 
 
@@ -79,7 +90,7 @@ def _confirmed_keys(key_of, items: Iterable[Mapping[str, Any]], unresolved: Any)
         seen.add(k)
     return out
 
-__VERSION__ = "1.8"
+__VERSION__ = "1.9"
 __all__ = ["get_manifest", "SIMKLModule", "OPS"]
 
 
@@ -128,12 +139,51 @@ except Exception as e:
     _log("feature_import_failed", level="warn", import_feature="playlists", error=str(e))
 
 
+def _env_rate(name: str, default: float) -> float:
+    try:
+        value = float(os.getenv(name) or default)
+    except Exception:
+        return default
+    return value if value > 0 else default
+
+
+# SIMKL flags any client sending 3 or more requests inside one second, so keep
+# a full run well under that even when a config asks for more.
+MAX_GET_PER_SEC = _env_rate("CW_SIMKL_MAX_GET_PER_SEC", 2.0)
+MAX_POST_PER_SEC = _env_rate("CW_SIMKL_MAX_POST_PER_SEC", 1.0)
+
+
 class SIMKLError(RuntimeError):
     pass
 
 
 class SIMKLAuthError(SIMKLError):
     pass
+
+
+def _fresh_access_token(simkl_cfg: Mapping[str, Any]) -> str:
+    current = str(simkl_cfg.get("access_token") or "").strip()
+    try:
+        from providers.auth._auth_SIMKL import fresh_access_token
+    except Exception:
+        return current
+    try:
+        return fresh_access_token(simkl_cfg) or current
+    except Exception as e:
+        _log("token_refresh_failed", level="warn", error=type(e).__name__)
+        return current
+
+
+def _recover_access_token(simkl_cfg: Mapping[str, Any], current: str) -> str:
+    try:
+        from providers.auth._auth_SIMKL import recover_access_token
+    except Exception:
+        return ""
+    try:
+        return recover_access_token(simkl_cfg, current)
+    except Exception as e:
+        _log("token_recover_failed", level="warn", error=type(e).__name__)
+        return ""
 
 
 def _json_load(path: str) -> dict[str, Any]:
@@ -282,7 +332,7 @@ class SIMKLConfig:
     date_from: str = ""
     timeout: float = 15.0
     max_retries: int = 3
-    rate_get_per_sec: float = 10.0
+    rate_get_per_sec: float = 2.0
     rate_post_per_sec: float = 1.0
     watchlist_batch_size: int = 100
     ratings_chunk_size: int = 100
@@ -297,6 +347,7 @@ class SIMKLClient:
         self.raw_cfg = raw_cfg
         # build_session returns a HitSession
         self.session: HitSession = build_session("SIMKL", ctx, feature_label=label_simkl)
+        pace_session(self.session)
 
         try:
             self.session._rate_limiter = SimpleRateLimiter(
@@ -315,6 +366,60 @@ class SIMKLClient:
         self.session.headers.update(
             build_headers({"simkl": {"api_key": cfg.api_key, "access_token": cfg.access_token}})
         )
+        self.quota_key = quota_account_key(raw_cfg)
+        self.rate_limit: int | None = None
+        self.rate_remaining: int | None = None
+        self._low_quota_warned = False
+        self._auth_refreshed = False
+        self._send = self.session.request
+        setattr(self.session, "request", self._guarded_request)
+        self.session.hooks.setdefault("response", []).append(self._on_response)
+
+    def _guarded_request(self, method: str, url: str, **kw: Any) -> requests.Response:
+        until = quota_blocked_until(self.quota_key)
+        if until:
+            raise SIMKLQuotaError(until)
+        return self._send(method, url, **kw)
+
+    def _on_response(self, resp: requests.Response, *args: Any, **kwargs: Any) -> requests.Response:
+        record_quota(self.quota_key, resp.headers)
+        rate = parse_rate_limit(resp.headers)
+        if rate.get("remaining") is not None:
+            self.rate_limit = rate.get("limit")
+            self.rate_remaining = rate.get("remaining")
+            if not self._low_quota_warned and int(self.rate_remaining or 0) <= QUOTA_LOW_WATERMARK:
+                self._low_quota_warned = True
+                _log("daily_quota_low", level="warn", remaining=self.rate_remaining, limit=self.rate_limit)
+        if is_user_limit_response(resp):
+            until = block_quota(self.quota_key, resp.headers.get("Retry-After"))
+            _log("daily_quota_exhausted", level="error", limit=self.rate_limit, resets_at=quota_reset_label(until))
+            raise SIMKLQuotaError(until)
+        if resp.status_code == 401:
+            return self._retry_unauthorized(resp, kwargs)
+        return resp
+
+    def _retry_unauthorized(self, resp: requests.Response, send_kw: Mapping[str, Any]) -> requests.Response:
+        req = resp.request
+        if req is None or getattr(req, "_cw_auth_retry", False):
+            return resp
+        sent = str(req.headers.get("Authorization") or "")
+        current = f"Bearer {self.cfg.access_token}"
+        if sent == current:
+            if self._auth_refreshed:
+                return resp
+            self._auth_refreshed = True
+            token = _recover_access_token(self.raw_cfg, self.cfg.access_token)
+            if not token or token == self.cfg.access_token:
+                return resp
+            self.cfg.access_token = token
+            current = f"Bearer {token}"
+            self.session.headers["Authorization"] = current
+            _log("token_recovered", level="info")
+        retry = req.copy()
+        retry.headers["Authorization"] = current
+        setattr(retry, "_cw_auth_retry", True)
+        opts = {k: send_kw[k] for k in ("timeout", "verify", "proxies", "stream", "cert") if k in send_kw}
+        return self.session.send(retry, **opts)
 
     def _request(self, method: str, url: str, **kw: Any) -> requests.Response:
         params = dict(kw.pop("params", {}) or {})
@@ -336,13 +441,8 @@ class SIMKLClient:
         return self
 
     def activities(self) -> dict[str, Any]:
-        try:
-            r = self._request("GET", f"{self.BASE}/sync/activities")
-            if r.ok:
-                return r.json() if r.text else {}
-            return {"status": r.status_code}
-        except Exception as e:
-            return {"error": str(e)}
+        data, _ = fetch_activities(self.session, self.session.headers, timeout=self.cfg.timeout)
+        return data or {}
 
     @staticmethod
     def normalize(obj: Any) -> dict[str, Any]:
@@ -357,7 +457,7 @@ class SIMKLModule:
     def __init__(self, cfg: Mapping[str, Any]):
         simkl_cfg = dict(cfg.get("simkl") or {})
         api_key = str(simkl_cfg.get("api_key") or simkl_cfg.get("client_id") or "").strip()
-        access_token = str(simkl_cfg.get("access_token") or "").strip()
+        access_token = _fresh_access_token(simkl_cfg)
         date_from = str(simkl_cfg.get("date_from") or "").strip()
         rl = simkl_cfg.get("rate_limit")
         rl_map = dict(rl) if isinstance(rl, dict) else {}
@@ -372,8 +472,8 @@ class SIMKLModule:
                 f = 0.0
             return f
 
-        rate_get = _rate("get_per_sec", 10.0)
-        rate_post = _rate("post_per_sec", 1.0)
+        rate_get = min(_rate("get_per_sec", MAX_GET_PER_SEC), MAX_GET_PER_SEC)
+        rate_post = min(_rate("post_per_sec", MAX_POST_PER_SEC), MAX_POST_PER_SEC)
 
         self.cfg = SIMKLConfig(
             api_key=api_key,
@@ -447,7 +547,11 @@ class SIMKLModule:
                         data = r.json() if (r.text or "").strip() else {}
                     except Exception:
                         data = None
-                    memoize_activities(data, rate)
+                    memoize_activities(data, rate, token=self.cfg.access_token)
+                    refresh_user_settings_from_activities(sess, sess.headers, data, timeout=tmo)
+            except SIMKLQuotaError as e:
+                core_reason = "daily_limit"
+                retry_after = max(0, int(e.until - time.time()))
             except Exception as e:
                 core_reason = f"exception:{e.__class__.__name__}"
 
@@ -479,6 +583,11 @@ class SIMKLModule:
             details["reason"] = f"core:{core_reason or 'down'}"
         if retry_after is not None:
             details["retry_after_s"] = retry_after
+        if core_reason == "daily_limit":
+            details["message"] = f"SIMKL daily request limit reached, resets at {quota_reset_label(time.time() + (retry_after or 0))}"
+        if self.client.rate_remaining is not None:
+            details["daily_remaining"] = self.client.rate_remaining
+            details["daily_limit"] = self.client.rate_limit
 
         api = {
             "activities": {

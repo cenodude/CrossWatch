@@ -3,16 +3,21 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import base64
+import hashlib
 import os
+import secrets
+import threading
 import time
 from collections.abc import Mapping, MutableMapping
 from typing import Any
 from urllib.parse import urlencode
 
 import requests
+from cw_platform.simkl_http import paced_request, record_outcome, transfer_token_state
 
 from ._auth_base import AuthManifest, AuthProvider, AuthStatus
-from cw_platform.config_base import save_config
+from cw_platform.config_base import load_config, save_config
 from cw_platform.provider_instances import ensure_instance_block, ensure_provider_block, normalize_instance_id
 from providers.sync.simkl._common import simkl_api_params, simkl_user_agent
 
@@ -30,21 +35,288 @@ def log(msg: str, level: str = "INFO", module: str = "AUTH", **_: Any) -> None:
     except Exception:
         pass
 
-SIMKL_AUTH = "https://simkl.com/oauth/authorize"
-SIMKL_TOKEN = "https://api.simkl.com/oauth/token"
 SIMKL_PIN = "https://api.simkl.com/oauth/pin"
 PIN_VERIFY_URL = "https://simkl.com/pin"
+OAUTH2_AUTHORIZE = "https://simkl.com/oauth2/authorize"
+OAUTH2_DEVICE = "https://api.simkl.com/oauth2/device"
+OAUTH2_TOKEN = "https://api.simkl.com/oauth2/token"
+OAUTH2_REVOKE = "https://api.simkl.com/oauth2/revoke"
+OAUTH2_ISSUER = "https://simkl.com"
+OAUTH2_SCOPE = "media:read media:write"
+DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
 # Baked CrossWatch app id used for the PIN flow (public identifier; env-overridable),
 # mirroring how MDBList bakes its device-code client id in code.
 DEFAULT_PIN_CLIENT_ID = "d9b210c448f28757294ce491a834a7591aabdd7b01f678031a07574fe6a4fb47"
 PIN_CLIENT_ID_ENV = "CROSSWATCH_SIMKL_CLIENT_ID"
+DEFAULT_DEVICE_CLIENT_ID = "a984232a78f1a5a690b12afdd94de142d08f7bf87550b84860748a8e86396c2d"
+DEVICE_CLIENT_ID_ENV = "CROSSWATCH_SIMKL_DEVICE_CLIENT_ID"
+V1_SUNSET = "2027-03-31"
+REFRESH_MARGIN_S = 24 * 3600
+USE_REFRESH_MARGIN_S = 48 * 3600
+REFRESH_WORKER_INTERVAL_S = 3600
+TOKEN_KEYS = (
+    "access_token",
+    "refresh_token",
+    "token_expires_at",
+    "scopes",
+    "account",
+    "_pending_pin",
+    "auth_method",
+    "auth_version",
+    "auth_error",
+)
 UA = "CrossWatch/1.0"
 HTTP_TIMEOUT = 15
-__VERSION__ = "2.1.0"
+__VERSION__ = "3.0.0"
+
+_REFRESH_LOCKS: dict[str, threading.Lock] = {}
+_REFRESH_LOCKS_GUARD = threading.Lock()
+_WORKER: threading.Thread | None = None
+_WORKER_GUARD = threading.Lock()
 
 
 def app_pin_client_id() -> str:
     return str(os.environ.get(PIN_CLIENT_ID_ENV) or DEFAULT_PIN_CLIENT_ID).strip()
+
+
+def app_device_client_id() -> str:
+    return str(os.environ.get(DEVICE_CLIENT_ID_ENV) or DEFAULT_DEVICE_CLIENT_ID).strip()
+
+
+def baked_client_ids() -> set[str]:
+    return {cid for cid in (app_pin_client_id(), app_device_client_id()) if cid}
+
+
+def auth_version(block: Mapping[str, Any] | None) -> int:
+    blk = block if isinstance(block, Mapping) else {}
+    token = str(blk.get("access_token") or "").strip()
+    if not token:
+        return 0
+    try:
+        declared = int(blk.get("auth_version") or 0)
+    except (TypeError, ValueError):
+        declared = 0
+    if declared >= 2 or token.startswith("simkl_at_"):
+        return 2
+    return 1
+
+
+def token_expires_at(block: Mapping[str, Any] | None) -> int:
+    try:
+        return int((block or {}).get("token_expires_at") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def needs_refresh(block: Mapping[str, Any] | None, margin_s: int = REFRESH_MARGIN_S) -> bool:
+    if auth_version(block) != 2:
+        return False
+    if not str((block or {}).get("refresh_token") or "").strip():
+        return False
+    exp = token_expires_at(block)
+    return not exp or (exp - int(time.time())) <= max(0, int(margin_s))
+
+
+def _refresh_lock(instance_id: Any) -> threading.Lock:
+    inst = normalize_instance_id(instance_id)
+    with _REFRESH_LOCKS_GUARD:
+        lock = _REFRESH_LOCKS.get(inst)
+        if lock is None:
+            lock = threading.Lock()
+            _REFRESH_LOCKS[inst] = lock
+        return lock
+
+
+def _pkce_pair() -> tuple[str, str]:
+    verifier = secrets.token_urlsafe(64)[:96]
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    challenge = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+    return verifier, challenge
+
+
+def _form_headers() -> dict[str, str]:
+    return {
+        "Accept": "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": simkl_user_agent(),
+    }
+
+
+def _auth_error_code(data: Mapping[str, Any]) -> str:
+    received = data.get("error")
+    for code in (
+        "invalid_request", "invalid_client", "invalid_grant", "unauthorized_client",
+        "unsupported_grant_type", "invalid_scope", "access_denied", "authorization_pending",
+        "slow_down", "expired_token", "server_error", "temporarily_unavailable",
+    ):
+        if received == code:
+            return code
+    return "oauth_error"
+
+
+def _post_form(url: str, data: Mapping[str, Any]) -> tuple[int, dict[str, Any]]:
+    r = paced_request(requests.post, "POST", url, data={k: v for k, v in data.items() if v not in (None, "")}, headers=_form_headers(), timeout=HTTP_TIMEOUT)
+    try:
+        body = r.json()
+    except ValueError:
+        body = None
+    return int(r.status_code), body if isinstance(body, dict) else {}
+
+
+def _store_tokens(blk: MutableMapping[str, Any], tok: Mapping[str, Any], client_id: str, method: str) -> None:
+    blk["access_token"] = str(tok.get("access_token") or "").strip()
+    refresh = str(tok.get("refresh_token") or "").strip()
+    if refresh:
+        blk["refresh_token"] = refresh
+    try:
+        expires_in = int(tok.get("expires_in") or 0)
+    except (TypeError, ValueError):
+        expires_in = 0
+    blk["token_expires_at"] = int(time.time()) + expires_in if expires_in > 0 else 0
+    if tok.get("scope"):
+        blk["scopes"] = str(tok.get("scope"))
+    blk["client_id"] = client_id
+    blk["api_key"] = client_id
+    blk["auth_method"] = method
+    blk["auth_version"] = 2
+    record_outcome(str(blk["access_token"]), 200)
+
+
+def _instance_ids(cfg: Mapping[str, Any]) -> list[str]:
+    base = cfg.get("simkl") if isinstance(cfg, Mapping) else None
+    if not isinstance(base, Mapping):
+        return []
+    out = ["default"]
+    insts = base.get("instances")
+    if isinstance(insts, Mapping):
+        out.extend(normalize_instance_id(k) for k in insts.keys() if normalize_instance_id(k) != "default")
+    return out
+
+
+def _lookup_block(cfg: Mapping[str, Any], instance_id: Any) -> Mapping[str, Any]:
+    base = cfg.get("simkl") if isinstance(cfg, Mapping) else None
+    if not isinstance(base, Mapping):
+        return {}
+    inst = normalize_instance_id(instance_id)
+    if inst == "default":
+        return base
+    insts = base.get("instances")
+    sub = insts.get(inst) if isinstance(insts, Mapping) else None
+    return sub if isinstance(sub, Mapping) else {}
+
+
+def instance_for_block(cfg: Mapping[str, Any], block: Mapping[str, Any] | None) -> str | None:
+    blk = block if isinstance(block, Mapping) else {}
+    for field_name in ("refresh_token", "access_token"):
+        value = str(blk.get(field_name) or "").strip()
+        if not value:
+            continue
+        for inst in _instance_ids(cfg):
+            if str(_lookup_block(cfg, inst).get(field_name) or "").strip() == value:
+                return inst
+    return None
+
+
+def fresh_access_token(block: Mapping[str, Any] | None, *, margin_s: int = USE_REFRESH_MARGIN_S) -> str:
+    blk = block if isinstance(block, Mapping) else {}
+    current = str(blk.get("access_token") or "").strip()
+    if not needs_refresh(blk, margin_s):
+        return current
+    try:
+        inst = instance_for_block(load_config() or {}, blk)
+    except Exception:
+        inst = None
+    if inst is None:
+        return current
+    return ensure_fresh(inst, margin_s=margin_s) or current
+
+
+def ensure_fresh(instance_id: Any = None, *, margin_s: int = REFRESH_MARGIN_S) -> str:
+    inst = normalize_instance_id(instance_id)
+    try:
+        blk = _lookup_block(load_config() or {}, inst)
+    except Exception:
+        return ""
+    if needs_refresh(blk, margin_s):
+        PROVIDER.refresh(None, instance_id=inst, margin_s=margin_s)
+        try:
+            blk = _lookup_block(load_config() or {}, inst)
+        except Exception:
+            return ""
+    return str(blk.get("access_token") or "").strip()
+
+
+def recover_access_token(block: Mapping[str, Any] | None, current: str) -> str:
+    blk = block if isinstance(block, Mapping) else {}
+    if auth_version(blk) != 2:
+        return ""
+    try:
+        cfg = load_config() or {}
+    except Exception:
+        return ""
+    inst = instance_for_block(cfg, blk)
+    if inst is None:
+        return ""
+    stored = str(_lookup_block(cfg, inst).get("access_token") or "").strip()
+    if stored and stored != str(current or "").strip():
+        return stored
+    res = PROVIDER.refresh(None, instance_id=inst)
+    if not res.get("ok"):
+        return ""
+    try:
+        return str(_lookup_block(load_config() or {}, inst).get("access_token") or "").strip()
+    except Exception:
+        return ""
+
+
+def refresh_all(margin_s: int = REFRESH_MARGIN_S) -> dict[str, str]:
+    out: dict[str, str] = {}
+    try:
+        cfg = load_config() or {}
+    except Exception:
+        return out
+    for inst in _instance_ids(cfg):
+        if needs_refresh(_lookup_block(cfg, inst), margin_s):
+            res = PROVIDER.refresh(None, instance_id=inst, margin_s=margin_s)
+            out[inst] = str(res.get("status") or "")
+    return out
+
+
+def _refresh_worker_loop() -> None:
+    while True:
+        try:
+            refresh_all()
+        except Exception as e:
+            log(f"SIMKL: refresh worker error: {type(e).__name__}", level="ERROR", module="AUTH")
+        time.sleep(REFRESH_WORKER_INTERVAL_S)
+
+
+def start_refresh_worker() -> bool:
+    global _WORKER
+    with _WORKER_GUARD:
+        if _WORKER is not None and _WORKER.is_alive():
+            return False
+        _WORKER = threading.Thread(target=_refresh_worker_loop, name="simkl-token-refresh", daemon=True)
+        _WORKER.start()
+        return True
+
+
+def revoke_block(block: Mapping[str, Any] | None) -> bool:
+    blk = block if isinstance(block, Mapping) else {}
+    if auth_version(blk) != 2:
+        return False
+    token = str(blk.get("refresh_token") or blk.get("access_token") or "").strip()
+    client_id = str(blk.get("client_id") or "").strip()
+    if not token or not client_id:
+        return False
+    try:
+        status, _ = _post_form(
+            OAUTH2_REVOKE,
+            {"token": token, "client_id": client_id, "client_secret": str(blk.get("client_secret") or "").strip()},
+        )
+    except requests.RequestException:
+        return False
+    return status < 400
 
 class SimklAuth(AuthProvider):
     name = "SIMKL"
@@ -68,7 +340,7 @@ class SimklAuth(AuthProvider):
                     "required": True,
                 },
             ],
-            actions={"start": True, "finish": False, "refresh": False, "disconnect": True},
+            actions={"start": True, "finish": False, "refresh": True, "disconnect": True},
             notes="Authorize with SIMKL; you'll be redirected back to the app.",
         )
 
@@ -133,25 +405,29 @@ class SimklAuth(AuthProvider):
         client_secret = str(base.get("client_secret") or "").strip()
         return client_id, client_secret, base
 
-    def _apply_token_response(self, target: MutableMapping[str, Any], j: dict[str, Any]) -> None:
-        if j.get("access_token"):
-            target["access_token"] = j["access_token"]
-
-        if j.get("scope"):
-            target["scopes"] = j["scope"]
-
-    def start(self, cfg: MutableMapping[str, Any], redirect_uri: str, instance_id: str | None = None) -> dict[str, Any]:
+    def start(
+        self,
+        cfg: MutableMapping[str, Any],
+        redirect_uri: str,
+        instance_id: str | None = None,
+        state: str = "",
+    ) -> dict[str, Any]:
         client_id, _, _ = self._resolve_creds(cfg, instance_id)
+        verifier, challenge = _pkce_pair()
         params = {
             "response_type": "code",
             "client_id": client_id,
             "redirect_uri": redirect_uri,
-            "scope": "public write",
+            "scope": OAUTH2_SCOPE,
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
         }
-        url = f"{SIMKL_AUTH}?{urlencode(params)}"
+        if state:
+            params["state"] = state
+        url = f"{OAUTH2_AUTHORIZE}?{urlencode(params)}"
         inst = normalize_instance_id(instance_id)
         log("SIMKL: start OAuth", level="INFO", module="AUTH", extra={"instance": inst, "redirect_uri": redirect_uri})
-        return {"url": url}
+        return {"url": url, "code_verifier": verifier}
 
     def finish(self, cfg: MutableMapping[str, Any], instance_id: str | None = None, **payload: Any) -> AuthStatus:
         inst = normalize_instance_id(instance_id)
@@ -163,35 +439,78 @@ class SimklAuth(AuthProvider):
             "client_secret": client_secret,
             "redirect_uri": payload.get("redirect_uri", ""),
             "code": payload.get("code", ""),
-        }
-        headers = {
-            "User-Agent": simkl_user_agent(),
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "simkl-api-key": client_id,
+            "code_verifier": payload.get("code_verifier", ""),
         }
         log("SIMKL: exchange code", level="INFO", module="AUTH", extra={"instance": inst})
-        r = requests.post(SIMKL_TOKEN, json=data, params=simkl_api_params(client_id), headers=headers, timeout=12)
-        r.raise_for_status()
-        j = r.json() or {}
+        status, tok = _post_form(OAUTH2_TOKEN, data)
+        if status >= 400 or not str(tok.get("access_token") or "").strip():
+            err = _auth_error_code(tok)
+            log(f"SIMKL: code exchange failed (HTTP {status})", level="ERROR", module="AUTH", extra={"instance": inst})
+            raise RuntimeError(f"SIMKL code exchange failed: {err}")
 
-        self._apply_token_response(target, j)
-        try:
-            if isinstance(cfg, dict):
-                save_config(dict(cfg))
-        except Exception:
-            pass
-
+        _store_tokens(target, tok, client_id, "oauth")
         log("SIMKL: tokens stored", level="SUCCESS", module="AUTH", extra={"instance": inst})
         return self.get_status(cfg, inst)
 
-    def refresh(self, cfg: MutableMapping[str, Any], instance_id: str | None = None) -> AuthStatus:
+    def refresh(
+        self,
+        cfg: MutableMapping[str, Any] | None = None,
+        instance_id: str | None = None,
+        *,
+        margin_s: int = 0,
+    ) -> dict[str, Any]:
         inst = normalize_instance_id(instance_id)
-        log("SIMKL: refresh skipped; access tokens are long-lived", level="INFO", module="AUTH", extra={"instance": inst})
-        return self.get_status(cfg, inst)
+        with _refresh_lock(inst):
+            cfgd: dict[str, Any] = load_config() or {}
+            blk = ensure_instance_block(cfgd, "simkl", inst)
+            version = auth_version(blk)
+            if version == 1:
+                return {"ok": True, "status": "legacy", "instance": inst}
+            if version == 0:
+                return {"ok": False, "status": "not_connected", "instance": inst}
+            if margin_s and not needs_refresh(blk, margin_s):
+                return {"ok": True, "status": "fresh", "expires_at": token_expires_at(blk), "instance": inst}
+
+            refresh_token = str(blk.get("refresh_token") or "").strip()
+            client_id = str(blk.get("client_id") or "").strip()
+            if not (refresh_token and client_id):
+                log("SIMKL: missing client_id/refresh_token for refresh", level="ERROR", module="AUTH", extra={"instance": inst})
+                return {"ok": False, "status": "missing_refresh", "instance": inst}
+
+            try:
+                status, tok = _post_form(
+                    OAUTH2_TOKEN,
+                    {
+                        "grant_type": "refresh_token",
+                        "refresh_token": refresh_token,
+                        "client_id": client_id,
+                        "client_secret": str(blk.get("client_secret") or "").strip(),
+                    },
+                )
+            except requests.RequestException as e:
+                log(f"SIMKL: token refresh network error: {type(e).__name__}", level="ERROR", module="AUTH", extra={"instance": inst})
+                return {"ok": False, "status": "network_error", "instance": inst}
+
+            if status >= 400 or not str(tok.get("access_token") or "").strip():
+                err = _auth_error_code(tok)
+                log(f"SIMKL: token refresh failed (HTTP {status})", level="ERROR", module="AUTH", extra={"instance": inst})
+                if err == "invalid_grant":
+                    blk["auth_error"] = "reconnect_required"
+                    save_config(cfgd)
+                return {"ok": False, "status": f"refresh_failed:{status}", "error": err, "instance": inst}
+
+            old_token = str(blk.get("access_token") or "")
+            _store_tokens(blk, tok, client_id, str(blk.get("auth_method") or "pin"))
+            transfer_token_state(old_token, str(blk["access_token"]))
+            blk.pop("auth_error", None)
+            save_config(cfgd)
+            log("SIMKL: refresh ok", level="SUCCESS", module="AUTH", extra={"instance": inst})
+            return {"ok": True, "status": "ok", "expires_at": token_expires_at(blk), "instance": inst}
 
     # PIN flow (https://api.simkl.org/api-reference/pin)
     def pin_start(self, cfg: MutableMapping[str, Any], *, instance_id: str | None = None) -> dict[str, Any]:
+        if app_device_client_id():
+            return self._device_start(cfg, instance_id=instance_id)
         inst = normalize_instance_id(instance_id)
         cfgd: dict[str, Any] = cfg if isinstance(cfg, dict) else dict(cfg)
         blk = ensure_instance_block(cfgd, "simkl", inst)
@@ -200,7 +519,7 @@ class SimklAuth(AuthProvider):
             return {"ok": False, "error": "missing_client_id"}
 
         try:
-            r = requests.get(
+            r = paced_request(requests.get, "GET",
                 SIMKL_PIN,
                 params=simkl_api_params(cid),
                 headers={"Accept": "application/json", "User-Agent": simkl_user_agent()},
@@ -246,7 +565,10 @@ class SimklAuth(AuthProvider):
         cfgd: dict[str, Any] = cfg if isinstance(cfg, dict) else dict(cfg)
         blk = ensure_instance_block(cfgd, "simkl", inst)
         cid = app_pin_client_id()
-        pend = blk.get("_pending_pin") if isinstance(blk.get("_pending_pin"), Mapping) else {}
+        pend_raw = blk.get("_pending_pin")
+        pend: dict[str, Any] = dict(pend_raw) if isinstance(pend_raw, Mapping) else {}
+        if str(pend.get("device_code") or "").strip():
+            return self._device_poll(cfgd, blk, pend, inst)
         user_code = str((pend or {}).get("user_code") or "").strip()
         if not user_code:
             return {"ok": False, "status": "no_pin"}
@@ -256,7 +578,7 @@ class SimklAuth(AuthProvider):
             return {"ok": False, "status": "expired"}
 
         try:
-            r = requests.get(
+            r = paced_request(requests.get, "GET",
                 f"{SIMKL_PIN}/{user_code}",
                 params=simkl_api_params(cid),
                 headers={"Accept": "application/json", "User-Agent": simkl_user_agent()},
@@ -281,10 +603,103 @@ class SimklAuth(AuthProvider):
         blk["client_id"] = cid
         blk["api_key"] = cid
         blk["auth_method"] = "pin"
+        blk["auth_version"] = 1
+        for k in ("refresh_token", "token_expires_at", "auth_error"):
+            blk.pop(k, None)
         blk.pop("_pending_pin", None)
         save_config(cfgd)
         log("SIMKL: PIN token stored", level="SUCCESS", module="AUTH", extra={"instance": inst})
         return {"ok": True, "status": "authorized", "auth_method": "pin"}
+
+    def _device_start(self, cfg: MutableMapping[str, Any], *, instance_id: str | None = None) -> dict[str, Any]:
+        inst = normalize_instance_id(instance_id)
+        cfgd: dict[str, Any] = cfg if isinstance(cfg, dict) else dict(cfg)
+        blk = ensure_instance_block(cfgd, "simkl", inst)
+        cid = app_device_client_id()
+        try:
+            status, data = _post_form(OAUTH2_DEVICE, {"client_id": cid, "scope": OAUTH2_SCOPE})
+        except requests.RequestException as e:
+            return {"ok": False, "error": "network_error", "detail": type(e).__name__}
+        if status >= 400:
+            return {"ok": False, "error": "http_error", "status": status, "body": _auth_error_code(data)}
+
+        device_code = str(data.get("device_code") or "").strip()
+        user_code = str(data.get("user_code") or "").strip()
+        if not device_code or not user_code:
+            return {"ok": False, "error": "invalid_response"}
+        verification_url = (
+            str(data.get("verification_uri_complete") or data.get("verification_uri") or PIN_VERIFY_URL).strip()
+            or PIN_VERIFY_URL
+        )
+        interval = int(data.get("interval") or 5)
+        expires_in = int(data.get("expires_in") or 900)
+        now = int(time.time())
+
+        blk["_pending_pin"] = {
+            "device_code": device_code,
+            "user_code": user_code,
+            "verification_url": verification_url,
+            "interval": interval,
+            "expires_at": now + expires_in,
+            "created_at": now,
+        }
+        save_config(cfgd)
+        log("SIMKL: device code issued", level="INFO", module="AUTH", extra={"instance": inst})
+        return {
+            "ok": True,
+            "user_code": user_code,
+            "verification_url": verification_url,
+            "interval": interval,
+            "expires_in": expires_in,
+        }
+
+    def _device_poll(
+        self,
+        cfgd: dict[str, Any],
+        blk: MutableMapping[str, Any],
+        pend: dict[str, Any],
+        inst: str,
+    ) -> dict[str, Any]:
+        if int(pend.get("expires_at") or 0) and time.time() >= int(pend.get("expires_at") or 0):
+            blk.pop("_pending_pin", None)
+            save_config(cfgd)
+            return {"ok": False, "status": "expired"}
+
+        cid = app_device_client_id()
+        try:
+            status, data = _post_form(
+                OAUTH2_TOKEN,
+                {"grant_type": DEVICE_GRANT, "client_id": cid, "device_code": str(pend.get("device_code") or "")},
+            )
+        except requests.RequestException as e:
+            return {"ok": False, "status": "network_error", "error": type(e).__name__}
+
+        err = str(data.get("error") or "").strip()
+        if err == "authorization_pending":
+            return {"ok": True, "status": "pending"}
+        if err == "slow_down":
+            pend["interval"] = int(pend.get("interval") or 5) + 5
+            blk["_pending_pin"] = pend
+            save_config(cfgd)
+            return {"ok": True, "status": "slow_down", "interval": pend["interval"]}
+        if err in ("expired_token", "access_denied", "invalid_grant"):
+            blk.pop("_pending_pin", None)
+            save_config(cfgd)
+            return {"ok": False, "status": "expired" if err != "access_denied" else "denied"}
+        if err == "invalid_client":
+            blk.pop("_pending_pin", None)
+            save_config(cfgd)
+            log("SIMKL: device flow rejected client_id", level="ERROR", module="AUTH", extra={"instance": inst})
+            return {"ok": False, "status": "invalid_client"}
+        if status >= 400 or not str(data.get("access_token") or "").strip():
+            return {"ok": False, "status": f"http:{status}"}
+
+        _store_tokens(blk, data, cid, "pin")
+        blk.pop("auth_error", None)
+        blk.pop("_pending_pin", None)
+        save_config(cfgd)
+        log("SIMKL: device token stored", level="SUCCESS", module="AUTH", extra={"instance": inst})
+        return {"ok": True, "status": "authorized", "auth_method": "pin", "auth_version": 2}
 
     def pin_cancel(self, cfg: MutableMapping[str, Any], *, instance_id: str | None = None) -> dict[str, Any]:
         inst = normalize_instance_id(instance_id)
@@ -306,14 +721,15 @@ class SimklAuth(AuthProvider):
 
         # If this profile was connected via PIN, clear the baked app id too so the
         # OAuth pane doesn't show it; leave user-supplied OAuth creds untouched.
+        revoke_block(target)
         try:
-            if str(target.get("client_id") or "").strip() == app_pin_client_id():
+            if str(target.get("client_id") or "").strip() in baked_client_ids():
                 target.pop("client_id", None)
                 target.pop("api_key", None)
         except Exception:
             pass
 
-        for k in ("access_token", "refresh_token", "token_expires_at", "scopes", "account", "_pending_pin", "auth_method"):
+        for k in TOKEN_KEYS:
             try:
                 target.pop(k, None)
             except Exception:
@@ -487,8 +903,9 @@ def html() -> str:
               </div>
 
               <div id="simkl_hint" class="msg warn hidden" style="margin-top:8px">
-                You need a SIMKL API key. Create one at
+                You need a SIMKL AUTH V2 app of type "Server apps &amp; services". Create one at
                 <a href="https://simkl.com/settings/developer/" target="_blank" rel="noopener">SIMKL Developer</a>.
+                Old V1 keys will not work.
                 Set the Redirect URL to <code id="redirect_uri_preview"></code>.
                 <button id="btn-copy-simkl-redirect" class="btn" type="button" style="margin-left:8px">Copy Redirect URL</button>
               </div>
