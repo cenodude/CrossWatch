@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+from importlib import import_module
 from types import SimpleNamespace
+
+import pytest
 
 from api import maintenanceAPI
 from cw_platform.local_db.legacy_files import STATE_JSON, STATISTICS_JSON, legacy_path, legacy_root
@@ -603,3 +606,74 @@ def test_crosswatch_tracker_clear_rejects_profile_path_input(tmp_path, monkeypat
     assert not (snaps / "20260101T000000Z-watchlist.json").exists()
     assert (profile_root / "watchlist.json").exists()
     assert (outside / "watchlist.json").exists()
+
+
+@pytest.mark.parametrize("feature", ["history", "ratings", "watchlist", "progress", "collection"])
+@pytest.mark.parametrize("pair_scoped", [False, True])
+@pytest.mark.parametrize("instance", ["default", "CW-P01"])
+def test_tracker_clear_keeps_missing_state_empty_with_retained_snapshots(
+    tmp_path, monkeypatch, feature, pair_scoped, instance,
+) -> None:
+    base = tmp_path / ".cw_provider"
+    profile = base / "profiles" / "CW-P01"
+    root, other = (base, profile) if instance == "default" else (profile, base)
+    snapshots = root / "snapshots"
+    snapshots.mkdir(parents=True)
+    other.mkdir(parents=True, exist_ok=True)
+    item = {
+        "type": "movie", "ids": {"tmdb": "1"}, "watched_at": "2026-09-19T12:00:00Z",
+        "rating": 8, "progress_percent": 20,
+    }
+    payload = json.dumps({"ts": 1, "items": {"tmdb:1": item}})
+    snapshot = snapshots / f"20260919T120000Z-{feature}.json"
+    snapshot.write_text(payload, encoding="utf-8")
+    other_state = other / f"{feature}.json"
+    other_state.write_text(payload, encoding="utf-8")
+    (tmp_path / "config.json").write_text(
+        json.dumps({"crosswatch": {"root_dir": str(base), "instances": {"CW-P01": {}}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(maintenanceAPI, "_cw", lambda: (tmp_path / "cache", tmp_path, tmp_path / ".cw_state", None, None, None))
+    monkeypatch.setattr(maintenanceAPI, "clear_caches", lambda: None)
+    monkeypatch.setattr(maintenanceAPI, "release_memory", lambda: None)
+    monkeypatch.setenv("CW_CROSSWATCH_PAIR_SCOPED", "1" if pair_scoped else "0")
+    monkeypatch.setenv("CW_PAIR_SCOPE", "test-pair")
+    monkeypatch.setenv("CW_PAIR_SRC", "SIMKL")
+    monkeypatch.delenv("CW_CAPTURE_MODE", raising=False)
+    module = import_module(f"providers.sync.crosswatch._{feature}")
+    adapter = SimpleNamespace(cfg=SimpleNamespace(base_path=root, auto_snapshot=False), config={"_cw_readonly": True})
+    assert module._load_state(adapter)["items"]
+    assert not (root / f"{feature}.json").exists()
+
+    result = maintenanceAPI.crosswatch_tracker_clear(clear_state=True, clear_snapshots=False, provider_instance=instance)
+
+    assert result["ok"] is True
+    assert f"{feature}.json" in result["removed"]["emptied_state_files"]
+    assert module._load_state(adapter)["items"] == {}
+    assert snapshot.read_text(encoding="utf-8") == payload
+    assert other_state.read_text(encoding="utf-8") == payload
+    if feature == "history":
+        adapter.config = {}
+        assert module.add(adapter, [item]) == (1, [])
+        assert len(module.build_index(adapter)) == 1
+
+
+def test_tracker_clear_snapshots_only_preserves_current_state(tmp_path, monkeypatch) -> None:
+    root = tmp_path / ".cw_provider"
+    snapshots = root / "snapshots"
+    snapshots.mkdir(parents=True)
+    payload = json.dumps({"items": {"tmdb:1": {"type": "movie", "ids": {"tmdb": "1"}}}})
+    state = root / "history.json"
+    state.write_text(payload, encoding="utf-8")
+    snapshot = snapshots / "20260919T120000Z-history.json"
+    snapshot.write_text(payload, encoding="utf-8")
+    monkeypatch.setattr(maintenanceAPI, "_cw", lambda: (tmp_path / "cache", tmp_path, tmp_path / ".cw_state", None, None, None))
+    monkeypatch.setattr(maintenanceAPI, "clear_caches", lambda: None)
+    monkeypatch.setattr(maintenanceAPI, "release_memory", lambda: None)
+
+    result = maintenanceAPI.crosswatch_tracker_clear(clear_state=False, clear_snapshots=True, provider_instance="default")
+
+    assert result["ok"] is True
+    assert state.read_text(encoding="utf-8") == payload
+    assert not snapshot.exists()
+    assert not (root / "ratings.json").exists()
