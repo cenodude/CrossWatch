@@ -9,6 +9,8 @@ import pytest
 from cw_platform.id_map import canonical_key, minimal
 from cw_platform.orchestrator import _applier, _unresolved
 from cw_platform.orchestrator._pairs_oneway import compute_effective_add, current_attempt_unresolved_keys
+from providers.sync.emby._common import normalize as emby_normalize
+from providers.sync.jellyfin._common import normalize as jellyfin_normalize
 from providers.sync.mdblist import _history as mdblist_history
 from providers.sync.mdblist._history import _bucketize, _items_for_not_found
 from providers.sync import _mod_MDBLIST as mdblist_mod
@@ -55,6 +57,55 @@ def test_special_episode_canonical_key_keeps_season_zero() -> None:
     item = {"type": "episode", "show_ids": {"tmdb": "63372"}, "season": 0, "episode": 1}
 
     assert canonical_key(item) == "tmdb:63372#s00e01"
+
+
+@pytest.mark.parametrize("normalize", [jellyfin_normalize, emby_normalize], ids=["jellyfin", "emby"])
+@pytest.mark.parametrize("field", ["ParentIndexNumber", "SeasonIndexNumber", "season", "season_number"])
+@pytest.mark.parametrize("season", [0, "0", 2])
+def test_media_server_episode_normalization_preserves_season(normalize, field, season) -> None:
+    row = {
+        "Type": "Episode",
+        "Name": "Episode",
+        "ParentIndexNumber": None,
+        "SeasonIndexNumber": None,
+        "season": None,
+        "season_number": None,
+        "IndexNumber": 6,
+        field: season,
+    }
+
+    parsed = normalize(row)
+    parsed["show_ids"] = {"tmdb": "958"}
+
+    assert parsed["season"] == int(season)
+    assert parsed["episode"] == 6
+    assert canonical_key(parsed) == f"tmdb:958#s{int(season):02d}e06"
+
+
+@pytest.mark.parametrize("normalize", [jellyfin_normalize, emby_normalize], ids=["jellyfin", "emby"])
+@pytest.mark.parametrize("fallback", [None, 2])
+def test_media_server_special_does_not_use_season_fallback(normalize, fallback) -> None:
+    row = {"Type": "Episode", "ParentIndexNumber": 0, "IndexNumber": 6}
+    if fallback is not None:
+        row.update(SeasonIndexNumber=fallback, season=fallback, season_number=fallback)
+
+    parsed = normalize(row)
+    parsed.update(show_ids={"tmdb": "958"}, watched_at=WATCHED_AT)
+    entry, reason = simkl_history._episode_add_entry(SimpleNamespace(config={}), parsed)
+
+    assert parsed["season"] == 0
+    assert reason is None
+    assert entry is not None
+    assert entry[1:3] == (0, 6)
+
+
+@pytest.mark.parametrize("normalize", [jellyfin_normalize, emby_normalize], ids=["jellyfin", "emby"])
+def test_media_server_missing_season_is_not_a_special(normalize) -> None:
+    parsed = normalize({"Type": "Episode", "IndexNumber": 6})
+    parsed.update(show_ids={"tmdb": "958"}, watched_at=WATCHED_AT)
+
+    assert "season" not in parsed
+    assert simkl_history._episode_add_entry(SimpleNamespace(config={}), parsed) == (None, "missing_season")
 
 
 def test_publicmetadb_special_episode_round_trip_shape() -> None:

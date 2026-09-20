@@ -553,12 +553,13 @@ def normalize(obj: Mapping[str, Any]) -> dict[str, Any]:
         series_title = series_title.strip() or None
         if series_title:
             row["series_title"] = series_title
-        s = (
-            obj.get("ParentIndexNumber")
-            or obj.get("SeasonIndexNumber")
-            or obj.get("season")
-            or obj.get("season_number")
-        )
+        s = obj.get("ParentIndexNumber")
+        if s is None:
+            s = obj.get("SeasonIndexNumber")
+        if s is None:
+            s = obj.get("season")
+        if s is None:
+            s = obj.get("season_number")
         e = (
             obj.get("IndexNumber")
             or obj.get("EpisodeIndexNumber")
