@@ -72,8 +72,15 @@ export default {
     let displayedGraph = null, displayedFinding = null;
     const viewport = bindGraphViewport($(".topology-graph"), $(".topology-zoom"));
     let compactGraph = $(".topology-graph").clientWidth < 460;
+    const applyGraphAspect = () => {
+      const host = $(".topology-graph"), svg = host?.querySelector("svg");
+      const w = Number(svg?.getAttribute("width")), h = Number(svg?.getAttribute("height"));
+      if (!svg || !(w > 0) || !(h > 0)) host?.style.removeProperty("--topology-aspect");
+      else host.style.setProperty("--topology-aspect", `${w} / ${h}`);
+    };
     const drawGraph = () => {
       if (displayedGraph) $(".topology-graph").innerHTML = renderGraph(displayedGraph, displayedFinding, compactGraph);
+      applyGraphAspect();
       viewport.update();
     };
     const resizeObserver = new ResizeObserver(([entry]) => {

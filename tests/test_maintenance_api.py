@@ -597,7 +597,9 @@ def test_crosswatch_tracker_clear_rejects_profile_path_input(tmp_path, monkeypat
 
     assert result["ok"] is True
     assert result["provider_instance"] == "default"
-    assert not (root / "watchlist.json").exists()
+    # Feature state is emptied in place so the tracker cannot restore it from a snapshot.
+    assert (root / "watchlist.json").exists()
+    assert json.loads((root / "watchlist.json").read_text(encoding="utf-8")).get("items") == {}
     assert not (snaps / "20260101T000000Z-watchlist.json").exists()
     assert (profile_root / "watchlist.json").exists()
     assert (outside / "watchlist.json").exists()
