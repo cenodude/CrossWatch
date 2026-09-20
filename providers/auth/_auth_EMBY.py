@@ -9,6 +9,7 @@ from typing import Any, cast
 from urllib.parse import urljoin
 
 from cw_platform.provider_instances import ensure_instance_block, normalize_instance_id
+from cw_platform.value_coercion import coerce_bool
 
 try:
     from _logging import log as _real_log
@@ -151,10 +152,11 @@ class EmbyAuth(AuthProvider):
         headers = _headers(token=None, device_id=dev_id)
         headers["Content-Type"] = "application/x-www-form-urlencoded"
         payload = {"Username": user, "Pw": pw}
+        verify_ssl = coerce_bool(em.get("verify_ssl", False))
 
         log("Emby: authenticating...", level="INFO", module="AUTH")
         try:
-            r = requests.post(url, data=payload, headers=headers, timeout=(5, 10))
+            r = requests.post(url, data=payload, headers=headers, timeout=(5, 10), verify=verify_ssl)
         except rx.ConnectTimeout:
             raise RuntimeError("Server not reachable: timeout")
         except rx.ReadTimeout:
@@ -189,6 +191,7 @@ class EmbyAuth(AuthProvider):
                 urljoin(base, "Users/Me"),
                 headers=_headers(token, dev_id),
                 timeout=10,
+                verify=verify_ssl,
             )
             if me.ok:
                 info = me.json() or {}
