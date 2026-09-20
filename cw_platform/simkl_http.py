@@ -3,7 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-import hashlib
+import hmac
 import json
 import os
 import sys
@@ -14,6 +14,8 @@ from typing import Any, Callable, Iterator, Mapping
 
 import requests
 from requests.adapters import HTTPAdapter
+
+from cw_platform import config_base
 
 _PACE_LOCK = threading.Lock()
 _LOCKS_GUARD = threading.Lock()
@@ -28,7 +30,13 @@ def token_key(token: Any) -> str:
     value = str(token or "").strip()
     if value.lower().startswith("bearer "):
         value = value[7:].strip()
-    return hashlib.sha256(value.encode()).hexdigest()[:16] if value else ""
+    if not value:
+        return ""
+    with config_base._CONFIG_LOCK:
+        key = config_base._load_config_key(create=True)
+    if key is None:
+        raise RuntimeError("SIMKL token fingerprint requires the config encryption key")
+    return hmac.digest(key, b"crosswatch/simkl/token\x00" + value.encode("utf-8"), "sha256").hex()
 
 
 @contextmanager

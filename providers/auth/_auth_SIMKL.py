@@ -142,13 +142,25 @@ def _form_headers() -> dict[str, str]:
     }
 
 
-def _post_form(url: str, data: Mapping[str, Any]) -> tuple[int, dict[str, Any], str]:
+def _oauth_error(data: Mapping[str, Any]) -> str:
+    received = data.get("error")
+    for code in (
+        "invalid_request", "invalid_client", "invalid_grant", "unauthorized_client",
+        "unsupported_grant_type", "invalid_scope", "access_denied", "authorization_pending",
+        "slow_down", "expired_token", "server_error", "temporarily_unavailable",
+    ):
+        if received == code:
+            return code
+    return "oauth_error"
+
+
+def _post_form(url: str, data: Mapping[str, Any]) -> tuple[int, dict[str, Any]]:
     r = paced_request(requests.post, "POST", url, data={k: v for k, v in data.items() if v not in (None, "")}, headers=_form_headers(), timeout=HTTP_TIMEOUT)
     try:
         body = r.json()
     except ValueError:
         body = None
-    return int(r.status_code), body if isinstance(body, dict) else {}, (r.text or "")[:400]
+    return int(r.status_code), body if isinstance(body, dict) else {}
 
 
 def _store_tokens(blk: MutableMapping[str, Any], tok: Mapping[str, Any], client_id: str, method: str) -> None:
@@ -298,7 +310,7 @@ def revoke_block(block: Mapping[str, Any] | None) -> bool:
     if not token or not client_id:
         return False
     try:
-        status, _, _ = _post_form(
+        status, _ = _post_form(
             OAUTH2_REVOKE,
             {"token": token, "client_id": client_id, "client_secret": str(blk.get("client_secret") or "").strip()},
         )
@@ -430,9 +442,9 @@ class SimklAuth(AuthProvider):
             "code_verifier": payload.get("code_verifier", ""),
         }
         log("SIMKL: exchange code", level="INFO", module="AUTH", extra={"instance": inst})
-        status, tok, text = _post_form(OAUTH2_TOKEN, data)
+        status, tok = _post_form(OAUTH2_TOKEN, data)
         if status >= 400 or not str(tok.get("access_token") or "").strip():
-            err = str(tok.get("error") or tok.get("error_description") or text or status)
+            err = _oauth_error(tok)
             log(f"SIMKL: code exchange failed {status}: {err}", level="ERROR", module="AUTH", extra={"instance": inst})
             raise RuntimeError(f"SIMKL code exchange failed: {err}")
 
@@ -466,7 +478,7 @@ class SimklAuth(AuthProvider):
                 return {"ok": False, "status": "missing_refresh", "instance": inst}
 
             try:
-                status, tok, text = _post_form(
+                status, tok = _post_form(
                     OAUTH2_TOKEN,
                     {
                         "grant_type": "refresh_token",
@@ -480,7 +492,7 @@ class SimklAuth(AuthProvider):
                 return {"ok": False, "status": "network_error", "instance": inst}
 
             if status >= 400 or not str(tok.get("access_token") or "").strip():
-                err = str(tok.get("error") or tok.get("error_description") or text or status)
+                err = _oauth_error(tok)
                 log(f"SIMKL: token refresh failed {status}: {err}", level="ERROR", module="AUTH", extra={"instance": inst})
                 if err == "invalid_grant":
                     blk["auth_error"] = "reconnect_required"
@@ -605,11 +617,11 @@ class SimklAuth(AuthProvider):
         blk = ensure_instance_block(cfgd, "simkl", inst)
         cid = app_device_client_id()
         try:
-            status, data, text = _post_form(OAUTH2_DEVICE, {"client_id": cid, "scope": OAUTH2_SCOPE})
+            status, data = _post_form(OAUTH2_DEVICE, {"client_id": cid, "scope": OAUTH2_SCOPE})
         except requests.RequestException as e:
-            return {"ok": False, "error": "network_error", "detail": str(e)}
+            return {"ok": False, "error": "network_error", "detail": type(e).__name__}
         if status >= 400:
-            return {"ok": False, "error": "http_error", "status": status, "body": text}
+            return {"ok": False, "error": "http_error", "status": status, "body": _oauth_error(data)}
 
         device_code = str(data.get("device_code") or "").strip()
         user_code = str(data.get("user_code") or "").strip()
@@ -655,12 +667,12 @@ class SimklAuth(AuthProvider):
 
         cid = app_device_client_id()
         try:
-            status, data, _ = _post_form(
+            status, data = _post_form(
                 OAUTH2_TOKEN,
                 {"grant_type": DEVICE_GRANT, "client_id": cid, "device_code": str(pend.get("device_code") or "")},
             )
         except requests.RequestException as e:
-            return {"ok": False, "status": "network_error", "error": str(e)}
+            return {"ok": False, "status": "network_error", "error": type(e).__name__}
 
         err = str(data.get("error") or "").strip()
         if err == "authorization_pending":

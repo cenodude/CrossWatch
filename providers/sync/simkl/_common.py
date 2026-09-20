@@ -2,7 +2,6 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import sys
@@ -12,7 +11,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
+from cw_platform import config_base
 from cw_platform.id_map import canonical_key, minimal as id_minimal
+from cw_platform.simkl_http import token_key
 
 START_OF_TIME_ISO = "1900-01-01T00:00:00Z"
 DEFAULT_DATE_FROM = START_OF_TIME_ISO
@@ -32,10 +33,7 @@ def account_settings_ttl() -> float:
 
 
 def account_cache_key(token: Any) -> str:
-    seed = str(token or "").strip()
-    if seed.lower().startswith("bearer "):
-        seed = seed[7:].strip()
-    return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16] if seed else ""
+    return token_key(token)
 
 
 def _account_cache_path(key: str) -> Path:
@@ -56,9 +54,16 @@ def account_settings_cached(key: str, max_age: float) -> dict[str, Any] | None:
     except (TypeError, ValueError):
         return None
     data = raw.get("data")
-    if age > max_age or not isinstance(data, Mapping):
+    if age > max_age or not isinstance(data, str):
         return None
-    return dict(data)
+    try:
+        cipher = config_base._get_cipher(create=False)
+        if cipher is None:
+            return None
+        decoded = json.loads(cipher.decrypt(data.encode("ascii")))
+    except Exception:
+        return None
+    return dict(decoded) if isinstance(decoded, Mapping) else None
 
 
 def account_settings_store(key: str, data: Mapping[str, Any] | None) -> None:
@@ -66,9 +71,14 @@ def account_settings_store(key: str, data: Mapping[str, Any] | None) -> None:
         return
     path = _account_cache_path(key)
     try:
+        with config_base._CONFIG_LOCK:
+            cipher = config_base._get_cipher(create=True)
+        if cipher is None:
+            return
+        encrypted = cipher.encrypt(json.dumps(dict(data)).encode("utf-8")).decode("ascii")
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(f"{path.name}.tmp")
-        tmp.write_text(json.dumps({"ts": time.time(), "data": dict(data)}), "utf-8")
+        tmp.write_text(json.dumps({"ts": time.time(), "data": encrypted}), "utf-8")
         os.replace(tmp, path)
     except Exception:
         pass
@@ -94,7 +104,7 @@ QUOTA_LOW_WATERMARK = 50
 def quota_account_key(block: Mapping[str, Any] | None) -> str:
     blk = block if isinstance(block, Mapping) else {}
     seed = str(blk.get("access_token") or blk.get("refresh_token") or "").strip()
-    return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16] if seed else ""
+    return token_key(seed)
 
 
 def _next_eastern_midnight(now: float) -> float:
