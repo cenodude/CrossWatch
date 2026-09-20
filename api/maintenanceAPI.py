@@ -230,6 +230,7 @@ def _is_tracker_feature_state(path: Path) -> bool:
 
 def _empty_tracker_state(path: Path) -> bool:
     try:
+        path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(f"{path.name}.tmp")
         tmp.write_text(json.dumps({"ts": int(time.time()), "items": {}}), "utf-8")
         os.replace(tmp, path)
@@ -1373,6 +1374,11 @@ def crosswatch_tracker_clear(
                     emptied_state.append(p.name)
             elif _safe_remove_path(p):
                 removed_state.append(p.name)
+
+        for stem in _TRACKER_FEATURE_STEMS:
+            path = root / f"{stem}.json"
+            if not path.exists() and not path.is_symlink() and _empty_tracker_state(path):
+                emptied_state.append(path.name)
 
     if clear_snapshots:
         for p in snapshot_paths:
