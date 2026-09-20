@@ -1221,7 +1221,10 @@ def _post_simkl_delete(
     hdr: dict[str, str],
     payload: dict[str, Any],
 ) -> dict[str, Any]:
-    r = requests.post(url, headers=hdr, json=payload, timeout=45)
+    from cw_platform.simkl_http import paced_request
+    from providers.sync.simkl._common import simkl_api_params_from_headers
+
+    r = paced_request(requests.post, "POST", url, headers=hdr, params=simkl_api_params_from_headers(hdr), json=payload, timeout=45)
     if not r.ok:
         raise RuntimeError(
             f"SIMKL delete {r.status_code} {getattr(r, 'text', '')}"

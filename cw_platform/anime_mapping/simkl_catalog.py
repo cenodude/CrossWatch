@@ -128,7 +128,9 @@ def _request(path: str, *, instance_id: Any = None, **params: Any) -> Any:
     query: dict[str, Any] = {"client_id": key, "app-name": "crosswatch", "app-version": version}
     query.update({k: v for k, v in params.items() if v is not None})
     try:
-        resp = requests.get(
+        from cw_platform.simkl_http import paced_request
+
+        resp = paced_request(requests.get, "GET",
             f"{BASE}{path}",
             headers={"Accept": "application/json", "User-Agent": f"crosswatch/{version}"},
             params=query,

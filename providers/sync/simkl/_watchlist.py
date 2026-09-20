@@ -157,10 +157,10 @@ def _shadow_age_seconds() -> float:
 
 def _shadow_ttl_seconds() -> float:
     try:
-        value = os.getenv("CW_SIMKL_SHADOW_TTL") or "300"
+        value = os.getenv("CW_SIMKL_SHADOW_TTL") or "21600"
         return float(value)
     except Exception:
-        return 300.0
+        return 21600.0
 
 
 def _history_cover_load() -> dict[str, dict[str, Any]]:

@@ -47,6 +47,12 @@ class Response:
 
 @pytest.fixture
 def api(monkeypatch, tmp_path):
+    from contextlib import nullcontext
+    from cw_platform import simkl_http
+    from providers.sync.simkl import _common
+
+    monkeypatch.setattr(simkl_http, "request_gate", lambda *args, **kwargs: nullcontext())
+    monkeypatch.setattr(_common, "STATE_DIR", tmp_path / "simkl-state")
     monkeypatch.setenv("CROSSWATCH_DB", str(tmp_path / "test.sqlite3"))
     rewatches._PLANS.clear()
     state = {"plan": "pro", "status": "completed", "http": 201, "calls": [], "records": [], "removed": [], "logs": [], "original_log": sink._log}
@@ -78,6 +84,27 @@ def api(monkeypatch, tmp_path):
 
 def scrobbles(api):
     return [(url, kw) for url, kw in api["calls"] if "/scrobble/" in url]
+
+
+@pytest.mark.parametrize("rewatch_mode", [False, True])
+def test_unknown_item_stops_after_one_alternate_for_six_hours(api, monkeypatch, rewatch_mode):
+    cfg = config(rewatch_mode)
+    api["http"] = 404
+    monkeypatch.setattr(sink, "_bodies", lambda ev, p: [
+        {"progress": p, "movie": {"ids": {"simkl": str(number)}}}
+        for number in (1, 2, 3)
+    ])
+    instance = sink.SimklSink()
+    instance.send(event(), cfg)
+    assert len(scrobbles(api)) == 2
+    count = len(api["calls"])
+    result = instance.send(event(session="second-session"), cfg)
+    assert result["reason"] == "unknown_on_simkl"
+    assert len(api["calls"]) == count
+    now = sink.time.time()
+    monkeypatch.setattr(sink.time, "time", lambda: now + 6 * 3600 + 1)
+    instance.send(event(session="third-session"), cfg)
+    assert len(scrobbles(api)) == 4
 
 
 def test_default_off_has_no_plan_request_or_rewatch_flag(api):
@@ -228,13 +255,16 @@ def test_atomic_claim_across_workers_and_expiry(api, monkeypatch):
     assert rewatches.claim("test-key") == "new"
 
 
-def test_plan_cache_is_account_scoped_and_refreshes(api, monkeypatch):
+def test_plan_cache_is_account_scoped_and_waits_for_sync(api, monkeypatch):
     assert rewatches.account(config(), sink._post)[0] == "pro"
     api["plan"] = "free"
     assert rewatches.account(config(token="test-account-b"), sink._post)[0] == "free"
     assert rewatches.account(config(), sink._post)[0] == "pro"
     now = rewatches.time.time()
     monkeypatch.setattr(rewatches.time, "time", lambda: now + 301)
+    assert rewatches.account(config(), sink._post)[0] == "pro"
+    rewatches.account_settings_store(rewatches.account_cache_key("test-account-a"), {"account": {"type": "free"}})
+    monkeypatch.setattr(rewatches.time, "time", lambda: now + 602)
     assert rewatches.account(config(), sink._post)[0] == "free"
 
 

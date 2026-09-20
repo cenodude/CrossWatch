@@ -9,6 +9,7 @@ from typing import Any, Callable
 import requests
 
 from cw_platform.local_db.db import get_conn
+from providers.sync.simkl._common import account_cache_key, account_settings_cached, account_settings_store
 
 _LOCK = threading.RLock()
 _PLANS: dict[str, tuple[float, str, str, str, int]] = {}
@@ -41,10 +42,16 @@ def account(cfg: dict[str, Any], post: Callable[..., Any], diagnostic: Callable[
         status = 0
         reason = "verified"
         try:
-            response = post("/users/settings", {}, cfg)
-            status = response.status_code
-            response.raise_for_status()
-            settings = response.json()
+            shared_key = account_cache_key((cfg.get("simkl") or {}).get("access_token"))
+            settings = account_settings_cached(shared_key, float("inf"))
+            if settings is None:
+                response = post("/users/settings", {}, cfg)
+                status = response.status_code
+                response.raise_for_status()
+                settings = response.json()
+                account_settings_store(shared_key, settings)
+            else:
+                status = 200
             plan = str(settings["account"]["type"]).lower()
             identity = str(settings["account"].get("id") or key)
             if plan not in {"free", "pro", "vip"}:
