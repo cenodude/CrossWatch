@@ -4,6 +4,7 @@
 from __future__ import annotations
 from collections.abc import Sequence, Mapping
 from typing import Any, Callable, cast
+from ._scope import provider_call
 from . import _unresolved as _unresolved_mod
 from ..run_control import SyncCancelled, cancel_requested
 record_unresolved = cast(Callable[..., dict[str, Any]], getattr(_unresolved_mod, "record_unresolved"))
@@ -185,6 +186,7 @@ def _normalize(
     dst: str,
     feature: str,
     emit,
+    instance: str | None = None,
 ) -> dict[str, Any]:
     res = dict(res or {})
     attempted = len(items)
@@ -271,6 +273,7 @@ def _normalize(
         emit(
             "apply:unresolved",
             provider=dst,
+            destination_instance=instance,
             feature=feature,
             count=_total,
             items=unresolved_details,
@@ -332,9 +335,9 @@ def _normalize(
                 to_store.append(d)
 
             if to_store:
-                record_unresolved(dst, feature, to_store, hint=f"{tag}:provider_unresolved")
+                record_unresolved(dst, feature, to_store, hint=f"{tag}:provider_unresolved", instance=instance)
             elif int(confirmed or 0) == 0 and items:
-                record_unresolved(dst, feature, [dict(it) for it in items], hint=f"{tag}:fallback_unresolved")
+                record_unresolved(dst, feature, [dict(it) for it in items], hint=f"{tag}:fallback_unresolved", instance=instance)
         except Exception:
             pass
 
@@ -380,7 +383,7 @@ def _normalize(
                     dst,
                     feature,
                     [dict(it) for it in leftover],
-                    hint=f"{tag}:unaccounted",
+                    hint=f"{tag}:unaccounted", instance=instance,
                 )
             except Exception:
                 pass
@@ -435,6 +438,7 @@ def _apply_chunked(
     dbg,
     chunk_size: int,
     chunk_pause_ms: int,
+    instance: str | None = None,
 ) -> dict[str, Any]:
     total = len(items)
     if total == 0:
@@ -449,7 +453,7 @@ def _apply_chunked(
         except SyncCancelled:
             emit(f"{tag}:cancelled", dst=dst, feature=feature, done=0, total=total)
             return {"ok": True, "attempted": 0, "confirmed": 0, "skipped": 0, "unresolved": 0, "errors": 0, "count": 0, "cancelled": True}
-        return _normalize(raw, items, tag, dst=dst, feature=feature, emit=emit)
+        return _normalize(raw, items, tag, dst=dst, feature=feature, emit=emit, instance=instance)
 
     done = 0
     agg: dict[str, Any] = {
@@ -479,7 +483,7 @@ def _apply_chunked(
             agg["cancelled"] = True
             emit(f"{tag}:cancelled", dst=dst, feature=feature, done=done, total=total)
             break
-        res = _normalize(raw, chunk, tag, dst=dst, feature=feature, emit=emit)
+        res = _normalize(raw, chunk, tag, dst=dst, feature=feature, emit=emit, instance=instance)
         agg["ok"] = agg["ok"] and res["ok"]
         agg["attempted"] += res["attempted"]
         agg["confirmed"] += res["confirmed"]
@@ -546,9 +550,10 @@ def apply_add(
     res = _apply_chunked(
         "apply:add",
         dst=dst_name,
+        instance=(cfg or {}).get("_cw_provider_instance"),
         feature=feature,
         items=items,
-        call=lambda ch: dst_ops.add(cfg, ch, feature=feature, dry_run=dry_run),
+        call=lambda ch: provider_call(dst_ops.add, cfg, ch, feature=feature, dry_run=dry_run),
         emit=emit,
         dbg=dbg,
         chunk_size=chunk_size,
@@ -559,6 +564,7 @@ def apply_add(
     _conf = int(res.get("confirmed", 0))
     payload: dict[str, Any] = {
         "dst": dst_name,
+        "destination_instance": (cfg or {}).get("_cw_provider_instance"),
         "feature": feature,
         "count": _conf,
         "attempted": int(res.get("attempted", 0)),
@@ -601,9 +607,10 @@ def apply_update(
     res = _apply_chunked(
         "apply:update",
         dst=dst_name,
+        instance=(cfg or {}).get("_cw_provider_instance"),
         feature=feature,
         items=items,
-        call=lambda ch: dst_ops.add(cfg, ch, feature=feature, dry_run=dry_run),
+        call=lambda ch: provider_call(dst_ops.add, cfg, ch, feature=feature, dry_run=dry_run),
         emit=emit,
         dbg=dbg,
         chunk_size=chunk_size,
@@ -614,6 +621,7 @@ def apply_update(
     _conf = int(res.get("confirmed", 0))
     payload: dict[str, Any] = {
         "dst": dst_name,
+        "destination_instance": (cfg or {}).get("_cw_provider_instance"),
         "feature": feature,
         "count": _conf,
         "attempted": int(res.get("attempted", 0)),
@@ -656,9 +664,10 @@ def apply_remove(
     res = _apply_chunked(
         "apply:remove",
         dst=dst_name,
+        instance=(cfg or {}).get("_cw_provider_instance"),
         feature=feature,
         items=items,
-        call=lambda ch: dst_ops.remove(cfg, ch, feature=feature, dry_run=dry_run),
+        call=lambda ch: provider_call(dst_ops.remove, cfg, ch, feature=feature, dry_run=dry_run),
         emit=emit,
         dbg=dbg,
         chunk_size=chunk_size,
@@ -669,6 +678,7 @@ def apply_remove(
     _conf = int(res.get("confirmed", 0))
     payload: dict[str, Any] = {
         "dst": dst_name,
+        "destination_instance": (cfg or {}).get("_cw_provider_instance"),
         "feature": feature,
         "count": _conf,
         "attempted": int(res.get("attempted", 0)),

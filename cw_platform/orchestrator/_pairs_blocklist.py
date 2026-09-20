@@ -16,6 +16,7 @@ except Exception:  # pragma: no cover
         feature: str | None = None,
         *,
         cross_features: bool = True,
+        instance: str | None = None,
     ) -> set[str]:
         return set()
 
@@ -26,6 +27,7 @@ except Exception:  # pragma: no cover
         dst: str,
         feature: str,
         pair: str | None = None,
+        instance: str | None = None,
     ) -> set[str]:
         return set()
 
@@ -36,6 +38,7 @@ def _breakdown(
     *,
     pair_key: str | None,
     cross_feature_unresolved: bool,
+    instance: str | None = None,
 ) -> tuple[set[str], set[str], set[str], set[str]]:
     global_tomb: set[str] = set()
 
@@ -46,12 +49,12 @@ def _breakdown(
         pair_tomb = set()
 
     try:
-        unresolved = set(load_unresolved_keys(dst, feature, cross_features=cross_feature_unresolved) or [])
+        unresolved = set(load_unresolved_keys(dst, feature, cross_features=cross_feature_unresolved, instance=instance) or [])
     except Exception:
         unresolved = set()
 
     try:
-        blackbox = set(load_blackbox_keys(dst, feature, pair=pair_key) or [])
+        blackbox = set(load_blackbox_keys(dst, feature, pair=pair_key, instance=instance) or [])
     except Exception:
         blackbox = set()
 
@@ -64,11 +67,12 @@ def blocked_keys_for_destination(
     *,
     pair_key: str | None = None,
     cross_feature_unresolved: bool = True,
+    instance: str | None = None,
 ) -> set[str]:
     g_tomb, p_tomb, _unr, bb = _breakdown(
         state_store, dst, feature,
         pair_key=pair_key,
-        cross_feature_unresolved=cross_feature_unresolved,
+        cross_feature_unresolved=cross_feature_unresolved, instance=instance,
     )
     return g_tomb | p_tomb | bb
 
@@ -188,6 +192,7 @@ def apply_blocklist(
     now: int | None = None,
     observed_tombstones: Mapping[str, int] | None = None,
     emit=None,
+    instance: str | None = None,
 ) -> list[dict[str, Any]]:
     global_tomb: set[str] = set()
 
@@ -202,12 +207,12 @@ def apply_blocklist(
         pair_tomb = set()
 
     try:
-        unresolved = set(load_unresolved_keys(dst, feature, cross_features=cross_feature_unresolved) or [])
+        unresolved = set(load_unresolved_keys(dst, feature, cross_features=cross_feature_unresolved, instance=instance) or [])
     except Exception:
         unresolved = set()
 
     try:
-        blackbox = set(load_blackbox_keys(dst, feature, pair=pair_key) or [])
+        blackbox = set(load_blackbox_keys(dst, feature, pair=pair_key, instance=instance) or [])
     except Exception:
         blackbox = set()
 
@@ -252,6 +257,7 @@ def apply_blocklist(
             emit(
                 "debug",
                 msg="blocked.counts",
+                destination_instance=instance,
                 feature=feature,
                 dst=dst,
                 pair=pair_key,

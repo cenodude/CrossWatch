@@ -16,19 +16,19 @@ export function createLibraryController({
   let pairServerCfgAt = 0;
   const PAIR_CFG_TTL_MS = 30000;
 
-  function getFeatureLibraries(state, feature, provider) {
+  function getFeatureLibraries(state, feature, provider, instance = null) {
     const f = getOpts(state, feature);
     const libs = f.libraries && typeof f.libraries === "object" ? f.libraries : {};
     if (!f.libraries) f.libraries = libs;
-    const cur = libs[provider];
+    const cur = libs[instance === null ? provider : `${provider}#${instance}`] ?? libs[provider];
     const arr = Array.isArray(cur) ? cur.map((x) => String(x)) : [];
     return { config: f, libraries: libs, selected: arr };
   }
 
-  function setFeatureLibraries(state, feature, provider, values) {
+  function setFeatureLibraries(state, feature, provider, values, instance = null) {
     const f = getOpts(state, feature);
     const libs = f.libraries && typeof f.libraries === "object" ? f.libraries : {};
-    libs[provider] = Array.isArray(values) ? values.map((x) => String(x)) : [];
+    libs[instance === null ? provider : `${provider}#${instance}`] = Array.isArray(values) ? values.map((x) => String(x)) : [];
     f.libraries = libs;
     state.options[feature] = f;
     state.visited.add(feature);
@@ -56,11 +56,11 @@ export function createLibraryController({
     }
   }
 
-  function fetchServerLibraries(state, kind) {
+  function fetchServerLibraries(state, kind, instance = null) {
     const prov = providerKeyFor(kind);
     if (!prov) return Promise.resolve([]);
     const url = `/api/${prov}/libraries`;
-    const inst = resolveInstance(state, kind);
+    const inst = instance ?? resolveInstance(state, kind);
     const qs = `?cb=${Date.now()}&instance=${encodeURIComponent(inst)}`;
     return fetch(url + qs, { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
@@ -96,14 +96,14 @@ export function createLibraryController({
     }
   }
 
-  function fetchPairLibraries(state, kind, feature) {
-    const inst = resolveInstance(state, kind);
-    return Promise.all([fetchServerLibraries(state, kind), fetchPairServerConfig()]).then(([libs, cfg]) =>
+  function fetchPairLibraries(state, kind, feature, instance = null) {
+    const inst = instance ?? resolveInstance(state, kind);
+    return Promise.all([fetchServerLibraries(state, kind, instance), fetchPairServerConfig()]).then(([libs, cfg]) =>
       filterLibsByServerConfig(libs, kind, feature, cfg, inst)
     );
   }
 
-  function renderPairLibChips(state, kind, feature, libs) {
+  function renderPairLibChips(state, kind, feature, groups) {
     let hostId = "";
     if (kind === "PLEX" && feature === "history") hostId = "plx-hist-libs";
     else if (kind === "PLEX" && feature === "ratings") hostId = "plx-rate-libs";
@@ -123,35 +123,59 @@ export function createLibraryController({
     else if (kind === "KODI" && feature === "collection") hostId = "kodi-coll-libs";
     const host = ID(hostId);
     if (!host) return;
-    const info = getFeatureLibraries(state, feature, kind);
-    const sel = new Set(info.selected);
-    const list = Array.isArray(libs) && libs.length ? libs : info.selected.map((id) => ({ key: id, title: id }));
     host.innerHTML = "";
-    list.forEach((lib) => {
-      const key = String(lib.key);
-      const title = lib.title || key;
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "chip" + (sel.has(key) ? " on" : "");
-      btn.textContent = title;
-      btn.dataset.key = key;
-      btn.addEventListener("click", () => {
-        const cur = getFeatureLibraries(state, feature, kind);
-        const next = new Set(cur.selected);
-        if (next.has(key)) next.delete(key);
-        else next.add(key);
-        setFeatureLibraries(state, feature, kind, Array.from(next));
-        renderPairLibChips(state, kind, feature, list);
-        onLibrariesChanged?.(state, kind, feature);
-      });
-      host.appendChild(btn);
-    });
-    if (!list.length) {
-      const empty = document.createElement("div");
-      empty.className = "muted";
-      empty.textContent = "No libraries";
-      host.appendChild(empty);
+    for (const {instance, label, libraries} of groups) {
+      const group = document.createElement("div");
+      if (label) {
+        const heading = document.createElement("div");
+        heading.className = "muted";
+        heading.textContent = label;
+        group.appendChild(heading);
+      }
+      const chips = document.createElement("div");
+      chips.className = "chip-row";
+      group.appendChild(chips);
+      host.appendChild(group);
+      const info = getFeatureLibraries(state, feature, kind, instance);
+      const selected = new Set(info.selected);
+      const list = libraries.length ? libraries : info.selected.map((id) => ({key: id, title: id}));
+      for (const lib of list) {
+        const key = String(lib.key);
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "chip" + (selected.has(key) ? " on" : "");
+        button.textContent = lib.title || key;
+        button.dataset.key = key;
+        button.addEventListener("click", () => {
+          const current = getFeatureLibraries(state, feature, kind, instance);
+          const next = new Set(current.selected);
+          if (next.has(key)) next.delete(key);
+          else next.add(key);
+          setFeatureLibraries(state, feature, kind, Array.from(next), instance);
+          button.classList.toggle("on", next.has(key));
+          onLibrariesChanged?.(state, kind, feature);
+        });
+        chips.appendChild(button);
+      }
+      if (!list.length) {
+        const empty = document.createElement("div");
+        empty.className = "muted";
+        empty.textContent = "No libraries";
+        chips.appendChild(empty);
+      }
     }
+  }
+
+  function libraryEndpoints(state, kind) {
+    if (String(state.src).toUpperCase() !== kind || String(state.dst).toUpperCase() !== kind) {
+      return [{instance: null, label: ""}];
+    }
+    const rows = state.instanceMap?.[kind] || [];
+    return [["Source", state.src_instance], ["Target", state.dst_instance]].filter(([, id]) => id).map(([side, instance]) => {
+      const row = rows.find((entry) => entry?.id === instance);
+      const label = row?.display_label || row?.label || (instance === "default" ? "Default" : instance);
+      return {instance, label: `${side}: ${label}`};
+    });
   }
 
   function wireProviderLibraries(state, kind) {
@@ -161,25 +185,23 @@ export function createLibraryController({
       kind === "EMBY" ? "em-libs-load" :
       kind === "KODI" ? "kodi-libs-load" : "";
     const btn = ID(btnId);
+    if (!btn) return;
     const load = () => {
       if (btn) {
         btn.disabled = true;
         btn.textContent = "Loading...";
       }
-      Promise.all([
-        fetchPairLibraries(state, kind, "history").then((libs) => {
-          renderPairLibChips(state, kind, "history", libs);
-        }),
-        fetchPairLibraries(state, kind, "ratings").then((libs) => {
-          renderPairLibChips(state, kind, "ratings", libs);
-        }),
-        fetchPairLibraries(state, kind, "progress").then((libs) => {
-          renderPairLibChips(state, kind, "progress", libs);
-        }),
-        fetchPairLibraries(state, kind, "collection").then((libs) => {
-          renderPairLibChips(state, kind, "collection", libs);
-        }),
-      ]).finally(() => {
+      const endpoints = libraryEndpoints(state, kind);
+      const selection = `${state.src}:${state.src_instance}:${state.dst}:${state.dst_instance}`;
+      Promise.all(["history", "ratings", "progress", "collection"].map(async (feature) => {
+        const groups = await Promise.all(endpoints.map(async (endpoint) => ({
+          ...endpoint,
+          libraries: await fetchPairLibraries(state, kind, feature, endpoint.instance),
+        })));
+        if (selection === `${state.src}:${state.src_instance}:${state.dst}:${state.dst_instance}`) {
+          renderPairLibChips(state, kind, feature, groups);
+        }
+      })).finally(() => {
         if (btn) {
           btn.disabled = false;
           btn.textContent = "Load libraries";
@@ -191,15 +213,14 @@ export function createLibraryController({
       btn.__wired = true;
       btn.addEventListener("click", load);
     }
-    const autoKey = `${kind}:${resolveInstance(state, kind)}`;
-    if (!state._libsAutoload[autoKey]) {
-      state._libsAutoload[autoKey] = true;
+    const autoKey = `${kind}:${state.src_instance}:${state.dst_instance}`;
+    if (btn?.dataset.libraryKey !== autoKey) {
+      if (btn) btn.dataset.libraryKey = autoKey;
       load();
     }
   }
 
   function initPairLibraryUI(state) {
-    if (!state._libsAutoload) state._libsAutoload = {};
     const hasPL = hasPlex(state);
     const hasJF = hasJelly(state);
     const hasEM = hasEmby(state);

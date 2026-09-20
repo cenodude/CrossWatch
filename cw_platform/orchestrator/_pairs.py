@@ -10,6 +10,7 @@ import os
 
 from ._pairs_utils import (
     inject_ctx_into_provider,
+    pair_feature_libraries,
     health_status,
     health_feature_ok,
     supports_feature,
@@ -48,7 +49,6 @@ def _config_with_pair_feature_options(
     feature: str,
 ) -> dict[str, Any]:
     feature_key = str(feature or "").strip().lower()
-    lib_cfg = fcfg.get("libraries")
     overrides: dict[str, list[str]] = {}
     provider_keys: list[str] = []
     for provider in providers:
@@ -58,12 +58,9 @@ def _config_with_pair_feature_options(
         provider_key = name.lower()
         if provider_key not in provider_keys:
             provider_keys.append(provider_key)
-        if isinstance(lib_cfg, Mapping):
-            raw = lib_cfg.get(name) or lib_cfg.get(provider_key)
-            if isinstance(raw, (list, tuple)):
-                values = [str(value).strip() for value in raw if str(value).strip()]
-                if values:
-                    overrides[provider_key] = values
+        values = pair_feature_libraries(fcfg, name, cfg.get("_cw_provider_instance"))
+        if values:
+            overrides[provider_key] = values
 
     has_replay = feature_key == "progress" and "replay_enabled" in fcfg
     has_tolerance = feature_key == "progress" and "timestamp_tolerance_seconds" in fcfg
@@ -505,6 +502,7 @@ def run_pairs(ctx) -> dict[str, Any]:
                     endpoint_blocks = {}
                     for instance in (src_inst, dst_inst):
                         endpoint_cfg = build_provider_config_view(cfg, src, instance)
+                        endpoint_cfg["_cw_provider_instance"] = instance
                         config_key = _config_key_for(cfg, src)
                         block = endpoint_cfg.setdefault(config_key, {})
                         override = next((value for key, value in pair_prov.items() if str(key).strip().upper() == src), {}) if isinstance(pair_prov, Mapping) else {}

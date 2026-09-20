@@ -12,6 +12,8 @@ import time
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from cw_platform.provider_instances import normalize_instance_id
+
 from .db import get_conn
 from .run_scope import pair_id_from_scope, record_run_pairs, scope_key as _scope_key
 
@@ -223,6 +225,16 @@ class RunRecorder:
             return self._a, self._b
         return self._src, self._dst
 
+    def _destination_route(self, provider: Any, instance: Any = None) -> tuple[str, str, str, str]:
+        src, dst = self._ctx_providers()
+        destination = _norm_prov(provider) or dst
+        reverse = self._two and destination == src and (
+            src != dst or instance is not None and normalize_instance_id(instance) == normalize_instance_id(self._si)
+        )
+        if reverse:
+            return dst, self._di, destination, self._si
+        return src, self._si, destination, self._di
+
     def _add(self, **kw: Any) -> None:
         kw.setdefault("run_id", self._run_id)
         kw.setdefault("feature", self._feature or None)
@@ -358,8 +370,7 @@ class RunRecorder:
             return
 
         if event == "apply:unresolved":
-            dst = _norm_prov(f.get("provider")) or self._dst
-            src = self._src if self._src and self._src != dst else self._a
+            src, si, dst, di = self._destination_route(f.get("provider"), f.get("destination_instance"))
             for it in (f.get("items") or []):
                 if not isinstance(it, Mapping):
                     continue
@@ -369,8 +380,8 @@ class RunRecorder:
                     severity="warn",
                     source_provider=src or None,
                     destination_provider=dst or None,
-                    source_instance=self._si or None,
-                    destination_instance=self._di or None,
+                    source_instance=si or None,
+                    destination_instance=di or None,
                     reason_code=str(it.get("reason") or ""),
                     reason=str(it.get("reason") or ""),
                     **_item_fields(it),
@@ -383,16 +394,13 @@ class RunRecorder:
 
         if event.endswith("apply:add:done") or event.endswith("apply:remove:done") or event.endswith("apply:update:done"):
             op = "add" if "add" in event else ("remove" if "remove" in event else "update")
-            dst = _norm_prov(f.get("dst")) or self._dst
-            src, ctx_dst = self._ctx_providers()
-            if not dst:
-                dst = ctx_dst
-            src_eff = src if src and src != dst else (self._b if dst == self._a else self._a)
+            src, si, dst, di = self._destination_route(f.get("dst"), f.get("destination_instance"))
+            pair_src, pair_dst = self._ctx_providers()
             attempted = int(f.get("attempted") or 0)
             errors = int(f.get("errors") or 0)
             self._bump_pair_stats(
-                src=src_eff or "",
-                dst=dst or "",
+                src=pair_src or "",
+                dst=pair_dst or "",
                 added=int(f.get("added") or 0),
                 removed=int(f.get("removed") or 0),
                 updated=int(f.get("updated") or 0),
@@ -402,10 +410,10 @@ class RunRecorder:
                 event_type="write_attempted",
                 operation=op,
                 severity="warn" if errors else "info",
-                source_provider=src_eff or None,
+                source_provider=src or None,
                 destination_provider=dst or None,
-                source_instance=self._si or None,
-                destination_instance=self._di or None,
+                source_instance=si or None,
+                destination_instance=di or None,
                 reason_code="errors" if errors else None,
                 detail={k: f.get(k) for k in ("attempted", "count", "added", "removed", "updated", "skipped", "unresolved", "errors") if k in f},
             )
@@ -414,18 +422,17 @@ class RunRecorder:
                     event_type="write_failed",
                     operation=op,
                     severity="error",
-                    source_provider=src_eff or None,
+                    source_provider=src or None,
                     destination_provider=dst or None,
-                    source_instance=self._si or None,
-                    destination_instance=self._di or None,
+                    source_instance=si or None,
+                    destination_instance=di or None,
                     reason_code="errors",
                 )
             self._flush()
             return
 
         if event == "archive:item_failures":
-            dst = _norm_prov(f.get("provider")) or self._dst
-            src = self._src if self._src and self._src != dst else self._a
+            src, si, dst, di = self._destination_route(f.get("provider"), f.get("destination_instance"))
             op = str(f.get("op") or "add")
             for row in (f.get("items") or []):
                 if not isinstance(row, Mapping):
@@ -438,7 +445,7 @@ class RunRecorder:
                 reason = str(row.get("reason") or "apply:add:failed")
                 base = dict(
                     source_provider=src or None, destination_provider=dst or None,
-                    source_instance=self._si or None, destination_instance=self._di or None,
+                    source_instance=si or None, destination_instance=di or None,
                     item_key=k, **_item_fields(it),
                 )
                 self._add(event_type="write_failed", operation=op, severity="error",
@@ -452,8 +459,7 @@ class RunRecorder:
             return
 
         if event == "archive:item_resolutions":
-            dst = _norm_prov(f.get("provider")) or self._dst
-            src = self._src if self._src and self._src != dst else self._a
+            src, si, dst, di = self._destination_route(f.get("provider"), f.get("destination_instance"))
             op = str(f.get("op") or "add")
             for row in (f.get("items") or []):
                 if not isinstance(row, Mapping):
@@ -466,7 +472,7 @@ class RunRecorder:
                 self._add(
                     event_type="unresolved_cleared", operation=op, severity="info",
                     source_provider=src or None, destination_provider=dst or None,
-                    source_instance=self._si or None, destination_instance=self._di or None,
+                    source_instance=si or None, destination_instance=di or None,
                     reason_code="unresolved_cleared", reason="unresolved_cleared",
                     item_key=k, **_item_fields(it),
                 )
@@ -475,16 +481,18 @@ class RunRecorder:
 
         if event == "debug" and str(f.get("msg") or "") == "blocked.counts":
             bb = int(f.get("blocked_blackbox") or 0)
-            dst_p = _norm_prov(f.get("dst")) or None
+            src, si, dst, di = self._destination_route(f.get("dst"), f.get("destination_instance"))
+            dst_p = dst or None
             pair_k = _norm_pair_key(f.get("pair"), self._pair)
             rows = f.get("blackbox_items") or []
             if bb > 0:
                 self._add(
                     event_type="blackbox_blocked",
                     severity="warn",
+                    source_provider=src or None,
                     destination_provider=dst_p,
-                    source_instance=self._si or None,
-                    destination_instance=self._di or None,
+                    source_instance=si or None,
+                    destination_instance=di or None,
                     pair_key=pair_k,
                     reason_code="blackbox",
                     detail={"blocked": bb},
@@ -499,8 +507,8 @@ class RunRecorder:
                     feature=f.get("feature") or self._feature,
                     pair_key=pair_k,
                     dst=dst_p,
-                    src_instance=self._si,
-                    dst_instance=self._di,
+                    src_instance=si,
+                    dst_instance=di,
                     item_key=k,
                 ):
                     continue
@@ -508,8 +516,9 @@ class RunRecorder:
                 it: Mapping[str, Any] = raw_it if isinstance(raw_it, Mapping) else {}
                 self._add(
                     event_type="blackbox_blocked", operation="add", severity="warn",
-                    destination_provider=dst_p, source_instance=self._si or None,
-                    destination_instance=self._di or None, pair_key=pair_k, item_key=k,
+                    source_provider=src or None,
+                    destination_provider=dst_p, source_instance=si or None,
+                    destination_instance=di or None, pair_key=pair_k, item_key=k,
                     reason_code="blackbox", reason="blackbox", **_item_fields(it),
                 )
             if bb > 0 or rows:

@@ -2,6 +2,7 @@
 # snapshot management for orchestrator.
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
+from ._scope import provider_call
 
 from collections.abc import Mapping
 from typing import Any, Callable
@@ -87,12 +88,12 @@ def refresh_destination_after_apply(
     refresher = getattr(ops, "snapshot_refresh", None)
     if callable(refresher):
         try:
-            idx_raw = refresher(config, feature=feature)
+            idx_raw = provider_call(refresher, config, feature=feature)
         except Exception:
             idx_raw = None
     if idx_raw is None:
         try:
-            idx_raw = ops.build_index(config, feature=feature)  # type: ignore[call-arg]
+            idx_raw = provider_call(ops.build_index, config, feature=feature)  # type: ignore[call-arg]
         except Exception:
             return None
     canon = canonicalize_index(idx_raw, feature=feature)
@@ -364,7 +365,7 @@ def module_checkpoint(ops: InventoryOps, config: Mapping[str, Any], feature: str
         return None
 
     try:
-        raw = acts_fn(config)
+        raw = provider_call(acts_fn, config)
     except Exception:
         return None
 
@@ -670,7 +671,7 @@ def prepare_source_snapshot(
     if not callable(hook) or not items:
         return False
     try:
-        hook(config, feature=feature, items=items)
+        provider_call(hook, config, feature=feature, items=items)
     except Exception as e:
         if dbg is not None:
             dbg("snapshot.prepare_failed", feature=feature, error=str(e))
@@ -748,7 +749,7 @@ def build_snapshots_for_feature(
                     continue
 
         try:
-            idx_raw = ops.build_index(config, feature=feature)  # type: ignore[call-arg]
+            idx_raw = provider_call(ops.build_index, config, feature=feature)  # type: ignore[call-arg]
         except Exception as e:
             emit_info(
                 f"[!] snapshot.failed provider={name} feature={feature} error={e}"
