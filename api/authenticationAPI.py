@@ -499,9 +499,13 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             pass
         while time.time() < deadline:
             cfg = load_config()
-            token = str((ensure_instance_block(cfg, "plex", inst).get("account_token") or "")).strip()
-            if token:
+            block = ensure_instance_block(cfg, "plex", inst)
+            token = str(block.get("account_token") or "").strip()
+            pending = block.get("_pending_pin") or {}
+            if token and not pending:
                 return token
+            if pending.get("id") != pin_id:
+                return None
             try:
                 if _PLEX_PROVIDER:
                     _PLEX_PROVIDER.finish(cfg, instance_id=inst)
@@ -530,6 +534,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                     plex_cfg = ensure_instance_block(cfg, "plex", _inst)
 
                     plex_cfg["account_token"] = token
+                    plex_cfg.pop("_pending_pin", None)
                     existing_url = (plex_cfg.get("server_url") or "").strip()
                     existing_user = (plex_cfg.get("username") or "").strip()
                     existing_aid = str(plex_cfg.get("account_id") or "").strip()
@@ -1855,7 +1860,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             if not key:
                 return {"ok": True, "connected": False, "pending": bool(token), "error": "Missing api_key", "instance": inst}
 
-            if not sess and token:
+            if token:
                 try:
                     j = _tmdb_v3_create_session(key, token)
                     new_sess = str((j or {}).get("session_id") or "").strip()
@@ -1874,6 +1879,8 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                         _probe_bust("tmdb_sync")
                         _safe_log(log_fn, "TMDB_SYNC", f"[TMDB_SYNC] auto-finish: session created instance={inst}")
                         sess = new_sess
+                    else:
+                        return {"ok": True, "connected": False, "pending": True, "error": "", "instance": inst}
                 except Exception:
                     return {"ok": True, "connected": False, "pending": True, "error": "", "instance": inst}
 
@@ -3272,6 +3279,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                 return PlainTextResponse("AniList token exchange failed.", 400)
 
             a["access_token"] = tok["access_token"]
+            a["auth_completed_at"] = str(time.time_ns())
             if tok.get("user"):
                 a["user"] = tok["user"]
             save_config(cfg)
@@ -3368,6 +3376,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                 SIMKL_STATE.pop(state, None)
                 return PlainTextResponse("SIMKL token exchange failed.", 400)
 
+            simkl_cfg["auth_completed_at"] = str(time.time_ns())
             save_config(cfg)
 
             SIMKL_STATE.pop(state, None)
@@ -3491,13 +3500,13 @@ def anilist_exchange_code_for_token(*, code: str, redirect_uri: str, instance_id
             prov.finish(cfg, redirect_uri=redirect_uri, code=code, instance_id=inst)
             save_config(cfg)
     except Exception:
-        pass
+        return None
 
     cfg2 = load_config()
     a = ensure_instance_block(cfg2, "anilist", inst)
     access = str(a.get("access_token") or "").strip()
     user = a.get("user")
-    if access:
+    if prov and access:
         out: dict[str, Any] = {"access_token": access}
         if isinstance(user, dict) and user:
             out["user"] = user
