@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import time, threading, re
+import ssl
 import xml.etree.ElementTree as ET
 from urllib.parse import urlparse
 from typing import Any, Iterable, Mapping, Callable, cast
@@ -33,7 +34,7 @@ from providers.scrobble.currently_watching import update_from_event as _cw_updat
 from providers.scrobble.media_filters import event_ignore_reason, log_media_filter_drop
 from providers.scrobble.sources import source_enabled
 from providers.sync.plex._common import stable_client_id
-from providers.sync.plex._utils import fetch_cloud_home_users, fetch_cloud_account_users
+from providers.sync.plex._utils import _build_session, _resolve_verify_from_cfg, fetch_cloud_home_users, fetch_cloud_account_users
 from cw_platform.provider_instances import get_instance_block, sanitize_instance_label
 
 
@@ -41,6 +42,16 @@ _CFG_CACHE: dict[str, Any] = {"ts": 0.0, "cfg": {}}
 _CFG_TTL_SEC = 2.0
 OFFLINE_INITIAL_RETRY_SECONDS = 30.0
 OFFLINE_MAX_RETRY_SECONDS = 300.0
+
+
+class _PlexAlertListener(AlertListener):
+    def run(self) -> None:
+        import websocket
+
+        url = self._server.url(self.key, includeToken=True).replace("http", "ws", 1)
+        self._ws = websocket.WebSocketApp(url, on_message=self._onMessage, on_error=self._onError, socket=self._socket)
+        verify = self._server._session.verify is not False
+        self._ws.run_forever(sslopt={"cert_reqs": ssl.CERT_REQUIRED if verify else ssl.CERT_NONE, "check_hostname": verify})
 
 
 def _cfg(ttl: float = _CFG_TTL_SEC) -> dict[str, Any]:
@@ -1655,19 +1666,24 @@ class WatchService:
         lvl = "DEBUG" if self._quiet_startup else "INFO"
         self._log(f"Ensuring Watcher is running; inst={self._instance_display()} | wired sinks: {self.sinks_count()}", lvl)
         while not self._stop.is_set():
+            session = None
             try:
-                base, token = _plex_btok(self._cfg_provider() or {}, instance_id=self._instance_id)
+                cfg = self._cfg_provider() or {}
+                base, token = _plex_btok(cfg, instance_id=self._instance_id)
                 if not token:
                     self._log("Missing plex.account_token or plex.token in config.json", "ERROR")
                     return
-                self._plex = PlexServer(base, token)
+                session = _build_session(token, _resolve_verify_from_cfg(cfg, base))
+                self._plex = PlexServer(base, token, session=session)
                 self._refresh_account_context()
                 if self._stop.is_set():
                     break
-                self._listener = self._plex.startAlertListener(
+                self._listener = _PlexAlertListener(
+                    self._plex,
                     callback=self._handle_alert,
                     callbackError=self._listener_error,
                 )
+                self._listener.start()
                 if self._stop.is_set():
                     break
                 self._attempt = 0
@@ -1685,6 +1701,8 @@ class WatchService:
                         listener.stop()
                     except Exception:
                         pass
+                if session is not None:
+                    session.close()
             if self._stop.is_set():
                 break
             self._attempt += 1
@@ -2176,7 +2194,7 @@ def process_rating_webhook(
         try:
             base, token = _plex_btok(cfg)
             if token:
-                px = PlexServer(base, token)
+                px = PlexServer(base, token, session=_build_session(token, _resolve_verify_from_cfg(cfg, base)))
                 it = px.fetchItem(int(rk))
                 if it is not None:
                     ids.update(_ids_from_guids_any(getattr(it, "guids", [])))
