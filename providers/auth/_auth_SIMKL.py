@@ -142,7 +142,7 @@ def _form_headers() -> dict[str, str]:
     }
 
 
-def _oauth_error(data: Mapping[str, Any]) -> str:
+def _auth_error_code(data: Mapping[str, Any]) -> str:
     received = data.get("error")
     for code in (
         "invalid_request", "invalid_client", "invalid_grant", "unauthorized_client",
@@ -444,8 +444,8 @@ class SimklAuth(AuthProvider):
         log("SIMKL: exchange code", level="INFO", module="AUTH", extra={"instance": inst})
         status, tok = _post_form(OAUTH2_TOKEN, data)
         if status >= 400 or not str(tok.get("access_token") or "").strip():
-            err = _oauth_error(tok)
-            log(f"SIMKL: code exchange failed {status}: {err}", level="ERROR", module="AUTH", extra={"instance": inst})
+            err = _auth_error_code(tok)
+            log(f"SIMKL: code exchange failed (HTTP {status})", level="ERROR", module="AUTH", extra={"instance": inst})
             raise RuntimeError(f"SIMKL code exchange failed: {err}")
 
         _store_tokens(target, tok, client_id, "oauth")
@@ -492,8 +492,8 @@ class SimklAuth(AuthProvider):
                 return {"ok": False, "status": "network_error", "instance": inst}
 
             if status >= 400 or not str(tok.get("access_token") or "").strip():
-                err = _oauth_error(tok)
-                log(f"SIMKL: token refresh failed {status}: {err}", level="ERROR", module="AUTH", extra={"instance": inst})
+                err = _auth_error_code(tok)
+                log(f"SIMKL: token refresh failed (HTTP {status})", level="ERROR", module="AUTH", extra={"instance": inst})
                 if err == "invalid_grant":
                     blk["auth_error"] = "reconnect_required"
                     save_config(cfgd)
@@ -621,7 +621,7 @@ class SimklAuth(AuthProvider):
         except requests.RequestException as e:
             return {"ok": False, "error": "network_error", "detail": type(e).__name__}
         if status >= 400:
-            return {"ok": False, "error": "http_error", "status": status, "body": _oauth_error(data)}
+            return {"ok": False, "error": "http_error", "status": status, "body": _auth_error_code(data)}
 
         device_code = str(data.get("device_code") or "").strip()
         user_code = str(data.get("user_code") or "").strip()

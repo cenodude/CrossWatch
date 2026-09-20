@@ -44,6 +44,22 @@ def test_token_fingerprint_uses_installation_key(monkeypatch):
     assert http.token_key("same-token") != first
 
 
+def test_token_derivation_is_password_strength_and_cached(monkeypatch):
+    calls = []
+    original = http.hashlib.pbkdf2_hmac
+    http._derive_token_key.cache_clear()
+
+    def derive(algorithm, password, salt, iterations):
+        calls.append((algorithm, iterations))
+        return original(algorithm, password, salt, iterations)
+
+    monkeypatch.setattr(http.hashlib, "pbkdf2_hmac", derive)
+    first = http.token_key("test-cached-token")
+    for _ in range(5):
+        assert http.token_key("Bearer test-cached-token") == first
+    assert calls == [("sha256", 600_000)]
+
+
 def test_empty_token_does_not_create_config_key(isolated):
     assert http.token_key("") == ""
     assert http.token_key("   ") == ""
@@ -152,7 +168,10 @@ def test_oauth_exchange_errors_do_not_log_or_raise_response_secrets(monkeypatch,
     with pytest.raises(RuntimeError) as exc:
         auth.PROVIDER.finish(cfg, code="test-code", code_verifier="test-verifier")
     assert "private-access-token" not in str(exc.value)
-    assert "private-access-token" not in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "private-access-token" not in output
+    assert "invalid_grant" not in output
+    assert "HTTP 400" in output
 
 
 @pytest.mark.parametrize("error", ["invalid_grant", "private-refresh-token"])
@@ -171,7 +190,10 @@ def test_refresh_errors_are_safe_and_preserve_reconnect_handling(monkeypatch, ca
     result = auth.PROVIDER.refresh()
     assert result["ok"] is False
     assert result["error"] == ("invalid_grant" if error == "invalid_grant" else "oauth_error")
-    assert "private-refresh-token" not in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "private-refresh-token" not in output
+    assert "invalid_grant" not in output
+    assert "HTTP 400" in output
     assert bool(saved) == (error == "invalid_grant")
     if saved:
         assert cfg["simkl"]["auth_error"] == "reconnect_required"
