@@ -232,9 +232,12 @@ def _rshadow_put_all(items: Iterable[Mapping[str, Any]]) -> None:
     _rshadow_save(sh)
 
 
-def _rshadow_replace_all(items: Iterable[Mapping[str, Any]]) -> None:
+def _rshadow_replace_all(
+    items: Iterable[Mapping[str, Any]], *, activities: Mapping[str, Any] | None = None,
+) -> None:
     sh = _rshadow_load()
     sh["items"] = _rshadow_items_from(items)
+    sh["activities"] = dict(activities) if activities is not None else None
     _rshadow_save(sh)
 
 
@@ -551,11 +554,13 @@ def build_index(adapter: Any, *, since_iso: str | None = None) -> dict[str, dict
 
     out: dict[str, dict[str, Any]] = {}
     thaw: set[str] = set()
-    shadow_items = _rshadow_load().get("items") or {}
+    shadow = _rshadow_load()
+    shadow_items = shadow.get("items") or {}
     shadow_has_data = bool(shadow_items)
     observed_at = observation_time(adapter)
 
     act_latest: str | None = None
+    activity_stamps: dict[str, Any] | None = None
 
     acts, _rate = fetch_activities(sess, _headers(adapter, force_refresh=True), timeout=tmo)
     if isinstance(acts, Mapping):
@@ -563,10 +568,14 @@ def build_index(adapter: Any, *, since_iso: str | None = None) -> dict[str, dict
         lm = extract_latest_ts(acts, (("movies", "rated_at"),))
         ls = extract_latest_ts(acts, (("tv_shows", "rated_at"), ("shows", "rated_at")))
         la = extract_latest_ts(acts, (("anime", "rated_at"),))
+        buckets = (acts.get("movies"), acts.get("tv_shows", acts.get("shows")), acts.get("anime"))
+        if all(isinstance(bucket, Mapping) and "rated_at" in bucket for bucket in buckets):
+            activity_stamps = {"movies": lm, "shows": ls, "anime": la}
         candidates = [x for x in (lm, ls, la) if x]
         act_latest = max(candidates) if candidates else None
         unchanged = bool(wm) and (lm is None or lm <= wm) and (ls is None or ls <= wm) and (la is None or la <= wm)
-        if unchanged and shadow_has_data:
+        snapshot_unchanged = activity_stamps is not None and shadow.get("activities") == activity_stamps
+        if (unchanged and shadow_has_data) or snapshot_unchanged:
             _dbg("index_cache_hit", source="shadow", reason="activities_unchanged", movies=lm or "", shows=ls or "", anime=la or "")
             _rshadow_merge_into(out, thaw)
             _dedupe_prefer_plex_id(out)
@@ -754,7 +763,7 @@ def build_index(adapter: Any, *, since_iso: str | None = None) -> dict[str, dict
         update_watermark_if_new("ratings", _as_iso(latest_any))
 
     try:
-        _rshadow_replace_all(out.values())
+        _rshadow_replace_all(out.values(), activities=activity_stamps if since_iso is None else None)
     except Exception as exc:
         _warn("cache_save_failed", cache="shadow", op="index", source="live", error=str(exc))
 

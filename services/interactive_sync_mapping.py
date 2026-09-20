@@ -104,14 +104,19 @@ def search_candidates(cfg, row, query, *, catalog="destination"):
                                              cfg=cfg, instance_id=instance, timeout=10, max_retries=0,
                                              params={"query": query, "limit": 20})
             elif source == "SIMKL":
+                from cw_platform.simkl_http import pace_session
+                from providers.sync.simkl._common import simkl_api_params
+
+                pace_session(client)
+
                 key = block.get("api_key") or block.get("client_id")
                 if not key:
                     raise HTTPException(409, "Configure SIMKL search credentials for this destination instance.")
                 response = client.get(f"https://api.simkl.com/search/{'movie' if entity == 'movie' else 'tv'}",
-                                      params={"q": query, "client_id": key, "limit": 20}, timeout=10)
+                                      params=simkl_api_params(key, q=query, limit=20), timeout=10)
                 _check_rate_limit(response)
                 if entity == "show":
-                    anime = client.get("https://api.simkl.com/search/anime", params={"q": query, "client_id": key, "limit": 20}, timeout=10)
+                    anime = client.get("https://api.simkl.com/search/anime", params=simkl_api_params(key, q=query, limit=20), timeout=10)
                     _check_rate_limit(anime)
                     if anime.status_code >= 400:
                         raise HTTPException(502, f"SIMKL anime search returned HTTP {anime.status_code}. Try again.")

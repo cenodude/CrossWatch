@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import math
 import os
+import time
 from collections.abc import Iterable, Mapping
 from typing import Any
 
@@ -12,7 +13,17 @@ from cw_platform.id_map import canonical_key, minimal as id_minimal
 from providers.sync._log import log as cw_log
 from providers.sync._progress_policy import decide_progress_write, progress_materially_equal, select_progress_record
 
-from ._common import _fix_imdb
+from ._common import (
+    _fix_imdb,
+    adapter_headers,
+    extract_latest_ts,
+    fetch_activities,
+    get_watermark,
+    load_json_state,
+    save_json_state,
+    state_file,
+    update_watermark_if_new,
+)
 
 
 _PROVIDER = "SIMKL"
@@ -234,7 +245,67 @@ def _playback_rows(adapter: Any) -> list[Mapping[str, Any]] | None:
     return []
 
 
+_PLAYBACK_PATHS = (("movies", "playback"), ("tv_shows", "playback"), ("shows", "playback"), ("anime", "playback"))
+
+
+def _shadow_path() -> str:
+    return str(state_file("simkl.progress.shadow.json"))
+
+
+def _shadow_ttl_seconds() -> float:
+    try:
+        return float(os.getenv("CW_SIMKL_PROGRESS_SHADOW_TTL") or "21600")
+    except Exception:
+        return 21600.0
+
+
+def _shadow_load() -> tuple[dict[str, dict[str, Any]], float]:
+    data = load_json_state(_shadow_path())
+    if not isinstance(data, Mapping):
+        return {}, 0.0
+    raw = data.get("items")
+    items: dict[str, dict[str, Any]] = {}
+    if isinstance(raw, Mapping):
+        for key, value in raw.items():
+            if isinstance(key, str) and isinstance(value, Mapping):
+                items[key] = dict(value)
+    try:
+        updated_at = float(data.get("updated_at") or 0.0)
+    except (TypeError, ValueError):
+        updated_at = 0.0
+    return items, updated_at
+
+
+def _shadow_save(items: Mapping[str, Mapping[str, Any]]) -> None:
+    save_json_state(_shadow_path(), {"updated_at": time.time(), "items": {k: dict(v) for k, v in items.items()}})
+
+
+def _activities_latest(adapter: Any) -> str | None:
+    try:
+        acts, _rate = fetch_activities(
+            adapter.client.session,
+            adapter_headers(adapter),
+            timeout=getattr(adapter.cfg, "timeout", 15.0),
+        )
+    except Exception as exc:
+        _dbg("activities_failed", error=exc.__class__.__name__)
+        return None
+    if not isinstance(acts, Mapping):
+        return None
+    return extract_latest_ts(acts, _PLAYBACK_PATHS)
+
+
 def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
+    latest = _activities_latest(adapter)
+    if latest:
+        cached, updated_at = _shadow_load()
+        age = max(0.0, time.time() - updated_at)
+        unchanged = (get_watermark("progress") or "") == latest
+        if updated_at > 0 and unchanged and age <= _shadow_ttl_seconds():
+            _dbg("index_cache_hit", source="shadow", reason="activities_unchanged", count=len(cached), age_s=int(age))
+            _info("index_done", count=len(cached), source="shadow")
+            return cached
+
     rows = _playback_rows(adapter)
     if rows is None:
         return {}
@@ -250,6 +321,12 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
         out[key] = selected
         _dbg("item", canonical_key=key, media_type=item.get("type"), progress_percent=item.get("progress_percent"), action=action)
     _info("index_done", count=len(out), rows=len(rows), skipped=sum(skipped.values()), skipped_reasons=skipped)
+    try:
+        _shadow_save(out)
+        if latest:
+            update_watermark_if_new("progress", latest)
+    except Exception as exc:
+        _dbg("shadow_save_failed", error=exc.__class__.__name__)
     return out
 
 

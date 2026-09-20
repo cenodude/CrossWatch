@@ -43,7 +43,7 @@ DEFAULT_SCHEDULING: dict[str, Any] = {
     "daily_time": "03:30",
     "custom_interval_minutes": 60,
     "timezone": "",
-    "jitter_seconds": 0,
+    "jitter_seconds": 300,
     "webhooks": dict(DEFAULT_WEBHOOKS),
     "advanced": {
         "enabled": False,
@@ -91,8 +91,9 @@ def _as_now_in_tz(tz: Any | None) -> datetime:
 
 
 def _apply_jitter(dt_local: datetime, sch: dict[str, Any]) -> datetime:
+    raw_js = sch.get("jitter_seconds", DEFAULT_SCHEDULING.get("jitter_seconds", 0))
     try:
-        js = int(sch.get("jitter_seconds") or 0)
+        js = int(raw_js if raw_js is not None else 0)
     except Exception:
         js = 0
     if js <= 0:

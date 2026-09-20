@@ -256,12 +256,14 @@ def _simkl_episode_rows(payload: Any) -> list[dict[str, Any]]:
 
 
 def _simkl_episode_list(cfg_view: dict[str, Any], tmdb_id: int) -> list[dict[str, Any]] | None:
+    from cw_platform.simkl_http import pace_session
     from providers.sync.simkl._common import build_headers
     from providers.sync.simkl._history import BASE, simkl_api_params_from_headers
 
     headers = build_headers(cfg_view)
     simkl_id = ""
     with requests.Session() as session:
+        pace_session(session)
         response = session.get(
             f"{BASE}/search/id",
             headers=headers,
