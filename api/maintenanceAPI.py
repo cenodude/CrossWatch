@@ -10,6 +10,7 @@ import logging
 import os
 import shutil
 import threading
+import time
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from fnmatch import fnmatch
@@ -200,6 +201,49 @@ def _json_files_in_dir(root: Path) -> list[Path]:
         return []
     out: list[Path] = []
     for path in safe_root.glob("*.json"):
+        resolved = path.resolve(strict=False)
+        try:
+            resolved.relative_to(safe_root)
+        except ValueError:
+            continue
+        if resolved.is_file():
+            out.append(resolved)
+    return out
+
+
+_TRACKER_FEATURE_STEMS = ("history", "ratings", "watchlist", "progress", "collection")
+
+
+_TRACKER_SIDECAR_MARKERS = frozenset({
+    "unresolved", "restore_state", "shadow", "blackbox", "flap", "hidden", "tomb", "tombstones", "pending",
+})
+
+
+def _is_tracker_feature_state(path: Path) -> bool:
+    parts = path.name.split(".")
+    if parts[-1] != "json" or parts[0] not in _TRACKER_FEATURE_STEMS:
+        return False
+    if len(parts) == 2:
+        return True
+    return len(parts) == 3 and parts[1] not in _TRACKER_SIDECAR_MARKERS
+
+
+def _empty_tracker_state(path: Path) -> bool:
+    try:
+        tmp = path.with_name(f"{path.name}.tmp")
+        tmp.write_text(json.dumps({"ts": int(time.time()), "items": {}}), "utf-8")
+        os.replace(tmp, path)
+        return True
+    except Exception:
+        return False
+
+
+def _snapshot_files_in_dir(root: Path) -> list[Path]:
+    safe_root = root.resolve(strict=False)
+    if not safe_root.exists():
+        return []
+    out: list[Path] = []
+    for path in safe_root.rglob("*.json"):
         resolved = path.resolve(strict=False)
         try:
             resolved.relative_to(safe_root)
@@ -1007,9 +1051,8 @@ def _scan_cw_tracker(root: Path) -> dict[str, Any]:
     snaps_dir = root / "snapshots"
     snapshots: list[dict[str, Any]] = []
     if snaps_dir.exists():
-        for p in snaps_dir.glob("*.json"):
-            if p.is_file():
-                snapshots.append(_file_meta(p))
+        for p in _snapshot_files_in_dir(snaps_dir):
+            snapshots.append(_file_meta(p))
 
     state_files.sort(key=lambda x: x.get("name") or "")
     snapshots.sort(key=lambda x: x.get("mtime") or "")
@@ -1306,7 +1349,7 @@ def crosswatch_tracker_clear(
     _, CONFIG_DIR, *_ = _cw()
     inst, root = _cw_tracker_context(CONFIG_DIR, provider_instance)
     state_paths = _json_files_in_dir(root)
-    snapshot_paths = _json_files_in_dir(_cw_tracker_snapshot_dir(root)) if clear_snapshots else []
+    snapshot_paths = _snapshot_files_in_dir(_cw_tracker_snapshot_dir(root)) if clear_snapshots else []
 
     before = _scan_cw_tracker(root)
     selected_before_paths = []
@@ -1318,9 +1361,17 @@ def crosswatch_tracker_clear(
     removed_state: list[str] = []
     removed_snapshots: list[str] = []
 
+    emptied_state: list[str] = []
     if clear_state:
         for p in state_paths:
-            if p.is_file() and _safe_remove_path(p):
+            if not p.is_file():
+                continue
+            # Feature state is emptied, not deleted: a missing file makes the tracker
+            # restore itself from the newest snapshot on the next run.
+            if _is_tracker_feature_state(p):
+                if _empty_tracker_state(p):
+                    emptied_state.append(p.name)
+            elif _safe_remove_path(p):
                 removed_state.append(p.name)
 
     if clear_snapshots:
@@ -1333,7 +1384,7 @@ def crosswatch_tracker_clear(
     if clear_state:
         selected_after_paths.extend(_json_files_in_dir(root))
     if clear_snapshots:
-        selected_after_paths.extend(_json_files_in_dir(_cw_tracker_snapshot_dir(root)))
+        selected_after_paths.extend(_snapshot_files_in_dir(_cw_tracker_snapshot_dir(root)))
     after_usage = _paths_usage(list(selected_after_paths))
     clear_caches()
     release_memory()
@@ -1344,6 +1395,7 @@ def crosswatch_tracker_clear(
         "root": str(root),
         "removed": {
             "state_files": removed_state,
+            "emptied_state_files": emptied_state,
             "snapshots": removed_snapshots,
         },
         "before": before,

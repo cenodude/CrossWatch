@@ -134,6 +134,8 @@ def _load_state(adapter: Any) -> dict[str, Any]:
         snap = latest_snapshot_file(root, "watchlist")
         if snap:
             raw = _read_json(snap)
+            if raw is not None:
+                _warn("state_restored_from_snapshot", snapshot=snap.name)
     if raw is None:
         return {"ts": 0, "items": {}}
 
