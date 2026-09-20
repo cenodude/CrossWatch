@@ -178,13 +178,9 @@
 
   async function onConnect() {
     const keyEl = el("tmdb_sync_api_key");
-    const sessEl = el("tmdb_sync_session_id");
     const keyState = readSecretField(keyEl);
-    const sessState = readSecretField(sessEl);
     const apiKey = keyState.value;
     const hasKey = keyState.hasValue;
-    const hasSess = sessState.hasValue;
-    if (hasSess) { await refresh(false); return; }
 
     if (!hasKey) {
       setConn(false, "Enter your API key first.");

@@ -30,6 +30,24 @@ html[data-cw-theme] :is(#page-editor .cw-root, #page-snapshots, #page-playlists)
   --pl-shell-shadow: none;
 }
 
+html[data-cw-theme] #page-settings #auth-providers :is(.btn, #tmdb_check).cw-page-reconnect {
+  background: var(--cw-reconnect-bg) !important;
+  border-color: var(--cw-reconnect-border) !important;
+  color: var(--cw-reconnect-text) !important;
+  -webkit-text-fill-color: var(--cw-reconnect-text) !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+}
+
+html[data-cw-theme] #page-settings #auth-providers :is(.btn, #tmdb_check).cw-page-reconnect:hover:not(:disabled) {
+  background: var(--cw-reconnect-hover) !important;
+}
+
+html[data-cw-theme] #page-settings #auth-providers :is(.btn, #tmdb_check).cw-page-reconnect:focus-visible {
+  outline: 2px solid var(--cw-reconnect-border) !important;
+  outline-offset: 3px;
+}
+
 html[data-cw-theme] #layout > .cw-main-card {
   background: var(--cw-theme-surface);
   border-color: var(--cw-theme-border);

@@ -51,6 +51,10 @@
     return traktProfile ? traktProfile.cfgBlock(cfg, true) : {};
   }
 
+  function hasTraktPendingDevice(block) {
+    return !!_str(block?._pending_device?.device_code || block?._pending_device?.user_code);
+  }
+
   async function refreshTraktInstanceOptions(preserve) {
     if (traktProfile) await traktProfile.refreshOptions(preserve);
   }
@@ -118,7 +122,7 @@
             var isDefault = (getTraktInstance() === "default");
       _markSecretField(_el("trakt_client_id"),     _str(t.client_id || (isDefault ? (cfg.trakt && cfg.trakt.client_id) : "")));
       _markSecretField(_el("trakt_client_secret"), _str(t.client_secret || (isDefault ? (cfg.trakt && cfg.trakt.client_secret) : "")));
-      traktConnected = !!_str(t.access_token || (getTraktInstance() === 'default' ? a.access_token : ''));
+      traktConnected = !!_str(t.access_token || (getTraktInstance() === 'default' ? a.access_token : '')) && !hasTraktPendingDevice(t);
       _setVal("trakt_pin",           _str((t._pending_device && t._pending_device.user_code) || ''));
       if (traktConnected) { try { trqcStop(); } catch (_) {} }
       updateTraktHint();
@@ -296,7 +300,7 @@
         return !(page && !page.classList.contains("hidden"));
       },
       classify: function (status, data) {
-        return traktTokenFromCfg(data) ? { state: "authorized" } : { state: "pending" };
+        return traktTokenFromCfg(data) && !hasTraktPendingDevice(getTraktCfgBlock(data)) ? { state: "authorized" } : { state: "pending" };
       },
     });
     return traktPoller;

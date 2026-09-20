@@ -221,22 +221,27 @@
 
   function setConnectLocked(targets, locked, message) {
     const list = Array.isArray(targets) ? targets : [targets];
-    const title = txt(message) || "Already connected, delete existing connection first.";
     list.forEach((target) => {
       const node = typeof target === "string" ? el(target) : target;
       if (!node) return;
+      node.disabled = node.classList.contains("busy");
+      node.removeAttribute("aria-disabled");
+      node.classList.remove("cw-auth-connect-locked");
+      node.classList.toggle("cw-page-reconnect", !!locked && !/restart/i.test(node.id));
       if (locked) {
         if (!Object.prototype.hasOwnProperty.call(node.dataset, "cwConnectLockPrevTitle")) {
           node.dataset.cwConnectLockPrevTitle = node.getAttribute("title") || "";
         }
-        node.disabled = true;
-        node.setAttribute("aria-disabled", "true");
-        node.setAttribute("title", title);
-        node.classList.add("cw-auth-connect-locked");
+        if (!/restart/i.test(node.id)) {
+          if (node.dataset.cwConnectOriginalLabel === undefined) node.dataset.cwConnectOriginalLabel = node.innerHTML;
+          if (node.textContent !== "Reconnect") node.textContent = "Reconnect";
+        }
+        node.setAttribute("title", "Reconnect this connection profile");
       } else {
-        node.disabled = false;
-        node.removeAttribute("aria-disabled");
-        node.classList.remove("cw-auth-connect-locked");
+        if (node.dataset.cwConnectOriginalLabel !== undefined) {
+          node.innerHTML = node.dataset.cwConnectOriginalLabel;
+          delete node.dataset.cwConnectOriginalLabel;
+        }
         if (node.dataset.cwConnectLockPrevTitle !== undefined) {
           const previous = node.dataset.cwConnectLockPrevTitle;
           if (previous) node.setAttribute("title", previous);
@@ -245,6 +250,18 @@
         }
       }
     });
+  }
+
+  async function captureAuthCompletion(profile) {
+    const instance = profile.getInstance();
+    const response = await fetchJSON("/api/config?ts=" + Date.now(), { cache: "no-store" });
+    if (!response.ok || !response.data || profile.getInstance() !== instance) throw new Error("Could not load the connection profile");
+    const before = profile.cfgBlock(response.data, false)?.auth_completed_at;
+    return (current) => {
+      if (profile.getInstance() !== instance) return false;
+      const block = profile.cfgBlock(current || {}, false);
+      return !!(block?.access_token && block.auth_completed_at && block.auth_completed_at !== before);
+    };
   }
 
   function mediaAuthGuide(root, opts) {
@@ -868,6 +885,7 @@
     setStatusPill,
     setStatus,
     setConnectLocked,
+    captureAuthCompletion,
     mediaAuthGuide,
     setMediaAuthStep,
     applyMediaTabState,

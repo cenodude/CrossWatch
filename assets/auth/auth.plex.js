@@ -507,7 +507,7 @@ function ensurePlexInstanceUI() {
       },
       classify: (status, cfg) => {
         const p = getPlexCfgBlock(cfg || {});
-        return String(p.account_token || "").trim() ? { state: "authorized" } : { state: "pending" };
+        return String(p.account_token || "").trim() && !p._pending_pin ? { state: "authorized" } : { state: "pending" };
       },
       onAuthorized: async (cfg) => {
         try { plexQcStop(); } catch {}
@@ -598,7 +598,7 @@ async function plexDeleteToken() {
       await waitFor("#plex_server_url"); await waitFor("#plex_username");
       const set = (id, val) => { const el = $(id); if (el != null && val != null) el.value = String(val); };
       const tok = String(p.account_token || '').trim();
-      if (tok) setPlexConnected();
+      if (tok && !p._pending_pin) setPlexConnected();
       else setPlexSuccess(false);
       set("plex_pin", p._pending_pin?.code || "");
       set("plex_server_url", p.server_url || "");

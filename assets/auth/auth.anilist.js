@@ -310,8 +310,8 @@
         const next = computeRedirect();
         if (rid.textContent !== next) rid.textContent = next;
       }
-      if (btn && !anilistConnected) btn.disabled = !ok;
       try { Shared.setConnectLocked("btn-connect-anilist", anilistConnected); } catch {}
+      if (btn) btn.disabled = !ok || btn.classList.contains("busy");
       if (hint) hint.classList.toggle("hidden", ok);
       renderMappingRecommendation();
     } catch (e) {
@@ -412,6 +412,10 @@
     const secState = readSecretField($("anilist_client_secret"));
     if (!cidState.hasValue || !secState.hasValue) return;
 
+    let authCompleted;
+    try { authCompleted = await Shared.captureAuthCompletion(profile); }
+    catch (e) { notify(e.message); return; }
+
     const payload = {};
     if (cidState.value) payload.client_id = cidState.value;
     if (secState.value) payload.client_secret = secState.value;
@@ -466,7 +470,7 @@
 
       const blk = getAniListCfgBlock(cfg || {});
       const tok = String(blk?.access_token || "").trim();
-      if (tok) {
+      if (tok && authCompleted(cfg)) {
         anilistConnected = true;
         setAniListSuccess(true);
 
