@@ -203,3 +203,42 @@ def test_history_parent_shortcut_requires_external_show_evidence(plex, monkeypat
     assert bool(unresolved) is not correct_available
     assert plex.transport.writes == ([("/:/scrobble", "5678")] if correct_available else [])
     assert "/library/metadata/900/allLeaves" not in plex.transport.reads
+
+
+@pytest.mark.parametrize("destination_parent", ["1053", "900"])
+@pytest.mark.parametrize("case", ["correct", "wrong_parent", "wrong_season", "wrong_episode", "missing"])
+def test_history_matches_plex_show_guid_without_external_show_ids(plex, monkeypatch, destination_parent, case):
+    show_guid = "plex://show/5d9c08742192ba001f311a5d"
+    item = {
+        "type": "episode", "series_title": "South Park", "season": 1, "episode": 1,
+        "watched_at": "2023-04-07T13:38:38Z",
+        "ids": {"plex": "45651", "tmdb": "153587", "guid": "plex://episode/5d9c13e33c3f87001f3d15ed"},
+        "show_ids": {"plex": "1053", "guid": show_guid},
+    }
+    show = media("show", destination_parent, modern=True)
+    show["guid"] = show_guid
+    plex.transport.rows[destination_parent] = show
+    if case != "missing":
+        episode = media("episode", "5678", parent=destination_parent, modern=True,
+                        season=2 if case == "wrong_season" else 1,
+                        episode=2 if case == "wrong_episode" else 1)
+        episode["grandparentGuid"] = "plex://show/other-show" if case == "wrong_parent" else show_guid
+        plex.transport.rows["5678"] = episode
+    monkeypatch.setattr(common, "hydrate_external_ids", lambda *args: {})
+    monkeypatch.setattr(history._INDEX_CACHE, "catalog", None, raising=False)
+
+    count, unresolved = history.add(plex.adapter, [item])
+
+    assert count == int(case == "correct")
+    assert bool(unresolved) is (case != "correct")
+    assert plex.transport.writes == ([("/:/scrobble", "5678")] if case == "correct" else [])
+
+
+def test_history_rejects_reused_local_show_id_with_different_guid():
+    cat = history.HistoryCatalog()
+    cat.add({"rk": "5678", "type": "episode", "show_rk": "1053",
+             "show_ids": {"plex": "1053", "guid": "plex://show/other-show"}, "season": 1, "episode": 1})
+    item = {"type": "episode", "show_ids": {"plex": "1053", "guid": "plex://show/source-show"},
+            "season": 1, "episode": 1}
+
+    assert cat.resolve(item, strict=True) == (None, history.CLASS_NOT_IN_PLEX_CATALOG)

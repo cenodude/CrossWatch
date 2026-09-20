@@ -268,6 +268,9 @@ def _id_tokens(ids: Mapping[str, Any] | None) -> set[str]:
         if v is None or str(v).strip() == "":
             continue
         out.add(f"{k}:{str(v).strip().lower()}")
+    guid = str(ids.get("guid") or "").strip().lower()
+    if re.fullmatch(r"plex://(?:movie|show|episode)/[^/?#\s]+", guid):
+        out.add(f"guid:{guid}")
     return out
 
 
