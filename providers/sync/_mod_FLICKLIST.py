@@ -43,7 +43,10 @@ _FEATURE_MODULES = {
 _ACCEPTED_IDS = ["fldb", "tmdb", "imdb", "tvdb"]
 
 
-def _current_instance_id() -> str:
+def _current_instance_id(cfg: Mapping[str, Any] | None = None) -> str:
+    explicit_instance = (cfg or {}).get("_cw_provider_instance")
+    if explicit_instance is not None:
+        return normalize_instance_id(explicit_instance)
     if str(os.getenv("CW_PROBE_PROVIDER") or "").upper().strip() == "FLICKLIST":
         return normalize_instance_id(os.getenv("CW_PROBE_INSTANCE"))
     if str(os.getenv("CW_PAIR_SRC") or "").upper().strip() == "FLICKLIST":
@@ -169,7 +172,7 @@ def _result_from(raw: Mapping[str, Any] | None) -> dict[str, Any]:
 class FLICKLISTModule:
     def __init__(self, cfg: Mapping[str, Any], instance_id: str | None = None):
         self.config = cfg or {}
-        self.instance_id = normalize_instance_id(instance_id) if instance_id is not None else _current_instance_id()
+        self.instance_id = normalize_instance_id(instance_id) if instance_id is not None else _current_instance_id(cfg)
         section = (self.config.get("flicklist") or {}) if isinstance(self.config, Mapping) else {}
         get_rps = cfg_float(section, "get_per_sec", DEFAULT_GET_PER_SEC)
         post_rps = cfg_float(section, "post_per_sec", DEFAULT_POST_PER_SEC)
@@ -312,7 +315,7 @@ class _FLICKLISTOPS:
 
     def is_configured(self, cfg: Mapping[str, Any]) -> bool:
         try:
-            block = resolve_provider_block(cfg or {}, "flicklist", _current_instance_id())
+            block = resolve_provider_block(cfg or {}, "flicklist", _current_instance_id(cfg))
         except Exception:
             block = (cfg or {}).get("flicklist") if isinstance(cfg, Mapping) else None
         return auth_is_configured(block if isinstance(block, Mapping) else {})

@@ -69,7 +69,10 @@ def log(feature: str, level: str, event: str, **fields: Any) -> None:
     cw_log("KODI", feature, level, event, **fields)
 
 
-def pick_instance_id() -> str:
+def pick_instance_id(cfg: Mapping[str, Any] | None = None) -> str:
+    explicit_instance = (cfg or {}).get("_cw_provider_instance")
+    if explicit_instance is not None:
+        return normalize_instance_id(explicit_instance)
     for key in ("CW_SNAPSHOT_INSTANCE", "CW_INSTANCE_ID", "CW_PROVIDER_INSTANCE", "CW_INSTANCE"):
         value = str(os.getenv(key) or "").strip()
         if value:

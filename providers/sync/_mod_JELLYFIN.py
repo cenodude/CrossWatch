@@ -153,7 +153,10 @@ __all__ = ["get_manifest", "JELLYFINModule", "OPS"]
 _DEF_UA = os.environ.get("CW_JELLYFIN_UA") or os.environ.get("CW_UA") or f"CrossWatch/{__VERSION__} (Jellyfin)"
 
 
-def _pick_instance_id(provider: str) -> str:
+def _pick_instance_id(provider: str, cfg: Mapping[str, Any] | None = None) -> str:
+    explicit_instance = (cfg or {}).get("_cw_provider_instance")
+    if explicit_instance is not None:
+        return normalize_instance_id(explicit_instance)
     prov = str(provider or "").upper().strip()
     for k in ("CW_SNAPSHOT_INSTANCE", "CW_INSTANCE_ID", "CW_PROFILE", "CW_PROVIDER_INSTANCE", "CW_INSTANCE"):
         v = (os.environ.get(k) or "").strip()
@@ -439,8 +442,8 @@ class JFClient:
 
 class JELLYFINModule:
     def __init__(self, cfg: Mapping[str, Any]):
-        self.instance_id = "default"
-        inst = _pick_instance_id("JELLYFIN")
+        inst = _pick_instance_id("JELLYFIN", cfg)
+        self.instance_id = inst
         jf = _merge_instance_block((cfg or {}).get("jellyfin") or {}, inst)
         auth = _merge_instance_block(dict((cfg or {}).get("auth") or {}).get("jellyfin") or {}, inst)
         jf.setdefault("server", auth.get("server"))

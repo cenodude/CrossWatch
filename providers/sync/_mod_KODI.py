@@ -92,7 +92,7 @@ def get_manifest() -> Mapping[str, Any]:
 class KODIModule:
     def __init__(self, cfg: Mapping[str, Any]):
         self.config = cfg or {}
-        self.instance_id = pick_instance_id()
+        self.instance_id = pick_instance_id(cfg)
         self.cfg = make_config(self.config, self.instance_id)
         if not self.cfg.server:
             raise RuntimeError("Kodi config requires server")

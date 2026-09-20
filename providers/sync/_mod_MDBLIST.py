@@ -323,7 +323,10 @@ class MDBLISTAuthError(MDBLISTError):
     pass
 
 
-def _pick_instance_id() -> str:
+def _pick_instance_id(cfg: Mapping[str, Any] | None = None) -> str:
+    explicit_instance = (cfg or {}).get("_cw_provider_instance")
+    if explicit_instance is not None:
+        return mdblist_auth.normalize_instance_id_value(explicit_instance)
     src_p = str(os.getenv("CW_PAIR_SRC") or "").upper().strip()
     dst_p = str(os.getenv("CW_PAIR_DST") or "").upper().strip()
     if src_p == "MDBLIST":
@@ -433,7 +436,7 @@ class MDBLISTClient:
 class MDBLISTModule:
     def __init__(self, cfg: Mapping[str, Any]):
         m = dict(cfg.get("mdblist") or {})
-        self.instance_id = _pick_instance_id()
+        self.instance_id = _pick_instance_id(cfg)
         rl = m.get("rate_limit")
         if not isinstance(rl, dict):
             rl = {}
@@ -934,7 +937,7 @@ class _MDBLISTOPS:
                 "GET",
                 f"{MDBLISTClient.BASE}/sync/last_activities",
                 cfg=c,
-                instance_id=_pick_instance_id(),
+                instance_id=_pick_instance_id(c),
                 params={"apikey": str(m.get("api_key") or "").strip()},
                 timeout=8.0,
                 max_retries=1,

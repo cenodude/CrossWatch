@@ -48,7 +48,10 @@ _FEATURE_MODULES = {
 _ACCEPTED_IDS = ["tmdb", "imdb", "tvdb", "mal"]
 
 
-def _current_instance_id() -> str:
+def _current_instance_id(cfg: Mapping[str, Any] | None = None) -> str:
+    explicit_instance = (cfg or {}).get("_cw_provider_instance")
+    if explicit_instance is not None:
+        return normalize_instance_id(explicit_instance)
     if str(os.getenv("CW_PROBE_PROVIDER") or "").upper().strip() == "PUNCHPLAY":
         return normalize_instance_id(os.getenv("CW_PROBE_INSTANCE"))
     if str(os.getenv("CW_PAIR_SRC") or "").upper().strip() == "PUNCHPLAY":
@@ -175,7 +178,7 @@ def _result_from(raw: Mapping[str, Any] | None) -> dict[str, Any]:
 class PUNCHPLAYModule:
     def __init__(self, cfg: Mapping[str, Any]):
         self.config = cfg or {}
-        self.instance_id = _current_instance_id()
+        self.instance_id = _current_instance_id(cfg)
         section = (self.config.get("punchplay") or {}) if isinstance(self.config, Mapping) else {}
         get_rps = cfg_float(section, "get_per_sec", DEFAULT_GET_PER_SEC)
         post_rps = cfg_float(section, "post_per_sec", DEFAULT_POST_PER_SEC)
