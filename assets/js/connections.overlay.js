@@ -5,8 +5,6 @@
 (function () {
   let _renderBusy = false;
   let _pick = { source: "", target: "" };
-  let _instances = {};
-  let _instancesLoaded = false;
 
   const key = (s) => String(s || "").trim().toUpperCase();
   const providerMeta = () => window.CW?.ProviderMeta || null;
@@ -56,11 +54,6 @@
     }).join("");
   }
 
-  function hasOtherInstance(provider) {
-    const rows = _instances[key(provider)] || _instances[String(provider || "").toLowerCase()] || [];
-    return new Set(rows.filter(row => row?.configured !== false).map(row => String(typeof row === "string" ? row : row.id || "").trim()).filter(Boolean)).size > 1;
-  }
-
   function renderCards(providers) {
     const containers = ensureHost();
     if (!containers) return;
@@ -101,7 +94,7 @@
             <div class="prov-features" aria-label="Supported features">${featureDots(item.features || {})}</div>
             <div class="prov-actions">
               <button type="button" class="prov-btn ${btnClass}" data-action="pick" data-prov="${providerKey}"${sourceOnly ? ' disabled title="This provider can only be used as a source"' : ""}>${btnText}</button>
-              ${isSource && hasOtherInstance(providerKey) && item?.capabilities?.can_target !== false ? `<button type="button" class="prov-btn target" data-action="instance" data-prov="${providerKey}">Connect another instance</button>` : ""}
+              ${isSource && item?.capabilities?.can_target !== false ? `<button type="button" class="prov-btn target" data-action="instance" data-prov="${providerKey}">Set as Target</button>` : ""}
               ${badge}
             </div>
           </div>
@@ -190,13 +183,6 @@
   }
 
   async function loadProvidersIfNeeded(force = false) {
-    if (force || !_instancesLoaded) {
-      try {
-        const response = await fetch("/api/provider-instances", { cache: "no-store" });
-        _instances = response.ok ? await response.json() : {};
-        _instancesLoaded = response.ok;
-      } catch { _instances = {}; }
-    }
     if (!force && Array.isArray(window.cx?.providers) && window.cx.providers.length) return window.cx.providers;
 
     try {
