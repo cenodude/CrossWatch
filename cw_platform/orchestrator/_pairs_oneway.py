@@ -2,7 +2,8 @@
 # One-way synchronization logic for data pairs.
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
-from ._pairs_utils import pair_endpoint_config
+from ._pairs_utils import pair_endpoint_config, pair_feature_libraries
+from ._scope import provider_call
 from collections.abc import Mapping
 from typing import Any
 
@@ -26,12 +27,12 @@ def load_feature_state(state_store: Any, feature: str) -> dict[str, Any]:
     return {}
 
 
-def _emit_item_failures(emit, provider, feature, pair, keys, key2item, bb_res) -> None:
+def _emit_item_failures(emit, provider, feature, pair, keys, key2item, bb_res, instance: str | None = None) -> None:
     try:
         prom = set((bb_res or {}).get("promoted_keys") or [])
         all_keys = [k for k in (keys or [])]
         total = len(all_keys)
-        unresolved_reasons = load_unresolved_map(provider, feature, cross_features=False)
+        unresolved_reasons = load_unresolved_map(provider, feature, cross_features=False, instance=instance)
 
         def _reason_for_key(k: str) -> str:
             from_state = unresolved_reasons.get(k) if isinstance(unresolved_reasons, dict) else None
@@ -60,6 +61,7 @@ def _emit_item_failures(emit, provider, feature, pair, keys, key2item, bb_res) -
         emit(
             "archive:item_failures",
             provider=provider,
+            destination_instance=instance,
             feature=feature,
             pair=pair,
             op="add",
@@ -73,7 +75,7 @@ def _emit_item_failures(emit, provider, feature, pair, keys, key2item, bb_res) -
         pass
 
 
-def _emit_item_resolutions(emit, provider, feature, pair, keys, key2item) -> None:
+def _emit_item_resolutions(emit, provider, feature, pair, keys, key2item, instance: str | None = None) -> None:
     try:
         all_keys = [k for k in (keys or []) if k]
         if not all_keys:
@@ -82,6 +84,7 @@ def _emit_item_resolutions(emit, provider, feature, pair, keys, key2item) -> Non
         emit(
             "archive:item_resolutions",
             provider=provider,
+            destination_instance=instance,
             feature=feature,
             pair=pair,
             op="add",
@@ -358,7 +361,7 @@ def _load_provider_dropped_tokens(ops: Any, cfg: Mapping[str, Any]) -> set[str]:
     if not callable(getter):
         return set()
     try:
-        raw = getter(cfg)
+        raw = provider_call(getter, cfg)
         if isinstance(raw, set):
             return {str(x) for x in raw if str(x).strip()}
         if isinstance(raw, (list, tuple)):
@@ -616,9 +619,7 @@ def _effective_library_whitelist(
 
     lib_cfg = fcfg.get("libraries")
     if isinstance(lib_cfg, dict):
-        per = lib_cfg.get(provider_name.upper()) or lib_cfg.get(provider_name.lower())
-        if isinstance(per, (list, tuple)):
-            libs = [str(x).strip() for x in per if str(x).strip()]
+        libs = pair_feature_libraries(fcfg, provider_name, cfg.get("_cw_provider_instance"))
     elif isinstance(lib_cfg, (list, tuple)):
         libs = [str(x).strip() for x in lib_cfg if str(x).strip()]
 
@@ -1210,8 +1211,8 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
         now_cp_src = module_checkpoint(src_ops, src_cfg, feature)
         now_cp_dst = module_checkpoint(dst_ops, dst_cfg, feature)
 
-    libs_src: list[str] = _effective_library_whitelist(cfg, src, feature, fcfg)
-    libs_dst: list[str] = _effective_library_whitelist(cfg, dst, feature, fcfg)
+    libs_src: list[str] = _effective_library_whitelist(src_cfg, src, feature, fcfg)
+    libs_dst: list[str] = _effective_library_whitelist(dst_cfg, dst, feature, fcfg)
 
     allow_unknown_src = (str(src).upper() == "PLEX" and feature == "history") or str(src).upper() == "KODI"
     allow_unknown_dst = (str(dst).upper() == "PLEX" and feature == "history") or str(dst).upper() == "KODI"
@@ -1240,8 +1241,8 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
 
     src_dropped_tokens: set[str] = set()
     dst_dropped_tokens: set[str] = set()
-    if src in ("TRAKT", "MDBLIST", "SIMKL") and _provider_ignore_dropped_enabled(cfg, src, feature):
-        src_dropped_tokens = _load_provider_dropped_tokens(src_ops, cfg)
+    if src in ("TRAKT", "MDBLIST", "SIMKL") and _provider_ignore_dropped_enabled(src_cfg, src, feature):
+        src_dropped_tokens = _load_provider_dropped_tokens(src_ops, src_cfg)
         if src_dropped_tokens:
             prev_src, prev_filtered = _filter_index_for_dropped_shows(prev_src, src_dropped_tokens)
             src_cur, cur_filtered = _filter_index_for_dropped_shows(src_cur, src_dropped_tokens)
@@ -1249,11 +1250,11 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
             if prev_filtered or cur_filtered or eff_filtered:
                 emit("debug", msg="provider.dropped.filtered", provider=src, feature=feature, scope="source", prev=prev_filtered, current=cur_filtered, effective=eff_filtered)
 
-    if dst in ("TRAKT", "MDBLIST", "SIMKL") and _provider_ignore_dropped_enabled(cfg, dst, feature):
-        dst_dropped_tokens = _load_provider_dropped_tokens(dst_ops, cfg)
+    if dst in ("TRAKT", "MDBLIST", "SIMKL") and _provider_ignore_dropped_enabled(dst_cfg, dst, feature):
+        dst_dropped_tokens = _load_provider_dropped_tokens(dst_ops, dst_cfg)
 
-    dst_sem = _index_semantics(dst_ops, feature, cfg=ctx.config, provider=dst)
-    src_sem = _index_semantics(src_ops, feature, cfg=ctx.config, provider=src)
+    dst_sem = _index_semantics(dst_ops, feature, cfg=dst_cfg, provider=dst)
+    src_sem = _index_semantics(src_ops, feature, cfg=src_cfg, provider=src)
 
     dst_full = (dict(prev_dst) | dict(dst_cur)) if dst_sem == "delta" else dict(eff_dst)
     src_idx = (dict(prev_src) | dict(src_cur)) if src_sem == "delta" else dict(eff_src)
@@ -1516,7 +1517,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
     dst_alias = _alias_index(dst_full)
 
     try:
-        unresolved_known = set(load_unresolved_keys(dst, feature, cross_features=_cross_feature_unresolved(feature)) or [])
+        unresolved_known = set(load_unresolved_keys(dst, feature, cross_features=_cross_feature_unresolved(feature), instance=dst_cfg.get("_cw_provider_instance")) or [])
     except Exception:
         unresolved_known = set()
 
@@ -1614,7 +1615,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
             retry_removes: list[dict[str, Any]] = []
             stale_pending: list[str] = []
             try:
-                pending = load_unresolved_pending(dst, feature)
+                pending = load_unresolved_pending(dst, feature, instance=dst_cfg.get("_cw_provider_instance"))
             except Exception:
                 pending = []
             for rec in pending or []:
@@ -1642,7 +1643,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                 retry_removes.append(_sync_minimal(dv))
             if stale_pending and not bool(ctx.dry_run or sync_cfg.get("dry_run", False)):
                 try:
-                    clear_unresolved(dst, feature, stale_pending)
+                    clear_unresolved(dst, feature, stale_pending, instance=dst_cfg.get("_cw_provider_instance"))
                 except Exception:
                     pass
             if retry_removes:
@@ -1677,6 +1678,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
             ctx.state_store,
             adds,
             dst=dst,
+            instance=dst_cfg.get("_cw_provider_instance"),
             feature=feature,
             pair_key=pair_key,
             cross_feature_unresolved=_cross_feature_unresolved(feature),
@@ -1795,18 +1797,18 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
     cancelled = cancelled or bool(cancel_requested())
 
     if matched_history_keys and not (cancelled or dry_run_flag or src_down or dst_down or src_suspect or dst_suspect):
-        resolved = clear_matched_history_retries(dst, matched_history_keys)
+        resolved = clear_matched_history_retries(dst, matched_history_keys, instance=dst_cfg.get("_cw_provider_instance"))
         if resolved:
             resolved_items = {key: src_idx[event_key] for key, event_key in resolved.items()}
-            _emit_item_resolutions(emit, dst, feature, pair_key, resolved, resolved_items)
+            _emit_item_resolutions(emit, dst, feature, pair_key, resolved, resolved_items, instance=dst_cfg.get("_cw_provider_instance"))
 
     if updates and not cancelled:
         if dst_down:
-            record_unresolved(dst, feature, updates, hint="provider_down:update")
+            record_unresolved(dst, feature, updates, hint="provider_down:update", instance=dst_cfg.get("_cw_provider_instance"))
             emit("writes:skipped", dst=dst, feature=feature, reason="provider_down", op="update", count=len(updates))
             unresolved_new_total += len(updates)
         else:
-            unresolved_before = set(load_unresolved_keys(dst, feature, cross_features=_cross_feature_unresolved(feature)) or [])
+            unresolved_before = set(load_unresolved_keys(dst, feature, cross_features=_cross_feature_unresolved(feature), instance=dst_cfg.get("_cw_provider_instance")) or [])
             upd_res = apply_update(
                 dst_ops=dst_ops,
                 cfg=dst_cfg,
@@ -1819,7 +1821,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                 chunk_size=effective_chunk_size(ctx, dst),
                 chunk_pause_ms=_pause_for(dst, dst_inst),
             )
-            unresolved_after = set(load_unresolved_keys(dst, feature, cross_features=_cross_feature_unresolved(feature)) or [])
+            unresolved_after = set(load_unresolved_keys(dst, feature, cross_features=_cross_feature_unresolved(feature), instance=dst_cfg.get("_cw_provider_instance")) or [])
             res_update = {
                 "attempted": int((upd_res or {}).get("attempted", 0)),
                 "confirmed": int((upd_res or {}).get("confirmed", (upd_res or {}).get("count", 0)) or 0),
@@ -1853,12 +1855,12 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
 
     if adds and not cancelled:
         if dst_down:
-            record_unresolved(dst, feature, adds, hint="provider_down:add")
+            record_unresolved(dst, feature, adds, hint="provider_down:add", instance=dst_cfg.get("_cw_provider_instance"))
             emit("writes:skipped", dst=dst, feature=feature, reason="provider_down", op="add", count=len(adds))
             unresolved_new_total += len(adds)
         else:
-            unresolved_before = set(load_unresolved_keys(dst, feature, cross_features=_cross_feature_unresolved(feature)) or [])
-            _ = set(load_blackbox_keys(dst, feature) or [])
+            unresolved_before = set(load_unresolved_keys(dst, feature, cross_features=_cross_feature_unresolved(feature), instance=dst_cfg.get("_cw_provider_instance")) or [])
+            _ = set(load_blackbox_keys(dst, feature, instance=dst_cfg.get("_cw_provider_instance")) or [])
             add_res = apply_add(
                 dst_ops=dst_ops,
                 cfg=dst_cfg,
@@ -1871,7 +1873,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                 chunk_size=effective_chunk_size(ctx, dst),
                 chunk_pause_ms=_pause_for(dst, dst_inst),
             )
-            unresolved_after = set(load_unresolved_keys(dst, feature, cross_features=_cross_feature_unresolved(feature)) or [])
+            unresolved_after = set(load_unresolved_keys(dst, feature, cross_features=_cross_feature_unresolved(feature), instance=dst_cfg.get("_cw_provider_instance")) or [])
             res_add = {
                 "attempted": int((add_res or {}).get("attempted", 0)),
                 "confirmed": int((add_res or {}).get("confirmed", (add_res or {}).get("count", 0)) or 0),
@@ -1919,7 +1921,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
            
             if verify_after_write and _apply_verify_after_write_supported(dst_ops):
                 try:
-                    unresolved_again = set(load_unresolved_keys(dst, feature, cross_features=_cross_feature_unresolved(feature)) or [])
+                    unresolved_again = set(load_unresolved_keys(dst, feature, cross_features=_cross_feature_unresolved(feature), instance=dst_cfg.get("_cw_provider_instance")) or [])
                     confirmed_keys = [k for k in confirmed_keys if k not in unresolved_again]
                 except Exception:
                     pass
@@ -1929,7 +1931,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
 
             if not dry_run_flag and not new_unresolved and prov_confirmed == 0 and adds and not have_exact_keys:
                 try:
-                    record_unresolved(dst, feature, adds, hint="apply:add:no_confirmations_fallback")
+                    record_unresolved(dst, feature, adds, hint="apply:add:no_confirmations_fallback", instance=dst_cfg.get("_cw_provider_instance"))
                     new_unresolved = set(attempted_keys)
                     still_unresolved = set(attempted_keys)
                     confirmed_keys = []
@@ -1975,23 +1977,23 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
             try:
                 if failed_keys and not ambiguous_partial and not dry_run_flag:
                     _bb = record_attempts(dst, feature, failed_keys, reason="apply:add:failed", op="add",
-                        pair=pair_key, cfg=cfg)
+                        pair=pair_key, cfg=cfg, instance=dst_cfg.get("_cw_provider_instance"))
                     promoted_keys = {str(x) for x in ((_bb or {}).get("promoted_keys") or []) if x}
                     failed_items = [key2item[k] for k in failed_keys if k in key2item and k not in promoted_keys]
                     if failed_items:
-                        record_unresolved(dst, feature, failed_items, hint="apply:add:failed")
+                        record_unresolved(dst, feature, failed_items, hint="apply:add:failed", instance=dst_cfg.get("_cw_provider_instance"))
                     if promoted_keys:
-                        clear_unresolved(dst, feature, promoted_keys)
+                        clear_unresolved(dst, feature, promoted_keys, instance=dst_cfg.get("_cw_provider_instance"))
                         
-                    _emit_item_failures(emit, dst, feature, pair_key, failed_keys, key2item, _bb)
+                    _emit_item_failures(emit, dst, feature, pair_key, failed_keys, key2item, _bb, instance=dst_cfg.get("_cw_provider_instance"))
                             
                 if success_keys and not ambiguous_partial and not dry_run_flag:
-                    record_success(dst, feature, success_keys, pair=pair_key, cfg=cfg)
-                    clear_unresolved(dst, feature, success_keys)
+                    record_success(dst, feature, success_keys, pair=pair_key, cfg=cfg, instance=dst_cfg.get("_cw_provider_instance"))
+                    clear_unresolved(dst, feature, success_keys, instance=dst_cfg.get("_cw_provider_instance"))
                     unresolved_new_total = max(0, unresolved_new_total - len(set(success_keys) & set(still_unresolved)))
                     resolved_keys = [k for k in success_keys if k in unresolved_before]
                     if resolved_keys:
-                        _emit_item_resolutions(emit, dst, feature, pair_key, resolved_keys, key2item)
+                        _emit_item_resolutions(emit, dst, feature, pair_key, resolved_keys, key2item, instance=dst_cfg.get("_cw_provider_instance"))
                     clear_items_for_feature(
                         ctx.state_store,
                         dbg,
@@ -2029,7 +2031,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
             rem_keys_attempted = []
 
         if dst_down:
-            record_unresolved(dst, feature, removes, hint="provider_down:remove")
+            record_unresolved(dst, feature, removes, hint="provider_down:remove", instance=dst_cfg.get("_cw_provider_instance"))
             res_remove = {
                 "attempted": len(rem_keys_attempted),
                 "confirmed": 0,
@@ -2121,7 +2123,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                                 dst_canonical.pop(ck0, None)
                 _bust_snapshot(dst)
                 try:
-                    clear_unresolved(dst, feature, rem_success_keys)
+                    clear_unresolved(dst, feature, rem_success_keys, instance=dst_cfg.get("_cw_provider_instance"))
                 except Exception:
                     pass
             if not dry_run_flag and rem_failed_keys:
@@ -2130,7 +2132,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                         dst,
                         feature,
                         [rem_key2item[k] for k in rem_failed_keys if k in rem_key2item],
-                        hint="apply:remove:unconfirmed",
+                        hint="apply:remove:unconfirmed", instance=dst_cfg.get("_cw_provider_instance"),
                     )
                 except Exception:
                     pass

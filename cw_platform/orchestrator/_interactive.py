@@ -51,7 +51,7 @@ class InteractivePlan:
     def filter(self, feature, provider, instance, operation, items, *, source="", source_instance="default", before=None, scope="", down=False, destination_label=""):
         from ._unresolved import load_unresolved_map
 
-        unresolved = load_unresolved_map(provider, feature, cross_features=False) if self.record_rows and self.preview and items else {}
+        unresolved = load_unresolved_map(provider, feature, cross_features=False, instance=instance if provider == source else None) if self.record_rows and self.preview and items else {}
         valid = self.valid is None or self.valid()
         kept = []
         total = len(items) if hasattr(items, "__len__") else None

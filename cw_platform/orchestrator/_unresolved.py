@@ -67,16 +67,16 @@ def _atomic_write(path: Path, data: Mapping[str, Any]) -> tuple[bool, str | None
         return False, error
 
 
-def _blocking_path(dst: str, feature: str) -> Path:
+def _blocking_path(dst: str, feature: str, instance: str | None = None) -> Path:
     dst_lower = str(dst).strip().lower()
     feat_lower = str(feature).strip().lower()
-    return scoped_file(STATE_DIR, f"{dst_lower}_{feat_lower}.unresolved.json")
+    return scoped_file(STATE_DIR, f"{dst_lower}_{feat_lower}.unresolved.json", instance=instance)
 
 
-def _pending_path(dst: str, feature: str) -> Path:
+def _pending_path(dst: str, feature: str, instance: str | None = None) -> Path:
     dst_lower = str(dst).strip().lower()
     feat_lower = str(feature).strip().lower()
-    return scoped_file(STATE_DIR, f"{dst_lower}_{feat_lower}.unresolved.pending.json")
+    return scoped_file(STATE_DIR, f"{dst_lower}_{feat_lower}.unresolved.pending.json", instance=instance)
 
 
 # Blocking
@@ -85,16 +85,17 @@ def load_unresolved_keys(
     feature: str | None = None,
     *,
     cross_features: bool = True,
+    instance: str | None = None,
 ) -> set[str]:
     keys: set[str] = set()
     if not dst:
         return keys
 
     dst_lower = str(dst).strip().lower()
-    scope = scope_safe()
+    scope = scope_safe(instance=instance)
 
     if feature and not cross_features:
-        p = _blocking_path(dst_lower, feature)
+        p = _blocking_path(dst_lower, feature, instance=instance)
         if p.exists():
             keys |= set(_read_json(p).keys())
         return keys
@@ -114,17 +115,17 @@ def load_unresolved_keys(
             name = p.name
             if not name.startswith(prefix):
                 continue
-            is_blocking = (name.endswith(scoped1) or name.endswith(scoped2) or name.endswith(suffix))
-            is_pending = (name.endswith(scopedp1) or name.endswith(scopedp2) or name.endswith(pending_suffix))
+            is_blocking = (name.endswith(scoped1) or name.endswith(scoped2) or (instance is None and name.endswith(suffix)))
+            is_pending = (name.endswith(scopedp1) or name.endswith(scopedp2) or (instance is None and name.endswith(pending_suffix)))
             if not (is_blocking or is_pending):
                 continue
 
             # Migrate legacy (unscoped) files to scoped when needed.
             rp = p
-            if (name.endswith(suffix) or name.endswith(pending_suffix)) and not (
+            if (name.endswith(suffix) or (instance is None and name.endswith(pending_suffix))) and not (
                 name.endswith(scoped1) or name.endswith(scoped2) or name.endswith(scopedp1) or name.endswith(scopedp2)
             ):
-                rp = scoped_file(STATE_DIR, name)
+                rp = scoped_file(STATE_DIR, name, instance=instance)
 
             data = _read_json(rp)
 
@@ -146,20 +147,21 @@ def load_unresolved_map(
     feature: str | None = None,
     *,
     cross_features: bool = True,
+    instance: str | None = None,
 ) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     if not dst:
         return out
 
     dst_lower = str(dst).strip().lower()
-    scope = scope_safe()
+    scope = scope_safe(instance=instance)
 
     if feature and not cross_features:
-        blocking = _read_json(_blocking_path(dst_lower, feature))
+        blocking = _read_json(_blocking_path(dst_lower, feature, instance=instance))
         for k, v in blocking.items():
             out[str(k)] = v if isinstance(v, dict) else {}
 
-        pending = _read_json(_pending_path(dst_lower, feature))
+        pending = _read_json(_pending_path(dst_lower, feature, instance=instance))
         raw_hints = pending.get("hints") if isinstance(pending, dict) else None
         hints = raw_hints if isinstance(raw_hints, dict) else {}
         raw_keys = pending.get("keys") if isinstance(pending, dict) else None
@@ -186,16 +188,16 @@ def load_unresolved_map(
             name = p.name
             if not name.startswith(prefix):
                 continue
-            is_blocking = (name.endswith(scoped1) or name.endswith(scoped2) or name.endswith(suffix))
-            is_pending = (name.endswith(scopedp1) or name.endswith(scopedp2) or name.endswith(pending_suffix))
+            is_blocking = (name.endswith(scoped1) or name.endswith(scoped2) or (instance is None and name.endswith(suffix)))
+            is_pending = (name.endswith(scopedp1) or name.endswith(scopedp2) or (instance is None and name.endswith(pending_suffix)))
             if not (is_blocking or is_pending):
                 continue
 
             rp = p
-            if (name.endswith(suffix) or name.endswith(pending_suffix)) and not (
+            if (name.endswith(suffix) or (instance is None and name.endswith(pending_suffix))) and not (
                 name.endswith(scoped1) or name.endswith(scoped2) or name.endswith(scopedp1) or name.endswith(scopedp2)
             ):
-                rp = scoped_file(STATE_DIR, name)
+                rp = scoped_file(STATE_DIR, name, instance=instance)
 
             data = _read_json(rp)
             if is_pending and isinstance(data, dict):
@@ -260,10 +262,10 @@ def load_unresolved_items(dst: str | None = None) -> list[dict[str, Any]]:
     return list(out.values())
 
 
-def load_unresolved_pending(dst: str, feature: str) -> list[dict[str, Any]]:
+def load_unresolved_pending(dst: str, feature: str, instance: str | None = None) -> list[dict[str, Any]]:
     if not dst or not feature:
         return []
-    data = _read_json(_pending_path(dst, feature))
+    data = _read_json(_pending_path(dst, feature, instance=instance))
     if not isinstance(data, dict):
         return []
     raw_items = data.get("items")
@@ -336,8 +338,9 @@ def record_unresolved(
     items: Iterable[str | Mapping[str, Any]],
     *,
     hint: str = "provider_down",
+    instance: str | None = None,
 ) -> dict[str, Any]:
-    path = _pending_path(dst, feature)
+    path = _pending_path(dst, feature, instance=instance)
     now = int(time.time())
 
     data: dict[str, Any] = {"keys": [], "items": {}, "hints": {}}
@@ -411,7 +414,7 @@ def is_remove_retry(record: Mapping[str, Any] | None) -> bool:
     return False
 
 
-def clear_matched_history_retries(dst: str, matched_keys: Iterable[str]) -> dict[str, str]:
+def clear_matched_history_retries(dst: str, matched_keys: Iterable[str], instance: str | None = None) -> dict[str, str]:
     """Clear add failures already confirmed by a pair's history comparison.
 
     A present watch does not confirm a pending deletion. Keep those failures,
@@ -419,11 +422,11 @@ def clear_matched_history_retries(dst: str, matched_keys: Iterable[str]) -> dict
     Return retry keys mapped to confirmed event keys so callers can retain
     the correct item metadata when recording resolutions.
     """
-    records = load_unresolved_map(dst, "history", cross_features=False)
+    records = load_unresolved_map(dst, "history", cross_features=False, instance=instance)
     # Pending hints can shadow a provider's blocking row in the merged map.
-    blocking = _read_json(_blocking_path(dst, "history"))
+    blocking = _read_json(_blocking_path(dst, "history", instance=instance))
     matched = set(matched_keys)
-    pending_items = {row["key"]: row.get("item") for row in load_unresolved_pending(dst, "history")}
+    pending_items = {row["key"]: row.get("item") for row in load_unresolved_pending(dst, "history", instance=instance)}
     resolved: dict[str, str] = {}
     for key, record in records.items():
         if not isinstance(record, Mapping):
@@ -442,7 +445,7 @@ def clear_matched_history_retries(dst: str, matched_keys: Iterable[str]) -> dict
             continue
         resolved[str(key)] = event_key
     if resolved:
-        clear_unresolved(dst, "history", resolved)
+        clear_unresolved(dst, "history", resolved, instance=instance)
     return resolved
 
 
@@ -450,6 +453,7 @@ def clear_unresolved(
     dst: str,
     feature: str,
     keys: Iterable[str],
+    instance: str | None = None,
 ) -> dict[str, Any]:
     key_set = {str(k) for k in (keys or []) if k}
     if not dst or not key_set:
@@ -457,7 +461,7 @@ def clear_unresolved(
 
     removed = 0
 
-    pend = _pending_path(dst, feature)
+    pend = _pending_path(dst, feature, instance=instance)
     pdata = _read_json(pend)
     if pdata:
         pchanged = False
@@ -477,7 +481,7 @@ def clear_unresolved(
         if pchanged:
             _atomic_write(pend, pdata)
 
-    blk = _blocking_path(dst, feature)
+    blk = _blocking_path(dst, feature, instance=instance)
     bdata = _read_json(blk)
     if bdata:
         bchanged = False

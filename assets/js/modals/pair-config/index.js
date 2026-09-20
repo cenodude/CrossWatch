@@ -877,11 +877,11 @@ function renderInstanceSelects(state){
   fill(srcInstSel, state.src, state.src_instance, pinnedFor("src", state.src));
   fill(dstInstSel, state.dst, state.dst_instance, pinnedFor("dst", state.dst));
   state.src_instance=norm(srcInstSel.value);
-  state.dst_instance=norm(dstInstSel.value);
+  state.dst_instance=dstInstSel.value ? norm(dstInstSel.value) : "";
 
   const onInstChange=()=>{resetPairUserProfileControl(state);try{renderFeaturePanel(state)}catch{}};
   srcInstSel.onchange=()=>{state.src_instance=norm(srcInstSel.value);renderInstanceSelects(state);onInstChange()};
-  dstInstSel.onchange=()=>{state.dst_instance=norm(dstInstSel.value);onInstChange()};
+  dstInstSel.onchange=()=>{state.dst_instance=dstInstSel.value ? norm(dstInstSel.value) : "";onInstChange()};
 
   try{
     G.CW?.ProfileSelect?.enhanceProfile?.(srcInstSel,{className:"cx-profile-select-glass"});
@@ -1010,15 +1010,15 @@ function applyHistoryRewatchGuard(state){
 }
 
 function countProviderLibraries(state, providerName){
-  const historyLibs = state.options?.history?.libraries?.[providerName];
-  const ratingsLibs = state.options?.ratings?.libraries?.[providerName];
-  const progressLibs = state.options?.progress?.libraries?.[providerName];
-  const collectionLibs = state.options?.collection?.libraries?.[providerName];
-  const historyCount = Array.isArray(historyLibs) ? historyLibs.length : 0;
-  const ratingsCount = Array.isArray(ratingsLibs) ? ratingsLibs.length : 0;
-  const progressCount = Array.isArray(progressLibs) ? progressLibs.length : 0;
-  const collectionCount = Array.isArray(collectionLibs) ? collectionLibs.length : 0;
-  return historyCount + ratingsCount + progressCount + collectionCount;
+  const sameProvider = same(state.src, state.dst);
+  const instances = sameProvider ? [state.src_instance, state.dst_instance].filter(Boolean) : [null];
+  return ["history", "ratings", "progress", "collection"].reduce((total, feature) => {
+    const libraries = state.options?.[feature]?.libraries || {};
+    return total + instances.reduce((count, instance) => {
+      const selected = libraries[instance ? `${providerName}#${instance}` : providerName] ?? libraries[providerName];
+      return count + (Array.isArray(selected) ? selected.length : 0);
+    }, 0);
+  }, 0);
 }
 
 function getProviderOverrideCount(state, providerKey){
@@ -2788,7 +2788,7 @@ function buildPayload(state,wrap){
   const src=state.src||ID("cx-src")?.value||ID("cx-src-display")?.dataset.value||"";
   const dst=state.dst||ID("cx-dst")?.value||ID("cx-dst-display")?.dataset.value||"";
   const srcInst=state.src_instance||ID("cx-src-inst")?.value||"default";
-  const dstInst=state.dst_instance||ID("cx-dst-inst")?.value||"default";
+  const dstInst=state.dst_instance??ID("cx-dst-inst")?.value??"default";
   const modeTwo=!!ID("cx-mode-two")?.checked;const enabled=!!ID("cx-enabled")?.checked;
   const get=k=>Object.assign(defaultFor(k), (state.options||{})[k]||{});
   const watchlist=get("watchlist");
@@ -2824,7 +2824,7 @@ function buildPayload(state,wrap){
   }
   const features=sanitizeFeaturesForPair({src,dst,twoWay:modeTwo},{watchlist,ratings,history,progress,playlists:get("playlists"),collection});
   if(state.pair_remove_mode_touched) applyPairRemoveMode(features,state.pair_remove_mode);
-  const payload={source:src,target:dst,source_instance:String(srcInst||"default"),target_instance:String(dstInst||"default"),enabled,mode:modeTwo?"two-way":"one-way",features};
+  const payload={source:src,target:dst,source_instance:String(srcInst||"default"),target_instance:String(dstInst??"default"),enabled,mode:modeTwo?"two-way":"one-way",features};
   const eid=wrap.dataset&&wrap.dataset.editingId?String(wrap.dataset.editingId||""):"";
   const selectedProfileId=String(state.selected_user_profile_id||"").trim();
   if(selectedProfileId||eid) payload.profile_id=selectedProfileId;
@@ -2891,10 +2891,20 @@ function buildPayload(state,wrap){
 
 // Save:
 async function savePair(payload){
-  try{if(payload?.id){const r=await fetch(`/api/pairs/${encodeURIComponent(payload.id)}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});const result=await r.json();return{...result,ok:r.ok&&result.ok!==false}}}catch{}
-  try{const r=await fetch("/api/pairs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});const result=await r.json();return{...result,ok:r.ok&&result.ok!==false}}catch{}
-  if(typeof window.cxSavePair==="function"){try{const res=await Promise.resolve(window.cxSavePair(payload,payload.id||""));const ok=typeof res==="object"?res?.ok!==false&&!res?.error:res!==false;return{ok:!!ok}}catch(e){return{ok:false}}}
-  return{ok:false}
+  try {
+    const editing = !!payload?.id;
+    const url = editing ? `/api/pairs/${encodeURIComponent(payload.id)}` : "/api/pairs";
+    const response = await fetch(url, {
+      method: editing ? "PUT" : "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload),
+    });
+    const result = await response.json();
+    if (!result || typeof result !== "object") return {ok: false};
+    return {...result, ok: response.ok && !response.redirected && result.ok === true};
+  } catch {
+    return {ok: false};
+  }
 }
 
 export default{
@@ -2977,7 +2987,7 @@ export default{
     ensureInlineFoot(hostEl);
     hostEl.__doSave=async()=>{
       const payload=buildPayload(state,wrap);
-      if(same(payload.source,payload.target)&&(!ID("cx-dst-inst")?.value||payload.source_instance===payload.target_instance)){
+      if(same(payload.source,payload.target)&&(!payload.target_instance||payload.source_instance===payload.target_instance)){
         alert("Choose two different instances to create a sync pair.");
         return;
       }
@@ -2991,7 +3001,7 @@ export default{
       }
 
       const res=await savePair(payload);
-      if(!res.ok){alert(res.error==="same_provider_instance"?"Choose two different instances to create a sync pair.":"Save failed");return;}
+      if(!res.ok){alert(res.error==="same_provider_instance"?"Choose two different instances to create a sync pair.":res.error==="not_found"?"This pair no longer exists. Close the editor and create a new pair.":"Save failed");return;}
 
       try{
         if(typeof window.loadPairs==="function"){await window.loadPairs(true)}

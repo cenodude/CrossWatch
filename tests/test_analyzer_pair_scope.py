@@ -171,3 +171,53 @@ def test_empty_profile_cannot_reuse_all_profiles_cache(pair_state):
     assert A._cached_scoped_rows(None)[0]
     assert not A._cached_analysis(A._STRICT_PAIRS_PREFIX)["attention"]["counts"]["current_mismatch"]
     assert not A._cached_scoped_rows(A._STRICT_PAIRS_PREFIX)[0]
+
+
+@pytest.mark.parametrize("source_instance,target_instance", [("default", "P01"), ("P01", "default")])
+def test_same_provider_retry_files_keep_destination_identity(pair_state, monkeypatch, source_instance, target_instance):
+    from cw_platform.orchestrator import _blackbox as B, _unresolved as U
+
+    store, cfg = pair_state
+    pair = cfg["pairs"][0]
+    pair.update(target="PLEX", source_instance=source_instance, target_instance=target_instance)
+    monkeypatch.setattr(U, "STATE_DIR", store.cw_state_dir)
+    monkeypatch.setattr(B, "STATE_DIR", store.cw_state_dir)
+    scope = pair_feature_scope(cfg, pair, "watchlist", 1)
+    monkeypatch.setenv("CW_PAIR_SCOPE", scope)
+    item = {"type": "movie", "title": "Same title", "ids": {"tmdb": "1"}}
+    for instance in ("default", "P01"):
+        U.record_unresolved("PLEX", "watchlist", [item], hint=f"missing_{instance}", instance=instance)
+    B._promote("PLEX", "watchlist", "tmdb:1", reason="flapper", ts=1, pair=scope, instance="P01")
+    save_pair(store, cfg, pair["id"], {
+        ("PLEX", instance, "watchlist"): {"baseline": {"items": {}}} for instance in ("default", "P01")
+    })
+
+    records = A._unresolved_records({scope})
+    assert {(r["provider"], r["reason"], r["retry_blocked"]) for r in records} == {
+        ("PLEX", "missing_default", False), ("PLEX@P01", "missing_P01", True)
+    }
+    for path in store.cw_state_dir.glob("*.json"):
+        assert not A._orphaned_unresolved_scope(A._cw_state_meta(path), A._active_feature_scopes(cfg))
+    result = A._cached_analysis(pair["id"])
+    assert {row["provider"] for row in result["attention"]["rows"]} == {"PLEX", "PLEX@P01"}
+    assert result["attention"]["counts"]["pending_retry"] == 2
+    assert not A._cached_analysis("plex-mdblist")["attention"]["counts"]["pending_retry"]
+    index = A._unresolved_index({scope})
+    for token, expected in (("PLEX", "missing_default"), ("PLEX@P01", "missing_P01")):
+        hints = A._missing_peer_hints(index, "watchlist", ["tmdb:1"], [token], False)
+        assert {h["reason"] for h in hints if h.get("kind") == "unresolved_pending"} == {expected}
+    assert not A._missing_peer_hints(index, "watchlist", ["tmdb:1"], ["PLEX@P02"], False)
+
+
+@pytest.mark.parametrize("default_libraries", [["Movies A"], []])
+def test_analyzer_uses_endpoint_library_filters(pair_state, default_libraries):
+    _, cfg = pair_state
+    pair = cfg["pairs"][0]
+    pair.update(target="PLEX", source_instance="default", target_instance="P01", features={
+        "history": {"enable": True, "libraries": {
+            "PLEX": ["Legacy"], "PLEX#default": default_libraries, "PLEX#P01": ["Movies B"]
+        }}
+    })
+    filters = A._pair_lib_filters(cfg)
+    assert filters.get(("PLEX", "history", "PLEX@P01"), set()) == set(default_libraries)
+    assert filters[("PLEX@P01", "history", "PLEX")] == {"Movies B"}

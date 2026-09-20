@@ -28,14 +28,16 @@ LIBRARY_PROVIDER_KEYS = {
 }
 
 
-def pair_feature_libraries(fcfg: Any, provider: str) -> list[str]:
+def pair_feature_libraries(fcfg: Any, provider: str, instance: str | None = None) -> list[str]:
     lib_cfg = (fcfg or {}).get("libraries") if isinstance(fcfg, Mapping) else None
     if not isinstance(lib_cfg, Mapping):
         return []
     name = str(provider or "").strip()
-    per = lib_cfg.get(name.upper())
-    if per is None:
-        per = lib_cfg.get(name.lower())
+    endpoint_key = f"{name.upper()}#{normalize_instance_id(instance)}"
+    if instance is not None and endpoint_key in lib_cfg:
+        per = lib_cfg[endpoint_key]
+    else:
+        per = lib_cfg.get(name.upper(), lib_cfg.get(name.lower()))
     if not isinstance(per, (list, tuple)):
         return []
     return [str(x).strip() for x in per if str(x).strip()]
@@ -56,7 +58,7 @@ def config_with_pair_libraries(
         key = LIBRARY_PROVIDER_KEYS.get(str(provider or "").strip().upper())
         if not key:
             continue
-        libs = pair_feature_libraries(fcfg, provider)
+        libs = pair_feature_libraries(fcfg, provider, cfg.get("_cw_provider_instance"))
         if not libs:
             continue
         if out is None:

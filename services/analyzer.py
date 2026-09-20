@@ -23,6 +23,7 @@ from services.analyzer_mapping import MappingRequest, handle_mapping
 from cw_platform.access_policy import filter_pairs_for_user, pair_ids_for_user, request_user
 from cw_platform.pair_scope import pair_feature_scope
 from cw_platform.orchestrator._state_store import StateStore
+from cw_platform.orchestrator._scope import scope_safe as endpoint_scope
 from cw_platform.anime_mapping.history_coords import (
     HistoryCoordinateAliases,
     build_history_coordinate_aliases,
@@ -872,9 +873,11 @@ def _read_cw_state(allowed_scopes: set[str] | None = None) -> dict[str, Any]:
         return out
 
     scopes = set(allowed_scopes or [])
+    scopes.update(scope for scope, (base, _) in _endpoint_retry_scopes(_cfg()).items() if base in scopes)
     for p in sorted(CWS_DIR.glob("*.json")):
         if allowed_scopes is not None:
-            if not any(p.name.endswith(f".{safe}.json") for safe in scopes):
+            scope = str(_cw_state_meta(p).get("scope") or "").removeprefix("pending.")
+            if scope not in scopes and not any(p.name.endswith(f".{safe}.json") for safe in scopes):
                 continue
         try:
             out[p.name] = json.loads(p.read_text(encoding="utf-8"))
@@ -1088,6 +1091,29 @@ def _active_pairs_by_scope(cfg: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return out
 
 
+def _endpoint_retry_scopes(cfg: Mapping[str, Any]) -> dict[str, tuple[str, str]]:
+    out: dict[str, tuple[str, str]] = {}
+    for index, pair in enumerate(cfg.get("pairs") or [], 1):
+        if not isinstance(pair, dict) or pair.get("enabled") is False:
+            continue
+        src = _provider_base(pair.get("source") or pair.get("src"))
+        dst = _provider_base(pair.get("target") or pair.get("dst"))
+        if not src or src != dst:
+            continue
+        instances = {normalize_instance_id(pair.get("source_instance") or pair.get("src_instance")),
+                     normalize_instance_id(pair.get("target_instance") or pair.get("dst_instance"))}
+        feats = pair.get("features")
+        if not isinstance(feats, dict) or not feats:
+            feats = {feature: {} for feature in _ANALYZER_FEATURES}
+        for feature, fcfg in feats.items():
+            if fcfg is False or isinstance(fcfg, dict) and fcfg.get("enable", True) is False:
+                continue
+            base = pair_feature_scope(cfg, pair, str(feature).lower(), index)
+            for instance in instances:
+                out[endpoint_scope(instance, pair=base)] = (base, f"{src}@{instance}")
+    return out
+
+
 def _active_feature_scopes(cfg: Mapping[str, Any]) -> set[str]:
     out: set[str] = set()
     for index, pair in enumerate(cfg.get("pairs") or [], 1):
@@ -1103,6 +1129,7 @@ def _active_feature_scopes(cfg: Mapping[str, Any]) -> set[str]:
                 out.add(pair_feature_scope(cfg, pair, str(feature).lower(), index).lower())
             except Exception:
                 continue
+    out.update(scope.lower() for scope in _endpoint_retry_scopes(cfg))
     return out
 
 
@@ -2184,7 +2211,8 @@ def _pair_lib_filters(cfg: dict[str, Any]) -> dict[tuple[str, str, str], set[str
             def add_dir(a_tok: str, a_base: str, b_tok: str) -> None:
                 if not _supports_pair_libs(a_tok):
                     return
-                raw = (
+                endpoint_key = f"{a_base}#{_split_prov_token(a_tok)[1]}"
+                raw = libs_dict[endpoint_key] if endpoint_key in libs_dict else (
                     libs_dict.get(a_tok)
                     or libs_dict.get(a_base)
                     or libs_dict.get(a_base.lower())
@@ -3409,6 +3437,7 @@ def _iter_unresolved_files(
     allowed_scopes: set[str] | None,
 ) -> Iterable[tuple[str, str, str, bool, str, list[tuple[str, dict[str, Any], dict[str, Any]]]]]:
     cw_state = _read_cw_state(allowed_scopes)
+    endpoints = _endpoint_retry_scopes(_cfg())
     for name, body in (cw_state or {}).items():
         if not isinstance(body, dict):
             continue
@@ -3416,6 +3445,11 @@ def _iter_unresolved_files(
             continue
 
         stem = name[:-5]
+        meta = _cw_state_meta(Path(name))
+        scope = str(meta.get("scope") or "").removeprefix("pending.")
+        endpoint = endpoints.get(scope)
+        if scope:
+            stem = stem.replace(f".{scope}", "", 1)
         if allowed_scopes:
             for safe in sorted(allowed_scopes, key=len, reverse=True):
                 suf = f".{safe}"
@@ -3511,13 +3545,13 @@ def _iter_unresolved_files(
                 item = cast(dict[str, Any], raw_item) if isinstance(raw_item, dict) else {}
                 rows.append((str(uk), item, rec))
 
-        yield prov_raw.upper(), feat_raw.lower(), kind, pending, name, rows
+        yield endpoint[1] if endpoint else prov_raw.upper(), feat_raw.lower(), kind, pending, name, rows
 
 
 def _unresolved_index(allowed_scopes: set[str] | None) -> dict[tuple[str, str], dict[str, list[dict[str, Any]]]]:
     unresolved_index: dict[tuple[str, str], dict[str, list[dict[str, Any]]]] = {}
     for prov_key, feat_key, kind, pending, name, rows in _iter_unresolved_files(allowed_scopes):
-        key = (prov_key, feat_key)
+        key = (_norm_prov_token(prov_key), feat_key)
         idx = unresolved_index.setdefault(key, {})
 
         for uk, item, rec in rows:
@@ -3530,6 +3564,8 @@ def _unresolved_index(allowed_scopes: set[str] | None) -> dict[tuple[str, str], 
             if not aks:
                 continue
             meta: dict[str, Any] = {"file": name, "kind": "unresolved_pending" if pending else kind}
+            if _split_prov_token_ex(prov_key)[2]:
+                meta["instance"] = _split_prov_token(prov_key)[1]
             if kind == "blackbox":
                 meta["blocked_key"] = uk
             reasons = rec.get("reasons")
@@ -3568,7 +3604,8 @@ def _unresolved_records(allowed_scopes: set[str] | None) -> list[dict[str, Any]]
             reason = reason or next(iter(reasons), "")
             records.append(
                 {
-                    "provider": prov_key,
+                    "provider": _norm_prov_token(prov_key),
+                    "instance": _split_prov_token(prov_key)[1] if _split_prov_token_ex(prov_key)[2] else None,
                     "feature": feat_key,
                     "key": alias_key,
                     "event_key": uk,
@@ -3635,7 +3672,7 @@ def _attention_model(
         if not alias:
             return
         feat = str(feature or "").lower()
-        base = _provider_base(provider_base)
+        base = _norm_prov_token(provider_base)
         groups.setdefault((feat, base), []).append(
             {
                 "alias": alias,
@@ -3791,7 +3828,8 @@ def _history_resolved_unresolved(ctx: _AnalysisContext | None, rec: Mapping[str,
     # Legacy retry files identify the destination provider, not its account.
     # Only resolve them when this analysis has a single eligible route.
     routes = [(src, dst) for src, dst in ctx.history_rewatch_pairs
-              if _provider_base(dst) == _provider_base(rec.get("provider"))]
+              if _provider_base(dst) == _provider_base(rec.get("provider"))
+              and (rec.get("instance") is None or _split_prov_token(dst)[1] == rec["instance"])]
     if len(routes) != 1:
         return False
     src, dst = routes[0]
@@ -3821,6 +3859,8 @@ def _anime_resolved_unresolved(ctx: _AnalysisContext | None, rec: Mapping[str, A
             continue
         for dst_tok in targets:
             if _provider_base(dst_tok) != dst_base:
+                continue
+            if rec.get("instance") is not None and _split_prov_token(dst_tok)[1] != rec["instance"]:
                 continue
             if (src_tok, dst_tok) in ctx.history_rewatch_pairs:
                 continue  # Rewatch retries use the shared one-to-one event match.
@@ -3928,7 +3968,8 @@ def _missing_peer_hints(
         for ak in alias_keys:
             rows: list[dict[str, Any]] = []
             for uidx in uidxs:
-                rows = uidx.get(ak, [])
+                rows = [meta for meta in uidx.get(ak, [])
+                        if meta.get("instance") is None or meta["instance"] == _split_prov_token(dst_norm)[1]]
                 if rows:
                     break
             for meta in rows:
