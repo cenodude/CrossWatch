@@ -94,6 +94,11 @@
       const method = activeSimklMethod(blk);
       setSimklMethodUI(method);
       try { setSimklSuccess(!!tok, tok ? (method === "pin" ? "Connected using PIN" : "Connected") : ""); } catch {}
+      if (tok) {
+        const legacy = Number(blk.auth_version || 0) < 2 && !tok.startsWith("simkl_at_");
+        if (String(blk.auth_error || "") === "reconnect_required") setSimklBanner("warn", "SIMKL login expired - delete and reconnect");
+        else if (legacy) setSimklBanner("warn", "Old SIMKL login - delete and reconnect before end of March 2027");
+      }
       if (tok) { try { smqcStop(); } catch (_) {} }
       try { updateSimklButtonState(); } catch {}
     } catch (e) {

@@ -371,6 +371,10 @@ def _req_error_user_msg(provider: str, e: Exception) -> str:
 
 def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, probe_cache: Optional[dict[str, Any]] = None) -> None:
     def _probe_bust(name: str) -> None:
+        if name == "simkl":
+            from api.probesAPI import invalidate_provider_caches
+
+            invalidate_provider_caches(name)
         try:
             if isinstance(probe_cache, dict): probe_cache[name] = (0.0, False)
         except Exception:
@@ -3321,9 +3325,8 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             state = secrets.token_urlsafe(24)
             redirect_uri = f"{origin}/callback"
             _simkl_prune_state()
-            SIMKL_STATE[state] = {"instance": inst, "redirect_uri": redirect_uri, "created_at": int(time.time())}
-
-            url = simkl_build_authorize_url(cfg, inst, client_id, redirect_uri, state)
+            url, verifier = simkl_build_authorize_url(cfg, inst, client_id, redirect_uri, state)
+            SIMKL_STATE[state] = {"instance": inst, "redirect_uri": redirect_uri, "code_verifier": verifier, "created_at": int(time.time())}
             save_config(cfg)
             return {"ok": True, "authorize_url": url, "instance": inst}
         except Exception as e:
@@ -3355,13 +3358,16 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             if not client_id or not client_secret:
                 return PlainTextResponse("SIMKL client_id/client_secret missing.", 400)
 
-            tokens = simkl_exchange_code(cfg, inst, client_id, client_secret, str(code), redirect_uri)
+            iss = str(request.query_params.get("iss") or "").strip()
+            if iss and iss.rstrip("/") != "https://simkl.com":
+                SIMKL_STATE.pop(state, None)
+                return PlainTextResponse("SIMKL issuer mismatch.", 400)
+
+            tokens = simkl_exchange_code(cfg, inst, client_id, client_secret, str(code), redirect_uri, str(st.get("code_verifier") or ""))
             if not isinstance(tokens, dict) or not str(tokens.get("access_token") or "").strip():
+                SIMKL_STATE.pop(state, None)
                 return PlainTextResponse("SIMKL token exchange failed.", 400)
 
-            simkl_cfg["access_token"] = str(tokens.get("access_token") or "").strip()
-            simkl_cfg.pop("refresh_token", None)
-            simkl_cfg.pop("token_expires_at", None)
             save_config(cfg)
 
             SIMKL_STATE.pop(state, None)
@@ -3380,14 +3386,17 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         if conflict is not None:
             return conflict
         s = ensure_instance_block(cfg, "simkl", inst)
+        token_keys: tuple[str, ...] = ("access_token", "refresh_token", "token_expires_at", "scopes", "account", "_pending_pin", "auth_method")
         try:
-            from providers.auth._auth_SIMKL import app_pin_client_id as _simkl_pin_cid
-            if str(s.get("client_id") or "").strip() == _simkl_pin_cid():
+            from providers.auth import _auth_SIMKL as _simkl_auth
+            _simkl_auth.revoke_block(s)
+            if str(s.get("client_id") or "").strip() in _simkl_auth.baked_client_ids():
                 s.pop("client_id", None)
                 s.pop("api_key", None)
+            token_keys = _simkl_auth.TOKEN_KEYS
         except Exception:
             pass
-        for k in ("access_token", "refresh_token", "token_expires_at", "scopes", "account", "_pending_pin", "auth_method"):
+        for k in token_keys:
             s.pop(k, None)
         save_config(cfg)
         _probe_bust("simkl")
@@ -3556,38 +3565,41 @@ def _simkl_prune_state(max_age_s: int = 900) -> None:
     except Exception:
         pass
 
-def simkl_build_authorize_url(cfg: dict[str, Any], instance_id: Any, client_id: str, redirect_uri: str, state: str) -> str:
+def simkl_build_authorize_url(cfg: dict[str, Any], instance_id: Any, client_id: str, redirect_uri: str, state: str) -> tuple[str, str]:
     prov = _import_provider("providers.auth._auth_SIMKL")
     inst = normalize_instance_id(instance_id)
     s = ensure_instance_block(cfg, "simkl", inst)
     s["client_id"] = (client_id or s.get("client_id") or "").strip()
-    url = f"https://simkl.com/oauth/authorize?response_type=code&client_id={s['client_id']}&redirect_uri={redirect_uri}"
-    try:
-        if prov:
-            cfg_view = dict(cfg); cfg_view["simkl"] = s
-            res = prov.start(cfg_view, redirect_uri=redirect_uri) or {}
-            url = (res or {}).get("url") or url
-    except Exception:
-        pass
-    if "state=" not in url:
-        sep = "&" if "?" in url else "?"
-        url = f"{url}{sep}state={state}"
-    return url
+    if not prov:
+        raise RuntimeError("SIMKL auth provider missing")
+    res = prov.start(cfg, redirect_uri=redirect_uri, instance_id=inst, state=state) or {}
+    url = str(res.get("url") or "")
+    verifier = str(res.get("code_verifier") or "")
+    if not url or not verifier:
+        raise RuntimeError("SIMKL authorize URL could not be built")
+    return url, verifier
 
-def simkl_exchange_code(cfg: dict[str, Any], instance_id: Any, client_id: str, client_secret: str, code: str, redirect_uri: str) -> dict[str, Any] | None:
+def simkl_exchange_code(
+    cfg: dict[str, Any],
+    instance_id: Any,
+    client_id: str,
+    client_secret: str,
+    code: str,
+    redirect_uri: str,
+    code_verifier: str,
+) -> dict[str, Any] | None:
     prov = _import_provider("providers.auth._auth_SIMKL")
     inst = normalize_instance_id(instance_id)
     s = ensure_instance_block(cfg, "simkl", inst)
     s["client_id"] = (client_id or "").strip()
     s["client_secret"] = (client_secret or "").strip()
+    if not prov:
+        return None
     try:
-        if prov:
-            cfg_view = dict(cfg); cfg_view["simkl"] = s
-            prov.finish(cfg_view, redirect_uri=redirect_uri, code=code)
+        prov.finish(cfg, instance_id=inst, redirect_uri=redirect_uri, code=code, code_verifier=code_verifier)
     except Exception:
-        pass
+        return None
     access = str(s.get("access_token") or "").strip()
     if not access:
         return None
-    out: dict[str, Any] = {"access_token": access}
-    return out
+    return {"access_token": access}

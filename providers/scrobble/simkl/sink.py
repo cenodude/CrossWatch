@@ -5,11 +5,13 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 import hashlib
-import json, time
+import json, os, threading, time
 from pathlib import Path
 from typing import Any
 
 import requests
+from cw_platform.simkl_http import paced_request
+from providers.sync.simkl._common import SIMKLQuotaError
 
 from cw_platform.config_base import load_config
 from cw_platform.local_db.ttl_dedupe import once_per_ttl
@@ -46,6 +48,8 @@ except ImportError:
 
 
 SIMKL_API = "https://api.simkl.com"
+_MAX_REPRESENTATIONS = 2
+_UNKNOWN_TTL = 6 * 3600.0
 APP_AGENT = "CrossWatch/Watcher/1.0"
 _AR_TTL = 60
 
@@ -90,6 +94,17 @@ def _log(msg: str, lvl: str = "INFO") -> None:
     print(f"[SIMKL-SINK:{level}] {msg}")
 
 
+def _fresh_token(block: Mapping[str, Any], instance_id: Any = None) -> str:
+    current = str(block.get("access_token") or "").strip()
+    try:
+        from providers.auth import _auth_SIMKL as simkl_auth
+        if simkl_auth.needs_refresh(block, simkl_auth.USE_REFRESH_MARGIN_S):
+            return simkl_auth.ensure_fresh(instance_id, margin_s=simkl_auth.USE_REFRESH_MARGIN_S) or current
+    except Exception as e:
+        _log(f"SIMKL token refresh failed: {type(e).__name__}", "WARN")
+    return current
+
+
 def _merged_provider_block(cfg: Mapping[str, Any], key: str, instance_id: Any = None) -> dict[str, Any]:
     base = cfg.get(key) if isinstance(cfg, Mapping) else None
     blk = dict(base or {}) if isinstance(base, Mapping) else {}
@@ -129,10 +144,10 @@ def _hdr(cfg: dict[str, Any]) -> dict[str, str]:
 
 
 def _post(path: str, body: dict[str, Any], cfg: dict[str, Any], *, allow_rewatch: bool = False) -> requests.Response:
-    params = {"client_id": _hdr(cfg)["simkl-api-key"], "app-name": "CrossWatch", "app-version": _app_meta(cfg)["app_version"]}
+    params = {"client_id": _hdr(cfg)["simkl-api-key"], "app-name": "crosswatch", "app-version": _app_meta(cfg)["app_version"]}
     if allow_rewatch and path == "/scrobble/stop" and float(body.get("progress") or 0) >= 80:
         params["allow_rewatch"] = "yes"
-    return requests.post(f"{SIMKL_API}{path}", headers=_hdr(cfg), params=params, json=body, timeout=10)
+    return paced_request(requests.post, "POST", f"{SIMKL_API}{path}", headers=_hdr(cfg), params=params, json=body, timeout=10)
 
 
 def _stop_pause_threshold(cfg: dict[str, Any]) -> int:
@@ -500,6 +515,7 @@ class SimklSink(ScrobbleSink):
         self._p_glob: dict[str, float] = {}
         self._best: dict[str, dict[str, Any]] = {}
         self._completed: dict[str, float] = {}
+        self._unknown: dict[str, float] = {}
         self._ids_logged: set[str] = set()
         self._last_intent_path: dict[str, str] = {}
         self._last_intent_prog: dict[str, int] = {}
@@ -601,7 +617,9 @@ class SimklSink(ScrobbleSink):
         cfg["simkl"] = _merged_provider_block(cfg, "simkl", self._instance_id)
         s = cfg.get("simkl") or {}
         api_key = s.get("api_key") or s.get("client_id")
-        token = s.get("access_token")
+        token = _fresh_token(s, self._instance_id)
+        if token:
+            s["access_token"] = token
 
         if not api_key:
             if not self._warn_no_key:
@@ -628,7 +646,7 @@ class SimklSink(ScrobbleSink):
             mk = json.dumps([getattr(ev, "server_uuid", None), str(getattr(ev, "account", None) or "").casefold(), mk])
             scope = rewatches.account_key(cfg) + json.dumps((cfg.get("scrobble") or {}).get("watch") or {}, sort_keys=True)
             if scope != self._rewatch_scope:
-                for cache in (self._last_sent, self._p_sess, self._p_step, self._a_sess, self._p_glob, self._best, self._completed):
+                for cache in (self._last_sent, self._p_sess, self._p_step, self._a_sess, self._p_glob, self._best, self._completed, self._unknown):
                     cache.clear()
                 self._rewatch_scope = scope
 
@@ -652,6 +670,14 @@ class SimklSink(ScrobbleSink):
 
         name = _media_name(ev)
         key = self._ckey(ev)
+
+        unknown_until = self._unknown.get(mk, 0.0)
+        if unknown_until > time.time():
+            _log(f"skip action={action} media='{name}' reason=unknown_on_simkl", "DEBUG")
+            return {"ok": False, "skipped": True, "reason": "unknown_on_simkl"}
+        if unknown_until:
+            self._unknown.pop(mk, None)
+
 
         if force_seek:
             if action == "start":
@@ -846,10 +872,14 @@ class SimklSink(ScrobbleSink):
                     self._p_step[(sk, mk)] = int(bucket)
                 return
             last_err = res
-            if res.get("status") == 404:
+            if res.get("status") == 404 and i + 1 < _MAX_REPRESENTATIONS:
                 _log("404 with current representation → trying alternate", "WARN")
                 continue
             break
+
+        if last_err and int(last_err.get("status") or 0) == 404:
+            self._unknown[mk] = time.time() + _UNKNOWN_TTL
+            _log(f"SIMKL does not know media='{name}', skipping it for {int(_UNKNOWN_TTL / 3600)}h", "WARN")
 
         if rewatch_mode and last_err:
             status = int(last_err.get("status") or 0)
@@ -907,6 +937,8 @@ class SimklSink(ScrobbleSink):
             api_error = code if code in ("RATE_LIMIT", "INVALID_TOKEN", "INVALID_CLIENT_ID", "NOT_FOUND") else None
             return {"ok": 200 <= response.status_code < 300, "status": response.status_code, "resp": payload,
                     "diagnostic": diagnostic, "api_error": api_error, "elapsed_ms": round((time.monotonic() - started) * 1000)}
+        except SIMKLQuotaError as exc:
+            return {"ok": False, "status": 429, "resp": "user_limit_exceeded", "retryable": False, "retry_at": exc.until}
         except requests.Timeout:
             diagnostic = "timeout"
         except requests.ConnectionError:
@@ -921,6 +953,8 @@ class SimklSink(ScrobbleSink):
         for _ in range(6):
             try:
                 r = _post(path, body, cfg)
+            except SIMKLQuotaError as exc:
+                return {"ok": False, "status": 429, "resp": "user_limit_exceeded", "retryable": False, "retry_at": exc.until}
             except Exception:
                 time.sleep(backoff)
                 backoff = min(8.0, backoff * 2)
