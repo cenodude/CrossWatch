@@ -866,10 +866,12 @@ function renderInstanceSelects(state){
       }
     }
     if(!rows.length) rows=[{id:"default",label:"Default",stale:!!state.instancesLoaded}];
+    if(sel===dstInstSel&&same(state.src,state.dst)) rows=rows.filter(row=>row.id!==norm(srcInstSel.value));
     const ids=rows.map(row=>row.id);
     sel.innerHTML=rows.map(row=>`<option value="${escHTML(row.id)}" title="${escHTML(row.id)}">${escHTML(row.stale?`${row.label} - not configured`:row.label)}</option>`).join("");
-    sel.value=ids.includes(want)?want:ids[0];
-    sel.disabled=!prov;
+    sel.value=ids.includes(want)?want:(ids[0]||"");
+    if(!rows.length) sel.innerHTML='<option value="">No other configured instance</option>';
+    sel.disabled=!prov||!rows.length;
   };
 
   fill(srcInstSel, state.src, state.src_instance, pinnedFor("src", state.src));
@@ -878,7 +880,7 @@ function renderInstanceSelects(state){
   state.dst_instance=norm(dstInstSel.value);
 
   const onInstChange=()=>{resetPairUserProfileControl(state);try{renderFeaturePanel(state)}catch{}};
-  srcInstSel.onchange=()=>{state.src_instance=norm(srcInstSel.value);onInstChange()};
+  srcInstSel.onchange=()=>{state.src_instance=norm(srcInstSel.value);renderInstanceSelects(state);onInstChange()};
   dstInstSel.onchange=()=>{state.dst_instance=norm(dstInstSel.value);onInstChange()};
 
   try{
@@ -2889,8 +2891,8 @@ function buildPayload(state,wrap){
 
 // Save:
 async function savePair(payload){
-  try{if(payload?.id){const r=await fetch(`/api/pairs/${encodeURIComponent(payload.id)}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});if(r.ok)return{ok:true}}}catch{}
-  try{const r=await fetch("/api/pairs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});if(r&&r.ok)return{ok:true}}catch{}
+  try{if(payload?.id){const r=await fetch(`/api/pairs/${encodeURIComponent(payload.id)}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});const result=await r.json();return{...result,ok:r.ok&&result.ok!==false}}}catch{}
+  try{const r=await fetch("/api/pairs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});const result=await r.json();return{...result,ok:r.ok&&result.ok!==false}}catch{}
   if(typeof window.cxSavePair==="function"){try{const res=await Promise.resolve(window.cxSavePair(payload,payload.id||""));const ok=typeof res==="object"?res?.ok!==false&&!res?.error:res!==false;return{ok:!!ok}}catch(e){return{ok:false}}}
   return{ok:false}
 }
@@ -2974,8 +2976,12 @@ export default{
     queueMicrotask(() => applyHelpIcons(wrap, { QA }));
     ensureInlineFoot(hostEl);
     hostEl.__doSave=async()=>{
-      await saveConfigBits(state);
       const payload=buildPayload(state,wrap);
+      if(same(payload.source,payload.target)&&(!ID("cx-dst-inst")?.value||payload.source_instance===payload.target_instance)){
+        alert("Choose two different instances to create a sync pair.");
+        return;
+      }
+      await saveConfigBits(state);
 
       const feats=payload.features||{};
       const enabledKeys=Object.keys(feats).filter(k=>feats[k]?.enable);
@@ -2985,7 +2991,7 @@ export default{
       }
 
       const res=await savePair(payload);
-      if(!res.ok){alert("Save failed");return;}
+      if(!res.ok){alert(res.error==="same_provider_instance"?"Choose two different instances to create a sync pair.":"Save failed");return;}
 
       try{
         if(typeof window.loadPairs==="function"){await window.loadPairs(true)}

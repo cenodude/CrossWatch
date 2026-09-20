@@ -88,6 +88,7 @@ def _cfg(dry_run: bool) -> dict[str, Any]:
 
 
 def _install(monkeypatch: pytest.MonkeyPatch, src: FakeOps, dst: FakeOps, state_dir: Path) -> None:
+    monkeypatch.setattr("cw_platform.orchestrator._pairs.record_health", lambda *args: None)
     monkeypatch.setattr(
         "cw_platform.orchestrator.facade.load_sync_providers",
         lambda: {"SRC": src, "DST": dst},

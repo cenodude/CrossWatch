@@ -3022,7 +3022,7 @@ def test_pair_config_instance_select_hides_unconfigured_default() -> None:
     assert 'typeof x.configured==="boolean"?x.configured:null' in block
     assert 'const gated=all.some(row=>typeof row.configured==="boolean")' in block
     assert "gated?all.filter(row=>row.configured!==false):all.slice()" in block
-    assert 'sel.value=ids.includes(want)?want:ids[0]' in block
+    assert 'sel.value=ids.includes(want)?want:(ids[0]||"")' in block
     assert 'sel.value=ids.includes(want)?want:"default"' not in block
 
 

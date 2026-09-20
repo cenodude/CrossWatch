@@ -127,7 +127,7 @@ def get_manifest() -> Mapping[str, Any]:
 class STREMIOModule:
     def __init__(self, cfg: Mapping[str, Any]):
         self.config = cfg or {}
-        self.instance_id = _current_instance_id()
+        self.instance_id = normalize_instance_id(self.config["_cw_provider_instance"]) if "_cw_provider_instance" in self.config else _current_instance_id()
         self.stremio_profile_id = DEFAULT_STREMIO_PROFILE_ID
         session = build_session("STREMIO", ctx)
         try:

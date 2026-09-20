@@ -15,7 +15,7 @@ from ._pairs_utils import (
     supports_feature,
 )
 from ._pairs_metrics import ApiMetrics, persist_api_totals
-from ..provider_instances import build_pair_config_view, build_provider_config_view, normalize_instance_id
+from ..provider_instances import _config_key_for, build_pair_config_view, build_provider_config_view, normalize_instance_id
 from ._pairs_oneway import run_one_way_feature
 from ._pairs_twoway import run_two_way_feature
 from ._pairs_playlists import run_playlist_mappings
@@ -419,6 +419,9 @@ def run_pairs(ctx) -> dict[str, Any]:
         dst = str(pair.get("target") or "").upper().strip()
         src_inst = normalize_instance_id(pair.get("source_instance"))
         dst_inst = normalize_instance_id(pair.get("target_instance"))
+        if src == dst and src_inst == dst_inst:
+            emit("pair:skip", pair_id=str(pair.get("id") or ""), src=src, dst=dst, reason="same_provider_instance")
+            continue
         pair_cfg_view = build_pair_config_view(cfg, src, src_inst, dst, dst_inst)
         pair_prov = pair.get("providers") or {}
         if isinstance(pair_prov, dict) and pair_prov:
@@ -498,6 +501,20 @@ def run_pairs(ctx) -> dict[str, Any]:
                 prev_store = ctx.state_store
                 ctx.state_store = prev_store.for_pair(scope, pair_id=str(pair.get("id") or ""))
                 ctx.config = {**_config_with_pair_feature_options(pair_cfg_view, fcfg, (src, dst), feature), "_cw_pair_scope": scope}
+                if src == dst:
+                    endpoint_blocks = {}
+                    for instance in (src_inst, dst_inst):
+                        endpoint_cfg = build_provider_config_view(cfg, src, instance)
+                        config_key = _config_key_for(cfg, src)
+                        block = endpoint_cfg.setdefault(config_key, {})
+                        override = next((value for key, value in pair_prov.items() if str(key).strip().upper() == src), {}) if isinstance(pair_prov, Mapping) else {}
+                        if isinstance(override, Mapping):
+                            _deep_merge_provider_overrides(block, override)
+                        elif override is not None and src in {"PLEX", "JELLYFIN", "EMBY"}:
+                            block["strict_id_matching"] = coerce_bool(override)
+                        endpoint_cfg = _config_with_pair_feature_options(endpoint_cfg, fcfg, (src, dst), feature)
+                        endpoint_blocks[instance] = endpoint_cfg[config_key]
+                    ctx.config["_cw_pair_instance_blocks"] = {src: endpoint_blocks}
                 try:
                     if not injected:
                         inject_ctx_into_provider(sops, ctx)

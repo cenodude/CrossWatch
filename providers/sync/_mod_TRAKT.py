@@ -303,7 +303,9 @@ class TRAKTClient:
             src_p = str(os.getenv("CW_PAIR_SRC") or "").upper().strip()
             dst_p = str(os.getenv("CW_PAIR_DST") or "").upper().strip()
             inst = "default"
-            if src_p == "TRAKT":
+            if "_cw_provider_instance" in self.raw_cfg:
+                inst = str(self.raw_cfg["_cw_provider_instance"] or "default").strip() or "default"
+            elif src_p == "TRAKT":
                 inst = str(os.getenv("CW_PAIR_SRC_INSTANCE") or "default").strip() or "default"
             elif dst_p == "TRAKT":
                 inst = str(os.getenv("CW_PAIR_DST_INSTANCE") or "default").strip() or "default"
