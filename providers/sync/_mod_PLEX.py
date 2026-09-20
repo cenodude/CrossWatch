@@ -65,7 +65,7 @@ from .plex._common import (
     stable_client_id,
     set_client_id,
 )
-from .plex._utils import fetch_shared_server_token, resolve_user_scope
+from .plex._utils import _resolve_verify_from_cfg, fetch_shared_server_token, resolve_user_scope
 from cw_platform.id_map import canonical_key as _canonical_key
 from ._mod_common import (
     build_session,
@@ -295,6 +295,7 @@ def _adapter_identity(cfg: Mapping[str, Any]) -> str:
         "scrobble": pl.get("scrobble") if isinstance(pl.get("scrobble"), Mapping) else {},
         "strict_id_matching": pl.get("strict_id_matching"),
         "timeout": pl.get("timeout"),
+        "verify_ssl": _resolve_verify_from_cfg(cfg, "https://"),
         "max_retries": pl.get("max_retries"),
         "history_workers": pl.get("history_workers"),
         "rating_workers": pl.get("rating_workers"),
@@ -599,6 +600,7 @@ class PLEXConfig:
     watchlist_allow_pms_fallback: bool = True
     watchlist_page_size: int = 100
     strict_id_matching: bool = False
+    verify_ssl: bool = True
 
 
 class PLEXClient:
@@ -607,6 +609,7 @@ class PLEXClient:
         self.server: PlexServer | None = None
         self._account: MyPlexAccount | None = None
         self.session = build_session("PLEX", ctx, feature_label=label_plex)
+        self.session.verify = cfg.verify_ssl
 
         # Token used for plex.tv and Discover/Metadata domains.
         # This is NOT always the same as the PMS resource token when switching Home users.
@@ -692,8 +695,7 @@ class PLEXClient:
                         pass
 
                 try:
-                    self.server = PlexServer(self.cfg.baseurl, connection_token, timeout=self.cfg.timeout)
-                    self.server._session = self.session  # type: ignore[attr-defined]
+                    self.server = PlexServer(self.cfg.baseurl, connection_token, session=self.session, timeout=self.cfg.timeout)
                     self._pms_baseurl = str(getattr(self.server, "baseurl", None) or self.cfg.baseurl or "")
                     if self._pms_baseurl and (pms_token or cloud_token):
                         configure_plex_context(baseurl=str(self._pms_baseurl), token=str(pms_token or cloud_token), account_token=cloud_token)
@@ -1235,6 +1237,7 @@ class PLEXModule:
             watchlist_allow_pms_fallback=coerce_bool(plex_cfg.get("watchlist_allow_pms_fallback", True), True),
             watchlist_page_size=int(plex_cfg.get("watchlist_page_size", 100)),
             strict_id_matching=coerce_bool(plex_cfg.get("strict_id_matching", False)),
+            verify_ssl=_resolve_verify_from_cfg(cfg, "https://"),
         )
 
         configure_plex_context(baseurl=self.cfg.baseurl or "", token=(self.cfg.pms_token or self.cfg.token or ""), account_token=self.cfg.token or "")
