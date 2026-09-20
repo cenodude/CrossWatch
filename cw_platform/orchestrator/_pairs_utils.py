@@ -8,6 +8,15 @@ import importlib
 import threading
 from collections.abc import Mapping as _Mapping
 from ..id_map import canonical_key as _ck, keys_for_item, ID_KEYS
+from ..provider_instances import _config_key_for, normalize_instance_id
+
+
+def pair_endpoint_config(cfg: Mapping[str, Any], provider: str, instance: str) -> dict[str, Any]:
+    blocks = cfg.get("_cw_pair_instance_blocks") or {}
+    block = (blocks.get(provider) or {}).get(normalize_instance_id(instance))
+    if block is None:
+        return dict(cfg)
+    return {**cfg, _config_key_for(cfg, provider): block, "_cw_provider_instance": normalize_instance_id(instance)}
 
 LIBRARY_SCOPED_FEATURES = frozenset({"history", "ratings", "progress", "collection"})
 

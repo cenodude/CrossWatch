@@ -2,6 +2,7 @@
 # Two-way synchronization logic for data pairs.
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
+from ._pairs_utils import pair_endpoint_config
 from collections.abc import Mapping
 from typing import Any
 
@@ -362,6 +363,8 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
     provs = ctx.providers
     a = str(a).upper()
     b = str(b).upper()
+    a_choice = f"{a}#{src_inst}" if a == b else a
+    b_choice = f"{b}#{dst_inst}" if a == b else b
 
     aops = provs.get(a)
     bops = provs.get(b)
@@ -442,9 +445,8 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         provider_cfg = config_with_history_rewatches(provider_cfg, False)
         emit("debug", msg="history.rewatches.disabled", a=a, b=b, reason="provider_capability")
 
-    def _pause_for(pname: str) -> int:
+    def _pause_for(pname: str, inst: str) -> int:
         base = int(getattr(ctx, "apply_chunk_pause_ms", 0) or 0)
-        inst = src_inst if pname == a else (dst_inst if pname == b else "default")
         rem = _rate_remaining(health_map.get(f"{pname}#{inst}") or health_map.get(pname))
         if rem is not None and rem < 10:
             emit("rate:slow", provider=pname, remaining=rem, base_ms=base, extra_ms=1000)
@@ -459,6 +461,8 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
 
     emit("two:start", a=a, b=b, feature=feature, removals=allow_removals)
 
+    a_cfg = pair_endpoint_config(provider_cfg, a, src_inst)
+    b_cfg = pair_endpoint_config(provider_cfg, b, dst_inst)
     pair_providers = {a: aops, b: bops}
 
     if str(a).strip().upper() == "SIMKL" and str(b).strip().upper() != "SIMKL":
@@ -471,16 +475,28 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
     def _on_snapshot(name: str, idx: Mapping[str, Any]) -> None:
         if name != prep_after:
             return
-        prepare_source_snapshot(prep_ops, config=provider_cfg, feature=feature, items=idx, dbg=dbg)
+        prepare_source_snapshot(prep_ops, config=b_cfg if prep_ops is bops else a_cfg, feature=feature, items=idx, dbg=dbg)
 
-    snaps = build_snapshots_for_feature(
-        feature=feature, config=provider_cfg, providers=pair_providers,
-        snap_cache=ctx.snap_cache, snap_ttl_sec=ctx.snap_ttl_sec,
-        dbg=dbg, emit_info=info,
-        build_order=build_order, on_snapshot=_on_snapshot,
-    )
-    A_cur = snaps.get(a) or {}
-    B_cur = snaps.get(b) or {}
+    if a == b:
+        A_cur = build_snapshots_for_feature(
+            feature=feature, config=a_cfg, providers={a: aops},
+            snap_cache=ctx.snap_cache, snap_ttl_sec=ctx.snap_ttl_sec,
+            dbg=dbg, emit_info=info, on_snapshot=_on_snapshot,
+        ).get(a) or {}
+        B_cur = build_snapshots_for_feature(
+            feature=feature, config=b_cfg, providers={b: bops},
+            snap_cache=ctx.snap_cache, snap_ttl_sec=ctx.snap_ttl_sec,
+            dbg=dbg, emit_info=info,
+        ).get(b) or {}
+    else:
+        snaps = build_snapshots_for_feature(
+            feature=feature, config=provider_cfg, providers=pair_providers,
+            snap_cache=ctx.snap_cache, snap_ttl_sec=ctx.snap_ttl_sec,
+            dbg=dbg, emit_info=info,
+            build_order=build_order, on_snapshot=_on_snapshot,
+        )
+        A_cur = snaps.get(a) or {}
+        B_cur = snaps.get(b) or {}
     cancelled = bool(cancel_requested())
 
 
@@ -550,12 +566,12 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
 
     prev_cp_A = prev_checkpoint(prev_state, a, feature, src_inst)
     prev_cp_B = prev_checkpoint(prev_state, b, feature, dst_inst)
-    now_cp_A = module_checkpoint(aops, provider_cfg, feature)
-    now_cp_B = module_checkpoint(bops, provider_cfg, feature)
+    now_cp_A = module_checkpoint(aops, a_cfg, feature)
+    now_cp_B = module_checkpoint(bops, b_cfg, feature)
 
     if drop_guard:
         A_eff_guard, A_suspect, A_reason = coerce_suspect_snapshot(
-            config=provider_cfg,
+            config=a_cfg,
             provider=a, ops=aops, prev_idx=prevA, cur_idx=A_cur, feature=feature,
             suspect_min_prev=int((cfg.get("runtime") or {}).get("suspect_min_prev", 20)),
             suspect_shrink_ratio=float((cfg.get("runtime") or {}).get("suspect_shrink_ratio", 0.10)),
@@ -565,7 +581,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         if A_suspect:
             dbg("snapshot.guard", provider=a, feature=feature, reason=A_reason)
         B_eff_guard, B_suspect, B_reason = coerce_suspect_snapshot(
-            config=provider_cfg,
+            config=b_cfg,
             provider=b, ops=bops, prev_idx=prevB, cur_idx=B_cur, feature=feature,
             suspect_min_prev=int((cfg.get("runtime") or {}).get("suspect_min_prev", 20)),
             suspect_shrink_ratio=float((cfg.get("runtime") or {}).get("suspect_shrink_ratio", 0.10)),
@@ -650,8 +666,8 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         if len(A_eff) != a_before or len(B_eff) != b_before:
             dbg("anime_mapping.rekeyed", feature=feature, a=a, b=b, a_items=len(A_eff), b_items=len(B_eff))
         if feature in ("history", "ratings", "progress"):
-            A_eff = _comparison_view(aops, provider_cfg, feature, A_eff, side=a, dbg=dbg)
-            B_eff = _comparison_view(bops, provider_cfg, feature, B_eff, side=b, dbg=dbg)
+            A_eff = _comparison_view(aops, a_cfg, feature, A_eff, side=a, dbg=dbg)
+            B_eff = _comparison_view(bops, b_cfg, feature, B_eff, side=b, dbg=dbg)
 
     if feature == "history":
         A_cur = filter_history_events(A_cur, event_mode=history_event_mode)
@@ -1071,7 +1087,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
 
         bi = sync_cfg.get("bidirectional") or {}
         sot = (bi.get("source_of_truth") or bi.get("sourceOfTruth") or "").strip().upper()
-        prefer = sot if sot in (a, b) else a
+        prefer = next((choice for choice in (a_choice, b_choice) if choice.upper() == sot), a_choice)
 
         addA: list[dict[str, Any]] = []
         addB: list[dict[str, Any]] = []
@@ -1109,11 +1125,11 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                 ta = _rated_epoch(av)
                 tb = _rated_epoch(bv)
                 if ta is not None and tb is not None and ta != tb:
-                    win = a if ta > tb else b
+                    win = a_choice if ta > tb else b_choice
                 else:
                     win = prefer
-                win = choose_conflict(ctx, feature, ak, a, b, av, bv, win)
-                if win == a:
+                win = choose_conflict(ctx, feature, ak, a_choice, b_choice, av, bv, win)
+                if win == a_choice:
                     addB.append(_minimal_keep_rating(av))
                 else:
                     addA.append(_minimal_keep_rating(bv))
@@ -1425,7 +1441,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
 
         bi = sync_cfg.get("bidirectional") or {}
         sot = (bi.get("source_of_truth") or bi.get("sourceOfTruth") or "").strip().upper()
-        prefer = sot if sot in (a, b) else a
+        prefer = next((choice for choice in (a_choice, b_choice) if choice.upper() == sot), a_choice)
 
         upB = {k: it for it in up_B if (k := _ck(it))}
         upA = {k: it for it in up_A if (k := _ck(it))}
@@ -1456,24 +1472,24 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                 ta = _real_prog_epoch(a, a_it)
                 tb = _real_prog_epoch(b, b_it)
                 if ta is not None and tb is not None and ta != tb:
-                    win = a if ta > tb else b
+                    win = a_choice if ta > tb else b_choice
                 else:
                     msa = _prog_ms(a_it)
                     msb = _prog_ms(b_it)
                     if msa > 0 and msb > 0 and msa != msb:
-                        win = a if msa > msb else b
+                        win = a_choice if msa > msb else b_choice
                     else:
                         pca = _prog_percent(a_it)
                         pcb = _prog_percent(b_it)
                         if pca is not None and pcb is not None and abs(float(pca) - float(pcb)) > 0.1:
-                            win = a if float(pca) > float(pcb) else b
+                            win = a_choice if float(pca) > float(pcb) else b_choice
                         elif msa != msb:
-                            win = a if msa > msb else b
+                            win = a_choice if msa > msb else b_choice
                         else:
                             win = prefer
 
-                win = choose_conflict(ctx, feature, k, a, b, a_it, b_it, win)
-                if win == a:
+                win = choose_conflict(ctx, feature, k, a_choice, b_choice, a_it, b_it, win)
+                if win == a_choice:
                     addB.append(_minimal_keep_progress(upB[k]))
                 else:
                     addA.append(_minimal_keep_progress(upA[k]))
@@ -1485,11 +1501,11 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                 ta = _real_prog_epoch(a, clB[k])
                 tb = _real_prog_epoch(b, b_it)
                 if ta is not None and tb is not None and ta != tb:
-                    win = a if ta > tb else b
+                    win = a_choice if ta > tb else b_choice
                 else:
                     win = prefer
-                win = choose_conflict(ctx, feature, k, a, b, clB[k], b_it, win)
-                if win == a:
+                win = choose_conflict(ctx, feature, k, a_choice, b_choice, clB[k], b_it, win)
+                if win == a_choice:
                     if allow_removals:
                         remB.append(_minimal(clB[k]))
                 else:
@@ -1500,11 +1516,11 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                 tb = _real_prog_epoch(b, clA[k])
                 ta = _real_prog_epoch(a, a_it)
                 if ta is not None and tb is not None and ta != tb:
-                    win = a if ta > tb else b
+                    win = a_choice if ta > tb else b_choice
                 else:
                     win = prefer
-                win = choose_conflict(ctx, feature, k, a, b, a_it, clA[k], win)
-                if win == b:
+                win = choose_conflict(ctx, feature, k, a_choice, b_choice, a_it, clA[k], win)
+                if win == b_choice:
                     if allow_removals:
                         remA.append(_minimal(clA[k]))
                 else:
@@ -1973,9 +1989,9 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         else:
             emit("two:apply:remove:A:start", dst=a, feature=feature, count=len(rem_from_A))
             resA_rem = apply_remove(
-                dst_ops=aops, cfg=provider_cfg, dst_name=a, feature=feature, items=rem_from_A,
+                dst_ops=aops, cfg=a_cfg, dst_name=a, feature=feature, items=rem_from_A,
                 dry_run=dry_run_flag, emit=emit, dbg=dbg,
-                chunk_size=effective_chunk_size(ctx, a), chunk_pause_ms=_pause_for(a),
+                chunk_size=effective_chunk_size(ctx, a), chunk_pause_ms=_pause_for(a, src_inst),
             )
             decA_rem = compute_effective_remove(
                 attempted_keys=remA_keys,
@@ -2020,9 +2036,9 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         else:
             emit("two:apply:remove:B:start", dst=b, feature=feature, count=len(rem_from_B))
             resB_rem = apply_remove(
-                dst_ops=bops, cfg=provider_cfg, dst_name=b, feature=feature, items=rem_from_B,
+                dst_ops=bops, cfg=b_cfg, dst_name=b, feature=feature, items=rem_from_B,
                 dry_run=dry_run_flag, emit=emit, dbg=dbg,
-                chunk_size=effective_chunk_size(ctx, b), chunk_pause_ms=_pause_for(b),
+                chunk_size=effective_chunk_size(ctx, b), chunk_pause_ms=_pause_for(b, dst_inst),
             )
             decB_rem = compute_effective_remove(
                 attempted_keys=remB_keys,
@@ -2081,9 +2097,9 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             emit("two:apply:update:A:start", dst=a, feature=feature, count=len(upd_to_A))
             unresolved_before_A = set(load_unresolved_keys(a, feature, cross_features=_cross_feature_unresolved(feature)) or [])
             resA_upd = apply_update(
-                dst_ops=aops, cfg=provider_cfg, dst_name=a, feature=feature, items=upd_to_A,
+                dst_ops=aops, cfg=a_cfg, dst_name=a, feature=feature, items=upd_to_A,
                 dry_run=dry_run_flag, emit=emit, dbg=dbg,
-                chunk_size=effective_chunk_size(ctx, a), chunk_pause_ms=_pause_for(a),
+                chunk_size=effective_chunk_size(ctx, a), chunk_pause_ms=_pause_for(a, src_inst),
             )
             unresolved_after_A = set(load_unresolved_keys(a, feature, cross_features=_cross_feature_unresolved(feature)) or [])
             prov_unresolved_keys_A_raw = (resA_upd or {}).get("unresolved_keys")
@@ -2122,9 +2138,9 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             emit("two:apply:update:B:start", dst=b, feature=feature, count=len(upd_to_B))
             unresolved_before_B = set(load_unresolved_keys(b, feature, cross_features=_cross_feature_unresolved(feature)) or [])
             resB_upd = apply_update(
-                dst_ops=bops, cfg=provider_cfg, dst_name=b, feature=feature, items=upd_to_B,
+                dst_ops=bops, cfg=b_cfg, dst_name=b, feature=feature, items=upd_to_B,
                 dry_run=dry_run_flag, emit=emit, dbg=dbg,
-                chunk_size=effective_chunk_size(ctx, b), chunk_pause_ms=_pause_for(b),
+                chunk_size=effective_chunk_size(ctx, b), chunk_pause_ms=_pause_for(b, dst_inst),
             )
             unresolved_after_B = set(load_unresolved_keys(b, feature, cross_features=_cross_feature_unresolved(feature)) or [])
             prov_unresolved_keys_B_raw = (resB_upd or {}).get("unresolved_keys")
@@ -2175,9 +2191,9 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                 k2i_A[k] = _sync_minimal(it)
             
             resA_add = apply_add(
-                dst_ops=aops, cfg=provider_cfg, dst_name=a, feature=feature, items=add_to_A,
+                dst_ops=aops, cfg=a_cfg, dst_name=a, feature=feature, items=add_to_A,
                 dry_run=dry_run_flag, emit=emit, dbg=dbg,
-                chunk_size=effective_chunk_size(ctx, a), chunk_pause_ms=_pause_for(a),
+                chunk_size=effective_chunk_size(ctx, a), chunk_pause_ms=_pause_for(a, src_inst),
             )
             unresolved_after_A = set(load_unresolved_keys(a, feature, cross_features=_cross_feature_unresolved(feature)) or [])
             prov_unresolved_keys_A_raw = (resA_add or {}).get("unresolved_keys")
@@ -2313,9 +2329,9 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                 k2i_B[k] = _sync_minimal(it)
             
             resB_add = apply_add(
-                dst_ops=bops, cfg=provider_cfg, dst_name=b, feature=feature, items=add_to_B,
+                dst_ops=bops, cfg=b_cfg, dst_name=b, feature=feature, items=add_to_B,
                 dry_run=dry_run_flag, emit=emit, dbg=dbg,
-                chunk_size=effective_chunk_size(ctx, b), chunk_pause_ms=_pause_for(b),
+                chunk_size=effective_chunk_size(ctx, b), chunk_pause_ms=_pause_for(b, dst_inst),
             )
             unresolved_after_B = set(load_unresolved_keys(b, feature, cross_features=_cross_feature_unresolved(feature)) or [])
             prov_unresolved_keys_B_raw = (resB_add or {}).get("unresolved_keys")
@@ -2441,7 +2457,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
              presence_confirmed_keys=len(r.get("presence_confirmed_keys") or []))
         try:
             refreshed = refresh_destination_after_apply(
-                ops=ops, config=provider_cfg, feature=feature, provider=prov, snap_cache=ctx.snap_cache,
+                ops=ops, config=pair_endpoint_config(provider_cfg, prov, inst), feature=feature, provider=prov, snap_cache=ctx.snap_cache,
             )
         except Exception:
             refreshed = None

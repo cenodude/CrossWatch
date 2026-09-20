@@ -2258,6 +2258,13 @@ class PairPatch(BaseModel):
     features: dict[str, Any] | None = None
     profile_id: str | None = None
 
+
+def _same_pair_endpoint(pair: Mapping[str, Any]) -> bool:
+    source = str(pair.get("source") or "").strip().upper()
+    target = str(pair.get("target") or "").strip().upper()
+    return bool(source and source == target and _norm_instance_id(pair.get("source_instance")) == _norm_instance_id(pair.get("target_instance")))
+
+
 def _request_user(request: Request | None) -> dict[str, Any] | None:
     try:
         user = request_user(request)
@@ -2353,6 +2360,8 @@ def api_pairs_add(payload: PairIn = Body(...), request: Request = cast(Request, 
         item.setdefault("mode", "one-way")
         item["source_instance"] = _norm_instance_id(item.get("source_instance"))
         item["target_instance"] = _norm_instance_id(item.get("target_instance"))
+        if _same_pair_endpoint(item):
+            return {"ok": False, "error": "same_provider_instance"}
         item["enabled"] = coerce_bool(item.get("enabled", False))
         item["features"] = _normalize_features(item.get("features") or {"watchlist": True})
         _apply_pair_profile_scope(cfg, request, item)
@@ -2437,6 +2446,8 @@ def api_pairs_update(pair_id: str, payload: PairPatch = Body(...), request: Requ
                     return {"ok": False, "error": "profile_scope_denied"}
                 if _playlist_managed_pair(it):
                     return {"ok": False, "error": "playlist_managed_pair"}
+                if _same_pair_endpoint({**it, **upd}):
+                    return {"ok": False, "error": "same_provider_instance"}
                 if "features" in upd:
                     it["features"] = _normalize_features(upd.pop("features"))
                 if "providers" in upd:

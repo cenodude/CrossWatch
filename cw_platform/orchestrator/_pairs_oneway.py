@@ -2,6 +2,7 @@
 # One-way synchronization logic for data pairs.
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
+from ._pairs_utils import pair_endpoint_config
 from collections.abc import Mapping
 from typing import Any
 
@@ -854,9 +855,8 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
     def _cross_feature_unresolved(feature_name: str) -> bool:
         return str(feature_name or "").strip().lower() == "history"
 
-    def _pause_for(pname: str) -> int:
+    def _pause_for(pname: str, inst: str) -> int:
         base = int(getattr(ctx, "apply_chunk_pause_ms", 0) or 0)
-        inst = src_inst if pname == src else (dst_inst if pname == dst else "default")
         rem = _rate_remaining(health_map.get(f"{pname}#{inst}") or health_map.get(pname))
         if rem is not None and rem < 10:
             emit("rate:slow", provider=pname, remaining=rem, base_ms=base, extra_ms=1000)
@@ -1082,6 +1082,8 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
 
         return out
 
+    src_cfg = pair_endpoint_config(provider_cfg, src, src_inst)
+    dst_cfg = pair_endpoint_config(provider_cfg, dst, dst_inst)
     pair_providers = {src: src_ops, dst: dst_ops}
 
     def _on_snapshot(name: str, idx: Mapping[str, Any]) -> None:
@@ -1089,26 +1091,38 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
             return
         prepare_source_snapshot(
             dst_ops,
-            config=provider_cfg,
+            config=dst_cfg,
             feature=feature,
             items=idx,
             dbg=dbg,
         )
 
-    snaps = build_snapshots_for_feature(
-        feature=feature,
-        config=provider_cfg,
-        providers=pair_providers,
-        snap_cache=ctx.snap_cache,
-        snap_ttl_sec=ctx.snap_ttl_sec,
-        dbg=dbg,
-        emit_info=ctx.emit_info,
-        build_order=[src, dst],
-        on_snapshot=_on_snapshot,
-    )
+    if src == dst:
+        src_cur = build_snapshots_for_feature(
+            feature=feature, config=src_cfg, providers={src: src_ops},
+            snap_cache=ctx.snap_cache, snap_ttl_sec=ctx.snap_ttl_sec,
+            dbg=dbg, emit_info=ctx.emit_info, on_snapshot=_on_snapshot,
+        ).get(src) or {}
+        dst_cur = build_snapshots_for_feature(
+            feature=feature, config=dst_cfg, providers={dst: dst_ops},
+            snap_cache=ctx.snap_cache, snap_ttl_sec=ctx.snap_ttl_sec,
+            dbg=dbg, emit_info=ctx.emit_info,
+        ).get(dst) or {}
+    else:
+        snaps = build_snapshots_for_feature(
+            feature=feature,
+            config=provider_cfg,
+            providers=pair_providers,
+            snap_cache=ctx.snap_cache,
+            snap_ttl_sec=ctx.snap_ttl_sec,
+            dbg=dbg,
+            emit_info=ctx.emit_info,
+            build_order=[src, dst],
+            on_snapshot=_on_snapshot,
+        )
 
-    src_cur = snaps.get(src) or {}
-    dst_cur = snaps.get(dst) or {}
+        src_cur = snaps.get(src) or {}
+        dst_cur = snaps.get(dst) or {}
     cancelled = bool(cancel_requested())
 
     prev_state = load_feature_state(ctx.state_store, feature)
@@ -1165,9 +1179,9 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
 
     if drop_guard:
         prev_cp_src = prev_checkpoint(prev_state, src, feature, src_inst)
-        now_cp_src = module_checkpoint(src_ops, provider_cfg, feature)
+        now_cp_src = module_checkpoint(src_ops, src_cfg, feature)
         eff_src, src_suspect, src_reason = coerce_suspect_snapshot(
-            config=cfg,
+            config=src_cfg,
             provider=src, ops=src_ops,
             prev_idx=prev_src, cur_idx=src_cur, feature=feature,
             suspect_min_prev=suspect_min_prev, suspect_shrink_ratio=suspect_ratio,
@@ -1178,9 +1192,9 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
             dbg("snapshot.guard", provider=src, feature=feature, reason=src_reason)
 
         prev_cp_dst = prev_checkpoint(prev_state, dst, feature, dst_inst)
-        now_cp_dst = module_checkpoint(dst_ops, provider_cfg, feature)
+        now_cp_dst = module_checkpoint(dst_ops, dst_cfg, feature)
         eff_dst, dst_suspect, dst_reason = coerce_suspect_snapshot(
-            config=cfg,
+            config=dst_cfg,
             provider=dst, ops=dst_ops,
             prev_idx=prev_dst, cur_idx=dst_cur, feature=feature,
             suspect_min_prev=suspect_min_prev, suspect_shrink_ratio=suspect_ratio,
@@ -1193,8 +1207,8 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
         eff_src, eff_dst = dict(src_cur), dict(dst_cur)
         src_suspect = False
         dst_suspect = False
-        now_cp_src = module_checkpoint(src_ops, provider_cfg, feature)
-        now_cp_dst = module_checkpoint(dst_ops, provider_cfg, feature)
+        now_cp_src = module_checkpoint(src_ops, src_cfg, feature)
+        now_cp_dst = module_checkpoint(dst_ops, dst_cfg, feature)
 
     libs_src: list[str] = _effective_library_whitelist(cfg, src, feature, fcfg)
     libs_dst: list[str] = _effective_library_whitelist(cfg, dst, feature, fcfg)
@@ -1287,7 +1301,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
         try:
             _view_hook = getattr(dst_ops, "destination_comparison_view", None)
             if callable(_view_hook):
-                _view = _view_hook(provider_cfg, feature=feature, index=dst_full)
+                _view = _view_hook(dst_cfg, feature=feature, index=dst_full)
                 if isinstance(_view, Mapping) and _view:
                     if len(_view) != len(dst_full) or set(_view) != set(dst_full):
                         dbg("destination_comparison_view", feature=feature, dst=dst, before=len(dst_full), after=len(_view))
@@ -1795,7 +1809,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
             unresolved_before = set(load_unresolved_keys(dst, feature, cross_features=_cross_feature_unresolved(feature)) or [])
             upd_res = apply_update(
                 dst_ops=dst_ops,
-                cfg=provider_cfg,
+                cfg=dst_cfg,
                 dst_name=dst,
                 feature=feature,
                 items=updates,
@@ -1803,7 +1817,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                 emit=emit,
                 dbg=dbg,
                 chunk_size=effective_chunk_size(ctx, dst),
-                chunk_pause_ms=_pause_for(dst),
+                chunk_pause_ms=_pause_for(dst, dst_inst),
             )
             unresolved_after = set(load_unresolved_keys(dst, feature, cross_features=_cross_feature_unresolved(feature)) or [])
             res_update = {
@@ -1847,7 +1861,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
             _ = set(load_blackbox_keys(dst, feature) or [])
             add_res = apply_add(
                 dst_ops=dst_ops,
-                cfg=provider_cfg,
+                cfg=dst_cfg,
                 dst_name=dst,
                 feature=feature,
                 items=adds,
@@ -1855,7 +1869,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                 emit=emit,
                 dbg=dbg,
                 chunk_size=effective_chunk_size(ctx, dst),
-                chunk_pause_ms=_pause_for(dst),
+                chunk_pause_ms=_pause_for(dst, dst_inst),
             )
             unresolved_after = set(load_unresolved_keys(dst, feature, cross_features=_cross_feature_unresolved(feature)) or [])
             res_add = {
@@ -2027,7 +2041,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
         else:
             rem_res = apply_remove(
                 dst_ops=dst_ops,
-                cfg=provider_cfg,
+                cfg=dst_cfg,
                 dst_name=dst,
                 feature=feature,
                 items=removes,
@@ -2035,7 +2049,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                 emit=emit,
                 dbg=dbg,
                 chunk_size=effective_chunk_size(ctx, dst),
-                chunk_pause_ms=_pause_for(dst),
+                chunk_pause_ms=_pause_for(dst, dst_inst),
             )
             _rem_decision = compute_effective_remove(
                 attempted_keys=rem_keys_attempted,
@@ -2150,7 +2164,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
              presence_confirmed_keys=len(_r.get("presence_confirmed_keys") or []))
         try:
             refreshed = refresh_destination_after_apply(
-                ops=dst_ops, config=provider_cfg, feature=feature, provider=dst, snap_cache=ctx.snap_cache,
+                ops=dst_ops, config=dst_cfg, feature=feature, provider=dst, snap_cache=ctx.snap_cache,
             )
         except Exception:
             refreshed = None

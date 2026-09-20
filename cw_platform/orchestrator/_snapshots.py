@@ -100,7 +100,10 @@ def refresh_destination_after_apply(
         scope = pair_scope() or "unscoped"
         if canon:
             mode = "events" if bool((config or {}).get("_cw_history_rewatches")) and str(feature).lower() == "history" else "state"
-            snap_cache[(scope, provider, feature, mode)] = (time.time(), canon)
+            memo_key = (scope, provider, feature, mode)
+            if "_cw_provider_instance" in config:
+                memo_key += (str(config["_cw_provider_instance"]),)
+            snap_cache[memo_key] = (time.time(), canon)
     except Exception:
         pass
     return canon
@@ -730,6 +733,8 @@ def build_snapshots_for_feature(
         scope = pair_scope() or "unscoped"
         mode = "events" if bool((config or {}).get("_cw_history_rewatches")) and str(feature).lower() == "history" else "state"
         memo_key = (scope, name, feature, mode)
+        if "_cw_provider_instance" in config:
+            memo_key += (str(config["_cw_provider_instance"]),)
         if snap_ttl_sec > 0:
             ent = snap_cache.get(memo_key)
             if ent is not None:
