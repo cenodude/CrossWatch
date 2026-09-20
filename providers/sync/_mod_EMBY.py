@@ -379,6 +379,7 @@ class EMBYClient:
             json=json,
             timeout=self.cfg.timeout,
             max_retries=self.cfg.max_retries,
+            verify=self.cfg.verify_ssl,
         )
 
     def get(self, path: str, *, params: dict[str, Any] | None = None) -> requests.Response:

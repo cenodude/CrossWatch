@@ -150,7 +150,7 @@ class JellyfinAuthSession:
         timeout = HTTP_TIMEOUT_POST if method.upper() == "POST" else HTTP_TIMEOUT_GET
         try:
             return self._session.request(
-                method, url, params=params, json=json, headers=headers, timeout=timeout
+                method, url, params=params, json=json, headers=headers, timeout=timeout, verify=self.verify_ssl
             )
         except (rx.ConnectTimeout, rx.ReadTimeout):
             raise JellyfinAuthError("Server not reachable: timeout", reason="unreachable")
