@@ -4,6 +4,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+import pytest
+
 
 class FakeClient:
     def __init__(self, rows: list[dict[str, Any]] | None = None):
@@ -246,3 +248,217 @@ def test_watchlist_failed_verification_reports_numeric_errors() -> None:
 
     assert result["ok"] is False
     assert result["errors"] == 1
+
+
+@pytest.mark.parametrize("content_type,item_type", [("movie", "movie"), ("series", "show"), ("series", "tv")])
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_watchlist_remove_matches_stored_imdb_row(content_type: str, item_type: str, dry_run: bool) -> None:
+    from providers.sync.nuvio import _watchlist
+
+    rows = [
+        {"content_id": "tt0120791", "content_type": content_type, "name": "Example"},
+        {"content_id": "tmdb:999", "content_type": "movie", "name": "Keep", "poster": "keep.jpg"},
+    ]
+    adapter = FakeAdapter(rows)
+    item = {"type": item_type, "ids": {"tmdb": "6435", "imdb": "tt0120791"}}
+
+    result = _watchlist.remove(adapter, [item], dry_run=dry_run)
+
+    assert result["ok"] is True
+    assert result["count"] == result["attempted"] == 1
+    assert result["skipped"] == 0
+    if dry_run:
+        assert adapter.client.rows == rows
+        assert not any(name == "sync_push_library" for name, _ in adapter.client.calls)
+        assert result["confirmed_keys"] == []
+    else:
+        assert result["confirmed_keys"] == ["tmdb:6435"]
+        assert len(adapter.client.rows) == 1
+        assert adapter.client.rows[0]["content_id"] == "tmdb:999"
+        assert adapter.client.rows[0]["poster"] == "keep.jpg"
+        again = _watchlist.remove(adapter, [item])
+        assert again["attempted"] == 0
+        assert again["results"][0]["reason"] == "already_absent"
+
+
+def test_watchlist_remove_keeps_imdb_identity_with_metadata_configured(monkeypatch: Any) -> None:
+    from providers.metadata import _meta_TMDB
+    from providers.sync.nuvio import _watchlist
+
+    class FakeTmdb:
+        def __init__(self, *_: Any, **__: Any) -> None:
+            pass
+
+        def fetch(self, **_: Any) -> dict[str, Any]:
+            return {"ids": {"tmdb": "6435", "imdb": "tt0120791"}}
+
+    adapter = FakeAdapter([{"content_id": "tt0120791", "content_type": "movie", "name": "Example"}])
+    adapter.config["tmdb"] = {"api_key": "tmdb-key"}
+    monkeypatch.setattr(_meta_TMDB, "TmdbProvider", FakeTmdb)
+
+    result = _watchlist.remove(adapter, [{"type": "movie", "ids": {"imdb": "tt0120791"}}])
+
+    assert result["confirmed_keys"] == ["imdb:tt0120791"]
+    assert adapter.client.rows == []
+
+
+@pytest.mark.parametrize("native", [False, True])
+def test_watchlist_remove_does_not_guess_between_alias_rows(native: bool) -> None:
+    from providers.sync.nuvio import _watchlist
+
+    rows = [
+        {"content_id": "tmdb:6435", "content_type": "movie", "name": "TMDb row"},
+        {"content_id": "tt0120791", "content_type": "movie", "name": "IMDb row"},
+    ]
+    adapter = FakeAdapter(rows)
+    item = {"type": "movie", "ids": {"tmdb": "6435", "imdb": "tt0120791"}}
+    if native:
+        item["_nuvio_content_id"] = "tt0120791"
+
+    result = _watchlist.remove(adapter, [item])
+
+    if native:
+        assert result["confirmed_keys"] == ["tmdb:6435"]
+        assert [row["content_id"] for row in adapter.client.rows] == ["tmdb:6435"]
+    else:
+        assert result["ok"] is False
+        assert result["attempted"] == result["skipped"] == 0
+        assert result["unresolved_keys"] == ["tmdb:6435"]
+        assert result["unresolved"][0]["reason"] == "nuvio_id_ambiguous"
+        assert adapter.client.rows == rows
+        assert not any(name == "sync_push_library" for name, _ in adapter.client.calls)
+
+
+@pytest.mark.parametrize("same_id", [False, True])
+def test_watchlist_remove_preserves_other_media_types(same_id: bool) -> None:
+    from providers.sync.nuvio import _watchlist
+
+    rows = [{"content_id": "tmdb:6435", "content_type": "series", "name": "Keep show"}]
+    if same_id:
+        rows.insert(0, {"content_id": "tmdb:6435", "content_type": "movie", "name": "Remove movie"})
+    adapter = FakeAdapter(rows)
+
+    result = _watchlist.remove(adapter, [{"type": "movie", "ids": {"tmdb": "6435"}}])
+
+    assert result["count"] == int(same_id)
+    assert len(adapter.client.rows) == 1
+    assert adapter.client.rows[0]["content_type"] == "series"
+    assert adapter.client.rows[0]["name"] == "Keep show"
+
+
+def test_watchlist_remove_preserves_unrecognized_library_rows() -> None:
+    from providers.sync.nuvio import _watchlist
+
+    adapter = FakeAdapter([
+        {"content_id": "tt0120791", "content_type": "movie", "name": "Remove"},
+        {"content_id": "addon:custom", "content_type": "series", "name": "Keep", "poster": "custom.jpg"},
+    ])
+
+    result = _watchlist.remove(adapter, [{"type": "movie", "ids": {"imdb": "tt0120791"}}])
+
+    assert result["count"] == 1
+    assert len(adapter.client.rows) == 1
+    assert adapter.client.rows[0]["content_id"] == "addon:custom"
+    assert adapter.client.rows[0]["poster"] == "custom.jpg"
+
+
+def test_watchlist_remove_verifies_the_matched_alias() -> None:
+    from providers.sync.nuvio import _watchlist
+
+    rows = [{"content_id": "tt0120791", "content_type": "movie", "name": "Example"}]
+    adapter = FakeAdapter(rows)
+    adapter.client = NonPersistingClient(rows)
+
+    result = _watchlist.remove(adapter, [{"type": "movie", "ids": {"tmdb": "6435", "imdb": "tt0120791"}}])
+
+    assert result["ok"] is False
+    assert result["attempted"] == 1
+    assert result["count"] == 0
+    assert result["confirmed_keys"] == []
+    assert result["errors"] == 1
+    assert result["unresolved"][0]["reason"] == "nuvio_library_verification_failed"
+
+
+def test_watchlist_remove_does_not_match_title_and_year() -> None:
+    from providers.sync.nuvio import _watchlist
+
+    rows = [{"content_id": "tt0120791", "content_type": "movie", "name": "Example", "release_info": "1998"}]
+    adapter = FakeAdapter(rows)
+
+    result = _watchlist.remove(adapter, [{"type": "movie", "title": "Example", "year": 1998}])
+
+    assert result["ok"] is False
+    assert result["unresolved"][0]["reason"] == "nuvio_id_missing"
+    assert adapter.client.rows == rows
+    assert not any(name == "sync_push_library" for name, _ in adapter.client.calls)
+
+
+@pytest.mark.parametrize("requested_ids", [{"imdb": "tt0120791"}, {"tvdb": "1946"}])
+def test_watchlist_remove_resolves_to_existing_tmdb_row(monkeypatch: Any, requested_ids: dict[str, str]) -> None:
+    from providers.metadata import _meta_TMDB
+    from providers.sync.nuvio import _watchlist
+
+    class FakeTmdb:
+        def __init__(self, *_: Any, **__: Any) -> None:
+            pass
+
+        def fetch(self, **_: Any) -> dict[str, Any]:
+            return {"ids": {"tmdb": "6435"}}
+
+    adapter = FakeAdapter([{"content_id": "tmdb:6435", "content_type": "movie", "name": "Example"}])
+    adapter.config["tmdb"] = {"api_key": "tmdb-key"}
+    monkeypatch.setattr(_meta_TMDB, "TmdbProvider", FakeTmdb)
+
+    result = _watchlist.remove(adapter, [{"type": "movie", "ids": requested_ids}])
+
+    assert result["count"] == 1
+    assert result["confirmed_keys"] == [f"{name}:{value}" for name, value in requested_ids.items()]
+    assert adapter.client.rows == []
+
+
+def test_watchlist_remove_rejects_conflicting_external_ids(monkeypatch: Any) -> None:
+    from providers.metadata import _meta_TMDB
+    from providers.sync.nuvio import _watchlist
+
+    class FakeTmdb:
+        def __init__(self, *_: Any, **__: Any) -> None:
+            pass
+
+        def fetch(self, **_: Any) -> dict[str, Any]:
+            return {"ids": {"tmdb": "6435", "imdb": "tt0120791"}}
+
+    rows = [{"content_id": "tmdb:6435", "content_type": "movie", "name": "Example"}]
+    adapter = FakeAdapter(rows)
+    adapter.config["tmdb"] = {"api_key": "tmdb-key"}
+    monkeypatch.setattr(_meta_TMDB, "TmdbProvider", FakeTmdb)
+
+    result = _watchlist.remove(adapter, [{"type": "movie", "ids": {"tmdb": "6435", "imdb": "tt9999999"}}])
+
+    assert result["ok"] is False
+    assert result["attempted"] == result["skipped"] == 0
+    assert result["unresolved"][0]["reason"] == "nuvio_id_conflict"
+    assert adapter.client.rows == rows
+    assert not any(name == "sync_push_library" for name, _ in adapter.client.calls)
+
+
+def test_watchlist_remove_batch_does_not_count_aliases_twice() -> None:
+    from providers.sync.nuvio import _watchlist
+
+    adapter = FakeAdapter([
+        {"content_id": "tt0120791", "content_type": "movie", "name": "First"},
+        {"content_id": "tmdb:999", "content_type": "movie", "name": "Second"},
+    ])
+    items = [
+        {"type": "movie", "ids": {"tmdb": "6435", "imdb": "tt0120791"}},
+        {"type": "movie", "ids": {"imdb": "tt0120791"}},
+        {"type": "movie", "ids": {"tmdb": "999"}},
+    ]
+
+    result = _watchlist.remove(adapter, items)
+
+    assert result["ok"] is True
+    assert result["count"] == result["attempted"] == 2
+    assert result["skipped"] == 1
+    assert result["confirmed_keys"] == ["tmdb:6435", "tmdb:999"]
+    assert adapter.client.rows == []
+    assert sum(name == "sync_push_library" for name, _ in adapter.client.calls) == 1
