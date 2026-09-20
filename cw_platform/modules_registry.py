@@ -60,6 +60,18 @@ def get_sync_module_path_by_name(name: str) -> str | None:
     return MODULES["SYNC"].get(key)
 
 
+def provider_names(*, upper: bool = True) -> list[str]:
+    names: set[str] = set()
+    for group, prefix in (("AUTH", "_auth_"), ("SYNC", "_mod_")):
+        for key in (MODULES.get(group) or {}):
+            if not key.startswith(prefix):
+                continue
+            name = key[len(prefix):]
+            if name and name.lower() != "base":
+                names.add(name.upper() if upper else name.lower())
+    return sorted(names)
+
+
 def sync_provider_names(*, upper: bool = True) -> list[str]:
     names = [
         str(key).replace("_mod_", "")

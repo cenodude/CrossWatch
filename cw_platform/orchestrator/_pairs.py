@@ -23,6 +23,7 @@ from ..run_control import SyncCancelled, cancel_requested
 from ..value_coercion import coerce_bool
 from ..pair_scope import pair_feature_scope
 from ..log_context import log_pair_id
+from ..connection_status import record_health
 
 def _deep_merge_provider_overrides(dst: dict[str, Any], src: Mapping[str, Any]) -> None:
     for k, v in (src or {}).items():
@@ -216,6 +217,7 @@ def _collect_health_for_run(ctx, pairs: list[Mapping[str, Any]]) -> dict[str, An
 
         health_key = f"{str(name).upper()}#{normalize_instance_id(inst)}"
         health_map[health_key] = h
+        record_health(name, cfg_view, h)
         emit(
             "health",
             provider=name,

@@ -8,6 +8,9 @@ from typing import Any
 
 import requests
 
+from cw_platform.connection_status import record_response
+from cw_platform.provider_instances import build_provider_config_view
+
 
 def _key(provider: Any) -> str:
     return str(provider or "").strip().lower().replace("-", "_")
@@ -91,4 +94,8 @@ def request_with_auth(
     cfg: Mapping[str, Any] | None,
     **kwargs: Any,
 ) -> requests.Response:
-    return _backend(provider).request_with_auth(session, method, url, cfg=cfg, **kwargs)
+    response = _backend(provider).request_with_auth(session, method, url, cfg=cfg, **kwargs)
+    if cfg is not None:
+        view = build_provider_config_view(cfg, provider, kwargs.get("instance_id") or "default")
+        record_response(provider, view, int(response.status_code))
+    return response

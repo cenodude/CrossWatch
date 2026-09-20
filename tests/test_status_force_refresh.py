@@ -88,7 +88,7 @@ def test_status_cache_still_serves_repeat_calls_without_the_fresh_flag(monkeypat
     assert _connected(client, "/api/status?fresh=1") is False
 
 
-def test_a_fresh_refresh_does_not_reprobe_providers_that_did_not_change(monkeypatch) -> None:
+def test_a_fresh_refresh_verifies_each_provider_once(config_base, monkeypatch) -> None:
     state = {"cfg": _cfg(CONNECTED)}
     state["cfg"]["plex"] = {"account_token": "PT"}
     state["cfg"]["trakt"] = {"client_id": "CID", "access_token": "TT", "expires_at": 4102444800}
@@ -106,8 +106,16 @@ def test_a_fresh_refresh_does_not_reprobe_providers_that_did_not_change(monkeypa
     client.get("/api/status")
     calls.clear()
 
-    client.get("/api/status?fresh=1")
+    probes.STATUS_CACHE["ts"] = 0
+    client.get("/api/status")
     assert calls == []
+
+    client.get("/api/status?fresh=1")
+    assert len(calls) == 3
+    assert len(set(calls)) == 3
+    assert "https://api.trakt.tv/users/settings" in calls
+    assert "https://plex.tv/api/v2/user" in calls
+    calls.clear()
 
     changed = dict(CONNECTED)
     changed["api_key"] = "ROTATED"
@@ -116,8 +124,9 @@ def test_a_fresh_refresh_does_not_reprobe_providers_that_did_not_change(monkeypa
     state["cfg"]["trakt"] = {"client_id": "CID", "access_token": "TT", "expires_at": 4102444800}
 
     assert _connected(client, "/api/status?fresh=1") is True
-    assert calls
-    assert all("7330" in url for url in calls)
+    assert len(calls) == 3
+    assert len(set(calls)) == 3
+    assert any("7330" in url for url in calls)
 
 
 def test_client_sends_the_fresh_flag_only_on_a_forced_status_refresh() -> None:
