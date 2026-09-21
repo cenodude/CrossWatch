@@ -26,6 +26,7 @@ from ._common import (
 )
 from cw_platform.id_map import minimal as id_minimal
 from .._log import log as cw_log
+from ._pagination import TraktPager, TraktPaginationError
 
 BASE = "https://api.trakt.tv"
 URL_RAT_MOV = f"{BASE}/sync/ratings/movies"
@@ -85,7 +86,8 @@ def _load_cache_doc() -> dict[str, Any]:
         p = _cache_path()
         if not p.exists():
             return {}
-        return json.loads(p.read_text("utf-8") or "{}")
+        doc = json.loads(p.read_text("utf-8") or "{}")
+        return doc if isinstance(doc, dict) and doc.get("schema") == 1 else {}
     except Exception:
         return {}
 
@@ -96,7 +98,7 @@ def _save_cache_doc(items: Mapping[str, Any], wm: Mapping[str, Any]) -> None:
     try:
         p = _cache_path()
         p.parent.mkdir(parents=True, exist_ok=True)
-        doc = {"generated_at": _now_iso(), "items": dict(items), "wm": dict(wm or {})}
+        doc = {"schema": 1, "generated_at": _now_iso(), "items": dict(items), "wm": dict(wm or {})}
         tmp = p.with_suffix(".tmp")
         tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2, sort_keys=True), "utf-8")
         os.replace(tmp, p)
@@ -237,24 +239,16 @@ def _fetch_bucket(
     rr: int,
 ) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
-    for page in range(1, max_pages + 1):
-        last_status: int | None = None
+    pager = TraktPager("ratings", max_pages)
+    page = 1
+    while True:
         for attempt in range(max(int(rr or 0), 0) + 1):
             try:
                 r = sess.get(url, headers=headers, params={"page": page, "limit": per_page}, timeout=tmo)
-                last_status = r.status_code
                 if r.status_code == 200:
-                    rows = r.json() or []
+                    rows = pager.read(r, page)
                     if not rows:
                         return out
-                    try:
-                        applied = int(r.headers.get("X-Pagination-Limit") or per_page)
-                    except Exception:
-                        applied = per_page
-                    try:
-                        page_count = int(r.headers.get("X-Pagination-Page-Count") or 0)
-                    except Exception:
-                        page_count = 0
                     for row in rows:
                         val = _valid_rating(row.get("rating"))
                         if not val:
@@ -316,11 +310,6 @@ def _fetch_bucket(
                             m["rated_at"] = ra
                         out.append(m)
 
-                    if page_count:
-                        if page >= page_count:
-                            return out
-                    elif len(rows) < min(per_page, applied):
-                        return out
                     break
 
                 if r.status_code in _RETRYABLE_STATUS and attempt < rr:
@@ -329,20 +318,19 @@ def _fetch_bucket(
                     continue
 
                 _warn("http_failed", op="index", url=url, page=page, status=r.status_code, body=((r.text or "")[:200]))
-                return out
+                pager.read(r, page)
 
+            except TraktPaginationError:
+                raise
             except Exception as e:
                 if attempt < rr:
                     _warn("http_failed", op="index", url=url, page=page, error=str(e), attempt=attempt + 1, max_attempts=rr, retrying=True)
                     _sleep_backoff(attempt, None)
                     continue
                 _warn("http_failed", op="index", url=url, page=page, error=str(e))
-                return out
+                raise TraktPaginationError(f"Trakt ratings request failed on page {page}") from e
 
-        if last_status is not None and last_status != 200:
-            return out
-
-    return out
+        page += 1
 
 
 def _dedupe_canonical(items: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:

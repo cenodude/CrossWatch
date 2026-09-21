@@ -27,6 +27,7 @@ from ._common import (
 )
 from .._log import log as cw_log
 from .._mod_common import request_with_retries
+from ._pagination import TraktPager
 
 BASE = "https://api.trakt.tv"
 URL_ADD = f"{BASE}/sync/collection"
@@ -37,7 +38,7 @@ URL_REMOVE = f"{BASE}/sync/collection/remove"
 
 _PROVIDER = "TRAKT"
 _FEATURE = "collection"
-_SHADOW_SCHEMA = 3
+_SHADOW_SCHEMA = 4
 
 
 def _dbg(event: str, **fields: Any) -> None:
@@ -293,7 +294,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
 
         idx: dict[str, dict[str, Any]] = {}
         page = 1
-        total_pages: int | None = None
+        pager = TraktPager("collection", max_pages)
         etag_out: str | None = None
         total_hint: int | None = None
         rows_seen = 0
@@ -324,27 +325,17 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
                     timeout=adapter.cfg.timeout,
                     max_retries=adapter.cfg.max_retries,
                 )
-                if r.status_code != 200:
-                    _warn("http_failed", op="index", bucket=name, page=page, status=r.status_code)
-                    break
-
             if page == 1:
                 etag_out = r.headers.get("ETag")
-                total_pages = _hdr_int(r.headers, "X-Pagination-Page-Count")
                 total_hint = _hdr_int(r.headers, "X-Pagination-Item-Count")
 
-            data = r.json() if (r.text or "").strip() else []
-            rows: list[Mapping[str, Any]] = []
-            if isinstance(data, list):
-                rows = [x for x in data if isinstance(x, Mapping)]
-            elif isinstance(data, Mapping):
-                raw = data.get(name)
-                if isinstance(raw, list):
-                    rows = [x for x in raw if isinstance(x, Mapping)]
+            rows = pager.read(r, page, bucket=name)
             if not rows:
                 break
 
             for row in rows:
+                if not isinstance(row, Mapping):
+                    continue
                 for item in _items_from_collection_row(row):
                     key = _item_key(item)
                     if key:
@@ -354,13 +345,6 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
                 prog.tick(rows_seen, total=total_hint or max(rows_seen, len(rows)))
 
             page += 1
-            if total_pages is not None and page > total_pages:
-                break
-            if total_pages is None and len(rows) < per_page:
-                break
-            if max_pages and page > max_pages:
-                _warn("index_reconcile", reason="safety_cap_hit", strategy="paged_fetch", bucket=name, max_pages=max_pages)
-                break
 
         _dbg("index_fetch_bucket", bucket=name, rows=rows_seen, items=len(idx), per_page=per_page, max_pages=max_pages, pages=(page - 1))
         return idx, etag_out, False

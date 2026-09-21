@@ -91,7 +91,7 @@ def test_watchlist_index_follows_pages(monkeypatch):
     idx = _wl.build_index(FakeAdapter())
 
     assert len(idx) == 250
-    assert [c["page"] for c in calls] == [1, 2, 3]
+    assert [c["page"] for c in calls] == [1, 2, 3, 4]
     assert all(c["limit"] == 100 for c in calls)
 
 
@@ -111,4 +111,4 @@ def test_ratings_bucket_uses_applied_limit(monkeypatch):
     out = _rat._fetch_bucket(Sess(), {}, _rat.URL_RAT_MOV, "movie", 1000, 50, 5.0, 0)
 
     assert len(out) == 600
-    assert pages == [1, 2, 3]
+    assert pages == [1, 2, 3, 4]

@@ -68,7 +68,7 @@ def test_collection_index_reads_trakt_media_endpoint(monkeypatch: Any) -> None:
                 ],
                 {"ETag": "m1", "X-Pagination-Page-Count": "2", "X-Pagination-Item-Count": "2"},
             )
-        return FakeResp(404, {})
+        return FakeResp(200, [])
 
     monkeypatch.setattr(collection, "request_with_retries", fake_request)
     monkeypatch.setattr(collection, "fetch_last_activities", lambda *_args, **_kwargs: {})
@@ -79,6 +79,7 @@ def test_collection_index_reads_trakt_media_endpoint(monkeypatch: Any) -> None:
     idx = collection.build_index(_adapter())
 
     assert calls == [
+        "GET https://api.trakt.tv/sync/collection/media",
         "GET https://api.trakt.tv/sync/collection/media",
         "GET https://api.trakt.tv/sync/collection/media",
     ]

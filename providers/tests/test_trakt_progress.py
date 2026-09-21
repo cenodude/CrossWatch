@@ -31,6 +31,9 @@ class FakeClient:
             rows = [row for row in self.rows if row.get("type") == "episode"]
         else:
             rows = []
+        params = kwargs.get("params") or {}
+        page, limit = int(params.get("page", 1)), int(params.get("limit", 100))
+        rows = rows[(page - 1) * limit:page * limit]
         return Response(200, rows)
 
     def post(self, url: str, json: Mapping[str, Any], **_: Any) -> Response:

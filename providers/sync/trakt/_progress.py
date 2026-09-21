@@ -13,6 +13,7 @@ from providers.sync._log import log as cw_log
 from providers.sync._progress_policy import decide_progress_write, progress_materially_equal, select_progress_record
 
 from ._common import _fix_imdb
+from ._pagination import TraktPager
 
 
 _PROVIDER = "TRAKT"
@@ -154,16 +155,12 @@ def _item_from_row(row: Mapping[str, Any]) -> tuple[str | None, dict[str, Any] |
     return key, item, None
 
 
-def _progress_page(adapter: Any, media_type: str, page: int, limit: int) -> list[Mapping[str, Any]] | None:
+def _progress_page(adapter: Any, media_type: str, page: int, limit: int, *, pager: TraktPager) -> list[Mapping[str, Any]]:
     response = adapter.client.get(
         f"{adapter.client.BASE}/sync/playback/{media_type}",
         params={"extended": "full", "page": int(page), "limit": int(limit)},
     )
-    if not (200 <= int(getattr(response, "status_code", 0) or 0) < 300):
-        _warn("index_http_failed", media_type=media_type, page=page, status=getattr(response, "status_code", None))
-        return None
-    data = response.json() if (getattr(response, "text", "") or "").strip() else []
-    return data if isinstance(data, list) else []
+    return pager.read(response, page)
 
 
 def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
@@ -182,9 +179,10 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
     rows_seen = 0
     for media_type in ("movies", "episodes"):
         page = 1
-        while page <= max_pages:
-            rows = _progress_page(adapter, media_type, page, limit)
-            if rows is None:
+        pager = TraktPager("progress", max_pages)
+        while True:
+            rows = _progress_page(adapter, media_type, page, limit, pager=pager)
+            if not rows:
                 break
             rows_seen += len(rows)
             for row in rows:
@@ -198,8 +196,6 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
                 selected, action = select_progress_record(out.get(key), item)
                 out[key] = selected
                 _dbg("item", canonical_key=key, media_type=item.get("type"), progress_ms=item.get("progress_ms"), duration_ms=item.get("duration_ms"), action=action)
-            if len(rows) < limit:
-                break
             page += 1
     _info("index_done", count=len(out), rows=rows_seen, skipped=sum(skipped.values()), skipped_reasons=skipped)
     return out

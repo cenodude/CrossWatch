@@ -7,6 +7,7 @@ from typing import Any, Mapping
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 from providers.sync._mod_TRAKT import OPS as TRAKT_OPS, TRAKTModule
+from providers.sync.trakt._pagination import TraktPager
 
 from ..models import PlaybackActionResult, PlaybackCapabilities, PlaybackListResult, PlaybackRecord, clean_mapping, utc_now_iso
 from .base import PlaybackProgressAdapter, public_failure, rating_from_sources
@@ -190,36 +191,38 @@ class TraktPlaybackAdapter(PlaybackProgressAdapter):
             module = _module(config_view)
             rows: list[Mapping[str, Any]] = []
             seen_ids: set[str] = set()
-            first_error: tuple[int, str] | None = None
             for kind in ("movies", "episodes"):
-                response = module.client.get(f"{module.client.BASE}/sync/playback/{kind}", params={"extended": "full,images"})
-                if not (200 <= response.status_code < 300):
-                    if first_error is None:
-                        first_error = (int(response.status_code), kind)
-                    continue
-                data = response.json() if (response.text or "").strip() else []
-                if not isinstance(data, list):
-                    continue
-                for row in data:
-                    if not isinstance(row, Mapping):
-                        continue
-                    row_id = str(row.get("id") or "").strip()
-                    if row_id and row_id in seen_ids:
-                        continue
-                    if row_id:
-                        seen_ids.add(row_id)
-                    rows.append(row)
-            if first_error and not rows:
-                status, kind = first_error
-                return PlaybackListResult(
-                    ok=False,
-                    provider=self.provider,
-                    instance_id=instance_id,
-                    error_code=f"http:{status}",
-                    message=f"Trakt playback {kind} request failed.",
-                    remote_status=status,
-                    retryable=status in {408, 429, 500, 502, 503, 504},
-                )
+                pager = TraktPager("progress", 100)
+                page = 1
+                while True:
+                    response = module.client.get(
+                        f"{module.client.BASE}/sync/playback/{kind}",
+                        params={"extended": "full,images", "page": page, "limit": 100},
+                    )
+                    if response.status_code != 200:
+                        status = int(response.status_code)
+                        return PlaybackListResult(
+                            ok=False,
+                            provider=self.provider,
+                            instance_id=instance_id,
+                            error_code=f"http:{status}",
+                            message=f"Trakt playback {kind} request failed.",
+                            remote_status=status,
+                            retryable=status in {408, 429, 500, 502, 503, 504},
+                        )
+                    data = pager.read(response, page)
+                    if not data:
+                        break
+                    for row in data:
+                        if not isinstance(row, Mapping):
+                            continue
+                        row_id = str(row.get("id") or "").strip()
+                        if row_id and row_id in seen_ids:
+                            continue
+                        if row_id:
+                            seen_ids.add(row_id)
+                        rows.append(row)
+                    page += 1
             caps = self.capabilities(config_view, instance_id=instance_id, instance_label=instance_label)
             items = [self._normalize(row, instance_id, instance_label, caps) for row in rows]
             return PlaybackListResult(ok=True, provider=self.provider, instance_id=instance_id, items=[x for x in items if x], refreshed_at=utc_now_iso())

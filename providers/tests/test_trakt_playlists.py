@@ -60,6 +60,8 @@ def _router(monkeypatch, handlers):
 
     def fake_rwr(sess, method, url, **kw):
         captured.append({"method": method, "url": url, "json": kw.get("json"), "params": kw.get("params")})
+        if method == "GET" and int((kw.get("params") or {}).get("page", 1)) > 1:
+            return FakeResp(200, [])
         for (m, needle), resp in handlers.items():
             if method == m and needle in url:
                 return resp() if callable(resp) else resp
