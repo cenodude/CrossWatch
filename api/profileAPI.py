@@ -19,6 +19,8 @@ from pathlib import Path
 from fastapi import APIRouter, Body, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 
+from cw_platform.app_version import user_agent as http_user_agent
+
 from api.appAuthAPI import (
     ADMIN_USER_ID,
     COOKIE_NAME,
@@ -244,7 +246,7 @@ def _avatar_response(raw: dict[str, Any]) -> Response:
             if cached is not None:
                 return FileResponse(cached, media_type=_avatar_media_type_for_path(cached), headers=AVATAR_CACHE_HEADERS)
             try:
-                req = urllib.request.Request(linked_url, headers={"User-Agent": "CrossWatch/0.11"})
+                req = urllib.request.Request(linked_url, headers={"User-Agent": http_user_agent()})
                 with urllib.request.urlopen(req, timeout=8) as res:
                     content_type = str(res.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
                     if content_type in AVATAR_TYPES:

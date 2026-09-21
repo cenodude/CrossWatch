@@ -9,6 +9,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
+from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.config_base import load_config
 from cw_platform.provider_instances import normalize_instance_id, resolve_provider_block
 from providers.scrobble._watched_gate import resolve_stop_action
@@ -32,7 +33,7 @@ except ImportError:
         return s[0] + "*" if len(s) <= 2 else s[:2] + "***"
 
 
-APP_AGENT = "CrossWatch/BingeBaseWebhook/1.0"
+APP_AGENT = http_user_agent("BingeBaseWebhook", override_env="CW_BINGEBASE_UA")
 DEFAULT_WATCHED_AT = 90.0
 ACTION_EVENT = {
     "start": "playback.start",
@@ -199,7 +200,7 @@ class BingeBaseSink(ScrobbleSink):
         self._completed: dict[str, float] = {}
         try:
             self.session.headers.setdefault("Accept", "application/json")
-            self.session.headers.setdefault("User-Agent", APP_AGENT)
+            self.session.headers["User-Agent"] = APP_AGENT
         except Exception:
             pass
 

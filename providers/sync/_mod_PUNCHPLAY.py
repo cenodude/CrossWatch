@@ -8,6 +8,7 @@ import time
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.provider_instances import normalize_instance_id
 from providers.auth._auth_PUNCHPLAY import ME_URL, is_configured as auth_is_configured
 from providers.sync._mod_common import SimpleRateLimiter, build_op_result, build_session, dedup_keys
@@ -195,7 +196,7 @@ class PUNCHPLAYModule:
             pass
         try:
             session.headers.setdefault("Accept", "application/json")
-            session.headers.setdefault("User-Agent", f"CrossWatch PUNCHPLAY/{__VERSION__}")
+            session.headers["User-Agent"] = http_user_agent("PUNCHPLAY", override_env="CW_PUNCHPLAY_UA")
         except Exception:
             pass
         self.session = session

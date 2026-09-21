@@ -3,16 +3,16 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-import os
 from typing import Any
 from urllib.parse import urljoin
 
 import requests
 
+from cw_platform.app_version import app_version, user_agent as http_user_agent
 from cw_platform.config_base import load_config, save_config
 from cw_platform.provider_instances import ensure_instance_block, normalize_instance_id
 
-UA = os.environ.get("CW_EMBY_UA") or os.environ.get("CW_UA") or "CrossWatch"
+UA = http_user_agent("Emby", override_env="CW_EMBY_UA")
 
 
 def _clean(url: str) -> str:
@@ -27,7 +27,7 @@ def _clean(url: str) -> str:
 
 
 def _mb_auth(token: str | None, device_id: str) -> str:
-    version = os.environ.get("CW_EMBY_VERSION") or os.environ.get("CW_VERSION") or "unknown"
+    version = app_version()
     base = f'MediaBrowser Client="CrossWatch", Device="Web", DeviceId="{device_id}", Version="{version}"'
     return f'{base}, Token="{token}"' if token else base
 

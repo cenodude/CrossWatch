@@ -13,6 +13,7 @@ from typing import Any
 
 import requests
 
+from cw_platform.app_version import app_version, user_agent as http_user_agent
 from cw_platform.config_base import load_config
 from cw_platform.local_db.ttl_dedupe import once_per_ttl
 from cw_platform.provider_instances import normalize_instance_id
@@ -38,7 +39,7 @@ except ImportError:
 
 
 TRAKT_API = "https://api.trakt.tv"
-APP_AGENT = "CrossWatch/Watcher/1.0"
+APP_AGENT = http_user_agent("Watcher", override_env="CW_TRAKT_UA")
 _TOKEN_OVERRIDE: dict[str, str] = {}
 _AR_TTL = 60
 _SENSITIVE_KEYS = {
@@ -122,7 +123,7 @@ def _merged_provider_block(cfg: Mapping[str, Any], key: str, instance_id: Any = 
 
 def _app_meta(cfg: dict[str, Any]) -> dict[str, str]:
     rt = cfg.get("runtime") or {}
-    ver = str(rt.get("version") or APP_AGENT)
+    ver = app_version()
     bdate = (rt.get("build_date") or "").strip()
     out: dict[str, str] = {"app_version": ver}
     if bdate:

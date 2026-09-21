@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
 from urllib.parse import urlparse
 
+from cw_platform.app_version import app_version, user_agent as http_user_agent
 from cw_platform.value_coercion import coerce_bool
 
 from ._log import log as cw_log
@@ -41,8 +42,7 @@ def _log(msg: str) -> None:
     _dbg(msg)
 
 __VERSION__ = "2.6"
-os.environ.setdefault("CW_PLEX_VERSION", __VERSION__)
-os.environ.setdefault("CW_PLEX_UA", f"CrossWatch/{__VERSION__} (Plex)")
+os.environ.setdefault("CW_PLEX_UA", http_user_agent("Plex", override_env="CW_PLEX_UA"))
 __all__ = ["get_manifest", "PLEXModule", "PLEXClient", "PLEXError", "PLEXAuthError", "PLEXNotFound", "OPS"]
 
 try:
@@ -343,7 +343,8 @@ def _plex_tv_session(token: str, client_id: str) -> requests.Session:
             "X-Plex-Client-Identifier": client_id,
             "X-Plex-Product": "CrossWatch",
             "X-Plex-Platform": "CrossWatch",
-            "X-Plex-Version": __VERSION__,
+            "X-Plex-Version": app_version(),
+            "User-Agent": http_user_agent("Plex", override_env="CW_PLEX_UA"),
             "Accept": "application/xml, application/json;q=0.9,*/*;q=0.8",
         }
     )
@@ -671,7 +672,8 @@ class PLEXClient:
             self.session.headers.setdefault("X-Plex-Client-Identifier", cid)
             self.session.headers.setdefault("X-Plex-Product", "CrossWatch")
             self.session.headers.setdefault("X-Plex-Platform", "CrossWatch")
-            self.session.headers.setdefault("X-Plex-Version", __VERSION__)
+            self.session.headers.setdefault("X-Plex-Version", app_version())
+            self.session.headers["User-Agent"] = http_user_agent("Plex", override_env="CW_PLEX_UA")
             self.session.headers.setdefault("Accept", "application/xml")
             self.session.headers["X-Plex-Token"] = connection_token
 

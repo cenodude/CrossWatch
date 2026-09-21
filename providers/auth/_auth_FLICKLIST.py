@@ -13,6 +13,7 @@ from typing import Any
 import requests
 
 from ._auth_base import AuthManifest, AuthStatus
+from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.config_base import load_config, save_config
 from cw_platform.provider_instances import ensure_instance_block, normalize_instance_id, resolve_provider_block
 
@@ -47,7 +48,7 @@ POLL_INTERVAL_SEC = 5
 REFRESH_AFTER_SEC = 7 * 86400
 REFRESH_SKEW_SEC = 86400
 HTTP_TIMEOUT = 20.0
-UA = "CrossWatch/FlickListAuth"
+UA = http_user_agent("FlickListAuth", override_env="CW_FLICKLIST_UA")
 __VERSION__ = "0.1"
 
 _TOKEN_KEYS = (

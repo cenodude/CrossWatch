@@ -8,6 +8,7 @@ from collections.abc import Mapping, MutableMapping
 from typing import Any, cast
 from urllib.parse import urljoin
 
+from cw_platform.app_version import app_version, user_agent as http_user_agent
 from cw_platform.provider_instances import ensure_instance_block, normalize_instance_id
 from cw_platform.value_coercion import coerce_bool
 
@@ -27,7 +28,7 @@ def log(msg: str, level: str = "INFO", module: str = "AUTH", **_: Any) -> None:
 
 from ._auth_base import AuthManifest, AuthProvider, AuthStatus
 
-UA = "CrossWatch/1.0"
+UA = http_user_agent(override_env="CW_EMBY_UA")
 __VERSION__ = "2.0.0"
 HTTP_TIMEOUT_POST = 15
 HTTP_TIMEOUT_GET = 10
@@ -44,7 +45,7 @@ def _clean_base(url: str) -> str:
 def _mb_auth_value(token: str | None, device_id: str) -> str:
     base = (
         f'MediaBrowser Client="CrossWatch", Device="Web", '
-        f'DeviceId="{device_id}", Version="1.0"'
+        f'DeviceId="{device_id}", Version="{app_version()}"'
     )
     return f'{base}, Token="{token}"' if token else base
 

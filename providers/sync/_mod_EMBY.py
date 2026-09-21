@@ -11,6 +11,7 @@ from typing import Any, Callable, Iterable, Mapping
 
 import requests
 
+from cw_platform.app_version import app_version, user_agent as http_user_agent
 from cw_platform.provider_instances import normalize_instance_id
 from cw_platform.value_coercion import coerce_bool
 
@@ -133,11 +134,10 @@ except Exception:
     ctx = None  # type: ignore[assignment]
 
 __VERSION__ = "2.6"
-os.environ.setdefault("CW_EMBY_VERSION", __VERSION__)
-os.environ.setdefault("CW_EMBY_UA", f"CrossWatch/{__VERSION__} (Emby)")
+os.environ.setdefault("CW_EMBY_UA", http_user_agent("Emby", override_env="CW_EMBY_UA"))
 __all__ = ["get_manifest", "EMBYModule", "OPS"]
 
-_DEF_UA = os.environ.get("CW_EMBY_UA") or os.environ.get("CW_UA") or f"CrossWatch/{__VERSION__} (Emby)"
+_DEF_UA = os.environ.get("CW_EMBY_UA") or os.environ.get("CW_UA") or http_user_agent("Emby", override_env="CW_EMBY_UA")
 
 
 def _pick_instance_id(provider: str, cfg: Mapping[str, Any] | None = None) -> str:
@@ -351,7 +351,7 @@ class EMBYClient:
         self.session.verify = bool(cfg.verify_ssl)
         auth_val = (
             f'MediaBrowser Client="CrossWatch", Device="CrossWatch", '
-            f'DeviceId="{cfg.device_id}", Version="{__VERSION__}", Token="{cfg.access_token}"'
+            f'DeviceId="{cfg.device_id}", Version="{app_version()}", Token="{cfg.access_token}"'
         )
         self.session.headers.update(
             {

@@ -20,6 +20,7 @@ from fastapi import Body, Request, HTTPException, Response, Query
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 from api.provider_guard import usage_conflict_response
+from cw_platform.app_version import app_version, user_agent as http_user_agent
 from cw_platform.config_base import DEFAULT_CFG, load_config, save_config
 from cw_platform.provider_instances import apply_instance_defaults, ensure_instance_block, ensure_provider_block, normalize_instance_id
 from cw_platform.tracker_storage import remove_crosswatch_storage
@@ -166,7 +167,7 @@ def _validate_mdblist_api_key(api_key: str, *, timeout: float = 12.0) -> tuple[b
         r = requests.get(
             "https://api.mdblist.com/user",
             params={"apikey": key},
-            headers={"Accept": "application/json", "User-Agent": "CrossWatch/MDBListAuth"},
+            headers={"Accept": "application/json", "User-Agent": http_user_agent("MDBListAuth", override_env="CW_MDBLIST_UA")},
             timeout=timeout,
         )
     except requests.Timeout:
@@ -198,7 +199,7 @@ def _validate_publicmetadb_api_key(api_key: str, *, base_url: str = "https://pub
             headers={
                 "Accept": "application/json",
                 "Authorization": f"Bearer {key}",
-                "User-Agent": "CrossWatch/PublicMetaDBAuth",
+                "User-Agent": http_user_agent("PublicMetaDBAuth", override_env="CW_PUBLICMETADB_UA"),
             },
             timeout=timeout,
         )
@@ -232,7 +233,7 @@ def _validate_tautulli_credentials(server_url: str, api_key: str, *, timeout: fl
         r = requests.get(
             f"{server}/api/v2",
             params={"apikey": key, "cmd": "get_server_info"},
-            headers={"Accept": "application/json", "User-Agent": "CrossWatch/TautulliAuth"},
+            headers={"Accept": "application/json", "User-Agent": http_user_agent("TautulliAuth", override_env="CW_TAUTULLI_UA")},
             timeout=timeout,
             verify=coerce_bool(verify_ssl, True),
         )
@@ -1075,11 +1076,11 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         verify = coerce_bool(jf.get("verify_ssl", False))
         devid = str(jf.get("device_id") or "crosswatch").strip() or "crosswatch"
 
-        base = f'MediaBrowser Client="CrossWatch", Device="Web", DeviceId="{devid}", Version="1.0"'
+        base = f'MediaBrowser Client="CrossWatch", Device="Web", DeviceId="{devid}", Version="{app_version()}"'
         auth = f'{base}, Token="{token}"'
         headers = {
             "Accept": "application/json",
-            "User-Agent": "CrossWatch/1.0",
+            "User-Agent": http_user_agent(override_env="CW_JELLYFIN_UA"),
             "Authorization": auth,
             "X-Emby-Authorization": auth,
             "X-MediaBrowser-Token": token,
@@ -1089,7 +1090,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         def _get(url: str, *, params: dict[str, Any] | None = None, use_headers: bool = True) -> requests.Response:
             return requests.get(
                 url,
-                headers=headers if use_headers else {"Accept": "application/json", "User-Agent": "CrossWatch/1.0"},
+                headers=headers if use_headers else {"Accept": "application/json", "User-Agent": http_user_agent(override_env="CW_JELLYFIN_UA")},
                 params=params,
                 timeout=timeout,
                 verify=verify,
@@ -1528,10 +1529,10 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         verify = coerce_bool(em.get("verify_ssl", False))
         device_id = str(em.get("device_id") or "crosswatch").strip() or "crosswatch"
         stored_user_id = str(em.get("user_id") or "").strip()
-        auth = f'MediaBrowser Client="CrossWatch", Device="Web", DeviceId="{device_id}", Version="1.0", Token="{token}"'
+        auth = f'MediaBrowser Client="CrossWatch", Device="Web", DeviceId="{device_id}", Version="{app_version()}", Token="{token}"'
         headers = {
             "Accept": "application/json",
-            "User-Agent": "CrossWatch/1.0",
+            "User-Agent": http_user_agent(override_env="CW_EMBY_UA"),
             "Authorization": auth,
             "X-Emby-Authorization": auth,
             "X-Emby-Token": token,
@@ -1541,7 +1542,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         def _get(url: str, *, params: dict[str, Any] | None = None, use_headers: bool = True) -> requests.Response:
             return requests.get(
                 url,
-                headers=headers if use_headers else {"Accept": "application/json", "User-Agent": "CrossWatch/1.0"},
+                headers=headers if use_headers else {"Accept": "application/json", "User-Agent": http_user_agent(override_env="CW_EMBY_UA")},
                 params=params,
                 timeout=timeout,
                 verify=verify,
@@ -3525,7 +3526,7 @@ def anilist_exchange_code_for_token(*, code: str, redirect_uri: str, instance_id
         "redirect_uri": redirect_uri,
         "code": code,
     }
-    headers = {"Accept": "application/json", "User-Agent": "CrossWatch/1.0"}
+    headers = {"Accept": "application/json", "User-Agent": http_user_agent(override_env="CW_ANILIST_UA")}
 
     r = requests.post("https://anilist.co/api/v2/oauth/token", json=payload, headers=headers, timeout=15)
     if r.status_code >= 400:

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -12,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from cw_platform import config_base
+from cw_platform.app_version import app_version, user_agent as http_user_agent
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 from cw_platform.simkl_http import token_key
 
@@ -209,27 +209,11 @@ def is_user_limit_response(resp: Any) -> bool:
 
 
 def simkl_user_agent() -> str:
-    env_ua = str(os.getenv("CW_UA") or "").strip()
-    if env_ua:
-        return env_ua
-    for mod_name in ("sync._mod_SIMKL", "providers.sync._mod_SIMKL"):
-        mod = sys.modules.get(mod_name)
-        version = getattr(mod, "__VERSION__", None) if mod is not None else None
-        if isinstance(version, str) and version.strip():
-            return f"CrossWatch/{version.strip()} (SIMKL)"
-    return "CrossWatch (SIMKL)"
+    return http_user_agent("SIMKL", override_env="CW_SIMKL_UA")
 
 
 def simkl_app_version() -> str:
-    env_version = str(os.getenv("APP_VERSION") or "").strip()
-    if env_version:
-        return env_version
-    for mod_name in ("sync._mod_SIMKL", "providers.sync._mod_SIMKL"):
-        mod = sys.modules.get(mod_name)
-        version = getattr(mod, "__VERSION__", None) if mod is not None else None
-        if isinstance(version, str) and version.strip():
-            return version.strip()
-    return "1.0"
+    return app_version()
 
 
 def simkl_api_params(api_key: Any, **extra: Any) -> dict[str, Any]:

@@ -9,7 +9,6 @@ import re
 import time
 from functools import lru_cache
 from importlib import import_module
-from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
@@ -17,29 +16,15 @@ import requests
 from fastapi import APIRouter
 from packaging.version import InvalidVersion, Version
 
+from cw_platform.app_version import FALLBACK_VERSION, VERSION_FILE, app_version
+
 __all__ = ["router"]
 
 router = APIRouter(prefix="/api", tags=["version"])
 
-VERSION_FILE = Path(__file__).resolve().parent.parent / "VERSION"
-FALLBACK_VERSION = "v0.12.4"
-
-
-def _usable_version(value: Any) -> str:
-    raw = str(value or "").strip()
-    return "" if raw.lower().lstrip("v") in ("", "0.0.0") else raw
-
 
 def resolve_current_version() -> str:
-    try:
-        stamped = VERSION_FILE.read_text(encoding="utf-8")
-    except Exception:
-        stamped = ""
-    for candidate in (stamped, os.getenv("APP_VERSION")):
-        usable = _usable_version(candidate)
-        if usable:
-            return usable
-    return FALLBACK_VERSION
+    return app_version(version_file=VERSION_FILE, fallback=FALLBACK_VERSION)
 
 
 CURRENT_VERSION = resolve_current_version()

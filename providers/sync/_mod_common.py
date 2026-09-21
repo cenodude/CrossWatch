@@ -3,6 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from cw_platform.app_version import user_agent as http_user_agent
+
 import json
 import os
 import time
@@ -487,6 +489,7 @@ class HitSession(requests.Session):
         emit_hits: bool | None = None,
     ):
         super().__init__()
+        self.headers["User-Agent"] = http_user_agent(provider, override_env=f"CW_{provider.upper()}_UA")
         self._provider = provider
         self._emit = emit
         self._label = feature_label or (lambda m, u, kw: default_feature_label(provider, m, u, kw))

@@ -45,7 +45,7 @@ def test_floppy_validation_uses_authenticated_lists_probe() -> None:
     assert session.calls[0]["url"] == "http://floppy.local/api/v1/lists"
     assert session.calls[0]["headers"]["Authorization"] == "Bearer tok-123"
     assert session.calls[0]["headers"]["Accept"] == "application/json"
-    assert session.calls[0]["headers"]["User-Agent"] == "CrossWatch/1.0"
+    assert session.calls[0]["headers"]["User-Agent"] == floppy.UA
     assert session.calls[0]["params"] == {"limit": 1}
     assert session.calls[0]["verify"] is False
 

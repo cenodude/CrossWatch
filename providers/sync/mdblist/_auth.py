@@ -10,6 +10,7 @@ from typing import Any
 
 import requests
 
+from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.config_base import load_config, save_config
 from cw_platform.provider_instances import ensure_instance_block, get_provider_block, normalize_instance_id
 
@@ -21,7 +22,7 @@ DEFAULT_CLIENT_ID = "4A5MNaWPLOLSHws7JCQXOtATBOs2AmYJsqcwT7Uj"
 CLIENT_ID_ENV = "CROSSWATCH_MDBLIST_CLIENT_ID"
 SCOPE = "write"
 REFRESH_SKEW_SEC = 300
-UA = "CrossWatch/MDBListAuth"
+UA = http_user_agent("MDBListAuth", override_env="CW_MDBLIST_UA")
 
 
 class MDBListAuthError(RuntimeError):

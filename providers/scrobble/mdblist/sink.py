@@ -11,6 +11,7 @@ from typing import Any
 
 import requests
 
+from cw_platform.app_version import app_version, user_agent as http_user_agent
 from cw_platform.config_base import load_config
 from cw_platform.local_db.ttl_dedupe import once_per_ttl
 from cw_platform.provider_instances import normalize_instance_id
@@ -43,7 +44,7 @@ except ImportError:
 
 
 MDBLIST_API = "https://api.mdblist.com"
-APP_AGENT = "CrossWatch/Watcher/1.0"
+APP_AGENT = http_user_agent("Watcher", override_env="CW_MDBLIST_UA")
 _AR_TTL = 60
 
 _RESOLVE_TTL_S = 30 * 86400
@@ -103,7 +104,7 @@ def _merged_provider_block(cfg: Mapping[str, Any], key: str, instance_id: Any = 
 
 def _app_meta(cfg: dict[str, Any]) -> dict[str, str]:
     rt = cfg.get("runtime") or {}
-    av = str(rt.get("version") or APP_AGENT)
+    av = app_version()
     ad = (rt.get("build_date") or "").strip()
     return {"app_version": av, **({"app_date": ad} if ad else {})}
 

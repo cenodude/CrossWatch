@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from cw_platform.app_version import user_agent as http_user_agent
 import os
 import time
 from dataclasses import dataclass
@@ -106,7 +107,7 @@ except Exception:
 __VERSION__ = "1.8"
 __all__ = ["get_manifest", "TRAKTModule", "OPS"]
 
-os.environ.setdefault("CW_TRAKT_UA", f"CrossWatch TRAKT/{__VERSION__}")
+os.environ.setdefault("CW_TRAKT_UA", http_user_agent("TRAKT", override_env="CW_TRAKT_UA"))
 
 
 class TRAKTError(RuntimeError):

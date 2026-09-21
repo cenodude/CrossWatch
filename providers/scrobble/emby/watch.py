@@ -13,6 +13,7 @@ try:
 except Exception:
     BASE_LOG = None
 
+from cw_platform.app_version import app_version
 from cw_platform.config_base import load_config
 from providers.scrobble.scrobble import Dispatcher, ScrobbleSink, ScrobbleEvent, MediaType, mask_account as _mask_account
 from providers.scrobble.currently_watching import update_from_event as _cw_update, update_from_payload as _cw_update_payload
@@ -168,7 +169,7 @@ def _hdr(tok: str, cfg: dict[str, Any]) -> dict[str, str]:
         "Accept": "application/json",
         "X-Emby-Token": tok,
         "X-MediaBrowser-Token": tok,
-        "Authorization": f'Emby Client="CrossWatch", Device="CrossWatch", DeviceId="{did}", Version="1.0.0"',
+        "Authorization": f'Emby Client="CrossWatch", Device="CrossWatch", DeviceId="{did}", Version="{app_version()}"',
     }
 
 

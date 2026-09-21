@@ -14,6 +14,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 import requests
+from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.simkl_http import paced_request, record_outcome, transfer_token_state
 
 from ._auth_base import AuthManifest, AuthProvider, AuthStatus
@@ -65,7 +66,7 @@ TOKEN_KEYS = (
     "auth_version",
     "auth_error",
 )
-UA = "CrossWatch/1.0"
+UA = http_user_agent(override_env="CW_SIMKL_UA")
 HTTP_TIMEOUT = 15
 __VERSION__ = "3.0.0"
 

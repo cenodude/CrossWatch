@@ -13,6 +13,7 @@ from typing import Any
 import requests
 
 from ._auth_base import AuthManifest, AuthStatus
+from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.config_base import load_config, save_config
 from cw_platform.provider_instances import ensure_instance_block, get_provider_block, normalize_instance_id
 
@@ -64,7 +65,7 @@ DEVICE_NAME = "CrossWatch"
 POLL_INTERVAL_SEC = 5
 REFRESH_SKEW_SEC = 300
 HTTP_TIMEOUT = 20
-UA = "CrossWatch/PunchPlayAuth"
+UA = http_user_agent("PunchPlayAuth", override_env="CW_PUNCHPLAY_UA")
 __VERSION__ = "0.1"
 
 _TOKEN_KEYS = (

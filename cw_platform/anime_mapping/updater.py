@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from cw_platform.app_version import user_agent as http_user_agent
 import hashlib
 import json
 import os
@@ -35,7 +36,7 @@ from .storage import (
 BASE_URL = "https://github.com/anibridge/anibridge-mappings/releases/download"
 IDENTITY_URL = "https://raw.githubusercontent.com/nattadasu/animeApi/v3/database/animeapi.tsv"
 IDENTITY_COMMITS_URL = "https://api.github.com/repos/nattadasu/animeApi/commits"
-UA = "CrossWatch AnimeMapping/1.0"
+UA = http_user_agent("AnimeMapping")
 _UPDATE_LOCK = threading.Lock()
 
 

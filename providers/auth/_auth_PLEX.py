@@ -11,6 +11,7 @@ from typing import Any
 import requests
 
 from ._auth_base import AuthManifest, AuthProvider, AuthStatus
+from cw_platform.app_version import app_version, user_agent as http_user_agent
 from cw_platform.config_base import DEFAULT_CFG, save_config
 from cw_platform.provider_instances import ensure_provider_block, ensure_instance_block, normalize_instance_id
 from providers.sync.plex._common import stable_client_id
@@ -32,7 +33,7 @@ def log(msg: str, level: str = "INFO", module: str = "AUTH", **_: Any) -> None:
 
 
 PLEX_PIN_URL = "https://plex.tv/api/v2/pins"
-UA = "CrossWatch/1.0"
+UA = http_user_agent(override_env="CW_PLEX_UA")
 HTTP_TIMEOUT = 10
 __VERSION__ = "2.1.0"
 
@@ -93,7 +94,7 @@ class PlexAuth(AuthProvider):
             "Accept": "application/json",
             "User-Agent": UA,
             "X-Plex-Product": "CrossWatch",
-            "X-Plex-Version": "1.0",
+            "X-Plex-Version": app_version(),
             "X-Plex-Client-Identifier": cid,
             "X-Plex-Platform": "Web",
         }
@@ -125,7 +126,7 @@ class PlexAuth(AuthProvider):
                 "Accept": "application/json",
                 "User-Agent": UA,
                 "X-Plex-Product": "CrossWatch",
-                "X-Plex-Version": "1.0",
+                "X-Plex-Version": app_version(),
                 "X-Plex-Client-Identifier": cid,
                 "X-Plex-Platform": "Web",
             },

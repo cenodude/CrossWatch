@@ -9,6 +9,7 @@ from typing import Any
 import requests
 
 from ._auth_base import AuthManifest, AuthProvider, AuthStatus
+from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.config_base import load_config, save_config
 from cw_platform.provider_instances import ensure_instance_block, normalize_instance_id, resolve_provider_block
 from providers.sync.mdblist import _auth as mdblist_auth
@@ -30,7 +31,7 @@ def log(msg: str, level: str = "INFO", module: str = "AUTH", **_: Any) -> None:
 
 
 API_BASE = "https://api.mdblist.com"
-UA = "CrossWatch/1.0"
+UA = http_user_agent(override_env="CW_MDBLIST_UA")
 HTTP_TIMEOUT = 10
 __VERSION__ = "2.1.0"
 

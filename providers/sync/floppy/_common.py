@@ -6,6 +6,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.id_map import canonical_key, ids_from, merge_ids, minimal as id_minimal
 from providers.auth._auth_FLOPPY import FloppyAuthError, is_configured as auth_is_configured, provider_block
 from providers.sync._mod_common import safe_json
@@ -56,7 +57,7 @@ def api_request(adapter: Any, method: str, path: str, *, ok: tuple[int, ...] = (
     client = adapter.client
     url = f"{client.api_base}/{str(path or '').strip('/')}"
     headers = dict(kwargs.pop("headers", {}) or {})
-    headers.update({"Accept": "application/json", "Authorization": f"Bearer {client.api_token}", "User-Agent": "CrossWatch/1.0"})
+    headers.update({"Accept": "application/json", "Authorization": f"Bearer {client.api_token}", "User-Agent": http_user_agent(override_env="CW_FLOPPY_UA")})
     if method.upper() in {"POST", "PUT", "PATCH"}:
         headers.setdefault("Content-Type", "application/json")
     resp = client.session.request(method.upper(), url, headers=headers, timeout=client.timeout, verify=client.verify_ssl, **kwargs)

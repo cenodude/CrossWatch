@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.config_base import load_config
 from cw_platform.provider_instances import get_provider_block, list_instance_ids, normalize_instance_id
 
@@ -132,7 +133,7 @@ def _request(path: str, *, instance_id: Any = None, **params: Any) -> Any:
 
         resp = paced_request(requests.get, "GET",
             f"{BASE}{path}",
-            headers={"Accept": "application/json", "User-Agent": f"crosswatch/{version}"},
+            headers={"Accept": "application/json", "User-Agent": http_user_agent("SIMKL", override_env="CW_SIMKL_UA")},
             params=query,
             timeout=TIMEOUT,
         )

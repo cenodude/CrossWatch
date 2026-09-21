@@ -11,6 +11,7 @@ from typing import Any
 import requests
 
 from ._auth_base import AuthManifest, AuthStatus
+from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.config_base import load_config, save_config
 from cw_platform.provider_instances import ensure_instance_block, ensure_provider_block, normalize_instance_id
 
@@ -311,7 +312,7 @@ class _TraktProvider:
             "Accept": "application/json",
             "Content-Type": "application/json",
             "trakt-api-version": "2",
-            "User-Agent": "CrossWatch/TraktAuth",
+            "User-Agent": http_user_agent("TraktAuth", override_env="CW_TRAKT_UA"),
             "trakt-api-key": cid,
         }
 

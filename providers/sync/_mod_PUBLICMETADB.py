@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
 from urllib.parse import urljoin
 
+from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 from ._log import log as cw_log
@@ -173,7 +174,7 @@ class PUBLICMETADBClient:
                 "Accept": "application/json",
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {cfg.api_key}",
-                "User-Agent": f"CrossWatch PublicMetaDB/{__VERSION__}",
+                "User-Agent": http_user_agent("PublicMetaDB", override_env="CW_PUBLICMETADB_UA"),
             }
         )
         self.session._rate_limiter = SimpleRateLimiter(

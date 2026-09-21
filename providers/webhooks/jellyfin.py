@@ -7,6 +7,7 @@ import time
 import requests
 from typing import Any, Mapping, Callable
 
+from cw_platform.app_version import app_version, user_agent as http_user_agent
 from cw_platform.config_base import load_config, save_config
 
 try:
@@ -89,7 +90,7 @@ def _jf_conn(cfg: dict[str, Any]) -> tuple[str, str, str, float, bool, str]:
 
 
 def _jf_headers(tok: str, did: str) -> dict[str, str]:
-    auth = f'MediaBrowser Client="CrossWatch", Device="CrossWatch", DeviceId="{did}", Version="1.0.0", Token="{tok}"'
+    auth = f'MediaBrowser Client="CrossWatch", Device="CrossWatch", DeviceId="{did}", Version="{app_version()}", Token="{tok}"'
     return {
         'Accept': 'application/json',
         'X-Emby-Token': tok,
@@ -343,7 +344,7 @@ def _tokens(cfg: dict[str, Any]) -> dict[str, str]:
 
 def _app_meta(cfg: dict[str, Any]) -> dict[str, str]:
     rt = (cfg.get("runtime") or {})
-    av = str(rt.get("version") or "CrossWatch/Scrobble")
+    av = app_version()
     ad = (rt.get("build_date") or "").strip()
     meta: dict[str, str] = {"app_version": av}
     if ad:
@@ -358,7 +359,7 @@ def _headers(cfg: dict[str, Any]) -> dict[str, str]:
         "Accept": "application/json",
         "trakt-api-version": "2",
         "trakt-api-key": t["client_id"],
-        "User-Agent": "CrossWatch/Scrobble",
+        "User-Agent": http_user_agent("Scrobble", override_env="CW_TRAKT_UA"),
     }
     if t["access_token"]:
         h["Authorization"] = f"Bearer {t['access_token']}"

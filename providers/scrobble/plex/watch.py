@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import time, threading, re
 import ssl
+from socket import socket
 import xml.etree.ElementTree as ET
 from urllib.parse import urlparse
 from typing import Any, Iterable, Mapping, Callable, cast
@@ -19,6 +20,7 @@ try:
 except Exception:
     BASE_LOG = None
 
+from cw_platform.app_version import app_version, user_agent as http_user_agent
 from cw_platform.config_base import load_config, save_config
 from cw_platform.account_match import media_account_allowed, normalize_media_account_name
 from cw_platform.provider_instances import ensure_instance_block, normalize_instance_id
@@ -49,7 +51,7 @@ class _PlexAlertListener(AlertListener):
         import websocket
 
         url = self._server.url(self.key, includeToken=True).replace("http", "ws", 1)
-        self._ws = websocket.WebSocketApp(url, on_message=self._onMessage, on_error=self._onError, socket=self._socket)
+        self._ws = websocket.WebSocketApp(url, on_message=self._onMessage, on_error=self._onError, socket=cast(socket | None, self._socket))
         verify = self._server._session.verify is not False
         self._ws.run_forever(sslopt={"cert_reqs": ssl.CERT_REQUIRED if verify else ssl.CERT_NONE, "check_hostname": verify})
 
@@ -139,6 +141,8 @@ def _try_discover_pms_token(cfg: dict[str, Any], baseurl: str, cloud_token: str,
         "X-Plex-Client-Identifier": client_id,
         "X-Plex-Product": "CrossWatch",
         "X-Plex-Platform": "CrossWatch",
+        "X-Plex-Version": app_version(),
+        "User-Agent": http_user_agent("Plex", override_env="CW_PLEX_UA"),
         "Accept": "application/xml",
     }
 
@@ -874,6 +878,8 @@ class WatchService:
             "X-Plex-Client-Identifier": client_id,
             "X-Plex-Product": "CrossWatch",
             "X-Plex-Platform": "CrossWatch",
+            "X-Plex-Version": app_version(),
+            "User-Agent": http_user_agent("Plex", override_env="CW_PLEX_UA"),
         }
 
     def _server_is_owned(self, cfg: dict[str, Any], token: str, machine_id: str) -> bool | None:

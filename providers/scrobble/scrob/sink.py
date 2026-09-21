@@ -11,6 +11,7 @@ from typing import Any
 
 import requests
 
+from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.config_base import load_config
 from cw_platform.event_archive import record_watch
 from cw_platform.local_db.ttl_dedupe import once_per_ttl
@@ -50,7 +51,7 @@ from providers.sync.scrob._common import (
     webhook_post,
 )
 
-APP_AGENT = "CrossWatch/Watcher/1.0"
+APP_AGENT = http_user_agent("Watcher", override_env="CW_SCROB_UA")
 DEFAULT_WATCHED_AT = 90.0
 SESSION_TTL_SEC = 6 * 3600
 SESSION_PREFIX = "crosswatch"
@@ -188,7 +189,7 @@ class ScrobSink(ScrobbleSink):
         self.session = requests.Session()
         try:
             self.session.headers.setdefault("Accept", "application/json")
-            self.session.headers.setdefault("User-Agent", APP_AGENT)
+            self.session.headers["User-Agent"] = APP_AGENT
         except Exception:
             pass
 
