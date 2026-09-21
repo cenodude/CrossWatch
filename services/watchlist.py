@@ -11,6 +11,7 @@ from urllib.parse import urlencode
 
 import requests
 
+from cw_platform.app_version import app_version, user_agent as http_user_agent
 from cw_platform.config_base import CONFIG
 from cw_platform.local_db import watchlist_hide as sqlite_watchlist_hide
 from cw_platform.modules_registry import load_sync_ops, sync_provider_names
@@ -541,7 +542,7 @@ def _jf_headers(cfg: dict[str, Any]) -> dict[str, str]:
         "Content-Type": "application/json",
         "X-Emby-Authorization": (
             'MediaBrowser Client="CrossWatch", '
-            f'Device="WebUI", DeviceId="{dev}", Version="1.0.0"'
+            f'Device="WebUI", DeviceId="{dev}", Version="{app_version()}"'
         ),
     }
     if token:
@@ -1208,7 +1209,7 @@ _SIMKL_WL = "https://api.simkl.com/sync/watchlist/remove"
 
 def _simkl_headers(cfg: dict[str, Any]) -> dict[str, str]:
     return {
-        "User-Agent": "CrossWatch/WebUI",
+        "User-Agent": http_user_agent("WebUI", override_env="CW_SIMKL_UA"),
         "Accept": "application/json",
         "Content-Type": "application/json",
         "Authorization": f"Bearer {cfg.get('access_token', '')}",
@@ -1282,7 +1283,7 @@ def _trakt_headers(cfg: dict[str, Any]) -> dict[str, str]:
     return {
         "Content-Type": "application/json",
         "Accept": "application/json",
-        "User-Agent": "CrossWatch/WebUI",
+        "User-Agent": http_user_agent("WebUI", override_env="CW_TRAKT_UA"),
         "trakt-api-version": "2",
         "trakt-api-key": (cfg.get("client_id") or "").strip(),
         "Authorization": f"Bearer {tok}" if tok else "",

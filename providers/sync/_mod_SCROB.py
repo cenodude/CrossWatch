@@ -12,6 +12,7 @@ import requests
 
 from ._log import log as cw_log
 from ._mod_common import build_session
+from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.provider_instances import normalize_instance_id, resolve_provider_block
 from providers.auth._auth_SCROB import is_configured as auth_configured
 
@@ -21,8 +22,7 @@ except Exception:
     ctx = None  # type: ignore[assignment]
 
 __VERSION__ = "0.2"
-os.environ.setdefault("CW_SCROB_VERSION", __VERSION__)
-os.environ.setdefault("CW_SCROB_UA", f"CrossWatch/{__VERSION__} (Scrob)")
+os.environ.setdefault("CW_SCROB_UA", http_user_agent("Scrob", override_env="CW_SCROB_UA"))
 __all__ = ["get_manifest", "SCROBModule", "OPS"]
 
 FEATURES = {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": False, "collection": True}
@@ -120,7 +120,7 @@ class SCROBModule:
         self.raw_cfg = self.config
         self.session: requests.Session = build_session("SCROB", ctx, feature_label=_feature_label)
         try:
-            self.session.headers.setdefault("User-Agent", os.environ.get("CW_SCROB_UA") or f"CrossWatch/{__VERSION__} (Scrob)")
+            self.session.headers["User-Agent"] = os.environ.get("CW_SCROB_UA") or http_user_agent("Scrob", override_env="CW_SCROB_UA")
             self.session.headers.setdefault("Accept", "application/json")
         except Exception:
             pass

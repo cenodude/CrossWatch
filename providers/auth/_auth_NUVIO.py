@@ -15,6 +15,7 @@ from urllib.parse import urlsplit, urlunsplit
 import requests
 
 from ._auth_base import AuthManifest, AuthProvider, AuthStatus
+from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.config_base import load_config, save_config
 from cw_platform.provider_instances import ensure_instance_block, get_provider_block, normalize_instance_id
 
@@ -36,7 +37,7 @@ SERVER_SELF_HOSTED = "self_hosted"
 DISCOVERY_PATH = "/.well-known/nuvio"
 DISCOVERY_MAX_BYTES = 64 * 1024
 REFRESH_SKEW_SEC = 300
-UA = "CrossWatch/NuvioAuth"
+UA = http_user_agent("NuvioAuth", override_env="CW_NUVIO_UA")
 DEFAULT_PROFILE: dict[str, Any] = {
     "profile_id": 1,
     "profile_index": 1,

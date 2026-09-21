@@ -10,8 +10,9 @@ from pathlib import Path
 from typing import Any
 
 import requests
+from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.simkl_http import paced_request
-from providers.sync.simkl._common import SIMKLQuotaError
+from providers.sync.simkl._common import SIMKLQuotaError, simkl_app_version
 
 from cw_platform.config_base import load_config
 from cw_platform.local_db.ttl_dedupe import once_per_ttl
@@ -50,7 +51,7 @@ except ImportError:
 SIMKL_API = "https://api.simkl.com"
 _MAX_REPRESENTATIONS = 2
 _UNKNOWN_TTL = 6 * 3600.0
-APP_AGENT = "CrossWatch/Watcher/1.0"
+APP_AGENT = http_user_agent("Watcher", override_env="CW_SIMKL_UA")
 _AR_TTL = 60
 
 _SIMKL_ID_KEYS = (
@@ -123,7 +124,7 @@ def _merged_provider_block(cfg: Mapping[str, Any], key: str, instance_id: Any = 
 
 def _app_meta(cfg: dict[str, Any]) -> dict[str, str]:
     rt = cfg.get("runtime") or {}
-    av = str(rt.get("version") or APP_AGENT)
+    av = simkl_app_version()
     ad = (rt.get("build_date") or "").strip()
     return {"app_version": av, **({"app_date": ad} if ad else {})}
 

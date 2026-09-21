@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from cw_platform.app_version import user_agent as http_user_agent
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -18,8 +19,7 @@ except Exception:
     ctx = None  # type: ignore[assignment]
 
 __VERSION__ = "1.1"
-os.environ.setdefault("CW_TAUTULLI_VERSION", __VERSION__)
-os.environ.setdefault("CW_TAUTULLI_UA", f"CrossWatch/{__VERSION__} (Tautulli)")
+os.environ.setdefault("CW_TAUTULLI_UA", http_user_agent("Tautulli", override_env="CW_TAUTULLI_UA"))
 __all__ = ["get_manifest", "OPS"]
 
 _HISTORY_CAPABILITIES: dict[str, Any] = {
@@ -121,7 +121,7 @@ class TAUTULLIClient:
         self.raw_cfg = raw_cfg
         self.session = build_session("TAUTULLI", ctx, feature_label=_label)
         try:
-            self.session.headers.setdefault("User-Agent", os.environ.get("CW_TAUTULLI_UA") or f"CrossWatch/{__VERSION__} (Tautulli)")
+            self.session.headers["User-Agent"] = os.environ.get("CW_TAUTULLI_UA") or http_user_agent("Tautulli", override_env="CW_TAUTULLI_UA")
             self.session.headers.setdefault("Accept", "application/json")
         except Exception:
             pass

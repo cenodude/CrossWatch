@@ -9,6 +9,7 @@ from typing import Any
 
 import requests
 
+from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.provider_instances import resolve_provider_block
 
 from .._log import log as cw_log
@@ -380,7 +381,7 @@ def webhook_post(adapter: Any, path: str, payload: Mapping[str, Any]) -> request
         url_for(section, path),
         params={"api_key": api_key},
         json=dict(payload),
-        headers={"Accept": "application/json", "X-Api-Key": api_key, "User-Agent": "CrossWatch/1.0"},
+        headers={"Accept": "application/json", "X-Api-Key": api_key, "User-Agent": http_user_agent(override_env="CW_SCROB_UA")},
         timeout=cfg_float(section, "timeout", DEFAULT_TIMEOUT),
         verify=bool(section.get("verify_ssl", False)),
         allow_redirects=False,

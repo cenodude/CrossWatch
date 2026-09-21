@@ -115,6 +115,21 @@ def test_start_pause_resume_stop_lifecycle(sink) -> None:
     assert len(session_ids) == 1, "all events in one viewing session share a session id"
 
 
+def test_scrobble_sends_installed_app_version(sink, tmp_path, monkeypatch) -> None:
+    from cw_platform import app_version as version_source
+
+    version_file = tmp_path / "VERSION"
+    version_file.write_text("v0.12.4", encoding="utf-8")
+    monkeypatch.setattr(version_source, "VERSION_FILE", version_file)
+    monkeypatch.setenv("APP_VERSION", "v0.11.3-dev")
+    s, calls = sink
+
+    s.send(Event(action="start", progress=5.0))
+
+    assert len(calls) == 1
+    assert calls[0]["json"]["client_version"] == "v0.12.4"
+
+
 def test_repeat_start_becomes_progress(sink) -> None:
     s, calls = sink
 

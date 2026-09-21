@@ -6,6 +6,7 @@ from typing import Any
 
 import requests
 
+from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.config_base import load_config
 from cw_platform.event_archive import record_watch
 from cw_platform.local_db.ttl_dedupe import once_per_ttl
@@ -33,7 +34,7 @@ except ImportError:
         s = str(value or "").strip()
         return s[:2] + "***" if len(s) > 2 else "unknown"
 
-APP_AGENT = "CrossWatch/FlickListWatcher/1.0"
+APP_AGENT = http_user_agent("FlickListWatcher", override_env="CW_FLICKLIST_UA")
 DEFAULT_WATCHED_AT = 90.0
 _AR_TTL = 60
 
@@ -148,7 +149,7 @@ class FlickListSink(ScrobbleSink):
         self.session = requests.Session()
         try:
             self.session.headers.setdefault("Accept", "application/json")
-            self.session.headers.setdefault("User-Agent", APP_AGENT)
+            self.session.headers["User-Agent"] = APP_AGENT
         except Exception:
             pass
 

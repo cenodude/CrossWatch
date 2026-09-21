@@ -5,10 +5,10 @@ from __future__ import annotations
 
 import math
 import os
-import sys
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from cw_platform.app_version import app_version
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 from providers.sync._log import log as cw_log
 from providers.sync._progress_policy import decide_progress_write, progress_materially_equal, select_progress_record
@@ -228,12 +228,7 @@ def _progress_values(item: Mapping[str, Any]) -> tuple[int | None, int | None, f
 
 
 def _app_version() -> str:
-    env_version = str(os.getenv("APP_VERSION") or "").strip()
-    if env_version:
-        return env_version
-    mod = sys.modules.get("providers.sync._mod_MDBLIST") or sys.modules.get("sync._mod_MDBLIST")
-    version = getattr(mod, "__VERSION__", None) if mod is not None else None
-    return str(version or "1.0.0").strip() or "1.0.0"
+    return app_version()
 
 
 def _movie_body(item: Mapping[str, Any], progress_percent: float) -> tuple[dict[str, Any] | None, str | None]:

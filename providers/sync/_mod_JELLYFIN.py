@@ -11,6 +11,7 @@ from typing import Any, Callable, Iterable, Mapping
 
 import requests
 
+from cw_platform.app_version import app_version, user_agent as http_user_agent
 from cw_platform.provider_instances import normalize_instance_id
 from cw_platform.value_coercion import coerce_bool
 
@@ -146,11 +147,10 @@ def _version_tuple(value: Any) -> tuple[int, ...] | None:
 def _progress_version_supported(value: Any) -> bool:
     parsed = _version_tuple(value)
     return bool(parsed and parsed[:2] >= _MIN_PROGRESS_WRITE_VERSION)
-os.environ.setdefault("CW_JELLYFIN_VERSION", __VERSION__)
-os.environ.setdefault("CW_JELLYFIN_UA", f"CrossWatch/{__VERSION__} (Jellyfin)")
+os.environ.setdefault("CW_JELLYFIN_UA", http_user_agent("Jellyfin", override_env="CW_JELLYFIN_UA"))
 __all__ = ["get_manifest", "JELLYFINModule", "OPS"]
 
-_DEF_UA = os.environ.get("CW_JELLYFIN_UA") or os.environ.get("CW_UA") or f"CrossWatch/{__VERSION__} (Jellyfin)"
+_DEF_UA = os.environ.get("CW_JELLYFIN_UA") or os.environ.get("CW_UA") or http_user_agent("Jellyfin", override_env="CW_JELLYFIN_UA")
 
 
 def _pick_instance_id(provider: str, cfg: Mapping[str, Any] | None = None) -> str:
@@ -359,7 +359,7 @@ class JFClient:
         self.session.verify = bool(cfg.verify_ssl)
         auth_val = (
             f'MediaBrowser Client="CrossWatch", Device="CrossWatch", '
-            f'DeviceId="{cfg.device_id}", Version="{__VERSION__}", Token="{cfg.access_token}"'
+            f'DeviceId="{cfg.device_id}", Version="{app_version()}", Token="{cfg.access_token}"'
         )
         self.session.headers.update(
             {

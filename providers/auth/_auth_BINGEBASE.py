@@ -10,6 +10,7 @@ from typing import Any
 import requests
 
 from ._auth_base import AuthManifest, AuthStatus
+from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.config_base import load_config, save_config
 from cw_platform.provider_instances import ensure_instance_block, normalize_instance_id, resolve_provider_block
 
@@ -36,7 +37,7 @@ VERIFY_URL = f"{API_BASE}/activate"
 KODI_WEBHOOK_PREFIX = f"{API_BASE}/webhooks/kodi/"
 POLL_INTERVAL_SEC = 5
 HTTP_TIMEOUT = 20
-UA = "CrossWatch/BingeBaseAuth"
+UA = http_user_agent("BingeBaseAuth", override_env="CW_BINGEBASE_UA")
 __VERSION__ = "0.1"
 
 _TOKEN_KEYS = ("access_token", "username", "user_id")

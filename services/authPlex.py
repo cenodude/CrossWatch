@@ -3,6 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from cw_platform.app_version import app_version, user_agent as http_user_agent
+
 from typing import Any
 
 import hashlib
@@ -82,7 +84,8 @@ def _headers(client_id: str, token: str | None = None) -> dict[str, str]:
         "Accept": "application/json",
         "X-Plex-Client-Identifier": str(client_id or "").strip(),
         "X-Plex-Product": "CrossWatch",
-        "X-Plex-Version": "1.0",
+        "X-Plex-Version": app_version(),
+        "User-Agent": http_user_agent("Plex", override_env="CW_PLEX_UA"),
         "X-Plex-Platform": "Web",
     }
     if token:

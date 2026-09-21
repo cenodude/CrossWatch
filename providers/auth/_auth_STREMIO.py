@@ -8,6 +8,7 @@ from typing import Any, cast
 
 import requests
 
+from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.config_base import _decrypt_secret
 from cw_platform.provider_instances import ensure_instance_block, normalize_instance_id, resolve_provider_block
 
@@ -16,7 +17,7 @@ from ._auth_base import AuthManifest, AuthProvider, AuthStatus
 __VERSION__ = "0.1"
 
 API_BASE = "https://api.strem.io/api"
-UA = "CrossWatch/1.0 (Stremio)"
+UA = http_user_agent("Stremio", override_env="CW_STREMIO_UA")
 
 
 class StremioAuthError(RuntimeError):

@@ -16,6 +16,7 @@ try:
 except Exception:
     BASE_LOG = None
 
+from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.config_base import load_config
 from cw_platform.provider_instances import normalize_instance_id, resolve_provider_block
 from providers.scrobble.currently_watching import update_from_event as _cw_update
@@ -159,7 +160,7 @@ class ScrobWatchService:
         self.session = requests.Session()
         try:
             self.session.headers.setdefault("Accept", "application/json")
-            self.session.headers.setdefault("User-Agent", "CrossWatch/Watcher/1.0")
+            self.session.headers["User-Agent"] = http_user_agent("Watcher", override_env="CW_SCROB_UA")
         except Exception:
             pass
 

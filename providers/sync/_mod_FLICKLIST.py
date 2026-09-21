@@ -6,6 +6,7 @@ import time
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
+from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.provider_instances import normalize_instance_id, resolve_provider_block
 from providers.auth._auth_FLICKLIST import ME_URL, is_configured as auth_is_configured
 from providers.sync._mod_common import SimpleRateLimiter, build_op_result, build_session, dedup_keys
@@ -188,7 +189,7 @@ class FLICKLISTModule:
             pass
         try:
             session.headers.setdefault("Accept", "application/json")
-            session.headers.setdefault("User-Agent", f"CrossWatch FLICKLIST/{__VERSION__}")
+            session.headers["User-Agent"] = http_user_agent("FLICKLIST", override_env="CW_FLICKLIST_UA")
         except Exception:
             pass
         self.session = session

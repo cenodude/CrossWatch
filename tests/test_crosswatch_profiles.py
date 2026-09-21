@@ -3091,31 +3091,24 @@ def test_scrobbler_route_and_webhook_modals_are_not_backdrop_dismissible() -> No
 def test_version_stamp_file_beats_stale_env(tmp_path, monkeypatch) -> None:
     from api import versionAPI
 
-    stamp = tmp_path / "VERSION"
-    monkeypatch.setattr(versionAPI, "VERSION_FILE", stamp)
-
-    # a container env pinned by Portainer or Watchtower must not win
-    stamp.write_text("v0.11.1", encoding="utf-8")
-    monkeypatch.setenv("APP_VERSION", "v0.11.0")
-    assert versionAPI.resolve_current_version() == "v0.11.1"
-
-    # without a stamp the env still works, for bare python runs
-    stamp.unlink()
-    assert versionAPI.resolve_current_version() == "v0.11.0"
-
-    # an empty or truncated stamp must not blank the version
-    stamp.write_text("   ", encoding="utf-8")
-    assert versionAPI.resolve_current_version() == "v0.11.0"
-
-    monkeypatch.delenv("APP_VERSION", raising=False)
-    assert versionAPI.resolve_current_version() == versionAPI.FALLBACK_VERSION
-
-    # dev images build without the arg, so the placeholder must fall through
-    stamp.write_text("v0.0.0", encoding="utf-8")
-    monkeypatch.setenv("APP_VERSION", "v0.0.0")
-    assert versionAPI.resolve_current_version() == versionAPI.FALLBACK_VERSION
-    stamp.write_text("0.0.0", encoding="utf-8")
-    assert versionAPI.resolve_current_version() == versionAPI.FALLBACK_VERSION
+    cases = [
+        ("v0.11.1", "v0.11.0", "v0.11.1"),
+        (None, "v0.11.0", "v0.11.0"),
+        ("   ", "v0.11.0", "v0.11.0"),
+        ("   ", None, versionAPI.FALLBACK_VERSION),
+        ("v0.0.0", "v0.0.0", versionAPI.FALLBACK_VERSION),
+        ("0.0.0", "v0.0.0", versionAPI.FALLBACK_VERSION),
+    ]
+    for index, (stamped, environment, expected) in enumerate(cases):
+        stamp = tmp_path / f"VERSION-{index}"
+        if stamped is not None:
+            stamp.write_text(stamped, encoding="utf-8")
+        monkeypatch.setattr(versionAPI, "VERSION_FILE", stamp)
+        if environment is None:
+            monkeypatch.delenv("APP_VERSION", raising=False)
+        else:
+            monkeypatch.setenv("APP_VERSION", environment)
+        assert versionAPI.resolve_current_version() == expected
 
 
 def test_dockerfile_stamps_version_into_the_image() -> None:

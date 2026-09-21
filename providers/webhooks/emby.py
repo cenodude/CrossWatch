@@ -9,6 +9,7 @@ from typing import Any, Callable, Mapping
 
 import requests
 
+from cw_platform.app_version import app_version, user_agent as http_user_agent
 from cw_platform.config_base import load_config, save_config
 
 try:
@@ -92,7 +93,7 @@ def _emby_headers(tok: str, did: str) -> dict[str, str]:
         'Accept': 'application/json',
         'X-Emby-Token': tok,
         'X-MediaBrowser-Token': tok,
-        'Authorization': f'Emby Client="CrossWatch", Device="CrossWatch", DeviceId="{did}", Version="1.0.0"',
+        'Authorization': f'Emby Client="CrossWatch", Device="CrossWatch", DeviceId="{did}", Version="{app_version()}"',
     }
 
 
@@ -303,7 +304,7 @@ def _tokens(cfg: dict[str, Any]) -> dict[str, str]:
 
 def _app_meta(cfg: dict[str, Any]) -> dict[str, str]:
     rt = cfg.get("runtime") or {}
-    av = str(rt.get("version") or "CrossWatch/Scrobble")
+    av = app_version()
     ad = (rt.get("build_date") or "").strip()
     out: dict[str, str] = {"app_version": av}
     if ad:
@@ -318,7 +319,7 @@ def _headers(cfg: dict[str, Any]) -> dict[str, str]:
         "Accept": "application/json",
         "trakt-api-version": "2",
         "trakt-api-key": t["client_id"],
-        "User-Agent": "CrossWatch/Scrobble",
+        "User-Agent": http_user_agent("Scrobble", override_env="CW_TRAKT_UA"),
     }
     if t["access_token"]:
         h["Authorization"] = f"Bearer {t['access_token']}"

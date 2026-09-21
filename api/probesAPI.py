@@ -16,6 +16,7 @@ from functools import wraps
 from typing import Any, Callable, Mapping
 
 import requests
+from cw_platform.app_version import app_version, user_agent as http_user_agent
 from cw_platform import connection_status
 from cw_platform.simkl_http import last_outcome, paced_request
 from fastapi import FastAPI, Query, Request
@@ -219,7 +220,7 @@ def _authenticated_account(provider: str, cfg: dict[str, Any], url: str) -> tupl
             with requests.Session() as sess:
                 r = _provider_auth().request_with_auth(
                     provider, sess, "GET", url, cfg=cfg,
-                    instance_id=normalize_instance_id(hint.get("instance")), headers=UA,
+                    instance_id=normalize_instance_id(hint.get("instance")), headers=_provider_headers(provider),
                     timeout=max(int(HTTP_TIMEOUT), 6), max_retries=1,
                 )
                 return int(r.status_code), r.text or ""
@@ -244,8 +245,13 @@ def _last_http_error() -> str:
 
 UA: dict[str, str] = {
     "Accept": "application/json",
-    "User-Agent": "CrossWatch/1.0",
+    "User-Agent": http_user_agent(),
 }
+
+
+def _provider_headers(provider: str) -> dict[str, str]:
+    return {**UA, "User-Agent": http_user_agent(override_env=f"CW_{provider.upper()}_UA")}
+
 
 PROBE_CFG_KEY: dict[str, str] = {
     "PLEX": "plex",
@@ -656,7 +662,7 @@ def _trakt_limits_used(
         return out
 
     headers = {
-        **UA,
+        **_provider_headers('trakt'),
         "Authorization": f"Bearer {token}",
         "trakt-api-key": client_id,
         "trakt-api-version": "2",
@@ -762,11 +768,11 @@ def _probe_plex_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tup
 
     url = "https://plex.tv/api/v2/user"
     headers = {
-        **UA,
+        **_provider_headers('plex'),
         "X-Plex-Token": token,
         "X-Plex-Client-Identifier": _plex_client_identifier(cfg),
         "X-Plex-Product": "CrossWatch",
-        "X-Plex-Version": "1.0",
+        "X-Plex-Version": app_version(),
     }
     code, _ = _account_fetch("plex", cfg, lambda: _http_get(url, headers=headers))
     ok = code == 200
@@ -940,7 +946,7 @@ def _probe_trakt_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tu
         pass
 
     url = "https://api.trakt.tv/users/settings"
-    headers = {**UA, "Content-Type": "application/json", "trakt-api-version": "2", "trakt-api-key": cid, "Authorization": f"Bearer {tok}"}
+    headers = {**_provider_headers('trakt'), "Content-Type": "application/json", "trakt-api-version": "2", "trakt-api-key": cid, "Authorization": f"Bearer {tok}"}
     code, _ = _account_fetch("trakt", cfg, lambda: _http_get(url, headers=headers, timeout=HTTP_TIMEOUT))
 
     # One retry after refresh if token expired/revoked.
@@ -953,7 +959,7 @@ def _probe_trakt_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tu
                     cfg2 = _cfg_view_for(fresh_cfg, "TRAKT", inst)
                     cid2, tok2, _, _ = _extract_tokens(cfg2)
                     if cid2 and tok2:
-                        headers = {**UA, "Content-Type": "application/json", "trakt-api-version": "2", "trakt-api-key": cid2, "Authorization": f"Bearer {tok2}"}
+                        headers = {**_provider_headers('trakt'), "Content-Type": "application/json", "trakt-api-version": "2", "trakt-api-key": cid2, "Authorization": f"Bearer {tok2}"}
                         cfg["trakt"] = cfg2["trakt"]
                         key = _probe_key("trakt", cfg)
                         code, _ = _account_fetch("trakt", cfg, lambda: _http_get(url, headers=headers, timeout=HTTP_TIMEOUT), refresh=True)
@@ -985,7 +991,7 @@ def _probe_anilist_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> 
     url = "https://graphql.anilist.co"
     q = {"query": "query { Viewer { id name } }"}
     payload = json.dumps(q).encode("utf-8")
-    headers = {**UA, "Content-Type": "application/json", "Authorization": f"Bearer {tok}"}
+    headers = {**_provider_headers('anilist'), "Content-Type": "application/json", "Authorization": f"Bearer {tok}"}
     code, body = _account_fetch("anilist", cfg, lambda: _http_post(url, headers=headers, data=payload, timeout=HTTP_TIMEOUT))
 
     ok = code == 200
@@ -1023,7 +1029,7 @@ def _probe_tmdb_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tup
         return False, "TMDb: missing session_id"
 
     url = f"https://api.themoviedb.org/3/account?api_key={api_key}&session_id={sess}"
-    code, _ = _http_get(url, headers=UA, timeout=HTTP_TIMEOUT)
+    code, _ = _http_get(url, headers=_provider_headers('tmdb'), timeout=HTTP_TIMEOUT)
     ok = code == 200
     rsn = "" if ok else _reason_http(code, "TMDb")
     with _CACHE_LOCK:
@@ -1078,7 +1084,7 @@ def _probe_publicmetadb_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL
 
     base = str(p.get("base_url") or "https://publicmetadb.com").strip().rstrip("/")
     url = f"{base}/api/external/lists?page=1&perPage=1"
-    headers = {**UA, "Authorization": f"Bearer {api_key}"}
+    headers = {**_provider_headers('publicmetadb'), "Authorization": f"Bearer {api_key}"}
     code, body, _ = _http_get_with_headers(url, headers=headers, timeout=max(int(HTTP_TIMEOUT), 6))
 
     if code != 200:
@@ -1169,7 +1175,7 @@ def _probe_tautulli_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) ->
         return False, "not configured"
 
     url = f"{base}/api/v2?apikey={apikey}&cmd=get_server_info"
-    code, body = _http_get(url, headers=UA, timeout=HTTP_TIMEOUT)
+    code, body = _http_get(url, headers=_provider_headers('tautulli'), timeout=HTTP_TIMEOUT)
     if code != 200:
         rsn = f"HTTP {code}" if code else "HTTP 0"
         with _CACHE_LOCK:
@@ -1207,7 +1213,7 @@ def _probe_tracearr_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) ->
     if not base.startswith(("http://", "https://")):
         base = "http://" + base
 
-    headers = {**UA, "Authorization": f"Bearer {apikey}"}
+    headers = {**_provider_headers('tracearr'), "Authorization": f"Bearer {apikey}"}
     code, body = _http_get(f"{base}/api/v2/public/users?pageSize=1", headers=headers, timeout=HTTP_TIMEOUT)
     if code in (401, 403):
         rsn = "invalid API key - reconnect required"
@@ -1252,7 +1258,7 @@ def _probe_jellyfin_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) ->
     from providers.sync.jellyfin._auth_http import auth_headers
 
     url = f"{server.rstrip('/')}/Users/Me"
-    code, _ = _http_get(url, headers={**UA, **auth_headers(token, device_id)}, timeout=HTTP_TIMEOUT)
+    code, _ = _http_get(url, headers={**_provider_headers('jellyfin'), **auth_headers(token, device_id)}, timeout=HTTP_TIMEOUT)
 
     ok = code == 200
     rsn = "" if ok else _reason_http(code, "Jellyfin")
@@ -1284,7 +1290,7 @@ def _probe_emby_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tup
         return False, rsn
 
     url = f"{server.rstrip('/')}/System/Info"
-    headers = {**UA, "X-Emby-Token": token}
+    headers = {**_provider_headers('emby'), "X-Emby-Token": token}
     code, _ = _account_fetch("emby", cfg, lambda: _http_get(url, headers=headers, timeout=HTTP_TIMEOUT))
     ok = code == 200
     rsn = "" if ok else _reason_http(code, "Emby")
@@ -1643,11 +1649,11 @@ def plex_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict
 
     if plexpass is None:
         headers = {
-            **UA,
+            **_provider_headers('plex'),
             "X-Plex-Token": token,
             "X-Plex-Client-Identifier": _plex_client_identifier(cfg),
             "X-Plex-Product": "CrossWatch",
-            "X-Plex-Version": "1.0",
+            "X-Plex-Version": app_version(),
         }
         code, body = _account_fetch("plex", cfg, lambda: _http_get("https://plex.tv/api/v2/user", headers=headers))
         if code == 200:
@@ -1913,7 +1919,7 @@ def trakt_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dic
             _USERINFO_CACHE[key] = (now, {})
         return {}
 
-    headers = {**UA, "Authorization": f"Bearer {tok}", "trakt-api-key": cid, "trakt-api-version": "2"}
+    headers = {**_provider_headers('trakt'), "Authorization": f"Bearer {tok}", "trakt-api-key": cid, "trakt-api-version": "2"}
     code, body = _account_fetch("trakt", cfg, lambda: _http_get("https://api.trakt.tv/users/settings", headers=headers))
 
     out: dict[str, Any] = {}
@@ -1968,7 +1974,7 @@ def emby_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict
         return {}
 
     url = f"{server.rstrip('/')}/System/Info"
-    headers = {**UA, "X-Emby-Token": token}
+    headers = {**_provider_headers('emby'), "X-Emby-Token": token}
     code, body = _account_fetch("emby", cfg, lambda: _http_get(url, headers=headers))
 
     out: dict[str, Any] = {}
@@ -2034,7 +2040,7 @@ def anilist_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> d
             _USERINFO_CACHE[key] = (now, {})
         return {}
 
-    headers = {**UA, "Authorization": f"Bearer {tok}"}
+    headers = {**_provider_headers('anilist'), "Authorization": f"Bearer {tok}"}
     code, body = _account_fetch("anilist", cfg, lambda: _http_post(
         "https://graphql.anilist.co",
         headers={**headers, "Content-Type": "application/json"},

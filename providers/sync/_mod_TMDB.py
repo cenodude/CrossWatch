@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from cw_platform.app_version import user_agent as http_user_agent
 import os
 import time
 from dataclasses import dataclass
@@ -17,8 +18,7 @@ except Exception:
     ctx = None  # type: ignore[assignment]
 
 __VERSION__ = "1.0"
-os.environ.setdefault("CW_TMDB_VERSION", __VERSION__)
-os.environ.setdefault("CW_TMDB_UA", f"CrossWatch/{__VERSION__} (TMDB)")
+os.environ.setdefault("CW_TMDB_UA", http_user_agent("TMDB", override_env="CW_TMDB_UA"))
 __all__ = ["get_manifest", "TMDBModule", "OPS"]
 
 
@@ -164,7 +164,7 @@ class TMDBClient:
             pass
         try:
             self.session.headers.setdefault("Accept", "application/json")
-            self.session.headers.setdefault("User-Agent", os.environ.get("CW_TMDB_UA") or f"CrossWatch/{__VERSION__} (TMDB)")
+            self.session.headers["User-Agent"] = os.environ.get("CW_TMDB_UA") or http_user_agent("TMDB", override_env="CW_TMDB_UA")
         except Exception:
             pass
         return self

@@ -13,6 +13,7 @@ try:
 except Exception:
     BASE_LOG = None
 
+from cw_platform.app_version import app_version
 from cw_platform.config_base import load_config
 from providers.scrobble.scrobble import Dispatcher, ScrobbleSink, ScrobbleEvent, MediaType, mask_account as _mask_account
 from providers.scrobble.currently_watching import update_from_event as _cw_update, update_from_payload as _cw_update_payload
@@ -160,7 +161,7 @@ def _jf_bt(cfg: dict[str, Any]) -> tuple[str, str]:
 def _hdr(tok: str, cfg: dict[str, Any]) -> dict[str, str]:
     e = cfg.get("jellyfin") or {}
     did = str(e.get("device_id") or "crosswatch")
-    auth = f'MediaBrowser Client="CrossWatch", Device="CrossWatch", DeviceId="{did}", Version="1.0.0", Token="{tok}"'
+    auth = f'MediaBrowser Client="CrossWatch", Device="CrossWatch", DeviceId="{did}", Version="{app_version()}", Token="{tok}"'
     return {
         "Accept": "application/json",
         "X-Emby-Token": tok,

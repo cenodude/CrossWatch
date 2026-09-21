@@ -22,6 +22,7 @@ from typing import Any, Callable, Iterable, Mapping
 from urllib.parse import urlsplit, quote
 
 from .._log import log as cw_log
+from cw_platform.app_version import app_version, user_agent as http_user_agent
 from cw_platform.log_context import log_run_id
 from cw_platform.id_map import ids_from
 
@@ -501,7 +502,7 @@ def plex_headers(
     user_agent: str | None = None,
 ) -> dict[str, str]:
     cid = str(client_id or CLIENT_ID or "").strip() or stable_client_id()
-    version_s = str(version or os.environ.get("CW_PLEX_VERSION") or os.environ.get("CW_VERSION") or "").strip() or "unknown"
+    version_s = str(version or app_version()).strip()
     headers = {
         "X-Plex-Product": product,
         "X-Plex-Platform": platform,
@@ -510,7 +511,7 @@ def plex_headers(
         "X-Plex-Token": token,
         "Accept": accept,
     }
-    ua = str(user_agent or os.environ.get("CW_PLEX_UA") or os.environ.get("CW_UA") or "").strip()
+    ua = str(user_agent or http_user_agent("Plex", override_env="CW_PLEX_UA")).strip()
     if ua:
         headers["User-Agent"] = ua
     return headers

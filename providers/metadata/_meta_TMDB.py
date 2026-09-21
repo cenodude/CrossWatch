@@ -16,6 +16,7 @@ from typing import Any, Callable
 
 import requests
 
+from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.metadata_cache import normalize_title
 
 try:
@@ -36,7 +37,7 @@ IMG_BASE = "https://image.tmdb.org/t/p"
 
 class TmdbProvider:
     name = "TMDB"
-    UA = "CrossWatch/1.0"
+    UA = http_user_agent(override_env="CW_TMDB_UA")
     CACHE_MAX_ENTRIES = 4096
 
     @staticmethod

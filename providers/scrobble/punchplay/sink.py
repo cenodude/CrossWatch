@@ -12,6 +12,7 @@ from typing import Any
 
 import requests
 
+from cw_platform.app_version import app_version, user_agent as http_user_agent
 from cw_platform.config_base import load_config
 from cw_platform.event_archive import record_watch
 from cw_platform.local_db.ttl_dedupe import once_per_ttl
@@ -48,7 +49,7 @@ from providers.sync.punchplay._common import (
     request_id_of,
 )
 
-APP_AGENT = "CrossWatch/Watcher/1.0"
+APP_AGENT = http_user_agent("Watcher", override_env="CW_PUNCHPLAY_UA")
 DEFAULT_WATCHED_AT = 90.0
 SESSION_TTL_SEC = 6 * 3600
 _AR_TTL = 60
@@ -193,7 +194,7 @@ class PunchPlaySink(ScrobbleSink):
         self.session = requests.Session()
         try:
             self.session.headers.setdefault("Accept", "application/json")
-            self.session.headers.setdefault("User-Agent", APP_AGENT)
+            self.session.headers["User-Agent"] = APP_AGENT
         except Exception:
             pass
 
@@ -320,7 +321,7 @@ class PunchPlaySink(ScrobbleSink):
         payload["event_id"] = str(uuid.uuid4())
         payload["playback_session_id"] = session_id
         payload["event_created_at"] = int(now * 1000)
-        payload["client_version"] = APP_AGENT
+        payload["client_version"] = app_version()
         payload["title"] = title
 
         year = _as_int(getattr(event, "year", None))

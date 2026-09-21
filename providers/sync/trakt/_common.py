@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.id_map import minimal as id_minimal, canonical_key
 from cw_platform.anime_mapping.service import mapped_or_default_media_type
 
@@ -19,11 +20,7 @@ from ._pagination import TraktPager
 
 # headers
 def _user_agent() -> str:
-    return (
-        os.environ.get("CW_TRAKT_UA")
-        or os.environ.get("CW_UA")
-        or "CrossWatch TRAKT"
-    )
+    return http_user_agent("TRAKT", override_env="CW_TRAKT_UA")
 
 STATE_DIR = Path("/config/.cw_state")
 _ACT_MEMO: tuple[float, dict[str, Any] | None] = (0.0, None)

@@ -11,6 +11,7 @@ from typing import Any, Iterable, Mapping
 
 from ._mod_common import build_session, make_snapshot_progress, request_with_retries
 from ._log import log as cw_log
+from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 
@@ -55,8 +56,7 @@ def _confirmed_keys(key_of, items: Iterable[Mapping[str, Any]], unresolved: Any)
     return out
 
 __VERSION__ = "0.1"
-os.environ.setdefault("CW_ANILIST_VERSION", __VERSION__)
-os.environ.setdefault("CW_ANILIST_UA", f"CrossWatch/{__VERSION__} (AniList)")
+os.environ.setdefault("CW_ANILIST_UA", http_user_agent("AniList", override_env="CW_ANILIST_UA"))
 __all__ = ["get_manifest", "ANILISTModule", "OPS"]
 
 def _health(status: str, ok: bool, latency_ms: int) -> None:
@@ -102,7 +102,7 @@ except Exception as e:
 
 
 GQL_URL = "https://graphql.anilist.co"
-UA = os.environ.get("CW_ANILIST_UA") or os.environ.get("CW_UA") or f"CrossWatch/{__VERSION__} (AniList)"
+UA = os.environ.get("CW_ANILIST_UA") or os.environ.get("CW_UA") or http_user_agent("AniList", override_env="CW_ANILIST_UA")
 
 
 class ANILISTError(RuntimeError):

@@ -8,6 +8,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Mapping
 
+from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 from ._log import log as cw_log
@@ -368,7 +369,7 @@ class MDBLISTClient:
             pass
         try:
             self.session.headers.setdefault("Accept", "application/json")
-            self.session.headers.setdefault("User-Agent", f"CrossWatch MDBLIST/{__VERSION__}")
+            self.session.headers["User-Agent"] = http_user_agent("MDBLIST", override_env="CW_MDBLIST_UA")
         except Exception:
             pass
         return self
@@ -928,7 +929,7 @@ class _MDBLISTOPS:
                 pass
             try:
                 sess.headers.setdefault("Accept", "application/json")
-                sess.headers.setdefault("User-Agent", f"CrossWatch MDBLIST/{__VERSION__}")
+                sess.headers["User-Agent"] = http_user_agent("MDBLIST", override_env="CW_MDBLIST_UA")
             except Exception:
                 pass
 
