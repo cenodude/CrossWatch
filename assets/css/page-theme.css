@@ -54,6 +54,25 @@ html[data-cw-theme] #layout > .cw-main-card {
   box-shadow: none;
 }
 
+.cw-topology-shell .cw-page-button {
+  border: 1px solid var(--cw-theme-border);
+  border-radius: 10px;
+  background: var(--cw-theme-surface);
+  color: var(--cw-theme-text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.cw-topology-shell .cw-page-button .material-symbol {
+  color: var(--cw-theme-accent);
+  font-size: 18px;
+}
+.cw-topology-shell .cw-page-button:hover:not(:disabled) {
+  border-color: var(--cw-theme-accent);
+  background: var(--cw-theme-surface-raised);
+}
+
 html[data-cw-theme] .cw-icon-select-menu {
   background: var(--cw-theme-surface-raised);
   border-color: var(--cw-theme-border-strong);

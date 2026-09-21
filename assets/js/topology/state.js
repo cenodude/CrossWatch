@@ -3,6 +3,7 @@
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 import { analyzeTopology, pairsForProfile } from "./analysis.js";
+import { baselineMatches, savedBaseline, topologySnapshot } from "./baseline.js";
 
 export function currentTopology() {
   const profile = window.CW?.OverviewProfile?.profile;
@@ -10,8 +11,11 @@ export function currentTopology() {
   const pairs = pairsForProfile(allPairs, profile);
   const numbers = new Map(allPairs.map((pair, index) => [String(pair.id), index + 1]));
   const result = analyzeTopology(pairs, window.cx?.providers || [], window.CW?.FeatureMeta?.order || []);
+  const profileId = profile?.id || "";
+  const snapshot = topologySnapshot(pairs, result), baseline = savedBaseline(profileId);
   result.graphs.forEach(graph => graph.connections.forEach(connection => { connection.number = numbers.get(connection.id); }));
   return { ...result,
+    profileId, snapshot, baseline, baselineReady: baseline !== undefined, acknowledged: baselineMatches(snapshot, baseline),
     profileLabel: profile?.id ? (profile.label || profile.id) : "",
     scope: profile?.label || "All configured pairs" };
 }

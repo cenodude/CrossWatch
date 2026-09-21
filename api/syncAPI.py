@@ -3,7 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any, Literal, cast
 from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from datetime import datetime, timezone, date
@@ -12,7 +12,7 @@ from contextlib import contextmanager
 import dataclasses as _dc, importlib, inspect, json, os, re, shlex, shutil, threading, time, uuid
 import asyncio
 
-from fastapi import APIRouter, Body, Request
+from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 from cw_platform.modules_registry import get_sync_module_path_by_name, sync_provider_names, sync_provider_supports_feature
@@ -2257,6 +2257,75 @@ class PairPatch(BaseModel):
     providers: dict[str, Any] | None = None
     features: dict[str, Any] | None = None
     profile_id: str | None = None
+
+
+class TopologyBaselineIn(BaseModel):
+    version: Literal[1]
+    pairs: list[dict[str, Any]]
+    findings: list[dict[str, Any]]
+    unsupportedPairs: int = 0
+
+
+def _topology_pairs(cfg: dict[str, Any], profile_id: str) -> list[dict[str, Any]]:
+    profile = next((row for row in list_user_profiles(cfg) if row["id"] == profile_id), None)
+    if profile_id and profile is None:
+        raise HTTPException(404, "Topology profile no longer exists.")
+    pairs = []
+    for pair in _cfg_pairs(cfg):
+        if pair.get("enabled") is False:
+            continue
+        if profile:
+            assigned = pair.get("profile_id")
+            if assigned and assigned != profile_id:
+                continue
+            if not assigned and not all(
+                _norm_instance_id(pair.get(f"{side}_instance")) in profile["instances"].get(str(pair.get(side) or "").strip().upper(), [])
+                for side in ("source", "target")
+            ):
+                continue
+        pairs.append({
+            "id": str(pair.get("id") or ""),
+            "source": str(pair.get("source") or "").strip().upper(),
+            "target": str(pair.get("target") or "").strip().upper(),
+            "source_instance": _norm_instance_id(pair.get("source_instance")),
+            "target_instance": _norm_instance_id(pair.get("target_instance")),
+            "mode": "two-way" if str(pair.get("mode") or "one-way").lower().startswith("two") else "one-way",
+            "features": pair.get("features") or {},
+        })
+    return sorted(pairs, key=lambda pair: pair["id"])
+
+
+@router.get("/sync/topology/baseline")
+def api_topology_baseline(profile_id: str = "") -> JSONResponse:
+    cfg = _env()[0]()
+    _topology_pairs(cfg, profile_id)
+    return JSONResponse({"baseline": (cfg.get("topology_baselines") or {}).get(profile_id or "all")}, headers={"Cache-Control": "no-store"})
+
+
+@router.put("/sync/topology/baseline")
+def api_topology_acknowledge(payload: TopologyBaselineIn, profile_id: str = "") -> dict[str, Any]:
+    from cw_platform.config_base import update_config
+
+    def mutate(cfg: dict[str, Any]) -> dict[str, Any]:
+        if payload.pairs != _topology_pairs(cfg, profile_id):
+            raise HTTPException(409, "Topology changed. Reload the sync configuration and review it again.")
+        baseline = {**payload.model_dump(), "accepted_at": datetime.now(timezone.utc).isoformat()}
+        cfg.setdefault("topology_baselines", {})[profile_id or "all"] = baseline
+        return baseline
+
+    return {"baseline": update_config(mutate)[1]}
+
+
+@router.delete("/sync/topology/baseline")
+def api_topology_reset(profile_id: str = "") -> dict[str, Any]:
+    from cw_platform.config_base import update_config
+
+    def mutate(cfg: dict[str, Any]) -> None:
+        _topology_pairs(cfg, profile_id)
+        cfg.setdefault("topology_baselines", {}).pop(profile_id or "all", None)
+
+    update_config(mutate)
+    return {"baseline": None}
 
 
 def _same_pair_endpoint(pair: Mapping[str, Any]) -> bool:

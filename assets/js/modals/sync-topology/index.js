@@ -5,6 +5,7 @@
 import { currentTopology } from "../../topology/state.js";
 import { connectionLabel, esc, featureName, findingConnections, mergeGraphs, nodeName, pairBadge, renderGraph, topologySummary } from "../../topology/graph.js";
 import { bindGraphViewport } from "../../topology/viewport.js";
+import { baselineCopy, saveBaseline } from "../../topology/baseline.js";
 
 const titles = { conflict: "Updates from multiple providers", loop: "Return route through additional pairs",
   redundancy: "Potential redundant route", observation: "Consider simplifying your routes" };
@@ -63,13 +64,21 @@ export default {
           <details class="topology-route-details"><summary><span>Route details</span><small>Features and directions for each sync pair</small></summary><ul class="topology-route-list"></ul></details>
         </section><section class="topology-findings" aria-labelledby="topology-findings-title"><div class="topology-findings-heading"><span class="topology-heading-icon material-symbol" aria-hidden="true">monitor_heart</span><div><h3 id="topology-findings-title">Findings &amp; notes</h3><p>Findings for the selected features. See Route details for the full route list.</p></div><span class="topology-finding-count" role="status"></span></div>
           <div class="topology-health-stats" aria-label="Selected topology summary"></div>
+          <div class="topology-baseline">
+            <p class="topology-copy topology-baseline-status" role="status"></p>
+            <div class="topology-baseline-actions">
+              <button type="button" class="cw-page-button topology-acknowledge"><span class="material-symbol" aria-hidden="true">task_alt</span>Acknowledge current topology</button>
+              <button type="button" class="cw-page-button topology-reset"><span class="material-symbol" aria-hidden="true">restart_alt</span>Reset acknowledgement</button>
+            </div>
+            <details class="topology-accepted"><summary>Accepted findings</summary><ul></ul></details>
+          </div>
           <div class="topology-finding-list"></div>
           <div class="topology-analysis-footer"><span class="topology-analyzed-at"></span><button type="button" class="topology-refresh" aria-label="Reanalyze configured routes" title="Reanalyze configured routes"><span class="material-symbol" aria-hidden="true">refresh</span></button></div></section></div>
         <p class="topology-footnote"><span class="material-symbol" aria-hidden="true">info</span>Analyzed locally from enabled pair features. Media filters, library scopes and sync safeguards can reduce actual overlap. No provider data is changed.</p>
       </div></div>`;
     const $ = selector => host.querySelector(selector);
     $(".topology-close").addEventListener("click", () => window.cxCloseModal?.());
-    let displayedGraph = null, displayedFinding = null;
+    let displayedGraph = null, displayedFinding = null, saving = false, baselineError = "";
     const viewport = bindGraphViewport($(".topology-graph"), $(".topology-zoom"));
     let compactGraph = $(".topology-graph").clientWidth < 460;
     const applyGraphAspect = () => {
@@ -112,6 +121,20 @@ export default {
       $(".topology-clear").hidden = !finding;
       $(".topology-route-list").innerHTML = graph.connections.map(connection => `<li>${pairBadge(connection)}<span>${esc(connectionLabel(connection, nodes))}<small>${connection.twoWay ? "Two-way pair" : "One-way pair"} · ${esc(connection.features.map(featureName).join(", "))}</small></span></li>`).join("");
       const health = topologySummary(graph, findings, result.unsupportedPairs);
+      if (result.acknowledged) Object.assign(health, { status: "review", icon: "info", label: "Accepted" });
+      else if (result.baseline && ["healthy", "empty"].includes(health.status)) Object.assign(health, { status: "review", icon: "info", label: "Review" });
+      $(".topology-baseline").hidden = !result.baseline && !result.findings.some(item => !item.informational);
+      $(".topology-baseline-status").textContent = baselineError || [baselineCopy(result),
+        !result.baselineReady ? "Acknowledgement unavailable. Reanalyze to retry." : !result.acknowledged && selectedFeature !== "all" ? "Select All to acknowledge findings across all features in this scope." : ""
+      ].filter(Boolean).join(" ") || "Acceptance applies to all features in this scope. Analysis continues after acceptance.";
+      $(".topology-acknowledge").hidden = result.acknowledged || !result.findings.some(item => !item.informational);
+      $(".topology-acknowledge").disabled = saving || !result.baselineReady || selectedFeature !== "all" || !!result.unsupportedPairs;
+      $(".topology-reset").hidden = !result.baseline;
+      $(".topology-reset").disabled = saving;
+      $(".topology-accepted").hidden = !result.baseline;
+      $(".topology-accepted ul").innerHTML = (result.baseline?.findings || []).filter(item => !item.informational)
+        .map(item => `<li>${esc(featureName(item.feature))}: ${esc(titles[item.type] || item.type)}
+          ${(item.paths || []).map(path => `<div>${esc(path.map(id => JSON.parse(id).join(":")).join(" → "))}</div>`).join("")}</li>`).join("");
       $(".topology-health-stats").innerHTML = `<div><span class="material-symbol" aria-hidden="true">hub</span><strong>${health.providers}</strong><small>Providers</small></div>
         <div><span class="material-symbol" aria-hidden="true">link</span><strong>${health.twoWay}</strong><small>Two-way pairs</small></div>
         <div><span class="material-symbol" aria-hidden="true">arrow_forward</span><strong>${health.oneWay}</strong><small>One-way pairs</small></div>
@@ -160,7 +183,20 @@ export default {
       $(".topology-graph").focus({ preventScroll: true });
     });
     const update = () => { result = currentTopology(); analyzedAt = new Date(); draw(); };
-    $(".topology-refresh").addEventListener("click", update);
+    const accept = async reset => {
+      saving = true;
+      baselineError = "";
+      draw();
+      try { await saveBaseline(result, reset); }
+      catch (error) { baselineError = error.message; }
+      finally { saving = false; if (host.isConnected) update(); }
+    };
+    $(".topology-acknowledge").addEventListener("click", () => accept(false));
+    $(".topology-reset").addEventListener("click", () => accept(true));
+    $(".topology-refresh").addEventListener("click", () => {
+      baselineError = "";
+      document.dispatchEvent(new Event("cw:sync-data-changed"));
+    });
     document.addEventListener("cw:topology-updated", update);
     cleanup = () => {
       viewport.dispose();

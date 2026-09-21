@@ -4,10 +4,12 @@
 
 import { currentTopology } from "./state.js";
 import { esc } from "./graph.js";
+import { baselineCopy, clearBaselines, loadBaseline } from "./baseline.js";
 
 export const statusLabel = result => ({ attention: "Attention required", review: "Review recommended", healthy: "Healthy" }[result.status]);
 export const statusIcon = result => ({ attention: "error", review: "info", healthy: "check_circle" }[result.status]);
 export function summaryCopy(result) {
+  if (result.baseline) return baselineCopy(result);
   if (!result.activePairs) return "Enable a sync pair to visualize your routes.";
   if (result.unsupportedPairs) return "Some enabled features lack provider support. Review pair settings and available routes.";
   if (!result.graphs.length) return "No synchronization features are enabled in these pairs.";
@@ -25,14 +27,15 @@ function renderSummary() {
     return;
   }
   const result = currentTopology();
+  if (result.baseline && !result.acknowledged && result.status === "healthy") result.status = "review";
   const minimal = result.activePairs <= 1 && !result.findings.length;
   host.classList.toggle("is-minimal", minimal);
-  const state = result.unsupportedPairs ? "review" : result.status;
-  const label = result.unsupportedPairs ? "Review recommended" : result.activePairs ? statusLabel(result) : "No active pairs";
+  const state = result.acknowledged ? "review" : result.unsupportedPairs ? "review" : result.status;
+  const label = result.acknowledged ? "Acknowledged" : result.unsupportedPairs ? "Review recommended" : result.activePairs || result.baseline ? statusLabel(result) : "No active pairs";
   const focus = document.activeElement?.closest?.("#sync-topology-health button")?.dataset.action;
   host.innerHTML = `<div class="topology-summary-content"><div class="topology-summary-main">
     <div class="topology-summary-title"><h4 class="topology-kicker" id="topology-health-title">Topology health</h4>
-      <span class="topology-status is-${state}"><span class="material-symbol" aria-hidden="true">${result.unsupportedPairs ? "info" : statusIcon(result)}</span>${label}</span></div>
+      <span class="topology-status is-${state}"><span class="material-symbol" aria-hidden="true">${result.acknowledged || result.unsupportedPairs ? "info" : statusIcon(result)}</span>${label}</span></div>
     <div class="topology-counters" aria-label="Topology summary"><span><strong>${result.activePairs}</strong> active ${result.activePairs === 1 ? "pair" : "pairs"}</span>
       ${minimal ? "" : `<span><strong>${result.conflicts}</strong> ${result.conflicts === 1 ? "conflict" : "conflicts"}</span><span><strong>${result.loops}</strong> ${result.loops === 1 ? "loop" : "loops"}</span><span><strong>${result.suggestions}</strong> ${result.suggestions === 1 ? "suggestion" : "suggestions"}</span>`}</div>
     <p class="topology-copy">${summaryCopy(result)} <span class="topology-scope">${esc(result.scope)}</span></p>
@@ -53,20 +56,27 @@ function renderSummary() {
 }
 
 let scheduled = false;
+function render() {
+  renderSummary();
+  document.dispatchEvent(new Event("cw:topology-updated"));
+}
 function refresh() {
   if (scheduled) return;
   scheduled = true;
-  queueMicrotask(() => {
+  queueMicrotask(async () => {
     scheduled = false;
-    renderSummary();
-    document.dispatchEvent(new Event("cw:topology-updated"));
+    render();
+    if (!document.getElementById("sync-topology-health")) return;
+    await loadBaseline(currentTopology().profileId);
+    render();
   });
 }
+document.addEventListener("cw:topology-baseline-changed", render);
 document.addEventListener("cw:sync-data-changed", refresh);
 document.addEventListener("cx-state-change", refresh);
 window.addEventListener("cx:pairs:changed", refresh);
 window.addEventListener("cw:overview-profile-changed", refresh);
-window.addEventListener("cw:auth-state-changed", refresh);
-window.addEventListener("auth-changed", refresh);
+window.addEventListener("cw:auth-state-changed", () => { clearBaselines(); refresh(); });
+window.addEventListener("auth-changed", () => { clearBaselines(); refresh(); });
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", refresh, { once: true });
 else refresh();
