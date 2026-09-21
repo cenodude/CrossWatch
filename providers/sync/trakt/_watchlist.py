@@ -27,6 +27,7 @@ from ._common import (
 from .._mod_common import request_with_retries
 from cw_platform.id_map import minimal as id_minimal
 from .._log import log as cw_log
+from ._pagination import TraktPager
 
 BASE = "https://api.trakt.tv"
 URL_ALL = f"{BASE}/sync/watchlist"
@@ -124,7 +125,10 @@ def _shadow_load() -> dict[str, Any]:
         return {"etag": None, "ts": 0, "items": {}}
     p = _shadow_path()
     try:
-        return json.loads(p.read_text("utf-8"))
+        doc = json.loads(p.read_text("utf-8"))
+        if isinstance(doc, dict) and doc.get("schema") == 1:
+            return doc
+        return {"etag": None, "ts": 0, "items": {}}
     except Exception:
         return {"etag": None, "ts": 0, "items": {}}
 
@@ -135,7 +139,7 @@ def _shadow_save(etag: str | None, items: Mapping[str, Any]) -> None:
     try:
         _shadow_path().parent.mkdir(parents=True, exist_ok=True)
         tmp = _shadow_path().with_suffix(".tmp")
-        payload: dict[str, Any] = {"ts": int(time.time()), "items": dict(items)}
+        payload: dict[str, Any] = {"schema": 1, "ts": int(time.time()), "items": dict(items)}
         if isinstance(etag, str) and etag.strip():
             payload["etag"] = etag
         tmp.write_text(
@@ -224,25 +228,17 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         _info("index_done", count=len(idx), source="shadow_fallback")
         return idx
 
-    try:
-        page_count = int(r.headers.get("X-Pagination-Page-Count") or 0)
-    except Exception:
-        page_count = 0
-
     idx: dict[str, dict[str, Any]] = {}
     page = 1
+    pager = TraktPager("watchlist", max_pages)
     while True:
-        data = r.json() if (r.text or "").strip() else []
-        rows = [x for x in (data if isinstance(data, list) else []) if isinstance(x, dict)]
+        rows = pager.read(r, page)
         for x in rows:
+            if not isinstance(x, dict):
+                continue
             m = normalize_watchlist_row(x)
             idx[key_of(m)] = m
-        if not rows or page >= max_pages:
-            break
-        if page_count:
-            if page >= page_count:
-                break
-        elif len(rows) < per_page:
+        if not rows:
             break
         page += 1
         r = request_with_retries(

@@ -15,6 +15,7 @@ from cw_platform.anime_mapping.service import mapped_or_default_media_type
 
 from .._mod_common import request_with_retries
 from .._log import log as cw_log
+from ._pagination import TraktPager
 
 # headers
 def _user_agent() -> str:
@@ -357,7 +358,7 @@ def load_dropped_show_tokens(adapter: Any) -> set[str]:
     raw_cached_tokens = cached.get("tokens") if isinstance(cached, Mapping) else None
     cached_tokens = raw_cached_tokens if isinstance(raw_cached_tokens, list) else []
     cache_version = int(cached.get("version") or 0) if isinstance(cached, Mapping) else 0
-    cache_ok = cache_version >= 1
+    cache_ok = cache_version >= 2
     if cache_ok and remote_ts and str(cached.get("updated_at") or "").strip() == str(remote_ts).strip():
         return {str(x) for x in cached_tokens if str(x).strip()}
     if cache_ok and not remote_ts and cached_tokens:
@@ -366,7 +367,8 @@ def load_dropped_show_tokens(adapter: Any) -> set[str]:
     tokens: set[str] = set()
     page = 1
     limit = 100
-    while page <= 100:
+    pager = TraktPager("dropped", 100)
+    while True:
         try:
             r = adapter.client.get(
                 "https://api.trakt.tv/users/hidden/dropped",
@@ -377,15 +379,13 @@ def load_dropped_show_tokens(adapter: Any) -> set[str]:
                 cw_log("TRAKT", "common", "warn", "dropped_fetch_failed", page=page, path=str(dropped_path))
             except Exception:
                 pass
-            break
+            raise
         if not (200 <= r.status_code < 300):
             try:
                 cw_log("TRAKT", "common", "warn", "dropped_fetch_http", page=page, status=r.status_code, path=str(dropped_path))
             except Exception:
                 pass
-            break
-        data = r.json() if (r.text or "").strip() else []
-        rows = data if isinstance(data, list) else []
+        rows = pager.read(r, page)
         if not rows:
             break
         for row in rows:
@@ -407,12 +407,10 @@ def load_dropped_show_tokens(adapter: Any) -> set[str]:
                 }
             )
             tokens.update(_identity_tokens(item))
-        if len(rows) < limit:
-            break
         page += 1
 
     doc = {
-        "version": 1,
+        "version": 2,
         "updated_at": str(remote_ts or ""),
         "fetched_at": _now_iso(),
         "tokens": sorted(tokens),

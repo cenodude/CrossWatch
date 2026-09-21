@@ -26,6 +26,7 @@ from . import _watchlist as feat_watchlist
 from ._watchlist import _batch_payload, _record_not_found
 from .._mod_common import request_with_retries
 from .._log import log as cw_log
+from ._pagination import TraktPager
 
 BASE = "https://api.trakt.tv"
 _PROVIDER = "TRAKT"
@@ -252,21 +253,19 @@ def _discovery_snapshot(adapter: Any, feed: Mapping[str, Any]) -> PlaylistSnapsh
     items: list[PlaylistItem] = []
     page = 1
     per_page = _DISCOVERY_LIMIT
-    while len(items) < _DISCOVERY_LIMIT and page <= 10:
+    pager = TraktPager("playlists", 10)
+    while len(items) < _DISCOVERY_LIMIT:
         r = request_with_retries(
             sess,
             "GET",
             f"{BASE}{path}",
             headers=headers,
-            params={"page": page, "limit": min(per_page, _DISCOVERY_LIMIT - len(items)), "extended": "full"},
+            params={"page": page, "limit": per_page, "extended": "full"},
             timeout=adapter.cfg.timeout,
             max_retries=adapter.cfg.max_retries,
         )
-        if r.status_code != 200:
-            _warn("http_failed", op="discovery_snapshot", status=r.status_code, feed=feed.get("id"))
-            break
-        rows = r.json() if (r.text or "").strip() else []
-        if not isinstance(rows, list) or not rows:
+        rows = pager.read(r, page)
+        if not rows:
             break
         for row in rows:
             if not isinstance(row, Mapping):
@@ -285,14 +284,6 @@ def _discovery_snapshot(adapter: Any, feed: Mapping[str, Any]) -> PlaylistSnapsh
             )
             if len(items) >= _DISCOVERY_LIMIT:
                 break
-        try:
-            page_count = int(r.headers.get("X-Pagination-Page-Count") or 0)
-        except Exception:
-            page_count = 0
-        if page_count and page >= page_count:
-            break
-        if len(rows) < per_page:
-            break
         page += 1
     _info("snapshot_done", list_id=resource.id, count=len(items))
     return PlaylistSnapshot(resource=resource, items=items, checkpoint=None)
@@ -335,7 +326,8 @@ def get_snapshot(adapter: Any, playlist_id: Any) -> PlaylistSnapshot:
     items: list[PlaylistItem] = []
     page = 1
     per_page = 100
-    while page <= 1000:
+    pager = TraktPager("playlists", 1000)
+    while True:
         r = request_with_retries(
             sess,
             "GET",
@@ -345,10 +337,7 @@ def get_snapshot(adapter: Any, playlist_id: Any) -> PlaylistSnapshot:
             timeout=adapter.cfg.timeout,
             max_retries=adapter.cfg.max_retries,
         )
-        if r.status_code != 200:
-            _warn("http_failed", op="get_snapshot", status=r.status_code, list_id=lid)
-            break
-        rows = r.json() if (r.text or "").strip() else []
+        rows = pager.read(r, page)
         if not rows:
             break
         for row in rows:
@@ -366,14 +355,6 @@ def get_snapshot(adapter: Any, playlist_id: Any) -> PlaylistSnapshot:
                     provider_media_id=(dict(media.get("ids") or {}).get("trakt")),
                 )
             )
-        try:
-            page_count = int(r.headers.get("X-Pagination-Page-Count") or 0)
-        except Exception:
-            page_count = 0
-        if page_count and page >= page_count:
-            break
-        if len(rows) < per_page:
-            break
         page += 1
 
     items.sort(key=lambda it: (it.position is None, it.position if it.position is not None else 0))
