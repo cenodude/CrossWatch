@@ -10,6 +10,7 @@ import { analyzeTopology, endpointId, pairsForProfile } from "../assets/js/topol
 import { connectionLabel, findingConnections, layoutGraph, mergeGraphs, nodeName, renderGraph, topologySummary } from "../assets/js/topology/graph.js";
 import { currentTopology } from "../assets/js/topology/state.js";
 import { graphViewBox } from "../assets/js/topology/viewport.js";
+import { baselineMatches, clearBaselines, loadBaseline, savedBaseline, saveBaseline, topologySnapshot } from "../assets/js/topology/baseline.js";
 
 globalThis.window = {};
 await import("../assets/helpers/feature-meta.js");
@@ -20,6 +21,66 @@ const pair = (source, target, options = {}) => ({ id: `${source}-${target}`, sou
   mode: "one-way", features: { history: { enable: true } }, ...options });
 const analyze = (pairs, metadata = providers) => analyzeTopology(pairs, metadata, order);
 const findingsOf = (result, type) => result.findings.filter(finding => finding.type === type);
+
+test("accepted topology stays stable across reordering and cosmetic changes", () => {
+  const pairs = [pair("A", "C"), pair("B", "C")];
+  const snapshot = topologySnapshot(pairs, analyze(pairs));
+  const baseline = { ...snapshot, accepted_at: "2026-09-21T12:00:00Z" };
+  const reordered = pairs.toReversed().map(item => ({ ...item, label: "Renamed" }));
+  assert.ok(baselineMatches(topologySnapshot(reordered, analyze(reordered)), baseline));
+  assert.equal(baselineMatches({ ...snapshot, version: 2 }, baseline), false);
+  assert.equal(baselineMatches({ ...snapshot, unsupportedPairs: 1 }, baseline), false);
+});
+
+test("acceptance expires for material changes even when finding IDs stay the same", () => {
+  const original = [pair("A", "C"), pair("B", "C")];
+  const snapshot = topologySnapshot(original, analyze(original));
+  const baseline = { ...snapshot, accepted_at: "2026-09-21T12:00:00Z" };
+  for (const mutate of [
+    pairs => { pairs[0].mode = "two-way"; },
+    pairs => { pairs[0].features.history.remove_mode = "both"; },
+    pairs => { pairs[0].features.history.enable = false; },
+    pairs => { pairs[0].enabled = false; },
+    pairs => { pairs[0].source_instance = "other"; },
+    pairs => { pairs.push(pair("D", "C")); },
+  ]) {
+    const pairs = structuredClone(original);
+    mutate(pairs);
+    assert.equal(baselineMatches(topologySnapshot(pairs, analyze(pairs)), baseline), false);
+  }
+  const extraWriter = [...original, pair("D", "C")];
+  assert.deepEqual(analyze(original).findings.map(item => item.id), analyze(extraWriter).findings.map(item => item.id));
+  original[0].features.history.remove = true;
+  assert.equal(snapshot.pairs[0].features.history.remove, undefined);
+});
+
+test("baseline loading, reset and stale saves keep scope and failures explicit", async () => {
+  const originalFetch = globalThis.fetch, originalDocument = globalThis.document;
+  globalThis.document = new EventTarget();
+  clearBaselines();
+  try {
+    const baseline = { version: 1, pairs: [], findings: [], unsupportedPairs: 0, accepted_at: "2026-09-21T12:00:00Z" };
+    globalThis.fetch = async () => ({ ok: true, json: async () => ({ baseline }) });
+    await loadBaseline("one");
+    assert.deepEqual(savedBaseline("one"), baseline);
+    assert.equal(savedBaseline("two"), undefined);
+    globalThis.fetch = async () => ({ ok: false, json: async () => ({ detail: "Topology changed." }) });
+    await assert.rejects(saveBaseline({ profileId: "one", snapshot: {} }), /Topology changed/);
+    assert.deepEqual(savedBaseline("one"), baseline);
+    await loadBaseline("one");
+    assert.equal(savedBaseline("one"), undefined);
+    globalThis.fetch = async (_, options) => {
+      assert.equal(options.method, "DELETE");
+      return { ok: true, json: async () => ({ baseline: null }) };
+    };
+    await saveBaseline({ profileId: "one" }, true);
+    assert.equal(savedBaseline("one"), null);
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.document = originalDocument;
+    clearBaselines();
+  }
+});
 
 test("simple A → B is healthy", () => {
   const result = analyze([pair("A", "B")]);
