@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
+
+import pytest
+from plexapi.utils import toDatetime
 
 from providers.sync import _progress_policy as policy
 
@@ -71,7 +75,7 @@ class _PlexAdapter:
     client = type("C", (), {"server": _Srv()})()
 
 
-def _run_plex_add(monkeypatch):
+def _run_plex_add(monkeypatch, *, source_timestamp=SOURCE_TS):
     from providers.sync.plex import _progress as pr
 
     written: list[dict[str, Any]] = []
@@ -91,7 +95,7 @@ def _run_plex_add(monkeypatch):
         "type": "movie",
         "title": "The Godfather Part II",
         "ids": {"tmdb": "240"},
-        "progress_at": SOURCE_TS,
+        "progress_at": source_timestamp,
         "progress_ms": PROGRESS_MS,
         "duration_ms": RUNTIME_MS,
     }
@@ -118,3 +122,23 @@ def test_write_results_carry_the_canonical_key_for_accounting(monkeypatch) -> No
 
     assert results[0]["key"] == "tmdb:240"
     assert _progress_skipped_keys(results) == []
+
+
+@pytest.mark.parametrize("source_timestamp", ["2026-09-20T23:48:34Z", "2026-01-20T23:48:34Z"])
+@pytest.mark.parametrize("target_newer", [False, True])
+@pytest.mark.parametrize("aware", [False, True])
+def test_plex_progress_compares_local_playback_time_in_utc(monkeypatch, source_timestamp, target_newer, aware):
+    source_epoch = datetime.fromisoformat(source_timestamp.replace("Z", "+00:00")).timestamp()
+    target_epoch = source_epoch + (987 if target_newer else -987)
+    target_datetime = datetime.fromtimestamp(target_epoch, timezone.utc) if aware else toDatetime(target_epoch)
+    monkeypatch.setattr(_PlexObj, "lastViewedAt", target_datetime)
+    monkeypatch.setattr(_PlexObj, "viewOffset", 109047)
+
+    _, adapter, applied, unresolved, written = _run_plex_add(monkeypatch, source_timestamp=source_timestamp)
+
+    assert unresolved == []
+    assert applied == int(not target_newer)
+    assert len(written) == int(not target_newer)
+    result = adapter._progress_write_results[0]
+    assert result["reason"] == ("target_newer" if target_newer else "apply")
+    assert policy.as_epoch(result["target_timestamp"]) == target_epoch

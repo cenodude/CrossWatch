@@ -359,7 +359,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
             tok_source = "active_pms_token(srv)"
         if not tok:
             tok, tok_source = _preferred_pms_token(adapter)
-        configure_plex_context(baseurl=base, token=tok)
+        configure_plex_context(baseurl=base, token=tok, session=ses)
 
         if not (base and tok and ses):
             raise RuntimeError(f"PLEX ratings fast query unavailable (base={bool(base)} tok={bool(tok)} ses={bool(ses)})")

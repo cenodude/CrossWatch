@@ -96,8 +96,6 @@ def _iso(v: Any) -> str | None:
         return None
     if isinstance(v, datetime):
         try:
-            if v.tzinfo is None:
-                v = v.replace(tzinfo=timezone.utc)
             return v.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
         except Exception:
             return None
@@ -827,7 +825,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                     or int(getattr(obj, "viewCount", 0) or 0) > 0
                 )
                 source_timestamp = it0.get("progress_at") or it0.get("lastViewedAt")
-                target_timestamp = getattr(obj, "lastViewedAt", None) or getattr(obj, "viewedAt", None)
+                target_timestamp = _iso(getattr(obj, "lastViewedAt", None) or getattr(obj, "viewedAt", None))
                 target_progress = _to_int(getattr(obj, "viewOffset", None))
                 duration = _to_int(getattr(obj, "duration", None)) or _to_int(it0.get("duration_ms")) or 0
                 ms_i = _progress_ms_for_write(it0, duration)

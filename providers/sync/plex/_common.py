@@ -114,18 +114,18 @@ try:
 except ImportError:
     from _id_map import minimal as id_minimal, ids_from_guid  # type: ignore
 
-_PLEX_CTX: dict[str, str | None] = {"baseurl": None, "token": None, "account_token": None}
-_SCOPED_PLEX_CTX: ContextVar[dict[str, str | None] | None] = ContextVar("plex_context", default=None)
+_PLEX_CTX: dict[str, Any] = {"baseurl": None, "token": None, "account_token": None, "session": None}
+_SCOPED_PLEX_CTX: ContextVar[dict[str, Any] | None] = ContextVar("plex_context", default=None)
 
 
-def plex_context() -> dict[str, str | None]:
+def plex_context() -> dict[str, Any]:
     scoped = _SCOPED_PLEX_CTX.get()
     return scoped if scoped is not None else _PLEX_CTX
 
 
 @contextmanager
 def isolated_plex_context():
-    token = _SCOPED_PLEX_CTX.set({"baseurl": None, "token": None, "account_token": None})
+    token = _SCOPED_PLEX_CTX.set({"baseurl": None, "token": None, "account_token": None, "session": None})
     try:
         yield
     finally:
@@ -137,10 +137,12 @@ def configure_plex_context(
     baseurl: str | None,
     token: str | None,
     account_token: str | None = None,
+    session: requests.Session | None = None,
 ) -> None:
     context = plex_context()
     context["baseurl"] = baseurl.rstrip("/") if isinstance(baseurl, str) else None
     context["token"] = token or None
+    context["session"] = session
     if account_token is not None:
         context["account_token"] = account_token or None
 
@@ -325,7 +327,7 @@ def emit(evt: dict[str, Any], *, default_feature: str = "common") -> None:
                         cw_log("PLEX", s_feat, s_level, s_event, **s_fields)
                     return
 
-                if mode == "summary" and not act.endswith("_miss"):
+                if mode == "summary":
                     _meta_enrich_note_suppressed()
                     summ = _meta_enrich_maybe_flush()
                     if summ:
@@ -827,9 +829,30 @@ _SHOW_PMS_GUID_CACHE: dict[str, dict[str, str]] = {}
 _EP_SHOW_IDS_CACHE: dict[str, dict[str, str]] = {}
 
 def _metadata_cache_key(rating_key: str, token: str | None = None, base: str | None = None) -> str:
-    identity = [scope_safe(), base or plex_context().get("baseurl"), token or plex_context().get("token"), plex_context().get("account_token")]
+    identity = [scope_safe(), base or plex_context().get("baseurl"), token or plex_context().get("token"), plex_context().get("account_token"), getattr(plex_context().get("session"), "verify", True)]
     digest = hashlib.sha256(json.dumps(identity, separators=(",", ":")).encode()).hexdigest()
     return f"{digest}:{rating_key}"
+
+
+def _metadata_request(base: str, rating_key: str, token: str, *, session: Any = None, timeout: int = 10) -> requests.Response:
+    cloud = base.rstrip("/") == METADATA
+    source = "meta" if cloud else "pms"
+    if not cloud and session is None and base.rstrip("/") == plex_context().get("baseurl"):
+        session = plex_context().get("session")
+    get = requests.get if cloud or session is None else session.get
+    try:
+        response = get(
+            f"{base.rstrip('/')}/library/metadata/{rating_key}",
+            headers=plex_headers(token), params={"includeGuids": 1}, timeout=timeout,
+            verify=False if cloud else getattr(session, "verify", True),
+        )
+    except requests.RequestException as exc:
+        _warn("hydrate_request_failed", rk=rating_key, source=source, error_type=type(exc).__name__)
+        raise
+    if not response.ok:
+        log = _dbg if response.status_code == 404 else _warn
+        log("hydrate_miss", rk=rating_key, source=source, status=response.status_code)
+    return response
 
 
 def _hydrate_show_ids_from_episode_rk(token: str | None, episode_rk: str | None) -> dict[str, str]:
@@ -843,8 +866,6 @@ def _hydrate_show_ids_from_episode_rk(token: str | None, episode_rk: str | None)
     if key in _EP_SHOW_IDS_CACHE:
         return dict(_EP_SHOW_IDS_CACHE[key])
 
-    headers = plex_headers(token)
-    headers["Accept"] = "application/json, application/xml;q=0.9,*/*;q=0.5"
     base = str(plex_context().get("baseurl") or "").strip().rstrip("/")
 
     def _parse(r: requests.Response) -> dict[str, str]:
@@ -870,14 +891,15 @@ def _hydrate_show_ids_from_episode_rk(token: str | None, episode_rk: str | None)
                 out.update({k: v for k, v in extra.items() if v})
         return {k: v for k, v in out.items() if v}
 
-    urls: list[str] = []
+    bases: list[str] = []
     if base:
-        urls.append(f"{base}/library/metadata/{rk}")
-    urls.append(f"{METADATA}/library/metadata/{rk}")
+        bases.append(base)
+    bases.append(METADATA)
 
-    for url in urls:
+    for target in bases:
         try:
-            r = requests.get(url, headers=headers, params={"includeGuids": 1}, timeout=10)
+            request_token = str(plex_context().get("account_token") or token) if target == METADATA else token
+            r = _metadata_request(target, rk, request_token)
             if not r.ok:
                 continue
             ids = _parse(r)
@@ -904,16 +926,8 @@ def _hydrate_show_ids_from_pms(obj: Any) -> dict[str, str]:
     if not base or not token:
         _SHOW_PMS_GUID_CACHE[key] = {}
         return {}
-    url = f"{base}/library/metadata/{rk}?includeGuids=1"
     try:
-        r = requests.get(
-            url,
-            headers={
-                "X-Plex-Token": token,
-                "Accept": "application/json, application/xml;q=0.9, */*;q=0.5",
-            },
-            timeout=8,
-        )
+        r = _metadata_request(base, rk, token, session=getattr(srv, "_session", None), timeout=8)
         ids: dict[str, str] = {}
         if r.ok:
             ctype = (r.headers.get("content-type") or "").lower()
@@ -1039,9 +1053,7 @@ def hydrate_external_ids(token: str | None, rating_key: str | None) -> dict[str,
         if key in _HYDRATE_404:
             return {}
 
-    headers = plex_headers(token)
     cloud_token = str(plex_context().get("account_token") or "").strip() or token
-    cloud_headers = plex_headers(cloud_token) if cloud_token != token else headers
     base = str(plex_context().get("baseurl") or "").strip().rstrip("/")
 
     meta_status: int | None = None
@@ -1070,27 +1082,19 @@ def hydrate_external_ids(token: str | None, rating_key: str | None) -> dict[str,
                         ids.update(ids_from_guid(str(gid)))
         return {k: v for k, v in ids.items() if v}
 
-    urls: list[tuple[str, str]] = []
+    bases: list[tuple[str, str]] = []
     if base:
-        urls.append((f"{base}/library/metadata/{rk}", "pms"))
-    urls.append((f"{METADATA}/library/metadata/{rk}", "meta"))
+        bases.append((base, "pms"))
+    bases.append((METADATA, "meta"))
 
-    for url, kind in urls:
+    for target, kind in bases:
         try:
-            r = requests.get(
-                url,
-                headers=cloud_headers if kind == "meta" else headers,
-                params={"includeGuids": 1},
-                timeout=10,
-            )
+            r = _metadata_request(target, rk, cloud_token if kind == "meta" else token)
             if kind == "meta":
                 meta_status = r.status_code
             if r.status_code == 401:
                 raise RuntimeError("Unauthorized (bad Plex token)")
             if not r.ok:
-                if kind == "meta":
-                    _dbg("hydrate_miss", rk=rk, status=r.status_code, source=kind)
-                    _emit({"feature": "common", "event": "hydrate", "action": "miss", "rk": rk, "status": r.status_code})
                 continue
             ids = _parse_response(r)
             with _HYDRATE_LOCK:

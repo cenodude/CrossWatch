@@ -699,7 +699,7 @@ class PLEXClient:
                     self.server = PlexServer(self.cfg.baseurl, connection_token, session=self.session, timeout=self.cfg.timeout)
                     self._pms_baseurl = str(getattr(self.server, "baseurl", None) or self.cfg.baseurl or "")
                     if self._pms_baseurl and (pms_token or cloud_token):
-                        configure_plex_context(baseurl=str(self._pms_baseurl), token=str(pms_token or cloud_token), account_token=cloud_token)
+                        configure_plex_context(baseurl=str(self._pms_baseurl), token=str(pms_token or cloud_token), account_token=cloud_token, session=self.session)
                 except Exception as e:
                     _warn("pms_connect_failed", baseurl=str(self.cfg.baseurl or ""), error=str(e), mode="account_only")
                     self._post_connect_user_scope(str(pms_token or cloud_token))
@@ -719,7 +719,7 @@ class PLEXClient:
                 if pms_token:
                     self._apply_pms_token(pms_token)
                     if self._pms_baseurl:
-                        configure_plex_context(baseurl=str(self._pms_baseurl), token=str(pms_token), account_token=cloud_token)
+                        configure_plex_context(baseurl=str(self._pms_baseurl), token=str(pms_token), account_token=cloud_token, session=self.session)
 
                 self._post_connect_user_scope(str(pms_token or cloud_token))
                 _dbg(
@@ -744,7 +744,7 @@ class PLEXClient:
                     pms_token = res_tok
                     self._apply_pms_token(pms_token)
                 if self._pms_baseurl and (pms_token or cloud_token):
-                    configure_plex_context(baseurl=str(self._pms_baseurl), token=str(pms_token or cloud_token), account_token=cloud_token)
+                    configure_plex_context(baseurl=str(self._pms_baseurl), token=str(pms_token or cloud_token), account_token=cloud_token, session=self.session)
             except Exception as e:
                 _warn("pms_resource_connect_failed", error=str(e), mode="account_only")
                 self._post_connect_user_scope(str(pms_token or cloud_token))
@@ -1003,7 +1003,7 @@ class PLEXClient:
         try:
             baseurl = str(getattr(srv, "baseurl", None) or self._pms_baseurl or self.cfg.baseurl or "")
             if baseurl:
-                configure_plex_context(baseurl=baseurl, token=pms_user_token)
+                configure_plex_context(baseurl=baseurl, token=pms_user_token, session=self.session)
         except Exception:
             pass
 
@@ -1102,7 +1102,7 @@ class PLEXClient:
         try:
             baseurl = str(getattr(srv, "baseurl", None) or self._pms_baseurl or self.cfg.baseurl or "")
             if baseurl:
-                configure_plex_context(baseurl=baseurl, token=pms_user_token)
+                configure_plex_context(baseurl=baseurl, token=pms_user_token, session=self.session)
         except Exception:
             pass
 
@@ -1146,7 +1146,7 @@ class PLEXClient:
             try:
                 baseurl = str(getattr(srv, "baseurl", None) or self._pms_baseurl or self.cfg.baseurl or "")
                 if baseurl:
-                    configure_plex_context(baseurl=baseurl, token=prev_token)
+                    configure_plex_context(baseurl=baseurl, token=prev_token, session=self.session)
             except Exception:
                 pass
         self.user_username = prev_uname
@@ -1607,7 +1607,7 @@ class _PlexOPS:
             if ent is not None and (now - ent[1]) < _ADAPTER_TTL:
                 mod = ent[0]
                 server = getattr(getattr(mod, "client", None), "server", None)
-                configure_plex_context(baseurl=mod.cfg.baseurl or "", token=getattr(server, "_token", None) or mod.cfg.pms_token or mod.cfg.token or "", account_token=mod.cfg.token or "")
+                configure_plex_context(baseurl=mod.cfg.baseurl or "", token=getattr(server, "_token", None) or mod.cfg.pms_token or mod.cfg.token or "", account_token=mod.cfg.token or "", session=getattr(server, "_session", None) or getattr(getattr(mod, "client", None), "session", None))
                 return mod
         mod = PLEXModule(cfg)
         try:
