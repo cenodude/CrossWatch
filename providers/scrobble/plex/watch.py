@@ -1109,11 +1109,10 @@ class WatchService:
                 return stale_hit
             misses = self._identity_miss.get(sk, 0) + 1
             self._identity_miss[sk] = misses
-            if misses > 1:
+            if misses == 2:
                 self._log_identity(
                     f"identity unresolved sess={sk} reason=session_not_listed "
-                    f"misses={misses} in={_ms()}ms",
-                    f"miss|{sk}",
+                    f"misses={misses} in={_ms()}ms"
                 )
             return None
         except Exception as e:

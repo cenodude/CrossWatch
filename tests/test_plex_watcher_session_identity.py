@@ -593,16 +593,36 @@ def test_identity_log_reports_forbidden_without_retrying(monkeypatch: pytest.Mon
     assert plex.queries == ["/status/sessions"]
 
 
-def test_identity_miss_log_is_throttled_per_session(monkeypatch: pytest.MonkeyPatch) -> None:
-    cfg = _cfg(["Carmen"])
-    plex = FakePlex(["<MediaContainer />"] * 12)
-    service, _sink = _service(monkeypatch, cfg, plex)
-    lines = _identity_logs(monkeypatch, service)
+def test_identity_miss_log_is_emitted_once_per_unresolved_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.scrobble.plex import watch
 
-    service._handle_alert(_alert("31"))
-    service._handle_alert(_alert("31"))
+    cfg = _cfg(["Carmen"])
+    plex = FakePlex([])
+    service, sink = _service(monkeypatch, cfg, plex)
+    lines = _identity_logs(monkeypatch, service)
+    now = [1000.0]
+    monkeypatch.setattr(watch.time, "time", lambda: now[0])
+
+    for _ in range(450):
+        service._handle_alert(_alert("31"))
+        now[0] += 20.0
 
     assert len([ln for ln in lines if ln.startswith("identity unresolved")]) == 1
+    assert sink.events == []
+    assert plex.queries == ["/status/sessions"] * 450
+
+    service._handle_alert(_alert("32"))
+    service._handle_alert(_alert("32"))
+
+    unresolved = [ln for ln in lines if ln.startswith("identity unresolved")]
+    assert len(unresolved) == 2
+    assert "sess=32" in unresolved[1]
+
+    plex._sessions.append(_session_xml("31", user_name="Carmen", user_id="176467484"))
+    service._handle_alert(_alert("31"))
+
+    assert len(sink.events) == 1
+    assert sink.events[0].account == "Carmen"
 
 
 def test_username_whitelist_matches_plex_user_id(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -769,7 +789,9 @@ def test_miss_counter_resets_once_the_session_resolves(monkeypatch: pytest.Monke
     cfg = _cfg(["Carmen"])
     plex = FakePlex([
         "<MediaContainer />",
+        "<MediaContainer />",
         _session_xml("31", user_name="Carmen", user_id="176467484"),
+        "<MediaContainer />",
         "<MediaContainer />",
     ])
     service, _sink = _service(monkeypatch, cfg, plex)
@@ -777,12 +799,20 @@ def test_miss_counter_resets_once_the_session_resolves(monkeypatch: pytest.Monke
 
     service._handle_alert(_alert("31"))
     service._handle_alert(_alert("31"))
+    assert len([ln for ln in lines if ln.startswith("identity unresolved")]) == 1
+    service._handle_alert(_alert("31"))
     assert service._identity_miss.get("31") is None
 
     service._sess_identity_cache.clear()
     service._last_event.clear()
+    lines.clear()
     service._handle_alert(_alert("31"))
     assert [ln for ln in lines if ln.startswith("identity unresolved")] == []
+
+    service._handle_alert(_alert("31"))
+    unresolved = [ln for ln in lines if ln.startswith("identity unresolved")]
+    assert len(unresolved) == 1
+    assert "misses=2" in unresolved[0]
 
 
 def test_forbidden_is_logged_on_the_very_first_failure(monkeypatch: pytest.MonkeyPatch) -> None:
