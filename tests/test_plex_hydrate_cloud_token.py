@@ -31,7 +31,7 @@ def plex(monkeypatch):
         c._HYDRATE_404.clear()
     calls: list[tuple[str, str]] = []
 
-    def _get(url, headers=None, params=None, timeout=None):
+    def _get(url, headers=None, params=None, timeout=None, verify=True):
         tok = (headers or {}).get("X-Plex-Token", "")
         calls.append((url, tok))
         if url.startswith(c.METADATA):

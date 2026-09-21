@@ -103,6 +103,7 @@ class PlexSink(MediaServerSink):
             baseurl=getattr(server, "_baseurl", None) or getattr(adapter.cfg, "baseurl", None),
             token=getattr(server, "_token", None) or getattr(adapter.cfg, "pms_token", None) or getattr(adapter.cfg, "token", None),
             account_token=getattr(cli, "cloud_token", None) or getattr(adapter.cfg, "token", None) or "",
+            session=getattr(server, "_session", None) or getattr(cli, "session", None),
         )
         return adapter
 
