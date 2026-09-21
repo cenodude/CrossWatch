@@ -1294,6 +1294,59 @@ def _distinct_watches(epochs: Iterable[int]) -> list[int]:
     return watches
 
 
+def _plex_history_identity_aliases(item: Mapping[str, Any]) -> list[str]:
+    row = {"type": _media_type(item), "season": _season_number(item), "episode": _episode_number(item), "ids": _ids(item)}
+    return [alias for alias in _media_id_aliases("history", row)
+            if any(f"|{key}:" in alias for key in ("tmdb", "imdb", "tvdb")) or "|guid:plex://" in alias]
+
+
+def _complete_plex_history_sources(
+    rows: list[dict[str, Any]], state: Mapping[str, Any], user_filter: Mapping[str, Any] | None,
+) -> None:
+    from cw_platform.config_base import load_config
+
+    if not any(source.get("provider") == "PLEX" for row in rows for source in row.get("sources") or []):
+        return
+    try:
+        cfg = load_config() or {}
+    except Exception:
+        return
+    partners: dict[str, set[str]] = {}
+    for pair in cfg.get("pairs") or []:
+        if not isinstance(pair, Mapping) or pair.get("enabled") is False:
+            continue
+        if str(pair.get("source") or "").upper() != "PLEX" or str(pair.get("target") or "").upper() != "PLEX":
+            continue
+        feature = (pair.get("features") or {}).get("history")
+        if not isinstance(feature, Mapping) or feature.get("enable") is False:
+            continue
+        src = normalize_instance_id(pair.get("source_instance"))
+        dst = normalize_instance_id(pair.get("target_instance"))
+        if src == dst or not all(_endpoint_matches_user("PLEX", instance, user_filter) for instance in (src, dst)):
+            continue
+        partners.setdefault(src, set()).add(dst)
+        partners.setdefault(dst, set()).add(src)
+    if not partners:
+        return
+    matches: dict[tuple[str, str], set[int]] = {}
+    for index, row in enumerate(rows):
+        existing = {normalize_instance_id(source.get("instance")) for source in row.get("sources") or []
+                    if source.get("provider") == "PLEX"}
+        candidates = {partner for instance in existing for partner in partners.get(instance, set())} - existing
+        for instance in candidates:
+            for alias in _plex_history_identity_aliases(row):
+                matches.setdefault((instance, alias), set()).add(index)
+    instances = {instance for instance, _alias in matches}
+    for provider, instance, block in _history_provider_blocks(state, user_filter):
+        if provider != "PLEX" or instance not in instances:
+            continue
+        source = {"sources": [_provider_ref("PLEX", instance)]}
+        for raw_item in _feature_items(block, "history").values():
+            for alias in _plex_history_identity_aliases(_unwrap_history_item(raw_item)):
+                for index in matches.get((instance, alias), ()):
+                    _merge_sources(rows[index], source)
+
+
 def recent_history_widget(
     state: Mapping[str, Any] | None = None,
     *,
@@ -1311,7 +1364,9 @@ def recent_history_widget(
         state_rows = _latest_history_state_rows(state or {}, user_filter=user_filter, window=None)
         tracker_rows = _latest_history_tracker_rows(tracker_items or {}, user_filter=user_filter, window=None)
         rows = _merge_history_rows(state_rows, tracker_rows, alias_map=alias_map)
-    selected = _resolve_missing_art_rows(rows[:cap], size="w300", episode_still=True)
+    selected = rows[:cap]
+    _complete_plex_history_sources(selected, state or {}, user_filter)
+    selected = _resolve_missing_art_rows(selected, size="w300", episode_still=True)
     return {"ok": True, "items": selected, "total": len(rows)}
 
 
