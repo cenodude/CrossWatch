@@ -253,3 +253,9 @@ html[data-cw-theme] #layout .cw-themed-page .ss-modebtn.active {
   background: var(--cw-page-good-bg);
   border-color: var(--cw-theme-good);
 }
+
+body.cw-profile-page :is(.cw-tl-action,.cw-tl-remove-submit)[data-action-result="success"] .material-symbols-rounded{color:rgb(var(--hist-sync-rgb))}
+body.cw-profile-page :is(.cw-tl-action,.cw-tl-remove-submit)[data-action-result="failure"] .material-symbols-rounded{color:rgb(var(--hist-conflict-rgb))}
+
+#profile-remove-dialog .cw-tl-remove-submit[data-action-result="success"]{background:var(--cw-page-good-bg);color:var(--cw-theme-good)}
+#profile-remove-dialog .cw-tl-remove-submit[data-action-result="failure"]{background:var(--cw-page-danger-bg);color:var(--cw-theme-danger)}

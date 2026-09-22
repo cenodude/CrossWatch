@@ -669,6 +669,13 @@ html[data-cw-theme="flat-light"] .cw-editor-send-card{--send-bg:#e9edf5;--send-p
 
 .topology-baseline{display:grid;gap:10px;margin-bottom:14px}.topology-baseline .topology-copy{margin:0}.topology-baseline-actions{display:flex;flex-wrap:wrap;gap:8px}.topology-baseline-actions .cw-page-button{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:36px;max-width:100%;padding:8px 12px}.topology-baseline-actions .cw-page-button:disabled{opacity:.5;cursor:not-allowed}
 
+.cw-play-meta{display:flex;align-items:center;gap:calc(8 * var(--cch-u));min-width:0}
+.cw-play-meta>.cw-hist-meta{flex:1;min-width:0}
+.cw-play-meta>.cw-play-rating{flex:0 0 auto}
+body.cw-profile-page :is(.cw-tl-action,.cw-tl-remove-submit)[aria-busy="true"]{opacity:1;cursor:progress;transform:none}
+body.cw-profile-page :is(.cw-tl-action,.cw-tl-remove-submit):is([data-action-result="success"],[data-action-result="failure"]){opacity:1;transform:none}
+@media(prefers-reduced-motion:no-preference){body.cw-profile-page :is(.cw-tl-action,.cw-tl-remove-submit)[aria-busy="true"] .material-symbols-rounded{animation:cwPlaySpin .8s linear infinite}}
+
 #ie-recovery { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; min-width: 0; }
 #ie-recovery .ie-panel { min-width: 0; }
 #ie-recovery .pr-actions { display: flex; gap: 12px; flex-wrap: wrap; margin-block: 16px; }
