@@ -19,8 +19,8 @@ from ._common import (
     _record_unresolved,
     _root,
     _snapshot_state,
-    latest_snapshot_file,
-    latest_state_file,
+    fallback_snapshot_file,
+    fallback_state_file,
     make_logger,
     may_persist,
     merge_tracker_identity,
@@ -205,11 +205,11 @@ def _load_state(adapter: Any) -> dict[str, Any]:
     read_path = state_file_for_read(root, "progress", path)
     raw = _read_json(read_path)
     if raw is None:
-        alt = latest_state_file(root, "progress")
+        alt = fallback_state_file(root, "progress")
         if alt and alt != path:
             raw = _read_json(alt)
     if raw is None:
-        snap = latest_snapshot_file(root, "progress")
+        snap = fallback_snapshot_file(root, "progress")
         if snap:
             raw = _read_json(snap)
             if raw is not None:

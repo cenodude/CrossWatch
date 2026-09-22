@@ -48,6 +48,61 @@ def test_crosswatch_target_keeps_current_pair_scoped_state(tmp_path: Path, monke
     assert "tmdb:2" not in index
 
 
+def test_crosswatch_target_ignores_other_pair_state_when_its_own_is_missing(tmp_path: Path, monkeypatch) -> None:
+    from providers.sync.crosswatch import _watchlist
+
+    monkeypatch.setenv("CW_CROSSWATCH_PAIR_SCOPED", "1")
+    monkeypatch.setenv("CW_PAIR_SCOPE", "newpair")
+    monkeypatch.setenv("CW_PAIR_SRC", "SIMKL")
+    _write_state(tmp_path / "watchlist.otherpair.json", "tmdb:2", "2", 200)
+
+    assert not (tmp_path / "watchlist.newpair.json").exists()
+    assert _watchlist.build_index(_adapter(tmp_path)) == {}
+
+
+def test_crosswatch_source_still_reads_other_pair_state_when_its_own_is_missing(tmp_path: Path, monkeypatch) -> None:
+    from providers.sync.crosswatch import _watchlist
+
+    monkeypatch.setenv("CW_CROSSWATCH_PAIR_SCOPED", "1")
+    monkeypatch.setenv("CW_PAIR_SCOPE", "newpair")
+    monkeypatch.setenv("CW_PAIR_SRC", "CROSSWATCH")
+    _write_state(tmp_path / "watchlist.otherpair.json", "tmdb:2", "2", 200)
+
+    assert "tmdb:2" in _watchlist.build_index(_adapter(tmp_path))
+
+
+def test_crosswatch_target_ignores_other_pair_snapshots(tmp_path: Path, monkeypatch) -> None:
+    from providers.sync.crosswatch import _watchlist
+
+    monkeypatch.setenv("CW_CROSSWATCH_PAIR_SCOPED", "1")
+    monkeypatch.setenv("CW_PAIR_SCOPE", "newpair")
+    monkeypatch.setenv("CW_PAIR_SRC", "SIMKL")
+    foreign = tmp_path / "snapshots" / "otherpair"
+    foreign.mkdir(parents=True)
+    _write_state(foreign / "20260101-000000-watchlist.json", "tmdb:2", "2", 200)
+
+    assert _watchlist.build_index(_adapter(tmp_path)) == {}
+
+    own = tmp_path / "snapshots" / "newpair"
+    own.mkdir(parents=True)
+    _write_state(own / "20260101-000000-watchlist.json", "tmdb:1", "1", 100)
+
+    assert "tmdb:1" in _watchlist.build_index(_adapter(tmp_path))
+
+
+def test_crosswatch_source_still_reads_other_pair_snapshots(tmp_path: Path, monkeypatch) -> None:
+    from providers.sync.crosswatch import _watchlist
+
+    monkeypatch.setenv("CW_CROSSWATCH_PAIR_SCOPED", "1")
+    monkeypatch.setenv("CW_PAIR_SCOPE", "newpair")
+    monkeypatch.setenv("CW_PAIR_SRC", "CROSSWATCH")
+    foreign = tmp_path / "snapshots" / "otherpair"
+    foreign.mkdir(parents=True)
+    _write_state(foreign / "20260101-000000-watchlist.json", "tmdb:2", "2", 200)
+
+    assert "tmdb:2" in _watchlist.build_index(_adapter(tmp_path))
+
+
 def test_crosswatch_progress_enriches_episode_series_title(monkeypatch) -> None:
     from providers.sync.crosswatch import _progress
 

@@ -21,8 +21,8 @@ from ._common import (
     _root,
     _snapshot_state,
     current_state_only,
-    latest_snapshot_file,
-    latest_state_file,
+    fallback_snapshot_file,
+    fallback_state_file,
     make_logger,
     may_persist,
     merge_tracker_identity,
@@ -113,13 +113,13 @@ def _load_state(adapter: Any) -> dict[str, Any]:
     read_path = state_file_for_read(root, "history", path)
     raw = _read_json(read_path)
     if raw is None:
-        alt = latest_state_file(root, "history")
+        alt = fallback_state_file(root, "history")
         if alt and alt != path:
             raw = _read_json(alt)
     if raw is None and current_state_only(adapter):
         return {"ts": 0, "items": {}}
     if raw is None:
-        snap = latest_snapshot_file(root, "history")
+        snap = fallback_snapshot_file(root, "history")
         if snap:
             raw = _read_json(snap)
             if raw is not None:
