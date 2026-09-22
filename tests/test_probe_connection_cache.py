@@ -13,6 +13,7 @@ import pytest
 
 from api import probesAPI as probes
 from cw_platform import connection_status as connections
+from cw_platform.modules_registry import PROVIDER_CONNECTION_FIELDS, provider_names
 
 
 @pytest.fixture(autouse=True)
@@ -131,6 +132,58 @@ def test_changed_credentials_and_profiles_do_not_share_state():
     assert "first" not in serialized
 
 
+def test_connection_identity_definitions_cover_registered_providers():
+    assert set(PROVIDER_CONNECTION_FIELDS) == set(provider_names(upper=False))
+
+
+@pytest.mark.parametrize("provider", provider_names(upper=False))
+def test_account_metadata_does_not_change_connection_identity(provider):
+    groups = PROVIDER_CONNECTION_FIELDS[provider]
+    block = {aliases[0]: "original" for aliases in groups}
+    used = {field for aliases in groups for field in aliases}
+    metadata = {field: "updated" for field in (
+        "username", "user_id", "connected", "enabled", "connection_verified", "expires_at",
+        "label", "avatar", "account_type", "last_checked", "token_expires_at",
+    ) if field not in used}
+    cfg = {provider: block}
+    connections.update(provider, cfg, connected=True, checked_at=time.time())
+    updated = {provider: {**block, **metadata}}
+    assert connections.identity(provider, cfg) == connections.identity(provider, updated)
+    assert connections.read(provider, updated)["connected"] is True
+
+
+@pytest.mark.parametrize("provider,block,change", [
+    ("trakt", {"client_id": "client", "access_token": "token"}, {"access_token": "other"}),
+    ("mdblist", {"api_key": "key"}, {"api_key": "other"}),
+    ("floppy", {"api_token": "key", "server_url": "http://first"}, {"api_token": "other"}),
+    ("jellyfin", {"server": "http://first", "access_token": "token"}, {"server": "http://second"}),
+    ("emby", {"server": "http://first", "access_token": "token", "user_id": "one"}, {"user_id": "two"}),
+    ("nuvio", {"access_token": "token", "profile_id": "one"}, {"profile_id": "two"}),
+    ("nuvio", {"access_token": "token", "server_mode": "self_hosted", "publishable_key": "one"}, {"publishable_key": "two"}),
+    ("plex", {"account_token": "token", "server_url": "http://first"}, {"server_url": "http://second"}),
+    ("stremio", {"auth_key": "key", "stremio_profile_id": "one"}, {"stremio_profile_id": "two"}),
+    ("kodi", {"server": "http://first", "username": "one", "password": "secret"}, {"username": "two"}),
+    ("scrob", {"server_url": "http://first", "api_key": "key", "username": "one"}, {"username": "two"}),
+    ("scrob", {"server_url": "http://first", "api_key": "key", "api_prefix": "/api"}, {"api_prefix": "/other"}),
+    ("tmdb", {"api_key": "key", "session_id": "one"}, {"session_id": "two"}),
+])
+def test_connection_changes_require_new_verification(provider, block, change):
+    cfg = {provider: block}
+    connections.update(provider, cfg, connected=True, checked_at=time.time())
+    assert connections.read(provider, {provider: {**block, **change}}) == {}
+
+
+@pytest.mark.parametrize("provider,primary,alias", [
+    ("simkl", {"client_id": "client", "access_token": "token"}, {"api_key": "client", "token": "token"}),
+    ("trakt", {"client_id": "client", "access_token": "token"}, {"client_id": "client", "token": "token"}),
+    ("emby", {"server": "http://server", "access_token": "token"}, {"server": "http://server", "api_key": "token"}),
+    ("floppy", {"server_url": "http://server", "api_token": "token"}, {"server": "http://server", "token": "token"}),
+    ("stremio", {"auth_key": "key"}, {"authKey": "key"}),
+])
+def test_equivalent_credential_aliases_share_connection_state(provider, primary, alias):
+    assert connections.identity(provider, {provider: primary}) == connections.identity(provider, {provider: alias})
+
+
 def test_concurrent_cold_probes_share_one_verification(monkeypatch):
     entered = threading.Event()
     release = threading.Event()
@@ -201,6 +254,39 @@ def test_simkl_concurrent_startup_reads_verify_once_even_with_saved_settings(mon
             assert list(pool.map(probes._probe_simkl_detail, [cfg] * 4)) == [(True, "")] * 4
         assert probes.simkl_user_info(cfg)["account_type"] == "pro"
     assert len(calls) == 2
+
+
+def test_simkl_startup_profile_views_and_sync_share_settings(monkeypatch, tmp_path):
+    from providers.sync.simkl import _common
+
+    monkeypatch.setattr(_common, "STATE_DIR", tmp_path)
+    monkeypatch.setattr(_common, "_SETTINGS_MEMO", {})
+    monkeypatch.setattr(probes, "SIMKL_AUTH", None)
+    monkeypatch.setattr(probes, "_SIMKL_SETTINGS_CACHE", {})
+    monkeypatch.setattr(probes, "_SIMKL_VERIFY_AFTER", 0.0)
+    monkeypatch.setattr(probes, "last_outcome", lambda _: True)
+    calls = []
+    monkeypatch.setattr(probes, "_simkl_settings_post", lambda *a, **kw: (
+        calls.append(True) or 200, b'{"account":{"id":12,"type":"pro"}}',
+    ))
+    base = {"client_id": "client", "access_token": "token"}
+    views = [{"simkl": {**base, **extra}} for extra in (
+        {}, {"api_key": "client"}, {"connected": True, "username": "Test"}, {"auth_method": "pin", "enabled": True},
+    )]
+    session = SimpleNamespace(post=lambda *a, **kw: pytest.fail("sync repeated the startup settings request"))
+    for boot in ("before-restart", "after-restart"):
+        monkeypatch.setattr(connections, "_BOOT_ID", boot)
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            assert list(pool.map(probes._probe_simkl_detail, views)) == [(True, "")] * 4
+        for _ in range(3):
+            settings = _common.refresh_user_settings_from_activities(
+                session, {"Authorization": "Bearer token"}, {"settings": {"all": "2026-01-01T00:00:00Z"}},
+            )
+            assert settings["account"]["type"] == "pro"
+    assert len(calls) == 2
+    assert probes._probe_simkl_detail(views[0], max_age_sec=0) == (True, "")
+    assert len(calls) == 3
+    assert connections.identity("simkl", views[0]) != connections.identity("simkl", {"simkl": {**base, "access_token": "other"}})
 
 
 def test_failed_startup_verification_is_not_retried_by_status_reads(monkeypatch):

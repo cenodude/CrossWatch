@@ -15,17 +15,17 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from cw_platform.config_base import CONFIG_BASE
-from cw_platform.modules_registry import provider_names
+from cw_platform.modules_registry import PROVIDER_CONNECTION_FIELDS, provider_names
 from cw_platform.provider_instances import provider_key
 
 _GUARD = threading.Lock()
 _LOCKS: dict[str, Any] = {}
 _BOOT_ID = secrets.token_hex(16)
 _FIELDS = (
-    "account_token", "access_token", "token", "api_key", "key", "auth_key", "authKey",
+    "account_token", "access_token", "token", "api_key", "api_token", "key", "auth_key", "authKey",
     "client_id", "session_id", "server", "server_url", "base_url", "url", "root_dir",
     "profile_id", "stremio_profile_id", "user_id", "username", "password", "webhook_url",
-    "auth_method", "oauth", "enabled", "connected", "connection_verified", "verify_ssl",
+    "auth_method", "verify_ssl", "api_prefix",
 )
 
 
@@ -43,7 +43,18 @@ def identity(provider: str, cfg: Mapping[str, Any]) -> str:
     name = _name(provider)
     block = (cfg.get("tmdb_sync") if name in {"tmdb", "tmdb_sync"} else None) or cfg.get(name) or cfg.get(str(provider).upper()) or {}
     auth = (cfg.get("auth") or {}).get(name) or {}
-    values = {field: block.get(field, auth.get(field)) for field in _FIELDS}
+    groups = PROVIDER_CONNECTION_FIELDS.get(name, tuple((field,) for field in _FIELDS))
+    values: dict[str, Any] = {}
+    for aliases in groups:
+        value = None
+        for field in aliases:
+            candidate = block.get(field, auth.get(field))
+            if isinstance(candidate, str) and field != "password":
+                candidate = candidate.strip()
+            if candidate is not None and candidate != "":
+                value = candidate
+                break
+        values[aliases[0]] = value
     digest = hashlib.sha256(json.dumps(values, sort_keys=True, default=str).encode()).hexdigest()
     return f"{name}.{digest}"
 

@@ -55,6 +55,30 @@ MODULES: dict[str, dict[str, str]] = {
 }
 
 
+PROVIDER_CONNECTION_FIELDS: dict[str, tuple[tuple[str, ...], ...]] = {
+    "anilist": (("access_token", "token"),),
+    "bingebase": (("access_token",), ("webhook_url",), ("api_key",)),
+    "crosswatch": (("root_dir",), ("profile_id",), ("enabled",), ("connected",)),
+    "emby": (("server",), ("access_token", "token", "api_key"), ("user_id",), ("verify_ssl",)),
+    "flicklist": (("api_key",), ("access_token", "token"), ("auth_method",)),
+    "floppy": (("server_url", "server"), ("api_token", "token"), ("verify_ssl",)),
+    "jellyfin": (("server",), ("access_token", "token"), ("user_id",), ("verify_ssl",)),
+    "kodi": (("server",), ("username",), ("password",), ("verify_ssl",), ("connection_verified",)),
+    "mdblist": (("api_key", "key"), ("access_token",), ("auth_method",)),
+    "nuvio": (("base_url",), ("server_mode",), ("publishable_key",), ("access_token",), ("profile_id",), ("auth_method",)),
+    "plex": (("account_token",), ("pms_token",), ("server_url", "server"), ("user_id",), ("verify_ssl",)),
+    "publicmetadb": (("base_url",), ("api_key",)),
+    "punchplay": (("access_token",),),
+    "scrob": (("server_url",), ("api_prefix",), ("api_key",), ("access_token",), ("username",), ("password",), ("verify_ssl",)),
+    "simkl": (("client_id", "api_key"), ("access_token", "token")),
+    "stremio": (("auth_key", "authKey"), ("stremio_profile_id",)),
+    "tautulli": (("server_url",), ("api_key",), ("verify_ssl",)),
+    "tmdb": (("api_key",), ("session_id",)),
+    "tracearr": (("server_url",), ("api_key",), ("verify_ssl",)),
+    "trakt": (("client_id",), ("access_token", "token")),
+}
+
+
 def get_sync_module_path_by_name(name: str) -> str | None:
     key = f"_mod_{(name or '').strip().upper()}"
     return MODULES["SYNC"].get(key)

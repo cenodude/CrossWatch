@@ -745,7 +745,7 @@
     }));
   }
 
-  async function refreshStatus(force = false) {
+  async function refreshStatus(force = false, verify = force) {
     if (authSetupPending()) return UI.status;
     const now = Date.now();
     if (!force && state.lastStatusMs && (now - state.lastStatusMs) < STATUS_MIN_INTERVAL) return UI.status;
@@ -755,8 +755,8 @@
       const [, payload] = await Promise.all([
         refreshPairedProviders(force ? 0 : 5000),
         typeof API.Status?.get === "function"
-          ? API.Status.get(!!force)
-          : requestJSON(force ? "/api/status?fresh=1" : "/api/status", {}, 15000),
+          ? API.Status.get(!!force, !!verify)
+          : requestJSON(verify ? "/api/status?fresh=1" : "/api/status", {}, 15000),
       ]);
       state.appDebug = !!payload?.debug;
       const providers = extractProviderStatus(payload);
@@ -1278,10 +1278,15 @@
 
   window.addEventListener("cw:overview-profile-changed", () => {
     try { window.CW?.Cache?.invalidate?.(["status"]); } catch {}
-    queueSafe(() => { refreshStatus(true); });
+    queueSafe(() => { refreshStatus(true, false); });
     const current = normalizeRouteTab(state.currentTab || document.documentElement?.dataset?.tab || document.body?.dataset?.tab || "main");
     const tab = allowedRouteTab(current);
     if (tab !== current) Promise.resolve(showTab(tab)).catch(() => {});
+  });
+
+  window.addEventListener("sync-complete", () => {
+    try { window.CW?.Cache?.invalidate?.(["status"]); } catch {}
+    queueSafe(() => { refreshStatus(true, false); });
   });
 
   window.addEventListener("load", () => {
