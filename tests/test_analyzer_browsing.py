@@ -10,6 +10,11 @@ from fastapi.testclient import TestClient
 import services.analyzer as A
 
 
+def _state(pairs=None, **kwargs):
+    defaults = {"offset": 0, "limit": 250, "q": "", "feature": "", "sort": "", "direction": "asc"}
+    return A._build_state_page(pairs, **{**defaults, **kwargs})
+
+
 @pytest.fixture
 def rows(monkeypatch):
     items = [
@@ -23,7 +28,7 @@ def rows(monkeypatch):
 
 
 def test_search_and_feature_filter_precede_paging(rows):
-    page = A.api_state(q="Movie 49", feature="ratings", offset=250, limit=250, sort="title")
+    page = _state(q="Movie 49", feature="ratings", offset=250, limit=250, sort="title")
     expected = [r for r in rows if "49" in r["title"] and r["feature"] == "ratings"]
     assert page["total"] == len(expected)
     assert page["items"] == expected[250:500]
@@ -31,25 +36,25 @@ def test_search_and_feature_filter_precede_paging(rows):
 
 
 def test_global_sort_is_stable_and_does_not_mutate_cached_rows(rows):
-    page = A.api_state(sort="title", direction="desc", offset=250, limit=250)
+    page = _state(sort="title", direction="desc", offset=250, limit=250)
     assert page["items"] == list(reversed(rows))[250:500]
     assert rows[0]["title"] == "Movie 00000"
-    assert A.api_state(limit=1)["items"] == rows[:1]
+    assert _state(limit=1)["items"] == rows[:1]
 
 
 def test_id_search_finds_items_beyond_first_page(rows):
-    page = A.api_state(q="plex tmdb:49999")
+    page = _state(q="plex tmdb:49999")
     assert page["items"] == rows[-1:]
     assert page["total"] == 1
     assert not page["has_more"]
 
 
 def test_bounded_pages_and_metadata_only_requests(rows):
-    assert len(A.api_state(limit=50000)["items"]) == 500
-    assert A.api_state(limit=0)["items"] == []
-    assert A.api_state(limit=0)["total"] == 50000
-    assert A.api_state(q="no such title")["total"] == 0
-    assert A.api_state(feature="unsupported")["total"] == 0
+    assert len(_state(limit=50000)["items"]) == 500
+    assert _state(limit=0)["items"] == []
+    assert _state(limit=0)["total"] == 50000
+    assert _state(q="no such title")["total"] == 0
+    assert _state(feature="unsupported")["total"] == 0
 
 
 def test_episode_search_and_malformed_coordinates(monkeypatch):
@@ -58,8 +63,8 @@ def test_episode_search_and_malformed_coordinates(monkeypatch):
         {"title": "Broken metadata", "type": "episode", "season": "unknown", "episode": 1},
     ]
     monkeypatch.setattr(A, "_cached_scoped_rows", lambda pairs: (rows, {}))
-    assert A.api_state(q="series s02e03")["items"] == rows[:1]
-    assert A.api_state(sort="title")["items"] == list(reversed(rows))
+    assert _state(q="series s02e03")["items"] == rows[:1]
+    assert _state(sort="title")["items"] == list(reversed(rows))
 
 
 def test_http_filters_preserve_managed_pair_scope(monkeypatch):
