@@ -1358,9 +1358,10 @@
       mode: "editor",
       noun: "title",
       entries: [...collectionState.selected.values()],
-      onDone: (clean) => {
+      trigger: $("#profile-collection-bulk")?.querySelector("[data-collection-remove]"),
+      onDone: async (clean) => {
         if (clean) collectionState.selected.clear();
-        void loadCollection();
+        await loadCollection();
       },
     });
   }
@@ -2239,7 +2240,7 @@
     };
     const PLACES = { history: "provider history", ratings: "provider ratings", collection: "provider collections", watchlist: "provider watchlists" };
     const CONFIRM_MS = 4200;
-    const state = { ctx: null, targets: [], picked: new Set(), previewId: "", empty: null, busy: false, armedUntil: 0, generation: 0 };
+    const state = { ctx: null, targets: [], picked: new Set(), previewId: "", empty: null, busy: false, outcome: "", feedbackTimer: 0, armedUntil: 0, generation: 0 };
     const emptyHtml = ({ icon = "info", title = "", text = "", tone = "", spin = false } = {}) => `<div class="cw-tl-remove-empty${tone ? ` is-${tone}` : ""}">
         <span class="material-symbols-rounded${spin ? " is-spinning" : ""}" aria-hidden="true">${esc(icon)}</span>
         <span class="cw-tl-remove-empty-copy"><strong>${esc(title)}</strong>${text ? `<small>${esc(text)}</small>` : ""}</span>
@@ -2307,6 +2308,18 @@
       return [...map.values()].sort((a, b) => a.provider.localeCompare(b.provider) || (a.instance !== "default") - (b.instance !== "default") || a.instance.localeCompare(b.instance));
     }
 
+    function syncFeedback(button, fallback = "delete") {
+      if (!button) return;
+      const pending = state.busy && !state.outcome;
+      button.setAttribute("aria-busy", String(pending));
+      button.dataset.actionResult = state.outcome;
+      const icon = button.querySelector(".material-symbols-rounded");
+      if (icon) icon.textContent = pending ? "progress_activity" : state.outcome ? (state.outcome === "success" ? "check" : "close") : fallback;
+      const label = pending ? "Removing…" : state.outcome === "success" ? "Remove: Completed" : state.outcome === "failure" ? "Remove: Failed or incomplete" : fallback === "warning" ? "Confirm removal" : "Remove";
+      button.title = label;
+      button.setAttribute("aria-label", label);
+    }
+
     function syncActions() {
       const dialog = node();
       if (!dialog) return;
@@ -2316,10 +2329,14 @@
       if (submit) {
         submit.disabled = state.busy || !records;
         submit.classList.toggle("is-confirming", armed);
-        submit.firstElementChild.textContent = armed ? "warning" : "delete";
+        syncFeedback(submit, armed ? "warning" : "delete");
         submit.lastElementChild.textContent = armed
           ? `Confirm remove ${count(records)}`
           : (records ? `Remove ${count(records)} record${records === 1 ? "" : "s"}` : "Remove");
+      }
+      if (state.ctx?.trigger) {
+        state.ctx.trigger.disabled = state.busy;
+        syncFeedback(state.ctx.trigger);
       }
       const all = dialog.querySelector("[data-remove-all]");
       if (all) {
@@ -2449,6 +2466,8 @@
       const targets = chosen();
       if (!ctx || state.busy || !targets.length) return;
       if (Date.now() >= state.armedUntil) {
+        clearTimeout(state.feedbackTimer);
+        state.outcome = "";
         state.armedUntil = Date.now() + CONFIRM_MS;
         clearTimeout(armTimer);
         armTimer = setTimeout(() => {
@@ -2460,6 +2479,8 @@
       }
       state.armedUntil = 0;
       clearTimeout(armTimer);
+      clearTimeout(state.feedbackTimer);
+      state.outcome = "";
       state.busy = true;
       part("error").textContent = "";
       part("result").innerHTML = `<div class="cw-tl-remove-line is-running"><span class="material-symbols-rounded" aria-hidden="true">progress_activity</span><span>Removing from ${count(targets.length)} provider profile${targets.length === 1 ? "" : "s"}...</span></div>`;
@@ -2467,24 +2488,34 @@
       let rows = null;
       try {
         rows = ctx.mode === "watchlist" ? await removeWatchlist(targets) : await removeEditor(ctx, targets);
-      } catch (e) {
-        part("error").textContent = e.message || "Removal failed";
-      }
-      state.busy = false;
-      state.picked = new Set();
-      part("result").innerHTML = rows ? resultHtml(rows) : "";
-      if (rows) {
         const removed = rows.reduce((sum, row) => sum + row.removed, 0);
-        const clean = rows.every((row) => !row.error && !row.unresolved);
+        const clean = removed > 0 && rows.length === targets.length && rows.every((row) => !row.error && !row.unresolved && !row.skipped);
+        state.outcome = clean ? "success" : "failure";
+        part("result").innerHTML = resultHtml(rows);
+        syncActions();
         toast(removed ? `Removed ${count(removed)} record${removed === 1 ? "" : "s"}` : "Nothing was removed", !removed);
-        ctx.onDone?.(clean);
-      }
-      if (ctx.mode === "watchlist") {
-        state.targets = [];
-        state.empty = { icon: "task_alt", tone: "good", title: "Done", text: "Close this dialog to see the refreshed watchlist." };
+        await new Promise((resolve) => setTimeout(resolve, 750));
+        await ctx.onDone?.(clean);
+        if (clean) state.picked = new Set();
+        if (ctx.mode === "watchlist") {
+          if (clean) {
+            state.targets = [];
+            state.empty = { icon: "task_alt", tone: "good", title: "Done", text: "Close this dialog to see the refreshed watchlist." };
+          }
+        } else {
+          await loadTargets();
+        }
+      } catch (e) {
+        state.outcome = "failure";
+        part("error").textContent = e.message || "Removal failed";
+        if (!rows) part("result").innerHTML = "";
+      } finally {
+        state.busy = false;
         render();
-      } else {
-        await loadTargets();
+        state.feedbackTimer = setTimeout(() => {
+          state.outcome = "";
+          syncActions();
+        }, 2000);
       }
     }
 
@@ -2524,7 +2555,7 @@
 
     function open(options) {
       const dialog = node();
-      if (!dialog || state.busy) return;
+      if (!dialog || state.busy || dialog.open) return;
       const all = (options.entries || []).filter((entry) => entry?.key);
       if (!all.length) return;
       wire();
@@ -2532,6 +2563,9 @@
       const entries = usable.slice(0, RECORD_SELECTION_MAX);
       const skipped = all.length - usable.length;
       const noun = options.noun || "item";
+      clearTimeout(state.feedbackTimer);
+      state.outcome = "";
+      syncActions();
       state.ctx = { ...options, entries };
       state.picked = new Set();
       state.autoPick = true;
@@ -2939,9 +2973,10 @@
         mode: cfg.removeMode || "editor",
         noun: meta().noun,
         entries: [...state.selected.values()],
-        onDone: (clean) => {
+        trigger: q("bulk")?.querySelector("[data-timeline-remove]"),
+        onDone: async (clean) => {
           if (clean) state.selected.clear();
-          void load();
+          await load();
         },
       });
     }
@@ -3522,6 +3557,9 @@
     const state = {
       loaded: false,
       busy: false,
+      pendingAction: null,
+      actionFeedback: null,
+      actionFeedbackTimer: 0,
       seq: 0,
       clock: 0,
       page: 1,
@@ -3703,9 +3741,9 @@
         ${selectBox(key)}
         <span class="cw-hist-info">
           <strong class="cw-hist-name">${esc(title)}</strong>
-          <span class="cw-hist-meta">${esc(subtitleFor(item))}</span>
+          <span class="cw-play-meta"><span class="cw-hist-meta">${esc(subtitleFor(item))}</span>${rating}</span>
           <span class="cw-play-progress"><strong>${pct == null ? "Unknown" : `${Math.round(pct)}%`} watched</strong><span>${esc(pausedLabel(item))}</span></span>
-          <span class="cw-play-foot"><span class="cw-hist-providers">${providerChips(item)}</span>${rating}${actions(item, key)}</span>
+          <span class="cw-play-foot"><span class="cw-hist-providers">${providerChips(item)}</span>${actions(item, key)}</span>
         </span>
       </article>`;
     }
@@ -3768,7 +3806,46 @@
       syncSelection();
     }
 
+    function syncActionUI() {
+      const pending = state.pendingAction;
+      const feedback = state.actionFeedback;
+      const icons = { update_progress: "edit", mark_watched: "check_circle", remove_progress: "delete" };
+      panel()?.querySelectorAll("[data-playback-action], [data-playback-bulk]").forEach((button) => {
+        const action = button.dataset.playbackAction || button.dataset.playbackBulk;
+        const active = !!pending && pending.action === action && (button.dataset.playbackBulk ? pending.bulk : pending.keys.has(button.dataset.playbackKey));
+        const result = feedback?.action === action ? (button.dataset.playbackBulk ? (feedback.bulk ? feedback.outcome : "") : feedback.results.get(button.dataset.playbackKey)) : "";
+        button.disabled = !!pending;
+        button.setAttribute("aria-busy", String(active && !result));
+        button.dataset.actionResult = result || "";
+        const label = result ? `${actionTitle(action)}: ${result === "success" ? "Completed" : "Failed"}` : active ? pending.message : actionTitle(action);
+        button.title = label;
+        button.setAttribute("aria-label", label);
+        const icon = button.querySelector(".material-symbols-rounded");
+        if (icon) icon.textContent = result ? (result === "success" ? "check" : "close") : active ? "progress_activity" : icons[action];
+      });
+      panel()?.querySelectorAll("[data-playback-bulk-select], [data-playback-select]").forEach((control) => {
+        control.disabled = !!pending;
+      });
+      renderSync();
+    }
+
+    function showActionResult(action, items, payloads, results, bulk) {
+      const successful = (result) => !!result?.ok && result.playback_cleanup_result?.ok !== false;
+      state.actionFeedback = {
+        action,
+        bulk,
+        outcome: results.length === payloads.length && results.every(successful) ? "success" : "failure",
+        results: new Map(items.map((item) => {
+          const records = recordsOf(item);
+          const matches = payloads.flatMap((payload, index) => records.includes(payload.record) ? [results[index]] : []);
+          return [keyOf(item), matches.length && matches.every(successful) ? "success" : "failure"];
+        })),
+      };
+      syncActionUI();
+    }
+
     function syncSelection() {
+      syncActionUI();
       const host = q("list");
       host?.querySelectorAll("article[data-playback-key]").forEach((node) => {
         const selected = state.selected.has(node.dataset.playbackKey);
@@ -3912,7 +3989,7 @@
       }
       const refresh = q("refresh");
       if (refresh) {
-        refresh.disabled = state.busy;
+        refresh.disabled = state.busy || !!state.pendingAction;
         refresh.classList.toggle("is-spinning", state.busy);
       }
     }
@@ -4139,46 +4216,81 @@
     }
 
     async function runAction(action, items, { confirmFirst = false } = {}) {
-      if (!canAct() || !items.length) return;
+      if (!canAct() || !items.length || state.pendingAction) return;
       const payloads = actionPayloads(items, action);
       if (!payloads.length) {
         toast(`${actionTitle(action)} is not supported for ${items.length === 1 ? "this record" : "the selected records"}.`, true);
         return;
       }
-      let progressPercent = null;
-      if (action === "update_progress") {
-        const records = payloads.map((payload) => payload.record);
-        const max = editableMax(records);
-        progressPercent = await askProgress(averageProgress(records, max), payloads.length, max);
-        if (progressPercent == null) return;
-      } else if (confirmFirst) {
-        const skipped = items.flatMap(recordsOf).length - payloads.length;
-        const note = skipped ? ` ${skipped} unsupported record${skipped === 1 ? "" : "s"} will be skipped.` : "";
-        if (!window.confirm(`${actionTitle(action)} for ${payloads.length} provider record${payloads.length === 1 ? "" : "s"}?${note}`)) return;
+      clearTimeout(state.actionFeedbackTimer);
+      state.actionFeedback = null;
+      state.pendingAction = {
+        action,
+        keys: new Set(items.map(keyOf)),
+        bulk: confirmFirst,
+        message: action === "mark_watched" ? "Marking as watched…" : action === "remove_progress" ? "Removing progress…" : "Updating progress…",
+      };
+      syncActionUI();
+      try {
+        let progressPercent = null;
+        if (action === "update_progress") {
+          const records = payloads.map((payload) => payload.record);
+          const max = editableMax(records);
+          progressPercent = await askProgress(averageProgress(records, max), payloads.length, max);
+          if (progressPercent == null) return;
+        } else if (confirmFirst) {
+          const skipped = items.flatMap(recordsOf).length - payloads.length;
+          const note = skipped ? ` ${skipped} unsupported record${skipped === 1 ? "" : "s"} will be skipped.` : "";
+          if (!window.confirm(`${actionTitle(action)} for ${payloads.length} provider record${payloads.length === 1 ? "" : "s"}?${note}`)) return;
+        }
+        let succeeded = false;
+        if (payloads.length === 1 && items.length === 1 && !items[0].is_combined) {
+          const urls = {
+            mark_watched: "/api/playback_progress/actions/mark_watched",
+            update_progress: "/api/playback_progress/actions/update_progress",
+            remove_progress: "/api/playback_progress/actions/remove",
+          };
+          const res = await postJson(urls[action], { ...payloads[0], progress_percent: progressPercent });
+          succeeded = !!res.ok;
+          showActionResult(action, items, payloads, [res], confirmFirst);
+          toast(res.message || (res.ok ? "Done" : "Action failed"), !res.ok);
+        } else {
+          const res = await postJson("/api/playback_progress/actions/bulk", { action, progress_percent: progressPercent, items: payloads });
+          if (res.ok === false && !Array.isArray(res.results)) {
+            showActionResult(action, items, payloads, [], confirmFirst);
+            toast(res.message || "Action failed", true);
+            return;
+          }
+          const done = Number(res.successful) || 0;
+          succeeded = done > 0;
+          showActionResult(action, items, payloads, Array.isArray(res.results) ? res.results : payloads.map(() => ({ ok: done === payloads.length })), confirmFirst);
+          toast(`${count(done)} done · ${count(res.failed)} failed · ${count(res.unsupported)} unsupported`, !succeeded);
+        }
+        if (!succeeded) return;
+        await new Promise((resolve) => setTimeout(resolve, 750));
+        items.forEach((item) => state.selected.delete(keyOf(item)));
+        await load({ force: true });
+      } catch (error) {
+        if (!state.actionFeedback) showActionResult(action, items, payloads, [], confirmFirst);
+        toast(error?.message || "Could not complete the action. Refresh to check its result.", true);
+      } finally {
+        state.pendingAction = null;
+        syncActionUI();
+        if (state.actionFeedback) {
+          const feedback = state.actionFeedback;
+          state.actionFeedbackTimer = setTimeout(() => {
+            if (state.actionFeedback !== feedback) return;
+            state.actionFeedback = null;
+            syncActionUI();
+          }, 2000);
+        }
       }
-      let succeeded = false;
-      if (payloads.length === 1 && items.length === 1 && !items[0].is_combined) {
-        const urls = {
-          mark_watched: "/api/playback_progress/actions/mark_watched",
-          update_progress: "/api/playback_progress/actions/update_progress",
-          remove_progress: "/api/playback_progress/actions/remove",
-        };
-        const res = await postJson(urls[action], { ...payloads[0], progress_percent: progressPercent });
-        succeeded = !!res.ok;
-        toast(res.message || (res.ok ? "Done" : "Action failed"), !res.ok);
-      } else {
-        const res = await postJson("/api/playback_progress/actions/bulk", { action, progress_percent: progressPercent, items: payloads });
-        const done = Number(res.successful) || 0;
-        succeeded = done > 0;
-        toast(`${count(done)} done · ${count(res.failed)} failed · ${count(res.unsupported)} unsupported`, !succeeded);
-      }
-      if (!succeeded) return;
-      items.forEach((item) => state.selected.delete(keyOf(item)));
-      await load({ force: true });
     }
 
     async function selectAllResults() {
+      if (state.pendingAction) return;
       const data = await request(`/api/playback_progress/items?${query({ all: true })}`);
+      if (state.pendingAction) return;
       (Array.isArray(data.items) ? data.items : []).forEach((item) => state.selected.set(keyOf(item), item));
       syncSelection();
     }
@@ -4299,6 +4411,7 @@
         }
         const pick = target?.closest?.("[data-playback-bulk-select]");
         if (pick) {
+          if (state.pendingAction) return;
           const mode = pick.dataset.playbackBulkSelect;
           if (mode === "all") {
             void selectAllResults();
@@ -4375,7 +4488,7 @@
       bar().wire();
       host.addEventListener("change", (event) => {
         const box = event.target?.closest?.("[data-playback-select]");
-        if (!box) return;
+        if (!box || state.pendingAction) return;
         const item = state.items.find((entry) => keyOf(entry) === box.dataset.playbackSelect);
         if (!item) return;
         if (box.checked) state.selected.set(keyOf(item), item);
