@@ -25,31 +25,38 @@ export function baselineMatches(snapshot, baseline) {
   return canonical(snapshot) === canonical(saved);
 }
 
-export const savedBaseline = profileId => baselines.get(profileId);
+const scopeId = value => {
+  const id = String(value ?? "").trim();
+  return id === "undefined" || id === "null" ? "" : id;
+};
+
+export const savedBaseline = profileId => baselines.get(scopeId(profileId));
 export function clearBaselines() { revision++; baselines.clear(); }
 
 export async function loadBaseline(profileId) {
+  const scope = scopeId(profileId);
   const current = ++revision;
   try {
-    const response = await fetch(`/api/sync/topology/baseline?profile_id=${encodeURIComponent(profileId)}`, { cache: "no-store" });
+    const response = await fetch(`/api/sync/topology/baseline?profile_id=${encodeURIComponent(scope)}`, { cache: "no-store" });
     if (!response.ok) throw new Error("Could not load topology acknowledgement.");
     const data = await response.json();
-    if (current === revision) baselines.set(profileId, data.baseline);
+    if (current === revision) baselines.set(scope, data.baseline);
   } catch {
-    if (current === revision) baselines.delete(profileId);
+    if (current === revision) baselines.delete(scope);
   }
 }
 
 export async function saveBaseline(result, reset = false) {
+  const scope = scopeId(result.profileId);
   revision++;
-  const response = await fetch(`/api/sync/topology/baseline?profile_id=${encodeURIComponent(result.profileId)}`, {
+  const response = await fetch(`/api/sync/topology/baseline?profile_id=${encodeURIComponent(scope)}`, {
     method: reset ? "DELETE" : "PUT", headers: { "Content-Type": "application/json" },
     ...(reset ? {} : { body: JSON.stringify(result.snapshot) })
   });
   const data = await response.json();
   if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : "Could not save topology acknowledgement.");
   revision++;
-  baselines.set(result.profileId, data.baseline);
+  baselines.set(scope, data.baseline);
   document.dispatchEvent(new Event("cw:topology-baseline-changed"));
 }
 

@@ -82,6 +82,27 @@ test("baseline loading, reset and stale saves keep scope and failures explicit",
   }
 });
 
+test("a missing profile scope never reaches the API as a literal undefined", async () => {
+  const originalFetch = globalThis.fetch, originalDocument = globalThis.document;
+  globalThis.document = new EventTarget();
+  clearBaselines();
+  const urls = [];
+  try {
+    const baseline = { version: 1, pairs: [], findings: [], unsupportedPairs: 0, accepted_at: "2026-09-21T12:00:00Z" };
+    globalThis.fetch = async url => { urls.push(url); return { ok: true, json: async () => ({ baseline }) }; };
+    for (const scope of [undefined, null, "undefined", "null", "  "]) await loadBaseline(scope);
+    assert.deepEqual([...new Set(urls)], ["/api/sync/topology/baseline?profile_id="]);
+    assert.deepEqual(savedBaseline(""), baseline);
+    assert.deepEqual(savedBaseline(undefined), baseline);
+    await saveBaseline({ profileId: undefined, snapshot: {} });
+    assert.equal(urls.at(-1), "/api/sync/topology/baseline?profile_id=");
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.document = originalDocument;
+    clearBaselines();
+  }
+});
+
 test("simple A → B is healthy", () => {
   const result = analyze([pair("A", "B")]);
   assert.equal(result.status, "healthy");
