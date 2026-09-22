@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -36,6 +37,125 @@ def _patch_transport(monkeypatch, responder):
 
     monkeypatch.setattr(u, "_build_session", lambda token, verify: {"token": token, "verify": verify})
     monkeypatch.setattr(u, "_try_get", responder)
+
+
+def _patch_resources(monkeypatch, xml: str) -> None:
+    from providers.sync.plex import _utils as u
+
+    def _get(url, **kwargs):
+        assert url == "https://plex.tv/api/resources"
+        return SimpleNamespace(text=xml, raise_for_status=lambda: None)
+
+    monkeypatch.setattr(u.requests, "get", _get)
+
+
+@pytest.mark.parametrize("scheme", ["http", "https"])
+@pytest.mark.parametrize("address", ["192.168.2.190", "fd00::190"])
+def test_resource_token_matches_advertised_ip_address(monkeypatch, scheme, address) -> None:
+    from providers.sync.plex import _utils as u
+
+    _patch_resources(monkeypatch, f'''<MediaContainer>
+      <Device provides="server" clientIdentifier="mid-a" accessToken="PMS-A">
+        <Connection uri="{SERVER_A}" address="{address}" port="32400"/>
+      </Device>
+    </MediaContainer>''')
+    host = f"[{address}]" if ":" in address else address
+
+    assert u._resource_token_for_connection("ACCOUNT", "cid", f"{scheme}://{host}:32400") == ("mid-a", "PMS-A")
+
+
+@pytest.mark.parametrize("address, port", [("192.168.2.191", "32400"), ("192.168.2.190", "32401"), ("192.168.2.190", "bad")])
+def test_resource_token_rejects_other_addresses_and_ports(monkeypatch, address, port) -> None:
+    from providers.sync.plex import _utils as u
+
+    _patch_resources(monkeypatch, f'''<MediaContainer>
+      <Device provides="server" clientIdentifier="mid-a" accessToken="PMS-A">
+        <Connection uri="{SERVER_A}" address="{address}" port="{port}"/>
+      </Device>
+    </MediaContainer>''')
+
+    assert u._resource_token_for_connection("ACCOUNT", "cid", "https://192.168.2.190:32400") == (None, None)
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_resource_token_rejects_ambiguous_local_addresses(monkeypatch, reverse) -> None:
+    from providers.sync.plex import _utils as u
+
+    devices = [f'''<Device provides="server" clientIdentifier="mid-{name}" accessToken="PMS-{name}">
+      <Connection uri="{uri}" address="192.168.2.190" port="32400"/>
+    </Device>''' for name, uri in (("a", SERVER_A), ("b", SERVER_B))]
+    _patch_resources(monkeypatch, "<MediaContainer>" + "".join(reversed(devices) if reverse else devices) + "</MediaContainer>")
+
+    assert u._resource_token_for_connection("ACCOUNT", "cid", "https://192.168.2.190:32400") == (None, None)
+    assert u._resource_token_for_connection("ACCOUNT", "cid", SERVER_B) == ("mid-b", "PMS-b")
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_resource_token_prefers_exact_url_over_address_aliases(monkeypatch, reverse) -> None:
+    from providers.sync.plex import _utils as u
+
+    base = "https://192.168.2.190:32400"
+    devices = [f'''<Device provides="server" clientIdentifier="mid-{name}" accessToken="PMS-{name}">
+      <Connection uri="{uri}" address="192.168.2.190" port="32400"/>
+    </Device>''' for name, uri in (("a", SERVER_A), ("b", SERVER_B), ("c", base))]
+    _patch_resources(monkeypatch, "<MediaContainer>" + "".join(reversed(devices) if reverse else devices) + "</MediaContainer>")
+
+    assert u._resource_token_for_connection("ACCOUNT", "cid", base) == ("mid-c", "PMS-c")
+
+
+def test_local_address_rebind_is_saved_and_accepted_by_sync(monkeypatch) -> None:
+    from providers.sync.plex import _utils as u
+    from providers.sync._mod_PLEX import _resolve_pms_binding
+
+    base = "https://192.168.2.190:32400"
+    block = {"account_token": "ACCOUNT", "pms_token": "OLD", "machine_id": "mid-a", "pms_token_server": SERVER_A, "server_url": base}
+    cfg = {"plex": block}
+    saved = []
+    _patch_resources(monkeypatch, f'''<MediaContainer>
+      <Device provides="server" clientIdentifier="mid-a" accessToken="PMS-A">
+        <Connection uri="{SERVER_A}" address="192.0.2.10" port="32400"/>
+        <Connection uri="https://192-168-2-190.aaa.plex.direct:32400" address="192.168.2.190" port="32400"/>
+      </Device>
+    </MediaContainer>''')
+    _patch_transport(monkeypatch, lambda session, base, path, timeout: _Resp(200, SECTIONS_A))
+    monkeypatch.setattr(u, "save_config", lambda cfg: saved.append(dict(cfg["plex"])))
+
+    assert u.fetch_libraries_from_cfg(cfg)
+    assert saved[0]["pms_token_server"] == base
+    assert saved[0]["pms_token"] == "PMS-A"
+    assert _resolve_pms_binding(block, {}, base) == ("PMS-A", "mid-a")
+
+
+@pytest.mark.parametrize("instance", ["default", "2"])
+@pytest.mark.parametrize("token", [None, "NEW-ACCOUNT"])
+def test_reconnect_refreshes_server_credentials_only_after_authorization(monkeypatch, instance, token) -> None:
+    from providers.auth import _auth_PLEX as auth
+
+    block = {"account_token": "OLD-ACCOUNT", "pms_token": "OLD-PMS", "pms_token_server": SERVER_A,
+             "machine_id": "mid-a", "server_url": "https://192.168.2.190:32400", "_pending_pin": {"id": 123}}
+    other = {"account_token": "OTHER", "pms_token": "OTHER-PMS", "pms_token_server": SERVER_B}
+    cfg = {"plex": {**other, "instances": {"2": block}}} if instance == "2" else {"plex": block}
+    saved = []
+    monkeypatch.setattr(auth.requests, "get", lambda *a, **k: SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"authToken": token}))
+    monkeypatch.setattr(auth, "save_config", lambda cfg: saved.append(dict(block)))
+
+    auth.PROVIDER.finish(cfg, instance_id=instance)
+
+    assert block["machine_id"] == "mid-a"
+    assert block["server_url"] == "https://192.168.2.190:32400"
+    if token:
+        assert saved
+        assert saved[-1]["account_token"] == token
+        assert "pms_token" not in saved[-1]
+        assert "pms_token_server" not in saved[-1]
+        assert "_pending_pin" not in saved[-1]
+    else:
+        assert not saved
+        assert block["pms_token"] == "OLD-PMS"
+        assert block["pms_token_server"] == SERVER_A
+        assert block["_pending_pin"] == {"id": 123}
+    if instance == "2":
+        assert {k: cfg["plex"][k] for k in other} == other
 
 
 def test_libraries_rebind_pms_token_when_server_url_changes(monkeypatch) -> None:

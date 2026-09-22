@@ -137,6 +137,8 @@ class PlexAuth(AuthProvider):
 
         if j.get("authToken"):
             plex["account_token"] = j["authToken"]
+            plex.pop("pms_token", None)
+            plex.pop("pms_token_server", None)
             plex.pop("_pending_pin", None)
             save_config(cfgd)
             log(f"Plex[{inst}]: token stored", level="SUCCESS", module="AUTH")
