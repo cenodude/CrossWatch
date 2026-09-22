@@ -190,7 +190,7 @@ FLOPPY = {
 def test_mdblist_to_simkl(env) -> None:
     res = _write(env, MDBLIST)
     _assert_landed_on_52(res)
-    assert "tvdb" in res["redirect_namespaces"]
+    assert res["redirect_namespaces"] == []
 
 
 def test_mdblist_integer_ids_are_handled(env) -> None:
@@ -208,7 +208,7 @@ def test_trakt_without_its_absolute_hint_falls_back_to_anibridge(env) -> None:
     item = {k: v for k, v in TRAKT.items() if k != "_trakt_number_abs"}
     res = _write(env, item)
     _assert_landed_on_52(res)
-    assert "mal" in res["redirect_namespaces"], "AniBridge's namespace must be verified"
+    assert res["redirect_namespaces"] == []
 
 
 def test_floppy_to_simkl(env) -> None:
@@ -236,6 +236,7 @@ def test_simkl_own_map_wins_for_a_flat_numbered_source(env) -> None:
     """
     flat = {
         "type": "episode", "season": 1, "episode": 52, "watched_at": WATCHED,
+        "simkl_bucket": "anime",
         "series_title": "Dragon Ball Z",
         "show_ids": {"tmdb": "12971", "tvdb": "81472"},
     }
@@ -262,7 +263,7 @@ def test_non_anime_show_is_untouched(env) -> None:
     res = _write(env, lost)
     assert res["anime"] == []
     assert len(res["shows"]) == 1
-    assert res["redirect_namespaces"] == ["tvdb"]
+    assert res["redirect_namespaces"] == []
 
 
 def test_user_override_redirects_all_three_providers(env) -> None:

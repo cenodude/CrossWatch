@@ -131,6 +131,14 @@ function normalizeAnimeHistoryOptions(state){
   state.options.history=opts;
   return opts;
 }
+function simklCanReceiveProgress(state){return isSimkl(state?.dst)||(isSimkl(state?.src)&&isTwoWayMode(state))}
+function normalizeAnimeProgressOptions(state){
+  const opts=Object.assign({},state?.options?.progress||{});
+  opts.use_anime_mapping=!!opts.use_anime_mapping&&simklCanReceiveProgress(state)&&globalAnimeMappingEnabled(state);
+  opts.anime_only_sync=false;
+  state.options.progress=opts;
+  return opts;
+}
 function normalizeAnimeFeatureOptions(state, feature){
   const key=String(feature||"watchlist").trim().toLowerCase()||"watchlist";
   const opts=Object.assign({}, state?.options?.[key]||{});
@@ -979,7 +987,7 @@ function applySubDisable(feature){
     ],
     history: ["#cx-hs-add", "#cx-hs-remove", "#cx-hs-rewatches", "#cx-hs-anime-map", "#cx-tr-hs-numfb", "#cx-tr-hs-col", "#cx-tr-hs-col-movies", "#cx-tr-hs-col-shows", "#cx-tr-hs-ignore-dropped", "#cx-md-hs-ignore-dropped", "#cx-sm-hs-ignore-dropped", "#cx-tr-hs-unres"],
     playlists:["#cx-pl-add","#cx-pl-remove"],
-    progress:["#cx-pr-add","#cx-pr-remove","#cx-pr-min","#cx-pr-delta","#cx-pr-maxp","#cx-pr-replay","#cx-pr-tolerance"],
+    progress:["#cx-pr-add","#cx-pr-remove","#cx-pr-min","#cx-pr-delta","#cx-pr-maxp","#cx-pr-replay","#cx-pr-tolerance","#cx-pr-anime-map"],
     collection:["#cx-co-add","#cx-co-remove","#cx-co-type-all","#cx-co-type-movies","#cx-co-type-shows","#cx-co-type-seasons","#cx-co-type-episodes"]
   };
   const on=ID(feature==="ratings"?"cx-rt-enable":feature==="watchlist"?"cx-wl-enable":feature==="history"?"cx-hs-enable":feature==="progress"?"cx-pr-enable":feature==="collection"?"cx-co-enable":"cx-pl-enable")?.checked;
@@ -2058,7 +2066,7 @@ left.innerHTML = `
   }
 
   if (state.feature === "progress") {
-    const pr = getOpts(state, "progress") || {};
+    const pr = normalizeAnimeProgressOptions(state);
     const minS = Number.isFinite(pr.min_seconds) ? pr.min_seconds : 60;
     const deltaS = Number.isFinite(pr.delta_seconds) ? pr.delta_seconds : 30;
     const { maxPercent: maxP } = applyProgressMaxRecommendation(state, pr);
@@ -2077,7 +2085,13 @@ left.innerHTML = `
           <label class="switch"><input id="cx-pr-add" type="checkbox" ${progressAdd ? "checked" : ""}><span class="slider"></span></label></div>
         <div class="opt-row"><label for="cx-pr-remove" data-tip-id="cx-pr-remove">Remove</label>
           <label class="switch"><input id="cx-pr-remove" type="checkbox" ${pr.remove ? "checked" : ""}><span class="slider"></span></label></div>
-      </div>`;
+      </div>
+      ${simklCanReceiveProgress(state) ? `<div class="panel-title small">Anime</div>
+      <div class="opt-row ${globalAnimeMappingEnabled(state) ? "" : "muted"}">
+        <label for="cx-pr-anime-map" data-tip-id="cx-pr-anime-map">Anime episode mapping</label>
+        <label class="switch"><input id="cx-pr-anime-map" type="checkbox" ${pr.use_anime_mapping ? "checked" : ""} ${globalAnimeMappingEnabled(state) ? "" : "disabled"}><span class="slider"></span></label>
+      </div>
+      ${globalAnimeMappingEnabled(state) ? "" : `<div class="muted">Enable global Anime ID Mapping first.</div>`}` : ""}`;
 
     right.innerHTML = `<div class="panel-title">Advanced Playback Progress</div>
       <div class="grid2 compact">
@@ -2097,6 +2111,8 @@ left.innerHTML = `
       <div class="muted" style="margin-top:10px">Tip: Progress does not infer clears from absence. It only syncs resume positions.</div>`;
 
     applySubDisable("progress");
+    const animeMap = ID("cx-pr-anime-map");
+    if(animeMap) animeMap.disabled=!progressEnabled||!globalAnimeMappingEnabled(state);
     return;
   }
 }
@@ -2301,6 +2317,8 @@ function bindChangeHandlers(state,root){
       const add = ID("cx-pr-add");
       if (add) add.checked = enabled;
       applySubDisable("progress");
+      const animeMap = ID("cx-pr-anime-map");
+      if(animeMap) animeMap.disabled=!enabled||!globalAnimeMappingEnabled(state);
     }
 
     if (id === "cx-co-enable") {
@@ -2406,6 +2424,7 @@ function bindChangeHandlers(state,root){
         enable:!!ID("cx-pr-enable")?.checked,
         add:!!ID("cx-pr-add")?.checked,
         remove:!!ID("cx-pr-remove")?.checked,
+        use_anime_mapping:!!ID("cx-pr-anime-map")?.checked&&simklCanReceiveProgress(state)&&globalAnimeMappingEnabled(state),
         min_seconds: Number.isFinite(minS)?Math.max(0,minS):60,
         delta_seconds: Number.isFinite(delS)?Math.max(0,delS):30,
         max_percent: Number.isFinite(maxP)?Math.min(100,Math.max(0,maxP)):80,
@@ -2810,6 +2829,8 @@ function buildPayload(state,wrap){
   normalizeAnimePairBlock(watchlist);
   normalizeAnimePairBlock(ratings);
   const progress=get("progress");
+  progress.use_anime_mapping=!!progress.use_anime_mapping&&(isSimkl(dst)||(modeTwo&&isSimkl(src)))&&globalAnimeMappingEnabled(state);
+  progress.anime_only_sync=false;
   progress.max_percent = applyProgressMaxRecommendation(state, progress).maxPercent;
   const dis=ratingsDisabledFor({src,dst});
   if(ratings&&Array.isArray(ratings.types)&&dis.size)ratings.types=ratings.types.filter(t=>!dis.has(String(t)));

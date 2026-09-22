@@ -14,7 +14,7 @@ from .storage import index_ready, query_edges, query_identity_natives, query_nat
 
 ANIME_NATIVE_PROVIDERS = {"anilist", "simkl", "crosswatch"}
 DEFAULT_FEATURES = {"watchlist", "ratings"}
-OPT_IN_FEATURES = {"history"}
+OPT_IN_FEATURES = {"history", "progress"}
 ANY_PAIR = "*"
 OUTPUT_KEYS = ("anilist", "mal", "anidb", "tmdb", "tvdb", "imdb")
 SEED_KEYS = frozenset(OUTPUT_KEYS)
