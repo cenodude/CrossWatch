@@ -27,13 +27,13 @@ for (const scenario of [
   test(`progress anime mapping: ${scenario.name}`, () => {
     const context = vm.createContext({
       ID: id => id === "cx-mode-two" ? {checked: !!scenario.twoWay} : null,
-      isSimkl: value => value === "SIMKL", isAniList: () => false, isMDBList: () => false,
+      isSimkl: value => value === "SIMKL", isAniList: () => false, isMDBList: () => false, isCrossWatch: () => false,
       hasOwn: (value, key) => Object.hasOwn(value, key), defaultFor: () => ({}),
       applyProgressMaxRecommendation: () => ({maxPercent: 90}), ratingsDisabledFor: () => new Set(),
       pairSupportsHistoryRewatches: () => false, collectionTypesForPair: () => ["movies"],
       sanitizeFeaturesForPair: (_, features) => features, getPairProviderStrictValue: () => false,
     });
-    for (const name of ["isTwoWayMode", "globalAnimeMappingEnabled", "simklCanReceiveProgress", "normalizeAnimeProgressOptions", "buildPayload"])
+    for (const name of ["isTwoWayMode", "globalAnimeMappingEnabled", "hasAniList", "hasAnimeProvider", "simklCanReceiveProgress", "normalizeAnimeProgressOptions", "buildPayload"])
       vm.runInContext(sourceFor(name), context);
     const state = {
       src: scenario.src || "PLEX", dst: scenario.dst || "PLEX",
@@ -45,6 +45,37 @@ for (const scenario of [
     assert.equal(saved.features.progress.anime_only_sync, false);
     assert.equal(context.normalizeAnimeProgressOptions(state).use_anime_mapping, scenario.expected);
     assert.equal(state.options.history.use_anime_mapping, true);
+  });
+}
+
+for (const scenario of [
+  {name: "CrossWatch target", src: "PLEX", dst: "CROSSWATCH", expected: true},
+  {name: "CrossWatch source", src: "CROSSWATCH", dst: "TRAKT", expected: true},
+  {name: "SIMKL target", src: "PLEX", dst: "SIMKL", expected: true},
+  {name: "AniList target", src: "PLEX", dst: "ANILIST", expected: true},
+  {name: "no anime provider", src: "PLEX", dst: "TRAKT", expected: false},
+  {name: "global mapping disabled", src: "PLEX", dst: "CROSSWATCH", global: false, expected: false},
+]) {
+  test(`watchlist and ratings anime mapping survives a save: ${scenario.name}`, () => {
+    const context = vm.createContext({
+      ID: () => null,
+      isSimkl: value => value === "SIMKL", isAniList: value => value === "ANILIST",
+      isCrossWatch: value => value === "CROSSWATCH", isMDBList: () => false,
+      hasOwn: (value, key) => Object.hasOwn(value, key), defaultFor: () => ({}),
+      applyProgressMaxRecommendation: () => ({maxPercent: 90}), ratingsDisabledFor: () => new Set(),
+      pairSupportsHistoryRewatches: () => false, collectionTypesForPair: () => ["movies"],
+      sanitizeFeaturesForPair: (_, features) => features, getPairProviderStrictValue: () => false,
+    });
+    for (const name of ["isTwoWayMode", "globalAnimeMappingEnabled", "hasAniList", "hasAnimeProvider", "simklCanReceiveProgress", "buildPayload"])
+      vm.runInContext(sourceFor(name), context);
+    const state = {
+      src: scenario.src, dst: scenario.dst,
+      cfgRaw: {anime_mapping: {enabled: scenario.global !== false}},
+      options: {watchlist: {use_anime_mapping: true}, ratings: {use_anime_mapping: true}},
+    };
+    const saved = context.buildPayload(state, {dataset: {}});
+    assert.equal(saved.features.watchlist.use_anime_mapping, scenario.expected);
+    assert.equal(saved.features.ratings.use_anime_mapping, scenario.expected);
   });
 }
 
@@ -104,12 +135,12 @@ for (const instance of ["default", "P01"]) {
     const context = vm.createContext({
       ID: id => id === "cx-src-inst" ? src : dst,
       same: (a, b) => a === b, escHTML: value => value, G: {}, renderPairUserProfileControl() {},
-      defaultFor: () => ({}), isAniList: () => false, isSimkl: () => false, isMDBList: () => false,
+      defaultFor: () => ({}), isAniList: () => false, isSimkl: () => false, isMDBList: () => false, isCrossWatch: () => false,
       applyProgressMaxRecommendation: () => ({maxPercent: 90}), ratingsDisabledFor: () => new Set(),
       pairSupportsHistoryRewatches: () => false, collectionTypesForPair: () => ["movies"],
       sanitizeFeaturesForPair: (_, features) => features, getPairProviderStrictValue: () => false,
     });
-    vm.runInContext(sourceFor("renderInstanceSelects") + "\n" + sourceFor("buildPayload"), context);
+    vm.runInContext([sourceFor("renderInstanceSelects"), sourceFor("hasAniList"), sourceFor("hasAnimeProvider"), sourceFor("buildPayload")].join(";"), context);
     const state = {src: "PLEX", dst: "PLEX", src_instance: instance, instanceMap: {PLEX: [{id: instance, configured: true}]}};
     context.renderInstanceSelects(state);
     assert.equal(state.src_instance, instance);

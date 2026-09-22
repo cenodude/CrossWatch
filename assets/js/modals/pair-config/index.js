@@ -2811,7 +2811,7 @@ function buildPayload(state,wrap){
   const modeTwo=!!ID("cx-mode-two")?.checked;const enabled=!!ID("cx-enabled")?.checked;
   const get=k=>Object.assign(defaultFor(k), (state.options||{})[k]||{});
   const watchlist=get("watchlist");
-  const animePair=isAniList(src)||isAniList(dst)||isSimkl(src)||isSimkl(dst);
+  const animePair=hasAnimeProvider({src,dst});
   const animeCanReceive=isAniList(dst)||((isAniList(src)||isAniList(dst))&&modeTwo);
   const ratings=get("ratings");
   const normalizeAnimePairBlock=(block)=>{
