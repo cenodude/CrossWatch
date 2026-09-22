@@ -40,6 +40,8 @@ _ID_KEYS = (
     "guid",
     "slug",
 )
+_SERVER_SCOPED_ID_KEYS = frozenset({"plex", "jellyfin", "emby", "guid"})
+
 _SHOW_ID_ALIASES = {
     "tmdb_show": "tmdb",
     "imdb_show": "imdb",
@@ -816,6 +818,8 @@ def _media_id_aliases(prefix: str, row: Mapping[str, Any], *, bucket: int | None
             return []
         suffix = f"|s{season}"
     aliases: list[str] = []
+    local: list[str] = []
+    show_scope = typ in {"episode", "season", "show"}
     if isinstance(source, Mapping):
         for key in _ID_KEYS:
             if key == "slug":
@@ -824,10 +828,11 @@ def _media_id_aliases(prefix: str, row: Mapping[str, Any], *, bucket: int | None
             if not value:
                 continue
             base = f"{prefix}|id|{typ}|{key}:{value}{suffix}"
+            target = local if show_scope and key in _SERVER_SCOPED_ID_KEYS else aliases
             if bucket is not None:
-                aliases.append(f"{base}|b{bucket}")
-            aliases.append(base)
-    return aliases
+                target.append(f"{base}|b{bucket}")
+            target.append(base)
+    return aliases or local
 
 
 def _history_id_aliases(row: Mapping[str, Any], *, bucket: int) -> list[str]:
