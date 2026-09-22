@@ -27,6 +27,10 @@ _MEDIA_SERVER_LIBRARY_MESSAGES = {
 
 _SIMKL_HISTORY_MESSAGES = {
     "simkl_not_found:episodes": "SIMKL could not find this episode with the normal history payload.",
+    "simkl_not_found:anime:episodes": "SIMKL could not find this episode with the native anime history payload.",
+    "simkl_not_found:anime:shows": "SIMKL could not find this anime entry with the native anime history payload.",
+    "simkl_anime_unmapped:episodes": "CrossWatch could not map the source season and episode to the native SIMKL anime episode number.",
+    "simkl_write_response_ambiguous:anime_count": "SIMKL accepted the anime request but did not report enough episode detail to safely confirm the write.",
     "simkl_not_found:anime_retry:episodes": "SIMKL could not find this episode with the anime retry payload.",
     "simkl_anime_retry_unmapped:episodes": "CrossWatch confirmed this is SIMKL anime, but could not map the source season and episode to SIMKL's native anime episode number.",
     "simkl_write_response_ambiguous:add_count": "SIMKL accepted the request but did not report enough detail to safely confirm the write.",
@@ -39,6 +43,10 @@ _DIRECT_LABELS = {
     "not_in_library": "Not in library",
     "not_in_catalog": "Not in library",
     "simkl_not_found:anime_retry:episodes": "SIMKL anime episode not found",
+    "simkl_not_found:anime:episodes": "SIMKL anime episode not found",
+    "simkl_not_found:anime:shows": "SIMKL anime entry not found",
+    "simkl_anime_unmapped:episodes": "SIMKL anime episode mapping missing",
+    "simkl_write_response_ambiguous:anime_count": "SIMKL anime response ambiguous",
     "simkl_not_found:episodes": "SIMKL episode not found",
     "simkl_anime_retry_unmapped:episodes": "SIMKL anime episode mapping missing",
     "simkl_write_response_ambiguous:add_count": "SIMKL write response ambiguous",

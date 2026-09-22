@@ -138,7 +138,8 @@ def _dedupe_unresolved_rows(rows: Sequence[Any], *, feature: str) -> list[Mappin
             try:
                 from ..history_events import history_sync_key as _hkey  # type: ignore
 
-                key = str(_hkey(item, row.get("_cw_event_key"), event_mode=False) or "").strip()
+                event_mode = item.get("_cw_rewatch_sync") is True
+                key = str(_hkey(item, item.get("_cw_event_key") or row.get("_cw_event_key"), event_mode=event_mode) or "").strip()
                 if key:
                     return key
             except Exception:
@@ -308,6 +309,11 @@ def _normalize(
                     item_u, _ = _unwrap(raw)
                     if not isinstance(item_u, Mapping):
                         continue
+                    if feature == "history" and item_u.get("_cw_rewatch_sync") is True and _history_event_key:
+                        key = _history_event_key(item_u, item_u.get("_cw_event_key"))
+                        if key:
+                            unresolved_keys.append(key)
+                            continue
                     if _ckey:
                         try:
                             k = _ckey(item_u) or ""
@@ -439,6 +445,7 @@ def _apply_chunked(
     chunk_size: int,
     chunk_pause_ms: int,
     instance: str | None = None,
+    finalize: Callable[[list[dict[str, Any]]], None] | None = None,
 ) -> dict[str, Any]:
     total = len(items)
     if total == 0:
@@ -453,6 +460,9 @@ def _apply_chunked(
         except SyncCancelled:
             emit(f"{tag}:cancelled", dst=dst, feature=feature, done=0, total=total)
             return {"ok": True, "attempted": 0, "confirmed": 0, "skipped": 0, "unresolved": 0, "errors": 0, "count": 0, "cancelled": True}
+        if finalize is not None:
+            raw = dict(raw or {})
+            finalize([raw])
         return _normalize(raw, items, tag, dst=dst, feature=feature, emit=emit, instance=instance)
 
     done = 0
@@ -471,18 +481,7 @@ def _apply_chunked(
         "unresolved_keys": [],
         "errors": 0,
     }
-    for i in range(0, total, csize):
-        if cancel_requested():
-            agg["cancelled"] = True
-            emit(f"{tag}:cancelled", dst=dst, feature=feature, done=done, total=total)
-            break
-        chunk = items[i : i + csize]
-        try:
-            raw = _retry(lambda: call(chunk))
-        except SyncCancelled:
-            agg["cancelled"] = True
-            emit(f"{tag}:cancelled", dst=dst, feature=feature, done=done, total=total)
-            break
+    def merge(chunk, raw):
         res = _normalize(raw, chunk, tag, dst=dst, feature=feature, emit=emit, instance=instance)
         agg["ok"] = agg["ok"] and res["ok"]
         agg["attempted"] += res["attempted"]
@@ -515,14 +514,38 @@ def _apply_chunked(
         basis = str(res.get("skip_basis") or "provider_keys")
         if agg.get("skip_basis") != basis:
             agg["skip_basis"] = "mixed"
+        return res
+
+    pending: list[tuple[Sequence[Mapping[str, Any]], dict[str, Any]]] = []
+    for i in range(0, total, csize):
+        if cancel_requested():
+            agg["cancelled"] = True
+            emit(f"{tag}:cancelled", dst=dst, feature=feature, done=done, total=total)
+            break
+        chunk = items[i : i + csize]
+        try:
+            raw = _retry(lambda: call(chunk))
+        except SyncCancelled:
+            agg["cancelled"] = True
+            emit(f"{tag}:cancelled", dst=dst, feature=feature, done=done, total=total)
+            break
+        if finalize is not None:
+            res = dict(raw or {})
+            pending.append((chunk, res))
+        else:
+            res = merge(chunk, raw)
         done += len(chunk)
-        emit(f"{tag}:progress", dst=dst, feature=feature, done=done, total=total, ok=res["ok"])
+        emit(f"{tag}:progress", dst=dst, feature=feature, done=done, total=total, ok=bool(res.get("ok", True)))
         pause = int(chunk_pause_ms or 0)
         if pause and not cancel_requested():
             try:
                 __import__("time").sleep(pause / 1000.0)
             except Exception:
                 pass
+    if finalize is not None and pending:
+        finalize([raw for _, raw in pending])
+        for chunk, raw in pending:
+            merge(chunk, raw)
     agg["count"] = agg["confirmed"]
     return agg
 
@@ -532,6 +555,20 @@ def _mark_dry_run(res: dict[str, Any]) -> dict[str, Any]:
     res["confirmed_keys"] = []
     res["count"] = 0
     return res
+
+def _add_batch_finalizer(
+    dst_ops: Any, cfg: Mapping[str, Any] | None, *, feature: str, dry_run: bool,
+) -> tuple[Mapping[str, Any] | None, Callable[[list[dict[str, Any]]], None] | None]:
+    hook = getattr(dst_ops, "finalize_add", None)
+    if dry_run or feature != "history" or not callable(hook):
+        return cfg, None
+    config = {**(cfg or {}), "_cw_defer_add_verification": True}
+
+    def finalize(results: list[dict[str, Any]]) -> None:
+        provider_call(hook, config, results, feature=feature)
+
+    return config, finalize
+
 
 def apply_add(
     *,
@@ -547,17 +584,19 @@ def apply_add(
     chunk_pause_ms: int,
 ) -> dict[str, Any]:
     emit("apply:add:start", dst=dst_name, feature=feature, count=len(items))
+    apply_cfg, finalize = _add_batch_finalizer(dst_ops, cfg, feature=feature, dry_run=dry_run)
     res = _apply_chunked(
         "apply:add",
         dst=dst_name,
         instance=(cfg or {}).get("_cw_provider_instance"),
         feature=feature,
         items=items,
-        call=lambda ch: provider_call(dst_ops.add, cfg, ch, feature=feature, dry_run=dry_run),
+        call=lambda ch: provider_call(dst_ops.add, apply_cfg, ch, feature=feature, dry_run=dry_run),
         emit=emit,
         dbg=dbg,
         chunk_size=chunk_size,
         chunk_pause_ms=chunk_pause_ms,
+        finalize=finalize,
     )
     if dry_run:
         _mark_dry_run(res)
@@ -604,17 +643,19 @@ def apply_update(
     chunk_pause_ms: int,
 ) -> dict[str, Any]:
     emit("apply:update:start", dst=dst_name, feature=feature, count=len(items))
+    apply_cfg, finalize = _add_batch_finalizer(dst_ops, cfg, feature=feature, dry_run=dry_run)
     res = _apply_chunked(
         "apply:update",
         dst=dst_name,
         instance=(cfg or {}).get("_cw_provider_instance"),
         feature=feature,
         items=items,
-        call=lambda ch: provider_call(dst_ops.add, cfg, ch, feature=feature, dry_run=dry_run),
+        call=lambda ch: provider_call(dst_ops.add, apply_cfg, ch, feature=feature, dry_run=dry_run),
         emit=emit,
         dbg=dbg,
         chunk_size=chunk_size,
         chunk_pause_ms=chunk_pause_ms,
+        finalize=finalize,
     )
     if dry_run:
         _mark_dry_run(res)

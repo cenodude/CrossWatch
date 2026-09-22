@@ -151,7 +151,7 @@ def test_mapping_is_applied_when_enabled(monkeypatch, m):
     assert out[0]["_cw_anime_map"]["absolute"] == 52
 
 
-def test_trakt_number_abs_wins_and_skips_anibridge(monkeypatch, m):
+def test_trakt_absolute_hint_is_preserved_while_resolving_local_identity(monkeypatch, m):
     calls = []
 
     def _resolve(*a, **k):
@@ -161,8 +161,11 @@ def test_trakt_number_abs_wins_and_skips_anibridge(monkeypatch, m):
     monkeypatch.setattr(m, "resolve_absolute", _resolve)
     items = [{"type": "episode", "season": 2, "episode": 13, "show_ids": {"tvdb": "81472"}, "_trakt_number_abs": 52}]
     out = m._apply_anibridge_maps(_adapter({"anime_mapping": {"enabled": True, "features": ["history"]}}), items)
-    assert "_cw_anime_map" not in out[0]
-    assert calls == []
+    assert out[0]["_trakt_number_abs"] == 52
+    assert out[0]["_cw_anime_map"]["namespace"] == "anidb"
+    assert out[0]["_cw_anime_map"]["target_id"] == "1530"
+    assert "_cw_anime_map" not in items[0]
+    assert calls == [1]
 
 
 def test_pair_option_can_disable_mapping(monkeypatch, m):

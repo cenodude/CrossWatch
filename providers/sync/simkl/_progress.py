@@ -13,6 +13,7 @@ from cw_platform.id_map import canonical_key, minimal as id_minimal
 from providers.sync._log import log as cw_log
 from providers.sync._progress_policy import decide_progress_write, progress_materially_equal, select_progress_record
 
+from . import _history as anime_mapping
 from ._common import (
     _fix_imdb,
     adapter_headers,
@@ -193,6 +194,8 @@ def _item_from_row(row: Mapping[str, Any]) -> tuple[str | None, dict[str, Any] |
         )
         if media_kind == "anime":
             item["simkl_bucket"] = "anime"
+            item["_simkl_episode_number"] = _episode_number(episode, row)
+            item["season"] = 1
             if payload.get("anime_type"):
                 item["anime_type"] = payload.get("anime_type")
 
@@ -301,7 +304,7 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
         cached, updated_at = _shadow_load()
         age = max(0.0, time.time() - updated_at)
         unchanged = (get_watermark("progress") or "") == latest
-        if updated_at > 0 and unchanged and age <= _shadow_ttl_seconds():
+        if not _kwargs.get("force_refresh") and updated_at > 0 and unchanged and age <= _shadow_ttl_seconds():
             _dbg("index_cache_hit", source="shadow", reason="activities_unchanged", count=len(cached), age_s=int(age))
             _info("index_done", count=len(cached), source="shadow")
             return cached
@@ -371,6 +374,10 @@ def _episode_body(item: Mapping[str, Any], progress_percent: float) -> tuple[dic
 
     show_ids_raw = item.get("show_ids")
     show_ids_map = dict(show_ids_raw) if isinstance(show_ids_raw, Mapping) else {}
+    native_number = _positive_int(item.get("_simkl_episode_number"))
+    native_id = _positive_int(show_ids_map.get("simkl"))
+    if native_id is not None and native_number is not None:
+        return {"progress": progress_percent, "anime": {"ids": {"simkl": native_id}}, "episode": {"number": native_number}}, None
     wants_anime = str(item.get("simkl_bucket") or "").strip().lower() == "anime" or bool(
         _anime_ids(show_ids_map)
         and any(str(k) in show_ids_map for k in ("mal", "anidb", "anilist", "kitsu", "anisearch", "animeplanet", "livechart"))
@@ -464,6 +471,60 @@ def _percent_equal(source: Mapping[str, Any], target: Mapping[str, Any]) -> bool
     return abs(float(source_percent) - float(target_percent)) <= 0.1
 
 
+class _AnimeProgressMapper:
+    def __init__(self, adapter: Any) -> None:
+        self.adapter = adapter
+        self.block = anime_mapping._anibridge_config(adapter, feature="progress")
+        self.state: anime_mapping._AnimeResolveState | None = None
+        self.episodes: dict[str, list[dict[str, Any]]] = {}
+        self.aliases: dict[str, dict[str, Any]] = {}
+
+    def map(self, item: Mapping[str, Any]) -> tuple[Mapping[str, Any] | None, str | None]:
+        if str(item.get("type") or "").lower() != "episode":
+            return item, None
+        ids = item.get("show_ids") or {}
+        if isinstance(ids, Mapping) and _positive_int(ids.get("simkl")) and _positive_int(item.get("_simkl_episode_number")):
+            return item, None
+        if self.block is None:
+            return item, None
+        mapped = anime_mapping._with_anibridge_map(self.adapter, item, self.block)
+        if not (mapped.get("_cw_anime_map") or anime_mapping._is_anime_like(mapped, anime_mapping._show_ids_of_episode(mapped))):
+            return item, None
+        if self.state is None:
+            self.state = anime_mapping._load_anime_resolve_cache()
+            self.episodes = anime_mapping._load_anime_episode_map_cache()
+            self.aliases = anime_mapping._load_anime_episode_alias_cache()
+        session = self.adapter.client.session
+        headers = adapter_headers(self.adapter)
+        timeout = getattr(self.adapter.cfg, "timeout", 15.0)
+        native_ids = anime_mapping._native_anime_ids_for_mismatched_show(
+            session, headers, timeout, mapped, self.state, mapping_enabled=True,
+        )
+        if not native_ids:
+            return None, "simkl_anime_id_unresolved"
+        number = anime_mapping._anime_retry_episode_number(
+            mapped, native_ids, session=session, headers=headers, timeout=timeout,
+            episode_cache=self.episodes, alias_cache=self.aliases, resolve_state=self.state,
+        )
+        if number is None:
+            return None, "simkl_anime_episode_unmapped"
+        return {**mapped, "show_ids": {"simkl": native_ids["simkl"]}, "ids": {},
+                "season": 1, "episode": number, "_simkl_episode_number": number, "simkl_bucket": "anime"}, None
+
+
+def _mapped_target(index: Mapping[str, Any], key: str, item: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    show_ids = item.get("show_ids") or {}
+    native_id = str(show_ids.get("simkl") or "") if isinstance(show_ids, Mapping) else ""
+    native_number = _positive_int(item.get("_simkl_episode_number"))
+    if not native_id or native_number is None:
+        target = index.get(key)
+        return target if isinstance(target, Mapping) else None
+    matches = [row for row in index.values() if isinstance(row, Mapping)
+               and str((row.get("show_ids") or {}).get("simkl") or "") == native_id
+               and _positive_int(row.get("_simkl_episode_number") or (row.get("episode") if row.get("simkl_bucket") == "anime" else None)) == native_number]
+    return matches[0] if len(matches) == 1 else None
+
+
 def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = False) -> dict[str, Any]:
     src = [dict(item or {}) for item in items or [] if isinstance(item, Mapping)]
     current = build_index(adapter)
@@ -471,6 +532,8 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
     results: list[dict[str, Any]] = []
     pending: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
     skipped = 0
+    mapper = _AnimeProgressMapper(adapter)
+    mapped_items: dict[str, Mapping[str, Any]] = {}
 
     for item in src:
         key = canonical_key(item) or ""
@@ -480,7 +543,20 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
             unresolved.append(row)
             results.append(row)
             continue
-        target = current.get(key)
+        mapped, reason = mapper.map(item)
+        if mapped is None:
+            row = _unresolved(item, reason or "simkl_anime_episode_unmapped")
+            unresolved.append(row)
+            results.append(row)
+            continue
+        body, reason = _scrobble_body(mapped)
+        if body is None:
+            row = _unresolved(item, reason or "simkl_progress_invalid")
+            unresolved.append(row)
+            results.append(row)
+            continue
+        mapped_items[key] = mapped
+        target = _mapped_target(current, key, mapped)
         progress_ms, duration_ms, source_percent = _progress_values(item)
         if isinstance(target, Mapping) and _percent_equal(item, target):
             skipped += 1
@@ -519,10 +595,10 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
             results.append(row)
             _warn("write_failed", op="add", canonical_key=key, status=status)
 
-    after = build_index(adapter) if pending and not failed else current
+    after = build_index(adapter, force_refresh=True) if pending and not failed else current
     confirmed: list[str] = []
     for key, item, _body in ([] if failed else pending):
-        target = after.get(key)
+        target = _mapped_target(after, key, mapped_items[key])
         if isinstance(target, Mapping) and (
             progress_materially_equal(item.get("progress_ms"), item.get("duration_ms"), target.get("progress_ms"), target.get("duration_ms"))
             or _percent_equal(item, target)
@@ -545,10 +621,19 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
     results: list[dict[str, Any]] = []
     pending: list[tuple[str, int, dict[str, Any]]] = []
     skipped = 0
+    mapper = _AnimeProgressMapper(adapter)
+    mapped_items: dict[str, Mapping[str, Any]] = {}
 
     for item in src:
         key = canonical_key(item) or ""
-        target = current.get(key)
+        mapped, reason = mapper.map(item)
+        if mapped is None:
+            row = _unresolved(item, reason or "simkl_anime_episode_unmapped")
+            unresolved.append(row)
+            results.append(row)
+            continue
+        mapped_items[key] = mapped
+        target = _mapped_target(current, key, mapped)
         if not isinstance(target, Mapping):
             skipped += 1
             results.append({"status": "skipped", "reason": "already_absent", "canonical_key": key, "item": id_minimal(item)})
@@ -576,10 +661,10 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
             results.append(row)
             _warn("write_failed", op="remove", canonical_key=key, playback_id=playback_id, status=status)
 
-    after = build_index(adapter) if pending and not failed else current
+    after = build_index(adapter, force_refresh=True) if pending and not failed else current
     verified: list[str] = []
     for key, _playback_id, item in ([] if failed else pending):
-        if key not in after:
+        if _mapped_target(after, key, mapped_items[key]) is None:
             verified.append(key)
         else:
             row = _unresolved(item, "simkl_progress_delete_unconfirmed", status="failed")

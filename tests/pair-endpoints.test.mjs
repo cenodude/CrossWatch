@@ -16,6 +16,38 @@ const sourceFor = name => {
   return index.slice(node.start, node.end);
 };
 
+for (const scenario of [
+  {name: "defaults off", dst: "SIMKL", expected: false},
+  {name: "explicitly enabled", dst: "SIMKL", enabled: true, expected: true},
+  {name: "global mapping disabled", dst: "SIMKL", enabled: true, global: false, expected: false},
+  {name: "SIMKL is only the source", src: "SIMKL", enabled: true, expected: false},
+  {name: "SIMKL receives in two-way mode", src: "SIMKL", twoWay: true, enabled: true, expected: true},
+  {name: "no SIMKL endpoint", enabled: true, expected: false},
+]) {
+  test(`progress anime mapping: ${scenario.name}`, () => {
+    const context = vm.createContext({
+      ID: id => id === "cx-mode-two" ? {checked: !!scenario.twoWay} : null,
+      isSimkl: value => value === "SIMKL", isAniList: () => false, isMDBList: () => false,
+      hasOwn: (value, key) => Object.hasOwn(value, key), defaultFor: () => ({}),
+      applyProgressMaxRecommendation: () => ({maxPercent: 90}), ratingsDisabledFor: () => new Set(),
+      pairSupportsHistoryRewatches: () => false, collectionTypesForPair: () => ["movies"],
+      sanitizeFeaturesForPair: (_, features) => features, getPairProviderStrictValue: () => false,
+    });
+    for (const name of ["isTwoWayMode", "globalAnimeMappingEnabled", "simklCanReceiveProgress", "normalizeAnimeProgressOptions", "buildPayload"])
+      vm.runInContext(sourceFor(name), context);
+    const state = {
+      src: scenario.src || "PLEX", dst: scenario.dst || "PLEX",
+      cfgRaw: {anime_mapping: {enabled: scenario.global !== false}},
+      options: {history: {use_anime_mapping: true}, progress: {use_anime_mapping: scenario.enabled}},
+    };
+    const saved = context.buildPayload(state, {dataset: {}});
+    assert.equal(saved.features.progress.use_anime_mapping, scenario.expected);
+    assert.equal(saved.features.progress.anime_only_sync, false);
+    assert.equal(context.normalizeAnimeProgressOptions(state).use_anime_mapping, scenario.expected);
+    assert.equal(state.options.history.use_anime_mapping, true);
+  });
+}
+
 for (const response of [
   {ok: true, data: {ok: false, error: "not_found"}},
   {ok: false, data: {ok: false}},

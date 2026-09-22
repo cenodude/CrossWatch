@@ -760,6 +760,10 @@ class SIMKLModule:
         out = {"ok": True, "count": int(count), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
         if isinstance(exact_skipped, list):
             out["skipped_keys"] = [str(k) for k in exact_skipped if k]
+        if feature == "history":
+            verification = getattr(self, "_simkl_history_add_verification", None)
+            if verification:
+                out["_simkl_history_verification"] = verification
         return out
     def remove(
         self,
@@ -941,6 +945,10 @@ class _SIMKLOPS:
         dry_run: bool = False,
     ) -> dict[str, Any]:
         return self._adapter(cfg).add(feature, items, dry_run=dry_run)
+
+    def finalize_add(self, cfg: Mapping[str, Any], results: list[dict[str, Any]], *, feature: str) -> None:
+        if feature == "history" and feat_history is not None and any(result.get("_simkl_history_verification") for result in results):
+            feat_history.finalize_add(self._adapter(cfg), results)
 
     def remove(
         self,

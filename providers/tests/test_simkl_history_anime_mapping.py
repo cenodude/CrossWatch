@@ -79,7 +79,11 @@ def _patch_fs(monkeypatch, m):
 
 
 def _adapter(session):
-    return SimpleNamespace(client=SimpleNamespace(session=session), cfg=SimpleNamespace(timeout=5, history_chunk_size=100))
+    return SimpleNamespace(
+        client=SimpleNamespace(session=session), cfg=SimpleNamespace(timeout=5, history_chunk_size=100),
+        raw_cfg={"anime_mapping": {"enabled": True},
+                 "_cw_pair_feature_options": {"feature": "history", "use_anime_mapping": True}},
+    )
 
 
 def _episode(tvdb, tmdb, season, episode, series, *, number_abs=None):
@@ -97,11 +101,11 @@ def _episode(tvdb, tmdb, season, episode, series, *, number_abs=None):
 
 
 def _dbz(season, episode, number_abs):
-    return _episode("81472", "12971", season, episode, "Dragon Ball Z", number_abs=number_abs)
+    return {**_episode("81472", "12971", season, episode, "Dragon Ball Z", number_abs=number_abs), "simkl_bucket": "anime"}
 
 
 def _aot(season, episode):
-    return _episode("267440", "1429", season, episode, "Attack on Titan")
+    return {**_episode("267440", "1429", season, episode, "Attack on Titan"), "simkl_bucket": "anime"}
 
 
 def _s00(show_tvdb, show_tmdb, episode, series, *, ep_tvdb=None):
@@ -361,6 +365,7 @@ def test_anime_like_s00_unmapped_is_unresolved(monkeypatch):
     adapter = _adapter(session)
 
     item = _s00("267440", "1429", 2, "Attack on Titan")
+    item["simkl_bucket"] = "anime"
     ok, unresolved = m.add(adapter, [item])
 
     assert ok == 0
@@ -597,7 +602,7 @@ def test_simkl_target_override_beats_source_tvdb_redirect(monkeypatch):
         },
     }
 
-    ids = m._native_anime_ids_for_mismatched_show(session, {}, 5, item, state)
+    ids = m._native_anime_ids_for_mismatched_show(session, {}, 5, item, state, mapping_enabled=True)
     mapped = m._anime_retry_episode_number(
         item,
         ids,
@@ -1361,7 +1366,7 @@ def test_non_anime_tvdb_not_found_skips_anime_retry(monkeypatch):
     assert "simkl_not_found:episodes" in reasons
 
 
-def test_real_anime_tvdb_not_found_still_reaches_anime_retry(monkeypatch):
+def test_anime_tvdb_not_found_is_unresolved_without_retry(monkeypatch):
     import sync.simkl._history as m
 
     _patch_fs(monkeypatch, m)
@@ -1372,8 +1377,9 @@ def test_real_anime_tvdb_not_found_still_reaches_anime_retry(monkeypatch):
     )
     adapter = _adapter(session)
 
-    _ok, unresolved = m.add(adapter, [_episode("267440", "1429", 4, 17, "Attack on Titan")])
+    _ok, unresolved = m.add(adapter, [_aot(4, 17)])
 
     reasons = {u.get("reason") or u.get("hint") for u in unresolved}
-    assert "simkl_anime_retry_unmapped:episodes" in reasons
-    assert "simkl_not_found:episodes" not in reasons
+    assert "simkl_anime_retry_unmapped:episodes" not in reasons
+    assert "simkl_not_found:episodes" in reasons
+    assert len(session.posts) == 1

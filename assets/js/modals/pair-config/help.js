@@ -25,7 +25,8 @@ export const HELP_TEXT = {
   "cx-rt-add": "Ratings: Add / Update\nWrites ratings/updates to the target.",
   "cx-rt-remove": "Ratings: Remove\nClears ratings on the target (destructive and only for very specific needs).",
   "cx-rt-anime-map": "Use Anime ID Mapping\nUse the local Anime ID database to match anime for this ratings pair. Requires global Anime ID Mapping to be enabled first.",
-  "cx-hs-anime-map": "Anime episode mapping\nTranslate anime episode numbering when this history pair writes to an anime tracker, using the local Anime ID database. Requires a TMDB metadata key and global Anime ID Mapping. Syncing from SIMKL to Trakt already maps episodes on its own and does not need this.",
+  "cx-hs-anime-map": "Anime episode mapping\nTranslate anime episode numbering when this history pair writes to an anime tracker, using the local Anime ID database. Requires a TMDB metadata key and global Anime ID Mapping. This can heavily increase API calls when additional anime ID and episode lookups are needed.",
+  "cx-pr-anime-map": "Anime episode mapping\nTranslate anime episode numbering before writing progress to SIMKL, using the local Anime ID database. Requires global Anime ID Mapping. This can heavily increase API calls when additional anime ID and episode lookups are needed.",
   "cx-rt-anime-only": "Anime-only sync\nOnly sync ratings for items that Anime ID Mapping can confirm as anime. Non-anime and unmapped items are skipped before falling back to a title search.",
 
   "cx-hs-enable": "History: Enable\nCompare and write watch history to the target.",
