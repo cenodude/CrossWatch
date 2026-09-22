@@ -136,22 +136,44 @@ def state_file_for_read(root: Path, stem: str, scoped: Path) -> Path:
     return scoped
 
 
-def latest_snapshot_file(root: Path, feature: str) -> Path | None:
-    snaps = root / "snapshots"
-    if not snaps.exists() or not snaps.is_dir():
-        return None
-
-    candidates: list[Path] = []
-    for p in snaps.rglob(f"*-{feature}.json"):
-        if p.is_file():
-            candidates.append(p)
-
+def _newest(candidates: list[Path]) -> Path | None:
     if not candidates:
         return None
     try:
         return max(candidates, key=lambda x: x.stat().st_mtime)
     except Exception:
         return candidates[-1]
+
+
+def latest_snapshot_file(root: Path, feature: str) -> Path | None:
+    snaps = root / "snapshots"
+    if not snaps.exists() or not snaps.is_dir():
+        return None
+    return _newest([p for p in snaps.rglob(f"*-{feature}.json") if p.is_file()])
+
+
+def chained_source() -> bool:
+    if not pair_scoped():
+        return True
+    return str(os.getenv("CW_PAIR_SRC") or "").strip().upper() == "CROSSWATCH"
+
+
+def fallback_state_file(root: Path, stem: str) -> Path | None:
+    return latest_state_file(root, stem) if chained_source() else None
+
+
+def fallback_snapshot_file(root: Path, feature: str) -> Path | None:
+    if chained_source():
+        return latest_snapshot_file(root, feature)
+
+    snaps = root / "snapshots"
+    candidates: list[Path] = []
+    if snaps.is_dir():
+        candidates += [p for p in snaps.glob(f"*-{feature}.json") if p.is_file()]
+    scoped = scoped_snapshots_dir(root)
+    if scoped != snaps and scoped.is_dir():
+        candidates += [p for p in scoped.rglob(f"*-{feature}.json") if p.is_file()]
+    return _newest(candidates)
 
 # Logging factory
 
