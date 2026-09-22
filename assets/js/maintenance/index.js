@@ -114,7 +114,7 @@ const OPS = [
     kind: "state-file-prune",
     icon: "cleaning_services",
     title: "Prune stale state",
-    desc: "Creates an app-state backup, then removes state baselines for pairs or routes that no longer exist.",
+    desc: "Creates an app-state backup, then removes state baselines and leftover unresolved, blackbox and flap files for pairs or routes that no longer exist.",
   },
   {
     key: "meta",
@@ -697,7 +697,8 @@ const MaintenancePage = {
       const items = Number(removed.removed_items || 0);
       const freed = formatBytes((res.summary && res.summary.freed_bytes) || 0);
       const backupPath = res.backup && res.backup.path ? String(res.backup.path) : "";
-      const bits = [`${providers} providers`, `${instances} instances`, `${baselines} baselines`, `${items} items`, `${freed} reclaimed`];
+      const orphans = Number(res.orphaned_state_files || 0);
+      const bits = [`${providers} providers`, `${instances} instances`, `${baselines} baselines`, `${items} items`, `${orphans} orphaned files`, `${freed} reclaimed`];
       if (backupPath) bits.push(`backup ${backupPath}`);
       return `Prune sync state completed · ${bits.join(" · ")}.`;
     };
@@ -894,7 +895,7 @@ const MaintenancePage = {
         return false;
       }
 
-      if (kind === "state-file-prune" && !confirm("Create an app-state backup and prune stale sync state baselines?\n\nThis removes provider or instance baselines that are no longer referenced by configured sync pairs or scrobbler routes.")) {
+      if (kind === "state-file-prune" && !confirm("Create an app-state backup and prune stale sync state?\n\nThis removes provider or instance baselines that are no longer referenced by configured sync pairs or scrobbler routes, plus unresolved, blackbox and flap files left behind by removed pairs.")) {
         setStatus("Cancelled.", "");
         return false;
       }

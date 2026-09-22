@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import asyncio
 import importlib
 import importlib.util
 import logging
@@ -17,7 +18,7 @@ import threading
 
 import requests
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from services.analyzer_mapping import MappingRequest, handle_mapping
 
 from cw_platform.access_policy import filter_pairs_for_user, pair_ids_for_user, request_user
@@ -1625,6 +1626,38 @@ def _cw_state_pair_state_problems(path: Path, data: Any, meta: Mapping[str, Any]
     return probs
 
 
+_ORPHANABLE_STATE_KINDS = ("unresolved", "blackbox", "flap")
+
+
+def orphaned_state_files(cfg: Mapping[str, Any] | None = None) -> list[Path]:
+    """State artifacts whose pair scope no longer exists, so sync can never read them."""
+    try:
+        config = cfg if isinstance(cfg, Mapping) else _cfg()
+        active_scopes = _active_feature_scopes(config)
+    except Exception:
+        return []
+    out: list[Path] = []
+    try:
+        paths = sorted(CWS_DIR.glob("*.json"))
+    except Exception:
+        return []
+    for path in paths:
+        try:
+            meta = _cw_state_meta(path)
+        except Exception:
+            continue
+        kind = str(meta.get("kind") or "")
+        if kind not in _ORPHANABLE_STATE_KINDS:
+            continue
+        if kind == "unresolved":
+            if not _orphaned_unresolved_scope(meta, active_scopes):
+                continue
+        elif str(meta.get("scope") or "").lower() in active_scopes:
+            continue
+        out.append(path)
+    return out
+
+
 def _cw_state_semantic_diagnostics() -> list[dict[str, Any]]:
     probs: list[dict[str, Any]] = []
     try:
@@ -1657,15 +1690,11 @@ def _cw_state_semantic_diagnostics() -> list[dict[str, Any]]:
             elif kind == "shadow":
                 probs.extend(_cw_state_shadow_problems(path, data, meta, now_epoch=now_epoch))
             elif kind == "unresolved" and _orphaned_unresolved_scope(meta, active_scopes):
-                if isinstance(data, dict) and data:
-                    count = len(data["keys"]) if isinstance(data.get("keys"), list) else len(data)
-                    if count:
-                        probs.append(_artifact_meta_problem("info", "cw_state_unresolved_orphaned", path, "Unresolved file belongs to an old or removed pair setup and is not used by sync.", meta, count=count))
+                continue
             elif kind == "unresolved":
                 probs.extend(_cw_state_unresolved_problems(state, path, data, meta, now_epoch=now_epoch))
             elif kind in ("flap", "blackbox") and str(meta.get("scope") or "").lower() not in active_scopes:
-                if kind == "blackbox" and isinstance(data, dict) and data:
-                    probs.append(_artifact_meta_problem("info", "cw_state_blackbox_orphaned", path, "Blackbox file belongs to an old or removed pair setup and is not used by sync.", meta, count=len(data)))
+                continue
             elif kind == "flap":
                 probs.extend(_cw_state_flap_problems(state, path, data, meta, promote_after=promote_after))
             elif kind == "blackbox":
@@ -2267,6 +2296,9 @@ def _hist_num(v: Any) -> Any:
         return v
 
 
+_SERVER_SCOPED_ID_KEYS = frozenset({"plex", "jellyfin", "emby", "guid"})
+
+
 def _history_exact_keys(item: Mapping[str, Any]) -> set[tuple[str, str, Any, Any]]:
     typ = str(item.get("type") or "").strip().lower()
     if typ not in {"episode", "season"}:
@@ -2292,8 +2324,10 @@ def _history_exact_key(item: Mapping[str, Any]) -> tuple[str, str, Any, Any] | N
 
 def _history_event_tokens(item: Mapping[str, Any]) -> set[str]:
     typ = str(item.get("type") or "").strip().lower()
-    ids_raw = item.get("show_ids") if typ in {"episode", "season"} and isinstance(item.get("show_ids"), Mapping) else item.get("ids")
+    show_ids = item.get("show_ids") if typ in {"episode", "season"} and isinstance(item.get("show_ids"), Mapping) else None
+    ids_raw = show_ids if show_ids is not None else item.get("ids")
     ids = ids_raw if isinstance(ids_raw, Mapping) else {}
+    show_scope = show_ids is not None or typ == "show"
     out: set[str] = set()
     if typ == "episode":
         season = _hist_num(item.get("season"))
@@ -2308,11 +2342,17 @@ def _history_event_tokens(item: Mapping[str, Any]) -> set[str]:
         frag = f"#season:{season}"
     else:
         frag = ""
+    local: set[str] = set()
     for key, value in ids.items():
         if value in (None, ""):
             continue
-        out.add(f"{str(key).lower()}:{str(value).lower()}{frag}")
-    return out
+        namespace = str(key).lower()
+        token = f"{namespace}:{str(value).lower()}{frag}"
+        if show_scope and namespace in _SERVER_SCOPED_ID_KEYS:
+            local.add(token)
+        else:
+            out.add(token)
+    return out or local
 
 
 def _history_exact_indices(s: dict[str, Any]) -> dict[str, set[tuple[str, str, Any, Any]]]:
@@ -4688,8 +4728,52 @@ def _detail_for_item(pairs_raw: str | None, provider: str, feature: str, key: st
         details = ([{"target": "ALL", "feature": feat_key, "message": f"Blocked by {_MANUAL_POLICY_REF}."}] + details)
     return {"targets": missing_targets, "hints": hints, "target_show_info": details, "watch_time_differences": time_differences}
 
-@router.get("/analyzer/state", response_class=JSONResponse)
-def api_state(
+_STREAM_GRACE_SECONDS = 5.0
+_STREAM_HEARTBEAT_SECONDS = 10.0
+_STREAM_HEADERS = {
+    "Cache-Control": "no-store",
+    "Content-Encoding": "identity",
+    "X-Accel-Buffering": "no",
+}
+
+
+def _json_bytes(payload: Any) -> bytes:
+    return json.dumps(payload, default=str).encode("utf-8")
+
+
+async def _keepalive_json(build: Any) -> Any:
+    """Hold the connection open with newline padding so proxies do not time out."""
+    loop = asyncio.get_running_loop()
+    pending = loop.run_in_executor(None, build)
+    try:
+        payload = await asyncio.wait_for(asyncio.shield(pending), _STREAM_GRACE_SECONDS)
+    except asyncio.TimeoutError:
+        pass
+    else:
+        return JSONResponse(payload)
+
+    async def agen():
+        while True:
+            try:
+                payload = await asyncio.wait_for(asyncio.shield(pending), _STREAM_HEARTBEAT_SECONDS)
+            except asyncio.TimeoutError:
+                yield b"\n"
+                continue
+            except HTTPException as exc:
+                yield _json_bytes({"ok": False, "error": exc.detail, "status": exc.status_code})
+                return
+            except Exception:
+                _LOG.exception("analyzer stream failed")
+                yield _json_bytes({"ok": False, "error": "internal_error", "status": 500})
+                return
+            yield _json_bytes(payload)
+            return
+
+    return StreamingResponse(agen(), media_type="application/json", headers=dict(_STREAM_HEADERS))
+
+
+@router.get("/analyzer/state")
+async def api_state(
     pairs: str | None = None,
     offset: int = 0,
     limit: int = 250,
@@ -4698,8 +4782,23 @@ def api_state(
     feature: str = "",
     sort: str = "",
     direction: str = "asc",
-) -> dict[str, Any]:
+) -> Any:
     pairs = _scoped_pairs_arg(request, pairs)
+    return await _keepalive_json(
+        lambda: _build_state_page(pairs, offset=offset, limit=limit, q=q, feature=feature, sort=sort, direction=direction)
+    )
+
+
+def _build_state_page(
+    pairs: str | None,
+    *,
+    offset: int,
+    limit: int,
+    q: str,
+    feature: str,
+    sort: str,
+    direction: str,
+) -> dict[str, Any]:
     try:
         items, counts = _cached_scoped_rows(pairs)
     except HTTPException as e:
@@ -4743,13 +4842,15 @@ def api_mapping(payload: MappingRequest, request: Request):
     return handle_mapping(payload, request)
 
 
-@router.get("/analyzer/problems", response_class=JSONResponse)
-def api_problems(pairs: str | None = None, include_system: bool = False, include_hints: bool = False, request: Request = cast(Request, None)) -> dict[str, Any]:
+@router.get("/analyzer/problems")
+async def api_problems(pairs: str | None = None, include_system: bool = False, include_hints: bool = False, request: Request = cast(Request, None)) -> Any:
     pairs = _scoped_pairs_arg(request, pairs)
     user = request_user(request)
     if user and not bool(user.get("is_admin")):
         include_system = False
-    return _cached_analysis(pairs, include_system=include_system, include_hints=include_hints)
+    return await _keepalive_json(
+        lambda: _cached_analysis(pairs, include_system=include_system, include_hints=include_hints)
+    )
 
 
 @router.get("/analyzer/system", response_class=JSONResponse)
@@ -4777,10 +4878,10 @@ def api_pair_activity(request: Request = cast(Request, None)) -> dict[str, Any]:
     return {"pairs": out}
 
 
-@router.get("/analyzer/detail", response_class=JSONResponse)
-def api_detail(provider: str, feature: str, key: str, pairs: str | None = None, request: Request = cast(Request, None)) -> dict[str, Any]:
+@router.get("/analyzer/detail")
+async def api_detail(provider: str, feature: str, key: str, pairs: str | None = None, request: Request = cast(Request, None)) -> Any:
     pairs = _scoped_pairs_arg(request, pairs)
-    return _detail_for_item(pairs, provider, feature, key)
+    return await _keepalive_json(lambda: _detail_for_item(pairs, provider, feature, key))
 
 
 @router.get("/analyzer/ratings-audit", response_class=JSONResponse)

@@ -684,11 +684,12 @@ def maintenance_action_status(action: str) -> dict[str, Any]:
                 _metric("Stale instances", stale.get("removed_instances", 0)),
                 _metric("Stale baselines", stale.get("removed_baselines", 0)),
                 _metric("Stale items", stale.get("removed_items", 0)),
+                _metric("Orphaned state files", len(_orphaned_state_files())),
             ])
         response.update(
             title="Prune sync state" if action == "state-file-prune" else "Sync state",
             note=(
-                "Creates an app-state backup, then removes provider or instance baselines that are no longer referenced by configured sync pairs or scrobbler routes."
+                "Creates an app-state backup, then removes provider or instance baselines that are no longer referenced by configured sync pairs or scrobbler routes, plus unresolved, blackbox and flap files left behind by removed pairs."
                 if action == "state-file-prune"
                 else "Inspects the local sync state baseline store."
             ),
@@ -1238,6 +1239,35 @@ def compact_state_file() -> dict[str, Any]:
     }
 
 
+def _orphaned_state_files() -> list[Path]:
+    try:
+        from services.analyzer import orphaned_state_files
+
+        return list(orphaned_state_files())
+    except Exception:
+        _LOG.exception("orphaned state scan failed")
+        return []
+
+
+def _remove_orphaned_state_files(paths: list[Path]) -> tuple[int, int]:
+    removed = freed = 0
+    for path in paths:
+        try:
+            size = path.stat().st_size
+        except Exception:
+            size = 0
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            continue
+        except Exception:
+            _LOG.exception("orphaned state removal failed path=%s", path)
+            continue
+        removed += 1
+        freed += int(size or 0)
+    return removed, freed
+
+
 @router.post("/state-file/prune")
 def prune_state_file() -> dict[str, Any]:
     _, CONFIG_DIR, *_ = _cw()
@@ -1277,7 +1307,9 @@ def prune_state_file() -> dict[str, Any]:
         }
 
     pruned, removed, details = _prune_state_payload(payload, cfg)
+    orphans = _orphaned_state_files()
     if removed.get("removed_baselines", 0) <= 0 and removed.get("removed_instances", 0) <= 0 and removed.get("removed_providers", 0) <= 0:
+        orphan_files, orphan_bytes = _remove_orphaned_state_files(orphans)
         return {
             "ok": True,
             "path": str(state_path),
@@ -1285,9 +1317,10 @@ def prune_state_file() -> dict[str, Any]:
             "backup": None,
             "removed": removed,
             "details": details,
+            "orphaned_state_files": orphan_files,
             "before_bytes": int(before.get("bytes") or 0),
             "after_bytes": int(before.get("bytes") or 0),
-            "summary": {"removed_files": 0, "removed_items": 0, "freed_bytes": 0},
+            "summary": {"removed_files": orphan_files, "removed_items": 0, "freed_bytes": orphan_bytes},
             "inventory": _sync_state_baseline_inventory(CONFIG_DIR),
         }
 
@@ -1321,11 +1354,12 @@ def prune_state_file() -> dict[str, Any]:
             "summary": {"removed_files": 0, "removed_items": 0, "freed_bytes": 0},
         }
 
+    orphan_files, orphan_bytes = _remove_orphaned_state_files(orphans)
     after = _paths_usage(_sync_state_storage_paths(CONFIG_DIR, []))
     summary = {
-        "removed_files": 0,
+        "removed_files": orphan_files,
         "removed_items": int(removed.get("removed_items") or 0),
-        "freed_bytes": max(0, int(before.get("bytes") or 0) - int(after.get("bytes") or 0)),
+        "freed_bytes": max(0, int(before.get("bytes") or 0) - int(after.get("bytes") or 0)) + orphan_bytes,
     }
     return {
         "ok": True,
@@ -1334,6 +1368,7 @@ def prune_state_file() -> dict[str, Any]:
         "backup": backup,
         "removed": removed,
         "details": details,
+        "orphaned_state_files": orphan_files,
         "before_bytes": int(before.get("bytes") or 0),
         "after_bytes": int(after.get("bytes") or 0),
         "summary": summary,
