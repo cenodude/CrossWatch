@@ -2055,3 +2055,33 @@ def test_recent_scrobble_widget_filters_by_user_profile_instances(monkeypatch) -
 
     assert payload["total"] == 1
     assert payload["items"][0]["title"] == "Bob Movie"
+
+
+def _monster_episode(tmdb: str, series: str, episode: int) -> dict:
+    return {
+        "type": "episode", "season": 1, "episode": episode,
+        "series_title": series,
+        "ids": {"tmdb": f"76390{episode}", "show_ids": {"tmdb": tmdb, "plex": "6065854300205892022"}},
+    }
+
+
+def test_one_media_server_show_id_does_not_join_separate_shows() -> None:
+    dahmer = dashboard_widgets._media_id_aliases("history", _monster_episode("113988", "DAHMER", 2))
+    lizzie = dashboard_widgets._media_id_aliases("history", _monster_episode("299939", "Lizzie Borden", 2))
+    assert not set(dahmer) & set(lizzie)
+    assert any("tmdb:113988" in alias for alias in dahmer)
+    assert not any("plex:" in alias for alias in dahmer)
+
+
+def test_a_media_server_show_id_is_still_used_when_it_is_all_there_is() -> None:
+    row = {"type": "episode", "season": 1, "episode": 2,
+           "ids": {"show_ids": {"plex": "6065854300205892022"}}}
+    aliases = dashboard_widgets._media_id_aliases("history", row)
+    assert aliases == ["history|id|episode|plex:6065854300205892022|s1|e2"]
+
+
+def test_movie_aliases_still_carry_media_server_ids() -> None:
+    row = {"type": "movie", "ids": {"tmdb": "603", "plex": "12345"}}
+    aliases = dashboard_widgets._media_id_aliases("history", row)
+    assert any("plex:12345" in alias for alias in aliases)
+    assert any("tmdb:603" in alias for alias in aliases)
