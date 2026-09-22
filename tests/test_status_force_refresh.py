@@ -135,10 +135,10 @@ def test_client_sends_the_fresh_flag_only_on_a_forced_status_refresh() -> None:
     start = next(i for i, line in enumerate(lines) if "const qs = [];" in line)
     body = "\n".join(line.strip() for line in lines[start - 1:start + 4])
 
-    assert "if (force) qs.push('fresh=1');" in body
+    assert "if (verify) qs.push('fresh=1');" in body
 
     core_js = pathlib.Path("assets/helpers/core.js").read_text(encoding="utf-8")
-    assert 'requestJSON(force ? "/api/status?fresh=1" : "/api/status", {}, 15000)' in core_js
+    assert 'requestJSON(verify ? "/api/status?fresh=1" : "/api/status", {}, 15000)' in core_js
 
 
 def test_provider_cards_prefer_live_status_over_persisted_status() -> None:

@@ -31,6 +31,7 @@ from providers.sync.simkl._common import (
     account_cache_key,
     SIMKLQuotaError,
     account_settings_cached,
+    account_settings_lock,
     account_settings_store,
     latest_quota,
     quota_account_key,
@@ -788,60 +789,62 @@ def _simkl_settings(
     max_age_sec: float,
     bust_ts: float = 0.0,
 ) -> tuple[int, dict[str, Any]]:
-    key = _probe_key("simkl", cfg)
-    now = time.time()
-    effective_age = max(float(max_age_sec), float(SIMKL_SETTINGS_TTL)) if max_age_sec > 0 else 0.0
-    if effective_age > 0:
-        with _CACHE_LOCK:
-            hit = _SIMKL_SETTINGS_CACHE.get(key)
-        if hit and (now - hit[0]) < effective_age and (not bust_ts or hit[0] >= bust_ts):
-            return hit[1], hit[2]
-
-    s: Mapping[str, Any] = (cfg.get("simkl") or {}) if isinstance(cfg.get("simkl"), Mapping) else {}
-    cid = str((s.get("client_id") or s.get("api_key") or "")).strip()
-    tok = str((s.get("access_token") or s.get("token") or "")).strip()
-    if not cid or not tok:
-        return 0, {}
-
-    shared_key = account_cache_key(tok)
-    if effective_age > 0 and not bust_ts:
-        shared = account_settings_cached(shared_key, effective_age)
-        if shared is not None:
+    block = cfg.get("simkl") or {}
+    with account_settings_lock(account_cache_key(block.get("access_token") or block.get("token"))):
+        key = _probe_key("simkl", cfg)
+        now = time.time()
+        effective_age = max(float(max_age_sec), float(SIMKL_SETTINGS_TTL)) if max_age_sec > 0 else 0.0
+        if effective_age > 0:
             with _CACHE_LOCK:
-                _SIMKL_SETTINGS_CACHE[key] = (now, 200, shared)
-            return 200, shared
+                hit = _SIMKL_SETTINGS_CACHE.get(key)
+            if hit and (now - hit[0]) < effective_age and (not bust_ts or hit[0] >= bust_ts):
+                return hit[1], hit[2]
 
-    inst = "default"
-    try:
-        hint = cfg.get("_cw_probe") if isinstance(cfg.get("_cw_probe"), dict) else None
-        inst = normalize_instance_id((hint or {}).get("instance"))
-    except Exception:
+        s: Mapping[str, Any] = (cfg.get("simkl") or {}) if isinstance(cfg.get("simkl"), Mapping) else {}
+        cid = str((s.get("client_id") or s.get("api_key") or "")).strip()
+        tok = str((s.get("access_token") or s.get("token") or "")).strip()
+        if not cid or not tok:
+            return 0, {}
+
+        shared_key = account_cache_key(tok)
+        if effective_age > 0 and not bust_ts:
+            shared = account_settings_cached(shared_key, effective_age)
+            if shared is not None:
+                with _CACHE_LOCK:
+                    _SIMKL_SETTINGS_CACHE[key] = (now, 200, shared)
+                return 200, shared
+
         inst = "default"
+        try:
+            hint = cfg.get("_cw_probe") if isinstance(cfg.get("_cw_probe"), dict) else None
+            inst = normalize_instance_id((hint or {}).get("instance"))
+        except Exception:
+            inst = "default"
 
-    if SIMKL_AUTH is not None and SIMKL_AUTH.needs_refresh(s, SIMKL_AUTH.USE_REFRESH_MARGIN_S):
-        fresh_tok = SIMKL_AUTH.ensure_fresh(inst, margin_s=SIMKL_AUTH.USE_REFRESH_MARGIN_S)
-        if fresh_tok:
-            tok = fresh_tok
-
-    qkey = quota_account_key(s)
-    code, body = _simkl_settings_post(cid, tok, timeout=HTTP_TIMEOUT, quota_key=qkey)
-
-    if code == 401 and SIMKL_AUTH is not None and SIMKL_AUTH.auth_version(s) == 2:
-        res = SIMKL_AUTH.PROVIDER.refresh(None, instance_id=inst)
-        if isinstance(res, dict) and res.get("ok"):
-            fresh_tok = SIMKL_AUTH.ensure_fresh(inst)
-            if fresh_tok and fresh_tok != tok:
+        if SIMKL_AUTH is not None and SIMKL_AUTH.needs_refresh(s, SIMKL_AUTH.USE_REFRESH_MARGIN_S):
+            fresh_tok = SIMKL_AUTH.ensure_fresh(inst, margin_s=SIMKL_AUTH.USE_REFRESH_MARGIN_S)
+            if fresh_tok:
                 tok = fresh_tok
-                code, body = _simkl_settings_post(cid, tok, timeout=HTTP_TIMEOUT, quota_key=qkey)
 
-    data = (_json_loads(body) or {}) if code == 200 else {}
-    if not isinstance(data, dict):
-        data = {}
-    with _CACHE_LOCK:
-        _SIMKL_SETTINGS_CACHE[key] = (now, int(code), data)
-    if code == 200:
-        account_settings_store(account_cache_key(tok), data)
-    return int(code), data
+        qkey = quota_account_key(s)
+        code, body = _simkl_settings_post(cid, tok, timeout=HTTP_TIMEOUT, quota_key=qkey)
+
+        if code == 401 and SIMKL_AUTH is not None and SIMKL_AUTH.auth_version(s) == 2:
+            res = SIMKL_AUTH.PROVIDER.refresh(None, instance_id=inst)
+            if isinstance(res, dict) and res.get("ok"):
+                fresh_tok = SIMKL_AUTH.ensure_fresh(inst)
+                if fresh_tok and fresh_tok != tok:
+                    tok = fresh_tok
+                    code, body = _simkl_settings_post(cid, tok, timeout=HTTP_TIMEOUT, quota_key=qkey)
+
+        data = (_json_loads(body) or {}) if code == 200 else {}
+        if not isinstance(data, dict):
+            data = {}
+        with _CACHE_LOCK:
+            _SIMKL_SETTINGS_CACHE[key] = (now, int(code), data)
+        if code == 200:
+            account_settings_store(account_cache_key(tok), data)
+        return int(code), data
 
 
 def _simkl_local_verdict(s: Mapping[str, Any]) -> tuple[bool, str]:

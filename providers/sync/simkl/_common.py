@@ -23,6 +23,13 @@ URL_USER_SETTINGS = f"{SIMKL_BASE}/users/settings"
 REWATCH_ACCOUNT_TYPES = frozenset({"pro", "vip"})
 _SETTINGS_TTL = 300.0
 _SETTINGS_MEMO: dict[str, tuple[float, dict[str, Any]]] = {}
+_SETTINGS_LOCKS: dict[tuple[str, str], Any] = {}
+_SETTINGS_GUARD = threading.Lock()
+
+
+def account_settings_lock(key: str) -> Any:
+    with _SETTINGS_GUARD:
+        return _SETTINGS_LOCKS.setdefault((str(STATE_DIR), key), threading.RLock())
 
 
 def account_settings_ttl() -> float:
@@ -69,6 +76,7 @@ def account_settings_cached(key: str, max_age: float) -> dict[str, Any] | None:
 def account_settings_store(key: str, data: Mapping[str, Any] | None) -> None:
     if not key or not isinstance(data, Mapping):
         return
+    _SETTINGS_MEMO[key] = (time.time(), dict(data))
     path = _account_cache_path(key)
     try:
         with config_base._CONFIG_LOCK:
@@ -695,15 +703,16 @@ def refresh_user_settings_from_activities(
     *,
     timeout: float = 15.0,
 ) -> dict[str, Any] | None:
-    latest = extract_latest_ts(activities or {}, (("settings", "all"),))
-    max_age = float("inf")
-    if latest:
-        changed_at = datetime.fromisoformat(latest.replace("Z", "+00:00")).timestamp()
-        max_age = max(0.0, time.time() - changed_at)
-    cached = account_settings_cached(account_cache_key(headers.get("Authorization")), max_age)
-    if cached is not None:
-        return cached
-    return fetch_user_settings(session, headers, timeout=timeout, force_refresh=True)
+    with account_settings_lock(account_cache_key(headers.get("Authorization"))):
+        latest = extract_latest_ts(activities or {}, (("settings", "all"),))
+        max_age = float("inf")
+        if latest:
+            changed_at = datetime.fromisoformat(latest.replace("Z", "+00:00")).timestamp()
+            max_age = max(0.0, time.time() - changed_at)
+        cached = account_settings_cached(account_cache_key(headers.get("Authorization")), max_age)
+        if cached is not None:
+            return cached
+        return fetch_user_settings(session, headers, timeout=timeout, force_refresh=True)
 
 
 def fetch_user_settings(
@@ -714,34 +723,35 @@ def fetch_user_settings(
     force_refresh: bool = False,
 ) -> dict[str, Any] | None:
     global _SETTINGS_MEMO
-    now = time.time()
-    key = account_cache_key((headers or {}).get("Authorization"))
-    ts, cached = _SETTINGS_MEMO.get(key, (0.0, None))
-    if cached is not None and not force_refresh and (now - ts) < _SETTINGS_TTL:
-        return cached
-    if not force_refresh:
-        shared = account_settings_cached(key, float("inf"))
-        if shared is not None:
-            _SETTINGS_MEMO[key] = (now, shared)
-            return shared
-    try:
-        resp = session.post(
-            URL_USER_SETTINGS,
-            headers=dict(headers),
-            params=simkl_api_params_from_headers(headers),
-            timeout=timeout,
-        )
-        if not (200 <= int(getattr(resp, "status_code", 0) or 0) < 300):
+    with account_settings_lock(account_cache_key(headers.get("Authorization"))):
+        now = time.time()
+        key = account_cache_key((headers or {}).get("Authorization"))
+        ts, cached = _SETTINGS_MEMO.get(key, (0.0, None))
+        if cached is not None and not force_refresh and (now - ts) < _SETTINGS_TTL:
+            return cached
+        if not force_refresh:
+            shared = account_settings_cached(key, float("inf"))
+            if shared is not None:
+                _SETTINGS_MEMO[key] = (now, shared)
+                return shared
+        try:
+            resp = session.post(
+                URL_USER_SETTINGS,
+                headers=dict(headers),
+                params=simkl_api_params_from_headers(headers),
+                timeout=timeout,
+            )
+            if not (200 <= int(getattr(resp, "status_code", 0) or 0) < 300):
+                return None
+            data = resp.json()
+        except Exception:
             return None
-        data = resp.json()
-    except Exception:
-        return None
-    if not isinstance(data, Mapping):
-        return None
-    out = dict(data)
-    _SETTINGS_MEMO[key] = (now, out)
-    account_settings_store(key, out)
-    return out
+        if not isinstance(data, Mapping):
+            return None
+        out = dict(data)
+        _SETTINGS_MEMO[key] = (now, out)
+        account_settings_store(key, out)
+        return out
 
 
 def account_type(session: Any, headers: Mapping[str, str], *, timeout: float = 15.0) -> str:

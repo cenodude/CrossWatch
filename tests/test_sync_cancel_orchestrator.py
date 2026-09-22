@@ -97,6 +97,7 @@ def _pair(pid: str, src: str, dst: str) -> dict[str, Any]:
 
 
 def _wire(monkeypatch, providers: dict[str, FakeOps]) -> None:
+    monkeypatch.setattr("cw_platform.orchestrator._pairs.record_health", lambda *args: None)
     monkeypatch.setattr("cw_platform.orchestrator.facade.load_sync_providers", lambda: providers)
     monkeypatch.setattr("cw_platform.orchestrator._snapshots.provider_configured", lambda _cfg, _name: True)
 
@@ -153,6 +154,49 @@ def test_uncancelled_run_still_writes(config_base, monkeypatch) -> None:
     assert [it["ids"]["imdb"] for it in dst.add_calls[0]] == ["tt01"]
     assert result["cancelled"] is False
     assert result["added"] == 1
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+def test_account_refresh_runs_once_after_all_pairs(config_base, monkeypatch, cancel):
+    src = FakeOps("SRC", {"imdb:tt01": _movie("01")})
+    dst = FakeOps("SIMKL", {})
+    events = []
+    refreshed = []
+    dst.hooks["build_index"] = lambda ops: events.append("index")
+    if cancel:
+        dst.hooks["add"] = lambda ops: run_control.request_cancel()
+
+    def refresh(cfg):
+        refreshed.append(cfg["simkl"]["access_token"])
+        events.append("refresh")
+        return True
+
+    monkeypatch.setattr(dst, "refresh_account", refresh, raising=False)
+    _wire(monkeypatch, {"SRC": src, "SIMKL": dst})
+    cfg = _cfg([_pair(f"p{i}", "SRC", "SIMKL") for i in range(3)])
+    cfg["simkl"] = {"client_id": "client", "access_token": "token"}
+    result = Orchestrator(cfg).run()
+    assert result["cancelled"] is cancel
+    assert refreshed == ([] if cancel else ["token"])
+    if not cancel:
+        assert events[-1] == "refresh"
+        assert events.count("index") >= 3
+
+
+def test_account_refresh_deduplicates_credentials_but_keeps_accounts_separate(monkeypatch):
+    from types import SimpleNamespace
+    from cw_platform.orchestrator import _pairs
+
+    calls = []
+    cfg = {"simkl": {"client_id": "client", "access_token": "one", "instances": {
+        "duplicate": {"client_id": "client", "access_token": "one"},
+        "other": {"client_id": "client", "access_token": "two"},
+    }}}
+    ctx = SimpleNamespace(config=cfg, emit=lambda *a, **kw: None,
+                          providers={"SIMKL": SimpleNamespace(refresh_account=lambda view: calls.append(view["simkl"]["access_token"]) or True)})
+    pairs = [{"source": "PLEX", "target": "SIMKL", "target_instance": instance} for instance in ("default", "duplicate", "other")]
+    _pairs._refresh_accounts_after_run(ctx, pairs)
+    assert calls == ["one", "two"]
 
 
 def test_cancel_during_health_returns_cancelled_summary(config_base, monkeypatch) -> None:

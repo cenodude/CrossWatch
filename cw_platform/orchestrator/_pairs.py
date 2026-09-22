@@ -24,7 +24,7 @@ from ..run_control import SyncCancelled, cancel_requested
 from ..value_coercion import coerce_bool
 from ..pair_scope import pair_feature_scope
 from ..log_context import log_pair_id
-from ..connection_status import record_health
+from ..connection_status import identity as connection_identity, record_health
 
 def _deep_merge_provider_overrides(dst: dict[str, Any], src: Mapping[str, Any]) -> None:
     for k, v in (src or {}).items():
@@ -238,6 +238,27 @@ def _collect_health_for_run(ctx, pairs: list[Mapping[str, Any]]) -> dict[str, An
             pass
 
     return health_map
+
+
+def _refresh_accounts_after_run(ctx, pairs: list[Mapping[str, Any]]) -> None:
+    refreshed: set[str] = set()
+    for pair in pairs:
+        for side in ("source", "target"):
+            name = str(pair.get(side) or "").upper().strip()
+            refresh = getattr((ctx.providers or {}).get(name), "refresh_account", None)
+            if not callable(refresh):
+                continue
+            instance = normalize_instance_id(pair.get(f"{side}_instance"))
+            cfg = build_provider_config_view(ctx.config or {}, name, instance)
+            key = connection_identity(name, cfg)
+            if key in refreshed:
+                continue
+            refreshed.add(key)
+            try:
+                ok = bool(refresh(cfg))
+                ctx.emit("account:refresh", provider=name, instance=instance, ok=ok)
+            except Exception as exc:
+                ctx.emit("account:refresh", provider=name, instance=instance, ok=False, error=type(exc).__name__)
 
 
 def _feature_list_for_pair(pair: Mapping[str, Any]) -> list[str]:
@@ -615,6 +636,9 @@ def run_pairs(ctx) -> dict[str, Any]:
         ctx.emit = metrics._orig_emit
         return {"ok": not errors_total and not cancelled, "errors": errors_total,
                 "blocked": blocked_total, "cancelled": cancelled, "pairs": len(pairs)}
+
+    if not cancelled:
+        _refresh_accounts_after_run(ctx, pairs)
 
     if "watchlist" in features_ran:
         try:

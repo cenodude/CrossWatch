@@ -375,6 +375,29 @@ def test_changed_settings_refresh_even_with_warm_memory_cache():
     assert len(calls) == 1
 
 
+def test_concurrent_settings_consumers_share_one_request():
+    entered = threading.Event()
+    release = threading.Event()
+    calls = []
+
+    def post(*args, **kwargs):
+        calls.append(True)
+        entered.set()
+        assert release.wait(3)
+        return response(200, {"account": {"type": "pro"}})
+
+    session = SimpleNamespace(post=post)
+    headers = {"Authorization": "Bearer token"}
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        first = pool.submit(_common.fetch_user_settings, session, headers)
+        assert entered.wait(3)
+        second = pool.submit(_common.fetch_user_settings, session, headers)
+        third = pool.submit(_common.refresh_user_settings_from_activities, session, headers, {})
+        release.set()
+        assert first.result(timeout=3) == second.result(timeout=3) == third.result(timeout=3)
+    assert len(calls) == 1
+
+
 def test_quota_headers_feed_the_status_fields_and_zero_on_daily_limit():
     def send(url, **kwargs):
         result = response(200)
@@ -388,6 +411,40 @@ def test_quota_headers_feed_the_status_fields_and_zero_on_daily_limit():
     assert fields["daily_resets_label"]
     _common.block_quota(http.token_key("token"), 60)
     assert _common.latest_quota(http.token_key("token"))["daily_remaining"] == 0
+
+
+def test_end_of_sync_refresh_updates_warm_settings_and_quota(monkeypatch):
+    from api import probesAPI as probes
+    from providers.sync import _mod_SIMKL as simkl
+
+    cfg = {"simkl": {"client_id": "client", "access_token": "token"}}
+    key = http.token_key("token")
+    _common.account_settings_store(key, {"account": {"type": "free"}})
+    probes.STATUS_CACHE.update(ts=time.time(), data={"old": True})
+    session = requests.Session()
+    session.headers.update({"Authorization": "Bearer token", "simkl-api-key": "client"})
+    calls = []
+
+    def send(url, **kwargs):
+        calls.append(url)
+        result = response(200, {"account": {"type": "pro"}})
+        result.headers.update({"X-RateLimit-Limit": "1000", "X-RateLimit-Remaining": "123"})
+        return result
+
+    monkeypatch.setattr(session, "post", lambda url, **kw: http.paced_request(send, "POST", url, **kw))
+    adapter = SimpleNamespace(client=SimpleNamespace(session=session), cfg=SimpleNamespace(timeout=5))
+    monkeypatch.setattr(simkl.OPS, "_adapter", lambda cfg: adapter)
+    for _ in range(2):
+        assert simkl.OPS.refresh_account(cfg) is True
+        assert probes.simkl_user_info(cfg)["account_type"] == "pro"
+        assert _common.latest_quota(key)["daily_remaining"] == 123
+        assert probes.STATUS_CACHE["data"] is None
+    assert calls == [_common.URL_USER_SETTINGS] * 2
+    assert _common.fetch_user_settings(session, session.headers)["account"]["type"] == "pro"
+    assert len(calls) == 2
+    _common.block_quota(key, 60)
+    assert simkl.OPS.refresh_account(cfg) is False
+    assert len(calls) == 2
 
 
 def test_empty_progress_snapshot_is_reused_until_playback_changes(monkeypatch):

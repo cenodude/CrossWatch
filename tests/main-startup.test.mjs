@@ -136,6 +136,47 @@ function setup({ authPending = false } = {}) {
     enableAuth() { authPending = false; }, resolveAuth };
 }
 
+test("overview profile changes reload status without forcing provider probes", async () => {
+  const app = setup();
+  const requests = [];
+  app.window.CW.API.Status.get = (...args) => { requests.push(args); return new Promise(() => {}); };
+  app.fire(app.window, "cw:overview-profile-changed");
+  await app.advance(0);
+  assert.deepEqual(requests, [[true, false]]);
+  void app.window.refreshStatus(true);
+  await app.flush();
+  assert.deepEqual(requests, [[true, false], [true, true]]);
+});
+
+test("sync completion reloads the tooltip without requesting another provider check", async () => {
+  const app = setup();
+  const requests = [];
+  app.window.CW.API.Status.get = (...args) => { requests.push(args); return new Promise(() => {}); };
+  app.fire(app.window, "sync-complete");
+  await app.advance(0);
+  assert.deepEqual(requests, [[true, false]]);
+});
+
+test("status API can bypass the UI cache without requesting a provider check", async () => {
+  const requests = [];
+  const window = { CW: {OverviewProfile: {id: "profile-one"}}, addEventListener() {} };
+  const context = {
+    window, document: {addEventListener() {}}, AbortController, setTimeout, clearTimeout,
+    fetch: async url => {
+      requests.push(url);
+      return {ok: true, headers: {get: () => "application/json"}, json: async () => ({})};
+    },
+  };
+  vm.runInNewContext(readFileSync(new URL("../assets/helpers/api.js", import.meta.url), "utf8"), context);
+  await window.CW.API.Status.get(true, false);
+  await window.CW.API.Status.get(true, false);
+  await window.CW.API.Status.get(true);
+  assert.deepEqual(requests, [
+    "/api/status?user_profile=profile-one", "/api/status?user_profile=profile-one",
+    "/api/status?user_profile=profile-one&fresh=1",
+  ]);
+});
+
 test("Main starts the preview and streams without waiting for pairs, status or insights", async () => {
   const app = setup();
   void app.window.showTab("main");

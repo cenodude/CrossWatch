@@ -12,6 +12,7 @@ from typing import Any, Iterable, Mapping
 
 import requests
 from cw_platform.simkl_http import pace_session
+from cw_platform.connection_status import bust_status, record_response
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 from ._log import log as cw_log
@@ -29,6 +30,7 @@ from .simkl._common import (
     _is_capture_mode as simkl_capture_mode,
     build_headers,
     fetch_activities,
+    fetch_user_settings,
     refresh_user_settings_from_activities,
     memoize_activities,
     normalize as simkl_normalize,
@@ -952,6 +954,19 @@ class _SIMKLOPS:
 
     def health(self, cfg: Mapping[str, Any]) -> Mapping[str, Any]:
         return self._adapter(cfg).health()
+
+    def refresh_account(self, cfg: Mapping[str, Any]) -> bool:
+        if not self.is_configured(cfg) or quota_blocked_until(quota_account_key(cfg.get("simkl") or {})):
+            return False
+        adapter = self._adapter(cfg)
+        with adapter.client.session as session:
+            settings = fetch_user_settings(
+                session, session.headers, timeout=max(3.0, min(adapter.cfg.timeout, 15.0)), force_refresh=True,
+            )
+        if settings is not None:
+            record_response("simkl", cfg, 200)
+        bust_status()
+        return settings is not None
 
     def dropped_show_tokens(self, cfg: Mapping[str, Any]) -> set[str]:
         return self._adapter(cfg).dropped_show_tokens()
