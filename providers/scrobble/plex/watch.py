@@ -44,6 +44,8 @@ _CFG_CACHE: dict[str, Any] = {"ts": 0.0, "cfg": {}}
 _CFG_TTL_SEC = 2.0
 OFFLINE_INITIAL_RETRY_SECONDS = 30.0
 OFFLINE_MAX_RETRY_SECONDS = 300.0
+SESSION_CONTINUITY_SECONDS = 6 * 3600
+ACTIVE_PLAYBACK_SECONDS = 120.0
 
 
 class _PlexAlertListener(AlertListener):
@@ -412,6 +414,9 @@ class WatchService:
         self._best_offset: dict[str, tuple[int, int, float]] = {}
         self._dur_cache: dict[int, tuple[int, float]] = {}
         self._last_event: dict[str, ScrobbleEvent] = {}
+        self._session_playback: dict[str, tuple[dict[str, str], float]] = {}
+        self._stop_fallback: dict[str, tuple[ScrobbleEvent, dict[str, str], float]] = {}
+        self._identity_recovery: dict[str, tuple[ScrobbleEvent, dict[str, str], float]] = {}
         self._pkc_pending: dict[str, dict[str, Any]] = {}
         self._tl_last: dict[str, tuple[int, int, int, float]] = {}
         self._last_seek_emit: dict[str, float] = {}
@@ -548,13 +553,15 @@ class WatchService:
 
         return max(cand, key=score)
 
-    def _normalize_ms(self, off: int | None, dur: int | None) -> tuple[int | None, int | None]:
+    def _normalize_ms(self, off: int | None, dur: int | None, *, milliseconds: bool = False) -> tuple[int | None, int | None]:
         o = _safe_int(off) if off is not None else None
         d = _safe_int(dur) if dur is not None else None
         if o is None and d is None:
             return None, None
         if o is not None and o < 0:
             o = 0
+        if milliseconds:
+            return o, d
         if d is not None and d > 0:
             # Plex mixes seconds and milliseconds.
             if d < 36000 and o is not None and o < 36000:
@@ -634,6 +641,203 @@ class WatchService:
             return True, int(jump), dt
         return False, int(jump), dt
 
+    @staticmethod
+    def _playback_fingerprint(raw: dict[str, Any], session_key: str | None = None) -> dict[str, str]:
+        candidates: list[dict[str, Any]] = []
+
+        def visit(value: Any) -> None:
+            if isinstance(value, dict):
+                sk = str(value.get("sessionKey") or value.get("session") or "").strip()
+                if sk:
+                    if session_key is None or sk == str(session_key):
+                        candidates.append(value)
+                    return
+                for key, child in value.items():
+                    if not str(key).startswith("_cw_"):
+                        visit(child)
+            elif isinstance(value, list):
+                for child in value:
+                    visit(child)
+
+        visit(raw)
+        if len(candidates) > 1:
+            return {}
+        entry = candidates[0] if candidates else raw
+        if not candidates and session_key is not None:
+            sk = str(entry.get("sessionKey") or entry.get("session") or "").strip()
+            if sk and sk != str(session_key):
+                return {}
+        result = {
+            field: str(entry[field]).strip()
+            for field in ("ratingKey", "clientIdentifier", "guid", "account")
+            if entry.get(field) and str(entry[field]).strip()
+        }
+        if "ratingKey" not in result:
+            key = str(entry.get("ratingkey") or entry.get("itemID") or "").strip()
+            match = re.match(r"^/library/metadata/(\d+)", str(entry.get("key") or ""))
+            if key:
+                result["ratingKey"] = key
+            elif match is not None:
+                result["ratingKey"] = match.group(1)
+        return result
+
+    @staticmethod
+    def _playback_conflicts(previous: dict[str, str], current: dict[str, str]) -> bool:
+        fields = ("ratingKey", "clientIdentifier", "account")
+        if not (previous.get("ratingKey") and current.get("ratingKey")):
+            fields += ("guid",)
+        return any(previous.get(key) and current.get(key) and previous[key] != current[key] for key in fields)
+
+    def _same_playback(self, previous: dict[str, str], current: dict[str, str]) -> bool:
+        return not self._playback_conflicts(previous, current) and any(
+            previous.get(key) and previous.get(key) == current.get(key)
+            for key in ("ratingKey", "clientIdentifier", "guid")
+        )
+
+    def _forget_session(self, sk: str, *, keep_stop: bool = False) -> None:
+        self._identity_recovery.pop(sk, None)
+        previous = self._last_event.get(sk)
+        playback = self._session_playback.get(sk)
+        if keep_stop and previous is not None and playback is not None:
+            self._stop_fallback[sk] = (previous, dict(playback[0]), playback[1])
+        elif not keep_stop:
+            self._stop_fallback.pop(sk, None)
+        for state in (
+            self._session_playback, self._last_event, self._sess_identity_cache,
+            self._last_seen, self._last_emit, self._max_seen, self._first_seen,
+            self._last_pause_ts, self._last_probe, self._best_offset,
+            self._tl_last, self._last_seek_emit, self._identity_miss, self._identity_logged,
+        ):
+            state.pop(sk, None)
+        self._allowed_sessions = {key for key in self._allowed_sessions if not key.startswith(f"{sk}|")}
+        self._pkc_pending = {
+            client: pending for client, pending in self._pkc_pending.items()
+            if pending.get("session_key") != sk
+        }
+
+    def _suspend_session_identity(self, sk: str) -> None:
+        previous = self._last_event.get(sk)
+        playback = self._session_playback.get(sk)
+        self._forget_session(sk)
+        if previous is not None and playback is not None:
+            self._identity_recovery[sk] = (previous, dict(playback[0]), playback[1])
+
+    def _expire_session_identity(self, sk: str) -> None:
+        now = time.time()
+        previous = self._session_playback.get(sk)
+        if previous and not 0 <= now - previous[1] < SESSION_CONTINUITY_SECONDS:
+            self._forget_session(sk)
+        fallback = self._stop_fallback.get(sk)
+        if fallback and not 0 <= now - fallback[2] < SESSION_CONTINUITY_SECONDS:
+            self._stop_fallback.pop(sk, None)
+        recovery = self._identity_recovery.get(sk)
+        if recovery and not 0 <= now - recovery[2] < SESSION_CONTINUITY_SECONDS:
+            self._identity_recovery.pop(sk, None)
+
+    def _playback_rewound(self, sk: str, entry: dict[str, Any]) -> bool:
+        offset = _safe_int(entry.get("viewOffset"))
+        best = self._best_offset.get(sk)
+        return offset is not None and best is not None and offset < best[0]
+
+    def _prepare_session(self, sk: str, fingerprint: dict[str, str], action: str, entry: dict[str, Any] | None = None) -> None:
+        self._expire_session_identity(sk)
+        if entry is not None and self._playback_rewound(sk, entry):
+            self._suspend_session_identity(sk)
+        now = time.time()
+        previous = self._session_playback.get(sk)
+        if previous:
+            old, ts = previous
+            matching = self._same_playback(old, fingerprint)
+            recent = 0 <= now - ts < ACTIVE_PLAYBACK_SECONDS
+            last_action = self._last_emit.get(sk, (None, None))[0]
+            if not matching:
+                self._forget_session(sk)
+            elif action == "start" and not recent and (sk in self._last_event or sk in self._sess_identity_cache):
+                self._forget_session(sk, keep_stop=True)
+            else:
+                fingerprint = {**old, **fingerprint}
+                if action == "start" and last_action in ("pause", "stop"):
+                    self._sess_identity_cache.pop(sk, None)
+                now = ts
+        self._session_playback[sk] = (fingerprint, now)
+
+    def _can_inherit_identity(self, sk: str, entry: dict[str, Any], *, action: str = "start") -> bool:
+        previous = self._session_playback.get(sk)
+        base = self._last_event.get(sk)
+        if previous is None or base is None or not base.account:
+            return False
+        fingerprint, ts = previous
+        if (
+            self._last_emit.get(sk, (None, None))[0] != action
+            or not 0 <= time.time() - ts < ACTIVE_PLAYBACK_SECONDS
+            or not self._same_playback(fingerprint, self._playback_fingerprint(entry, sk))
+            or self._playback_rewound(sk, entry)
+        ):
+            return False
+        cached = self._sess_identity_cache.get(sk)
+        if cached and str(cached.get("name") or "").strip() != str(base.account).strip():
+            return False
+        offset = _safe_int(entry.get("viewOffset"))
+        duration = _safe_int(entry.get("duration"))
+        best = self._best_offset.get(sk)
+        if duration is None and best:
+            duration = best[1]
+        if offset is not None and duration is not None:
+            is_seek, _, _ = self._is_seek_jump(best, offset, duration, time.time())
+            if is_seek:
+                return False
+        return True
+
+    def _progress_matches_session(self, sk: str, entry: dict[str, Any], *, verify_user: bool = False) -> bool:
+        self._expire_session_identity(sk)
+        recovery = self._identity_recovery.get(sk)
+        if recovery is not None:
+            base, fingerprint, _ = recovery
+            current = self._playback_fingerprint(entry, sk)
+            if not self._same_playback(fingerprint, current):
+                self._forget_session(sk)
+                return False
+            ident = self._resolve_session_identity(sk, current, allow_stale=False)
+            if not ident:
+                return False
+            candidate = self._event_with_session_identity(base, ident)
+            if candidate.account != base.account or not self._accepts_user(candidate):
+                self._forget_session(sk)
+                self._sess_identity_cache[sk] = ident
+                return False
+            self._identity_recovery.pop(sk, None)
+            self._last_event[sk] = candidate
+            self._last_emit[sk] = (candidate.action, candidate.progress)
+            self._session_playback[sk] = ({**fingerprint, **current}, time.time())
+        previous = self._session_playback.get(sk)
+        if not previous:
+            return False
+        fingerprint, ts = previous
+        current = self._playback_fingerprint(entry, sk)
+        if not 0 <= time.time() - ts < ACTIVE_PLAYBACK_SECONDS or not self._same_playback(fingerprint, current):
+            return False
+        if not verify_user or not self._needs_user_resolution() or self._shared_instance_identity():
+            return True
+        base = self._last_event.get(sk)
+        if base is None or self._last_emit.get(sk, (None, None))[0] == "stop":
+            return False
+        if self._can_inherit_identity(sk, entry):
+            return self._accepts_user(base)
+        rewound = self._playback_rewound(sk, entry)
+        if rewound:
+            self._sess_identity_cache.pop(sk, None)
+        ident = self._resolve_session_identity(sk, current, allow_stale=False)
+        if not ident:
+            if rewound:
+                self._suspend_session_identity(sk)
+            return False
+        candidate = self._event_with_session_identity(base, ident)
+        if candidate.account != base.account:
+            self._forget_session(sk)
+            self._sess_identity_cache[sk] = ident
+            return False
+        return self._accepts_user(candidate)
+
     def _emit_seek_update(self, session_key: str, pct: int, cfg: dict[str, Any], src: str) -> None:
         sk = str(session_key or "").strip()
         if not sk:
@@ -680,18 +884,19 @@ class WatchService:
         self._log(f"seek update p={pct_i}% sess={ev2.session_key}", "DEBUG")
 
     # Ingest progress from PSN, TimelineEntry, and ProgressNotification alerts.
-    def _ingest_progress_from_alert(self, alert: dict[str, Any], cfg: dict[str, Any] | None = None) -> None:
+    def _ingest_progress_from_alert(self, alert: dict[str, Any], cfg: dict[str, Any] | None = None, *, verified_session: str | None = None) -> None:
         cfg = cfg or _cfg()
         psn = alert.get("PlaySessionStateNotification")
         best_psn = self._best_psn_entry(psn)
-        if isinstance(best_psn, dict):
-            sk = str(best_psn.get("sessionKey") or "").strip()
+        psn_sk = str(best_psn.get("sessionKey") or "").strip() if isinstance(best_psn, dict) else ""
+        if isinstance(best_psn, dict) and self._progress_matches_session(psn_sk, best_psn, verify_user=psn_sk != verified_session):
+            sk = psn_sk
             rk = _safe_int(best_psn.get("ratingKey") or best_psn.get("ratingkey"))
             off = best_psn.get("viewOffset")
             if off is None:
                 off = best_psn.get("time")
             dur = best_psn.get("duration")
-            o, d = self._normalize_ms(_safe_int(off), _safe_int(dur))
+            o, d = self._normalize_ms(_safe_int(off), _safe_int(dur), milliseconds=best_psn.get("viewOffset") is not None)
             if d is None or d <= 0:
                 d = self._duration_ms_for(rk)
             if sk and o is not None and d is not None and d > 0:
@@ -721,7 +926,7 @@ class WatchService:
                 items = [x for x in data if isinstance(x, dict)]
             for entry in items:
                 sk = str(entry.get("sessionKey") or entry.get("session") or "").strip()
-                if not sk:
+                if not sk or not self._progress_matches_session(sk, entry, verify_user=sk != verified_session):
                     continue
                 off = entry.get("viewOffset")
                 if off is None:
@@ -991,26 +1196,27 @@ class WatchService:
             self._identity_log_ts[throttle_key] = now
         self._dbg(msg)
 
-    def _resolve_session_identity(self, session_key: str | None) -> dict[str, Any] | None:
+    def _resolve_session_identity(self, session_key: str | None, fingerprint: dict[str, str] | None = None, *, allow_stale: bool = True) -> dict[str, Any] | None:
         self._no_sessions_access = False
         if not (self._plex and session_key):
             return None
         sk = str(session_key).strip()
         if not sk:
             return None
+        fingerprint = fingerprint or {}
         now = time.time()
         cache = getattr(self, "_sess_identity_cache", None)
         stale_hit = None
         stale_age = None
         if isinstance(cache, dict):
             hit = cache.get(sk)
-            if isinstance(hit, dict):
+            if isinstance(hit, dict) and self._same_playback(hit.get("fingerprint") or {}, fingerprint):
                 try:
                     stale_age = now - float(hit.get("ts") or 0.0)
                 except Exception:
                     stale_age = None
                 stale_hit = hit
-                if stale_age is not None and stale_age < 15.0:
+                if stale_age is not None and 0 <= stale_age < 15.0:
                     return hit
         t0 = time.time()
 
@@ -1069,7 +1275,21 @@ class WatchService:
                             acc_name = str(val).strip()
                             break
 
+                player = v.find("Player")
+                row_fingerprint = self._playback_fingerprint(dict(v.attrib))
+                if player is not None:
+                    client = str(player.get("machineIdentifier") or player.get("clientIdentifier") or "").strip()
+                    if client:
+                        row_fingerprint["clientIdentifier"] = client
+                if vk == sk:
+                    if self._playback_conflicts(row_fingerprint, fingerprint):
+                        stale_hit = None
+                        if isinstance(cache, dict):
+                            cache.pop(vk, None)
+                        continue
+                    row_fingerprint = {**fingerprint, **row_fingerprint}
                 row: dict[str, Any] = {
+                    "fingerprint": row_fingerprint,
                     "name": user_name or acc_name,
                     "user_name": user_name,
                     "user_username": user_username,
@@ -1099,7 +1319,7 @@ class WatchService:
                         f"in={_ms()}ms"
                     )
                 return ident
-            if isinstance(stale_hit, dict) and stale_age is not None and stale_age < 6 * 3600:
+            if allow_stale and isinstance(stale_hit, dict) and stale_age is not None and 0 <= stale_age < SESSION_CONTINUITY_SECONDS:
                 self._identity_miss.pop(sk, None)
                 self._log_identity(
                     f"identity stale sess={sk} user={_mask_account(stale_hit.get('name'))} "
@@ -1124,7 +1344,7 @@ class WatchService:
                     reason = "sessions_forbidden"
             except Exception:
                 pass
-            if isinstance(stale_hit, dict) and stale_age is not None and stale_age < 6 * 3600:
+            if allow_stale and isinstance(stale_hit, dict) and stale_age is not None and 0 <= stale_age < SESSION_CONTINUITY_SECONDS:
                 self._log_identity(
                     f"identity stale sess={sk} user={_mask_account(stale_hit.get('name'))} "
                     f"age={int(stale_age)}s reason={reason} in={_ms()}ms",
@@ -1210,7 +1430,11 @@ class WatchService:
 
     def _drop_itemless_event(self, ev: ScrobbleEvent, entry: dict[str, Any]) -> None:
         sk = str(ev.session_key or "").strip()
+        self._expire_session_identity(sk)
         prev = self._last_event.get(sk) if sk else None
+        fallback = self._stop_fallback.get(sk) if sk else None
+        if prev is None and fallback:
+            prev = fallback[0]
         if ev.action == "stop" and isinstance(prev, ScrobbleEvent):
             client = str(entry.get("clientIdentifier") or "").strip()
             if client and self._needs_pkc_support():
@@ -1240,6 +1464,7 @@ class WatchService:
             or offset is None
             or _safe_int(entry.get("viewOffset")) != offset
             or time.time() - float(pending.get("ts") or 0.0) > 2.0
+            or not self._same_playback(self._playback_fingerprint(prev.raw or {}, prev.session_key), self._playback_fingerprint(entry))
         ):
             return ev
         raw = dict(ev.raw or {})
@@ -1446,11 +1671,6 @@ class WatchService:
             if not source_enabled(cfg, "watcher"):
                 return
 
-            try:
-                self._ingest_progress_from_alert(alert, cfg)
-            except Exception:
-                pass
-
             px = (cfg.get("plex") or {})
             inst = {}
             if self._instance_id and str(self._instance_id) != "default":
@@ -1482,31 +1702,69 @@ class WatchService:
             if not isinstance(ev, ScrobbleEvent):
                 self._dbg("alert parsed but no event produced (unknown shape)")
                 return
-            if isinstance(best_psn, dict):
-                if not self._psn_has_item(best_psn):
-                    self._drop_itemless_event(ev, best_psn)
-                    return
-                if ev.action == "stop":
-                    ev = self._pkc_merged_stop(ev, best_psn)
+            fingerprint = self._playback_fingerprint(ev.raw or {}, ev.session_key)
+            if ev.account:
+                fingerprint["account"] = str(ev.account).strip()
+            if isinstance(best_psn, dict) and not self._psn_has_item(best_psn):
+                previous = self._session_playback.get(str(ev.session_key or ""))
+                if previous and self._playback_conflicts(previous[0], fingerprint):
+                    self._forget_session(str(ev.session_key))
+                self._drop_itemless_event(ev, best_psn)
+                return
+            if ev.session_key:
+                self._prepare_session(
+                    str(ev.session_key), fingerprint, ev.action,
+                    best_psn if isinstance(best_psn, dict) else ev.raw or {},
+                )
+            if isinstance(best_psn, dict) and ev.action == "stop":
+                ev = self._pkc_merged_stop(ev, best_psn)
 
             # Ignore idle/incomplete Plex alerts with no user and no session.
             if not str(ev.account or "").strip() and not str(ev.session_key or "").strip():
                 return
-            if not ev.account and ev.session_key:
+            inherit_identity = bool(
+                ev.session_key and ev.action in ("start", "pause")
+                and self._can_inherit_identity(
+                    str(ev.session_key), best_psn if isinstance(best_psn, dict) else ev.raw or {}, action=ev.action,
+                )
+            )
+            if not ev.account and ev.session_key and (ev.action == "stop" or inherit_identity):
                 prev_ev = self._last_event.get(str(ev.session_key))
+                if prev_ev is None and ev.action == "stop":
+                    fallback = self._stop_fallback.get(str(ev.session_key))
+                    if fallback and self._same_playback(fallback[1], fingerprint):
+                        prev_ev = fallback[0]
                 prev_acc = str(getattr(prev_ev, "account", "") or "").strip() if prev_ev else ""
-                if prev_acc:
-                    ev = ScrobbleEvent(**{**ev.__dict__, "account": prev_acc})
+                if prev_ev is not None and prev_acc:
+                    raw = dict(ev.raw or {})
+                    ident = (prev_ev.raw or {}).get("_cw_session_identity")
+                    if isinstance(ident, dict):
+                        raw["_cw_session_identity"] = dict(ident)
+                    ev = ScrobbleEvent(**{**ev.__dict__, "account": prev_acc, "raw": raw})
 
             if not str(ev.account or "").strip():
                 shared = self._shared_instance_identity()
                 if shared:
                     ev = self._event_with_session_identity(ev, shared)
                 elif self._needs_user_resolution():
-                    ident = self._resolve_session_identity(ev.session_key)
+                    ident = self._resolve_session_identity(ev.session_key, fingerprint, allow_stale=ev.action == "stop")
                     ev = self._event_with_session_identity(ev, ident)
                     if not str(ev.account or "").strip() and getattr(self, "_no_sessions_access", False):
                         ev = self._event_with_unresolved_user_fallback(ev)
+
+            if ev.session_key and ev.account:
+                sk = str(ev.session_key)
+                self._identity_recovery.pop(sk, None)
+                previous = self._session_playback.get(sk)
+                account = str(ev.account).strip()
+                fallback = self._stop_fallback.get(sk)
+                previous_account = str((previous[0].get("account") if previous else "") or (fallback[0].account if fallback else "") or "")
+                if previous_account and previous_account != account:
+                    identity = self._sess_identity_cache.get(sk)
+                    self._forget_session(sk)
+                    if identity:
+                        self._sess_identity_cache[sk] = identity
+                    self._session_playback[sk] = ({**fingerprint, "account": account}, time.time())
 
             if not self._passes_filters(ev):
                 self._throttled_filtered_log(ev)
@@ -1515,6 +1773,17 @@ class WatchService:
             if not self._accepts_user(ev):
                 self._throttled_route_filtered_log(ev)
                 return
+
+            if ev.session_key:
+                sk = str(ev.session_key)
+                current, ts = self._session_playback.get(sk, (fingerprint, time.time()))
+                if ev.account:
+                    current = {**current, "account": str(ev.account).strip()}
+                self._session_playback[sk] = (current, time.time())
+            try:
+                self._ingest_progress_from_alert(alert, cfg, verified_session=str(ev.session_key or ""))
+            except Exception:
+                pass
 
             enriched = self._enrich_event_with_plex(ev)
             if enriched is None:
@@ -1539,7 +1808,10 @@ class WatchService:
                 dur = best_psn.get("duration")
 
             rk = _safe_int((ev.ids or {}).get("plex")) or self._find_rating_key(ev.raw or {})
-            o, d = self._normalize_ms(_safe_int(vo), _safe_int(dur))
+            o, d = self._normalize_ms(
+                _safe_int(vo), _safe_int(dur),
+                milliseconds=isinstance(best_psn, dict) and best_psn.get("viewOffset") is not None,
+            )
             if d is None or d <= 0:
                 d = self._duration_ms_for(rk)
             if (o is None or o <= 0) and sk:
@@ -1653,6 +1925,7 @@ class WatchService:
                 pass
             if sk and ev.action == "start":
                 self._last_event[sk] = ev
+                self._stop_fallback.pop(sk, None)
             self._log(f"event {ev.action} {ev.media_type} user={_mask_account(ev.account)} p={ev.progress} sess={ev.session_key}")
             if sk:
                 self._last_emit[sk] = (ev.action, ev.progress)
