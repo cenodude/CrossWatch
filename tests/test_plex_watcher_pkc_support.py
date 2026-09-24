@@ -176,7 +176,8 @@ def test_pkc_merge_expires(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_pkc_autoplay_stop_carries_the_new_item(monkeypatch: pytest.MonkeyPatch) -> None:
-    service, sink = _service(monkeypatch, _cfg(["owner"], pkc=True), FakePlex([OWNER_SESSION]))
+    plex = FakePlex([OWNER_SESSION, OWNER_SESSION])
+    service, sink = _service(monkeypatch, _cfg(["owner"], pkc=True), plex)
 
     _start(service)
     _start(service, rating_key="1002", imdb="tt0000002", offset=12_619)
@@ -186,6 +187,7 @@ def test_pkc_autoplay_stop_carries_the_new_item(monkeypatch: pytest.MonkeyPatch)
     assert len(stops) == 1
     assert stops[0].ids.get("imdb") == "tt0000002"
     assert stops[0].account == "owner"
+    assert plex.queries == ["/status/sessions", "/status/sessions"]
 
 
 def test_pkc_merge_is_applied_per_route(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -230,3 +232,23 @@ def test_route_option_is_strict_boolean(value: Any, expected: bool) -> None:
 
     assert normalize_route_options({"watch": {"plexkodiconnect_support": value}})["watch"]["plexkodiconnect_support"] is expected
     assert "plexkodiconnect_support" not in normalize_route_options({})["watch"]
+
+
+def test_pkc_stop_cannot_merge_a_different_item(monkeypatch: pytest.MonkeyPatch) -> None:
+    service, sink = _service(monkeypatch, _cfg(["owner"], pkc=True), FakePlex([OWNER_SESSION]))
+
+    _start(service)
+    _pkc_stop(service, rating_key="1002", imdb="tt0000002")
+
+    assert [event.action for event in sink.events] == ["start"]
+
+
+def test_pkc_autoplay_resolves_user_again(monkeypatch: pytest.MonkeyPatch) -> None:
+    shared = '<MediaContainer><Video sessionKey="85"><User id="2" title="shared" /></Video></MediaContainer>'
+    service, sink = _service(monkeypatch, _cfg(["owner"], pkc=True), FakePlex([OWNER_SESSION, shared]))
+
+    _start(service)
+    _start(service, rating_key="1002", imdb="tt0000002", offset=12_619)
+    _pkc_stop(service, rating_key="1002", imdb="tt0000002")
+
+    assert [event.action for event in sink.events] == ["start"]

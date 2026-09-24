@@ -172,6 +172,8 @@ def _video_xml(
     account_name: str = "",
     account_id: str = "",
     account_uuid: str = "",
+    rating_key: str = "",
+    client: str = "",
 ) -> str:
     user_attrs = []
     if user_name:
@@ -187,7 +189,8 @@ def _video_xml(
         account_attrs.append(f'uuid="{account_uuid}"')
     user = f"<User {' '.join(user_attrs)} />" if user_attrs else ""
     account = f"<Account {' '.join(account_attrs)} />" if account_attrs else ""
-    return f'<Video sessionKey="{session_key}">{user}{account}</Video>'
+    player = f'<Player machineIdentifier="{client}" />' if client else ""
+    return f'<Video sessionKey="{session_key}" ratingKey="{rating_key}" guid="imdb://tt0000001">{user}{account}{player}</Video>'
 
 
 def _sessions_xml(*videos: str) -> str:
@@ -1155,3 +1158,716 @@ def test_id_diagnostics_preserve_episode_and_show_namespaces() -> None:
 
     assert _ids_desc({"plex": "42", "tmdb": "123", "imdb": "tt0000001", "tmdb_show": "456"}) == "plex:42, tmdb:123, imdb:tt0000001, tmdb_show:456"
     assert _ids_desc({}) == "none"
+
+
+@pytest.mark.parametrize("cache_only", [False, True])
+@pytest.mark.parametrize("change", ["item", "client", "age"])
+def test_recycled_session_does_not_inherit_owner(monkeypatch: pytest.MonkeyPatch, cache_only: bool, change: str) -> None:
+    from providers.scrobble.plex import watch
+
+    clock = [1000.0]
+    monkeypatch.setattr(watch.time, "time", lambda: clock[0])
+    plex = CountingPlex([
+        _session_xml("8", user_name="owner", user_id="1"),
+        _session_xml("8", user_name="shared", user_id="2"),
+    ])
+    service, sink = _service(monkeypatch, _cfg(["owner"]), plex)
+    first = _alert_with_rating_key("8", 101)
+    first["PlaySessionStateNotification"][0]["clientIdentifier"] = "owner-client"
+    service._handle_alert(first)
+    if cache_only:
+        service._last_event.clear()
+    clock[0] += 40 * 3600 if change == "age" else 1
+    second = _alert_with_rating_key("8", 202 if change == "item" else 101)
+    second["PlaySessionStateNotification"][0]["clientIdentifier"] = "shared-client" if change == "client" else "owner-client"
+    service._handle_alert(second)
+    second["PlaySessionStateNotification"][0]["viewOffset"] = 60_000
+    service._handle_alert(second)
+
+    assert len(sink.events) == 1
+    assert plex.queries == ["/status/sessions", "/status/sessions"]
+
+
+@pytest.mark.parametrize("kind", ["playing", "timeline", "progress"])
+def test_recycled_session_cannot_emit_owner_seek(monkeypatch: pytest.MonkeyPatch, kind: str) -> None:
+    from providers.scrobble.plex import watch
+
+    clock = [1000.0]
+    monkeypatch.setattr(watch.time, "time", lambda: clock[0])
+    service, sink = _service(monkeypatch, _cfg(["owner"]), CountingPlex([_session_xml("8", user_name="owner")]))
+    service._handle_alert(_alert_with_rating_key("8", 101))
+    clock[0] += 10
+    entry = dict(_alert_with_rating_key("8", 202)["PlaySessionStateNotification"][0])
+    entry.update(account="shared", viewOffset=300_000)
+    field = {"playing": "PlaySessionStateNotification", "timeline": "TimelineEntry", "progress": "ProgressNotification"}[kind]
+    service._handle_alert({"type": kind, field: [entry]})
+    clock[0] += 10
+    entry = {**entry, "viewOffset": 600_000}
+    service._handle_alert({"type": kind, field: [entry]})
+
+    assert len(sink.events) == 1
+    assert not any(event.raw.get("_cw_seek") for event in sink.events)
+
+
+@pytest.mark.parametrize("whitelist", [["owner"], ["id:12345"], ["AccountName"]])
+@pytest.mark.parametrize("missing_client", [False, True])
+def test_owner_identity_survives_pause_stop_and_late_tick(monkeypatch: pytest.MonkeyPatch, whitelist: list[str], missing_client: bool) -> None:
+    from providers.scrobble.plex import watch
+
+    clock = [1000.0]
+    monkeypatch.setattr(watch.time, "time", lambda: clock[0])
+    row = '<MediaContainer><Video sessionKey="8"><User id="12345" title="owner" username="AccountName" /></Video></MediaContainer>'
+    plex = CountingPlex([row])
+    service, sink = _service(monkeypatch, _cfg(whitelist), plex)
+    first = _alert_with_rating_key("8", 101)
+    first["PlaySessionStateNotification"][0]["clientIdentifier"] = "client"
+    service._handle_alert(first)
+    for state, delay, offset in [("paused", 10, 500_000), ("stopped", 3600, 950_000), ("playing", 1, 960_000)]:
+        clock[0] += delay
+        alert = _alert_with_rating_key("8", 101)
+        alert["PlaySessionStateNotification"][0].update(state=state, viewOffset=offset)
+        if not missing_client:
+            alert["PlaySessionStateNotification"][0]["clientIdentifier"] = "client"
+        service._handle_alert(alert)
+
+    assert any(event.action == "stop" and event.account == "owner" for event in sink.events)
+    assert sink.events[-1].account == "owner"
+    assert sink.events[-1].raw["_cw_session_identity"]["user_id"] == "12345"
+    assert plex.queries == ["/status/sessions", "/status/sessions"]
+    assert service._last_event["8"].account == "owner"
+
+
+def test_recycled_session_resets_previous_progress(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.scrobble.plex import watch
+
+    clock = [1000.0]
+    monkeypatch.setattr(watch.time, "time", lambda: clock[0])
+    plex = CountingPlex([_session_xml("8", user_name="owner"), _session_xml("8", user_name="owner")])
+    service, sink = _service(monkeypatch, _cfg(["owner"]), plex)
+    old = _alert_with_rating_key("8", 101)
+    old["PlaySessionStateNotification"][0]["viewOffset"] = 900_000
+    service._handle_alert(old)
+    clock[0] += 10
+    service._handle_alert(_alert_with_rating_key("8", 202))
+
+    assert [event.progress for event in sink.events] == [90, 5]
+    assert service._max_seen["8"] == 5
+    assert service._first_seen["8"] == clock[0]
+
+
+@pytest.mark.parametrize("response", ["<MediaContainer />", RuntimeError("connection reset")])
+def test_changed_item_cannot_use_stale_identity_on_lookup_failure(monkeypatch: pytest.MonkeyPatch, response: Any) -> None:
+    from providers.scrobble.plex import watch
+
+    clock = [1000.0]
+    monkeypatch.setattr(watch.time, "time", lambda: clock[0])
+    plex = CountingPlex([_session_xml("8", user_name="owner"), response])
+    service, sink = _service(monkeypatch, _cfg(["owner"]), plex)
+    service._handle_alert(_alert_with_rating_key("8", 101))
+    clock[0] += 30
+    service._handle_alert(_alert_with_rating_key("8", 202))
+
+    assert len(sink.events) == 1
+    assert plex.queries == ["/status/sessions", "/status/sessions"]
+
+
+@pytest.mark.parametrize("age", [1, 30])
+@pytest.mark.parametrize("change", ["item", "client"])
+def test_prefetched_identity_is_bound_to_its_playback(monkeypatch: pytest.MonkeyPatch, age: int, change: str) -> None:
+    from providers.scrobble.plex import watch
+
+    clock = [1000.0]
+    monkeypatch.setattr(watch.time, "time", lambda: clock[0])
+    plex = CountingPlex([
+        _sessions_xml(
+            _video_xml("other", user_name="shared"),
+            _video_xml("8", user_name="owner", rating_key="101", client="owner-client"),
+        ),
+        "<MediaContainer />",
+    ])
+    service, sink = _service(monkeypatch, _cfg(["owner"]), plex)
+    service._handle_alert(_alert("other"))
+    clock[0] += age
+    alert = _alert_with_rating_key("8", 202 if change == "item" else 101)
+    alert["PlaySessionStateNotification"][0]["clientIdentifier"] = "shared-client" if change == "client" else "owner-client"
+    service._handle_alert(alert)
+
+    assert sink.events == []
+    assert plex.queries == ["/status/sessions", "/status/sessions"]
+
+
+@pytest.mark.parametrize("change", ["item", "client"])
+def test_live_session_with_conflicting_playback_is_rejected(monkeypatch: pytest.MonkeyPatch, change: str) -> None:
+    row = _session_xml("8", user_name="owner", rating_key="101", client="owner-client")
+    plex = CountingPlex([row])
+    service, sink = _service(monkeypatch, _cfg(["owner"]), plex)
+    alert = _alert_with_rating_key("8", 202 if change == "item" else 101)
+    alert["PlaySessionStateNotification"][0]["clientIdentifier"] = "shared-client" if change == "client" else "owner-client"
+    service._handle_alert(alert)
+
+    assert sink.events == []
+
+
+@pytest.mark.parametrize("kind", ["playing", "timeline", "progress"])
+def test_current_playback_seek_retains_owner(monkeypatch: pytest.MonkeyPatch, kind: str) -> None:
+    from providers.scrobble.plex import watch
+
+    clock = [1000.0]
+    monkeypatch.setattr(watch.time, "time", lambda: clock[0])
+    service, sink = _service(monkeypatch, _cfg(["owner"]), CountingPlex([_session_xml("8", user_name="owner")]))
+    service._handle_alert(_alert_with_rating_key("8", 101))
+    field = {"playing": "PlaySessionStateNotification", "timeline": "TimelineEntry", "progress": "ProgressNotification"}[kind]
+    for delay, offset in [(1, 50_000), (10, 300_000)]:
+        clock[0] += delay
+        entry = dict(_alert_with_rating_key("8", 101)["PlaySessionStateNotification"][0])
+        entry["viewOffset"] = offset
+        service._handle_alert({"type": kind, field: [entry]})
+
+    assert sink.events[-1].progress == 30
+    assert sink.events[-1].account == "owner"
+    assert sink.events[-1].raw.get("_cw_seek") is True
+
+
+@pytest.mark.parametrize("offset, duration", [(12_619, 1_000_000), (5_000, 20_000)])
+def test_native_plex_offsets_remain_milliseconds(monkeypatch: pytest.MonkeyPatch, offset: int, duration: int) -> None:
+    service, sink = _service(monkeypatch, _cfg(["owner"]), CountingPlex([_session_xml("8", user_name="owner")]))
+    alert = _alert_with_rating_key("8", 101)
+    alert["PlaySessionStateNotification"][0].update(viewOffset=offset, duration=duration)
+
+    service._handle_alert(alert)
+
+    assert len(sink.events) == 1
+    assert sink.events[0].position_ms == offset
+    assert sink.events[0].duration_ms == duration
+    assert sink.events[0].progress == round(offset * 100 / duration)
+
+
+@pytest.mark.parametrize("delay", [30, 3600])
+def test_matching_cached_identity_closes_missing_live_session(monkeypatch: pytest.MonkeyPatch, delay: int) -> None:
+    from providers.scrobble.plex import watch
+
+    clock = [1000.0]
+    monkeypatch.setattr(watch.time, "time", lambda: clock[0])
+    plex = CountingPlex([_session_xml("8", user_name="owner", user_id="12345"), "<MediaContainer />"])
+    service, sink = _service(monkeypatch, _cfg(["id:12345"]), plex)
+    service._handle_alert(_alert_with_rating_key("8", 101))
+    service._last_event.clear()
+    clock[0] += delay
+    stop = _alert_with_rating_key("8", 101)
+    stop["PlaySessionStateNotification"][0].update(state="stopped", viewOffset=950_000)
+    service._handle_alert(stop)
+
+    assert [event.action for event in sink.events] == ["start", "stop"]
+    assert sink.events[-1].account == "owner"
+    assert plex.queries == ["/status/sessions", "/status/sessions"]
+
+
+@pytest.mark.parametrize("hours", [5, 7, 24])
+@pytest.mark.parametrize("stop_user", ["missing", "owner", "shared"])
+def test_overnight_stop_requires_live_identity_after_expiry(monkeypatch: pytest.MonkeyPatch, hours: int, stop_user: str) -> None:
+    from providers.scrobble.plex import watch
+
+    clock = [1000.0]
+    monkeypatch.setattr(watch.time, "time", lambda: clock[0])
+    response = "<MediaContainer />" if stop_user == "missing" else _session_xml("8", user_name=stop_user)
+    plex = CountingPlex([_session_xml("8", user_name="owner"), response])
+    service, sink = _service(monkeypatch, _cfg(["owner"]), plex)
+    for state, delay in [("playing", 0), ("paused", 10), ("stopped", hours * 3600)]:
+        clock[0] += delay
+        alert = _alert_with_rating_key("8", 101)
+        alert["PlaySessionStateNotification"][0].update(state=state, clientIdentifier="clientA", viewOffset=900_000)
+        service._handle_alert(alert)
+
+    closes = hours < 6 or stop_user == "owner"
+    assert [event.action for event in sink.events] == ["start", "pause"] + (["stop"] if closes else [])
+    assert sink.events[-1].account == "owner"
+    assert len(plex.queries) == (1 if hours < 6 else 2)
+
+
+def test_itemless_stop_without_client_preserves_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
+    service, sink = _service(monkeypatch, _cfg(["owner"]), CountingPlex([_session_xml("8", user_name="owner")]))
+    service._handle_alert(_alert_with_rating_key("8", 101))
+    cleared: list[Any] = []
+    monkeypatch.setattr(service, "_clear_currently_watching", cleared.append)
+
+    service._handle_alert({"type": "playing", "PlaySessionStateNotification": [{"sessionKey": "8", "state": "stopped"}]})
+
+    assert cleared == [sink.events[0]]
+    assert service._last_event["8"] == sink.events[0]
+
+
+@pytest.mark.parametrize("hours", [0.01, 3])
+@pytest.mark.parametrize("previous_state", ["playing", "paused", "stopped"])
+@pytest.mark.parametrize("next_state", ["playing", "paused"])
+def test_same_item_and_client_do_not_pin_previous_user(monkeypatch: pytest.MonkeyPatch, hours: float, previous_state: str, next_state: str) -> None:
+    from providers.scrobble.plex import watch
+
+    clock = [1000.0]
+    monkeypatch.setattr(watch.time, "time", lambda: clock[0])
+    plex = CountingPlex([_session_xml("8", user_name="owner"), _session_xml("8", user_name="shared")])
+    service, sink = _service(monkeypatch, _cfg(["owner"]), plex)
+    first = _alert_with_rating_key("8", 101)
+    first["PlaySessionStateNotification"][0]["clientIdentifier"] = "clientA"
+    service._handle_alert(first)
+    if previous_state != "playing":
+        old = _alert_with_rating_key("8", 101)
+        old["PlaySessionStateNotification"][0].update(state=previous_state, clientIdentifier="clientA")
+        service._handle_alert(old)
+    count = len(sink.events)
+    clock[0] += hours * 3600
+    new = _alert_with_rating_key("8", 101)
+    new["PlaySessionStateNotification"][0].update(clientIdentifier="clientA", viewOffset=300_000, state=next_state)
+    service._handle_alert(new)
+
+    assert len(sink.events) == count
+    assert plex.queries == ["/status/sessions", "/status/sessions"]
+
+
+def test_flat_fingerprint_does_not_mix_sessions(monkeypatch: pytest.MonkeyPatch) -> None:
+    service, _ = _service(monkeypatch, _cfg(["owner"]), CountingPlex([]))
+    raw = {"TimelineEntry": [
+        {"sessionKey": "8", "ratingKey": "101"},
+        {"sessionKey": "9", "clientIdentifier": "clientB", "guid": "imdb://ttOTHER"},
+    ]}
+
+    assert service._playback_fingerprint(raw) == {}
+    assert service._playback_fingerprint(raw, "8") == {"ratingKey": "101"}
+    assert service._playback_fingerprint(raw, "9") == {"clientIdentifier": "clientB", "guid": "imdb://ttOTHER"}
+
+
+def test_nonmatching_psn_does_not_discard_matching_timeline(monkeypatch: pytest.MonkeyPatch) -> None:
+    service, _ = _service(monkeypatch, _cfg(["owner"]), CountingPlex([_session_xml("8", user_name="owner")]))
+    service._handle_alert(_alert_with_rating_key("8", 101))
+    service._handle_alert({
+        "type": "timeline",
+        "PlaySessionStateNotification": [{"sessionKey": "other", "ratingKey": "999"}],
+        "TimelineEntry": [{"sessionKey": "8", "ratingKey": "101", "viewOffset": 300_000, "duration": 1_000_000}],
+    })
+
+    assert service._best_offset["8"][:2] == (300_000, 1_000_000)
+
+
+@pytest.mark.parametrize("field", ["TimelineEntry", "ProgressNotification"])
+def test_progress_item_id_can_match_verified_playback(monkeypatch: pytest.MonkeyPatch, field: str) -> None:
+    service, _ = _service(monkeypatch, _cfg(["owner"]), CountingPlex([_session_xml("8", user_name="owner")]))
+    service._handle_alert(_alert_with_rating_key("8", 101))
+    service._handle_alert({"type": "progress", field: [{"sessionKey": "8", "itemID": "101", "viewOffset": 300_000, "duration": 1_000_000}]})
+
+    assert service._best_offset["8"][:2] == (300_000, 1_000_000)
+
+
+@pytest.mark.parametrize("kind, field", [("timeline", "TimelineEntry"), ("progress", "ProgressNotification")])
+def test_same_item_progress_revalidates_user(monkeypatch: pytest.MonkeyPatch, kind: str, field: str) -> None:
+    from providers.scrobble.plex import watch
+
+    clock = [1000.0]
+    monkeypatch.setattr(watch.time, "time", lambda: clock[0])
+    plex = CountingPlex([_session_xml("8", user_name="owner"), _session_xml("8", user_name="shared")])
+    service, sink = _service(monkeypatch, _cfg(["owner"]), plex)
+    service._handle_alert(_alert_with_rating_key("8", 101))
+    for delay, offset in [(1, 50_000), (35, 300_000)]:
+        clock[0] += delay
+        service._handle_alert({"type": kind, field: [{"sessionKey": "8", "itemID": "101", "viewOffset": offset, "duration": 1_000_000}]})
+
+    assert len(sink.events) == 1
+    assert plex.queries == ["/status/sessions", "/status/sessions"]
+
+
+@pytest.mark.parametrize("response", ["<MediaContainer />", RuntimeError("connection reset")])
+@pytest.mark.parametrize("gap", [30, 3 * 3600])
+def test_unresolved_start_cannot_use_matching_stale_identity(monkeypatch: pytest.MonkeyPatch, response: Any, gap: int) -> None:
+    from providers.scrobble.plex import watch
+
+    clock = [1000.0]
+    monkeypatch.setattr(watch.time, "time", lambda: clock[0])
+    plex = CountingPlex([_session_xml("8", user_name="owner"), response])
+    service, sink = _service(monkeypatch, _cfg(["owner"]), plex)
+    service._handle_alert(_alert_with_rating_key("8", 101))
+    clock[0] += gap
+    new = _alert_with_rating_key("8", 101)
+    new["PlaySessionStateNotification"][0]["viewOffset"] = 300_000
+    service._handle_alert(new)
+
+    assert len(sink.events) == 1
+    assert plex.queries == ["/status/sessions", "/status/sessions"]
+
+
+def test_overnight_resume_resolves_owner_before_completion(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.scrobble.plex import watch
+
+    clock = [1000.0]
+    monkeypatch.setattr(watch.time, "time", lambda: clock[0])
+    row = _session_xml("8", user_name="owner", user_id="12345")
+    plex = CountingPlex([row, row])
+    service, sink = _service(monkeypatch, _cfg(["id:12345"]), plex)
+    for state, delay, offset in [("playing", 0, 500_000), ("paused", 10, 500_000), ("playing", 7 * 3600, 900_000), ("stopped", 10, 900_000)]:
+        clock[0] += delay
+        alert = _alert_with_rating_key("8", 101)
+        alert["PlaySessionStateNotification"][0].update(state=state, viewOffset=offset, clientIdentifier="clientA")
+        service._handle_alert(alert)
+
+    assert [event.action for event in sink.events] == ["start", "pause", "start", "stop"]
+    assert sink.events[-1].progress == 90
+    assert sink.events[-1].account == "owner"
+    assert plex.queries == ["/status/sessions", "/status/sessions"]
+
+
+@pytest.mark.parametrize("cadence", [5, 10, 14, 16, 25, 60])
+def test_continuous_ticks_use_one_identity_lookup(monkeypatch: pytest.MonkeyPatch, cadence: int) -> None:
+    from providers.scrobble.plex import watch
+
+    clock = [1000.0]
+    monkeypatch.setattr(watch.time, "time", lambda: clock[0])
+    row = _session_xml("8", user_name="owner")
+    plex = CountingPlex([row] * 30)
+    service, sink = _service(monkeypatch, _cfg(["owner"]), plex)
+    for index in range(21):
+        alert = _alert_with_rating_key("8", 101)
+        alert["PlaySessionStateNotification"][0].update(
+            clientIdentifier="clientA", viewOffset=50_000 + index * cadence * 1000, duration=6_000_000,
+        )
+        service._handle_alert(alert)
+        clock[0] += cadence
+
+    assert sink.events
+    assert {event.account for event in sink.events} == {"owner"}
+    assert plex.queries == ["/status/sessions"]
+
+
+@pytest.mark.parametrize("resume_response", ["<MediaContainer />", RuntimeError("connection reset")])
+@pytest.mark.parametrize("pause_event", [False, True])
+def test_missed_resume_lookup_keeps_stop_only_identity(monkeypatch: pytest.MonkeyPatch, resume_response: Any, pause_event: bool) -> None:
+    from providers.scrobble.plex import watch
+
+    clock = [1000.0]
+    monkeypatch.setattr(watch.time, "time", lambda: clock[0])
+    plex = CountingPlex([_session_xml("8", user_name="owner", user_id="12345"), resume_response])
+    service, sink = _service(monkeypatch, _cfg(["id:12345"]), plex)
+    first = _alert_with_rating_key("8", 101)
+    first["PlaySessionStateNotification"][0].update(clientIdentifier="clientA", viewOffset=900_000)
+    service._handle_alert(first)
+    if pause_event:
+        clock[0] += 1
+        paused = _alert_with_rating_key("8", 101)
+        paused["PlaySessionStateNotification"][0].update(state="paused", clientIdentifier="clientA", viewOffset=900_000)
+        service._handle_alert(paused)
+    clock[0] += 300
+    service._handle_alert(first)
+    assert [event.action for event in sink.events].count("start") == 1
+    clock[0] += 1
+    stop = _alert_with_rating_key("8", 101)
+    stop["PlaySessionStateNotification"][0].update(state="stopped", clientIdentifier="clientA", viewOffset=900_000)
+    service._handle_alert(stop)
+
+    assert sink.events[-1].action == "stop"
+    assert sink.events[-1].account == "owner"
+    assert sink.events[-1].progress == 90
+    assert sink.events[-1].raw["_cw_session_identity"]["user_id"] == "12345"
+
+
+@pytest.mark.parametrize("replacement", ["shared", "different_item"])
+def test_stop_fallback_is_discarded_for_replacement_playback(monkeypatch: pytest.MonkeyPatch, replacement: str) -> None:
+    from providers.scrobble.plex import watch
+
+    clock = [1000.0]
+    monkeypatch.setattr(watch.time, "time", lambda: clock[0])
+    plex = CountingPlex([_session_xml("8", user_name="owner"), "<MediaContainer />", _session_xml("8", user_name="shared")])
+    service, sink = _service(monkeypatch, _cfg(["owner"]), plex)
+    service._handle_alert(_alert_with_rating_key("8", 101))
+    clock[0] += 300
+    service._handle_alert(_alert_with_rating_key("8", 101))
+    clock[0] += 1
+    new = _alert_with_rating_key("8", 202 if replacement == "different_item" else 101)
+    service._handle_alert(new)
+    new["PlaySessionStateNotification"][0]["state"] = "stopped"
+    service._handle_alert(new)
+
+    assert len(sink.events) == 1
+
+
+
+def test_continuity_does_not_override_newly_resolved_user(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.scrobble.plex import watch
+
+    clock = [1000.0]
+    monkeypatch.setattr(watch.time, "time", lambda: clock[0])
+    plex = CountingPlex([
+        _session_xml("8", user_name="owner", rating_key="101", client="clientA"),
+        _sessions_xml(
+            _video_xml("other", user_name="shared"),
+            _video_xml("8", user_name="shared", rating_key="101", client="clientA"),
+        ),
+    ])
+    service, sink = _service(monkeypatch, _cfg(["owner"]), plex)
+    first = _alert_with_rating_key("8", 101)
+    first["PlaySessionStateNotification"][0]["clientIdentifier"] = "clientA"
+    service._handle_alert(first)
+    clock[0] += 25
+    service._handle_alert(_alert("other"))
+    tick = _alert_with_rating_key("8", 101)
+    tick["PlaySessionStateNotification"][0].update(clientIdentifier="clientA", viewOffset=75_000)
+    service._handle_alert(tick)
+    tick["PlaySessionStateNotification"][0]["state"] = "stopped"
+    service._handle_alert(tick)
+
+    assert len(sink.events) == 1
+    assert plex.queries == ["/status/sessions", "/status/sessions"]
+
+
+def test_itemless_stop_after_resume_miss_still_cleans_up(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.scrobble.plex import watch
+
+    clock = [1000.0]
+    monkeypatch.setattr(watch.time, "time", lambda: clock[0])
+    service, sink = _service(monkeypatch, _cfg(["owner"]), CountingPlex([_session_xml("8", user_name="owner")]))
+    service._handle_alert(_alert_with_rating_key("8", 101))
+    clock[0] += 300
+    service._handle_alert(_alert_with_rating_key("8", 101))
+    cleared: list[Any] = []
+    monkeypatch.setattr(service, "_clear_currently_watching", cleared.append)
+    service._handle_alert({"type": "playing", "PlaySessionStateNotification": [{"sessionKey": "8", "state": "stopped"}]})
+
+    assert cleared == [sink.events[0]]
+
+
+@pytest.mark.parametrize("resume_user", ["owner", "shared"])
+def test_repeated_paused_notifications_reuse_identity_until_resume(monkeypatch: pytest.MonkeyPatch, resume_user: str) -> None:
+    from providers.scrobble.plex import watch
+
+    clock = [1000.0]
+    monkeypatch.setattr(watch.time, "time", lambda: clock[0])
+    row = _session_xml("8", user_name="owner")
+    plex = CountingPlex([row] * 20)
+    service, sink = _service(monkeypatch, _cfg(["owner"]), plex)
+    service._handle_alert(_alert_with_rating_key("8", 101))
+    for index in range(15):
+        clock[0] += 20 if index == 0 else 10
+        paused = _alert_with_rating_key("8", 101)
+        paused["PlaySessionStateNotification"][0].update(state="paused", viewOffset=50_000)
+        service._handle_alert(paused)
+
+    assert plex.queries == ["/status/sessions", "/status/sessions"]
+    assert [event.action for event in sink.events] == ["start", "pause"]
+    plex._sessions = [_session_xml("8", user_name=resume_user)]
+    clock[0] += 1
+    resumed = _alert_with_rating_key("8", 101)
+    resumed["PlaySessionStateNotification"][0]["viewOffset"] = 60_000
+    service._handle_alert(resumed)
+
+    assert len(plex.queries) == 3
+    assert len(sink.events) == (3 if resume_user == "owner" else 2)
+
+
+@pytest.mark.parametrize("age", [3600, 6 * 3600 - 1, 6 * 3600, 7 * 3600, 40 * 3600])
+@pytest.mark.parametrize("missed_resume", [False, True])
+def test_stop_identity_expires_from_last_verified_playback(monkeypatch: pytest.MonkeyPatch, age: int, missed_resume: bool) -> None:
+    from providers.scrobble.plex import watch
+
+    clock = [1000.0]
+    monkeypatch.setattr(watch.time, "time", lambda: clock[0])
+    plex = CountingPlex([_session_xml("8", user_name="owner")])
+    service, sink = _service(monkeypatch, _cfg(["owner"]), plex)
+    alert = _alert_with_rating_key("8", 101)
+    alert["PlaySessionStateNotification"][0].update(clientIdentifier="clientA", viewOffset=900_000)
+    service._handle_alert(alert)
+    if missed_resume:
+        clock[0] = 1300.0
+        service._handle_alert(alert)
+    clock[0] = 1000.0 + age
+    alert["PlaySessionStateNotification"][0]["state"] = "stopped"
+    service._handle_alert(alert)
+
+    expected = ["start", "stop"] if age < watch.SESSION_CONTINUITY_SECONDS else ["start"]
+    assert [event.action for event in sink.events] == expected
+    if age >= watch.SESSION_CONTINUITY_SECONDS:
+        assert "8" not in service._stop_fallback
+
+
+@pytest.mark.parametrize("gap", [1, 10, 60])
+@pytest.mark.parametrize("next_user", ["owner", "shared", "missing"])
+@pytest.mark.parametrize("kind", ["playing", "timeline", "progress"])
+def test_backwards_offset_requires_fresh_identity(monkeypatch: pytest.MonkeyPatch, gap: int, next_user: str, kind: str) -> None:
+    from providers.scrobble.plex import watch
+
+    clock = [1000.0]
+    monkeypatch.setattr(watch.time, "time", lambda: clock[0])
+    response = "<MediaContainer />" if next_user == "missing" else _session_xml("8", user_name=next_user)
+    plex = CountingPlex([_session_xml("8", user_name="owner"), response])
+    service, sink = _service(monkeypatch, _cfg(["owner"]), plex)
+    alert = _alert_with_rating_key("8", 101)
+    alert["PlaySessionStateNotification"][0]["clientIdentifier"] = "clientA"
+    service._handle_alert(alert)
+    clock[0] += gap
+    entry = dict(alert["PlaySessionStateNotification"][0], viewOffset=5_000)
+    field = {"playing": "PlaySessionStateNotification", "timeline": "TimelineEntry", "progress": "ProgressNotification"}[kind]
+    service._handle_alert({"type": kind, field: [entry]})
+
+    assert plex.queries == ["/status/sessions", "/status/sessions"]
+    if next_user != "owner":
+        assert len(sink.events) == 1
+        clock[0] += 1
+        entry["state"] = "stopped"
+        service._handle_alert({"type": "playing", "PlaySessionStateNotification": [entry]})
+        assert len(sink.events) == 1
+    elif kind == "playing":
+        assert len(sink.events) == 2
+        assert sink.events[-1].account == "owner"
+
+
+@pytest.mark.parametrize("idle_before_resume", [300, 7 * 3600])
+def test_itemless_stop_cannot_use_expired_fallback(monkeypatch: pytest.MonkeyPatch, idle_before_resume: int) -> None:
+    from providers.scrobble.plex import watch
+
+    clock = [1000.0]
+    monkeypatch.setattr(watch.time, "time", lambda: clock[0])
+    service, _ = _service(monkeypatch, _cfg(["owner"]), CountingPlex([_session_xml("8", user_name="owner")]))
+    alert = _alert_with_rating_key("8", 101)
+    service._handle_alert(alert)
+    clock[0] += idle_before_resume
+    service._handle_alert(alert)
+    clock[0] = 1000.0 + 7 * 3600 + 1
+    cleared: list[Any] = []
+    monkeypatch.setattr(service, "_clear_currently_watching", cleared.append)
+    service._handle_alert({"type": "playing", "PlaySessionStateNotification": [{"sessionKey": "8", "state": "stopped"}]})
+
+    assert cleared == []
+    assert "8" not in service._stop_fallback
+
+
+@pytest.mark.parametrize("kind", ["playing", "timeline", "progress"])
+@pytest.mark.parametrize("recovery_at", ["next_tick", "stop"])
+@pytest.mark.parametrize("resolved_user", ["owner", "shared", "missing"])
+def test_rewind_lookup_miss_retries_identity_on_subsequent_playback(
+    monkeypatch: pytest.MonkeyPatch, kind: str, recovery_at: str, resolved_user: str,
+) -> None:
+    from providers.scrobble.plex import watch
+
+    clock = [1000.0]
+    monkeypatch.setattr(watch.time, "time", lambda: clock[0])
+    response = "<MediaContainer />" if resolved_user == "missing" else _session_xml("8", user_name=resolved_user)
+    plex = CountingPlex([_session_xml("8", user_name="owner"), "<MediaContainer />", response])
+    service, sink = _service(monkeypatch, _cfg(["owner"]), plex)
+    alert = _alert_with_rating_key("8", 101)
+    entry = alert["PlaySessionStateNotification"][0]
+    entry.update(clientIdentifier="clientA", viewOffset=500_000)
+    service._handle_alert(alert)
+    clock[0] += 25
+    entry["viewOffset"] = 120_000
+    field = {"playing": "PlaySessionStateNotification", "timeline": "TimelineEntry", "progress": "ProgressNotification"}[kind]
+    service._handle_alert({"type": kind, field: [dict(entry)]})
+    assert [event.action for event in sink.events] == ["start"]
+    assert len(plex.queries) == 2
+    if recovery_at == "next_tick":
+        clock[0] += 25
+        entry["viewOffset"] = 145_000
+        service._handle_alert(alert)
+    clock[0] += 1
+    entry.update(state="stopped", viewOffset=146_000)
+    service._handle_alert(alert)
+
+    expected = ["start"]
+    if resolved_user == "owner":
+        expected += ["start", "stop"] if recovery_at == "next_tick" else ["stop"]
+    assert [event.action for event in sink.events] == expected
+    assert {event.account for event in sink.events} == {"owner"}
+    assert len(plex.queries) == (4 if recovery_at == "next_tick" and resolved_user == "missing" else 3)
+
+
+@pytest.mark.parametrize("rewind_kind", ["playing", "timeline", "progress"])
+@pytest.mark.parametrize("recovery_kind", ["timeline", "progress"])
+@pytest.mark.parametrize("resolved_user", ["owner", "shared", "missing"])
+def test_rewind_miss_recovers_from_progress_before_session_disappears(
+    monkeypatch: pytest.MonkeyPatch, rewind_kind: str, recovery_kind: str, resolved_user: str,
+) -> None:
+    from providers.scrobble.plex import watch
+
+    clock = [1000.0]
+    monkeypatch.setattr(watch.time, "time", lambda: clock[0])
+    plex = CountingPlex([_session_xml("8", user_name="owner"), "<MediaContainer />"])
+    service, sink = _service(monkeypatch, _cfg(["owner"]), plex)
+    alert = _alert_with_rating_key("8", 101)
+    entry = alert["PlaySessionStateNotification"][0]
+    entry.update(clientIdentifier="clientA", viewOffset=500_000)
+    service._handle_alert(alert)
+    fields = {"playing": "PlaySessionStateNotification", "timeline": "TimelineEntry", "progress": "ProgressNotification"}
+    clock[0] += 25
+    entry["viewOffset"] = 120_000
+    service._handle_alert({"type": rewind_kind, fields[rewind_kind]: [dict(entry)]})
+    assert len(sink.events) == 1
+    assert len(plex.queries) == 2
+    plex._sessions = [] if resolved_user == "missing" else [_session_xml("8", user_name=resolved_user)]
+    clock[0] += 25
+    entry["viewOffset"] = 145_000
+    service._handle_alert({"type": recovery_kind, fields[recovery_kind]: [dict(entry)]})
+    assert len(plex.queries) == 3
+    plex._sessions = []
+    clock[0] += 1
+    entry.update(state="stopped", viewOffset=950_000)
+    service._handle_alert(alert)
+
+    assert [event.action for event in sink.events] == (["start", "start", "stop"] if resolved_user == "owner" else ["start"])
+    if resolved_user == "owner":
+        assert sink.events[-2].raw.get("_cw_seek") is True
+        assert sink.events[-1].account == "owner"
+        assert sink.events[-1].progress == 95
+
+
+@pytest.mark.parametrize("change", ["item", "client", "expiry"])
+def test_pending_rewind_recovery_rejects_changed_or_expired_context(monkeypatch: pytest.MonkeyPatch, change: str) -> None:
+    from providers.scrobble.plex import watch
+
+    clock = [1000.0]
+    monkeypatch.setattr(watch.time, "time", lambda: clock[0])
+    plex = CountingPlex([_session_xml("8", user_name="owner"), "<MediaContainer />"])
+    service, sink = _service(monkeypatch, _cfg(["owner"]), plex)
+    alert = _alert_with_rating_key("8", 101)
+    entry = alert["PlaySessionStateNotification"][0]
+    entry.update(clientIdentifier="clientA", viewOffset=500_000)
+    service._handle_alert(alert)
+    clock[0] += 25
+    entry["viewOffset"] = 120_000
+    service._handle_alert(alert)
+    assert "8" in service._identity_recovery
+    clock[0] = 1000 + watch.SESSION_CONTINUITY_SECONDS if change == "expiry" else clock[0] + 25
+    entry["viewOffset"] = 145_000
+    if change == "item":
+        entry["ratingKey"] = 202
+    elif change == "client":
+        entry["clientIdentifier"] = "clientB"
+    service._handle_alert({"type": "progress", "ProgressNotification": [dict(entry)]})
+
+    assert len(plex.queries) == 2
+    assert "8" not in service._identity_recovery
+    assert len(sink.events) == 1
+    entry["state"] = "stopped"
+    service._handle_alert(alert)
+    assert len(sink.events) == 1
+
+
+def test_progress_recovery_retries_misses_then_reuses_verified_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.scrobble.plex import watch
+
+    clock = [1000.0]
+    monkeypatch.setattr(watch.time, "time", lambda: clock[0])
+    row = _session_xml("8", user_name="owner")
+    plex = CountingPlex([row, "<MediaContainer />", "<MediaContainer />", row])
+    service, sink = _service(monkeypatch, _cfg(["owner"]), plex)
+    alert = _alert_with_rating_key("8", 101)
+    entry = alert["PlaySessionStateNotification"][0]
+    entry.update(clientIdentifier="clientA", viewOffset=500_000)
+    service._handle_alert(alert)
+    clock[0] += 25
+    entry["viewOffset"] = 120_000
+    service._handle_alert(alert)
+    for offset in (145_000, 170_000, 195_000, 220_000):
+        clock[0] += 25
+        entry["viewOffset"] = offset
+        service._handle_alert({"type": "timeline", "TimelineEntry": [dict(entry)]})
+
+    assert len(plex.queries) == 4
+    assert "8" not in service._identity_recovery
+    clock[0] += 1
+    entry.update(state="stopped", viewOffset=221_000)
+    service._handle_alert(alert)
+    assert [event.action for event in sink.events] == ["start", "stop"]
+    assert sink.events[-1].account == "owner"
