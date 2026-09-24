@@ -178,6 +178,8 @@ def get_manifest() -> Mapping[str, Any]:
                 "upsert": True,
                 "unrate": True,
                 "from_date": False,
+                "scale": "0-10",
+                "step": 0.1,
             },
             "history": {
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
