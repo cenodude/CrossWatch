@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from cw_platform.app_version import user_agent as http_user_agent
-from cw_platform.id_map import canonical_key, ids_from, merge_ids, minimal as id_minimal
+from cw_platform.id_map import canonical_key, coalesce_ids, ids_from, merge_ids, minimal as id_minimal
 from providers.auth._auth_FLOPPY import FloppyAuthError, is_configured as auth_is_configured, provider_block
 from providers.sync._mod_common import safe_json
 
@@ -333,14 +333,16 @@ def item_from_row(row: Mapping[str, Any], *, force_type: str | None = None) -> d
     typ = str(force_type or row.get("media_type") or typ or inner.get("media_type") or "").strip().lower()
     if source != "tmdb" or not media_id:
         return None
+    inner_ids_raw = inner.get("ids")
+    inner_ids = coalesce_ids(inner_ids_raw) if isinstance(inner_ids_raw, Mapping) else {}
     if typ == "episode" or (season is not None and episode is not None):
         if season is None or episode is None:
             return None
         out = {"type": "episode", "show_ids": {"tmdb": media_id}, "season": season, "episode": episode}
     elif typ in {"tv", "show", "series"}:
-        out: dict[str, Any] = {"type": "show", "ids": {"tmdb": media_id}}
+        out: dict[str, Any] = {"type": "show", "ids": {**inner_ids, "tmdb": media_id}}
     elif typ == "movie":
-        out = {"type": "movie", "ids": {"tmdb": media_id}}
+        out = {"type": "movie", "ids": {**inner_ids, "tmdb": media_id}}
     else:
         return None
     title = str(row.get("title") or inner.get("title") or "").strip()

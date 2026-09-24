@@ -9,7 +9,7 @@ from pathlib import Path
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from cw_platform.id_map import canonical_key
+from cw_platform.id_map import canonical_key, ids_from, unified_keys_from_ids
 from providers.sync._mod_common import observation_time
 
 from ._common import (
@@ -81,6 +81,36 @@ def _accepted(obj: Mapping[str, Any], *, observed_at: str | None = None) -> dict
     elif obj.get("rating") is not None or obj.get("liked") is not None:
         out["rated_at"] = observed_at or _now_iso_z()
     return out
+
+
+_ALIAS_EXCLUDED_TYPES = ("episode", "season")
+
+
+def _alias_tokens(obj: Mapping[str, Any]) -> set[str]:
+    typ = str(obj.get("type") or "").strip().lower()
+    if typ in _ALIAS_EXCLUDED_TYPES:
+        return set()
+    return {f"{typ}|{tok}" for tok in unified_keys_from_ids(ids_from(obj))}
+
+
+def _alias_index(cur: Mapping[str, Mapping[str, Any]]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for key, value in (cur or {}).items():
+        if not isinstance(value, Mapping):
+            continue
+        for tok in _alias_tokens(value):
+            out.setdefault(tok, str(key))
+    return out
+
+
+def _resolve_stored_key(cur: Mapping[str, Any], alias: Mapping[str, str], accepted: Mapping[str, Any], key: str) -> str | None:
+    if key in cur:
+        return key
+    for tok in _alias_tokens(accepted):
+        alt = alias.get(tok)
+        if alt and alt != key and alt in cur:
+            return alt
+    return None
 
 
 def _ratings_path(adapter: Any) -> Path:
@@ -214,6 +244,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
 
     state = _load_state(adapter)
     cur: dict[str, dict[str, Any]] = dict(state.get("items") or {})
+    alias = _alias_index(cur)
     unresolved_src: list[Mapping[str, Any]] = []
     changed = 0
 
@@ -229,13 +260,18 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         if not key:
             unresolved_src.append(obj)
             continue
-        existing = cur.get(key)
+        stored_key = _resolve_stored_key(cur, alias, accepted, key)
+        existing = cur.get(stored_key) if stored_key else None
         new_ts = str(accepted.get("rated_at") or "")
         old_ts = str((existing or {}).get("rated_at") or "")
         if existing is None or old_ts <= new_ts:
             if isinstance(existing, Mapping):
                 accepted = merge_tracker_identity(existing, accepted)
+            if stored_key and stored_key != key:
+                cur.pop(stored_key, None)
             cur[key] = accepted
+            for tok in _alias_tokens(accepted):
+                alias[tok] = key
             changed += 1
 
     if changed:
@@ -257,6 +293,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
 
     state = _load_state(adapter)
     cur: dict[str, dict[str, Any]] = dict(state.get("items") or {})
+    alias = _alias_index(cur)
     unresolved_src: list[Mapping[str, Any]] = []
     changed = 0
 
@@ -272,8 +309,9 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         if not key:
             unresolved_src.append(obj)
             continue
-        if key in cur:
-            del cur[key]
+        stored_key = _resolve_stored_key(cur, alias, accepted, key)
+        if stored_key:
+            del cur[stored_key]
             changed += 1
 
     if changed:

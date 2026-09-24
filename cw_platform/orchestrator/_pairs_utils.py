@@ -8,6 +8,7 @@ import importlib
 import threading
 from collections.abc import Mapping as _Mapping
 from ..id_map import canonical_key as _ck, keys_for_item, ID_KEYS
+from ._planner import _rating_step
 from ..provider_instances import _config_key_for, normalize_instance_id
 
 
@@ -70,6 +71,17 @@ def config_with_pair_libraries(
         out[key] = block
 
     return out if out is not None else base
+
+
+def ratings_step_for(ops) -> float:
+    try:
+        caps = ops.capabilities() or {}
+        per = caps.get("ratings") if isinstance(caps, Mapping) else None
+        if isinstance(per, Mapping):
+            return _rating_step(per.get("step"))
+    except Exception:
+        pass
+    return 1.0
 
 
 def supports_feature(ops, feature: str) -> bool:
