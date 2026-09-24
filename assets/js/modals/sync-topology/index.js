@@ -2,10 +2,12 @@
 /* CrossWatch - Sync topology modal and findings */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
-import { currentTopology } from "../../topology/state.js";
 import { connectionLabel, esc, featureName, findingConnections, mergeGraphs, nodeName, pairBadge, renderGraph, topologySummary } from "../../topology/graph.js";
 import { bindGraphViewport } from "../../topology/viewport.js";
 import { baselineCopy, saveBaseline } from "../../topology/baseline.js";
+
+const stateVersion = new URL(import.meta.url).searchParams.get("v") || window.__CW_VERSION__ || "";
+const { currentTopology } = await import(`../../topology/state.js?v=${encodeURIComponent(stateVersion)}`);
 
 const titles = { conflict: "Updates from multiple providers", loop: "Return route through additional pairs",
   redundancy: "Potential redundant route", observation: "Consider simplifying your routes" };

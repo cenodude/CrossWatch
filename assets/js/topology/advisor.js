@@ -2,9 +2,11 @@
 /* CrossWatch - Sync topology health summary and refresh handling */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
-import { currentTopology } from "./state.js";
 import { esc } from "./graph.js";
 import { baselineCopy, clearBaselines, loadBaseline } from "./baseline.js";
+
+const stateVersion = new URL(import.meta.url).searchParams.get("v") || window.__CW_VERSION__ || "";
+const { currentTopology } = await import(`./state.js?v=${encodeURIComponent(stateVersion)}`);
 
 export const statusLabel = result => ({ attention: "Attention required", review: "Review recommended", healthy: "Healthy" }[result.status]);
 export const statusIcon = result => ({ attention: "error", review: "info", healthy: "check_circle" }[result.status]);
