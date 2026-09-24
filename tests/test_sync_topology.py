@@ -17,7 +17,7 @@ def test_topology_analysis_and_layout():
     if not node:
         pytest.skip("Node.js is needed for the local frontend topology tests")
     result = subprocess.run(
-        [node, "--test", "tests/topology.test.mjs"], cwd=ROOT,
+        [node, "--experimental-vm-modules", "--test", "tests/topology.test.mjs", "tests/topology-loading.test.mjs"], cwd=ROOT,
         capture_output=True, text=True, encoding="utf-8", timeout=60,
     )
     assert result.returncode == 0, result.stdout + result.stderr
