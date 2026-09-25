@@ -52,7 +52,9 @@ function setup({ blocked = false } = {}) {
 test("opens separate approval page and accepts a pasted code without device polling", async () => {
   const app = setup();
   await app.click("wetrakr_oauth_start");
-  assert.match(app.popup.location.href, /^https:\/\/api.wetrakr.com\/oauth\/authorize/);
+  const approvalUrl = new URL(app.popup.location.href);
+  assert.equal(approvalUrl.origin, "https://api.wetrakr.com");
+  assert.equal(approvalUrl.pathname, "/oauth/authorize");
   assert.equal(app.popup.opener, null);
   assert.equal(app.node("wetrakr_oauth_panel").classList.contains("hidden"), false);
   app.node("wetrakr_code").value = " pasted-code ";
@@ -68,7 +70,9 @@ test("opens separate approval page and accepts a pasted code without device poll
 test("popup blocking leaves a usable approval link and code input", async () => {
   const app = setup({ blocked: true });
   await app.click("wetrakr_oauth_start");
-  assert.match(app.node("wetrakr_approval_link").href, /^https:\/\/api.wetrakr.com/);
+  const approvalUrl = new URL(app.node("wetrakr_approval_link").href);
+  assert.equal(approvalUrl.origin, "https://api.wetrakr.com");
+  assert.equal(approvalUrl.pathname, "/oauth/authorize");
   assert.equal(app.node("wetrakr_oauth_finish").classList.contains("hidden"), false);
 });
 
