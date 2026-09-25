@@ -3439,7 +3439,7 @@
       }
     }
 
-    return { open, wire };
+    return { open, wire, invalidate: () => { state.loaded = false; } };
   }
 
   const coverageTiles = (stats, tile, count) => {
@@ -4548,7 +4548,7 @@
       });
     }
 
-    return { open, wire };
+    return { open, wire, invalidate: () => { state.loaded = false; } };
   })();
 
   function connectedServices(status) {
@@ -5037,6 +5037,18 @@
     document.querySelectorAll("[data-settings-section]").forEach((section) => observer.observe(section));
   }
 
+  function refreshTimeDisplays() {
+    [historyPanel, ratingsPanel, watchlistPanel, playbackPanel].forEach((panel) => panel.invalidate());
+    collectionState.loaded = false;
+    const active = document.querySelector("[data-profile-tab].active")?.dataset.profileTab;
+    const panels = { history: historyPanel, ratings: ratingsPanel, watchlist: watchlistPanel, playback: playbackPanel };
+    if (active === "collection") void loadCollection({ reset: true });
+    else panels[active]?.open();
+    void loadOverview().catch(() => {});
+    void loadProfileActivity({ preserve: true }).catch(() => {});
+    void refreshNowPlaying();
+  }
+
   function wirePreferences() {
     $("#profile-timezone-search")?.addEventListener("input", () => renderTimezoneOptions());
     const inputs = [$("#profile-pref-playing-card"), $("#profile-pref-quick-add"), $("#profile-pref-timezone"), $("#profile-pref-time-format")].filter(Boolean);
@@ -5062,7 +5074,7 @@
           });
           renderProfile(data);
           toast("Preferences saved");
-          if (input.id === "profile-pref-timezone" || input.id === "profile-pref-time-format") window.location.reload();
+          if (input.id === "profile-pref-timezone" || input.id === "profile-pref-time-format") refreshTimeDisplays();
         } catch (e) {
           renderPreferences(profile);
           toast(e.message || "Preferences could not be saved", true);

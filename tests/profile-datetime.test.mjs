@@ -99,6 +99,7 @@ function preferenceForm({ fail = false } = {}) {
   }));
   const requests = [];
   let reloads = 0;
+  let refreshes = 0;
   const context = {
     $: (selector) => elements[selector],
     profile: { preferences: { timezone: "auto", time_format: "auto" } },
@@ -110,11 +111,12 @@ function preferenceForm({ fail = false } = {}) {
     renderProfile: (data) => { context.profile = data.user; },
     renderPreferences: (user) => { elements["#profile-pref-timezone"].value = user.preferences.timezone; },
     toast() {},
+    refreshTimeDisplays() { refreshes += 1; },
     window: { location: { reload() { reloads += 1; } } },
   };
   vm.createContext(context);
   vm.runInContext(pageSource.slice(pageSource.indexOf("  function wirePreferences()"), pageSource.indexOf("  let nowTimer =")) + "\nwirePreferences();", context);
-  return { elements, requests, get reloads() { return reloads; } };
+  return { elements, requests, get reloads() { return reloads; }, get refreshes() { return refreshes; } };
 }
 
 test("timezone arrow-key changes save once on blur and unchanged blur does nothing", async () => {
@@ -127,16 +129,18 @@ test("timezone arrow-key changes save once on blur and unchanged blur does nothi
     await zone.handlers.change?.();
   }
   assert.equal(form.requests.length, 0);
+  assert.equal(form.refreshes, 0);
   assert.equal(form.reloads, 0);
   await zone.handlers.blur();
   assert.equal(form.requests.length, 1);
   assert.equal(form.requests[0].preferences.timezone, "Europe/Berlin");
-  assert.equal(form.reloads, 1);
+  assert.equal(form.refreshes, 1);
+  assert.equal(form.reloads, 0);
   await zone.handlers.blur();
   assert.equal(form.requests.length, 1);
 });
 
-test("failed timezone blur save restores the selection without reloading", async () => {
+test("failed timezone blur save restores the selection without refreshing", async () => {
   const form = preferenceForm({ fail: true });
   const zone = form.elements["#profile-pref-timezone"];
   zone.value = "UTC";
@@ -147,6 +151,7 @@ test("failed timezone blur save restores the selection without reloading", async
   await zone.handlers.blur();
   assert.equal(zone.value, "auto");
   assert.equal(zone.disabled, false);
+  assert.equal(form.refreshes, 0);
   assert.equal(form.reloads, 0);
   await zone.handlers.blur();
   assert.equal(form.requests.length, 1);
@@ -158,10 +163,12 @@ test("other preferences still save on change", async () => {
   toggle.checked = false;
   await toggle.handlers.change();
   assert.equal(form.requests[0].preferences.quick_add, false);
+  assert.equal(form.refreshes, 0);
   assert.equal(form.reloads, 0);
   const format = form.elements["#profile-pref-time-format"];
   format.value = "24h";
   await format.handlers.change();
   assert.equal(form.requests[1].preferences.time_format, "24h");
-  assert.equal(form.reloads, 1);
+  assert.equal(form.refreshes, 1);
+  assert.equal(form.reloads, 0);
 });
