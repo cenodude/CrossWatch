@@ -105,11 +105,28 @@
     if (!src) return logoHtml(k, cls);
     return `<img class="${cls}" src="${src}" alt="${k} logo" width="28" height="28" loading="lazy">`;
   }
+  function dailyQuotaDetails(data) {
+    const remaining = data?.daily_remaining;
+    const reset = Number(data?.daily_resets_at);
+    const seen = Number(data?.daily_seen_at);
+    const now = Date.now() / 1000;
+    if (remaining == null || !Number.isFinite(Number(remaining)) || Number(remaining) < 0) return [];
+    if ((reset > 0 && reset <= now) || (!(reset > 0) && (!seen || now - seen >= 300))) return [];
+    const limit = Number(data?.daily_limit);
+    const lines = [`API calls left today: ${Number(remaining)}${Number.isFinite(limit) && limit > 0 ? ` / ${limit}` : ""}`];
+    if (reset > 0 && Number.isFinite(reset)) {
+      const date = new Date(reset * 1000);
+      const options = { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", timeZoneName: "short" };
+      const label = window.CW?.ProfileDateTime?.format?.(date, options) || date.toLocaleString(undefined, options);
+      lines.push(`Resets: ${label}`);
+    }
+    return lines;
+  }
   (window.CW ||= {});
   window.CW.ProviderMeta = {
     providers, order, get, normalizeToken, keyOf, matchKey, label, instanceLabel, shortLabel, aliases, aliasesMap, badgeId, sectionId, authGroupId,
     statusLegacy, tone, statusProviders, authProviders, watchlistProviders, scrobblerSinks, syncSurfaceProvider, assetPath, logoPath, logLogoPath, brandInfo, logoHtml,
-    logLogoHtml, logo: logoPath, logLogo: logLogoPath,
+    logLogoHtml, dailyQuotaDetails, logo: logoPath, logLogo: logLogoPath,
     labels: Object.fromEntries(order.map((key) => [key, label(key)])),
   };
 })();

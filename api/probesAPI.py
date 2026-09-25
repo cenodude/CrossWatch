@@ -1829,6 +1829,7 @@ def wetrakr_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> d
         if isinstance(j, dict):
             if j.get("id"):
                 out = wetrakr.account_info(j)
+                out.update(wetrakr.latest_quota(pp))
 
     with _CACHE_LOCK:
         _USERINFO_CACHE[key] = (now, out)
@@ -2962,11 +2963,18 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 }
 
             if "WETRAKR" in active_providers:
+                from providers.auth import _auth_WETRAKR as wetrakr_auth
+
                 inst_map, inst_sum = _instances_payload("WETRAKR")
                 providers_out["WETRAKR"] = {
                     "connected": wetrakr_ok,
                     **({} if wetrakr_ok else {"reason": wetrakr_reason}),
                     **userinfo.get("WETRAKR", {}),
+                    "daily_remaining": None,
+                    "daily_limit": None,
+                    "daily_resets_at": None,
+                    "daily_resets_label": None,
+                    **wetrakr_auth.latest_quota((cfg_wetrakr or {}).get("wetrakr") or {}),
                     "experimental": True,
                     "instances": inst_map,
                     "instances_summary": inst_sum,

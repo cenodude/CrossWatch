@@ -38,6 +38,8 @@ _LOCKS_GUARD = threading.Lock()
 _CONFIG_LOCK = threading.RLock()
 _REFRESH_RETRY_AT: dict[str, float] = {}
 _PENDING: dict[str, dict[str, Any]] = {}
+_QUOTA_LOCK = threading.Lock()
+_QUOTA_SEEN: dict[str, dict[str, Any]] = {}
 _TOKEN_FIELDS = ("access_token", "refresh_token", "token_type", "expires_at", "username", "user_id", "plan", "reauth_required")
 
 
@@ -59,6 +61,47 @@ def _int(value: Any, default: int = 0) -> int:
 def _lock(instance_id: Any) -> Any:
     with _LOCKS_GUARD:
         return _LOCKS.setdefault(normalize_instance_id(instance_id), threading.RLock())
+
+
+def _quota_key(block: Mapping[str, Any]) -> str:
+    token = str(block.get("access_token") or "")
+    identity = f"{app_client_id()}|user:{block['user_id']}" if block.get("user_id") else token
+    return hashlib.sha256(identity.encode()).hexdigest() if token else ""
+
+
+def record_quota(block: Mapping[str, Any], headers: Mapping[str, Any], *, started_at: float) -> None:
+    key = _quota_key(block)
+    values = {str(k).lower(): str(v).strip() for k, v in headers.items()}
+    parsed = {}
+    for field, header in (("daily_remaining", "x-quota-remaining"), ("daily_limit", "x-quota-limit"), ("reset", "x-quota-reset")):
+        value = values.get(header, "")
+        if value.isascii() and value.isdecimal() and len(value) <= 15:
+            parsed[field] = int(value)
+    if not key or "daily_remaining" not in parsed:
+        return
+    now = time.time()
+    reset = parsed.pop("reset", None)
+    if reset is not None and 0 <= reset <= 86400:
+        parsed["daily_resets_at"] = int(now + reset)
+    observation = {**parsed, "daily_seen_at": now, "started_at": started_at}
+    with _QUOTA_LOCK:
+        previous = _QUOTA_SEEN.get(key, {})
+        if previous.get("started_at", 0) > started_at:
+            return
+        _QUOTA_SEEN[key] = observation
+
+
+def latest_quota(block: Mapping[str, Any]) -> dict[str, Any]:
+    with _QUOTA_LOCK:
+        seen = dict(_QUOTA_SEEN.get(_quota_key(block), {}))
+    if not seen:
+        return {}
+    reset = seen.get("daily_resets_at")
+    now = time.time()
+    if (reset is not None and reset <= now) or (reset is None and now - seen["daily_seen_at"] >= 300):
+        return {}
+    seen.pop("started_at", None)
+    return seen
 
 
 def _load_full_cfg() -> dict[str, Any]:
@@ -328,12 +371,17 @@ def request_with_auth(session: requests.Session, method: str, url: str, *, cfg: 
     call = request_func or request_with_retries
     headers = {**dict(kwargs.pop("headers", {}) or {}), **_headers(token)}
     kwargs["allow_redirects"] = False
+    started_at = time.time()
     response = call(session, method, url, headers=headers, timeout=timeout, max_retries=max_retries, **kwargs)
+    record_quota(block, response.headers, started_at=started_at)
     if response.status_code == 401 and not proactive and block.get("refresh_token"):
         result = refresh_token(cfg, instance_id=inst, force=True, rejected_token=token, timeout=timeout)
         if result.get("ok"):
-            headers.update(_headers(str(provider_block(_load_full_cfg(), inst).get("access_token") or "")))
+            block = provider_block(_load_full_cfg(), inst)
+            headers.update(_headers(str(block.get("access_token") or "")))
+            started_at = time.time()
             response = call(session, method, url, headers=headers, timeout=timeout, max_retries=max_retries, **kwargs)
+            record_quota(block, response.headers, started_at=started_at)
             if response.status_code == 401:
                 _require_reauth(inst, headers["Authorization"].removeprefix("Bearer "))
     elif response.status_code == 401 and (not block.get("refresh_token") or proactive):
@@ -364,6 +412,7 @@ def account_status(cfg: Mapping[str, Any], *, instance_id: Any = None) -> dict[s
                 result["plan_usage"] = {key: usage.get(key) for key in ("plan", "tier", "features")}
         except (requests.RequestException, WeTrakrAuthError):
             pass
+        result.update(latest_quota(provider_block(_load_full_cfg(), inst)))
         return result
 
 

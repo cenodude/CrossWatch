@@ -41,6 +41,7 @@ def store(monkeypatch, config_base):
     monkeypatch.delenv("CW_WETRAKR_UA", raising=False)
     wt._REFRESH_RETRY_AT.clear()
     wt._PENDING.clear()
+    wt._QUOTA_SEEN.clear()
 
     def unexpected(*args, **kwargs):
         raise AssertionError("Unexpected network request")
@@ -55,6 +56,64 @@ def block(store):
 
 def connected(store, expires=900):
     block(store).update(access_token="old-access", refresh_token="old-refresh", expires_at=expires)
+
+
+@pytest.mark.parametrize("status, remaining", [(200, "49850"), (429, "0")])
+def test_authenticated_requests_capture_daily_allowance(store, status, remaining):
+    connected(store, expires=5000)
+    response = Response(status, headers={"X-Quota-Limit": "50000", "X-Quota-Remaining": remaining, "X-Quota-Reset": "3600"})
+    assert wt.request_with_auth(None, "GET", wt.ME_URL, cfg=store["cfg"], instance_id="P01", request_func=lambda *a, **k: response) is response
+    quota = wt.latest_quota(block(store))
+    assert quota["daily_remaining"] == int(remaining)
+    assert quota["daily_limit"] == 50000
+    assert quota["daily_resets_at"] == 4600
+    assert wt.latest_quota(store["cfg"]["wetrakr"]["instances"]["P02"]) == {}
+
+
+def test_quota_rotation_order_missing_headers_and_reset(store, monkeypatch):
+    connected(store, expires=5000)
+    block(store)["user_id"] = "42"
+    wt.record_quota(block(store), {"x-quota-remaining": "12", "x-quota-limit": "1000", "x-quota-reset": "60"}, started_at=1000)
+    wt.record_quota(block(store), {"x-quota-remaining": "15", "x-quota-reset": "60"}, started_at=999)
+    wt.record_quota(block(store), {}, started_at=1001)
+    wt.record_quota(block(store), {"X-Quota-Remaining": "invalid"}, started_at=1002)
+    block(store)["access_token"] = "rotated"
+    assert wt.latest_quota(block(store))["daily_remaining"] == 12
+    assert wt.latest_quota({**block(store), "user_id": "other"}) == {}
+    monkeypatch.setattr(wt.time, "time", lambda: 1060)
+    assert wt.latest_quota(block(store)) == {}
+
+
+def test_quota_without_valid_reset_expires_without_inventing_limit(store, monkeypatch):
+    connected(store, expires=5000)
+    wt.record_quota(block(store), {"X-Quota-Remaining": "0", "X-Quota-Limit": "bad", "X-Quota-Reset": "-1"}, started_at=1000)
+    quota = wt.latest_quota(block(store))
+    assert quota["daily_remaining"] == 0
+    assert "daily_limit" not in quota and "daily_resets_at" not in quota
+    monkeypatch.setattr(wt.time, "time", lambda: 1300)
+    assert wt.latest_quota(block(store)) == {}
+
+
+def test_probe_returns_quota_from_normal_account_request(store, monkeypatch):
+    from api import probesAPI as probes
+
+    connected(store, expires=5000)
+    block(store)["user_id"] = "42"
+    calls = []
+
+    def request(*args, **kwargs):
+        calls.append(args)
+        return Response(payload={"id": 42, "info": {"username": "alice"}, "plan": "vip"},
+                        headers={"X-Quota-Remaining": "49998", "X-Quota-Limit": "50000", "X-Quota-Reset": "3600"})
+
+    monkeypatch.setattr(wt.requests.sessions.Session, "request", request)
+    probes.invalidate_provider_caches("wetrakr")
+    view = probes._cfg_view_for(store["cfg"], "WETRAKR", "P01")
+    assert probes._probe_wetrakr_detail(view, max_age_sec=0) == (True, "")
+    info = probes.wetrakr_user_info(view)
+    assert info["vip"] and info["username"] == "alice"
+    assert info["daily_remaining"] == 49998 and info["daily_limit"] == 50000
+    assert len(calls) == 1
 
 
 def test_pkce_start_generates_s256_and_oob_without_network_or_persisted_secrets(store):

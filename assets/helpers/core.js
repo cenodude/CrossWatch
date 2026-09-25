@@ -696,6 +696,7 @@
       if (info.username) tips.push(`Account: ${info.username}`);
       if (info.vip || info.plan === "vip") tips.push("Plan: VIP");
       else if (info.plan === "free") tips.push("Plan: Free");
+      tips.push(...(META.dailyQuotaDetails?.(info) || []));
     }
     if (providerKey === "TRAKT" && info && typeof info === "object") {
       const limits = info.limits || {};
