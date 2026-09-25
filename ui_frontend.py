@@ -2223,11 +2223,8 @@ def get_profile_html(user: dict | None = None) -> str:
     preferences_allowed = is_admin or bool(perms.get("write"))
     settings_interface_nav = (
         '        <button type="button" data-settings-nav="interface"><span class="material-symbols-rounded" aria-hidden="true">tune</span><span>Display</span></button>'
-        if preferences_allowed else ""
     )
-    settings_interface = """        <section id="settings-interface" class="cw-set-card" data-settings-section="interface">
-          <header class="cw-set-head"><div><h2>Display</h2><p>Choose what shows up while you browse.</p></div></header>
-          <label class="cw-set-row cw-set-toggle">
+    settings_interface_controls = """          <label class="cw-set-row cw-set-toggle">
             <span class="cw-set-copy"><strong>Now playing card</strong><small>Show a small card with what you are watching.</small></span>
             <input id="profile-pref-playing-card" type="checkbox" checked role="switch"><span class="cw-set-switch" aria-hidden="true"></span>
           </label>
@@ -2235,7 +2232,22 @@ def get_profile_html(user: dict | None = None) -> str:
             <span class="cw-set-copy"><strong>Quick add button</strong><small>Show a shortcut to add something you watched by hand.</small></span>
             <input id="profile-pref-quick-add" type="checkbox" checked role="switch"><span class="cw-set-switch" aria-hidden="true"></span>
           </label>
-        </section>""" if preferences_allowed else ""
+""" if preferences_allowed else ""
+    settings_interface = f"""        <section id="settings-interface" class="cw-set-card" data-settings-section="interface">
+          <header class="cw-set-head"><div><h2>Display</h2><p>Choose how your profile pages look.</p></div></header>
+{settings_interface_controls}          <div class="cw-set-row">
+            <label class="cw-set-copy" for="profile-pref-timezone"><strong>Timezone</strong><small>Used for dates and day/month grouping on your profile pages.</small></label>
+            <div class="cw-set-inline cw-set-field">
+              <input id="profile-timezone-search" class="cw-set-input" type="search" placeholder="Search timezones" aria-label="Search timezones" aria-controls="profile-pref-timezone" autocomplete="off">
+              <select id="profile-pref-timezone" class="cw-set-input" data-cw-native-select="true"><option value="auto">Auto (browser settings)</option><option value="UTC">UTC</option></select>
+              <small id="profile-timezone-results" role="status" hidden></small>
+            </div>
+          </div>
+          <div class="cw-set-row">
+            <label class="cw-set-copy" for="profile-pref-time-format"><strong>Time format</strong><small>Choose a 12-hour or 24-hour clock on your profile pages.</small></label>
+            <span class="cw-set-inline"><select id="profile-pref-time-format" class="cw-set-input"><option value="auto">Auto (browser settings)</option><option value="12h">12-hour (6:30 PM)</option><option value="24h">24-hour (18:30)</option></select></span>
+          </div>
+        </section>"""
     dashboard = "on" if perms.get("dashboard") else "off"
     watchlist = "on" if perms.get("watchlist") else "off"
     playback = "on" if perms.get("playback") else "off"
@@ -2807,6 +2819,7 @@ def get_profile_html(user: dict | None = None) -> str:
 <script>window.cwIsAuthSetupPending = window.cwIsAuthSetupPending || (() => window.__cwAuthSetupPending === true);</script>
 <script src="/assets/js/dashboard-widgets.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/js/activity.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/helpers/profile-datetime.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/js/profile-media-modal.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/js/profile-page.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/js/theme-flat-runtime.js?v=__CW_VERSION__" defer></script>

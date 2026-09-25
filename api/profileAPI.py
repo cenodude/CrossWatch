@@ -55,6 +55,7 @@ from api.appAuthAPI import (
 from cw_platform.config_base import CONFIG as CONFIG_DIR, load_config, update_config
 from cw_platform.id_map import canonical_key
 from cw_platform.orchestrator._state_store import StateStore
+from cw_platform.profile_preferences import display_timezone
 from cw_platform.provider_instances import instances_for_user_profile, list_user_profiles, normalize_instance_id, provider_display_key
 from api.dashboardAPI import _dashboard_widgets_version
 from api.watchlistAPI import _item_for_user_filter as _watchlist_item_for_user_filter
@@ -621,11 +622,11 @@ def collection_cache_fingerprint() -> tuple:
     return (epoch, round(stamp, 3), round(cfg_stamp, 3))
 
 
-def _collection_month(item: dict[str, Any]) -> str:
+def _collection_month(item: dict[str, Any], display_tz: str = "UTC") -> str:
     ts = _collection_date_sort(item.get("last_collected_at"))
     if not ts:
         return ""
-    return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m")
+    return datetime.fromtimestamp(ts, tz=display_timezone(display_tz)).strftime("%Y-%m")
 
 
 def build_profile_collection_payload(
@@ -642,6 +643,7 @@ def build_profile_collection_payload(
     cache_key: tuple | None = None,
     include_keys: bool = False,
     month: str = "",
+    display_tz: str = "UTC",
 ) -> dict[str, Any]:
     items, counts, provider_counts = _collection_index(state, cfg, profile_id, cache_key)
     wanted_type = str(media_type or "all").strip().lower()
@@ -695,14 +697,14 @@ def build_profile_collection_payload(
     if wanted_sort in {"collected_at", "collected_at_asc"}:
         month_counts: dict[str, int] = {}
         for item in items:
-            key = _collection_month(item)
+            key = _collection_month(item, display_tz)
             if key:
                 month_counts[key] = month_counts.get(key, 0) + 1
         months = [{"month": key, "count": month_counts[key]} for key in sorted(month_counts, reverse=True)]
         wanted_month = str(month or "").strip()
         if wanted_month:
             for position, item in enumerate(items):
-                key = _collection_month(item)
+                key = _collection_month(item, display_tz)
                 if key and (key <= wanted_month if wanted_sort == "collected_at" else key >= wanted_month):
                     page = position // page_size + 1
                     break
@@ -756,6 +758,7 @@ def api_profile_collection(
     user_profile: str = Query(""),
     include_keys: bool = Query(False),
     month: str = Query(""),
+    display_tz: str = Query("UTC", max_length=128),
 ) -> JSONResponse:
     ctx = _profile_context(request)
     if isinstance(ctx, JSONResponse):
@@ -775,6 +778,7 @@ def api_profile_collection(
         cache_key=collection_cache_fingerprint(),
         include_keys=include_keys,
         month=month,
+        display_tz=display_tz,
     )
     return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 
@@ -957,6 +961,7 @@ def build_profile_history_payload(
     rating: str = "",
     search: str = "",
     month: str = "",
+    display_tz: str = "UTC",
     page: int = 1,
     page_size: int = 48,
     include_keys: bool = False,
@@ -971,6 +976,7 @@ def build_profile_history_payload(
         rating=rating,
         search=search,
         month=month,
+        display_tz=display_tz,
         page=page,
         page_size=page_size,
         include_keys=include_keys,
@@ -988,6 +994,7 @@ def api_profile_history(
     coverage: str = Query("all"),
     search: str = Query(""),
     month: str = Query(""),
+    display_tz: str = Query("UTC", max_length=128),
     page: int = Query(1, ge=1),
     page_size: int = Query(48, ge=1, le=profile_history.PAGE_SIZE_MAX),
     user_profile: str = Query(""),
@@ -1006,6 +1013,7 @@ def api_profile_history(
         coverage=coverage,
         search=search,
         month=month,
+        display_tz=display_tz,
         page=page,
         page_size=page_size,
     )
@@ -1020,6 +1028,7 @@ def api_profile_watchlist(
     coverage: str = Query("all"),
     search: str = Query(""),
     month: str = Query(""),
+    display_tz: str = Query("UTC", max_length=128),
     page: int = Query(1, ge=1),
     page_size: int = Query(48, ge=1, le=profile_history.PAGE_SIZE_MAX),
     include_keys: bool = Query(False),
@@ -1041,6 +1050,7 @@ def api_profile_watchlist(
         coverage=coverage,
         search=search,
         month=month,
+        display_tz=display_tz,
         page=page,
         page_size=page_size,
         include_keys=include_keys,
@@ -1057,6 +1067,7 @@ def api_profile_ratings(
     rating: str = Query(""),
     search: str = Query(""),
     month: str = Query(""),
+    display_tz: str = Query("UTC", max_length=128),
     page: int = Query(1, ge=1),
     page_size: int = Query(48, ge=1, le=profile_history.PAGE_SIZE_MAX),
     user_profile: str = Query(""),
@@ -1076,6 +1087,7 @@ def api_profile_ratings(
         rating=rating,
         search=search,
         month=month,
+        display_tz=display_tz,
         page=page,
         page_size=page_size,
     )
@@ -1101,9 +1113,9 @@ def api_profile_update(request: Request, payload: dict[str, Any] = Body(default_
             incoming = (payload or {}).get("preferences")
             merged = dict(current)
             if isinstance(incoming, dict):
-                for key in ("playing_card", "quick_add"):
+                for key in ("playing_card", "quick_add", "timezone", "time_format"):
                     if key in incoming:
-                        merged[key] = bool(incoming.get(key))
+                        merged[key] = bool(incoming[key]) if key in {"playing_card", "quick_add"} else incoming[key]
             raw["preferences"] = clean_user_preferences(merged)
         return a, uid, raw, user, token
 

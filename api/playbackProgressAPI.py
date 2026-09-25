@@ -66,11 +66,13 @@ def api_playback_progress_items(
     force_refresh: bool = Query(False),
     user_profile: str = Query(""),
     month: str = Query(""),
+    display_tz: str = Query("UTC", max_length=128),
     tmdb: str = Query("", max_length=20),
 ) -> dict[str, Any]:
     service = get_service()
     return service.items(
         month=month,
+        display_tz=display_tz,
         tmdb=tmdb,
         provider=provider,
         instance_id=instance_id,
