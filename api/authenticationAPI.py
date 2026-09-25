@@ -1482,7 +1482,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                 if server and token:
                     r = requests.get(
                         f"{server}/Users/Me",
-                        headers={"X-Emby-Token": token, "Accept": "application/json"},
+                        headers={"X-Emby-Token": token, "Accept": "application/json", "User-Agent": http_user_agent("EmbyAuth", override_env="CW_EMBY_UA")},
                         timeout=float(em.get("timeout", 15) or 15),
                         verify=coerce_bool(em.get("verify_ssl", False)),
                     )
@@ -1663,7 +1663,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         if key_error:
             return False, key_error
         try:
-            r = requests.get(f"{TMDB_API_BASE}/configuration", params={"api_key": key}, timeout=12)
+            r = requests.get(f"{TMDB_API_BASE}/configuration", params={"api_key": key}, headers={"User-Agent": http_user_agent("TMDbAuth", override_env="CW_TMDB_UA")}, timeout=12)
             r.raise_for_status()
             data = r.json() or {}
             if not isinstance(data, dict) or not isinstance(data.get("images"), dict):
@@ -1719,7 +1719,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return {"ok": False, "error": "internal"}
 
     def _tmdb_v3_request_token(api_key: str) -> dict[str, Any]:
-        r = requests.get(f"{TMDB_API_BASE}/authentication/token/new", params={"api_key": api_key}, timeout=15)
+        r = requests.get(f"{TMDB_API_BASE}/authentication/token/new", params={"api_key": api_key}, headers={"User-Agent": http_user_agent("TMDbAuth", override_env="CW_TMDB_UA")}, timeout=15)
         r.raise_for_status()
         return r.json() or {}
 
@@ -1728,13 +1728,14 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             f"{TMDB_API_BASE}/authentication/session/new",
             params={"api_key": api_key},
             json={"request_token": request_token},
+            headers={"User-Agent": http_user_agent("TMDbAuth", override_env="CW_TMDB_UA")},
             timeout=15,
         )
         r.raise_for_status()
         return r.json() or {}
 
     def _tmdb_v3_account(api_key: str, session_id: str) -> dict[str, Any]:
-        r = requests.get(f"{TMDB_API_BASE}/account", params={"api_key": api_key, "session_id": session_id}, timeout=15)
+        r = requests.get(f"{TMDB_API_BASE}/account", params={"api_key": api_key, "session_id": session_id}, headers={"User-Agent": http_user_agent("TMDbAuth", override_env="CW_TMDB_UA")}, timeout=15)
         r.raise_for_status()
         return r.json() or {}
 
@@ -2020,6 +2021,72 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return {"ok": True, "instance": inst}
         except Exception as e:
             _safe_log(log_fn, "MDBLIST", f"[MDBLIST] ERROR disconnect: {e}")
+            return {"ok": False, "error": "internal"}
+
+    @app.post("/api/wetrakr/oauth/start", tags=["auth"])
+    def api_wetrakr_oauth_start(instance: str | None = Query(None)) -> dict[str, Any]:
+        from providers.auth import _auth_WETRAKR as wetrakr_auth
+
+        return wetrakr_auth.start_oauth(instance_id=normalize_instance_id(instance))
+
+    @app.post("/api/wetrakr/oauth/finish", tags=["auth"])
+    def api_wetrakr_oauth_finish(payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            from providers.auth import _auth_WETRAKR as wetrakr_auth
+
+            res = wetrakr_auth.finish_oauth(code=str(payload.get("code") or ""), flow_id=str(payload.get("flow_id") or ""), instance_id=inst)
+            if res.get("ok") and isinstance(probe_cache, dict):
+                probe_cache["wetrakr"] = (0.0, False)
+            return res
+        except Exception as e:
+            _safe_log(log_fn, "WETRAKR", f"[WETRAKR] ERROR OAuth finish: {type(e).__name__}")
+            return {"ok": False, "error": "internal", "instance": inst}
+
+    @app.post("/api/wetrakr/oauth/cancel", tags=["auth"])
+    def api_wetrakr_oauth_cancel(payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
+        from providers.auth import _auth_WETRAKR as wetrakr_auth
+
+        return wetrakr_auth.cancel_oauth(flow_id=str(payload.get("flow_id") or ""), instance_id=normalize_instance_id(instance))
+
+    @app.post("/api/wetrakr/refresh", tags=["auth"])
+    def api_wetrakr_refresh(instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            res = _provider_auth().refresh_token("wetrakr", cfg, instance_id=inst)
+            if res.get("ok") and isinstance(probe_cache, dict):
+                probe_cache["wetrakr"] = (0.0, False)
+            return res
+        except Exception as e:
+            _safe_log(log_fn, "WETRAKR", f"[WETRAKR] ERROR refresh: {type(e).__name__}")
+            return {"ok": False, "status": "internal", "instance": inst}
+
+    @app.get("/api/wetrakr/status", tags=["auth"])
+    def api_wetrakr_status(instance: str | None = Query(None)) -> dict[str, Any]:
+        cfg = load_config()
+        inst = normalize_instance_id(instance)
+        from providers.auth import _auth_WETRAKR as wetrakr_auth
+
+        return wetrakr_auth.account_status(cfg, instance_id=inst)
+
+    @app.post("/api/wetrakr/disconnect", tags=["auth"])
+    def api_wetrakr_disconnect(instance: str | None = Query(None)) -> Any:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            conflict = usage_conflict_response(cfg, "wetrakr", inst)
+            if conflict is not None:
+                return conflict
+            from providers.auth import _auth_WETRAKR as wetrakr_auth
+
+            wetrakr_auth.PROVIDER.disconnect(cfg, instance_id=inst)
+            _safe_log(log_fn, "WETRAKR", f"[WETRAKR] disconnected instance={inst}")
+            if isinstance(probe_cache, dict):
+                probe_cache["wetrakr"] = (0.0, False)
+            return {"ok": True, "instance": inst}
+        except Exception as e:
+            _safe_log(log_fn, "WETRAKR", f"[WETRAKR] ERROR disconnect: {type(e).__name__}")
             return {"ok": False, "error": "internal"}
 
     @app.post("/api/punchplay/device/start", tags=["auth"])
@@ -3544,7 +3611,7 @@ def anilist_exchange_code_for_token(*, code: str, redirect_uri: str, instance_id
         vr = requests.post(
             "https://graphql.anilist.co",
             json={"query": "query { Viewer { id name } }"},
-            headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/json", "Accept": "application/json"},
+            headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/json", "Accept": "application/json", "User-Agent": http_user_agent("AniListAuth", override_env="CW_ANILIST_UA")},
             timeout=15,
         )
         if vr.ok:

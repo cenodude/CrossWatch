@@ -85,6 +85,7 @@
     { key: "EMBY", paths: [["emby"], ["auth", "emby"]], keys: ["access_token", "api_key", "token"] },
     { key: "MDBLIST", paths: [["mdblist"], ["auth", "mdblist"]], keys: ["api_key", "access_token"] },
     { key: "PUBLICMETADB", paths: [["publicmetadb"], ["auth", "publicmetadb"]], keys: ["api_key"] },
+    { key: "WETRAKR", paths: [["wetrakr"]], keys: ["access_token"] },
     { key: "PUNCHPLAY", paths: [["punchplay"], ["auth", "punchplay"]], keys: ["access_token"] },
     { key: "BINGEBASE", paths: [["bingebase"], ["auth", "bingebase"]], keys: ["access_token", "webhook_url"] },
     { key: "FLICKLIST", paths: [["flicklist"], ["auth", "flicklist"]], keys: ["api_key", "access_token", "token"] },
@@ -684,11 +685,18 @@
       const type = String(info.vip_type || "vip").toLowerCase();
       const label = /plus|ep/.test(type) ? "VIP+" : "VIP";
       tag = `<span class="tag vip" title="Trakt ${label}">${svgCheck()}${label}</span>`;
+    } else if (providerKey === "WETRAKR" && (info?.vip || info?.plan === "vip")) {
+      tag = `<span class="tag vip" title="WeTrakr VIP">${svgCrown()}VIP</span>`;
     }
 
     const tips = [];
     const instanceTip = instancesTooltip(info);
     if (instanceTip) tips.push(instanceTip);
+    if (providerKey === "WETRAKR" && info && typeof info === "object") {
+      if (info.username) tips.push(`Account: ${info.username}`);
+      if (info.vip || info.plan === "vip") tips.push("Plan: VIP");
+      else if (info.plan === "free") tips.push("Plan: Free");
+    }
     if (providerKey === "TRAKT" && info && typeof info === "object") {
       const limits = info.limits || {};
       const watchlist = limits.watchlist || {};

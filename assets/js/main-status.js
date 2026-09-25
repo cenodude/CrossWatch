@@ -298,6 +298,12 @@
         };
       case "TRAKT":
         return { vip: !!data?.vip, detail: data?.vip ? "Plan: VIP" : "Plan: Free" };
+      case "WETRAKR": {
+        const plan = txt(data?.plan).toLowerCase();
+        const vip = plan === "vip" || !!data?.vip;
+        const username = txt(data?.username);
+        return { vip, detail: [username ? `Account: ${username}` : "", vip ? "Plan: VIP" : plan === "free" ? "Plan: Free" : ""].filter(Boolean).join("\n") };
+      }
       case "SIMKL": {
         const plan = txt(data?.account_type || data?.plan_type || data?.account?.type).toLowerCase();
         const premium = plan === "pro" || plan === "vip";

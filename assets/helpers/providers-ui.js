@@ -47,7 +47,7 @@
 
   const AUTH_GROUPS = Object.freeze([
     { id: "sec-auth-media", title: "Media servers", keys: ["PLEX", "JELLYFIN", "EMBY"] },
-    { id: "sec-auth-trackers", title: "Trackers", keys: ["CROSSWATCH", "TRAKT", "SIMKL", "TMDB", "MDBLIST", "PUBLICMETADB", "ANILIST", "PUNCHPLAY", "BINGEBASE", "FLICKLIST", "FLOPPY", "SCROB"] },
+    { id: "sec-auth-trackers", title: "Trackers", keys: ["CROSSWATCH", "TRAKT", "SIMKL", "TMDB", "MDBLIST", "PUBLICMETADB", "ANILIST", "WETRAKR", "PUNCHPLAY", "BINGEBASE", "FLICKLIST", "FLOPPY", "SCROB"] },
     { id: "sec-auth-clients", title: "Media clients", keys: ["NUVIO", "KODI", "STREMIO"] },
     { id: "sec-auth-others", title: "Others", keys: ["TAUTULLI", "TRACEARR"] },
   ]);
@@ -225,6 +225,7 @@
     if (p === "trakt" || p === "simkl") return hasConfiguredValue(b.access_token) || hasConfiguredValue(b.refresh_token);
     if (p === "anilist") return hasConfiguredValue(b.access_token) || hasConfiguredValue(b.token);
     if (p === "mdblist") return hasConfiguredValue(b.api_key) || hasConfiguredValue(b.access_token);
+    if (p === "wetrakr") return hasConfiguredValue(b.access_token) && !b.reauth_required;
     if (p === "punchplay") return hasConfiguredValue(b.access_token);
     if (p === "bingebase") return hasConfiguredValue(b.access_token) || hasConfiguredValue(b.webhook_url);
     if (p === "flicklist") return hasConfiguredValue(b.api_key) || hasConfiguredValue(b.access_token) || hasConfiguredValue(b.token);
@@ -688,6 +689,15 @@
       steps: [["1", "Enter server URL", "The address you open Scrob with"], ["2", "Paste the API key", "Scrob > Connections > API Key"], ["3", "Sign in", "Scrob only accepts writes from a signed in session"]],
       order: [".grid2", "#scrob_totp_row", "#scrob_reauth", ".verify", "#scrob_actions_row"],
       actions: [{ row: "#scrob_actions_row", status: "#scrob_msg", buttons: "#scrob_connect" }]
+    },
+    WETRAKR: {
+      provider: "wetrakr", logo: "WETRAKR", help: window.CW.HelpLinks.url("wetrakr"), deleteSelector: "#wetrakr_disconnect",
+      tabs: { auth: ["lock", "Authentication", "Approve in your browser"] },
+      copy: { auth: ["WeTrakr Authentication", "Connect your account and view your plan."] },
+      journey: ["Connect to WeTrakr", "Approve CrossWatch in WeTrakr, then paste the authorization code here.", "255,255,255", "255,255,255", "WETRAKR"],
+      steps: [["1", "Open WeTrakr", "Sign in with your account"], ["2", "Approve access", "Copy the code WeTrakr displays"], ["3", "Paste your code", "Complete the connection in CrossWatch"]],
+      order: ["#wetrakr_oauth_panel", ".wt-actions", "#wetrakr_account"],
+      actions: [{ row: ".wt-actions", status: "#wetrakr_msg", buttons: "#wetrakr_oauth_start, #wetrakr_oauth_finish, #wetrakr_oauth_cancel" }]
     },
     PUNCHPLAY: {
       provider: "punchplay", logo: "PUNCHPLAY", help: window.CW.HelpLinks.url("punchplay"), deleteSelector: "#punchplay_disconnect",
@@ -1930,6 +1940,8 @@
   }
 
   function closeAuthProviderOverlay() {
+    const provider = document.getElementById("cw-auth-connection-overlay")?.dataset?.cwConnectionProvider;
+    document.dispatchEvent(new CustomEvent("cw-auth-modal-closed", { detail: { provider } }));
     try { pruneEmptyProfileOnClose(); } catch {}
     parkActiveAuthForm();
     try { window.CW.AuthShared.clearConnectionWarnings(); } catch {}
