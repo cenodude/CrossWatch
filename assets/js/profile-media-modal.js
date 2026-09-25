@@ -5,13 +5,7 @@
   const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
   const numberFmt = new Intl.NumberFormat(window.__CW_LOCALE || navigator.language || undefined);
   const compactFmt = new Intl.NumberFormat(window.__CW_LOCALE || navigator.language || undefined, { notation: "compact", maximumFractionDigits: 1 });
-  const dateFmt = (() => {
-    try {
-      return new Intl.DateTimeFormat(window.__CW_LOCALE || navigator.language || undefined, { day: "numeric", month: "short", year: "numeric" });
-    } catch {
-      return new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" });
-    }
-  })();
+  const dateFmt = { format: (date, options = {}) => window.CW.ProfileDateTime.format(date, { day: "numeric", month: "short", year: "numeric", ...options }) };
   const TABS = [["overview", "Overview"], ["episodes", "Episodes"], ["cast", "Cast & Crew"], ["media", "Media"], ["similar", "Similar"]];
   const LIVES = [
     ["watchlist", "bookmark", "Watchlist"],
@@ -39,7 +33,7 @@
     const raw = String(value || "").trim();
     if (!raw) return "";
     const parsed = Date.parse(raw.length <= 10 ? `${raw}T00:00:00Z` : raw);
-    return Number.isFinite(parsed) ? dateFmt.format(new Date(parsed)) : "";
+    return Number.isFinite(parsed) ? dateFmt.format(new Date(parsed), raw.length <= 10 ? { timeZone: "UTC" } : {}) : "";
   }
 
   function relTime(epoch) {

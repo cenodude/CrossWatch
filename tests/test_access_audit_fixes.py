@@ -760,13 +760,13 @@ def test_user_shapes_expose_created_at_and_preferences() -> None:
 
     managed = _public_user("a" * 32, {"username": "Pascal", "created_at": 1770000000, "preferences": {"quick_add": False}})
     assert managed["created_at"] == 1770000000
-    assert managed["preferences"] == {"playing_card": True, "quick_add": False}
+    assert managed["preferences"] == {"playing_card": True, "quick_add": False, "timezone": "auto", "time_format": "auto"}
 
     admin = _admin_identity({"username": "admin", "created_at": 1760000000})
     assert admin["created_at"] == 1760000000
-    assert admin["preferences"] == {"playing_card": True, "quick_add": True}
+    assert admin["preferences"] == {"playing_card": True, "quick_add": True, "timezone": "auto", "time_format": "auto"}
 
-    assert clean_user_preferences(None) == {"playing_card": True, "quick_add": True}
+    assert clean_user_preferences(None) == {"playing_card": True, "quick_add": True, "timezone": "auto", "time_format": "auto"}
 
 
 def test_managed_user_creation_stamps_created_at() -> None:
@@ -1139,7 +1139,7 @@ def test_main_dashboard_styles_are_not_touched() -> None:
     assert "cw-profile-page" not in main_css
 
 
-def test_settings_interface_is_hidden_from_read_only_users() -> None:
+def test_settings_interface_limits_read_only_users_to_display_preferences() -> None:
     import ui_frontend
 
     def page(**kw: Any) -> str:
@@ -1157,8 +1157,10 @@ def test_settings_interface_is_hidden_from_read_only_users() -> None:
     ro = page(is_admin=False, username="r", permissions=readonly)
     assert 'data-profile-tab="account"' in ro
     assert 'id="settings-security"' in ro
-    assert 'id="settings-interface"' not in ro
-    assert 'data-settings-nav="interface"' not in ro
+    assert 'id="settings-interface"' in ro
+    assert 'data-settings-nav="interface"' in ro
+    assert 'id="profile-pref-timezone"' in ro
+    assert 'id="profile-pref-time-format"' in ro
     assert 'id="profile-pref-playing-card"' not in ro
     assert ro.count("<section") == ro.count("</section>")
 

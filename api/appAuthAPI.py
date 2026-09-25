@@ -23,6 +23,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 
 from cw_platform.config_base import CONFIG as CONFIG_DIR, load_config, save_config, update_config as _atomic_update_config
 from cw_platform.access_policy import clean_managed_permissions
+from cw_platform.profile_preferences import clean_user_preferences
 from cw_platform.event_archive.audit import record_audit
 from cw_platform.provider_instances import list_user_profiles, normalize_user_profile_id
 
@@ -321,14 +322,6 @@ def _clean_create_permissions(v: Any) -> dict[str, bool]:
     if isinstance(v, dict):
         return clean_managed_permissions({**defaults, **v})
     return clean_managed_permissions(defaults)
-
-
-def clean_user_preferences(raw: Any) -> dict[str, bool]:
-    src = raw if isinstance(raw, dict) else {}
-    return {
-        "playing_card": src.get("playing_card") is not False,
-        "quick_add": src.get("quick_add") is not False,
-    }
 
 
 def _password_hash(password: str) -> dict[str, Any]:

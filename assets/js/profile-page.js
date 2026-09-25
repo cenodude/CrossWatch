@@ -5,6 +5,8 @@
   const $ = (sel, root = document) => root.querySelector(sel);
   const esc = (value) => String(value ?? "").replace(/[&<>"]/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[m]));
   const API_TIMEOUT_MS = 60 * 1000;
+  const profileDateTime = window.CW.ProfileDateTime;
+  const DISPLAY_TIME_PATHS = new Set(["/api/profile/collection", "/api/profile/history", "/api/profile/ratings", "/api/profile/watchlist", "/api/playback_progress/items"]);
   const VIEW_AS_PARAM = "as";
   const VIEW_AS_PATHS = [
     "/api/profile/collection", "/api/profile/history", "/api/profile/ratings", "/api/profile/watchlist", "/api/profile/title",
@@ -15,9 +17,10 @@
   const viewingAs = () => !!viewAsState.id;
   const scopeUrl = (url) => {
     const text = String(url || "");
-    if (!viewAsState.id || !VIEW_AS_PATHS.some((path) => text.startsWith(path))) return text;
     const parsed = new URL(text, window.location.origin);
-    if (!parsed.searchParams.has("user_profile")) parsed.searchParams.set("user_profile", viewAsState.id);
+    if (parsed.origin !== window.location.origin) return text;
+    if (DISPLAY_TIME_PATHS.has(parsed.pathname)) parsed.searchParams.set("display_tz", profileDateTime.timeZone());
+    if (viewAsState.id && VIEW_AS_PATHS.some((path) => text.startsWith(path)) && !parsed.searchParams.has("user_profile")) parsed.searchParams.set("user_profile", viewAsState.id);
     return `${parsed.pathname}${parsed.search}`;
   };
   window.CW = window.CW || {};
@@ -425,7 +428,7 @@
     const tick = Number(status?.last_tick || 0);
     const bits = [];
     if (mode && mode !== "disabled") bits.push(mode);
-    if (next > 0) bits.push(`next ${futureTime(next) || new Date(next * 1000).toLocaleString()}`);
+    if (next > 0) bits.push(`next ${futureTime(next) || profileDateTime.format(new Date(next * 1000), { dateStyle: "short", timeStyle: "short" })}`);
     return {
       id: "scheduler-status",
       kind: "scheduler",
@@ -637,6 +640,7 @@
 
   function renderProfile(data) {
     profile = data?.user || profile || {};
+    profileDateTime.configure(profile.preferences);
     const display = String(profile.display_name || profile.label || profile.username || "Profile");
     const viewed = viewingAs();
     $("#profile-display-name").textContent = viewed ? (viewAsState.label || viewAsState.id) : display;
@@ -661,7 +665,7 @@
     }
     const when = new Date(ts * 1000);
     host.querySelector("span:last-child").textContent =
-      `Member since ${when.toLocaleDateString(undefined, { month: "long", year: "numeric" })}`;
+      `Member since ${profileDateTime.format(when, { month: "long", year: "numeric" })}`;
     host.classList.remove("hidden");
   }
 
@@ -686,12 +690,41 @@
       </div>`).join("");
   }
 
+  let profileTimezoneNames = [];
+
+  function renderTimezoneOptions(selected = $("#profile-pref-timezone")?.value || "auto") {
+    const zone = $("#profile-pref-timezone");
+    if (!zone) return;
+    const query = String($("#profile-timezone-search")?.value || "").trim().toLowerCase().replaceAll("_", " ");
+    const matches = profileTimezoneNames.filter((name) => name.replaceAll("_", " ").toLowerCase().includes(query));
+    const names = [...new Set([selected === "auto" ? "" : selected, ...matches].filter(Boolean))];
+    zone.innerHTML = '<option value="auto">Auto (browser settings)</option>' + names.map((name) => `<option value="${esc(name)}">${esc(name.replaceAll("_", " "))}</option>`).join("");
+    zone.value = selected;
+    const status = $("#profile-timezone-results");
+    if (status) {
+      status.hidden = !query;
+      status.textContent = matches.length ? `${matches.length} matching timezone${matches.length === 1 ? "" : "s"}` : "No matching timezones. Your current selection is kept.";
+    }
+  }
+
   function renderPreferences(user) {
     const prefs = user?.preferences || {};
     const card = $("#profile-pref-playing-card");
     const quick = $("#profile-pref-quick-add");
     if (card) card.checked = prefs.playing_card !== false;
     if (quick) quick.checked = prefs.quick_add !== false;
+    const zone = $("#profile-pref-timezone");
+    if (zone) {
+      let names = [];
+      try { names = Intl.supportedValuesOf("timeZone"); } catch {}
+      profileTimezoneNames = [...new Set(["UTC", profileDateTime.timeZone(), prefs.timezone, ...names].filter((name) => name && name !== "auto"))].sort();
+      renderTimezoneOptions(prefs.timezone || "auto");
+    }
+    const format = $("#profile-pref-time-format");
+    if (format) {
+      format.value = prefs.time_format || "auto";
+      window.CW.IconSelect?.enhance?.(format, { className: "cw-plain-select" });
+    }
   }
 
   function renderTwoFactor(enabled) {
@@ -1369,7 +1402,7 @@
   const collectionDateFmt = (epoch) => {
     if (!epoch) return "";
     try {
-      return new Intl.DateTimeFormat(window.__CW_LOCALE || navigator.language || undefined, { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(epoch * 1000));
+      return profileDateTime.formatter({ day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(epoch * 1000));
     } catch {
       return "";
     }
@@ -1976,24 +2009,14 @@
   const TIMELINE_COVERAGE = ["partial", "full", "mismatch"];
 
   const timelineFormatter = (options) => {
-    let fmt;
-    try {
-      fmt = new Intl.DateTimeFormat(window.__CW_LOCALE || navigator.language || undefined, options);
-    } catch {
-      fmt = new Intl.DateTimeFormat(undefined, options);
-    }
-    return (epoch) => (epoch ? fmt.format(new Date(epoch * 1000)) : "");
+    return (epoch) => (epoch ? profileDateTime.format(new Date(epoch * 1000), options) : "");
   };
 
   const timelinePad = (value) => String(value).padStart(2, "0");
 
-  const timelineDayKey = (epoch) => {
-    if (!epoch) return "";
-    const date = new Date(epoch * 1000);
-    return `${date.getFullYear()}-${timelinePad(date.getMonth() + 1)}-${timelinePad(date.getDate())}`;
-  };
+  const timelineDayKey = profileDateTime.dayKey;
 
-  const timelineMonthKey = (epoch) => (epoch ? new Date(epoch * 1000).toISOString().slice(0, 7) : "");
+  const timelineMonthKey = profileDateTime.monthKey;
 
   function timelineEndpoints(rows) {
     const out = [];
@@ -5015,28 +5038,37 @@
   }
 
   function wirePreferences() {
-    const inputs = [$("#profile-pref-playing-card"), $("#profile-pref-quick-add")].filter(Boolean);
+    $("#profile-timezone-search")?.addEventListener("input", () => renderTimezoneOptions());
+    const inputs = [$("#profile-pref-playing-card"), $("#profile-pref-quick-add"), $("#profile-pref-timezone"), $("#profile-pref-time-format")].filter(Boolean);
     for (const input of inputs) {
-      input.addEventListener("change", async () => {
+      const isTimezone = input.id === "profile-pref-timezone";
+      input.addEventListener(isTimezone ? "blur" : "change", async () => {
+        if (input.disabled || (isTimezone && input.value === (profile?.preferences?.timezone || "auto"))) return;
         inputs.forEach((node) => { node.disabled = true; });
+        const search = $("#profile-timezone-search");
+        if (search) search.disabled = true;
         try {
           const data = await api("/api/profile", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               preferences: {
-                playing_card: $("#profile-pref-playing-card")?.checked !== false,
-                quick_add: $("#profile-pref-quick-add")?.checked !== false,
+                playing_card: $("#profile-pref-playing-card")?.checked ?? profile?.preferences?.playing_card ?? true,
+                quick_add: $("#profile-pref-quick-add")?.checked ?? profile?.preferences?.quick_add ?? true,
+                timezone: $("#profile-pref-timezone")?.value || "auto",
+                time_format: $("#profile-pref-time-format")?.value || "auto",
               },
             }),
           });
           renderProfile(data);
           toast("Preferences saved");
+          if (input.id === "profile-pref-timezone" || input.id === "profile-pref-time-format") window.location.reload();
         } catch (e) {
-          input.checked = !input.checked;
+          renderPreferences(profile);
           toast(e.message || "Preferences could not be saved", true);
         } finally {
           inputs.forEach((node) => { node.disabled = false; });
+          if (search) search.disabled = false;
         }
       });
     }
@@ -5107,6 +5139,7 @@
 
   async function init() {
     await resolveViewAs();
+    await refreshProfile().catch((error) => toast(error.message || "Profile could not be loaded", true));
     historyPanel.wire();
     ratingsPanel.wire();
     playbackPanel.wire();
@@ -5123,14 +5156,12 @@
     wirePosterOverlay();
     wireProfileActivity();
     void openUpgradeNotice();
-    const [profileResult, overviewResult, activityResult] = await Promise.allSettled([
-      refreshProfile(),
+    const [overviewResult, activityResult] = await Promise.allSettled([
       loadOverview(),
       loadProfileActivity(),
     ]);
     void refreshPlexStatus();
     void refreshOidcStatus();
-    if (profileResult.status === "rejected") toast(profileResult.reason?.message || "Profile could not be loaded", true);
     if (overviewResult.status === "rejected") toast(overviewResult.reason?.message || "Profile overview could not be loaded", true);
     if (activityResult.status === "rejected") {
       const host = $("#profile-activity");

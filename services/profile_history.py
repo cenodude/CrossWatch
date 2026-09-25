@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import threading
 from collections import OrderedDict
-from datetime import datetime, timezone
+from datetime import datetime, timezone, tzinfo
 from typing import Any, Callable, Mapping
+
+from cw_platform.profile_preferences import display_timezone
 
 from services import dashboard_widgets as dw
 
@@ -69,9 +71,9 @@ def clear_history_cache() -> None:
         _INDEX_CACHE.clear()
 
 
-def month_key(epoch: int) -> str:
+def month_key(epoch: int, tz: tzinfo = timezone.utc) -> str:
     try:
-        return datetime.fromtimestamp(int(epoch), tz=timezone.utc).strftime("%Y-%m")
+        return datetime.fromtimestamp(int(epoch), tz=tz).strftime("%Y-%m")
     except (OverflowError, OSError, ValueError):
         return ""
 
@@ -338,10 +340,12 @@ def build_history_payload(
     page_size: int = 48,
     resolve_art: bool = True,
     include_keys: bool = False,
+    display_tz: str = "UTC",
 ) -> dict[str, Any]:
     source = normalize_source(index.get("source"))
     endpoints = [tuple(endpoint) for endpoint in index.get("endpoints") or []]
     endpoint_total = len(endpoints)
+    tz = display_timezone(display_tz)
     rows = list(index.get("rows") or [])
 
     wanted_type = str(media_type or "all").strip().lower()
@@ -362,6 +366,12 @@ def build_history_payload(
     needle = str(search or "").strip().lower()
     if needle:
         rows = [row for row in rows if needle in _search_text(row)]
+
+    if tz is not timezone.utc:
+        rows = [
+            {**row, "_month": month_key(row["sort_epoch"], tz) if row["sort_epoch"] else ""}
+            for row in rows
+        ]
 
     month_counts: dict[str, int] = {}
     for row in rows:

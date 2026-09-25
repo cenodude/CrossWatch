@@ -13,6 +13,7 @@ from typing import Any, Mapping, cast
 
 from _logging import log as BASE_LOG
 from cw_platform.config_base import load_config, save_config
+from cw_platform.profile_preferences import display_timezone
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 from cw_platform.orchestrator._progress_completion import progress_caps_from_ops, progress_write_completion_policy
 from cw_platform.provider_instances import build_provider_config_view, get_instance_block, get_provider_block, list_instance_ids, normalize_instance_id
@@ -665,9 +666,9 @@ def _group_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
-def _paused_month(item: Mapping[str, Any]) -> str:
+def _paused_month(item: Mapping[str, Any], display_tz: str = "UTC") -> str:
     dt = _parse_iso(item.get("updated_at") or item.get("progress_at"))
-    return dt.strftime("%Y-%m") if dt else ""
+    return dt.astimezone(display_timezone(display_tz)).strftime("%Y-%m") if dt else ""
 
 
 def _playback_summary(rows: list[dict[str, Any]]) -> dict[str, int]:
@@ -1102,6 +1103,7 @@ class PlaybackProgressService:
         force_refresh: bool = False,
         user_filter: Mapping[str, Any] | None = None,
         month: str | None = None,
+        display_tz: str = "UTC",
         tmdb: str | None = None,
     ) -> dict[str, Any]:
         cfg = load_config()
@@ -1182,14 +1184,14 @@ class PlaybackProgressService:
         if (sort if sort in SORT_VALUES else "last_updated") == "last_updated":
             month_counts: dict[str, int] = {}
             for item in sorted_items:
-                key = _paused_month(item)
+                key = _paused_month(item, display_tz)
                 if key:
                     month_counts[key] = month_counts.get(key, 0) + 1
             months = [{"month": key, "count": month_counts[key]} for key in sorted(month_counts, reverse=True)]
             wanted_month = str(month or "").strip()
             if wanted_month:
                 for position, item in enumerate(sorted_items):
-                    key = _paused_month(item)
+                    key = _paused_month(item, display_tz)
                     if key and key <= wanted_month:
                         page = position // page_size + 1
                         break

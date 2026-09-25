@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlsplit
 
+from cw_platform.profile_preferences import clean_user_preferences
+
 
 def _current_version_norm() -> str:
     try:
@@ -2674,14 +2676,11 @@ def _normalize_app_auth(cfg: dict[str, Any]) -> None:
             updated_at = 0
         return {"file": name, "content_type": content_type, "updated_at": updated_at}
 
-    def _clean_managed_preferences(raw_user: dict[str, Any]) -> dict[str, bool]:
+    def _clean_managed_preferences(raw_user: dict[str, Any]) -> dict[str, Any]:
         prefs = raw_user.get("preferences")
         if not isinstance(prefs, dict):
             return {}
-        return {
-            "playing_card": prefs.get("playing_card") is not False,
-            "quick_add": prefs.get("quick_add") is not False,
-        }
+        return clean_user_preferences(prefs)
 
     def _clean_managed_plex_sso(raw_user: dict[str, Any]) -> dict[str, Any]:
         plex_sso_user = raw_user.get("plex_sso")
