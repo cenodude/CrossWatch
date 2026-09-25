@@ -1645,7 +1645,7 @@
       </div>`;
   }
 
-  function renderPagedList(host, items, count, cardFn, emptyText, kind, keepPager = false, horizontal = false) {
+  function renderPagedList(host, items, count, cardFn, emptyText, kind, horizontal = false) {
     if (!host) return;
     if (!items.length) {
       setEmpty(host, kind, emptyText);
@@ -1660,26 +1660,17 @@
     }
     const maxItems = widgetMaxItems(kind);
     const visible = Math.min(count, items.length, maxItems);
-    const hasMore = Math.min(widgetTotal(kind), maxItems) > visible;
-    const moreContent = kind === "playlists"
-      ? `<span class="cw-dash-see-more-label">${hasMore ? "View more playlists" : "View all playlists"}</span>`
-      : `<span class="material-symbols-rounded">expand_more</span>`;
-    const button = hasMore || keepPager
-      ? `<button type="button" class="cw-dash-see-more" data-cw-widget-more="${esc(kind)}" aria-label="${hasMore ? `Show more ${esc(kind)} items` : `All ${esc(kind)} items shown`}"${hasMore ? "" : " disabled"}>
-          ${moreContent}
-        </button>`
-      : "";
-    host.innerHTML = `${items.slice(0, visible).map(cardFn).join("")}${button}${historyPageLink(kind)}`;
+    host.innerHTML = `${items.slice(0, visible).map(cardFn).join("")}${historyPageLink(kind)}`;
     scheduleMasonry();
   }
 
   function renderWidget(kind) {
     const defs = {
-      history: { host: $("#recent-history-list"), list: historyCard, icon: (item, index) => mediaPosterCard(item, "history", index), media: (item, index) => mediaLandscapeCard(item, "history", index), keepPager: false },
-      ratings: { host: $("#latest-ratings-grid"), list: ratingListCard, icon: ratingCard, media: (item, index) => mediaLandscapeCard(item, "ratings", index), keepPager: false },
-      scrobble: { host: $("#recent-scrobble-list"), list: activityCard, icon: (item, index) => mediaPosterCard(item, "scrobble", index), media: (item, index) => mediaLandscapeCard(item, "scrobble", index), keepPager: true },
-      progress: { host: $("#recent-progress-list"), list: progressCard, icon: (item, index) => mediaPosterCard(item, "progress", index), media: (item, index) => mediaLandscapeCard(item, "progress", index), keepPager: true },
-      playlists: { host: $("#recent-playlists-list"), list: playlistCard, icon: playlistPosterCard, keepPager: true },
+      history: { host: $("#recent-history-list"), list: historyCard, icon: (item, index) => mediaPosterCard(item, "history", index), media: (item, index) => mediaLandscapeCard(item, "history", index) },
+      ratings: { host: $("#latest-ratings-grid"), list: ratingListCard, icon: ratingCard, media: (item, index) => mediaLandscapeCard(item, "ratings", index) },
+      scrobble: { host: $("#recent-scrobble-list"), list: activityCard, icon: (item, index) => mediaPosterCard(item, "scrobble", index), media: (item, index) => mediaLandscapeCard(item, "scrobble", index) },
+      progress: { host: $("#recent-progress-list"), list: progressCard, icon: (item, index) => mediaPosterCard(item, "progress", index), media: (item, index) => mediaLandscapeCard(item, "progress", index) },
+      playlists: { host: $("#recent-playlists-list"), list: playlistCard, icon: playlistPosterCard },
     };
     const def = defs[kind];
     if (!def) return;
@@ -1695,7 +1686,6 @@
       cardFn,
       "",
       kind,
-      def.keepPager,
       effectiveSize(kind) === "large"
     );
   }
@@ -2038,11 +2028,6 @@
           return;
         }
       }
-      const btn = event.target?.closest?.("[data-cw-widget-more]");
-      if (!btn) return;
-      const kind = String(btn.getAttribute("data-cw-widget-more") || "");
-      if (!REFRESHABLE_WIDGETS.includes(kind)) return;
-      expandWidget(kind, { button: btn });
     });
     document.addEventListener("tab-changed", (event) => {
       const id = event?.detail?.id || event?.detail?.tab;

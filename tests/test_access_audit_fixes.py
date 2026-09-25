@@ -1028,7 +1028,7 @@ def test_profile_widget_items_open_the_profile_preview_drawer() -> None:
 
     js = pathlib.Path("assets/js/dashboard-widgets.js").read_text(encoding="utf-8")
     helper = js[js.index("function openProfileWidgetPreview"):js.index("function historyCard")]
-    click = js[js.index('const itemLink = event.target?.closest?.("[data-cw-widget-item]")'):js.index('const btn = event.target?.closest?.("[data-cw-widget-more]")')]
+    click = js[js.index('const itemLink = event.target?.closest?.("[data-cw-widget-item]")'):js.index('document.addEventListener("tab-changed", (event) => {')]
 
     assert "ON_PROFILE_PAGE" in helper
     assert "window.CW?.WatchlistPreview?.openPreviewDrawer || window.openPreviewDrawer" in helper
