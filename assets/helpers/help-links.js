@@ -14,6 +14,7 @@
     mdblist: "crosswatch/settings/connections/trackers/mdblist",
     publicmetadb: "crosswatch/settings/connections/trackers/publicmetadb",
     anilist: "crosswatch/settings/connections/trackers/anilist",
+    wetrakr: "https://api.wetrakr.com/",
     punchplay: "crosswatch/settings/connections/trackers/punchplay",
     bingebase: "crosswatch/settings/connections/trackers/bingebase",
     flicklist: "crosswatch/settings/connections/trackers/flicklist",
@@ -39,7 +40,7 @@
 
   function url(key){
     const rel = path(key);
-    return rel ? BASE + rel : BASE;
+    return /^https:\/\//.test(rel) ? rel : rel ? BASE + rel : BASE;
   }
 
   const HelpLinks = Object.freeze({ base: BASE, paths: PATHS, path, url });

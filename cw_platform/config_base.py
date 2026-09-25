@@ -404,6 +404,18 @@ DEFAULT_CFG: dict[str, Any] = {
         },
     },
 
+    "wetrakr": {
+        "auth_method": "pkce",
+        "access_token": "",
+        "refresh_token": "",
+        "token_type": "bearer",
+        "expires_at": 0,
+        "username": "",
+        "user_id": "",
+        "plan": "",
+        "reauth_required": False,
+    },
+
     "punchplay": {
         "auth_method": "device_code",
         "access_token": "",
@@ -953,6 +965,7 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
         "anilist": {"access_token", "client_secret"},
         "mdblist": {"api_key", "access_token", "refresh_token", "_pending_device"},
         "publicmetadb": {"api_key"},
+        "wetrakr": {"access_token", "refresh_token"},
         "punchplay": {"access_token", "refresh_token", "_pending_device"},
         "bingebase": {"access_token", "webhook_url", "api_key", "_pending_device"},
         "flicklist": {"api_key", "access_token", "token", "_pending_device"},
@@ -1076,6 +1089,7 @@ CONFIG_TOP_LEVEL_ORDER: tuple[str, ...] = (
     "anilist",
     "tmdb_sync",
     "publicmetadb",
+    "wetrakr",
     "punchplay",
     "bingebase",
     "flicklist",

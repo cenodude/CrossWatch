@@ -48,7 +48,7 @@ def test_provider_identification_after_restart(tmp_path, custom_agent):
         for provider in (
             "ANILIST", "BINGEBASE", "EMBY", "FLICKLIST", "FLOPPY", "KODI", "MDBLIST",
             "NUVIO", "PLEX", "PUBLICMETADB", "PUNCHPLAY", "SCROB", "SIMKL", "STREMIO",
-            "TAUTULLI", "TRACEARR", "TRAKT", "TMDB", "JELLYFIN",
+            "TAUTULLI", "TRACEARR", "TRAKT", "TMDB", "JELLYFIN", "WETRAKR",
         ):
             env[f"CW_{provider}_UA"] = custom_agent
     script = r'''
@@ -131,6 +131,10 @@ assert probesAPI._provider_headers("simkl")["User-Agent"] == (expected_agent or 
 from services.authPlex import _headers as plex_login_headers
 assert plex_login_headers("test-device")["X-Plex-Version"] == "v0.12.4"
 assert plex_login_headers("test-device")["User-Agent"] == (expected_agent or "CrossWatch/v0.12.4 (Plex)")
+from providers.auth._auth_WETRAKR import _headers as wetrakr_headers, __VERSION__ as wetrakr_module_version
+assert wetrakr_headers()["User-Agent"] == (expected_agent or "CrossWatch/v0.12.4 (WeTrakrAuth)")
+assert wetrakr_headers()["wetrakr-api-version"] == "1"
+assert wetrakr_module_version == "0.1"
 '''
     result = subprocess.run(
         [sys.executable, "-c", script, str(stamp), custom_agent],

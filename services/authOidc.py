@@ -15,6 +15,7 @@ from urllib.parse import urlencode
 import requests
 from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa, utils as asym_utils
 from cryptography.hazmat.primitives import hashes
+from cw_platform.app_version import user_agent
 
 PENDING_TTL_SEC = 10 * 60
 DISCOVERY_TTL_SEC = 15 * 60
@@ -205,7 +206,7 @@ def _discovery(issuer: str) -> dict[str, Any]:
     now = _now()
     if cached and cached[0] > now:
         return dict(cached[1])
-    resp = requests.get(f"{issuer}/.well-known/openid-configuration", timeout=12)
+    resp = requests.get(f"{issuer}/.well-known/openid-configuration", headers={"User-Agent": user_agent("OIDC", override_env="CW_OIDC_UA")}, timeout=12)
     resp.raise_for_status()
     data = resp.json() or {}
     if _norm_issuer(data.get("issuer")) != issuer:
@@ -220,7 +221,7 @@ def _jwks(jwks_uri: str) -> dict[str, Any]:
     now = _now()
     if cached and cached[0] > now:
         return dict(cached[1])
-    resp = requests.get(uri, timeout=12)
+    resp = requests.get(uri, headers={"User-Agent": user_agent("OIDC", override_env="CW_OIDC_UA")}, timeout=12)
     resp.raise_for_status()
     data = resp.json() or {}
     _JWKS_CACHE[uri] = (now + DISCOVERY_TTL_SEC, dict(data))
@@ -317,7 +318,7 @@ def _fetch_userinfo(disco: dict[str, Any], access_token: str) -> dict[str, Any]:
     token = str(access_token or "").strip()
     if not uri or not token:
         return {}
-    resp = requests.get(uri, headers={"Authorization": f"Bearer {token}", "Accept": "application/json"}, timeout=12)
+    resp = requests.get(uri, headers={"Authorization": f"Bearer {token}", "Accept": "application/json", "User-Agent": user_agent("OIDC", override_env="CW_OIDC_UA")}, timeout=12)
     if not resp.ok:
         return {}
     data = resp.json() or {}
@@ -412,7 +413,7 @@ def check_callback(cfg: dict[str, Any], *, state: str, code: str) -> dict[str, A
     secret = str(oidc.get("client_secret") or "").strip()
     if secret:
         data["client_secret"] = secret
-    resp = requests.post(token_endpoint, data=data, headers={"Accept": "application/json"}, timeout=20)
+    resp = requests.post(token_endpoint, data=data, headers={"Accept": "application/json", "User-Agent": user_agent("OIDC", override_env="CW_OIDC_UA")}, timeout=20)
     resp.raise_for_status()
     token = resp.json() or {}
     id_token = str(token.get("id_token") or "").strip()

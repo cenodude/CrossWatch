@@ -32,6 +32,7 @@ _PROVIDER_LABELS = {
     "mdblist": "MDBList",
     "crosswatch": "CrossWatch",
     "floppy": "Floppy",
+    "wetrakr": "WeTrakr",
     "punchplay": "PunchPlay",
     "bingebase": "BingeBase",
     "flicklist": "FlickList",
