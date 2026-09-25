@@ -15,6 +15,7 @@ except Exception:
 
 from cw_platform.app_version import app_version
 from cw_platform.config_base import load_config
+from providers.scrobble._log_dedupe import LogDeduplicator
 from providers.scrobble.scrobble import Dispatcher, ScrobbleSink, ScrobbleEvent, MediaType, mask_account as _mask_account
 from providers.scrobble.currently_watching import update_from_event as _cw_update, update_from_payload as _cw_update_payload
 from providers.scrobble.media_filters import event_ignore_reason, log_media_filter_drop
@@ -573,7 +574,7 @@ class EmbyWatchService:
         self._allowed_sessions: set[str] = set()
         self._scrobble_whitelist_sessions: set[str] = set()
         self._filtered_sessions: set[str] = set()
-        self._route_filtered_ts: dict[str, float] = {}
+        self._route_filter_logs = LogDeduplicator()
         self._cw_last_heartbeat: dict[str, float] = {}
         self._best_offset: dict[str, tuple[int, int, float]] = {}
         self._last_seek_emit: dict[str, float] = {}
@@ -918,6 +919,7 @@ class EmbyWatchService:
             self._clear_currently_watching(ev2)
             return False
 
+        self._route_filter_logs.discard((ev2.server_uuid, ev2.session_key))
         try:
             _cw_update("emby", ev2, provider_instance=str(self._instance_id or "default"))
         except Exception:
@@ -958,6 +960,7 @@ class EmbyWatchService:
             self._clear_currently_watching(ev)
             return
 
+        self._route_filter_logs.discard((ev.server_uuid, ev.session_key))
         try:
             _cw_update("emby", ev, provider_instance=str(self._instance_id or "default"))
         except Exception:
@@ -979,12 +982,8 @@ class EmbyWatchService:
 
     def _throttled_route_filtered_log(self, ev: ScrobbleEvent, kind: str = "event") -> None:
         sk = str(ev.session_key or "")
-        key = f"{kind}|{ev.account}|{ev.server_uuid}|{sk or '?'}"
-        now = time.time()
-        last = self._route_filtered_ts.get(key, 0.0)
-        if now - last >= 30.0:
-            self._dbg(f"{kind} filtered by route dispatcher: user={_mask_account(ev.account)} server={ev.server_uuid} sess={sk}")
-            self._route_filtered_ts[key] = now
+        if self._route_filter_logs.should_log((ev.server_uuid, ev.session_key), ev.account):
+            self._dbg(f"{kind} not dispatched: user={_mask_account(ev.account)} server={ev.server_uuid} sess={sk}")
 
     def _clear_currently_watching(self, ev: ScrobbleEvent) -> None:
         try:

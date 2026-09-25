@@ -706,9 +706,11 @@ class WatchService:
             self._session_playback, self._last_event, self._sess_identity_cache,
             self._last_seen, self._last_emit, self._max_seen, self._first_seen,
             self._last_pause_ts, self._last_probe, self._best_offset,
-            self._tl_last, self._last_seek_emit, self._identity_miss, self._identity_logged,
+            self._tl_last, self._last_seek_emit, self._identity_miss,
         ):
             state.pop(sk, None)
+        if not keep_stop:
+            self._identity_logged.pop(sk, None)
         self._allowed_sessions = {key for key in self._allowed_sessions if not key.startswith(f"{sk}|")}
         self._pkc_pending = {
             client: pending for client, pending in self._pkc_pending.items()
