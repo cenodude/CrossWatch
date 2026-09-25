@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Iterable, Literal, Protocol
 
 from cw_platform.account_match import media_account_allowed, normalize_media_account_name
+from providers.scrobble._log_dedupe import LogDeduplicator
 from providers.scrobble.anime_mapping import maybe_enrich_event_for_sink, sink_name_for_mapping
 from providers.scrobble.media_filters import event_ignore_reason, log_media_filter_drop
 
@@ -375,6 +376,8 @@ class Dispatcher:
         self._last_progress: dict[str, float] = {}
         self._sink_accepts_cfg: dict[int, bool] = {}
         self._route_log_ts: dict[str, float] = {}
+        self._filter_log_state = LogDeduplicator()
+        self._filter_log_config_identity = ""
         self._retry_after: dict[str, tuple[float, int]] = {}
         self._dispatch_lock = threading.RLock()
         self._pending: OrderedDict[str, tuple[float, ScrobbleEvent]] = OrderedDict()
@@ -430,6 +433,26 @@ class Dispatcher:
         if now - self._route_log_ts.get(key, 0.0) >= 30.0:
             self._route_log_ts[key] = now
             _log(msg, lvl)
+
+    def _sync_filter_log_config(self, identity: str) -> None:
+        with self._dispatch_lock:
+            if identity != self._filter_log_config_identity:
+                self._filter_log_state.clear()
+                self._filter_log_config_identity = identity
+
+    def _log_filter_drop(self, ev: ScrobbleEvent, cfg: dict[str, Any], reason: str,
+                         identity: tuple[str, ...], lvl: str = "DEBUG") -> None:
+        route = self._route_label(cfg)
+        msg = f"route {route}: filtered user={mask_account(identity[0])} sess={ev.session_key} reason={reason}"
+        if not ev.session_key:
+            self._throttled_route_log(f"filter|{ev.server_uuid}|{reason}|{identity}", msg, lvl)
+            return
+        key = (ev.server_uuid, ev.session_key)
+        signature = (route, reason, *identity)
+        with self._dispatch_lock:
+            self._sync_filter_log_config(self._delivery_identity(cfg))
+            if self._filter_log_state.should_log(key, signature):
+                _log(msg, lvl)
 
     def _fallback_account(self, ev: ScrobbleEvent, cfg: dict[str, Any]) -> str:
         if str(ev.account or "").strip():
@@ -517,6 +540,7 @@ class Dispatcher:
 
         if cache_key:
             if cache_key in self._session_ok:
+                self._filter_log_state.discard((ev.server_uuid, ev.session_key))
                 return True
 
         if not self._identity_allowed(ev, cfg):
@@ -600,23 +624,16 @@ class Dispatcher:
         )
 
         resolved = bool(str(account or "").strip() or str(user_id or "").strip())
+        identity = (account, user_id, acc_id, acc_uuid)
 
         if want_user and want_user != user_id:
             if resolved:
-                self._throttled_route_log(
-                    f"user_id|{user_id}|{ev.session_key}",
-                    f"route {self._route_label(cfg)}: filtered user={mask_account(account)} "
-                    f"sess={ev.session_key} reason=user_id",
-                )
+                self._log_filter_drop(ev, cfg, "user_id", identity)
             return False
 
         scoped = bool(str(((cfg.get("scrobble") or {}).get("watch") or {}).get("route_profile_id") or "").strip())
         if not wl and scoped:
-            _log(
-                f"route {self._route_label(cfg)}: filtered user={mask_account(account)} "
-                f"sess={ev.session_key} reason=profile_scoped_without_whitelist",
-                "WARNING",
-            )
+            self._log_filter_drop(ev, cfg, "profile_scoped_without_whitelist", identity, "WARNING")
             return False
 
         accounts = [account]
@@ -629,12 +646,10 @@ class Dispatcher:
             for name in accounts
         ):
             if resolved:
-                self._throttled_route_log(
-                    f"username|{account}|{ev.session_key}",
-                    f"route {self._route_label(cfg)}: filtered user={mask_account(account)} "
-                    f"sess={ev.session_key} reason=username_whitelist",
-                )
+                self._log_filter_drop(ev, cfg, "username_whitelist", identity)
             return False
+        if ev.session_key:
+            self._filter_log_state.discard((ev.server_uuid, ev.session_key))
         return True
 
     def _should_send(self, ev: ScrobbleEvent, cfg: dict[str, Any], sk: str) -> bool:
@@ -744,6 +759,7 @@ class Dispatcher:
             identity = self._delivery_identity(cfg)
             watch = ((cfg.get("scrobble") or {}).get("watch") or {})
             if identity != self._config_identity:
+                self._sync_filter_log_config(identity)
                 if self._pending:
                     _log(f"route {self._route_label(cfg)}: cancelled {len(self._pending)} queued deliveries after destination or route configuration changed", "WARNING")
                 self._pending.clear()

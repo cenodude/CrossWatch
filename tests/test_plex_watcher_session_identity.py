@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -480,6 +481,138 @@ def test_route_filter_stays_quiet_while_identity_is_unresolved(monkeypatch: pyte
     messages = _dispatch_and_capture(monkeypatch, cfg, {})
 
     assert messages == []
+
+
+@pytest.mark.parametrize("restriction", ["username_whitelist", "user_id", "profile_scoped_without_whitelist"])
+def test_route_filter_logs_stay_quiet_during_long_playback(monkeypatch: pytest.MonkeyPatch, restriction: str) -> None:
+    from providers.scrobble import scrobble
+
+    cfg = _route_dispatcher_cfg("R1", "simkl", ["owner"], False)
+    if restriction == "user_id":
+        cfg["scrobble"]["watch"]["filters"]["user_id"] = "owner-id"
+    elif restriction == "profile_scoped_without_whitelist":
+        cfg["scrobble"]["watch"]["filters"] = {}
+        cfg["scrobble"]["watch"]["route_profile_id"] = "profile-1"
+    clock = [1000.0]
+    messages: list[tuple[str, str]] = []
+    monkeypatch.setattr(scrobble.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(scrobble.time, "time", lambda: clock[0])
+    monkeypatch.setattr(scrobble, "_log", lambda msg, lvl="INFO": messages.append((msg, lvl)))
+    sink = CaptureSink()
+    dispatcher = scrobble.Dispatcher([sink], cfg_provider=lambda: cfg)
+    parsed = scrobble.from_plex_pssn(_alert("30"))
+    assert parsed is not None
+    ev = replace(parsed, account="shared")
+
+    for _ in range(240):
+        assert not dispatcher.accepts_user(ev)
+        assert not dispatcher.dispatch(ev)
+        clock[0] += 30.0
+
+    level = "WARNING" if restriction == "profile_scoped_without_whitelist" else "DEBUG"
+    assert messages == [(f"route R1 plex->simkl: filtered user=sh*** sess=30 reason={restriction}", level)]
+    assert sink.events == []
+
+
+def test_route_filter_logs_report_changes_and_rejections_after_acceptance(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.scrobble import scrobble
+
+    cfg = _route_dispatcher_cfg("R1", "simkl", ["owner"], False)
+    messages: list[str] = []
+    monkeypatch.setattr(scrobble, "_log", lambda msg, lvl="INFO": messages.append(msg))
+    dispatcher = scrobble.Dispatcher([], cfg_provider=lambda: cfg)
+    parsed = scrobble.from_plex_pssn(_alert("30"))
+    assert parsed is not None
+    ev = replace(parsed, account="shared")
+
+    assert not dispatcher.accepts_user(ev)
+    assert not dispatcher.accepts_user(replace(ev, raw={"_cw_session_identity": {"user_id": "new-user"}}))
+    cfg["scrobble"]["watch"]["filters"]["user_id"] = "owner-id"
+    assert not dispatcher.accepts_user(ev)
+    cfg["scrobble"]["watch"]["filters"] = {"username_whitelist": ["shared"]}
+    assert dispatcher.accepts_user(ev)
+    cfg["scrobble"]["watch"]["filters"] = {"username_whitelist": ["owner"]}
+    assert not dispatcher.accepts_user(ev)
+
+    assert len(messages) == 4
+    assert "reason=user_id" in messages[2]
+    assert "reason=username_whitelist" in messages[3]
+
+
+@pytest.mark.parametrize("method", ["accepts", "dispatch"])
+def test_cached_acceptance_resets_route_filter_logs(monkeypatch: pytest.MonkeyPatch, method: str) -> None:
+    from providers.scrobble import scrobble
+
+    cfg = _route_dispatcher_cfg("R1", "simkl", ["alice"], False)
+    messages: list[str] = []
+    monkeypatch.setattr(scrobble, "_log", lambda msg, lvl="INFO": messages.append(msg))
+    dispatcher = scrobble.Dispatcher([], cfg_provider=lambda: cfg)
+    parsed = scrobble.from_plex_pssn(_alert("dev-1"))
+    assert parsed is not None
+    check = getattr(dispatcher, method)
+
+    for _ in range(2):
+        assert check(replace(parsed, account="alice"))
+        assert not check(replace(parsed, account="bob"))
+
+    assert messages == [
+        "route R1 plex->simkl: filtered user=bo*** sess=dev-1 reason=username_whitelist"
+    ] * 2
+
+
+@pytest.mark.parametrize("method", ["accepts", "accepts_user", "dispatch", "preflight_and_dispatch"])
+def test_filter_edits_reset_rejection_logs(monkeypatch: pytest.MonkeyPatch, method: str) -> None:
+    from providers.scrobble import scrobble
+
+    cfg = _route_dispatcher_cfg("R1", "simkl", ["alice"], False)
+    messages: list[str] = []
+    monkeypatch.setattr(scrobble, "_log", lambda msg, lvl="INFO": messages.append(msg))
+    dispatcher = scrobble.Dispatcher([], cfg_provider=lambda: cfg)
+    parsed = scrobble.from_plex_pssn(_alert("dev-1"))
+    assert parsed is not None
+    ev = replace(parsed, account="bob")
+
+    for whitelist in (["alice"], ["b0b"]):
+        cfg["scrobble"]["watch"]["filters"]["username_whitelist"] = whitelist
+        for _ in range(2):
+            if method == "preflight_and_dispatch":
+                assert not dispatcher.accepts_user(ev)
+                assert not dispatcher.dispatch(ev)
+            else:
+                assert not getattr(dispatcher, method)(ev)
+
+    assert messages == [
+        "route R1 plex->simkl: filtered user=bo*** sess=dev-1 reason=username_whitelist"
+    ] * 2
+
+
+def test_route_filter_log_state_is_scoped_bounded_and_expires(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.scrobble import scrobble
+
+    cfg = _route_dispatcher_cfg("R1", "simkl", ["owner"], False)
+    clock = [1000.0]
+    messages: list[str] = []
+    monkeypatch.setattr(scrobble.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(scrobble, "_log", lambda msg, lvl="INFO": messages.append(msg))
+    dispatcher = scrobble.Dispatcher([], cfg_provider=lambda: cfg)
+    other_route = scrobble.Dispatcher([], cfg_provider=lambda: _route_dispatcher_cfg("R2", "trakt", ["owner"], False))
+    parsed = scrobble.from_plex_pssn(_alert("30"))
+    assert parsed is not None
+    ev = replace(parsed, account="shared")
+
+    assert not dispatcher.accepts_user(ev)
+    assert not other_route.accepts_user(ev)
+    assert not dispatcher.accepts_user(replace(ev, server_uuid="server-2"))
+    assert not dispatcher.accepts_user(replace(ev, session_key="31"))
+    assert len(messages) == 4
+    clock[0] += 1800.0
+    assert not dispatcher.accepts_user(ev)
+    assert len(messages) == 5
+
+    for i in range(1100):
+        assert not dispatcher.accepts_user(replace(ev, session_key=f"session-{i}"))
+    assert not dispatcher.accepts_user(ev)
+    assert len(messages) == 1106
 
 
 def test_route_fallback_and_send_logs_name_the_route(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1084,6 +1217,30 @@ def test_identity_resolved_is_logged_once_per_session(monkeypatch: pytest.Monkey
 
     assert plex.queries == ["/status/sessions"] * 3
     assert len([ln for ln in lines if ln.startswith("identity resolved")]) == 1
+
+
+def test_filtered_identity_revalidation_logs_only_changes(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.scrobble.plex import watch
+
+    clock = [1000.0]
+    monkeypatch.setattr(watch.time, "time", lambda: clock[0])
+    row = _session_xml("31", user_name="shared", user_id="2")
+    changed = _session_xml("31", user_name="other", user_id="3")
+    plex = FakePlex([row] * 12 + [changed])
+    service, sink = _service(monkeypatch, _cfg(["owner"]), plex)
+    lines = _identity_logs(monkeypatch, service)
+
+    for _ in range(12):
+        service._handle_alert(_alert("31"))
+        clock[0] += 30.0
+
+    assert len(plex.queries) == 12
+    assert len([line for line in lines if line.startswith("identity resolved")]) == 1
+    service._handle_alert(_alert("31"))
+    resolved = [line for line in lines if line.startswith("identity resolved")]
+    assert len(resolved) == 2
+    assert "user=ot***" in resolved[-1]
+    assert sink.events == []
 
 
 def test_identity_is_logged_again_when_the_session_key_changes_hands(monkeypatch: pytest.MonkeyPatch) -> None:

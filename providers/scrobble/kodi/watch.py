@@ -16,6 +16,7 @@ except Exception:
 
 from cw_platform.config_base import load_config
 from providers.auth._auth_KODI import KodiAuthError, clean_base, jsonrpc_call
+from providers.scrobble._log_dedupe import LogDeduplicator
 from providers.scrobble.currently_watching import update_from_event as _cw_update
 from providers.scrobble.currently_watching import update_from_payload as _cw_update_payload
 from providers.scrobble.scrobble import Dispatcher, ScrobbleEvent, ScrobbleSink, mask_account
@@ -225,6 +226,8 @@ class KodiWatchService:
         self._profile: tuple[float, str | None] = (0.0, None)
         self._last_error: tuple[str, float] = ("", 0.0)
         self._last_filter: dict[str, float] = {}
+        self._route_filter_logs = LogDeduplicator()
+        self._event_logs = LogDeduplicator()
         self._quiet_startup = bool(quiet_startup)
         self._show_ids_cache: dict[int, dict[str, str] | None] = {}
         self._offline = False
@@ -411,15 +414,19 @@ class KodiWatchService:
                 meta["year"] = _to_int(details.get("year"))
 
     def _dispatch_event(self, ev: ScrobbleEvent, duration_ms: int | None = None) -> bool:
-        _log(f"incoming '{ev.action}' user='{mask_account(ev.account)}' server='{ev.server_uuid}' media='{_media_name(ev)}' sess={ev.session_key}", "DEBUG")
-        _log(f"ids resolved: {_media_name(ev)} -> {_ids_desc(ev.ids)} sess={ev.session_key}", "DEBUG")
+        key = (ev.server_uuid, ev.session_key)
+        signature = (ev.account, ev.media_type, ev.title, ev.year, ev.season, ev.number, tuple(sorted(ev.ids.items())))
+        if self._event_logs.should_log(key, signature):
+            _log(f"incoming '{ev.action}' user='{mask_account(ev.account)}' server='{ev.server_uuid}' media='{_media_name(ev)}' sess={ev.session_key}", "DEBUG")
+            _log(f"ids resolved: {_media_name(ev)} -> {_ids_desc(ev.ids)} sess={ev.session_key}", "DEBUG")
         accepted = bool(self._dispatch.dispatch(ev))
-        if not accepted:
-            self._log_filter_limited(
-                f"route|{ev.account}|{ev.session_key}",
-                f"event filtered by route dispatcher: user={mask_account(ev.account)} server={ev.server_uuid} sess={ev.session_key}",
+        if not accepted and self._route_filter_logs.should_log(key, ev.account):
+            _log(
+                f"event not dispatched: user={mask_account(ev.account)} server={ev.server_uuid} sess={ev.session_key}",
+                "DEBUG",
             )
         if accepted:
+            self._route_filter_logs.discard(key)
             try:
                 _cw_update("kodi", ev, duration_ms=duration_ms, provider_instance=self._instance_id)
             except Exception:
