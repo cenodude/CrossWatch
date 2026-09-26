@@ -14,7 +14,7 @@ from providers.auth import _auth_WETRAKR as auth
 from providers.sync._mod_common import build_op_result, build_session, make_snapshot_progress
 from providers.sync._log import log
 from providers.sync.wetrakr import _history, _progress, _ratings, _watchlist
-from providers.sync.wetrakr._common import WRITE_BATCH_SIZE, WeTrakrSyncError, body_of, commit_snapshot, request, write_lock
+from providers.sync.wetrakr._common import WRITE_BATCH_SIZE, WeTrakrSyncError, body_of, commit_snapshot, item_key, request, write_lock
 
 __VERSION__ = "0.1"
 __all__ = ["get_manifest", "WETRAKRModule", "OPS"]
@@ -76,7 +76,7 @@ class WETRAKRModule:
     def __init__(self, cfg: Mapping[str, Any], instance_id: str | None = None):
         self.config = cfg or {}
         self.instance_id = normalize_instance_id(instance_id) if instance_id is not None else _current_instance_id(self.config)
-        self.session = build_session("WETRAKR", ctx)
+        self.session = build_session("WETRAKR", ctx, emit_hits=True)
         self.progress_factory = lambda feature: make_snapshot_progress(ctx, dst="WETRAKR", feature=feature)
 
     @staticmethod
@@ -127,12 +127,29 @@ class WETRAKRModule:
                 self._pending_snapshot = None
 
     def add(self, feature: str, items: Iterable[Mapping[str, Any]], *, dry_run: bool = False) -> dict[str, Any]:
-        module = _FEATURE_MODULES.get(feature)
-        return module.add(self, items, dry_run=dry_run) if module else build_op_result(ok=False, unsupported=True)
+        return self._write(feature, items, remove=False, dry_run=dry_run)
 
     def remove(self, feature: str, items: Iterable[Mapping[str, Any]], *, dry_run: bool = False) -> dict[str, Any]:
+        return self._write(feature, items, remove=True, dry_run=dry_run)
+
+    def _write(self, feature: str, items: Iterable[Mapping[str, Any]], *, remove: bool, dry_run: bool) -> dict[str, Any]:
         module = _FEATURE_MODULES.get(feature)
-        return module.remove(self, items, dry_run=dry_run) if module else build_op_result(ok=False, unsupported=True)
+        if module is None:
+            return build_op_result(ok=False, unsupported=True)
+        sources = list(items)
+        result = (module.remove if remove else module.add)(self, sources, dry_run=dry_run)
+        by_key = {item_key(self, feature, item): item for item in sources}
+        details = {row["key"]: dict(row) for row in result.get("unresolved", [])}
+        for key in result.get("unresolved_keys", []):
+            row = details.setdefault(key, {"key": key, "reason": result.get("error") or "write_not_verified"})
+            source = by_key.get(key)
+            if source is not None:
+                item = dict(source)
+                if not item.get("title"):
+                    item["title"] = item.get("series_title") or item.get("show_title") or key
+                row["item"] = item
+        result["unresolved"] = list(details.values())
+        return result
 
 
 class _WETRAKROPS:
