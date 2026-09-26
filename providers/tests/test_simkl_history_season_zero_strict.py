@@ -270,7 +270,7 @@ def test_unique_native_number_season_zero_row_is_accepted(monkeypatch):
 def test_cache_schema_bumped_invalidates_legacy_documents(monkeypatch):
     import sync.simkl._history as m
 
-    assert m._CACHE_SCHEMA == 4
+    assert m._CACHE_SCHEMA >= 4
     store: dict[str, str] = {}
     monkeypatch.setattr(m, "state_file", lambda name: name)
     monkeypatch.setattr(m, "_load_json", lambda path: json.loads(store.get(path) or "{}"))

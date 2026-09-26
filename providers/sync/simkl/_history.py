@@ -47,7 +47,7 @@ URL_ADD = f"{BASE}/sync/history"
 URL_REMOVE = f"{BASE}/sync/history/remove"
 URL_REDIRECT = f"{BASE}/redirect"
 URL_ANIME_EPISODES = f"{BASE}/anime/episodes"
-_CACHE_SCHEMA = 4
+_CACHE_SCHEMA = 5
 
 
 def _unresolved_path() -> str:
@@ -519,7 +519,7 @@ def _inject_adds_into_cache(items_list: list[Mapping[str, Any]]) -> None:
         if not watched_at:
             continue
         ts = _as_epoch(watched_at)
-        if not ts:
+        if ts is None:
             continue
         bucket_key = simkl_key_of(item)
         if not bucket_key:
@@ -948,8 +948,8 @@ def _apply_since_limit(
     if since is not None:
         cutoff = int(since)
         for k in list(out.keys()):
-            ts = _safe_int(str(k).rsplit("@", 1)[-1])
-            if ts and ts < cutoff:
+            ts = _int_or_none(str(k).rsplit("@", 1)[-1])
+            if ts is not None and ts < cutoff:
                 out.pop(k, None)
 
     if limit is None:
@@ -1100,7 +1100,7 @@ def _watched_raw_coordinates(row: Mapping[str, Any]) -> set[tuple[int, int]]:
             if e_num is None or e_num <= 0:
                 continue
             watched_at = (episode.get("watched_at") or episode.get("last_watched_at") or "").strip()
-            if not _as_epoch(watched_at):
+            if _as_epoch(watched_at) is None:
                 continue
             coords.add((s_num, e_num))
     return coords
@@ -1179,7 +1179,7 @@ def _parse_rows(
             continue
         watched_at = (row.get("last_watched_at") or row.get("watched_at") or "").strip()
         ts = _as_epoch(watched_at)
-        if not ts:
+        if ts is None:
             continue
         movie_media = {"movie": row.get("movie")} if isinstance(row.get("movie"), Mapping) else row
         movie_norm = simkl_normalize(cast(Mapping[str, Any], movie_media))
@@ -1234,7 +1234,7 @@ def _parse_rows(
             if anime_type == "movie":
                 watched_at = (row.get("last_watched_at") or row.get("watched_at") or "").strip()
                 if not watched_at:
-                    best_ts = 0
+                    best_ts: int | None = None
                     best = ""
                     for season in row.get("seasons") or []:
                         season = season if isinstance(season, Mapping) else {}
@@ -1242,12 +1242,12 @@ def _parse_rows(
                             episode = episode if isinstance(episode, Mapping) else {}
                             wa = (episode.get("watched_at") or episode.get("last_watched_at") or "").strip()
                             ts_wa = _as_epoch(wa)
-                            if ts_wa and ts_wa > best_ts:
+                            if ts_wa is not None and (best_ts is None or ts_wa > best_ts):
                                 best_ts = ts_wa
                                 best = wa
                     watched_at = best
                 ts = _as_epoch(watched_at)
-                if ts:
+                if ts is not None:
                     movie_item: dict[str, Any] = {
                         "type": "movie",
                         "title": series_name,
@@ -1392,7 +1392,7 @@ def _parse_rows(
                         e_num = e_m
                 watched_at = (episode.get("watched_at") or episode.get("last_watched_at") or "").strip()
                 ts = _as_epoch(watched_at)
-                if not ts or s_num < 0 or e_num <= 0:
+                if ts is None or s_num < 0 or e_num <= 0:
                     continue
                 episode_ids = _episode_exact_ids(episode)
                 alias_ids = alias.get("ids") if isinstance(alias, Mapping) and isinstance(alias.get("ids"), Mapping) and alias.get("ids") else None

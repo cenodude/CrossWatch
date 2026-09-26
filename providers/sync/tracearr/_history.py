@@ -85,7 +85,7 @@ def _iso_z(v: Any) -> str | None:
         return None
     if not dt.tzinfo:
         dt = dt.replace(tzinfo=timezone.utc)
-    if dt.timestamp() <= 0:
+    if dt.timestamp() < 0:
         return None
     return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
