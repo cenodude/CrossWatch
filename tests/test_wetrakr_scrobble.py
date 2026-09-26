@@ -166,6 +166,47 @@ def test_scrobble_post_not_found_is_terminal_without_completion(live):
     assert all(not state.get("uncertain") for state in live.sink._sessions.values())
 
 
+@pytest.mark.parametrize("debug", [False, True])
+@pytest.mark.parametrize("episode", [False, True])
+@pytest.mark.parametrize("action,progress,returned_action", [("start", 31, "start"), ("pause", 45, "pause"), ("stop", 95, "scrobble")])
+def test_sink_logs_match_other_sinks_and_mask_account(live, monkeypatch, debug, episode, action, progress, returned_action):
+    logs = []
+    monkeypatch.setattr(sink, "load_config", lambda: {"runtime": {"debug": debug}})
+    monkeypatch.setattr(sink, "BASE_LOG", lambda msg, **kw: logs.append((msg, kw)))
+    ev = event(action=action, progress=progress, **({"media_type": "episode", "ids": {"tmdb_show": "1396"},
+        "title": "Test series", "season": 1, "number": 1} if episode else {}))
+    assert live.sink.send(ev)["ok"]
+    name = "Test series S01E01" if episode else "Test movie (2008)"
+    assert logs[-1] == (f"scrobble {returned_action} user='te***' p={progress:.1f}% media='{name}'",
+                       {"level": "INFO", "module": "WETRAKR-SINK"})
+    assert all(kw["module"] == "WETRAKR-SINK" for _, kw in logs)
+    assert all("tester" not in msg and "test-access" not in msg for msg, _ in logs)
+    debug_lines = [msg for msg, kw in logs if kw["level"] == "DEBUG"]
+    if debug:
+        assert debug_lines == [f"intent path=/scrobble/{action} ids=tmdb:{1396 if episode else 155} p={float(progress)}",
+                               f"send path=/scrobble/{action} status=200 action={returned_action}"]
+    else:
+        assert not debug_lines
+
+
+@pytest.mark.parametrize("ignored", [False, True])
+def test_sink_logs_rejection_without_success_summary(live, monkeypatch, ignored):
+    logs = []
+    monkeypatch.setattr(sink, "load_config", lambda: {"runtime": {"debug": True}})
+    monkeypatch.setattr(sink, "BASE_LOG", lambda msg, **kw: logs.append((msg, kw)))
+    previous = live.server.hook
+    reason = "Below scrobble threshold (5%)"
+    live.server.hook = lambda method, path, kwargs: Response({"action": "start", "ignored": True, "reason": reason}) if method == "POST" and ignored else Response({}, status=404) if method == "POST" else previous(method, path, kwargs)
+    result = live.sink.send(event(progress=2))
+    assert not any(msg.startswith("scrobble start ") for msg, _ in logs)
+    if ignored:
+        assert result["ignored"] and reason in logs[-1][0]
+        assert "user='te***'" in logs[-1][0] and logs[-1][1]["level"] == "INFO"
+    else:
+        assert not result["ok"] and "status=404" in logs[-1][0]
+        assert logs[-1][1]["level"] == "WARN"
+
+
 def test_episode_never_uses_episode_ids_as_parent(live):
     result = live.sink.send(event(media_type="episode", ids={"tmdb": "62085"}, season=1, number=1))
     assert not result["ok"] and not live.server.calls

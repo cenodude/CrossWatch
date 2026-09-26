@@ -699,7 +699,7 @@ def write_items(adapter: Any, feature: str, items: Iterable[Mapping[str, Any]], 
                     pending[key] = resolve_child(adapter, item) if feature == "ratings" and item.get("type") in ("season", "episode") and not remove else item
                 except WeTrakrSyncError as exc:
                     unresolved.append({"key": key, "reason": exc.reason})
-        log("WETRAKR", feature, "info", "write_prepare", action="remove" if remove else "add", count=len(pending))
+        log("WETRAKR", feature, "debug", "write_prepare", op="remove" if remove else "add", count=len(pending))
         keys = list(pending)
         for start in range(0, len(keys), WRITE_BATCH_SIZE):
             batch = keys[start:start + WRITE_BATCH_SIZE]
@@ -740,6 +740,7 @@ def write_items(adapter: Any, feature: str, items: Iterable[Mapping[str, Any]], 
             if error:
                 unresolved.extend({"key": key, "reason": error.reason} for key in keys[start + WRITE_BATCH_SIZE:])
                 break
-        log("WETRAKR", feature, "info", "write_done", confirmed=len(confirmed), unresolved=len(unresolved))
+        log("WETRAKR", feature, "info", "write_done", op="remove" if remove else "add", ok=not unresolved,
+            applied=len(confirmed), unresolved=len(unresolved))
     return build_op_result(ok=not unresolved, count=len(confirmed), confirmed_keys=confirmed,
                            unresolved=unresolved, unresolved_keys=[r["key"] for r in unresolved])

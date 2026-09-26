@@ -145,7 +145,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
                 pending[key] = item
         attempted: dict[str, Mapping[str, Any]] = {}
         error: WeTrakrSyncError | None = None
-        log("WETRAKR", "progress", "info", "write_prepare", action="add", count=len(pending))
+        log("WETRAKR", "progress", "debug", "write_prepare", op="add", count=len(pending))
         for key, item in pending.items():
             raise_if_cancelled()
             if error:
@@ -173,7 +173,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
                         unresolved.append({"key": key, "reason": error.reason if error else "write_not_verified"})
             except WeTrakrSyncError:
                 unresolved.extend({"key": key, "reason": "verification_failed"} for key in attempted)
-    log("WETRAKR", "progress", "info", "write_done", confirmed=len(confirmed), unresolved=len(unresolved), skipped=len(results))
+    log("WETRAKR", "progress", "info", "write_done", op="add", ok=not unresolved, applied=len(confirmed), unresolved=len(unresolved), skipped=len(results))
     return build_op_result(ok=not unresolved, count=len(confirmed), confirmed_keys=confirmed,
                            unresolved=unresolved, unresolved_keys=[row["key"] for row in unresolved], results=results, skipped=len(results))
 
@@ -219,7 +219,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
                 pending.setdefault(target_key, []).append(key)
         attempted: dict[str, Mapping[str, Any]] = {}
         error: WeTrakrSyncError | None = None
-        log("WETRAKR", "progress", "info", "write_prepare", action="remove", count=len(pending))
+        log("WETRAKR", "progress", "debug", "write_prepare", op="remove", count=len(pending))
         for target_key, keys in pending.items():
             raise_if_cancelled()
             if error:
@@ -251,6 +251,6 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
                         unresolved.append({"key": key, "reason": error.reason if error else "write_not_verified"})
             except WeTrakrSyncError:
                 unresolved.extend({"key": key, "reason": "verification_failed"} for key in attempted)
-    log("WETRAKR", "progress", "info", "write_done", confirmed=len(confirmed), unresolved=len(unresolved), skipped=len(results))
+    log("WETRAKR", "progress", "info", "write_done", op="remove", ok=not unresolved, applied=len(confirmed), unresolved=len(unresolved), skipped=len(results))
     return build_op_result(ok=not unresolved, count=len(confirmed), confirmed_keys=confirmed,
                            unresolved=unresolved, unresolved_keys=[row["key"] for row in unresolved], results=results, skipped=len(results))

@@ -17,12 +17,40 @@ from cw_platform.event_archive import record_watch
 from cw_platform.provider_instances import normalize_instance_id, resolve_provider_block
 from providers.scrobble._auto_remove_watchlist import remove_across_providers_by_ids
 from providers.scrobble._watched_gate import resolve_stop_action
-from providers.scrobble.scrobble import ScrobbleEvent
-from providers.sync._log import log
+from providers.scrobble.scrobble import ScrobbleEvent, mask_account
 from providers.sync._mod_WETRAKR import WETRAKRModule
 from providers.sync.wetrakr._common import WeTrakrSyncError, account_key, body_of, identity_tokens, int_value, request, resolve_child, write_lock
 from providers.sync.wetrakr._progress import ignored_reason, number, scrobble_ids
 from services.activity import record_scrobble_event
+
+try:
+    from _logging import log as BASE_LOG
+except Exception:
+    BASE_LOG = None
+
+
+def _log(msg: str, lvl: str = "INFO") -> None:
+    level = str(lvl or "INFO").upper()
+    if level == "DEBUG":
+        try:
+            if not (load_config().get("runtime") or {}).get("debug"):
+                return
+        except Exception:
+            return
+    if BASE_LOG is not None:
+        try:
+            BASE_LOG(msg, level=level, module="WETRAKR-SINK")
+            return
+        except Exception:
+            pass
+    print(f"[WETRAKR-SINK:{level}] {msg}")
+
+
+def _media_name(event: ScrobbleEvent) -> str:
+    title = event.title or "?"
+    if event.media_type == "episode":
+        return f"{title} S{int(event.season or 0):02d}E{int(event.number or 0):02d}"
+    return f"{title} ({event.year})" if event.year else title
 
 
 def _setting(cfg: Mapping[str, Any], key: str, default: float, *, watch: bool = False) -> float:
@@ -142,15 +170,24 @@ class WeTrakrSink:
                     and now - state.get("sent_at", 0) < _setting(config, "pause_debounce_seconds", 5, watch=True)):
                 return {"ok": True, "skipped": True, "reason": "debounced"}
             posted = False
+            path = f"/scrobble/{action}"
+            name = _media_name(event)
+            user = mask_account(event.account)
             try:
                 self._resolve(adapter, item, body)
+                ids = body["show" if event.media_type == "episode" else "movie"]["ids"]
+                description = ",".join(f"{source}:{value}" for source, value in ids.items())
+                _log(f"intent path={path} ids={description} p={body['progress']}", "DEBUG")
                 posted = True
-                response = body_of(request(adapter, "POST", f"/scrobble/{action}", json=body))
+                http_response = request(adapter, "POST", path, json=body)
+                response = body_of(http_response)
+                returned_action = response.get("action", action) if isinstance(response, Mapping) else action
+                _log(f"send path={path} status={http_response.status_code} action={returned_action}", "DEBUG")
                 reason = ignored_reason(response)
                 if reason is not None:
                     for field in ("action", "progress", "sent_at", "completed", "uncertain"):
                         state.pop(field, None)
-                    log("WETRAKR-SINK", "scrobble", "info", "send_ignored", action=action, reason=reason, instance=self.instance_id)
+                    _log(f"scrobble ignored action={action} user='{user}' p={body['progress']:.1f}% media='{name}' reason='{reason}'")
                     return {"ok": True, "skipped": True, "ignored": True, "reason": reason}
                 expected = "scrobble" if action == "stop" else action
                 if not isinstance(response, Mapping) or response.get("action") != expected or response.get("success") is False:
@@ -159,7 +196,7 @@ class WeTrakrSink:
                 uncertain = posted and action == "stop" and (not exc.status_code or exc.status_code >= 500)
                 state["uncertain"] = uncertain
                 self._archive(event, config, progress, "fail", exc.reason)
-                log("WETRAKR-SINK", "scrobble", "warn", "send_failed", reason=exc.reason, status=exc.status_code)
+                _log(f"{path} failed for {name}: status={exc.status_code} reason={exc.reason}", "WARN")
                 return {"ok": False, "error": exc.reason, "retryable": not uncertain and (exc.status_code in (408, 429) or exc.status_code >= 500 or exc.reason == "request_failed"),
                         "retry_after": exc.retry_after}
             state.update(action=action, progress=body["progress"], sent_at=now, completed=action == "stop")
@@ -171,7 +208,7 @@ class WeTrakrSink:
                 except Exception:
                     pass
                 self._auto_remove(event, config)
-            log("WETRAKR-SINK", "scrobble", "info", "send_done", action=action, progress=body["progress"], instance=self.instance_id)
+            _log(f"scrobble {response['action']} user='{user}' p={body['progress']:.1f}% media='{name}'")
             return {"ok": True, "action": response["action"]}
 
     def _archive(self, event: ScrobbleEvent, cfg: Mapping[str, Any], progress: float, status: str, reason: str = "") -> None:

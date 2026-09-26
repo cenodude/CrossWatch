@@ -161,6 +161,66 @@ def test_registry_profiles_capabilities_and_ids(env):
     assert env.server.calls[-1][2]["headers"]["Authorization"] == "Bearer test-access"
 
 
+def test_api_totals_count_requests_without_debug_and_exclude_local_quota_blocks(env, monkeypatch):
+    from cw_platform.orchestrator._pairs_metrics import ApiMetrics
+    from providers.sync import _mod_WETRAKR as module
+
+    monkeypatch.delenv("CW_API_HITS", raising=False)
+    metrics = ApiMetrics(lambda *args, **kwargs: None)
+    monkeypatch.setattr(module, "ctx", metrics)
+    adapter = WETRAKRModule(env.view)
+    assert adapter.health()["ok"]
+    env.server.hook = lambda *args: Response({}, 429, {"Retry-After": "30"})
+    with pytest.raises(common.WeTrakrSyncError):
+        common.request(adapter, "GET", "/sync/last_activities")
+    with pytest.raises(common.WeTrakrSyncError):
+        common.request(adapter, "GET", "/sync/last_activities")
+    totals = metrics.totals()
+    assert totals["total"] == len(env.server.calls) == 2
+    assert totals["providers"]["WETRAKR"]["by_feature"] == {"account/settings": 1, "sync/last_activities": 1}
+
+
+@pytest.mark.parametrize("media", [MOVIE, EPISODE])
+def test_unresolved_logs_and_archive_keep_media_details(env, monkeypatch, media):
+    from cw_platform.orchestrator import _applier
+
+    source = item(media)
+    env.server.partial = True
+    result = env.adapter.add("history", iter([source]))
+    assert not result["ok"] and result["unresolved"][0]["item"] == source
+    events, saved = [], []
+    monkeypatch.setattr(_applier, "record_unresolved", lambda *args, **kwargs: saved.extend(args[2]))
+    _applier._normalize(result, [source], "add", dst="WETRAKR", feature="history",
+                        emit=lambda event, **fields: events.append((event, fields)))
+    detail = next(fields["items"][0] for event, fields in events if event == "apply:unresolved")
+    assert detail["title"] == source["title"] and detail["reason"] == "write_not_verified"
+    assert saved[0]["ids"] == source["ids"]
+    if media == EPISODE:
+        assert detail["season"] == 1 and detail["episode"] == 1
+        assert detail["series_title"] == SHOW["title"]
+
+
+def test_unresolved_without_title_uses_identity_and_keeps_preflight_error(env):
+    source = {"type": "movie", "ids": {"tmdb": "155"}}
+    env.server.hook = lambda *args: Response({}, 503)
+    result = env.adapter.add("watchlist", [source])
+    row = result["unresolved"][0]
+    assert row["reason"] == "request_rejected" and row["item"]["title"] == "tmdb:155"
+    assert "title" not in source
+
+
+@pytest.mark.parametrize("remove", [False, True])
+def test_sync_write_summary_matches_other_providers(env, monkeypatch, remove):
+    logs = []
+    monkeypatch.setattr(common, "log", lambda *args, **fields: logs.append((args, fields)))
+    env.server.planning = [MOVIE] if remove else []
+    result = (env.adapter.remove if remove else env.adapter.add)("watchlist", [item()])
+    assert result["ok"]
+    args, fields = next(row for row in logs if row[0][-1] == "write_done")
+    assert args == ("WETRAKR", "watchlist", "info", "write_done")
+    assert fields == {"op": "remove" if remove else "add", "ok": True, "applied": 1, "unresolved": 0}
+
+
 def test_watchlist_reads_movies_shows_and_normalizes_ids(env):
     env.server.planning = [MOVIE, SHOW]
     index = env.adapter.build_index("watchlist")
