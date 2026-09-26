@@ -70,7 +70,7 @@ def _clear_analyzer_caches() -> None:
 register_cache("analyzer", _clear_analyzer_caches)
 
 _LOG = logging.getLogger("crosswatch.analyzer")
-_TRACKER_PROVIDER_BASES = {"CROSSWATCH", "TRAKT", "SIMKL", "MDBLIST", "ANILIST"}
+_TRACKER_PROVIDER_BASES = {"CROSSWATCH", "TRAKT", "SIMKL", "MDBLIST", "ANILIST", "WETRAKR"}
 _MEDIA_SERVER_PROVIDER_BASES = {"PLEX", "EMBY", "JELLYFIN"}
 _STRICT_PAIRS_PREFIX = "__cw_strict_pairs__:"
 
@@ -1887,7 +1887,7 @@ def _system_diagnostics() -> list[dict[str, Any]]:
 
 _ALIAS_ID_NAMESPACES = (
     "tmdb", "imdb", "tvdb", "trakt", "simkl", "mal", "anilist",
-    "plex", "emby", "guid", "mdblist", "publicmetadb",
+    "plex", "emby", "guid", "mdblist", "publicmetadb", "wetrakr",
 )
 
 

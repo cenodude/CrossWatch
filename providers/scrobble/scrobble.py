@@ -850,6 +850,10 @@ class Dispatcher:
                                  f"reason={result.get('error') or 'unknown'}", "ERROR")
                         continue
                     self._failed_ids.pop(sk, None)
+                    if isinstance(result, dict) and result.get("ignored") is True:
+                        self._last_action.pop(sk, None)
+                        self._last_progress.pop(sk, None)
+                        self._debounce.pop(f"{sk}|pause", None)
                     if newer:
                         self._retry_after[sk] = (time.monotonic(), 0)
                     else:

@@ -226,7 +226,7 @@ def _item_to_row(provider_state_id: int, key: str, item: Mapping[str, Any], ts: 
         _b(item.get("_cw_marked")) if "_cw_marked" in item else None,
         _s(item.get("_cw_instance")),
         _s(item.get("provider_item_id")),
-        _s(item.get("provider_event_id") or item.get("_simkl_rewatch_id") or item.get("rewatch_id") or item.get("_publicmetadb_history_id")),
+        _s(item.get("provider_event_id") or item.get("_simkl_rewatch_id") or item.get("rewatch_id") or item.get("_publicmetadb_history_id") or item.get("_wetrakr_history_id")),
         ts,
     )
 

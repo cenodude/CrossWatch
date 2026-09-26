@@ -12,8 +12,8 @@ from cw_platform.provider_instances import get_provider_block
 
 
 PROVIDERS = frozenset(("PLEX", "JELLYFIN", "EMBY", "KODI", "SCROB", "TRAKT", "MDBLIST", "SIMKL",
-                       "PUNCHPLAY", "FLICKLIST", "TMDB", "PUBLICMETADB", "NUVIO", "STREMIO", "FLOPPY"))
-NATIVE = PROVIDERS - {"FLICKLIST", "PUBLICMETADB", "NUVIO", "STREMIO"}
+                       "PUNCHPLAY", "FLICKLIST", "TMDB", "PUBLICMETADB", "NUVIO", "STREMIO", "FLOPPY", "WETRAKR"))
+NATIVE = PROVIDERS - {"FLICKLIST", "PUBLICMETADB", "NUVIO", "STREMIO", "WETRAKR"}
 LIBRARY = {"JELLYFIN", "EMBY", "KODI"}
 
 
@@ -30,7 +30,7 @@ def provider_block(cfg, provider, instance):
 def configured(provider, block):
     if provider not in PROVIDERS or not block:
         return False
-    if provider in {"SCROB", "PUNCHPLAY", "FLICKLIST", "NUVIO", "STREMIO", "FLOPPY"}:
+    if provider in {"SCROB", "PUNCHPLAY", "FLICKLIST", "NUVIO", "STREMIO", "FLOPPY", "WETRAKR"}:
         return import_module(f"providers.auth._auth_{provider}").is_configured(block)
     if provider == "MDBLIST":
         from providers.sync.mdblist._auth import is_configured

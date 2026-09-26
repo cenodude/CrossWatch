@@ -13,7 +13,7 @@ from cw_platform.orchestrator._pairs_oneway import _emit_item_failures, _emit_it
 from cw_platform.orchestrator._state_store import StateStore
 
 
-@pytest.mark.parametrize("providers", [("PLEX", "PLEX"), ("PLEX", "EMBY")])
+@pytest.mark.parametrize("providers", [("PLEX", "PLEX"), ("PLEX", "EMBY"), ("PLEX", "WETRAKR")])
 @pytest.mark.parametrize("mode,reverse", [("one-way", False), ("two-way", False), ("two-way", True)])
 @pytest.mark.parametrize("operation", ["add", "update", "remove"])
 @pytest.mark.parametrize("failed", [False, True])

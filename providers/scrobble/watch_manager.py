@@ -244,6 +244,10 @@ def _make_sink(name: str, cfg_provider: Callable[[], dict[str, Any]], instance_i
         from providers.scrobble.flicklist.sink import FlickListSink
 
         cls = FlickListSink
+    elif sink == "wetrakr":
+        from providers.scrobble.wetrakr.sink import WeTrakrSink
+
+        cls = WeTrakrSink
     elif sink == "scrob":
         from providers.scrobble.scrob.sink import ScrobSink
 

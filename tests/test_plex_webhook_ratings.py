@@ -68,7 +68,7 @@ def test_plex_webhook_ratings_forward_to_crosswatch_and_floppy(monkeypatch) -> N
     }
     payload = {
         "event": "media.rate",
-        "Account": {"title": "pasca"},
+        "Account": {"title": "test-user"},
         "Metadata": {
             "type": "movie",
             "title": "Fight Club",
@@ -246,7 +246,7 @@ def test_send_rating_supports_scrob_ops_sink(monkeypatch) -> None:
     calls: list[dict[str, Any]] = []
     monkeypatch.setattr(scrob_ratings, "scrob_request", lambda adapter, method, path, **kwargs: calls.append({"method": method, "path": path, **kwargs}) or Resp())
 
-    cfg = {"scrob": {"server_url": "http://scrob.test", "api_key": "scrob-token", "username": "pasca", "password": "secret"}}
+    cfg = {"scrob": {"server_url": "http://scrob.test", "api_key": "scrob-token", "username": "test-user", "password": "secret"}}
     item = {"type": "movie", "ids": {"tmdb": "550"}, "title": "Fight Club", "rating": 8}
 
     result = send_rating("scrob", cfg, "default", item, 8)
@@ -303,16 +303,17 @@ def test_plex_webhook_ratings_forward_to_every_dispatcher_sink(monkeypatch) -> N
         "floppy": {"instances": {"floppy-profile": {"server_url": "http://floppy.test", "api_token": "floppy-token"}}},
         "punchplay": {"access_token": "punchplay-token", "instances": {"punchplay-profile": {"access_token": "punchplay-token"}}},
         "flicklist": {"api_key": "flicklist-token", "instances": {"flicklist-profile": {"api_key": "flicklist-token"}}},
+        "wetrakr": {"instances": {"wetrakr-profile": {"access_token": "wetrakr-token"}}},
         "scrob": {
             "server_url": "http://scrob.test",
             "api_key": "scrob-token",
-            "username": "pasca",
+            "username": "test-user",
             "password": "secret",
             "instances": {
                 "scrob-profile": {
                     "server_url": "http://scrob.test",
                     "api_key": "scrob-token",
-                    "username": "pasca",
+                    "username": "test-user",
                     "password": "secret",
                 }
             },
@@ -320,7 +321,7 @@ def test_plex_webhook_ratings_forward_to_every_dispatcher_sink(monkeypatch) -> N
     }
     payload = {
         "event": "media.rate",
-        "Account": {"title": "pasca"},
+        "Account": {"title": "test-user"},
         "Metadata": {
             "type": "movie",
             "title": "Fight Club",

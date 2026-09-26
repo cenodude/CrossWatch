@@ -2404,6 +2404,7 @@ def process_rating_webhook(
         enable_punchplay = "punchplay" in custom_targets
         enable_flicklist = "flicklist" in custom_targets
         enable_scrob = "scrob" in custom_targets
+        enable_wetrakr = "wetrakr" in custom_targets
     else:
         enable_trakt = bool(watch_cfg.get("plex_trakt_ratings"))
         enable_simkl = bool(watch_cfg.get("plex_simkl_ratings"))
@@ -2413,8 +2414,9 @@ def process_rating_webhook(
         enable_punchplay = bool(watch_cfg.get("plex_punchplay_ratings"))
         enable_flicklist = bool(watch_cfg.get("plex_flicklist_ratings"))
         enable_scrob = bool(watch_cfg.get("plex_scrob_ratings"))
+        enable_wetrakr = bool(watch_cfg.get("plex_wetrakr_ratings"))
 
-    if not (enable_trakt or enable_simkl or enable_mdblist or enable_crosswatch or enable_floppy or enable_punchplay or enable_flicklist or enable_scrob):
+    if not (enable_trakt or enable_simkl or enable_mdblist or enable_crosswatch or enable_floppy or enable_punchplay or enable_flicklist or enable_scrob or enable_wetrakr):
         return {"ok": True, "ignored": True}
 
     if not payload:
@@ -2456,7 +2458,7 @@ def process_rating_webhook(
         rating_val = 0
 
 
-    if media_type == "episode" and not (enable_trakt or enable_crosswatch or enable_punchplay or enable_flicklist or enable_scrob):
+    if media_type == "episode" and not (enable_trakt or enable_crosswatch or enable_punchplay or enable_flicklist or enable_scrob or enable_wetrakr):
         return {"ok": True, "ignored": True}
 
     acc_key = _account_key(payload)
@@ -2500,12 +2502,18 @@ def process_rating_webhook(
         results["mdblist"] = _mdblist_send_rating(media_type, ids, rating_val, cfg, logger)
     ops_enabled = [
         name
-        for name, on in (("crosswatch", enable_crosswatch), ("floppy", enable_floppy), ("punchplay", enable_punchplay), ("flicklist", enable_flicklist), ("scrob", enable_scrob))
+        for name, on in (("crosswatch", enable_crosswatch), ("floppy", enable_floppy), ("punchplay", enable_punchplay), ("flicklist", enable_flicklist), ("scrob", enable_scrob), ("wetrakr", enable_wetrakr))
         if on
     ]
     if ops_enabled:
         from providers.scrobble.plex.ratings_sync import dispatch_ops_ratings
 
+        show_ids = episode_ids = None
+        if media_type == "episode":
+            from providers.webhooks.plex import _episode_ids_from_md, _show_ids_from_md, _plex_show_ids_from_metadata
+
+            episode_ids = _episode_ids_from_md(md)
+            show_ids = _show_ids_from_md(md) or _plex_show_ids_from_metadata(cfg, md, logger)
         sink_inst = str(watch_cfg.get("route_sink_instance") or "default").strip() or "default"
         results.update(
             dispatch_ops_ratings(
@@ -2516,6 +2524,8 @@ def process_rating_webhook(
                 cfg,
                 enabled=ops_enabled,
                 instance_for=lambda _sink: sink_inst,
+                show_ids=show_ids,
+                episode_ids=episode_ids,
             )
         )
     return results

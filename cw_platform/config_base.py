@@ -845,6 +845,7 @@ DEFAULT_CFG: dict[str, Any] = {
             "routes": [],                               # Route-based config
             "plex_simkl_ratings": False,                # Watch mode: forward Plex ratings to SIMKL
             "plex_trakt_ratings": False,                # Watch mode: forward Plex ratings to Trakt
+            "plex_wetrakr_ratings": False,
             "plex_mdblist_ratings": False,              # Watch mode: forward Plex ratings to MDblist
             "plex_flicklist_ratings": False,            # Watch mode: forward Plex ratings to FlickList
             "plex_scrob_ratings": False,                # Watch mode: forward Plex ratings to Scrob

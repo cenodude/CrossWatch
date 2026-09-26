@@ -6,7 +6,7 @@ from __future__ import annotations
 import sqlite3
 import time
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 ID_KEYS = (
     "tmdb",
@@ -24,6 +24,7 @@ ID_KEYS = (
     "emby",
     "guid",
     "slug",
+    "wetrakr",
 )
 
 
@@ -656,6 +657,9 @@ def apply_schema(conn: sqlite3.Connection) -> int:
         conn.execute(_CREATE_SYNC_RUN_PROVIDER_COUNTS)
         conn.execute(_CREATE_SYNC_RUN_FEATURE_LANES)
         conn.execute(_CREATE_SYNC_RUN_SPOTLIGHT_ITEMS)
+        for table in ("baseline_items", "pair_baseline_items", "manual_policy_add_items", "sync_run_spotlight_items"):
+            for prefix in ("ids", "show_ids"):
+                _ensure_column(conn, table, f"{prefix}_wetrakr", "TEXT")
         for stmt in _INDEXES:
             conn.execute(stmt)
         conn.execute(

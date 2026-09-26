@@ -20,6 +20,21 @@ const overview = {
   destination_availability: [{provider: "plex", profiles: [{instance: "default", configured: true}, {instance: "P01", configured: true}]}],
 };
 
+test("WeTrakr appears as a scrobble and Plex rating destination with its configured profile", () => {
+  const data = {...overview, destination_availability: [{provider: "wetrakr", profiles: [{instance: "WETRAKR-P01", label: "Test", configured: true}]}]};
+  const route = modal("route");
+  route(`props = {overview: ${JSON.stringify(data)}}; draft = {provider: "plex", provider_instance: "default", sink: "wetrakr"}; null`);
+  assert.deepEqual(route('sinkProviders("", "plex")'), ["wetrakr"]);
+  assert.deepEqual(route('allSinkProfiles("wetrakr").map(p => p.instance)'), ["WETRAKR-P01"]);
+  assert.equal(route('ratingSinks.includes("wetrakr")'), true);
+  assert.equal(route('label("wetrakr")'), "WeTrakr");
+  const webhook = modal("webhook");
+  webhook(`props = {overview: ${JSON.stringify(data)}, webhook: {provider: "plex", provider_instance: "default"}}; null`);
+  assert.deepEqual(webhook('availableSinks()'), ["wetrakr"]);
+  assert.equal(webhook('selectedSinkInstance("wetrakr")'), "WETRAKR-P01");
+  assert.equal(webhook('ratingSinks.includes("wetrakr")'), true);
+});
+
 for (const provider of ["plex", "jellyfin", "emby", "kodi", "scrob"]) {
   test(`${provider} watcher filters its own instance while allowing another`, () => {
     const run = modal("route");

@@ -324,7 +324,7 @@ def _norm_ids(ids: dict[str, Any]) -> dict[str, str]:
         m = re.search(r"(\d+)", str(v))
         if m:
             out["imdb"] = f"tt{m.group(1)}"
-    for ns in ("tmdb", "tvdb", "trakt", "simkl", "mdblist"):
+    for ns in ("tmdb", "tvdb", "trakt", "simkl", "mdblist", "wetrakr"):
         v = ids.get(ns)
         if v is None:
             continue

@@ -148,7 +148,7 @@ def pages(adapter: Any, path: str, *, from_date: str | None = None,
         total_pages = int_value(headers.get("x-pagination-page-count"))
         total = int_value(headers.get("x-pagination-item-count"))
         returned_page = int_value(headers.get("x-pagination-page"), page)
-        if total_pages < 0 or returned_page != page or total_pages > 10000:
+        if total_pages < 0 or total < 0 or (total_pages == 0 and (rows or total)) or returned_page != page or total_pages > 10000:
             raise WeTrakrSyncError("invalid_pagination")
         if expected_pages is not None and (total_pages != expected_pages or total != expected_total):
             raise WeTrakrSyncError("snapshot_changed")
@@ -256,7 +256,7 @@ def refresh_strategy(cached: Mapping[str, Any], current: Mapping[str, Any], feat
     return "delta"
 
 
-def _merge_rows(previous: list[Mapping[str, Any]], changed: list[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+def _merge_rows(previous: list[Mapping[str, Any]], changed: list[Mapping[str, Any]], *, removals: bool = False) -> list[Mapping[str, Any]]:
     merged: dict[str, Mapping[str, Any]] = {}
     for batch in (previous, changed):
         seen: set[str] = set()
@@ -265,8 +265,133 @@ def _merge_rows(previous: list[Mapping[str, Any]], changed: list[Mapping[str, An
             if not key or key in seen:
                 raise WeTrakrSyncError("invalid_delta_identity")
             seen.add(key)
-            merged[key] = row
+            if removals and row.get("status") == "removed":
+                merged.pop(key, None)
+            else:
+                merged[key] = row
     return list(merged.values())
+
+
+def activity_for(data: Mapping[str, Any], feature: str, section: str) -> dict[str, Any]:
+    block = data.get("ratings" if feature == "ratings" else section)
+    if isinstance(block, Mapping):
+        return dict(block)
+    if feature == "ratings" and _stamp(data.get("all")) is not None:
+        media = data.get(section)
+        return {"all": data["all"], "last_removed_at": data["all"],
+                "last_updated_at": media.get("last_rated_at") if isinstance(media, Mapping) else None}
+    return {}
+
+
+def journal_rows(adapter: Any, feature: str, since: str) -> tuple[list[Mapping[str, Any]], str]:
+    category = {"watchlist": "planning", "history": "watched", "ratings": "ratings"}[feature]
+    checkpoint = _stamp(since)
+    if checkpoint is None:
+        raise WeTrakrSyncError("invalid_journal_checkpoint")
+    rows: list[Mapping[str, Any]] = []
+    latest = checkpoint
+    expected: tuple[int, int] | None = None
+    seen: set[str] = set()
+    for page in range(1, 10001):
+        response = request(adapter, "GET", "/sync/journal", params={"from_date": since, "category": category, "page": page, "limit": 1000})
+        data = body_of(response)
+        batch = data.get("journal") if isinstance(data, Mapping) else None
+        if not isinstance(batch, list) or int_value(data.get("retention_days")) <= 0:
+            raise WeTrakrSyncError("invalid_journal")
+        headers = {str(k).lower(): v for k, v in response.headers.items()}
+        count = int_value(headers.get("x-pagination-item-count"))
+        pages_count = int_value(headers.get("x-pagination-page-count"))
+        if (count < 0 or not 0 <= pages_count <= 10000 or (pages_count == 0 and (batch or count))
+                or int_value(headers.get("x-pagination-page")) != page):
+            raise WeTrakrSyncError("invalid_journal_pagination")
+        if expected is not None and expected != (count, pages_count):
+            raise WeTrakrSyncError("journal_changed")
+        expected = (count, pages_count)
+        for row in batch:
+            stamp = _stamp(row.get("action_at")) if isinstance(row, Mapping) else None
+            if (stamp is None or stamp <= checkpoint or stamp < latest or row.get("category") != category
+                    or row.get("status") not in ("added", "updated", "removed") or int_value(row.get("id")) <= 0):
+                raise WeTrakrSyncError("invalid_journal_entry")
+            signature = json.dumps(row, sort_keys=True)
+            if signature in seen:
+                raise WeTrakrSyncError("repeated_journal_entry")
+            seen.add(signature)
+            latest = stamp
+            rows.append(row)
+        raise_if_cancelled()
+        if page >= pages_count:
+            if len(rows) != count:
+                raise WeTrakrSyncError("incomplete_journal")
+            return rows, latest.isoformat().replace("+00:00", "Z")
+        if not batch:
+            raise WeTrakrSyncError("incomplete_journal")
+    raise WeTrakrSyncError("journal_pagination_limit")
+
+
+def journal_worthwhile(size: int, extra_reads: int = 0) -> bool:
+    return (size + 99) // 100 > 2 + extra_reads
+
+
+def journal_removals(adapter: Any, feature: str, kind: str, old: Mapping[str, Any], activity: Mapping[str, Any],
+                     endpoint: str, feeds: dict[str, Any]) -> tuple[list[Mapping[str, Any]], str] | None:
+    if feature != "history" or not adapter.config.get("_cw_history_rewatches"):
+        return None
+    previous = old.get("activity")
+    if not isinstance(previous, Mapping) or not isinstance(old.get("rows"), list):
+        return None
+    cached = old["rows"]
+    if not journal_worthwhile(len(cached)):
+        return None
+    if refresh_strategy(old, previous, feature) != "cached":
+        return None
+    removed, changed = "last_tracking_removed_at", "last_tracking_watched_at"
+    before, after = _stamp(previous.get("all")), _stamp(activity.get("all"))
+    old_removed, new_removed = _stamp(previous.get(removed)), _stamp(activity.get(removed))
+    if (before is None or after is None or after <= before or old_removed is None or new_removed is None
+            or not old_removed < new_removed <= after or _stamp(previous.get(changed)) is None):
+        return None
+    for key, value in previous.items():
+        stamp, current = _stamp(value), _stamp(activity.get(key))
+        if stamp is not None and (current is None or current < stamp):
+            return None
+    history_delta = _stamp(previous[changed]) != _stamp(activity.get(changed))
+    if not journal_worthwhile(len(cached), int(history_delta)):
+        return None
+    mark = _stamp(old.get("journal_at")) or before - timedelta(seconds=2)
+    since = mark.isoformat().replace("+00:00", "Z")
+    if since not in feeds:
+        feeds[since] = None
+        feeds[since] = journal_rows(adapter, feature, since)
+    if feeds[since] is None:
+        return None
+    entries, next_mark = feeds[since]
+    relevant = [row for row in entries if row.get("type") == kind]
+    if not relevant or any(row["status"] != "removed" for row in relevant):
+        return None
+    if any(not str(row.get("play_id") or "").strip() for row in relevant):
+        return None
+    deleted = {str(row["play_id"]) for row in relevant}
+    victims = [row for row in cached if str(row.get("id")) in deleted]
+    if not victims:
+        return None
+    owners = {str(row["play_id"]): str(row["id"]) for row in relevant}
+    if any(not isinstance(row.get(kind), Mapping) or str(row[kind].get("id")) != owners[str(row["id"])] for row in victims):
+        raise WeTrakrSyncError("invalid_journal_identity")
+    result = [row for row in cached if str(row.get("id")) not in deleted]
+    if history_delta:
+        since = (before - timedelta(seconds=2)).isoformat().replace("+00:00", "Z")
+        result = _merge_rows(result, pages(adapter, endpoint, from_date=since))
+    response = request(adapter, "GET", endpoint, params={"page": 1, "limit": 1})
+    probe = body_of(response)
+    headers = {str(k).lower(): v for k, v in response.headers.items()}
+    if (not isinstance(probe, list) or len(probe) > 1 or any(not isinstance(row, Mapping) for row in probe)
+            or int_value(headers.get("x-pagination-item-count")) != len(result)
+            or int_value(headers.get("x-pagination-page")) != 1 or bool(probe) != bool(result)
+            or int_value(headers.get("x-pagination-page-count")) not in (len(result), max(1, len(result)))):
+        return None
+    if probe and not any(row == probe[0] for row in result):
+        return None
+    return result, next_mark
 
 
 def tracking_rows(adapter: Any, feature: str, *, force: bool = False) -> dict[str, list[Mapping[str, Any]]]:
@@ -280,6 +405,7 @@ def tracking_rows(adapter: Any, feature: str, *, force: bool = False) -> dict[st
         sections: dict[str, Any] = {}
         result: dict[str, list[Mapping[str, Any]]] = {}
         refreshed = False
+        feeds: dict[str, Any] = {}
         completed = 0
         progress = getattr(adapter, "_read_progress", None)
 
@@ -294,11 +420,24 @@ def tracking_rows(adapter: Any, feature: str, *, force: bool = False) -> dict[st
             section = f"{kind}s"
             old = cached.get(section)
             old = old if isinstance(old, Mapping) else {}
-            block = before.get("ratings" if feature == "ratings" else section)
-            activity = dict(block) if isinstance(block, Mapping) else {}
+            activity = activity_for(before, feature, section)
             strategy = refresh_strategy(old, activity, feature, force=force)
             endpoint = f"/sync/ratings/{section}" if feature == "ratings" else f"/sync/tracking/{status}/{event_path}{section}"
-            if strategy == "cached":
+            reconciled = None
+            if strategy == "full" and not force:
+                try:
+                    reconciled = journal_removals(adapter, feature, kind, old, activity, endpoint, feeds)
+                except WeTrakrSyncError as exc:
+                    if exc.status_code in (401, 403, 429) or exc.retry_after:
+                        raise
+                    log("WETRAKR", feature, "debug", "journal_full_refresh", reason=exc.reason)
+            journal_at = old.get("journal_at")
+            if reconciled is not None:
+                rows, journal_at = reconciled
+                checked = old["checked_at"]
+                strategy = "journal"
+                refreshed = True
+            elif strategy == "cached":
                 rows = old["rows"]
                 checked = old["checked_at"]
             else:
@@ -307,7 +446,7 @@ def tracking_rows(adapter: Any, feature: str, *, force: bool = False) -> dict[st
                     since = (checkpoint - timedelta(seconds=2)).isoformat().replace("+00:00", "Z")
                     changed = pages(adapter, endpoint, from_date=since, on_page=page_progress)
                     if changed:
-                        rows = _merge_rows(old["rows"], changed)
+                        rows = _merge_rows(old["rows"], changed, removals=feature == "ratings")
                         checked = old["checked_at"]
                     else:
                         strategy = "full"
@@ -317,7 +456,10 @@ def tracking_rows(adapter: Any, feature: str, *, force: bool = False) -> dict[st
                     rows = pages(adapter, endpoint, on_page=page_progress)
                     checked = time.time()
                 refreshed = True
-            sections[section] = {"activity": activity, "rows": rows, "checked_at": checked}
+            if strategy == "full":
+                stamp = _stamp(activity.get("all"))
+                journal_at = (stamp - timedelta(seconds=2)).isoformat().replace("+00:00", "Z") if stamp else None
+            sections[section] = {"activity": activity, "rows": rows, "checked_at": checked, "journal_at": journal_at}
             result[kind] = rows
             completed += len(rows)
             if progress is not None:
@@ -327,10 +469,8 @@ def tracking_rows(adapter: Any, feature: str, *, force: bool = False) -> dict[st
             after = _activities(adapter)
             for kind in kinds:
                 section = f"{kind}s"
-                activity_section = "ratings" if feature == "ratings" else section
-                old_activity, new_activity = before.get(activity_section), after.get(activity_section)
-                old_activity = dict(old_activity) if isinstance(old_activity, Mapping) else {}
-                new_activity = dict(new_activity) if isinstance(new_activity, Mapping) else {}
+                old_activity = activity_for(before, feature, section)
+                new_activity = activity_for(after, feature, section)
                 has_stamp = _stamp(old_activity.get("all")) is not None or _stamp(new_activity.get("all")) is not None
                 if has_stamp and old_activity != new_activity:
                     raise WeTrakrSyncError("snapshot_changed")
@@ -401,7 +541,20 @@ def identity_tokens(item: Mapping[str, Any]) -> set[str]:
 
 def matching(adapter: Any, feature: str, source: Mapping[str, Any], dest: Mapping[str, Any]) -> dict[str, str]:
     if feature == "history" and adapter.config.get("_cw_history_rewatches"):
-        return history_event_matches(source, dest, identity_tokens, tolerance_seconds=history_timestamp_tolerance_seconds(adapter.config))
+        event_ids = {str(row.get("_wetrakr_history_id")): key for key, row in dest.items() if row.get("_wetrakr_history_id")}
+        matches: dict[str, str] = {}
+        used: set[str] = set()
+        for key, item in source.items():
+            event_id = str(item.get("_wetrakr_history_id") or item.get("provider_event_id") or "")
+            peer = event_ids.get(event_id)
+            if peer is not None and peer not in used and identity_tokens(item) & identity_tokens(dest[peer]):
+                matches[key] = peer
+                used.add(peer)
+        matches.update(history_event_matches(
+            {key: item for key, item in source.items() if key not in matches},
+            {key: item for key, item in dest.items() if key not in used},
+            identity_tokens, tolerance_seconds=history_timestamp_tolerance_seconds(adapter.config)))
+        return matches
     lookup: dict[str, set[str]] = {}
     for key, item in dest.items():
         for token in identity_tokens(item):
@@ -465,7 +618,9 @@ def payload_item(item: Mapping[str, Any], feature: str, *, include_date: bool = 
 
 def resolve_child(adapter: Any, item: Mapping[str, Any]) -> dict[str, Any]:
     ids = item.get("ids")
-    if isinstance(ids, Mapping) and int_value(ids.get("wetrakr")) > 0:
+    show_ids = item.get("show_ids")
+    show_native = int_value(show_ids.get("wetrakr")) if isinstance(show_ids, Mapping) else -1
+    if isinstance(ids, Mapping) and int_value(ids.get("wetrakr")) > 0 and int_value(ids.get("wetrakr")) != show_native:
         return dict(item)
     season, episode = int_value(item.get("season")), int_value(item.get("episode"))
     kind = item.get("type")

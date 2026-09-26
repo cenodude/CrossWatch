@@ -161,6 +161,28 @@ def test_rating_activity_delta_and_removal_refresh(features):
     assert not any(kw.get("params", {}).get("from_date") for _, _, kw in features.server.calls)
 
 
+@pytest.mark.parametrize("media", [MOVIE, SHOW, SEASON, EPISODE])
+def test_rating_delta_overlap_does_not_restore_removed_ratings(features, media):
+    rating = lambda value: {**media, "interactions": {"user": {"rating": {"rating": value, "rated_at": WHEN}}}}
+    features.ratings[media["id"]] = rating(6)
+    before = features.adapter.build_index("ratings")
+    features.server.activities["ratings"].update(all=LATER, last_updated_at=LATER)
+    previous = features.server.hook
+
+    def hook(method, path, kwargs):
+        if path == f"/sync/ratings/{media['type']}s" and kwargs.get("params", {}).get("from_date"):
+            rows = [rating(8), {"id": 999999, "type": media["type"], "status": "removed", "removed_at": WHEN}]
+            return Response(rows, headers={"X-Pagination-Page": "1", "X-Pagination-Page-Count": "1", "X-Pagination-Item-Count": "2"})
+        return previous(method, path, kwargs)
+
+    features.server.hook = hook
+    after = features.adapter.build_index("ratings")
+    assert set(after) == set(before)
+    assert next(iter(after.values()))["rating"] == 8
+    cached = common._read(common.cache_path(features.adapter, "ratings"))
+    assert all(row.get("status") != "removed" for section in cached["sections"].values() for row in section["rows"])
+
+
 def progress_item(media=MOVIE, percent=40, when=LATER):
     return {**item(media), "progress_ms": percent * 60000, "duration_ms": 6000000, "progress_at": when}
 
@@ -206,6 +228,44 @@ def test_progress_success_response_must_be_verified(features):
     features.reject_write = True
     result = features.adapter.add("progress", [progress_item()])
     assert not result["ok"] and not result["confirmed_keys"]
+
+
+@pytest.mark.parametrize("remove", [False, True])
+def test_ignored_progress_reports_skip_without_confirmation(features, remove):
+    features.playing[MOVIE["id"]] = {**MOVIE, "playback": {"status": "paused", "progress_percent": 25, "tracked_at": WHEN}}
+    previous = features.server.hook
+    reason = "Abandoned session cancelled (no real progress)"
+    features.server.hook = lambda method, path, kwargs: Response({"action": "pause", "ignored": True, "reason": reason}) if method == "POST" else previous(method, path, kwargs)
+    result = (features.adapter.remove if remove else features.adapter.add)("progress", [progress_item()])
+    assert result["ok"] and result["count"] == 0 and not result["confirmed_keys"]
+    assert result["results"] == [{"status": "skipped", "reason": reason, "canonical_key": "tmdb:155"}]
+    assert len([call for call in features.server.calls if call[0] == "POST"]) == 1
+
+
+@pytest.mark.parametrize("remove", [False, True])
+def test_ignored_progress_does_not_block_other_batch_items(features, remove):
+    for media in (MOVIE, EPISODE):
+        features.playing[media["id"]] = {**media, "playback": {"status": "paused", "progress_percent": 25, "tracked_at": WHEN}}
+    previous = features.server.hook
+    features.server.hook = lambda method, path, kwargs: Response({"action": "pause", "ignored": True, "reason": "Ignored movie"}) if method == "POST" and "movie" in kwargs.get("json", {}) else previous(method, path, kwargs)
+    result = (features.adapter.remove if remove else features.adapter.add)("progress", [progress_item(MOVIE), progress_item(EPISODE)])
+    assert result["ok"] and result["skipped"] == 1 and result["count"] == 1
+    assert result["confirmed_keys"] == ["tmdb:1396#s01e01"]
+    assert features.playing[MOVIE["id"]]["playback"]["progress_percent"] == 25
+    assert (EPISODE["id"] not in features.playing) if remove else features.playing[EPISODE["id"]]["playback"]["progress_percent"] == 40
+
+
+@pytest.mark.parametrize("remove", [False, True])
+def test_playback_surfaces_provider_ignored_reason(features, remove):
+    features.playing[MOVIE["id"]] = {**MOVIE, "playback": {"status": "paused", "progress_percent": 25, "tracked_at": WHEN}}
+    adapter = WeTrakrPlaybackAdapter()
+    args = {"instance_id": "P01", "instance_label": "Test"}
+    record = adapter.list_progress(features.view, **args).items[0].to_dict()
+    previous = features.server.hook
+    reason = "Abandoned session cancelled (no real progress)"
+    features.server.hook = lambda method, path, kwargs: Response({"action": "pause", "ignored": True, "reason": reason}) if method == "POST" else previous(method, path, kwargs)
+    result = adapter.remove_progress(features.view, record, **args) if remove else adapter.update_progress(features.view, record, 40, **args)
+    assert result.ok and result.status == "skipped" and result.reason == reason
 
 
 @pytest.mark.parametrize("feature", ["ratings", "progress"])
