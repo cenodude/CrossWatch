@@ -72,6 +72,7 @@ body:
         - label: Tracearr
         - label: TMDb
         - label: Trakt
+        - label: WeTrakr
 
   - type: checkboxes
     id: areas
