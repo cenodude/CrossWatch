@@ -217,6 +217,7 @@ _AUTH_KEYS = {
     "jellyfin": ("access_token", "api_key", "token"),
     "trakt": ("access_token", "refresh_token"),
     "simkl": ("access_token", "refresh_token"),
+    "wetrakr": ("access_token", "refresh_token"),
     "anilist": ("access_token", "token"),
     "mdblist": ("api_key", "access_token"),
     "publicmetadb": ("api_key",),

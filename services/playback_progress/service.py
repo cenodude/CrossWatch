@@ -31,6 +31,7 @@ from .adapters.scrob import ScrobPlaybackAdapter
 from .adapters.simkl import SimklPlaybackAdapter
 from .adapters.stremio import StremioPlaybackAdapter
 from .adapters.trakt import TraktPlaybackAdapter
+from .adapters.wetrakr import WeTrakrPlaybackAdapter
 from .models import PlaybackActionResult, PlaybackCapabilities, PlaybackListResult, clean_mapping, utc_now_iso
 
 
@@ -39,7 +40,7 @@ CACHE_TTL_SECONDS = 60.0
 MAX_WORKERS = 6
 DEFAULT_PROVIDER_TIMEOUT_SECONDS = 20.0
 GROUP_PROGRESS_TOLERANCE = 2.0
-PHASE1_PROVIDERS = ("crosswatch", "trakt", "simkl", "mdblist", "publicmetadb", "punchplay", "flicklist", "plex", "emby", "jellyfin", "nuvio", "kodi", "stremio", "floppy", "scrob")
+PHASE1_PROVIDERS = ("crosswatch", "trakt", "simkl", "mdblist", "publicmetadb", "wetrakr", "punchplay", "flicklist", "plex", "emby", "jellyfin", "nuvio", "kodi", "stremio", "floppy", "scrob")
 SORT_VALUES = {"last_updated", "progress_high", "progress_low", "remaining_time", "rating_high", "title", "provider"}
 LIVE_MEDIA_PROVIDERS = {"plex", "emby", "jellyfin", "kodi"}
 LIVE_ACTIVE_STATES = {"playing", "paused", "buffering"}
@@ -47,7 +48,7 @@ LIVE_MAX_AGE_SECONDS = 10 * 60
 CANONICAL_TMDB_RE = re.compile(r"^tmdb:(\d+)(?:#|$)", re.I)
 EDITABLE_PROGRESS_MIN_PERCENT = 2.0
 EDITABLE_PROGRESS_DEFAULT_MAX_EXCLUSIVE = 100.0
-GROUP_ID_KEYS = ("tmdb", "imdb", "tvdb", "trakt", "simkl", "mdblist")
+GROUP_ID_KEYS = ("tmdb", "imdb", "tvdb", "trakt", "simkl", "mdblist", "wetrakr")
 
 
 def _parse_iso(value: Any) -> datetime | None:
@@ -776,6 +777,7 @@ def _instance_label(cfg: Mapping[str, Any], provider: str, instance_id: str) -> 
         "simkl": "SIMKL",
         "mdblist": "MDBList",
         "publicmetadb": "PublicMetaDB",
+        "wetrakr": "WeTrakr",
         "plex": "Plex",
         "emby": "Emby",
         "jellyfin": "Jellyfin",
@@ -831,6 +833,7 @@ def _profile_has_explicit_identity(cfg: Mapping[str, Any], provider: str, instan
     identity_paths = {
         "trakt": ("access_token", "token", "oauth.access_token"),
         "simkl": ("access_token", "token", "oauth.access_token"),
+        "wetrakr": ("access_token", "refresh_token"),
         "mdblist": ("access_token", "api_key", "key"),
         "publicmetadb": ("api_key",),
         "plex": (
@@ -917,6 +920,7 @@ class PlaybackProgressService:
     def __init__(self) -> None:
         self.adapters: dict[str, PlaybackProgressAdapter] = {
             "trakt": TraktPlaybackAdapter(),
+            "wetrakr": WeTrakrPlaybackAdapter(),
             "simkl": SimklPlaybackAdapter(),
             "mdblist": MDBListPlaybackAdapter(),
             "publicmetadb": PublicMetaDBPlaybackAdapter(),
