@@ -796,6 +796,7 @@ DEFAULT_CFG: dict[str, Any] = {
         "apply_chunk_pause_ms": 50,                     # Small pause between chunks
         "apply_chunk_size_by_provider": {               # Provider-specific apply chunk overrides
             "SIMKL": 500,
+            "WETRAKR": 500,
             "MDBLIST": 500,
             "PUBLICMETADB": 500,
             "PLEX": 500,

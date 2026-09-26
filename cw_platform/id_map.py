@@ -23,6 +23,7 @@ ID_KEYS: tuple[str, ...] = (
     "plex",
     "jellyfin",
     "mdblist",
+    "wetrakr",
     "emby",
     "guid",
     "slug",
@@ -37,6 +38,7 @@ KEY_PRIORITY: tuple[str, ...] = (
     "kitsu",
     "anidb",
     "simkl",
+    "wetrakr",
     "plex",
     "guid",
     "slug",
@@ -51,6 +53,7 @@ _CAPTURE_PROVIDER_TO_IDKEY: dict[str, str] = {
     "JELLYFIN": "jellyfin",
     "EMBY": "emby",
     "ANILIST": "anilist",
+    "WETRAKR": "wetrakr",
 }
 
 def _capture_prefer_id_key() -> str | None:
@@ -384,6 +387,8 @@ def minimal(item: Mapping[str, Any]) -> dict[str, Any]:
         "_scrob_list_item_id",
         "_flicklist_fldb",
         "_flicklist_history_id",
+        "_wetrakr_history_id",
+        "_wetrakr_watched_at_unknown",
         "_flicklist_playback_id",
         "_flicklist_list_id",
         "_stremio_record_id",

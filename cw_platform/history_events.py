@@ -50,6 +50,7 @@ EVENT_ID_FIELDS = (
     "_simkl_rewatch_id",
     "_punchplay_history_id",
     "_scrob_history_id",
+    "_wetrakr_history_id",
     "rewatch_id",
 )
 
@@ -57,6 +58,7 @@ EVENT_META_FIELDS = (
     *EVENT_ID_FIELDS,
     "_punchplay_history_ids",
     "_scrob_media_id",
+    "_wetrakr_watched_at_unknown",
     "is_rewatch",
     "rewatch_status",
     "_cw_event_key",

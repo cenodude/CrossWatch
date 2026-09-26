@@ -2285,7 +2285,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                     canonical=len(dst_commit), comparison=len(dst_full))
 
             if review is not None and review.retain_deferred(feature, src, src_inst, src_idx, prev_src, _sync_key):
-                now_cp_src = prev_cp_src
+                now_cp_src = prev_checkpoint(prev_state, src, feature, src_inst)
             _commit_baseline(provs_block, src, src_inst, feature, src_idx)
             _commit_baseline(provs_block, dst, dst_inst, feature, dst_commit)
             _commit_checkpoint(provs_block, src, src_inst, feature, now_cp_src)

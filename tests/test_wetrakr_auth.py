@@ -380,13 +380,13 @@ def test_disconnect_revokes_selected_profile_and_busts_probe_cache(store, monkey
     assert cache["wetrakr"] == (0, False)
 
 
-def test_registered_as_tracker_without_sync_features(store):
+def test_registered_as_tracker_with_sync_adapter(store):
     from cw_platform.modules_registry import MODULES, sync_provider_names
     from providers.auth import runtime
     from providers.auth.registry import auth_providers_html
 
     assert MODULES["AUTH"]["_auth_WETRAKR"] == "providers.auth._auth_WETRAKR"
-    assert "WETRAKR" not in sync_provider_names(upper=True)
+    assert "WETRAKR" in sync_provider_names(upper=True)
     assert runtime._backend("wetrakr") is wt
     assert wt.PROVIDER.manifest().fields == []
     html = auth_providers_html()

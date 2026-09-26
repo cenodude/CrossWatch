@@ -24,6 +24,7 @@ PROVIDER_BLOCKS: dict[str, dict[str, Any]] = {
     "stremio": {"auth_key": "K"},
     "tautulli": {"server_url": "http://tautulli:8181", "api_key": "K"},
     "tracearr": {"server_url": "http://tracearr:3000", "api_key": "K"},
+    "wetrakr": {"access_token": "T", "user_id": "42"},
 }
 
 
