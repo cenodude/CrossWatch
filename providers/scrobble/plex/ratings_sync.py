@@ -55,12 +55,12 @@ def item_from_plex_rating(
     item: dict[str, Any] = {"type": "movie" if mt == "movie" else mt}
 
     if mt == "episode":
-        season = _as_int(md.get("parentIndex") or md.get("season"))
+        season = _as_int(md.get("parentIndex") if md.get("parentIndex") is not None else md.get("season"))
         episode = _as_int(md.get("index") or md.get("episode"))
         if season is None or episode is None:
             return None
         ep_ids = _clean_ids(episode_ids) or clean
-        sh_ids = _clean_ids(show_ids) or clean
+        sh_ids = _clean_ids(show_ids) if show_ids is not None else clean
         if not ep_ids and not sh_ids:
             return None
         item.update({
@@ -105,6 +105,10 @@ def _ops(provider: str) -> Any | None:
         from providers.sync._mod_FLICKLIST import OPS
 
         return OPS
+    if provider == "wetrakr":
+        from providers.sync._mod_WETRAKR import OPS
+
+        return OPS
     if provider == "scrob":
         from providers.sync._mod_SCROB import OPS
 
@@ -112,7 +116,7 @@ def _ops(provider: str) -> Any | None:
     return None
 
 
-OPS_RATING_SINKS: tuple[str, ...] = ("crosswatch", "floppy", "punchplay", "flicklist", "scrob")
+OPS_RATING_SINKS: tuple[str, ...] = ("crosswatch", "floppy", "punchplay", "flicklist", "wetrakr", "scrob")
 RATING_SINKS: tuple[str, ...] = ("trakt", "simkl", "mdblist", *OPS_RATING_SINKS)
 
 

@@ -1,7 +1,7 @@
 /* assets/js/interactive-sync-mapping.js */
 /* CrossWatch - Batch mapping workspace for Interactive Sync */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
-const ID_FIELDS = ["tmdb", "imdb", "tvdb", "trakt", "simkl", "mdblist", "anilist", "mal", "anidb"];
+const ID_FIELDS = ["tmdb", "imdb", "tvdb", "trakt", "simkl", "mdblist", "wetrakr", "anilist", "mal", "anidb"];
 const icon = name => `<span class="material-symbols-rounded" aria-hidden="true">${name}</span>`;
 const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
 export const seriesTitle = item => String(item.series_title || item.show_title || item.title || "").replace(/\s*[·-]?\s*S\d+E\d+.*$/i, "").trim();

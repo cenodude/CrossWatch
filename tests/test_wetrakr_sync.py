@@ -247,6 +247,20 @@ def test_free_account_rewatch_add_repeat_and_delete_only_target_event(env):
     assert any(path == "/sync/tracklogs/play-2" for _, path, _ in env.server.calls)
 
 
+@pytest.mark.parametrize("persisted", [False, True])
+def test_rewatch_removal_keeps_event_identity_when_equal_date_rows_reorder(env, persisted):
+    env.adapter.config["_cw_history_rewatches"] = True
+    env.server.play(MOVIE)
+    env.server.play(MOVIE)
+    selected = next(iter(env.adapter.build_index("history").values()))
+    if persisted:
+        selected["provider_event_id"] = selected.pop("_wetrakr_history_id")
+    env.server.history.reverse()
+    result = env.adapter.remove("history", [selected])
+    assert result["ok"]
+    assert [row["id"] for row in env.server.history] == ["play-2"]
+
+
 def test_episode_show_ids_are_not_confused_with_episode_ids(env):
     source = item(EPISODE, WHEN)
     result = env.adapter.add("history", [source])
@@ -295,6 +309,8 @@ def test_uncertain_history_write_is_read_back_without_post_retry(env):
     ({"error": "bad"}, {}, "invalid_page"),
     ([MOVIE], {}, "invalid_pagination"),
     ([], {"X-Pagination-Page-Count": "2", "X-Pagination-Item-Count": "1"}, "incomplete_snapshot"),
+    ([MOVIE], {"X-Pagination-Page-Count": "0", "X-Pagination-Item-Count": "1"}, "invalid_pagination"),
+    ([MOVIE], {"X-Pagination-Page-Count": "1"}, "invalid_pagination"),
 ])
 def test_invalid_reads_raise_instead_of_returning_empty_snapshot(env, data, headers, reason):
     env.server.hook = lambda *a: Response(data, headers=headers)

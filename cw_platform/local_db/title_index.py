@@ -9,7 +9,7 @@ from typing import Any
 from .db import get_conn
 from .schema import ID_KEYS
 
-_LOOKUP_ID_KEYS = ("tmdb", "imdb", "tvdb", "trakt", "simkl", "slug", "plex", "guid")
+_LOOKUP_ID_KEYS = ("tmdb", "imdb", "tvdb", "trakt", "simkl", "wetrakr", "slug", "plex", "guid")
 
 _PROVIDER_PRIORITY = {
     "PLEX": 100,

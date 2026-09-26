@@ -259,7 +259,7 @@ def mapping_row(session, row_id):
 
 def prepare_mapping(row, corrected):
     item = deepcopy(row["item"])
-    for key in (*ID_KEYS, "_trakt_history_id", "history_id", "_simkl_history_id", "_plex_history_id", "watched_id", "play_id", "provider_item_id", "provider_event_id"):
+    for key in (*ID_KEYS, "_trakt_history_id", "history_id", "_simkl_history_id", "_plex_history_id", "_wetrakr_history_id", "watched_id", "play_id", "provider_item_id", "provider_event_id"):
         item.pop(key, None)
     for key in ("type", "title", "year", "season", "episode", "series_title", "series_year", "show_ids"):
         item.pop(key, None)
@@ -280,6 +280,11 @@ def prepare_mapping(row, corrected):
             number = item.get(field)
             if isinstance(number, bool) or not isinstance(number, int) or number < (1 if field == "episode" else 0):
                 raise HTTPException(400, f"Supply a valid {field} number")
+        original_item = row["item"]
+        original_ids = original_item.get("ids") or {}
+        if (item["ids"].get("wetrakr") == str(original_ids.get("wetrakr"))
+                and any(item.get(field) != original_item.get(field) for field in ("season", "episode", "show_ids"))):
+            item["ids"].pop("wetrakr", None)
     key = canonical_key(item)
     if key == "unknown:" or not (item["ids"] or item.get("show_ids")):
         raise HTTPException(400, "A media identifier is required")

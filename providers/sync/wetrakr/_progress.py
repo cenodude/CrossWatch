@@ -26,6 +26,12 @@ def number(value: Any) -> float | None:
         return None
 
 
+def ignored_reason(response: Any) -> str | None:
+    if isinstance(response, Mapping) and response.get("ignored") is True:
+        return str(response.get("reason") or "ignored_by_provider")
+    return None
+
+
 def build_index(adapter: Any, *, force: bool = False) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     completed = 0
@@ -147,7 +153,11 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
                 continue
             attempted[key] = item
             try:
-                body_of(request(adapter, "POST", "/scrobble/pause", json=bodies[key]))
+                response = body_of(request(adapter, "POST", "/scrobble/pause", json=bodies[key]))
+                reason = ignored_reason(response)
+                if reason is not None:
+                    attempted.pop(key)
+                    results.append({"status": "skipped", "reason": reason, "canonical_key": key})
             except WeTrakrSyncError as exc:
                 error = exc
         if attempted:
@@ -222,7 +232,12 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
                 continue
             attempted.update({key: selected[key] for key in keys})
             try:
-                body_of(request(adapter, "POST", "/scrobble/pause", json=body))
+                response = body_of(request(adapter, "POST", "/scrobble/pause", json=body))
+                reason = ignored_reason(response)
+                if reason is not None:
+                    for key in keys:
+                        attempted.pop(key)
+                        results.append({"status": "skipped", "reason": reason, "canonical_key": key})
             except WeTrakrSyncError as exc:
                 error = exc
         if attempted:

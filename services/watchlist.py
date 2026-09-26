@@ -303,7 +303,7 @@ def _ids_from_key_or_item(key: str, item: dict[str, Any]) -> dict[str, Any]:
     if len(parts) >= 2:
         k = parts[-2].lower().strip()
         v = parts[-1].strip()
-        if k in {"tmdb", "imdb", "tvdb", "trakt", "simkl", "mdblist", "slug", "jellyfin", "emby", "anilist", "mal"} and v:
+        if k in {"tmdb", "imdb", "tvdb", "trakt", "simkl", "mdblist", "wetrakr", "slug", "jellyfin", "emby", "anilist", "mal"} and v:
             ids.setdefault(k, v)
     if "thetvdb" in ids and "tvdb" not in ids:
         ids["tvdb"] = ids.get("thetvdb")
@@ -318,6 +318,7 @@ def _ids_from_key_or_item(key: str, item: dict[str, Any]) -> dict[str, Any]:
         "trakt",
         "simkl",
         "mdblist",
+        "wetrakr",
         "slug",
         "jellyfin",
         "emby",
@@ -333,7 +334,7 @@ def _ids_from_key_or_item(key: str, item: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-_WATCHLIST_ALIAS_ID_KEYS = ("tmdb", "imdb", "tvdb", "trakt", "simkl", "mdblist", "slug", "anilist", "mal")
+_WATCHLIST_ALIAS_ID_KEYS = ("tmdb", "imdb", "tvdb", "trakt", "simkl", "mdblist", "wetrakr", "slug", "anilist", "mal")
 
 
 def _watchlist_alias_tokens(key: str, item: dict[str, Any]) -> set[str]:
@@ -388,7 +389,7 @@ def _group_watchlist_refs(
 
 def _preferred_watchlist_key(alias_keys: list[str], info: dict[str, Any], typ: str) -> str:
     ids = _ids_from_key_or_item("", info)
-    ordered = ("tmdb", "imdb", "tvdb", "trakt", "simkl", "mdblist", "slug", "anilist", "mal")
+    ordered = _WATCHLIST_ALIAS_ID_KEYS
 
     for name in ordered:
         value = ids.get(name)

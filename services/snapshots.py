@@ -835,6 +835,7 @@ def _canonical_item_key(provider: str, feature: Feature, orig_key: str, item: Ma
         "SIMKL": ["simkl", "simkl_id"],
         "TMDB": ["tmdb"],
         "MDBLIST": ["mdblist"],
+        "WETRAKR": ["wetrakr"],
         "PLEX": ["plex", "guid"],
         "JELLYFIN": ["jellyfin"],
         "EMBY": ["emby"],
