@@ -17,7 +17,7 @@ import requests
 
 from cw_platform.app_version import user_agent
 from cw_platform.config_base import load_config, save_config
-from cw_platform.provider_instances import ensure_instance_block, normalize_instance_id, resolve_provider_block
+from cw_platform.provider_instances import ensure_instance_block, get_instance_block, normalize_instance_id
 from ._auth_base import AuthManifest, AuthStatus
 
 __VERSION__ = "0.1"
@@ -113,7 +113,12 @@ def _save_full_cfg(cfg: dict[str, Any]) -> None:
 
 
 def provider_block(cfg: Mapping[str, Any] | None, instance_id: Any = None) -> dict[str, Any]:
-    return resolve_provider_block(cfg or {}, "wetrakr", instance_id)
+    inst = normalize_instance_id(instance_id)
+    config = cfg if cfg is not None else _load_full_cfg()
+    base = config.get("wetrakr")
+    if inst != "default" and isinstance(base, Mapping) and "instances" not in base:
+        config = _load_full_cfg()
+    return dict(get_instance_block(config, "wetrakr", inst))
 
 
 def _update(instance_id: Any, values: Mapping[str, Any]) -> None:

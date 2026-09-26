@@ -26,6 +26,32 @@ def isolated(config_base, monkeypatch):
     monkeypatch.setattr(probes, "STATUS_SCOPE_CACHE", {})
 
 
+@pytest.mark.parametrize("provider", sorted(set(probes.PROBE_CFG_KEY.values())))
+@pytest.mark.parametrize("profile", [{}, {"label": "Second account"}, {"access_token": "profile-token"}])
+def test_probe_profiles_do_not_inherit_default_connection(provider, profile):
+    default = {"access_token": "default-token", "refresh_token": "default-refresh", "api_key": "default-key",
+               "username": "default-user", "user_id": "100", "plan": "vip", "server_url": "https://default.invalid"}
+    cfg = {provider: {**default, "instances": {"P01": dict(profile)}}}
+
+    selected = probes._instance_block(cfg, provider, "P01")
+    assert selected == profile
+    assert probes._instance_block(cfg, provider, "missing") == {}
+    assert probes._instance_block(cfg, provider, "default")["access_token"] == "default-token"
+    assert cfg[provider]["instances"]["P01"] == profile
+
+
+@pytest.mark.parametrize("provider", ["simkl", "trakt"])
+def test_probe_profiles_share_app_credentials_only(provider):
+    cfg = {provider: {"client_id": "shared-client", "client_secret": "shared-secret", "access_token": "default-token",
+                      "instances": {"P01": {"access_token": "profile-token"}, "P02": {"client_id": "own-client"}}}}
+
+    assert probes._instance_block(cfg, provider, "P01") == {
+        "client_id": "shared-client", "client_secret": "shared-secret", "access_token": "profile-token"}
+    assert probes._instance_block(cfg, provider, "P02") == {
+        "client_id": "own-client", "client_secret": "shared-secret"}
+    assert probes._prov_configured(cfg, provider, "P02") is False
+
+
 @pytest.mark.parametrize("provider", [p for p in probes.DETAIL_PROBES if p not in {"SIMKL", "CROSSWATCH"}])
 def test_verified_providers_check_once_after_restart_then_stop_polling(provider, monkeypatch):
     calls = []

@@ -14,7 +14,8 @@ from urllib.parse import quote
 from cw_platform.app_version import app_version
 from cw_platform.config_base import load_config
 from cw_platform.event_archive import record_watch
-from cw_platform.provider_instances import normalize_instance_id, resolve_provider_block
+from cw_platform.provider_instances import normalize_instance_id
+from providers.auth import _auth_WETRAKR as auth
 from providers.scrobble._auto_remove_watchlist import remove_across_providers_by_ids
 from providers.scrobble._watched_gate import resolve_stop_action
 from providers.scrobble.scrobble import ScrobbleEvent, mask_account
@@ -111,7 +112,7 @@ class WeTrakrSink:
 
     def send(self, event: ScrobbleEvent, cfg: Mapping[str, Any] | None = None) -> dict[str, Any]:
         config = dict(cfg if cfg is not None else self._cfg_provider() or {})
-        block = resolve_provider_block(config, "wetrakr", self.instance_id)
+        block = auth.provider_block(config, self.instance_id)
         if not block.get("access_token"):
             return {"ok": False, "error": "not_configured", "retryable": False}
         if event.action not in ("start", "pause", "stop"):
