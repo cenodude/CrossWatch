@@ -165,6 +165,12 @@
     <span>Tracker</span>
     <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
   </article>
+  <article class="cw-provider-card is-wetrakr">
+    <img class="cw-provider-mark" src="images/providers/WETRAKR.svg" alt="" aria-hidden="true">
+    <strong>WeTrakr</strong>
+    <span>Tracker</span>
+    <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
+  </article>
 </section>
 
 <section class="cw-gallery-strip" aria-label="CrossWatch screenshots" hidden>
