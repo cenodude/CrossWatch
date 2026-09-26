@@ -74,6 +74,43 @@ def test_history_explicit_limit_still_applies(empty_history_state):
     assert [call["StartIndex"] for call in http.calls] == [0, 500]
 
 
+@pytest.mark.parametrize("kind", ["Movie", "Episode"])
+@pytest.mark.parametrize("date,timestamp", [
+    ("1970-01-01T00:00:00Z", 0),
+    ("1970-01-01T00:00:01Z", 1),
+    (None, None),
+    ("", None),
+    ("invalid", None),
+])
+def test_history_distinguishes_epoch_zero_from_missing_date(empty_history_state, kind, date, timestamp):
+    http = Library(1)
+    http.rows[0].update({"Type": kind, "ParentIndexNumber": 1, "IndexNumber": 1})
+    http.rows[0]["UserData"]["LastPlayedDate"] = date
+    adapter = SimpleNamespace(client=http, cfg=SimpleNamespace(user_id="user"))
+
+    snapshot = history.build_index(adapter)
+
+    if timestamp is None:
+        assert snapshot == {}
+    else:
+        assert len(snapshot) == 1
+        key, item = next(iter(snapshot.items()))
+        assert key.endswith(f"@{timestamp}")
+        assert item["watched_at"] == date
+        assert item["watched"] is True
+        assert item["type"] == kind.lower()
+
+
+@pytest.mark.parametrize("kind", ["Movie", "Episode"])
+def test_history_epoch_zero_respects_since_cutoff(empty_history_state, kind):
+    http = Library(1)
+    http.rows[0].update({"Type": kind, "ParentIndexNumber": 1, "IndexNumber": 1})
+    http.rows[0]["UserData"]["LastPlayedDate"] = "1970-01-01T00:00:00Z"
+    adapter = SimpleNamespace(client=http, cfg=SimpleNamespace(user_id="user"))
+
+    assert history.build_index(adapter, since="1970-01-01T00:00:01Z") == {}
+
+
 @pytest.mark.parametrize("resolved", ["episode-id", None])
 def test_progress_episode_does_not_expand_to_library_index(monkeypatch, resolved):
     monkeypatch.setattr(common, "resolve_item_id", lambda *args, **kwargs: resolved)

@@ -149,7 +149,7 @@ def _epoch_to_emby_dateparam(ts: int) -> str:
 
 
 
-def _played_ts_from_row(row: Mapping[str, Any]) -> int:
+def _played_ts_from_row(row: Mapping[str, Any]) -> int | None:
     ud = (row.get("UserData") or {}) if isinstance(row, Mapping) else {}
     for v in (
         ud.get("DatePlayed"),
@@ -160,28 +160,28 @@ def _played_ts_from_row(row: Mapping[str, Any]) -> int:
         row.get("LastPlayedDate"),
     ):
         ts = _parse_iso_to_epoch(v)
-        if ts:
+        if ts is not None:
             return ts
-    return 0
+    return None
 
 
-def _played_ts_backfill(http: Any, uid: str, row: Mapping[str, Any]) -> int:
+def _played_ts_backfill(http: Any, uid: str, row: Mapping[str, Any]) -> int | None:
     iid = str(row.get("Id") or "").strip()
     if not iid:
-        return 0
+        return None
     try:
         r = http.get(
             f"/Users/{uid}/Items/{iid}",
             params={"Fields": "UserData,UserDataLastPlayedDate", "EnableUserData": True},
         )
         if getattr(r, "status_code", 0) != 200:
-            return 0
+            return None
         body = r.json() or {}
         ud = body.get("UserData") or {}
         ts = _parse_iso_to_epoch(ud.get("LastPlayedDate"))
-        return ts or 0
+        return ts
     except Exception:
-        return 0
+        return None
 
 
 
@@ -189,7 +189,7 @@ def _prefetch_played_ts(
     http: Any,
     uid: str,
     item_ids: Iterable[Any],
-    _cache: dict[str, int],
+    _cache: dict[str, int | None],
     *,
     chunk_size: int = 200,
 ) -> None:
@@ -217,7 +217,7 @@ def _prefetch_played_ts(
             r = None
         if r is None or getattr(r, 'status_code', 0) != 200:
             for iid in batch:
-                _cache.setdefault(iid, 0)
+                _cache.setdefault(iid, None)
             continue
         try:
             arr = (r.json() or {}).get('Items') or []
@@ -229,11 +229,11 @@ def _prefetch_played_ts(
                 if not iid:
                     continue
                 ts = _played_ts_from_row(raw)
-                _cache[iid] = int(ts or 0)
+                _cache[iid] = ts
             except Exception:
                 pass
         for iid in batch:
-            _cache.setdefault(iid, 0)
+            _cache.setdefault(iid, None)
             
 # unresolved tracking
 _UNRES_CACHE: dict[str, dict[str, Any]] = {}
@@ -713,8 +713,8 @@ def _unmark_played(http: Any, uid: str, item_id: str) -> bool:
         return False
 
 
-def _dst_user_states(http: Any, uid: str, iids: Iterable[Any], *, chunk_size: int = 200) -> dict[str, tuple[bool, int]]:
-    out: dict[str, tuple[bool, int]] = {}
+def _dst_user_states(http: Any, uid: str, iids: Iterable[Any], *, chunk_size: int = 200) -> dict[str, tuple[bool, int | None]]:
+    out: dict[str, tuple[bool, int | None]] = {}
     ids: list[str] = []
     seen: set[str] = set()
     for x in iids or []:
@@ -753,13 +753,13 @@ def _dst_user_states(http: Any, uid: str, iids: Iterable[Any], *, chunk_size: in
             ud = row.get("UserData") or {}
             play_count = int(ud.get("PlayCount") or 0)
             played = bool(ud.get("Played") is True or play_count > 0)
-            ts = _played_ts_from_row(row) or (_parse_iso_to_epoch(ud.get("LastPlayedDate")) or 0)
-            out[iid] = (played, int(ts or 0))
+            ts = _played_ts_from_row(row)
+            out[iid] = (played, ts)
     return out
 
 
-def _dst_user_state(http: Any, uid: str, iid: str) -> tuple[bool, int]:
-    return _dst_user_states(http, uid, [str(iid)]).get(str(iid), (False, 0))
+def _dst_user_state(http: Any, uid: str, iid: str) -> tuple[bool, int | None]:
+    return _dst_user_states(http, uid, [str(iid)]).get(str(iid), (False, None))
 
 
 # history index
@@ -776,7 +776,7 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
     _lib_anc_cache.clear()
     _series_fallback_cache.clear()
     series_cache: dict[str, dict[str, Any] | None] = {}
-    played_ts_cache: dict[str, int] = {}
+    played_ts_cache: dict[str, int | None] = {}
     page_size = _history_page_size(adapter)
     allow_deep_lookup = (os.environ.get("CW_EMBY_HISTORY_DEEP_LOOKUP") or "").strip().lower() == "true"
     allow_backfill    = (os.environ.get("CW_EMBY_HISTORY_BACKFILL") or "").strip().lower() == "true"
@@ -921,7 +921,7 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
             try:
                 missing_ts: list[str] = []
                 for row in rows:
-                    if _played_ts_from_row(row):
+                    if _played_ts_from_row(row) is not None:
                         continue
                     ud = row.get('UserData') or {}
                     if ud.get('Played') or ud.get('IsPlayed') or (ud.get('PlayCount') or 0) > 0:
@@ -937,16 +937,16 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
                 if callable(filter_row) and not filter_row(row):
                     continue
                 ts = _played_ts_from_row(row)
-                if not ts:
+                if ts is None:
                     iid = str(row.get('Id') or '').strip()
-                    ts = int(played_ts_cache.get(iid) or 0) if iid else 0
-                if not ts and allow_backfill:
+                    ts = played_ts_cache.get(iid) if iid else None
+                if ts is None and allow_backfill:
                     ts = _played_ts_backfill(http, uid, row)
-                if ts and since_epoch and ts <= since_epoch:
+                if ts is not None and since_epoch and ts <= since_epoch:
                     stop = True
                     break
                 ud = row.get("UserData") or {}
-                if not ts:
+                if ts is None:
                     if ud.get("Played") or ud.get("IsPlayed") or (ud.get("PlayCount") or 0) > 0:
                         try:
                             m0 = emby_normalize(row)
@@ -1325,13 +1325,13 @@ def _set_write_meta(adapter: Any, meta: Mapping[str, Any]) -> None:
         pass
 
 
-def _result_row(key: str, status: str, *, action: str, reason: str, iid: str | None = None, req_ts: int = 0, dst_ts: int = 0) -> dict[str, Any]:
+def _result_row(key: str, status: str, *, action: str, reason: str, iid: str | None = None, req_ts: int | None = None, dst_ts: int | None = None) -> dict[str, Any]:
     row: dict[str, Any] = {"key": key, "status": status, "action": action, "reason": reason}
     if iid:
         row["provider_item_id"] = str(iid)
-    if req_ts:
+    if req_ts is not None:
         row["requested_at"] = _epoch_to_iso_z(req_ts)
-    if dst_ts:
+    if dst_ts is not None:
         row["destination_at"] = _epoch_to_iso_z(dst_ts)
     return row
 
@@ -1376,7 +1376,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         results.append(_result_row(k, _ST_WRITE_FAILED, action="write", reason=hint, iid=iid))
         reason_counts["write_failed"] = reason_counts.get("write_failed", 0) + 1
 
-    def _confirm(k: str, status: str, *, action: str, reason: str, iid: str, req_ts: int, dst_ts: int = 0) -> None:
+    def _confirm(k: str, status: str, *, action: str, reason: str, iid: str, req_ts: int, dst_ts: int | None = None) -> None:
         confirmed_keys.append(k)
         results.append(_result_row(k, status, action=action, reason=reason, iid=iid, req_ts=req_ts, dst_ts=dst_ts))
 
@@ -1395,8 +1395,8 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         pending_verify: list[tuple[str, str, int]] = []
         for k, iid in chunk:
             it = wants[k]
-            src_ts = _parse_iso_to_epoch(it.get("watched_at")) or 0
-            if not src_ts:
+            src_ts = _parse_iso_to_epoch(it.get("watched_at"))
+            if src_ts is None:
                 unresolved.append({"item": id_minimal(it), "key": k, "hint": "missing_watched_at", "reason": "missing_watched_at"})
                 _freeze(it, reason="missing_watched_at")
                 results.append(_result_row(k, _ST_MISSING_DATE, action="skip", reason="missing_watched_at", iid=iid))
@@ -1405,7 +1405,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 continue
 
             src_iso = _epoch_to_iso_z(src_ts)
-            played, dst_ts = states.get(iid, (False, 0))
+            played, dst_ts = states.get(iid, (False, None))
 
             if do_force:
                 _unmark_played(http, uid, iid)
@@ -1424,7 +1424,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 sleep_ms(delay)
                 continue
 
-            if played and dst_ts and dst_ts >= (src_ts - tol):
+            if played and dst_ts is not None and dst_ts >= (src_ts - tol):
                 shadow[k] = int(shadow.get(k, 0)) + 1
                 bb[k] = {"reason": "presence:existing_newer", "since": _now_iso_z()}
                 stats["skip_newer"] += 1
@@ -1432,7 +1432,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 _confirm(k, status, action="skip", reason="existing_newer", iid=iid, req_ts=src_ts, dst_ts=dst_ts)
                 continue
 
-            if played and not dst_ts:
+            if played and dst_ts is None:
                 if _mark_played(http, uid, iid, date_played_iso=src_iso):
                     ok += 1
                     shadow[k] = int(shadow.get(k, 0)) + 1
@@ -1461,7 +1461,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 _confirm(k, _ST_ALREADY, action="skip", reason="existing_untimed", iid=iid, req_ts=src_ts)
                 continue
 
-            if do_back and (not dst_ts or dst_ts >= (src_ts + tol)):
+            if do_back and (dst_ts is None or dst_ts >= (src_ts + tol)):
                 _unmark_played(http, uid, iid)
                 if _mark_played(http, uid, iid, date_played_iso=src_iso):
                     ok += 1
@@ -1497,7 +1497,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         if verify and pending_verify:
             final = _dst_user_states(http, uid, [iid for _, iid, _ in pending_verify])
             for k, iid, req_ts in pending_verify:
-                played, _dst = final.get(iid, (False, 0))
+                played, _dst = final.get(iid, (False, None))
                 if played:
                     continue
                 confirmed_keys[:] = [c for c in confirmed_keys if c != k]

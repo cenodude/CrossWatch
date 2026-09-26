@@ -74,6 +74,43 @@ def test_playback_dates_survive_restart_and_ignore_legacy_watermark(playback):
     assert all("test-token" not in path.read_text() for path in playback.directory.glob("*"))
 
 
+@pytest.mark.parametrize("kind", ["movie", "episode"])
+def test_epoch_playback_survives_snapshot_and_cache(playback, kind):
+    playback.state["history"][0].viewedAt = 0
+    playback.state["history"][0].type = kind
+    adapter = playback.adapter()
+    adapter.config["plex"]["history"]["include_marked_watched"] = False
+
+    result = history.build_index(adapter)
+
+    assert len(result) == 1
+    key, item = next(iter(result.items()))
+    assert key.endswith("@0")
+    assert item["watched_at"] == "1970-01-01T00:00:00Z"
+    cache = history._load_playback_cache(history._playback_cache_path(adapter, {"1"}))
+    assert cache["items"] == result
+    assert history.build_index(adapter) == result
+
+
+def test_old_playback_cache_refetches_skipped_epoch_events(playback):
+    adapter = playback.adapter()
+    adapter.config["plex"]["history"]["include_marked_watched"] = False
+    history.build_index(adapter)
+    path = history._playback_cache_path(adapter, {"1"})
+    cached = history.read_json(path)
+    cached["version"] = 1
+    history.write_json(path, cached)
+    epoch = deepcopy(playback.state["history"][0])
+    epoch.viewedAt = 0
+    playback.state["history"].append(epoch)
+
+    result = history.build_index(adapter)
+
+    assert "mindate" not in playback.calls[-1]
+    assert len(result) == 2
+    assert any(key.endswith("@0") for key in result)
+
+
 @pytest.mark.parametrize("offset", [1, 86400])
 def test_real_rewatch_keeps_both_recorded_dates(playback, offset):
     history.build_index(playback.adapter())

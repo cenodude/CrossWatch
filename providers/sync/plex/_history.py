@@ -59,7 +59,7 @@ def _event_key(item: Mapping[str, Any]) -> str:
     except Exception:
         base = ""
     ts = _as_epoch(item.get("watched_at"))
-    return f"{base}@{ts}" if (base and ts) else (base or "")
+    return f"{base}@{ts}" if (base and ts is not None) else (base or "")
 
 
 def _shadow_path() -> Path:
@@ -452,12 +452,11 @@ class HistoryCatalog:
             if not e.get("watched"):
                 continue
             row = _catalog_entry_to_minimal(e)
-            ts = _as_epoch(e.get("last_viewed_at")) if e.get("last_viewed_at") else None
-            if not ts and e.get("view_count"):
+            ts = _as_epoch(e.get("last_viewed_at"))
+            if ts is None and e.get("view_count"):
                 row["watched_at_missing"] = True
-                ts = 0
             row["watched"] = True
-            row["watched_at"] = _iso(int(ts)) if ts else None
+            row["watched_at"] = _iso(ts) if ts is not None else None
             _force_episode_title(row)
             key = f"{canonical_key(row)}@{int(ts or 0)}"
             out[key] = row
@@ -535,11 +534,11 @@ def _epoch_from_history_entry(entry: Any) -> int | None:
     if data is not None and hasattr(data, "get"):
         for k in ("viewedAt", "lastViewedAt"):
             ts = _as_epoch(data.get(k))
-            if ts:
+            if ts is not None:
                 return ts
     for k in ("viewedAt", "viewed_at", "lastViewedAt"):
         ts = _as_epoch(getattr(entry, k, None))
-        if ts:
+        if ts is not None:
             return ts
     return None
 
@@ -760,7 +759,7 @@ def _episode_play_count_supported(adapter: Any, section_id: str, allow: set[str]
 def _iter_marked_watched_from_library(
     adapter: Any,
     allow: set[str],
-) -> list[tuple[dict[str, Any], int]]:
+) -> list[tuple[dict[str, Any], int | None]]:
     setattr(adapter, "_plex_live_scan_complete", False)
     srv = getattr(getattr(adapter, "client", None), "server", None)
     if not srv:
@@ -800,7 +799,7 @@ def _iter_marked_watched_from_library(
             return 0
 
     page_size = 200
-    results: list[tuple[dict[str, Any], int]] = []
+    results: list[tuple[dict[str, Any], int | None]] = []
     summary = {
         "sections_scanned": 0, "movie_sections": 0, "show_sections": 0,
         "watched_rows_seen": 0, "watched_rows_returned": 0,
@@ -862,16 +861,18 @@ def _iter_marked_watched_from_library(
 
             for row in rows:
                 view_count = max(_int0(row.get("viewCount")), _int0(row.get("leafCountViewed")))
-                ts = _as_epoch(row.get("lastViewedAt") or row.get("viewedAt"))
+                ts = _as_epoch(row.get("lastViewedAt"))
+                if ts is None:
+                    ts = _as_epoch(row.get("viewedAt"))
                 watched = view_count > 0
                 if not watched:
                     continue
                 sec["seen"] += 1
                 if view_count > 0:
                     sec["vc"] += 1
-                if ts:
+                if ts is not None:
                     sec["lva"] += 1
-                ts_i = int(ts) if ts else 0
+                ts_i = ts
                 meta = normalize_discover_row(row, token=token) or {}
                 if not meta:
                     raise RuntimeError("plex_watched_scan_normalize_failed")
@@ -879,7 +880,7 @@ def _iter_marked_watched_from_library(
                     raise RuntimeError("plex_watched_scan_missing_identity")
                 meta['_cw_marked'] = True
                 meta['_cw_view_count'] = view_count
-                if ts_i:
+                if ts_i is not None:
                     meta['watched_at'] = meta.get('watched_at') or _iso(int(ts_i))
                 else:
                     meta['watched_at'] = None
@@ -946,7 +947,7 @@ def _iter_marked_watched_from_library(
     return results
 
 
-def _live_watched_entry(meta: Mapping[str, Any], ts: int) -> dict[str, Any] | None:
+def _live_watched_entry(meta: Mapping[str, Any], ts: int | None) -> dict[str, Any] | None:
     ids = dict(meta.get("ids") or {})
     rk = ids.get("plex")
     if not rk:
@@ -966,7 +967,7 @@ def _live_watched_entry(meta: Mapping[str, Any], ts: int) -> dict[str, Any] | No
         "episode": meta.get("episode"),
         "watched": True,
         "view_count": meta.get("_cw_view_count"),
-        "last_viewed_at": int(ts) if ts else None,
+        "last_viewed_at": ts,
     }
 
 
@@ -1156,7 +1157,7 @@ def _load_playback_cache(path: Path | None) -> dict[str, Any] | None:
     if path is None:
         return None
     data = read_json(path)
-    if not isinstance(data, Mapping) or data.get("version") != 1 or not isinstance(data.get("items"), dict):
+    if not isinstance(data, Mapping) or data.get("version") != 2 or not isinstance(data.get("items"), dict):
         return None
     cursor = data.get("cursor")
     if not isinstance(cursor, int) or cursor < 0:
@@ -1164,7 +1165,7 @@ def _load_playback_cache(path: Path | None) -> dict[str, Any] | None:
     if not isinstance(data.get("full_refreshed", 0), int) or data.get("full_refreshed", 0) < 0:
         return None
     for key, row in data["items"].items():
-        if not isinstance(row, dict) or not _as_epoch(row.get("watched_at")) or _event_key(row) != key:
+        if not isinstance(row, dict) or _as_epoch(row.get("watched_at")) is None or _event_key(row) != key:
             return None
     return dict(data)
 
@@ -1202,9 +1203,9 @@ def _get_history_catalog(adapter: Any, allow: set[str], *, force: bool = False) 
 
 
 def _date_status(desired_ts: int | None, confirmed_ts: int | None, tol: int) -> tuple[str, int | None]:
-    if not confirmed_ts:
+    if confirmed_ts is None:
         return DATE_NO_DATE, None
-    if not desired_ts:
+    if desired_ts is None:
         return DATE_EXACT, 0
     delta = int(confirmed_ts) - int(desired_ts)
     return (DATE_EXACT, delta) if abs(delta) <= int(tol) else (DATE_MISMATCH, delta)
@@ -1433,8 +1434,8 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
             try:
                 new_rows = []
                 for rr in rows:
-                    ts_i = _epoch_from_history_entry(rr) or 0
-                    if ts_i and ts_i >= int(eff_since):
+                    ts_i = _epoch_from_history_entry(rr)
+                    if ts_i is not None and ts_i >= int(eff_since):
                         new_rows.append(rr)
                 sample = []
                 for rr in new_rows[:5]:
@@ -1459,7 +1460,7 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                 return None
 
             ts = _epoch_from_history_entry(raw)
-            if not ts:
+            if ts is None:
                 return None
             ts_i = int(ts)
 
@@ -1615,7 +1616,7 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
         _maybe_trace_snapshot(cat, allow, out)
 
         if cache_path is not None and history_complete:
-            cache_data = {"version": 1, "cursor": playback_cursor, "items": recorded,
+            cache_data = {"version": 2, "cursor": playback_cursor, "items": recorded,
                           "full_refreshed": now if reconciled else refreshed}
             if cache_data != playback_cache:
                 write_json(cache_path, cache_data, indent=0, sort_keys=False, separators=(",", ":"))
@@ -1762,7 +1763,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             resolve_progress.tick(resolved_n)
             key = canonical_key(item) or ""
             ts = _as_epoch(item.get("watched_at"))
-            if not ts:
+            if ts is None:
                 unresolved.append({"item": id_minimal(item), "key": key, "hint": "missing_watched_at", "reason": "missing_watched_at"})
                 meta["unresolved_keys"].append(key)
                 _bump_reason(meta, "missing_watched_at")

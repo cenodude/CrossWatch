@@ -151,7 +151,7 @@ def scan(adapter: Any, *, progress: Callable[..., None], check_cancel: Callable[
                 report(index + 1, title, result="Skipped: still in Plex")
                 continue
             timestamp = history._epoch_from_history_entry(raw)
-            item["watched_at"] = history._iso(timestamp) if timestamp else None
+            item["watched_at"] = history._iso(timestamp) if timestamp is not None else None
             item["watched"] = True
             common.force_episode_title(item)
             identity = common.has_external_ids(item.get("show_ids") or {}) if item.get("type") == "episode" else common.has_external_ids(item.get("ids") or {})
@@ -168,7 +168,7 @@ def scan(adapter: Any, *, progress: Callable[..., None], check_cancel: Callable[
             result = "Found for review"
             if not identity:
                 result = "Found: needs a match"
-            elif not timestamp:
+            elif timestamp is None:
                 result = "Found: missing watch date"
             elif match_key in guessed:
                 result = "Found: title guess needs review"

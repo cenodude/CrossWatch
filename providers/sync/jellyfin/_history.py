@@ -499,26 +499,26 @@ def _set_write_meta(adapter: Any, meta: Mapping[str, Any]) -> None:
         pass
 
 
-def _result_row(key: str, status: str, *, action: str, reason: str, iid: str | None = None, req_ts: int = 0, dst_ts: int = 0) -> dict[str, Any]:
+def _result_row(key: str, status: str, *, action: str, reason: str, iid: str | None = None, req_ts: int | None = None, dst_ts: int | None = None) -> dict[str, Any]:
     row: dict[str, Any] = {"key": key, "status": status, "action": action, "reason": reason}
     if iid:
         row["provider_item_id"] = str(iid)
-    if req_ts:
+    if req_ts is not None:
         row["requested_at"] = _epoch_to_iso_z(req_ts)
-    if dst_ts:
+    if dst_ts is not None:
         row["destination_at"] = _epoch_to_iso_z(dst_ts)
     return row
 
 
-def _dst_user_state(http: Any, uid: str, iid: str) -> tuple[bool, int]:
+def _dst_user_state(http: Any, uid: str, iid: str) -> tuple[bool, int | None]:
     # Delegate to batch variant to keep parsing consistent
-    return _dst_user_states(http, uid, [str(iid)]).get(str(iid), (False, 0))
+    return _dst_user_states(http, uid, [str(iid)]).get(str(iid), (False, None))
 
 
 
 
-def _dst_user_states(http: Any, uid: str, iids: Iterable[str]) -> dict[str, tuple[bool, int]]:
-    out: dict[str, tuple[bool, int]] = {}
+def _dst_user_states(http: Any, uid: str, iids: Iterable[str]) -> dict[str, tuple[bool, int | None]]:
+    out: dict[str, tuple[bool, int | None]] = {}
     ids: list[str] = []
     seen: set[str] = set()
     for x in iids or []:
@@ -553,12 +553,12 @@ def _dst_user_states(http: Any, uid: str, iids: Iterable[str]) -> dict[str, tupl
                     continue
                 ud = row.get('UserData') or {}
                 played = bool(ud.get('Played') or ud.get('IsPlayed'))
-                ts = 0
+                ts = None
                 for k in ('LastPlayedDate', 'DateLastPlayed', 'LastPlayed'):
                     v = ud.get(k) or row.get(k)
                     if v:
-                        ts = _parse_iso_to_epoch(v) or 0
-                        if ts:
+                        ts = _parse_iso_to_epoch(v)
+                        if ts is not None:
                             break
                 out[iid] = (played, ts)
         except Exception:
@@ -673,8 +673,8 @@ def build_index(
         for row in rows:
             ud = row.get("UserData") or {}
             lp = ud.get("LastPlayedDate") or row.get("DateLastPlayed") or None
-            ts = _parse_iso_to_epoch(lp) or 0
-            if not ts:
+            ts = _parse_iso_to_epoch(lp)
+            if ts is None:
                 continue
             if since_epoch and ts <= since_epoch:
                 rows = []
@@ -981,7 +981,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         "skip_played_untimed": 0, "skip_missing_date": 0, "fail_mark": 0,
     }
 
-    def _confirm(k: str, status: str, *, action: str, reason: str, iid: str, req_ts: int, dst_ts: int = 0) -> None:
+    def _confirm(k: str, status: str, *, action: str, reason: str, iid: str, req_ts: int, dst_ts: int | None = None) -> None:
         confirmed_keys.append(k)
         results.append(_result_row(k, status, action=action, reason=reason, iid=iid, req_ts=req_ts, dst_ts=dst_ts))
 
@@ -1000,8 +1000,8 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         states = _dst_user_states(http, uid, [iid for _, iid in chunk])
         pending_verify: list[tuple[str, str, int]] = []
         for k, iid in chunk:
-            src_ts = _parse_iso_to_epoch(wants[k].get("watched_at")) or 0
-            if not src_ts:
+            src_ts = _parse_iso_to_epoch(wants[k].get("watched_at"))
+            if src_ts is None:
                 unresolved.append({"item": id_minimal(wants[k]), "key": k, "hint": "missing_watched_at", "reason": "missing_watched_at"})
                 _freeze(wants[k], reason="missing_watched_at")
                 results.append(_result_row(k, _ST_MISSING_DATE, action="skip", reason="missing_watched_at", iid=iid))
@@ -1011,9 +1011,9 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 continue
 
             src_iso = _epoch_to_iso_z(src_ts)
-            played, dst_ts = states.get(iid, (False, 0))
+            played, dst_ts = states.get(iid, (False, None))
 
-            if played and dst_ts and dst_ts >= (src_ts - tol):
+            if played and dst_ts is not None and dst_ts >= (src_ts - tol):
                 bb[k] = {"reason": "presence:existing_newer", "since": _now_iso_z(), "iid": iid}
                 stats["skip_newer"] += 1
                 status = _ST_ALREADY if abs(dst_ts - src_ts) <= tol else _ST_NEWER
@@ -1022,7 +1022,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 sleep_ms(delay)
                 continue
 
-            if played and not dst_ts:
+            if played and dst_ts is None:
                 bb[k] = {"reason": "presence:existing_untimed", "since": _now_iso_z(), "iid": iid}
                 stats["skip_played_untimed"] += 1
                 _confirm(k, _ST_ALREADY, action="skip", reason="existing_untimed", iid=iid, req_ts=src_ts)
@@ -1058,7 +1058,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         if pending_verify:
             final = _dst_user_states(http, uid, [iid for _, iid, _ in pending_verify])
             for k, iid, req_ts in pending_verify:
-                played, _dst = final.get(iid, (False, 0))
+                played, _dst = final.get(iid, (False, None))
                 if played:
                     continue
                 confirmed_keys[:] = [c for c in confirmed_keys if c != k]

@@ -93,6 +93,26 @@ def test_movie_uses_external_ids_and_stop_time() -> None:
     assert item["watched_at"] == "2026-09-18T20:25:22Z"
 
 
+@pytest.mark.parametrize("factory", [_movie, _episode])
+@pytest.mark.parametrize("stopped,started,expected", [
+    ("1970-01-01T00:00:00Z", "2026-01-01T00:00:00Z", "1970-01-01T00:00:00Z"),
+    ("1970-01-01T00:00:01Z", None, "1970-01-01T00:00:01Z"),
+    (None, "1970-01-01T00:00:00Z", "1970-01-01T00:00:00Z"),
+    ("invalid", "1970-01-01T00:00:00Z", "1970-01-01T00:00:00Z"),
+    (None, None, None),
+    ("invalid", "invalid", None),
+    ("1969-12-31T23:59:59Z", None, None),
+])
+def test_epoch_dates_and_missing_date_fallback(factory, stopped, started, expected):
+    row = factory(stopped_at=stopped, started_at=started)
+    snapshot = history.build_index(_adapter(_Client([[row]])))
+    if expected is None:
+        assert snapshot == {}
+    else:
+        assert len(snapshot) == 1
+        assert next(iter(snapshot.values()))["watched_at"] == expected
+
+
 def test_episode_keys_on_show_ids_not_episode_ids() -> None:
     idx = history.build_index(_adapter(_Client([[_episode()]])))
 

@@ -68,6 +68,18 @@ def test_readded_identity_and_other_user_are_excluded(plex):
     assert not plex.searches
 
 
+@pytest.mark.parametrize("timestamp", [0, 1, None])
+def test_recovery_keeps_epoch_separate_from_missing_date(plex, timestamp):
+    row = raw("2", guid="tmdb://2")
+    row.viewedAt = timestamp
+    plex.rows = [row]
+
+    result = scan(plex)
+
+    assert len(result) == 1
+    assert result[0]["item"]["watched_at"] == (history._iso(timestamp) if timestamp is not None else None)
+
+
 def test_title_guess_rewatches_keep_the_review_requirement(plex):
     first=raw();repeat=deepcopy(first);repeat.viewedAt+=100
     plex.rows=[first,repeat,raw("known",guid="tmdb://1")]

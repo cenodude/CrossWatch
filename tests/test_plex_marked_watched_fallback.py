@@ -171,6 +171,22 @@ def test_watched_row_without_timestamp_is_still_returned(scan):
 
     assert len(results) == 1
     meta, ts = results[0]
-    assert ts == 0
+    assert ts is None
     assert meta["watched_at"] is None
     assert meta["_cw_watched_at_missing"] is True
+
+
+@pytest.mark.parametrize("kind", ["movie", "show"])
+@pytest.mark.parametrize("timestamp", [0, 1])
+def test_epoch_timestamp_survives_library_scan(scan, kind, timestamp):
+    row = (_movie if kind == "movie" else _episode)("5", view_count=1, last_viewed=timestamp)
+    row["viewedAt"] = LAST_VIEWED
+    results, _ = scan(lambda params: _Resp([row]), section_type=kind)
+
+    assert len(results) == 1
+    meta, ts = results[0]
+    assert ts == timestamp
+    assert meta["watched_at"] == history._iso(timestamp)
+    assert not meta.get("_cw_watched_at_missing")
+    entry = history._live_watched_entry(meta, ts)
+    assert entry["last_viewed_at"] == timestamp

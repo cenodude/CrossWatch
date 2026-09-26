@@ -321,12 +321,9 @@ def _comparison_alias_keys_for_episode(
     native_ids = _anime_native_ids(item)
     coords: set[tuple[int, int]] = set()
 
-    # MDBList can return long-running anime with the absolute number in the
-    # episode field even when the season field is not season 1, e.g. One Piece
-    # S23E1156. In that case resolving the raw S/E as an aired coordinate can
-    # double-count the absolute offset, so use the episode value as absolute.
+    # Keep absolute anime episode numbers to avoid counting the season offset twice.
     absolute_like = bool(absolute is not None and absolute >= 50 and season is not None and season > 1)
-    if absolute_like and native_ids:
+    if absolute_like and native_ids and absolute is not None:
         try:
             coords.update(resolve_axis_coordinates(native_ids, absolute, release_tag=release_tag))
         except Exception:
@@ -447,6 +444,14 @@ def _migrate_cache(items: Mapping[str, Any]) -> tuple[dict[str, Any], bool]:
     return normalized, changed
 
 
+def _cache_is_stale() -> bool:
+    try:
+        doc = read_json(_cache_path())
+        return not isinstance(doc, Mapping) or doc.get("version") != 1
+    except Exception:
+        return True
+
+
 def _load_cache() -> dict[str, Any]:
     try:
         p = _cache_path()
@@ -464,9 +469,10 @@ def _load_cache() -> dict[str, Any]:
         return {}
 
 
-def _save_cache(items: Mapping[str, Any]) -> None:
+def _save_cache(items: Mapping[str, Any], *, complete: bool = False) -> None:
     try:
-        doc = {"generated_at": _now_iso(), "items": dict(items)}
+        version = 1 if complete or not _cache_is_stale() else 0
+        doc = {"version": version, "generated_at": _now_iso(), "items": dict(items)}
         write_json(_cache_path(), doc)
     except Exception as e:
         _warn("cache_save_failed", error=str(e))
@@ -528,7 +534,7 @@ def _event_key(item: Mapping[str, Any]) -> str | None:
     if not _iso_ok(w):
         return None
     ts = _as_epoch(_iso_z(w))
-    if not ts:
+    if ts is None:
         return None
     return f"{_base_key(item)}@{ts}"
 
@@ -1096,6 +1102,7 @@ def build_index(
 ) -> dict[str, dict[str, Any]]:
     cfg = _cfg(adapter)
     event_mode = _rewatches_enabled(adapter)
+    cache_stale = not event_mode and _cache_is_stale()
     cached_raw = {} if event_mode else _load_cache()
     cached: dict[str, dict[str, Any]] = {
         str(k): dict(v) for k, v in (cached_raw or {}).items() if isinstance(v, Mapping)
@@ -1152,9 +1159,9 @@ def build_index(
     journal_iso = _iso_z(journal_ts) if _iso_ok(journal_ts) else None
     wm = get_watermark("history")
     journal_wm = get_watermark("history_journal")
-    force_baseline = False
+    force_baseline = cache_stale
 
-    if acts_watched_iso and journal_iso and wm and journal_wm:
+    if acts_watched_iso and journal_iso and wm and journal_wm and not force_baseline:
         a = _as_epoch(acts_watched_iso) or 0
         b = _as_epoch(wm) or 0
         jn = _as_epoch(journal_iso) or 0
@@ -1314,7 +1321,7 @@ def build_index(
             scope="delta",
         )
 
-    if normalized_out and (force_baseline or complete_fetch):
+    if normalized_out and (complete_fetch or (force_baseline and not cache_stale)):
         # /sync/watched is fetched as a full current snapshot here.
         merged_base = {str(k): dict(v) for k, v in normalized_out.items()}
     else:
@@ -1334,7 +1341,7 @@ def build_index(
         )
 
     if out or force_baseline or dropped_merged["shows"] or dropped_merged["seasons"]:
-        _save_cache(merged)
+        _save_cache(merged, complete=complete_fetch)
 
     update_watermark_if_new("history", latest_seen or acts_watched_iso)
     if journal_iso:
