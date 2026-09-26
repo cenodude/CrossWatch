@@ -25,7 +25,7 @@ from fastapi.responses import JSONResponse
 from cw_platform.access_policy import filter_pairs_for_profile, filter_pairs_for_user, managed_profile_instances, profile_instances_map, request_user
 from cw_platform.config_base import load_config as _load_config
 
-from cw_platform.provider_instances import get_provider_block, list_instance_ids, normalize_instance_id, provider_key
+from cw_platform.provider_instances import get_instance_block, get_provider_block, list_instance_ids, normalize_instance_id, provider_key
 from providers.auth._auth_KODI import KodiAuthError, verify_connection as verify_kodi_connection
 from providers.sync.simkl._common import (
     account_cache_key,
@@ -325,7 +325,7 @@ def _instance_block(cfg: Mapping[str, Any], cfg_key: str, instance_id: Any) -> d
     if inst == "default":
         return base
 
-    sub = get_provider_block(cfg, cfg_key, inst)
+    sub = get_instance_block(cfg, cfg_key, inst)
     out = dict(sub or {}) if isinstance(sub, Mapping) else {}
     for k in _FALLBACK_KEYS.get(cfg_key, ()):
         if not str(out.get(k) or "").strip() and str(base.get(k) or "").strip():

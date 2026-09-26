@@ -58,6 +58,59 @@ def connected(store, expires=900):
     block(store).update(access_token="old-access", refresh_token="old-refresh", expires_at=expires)
 
 
+@pytest.mark.parametrize("profile", [{}, {"label": "Second account"}, {"access_token": "profile-access"}])
+def test_profile_does_not_inherit_default_authentication(store, profile):
+    from cw_platform.provider_instances import build_provider_config_view
+
+    default = {"access_token": "default-access", "refresh_token": "default-refresh", "token_type": "bearer",
+               "expires_at": 5000, "username": "default-user", "user_id": "100", "plan": "vip", "reauth_required": True}
+    store["cfg"]["wetrakr"].update(default, timeout=25)
+    store["cfg"]["wetrakr"]["instances"]["P01"] = profile
+    before = copy.deepcopy(store["cfg"])
+
+    for cfg in (store["cfg"], build_provider_config_view(store["cfg"], "wetrakr", "P01")):
+        selected = wt.provider_block(cfg, "P01")
+        for key in default:
+            assert selected.get(key) == profile.get(key)
+        assert "timeout" not in selected
+    assert wt.provider_block(store["cfg"], "default")["access_token"] == "default-access"
+    assert store["cfg"] == before
+
+
+def test_new_profile_status_and_disconnect_leave_default_connected(store, monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from api import authenticationAPI as api
+    from api import probesAPI as probes
+    from cw_platform.provider_instances import build_provider_config_view
+    from providers.sync._mod_WETRAKR import OPS
+
+    store["cfg"]["wetrakr"].update(access_token="default-access", refresh_token="default-refresh", expires_at=5000,
+                                    username="default-user", user_id="100", plan="vip")
+    before = copy.deepcopy(store["cfg"]["wetrakr"])
+    monkeypatch.setattr(api, "load_config", lambda: copy.deepcopy(store["cfg"]))
+    app = FastAPI()
+    api.register_auth(app)
+    client = TestClient(app)
+
+    status = client.get("/api/wetrakr/status?instance=P01").json()
+    assert status["connected"] is False
+    assert status["username"] == ""
+    assert status["plan"] == ""
+    assert probes._prov_configured(store["cfg"], "WETRAKR", "P01") is False
+    assert probes._cfg_view_for(store["cfg"], "WETRAKR", "P01")["wetrakr"] == {}
+    view = build_provider_config_view(store["cfg"], "wetrakr", "P01")
+    assert OPS.is_configured({**view, "_cw_provider_instance": "P01"}) is False
+    with pytest.raises(wt.WeTrakrAuthError, match="reconnect_required"):
+        wt.request_with_auth(None, "GET", wt.ME_URL, cfg=store["cfg"], instance_id="P01")
+    assert wt.refresh_token(instance_id="P01")["status"] == "missing_refresh"
+    assert client.post("/api/wetrakr/disconnect?instance=P01").json()["ok"]
+    for key, value in before.items():
+        if key != "instances":
+            assert store["cfg"]["wetrakr"][key] == value
+    assert store["cfg"]["wetrakr"]["instances"]["P02"] == before["instances"]["P02"]
+
+
 @pytest.mark.parametrize("status, remaining", [(200, "49850"), (429, "0")])
 def test_authenticated_requests_capture_daily_allowance(store, status, remaining):
     connected(store, expires=5000)

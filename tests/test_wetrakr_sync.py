@@ -493,7 +493,8 @@ def test_cache_separates_watch_modes_profiles_and_accounts(env):
     env.adapter.config["_cw_history_rewatches"] = False
     env.adapter.instance_id = "P02"
     assert common.cache_path(env.adapter, "history") != original
-    other = WETRAKRModule({"wetrakr": {"access_token": "other", "user_id": "43"}}, instance_id="P01")
+    env.cfg["wetrakr"]["instances"]["P01"].update(access_token="other", user_id="43")
+    other = WETRAKRModule(build_provider_config_view(env.cfg, "wetrakr", "P01"), instance_id="P01")
     assert common.cache_path(other, "history") != original
 
 
