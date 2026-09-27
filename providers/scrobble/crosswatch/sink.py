@@ -276,7 +276,7 @@ class CrossWatchSink(ScrobbleSink):
             return True
         return (progress - previous) >= _progress_step(cfg)
 
-    def send(self, ev: ScrobbleEvent, cfg: dict[str, Any] | None = None) -> None:
+    def send(self, ev: ScrobbleEvent, cfg: dict[str, Any] | None = None) -> dict[str, Any] | None:
         cfg = cfg or (self._cfg_provider() if self._cfg_provider else None) or _cfg()
         if not isinstance(cfg, dict):
             cfg = {}
@@ -284,9 +284,9 @@ class CrossWatchSink(ScrobbleSink):
         try:
             if not CROSSWATCH_OPS.is_configured(view):
                 _log(f"CrossWatch tracker disabled for sink profile {self._instance_id}; skipping", "WARNING")
-                return
+                return {"ok": True, "log_status": "skipped", "reason": "not_configured"}
         except Exception:
-            return
+            return {"ok": True, "log_status": "skipped", "reason": "configuration_unavailable"}
 
         action = str(ev.action or "").lower().strip()
         progress = _clamp(ev.progress)
@@ -294,7 +294,7 @@ class CrossWatchSink(ScrobbleSink):
         item = _item_from_event(ev, view, progress)
         if not item:
             _log("CrossWatch tracker sink skipped event without enough identity", "DEBUG")
-            return
+            return {"ok": True, "log_status": "skipped", "reason": "missing_media_identity"}
 
         src, src_inst = _route_source(cfg)
         if action == "start":
@@ -304,7 +304,7 @@ class CrossWatchSink(ScrobbleSink):
         complete = action == "stop" and progress >= watched_at
         if complete:
             if self._completed.get(media_key, -1.0) >= watched_at:
-                return
+                return {"ok": True, "log_status": "skipped", "reason": "session_completed"}
             item["watched_at"] = utc_now_iso()
             history = CROSSWATCH_OPS.add(view, [item], feature="history", dry_run=False) or {}
             cleanup = CROSSWATCH_OPS.remove(view, [item], feature="progress", dry_run=False) or {}
@@ -321,12 +321,20 @@ class CrossWatchSink(ScrobbleSink):
                 record_watch(ev, action="stop", source_provider=src, source_instance=src_inst, destination_provider="crosswatch", destination_instance=self._instance_id, status="fail", progress=progress, reason="crosswatch_history_failed")
             return
 
+        previous = self._p_sess.get((str(ev.session_key or "?"), self._media_key(ev)))
         if action in {"start", "pause", "stop"} and self._should_write_progress(ev, cfg, progress):
             result = CROSSWATCH_OPS.add(view, [item], feature="progress", dry_run=False) or {}
             if not result.get("ok"):
                 record_watch(ev, action="start", source_provider=src, source_instance=src_inst, destination_provider="crosswatch", destination_instance=self._instance_id, status="fail", progress=progress, reason="crosswatch_progress_failed")
                 return
             _log(f"scrobble {action or 'update'} user='{mask_account(ev.account)}' p={progress:.1f}% media='{ev.title or '?'}'", "INFO")
+        elif action not in {"start", "pause", "stop"}:
+            return {"ok": True, "log_status": "skipped", "reason": "invalid_action"}
+        elif previous is None:
+            return {"ok": True, "log_status": "skipped", "reason": "no_progress"}
+        else:
+            return {"ok": True, "log_status": "skipped", "reason": "progress_step",
+                    "previous_progress": previous, "progress_step": _progress_step(cfg)}
 
 
 __all__ = ["CrossWatchSink"]

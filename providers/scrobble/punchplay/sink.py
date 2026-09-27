@@ -31,7 +31,7 @@ try:
     from providers.scrobble.scrobble import ScrobbleEvent, ScrobbleSink, mask_account  # type: ignore
 except ImportError:
     class ScrobbleSink:  # pragma: no cover
-        def send(self, event: Any) -> None: ...
+        def send(self, event: Any) -> dict[str, Any] | None: ...
 
     class ScrobbleEvent:  # pragma: no cover
         ...
@@ -274,27 +274,27 @@ class PunchPlaySink(ScrobbleSink):
             else:
                 _SESSIONS[scope] = before
 
-    def send(self, event: Any) -> None:
+    def send(self, event: Any) -> dict[str, Any] | None:
         cfg = self.config
         block = self._block(cfg)
         if not str(block.get("access_token") or "").strip():
             _log("PUNCHPLAY: skip scrobble, not connected", "DEBUG")
-            return
+            return {"ok": True, "log_status": "skipped", "reason": "not_configured"}
 
         raw_action = str(getattr(event, "action", "") or "").strip().lower()
         if raw_action not in ("start", "pause", "stop"):
-            return
+            return {"ok": True, "log_status": "skipped", "reason": "invalid_action"}
 
         media_type = "episode" if str(getattr(event, "media_type", "") or "").lower() == "episode" else "movie"
         ids_payload = self._ids_payload(event, media_type)
         if not ids_payload:
             _log("PUNCHPLAY: skip scrobble, no supported ids", "DEBUG")
-            return
+            return {"ok": True, "log_status": "skipped", "reason": "missing_external_ids"}
 
         title = str(getattr(event, "title", "") or "").strip()
         if not title:
             _log("PUNCHPLAY: skip scrobble, missing title", "DEBUG")
-            return
+            return {"ok": True, "log_status": "skipped", "reason": "missing_title"}
 
         season = number = None
         if media_type == "episode":
@@ -302,7 +302,7 @@ class PunchPlaySink(ScrobbleSink):
             number = _as_int(getattr(event, "number", None))
             if season is None or number is None:
                 _log("PUNCHPLAY: skip scrobble, episode missing season/episode", "DEBUG")
-                return
+                return {"ok": True, "log_status": "skipped", "reason": "missing_episode_coordinates"}
 
         try:
             progress_pct = max(0.0, min(100.0, float(getattr(event, "progress", 0.0) or 0.0)))
@@ -358,7 +358,7 @@ class PunchPlaySink(ScrobbleSink):
         ):
             _log(f"PUNCHPLAY: skip scrobble {action}, no position or duration", "DEBUG")
             self._rollback(scope, before)
-            return
+            return {"ok": True, "log_status": "skipped", "reason": "missing_position"}
 
         self._post(cfg, event, action, payload, progress_pct, watched=watched, scope=scope, before=before)
 

@@ -265,7 +265,7 @@ def test_repeated_completed_stop_records_once(sink, monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(sink_mod, "record_scrobble_event", lambda ev, **kwargs: activity.append(kwargs))
 
     s.send(Event(action="stop", progress=97))
-    s.send(Event(action="stop", progress=98))
+    assert s.send(Event(action="stop", progress=98)) == {"ok": True, "log_status": "skipped", "reason": "session_completed"}
 
     assert len(calls) == 1
     assert len(activity) == 1

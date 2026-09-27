@@ -362,7 +362,7 @@ def test_episode_scrobble_without_show_identity_is_not_sent(monkeypatch: pytest.
     calls: list[dict[str, Any]] = []
     monkeypatch.setattr(sink_mod, "flicklist_request", lambda adapter, method, url, **kwargs: calls.append({"method": method, "url": url, **kwargs}) or _Resp(200, {}))
 
-    FlickListSink(cfg_provider=lambda: dict(CFG)).send(Event(
+    result = FlickListSink(cfg_provider=lambda: dict(CFG)).send(Event(
         action="start",
         media_type="episode",
         title="Severance",
@@ -371,6 +371,7 @@ def test_episode_scrobble_without_show_identity_is_not_sent(monkeypatch: pytest.
         ids={"tmdb": "5978363", "imdb": "tt11280740"},
     ))
 
+    assert result == {"ok": True, "log_status": "skipped", "reason": "missing_external_ids"}
     assert calls == []
 
 

@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from importlib import import_module
+from types import SimpleNamespace
 from typing import Any
+
+import pytest
 
 
 class _Resp:
@@ -250,3 +254,52 @@ def test_plex_separate_playback_sessions_same_media_are_not_deduplicated(monkeyp
         "rk:movie-1|s:session-1|p:player-1|u:account-1",
         "rk:movie-1|s:session-2|p:player-1|u:account-1",
     ]
+
+
+@pytest.mark.parametrize("source", ["plex", "jellyfin", "emby"])
+@pytest.mark.parametrize("sink_result,recorded", [
+    (None, True),
+    ({"ok": True, "log_status": "skipped", "reason": "session_completed"}, True),
+    ({"ok": True, "log_status": "skipped", "reason": "not_configured"}, True),
+    ({"ok": True, "skipped": True, "reason": "session_completed"}, False),
+])
+def test_sink_diagnostics_preserve_webhook_completion(monkeypatch, source, sink_result, recorded):
+    from providers.webhooks import dispatch
+
+    module = import_module(f"providers.webhooks.{source}")
+    _patch_common(monkeypatch, module)
+    monkeypatch.setattr(module, "_dispatch_scrobble", dispatch.dispatch_scrobble)
+    monkeypatch.setattr(module, "_sinks_from_webhook_cfg", lambda *a: {"trakt"})
+    monkeypatch.setattr(dispatch, "webhook_sinks", lambda *a: ["trakt"])
+    monkeypatch.setattr(dispatch, "sink_configured", lambda *a: True)
+    monkeypatch.setattr(dispatch, "maybe_enrich_event_for_sink", lambda ev, *a: ev)
+    sends, removals, archives = [], [], []
+
+    def send(ev, **kwargs):
+        sends.append(ev)
+        return sink_result
+
+    monkeypatch.setattr(dispatch, "_make_sink", lambda *a: SimpleNamespace(send=send))
+    monkeypatch.setattr(module, "_call_remove_across", lambda *a, **kw: removals.append(a))
+    monkeypatch.setattr(module, "_archive", lambda *a, **kw: archives.append(a))
+    monkeypatch.setattr(module.time, "time", lambda: 1_000.0)
+    payload = {"plex": _plex_payload, "jellyfin": _jellyfin_payload, "emby": _emby_payload}[source]
+    cfg = {**_cfg(), "trakt": {"access_token": "test-token", "client_id": "test-client"}}
+    cfg["scrobble"]["webhook"]["providers"] = {source: {"sinks": ["trakt"]}}
+
+    result = module.process_webhook(payload(), {}, cfg=cfg)
+
+    assert result["ok"] is True
+    assert result["ignored"] is not recorded, repr(result)
+    assert result["trakt"]["activity_recorded"] is recorded
+    assert len(sends) == 1, result
+    assert bool(removals) is recorded
+    assert any(a[0] == "scrobble_completed" for a in archives) is recorded
+    assert any(state.get("finished") for state in module._SCROBBLE_STATE.values()) is recorded
+    assert any(state.get("completion_done") for state in module._SCROBBLE_STATE.values()) is recorded
+    if hasattr(module, "_LAST_FINISH_BY_ACC"):
+        assert bool(module._LAST_FINISH_BY_ACC) is recorded
+    if recorded:
+        replay = module.process_webhook(payload(), {}, cfg=cfg)
+        assert replay["dedup"] is True
+        assert len(sends) == len(removals) == 1

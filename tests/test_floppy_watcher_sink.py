@@ -298,7 +298,7 @@ def test_completed_stop_is_deduped_across_restarts(monkeypatch, _isolate_floppy_
     event = _episode(progress=99.5)
     FloppySink(cfg_provider=_cfg).send(event)
     # a brand new sink instance stands in for a process restart
-    FloppySink(cfg_provider=_cfg).send(event)
+    assert FloppySink(cfg_provider=_cfg).send(event) == {"ok": True, "log_status": "skipped", "reason": "session_completed"}
 
     assert len(calls) == 1, "persistent dedupe must survive a new sink instance"
 

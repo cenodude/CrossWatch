@@ -25,7 +25,7 @@ try:
     from providers.scrobble.scrobble import ScrobbleEvent, ScrobbleSink, mask_account  # type: ignore
 except ImportError:
     class ScrobbleSink:  # pragma: no cover
-        def send(self, event: Any) -> None: ...
+        def send(self, event: Any) -> dict[str, Any] | None: ...
 
     class ScrobbleEvent:  # pragma: no cover
         ...
@@ -223,19 +223,19 @@ class FlickListSink(ScrobbleSink):
             payload["progress"] = 0.0
         return media_type, payload
 
-    def send(self, event: Any, cfg: Mapping[str, Any] | None = None) -> None:
+    def send(self, event: Any, cfg: Mapping[str, Any] | None = None) -> dict[str, Any] | None:
         cfg = dict(cfg) if isinstance(cfg, Mapping) else self.config
         block = self._block(cfg)
         if not str(block.get("api_key") or block.get("access_token") or block.get("token") or "").strip():
             _log("FLICKLIST: skip scrobble, not connected", "DEBUG")
-            return
+            return {"ok": True, "log_status": "skipped", "reason": "not_configured"}
         action = str(getattr(event, "action", "") or "").strip().lower()
         if action not in {"start", "pause", "stop"}:
-            return
+            return {"ok": True, "log_status": "skipped", "reason": "invalid_action"}
         built = self._payload(event)
         if not built:
             _log("FLICKLIST: skip scrobble, no supported ids", "DEBUG")
-            return
+            return {"ok": True, "log_status": "skipped", "reason": "missing_external_ids"}
         media_type, payload = built
         progress_pct = float(payload.get("progress") or 0.0)
         watched_at = self._watched_at(cfg)

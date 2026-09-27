@@ -376,6 +376,8 @@ def test_dispatcher_does_not_acknowledge_failed_sink_and_allows_retry(monkeypatc
 @pytest.mark.parametrize("result,status", [
     ({"ok": False, "error": "unmatched_in_jellyfin", "retryable": False}, "failed"),
     ({"ok": True, "skipped": True, "reason": "destination_already_watched"}, "skipped"),
+    ({"ok": True, "skipped": True, "reason": "progress_step", "previous_progress": 60, "progress_step": 25,
+      "previous_bucket": 50, "progress_bucket": 50}, "skipped"),
     ({"ok": True}, "accepted"),
 ])
 def test_route_logs_destination_outcome_without_scheduler_success(monkeypatch, result, status):
@@ -397,6 +399,8 @@ def test_route_logs_destination_outcome_without_scheduler_success(monkeypatch, r
     if status != "accepted":
         assert not any(": accepted " in message for message in messages)
         assert (result.get("reason") or result.get("error")) in matching[0]
+    if result.get("reason") == "progress_step":
+        assert "reason=progress_step previous_p=60 step=25 previous_bucket=50 bucket=50" in matching[0]
 
 
 @pytest.mark.parametrize("retryable", [False, True])

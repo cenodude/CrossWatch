@@ -24,7 +24,7 @@ try:
     from providers.scrobble.scrobble import ScrobbleSink, mask_account  # type: ignore
 except ImportError:
     class ScrobbleSink:  # pragma: no cover
-        def send(self, event: Any) -> None: ...
+        def send(self, event: Any) -> dict[str, Any] | None: ...
 
     def mask_account(value: Any) -> str:  # pragma: no cover
         s = str(value or "").strip()
@@ -331,13 +331,13 @@ class BingeBaseSink(ScrobbleSink):
             return self._kodi_payload(event, action, media_type, ids, title)
         return self._jellyfin_payload(event, action, media_type, ids, title)
 
-    def send(self, event: Any, cfg: Mapping[str, Any] | None = None) -> None:
+    def send(self, event: Any, cfg: Mapping[str, Any] | None = None) -> dict[str, Any] | None:
         cfgd = dict(cfg) if isinstance(cfg, Mapping) else self.config
         block = self._block(cfgd)
         webhook_url = str(block.get("webhook_url") or "").strip()
         if not webhook_url:
             _log("BINGEBASE: skip scrobble, webhook URL not configured", "DEBUG")
-            return
+            return {"ok": True, "log_status": "skipped", "reason": "not_configured"}
 
         try:
             timeout = float(block.get("timeout") or 20.0)
@@ -359,11 +359,11 @@ class BingeBaseSink(ScrobbleSink):
         complete = raw_action == "stop" and action == "stop" and progress >= watched_at
         done_key = self._completion_key(event) if complete else ""
         if complete and self._completed.get(done_key, -1.0) >= watched_at:
-            return
+            return {"ok": True, "log_status": "skipped", "reason": "session_completed"}
 
         payload = self._payload(event, webhook_url, action_override=action)
         if payload is None:
-            return
+            return {"ok": True, "log_status": "skipped", "reason": "invalid_event"}
 
         src, src_inst = _route_source(cfgd)
         try:
