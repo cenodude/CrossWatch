@@ -551,3 +551,81 @@ def test_interactive_new_features_preview_and_selected_apply(features, config_ba
     assert not run(cfg, InteractivePlan(preview=False, selected={selected}))["errors"]
     stored = features.playing if feature == "progress" else features.ratings
     assert set(stored) == {EPISODE["id"]}
+
+
+@pytest.mark.parametrize("feature", ["watchlist", "history", "ratings", "progress"])
+def test_interactive_writes_do_not_rescan_inventory(features, feature):
+    from cw_platform.interactive_reads import ReviewReads, use_review_reads
+
+    source = {**item(), "watched_at": WHEN, "rating": 8, "progress_percent": 50,
+              "progress_ms": 300000, "duration_ms": 600000, "progress_at": LATER}
+    reads = ReviewReads()
+    try:
+        with use_review_reads(reads, collecting=True):
+            features.adapter.build_index(feature)
+        before = sum(method == "GET" for method, _, _ in features.server.calls)
+        with use_review_reads(reads):
+            result = features.adapter.add(feature, [source])
+            assert result["ok"], result
+            assert result["accepted_keys"]
+            result = features.adapter.remove(feature, [source])
+            assert result["ok"], result
+        assert sum(method == "GET" for method, _, _ in features.server.calls) == before
+    finally:
+        reads.close()
+
+
+def test_interactive_batch_rejection_does_not_claim_success(features, monkeypatch):
+    from cw_platform.interactive_reads import ReviewReads, use_review_reads
+    from test_wetrakr_sync import Response
+
+    reads = ReviewReads()
+    try:
+        with use_review_reads(reads, collecting=True):
+            features.adapter.build_index("watchlist")
+        original = common.request
+        def request(adapter, method, path, **kwargs):
+            if method == "POST":
+                return Response({"notFound": {"movies": [{"ids": {"tmdb": "1"}}]}})
+            return original(adapter, method, path, **kwargs)
+        monkeypatch.setattr(common, "request", request)
+        before = len(features.server.calls)
+        with use_review_reads(reads):
+            result = features.adapter.add("watchlist", [item()])
+        assert result["ok"] is False
+        assert result["count"] == 0
+        assert result["accepted_keys"] == []
+        assert result["unresolved"][0]["reason"] == "write_partially_rejected"
+        assert len(features.server.calls) == before
+    finally:
+        reads.close()
+
+
+def test_interactive_partial_rejection_preserves_known_success_and_later_batches(features, monkeypatch):
+    from cw_platform.interactive_reads import ReviewReads, use_review_reads
+    from test_wetrakr_sync import Response
+
+    source = [{"type": "movie", "ids": {"tmdb": str(n)}} for n in (1, 2, 3)]
+    monkeypatch.setattr(common, "WRITE_BATCH_SIZE", 2)
+    writes = []
+    original = common.request
+    def request(adapter, method, path, **kwargs):
+        if method == "POST":
+            writes.append(kwargs["json"])
+            return Response({"notFound": {"movies": [{"ids": {"tmdb": "2"}}]}} if len(writes) == 1 else {"notFound": {}})
+        return original(adapter, method, path, **kwargs)
+    monkeypatch.setattr(common, "request", request)
+    reads = ReviewReads()
+    try:
+        with use_review_reads(reads, collecting=True):
+            features.adapter.build_index("watchlist")
+        before = len(features.server.calls)
+        with use_review_reads(reads):
+            result = features.adapter.add("watchlist", source)
+        assert result["accepted_keys"] == ["tmdb:1", "tmdb:3"]
+        assert result["unresolved_keys"] == ["tmdb:2"]
+        assert result["count"] == 2
+        assert len(writes) == 2
+        assert len(features.server.calls) == before
+    finally:
+        reads.close()

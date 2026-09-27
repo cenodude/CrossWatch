@@ -3,6 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from cw_platform.interactive_reads import accepted_result, replaying, replace_retained
+
 import re
 from collections.abc import Iterable, Mapping
 from typing import Any
@@ -231,6 +233,18 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
             for item, key in zip(pending_items, keys):
                 unresolved.append({"status": "failed", "reason": "nuvio_history_write_failed", "item": id_minimal(item), "key": key, "canonical_key": key})
 
+    if replaying():
+        accepted = []
+        retained = {payload_item_key(row): dict(row) for row in rows}
+        for key, verify_key, payload in zip(keys, verify_keys, payloads):
+            if not failed:
+                accepted.append(key)
+                retained[verify_key] = dict(payload)
+        replace_retained(pull_watched_rows, list(retained.values()))
+        return accepted_result(_result(not unresolved, len(accepted), len(payloads), accepted, unresolved, results, skipped,
+                                       skipped_keys=skipped_keys, presence_confirmed_keys=presence_confirmed_keys,
+                                       confirmed_destinations=confirmed_destinations), accepted)
+
     after = build_index(adapter) if payloads and not failed else current
     confirmed: list[str] = []
     for item, key, verify_key in ([] if failed else zip(pending_items, keys, verify_keys)):
@@ -297,6 +311,13 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
             failed = True
             for item, key in zip(pending_items, item_keys):
                 unresolved.append({"status": "failed", "reason": "nuvio_history_write_failed", "item": id_minimal(item), "key": key, "canonical_key": key})
+
+    if replaying():
+        accepted = [] if failed else list(item_keys)
+        removed = set() if failed else set(verify_keys)
+        retained = [row for row in pull_watched_rows(adapter) if payload_item_key(row) not in removed]
+        replace_retained(pull_watched_rows, retained)
+        return _result(not unresolved, len(accepted), len(keys_payload), accepted, unresolved, results, skipped)
 
     after = build_index(adapter) if keys_payload and not failed else current
     confirmed: list[str] = []

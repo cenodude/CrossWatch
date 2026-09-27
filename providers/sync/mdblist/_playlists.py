@@ -3,6 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from cw_platform.interactive_reads import remember_resource, retained_read
+
 from typing import Any, Iterable, Mapping, Sequence
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal
@@ -177,6 +179,7 @@ def _resource_from_list(adapter: Any, row: Mapping[str, Any]) -> PlaylistResourc
     )
 
 
+@retained_read
 def list_resources(adapter: Any) -> list[PlaylistResource]:
     if not has_auth(cfg_section(adapter)):
         return []
@@ -328,6 +331,7 @@ def create(
     if res is None:
         raise MDBListPlaylistError("mdblist create list returned no id")
     _info("create_done", list_id=res.id, name=res.name)
+    remember_resource(list_resources, adapter, res)
     return res
 
 

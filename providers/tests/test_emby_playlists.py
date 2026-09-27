@@ -220,3 +220,25 @@ def test_delete_collection_is_blocked():
         pass
     else:
         raise AssertionError("collection delete should be blocked")
+
+
+def test_interactive_remove_and_reorder_reuse_captured_member_ids():
+    from cw_platform.interactive_reads import ReviewReads, use_review_reads
+
+    adapter = FakeAdapter()
+    reads = ReviewReads()
+    try:
+        with use_review_reads(reads, collecting=True):
+            snapshot = pl.get_snapshot(adapter, "P1")
+        before = sum(call["method"] == "GET" for call in adapter.client.calls)
+        with use_review_reads(reads):
+            result = pl.reorder(adapter, "P1", list(reversed(snapshot.ordered_keys())))
+            assert result["ok"] and result["reordered"] == 1
+            result = pl.remove(adapter, "P1", [snapshot.items[0].item])
+            assert result["ok"] and result["count"] == 1
+            missing = pl.reorder(adapter, "P1", ["tmdb:new"])
+            assert missing["ok"] is False
+            assert missing["error"] == "playlist_item_ids_unavailable"
+        assert sum(call["method"] == "GET" for call in adapter.client.calls) == before
+    finally:
+        reads.close()

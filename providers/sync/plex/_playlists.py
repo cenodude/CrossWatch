@@ -6,6 +6,7 @@ from __future__ import annotations
 from collections.abc import Iterable as IterableABC, Mapping as MappingABC
 from typing import Any, Mapping, Sequence
 
+from cw_platform.interactive_reads import retained_read, replaying
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 from cw_platform.playlists import (
     PLAYLIST_KIND_REGULAR,
@@ -300,6 +301,7 @@ def _first_empty_playlist_seed(adapter: Any) -> Any | None:
     return None
 
 
+@retained_read
 def list_resources(adapter: Any) -> list[PlaylistResource]:
     srv = _server(adapter)
     out = [_watchlist_resource(adapter)]
@@ -316,6 +318,8 @@ def _find_playlist(srv: Any, playlist_id: Any) -> Any:
     want = str(playlist_id or "").strip()
     if not want:
         raise PlaylistNotFound("missing playlist id")
+    if replaying() and want.isdigit():
+        return srv.fetchItem(int(want))
     for pl in _iter_video_playlists(srv):
         rk = str(getattr(pl, "ratingKey", "") or "")
         if rk and rk == want:
@@ -331,6 +335,8 @@ def _find_collection(srv: Any, collection_id: Any) -> tuple[Any, Any]:
     if not parsed:
         raise PlaylistNotFound("missing plex collection id")
     want_section, want_key = parsed
+    if replaying() and want_key.isdigit():
+        return srv.library.sectionByID(int(want_section)), srv.fetchItem(int(want_key))
     for section, coll in _iter_collections(srv):
         if _section_key(section) != want_section:
             continue
@@ -349,6 +355,7 @@ def _obj_key(obj: Any) -> str:
         return ""
 
 
+@retained_read
 def get_snapshot(adapter: Any, playlist_id: Any) -> PlaylistSnapshot:
     if _is_watchlist_id(playlist_id):
         resource = _watchlist_resource(adapter)
@@ -796,6 +803,29 @@ def remove(adapter: Any, playlist_id: Any, items: Sequence[Mapping[str, Any]]) -
         count, unresolved = feat_watchlist.remove(adapter, lst)
         return {"ok": True, "count": int(count or 0), "unresolved": unresolved, "confirmed_keys": _confirmed_keys(lst, unresolved)}
 
+    if replaying():
+        snapshot = get_snapshot(adapter, playlist_id)
+        if not snapshot.resource.can_remove:
+            raise SmartPlaylistError("cannot write to this plex list")
+        srv = _server(adapter)
+        resource = snapshot.resource
+        base = "/library/collections" if _is_collection_id(playlist_id) else "/playlists"
+        present = snapshot.by_key()
+        confirmed, unresolved = [], []
+        for raw in items or []:
+            key = canonical_key(id_minimal(raw))
+            member = present.get(key)
+            if member is None or not member.playlist_item_id:
+                unresolved.append({"item": id_minimal(raw), "hint": "playlist_item_id_unavailable"})
+                continue
+            try:
+                srv.query(f"{base}/{resource.extra['raw_id']}/items/{member.playlist_item_id}", method=srv._session.delete)
+                confirmed.append(key)
+            except Exception as exc:
+                _warn("remove_item_failed", list_id=resource.id, error=str(exc))
+                unresolved.append({"item": id_minimal(raw), "hint": "remove_failed"})
+        return {"ok": not unresolved, "count": len(confirmed), "confirmed_keys": confirmed, "unresolved": unresolved}
+
     srv = _server(adapter)
     if _is_collection_id(playlist_id):
         section, coll = _find_collection(srv, playlist_id)
@@ -885,6 +915,29 @@ def reorder(adapter: Any, playlist_id: Any, ordered_keys: Sequence[str]) -> dict
         return {"ok": True, "count": 0, "reordered": 0, "unsupported": True}
     if _is_collection_id(playlist_id):
         return {"ok": True, "count": 0, "reordered": 0, "unsupported": True}
+
+    if replaying():
+        snapshot = get_snapshot(adapter, playlist_id)
+        if not snapshot.resource.can_reorder:
+            raise SmartPlaylistError("cannot reorder this plex list")
+        present = snapshot.by_key()
+        target = list(ordered_keys or [])
+        if any(key not in present or not present[key].playlist_item_id for key in target):
+            return {"ok": False, "count": 0, "reordered": 0, "error": "playlist_item_ids_unavailable"}
+        srv = _server(adapter)
+        work = [key for key in snapshot.ordered_keys() if key in target]
+        moves = 0
+        for index, key in enumerate(target):
+            if index < len(work) and work[index] == key:
+                continue
+            path = f"/playlists/{snapshot.resource.extra['raw_id']}/items/{present[key].playlist_item_id}/move"
+            if index:
+                path += f"?after={present[target[index - 1]].playlist_item_id}"
+            srv.query(path, method=srv._session.put)
+            work.remove(key)
+            work.insert(index, key)
+            moves += 1
+        return {"ok": True, "count": moves, "reordered": moves}
 
     srv = _server(adapter)
     pl = _find_playlist(srv, playlist_id)

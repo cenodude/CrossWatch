@@ -3,6 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from cw_platform.interactive_reads import accepted_result, replaying, retained_read, replace_retained
+
 import math
 import os
 from collections.abc import Iterable, Mapping
@@ -163,6 +165,7 @@ def _progress_page(adapter: Any, media_type: str, page: int, limit: int, *, page
     return pager.read(response, page)
 
 
+@retained_read
 def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
     limit = 100
     try:
@@ -370,15 +373,34 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
         return _result(len(unresolved) == 0, len(pending), len(pending), [], unresolved, results, skipped, dry_run=True)
 
     failed = False
+    failed_keys: set[str] = set()
+    written_items: dict[str, dict[str, Any]] = {}
     for key, item, body in pending:
         response = adapter.client.post(f"{adapter.client.BASE}/scrobble/pause", json=body)
         status = int(getattr(response, "status_code", 0) or 0)
         if status != 201:
             failed = True
+            failed_keys.add(key)
             row = _unresolved(item, f"http:{status}", status="failed", remote_status=status)
             unresolved.append(row)
             results.append(row)
             _warn("write_failed", op="add", canonical_key=key, status=status)
+        elif replaying():
+            written = dict(item)
+            written.pop("_trakt_playback_id", None)
+            try:
+                remote_id = _positive_int((response.json() or {}).get("id"))
+            except (ValueError, TypeError, AttributeError):
+                remote_id = None
+            if remote_id is not None:
+                written["_trakt_playback_id"] = remote_id
+            written_items[key] = written
+
+    if replaying():
+        accepted = [key for key, _item, _body in pending if key not in failed_keys]
+        current.update(written_items)
+        replace_retained(build_index, current)
+        return accepted_result(_result(not unresolved, len(accepted), len(pending), accepted, unresolved, results, skipped), accepted)
 
     after = build_index(adapter) if pending and not failed else current
     confirmed: list[str] = []
@@ -427,6 +449,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
         return _result(len(unresolved) == 0, len(pending), len(pending), [], unresolved, results, skipped, dry_run=True)
 
     failed = False
+    failed_keys: set[str] = set()
     confirmed: list[str] = []
     for key, playback_id, item in pending:
         response = adapter.client.delete(f"{adapter.client.BASE}/sync/playback/{playback_id}")
@@ -435,10 +458,18 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
             confirmed.append(key)
         else:
             failed = True
+            failed_keys.add(key)
             row = _unresolved(item, f"http:{status}", status="failed", remote_status=status)
             unresolved.append(row)
             results.append(row)
             _warn("write_failed", op="remove", canonical_key=key, playback_id=playback_id, status=status)
+
+    if replaying():
+        accepted = [key for key, _remote_id, _item in pending if key not in failed_keys]
+        for key in accepted:
+            current.pop(key, None)
+        replace_retained(build_index, current)
+        return _result(not unresolved, len(accepted), len(pending), accepted, unresolved, results, skipped)
 
     after = build_index(adapter) if pending and not failed else current
     verified: list[str] = []

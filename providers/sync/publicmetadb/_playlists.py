@@ -3,6 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from cw_platform.interactive_reads import retained_read
+
 from typing import Any, Mapping, Sequence
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal
@@ -117,6 +119,7 @@ def _resource_from_row(adapter: Any, row: Mapping[str, Any]) -> PlaylistResource
     )
 
 
+@retained_read
 def list_resources(adapter: Any) -> list[PlaylistResource]:
     out: list[PlaylistResource] = []
     page = 1
@@ -168,6 +171,7 @@ def _playlist_item_id(row: Mapping[str, Any]) -> str:
     return str(row.get("id") or row.get("item_id") or row.get("list_item_id") or "").strip()
 
 
+@retained_read
 def _fetch_items(adapter: Any, list_id: str) -> tuple[list[PlaylistItem], dict[str, str]]:
     out: list[PlaylistItem] = []
     remote_ids: dict[str, str] = {}

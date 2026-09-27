@@ -3,6 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from cw_platform.interactive_reads import accepted_result, replaying, retained_read, replace_retained
+
 import math
 import os
 from collections.abc import Iterable, Mapping
@@ -32,6 +34,7 @@ def ignored_reason(response: Any) -> str | None:
     return None
 
 
+@retained_read
 def build_index(adapter: Any, *, force: bool = False) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     completed = 0
@@ -154,6 +157,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
                 pending[key] = item
         attempted: dict[str, Mapping[str, Any]] = {}
         error: WeTrakrSyncError | None = None
+        write_failed: set[str] = set()
         log("WETRAKR", "progress", "debug", "write_prepare", op="add", count=len(pending))
         for key, item in pending.items():
             raise_if_cancelled()
@@ -169,6 +173,18 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
                     results.append({"status": "skipped", "reason": reason, "canonical_key": key})
             except WeTrakrSyncError as exc:
                 error = exc
+                write_failed.add(key)
+        if replaying():
+            for key, item in attempted.items():
+                if key in write_failed:
+                    unresolved.append({"key": key, "reason": error.reason if error else "write_failed"})
+                    continue
+                confirmed.append(key)
+                current[matches.get(key, key)] = dict(item)
+            replace_retained(build_index, current)
+            result = build_op_result(ok=not unresolved, count=len(confirmed), confirmed_keys=confirmed,
+                                     unresolved=unresolved, unresolved_keys=[row["key"] for row in unresolved], results=results, skipped=len(results))
+            return accepted_result(result, confirmed)
         if attempted:
             try:
                 after = adapter.build_index("progress", force_refresh=True)
@@ -228,6 +244,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
                 pending.setdefault(target_key, []).append(key)
         attempted: dict[str, Mapping[str, Any]] = {}
         error: WeTrakrSyncError | None = None
+        write_failed: set[str] = set()
         log("WETRAKR", "progress", "debug", "write_prepare", op="remove", count=len(pending))
         for target_key, keys in pending.items():
             raise_if_cancelled()
@@ -251,6 +268,18 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
                         results.append({"status": "skipped", "reason": reason, "canonical_key": key})
             except WeTrakrSyncError as exc:
                 error = exc
+                write_failed.update(keys)
+        if replaying():
+            for key, item in attempted.items():
+                if key in write_failed:
+                    unresolved.append({"key": key, "reason": error.reason if error else "write_failed"})
+                    continue
+                confirmed.append(key)
+                before.pop(matches.get(key, key), None)
+            replace_retained(build_index, before)
+            result = build_op_result(ok=not unresolved, count=len(confirmed), confirmed_keys=confirmed,
+                                     unresolved=unresolved, unresolved_keys=[row["key"] for row in unresolved], results=results, skipped=len(results))
+            return result
         if attempted:
             try:
                 after = adapter.build_index("progress", force_refresh=True)

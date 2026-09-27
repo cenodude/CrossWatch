@@ -199,7 +199,7 @@ def test_request_counter_advances_during_preview_and_apply(config_base, monkeypa
         assert session.public()["progress"]["requests"] == 5
         svc.apply(session, cfg, set(session.plan.rows))
         assert session.status == "complete"
-        assert session.public()["progress"]["requests"] == 11
+        assert session.public()["progress"]["requests"] == 1
         assert len(dst.add_calls) == 1
     finally:
         session.close()

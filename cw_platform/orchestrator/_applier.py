@@ -7,6 +7,7 @@ from typing import Any, Callable, cast
 from ._scope import provider_call
 from . import _unresolved as _unresolved_mod
 from ..run_control import SyncCancelled, cancel_requested
+from ..interactive_reads import replaying
 record_unresolved = cast(Callable[..., dict[str, Any]], getattr(_unresolved_mod, "record_unresolved"))
 
 _UNRESOLVED_EXAMPLE_CAP = 25
@@ -556,6 +557,17 @@ def _mark_dry_run(res: dict[str, Any]) -> dict[str, Any]:
     res["count"] = 0
     return res
 
+
+def _accepted_unverified(res: Mapping[str, Any], dry_run: bool) -> int:
+    if dry_run:
+        return 0
+    if "accepted_not_seen_live_keys" in res:
+        return len(res.get("accepted_not_seen_live_keys") or [])
+    if replaying():
+        observed = set(res.get("presence_confirmed_keys") or []) | set(res.get("live_confirmed_keys") or [])
+        return max(0, int(res.get("confirmed", 0)) - len(observed))
+    return 0
+
 def _add_batch_finalizer(
     dst_ops: Any, cfg: Mapping[str, Any] | None, *, feature: str, dry_run: bool,
 ) -> tuple[Mapping[str, Any] | None, Callable[[list[dict[str, Any]]], None] | None]:
@@ -608,6 +620,7 @@ def apply_add(
         "count": _conf,
         "attempted": int(res.get("attempted", 0)),
         "added": _conf,
+        "accepted_unverified": _accepted_unverified(res, dry_run),
         "dry_run": bool(dry_run),
         "skipped": int(res.get("skipped", 0)),
         "skipped_exact": int(res.get("skipped_exact", 0)),
@@ -667,6 +680,7 @@ def apply_update(
         "count": _conf,
         "attempted": int(res.get("attempted", 0)),
         "updated": _conf,
+        "accepted_unverified": _accepted_unverified(res, dry_run),
         "dry_run": bool(dry_run),
         "skipped": int(res.get("skipped", 0)),
         "skipped_exact": int(res.get("skipped_exact", 0)),
@@ -724,6 +738,7 @@ def apply_remove(
         "count": _conf,
         "attempted": int(res.get("attempted", 0)),
         "removed": _conf,
+        "accepted_unverified": _accepted_unverified(res, dry_run),
         "dry_run": bool(dry_run),
         "skipped": int(res.get("skipped", 0)),
         "skipped_exact": int(res.get("skipped_exact", 0)),

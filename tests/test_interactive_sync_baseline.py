@@ -87,7 +87,7 @@ def test_incomplete_empty_review_does_not_run(config_base, monkeypatch, problem)
         session.close()
 
 
-def test_new_changes_during_empty_review_recheck_return_to_review(config_base, monkeypatch):
+def test_empty_review_commits_captured_baseline_without_rereading(config_base, monkeypatch):
     common = feature_item("watchlist", 1)
     cfg, src, dst = feature_setup(config_base, monkeypatch, "watchlist", [common], [common])
     original_build = svc.build
@@ -101,16 +101,17 @@ def test_new_changes_during_empty_review_recheck_return_to_review(config_base, m
         return plan, summary
 
     monkeypatch.setattr(svc, "build", build)
-    monkeypatch.setattr(syncAPI, "_run_pairs_thread", lambda *a, **k: pytest.fail("changed review reached execution"))
+    monkeypatch.setattr(syncAPI, "_env", lambda: (lambda: deepcopy(cfg), lambda *_: None))
     session = svc.Session(pair_id="p1", owner="local")
     try:
         svc.refresh(session, cfg, {})
         assert len(builds) == 2
-        assert session.status == "review"
-        assert session.store.counts["changes"] == 1
-        assert session.apply_review["applied"] == 0
-        assert session.report is None
+        assert session.status == "complete"
+        assert session.store.counts["changes"] == 0
+        assert session.apply_review is None
+        assert session.report["requested"] == 0
         assert not src.add_calls and not dst.add_calls
-        assert not StateStore(config_base).load_state()["providers"]
+        baseline = StateStore(config_base).load_state()["providers"]["SRC"]["watchlist"]["baseline"]["items"]
+        assert set(baseline) == {"imdb:tt0000001"}
     finally:
         session.close()

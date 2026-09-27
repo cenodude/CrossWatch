@@ -1,6 +1,7 @@
 # SIMKL Module for history sync
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
+from cw_platform.interactive_reads import replaying, retaining
 
 import json
 import re
@@ -457,6 +458,8 @@ def _cache_doc_is_stale(rewatches: bool | None = None) -> bool:
 
 def _cache_save(items: Mapping[str, Any], *, rewatches: bool | None = None) -> None:
     mode = _cache_doc_mode() if rewatches is None else bool(rewatches)
+    if any(isinstance(row, Mapping) and "_cw_simkl_native" in row for row in items.values()):
+        items = {key: {field: value for field, value in row.items() if field != "_cw_simkl_native"} for key, row in items.items()}
     _save_json(
         _cache_path(),
         {"schema": _CACHE_SCHEMA, "generated_at": _as_iso(_now_epoch()), "rewatches": mode, "items": dict(items)},
@@ -1420,6 +1423,10 @@ def _parse_rows(
                     if simkl_record:
                         ep["show_ids"].setdefault("simkl", simkl_record)
                         ep["_simkl_episode_number"] = e_num_internal
+                    if retaining():
+                        ep["_cw_simkl_native"] = dict(show_ids=show_ids, season=s_num_internal, episode=e_num_internal,
+                                                       alias=dict(alias) if alias else None,
+                                                       tvdb=episode.get("tvdb") or (dict(season=s_num, episode=e_num) if coord is None else None))
                 bucket_key = simkl_key_of(ep)
                 event_key = f"{bucket_key}@{ts}"
                 if event_key in out:
@@ -1582,6 +1589,73 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
     result = dict(final)
     _apply_since_limit(result, since=since, limit=limit)
     return result
+
+def capture_index(adapter: Any, items: Mapping[str, Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
+    episodes = _load_anime_episode_map_cache()
+    cache: dict[tuple[str, int], SourceCoordinate | None] = {}
+    out = {}
+    for key, raw in items.items():
+        item = dict(raw)
+        number = _int_or_none(item.get("_simkl_episode_number"))
+        ids = item.get("show_ids") or {}
+        if number is not None and ids.get("simkl"):
+            native: dict[str, Any] = dict(item.get("_cw_simkl_native") or dict(show_ids=dict(ids), season=1, episode=number, derived=True))
+            native["coordinate"] = _anime_source_coordinate(native["show_ids"], number, _anibridge_release_tag(adapter), cache)
+            if not native.get("tvdb"):
+                native["tvdb"] = next((row.get("tvdb") for row in episodes.get(str(ids["simkl"]), [])
+                                       if _row_anime_episode_number(row) == number), None)
+            item["_cw_simkl_native"] = native
+        out[key] = item
+    return out
+
+
+def replay_index(adapter: Any, items: Mapping[str, Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    cache: dict[tuple[str, int], SourceCoordinate | None] = {}
+    for key, raw in items.items():
+        item = dict(raw)
+        native = item.pop("_cw_simkl_native", None)
+        if not isinstance(native, Mapping):
+            number = _int_or_none(item.get("_simkl_episode_number"))
+            show_ids = item.get("show_ids") or {}
+            if number is None or not show_ids.get("simkl"):
+                out[key] = item
+                continue
+            native = dict(show_ids=show_ids, season=item.get("season", 1), episode=number,
+                          alias=dict(season=item.get("season"), episode=item.get("episode"), show_ids=show_ids))
+        show_ids = native["show_ids"]
+        coord = _anime_source_coordinate(show_ids, native["episode"], _anibridge_release_tag(adapter), cache)
+        if "coordinate" in native and coord == native["coordinate"]:
+            out[key] = item
+            continue
+        alias = native.get("alias") or {}
+        tvdb = native.get("tvdb") or {}
+        fallback = alias if alias else tvdb
+        if coord is not None and (coord.basis == "user_override" or not fallback):
+            item["season"], item["episode"] = coord.season, coord.episode
+            item["show_ids"] = _source_coordinate_show_ids(show_ids, coord)
+        else:
+            season = _int_or_none(fallback.get("season"))
+            episode = _int_or_none(fallback.get("episode"))
+            item["season"] = season if season is not None and season >= 0 else native["season"]
+            item["episode"] = episode if episode is not None and episode > 0 else native["episode"]
+            item["show_ids"] = dict(alias.get("show_ids") or show_ids)
+        if native.get("derived") and native.get("coordinate") is not None and coord is None and not alias:
+            item["show_ids"] = {name: value for name, value in item["show_ids"].items() if name not in _AIRED_ID_KEYS}
+        simkl_record = str(show_ids.get("simkl") or "").strip()
+        if simkl_record:
+            item["show_ids"].setdefault("simkl", simkl_record)
+        if (item.get("season"), item.get("episode"), item.get("show_ids")) != (raw.get("season"), raw.get("episode"), raw.get("show_ids")):
+            item["ids"] = {}
+            item["title"] = f"S{item['season']:02d}E{item['episode']:02d}"
+        stamp = _as_epoch(item.get("watched_at"))
+        event_key = f"{simkl_key_of(item)}@{stamp}" if stamp is not None else key
+        scope = _history_scope(item, event_key=event_key)
+        if scope:
+            item["_cw_scope"] = scope
+        out[event_key] = item
+    return out
+
 
 def _movie_add_entry(item: Mapping[str, Any]) -> dict[str, Any] | None:
     ids = {k: v for k, v in _ids_of(item).items() if k in _MOVIE_ID_KEYS}
@@ -1775,9 +1849,78 @@ def _verify_history_adds(adapter: Any, items: list[Mapping[str, Any]], *, rewatc
         return set()
 
 
+def _rewatch_receipts(items: list[Mapping[str, Any]], payload: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    added = payload.get("added") or {}
+    statuses = added.get("statuses") if isinstance(added, Mapping) else None
+    if not isinstance(statuses, list):
+        return {}
+    receipts: dict[str, dict[str, Any]] = {}
+    ambiguous: set[str] = set()
+    candidate_counts = {
+        "movies": sum(item.get("type") == "movie" for item in items),
+        "episodes": sum(item.get("type") == "episode" for item in items),
+    }
+    for row in statuses:
+        if not isinstance(row, Mapping):
+            continue
+        request = row.get("request")
+        response = row.get("response")
+        if not isinstance(request, Mapping) or not isinstance(response, Mapping):
+            continue
+        session_id = _int_or_none(response.get("rewatch_id") or row.get("rewatch_id"))
+        status = response.get("rewatch_status") or row.get("rewatch_status")
+        ids = request.get("ids")
+        if not session_id or session_id < 0 or status not in {"active", "completed", "closed"} or not isinstance(ids, Mapping):
+            continue
+        bucket = _response_bucket(response.get("simkl_type"))
+        if bucket is None:
+            continue
+        matches = []
+        for item in items:
+            if item.get("type") not in {"movie", "episode"}:
+                continue
+            movie = item.get("type") == "movie"
+            if bucket != "anime" and movie != (bucket == "movies"):
+                continue
+            field = "movies" if movie else "episodes"
+            if (_int_or_none(added.get(field)) or 0) < candidate_counts[field]:
+                continue
+            item_ids = _scope_ids_for_freeze(item) or _ids_of(item) or {}
+            if not any(str(item_ids.get(name)) == str(value) for name, value in ids.items() if value not in (None, "")):
+                continue
+            if movie and (not request.get("watched_at") or _as_epoch(request["watched_at"]) != _as_epoch(item.get("watched_at"))):
+                continue
+            matches.append(item)
+        for item in matches:
+            key = _thaw_key(item)
+            peers = [other for other in matches if (other.get("season"), other.get("episode")) == (item.get("season"), item.get("episode"))]
+            if len({_thaw_key(other) for other in peers}) > 1:
+                ambiguous.add(key)
+                continue
+            destination = id_minimal(item)
+            destination.update(rewatch_id=session_id, _simkl_rewatch_id=session_id, rewatch_status=status, is_rewatch=True)
+            if key in receipts and receipts[key]["item"]["rewatch_id"] != session_id:
+                ambiguous.add(key)
+            receipts[key] = {"key": key, "item": destination}
+    return {key: value for key, value in receipts.items() if key not in ambiguous}
+
+
 def finalize_add(adapter: Any, results: list[dict[str, Any]]) -> None:
     pending = [result for result in results if result.get("_simkl_history_verification")]
     if not pending:
+        return
+    if replaying():
+        for result in pending:
+            verification = result.pop("_simkl_history_verification")
+            candidates = verification["items"]
+            receipts = verification.get("receipts") or {}
+            result["confirmed_keys"] = list(dict.fromkeys([*(result.get("confirmed_keys") or []), *receipts]))
+            result.setdefault("confirmed_destinations", {}).update(receipts)
+            result["accepted_not_seen_live_keys"] = []
+            hint = "simkl_write_response_unconfirmed:add"
+            result.setdefault("unresolved", []).extend(_unresolved_for_items([item for item in candidates if _thaw_key(item) not in receipts], hint))
+            result["count"] = len(result.get("confirmed_keys") or [])
+            _unfreeze(receipts)
         return
     items = [item for result in pending for item in result["_simkl_history_verification"]["items"]]
     rewatches = any(result["_simkl_history_verification"]["rewatches"] for result in pending)
@@ -3277,11 +3420,12 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             if candidates and (rewatches or any(item.get("_cw_rewatch_sync") is True for item in candidates)
                                or (reported_total == 0 and not has_not_found)):
                 config = getattr(adapter, "config", None)
-                if isinstance(config, Mapping) and config.get("_cw_defer_add_verification"):
+                if replaying() or isinstance(config, Mapping) and config.get("_cw_defer_add_verification"):
                     pending_keys = {_thaw_key(item) for item in candidates}
                     setattr(adapter, "_simkl_history_add_verification", {
                         "items": [id_minimal(item) for item in candidates],
                         "rewatches": rewatches, "zero_additions": reported_total == 0,
+                        "receipts": _rewatch_receipts(candidates, payload) if replaying() and unknown_failed == 0 else {},
                     })
                 else:
                     verified = _verify_history_adds(adapter, candidates, rewatches=rewatches)
@@ -3698,7 +3842,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
 
     confirmed: list[Mapping[str, Any]] = []
     if accepted:
-        confirmed, remaining, verified = _verify_removals(adapter, accepted)
+        confirmed, remaining, verified = (accepted, [], False) if replaying() else _verify_removals(adapter, accepted)
         hint = "simkl_remove_not_confirmed" if verified else "simkl_remove_verification_failed"
         for item in remaining:
             unresolved.append({"item": id_minimal(item), "hint": hint, "reason": hint})

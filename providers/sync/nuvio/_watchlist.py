@@ -3,6 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from cw_platform.interactive_reads import accepted_result, replaying, replace_retained
+
 from collections.abc import Iterable, Mapping
 from typing import Any
 
@@ -319,6 +321,10 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
                 ]
                 return _result(False, 0, attempted, [], failed or [{"status": "failed", "reason": "nuvio_library_replace_failed"}], results, 0)
 
+        if replaying():
+            replace_retained(pull_library_rows, list(remote.values()))
+            return accepted_result(_result(not unresolved, len(pending_keys), attempted, pending_keys, unresolved, results, 0), pending_keys)
+
         after = build_index(adapter)
         confirmed = []
         for key, verify_key in zip(pending_keys, verify_keys):
@@ -425,6 +431,10 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
                     for item, key in zip(pending_items, pending_keys)
                 ]
                 return _result(False, 0, attempted, [], failed or [{"status": "failed", "reason": "nuvio_library_replace_failed"}], results, skipped)
+
+        if replaying():
+            replace_retained(pull_library_rows, list(remote.values()))
+            return _result(not unresolved, len(pending_keys), attempted, pending_keys, unresolved, results, skipped)
 
         after = {_library_row_identity(row) for row in pull_library_rows(adapter)}
         confirmed: list[str] = []

@@ -2,6 +2,7 @@
 # EMBY Module for common utilities
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
+from cw_platform.interactive_reads import retained_read
 from typing import Any, Iterable, Mapping, Sequence
 from datetime import datetime
 from hashlib import sha256
@@ -1008,6 +1009,7 @@ def prefetch_series_minimals(
             except Exception:
                 pass
 
+@retained_read
 def _fetch_all_playlist_items(
     http: Any,
     pid: str,
@@ -1073,6 +1075,7 @@ def _series_episodes_cached(adapter: Any, http: Any, uid: str, sid: str, *, feat
     return rows or []
 
 
+@retained_read
 def _fetch_all_collection_items(
     http: Any,
     uid: str,

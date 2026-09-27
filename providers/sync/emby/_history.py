@@ -2,6 +2,7 @@
 # EMBY Module for history synchronization
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
+from cw_platform.interactive_reads import retained_read, retaining, replaying, accepted_result, history_states
 
 import json
 import os
@@ -763,6 +764,7 @@ def _dst_user_state(http: Any, uid: str, iid: str) -> tuple[bool, int | None]:
 
 
 # history index
+@retained_read
 def build_index(adapter: Any, since: Any | None = None, limit: int | None = None) -> dict[str, dict[str, Any]]:
     prog_mk = getattr(adapter, "progress_factory", None)
     prog: Any = prog_mk("history") if callable(prog_mk) else None
@@ -952,6 +954,8 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
                             m0 = emby_normalize(row)
                             mm = id_minimal(m0)
                             mm["watched"] = True
+                            if retaining():
+                                mm["emby_item_id"] = str(row["Id"])
 
                             if str((row.get("Type") or "")).strip() == "Episode":
                                 sid = row.get("SeriesId") or row.get("ParentId")
@@ -1121,6 +1125,8 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
                             lib_id = show_roots[0]
                 if lib_id:
                     event["library_id"] = str(lib_id)
+                if retaining():
+                    event["emby_item_id"] = str(row["Id"])
                 ev_key = f"{_event_base_key(event, m)}@{ts}"
                 events.append((ts, {"key": ev_key}, event))
                 added_events += 1
@@ -1320,6 +1326,9 @@ _ST_READBACK = "readback_mismatch"
 
 def _set_write_meta(adapter: Any, meta: Mapping[str, Any]) -> None:
     try:
+        if replaying():
+            keys = [row["key"] for row in meta.get("results", []) if row.get("status") == _ST_WRITTEN]
+            meta = accepted_result(dict(meta), keys)
         setattr(adapter, "_history_write_meta", dict(meta))
     except Exception:
         pass
@@ -1389,9 +1398,13 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     if total:
         _info("write_start", op="add", count=total)
 
+    review = history_states(build_index(adapter), "emby", _parse_iso_to_epoch) if replaying() else {}
     processed = 0
     for chunk in chunked(mids, qlim):
-        states = {} if do_force else _dst_user_states(http, uid, [iid for _, iid in chunk])
+        if replaying():
+            states = review
+        else:
+            states = {} if do_force else _dst_user_states(http, uid, [iid for _, iid in chunk])
         pending_verify: list[tuple[str, str, int]] = []
         for k, iid in chunk:
             it = wants[k]
@@ -1494,7 +1507,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 _dbg("write_progress", op="add", done=processed, total=total, ok=ok, unresolved=len(unresolved))
             sleep_ms(delay)
 
-        if verify and pending_verify:
+        if verify and pending_verify and not replaying():
             final = _dst_user_states(http, uid, [iid for _, iid, _ in pending_verify])
             for k, iid, req_ts in pending_verify:
                 played, _dst = final.get(iid, (False, None))

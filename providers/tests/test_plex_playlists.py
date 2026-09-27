@@ -405,3 +405,32 @@ def test_reorder_minimal_moves_and_idempotent():
 
     res2 = plpl.reorder(ad, "10", ["tmdb:3", "tmdb:1", "tmdb:2"])
     assert res2["reordered"] == 0
+
+
+def test_interactive_membership_writes_use_captured_native_ids(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from cw_platform.interactive_reads import ReviewReads, use_review_reads
+
+    a, b = FObj(1, "A", plid=101), FObj(2, "B", plid=102)
+    playlist = FakePlaylist("Weekend", 10, [a, b])
+    server = FakeServer([playlist], [a, b])
+    adapter = FakeAdapter(server)
+    server.query = Mock()
+    server._session = SimpleNamespace(delete=object(), put=object())
+    reads = ReviewReads()
+    try:
+        with use_review_reads(reads, collecting=True):
+            snapshot = plpl.get_snapshot(adapter, "10")
+        monkeypatch.setattr(playlist, "items", Mock(side_effect=AssertionError("unexpected reread")))
+        monkeypatch.setattr(server, "playlists", Mock(side_effect=AssertionError("unexpected reread")))
+        with use_review_reads(reads):
+            result = plpl.reorder(adapter, "10", ["tmdb:2", "tmdb:1"])
+            assert result["ok"] and result["reordered"] == 1
+            result = plpl.remove(adapter, "10", [snapshot.items[0].item])
+            assert result["ok"] and result["count"] == 1
+            assert plpl.reorder(adapter, "10", ["tmdb:3"])["ok"] is False
+        assert [call.args[0] for call in server.query.call_args_list] == [
+            "/playlists/10/items/102/move", "/playlists/10/items/101"]
+    finally:
+        reads.close()

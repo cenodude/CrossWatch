@@ -2,6 +2,7 @@
 # JELLYFIN Module for watchlist sync functions
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
+from cw_platform.interactive_reads import retained_read, replaying
 
 import json
 import os
@@ -33,6 +34,10 @@ from ._common import (
     _is_capture_mode,
 )
 from ._routes import favorite as favorite_route, items as items_route, user_params
+
+playlist_fetch_all = retained_read(playlist_fetch_all)
+collection_fetch_all = retained_read(collection_fetch_all)
+
 
 def _unresolved_path() -> str:
     return str(state_file("jellyfin_watchlist.unresolved.json"))
@@ -396,7 +401,7 @@ def _add_favorites(
             sleep_ms(delay)
             continue
 
-        if not _verify_favorite(http, uid, iid, True):
+        if not replaying() and not _verify_favorite(http, uid, iid, True):
             forced = update_userdata(http, uid, iid, {"IsFavorite": True})
             _dbg("write_prepare", op="add", item_id=iid, strategy="force_userdata", forced=forced)
             if not forced:
@@ -437,7 +442,7 @@ def _remove_favorites(
             sleep_ms(delay)
             continue
 
-        if not _verify_favorite(http, uid, iid, False):
+        if not replaying() and not _verify_favorite(http, uid, iid, False):
             forced = update_userdata(http, uid, iid, {"IsFavorite": False})
             _dbg("write_prepare", op="remove", item_id=iid, strategy="force_userdata", forced=forced)
             if not forced:

@@ -3,6 +3,9 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from importlib import import_module
+from cw_platform.interactive_reads import accepted_result, replaying, replace_retained
+
 import hashlib
 import json
 import os
@@ -666,10 +669,46 @@ def write_matches(feature: str, item: Mapping[str, Any], target: Mapping[str, An
     return feature != "ratings" or rating_value(item.get("rating")) == rating_value(target.get("rating"))
 
 
+def _rejected_batch_keys(items, feature, missing):
+    if not isinstance(missing, Mapping):
+        return set(items)
+    rejected = set()
+    for group, rows in missing.items():
+        if not rows:
+            continue
+        if not isinstance(rows, list):
+            return set(items)
+        for row in rows:
+            if not isinstance(row, Mapping):
+                return set(items)
+            ids = set(media_ids(row).items())
+            matches = set()
+            for key, item in items.items():
+                expected_group, payload = payload_item(item, feature, include_date=False)
+                if group != expected_group or not ids.intersection(media_ids(payload).items()):
+                    continue
+                if row.get("seasons"):
+                    seasons = row["seasons"]
+                    if not isinstance(seasons, list) or any(not isinstance(season, Mapping) or not isinstance(season.get("episodes", []), list) for season in seasons):
+                        return set(items)
+                    if any(not isinstance(episode, Mapping) for season in seasons for episode in season.get("episodes", [])):
+                        return set(items)
+                    coordinates = {(int_value(season.get("number")), int_value(episode.get("number")))
+                                   for season in seasons for episode in season.get("episodes", [])}
+                    if item.get("type") == "episode" and (int_value(item.get("season")), int_value(item.get("episode"))) not in coordinates:
+                        continue
+                matches.add(key)
+            if not matches:
+                return set(items)
+            rejected.update(matches)
+    return rejected
+
+
 def write_items(adapter: Any, feature: str, items: Iterable[Mapping[str, Any]], *, remove: bool, dry_run: bool) -> dict[str, Any]:
     selected: dict[str, Mapping[str, Any]] = {}
     unresolved: list[dict[str, str]] = []
     confirmed: list[str] = []
+    accepted: list[str] = []
     event_mode = feature == "history" and bool(adapter.config.get("_cw_history_rewatches"))
     for item in items:
         key = item_key(adapter, feature, item)
@@ -716,6 +755,7 @@ def write_items(adapter: Any, feature: str, items: Iterable[Mapping[str, Any]], 
         for start in range(0, len(keys), WRITE_BATCH_SIZE):
             batch = keys[start:start + WRITE_BATCH_SIZE]
             error: WeTrakrSyncError | None = None
+            rejected: set[str] = set()
             try:
                 if event_mode and remove:
                     for key in batch:
@@ -732,9 +772,29 @@ def write_items(adapter: Any, feature: str, items: Iterable[Mapping[str, Any]], 
                     path = "/sync/ratings" if feature == "ratings" else "/sync/tracking"
                     if remove:
                         path += "/remove/all" if feature == "history" else "/remove"
-                    body_of(request(adapter, "POST", path, json=payload))
+                    response = body_of(request(adapter, "POST", path, json=payload))
+                    if replaying() and isinstance(response, Mapping):
+                        missing = response.get("notFound") or response.get("not_found") or {}
+                        if any(missing.values()) if isinstance(missing, Mapping) else bool(missing):
+                            rejected = _rejected_batch_keys({key: pending[key] for key in batch}, feature, missing)
             except WeTrakrSyncError as exc:
                 error = exc
+            if replaying():
+                if error:
+                    unresolved.extend({"key": key, "reason": error.reason} for key in keys[start:])
+                    break
+                unresolved.extend({"key": key, "reason": "write_partially_rejected"} for key in batch if key in rejected)
+                batch = [key for key in batch if key not in rejected]
+                confirmed.extend(batch)
+                accepted.extend(batch)
+                for key in batch:
+                    target_key = matches.get(key, key)
+                    if remove:
+                        before.pop(target_key, None)
+                    else:
+                        before[target_key] = dict(pending[key])
+                replace_retained(import_module(f"providers.sync.wetrakr._{feature}").build_index, before)
+                continue
             try:
                 after = adapter.build_index(feature, force_refresh=True)
                 verified = matching(adapter, feature, {k: pending[k] for k in batch}, after)
@@ -754,5 +814,6 @@ def write_items(adapter: Any, feature: str, items: Iterable[Mapping[str, Any]], 
                 break
         log("WETRAKR", feature, "info", "write_done", op="remove" if remove else "add", ok=not unresolved,
             applied=len(confirmed), unresolved=len(unresolved))
-    return build_op_result(ok=not unresolved, count=len(confirmed), confirmed_keys=confirmed,
-                           unresolved=unresolved, unresolved_keys=[r["key"] for r in unresolved])
+    result = build_op_result(ok=not unresolved, count=len(confirmed), confirmed_keys=confirmed,
+                             unresolved=unresolved, unresolved_keys=[r["key"] for r in unresolved])
+    return accepted_result(result, accepted) if replaying() and not remove else result

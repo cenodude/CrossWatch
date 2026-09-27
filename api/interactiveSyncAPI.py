@@ -31,6 +31,7 @@ class Revision(BaseModel):
 
 class Refresh(Revision):
     choices: dict[str, str] = Field(default_factory=dict)
+    reread: bool = True
 
 
 class Apply(Revision):
@@ -113,7 +114,7 @@ def launch(session, task, *args, applying=False, prepare=None):
         if prepare is not None:
             prepare()
         session.status = "applying" if applying else "reading"
-        session.message = "Checking provider data before applying selections…" if applying else "Reading providers and building the sync plan…"
+        session.message = "Checking selections locally before applying…" if applying else "Preparing the sync plan…"
         thread = threading.Thread(target=svc.worker, args=(session, task, *args), daemon=True)
         rt[1]["SYNC"] = thread
         thread.start()
@@ -185,7 +186,7 @@ def refresh(sid: str, payload: Refresh, request: Request):
             if not conflict or winner not in (conflict["source"], conflict["target"]):
                 raise HTTPException(400, "Invalid conflict choice")
             choices[cid] = winner
-        launch(session, svc.refresh, cfg, choices)
+        launch(session, svc.recalculate if payload.choices or not payload.reread else svc.refresh, cfg, choices)
         return session.public()
 
 

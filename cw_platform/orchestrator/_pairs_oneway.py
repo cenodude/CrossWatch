@@ -13,6 +13,7 @@ import datetime as _dt
 
 from ._progress_completion import fcfg_for_progress_target
 from ..run_control import cancel_requested
+from ..interactive_reads import read_once
 
 
 def load_feature_state(state_store: Any, feature: str) -> dict[str, Any]:
@@ -363,7 +364,7 @@ def _load_provider_dropped_tokens(ops: Any, cfg: Mapping[str, Any]) -> set[str]:
     if not callable(getter):
         return set()
     try:
-        raw = provider_call(getter, cfg)
+        raw = provider_call(lambda view: read_once(["dropped", ops.name()], lambda: getter(view)), cfg)
         if isinstance(raw, set):
             return {str(x) for x in raw if str(x).strip()}
         if isinstance(raw, (list, tuple)):

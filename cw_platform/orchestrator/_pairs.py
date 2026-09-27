@@ -25,6 +25,7 @@ from ..value_coercion import coerce_bool
 from ..pair_scope import pair_feature_scope
 from ..log_context import log_pair_id
 from ..connection_status import identity as connection_identity, record_health
+from ..interactive_reads import read_once, replaying
 
 def _deep_merge_provider_overrides(dst: dict[str, Any], src: Mapping[str, Any]) -> None:
     for k, v in (src or {}).items():
@@ -404,7 +405,7 @@ def run_pairs(ctx) -> dict[str, Any]:
         pass
 
     pairs = _pairs_for_run(ctx, cfg)
-    health_map = _collect_health_for_run(ctx, pairs)
+    health_map = read_once("health", lambda: _collect_health_for_run(ctx, pairs), scoped=False)
 
     emit(
         "run:start",
@@ -637,7 +638,7 @@ def run_pairs(ctx) -> dict[str, Any]:
         return {"ok": not errors_total and not cancelled, "errors": errors_total,
                 "blocked": blocked_total, "cancelled": cancelled, "pairs": len(pairs)}
 
-    if not cancelled:
+    if not cancelled and not replaying():
         _refresh_accounts_after_run(ctx, pairs)
 
     if "watchlist" in features_ran:

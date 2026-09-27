@@ -3,6 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from cw_platform.interactive_reads import accepted_result, replaying, replace_retained
+
 import re
 from collections.abc import Iterable, Mapping
 from typing import Any
@@ -363,6 +365,18 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
         unresolved.extend(write_failures)
 
     failed_keys = {str(row.get("key") or row.get("canonical_key") or "") for row in write_failures if isinstance(row, Mapping)}
+    if replaying():
+        accepted = []
+        retained = {payload_item_key(row): dict(row) for row in rows}
+        for key, verify_key, payload in zip(keys, verify_keys, entries):
+            if key not in failed_keys:
+                accepted.append(key)
+                retained[verify_key] = dict(payload)
+        replace_retained(pull_watch_progress_rows, list(retained.values()))
+        return accepted_result(_result(not unresolved, len(accepted), len(entries), accepted, unresolved, results, skipped,
+                                       skipped_keys=skipped_keys, presence_confirmed_keys=presence_confirmed_keys,
+                                       confirmed_destinations=confirmed_destinations), accepted)
+
     after = build_index(adapter) if entries and len(write_failures) < len(entries) else current
     confirmed: list[str] = []
     for item, key, verify_key, payload in zip(pending_items, keys, verify_keys, entries):
@@ -448,6 +462,13 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
             delete_failed = True
             for item, key in zip(pending_items, item_keys):
                 unresolved.append({"status": "failed", "reason": "nuvio_progress_delete_failed", "item": id_minimal(item), "key": key, "canonical_key": key})
+
+    if replaying():
+        accepted = [] if delete_failed else list(item_keys)
+        removed = set() if delete_failed else set(verify_keys)
+        retained = [row for row in pull_watch_progress_rows(adapter) if payload_item_key(row) not in removed]
+        replace_retained(pull_watch_progress_rows, retained)
+        return _result(not unresolved, len(accepted), len(remote_keys), accepted, unresolved, results, skipped)
 
     after = build_index(adapter) if remote_keys and not delete_failed else current
     confirmed: list[str] = []

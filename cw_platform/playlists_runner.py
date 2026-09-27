@@ -24,6 +24,7 @@ from .playlists import (
     validate_ruleset,
 )
 from .provider_instances import build_provider_config_view, normalize_instance_id
+from .interactive_reads import read_once, replaying
 
 MEMBERSHIP_ADD_ONLY = "add_only"
 MEMBERSHIP_MANAGED_ONLY = "managed_only"
@@ -409,9 +410,20 @@ def _providers() -> dict[str, Any]:
     return load_sync_providers()
 
 
+def _playlist_provider(ops):
+    name = getattr(ops, "name", None)
+    return name() if callable(name) else getattr(ops, "_name", type(ops).__name__)
+
+
+def _read_playlist(ops, cfg, playlist_id, instance):
+    return read_once(["playlist", _playlist_provider(ops), instance, playlist_id],
+                     lambda: ops.get_playlist_snapshot(cfg, playlist_id, instance=instance))
+
+
 def _find_resource(ops: Any, cfg: Mapping[str, Any], instance: str, playlist_id: str):
     try:
-        for res in ops.list_playlist_resources(cfg, instance=instance) or []:
+        for res in read_once(["playlist_resources", _playlist_provider(ops), instance],
+                             lambda: list(ops.list_playlist_resources(cfg, instance=instance) or [])):
             if res.id == playlist_id or res.name == playlist_id:
                 return res
     except Exception:
@@ -470,12 +482,13 @@ def _ops_cfg(providers: Mapping[str, Any], cfg: Mapping[str, Any], endpoint: Map
 def _snapshot_endpoint(providers: Mapping[str, Any], cfg: Mapping[str, Any], endpoint: Mapping[str, Any], *, review_pending: bool = False) -> tuple[PlaylistSnapshot, Any, Mapping[str, Any], str]:
     ops, view, inst, provider, playlist_id = _ops_cfg(providers, cfg, endpoint)
     if not playlist_id and review_pending and isinstance(endpoint.get("pending_create"), Mapping):
+        _find_resource(ops, view, inst, "")
         resource = PlaylistResource(provider=provider, id="pending", instance=inst,
                                     name=str(endpoint["pending_create"].get("name") or "New playlist"), can_add=True)
         return PlaylistSnapshot(resource=resource), ops, view, inst
     if not playlist_id:
         raise PlaylistRunError("playlist id missing")
-    snap = ops.get_playlist_snapshot(view, playlist_id, instance=inst)
+    snap = _read_playlist(ops, view, playlist_id, inst)
     if not isinstance(snap, PlaylistSnapshot):
         raise PlaylistRunError(f"{provider} returned an invalid playlist snapshot")
     return snap, ops, view, inst
@@ -867,10 +880,12 @@ def build_plan(
     src_cfg = build_provider_config_view(cfg, src, src_inst)
     dst_cfg = build_provider_config_view(cfg, dst, dst_inst)
 
-    src_snap: PlaylistSnapshot = src_ops.get_playlist_snapshot(src_cfg, src_pl, instance=src_inst)
+    src_snap: PlaylistSnapshot = _read_playlist(src_ops, src_cfg, src_pl, src_inst)
 
     seeded_keys: set[str] = set()
     pending_review = review_pending and not dst_pl and isinstance(target.get("pending_create"), Mapping)
+    if pending_review:
+        _find_resource(dst_ops, dst_cfg, dst_inst, "")
     if not dst_pl and not pending_review:
         dst_pl, seeded_keys = _materialize_pending(
             providers, cfg, mapping, target, src_snap.items, materialize=materialize
@@ -888,7 +903,7 @@ def build_plan(
         raise PlaylistRunError("target playlist is read only")
     _merge_warnings(plan.warnings, dst_resource)
 
-    dst_snap: PlaylistSnapshot = PlaylistSnapshot(resource=dst_resource) if pending_review else dst_ops.get_playlist_snapshot(dst_cfg, dst_pl, instance=dst_inst)
+    dst_snap: PlaylistSnapshot = PlaylistSnapshot(resource=dst_resource) if pending_review else _read_playlist(dst_ops, dst_cfg, dst_pl, dst_inst)
 
     src_by_key = src_snap.by_key()
     dst_by_key = dst_snap.by_key()
@@ -1394,18 +1409,31 @@ def run_mapping(
 
     if plan.order == ORDER_PRESERVE and plan.reorder_count and plan.target_order:
         try:
-            dst_snap2 = dst_ops.get_playlist_snapshot(dst_cfg, dst_pl, instance=dst_inst)
-            present = set(dst_snap2.by_key().keys())
+            if replaying():
+                present = (ctx["dst_set"] | applied_add_keys) - applied_remove_keys
+                current_order = [k for k in ctx["dst_keys"] if k in present]
+            else:
+                dst_snap2 = dst_ops.get_playlist_snapshot(dst_cfg, dst_pl, instance=dst_inst)
+                present = set(dst_snap2.by_key().keys())
+                current_order = dst_snap2.ordered_keys()
         except Exception:
             present = set()
+            current_order = []
         target_order = [k for k in plan.target_order if not present or k in present]
         if interactive is not None:
             target_order = [k for k in plan.target_order if k in present]
             ordered = set(target_order)
             if present:
-                target_order.extend(k for k in dst_snap2.ordered_keys() if k not in ordered)
+                target_order.extend(k for k in current_order if k not in ordered)
         if ctx["dst_resource"].can_reorder and target_order:
             ro = dst_ops.reorder_playlist_items(dst_cfg, dst_pl, target_order, instance=dst_inst) or {}
+            if replaying() and ro.get("ok") is False:
+                if ro.get("error") == "playlist_item_ids_unavailable":
+                    _merge_warnings(result, ["Playlist order was deferred because new entry IDs are unavailable. The next sync can apply the order."])
+                    _emit(emit, "playlist:order:deferred", feature="playlists", dst=ctx["dst"], mapping=mapping_id)
+                else:
+                    result["ok"] = False
+                    result["unresolved"].append({"reason": ro.get("error") or "playlist_order_unconfirmed"})
             result["reordered"] = int(ro.get("reordered") or ro.get("count") or 0)
             if result["reordered"]:
                 _emit(

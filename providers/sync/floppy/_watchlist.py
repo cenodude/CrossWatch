@@ -3,6 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from cw_platform.interactive_reads import retained_read
+
 from collections.abc import Iterable, Mapping
 from typing import Any
 
@@ -26,6 +28,7 @@ def _list_id(adapter: Any, *, create: bool = False) -> str | None:
     return str(data.get("id") or "").strip() if isinstance(data, Mapping) else None
 
 
+@retained_read
 def _list_items(adapter: Any, list_id: str) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     for row in paged(adapter, f"lists/{list_id}/items"):

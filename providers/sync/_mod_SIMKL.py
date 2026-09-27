@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 
 from __future__ import annotations
+from cw_platform.interactive_reads import retaining
 
 import json
 import os
@@ -925,7 +926,11 @@ class _SIMKLOPS:
         *,
         feature: str,
     ) -> Mapping[str, dict[str, Any]]:
-        return self._adapter(cfg).build_index(feature)
+        adapter = self._adapter(cfg)
+        items = adapter.build_index(feature)
+        if feature == "history" and retaining() and feat_history is not None:
+            return feat_history.capture_index(adapter, items)
+        return items
 
     def prepare_source_snapshot(
         self,
@@ -935,6 +940,11 @@ class _SIMKLOPS:
         items: Any,
     ) -> int:
         return self._adapter(cfg).prepare_source_snapshot(feature, items)
+
+    def replay_index(self, cfg: Mapping[str, Any], *, feature: str, items: Mapping[str, Any]) -> Mapping[str, Any]:
+        if feature == "history" and feat_history is not None:
+            return feat_history.replay_index(self._adapter(cfg), items)
+        return items
 
     def add(
         self,

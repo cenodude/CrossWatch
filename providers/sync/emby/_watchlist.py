@@ -2,6 +2,7 @@
 # EMBY Module for watchlist synchronization
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
+from cw_platform.interactive_reads import replaying
 import json
 import os
 from typing import Any, Iterable, Mapping
@@ -37,6 +38,7 @@ from ._common import (
 )
 
 from cw_platform.id_map import minimal as id_minimal, canonical_key
+
 
 def _unresolved_path() -> str:
     return state_file("emby_watchlist.unresolved.json")
@@ -408,26 +410,26 @@ def _add_favorites(
             _freeze(it, reason="resolve_failed")
             continue
 
-        try:
-            r = http.get(
-                f"/Users/{uid}/Items/{iid}",
-                params={"Fields": "UserData", "EnableUserData": True},
-            )
-            if getattr(r, "status_code", 0) == 200 and bool(
-                ((r.json() or {}).get("UserData") or {}).get("IsFavorite")
-            ):
-                _thaw_if_present([k, canonical_key({"ids": {"emby": iid}})])
-                continue
-        except Exception:
-            pass
-
+        if not replaying():
+            try:
+                r = http.get(
+                    f"/Users/{uid}/Items/{iid}",
+                    params={"Fields": "UserData", "EnableUserData": True},
+                )
+                if getattr(r, "status_code", 0) == 200 and bool(
+                    ((r.json() or {}).get("UserData") or {}).get("IsFavorite")
+                ):
+                    _thaw_if_present([k, canonical_key({"ids": {"emby": iid}})])
+                    continue
+            except Exception:
+                pass
         if not (mark_favorite(http, uid, iid, True) or _favorite(http, uid, iid, True)):
             unresolved.append({"item": id_minimal(it), "hint": "favorite_failed"})
             _freeze(it, reason="write_failed")
             sleep_ms(delay)
             continue
 
-        if not _verify_favorite(http, uid, iid, True) and not update_userdata(
+        if not replaying() and not _verify_favorite(http, uid, iid, True) and not update_userdata(
             http,
             uid,
             iid,
@@ -475,7 +477,7 @@ def _remove_favorites(
             sleep_ms(delay)
             continue
 
-        if not _verify_favorite(http, uid, iid, False):
+        if not replaying() and not _verify_favorite(http, uid, iid, False):
             forced = update_userdata(http, uid, iid, {"IsFavorite": False})
             _dbg("write_prepare", op="remove", item_id=iid, strategy="force_userdata", forced=forced)
             if not forced:
@@ -597,8 +599,11 @@ def _add_playlist(
             )
             sleep_ms(delay)
             continue
-        rows_after, _total_after = _fetch_all_playlist_items(http, pid, page_size=page_size)
-        after_ids = {str(r.get("Id")) for r in rows_after if r.get("Id")}
+        if replaying():
+            after_ids = set(chunk)
+        else:
+            rows_after, _total_after = _fetch_all_playlist_items(http, pid, page_size=page_size)
+            after_ids = {str(r.get("Id")) for r in rows_after if r.get("Id")}
         for iid in chunk:
             if iid in after_ids:
                 ok += 1
