@@ -2,11 +2,20 @@
 # CrossWatch - Plex rating writes for sync-backed local sinks
 from __future__ import annotations
 
+import math
 import time
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 from cw_platform.provider_instances import build_provider_config_view, normalize_instance_id
+
+
+def plex_rating_value(value: Any) -> float:
+    try:
+        rating = float(value)
+        return rating if math.isfinite(rating) and 0 <= rating <= 10 else 0.0
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _as_int(value: Any) -> int | None:
@@ -42,7 +51,7 @@ def item_from_plex_rating(
     media_type: str,
     md: Mapping[str, Any],
     ids: Mapping[str, Any],
-    rating: int | None,
+    rating: float | None,
     *,
     show_ids: Mapping[str, Any] | None = None,
     episode_ids: Mapping[str, Any] | None = None,
@@ -83,7 +92,7 @@ def item_from_plex_rating(
             item["year"] = year
 
     if rating is not None and rating > 0:
-        item["rating"] = int(rating)
+        item["rating"] = rating
         item["rated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     return {k: v for k, v in item.items() if v not in (None, "", {}, [])}
 
@@ -124,7 +133,7 @@ def dispatch_ops_ratings(
     media_type: str,
     md: Mapping[str, Any],
     ids: Mapping[str, Any],
-    rating: int | None,
+    rating: float | None,
     cfg: Mapping[str, Any],
     *,
     enabled: Iterable[str],
@@ -141,7 +150,7 @@ def dispatch_ops_ratings(
             media_type,
             md,
             ids,
-            int(rating or 0) if rating else None,
+            rating if rating else None,
             show_ids=show_ids,
             episode_ids=episode_ids,
         )
@@ -153,20 +162,28 @@ def dispatch_ops_ratings(
 
     out: dict[str, dict[str, Any]] = {}
     for sink in targets:
-        out[sink] = send_rating(sink, cfg, instance_for(sink), item, int(rating or 0))
+        out[sink] = send_rating(sink, cfg, instance_for(sink), item, rating)
     return out
 
 
-def send_rating(provider: str, cfg: Mapping[str, Any], instance: Any, item: Mapping[str, Any], rating: int | None) -> dict[str, Any]:
+def send_rating(provider: str, cfg: Mapping[str, Any], instance: Any, item: Mapping[str, Any], rating: float | None) -> dict[str, Any]:
     sink = str(provider or "").strip().lower()
     ops = _ops(sink)
     if ops is None:
         return {"ok": False, "error": "unsupported_rating_sink"}
 
     view = build_provider_config_view(dict(cfg or {}), sink, normalize_instance_id(instance))
-    clear = rating is None or int(rating or 0) <= 0
+    clear = rating is None or float(rating) <= 0
     try:
-        res = (ops.remove if clear else ops.add)(view, [dict(item)], feature="ratings", dry_run=False)
+        from cw_platform.orchestrator._pairs_utils import ratings_step_for
+        from cw_platform.orchestrator._planner import _quantize_rating
+
+        payload = dict(item)
+        if not clear:
+            payload["rating"] = _quantize_rating(rating, ratings_step_for(ops))
+            if payload["rating"] is None:
+                return {"ok": False, "error": "invalid_rating"}
+        res = (ops.remove if clear else ops.add)(view, [payload], feature="ratings", dry_run=False)
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 

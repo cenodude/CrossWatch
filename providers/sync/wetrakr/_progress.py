@@ -76,6 +76,26 @@ def scrobble_ids(value: Any) -> dict[str, Any]:
     return selected["ids"]
 
 
+def scrobble_media(item: Mapping[str, Any]) -> dict[str, Any]:
+    def identity(ids: Any) -> dict[str, Any]:
+        try:
+            return {"ids": scrobble_ids(ids)}
+        except WeTrakrSyncError:
+            return identifier(ids)
+
+    if item.get("type") == "movie":
+        return {"movie": identity(item.get("ids"))}
+    if item.get("type") != "episode":
+        raise WeTrakrSyncError("unsupported_media_type")
+    season, episode = int_value(item.get("season")), int_value(item.get("episode"))
+    if season >= 0 and episode >= 1 and item.get("show_ids"):
+        return {"show": identity(item["show_ids"]), "episode": {"season": season, "number": episode}}
+    ids = item.get("ids")
+    if isinstance(ids, Mapping) and int_value(ids.get("wetrakr")) > 0:
+        return {"episode": {"id": int_value(ids["wetrakr"])}}
+    raise WeTrakrSyncError("invalid_episode_coordinates")
+
+
 def percent_of(item: Mapping[str, Any]) -> float | None:
     position, duration = number(item.get("progress_ms")), number(item.get("duration_ms"))
     if position is not None and duration is not None and duration > 0:
@@ -87,18 +107,7 @@ def payload(item: Mapping[str, Any], *, clear: bool = False) -> dict[str, Any]:
     percent = 0 if clear else percent_of(item)
     if not clear and (percent is None or not 0 < percent < 100):
         raise WeTrakrSyncError("invalid_progress")
-    body: dict[str, Any] = {"progress": percent, "app_version": app_version()}
-    if item.get("type") == "movie":
-        body["movie"] = {"ids": scrobble_ids(item.get("ids"))}
-    elif item.get("type") == "episode":
-        season, episode = int_value(item.get("season")), int_value(item.get("episode"))
-        if season < 0 or episode < 1:
-            raise WeTrakrSyncError("invalid_episode_coordinates")
-        body["show"] = {"ids": scrobble_ids(item.get("show_ids"))}
-        body["episode"] = {"season": season, "number": episode}
-    else:
-        raise WeTrakrSyncError("unsupported_media_type")
-    return body
+    return {"progress": percent, "app_version": app_version(), **scrobble_media(item)}
 
 
 def same_origin() -> bool:
@@ -226,13 +235,15 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
                 unresolved.extend({"key": key, "reason": error.reason} for key in keys)
                 continue
             try:
-                body = payload(before[target_key], clear=True)
+                body = scrobble_media(before[target_key])
             except WeTrakrSyncError as exc:
                 unresolved.extend({"key": key, "reason": exc.reason} for key in keys)
                 continue
             attempted.update({key: selected[key] for key in keys})
             try:
-                response = body_of(request(adapter, "POST", "/scrobble/pause", json=body))
+                response = body_of(request(adapter, "DELETE", "/scrobble/playing", json=body))
+                if not isinstance(response, Mapping) or response.get("action") != "cancel":
+                    raise WeTrakrSyncError("cancel_not_confirmed")
                 reason = ignored_reason(response)
                 if reason is not None:
                     for key in keys:
