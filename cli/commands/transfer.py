@@ -65,6 +65,8 @@ def export_preview(
         state.out.data(payload)
         return
     block = as_dict(payload)
+    for warning in block.get("warnings") or []:
+        state.out.warn(str(warning))
     sample = block.get("sample") or block.get("preview") or block.get("text")
     if isinstance(sample, str):
         state.out.raw(sample)
@@ -98,18 +100,20 @@ def export_file(
         "provider_instance": instance,
     }
     payload = state.get("/api/export/file", params=params)
-    if isinstance(payload, str):
-        text = payload
+    if isinstance(payload, bytes):
+        data = payload
+    elif isinstance(payload, str):
+        data = payload.encode("utf-8")
     else:
         import json as _json
 
-        text = _json.dumps(payload, indent=2, default=str)
+        data = _json.dumps(payload, indent=2, default=str).encode("utf-8")
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(text, encoding="utf-8")
+    output.write_bytes(data)
     if state.out.json_mode:
-        state.out.data({"ok": True, "path": str(output), "bytes": len(text.encode("utf-8"))})
+        state.out.data({"ok": True, "path": str(output), "bytes": len(data)})
         return
-    state.out.success(f"Wrote {len(text.encode('utf-8')):,} bytes to {output}")
+    state.out.success(f"Wrote {len(data):,} bytes to {output}")
 
 
 @import_app.command("options")

@@ -99,6 +99,9 @@ class HttpTransport(Transport):
             if "/login" in location:
                 raise ApiError(401, {"error": "Authentication required"}, method=method.upper(), path=path)
 
+        if resp.status_code < 400 and "application/zip" in str(resp.headers.get("content-type") or ""):
+            return resp.content
+
         payload: Any
         text = resp.text or ""
         ctype = str(resp.headers.get("content-type") or "")
