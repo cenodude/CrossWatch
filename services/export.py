@@ -21,6 +21,7 @@ from cw_platform.config_base import CONFIG as CONFIG_DIR, load_config
 from cw_platform.history_events import base_key_from_history_event, history_epoch_from_key, is_history_event_key
 from cw_platform.modules_registry import load_sync_ops
 from cw_platform.provider_instances import sanitize_instance_label
+from services import export_trakt
 
 router = APIRouter(prefix="/api", tags=["export"])
 
@@ -249,7 +250,10 @@ def _combined_items_bucket(
 ) -> dict[str, Any]:
     history = _history_items_bucket(s, provider, instance_id=instance_id, include_rewatches=include_rewatches)
     ratings = _items_bucket(s, provider, "ratings", instance_id=instance_id)
-    merged: dict[str, dict[str, Any]] = {str(k): dict(v or {}) for k, v in history.items()}
+    merged: dict[str, dict[str, Any]] = {
+        str(k): {**dict(v or {}), "_cw_export_history": True, "_cw_export_watched_at": _actual_watched_at(v or {}) or "unknown"}
+        for k, v in history.items()
+    }
     ratings_by_base = {base_key_from_history_event(str(k)): dict(v or {}) for k, v in ratings.items()}
     if include_rewatches and _provider_rewatch_read_supported(provider):
         for key, history_item in list(merged.items()):
@@ -608,6 +612,11 @@ def _csv_bytes(header: list[str] | None, rows: Iterable[list[str]]) -> int:
 
 def _target_caps(fmt: str) -> dict[str, Any]:
     caps: dict[str, dict[str, Any]] = {
+        "trakt": {
+            "features": {"watchlist", "history", "ratings", "combined"},
+            "media_types": set(_MEDIA_TYPES),
+            "label": "Trakt CSV",
+        },
         "letterboxd": {
             "features": {"watchlist", "history", "ratings", "combined"},
             "media_types": {"movie"},
@@ -644,6 +653,8 @@ def _validate_items(
     *,
     include_watched_date: bool = True,
 ) -> tuple[list[tuple[str, dict[str, Any]]], list[str], dict[str, int]]:
+    if fmt == "trakt":
+        return export_trakt.validate_items(feature, items)
     caps = _target_caps(fmt)
     warnings: list[str] = []
     stats = {
@@ -1065,7 +1076,23 @@ def _build_tmdb(
     return _tmdb_build_imdb_v3(provider, feature, s, keys, instance_id=instance_id, include_rewatches=include_rewatches)
 
 
+def _build_trakt(
+    provider: str,
+    feature: str,
+    s: dict[str, Any],
+    keys: list[str],
+    instance_id: str | None = None,
+    *,
+    include_rewatches: bool = True,
+) -> Response:
+    bucket = _feature_bucket(s, provider, feature, instance_id=instance_id, include_rewatches=include_rewatches)
+    items = [(key, bucket[key]) for key in dict.fromkeys(keys) if key in bucket]
+    exportable, _warnings, _stats = export_trakt.validate_items(feature, items)
+    return export_trakt.build_export(provider, feature, exportable)
+
+
 _BUILDERS: dict[str, Callable[..., Response]] = {
+    "trakt": _build_trakt,
     "letterboxd": _build_letterboxd,
     "imdb": _build_imdb,
     "justwatch": _build_justwatch,
@@ -1112,12 +1139,13 @@ def api_export_options(request: Request = cast(Request, None)) -> dict[str, Any]
             counts_instances[p][iid] = {f: len(_feature_bucket(s, p, f, instance_id=iid) or {}) for f in features}
 
     formats = {
-        "watchlist": ["letterboxd", "imdb", "justwatch", "yamtrack", "tmdb"],
-        "history": ["letterboxd", "justwatch", "yamtrack"],
-        "ratings": ["letterboxd", "tmdb"],
-        "combined": ["letterboxd", "yamtrack"],
+        "watchlist": ["letterboxd", "imdb", "justwatch", "yamtrack", "tmdb", "trakt"],
+        "history": ["letterboxd", "justwatch", "yamtrack", "trakt"],
+        "ratings": ["letterboxd", "tmdb", "trakt"],
+        "combined": ["letterboxd", "yamtrack", "trakt"],
     }
     labels = {
+        "trakt": "Trakt CSV",
         "letterboxd": "Letterboxd",
         "imdb": "IMDb (list)",
         "justwatch": "JustWatch",
@@ -1151,7 +1179,7 @@ def api_export_sample(
     provider: str = Query("", description="TRAKT|PLEX|EMBY|JELLYFIN|SIMKL|MDBLIST|CROSSWATCH"),
     provider_instance: str = Query("all", description="default|all|<instance_id>"),
     feature: str = Query("watchlist", pattern="^(watchlist|history|ratings|combined)$"),
-    format: str = Query("letterboxd", pattern="^(letterboxd|imdb|justwatch|yamtrack|tmdb)$"),
+    format: str = Query("letterboxd", pattern="^(letterboxd|imdb|justwatch|yamtrack|tmdb|trakt)$"),
     media_types: str = Query("movie", description="CSV of movie,show,season,episode"),
     include_watched_date: bool = Query(True, description="Letterboxd only: include WatchedDate for history exports"),
     include_rewatches: bool = Query(True, description="Keep separate history events when supported by the source provider"),
@@ -1203,6 +1231,8 @@ def api_export_sample(
     items: list[dict[str, Any]] = []
     for k, it in exportable[offset : offset + limit]:
         t, title, year, watched, ids = _row_base(it)
+        if fmt == "trakt":
+            watched = it["_cw_trakt_row"]["watched_at"]
         items.append(
             {
                 "key": k,
@@ -1220,7 +1250,7 @@ def api_export_sample(
         "offset": offset,
         "limit": limit,
         "matched_total": validation["matched_total"],
-        "dropped_total": validation["unsupported_media_total"] + validation["missing_identity_total"],
+        "dropped_total": validation["unsupported_media_total"] + validation["missing_identity_total"] + validation.get("invalid_data_total", 0),
         "warnings": warnings,
         "validation": validation,
         "media_types": list(media),
@@ -1234,7 +1264,7 @@ def api_export_file(
     provider: str = Query("", description="TRAKT|PLEX|EMBY|JELLYFIN|SIMKL|MDBLIST|CROSSWATCH"),
     provider_instance: str = Query("all", description="default|all|<instance_id>"),
     feature: str = Query("watchlist", pattern="^(watchlist|history|ratings|combined)$"),
-    format: str = Query("letterboxd", pattern="^(letterboxd|imdb|justwatch|yamtrack|tmdb)$"),
+    format: str = Query("letterboxd", pattern="^(letterboxd|imdb|justwatch|yamtrack|tmdb|trakt)$"),
     media_types: str = Query("movie", description="CSV of movie,show,season,episode"),
     include_watched_date: bool = Query(True, description="Letterboxd only: include WatchedDate for history exports"),
     include_rewatches: bool = Query(True, description="Keep separate history events when supported by the source provider"),
@@ -1323,7 +1353,7 @@ class ExportFileRequest(BaseModel):
     provider: str
     provider_instance: str = "all"
     feature: Literal["watchlist", "history", "ratings", "combined"] = "watchlist"
-    format: Literal["letterboxd", "imdb", "justwatch", "yamtrack", "tmdb"] = "letterboxd"
+    format: Literal["letterboxd", "imdb", "justwatch", "yamtrack", "tmdb", "trakt"] = "letterboxd"
     media_types: str = "movie"
     include_watched_date: bool = True
     include_rewatches: bool = True

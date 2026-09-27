@@ -59,6 +59,47 @@ def _ctx(http: Transport | None = None, local: Transport | None = None, *, force
     return state
 
 
+@pytest.mark.parametrize("payload", [b"PK\x03\x04\xff\x00\x80", "imdb_id,type\ntt0068646,movie\n"])
+def test_export_file_preserves_download_bytes(tmp_path, capsys, payload):
+    from cli.commands.transfer import export_file
+
+    http = FakeTransport({("GET", "/api/export/file"): payload})
+    state = _ctx(http=http)
+    target = tmp_path / "export.bin"
+    export_file(SimpleNamespace(obj=state), output=target, provider="CROSSWATCH", feature="history",
+                export_format="trakt", media_types="movie", instance="default")
+    expected = payload if isinstance(payload, bytes) else payload.encode("utf-8")
+    assert target.read_bytes() == expected
+    assert json.loads(capsys.readouterr().out)["bytes"] == len(expected)
+    assert http.param_calls[0][2]["format"] == "trakt"
+
+
+def test_http_transport_returns_zip_without_decoding(monkeypatch):
+    from cli._transport import HttpTransport
+
+    response = SimpleNamespace(status_code=200, headers={"content-type": "application/zip"}, content=b"PK\xff\x00")
+    transport = HttpTransport("http://cw.test")
+    monkeypatch.setattr(transport.session, "request", lambda *_args, **_kwargs: response)
+    try:
+        assert transport.get("/api/export/file") == response.content
+    finally:
+        transport.close()
+
+
+def test_export_preview_shows_import_instructions_before_rows():
+    from cli.commands.transfer import export_preview
+
+    payload = {"warnings": ["Extract the ZIP and import your watchlist last."], "items": [{"title": "Movie"}]}
+    state = _ctx(http=FakeTransport({("GET", "/api/export/sample"): payload}))
+    warnings = []
+    records = []
+    state.out = SimpleNamespace(json_mode=False, warn=warnings.append, records=lambda rows, *_args, **_kwargs: records.extend(rows))
+    export_preview(SimpleNamespace(obj=state), provider="CROSSWATCH", feature="history",
+                   export_format="trakt", media_types="movie", instance="default")
+    assert warnings == payload["warnings"]
+    assert records == payload["items"]
+
+
 def test_split_path_handles_dots_slashes_and_indexes() -> None:
     assert split_path("sync.anime.enabled") == ["sync", "anime", "enabled"]
     assert split_path("sync/anime/enabled") == ["sync", "anime", "enabled"]
