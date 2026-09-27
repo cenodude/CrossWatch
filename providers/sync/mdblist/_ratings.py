@@ -8,6 +8,7 @@ import re
 import os
 import time
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any, Iterable, Mapping, TypeGuard
 
@@ -19,6 +20,7 @@ from .._mod_common import request_with_retries
 
 from ._common import (
     STATE_DIR,
+    MDBListFetchError,
     state_file,
     as_epoch,
     as_iso,
@@ -109,9 +111,14 @@ def _load_cache() -> dict[str, Any]:
         return {}
 
 
-def _save_cache(items: Mapping[str, Any]) -> None:
+def _cache_version() -> int:
+    doc = read_json(_cache_path())
+    return 2 if isinstance(doc, dict) and doc.get("version") == 2 else 1
+
+
+def _save_cache(items: Mapping[str, Any], *, precise: bool = False) -> None:
     try:
-        doc = {"generated_at": _now_iso(), "items": dict(items)}
+        doc = {"version": 2 if precise else _cache_version(), "generated_at": _now_iso(), "items": dict(items)}
         write_json(_cache_path(), doc)
     except Exception as e:
         _warn("cache_save_failed", error=str(e))
@@ -316,12 +323,21 @@ def _key_of(obj: Mapping[str, Any]) -> str:
         return f"title:{title}|year:{year_val}"
     return f"obj:{hash(json.dumps(obj, sort_keys=True)) & 0xffffffff}"
 
-def _valid_rating(value: Any) -> int | None:
-    try:
-        i = int(str(value).strip())
-        return i if 1 <= i <= 10 else None
-    except Exception:
+def _valid_rating(value: Any) -> float | None:
+    if isinstance(value, bool):
         return None
+    try:
+        rating = Decimal(str(value).strip())
+        if not rating.is_finite() or not 1 <= rating <= 10:
+            return None
+        return float((rating * 2).quantize(Decimal("1"), rounding=ROUND_HALF_UP) / 2)
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+
+
+def _read_rating(row: Mapping[str, Any]) -> float | None:
+    value = row.get("rating_precise")
+    return _valid_rating(row.get("rating") if value is None else value)
 
 
 def _journal_item(row: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -340,7 +356,7 @@ def _journal_item(row: Mapping[str, Any]) -> dict[str, Any] | None:
             out["episode"] = row.get("episode")
     else:
         out["ids"] = ids
-    rating = _valid_rating(row.get("rating"))
+    rating = _read_rating(row)
     if rating is None:
         out["_removed"] = True
     else:
@@ -443,7 +459,7 @@ def _row_movie(row: Mapping[str, Any]) -> dict[str, Any] | None:
         if not ids:
             return None
 
-        rating = _valid_rating(row.get("rating"))
+        rating = _read_rating(row)
         rated_at = row.get("rated_at")
 
         out: dict[str, Any] = {"type": "movie", "ids": ids}
@@ -476,7 +492,7 @@ def _row_show(row: Mapping[str, Any]) -> dict[str, Any] | None:
         if not ids:
             return None
 
-        rating = _valid_rating(row.get("rating"))
+        rating = _read_rating(row)
         rated_at = row.get("rated_at")
 
         out: dict[str, Any] = {"type": "show", "ids": ids}
@@ -515,7 +531,7 @@ def _row_season(row: Mapping[str, Any]) -> dict[str, Any] | None:
         if not ids:
             return None
 
-        rating = _valid_rating(row.get("rating"))
+        rating = _read_rating(row)
         rated_at = row.get("rated_at")
 
         out: dict[str, Any] = {"type": "season", "ids": ids, "season": sv.get("number")}
@@ -558,7 +574,7 @@ def _row_episode(row: Mapping[str, Any]) -> dict[str, Any] | None:
         if not ids:
             return None
 
-        rating = _valid_rating(row.get("rating"))
+        rating = _read_rating(row)
         rated_at = row.get("rated_at")
 
         num = ev.get("number") if ev.get("number") is not None else ev.get("episode")
@@ -640,11 +656,12 @@ def build_index(
     acts_ts = _iso_z(acts_ts_raw) if _iso_ok(acts_ts_raw) else None
     journal_ts_raw = acts.get("journal_at") if isinstance(acts, Mapping) else None
     journal_ts = _iso_z(journal_ts_raw) if _iso_ok(journal_ts_raw) else None
-    force_full = False
+    refresh_precision = _cache_version() < 2
+    force_full = refresh_precision
 
     wm = get_watermark("ratings")
     journal_wm = get_watermark("ratings_journal")
-    if journal_ts and wm and journal_wm:
+    if journal_ts and wm and journal_wm and not force_full:
         a = (_as_epoch(acts_ts) or 0) if acts_ts else 0
         b = _as_epoch(wm) or 0
         jn = _as_epoch(journal_ts) or 0
@@ -763,7 +780,7 @@ def build_index(
                     year = None
 
                 for sv in row.get("seasons") or []:
-                    sr = _valid_rating(sv.get("rating"))
+                    sr = _read_rating(sv)
                     sids = _ids_for_mdblist(sv)
                     ids_for_season = sids or ids_sh
                     if ids_for_season:
@@ -788,7 +805,7 @@ def build_index(
                         minis.append(sm)
 
                     for ev in sv.get("episodes") or []:
-                        er = _valid_rating(ev.get("rating"))
+                        er = _read_rating(ev)
                         eids = _ids_for_mdblist(ev)
                         ids_for_episode = eids or ids_sh
                         if not ids_for_episode:
@@ -847,12 +864,14 @@ def build_index(
             has_more = any(len(x) >= per_page for x in (movies, shows, seasons_top, episodes_top))
 
         pages += 1
+        if has_more and pages >= max_pages and refresh_precision:
+            raise MDBListFetchError("MDBList ratings precision refresh exceeded the page limit")
         if not bool(has_more) or pages >= max_pages:
             break
         offset += per_page
-    if force_full and out:
+    if force_full and (out or refresh_precision):
         merged = {k: v for k, v in out.items() if not v.get("_removed") and v.get("rating") is not None}
-        _save_cache(merged)
+        _save_cache(merged, precise=refresh_precision)
     else:
         merged = dict(cached)
         if out:

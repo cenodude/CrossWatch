@@ -278,6 +278,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "rewatches": {"read": True, "write": True, "account_gate": False},
             },
             "ratings": {
+                "step": 0.5,
                 "observed_deletes": True,
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
                 "upsert": True,
@@ -858,6 +859,7 @@ class _MDBLISTOPS:
                 "rewatches": {"read": True, "write": True, "account_gate": False},
             },
             "ratings": {
+                "step": 0.5,
                 "observed_deletes": True,
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
                 "upsert": True,
