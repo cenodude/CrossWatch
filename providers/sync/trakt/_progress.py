@@ -167,11 +167,11 @@ def _progress_page(adapter: Any, media_type: str, page: int, limit: int, *, page
 
 @retained_read
 def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
-    limit = 100
+    limit = 250
     try:
-        limit = max(1, min(100, int(getattr(adapter.cfg, "progress_per_page", 100) or 100)))
+        limit = max(1, min(250, int(getattr(adapter.cfg, "progress_per_page", 250) or 250)))
     except Exception:
-        limit = 100
+        limit = 250
     try:
         max_pages = max(1, int(getattr(adapter.cfg, "progress_max_pages", 100) or 100))
     except Exception:

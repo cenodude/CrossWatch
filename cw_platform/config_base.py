@@ -587,12 +587,12 @@ DEFAULT_CFG: dict[str, Any] = {
         "watchlist_freeze_details": True,               # Persist last status & ids in freeze store for debugging
 
         # Ratings
-        "ratings_per_page": 100,                        # Items per page when indexing (10–250; clamped to 250)
+        "ratings_per_page": 250,                        # Items per page when indexing (10–250; clamped to 250)
         "ratings_max_pages": 50,                        # Max pages per type; raise if you have >2k ratings/type
         "ratings_chunk_size": 100,                      # Batch size for POST/REMOVE
 
         # History
-        "history_per_page": 100,                        # Max allowed by Trakt; fastest without spamming
+        "history_per_page": 250,
         "history_max_pages": 10000,                     # Safety cap for huge libraries; lower to bound runtime
         "history_chunk_size": 100,                      # Batch size for history add/remove writes
         "history_unresolved": False,                    # bool, default false (enable the freeze file)

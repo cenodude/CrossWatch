@@ -184,7 +184,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     )
     update_watermarks_from_last_activities(acts)
 
-    per_page = max(1, min(100, _cfg_int(cfg, "watchlist_per_page", 100)))
+    per_page = max(1, min(250, _cfg_int(cfg, "watchlist_per_page", 250)))
     max_pages = max(1, _cfg_int(cfg, "watchlist_max_pages", 1000))
 
     sh = _shadow_load()

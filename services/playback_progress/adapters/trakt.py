@@ -189,6 +189,7 @@ class TraktPlaybackAdapter(PlaybackProgressAdapter):
     ) -> PlaybackListResult:
         try:
             module = _module(config_view)
+            limit = max(1, min(250, int(getattr(getattr(module, "cfg", None), "progress_per_page", 250) or 250)))
             rows: list[Mapping[str, Any]] = []
             seen_ids: set[str] = set()
             for kind in ("movies", "episodes"):
@@ -197,7 +198,7 @@ class TraktPlaybackAdapter(PlaybackProgressAdapter):
                 while True:
                     response = module.client.get(
                         f"{module.client.BASE}/sync/playback/{kind}",
-                        params={"extended": "full,images", "page": page, "limit": 100},
+                        params={"extended": "full,images", "page": page, "limit": limit},
                     )
                     if response.status_code != 200:
                         status = int(response.status_code)

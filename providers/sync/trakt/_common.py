@@ -363,7 +363,7 @@ def load_dropped_show_tokens(adapter: Any) -> set[str]:
 
     tokens: set[str] = set()
     page = 1
-    limit = 100
+    limit = 250
     pager = TraktPager("dropped", 100)
     while True:
         try:

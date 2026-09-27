@@ -1385,7 +1385,7 @@ def _fetch_history(
     return out
 
 
-def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 100000) -> dict[str, dict[str, Any]]:
+def build_index(adapter: Any, *, per_page: int = 250, max_pages: int = 100000) -> dict[str, dict[str, Any]]:
     prog_mk = getattr(adapter, "progress_factory", None)
     prog: Any = prog_mk("history") if callable(prog_mk) else None
     sess = adapter.client.session
@@ -1393,7 +1393,7 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 100000) -
     timeout = float(_cfg_num(adapter, "timeout", 10, float))
     retries = int(_cfg_num(adapter, "max_retries", 3, int))
     cfg_per_page = int(_cfg_num(adapter, "history_per_page", per_page, int))
-    cfg_per_page = max(1, min(100, cfg_per_page))
+    cfg_per_page = max(1, min(250, cfg_per_page))
     cfg_max_pages = int(_cfg_num(adapter, "history_max_pages", max_pages, int))
     if cfg_max_pages <= 0:
         cfg_max_pages = max_pages

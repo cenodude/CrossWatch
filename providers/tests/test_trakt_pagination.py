@@ -42,7 +42,7 @@ def _row(number: int) -> dict[str, Any]:
 READERS = ("history", "watchlist", "collection", "ratings", "playlists", "progress")
 
 
-def _reader(monkeypatch: Any, name: str, responses: list[Response]) -> tuple[Any, list[int], list[Any]]:
+def _reader(monkeypatch: Any, name: str, responses: list[Response], limits: list[int] | None = None) -> tuple[Any, list[int], list[Any]]:
     module = importlib.import_module(f"providers.sync.trakt._{name}")
     calls: list[int] = []
     saved: list[Any] = []
@@ -52,6 +52,8 @@ def _reader(monkeypatch: Any, name: str, responses: list[Response]) -> tuple[Any
             return Response([])
         page = int(kwargs["params"]["page"])
         calls.append(page)
+        if limits is not None:
+            limits.append(int(kwargs["params"]["limit"]))
         return responses[page - 1] if page <= len(responses) else Response([])
 
     session = SimpleNamespace(get=get)
@@ -69,9 +71,9 @@ def _reader(monkeypatch: Any, name: str, responses: list[Response]) -> tuple[Any
         monkeypatch.setattr(module, "_shadow_load", lambda: {})
         monkeypatch.setattr(module, "_shadow_save", lambda *a, **kw: saved.append(a))
     if name == "history":
-        fetch = lambda: module._fetch_history(session, {}, module.URL_HIST_MOV, per_page=100, max_pages=10, timeout=1, max_retries=0)
+        fetch = lambda: module._fetch_history(session, {}, module.URL_HIST_MOV, per_page=250, max_pages=10, timeout=1, max_retries=0)
     elif name == "ratings":
-        fetch = lambda: module._fetch_bucket(session, {}, module.URL_RAT_MOV, "movie", 100, 10, 1, 0)
+        fetch = lambda: module._fetch_bucket(session, {}, module.URL_RAT_MOV, "movie", 250, 10, 1, 0)
     elif name == "playlists":
         monkeypatch.setattr(module, "list_resources", lambda _adapter: [])
         fetch = lambda: module.get_snapshot(adapter, "123").items
@@ -250,7 +252,7 @@ def test_playback_service_fetches_all_pages_and_rejects_partial_results(monkeypa
     else:
         assert [row["id"] for row in result.items] == [1, 2]
         assert [params["page"] for params in calls] == [1, 2, 3]
-        assert all(params["limit"] == 100 for params in calls)
+        assert all(params["limit"] == 250 for params in calls)
 
 
 def test_discovery_keeps_page_size_constant_when_trakt_caps_responses(monkeypatch: Any) -> None:
@@ -272,3 +274,20 @@ def test_discovery_keeps_page_size_constant_when_trakt_caps_responses(monkeypatc
 
     assert len(result.items) == 100
     assert [params["limit"] for params in calls] == [100, 100]
+
+
+@pytest.mark.parametrize("name", READERS)
+@pytest.mark.parametrize("applied_limit", [100, 250])
+def test_readers_request_250_and_keep_all_items_when_server_caps_pages(monkeypatch: Any, name: str, applied_limit: int) -> None:
+    rows = [_row(number) for number in range(1, 502)]
+    responses = [
+        Response(rows[start:start + applied_limit], headers={"X-Pagination-Limit": str(applied_limit)})
+        for start in range(0, len(rows), applied_limit)
+    ]
+    responses.append(Response([]))
+    limits: list[int] = []
+    fetch, calls, _ = _reader(monkeypatch, name, responses, limits)
+
+    assert len(fetch()) == 501
+    assert calls == list(range(1, len(responses) + 1))
+    assert limits == [250] * len(responses)
