@@ -328,7 +328,7 @@ def get_snapshot(adapter: Any, playlist_id: Any) -> PlaylistSnapshot:
 
     items: list[PlaylistItem] = []
     page = 1
-    per_page = 100
+    per_page = 250
     pager = TraktPager("playlists", 1000)
     while True:
         r = request_with_retries(

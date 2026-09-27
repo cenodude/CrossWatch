@@ -346,7 +346,7 @@ def _dedupe_canonical(items: Iterable[dict[str, Any]]) -> dict[str, dict[str, An
     return idx
 
 
-def build_index(adapter: Any, *, per_page: int = 200, max_pages: int = 50) -> dict[str, dict[str, Any]]:
+def build_index(adapter: Any, *, per_page: int = 250, max_pages: int = 50) -> dict[str, dict[str, Any]]:
     per_page = int(getattr(adapter.cfg, "ratings_per_page", per_page) or per_page)
     per_page = max(1, min(per_page, _MAX_PAGE_SIZE))
     max_pages = int(getattr(adapter.cfg, "ratings_max_pages", max_pages) or max_pages)

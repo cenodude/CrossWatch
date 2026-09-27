@@ -263,7 +263,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     cfg = _cfg(adapter)
     use_etag = _cfg_bool(cfg, "collection_use_etag", True)
     ttl_h = _cfg_int(cfg, "collection_shadow_ttl_hours", 168)
-    per_page = max(1, min(100, _cfg_int(cfg, "collection_per_page", _cfg_int(cfg, "history_per_page", 100))))
+    per_page = max(1, min(250, _cfg_int(cfg, "collection_per_page", _cfg_int(cfg, "history_per_page", 250))))
     max_pages = _cfg_int(cfg, "collection_max_pages", _cfg_int(cfg, "history_max_pages", 10000))
     if max_pages <= 0:
         max_pages = 10000
