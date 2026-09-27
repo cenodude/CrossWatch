@@ -14,6 +14,9 @@ from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 from .._log import log as cw_log
 from ._common import (
+    CursorPager,
+    MDBListFetchError,
+    SHOW_BATCH_LIMIT,
     _is_capture_mode,
     _pair_scope,
     as_epoch,
@@ -487,23 +490,25 @@ def build_index(adapter: Any, *, per_page: int = 1000, max_pages: int = 250) -> 
         _info("index_done", count=len(cached), source="shadow")
         return cached
 
-    limit = max(1, min(_cfg_int(cfg, "collection_per_page", per_page), 5000))
+    limit = max(1, min(_cfg_int(cfg, "collection_per_page", per_page), 1000))
     max_pages = max(1, min(_cfg_int(cfg, "collection_max_pages", max_pages), 2000))
     prog_factory = getattr(adapter, "progress_factory", None)
     prog: Any = prog_factory("collection") if callable(prog_factory) else None
     out: dict[str, dict[str, Any]] = {}
-    offset = 0
-    pages = 0
+    pager = CursorPager(limit, max_pages)
     total_tick = 0
 
-    while pages < max_pages:
-        r = mdblist_request(adapter, "GET", URL_LIST, params={"apikey": apikey, "offset": offset, "limit": limit}, timeout=timeout, max_retries=retries)
+    while True:
+        r = mdblist_request(adapter, "GET", URL_LIST, params={"apikey": apikey, **pager.params()}, timeout=timeout, max_retries=retries)
         if r.status_code != 200:
-            _warn("http_failed", op="index", status=r.status_code, offset=offset)
-            break
+            _warn("http_failed", op="index", status=r.status_code, page=pager.pages + 1)
+            raise MDBListFetchError("MDBList collection read failed")
         data = r.json() if (r.text or "").strip() else {}
+        more = pager.advance(data, r)
+        if data == []:
+            data = {}
         if not isinstance(data, Mapping):
-            break
+            raise MDBListFetchError("Invalid MDBList collection response")
         rows_seen = 0
         for bucket in ("movies", "shows", "seasons", "episodes"):
             raw = data.get(bucket)
@@ -519,13 +524,9 @@ def build_index(adapter: Any, *, per_page: int = 1000, max_pages: int = 250) -> 
                         out[key] = item
         total_tick += rows_seen
         if prog:
-            prog.tick(total_tick, total=max(total_tick, offset + rows_seen))
-        pag = data.get("pagination") if isinstance(data.get("pagination"), Mapping) else {}
-        has_more = bool(pag.get("has_more")) if isinstance(pag, Mapping) else rows_seen >= limit
-        if not rows_seen or not has_more:
+            prog.tick(total_tick, total=total_tick)
+        if not more:
             break
-        offset += int(pag.get("limit") or limit) if isinstance(pag, Mapping) else limit
-        pages += 1
 
     if out:
         _shadow_save(out)
@@ -710,7 +711,7 @@ def _write(adapter: Any, op: str, items: Iterable[Mapping[str, Any]]) -> dict[st
         rows = body.get(bucket) or []
         if not rows:
             continue
-        for part in _chunk(rows, chunk_size):
+        for part in _chunk(rows, min(chunk_size, SHOW_BATCH_LIMIT) if bucket == "shows" else chunk_size):
             payload = {bucket: part}
             attempt = 0
             backoff = delay_ms

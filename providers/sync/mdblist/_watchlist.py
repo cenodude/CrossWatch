@@ -16,6 +16,8 @@ from cw_platform.id_map import minimal as id_minimal
 from .._log import log as cw_log
 from .._mod_common import request_with_retries
 from ._common import (
+    CursorPager,
+    MDBListFetchError,
     _pair_scope,
     _is_capture_mode,
     as_epoch,
@@ -386,7 +388,7 @@ def _peek_live(adapter: Any, apikey: str, timeout: float, retries: int) -> tuple
             adapter,
             "GET",
             URL_LIST,
-            params={"apikey": apikey, "limit": 1, "offset": 0, "unified": "true"},
+            params={"apikey": apikey, "limit": 1, "unified": "true"},
             timeout=timeout,
             max_retries=retries,
         )
@@ -407,7 +409,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     cfg = _cfg(adapter)
     ttl_h = _cfg_int(cfg, "watchlist_shadow_ttl_hours", 24)
     validate_shadow = _cfg_bool(cfg, "watchlist_shadow_validate", False)
-    limit = _cfg_int(cfg, "watchlist_page_size", 200)
+    limit = max(1, min(_cfg_int(cfg, "watchlist_page_size", 1000), 1000))
 
     apikey = _as_str(cfg.get("api_key")) or ""
     shadow = _shadow_load()
@@ -472,19 +474,18 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
 
     sess = adapter.client.session
     collected: dict[str, dict[str, Any]] = {}
-    offset = 0
+    pager = CursorPager(limit)
     total_tick = 0
 
     while True:
-        params = {"apikey": apikey, "limit": limit, "offset": offset, "unified": "true"}
+        params = {"apikey": apikey, **pager.params(), "unified": "true"}
         r = mdblist_request(adapter, "GET", URL_LIST, params=params, timeout=timeout, max_retries=retries)
         if r.status_code != 200:
-            _warn("http_failed", op="index", method="GET", url=URL_LIST, status=r.status_code, offset=offset)
-            break
+            _warn("http_failed", op="index", method="GET", url=URL_LIST, status=r.status_code, page=pager.pages + 1)
+            raise MDBListFetchError("MDBList watchlist read failed")
         data = r.json() if (r.text or "").strip() else {}
+        more = pager.advance(data, r)
         rows, _ = _parse_rows_and_total(data)
-        if not rows:
-            break
         for row in rows:
             minimal = _to_minimal(row)
             collected[_key_of(minimal)] = minimal
@@ -492,16 +493,11 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         total_tick += batch_len
         if prog:
             try:
-                prog.tick(total_tick, total=max(total_tick, offset + batch_len))
+                prog.tick(total_tick, total=total_tick)
             except Exception:
                 pass
-        pag = data.get("pagination") if isinstance(data, Mapping) else None
-        has_more = pag.get("has_more") if isinstance(pag, Mapping) else None
-        if has_more is None:
-            has_more = batch_len >= limit
-        if not has_more:
+        if not more:
             break
-        offset += batch_len
 
     if collected:
         _shadow_save(collected)

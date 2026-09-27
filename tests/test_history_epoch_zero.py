@@ -315,7 +315,9 @@ def test_mdblist_old_cache_recovers_epoch_despite_unchanged_activities(monkeypat
     adapter = SimpleNamespace(client=SimpleNamespace(session=object()), cfg=SimpleNamespace(timeout=5, max_retries=0))
     if failed_first:
         request.side_effect = RuntimeError("unavailable")
-        assert mdblist.build_index(adapter) == {"tmdb:999@1": existing}
+        with pytest.raises(mdblist.MDBListFetchError):
+            mdblist.build_index(adapter)
+        assert store["cache"]["items"] == {"tmdb:999@1": existing}
         assert mdblist._cache_is_stale()
         request.side_effect = None
         request.reset_mock()
