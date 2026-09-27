@@ -390,10 +390,10 @@ DEFAULT_CFG: dict[str, Any] = {
         "watchlist_list_id": "",                        # Optional list id; empty = discover/create
         "watchlist_name": "Watchlist",                  # Default PublicMetaDB list name; pair config can override
         "watchlist_auto_create": True,                  # Create a private CrossWatch watchlist if missing
-        "watchlist_page_size": 100,                     # GET page size for list items
-        "history_per_page": 100,                        # GET page size for watched history
+        "watchlist_page_size": 500,                     # GET page size for list items
+        "history_per_page": 500,                        # GET page size for watched history
         "history_max_pages": 1000,                      # Safety cap for watched history fetches
-        "progress_per_page": 100,                       # GET page size for resume/progress
+        "progress_per_page": 500,                       # GET page size for resume/progress
         "progress_max_pages": 1000,                     # Safety cap for resume/progress fetches
         "ratings_label": "Overall",                     # PublicMetaDB rating label used by CrossWatch
         "ratings_submit_per_hour": 200,                 # PublicMetaDB contribution limit for rating creates
@@ -465,7 +465,7 @@ DEFAULT_CFG: dict[str, Any] = {
         "avatar_url": "",
         "timeout": 20.0,
         "max_retries": 3,
-        "write_batch_size": 100,
+        "write_batch_size": 1000,
         "history_per_page": 100,
         "history_max_pages": 500,
         "rate_limit": {
@@ -799,6 +799,7 @@ DEFAULT_CFG: dict[str, Any] = {
             "WETRAKR": 500,
             "MDBLIST": 500,
             "PUBLICMETADB": 500,
+            "FLICKLIST": 1000,
             "PLEX": 500,
             "JELLYFIN": 500,
             "EMBY": 500,
@@ -1752,10 +1753,10 @@ def _normalize_publicmetadb(cfg: dict[str, Any]) -> None:
             n = default
         p[name] = max(lo, min(n, hi))
 
-    _int_range("watchlist_page_size", 100, 1, 500)
-    _int_range("history_per_page", 100, 1, 500)
+    _int_range("watchlist_page_size", 500, 1, 500)
+    _int_range("history_per_page", 500, 1, 500)
     _int_range("history_max_pages", 1000, 1, 100000)
-    _int_range("progress_per_page", 100, 1, 500)
+    _int_range("progress_per_page", 500, 1, 500)
     _int_range("progress_max_pages", 1000, 1, 100000)
     _int_range("ratings_submit_per_hour", 200, 1, 200)
     _int_range("ratings_update_per_hour", 100, 1, 100)

@@ -123,7 +123,7 @@ def _fetch_all_items(adapter: Any, list_id: str) -> tuple[dict[str, dict[str, An
     out: dict[str, dict[str, Any]] = {}
     remote_ids: dict[str, str] = {}
     page = 1
-    per_page = int(getattr(adapter.cfg, "watchlist_page_size", 100) or 100)
+    per_page = int(getattr(adapter.cfg, "watchlist_page_size", 500) or 500)
     per_page = max(1, min(per_page, 500))
     while True:
         data = adapter.client.get_json(
