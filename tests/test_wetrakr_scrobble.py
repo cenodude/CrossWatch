@@ -92,7 +92,11 @@ def test_zero_never_triggers_progress_deletion_or_watched(live, action, progress
 
 def test_progress_step_seek_debounce_and_suspicious_completion(live):
     assert live.sink.send(event())["ok"]
-    assert live.sink.send(event(progress=11))["reason"] == "progress_step"
+    skipped = live.sink.send(event(progress=11))
+    assert skipped["reason"] == "progress_step"
+    assert skipped["previous_progress"] == 10
+    assert skipped["progress_step"] == 25
+    assert len(posts(live)) == 1
     assert live.sink.send(event(progress=12, raw={"_cw_seek": True}))["ok"]
     assert live.sink.send(event(action="pause", progress=12))["ok"]
     assert live.sink.send(event(action="pause", progress=12))["reason"] == "debounced"

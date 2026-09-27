@@ -284,8 +284,9 @@ def test_episode_payload_identifies_the_show(sink) -> None:
 def test_episode_without_show_ids_is_skipped(sink) -> None:
     s, calls = sink
 
-    s.send(Event(action="start", media_type="episode", season=1, number=2,
-                 ids={"tmdb": "5978363"}, title="Severance"))
+    result = s.send(Event(action="start", media_type="episode", season=1, number=2,
+                         ids={"tmdb": "5978363"}, title="Severance"))
+    assert result == {"ok": True, "log_status": "skipped", "reason": "missing_external_ids"}
 
     assert calls == []
 
@@ -293,7 +294,8 @@ def test_episode_without_show_ids_is_skipped(sink) -> None:
 def test_episode_without_numbering_is_skipped(sink) -> None:
     s, calls = sink
 
-    s.send(Event(action="start", media_type="episode", season=None, number=None))
+    result = s.send(Event(action="start", media_type="episode", ids={"tmdb_show": "123"}, season=None, number=None))
+    assert result == {"ok": True, "log_status": "skipped", "reason": "missing_episode_coordinates"}
 
     assert calls == []
 
@@ -301,7 +303,7 @@ def test_episode_without_numbering_is_skipped(sink) -> None:
 def test_event_without_a_title_is_skipped(sink) -> None:
     s, calls = sink
 
-    s.send(Event(action="start", title=""))
+    assert s.send(Event(action="start", title="")) == {"ok": True, "log_status": "skipped", "reason": "missing_title"}
 
     assert calls == [], "title is a required field"
 
@@ -310,7 +312,8 @@ def test_incomplete_stop_without_a_position_is_skipped(sink) -> None:
     s, calls = sink
 
     s.send(Event(action="start", progress=5.0))
-    s.send(Event(action="stop", progress=40.0, position_ms=None, duration_ms=None))
+    result = s.send(Event(action="stop", progress=40.0, position_ms=None, duration_ms=None))
+    assert result == {"ok": True, "log_status": "skipped", "reason": "missing_position"}
 
     assert [_action_of(c) for c in calls] == ["start"], "an incomplete stop needs a resume position"
 

@@ -264,22 +264,22 @@ class FloppySink(ScrobbleSink):
             base = f"{base}|s{_int(ev.season) or 0}e{_int(ev.number) or 0}"
         return f"{ev.session_key or '?'}:{base}"
 
-    def send(self, ev: ScrobbleEvent, cfg: dict[str, Any] | None = None) -> None:
+    def send(self, ev: ScrobbleEvent, cfg: dict[str, Any] | None = None) -> dict[str, Any] | None:
         cfgd = self._cfg(cfg)
         view = self._view(cfgd)
         if not is_configured(view):
             _log(f"Floppy disabled for sink profile {self._instance_id}; skipping", "WARNING")
-            return
+            return {"ok": True, "log_status": "skipped", "reason": "not_configured"}
         body = _payload(ev, _watched_at(cfgd))
         if not body:
             _log("Floppy sink skipped event without enough identity", "DEBUG")
-            return
+            return {"ok": True, "log_status": "skipped", "reason": "missing_media_identity"}
         complete_key = self._key(ev)
         is_complete_stop = body.get("action") == "stop" and body.get("completed") is True
         if is_complete_stop and not once_per_ttl(
             _dedupe_base_path(), "floppy_scrobble_completed", complete_key, ttl_seconds=_COMPLETE_TTL
         ):
-            return
+            return {"ok": True, "log_status": "skipped", "reason": "session_completed"}
         src, src_inst = _route_source(cfgd)
         try:
             api_post(_Adapter(self._client(view)), "scrobble", json=body)

@@ -31,7 +31,7 @@ try:
     from providers.scrobble.scrobble import ScrobbleEvent, ScrobbleSink, mask_account  # type: ignore
 except ImportError:
     class ScrobbleSink:  # pragma: no cover
-        def send(self, event: Any) -> None: ...
+        def send(self, event: Any) -> dict[str, Any] | None: ...
 
     class ScrobbleEvent:  # pragma: no cover
         ...
@@ -302,22 +302,22 @@ class ScrobSink(ScrobbleSink):
             else:
                 _SESSIONS[scope] = before
 
-    def send(self, event: Any) -> None:
+    def send(self, event: Any) -> dict[str, Any] | None:
         cfg = self.config
         block = self._block(cfg)
         if not (str(block.get("server_url") or "").strip() and str(block.get("api_key") or "").strip()):
             _log("SCROB: skip scrobble, not connected", "DEBUG")
-            return
+            return {"ok": True, "log_status": "skipped", "reason": "not_configured"}
 
         raw_action = str(getattr(event, "action", "") or "").strip().lower()
         if raw_action not in ("start", "pause", "stop"):
-            return
+            return {"ok": True, "log_status": "skipped", "reason": "invalid_action"}
 
         media_type = "episode" if str(getattr(event, "media_type", "") or "").lower() == "episode" else "movie"
         item = self._kodi_item(event, media_type)
         if item is None:
             _log("SCROB: skip scrobble, no supported ids", "DEBUG")
-            return
+            return {"ok": True, "log_status": "skipped", "reason": "missing_external_ids"}
 
         try:
             progress_pct = max(0.0, min(100.0, float(getattr(event, "progress", 0.0) or 0.0)))

@@ -902,7 +902,7 @@ class TraktSink(ScrobbleSink):
             if action in ("start", "stop"):
                 self._note_watch(ev, action, cfg, p_send, status="fail", reason=str(last_err.get("status") or ""))
 
-    def send(self, ev: ScrobbleEvent, cfg: dict[str, Any] | None = None) -> None:
+    def send(self, ev: ScrobbleEvent, cfg: dict[str, Any] | None = None) -> dict[str, Any] | None:
         cfg = cfg or (self._cfg_provider() if self._cfg_provider else None) or _cfg()
         if not isinstance(cfg, dict):
             cfg = {}
@@ -924,13 +924,13 @@ class TraktSink(ScrobbleSink):
             if not self._warn_no_client:
                 _log("Missing trakt.client_id/api_key in config.json - skipping scrobble", "WARNING")
                 self._warn_no_client = True
-            return
+            return {"ok": True, "log_status": "skipped", "reason": "not_configured"}
 
         if not token:
             if not self._warn_no_token:
                 _log("Missing Trakt access_token - connect Trakt to enable scrobble", "WARNING")
                 self._warn_no_token = True
-            return
+            return {"ok": True, "log_status": "skipped", "reason": "not_configured"}
 
         ev = self._bind_event(ev, cfg)
         sk = str(ev.session_key or "?")
@@ -950,16 +950,17 @@ class TraktSink(ScrobbleSink):
 
         if decision.path is None:
             self._a_sess[(sk, mk)] = ev.action
-            return
+            reason = "completion_held" if decision.held else "no_progress" if ev.action in ("pause", "stop") else "invalid_action"
+            return {"ok": True, "log_status": "skipped", "reason": reason}
 
         if ev.action == "start":
             step = float(_trakt_progress_step(cfg))
             last_act = self._a_sess.get((sk, mk))
             force_seek = bool((getattr(ev, "raw", None) or {}).get("_cw_seek"))
             if last_act == "start" and not force_seek and p_sess >= 0 and abs(decision.progress - p_sess) < step:
-                return
+                return {"ok": True, "log_status": "skipped", "reason": "progress_step", "previous_progress": p_sess, "progress_step": step}
         elif not decision.bypass_debounce and self._debounced(ev.session_key, ev.action, _watch_pause_debounce(cfg)):
-            return
+            return {"ok": True, "log_status": "skipped", "reason": "debounced"}
 
         self._enqueue(
             {

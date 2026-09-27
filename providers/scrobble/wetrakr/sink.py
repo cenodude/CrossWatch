@@ -164,9 +164,11 @@ class WeTrakrSink:
                 if progress >= _setting(config, "suppress_start_at", 99, watch=True):
                     return {"ok": True, "skipped": True, "reason": "start_suppressed"}
                 body["progress"] = max(2, progress)
+                step = max(1, min(25, _setting(config, "progress_step", 25)))
                 if (state.get("action") == "start" and not event.raw.get("_cw_seek")
-                        and abs(progress - state.get("progress", 0)) < max(1, min(25, _setting(config, "progress_step", 25)))):
-                    return {"ok": True, "skipped": True, "reason": "progress_step"}
+                        and abs(progress - state.get("progress", 0)) < step):
+                    return {"ok": True, "skipped": True, "reason": "progress_step",
+                            "previous_progress": state.get("progress", 0), "progress_step": step}
             if (action == "pause" and state.get("action") == action and state.get("progress") == body["progress"]
                     and now - state.get("sent_at", 0) < _setting(config, "pause_debounce_seconds", 5, watch=True)):
                 return {"ok": True, "skipped": True, "reason": "debounced"}

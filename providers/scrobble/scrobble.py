@@ -197,7 +197,7 @@ class ScrobbleEvent:
 
 
 class ScrobbleSink(Protocol):
-    def send(self, event: ScrobbleEvent) -> None: ...
+    def send(self, event: ScrobbleEvent) -> dict[str, Any] | None: ...
 
 
 def from_plex_webhook(payload: Any, defaults: dict[str, Any] | None = None) -> ScrobbleEvent | None:
@@ -861,14 +861,21 @@ class Dispatcher:
                         self._pending.pop(sk, None)
                     sent = True
                     if log_delivery:
-                        skipped = isinstance(result, dict) and bool(result.get("skipped"))
+                        skipped = isinstance(result, dict) and (bool(result.get("skipped")) or result.get("log_status") == "skipped")
                         status = "skipped" if skipped else "accepted"
                         reason = str(result.get("reason") or "unknown") if skipped else ""
+                        details = ""
+                        if skipped and reason == "progress_step":
+                            for key, label in (("previous_progress", "previous_p"), ("progress_step", "step"),
+                                               ("previous_bucket", "previous_bucket"), ("progress_bucket", "bucket")):
+                                value = result.get(key)
+                                if isinstance(value, (int, float)):
+                                    details += f" {label}={value:g}"
                         self._throttled_route_log(
                             f"{id(s)}|{status}|{reason}|{ev.action}|{ev.account}|{ev.session_key}",
                             f"route {self._route_label(cfg)}: {status} {ev.action} "
                             f"user={mask_account(ev.account)} p={ev.progress} sess={ev.session_key}"
-                            + (f" reason={reason}" if reason else ""),
+                            + (f" reason={reason}{details}" if reason else ""),
                         )
             finally:
                 with self._dispatch_lock:

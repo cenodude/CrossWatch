@@ -139,13 +139,13 @@ def test_sink_computes_position_from_duration_when_absent(posts: list[dict[str, 
 
 def test_sink_skips_events_without_supported_ids(posts: list[dict[str, Any]]):
     s = scrob_sink.ScrobSink(cfg_provider=scrob_cfg)
-    s.send(event("start", ids={}))
+    assert s.send(event("start", ids={})) == {"ok": True, "log_status": "skipped", "reason": "missing_external_ids"}
     assert posts == []
 
 
 def test_sink_skips_when_not_connected(posts: list[dict[str, Any]]):
     s = scrob_sink.ScrobSink(cfg_provider=lambda: {"scrob": {"server_url": "", "api_key": ""}})
-    s.send(event("start"))
+    assert s.send(event("start")) == {"ok": True, "log_status": "skipped", "reason": "not_configured"}
     assert posts == []
 
 
