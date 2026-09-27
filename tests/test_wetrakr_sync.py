@@ -742,6 +742,7 @@ def test_delta_pagination_keeps_from_date_on_every_page(env):
         if not params.get("from_date"):
             return None
         assert params["from_date"] == "2026-09-15T21:09:51Z"
+        assert params["limit"] == 100
         page = params["page"]
         row = MOVIE if page == 1 else {**MOVIE, "id": 127, "ids": {"tmdb": 156}}
         return Response([row], headers={"X-Pagination-Page": str(page), "X-Pagination-Page-Count": "2", "X-Pagination-Item-Count": "2"})
