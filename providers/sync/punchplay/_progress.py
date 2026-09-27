@@ -3,8 +3,9 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-import time
+import math
 import secrets
+import time
 from typing import Any, Iterable, Mapping
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal
@@ -306,7 +307,7 @@ def _session_ids(item: Mapping[str, Any], key: str, *, device_id: str, instance:
     return out
 
 
-def _playback_payload(item: Mapping[str, Any]) -> dict[str, Any] | None:
+def _playback_payload(item: Mapping[str, Any], *, require_position: bool = True) -> dict[str, Any] | None:
     typ = str(item.get("type") or "").strip().lower()
     is_episode = typ == "episode"
 
@@ -348,14 +349,19 @@ def _playback_payload(item: Mapping[str, Any]) -> dict[str, Any] | None:
 
     pos_ms = _position_ms(item)
     dur_ms = _duration_ms_of(item)
-    if pos_ms is not None:
+    if pos_ms is not None and math.isfinite(pos_ms) and pos_ms >= 0:
         payload["position_seconds"] = round(pos_ms / 1000.0, 3)
-    if dur_ms:
+    if dur_ms and math.isfinite(dur_ms) and round(dur_ms / 1000.0, 3) > 0:
         payload["duration_seconds"] = round(dur_ms / 1000.0, 3)
 
     percent = _percent_of(item)
     if percent is not None:
         payload["progress"] = max(0.0, min(1.0, percent / 100.0))
+
+    if require_position and "position_seconds" not in payload and not (
+        "progress" in payload and "duration_seconds" in payload
+    ):
+        return None
 
     if item.get("anime") is True:
         payload["anime"] = True

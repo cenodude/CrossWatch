@@ -521,8 +521,62 @@ def test_history_index_prefers_sync_snapshot_history(monkeypatch: pytest.MonkeyP
     assert http.calls[0]["method"] == "GET"
     assert http.calls[0]["url"].endswith("/me/sync/snapshot")
     assert http.calls[0]["params"]["resource"] == "history"
-    assert http.calls[0]["params"]["limit"] == 100
+    assert http.calls[0]["params"]["limit"] == 500
     assert http.calls[0]["params"]["after"] == 0
+
+
+def test_history_snapshot_pages_independently_of_legacy_history_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.punchplay import _history as hi
+
+    rows = [
+        {"id": i, "kind": "movie", "tmdb_id": i, "watched_at": "2026-01-01T20:00:00Z"}
+        for i in range(1, 502)
+    ]
+    http = FakeHTTP([
+        _Resp(200, {"items": rows[:500], "hasMore": True, "nextAfter": 500}),
+        _Resp(200, {"items": rows[500:], "hasMore": False, "nextAfter": None}),
+    ])
+    _patch(monkeypatch, hi, http)
+    adapter = Adapter()
+    adapter.config["punchplay"]["history_per_page"] = 100
+
+    idx = hi.build_index(adapter)
+
+    assert len(idx) == 501
+    assert "tmdb:501" in idx
+    assert [call["params"] for call in http.calls] == [
+        {"resource": "history", "after": 0, "limit": 500},
+        {"resource": "history", "after": 500, "limit": 500},
+    ]
+    assert all(call["url"].endswith("/me/sync/snapshot") for call in http.calls)
+
+
+@pytest.mark.parametrize("configured,expected", [(None, 100), (500, 100), (50, 50)])
+def test_history_fallback_keeps_its_own_page_limit(monkeypatch: pytest.MonkeyPatch, configured, expected) -> None:
+    from providers.sync.punchplay import _history as hi
+
+    http = FakeHTTP([
+        _Resp(200, {"items": [], "hasMore": False}),
+        _Resp(200, {"items": [
+            {"id": 1, "kind": "movie", "tmdb_id": 550, "watched_at": "2026-01-01T20:00:00Z"},
+        ], "nextCursor": "next"}),
+        _Resp(200, {"items": [
+            {"id": 2, "kind": "movie", "tmdb_id": 551, "watched_at": "2026-01-02T20:00:00Z"},
+        ], "nextCursor": None}),
+    ])
+    _patch(monkeypatch, hi, http)
+    adapter = Adapter()
+    if configured is not None:
+        adapter.config["punchplay"]["history_per_page"] = configured
+
+    idx = hi.build_index(adapter)
+
+    assert set(idx) == {"tmdb:550", "tmdb:551"}
+    assert http.calls[0]["params"]["limit"] == 500
+    assert [call["params"] for call in http.calls[1:]] == [
+        {"limit": expected}, {"limit": expected, "cursor": "next"},
+    ]
+    assert all(call["url"].endswith("/me/history") for call in http.calls[1:])
 
 
 def test_history_index_reads_episode_from_sync_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -745,6 +799,57 @@ def test_progress_write_uses_incomplete_stop_for_passive_sync(monkeypatch: pytes
     assert call["json"]["watched"] is False
     assert call["json"]["watched_threshold"] == 1.0
     assert res["confirmed_keys"] == ["tmdb:550"]
+
+
+@pytest.mark.parametrize("duration", [None, 0, -1, float("inf"), 0.0001])
+def test_progress_write_rejects_percentage_without_usable_duration(monkeypatch: pytest.MonkeyPatch, duration) -> None:
+    from providers.sync.punchplay import _progress as pr
+
+    http = FakeHTTP([])
+    _patch(monkeypatch, pr, http)
+
+    res = pr.add(Adapter(), [{
+        "type": "movie", "title": "Fight Club", "ids": {"tmdb": "550"},
+        "progress_percent": 25, "duration_seconds": duration,
+    }])
+
+    assert http.calls == []
+    assert res["confirmed_keys"] == []
+    assert res["unresolved_keys"] == ["tmdb:550"]
+    assert res["unresolved"][0]["status"] == "missing_supported_id_or_position"
+
+
+@pytest.mark.parametrize("position", [0, 120])
+def test_progress_write_accepts_position_without_duration(monkeypatch: pytest.MonkeyPatch, position) -> None:
+    from providers.sync.punchplay import _progress as pr
+
+    http = FakeHTTP([_Resp(200, {})])
+    _patch(monkeypatch, pr, http)
+
+    res = pr.add(Adapter(), [{
+        "type": "movie", "title": "Fight Club", "ids": {"tmdb": "550"},
+        "position_seconds": position,
+    }])
+
+    assert res["confirmed_keys"] == ["tmdb:550"]
+    assert http.calls[0]["json"]["position_seconds"] == position
+    assert "duration_seconds" not in http.calls[0]["json"]
+
+
+def test_progress_write_accepts_percentage_with_duration(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.punchplay import _progress as pr
+
+    http = FakeHTTP([_Resp(200, {})])
+    _patch(monkeypatch, pr, http)
+
+    res = pr.add(Adapter(), [{
+        "type": "movie", "title": "Fight Club", "ids": {"tmdb": "550"},
+        "progress_percent": 25, "duration_seconds": 8000,
+    }])
+
+    assert res["confirmed_keys"] == ["tmdb:550"]
+    assert http.calls[0]["json"]["progress"] == 0.25
+    assert http.calls[0]["json"]["duration_seconds"] == 8000
 
 
 def test_progress_write_uses_progress_action_for_now_playing(monkeypatch: pytest.MonkeyPatch) -> None:
