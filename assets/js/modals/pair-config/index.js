@@ -1735,7 +1735,7 @@ function renderFeaturePanel(state){
           <div class="grid2 compact">
             <div class="opt-row">
               <label for="md-rt-perpage">Items per page</label>
-              <input id="md-rt-perpage" class="input small" type="number" min="1" max="5000" value="${md.ratings_per_page ?? 200}">
+              <input id="md-rt-perpage" class="input small" type="number" min="1" max="1000" value="${md.ratings_per_page ?? 1000}">
             </div>
             <div class="opt-row">
               <label for="md-rt-maxpages">Max pages</label>
@@ -1945,7 +1945,7 @@ left.innerHTML = `
           <div class="grid2 compact">
             <div class="opt-row">
               <label for="md-hs-perpage">Items per page</label>
-              <input id="md-hs-perpage" class="input small" type="number" min="1" max="5000" value="${md.history_per_page ?? 1000}">
+              <input id="md-hs-perpage" class="input small" type="number" min="1" max="1000" value="${md.history_per_page ?? 1000}">
             </div>
             <div class="opt-row">
               <label for="md-hs-maxpages">Max pages</label>
@@ -2789,10 +2789,10 @@ async function saveConfigBits(state){
       const hsPagesEl = ID("md-hs-maxpages");
       const hsChunkEl = ID("md-hs-chunk");
       if (wlBatchEl) md.watchlist_batch_size = clamp(n(wlBatchEl.id), 1, 1000);
-      if (rtPerEl) md.ratings_per_page = clamp(n(rtPerEl.id), 1, 5000);
+      if (rtPerEl) md.ratings_per_page = clamp(n(rtPerEl.id), 1, 1000);
       if (rtPagesEl) md.ratings_max_pages = clamp(n(rtPagesEl.id), 1, 2000);
       if (rtChunkEl) md.ratings_chunk_size = clamp(n(rtChunkEl.id), 1, 1000);
-      if (hsPerEl) md.history_per_page = clamp(n(hsPerEl.id), 1, 5000);
+      if (hsPerEl) md.history_per_page = clamp(n(hsPerEl.id), 1, 1000);
       if (hsPagesEl) md.history_max_pages = clamp(n(hsPagesEl.id), 1, 2000);
       if (hsChunkEl) md.history_chunk_size = clamp(n(hsChunkEl.id), 1, 1000);
       cfg.mdblist = md;

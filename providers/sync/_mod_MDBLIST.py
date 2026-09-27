@@ -12,7 +12,7 @@ from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 from ._log import log as cw_log
-from .mdblist._common import read_json as mdblist_read_json, state_file as mdblist_state_file, write_json as mdblist_write_json
+from .mdblist._common import CursorPager, MDBListFetchError, read_json as mdblist_read_json, state_file as mdblist_state_file, write_json as mdblist_write_json
 from .mdblist import _auth as mdblist_auth
 
 from ._mod_common import (
@@ -143,7 +143,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "1.8"
+__VERSION__ = "1.9"
 __all__ = ["get_manifest", "MDBLISTModule", "OPS"]
 
 def _health(status: str, ok: bool, latency_ms: int) -> None:
@@ -426,13 +426,27 @@ class MDBLISTClient:
         elif since:
             params["since"] = str(since)
         r = self.get(f"{self.BASE}/sync/journal", params=params)
-        if 200 <= r.status_code < 300:
-            try:
-                data = r.json() if (r.text or "").strip() else {}
-                return dict(data) if isinstance(data, Mapping) else {}
-            except Exception:
-                return {}
-        return {"status": r.status_code}
+        if not (200 <= r.status_code < 300 or r.status_code == 409):
+            raise MDBListFetchError(f"MDBList journal HTTP {r.status_code}")
+        try:
+            data = r.json()
+        except Exception as exc:
+            raise MDBListFetchError("Invalid MDBList journal JSON") from exc
+        if not isinstance(data, Mapping):
+            raise MDBListFetchError("Invalid MDBList journal response")
+        if data.get("requires_full_sync") is True:
+            return dict(data)
+        if r.status_code == 409 or not isinstance(data.get("journal"), list):
+            raise MDBListFetchError("Incomplete MDBList journal response")
+        data = dict(data)
+        pagination = dict(data.get("pagination") or {})
+        headers = {str(k).lower(): v for k, v in (getattr(r, "headers", None) or {}).items()}
+        if "has_more" not in pagination and "x-has-more" in headers:
+            pagination["has_more"] = headers["x-has-more"]
+        if not pagination.get("next_cursor"):
+            pagination["next_cursor"] = data.get("next_cursor") or headers.get("x-next-cursor")
+        data["pagination"] = pagination
+        return data
 
 
 class MDBLISTModule:
@@ -612,22 +626,26 @@ class MDBLISTModule:
         rows: list[dict[str, Any]] = []
         journal_oldest_at = ""
         latest_action_at = ""
-        cursor: str | None = None
-        pages = 0
+        pager = CursorPager(limit, 1000)
 
-        while pages < 1000:
+        while True:
             try:
-                data = self.client.journal_page(since=since, cursor=cursor, limit=limit)
+                data = self.client.journal_page(since=since if pager.cursor is None else None, cursor=pager.cursor, limit=pager.limit)
             except Exception as e:
-                _warn("journal_fetch_failed", cursor=cursor or "", since=since or "", error=str(e))
-                break
+                _warn("journal_fetch_failed", page=pager.pages + 1, since=since or "", error=str(e))
+                raise MDBListFetchError("MDBList journal read incomplete") from e
 
             if not isinstance(data, Mapping):
-                break
+                raise MDBListFetchError("Invalid MDBList journal page")
+            if data.get("requires_full_sync") is True:
+                return {"rows": [], "requires_full_sync": True}
             status = data.get("status")
             if status is not None:
-                _warn("journal_fetch_http", cursor=cursor or "", since=since or "", status=status)
-                break
+                _warn("journal_fetch_http", page=pager.pages + 1, since=since or "", status=status)
+                raise MDBListFetchError(f"MDBList journal HTTP {status}")
+            if not isinstance(data.get("journal"), list):
+                raise MDBListFetchError("MDBList journal page is missing rows")
+            more = pager.advance(data, None)
 
             oldest = str(data.get("journal_oldest_at") or "").strip()
             if oldest and not journal_oldest_at:
@@ -646,23 +664,8 @@ class MDBLISTModule:
                 if act:
                     latest_action_at = act if not latest_action_at else str(max(latest_action_at, act))
 
-            pag = data.get("pagination") if isinstance(data.get("pagination"), Mapping) else {}
-            has_more = bool(pag.get("has_more")) if isinstance(pag, Mapping) else False
-            next_cursor = ""
-            if isinstance(pag, Mapping):
-                next_cursor = str(
-                    pag.get("next_cursor")
-                    or pag.get("cursor")
-                    or data.get("next_cursor")
-                    or ""
-                ).strip()
-            if not has_more:
+            if not more:
                 break
-            if not next_cursor:
-                _warn("journal_fetch_paging_incomplete", since=since or "", page=pages + 1)
-                break
-            cursor = next_cursor
-            pages += 1
 
         return {
             "rows": rows,

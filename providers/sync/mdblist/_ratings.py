@@ -19,6 +19,8 @@ from .._log import log as cw_log
 from .._mod_common import request_with_retries
 
 from ._common import (
+    CursorPager,
+    SHOW_BATCH_LIMIT,
     STATE_DIR,
     MDBListFetchError,
     state_file,
@@ -644,7 +646,7 @@ def build_index(
         return dict(cached) if cached else {}
 
     per_page = _cfg_int(cfg, "ratings_per_page", per_page)
-    per_page = max(1, min(int(per_page), 5000))
+    per_page = max(1, min(int(per_page), 1000))
     max_pages = _cfg_int(cfg, "ratings_max_pages", max_pages)
     max_pages = max(1, min(int(max_pages), 2000))
 
@@ -658,6 +660,7 @@ def build_index(
     journal_ts = _iso_z(journal_ts_raw) if _iso_ok(journal_ts_raw) else None
     refresh_precision = _cache_version() < 2
     force_full = refresh_precision
+    pending_removals = False
 
     wm = get_watermark("ratings")
     journal_wm = get_watermark("ratings_journal")
@@ -675,7 +678,7 @@ def build_index(
             journal_limit = max(50, min(per_page, 1000))
             journal = adapter.fetch_journal(since=journal_wm, limit=journal_limit, category="rated")
             journal_oldest = str(journal.get("journal_oldest_at") or "").strip()
-            if _iso_ok(journal_oldest) and (_as_epoch(journal_wm) or 0) < (_as_epoch(_iso_z(journal_oldest)) or 0):
+            if journal.get("requires_full_sync") is True or (_iso_ok(journal_oldest) and (_as_epoch(journal_wm) or 0) < (_as_epoch(_iso_z(journal_oldest)) or 0)):
                 _warn("index_reconcile", reason="journal_window_stale", strategy="full_replace", journal_oldest_at=journal_oldest, journal_watermark=journal_wm)
                 force_full = True
             else:
@@ -684,14 +687,15 @@ def build_index(
                 if remove_rows:
                     cached_after_remove, remove_stats, latest_remove_seen = _apply_journal_rows(cached, remove_rows)
                     cached = cached_after_remove
-                    _save_cache(cached)
-                    latest_seen_for_remove = _max_iso(latest_remove_seen, acts_ts)
-                    update_watermark_if_new("ratings", latest_seen_for_remove)
+                    pending_removals = True
                 else:
                     remove_stats = {"added": 0, "removed": 0}
                     latest_remove_seen = None
 
                 if not upsert_rows:
+                    if pending_removals:
+                        _save_cache(cached)
+                        update_watermark_if_new("ratings", _max_iso(latest_remove_seen, acts_ts))
                     update_watermark_if_new("ratings_journal", journal_ts)
                     _dbg("index_reconcile", reason="journal_applied", strategy="journal", rows=len(rows), added=remove_stats["added"], removed=remove_stats["removed"], rated_at=acts_ts or "-", journal_at=journal_ts, journal_watermark=journal_wm)
                     _info("index_done", count=len(cached), source="journal")
@@ -729,8 +733,7 @@ def build_index(
 
     sess = adapter.client.session
     out: dict[str, dict[str, Any]] = {}
-    offset = 0
-    pages = 0
+    pager = CursorPager(per_page, max_pages)
     latest_seen: str | None = None
 
     _dbg("index_reconcile", reason="delta_fetch", strategy="delta", since=since_req, per_page=per_page, max_pages=max_pages, timeout=timeout, retries=retries)
@@ -739,16 +742,16 @@ def build_index(
             adapter,
             "GET",
             URL_LIST,
-            params={"apikey": apikey, "offset": offset, "limit": per_page, "since": since_req},
+            params={"apikey": apikey, **pager.params(), "since": since_req},
             timeout=timeout,
             max_retries=retries,
         )
         if r.status_code != 200:
-            _warn("http_failed", op="index", method="GET", url=URL_LIST, status=r.status_code, offset=offset, body=(r.text or '')[:160])
-            _info("index_done", count=len(cached), source="cache_fallback")
-            return dict(cached)
+            _warn("http_failed", op="index", method="GET", url=URL_LIST, status=r.status_code, page=pager.pages + 1, body=(r.text or '')[:160])
+            raise MDBListFetchError("MDBList ratings snapshot incomplete")
 
         data = r.json() if (r.text or "").strip() else {}
+        more = pager.advance(data, r)
         movies = data.get("movies") or []
         shows = data.get("shows") or []
         seasons_top = data.get("seasons") or []
@@ -858,17 +861,8 @@ def build_index(
             if _iso_ok(ra):
                 latest_seen = _max_iso(latest_seen, ra)
 
-        pag = data.get("pagination") or {}
-        has_more = pag.get("has_more")
-        if has_more is None:
-            has_more = any(len(x) >= per_page for x in (movies, shows, seasons_top, episodes_top))
-
-        pages += 1
-        if has_more and pages >= max_pages and refresh_precision:
-            raise MDBListFetchError("MDBList ratings precision refresh exceeded the page limit")
-        if not bool(has_more) or pages >= max_pages:
+        if not more:
             break
-        offset += per_page
     if force_full and (out or refresh_precision):
         merged = {k: v for k, v in out.items() if not v.get("_removed") and v.get("rating") is not None}
         _save_cache(merged, precise=refresh_precision)
@@ -880,6 +874,7 @@ def build_index(
                     merged.pop(k, None)
                 else:
                     merged[k] = v
+        if out or pending_removals:
             _save_cache(merged)
 
     update_watermark_if_new("ratings", _max_iso(latest_seen, acts_ts))
@@ -1148,7 +1143,7 @@ def _write(
 
         stage = "" if body_key == bucket else body_key
 
-        for part in _chunk(rows, chunk_size):
+        for part in _chunk(rows, min(chunk_size, SHOW_BATCH_LIMIT) if bucket == "shows" else chunk_size):
             payload = {bucket: part}
             url = URL_UNRATE if unrate else URL_UPSERT
 

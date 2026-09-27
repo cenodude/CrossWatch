@@ -361,12 +361,12 @@ DEFAULT_CFG: dict[str, Any] = {
         # Watchlist
         "watchlist_shadow_ttl_hours": 0,                # Shadow TTL (hours); 0 = disabled
         "watchlist_shadow_validate": True,              # Validate shadow on every run
-        "watchlist_page_size": 200,                     # GET page size for /watchlist/items
+        "watchlist_page_size": 1000,                    # GET page size for /watchlist/items
         "watchlist_batch_size": 500,                    # Batch size for add/remove writes
         "watchlist_freeze_details": True,               # Store extra details for "not_found" freezes
 
         # Ratings
-        "ratings_per_page": 200,                        # Items per page when indexing
+        "ratings_per_page": 1000,                       # Items per page when indexing
         "ratings_max_pages": 50,                        # Max pages to fetch (safety cap)
         "ratings_chunk_size": 500,                      # Batch size for POST/REMOVE
         "ratings_write_delay_ms": 600,                  # Optional pacing between writes

@@ -357,10 +357,10 @@ def test_mdblist_rewatch_remove_without_play_id_does_not_unwatch_item(monkeypatc
 
 
 def test_mdblist_rewatch_index_incomplete_snapshot_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    pages: list[int] = []
+    pages: list[str | None] = []
 
     def fake_request(adapter, method, url, **kwargs):
-        pages.append(int(kwargs.get("params", {}).get("offset") or 0))
+        pages.append(kwargs.get("params", {}).get("cursor"))
         if len(pages) == 1:
             return _MDBListResponse(
                 payload={
@@ -370,7 +370,8 @@ def test_mdblist_rewatch_index_incomplete_snapshot_raises(monkeypatch: pytest.Mo
                             "watched_at": "2026-01-01T00:00:00Z",
                             "movie": {"title": "Heat", "year": 1995, "ids": {"tmdb": 949}},
                         }
-                    ]
+                    ],
+                    "pagination": {"next_cursor": "next-page"},
                 }
             )
         return _MDBListResponse(status_code=500, payload={"error": "boom"})
@@ -381,7 +382,7 @@ def test_mdblist_rewatch_index_incomplete_snapshot_raises(monkeypatch: pytest.Mo
     with pytest.raises(mdblist_history.MDBListFetchError):
         mdblist_history.build_index(_mdblist_adapter())
 
-    assert len(pages) == 2
+    assert pages == [None, "next-page"]
 
 
 def test_mdblist_rewatch_remove_show_falls_back_to_item_remove(monkeypatch: pytest.MonkeyPatch) -> None:

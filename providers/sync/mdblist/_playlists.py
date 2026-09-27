@@ -18,7 +18,7 @@ from cw_platform.playlists import (
 
 from .._log import log as cw_log
 from . import _watchlist as feat_watchlist
-from ._common import cfg_section, has_auth, mdblist_request
+from ._common import CursorPager, cfg_section, has_auth, mdblist_request
 from ._watchlist import _as_int, _as_str, _parse_rows_and_total
 
 BASE = "https://api.mdblist.com"
@@ -231,24 +231,22 @@ def get_snapshot(adapter: Any, playlist_id: Any) -> PlaylistSnapshot:
         )
 
     items: list[PlaylistItem] = []
-    offset = 0
-    limit = 1000
+    pager = CursorPager(1000, 1000)
     apikey = _apikey(adapter)
     pos = 0
-    while offset <= 1_000_000:
+    while True:
         r = mdblist_request(
             adapter,
             "GET",
             URL_LIST_ITEMS.format(id=lid),
-            params={"apikey": apikey, "limit": limit, "offset": offset, "unified": "true"},
+            params={"apikey": apikey, **pager.params(), "unified": "true"},
         )
         if not (200 <= r.status_code < 300):
             _warn("http_failed", op="get_snapshot", status=r.status_code, list_id=lid)
-            break
+            raise MDBListPlaylistError("MDBList playlist read failed")
         data = r.json() if (r.text or "").strip() else {}
+        more = pager.advance(data, r)
         rows, _total = _parse_rows_and_total(data)
-        if not rows:
-            break
         for row in rows:
             media = _normalize_row(row)
             rank = _as_int(row.get("rank"))
@@ -261,19 +259,8 @@ def get_snapshot(adapter: Any, playlist_id: Any) -> PlaylistSnapshot:
                 )
             )
             pos += 1
-        has_more = None
-        try:
-            hdr = r.headers.get("X-Has-More")
-            if hdr is not None:
-                has_more = str(hdr).strip().lower() in ("1", "true", "yes")
-        except Exception:
-            has_more = None
-        if has_more is None:
-            pag = data.get("pagination") if isinstance(data, Mapping) else None
-            has_more = bool(pag.get("has_more")) if isinstance(pag, Mapping) else (len(rows) >= limit)
-        if not has_more:
+        if not more:
             break
-        offset += len(rows)
 
     items.sort(key=lambda it: (it.position is None, it.position if it.position is not None else 0))
     _info("snapshot_done", list_id=lid, count=len(items))
