@@ -281,7 +281,9 @@ def _accepted(items: Iterable[Mapping[str, Any]], *, include_watched_at: bool) -
     unresolved: list[dict[str, Any]] = []
     seen: set[str] = set()
     for raw in items or []:
-        key = str(raw.get("_cw_event_key") or "").strip() or event_key(raw) or key_of(raw)
+        key = str(raw.get("_cw_event_key") or "").strip()
+        if not key:
+            key = event_key(raw) if raw.get("_cw_rewatch_sync") is True else key_of(raw)
         payload = write_ident(raw)
         if not key or payload is None:
             if key:

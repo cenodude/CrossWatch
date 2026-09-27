@@ -165,6 +165,67 @@ def test_history_add_rejects_success_status_without_write_counters(monkeypatch: 
     assert res["unresolved"][0]["status"] == "invalid_response"
 
 
+def test_history_added_and_restored_items_match_sync_confirmations(monkeypatch: pytest.MonkeyPatch) -> None:
+    from cw_platform.orchestrator._pairs_oneway import compute_effective_add
+    from providers.sync._mod_FLICKLIST import _result_from
+    from providers.sync.flicklist import _history as history
+    from providers.sync.flicklist._common import key_of
+
+    items = [
+        {"type": "movie", "ids": {"tmdb": str(100000 + idx)}, "watched_at": "2026-08-21T20:00:00.000Z"}
+        for idx in range(149)
+    ]
+    monkeypatch.setattr(history, "flicklist_request", lambda *args, **kwargs: _Resp(200, {"added": 14, "restored": 135}))
+
+    result = _result_from(history.add(object(), items))
+    attempted = [key_of(item) for item in items]
+    confirmed = [key for key in result["confirmed_keys"] if key in set(attempted)]
+    decision = compute_effective_add(
+        attempted_keys=attempted,
+        prov_confirmed=result["count"],
+        confirmed_keys=confirmed,
+        still_unresolved=set(),
+        skipped_keys=set(),
+        have_exact_keys=True,
+        verify_after_write=False,
+        provider_skipped=False,
+    )
+
+    assert decision["effective"] == 149
+    assert decision["failed_keys"] == []
+
+
+@pytest.mark.parametrize("operation", ["add", "remove"])
+@pytest.mark.parametrize("mode", ["normal", "rewatch", "explicit"])
+@pytest.mark.parametrize("media_type", ["movie", "episode"])
+def test_history_write_confirmation_keys_follow_sync_mode(monkeypatch: pytest.MonkeyPatch, operation: str, mode: str, media_type: str) -> None:
+    from providers.sync.flicklist import _history as history
+    from providers.sync.flicklist._common import event_key, key_of
+
+    items = [
+        {"type": "movie", "ids": {"tmdb": "550"}, "watched_at": f"2026-08-{day}T20:00:00.000Z"}
+        for day in (20, 21)
+    ]
+    if media_type == "episode":
+        for item in items:
+            item.update({"type": "episode", "show_ids": {"tmdb": "100088"}, "season": 1, "episode": 1})
+    if mode != "normal":
+        for item in items:
+            item["_cw_rewatch_sync"] = True
+            if mode == "explicit":
+                item["_cw_event_key"] = event_key(item) + "~source"
+    expected = [key_of(items[0])] if mode == "normal" else [str(item.get("_cw_event_key") or event_key(item)) for item in items]
+    calls: list[dict[str, Any]] = []
+    counter = "added" if operation == "add" else "removed"
+    monkeypatch.setattr(history, "flicklist_request", lambda *args, **kwargs: calls.append(kwargs) or _Resp(200, {counter: len(expected)}))
+
+    result = getattr(history, operation)(object(), items)
+
+    assert result["confirmed_keys"] == expected
+    assert result["unresolved_keys"] == []
+    assert len(calls[0]["json"]["items"]) == len(expected)
+
+
 def test_history_add_uses_configured_flicklist_write_batch_size(monkeypatch: pytest.MonkeyPatch) -> None:
     from providers.sync.flicklist import _history as history
 
