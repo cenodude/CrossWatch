@@ -34,6 +34,8 @@ from providers.sync._mod_common import SimpleRateLimiter, build_op_result
 SCHEMA = 2
 MAX_CACHE_AGE = 3600
 WRITE_BATCH_SIZE = 500
+READ_PAGE_SIZE = 500
+DELTA_PAGE_SIZE = 100
 
 _STATES: dict[str, dict[str, Any]] = {}
 _STATES_LOCK = threading.Lock()
@@ -142,7 +144,7 @@ def pages(adapter: Any, path: str, *, from_date: str | None = None,
     expected_pages: int | None = None
     for page in range(1, 10001):
         raise_if_cancelled()
-        params: dict[str, Any] = {"page": page, "limit": 100}
+        params: dict[str, Any] = {"page": page, "limit": DELTA_PAGE_SIZE if from_date is not None else READ_PAGE_SIZE}
         if from_date is not None:
             params["from_date"] = from_date
         response = request(adapter, "GET", path, params=params)
@@ -336,7 +338,7 @@ def journal_rows(adapter: Any, feature: str, since: str) -> tuple[list[Mapping[s
 
 
 def journal_worthwhile(size: int, extra_reads: int = 0) -> bool:
-    return (size + 99) // 100 > 2 + extra_reads
+    return (size + READ_PAGE_SIZE - 1) // READ_PAGE_SIZE > 2 + extra_reads
 
 
 def journal_removals(adapter: Any, feature: str, kind: str, old: Mapping[str, Any], activity: Mapping[str, Any],

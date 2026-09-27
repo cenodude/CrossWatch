@@ -29,7 +29,9 @@ def entry(kind="movie", feature="watchlist", **extra):
             "type": kind, "id": 126, "action_at": LATER, "status": "removed", **extra}
 
 
-def setup_removal(env, feature="watchlist", kind="movie", size=400, *, fallback_ratings=False):
+def setup_removal(env, feature="watchlist", kind="movie", size=None, *, fallback_ratings=False):
+    if size is None:
+        size = 2000 if feature == "history" else 400
     media = {"movie": MOVIE, "show": SHOW, "season": SEASON, "episode": EPISODE}[kind]
     rows = [{**copy.deepcopy(media), "id": 126 + i, "ids": {"tmdb": 10000 + i}} for i in range(size)]
     if kind in ("season", "episode"):
@@ -104,7 +106,7 @@ def test_ratings_without_global_section_use_account_activity(env):
 @pytest.mark.parametrize("reason", ["empty", "partial", "mixed", "wrong_owner", "expired", "small", "stale", "force"])
 def test_unsafe_or_unhelpful_journal_falls_back_to_full_snapshot(env, reason):
     feature = "history"
-    state, original, endpoint = setup_removal(env, feature, size=2 if reason == "small" else 400)
+    state, original, endpoint = setup_removal(env, feature, size=2 if reason == "small" else 2000)
     if reason == "empty":
         state.journal = []
     elif reason == "partial":
@@ -122,7 +124,7 @@ def test_unsafe_or_unhelpful_journal_falls_back_to_full_snapshot(env, reason):
         path.write_text(json.dumps(data))
     current = env.adapter.build_index(feature, force_refresh=reason == "force")
     assert len(current) == len(state.rows)
-    assert any(kw["params"]["limit"] == 100 for _, path, kw in env.server.calls if path == endpoint)
+    assert any(kw["params"]["limit"] == 500 for _, path, kw in env.server.calls if path == endpoint)
     if reason in ("small", "stale", "force"):
         assert not any(path == "/sync/journal" for _, path, _ in env.server.calls)
 
@@ -153,16 +155,16 @@ def test_removal_with_watched_activity_merges_current_play_edits(env):
 
     env.server.hook = hook
     current = env.adapter.build_index("history")
-    assert len(current) == 399
+    assert len(current) == 1999
     assert next(row for row in current.values() if row["_wetrakr_history_id"] == "play-6")["watched_at"] == LATER
     reads = [kw["params"] for _, path, kw in env.server.calls if path == endpoint]
     assert len(reads) == 2 and "from_date" in reads[0] and reads[1]["limit"] == 1
 
 
 def test_cost_gate_includes_incremental_history_request(env):
-    setup_removal(env, "history", size=300)
+    setup_removal(env, "history", size=1500)
     env.server.activities["movies"]["last_tracking_watched_at"] = LATER
-    assert len(env.adapter.build_index("history")) == 299
+    assert len(env.adapter.build_index("history")) == 1499
     assert not any(path == "/sync/journal" for _, path, _ in env.server.calls)
 
 
@@ -183,7 +185,7 @@ def test_non_history_removals_keep_existing_read_path(env, feature, kind):
     _, _, endpoint = setup_removal(env, feature, kind)
     assert len(env.adapter.build_index(feature)) == 399
     assert not any(path == "/sync/journal" for _, path, _ in env.server.calls)
-    assert any(kw["params"]["limit"] == 100 for _, path, kw in env.server.calls if path == endpoint)
+    assert any(kw["params"]["limit"] == 500 for _, path, kw in env.server.calls if path == endpoint)
 
 
 def test_watched_state_does_not_replay_event_removals(env):
@@ -261,8 +263,8 @@ def test_invalid_count_probe_requires_full_snapshot(env, fault):
         return response
 
     env.server.hook = hook
-    assert len(env.adapter.build_index("history")) == 399
-    assert any("/history/" in path and kw["params"]["limit"] == 100 for _, path, kw in env.server.calls)
+    assert len(env.adapter.build_index("history")) == 1999
+    assert any("/history/" in path and kw["params"]["limit"] == 500 for _, path, kw in env.server.calls)
 
 
 def test_cancellation_does_not_advance_checkpoint(env, monkeypatch):
@@ -294,7 +296,7 @@ def test_capture_reads_full_snapshot(env, monkeypatch):
     setup_removal(env, "history")
     monkeypatch.setenv("CW_CAPTURE_MODE", "1")
     monkeypatch.setenv("CW_CAPTURE_PROVIDER", "WETRAKR")
-    assert len(env.adapter.build_index("history")) == 399
+    assert len(env.adapter.build_index("history")) == 1999
     assert not any(path == "/sync/journal" for _, path, _ in env.server.calls)
 
 
@@ -304,5 +306,5 @@ def test_legacy_cache_without_journal_checkpoint_is_supported(env):
     data = json.loads(path.read_text())
     data["sections"]["movies"].pop("journal_at")
     path.write_text(json.dumps(data))
-    assert len(env.adapter.build_index("history")) == 399
+    assert len(env.adapter.build_index("history")) == 1999
     assert json.loads(path.read_text())["sections"]["movies"]["journal_at"] == LATER

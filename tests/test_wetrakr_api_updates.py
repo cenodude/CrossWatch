@@ -32,11 +32,36 @@ def test_regular_reads_include_metadata_without_fallback(env):
     first = env.adapter.build_index("watchlist", force_refresh=True)
     assert next(iter(first.values()))["title"] == MOVIE["title"]
     reads = [(path, kwargs["params"]) for _, path, kwargs in env.server.calls if "/planning/" in path]
-    assert len(reads) == 2 and all(params == {"page": 1, "limit": 100} for _, params in reads)
+    assert len(reads) == 2 and all(params == {"page": 1, "limit": 500} for _, params in reads)
     assert not any(path.startswith("/shows/") or path.startswith("/movies/") for _, path, _ in env.server.calls)
     env.server.calls.clear()
     assert env.adapter.build_index("watchlist") == first
     assert not any("/planning/" in path for _, path, _ in env.server.calls)
+
+
+@pytest.mark.parametrize("effective_limit,expected_calls", [(500, 2), (100, 6)])
+def test_regular_pagination_follows_server_pages_even_when_capped(env, effective_limit, expected_calls):
+    rows = [{**MOVIE, "id": i, "ids": {"tmdb": i}} for i in range(1, 502)]
+
+    def hook(method, path, kwargs):
+        params = kwargs["params"]
+        assert params["limit"] == 500 and "compact" not in params
+        page = params["page"]
+        return Response(rows[(page - 1) * effective_limit:page * effective_limit], headers={
+            "X-Pagination-Page": str(page), "X-Pagination-Limit": str(effective_limit),
+            "X-Pagination-Page-Count": str(expected_calls), "X-Pagination-Item-Count": str(len(rows)),
+        })
+
+    env.server.hook = hook
+    result = common.pages(env.adapter, "/sync/tracking/planning/movies")
+
+    assert result == rows
+    assert len(env.server.calls) == expected_calls
+
+
+@pytest.mark.parametrize("size,extra,expected", [(1000, 0, False), (1001, 0, True), (1500, 1, False), (1501, 1, True)])
+def test_journal_cost_uses_500_item_full_pages(size, extra, expected):
+    assert common.journal_worthwhile(size, extra) is expected
 
 
 @pytest.mark.parametrize("section", [None, {"rows": None}, {"rows": [None]}])
