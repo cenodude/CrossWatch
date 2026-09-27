@@ -2283,7 +2283,7 @@ def _simkl_send_rating(media_type: str, ids: dict[str, Any], rating: int, cfg: d
 
 
 
-def _mdblist_send_rating(media_type: str, ids: dict[str, Any], rating: int, cfg: dict[str, Any], logger: Callable[..., None] | None) -> dict[str, Any]:
+def _mdblist_send_rating(media_type: str, ids: dict[str, Any], rating: float, cfg: dict[str, Any], logger: Callable[..., None] | None) -> dict[str, Any]:
     md_cfg = (cfg.get("mdblist") or {}) if isinstance(cfg, dict) else {}
     apikey = str(md_cfg.get("api_key") or "").strip()
     provider_auth = _provider_auth()
@@ -2301,12 +2301,16 @@ def _mdblist_send_rating(media_type: str, ids: dict[str, Any], rating: int, cfg:
         return {"ok": False, "error": "no_ids"}
 
     base = "https://api.mdblist.com"
-    is_remove = int(rating or 0) <= 0
+    is_remove = float(rating or 0) <= 0
     url = f"{base}/sync/ratings/remove" if is_remove else f"{base}/sync/ratings"
 
     item: dict[str, Any] = {"ids": ids3}
     if not is_remove:
-        item["rating"] = int(rating)
+        from providers.sync.mdblist._ratings import _valid_rating
+
+        item["rating"] = _valid_rating(rating)
+        if item["rating"] is None:
+            return {"ok": False, "error": "invalid_rating"}
     body: dict[str, Any] = {bucket: [item]}
 
     tmo = float(md_cfg.get("timeout") or 10)
@@ -2502,7 +2506,7 @@ def process_rating_webhook(
     if enable_simkl and media_type in ("movie", "show"):
         results["simkl"] = _simkl_send_rating(media_type, ids, rating_val, cfg, logger)
     if enable_mdblist and media_type in ("movie", "show"):
-        results["mdblist"] = _mdblist_send_rating(media_type, ids, rating_val, cfg, logger)
+        results["mdblist"] = _mdblist_send_rating(media_type, ids, rating_precise, cfg, logger)
     ops_enabled = [
         name
         for name, on in (("crosswatch", enable_crosswatch), ("floppy", enable_floppy), ("punchplay", enable_punchplay), ("flicklist", enable_flicklist), ("scrob", enable_scrob), ("wetrakr", enable_wetrakr))

@@ -1324,7 +1324,7 @@ def process_webhook(
                     results["simkl"] = _simkl_send_rating(media_type, ids_all2, int(rating_val or 0), cfg, logger)
                 if enable_mdblist_ratings:
                     sent = True
-                    results["mdblist"] = _mdblist_send_rating(media_type, ids_all2, int(rating_val or 0), cfg, logger)
+                    results["mdblist"] = _mdblist_send_rating(media_type, ids_all2, rating_precise, cfg, logger)
 
         ops_enabled = [
             name
