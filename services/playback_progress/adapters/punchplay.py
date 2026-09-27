@@ -310,10 +310,10 @@ class PunchPlayPlaybackAdapter(PlaybackProgressAdapter):
         item = self._item_from_record(record)
         percent = max(0.0, min(100.0, float(progress_percent or 0.0)))
         duration_ms = _float(item.get("duration_ms"))
-        if duration_ms:
+        if duration_ms and duration_ms > 0:
             item["progress_ms"] = int(duration_ms * (percent / 100.0))
         else:
-            item["progress_percent"] = percent
+            return self._failed("update_progress", instance_id, record, code="missing_duration", message="PunchPlay needs the runtime to update playback by percentage.")
 
         payload = feat_progress._playback_payload(item)
         if payload is None:
@@ -347,7 +347,7 @@ class PunchPlayPlaybackAdapter(PlaybackProgressAdapter):
             item["progress_ms"] = int(duration_ms)
         item["progress_percent"] = 100.0
 
-        payload = feat_progress._playback_payload(item)
+        payload = feat_progress._playback_payload(item, require_position=False)
         if payload is None:
             return self._failed("mark_watched", instance_id, record, code="missing_ids", message="PunchPlay needs a TMDB, IMDb or TVDB id for this item.")
         payload.update(

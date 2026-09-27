@@ -129,6 +129,27 @@ def test_update_progress_posts_incomplete_stop(adapter) -> None:
     assert p["watched_threshold"] == 1.0
 
 
+@pytest.mark.parametrize("duration", [None, 0, -1])
+def test_update_progress_without_runtime_fails_locally(adapter, duration) -> None:
+    a, calls = adapter
+
+    res = a.update_progress(CFG, dict(RECORD, duration_seconds=duration), 50.0, instance_id="default", instance_label="Default")
+
+    assert res.ok is False
+    assert res.error_code == "missing_duration"
+    assert calls == []
+
+
+def test_mark_watched_without_runtime_still_sends_completion(adapter) -> None:
+    a, calls = adapter
+
+    res = a.mark_watched(CFG, dict(RECORD, duration_seconds=None), instance_id="default", instance_label="Default")
+
+    assert res.ok is True
+    assert calls[0]["json"]["watched"] is True
+    assert "duration_seconds" not in calls[0]["json"]
+
+
 def test_mark_watched_posts_stop_with_watched_flag(adapter) -> None:
     a, calls = adapter
 

@@ -140,6 +140,10 @@ class _IPRateGuard:
         with self._lock:
             self._blocked[name] = max(self._blocked.get(name, 0.0), time.monotonic() + delay)
 
+    def cooldown_source(self, name: str) -> str:
+        with self._lock:
+            return "provider" if self._blocked.get(name, 0.0) > time.monotonic() else "local"
+
     def reset(self) -> None:
         with self._lock:
             self._hits.clear()
@@ -365,8 +369,9 @@ def start_device_code(
 
     wait = _AUTH_GUARD.reserve("device_code")
     if wait:
-        log(f"PUNCHPLAY: device code throttled locally (instance={inst})", level="WARN", module="AUTH")
-        return {"ok": False, "error": "rate_limited", "retry_after": wait, "local": True, "instance": inst}
+        source = _AUTH_GUARD.cooldown_source("device_code")
+        log(f"PUNCHPLAY: device code throttled locally (instance={inst} source={source} retry_after={wait}s)", level="WARN", module="AUTH")
+        return {"ok": False, "error": "rate_limited", "retry_after": wait, "local": True, "rate_limit_source": source, "instance": inst}
 
     try:
         r = requests.post(
@@ -379,9 +384,15 @@ def start_device_code(
         return {"ok": False, "error": "network_error", "detail": str(e), "instance": inst}
 
     if r.status_code == 429:
-        retry = _retry_after(r)
-        _AUTH_GUARD.note_429("device_code", retry or 60)
-        return {"ok": False, "error": "rate_limited", "retry_after": retry, "instance": inst}
+        retry = _retry_after(r) or 60
+        _AUTH_GUARD.note_429("device_code", retry)
+        try:
+            body = r.json()
+            request_id = str(body.get("request_id") or "") if isinstance(body, Mapping) else ""
+        except ValueError:
+            request_id = ""
+        log(f"PUNCHPLAY: device code rejected (instance={inst} status=429 retry_after={retry}s request_id={request_id or '-'})", level="WARN", module="AUTH")
+        return {"ok": False, "error": "rate_limited", "retry_after": retry, "rate_limit_source": "provider", "request_id": request_id, "instance": inst}
     if r.status_code >= 400:
         return {"ok": False, "error": _error_of(r) or "http_error", "status": int(r.status_code), "instance": inst}
 

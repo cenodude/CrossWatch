@@ -75,6 +75,26 @@ function setup() {
   };
 }
 
+for (const [source, local, expected] of [
+  ["local", true, "CrossWatch device-code limit reached"],
+  ["provider", false, "PunchPlay requested a cooldown"],
+  ["provider", true, "PunchPlay requested a cooldown"],
+]) {
+  test(`PunchPlay displays ${source} cooldown with local=${local} and suppresses duplicate starts`, async () => {
+    const app = setup();
+    const button = app.node("punchplay_device_start", "Connect PunchPlay");
+    const status = app.node("punchplay_msg");
+    app.response = { ok: true, data: { ok: false, error: "rate_limited", local, rate_limit_source: source, retry_after: 1671 } };
+    app.load("punchplay");
+    await Promise.all([button.listeners.click(), button.listeners.click()]);
+    assert.equal(app.requests.length, 1);
+    assert.equal(status.textContent, expected + " - try again in 27m 51s");
+    assert.equal(button.disabled, false);
+    await button.listeners.click();
+    assert.equal(app.requests.length, 2);
+  });
+}
+
 test("connected buttons offer Reconnect and restore their original labels per profile", () => {
   const app = setup(), button = app.node("btn-connect-simkl", "Connect SIMKL");
   app.shared.setConnectLocked(button, true);

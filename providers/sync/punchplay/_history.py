@@ -173,11 +173,11 @@ def _collect_history_rows(adapter: Any, rows: Any, collected: dict[str, dict[str
     return len(row_list)
 
 
-def _index_from_snapshot(adapter: Any, *, per_page: int) -> dict[str, dict[str, Any]]:
+def _index_from_snapshot(adapter: Any) -> dict[str, dict[str, Any]]:
     collected: dict[str, dict[str, Any]] = {}
     pages = 0
     rows = 0
-    for page in snapshot_pages(adapter, "history", feature=FEATURE, limit=per_page):
+    for page in snapshot_pages(adapter, "history", feature=FEATURE):
         pages += 1
         rows += _collect_history_rows(adapter, page, collected)
     _dbg(FEATURE, "snapshot_scanned", rows=rows, indexed=len(collected), pages=pages)
@@ -220,7 +220,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     per_page = max(1, min(cfg_int(section, "history_per_page", HISTORY_PAGE_MAX), HISTORY_PAGE_MAX))
     max_pages = cfg_int(section, "history_max_pages", 5000)
 
-    collected = _index_from_snapshot(adapter, per_page=per_page)
+    collected = _index_from_snapshot(adapter)
     source = "snapshot"
     if not collected:
         collected = _index_from_history_endpoint(adapter, per_page=per_page, max_pages=max_pages)

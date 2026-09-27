@@ -293,6 +293,7 @@ def test_device_code_is_capped_locally_at_ten_per_hour(punchplay, monkeypatch: p
     assert all(r["ok"] for r in results[:10])
     assert results[10]["error"] == "rate_limited"
     assert results[10]["local"] is True
+    assert results[10]["rate_limit_source"] == "local"
     assert results[10]["retry_after"] > 0
 
 
@@ -322,7 +323,33 @@ def test_server_429_blocks_further_local_attempts(punchplay, monkeypatch: pytest
     assert first["error"] == "rate_limited"
     assert len(post.calls) == 1
     assert second.get("local") is True
+    assert first["rate_limit_source"] == "provider"
+    assert second["rate_limit_source"] == "provider"
     assert second["retry_after"] >= 120
+
+
+def test_first_device_request_surfaces_provider_cooldown(punchplay, monkeypatch: pytest.MonkeyPatch) -> None:
+    pp, store = punchplay
+    post = FakePost([ResponseStub(429, {"error": "rate_limited", "request_id": "test-request"}, headers={"Retry-After": "1671"})])
+    monkeypatch.setattr(pp.requests, "post", post)
+    logs = []
+    monkeypatch.setattr(pp, "log", lambda message, **kw: logs.append(message))
+    result = pp.start_device_code(store["cfg"])
+    assert len(post.calls) == 1
+    assert result["retry_after"] == 1671
+    assert result["rate_limit_source"] == "provider"
+    assert result["request_id"] == "test-request"
+    assert any("status=429" in entry and "retry_after=1671s" in entry and "test-request" in entry for entry in logs)
+
+
+def test_device_cooldown_without_header_matches_local_guard(punchplay, monkeypatch: pytest.MonkeyPatch) -> None:
+    pp, store = punchplay
+    post = FakePost([ResponseStub(429, {"error": "rate_limited"})])
+    monkeypatch.setattr(pp.requests, "post", post)
+    result = pp.start_device_code(store["cfg"])
+    assert result["retry_after"] == 60
+    assert pp.start_device_code(store["cfg"])["rate_limit_source"] == "provider"
+    assert len(post.calls) == 1
 
 
 def test_forced_refresh_is_throttled_so_401s_cannot_storm(monkeypatch: pytest.MonkeyPatch) -> None:
