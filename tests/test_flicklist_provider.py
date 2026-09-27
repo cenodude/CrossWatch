@@ -43,14 +43,14 @@ CFG = {
 
 
 def test_sync_manifest_declares_full_provider_features() -> None:
-    from providers.sync._mod_FLICKLIST import OPS, get_manifest
+    from providers.sync._mod_FLICKLIST import OPS, __VERSION__, get_manifest
 
     manifest = dict(get_manifest())
     features = dict(manifest["features"])
     caps = dict(manifest["capabilities"])
 
     assert manifest["name"] == "FLICKLIST"
-    assert manifest["version"] == "0.1"
+    assert manifest["version"] == __VERSION__
     assert features == {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": True}
     assert OPS.features() == features
     assert caps["watchlist"]["write"] is True

@@ -39,6 +39,11 @@ MIGRATION_OVERRIDE_KEYS: tuple[str, ...] = (
     "mdblist.history_max_backoff_ms",
     "mdblist.history_since",
 
+    "publicmetadb.watchlist_page_size",
+    "publicmetadb.history_per_page",
+    "publicmetadb.progress_per_page",
+    "flicklist.write_batch_size",
+
     # Tautulli
     "tautulli.history.per_page",
     "tautulli.history.max_pages",
