@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 from ._scope import provider_call
+from ..interactive_reads import read_once, replaying
 
 from collections.abc import Mapping
 from typing import Any, Callable
@@ -45,6 +46,7 @@ def canonicalize_index(idx_raw: Any, *, feature: str) -> "SnapIndex":
             if not isinstance(raw, Mapping):
                 continue
             item = dict(raw)
+            item.pop("_cw_simkl_native", None)
             key = canonical_key(item)
             if key:
                 canon[key] = item
@@ -53,6 +55,7 @@ def canonicalize_index(idx_raw: Any, *, feature: str) -> "SnapIndex":
             if not isinstance(raw, Mapping):
                 continue
             item = dict(raw)
+            item.pop("_cw_simkl_native", None)
             computed = canonical_key(item) or ""
             provider_key = str(k or "").strip().lower() if isinstance(k, str) and k else ""
             if str(feature or "").lower() == "history" and is_history_event_key(provider_key):
@@ -66,6 +69,8 @@ def canonicalize_index(idx_raw: Any, *, feature: str) -> "SnapIndex":
 
 
 def needs_post_apply_refresh(result: Mapping[str, Any] | None) -> bool:
+    if replaying():
+        return False
     r = result or {}
     not_seen = r.get("accepted_not_seen_live_keys") or []
     if not_seen:
@@ -365,7 +370,7 @@ def module_checkpoint(ops: InventoryOps, config: Mapping[str, Any], feature: str
         return None
 
     try:
-        raw = provider_call(acts_fn, config)
+        raw = provider_call(lambda cfg: read_once(["activities", ops.name()], lambda: acts_fn(cfg)), config)
     except Exception:
         return None
 
@@ -749,7 +754,10 @@ def build_snapshots_for_feature(
                     continue
 
         try:
-            idx_raw = provider_call(ops.build_index, config, feature=feature)  # type: ignore[call-arg]
+            idx_raw = provider_call(lambda cfg: read_once(["inventory", name, feature], lambda: ops.build_index(cfg, feature=feature)), config)
+            normalize = getattr(ops, "replay_index", None)
+            if replaying() and callable(normalize):
+                idx_raw = provider_call(normalize, config, feature=feature, items=idx_raw)
         except Exception as e:
             emit_info(
                 f"[!] snapshot.failed provider={name} feature={feature} error={e}"

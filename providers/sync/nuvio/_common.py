@@ -3,6 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from cw_platform.interactive_reads import retained_read
+
 import threading
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -454,6 +456,7 @@ def _rows(data: Any, reason: str) -> list[Mapping[str, Any]]:
     return [row for row in data if isinstance(row, Mapping)]
 
 
+@retained_read
 def pull_watch_progress_rows(adapter: Any, *, limit: int = 1000, max_pages: int = 1000) -> list[Mapping[str, Any]]:
     pid = selected_profile_id(adapter)
     per_page = max(1, min(int(limit or 1000), 1000))
@@ -474,6 +477,7 @@ def pull_watch_progress_rows(adapter: Any, *, limit: int = 1000, max_pages: int 
     return out
 
 
+@retained_read
 def pull_watched_rows(adapter: Any, *, page_size: int = 900, max_pages: int = 1000) -> list[Mapping[str, Any]]:
     pid = selected_profile_id(adapter)
     size = max(1, min(int(page_size or 900), 1000))
@@ -487,6 +491,7 @@ def pull_watched_rows(adapter: Any, *, page_size: int = 900, max_pages: int = 10
     return out
 
 
+@retained_read
 def pull_library_rows(adapter: Any, *, limit: int = 500, max_pages: int = 1000) -> list[Mapping[str, Any]]:
     pid = selected_profile_id(adapter)
     size = max(1, min(int(limit or 500), 500))

@@ -2,6 +2,7 @@
 # Plex Module for progress (resume) synchronization
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
+from cw_platform.interactive_reads import replaying
 
 import os
 import time
@@ -922,12 +923,14 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                 else:
                     srv.query("/:/unscrobble", params={"key": str(rk), "identifier": "com.plexapp.plugins.library"})  # type: ignore[attr-defined]
 
-                try:
-                    verify_obj = srv.fetchItem(int(rk))  # type: ignore[attr-defined]
-                    remaining = _to_int(getattr(verify_obj, "viewOffset", None))
-                except Exception:
-                    remaining = _to_int(getattr(obj, "viewOffset", None))
-
+                if replaying():
+                    remaining = None
+                else:
+                    try:
+                        verify_obj = srv.fetchItem(int(rk))  # type: ignore[attr-defined]
+                        remaining = _to_int(getattr(verify_obj, "viewOffset", None))
+                    except Exception:
+                        remaining = _to_int(getattr(obj, "viewOffset", None))
                 context = {
                     "provider": "plex",
                     "provider_instance": instance,

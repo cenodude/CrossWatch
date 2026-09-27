@@ -84,7 +84,7 @@ def run_playlist_mappings(
                 emit=ctx.emit,
                 **review_kwargs,
             )
-            if not dry_run and isinstance(full_cfg, dict):
+            if not dry_run and review is None and isinstance(full_cfg, dict):
                 try:
                     from services import playlists as playlists_svc
 

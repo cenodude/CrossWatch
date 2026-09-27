@@ -1,6 +1,8 @@
 # CrossWatch - FlickList playlist sync
 from __future__ import annotations
 
+from cw_platform.interactive_reads import retained_read
+
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -84,6 +86,7 @@ def _resource_from_row(adapter: Any, row: Mapping[str, Any]) -> PlaylistResource
     )
 
 
+@retained_read
 def list_resources(adapter: Any) -> list[PlaylistResource]:
     resp = flicklist_request(adapter, "GET", URL_LISTS)
     if not ok_status(resp):

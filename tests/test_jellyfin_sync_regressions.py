@@ -302,3 +302,31 @@ def test_progress_newer_target_is_reported_as_skipped(monkeypatch):
     assert raw["confirmed_keys"] == []
     assert raw["skipped_keys"] == ["tmdb:1"]
     assert raw["results"][0]["reason"] == "target_newer"
+
+
+def test_interactive_history_uses_captured_states_and_skips_verification(monkeypatch, empty_history_state):
+    from unittest.mock import Mock
+    from cw_platform.interactive_reads import ReviewReads, use_review_reads
+    from providers.sync.jellyfin import _id_lookup
+
+    adapter = SimpleNamespace(client=Library(1), cfg=SimpleNamespace(user_id="user"))
+    monkeypatch.setattr(history, "_try_resolve_iid", lambda adapter, item: item["ids"]["tmdb"])
+    monkeypatch.setattr(_id_lookup, "prepare", lambda *args: None)
+    monkeypatch.setattr(history, "_dst_user_states", Mock(side_effect=AssertionError("unexpected reread")))
+    write = Mock(return_value=True)
+    monkeypatch.setattr(history, "_mark_played", write)
+    monkeypatch.setattr(history, "_normalize_watched", lambda *args, **kwargs: False)
+    reads = ReviewReads()
+    try:
+        with use_review_reads(reads, collecting=True):
+            initial = history.build_index(adapter)
+        before = len(adapter.client.calls)
+        source = {"type": "movie", "ids": {"tmdb": "999"}, "watched_at": "2026-09-01T00:00:00Z"}
+        with use_review_reads(reads):
+            count, unresolved = history.add(adapter, [source])
+        assert (count, unresolved) == (1, [])
+        assert write.call_count == 1
+        assert len(adapter.client.calls) == before
+        assert adapter._history_write_meta["accepted_not_seen_live_keys"] == ["tmdb:999"]
+    finally:
+        reads.close()

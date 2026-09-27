@@ -190,3 +190,30 @@ def test_mdblist_module_exposes_progress_feature() -> None:
     assert mdblist_mod.OPS.capabilities()["progress"]["remove"] is True
     assert mdblist_mod.OPS.capabilities()["progress"]["completion_policy"]["progress_write"]["mode"] == "none"
     assert mdblist_mod.OPS.capabilities()["progress"]["completion_policy"]["stop_scrobble"]["marks_watched_percent"] == 80
+
+
+def test_interactive_writes_reuse_initial_inventory(monkeypatch):
+    from cw_platform.interactive_reads import ReviewReads, use_review_reads
+    from providers.sync.mdblist import _progress
+
+    adapter = FakeAdapter([movie_row()])
+    reads = ReviewReads()
+    try:
+        with use_review_reads(reads, collecting=True):
+            initial = _progress.build_index(adapter)
+        item = {**next(iter(initial.values())), "progress_percent": 70, "progress_ms": 420000, "duration_ms": 600000,
+                "progress_at": "2026-07-25T13:00:00Z"}
+        before = len([call for call in adapter.client.calls if call[0] == "GET"])
+        with use_review_reads(reads):
+            result = _progress.add(adapter, [item])
+            assert result["ok"]
+            assert result["accepted_keys"]
+            assert result["presence_confirmed_keys"] == []
+            again = _progress.add(adapter, [item])
+            assert again["skipped"] == 1
+            removed = _progress.remove(adapter, [item])
+            assert removed["ok"] and removed["count"] == 1
+        assert len([call for call in adapter.client.calls if call[0] == "GET"]) == before
+        assert not adapter.client.rows
+    finally:
+        reads.close()

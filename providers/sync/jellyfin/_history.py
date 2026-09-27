@@ -2,6 +2,7 @@
 # JELLYFIN Module for history sync functions
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
+from cw_platform.interactive_reads import retained_read, replaying, accepted_result, history_states
 
 import json
 import os
@@ -494,6 +495,9 @@ _ST_READBACK = "readback_mismatch"
 
 def _set_write_meta(adapter: Any, meta: Mapping[str, Any]) -> None:
     try:
+        if replaying():
+            keys = [row["key"] for row in meta.get("results", []) if row.get("status") == _ST_WRITTEN]
+            meta = accepted_result(dict(meta), keys)
         setattr(adapter, "_history_write_meta", dict(meta))
     except Exception:
         pass
@@ -567,6 +571,7 @@ def _dst_user_states(http: Any, uid: str, iids: Iterable[str]) -> dict[str, tupl
 
 
 # event index (watched_at)
+@retained_read
 def build_index(
     adapter: Any,
     since: Any | None = None,
@@ -995,9 +1000,13 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     if total:
         _info("write_start", op="add", count=total)
 
+    review = history_states(build_index(adapter), "jellyfin", _parse_iso_to_epoch) if replaying() else {}
     processed = 0
     for chunk in chunked(mids, qlim):
-        states = _dst_user_states(http, uid, [iid for _, iid in chunk])
+        if replaying():
+            states = review
+        else:
+            states = _dst_user_states(http, uid, [iid for _, iid in chunk])
         pending_verify: list[tuple[str, str, int]] = []
         for k, iid in chunk:
             src_ts = _parse_iso_to_epoch(wants[k].get("watched_at"))
@@ -1055,7 +1064,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 _dbg("write_progress", op="add", done=processed, total=total, ok=ok, unresolved=len(unresolved))
             sleep_ms(delay)
 
-        if pending_verify:
+        if pending_verify and not replaying():
             final = _dst_user_states(http, uid, [iid for _, iid, _ in pending_verify])
             for k, iid, req_ts in pending_verify:
                 played, _dst = final.get(iid, (False, None))

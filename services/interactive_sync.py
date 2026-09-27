@@ -15,6 +15,7 @@ import uuid
 from cw_platform.orchestrator import Orchestrator
 from cw_platform.orchestrator._interactive import InteractivePlan, fingerprint
 from cw_platform.value_coercion import coerce_bool
+from cw_platform.interactive_reads import ReviewReads
 from .interactive_sync_store import ReviewStore
 from .interactive_sync_progress import SyncProgress
 from .interactive_sync_report import SyncReport
@@ -46,6 +47,7 @@ class Session:
     selection_version: int = 0
     apply_review: dict[str, Any] | None = None
     report: dict[str, Any] | None = None
+    reads: ReviewReads | None = None
 
     def public(self):
         return dict(ok=True, id=self.id, pair_id=self.pair_id, pair=self.pair, status=self.status,
@@ -58,6 +60,9 @@ class Session:
         if self.store is not None:
             self.store.close()
             self.store = None
+        if self.reads is not None:
+            self.reads.close()
+            self.reads = None
 
 
 def prune():
@@ -79,9 +84,10 @@ def mapping_version(cfg=None):
     return fingerprint([load_policy(CONFIG_BASE()), load_overrides(), stamp])
 
 
-def build(session: Session, cfg: dict[str, Any], choices: dict[str, str], *, store=None, selected=None) -> tuple[InteractivePlan, dict[str, Any]]:
+def build(session: Session, cfg: dict[str, Any], choices: dict[str, str], *, store=None, selected=None, collecting=False) -> tuple[InteractivePlan, dict[str, Any]]:
     plan = InteractivePlan(choices=dict(choices), planned_at=session.planned_at,
-                           record_rows=store is not None or selected is None, selected=selected or set(), copy_rows=store is None)
+                           record_rows=store is not None or selected is None, selected=selected or set(), copy_rows=store is None,
+                           reads=session.reads, collecting=collecting)
     plan.on_progress = session.progress.event
     if store is not None:
         plan.rows = store.rows
@@ -112,13 +118,28 @@ def _empty_review(plan, summary):
             and not any(summary.get(key) for key in ("cancelled", "errors", "unresolved", "blocked")))
 
 
-def refresh(session: Session, cfg: dict[str, Any], choices: dict[str, str], *, restart_progress=True, corrections=(), complete_empty=True):
+def refresh(session: Session, cfg: dict[str, Any], choices: dict[str, str], *, restart_progress=True, corrections=(), complete_empty=True, reread=True):
+    if not reread and session.reads is None:
+        session.status = "error"
+        session.message = "No captured provider data is available. Refresh provider data first."
+        session.progress.finish(session.status, session.message)
+        return
+    if not reread and fingerprint(cfg) != session.config_hash:
+        session.status = "review"
+        session.message = "Settings changed. Refresh provider data before recalculating this review."
+        session.progress.finish(session.status, session.message)
+        return
+    if reread or session.reads is None:
+        if session.reads is not None:
+            session.reads.close()
+        session.reads = ReviewReads()
+        reread = True
     if restart_progress:
-        session.progress.begin("preview")
+        session.progress.begin("preview" if reread else "recalculate")
     version = mapping_version(cfg)
     store = ReviewStore()
     try:
-        plan, summary = build(session, cfg, choices, store=store)
+        plan, summary = build(session, cfg, choices, store=store, collecting=reread)
         _finish_review(session, cfg, version, plan, summary, store, corrections=corrections)
     except Exception:
         if session.store is not store:
@@ -129,7 +150,7 @@ def refresh(session: Session, cfg: dict[str, Any], choices: dict[str, str], *, r
         # so provider baselines and the state-backed inventory are still saved.
         with LOCK:
             session.status = "applying"
-            session.message = "No changes proposed. Checking providers and saving the sync baseline."
+            session.message = "No changes proposed. Saving the sync baseline."
         apply(session, cfg, set())
 
 
@@ -139,7 +160,8 @@ def _finish_review(session, cfg, version, plan, summary, store, *, corrections=(
     if summary.get("ok"):
         store.select_corrected(corrections)
     with LOCK:
-        session.close()
+        if session.store is not None:
+            session.store.close()
         session.store = store
         session.plan = plan
         session.summary = summary
@@ -160,7 +182,11 @@ def _finish_review(session, cfg, version, plan, summary, store, *, corrections=(
 
 
 def refresh_mappings(session, cfg, choices, corrections):
-    refresh(session, cfg, choices, corrections=corrections)
+    refresh(session, cfg, choices, corrections=corrections, reread=False)
+
+
+def recalculate(session, cfg, choices):
+    refresh(session, cfg, choices, reread=False)
 
 
 def _apply_needs_review(session, selected, reason):
@@ -177,13 +203,22 @@ def _apply_needs_review(session, selected, reason):
 def apply(session: Session, cfg: dict[str, Any], selected: set[str]):
     from api import syncAPI
 
+    if session.reads is None:
+        session.status = "error"
+        session.message = "This review can no longer be applied. Refresh provider data first."
+        session.progress.finish(session.status, session.message)
+        return
     session.progress.begin("apply")
     session.apply_review = None
     session.report = None
     report = SyncReport(session.store, session.pair)
-    if fingerprint(cfg) != session.config_hash or mapping_version(cfg) != session.mapping_version:
-        refresh(session, cfg, session.plan.choices, restart_progress=False, complete_empty=False)
-        _apply_needs_review(session, selected, "Settings or mappings changed.")
+    if fingerprint(cfg) != session.config_hash:
+        session.status = "review"
+        _apply_needs_review(session, selected, "Settings changed. Refresh provider data first.")
+        return
+    if mapping_version(cfg) != session.mapping_version:
+        refresh(session, cfg, session.plan.choices, restart_progress=False, complete_empty=False, reread=False)
+        _apply_needs_review(session, selected, "Mappings changed.")
         return
     version = mapping_version(cfg)
     store = ReviewStore()
@@ -195,15 +230,15 @@ def apply(session: Session, cfg: dict[str, Any], selected: set[str]):
                 for detail in store.recheck_details(session.store, selected - plan.seen):
                     LOG.info("interactive_sync_proposal_changed session=%s detail=%s", session.id, json.dumps(detail, sort_keys=True))
             _finish_review(session, cfg, version, plan, summary, store)
-            reason = "The provider recheck could not be completed." if not summary.get("ok") else "Some selected proposals changed or are no longer available."
+            reason = "The local plan check could not be completed." if not summary.get("ok") else "Some selected proposals changed or are no longer available."
             if empty_changed and summary.get("ok"):
-                reason = "Provider data changed or needs attention."
+                reason = "The plan changed or needs attention."
             _apply_needs_review(session, selected, reason)
             return
     finally:
         if session.store is not store:
             store.close()
-    execution = InteractivePlan(preview=False, selected=selected, choices=dict(plan.choices), planned_at=session.planned_at, record_rows=False)
+    execution = InteractivePlan(preview=False, selected=selected, choices=dict(plan.choices), planned_at=session.planned_at, record_rows=False, reads=session.reads)
     def progress(event):
         session.progress.event(event)
         report.event(event)
@@ -216,6 +251,11 @@ def apply(session: Session, cfg: dict[str, Any], selected: set[str]):
         syncAPI._run_pairs_thread_entry("interactive-" + session.id, {"pair_id": session.pair_id}, interactive=execution)
     finally:
         with LOCK:
+            if session.reads is not None:
+                session.reads.close()
+                session.reads = None
+                session.plan.reads = None
+                execution.reads = None
             session.report = report.finish(session, execution, execution.result)
     with LOCK:
         result = execution.result

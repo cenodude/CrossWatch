@@ -3,6 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from cw_platform.interactive_reads import retained_read
+
 from typing import Any, Iterable, Mapping
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal
@@ -117,6 +119,7 @@ def _row_to_minimal(row: Mapping[str, Any], list_id: int) -> dict[str, Any] | No
     return out
 
 
+@retained_read
 def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     list_id = resolve_list_id(adapter)
     if not list_id:

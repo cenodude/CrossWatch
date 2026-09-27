@@ -248,3 +248,25 @@ def test_built_in_lists_cannot_be_renamed_or_deleted(monkeypatch):
         pl.rename(FakeAdapter(), pl.WATCHLIST_ID, "Nope")
     with pytest.raises(RuntimeError):
         pl.delete(FakeAdapter(), "discovery:trakt:movies:popular")
+
+
+def test_interactive_create_records_returned_resource_without_rereading(monkeypatch):
+    from cw_platform.interactive_reads import ReviewReads, use_review_reads
+
+    calls = _router(monkeypatch, {
+        ("GET", "/users/me/lists"): FakeResp(200, [LIST_ROW]),
+        ("POST", "/users/me/lists"): FakeResp(201, {"name": "New", "ids": {"trakt": 456}}),
+    })
+    adapter = FakeAdapter()
+    reads = ReviewReads()
+    try:
+        with use_review_reads(reads, collecting=True):
+            pl.list_resources(adapter)
+        before = len([call for call in calls if call["method"] == "GET"])
+        with use_review_reads(reads):
+            created = pl.create(adapter, "New")
+            assert created.id == "456"
+            assert "456" in {resource.id for resource in pl.list_resources(adapter)}
+        assert len([call for call in calls if call["method"] == "GET"]) == before
+    finally:
+        reads.close()

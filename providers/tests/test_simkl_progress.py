@@ -369,3 +369,30 @@ def test_progress_mapping_option_survives_api_normalization():
     cfg = {"anime_mapping": {"enabled": True, "features": ["progress"]}}
     assert not anime_mapping_pair_feature_options(cfg, {}, "progress", "PLEX", "SIMKL")["use_anime_mapping"]
     assert anime_mapping_pair_feature_options(cfg, features["progress"], "progress", "PLEX", "SIMKL")["use_anime_mapping"]
+
+
+def test_interactive_writes_reuse_initial_inventory(monkeypatch):
+    from cw_platform.interactive_reads import ReviewReads, use_review_reads
+    from providers.sync.simkl import _progress
+
+    adapter = FakeAdapter([movie_row()])
+    reads = ReviewReads()
+    try:
+        with use_review_reads(reads, collecting=True):
+            initial = _progress.build_index(adapter)
+        item = {**next(iter(initial.values())), "progress_percent": 70, "progress_ms": 420000, "duration_ms": 600000,
+                "progress_at": "2026-07-25T13:00:00Z"}
+        before = len([call for call in adapter.client.calls if call[0] == "GET"])
+        with use_review_reads(reads):
+            result = _progress.add(adapter, [item])
+            assert result["ok"]
+            assert result["accepted_keys"]
+            assert result["presence_confirmed_keys"] == []
+            again = _progress.add(adapter, [item])
+            assert again["skipped"] == 1
+            removed = _progress.remove(adapter, [item])
+            assert removed["ok"] and removed["count"] == 1
+        assert len([call for call in adapter.client.calls if call[0] == "GET"]) == before
+        assert ("DELETE", "https://api.simkl.com/sync/playback/1001", None) in adapter.client.calls
+    finally:
+        reads.close()

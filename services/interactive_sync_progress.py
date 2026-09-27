@@ -20,8 +20,8 @@ class SyncProgress:
             self.operation = operation
             self.started = self.changed = self.activity = time.monotonic()
             self.finished = None
-            self.stage = "connecting" if operation == "preview" else "verifying"
-            self.label = "Checking provider connections" if operation == "preview" else "Rechecking providers before applying"
+            self.stage = "connecting" if operation == "preview" else "planning"
+            self.label = "Checking provider connections" if operation == "preview" else "Recalculating changes locally" if operation == "recalculate" else "Checking selections locally"
             self.provider = self.feature = ""
             self.done, self.total, self.unit = 0, None, "items"
             self.requests = 0
@@ -84,7 +84,7 @@ class SyncProgress:
                 self.set_stage("connecting" if self.operation == "preview" else "verifying", f"Checked {provider} connection", provider=provider)
             elif name in ("snapshot:start", "snapshot:progress"):
                 stage = "reading" if self.operation == "preview" else "verifying"
-                self.set_stage(stage, f"{'Reading' if self.operation == 'preview' else 'Rechecking'} {subject}", provider=provider, feature=feature, done=done, total=total, unit="items read")
+                self.set_stage(stage, f"{'Reading' if self.operation == 'preview' else 'Using captured data for'} {subject}", provider=provider, feature=feature, done=done, total=total, unit="items read" if self.operation == "preview" else "captured items")
                 self.reads[(provider, feature)] = max(self.reads.get((provider, feature), 0), done)
             elif name == "snapshot:done":
                 self.reads[(provider, feature)] = self.number(event.get("count"))

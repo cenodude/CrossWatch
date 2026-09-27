@@ -1,6 +1,8 @@
 # CrossWatch - FlickList playback progress sync
 from __future__ import annotations
 
+from cw_platform.interactive_reads import retained_read
+
 from collections.abc import Iterable, Mapping
 from typing import Any
 
@@ -33,6 +35,7 @@ def _rows(data: Any) -> list[Any]:
     return []
 
 
+@retained_read
 def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     resp = flicklist_request(adapter, "GET", URL_PLAYBACK)
     if not ok_status(resp):

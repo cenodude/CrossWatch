@@ -326,3 +326,38 @@ def test_a_type_the_provider_cannot_create_is_refused(config_base, monkeypatch) 
 
     assert res["ok"] is False and "can only create a playlist" in res["error"]
     assert provs["JELLYFIN"].created == []
+
+
+@pytest.mark.parametrize("entry_ids_available", [True, False])
+def test_interactive_review_and_apply_reuse_playlist_snapshots(world, monkeypatch, entry_ids_available):
+    from unittest.mock import Mock
+    from cw_platform.interactive_reads import ReviewReads, use_review_reads
+    from cw_platform.orchestrator._interactive import InteractivePlan
+
+    cfg, src, dst, providers = world
+    dst["L2"] = {"name": "dst", "items": [_movie(3), _movie(1)]}
+    endpoint = cfg["playlists"]["endpoints"][1]
+    endpoint.pop("pending_create")
+    endpoint["playlist_id"] = "L2"
+    mapping = R.resolve_mapping_by_id(cfg, "MAP-01")
+    mapping["order"] = "preserve"
+    for ops in providers.values():
+        monkeypatch.setattr(ops, "get_playlist_snapshot", Mock(wraps=ops.get_playlist_snapshot))
+    if not entry_ids_available:
+        monkeypatch.setattr(providers["PLEX"], "reorder_playlist_items", Mock(return_value={"ok": False, "error": "playlist_item_ids_unavailable"}))
+    reads = ReviewReads()
+    try:
+        preview = InteractivePlan()
+        with use_review_reads(reads, collecting=True):
+            R.run_mapping(cfg, mapping, providers=providers, dry_run=True, interactive=preview)
+        with use_review_reads(reads):
+            R.run_mapping(cfg, mapping, providers=providers, dry_run=True, interactive=InteractivePlan())
+            result = R.run_mapping(cfg, mapping, providers=providers,
+                                   interactive=InteractivePlan(preview=False, selected=set(preview.rows)))
+        assert result["ok"] and result["added"] == 1
+        assert not result["unresolved"]
+        if not entry_ids_available:
+            assert any("order was deferred" in warning for warning in result["warnings"])
+        assert all(ops.get_playlist_snapshot.call_count == 1 for ops in providers.values())
+    finally:
+        reads.close()

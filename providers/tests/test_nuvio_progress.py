@@ -545,3 +545,26 @@ def test_profile_id_is_sent_with_progress_requests() -> None:
     calls = [body for name, body in adapter.client.calls if name in {"sync_pull_watch_progress", "sync_push_watch_progress"}]
     assert calls
     assert {body["p_profile_id"] for body in calls} == {3}
+
+
+def test_interactive_progress_uses_retained_rows_for_write_and_remove():
+    from cw_platform.interactive_reads import ReviewReads, use_review_reads
+    from providers.sync.nuvio import _progress
+
+    adapter = FakeAdapter([_row("tt1234567")])
+    reads = ReviewReads()
+    try:
+        with use_review_reads(reads, collecting=True):
+            initial = _progress.build_index(adapter)
+        item = {**next(iter(initial.values())), "progress_ms": 300000, "progress_percent": 50,
+                "progress_at": "2026-09-25T13:00:00Z"}
+        before = sum(name == "sync_pull_watch_progress" for name, _ in adapter.client.calls)
+        with use_review_reads(reads):
+            result = _progress.add(adapter, [item])
+            assert result["ok"] and result["accepted_keys"] == ["imdb:tt1234567"]
+            result = _progress.remove(adapter, [item])
+            assert result["ok"] and result["count"] == 1
+        assert sum(name == "sync_pull_watch_progress" for name, _ in adapter.client.calls) == before
+        assert not adapter.client.rows
+    finally:
+        reads.close()

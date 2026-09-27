@@ -2,6 +2,7 @@
 # Plex Module for history synchronization
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
+from cw_platform.interactive_reads import retained_read, replace_retained, replaying
 
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -1188,9 +1189,11 @@ def _catalog_cache_key(adapter: Any, allow: set[str]) -> tuple[Any, ...]:
 
 
 def _store_history_catalog(adapter: Any, allow: set[str], cat: HistoryCatalog) -> None:
+    replace_retained(_get_history_catalog, cat, allow)
     _INDEX_CACHE.catalog = {"cat": cat, "ts": time.monotonic(), "key": _catalog_cache_key(adapter, allow)}
 
 
+@retained_read
 def _get_history_catalog(adapter: Any, allow: set[str], *, force: bool = False) -> HistoryCatalog:
     key, shared = _index_cache_context(adapter, allow, "history")
     cached = getattr(_INDEX_CACHE, "catalog", None)
@@ -1849,6 +1852,8 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                     unresolved.append({"item": id_minimal(item), "key": key, "hint": "scrobble_failed", "reason": DATE_WRITE_FAILED})
                     meta["unresolved_keys"].append(key)
                     _bump_reason(meta, DATE_WRITE_FAILED)
+            if replaying():
+                replace_retained(_get_history_catalog, cat, allow)
 
         _shadow_add_batch(shadow_batch)
         _set_write_meta(adapter, meta)

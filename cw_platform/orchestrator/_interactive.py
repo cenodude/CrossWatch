@@ -36,6 +36,8 @@ class InteractivePlan:
     planned_at: int = field(default_factory=lambda: int(time.time()))
     on_progress: Callable[[Any], None] | None = None
     on_result: Callable[..., None] | None = None
+    reads: Any = None
+    collecting: bool = False
 
     def conflict(self, feature, key, a, b, left, right, default):
         cid = fingerprint([feature, key, a, b, left, right])

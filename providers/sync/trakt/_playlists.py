@@ -2,6 +2,7 @@
 # TRAKT Module for playlist sync functions
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
+from cw_platform.interactive_reads import remember_resource, retained_read, replaying
 
 import time
 from typing import Any, Iterable, Mapping, Sequence
@@ -204,6 +205,7 @@ def _resource_from_list(adapter: Any, row: Mapping[str, Any]) -> PlaylistResourc
     )
 
 
+@retained_read
 def list_resources(adapter: Any) -> list[PlaylistResource]:
     sess = adapter.client.session
     headers = headers_for_adapter(adapter)
@@ -289,6 +291,7 @@ def _discovery_snapshot(adapter: Any, feed: Mapping[str, Any]) -> PlaylistSnapsh
     return PlaylistSnapshot(resource=resource, items=items, checkpoint=None)
 
 
+@retained_read
 def get_snapshot(adapter: Any, playlist_id: Any) -> PlaylistSnapshot:
     if _is_watchlist_id(playlist_id):
         resource = _watchlist_resource(adapter)
@@ -411,6 +414,7 @@ def create(adapter: Any, name: str, *, media_type: str | None = None, dry_run: b
     if res is None:
         raise RuntimeError("trakt create list returned no id")
     _info("create_done", list_id=res.id, name=res.name)
+    remember_resource(list_resources, adapter, res)
     return res
 
 
@@ -613,13 +617,20 @@ def reorder(adapter: Any, playlist_id: Any, ordered_keys: Sequence[str]) -> dict
         return {"ok": True, "count": 0, "reordered": 0, "unsupported": True}
 
     lid = _list_id(playlist_id)
-    snap = get_snapshot(adapter, lid)
+    try:
+        snap = get_snapshot(adapter, lid)
+    except RuntimeError:
+        if replaying():
+            return {"ok": False, "count": 0, "error": "playlist_item_ids_unavailable"}
+        raise
     key_to_item_id: dict[str, Any] = {}
     for it in snap.items:
         if it.key and it.playlist_item_id and it.key not in key_to_item_id:
             key_to_item_id[it.key] = it.playlist_item_id
 
     rank: list[Any] = []
+    if replaying() and any(str(key) not in key_to_item_id for key in ordered_keys):
+        return {"ok": False, "count": 0, "error": "playlist_item_ids_unavailable"}
     seen: set[str] = set()
     for k in ordered_keys or []:
         ks = str(k or "").strip()

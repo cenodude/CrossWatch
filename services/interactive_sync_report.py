@@ -35,6 +35,7 @@ class SyncReport:
         self.operations = {}
         self.authoritative = set()
         self.detail_omitted = {}
+        self.accepted_unverified = {}
         if store is not None:
             store.clear_report_issues()
 
@@ -95,6 +96,9 @@ class SyncReport:
         if not isinstance(value, dict):
             return
         name = str(value.get("event") or "")
+        if name in ("apply:add:done", "apply:update:done", "apply:remove:done"):
+            key = (name, value.get("dst"), value.get("destination_instance"), value.get("feature"))
+            self.accepted_unverified[key] = count(value.get("accepted_unverified"))
         self.item_event(value)
         if name in ("feature:cancelled", "run:cancelled"):
             self.cancelled = True
@@ -102,6 +106,7 @@ class SyncReport:
             "feature:error": "A feature could not finish. Check Events for the provider error.",
             "feature:unsupported": "A provider does not support this feature or is unavailable.",
             "playlist:mapping:error": "A playlist mapping could not finish. Check Events for details.",
+            "playlist:order:deferred": "Playlist membership changes were processed, but ordering needs new entry IDs. The next sync can apply the order.",
             "writes:skipped": "Writes were skipped by the sync engine.",
             "pair:skip": "The pair was skipped by the sync engine.",
             "run:pair:skip": "The pair was skipped by the sync engine.",
@@ -161,6 +166,7 @@ class SyncReport:
                     started_at=timestamp(self.started), finished_at=timestamp(time.time()),
                     duration_seconds=session.progress.public().get("elapsed_seconds", 0),
                     outcome=outcome, totals=totals, requested=requested,
+                    accepted_unverified=sum(self.accepted_unverified.values()),
                     manual_excluded=manual_excluded, engine_blocked=engine_blocked,
                     proposed=count(counts.get("changes")),
                     not_selected=max(0, count(counts.get("changes")) - requested),

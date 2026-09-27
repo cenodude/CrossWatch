@@ -90,7 +90,7 @@
     else render();
     updateProgressClock();
     schedule();
-    if (mappingDirty && data.status === "review") { mappingDirty = false; action("refresh"); }
+    if (mappingDirty && data.status === "review") { mappingDirty = false; action("refresh", { reread: false }); }
     else if (active() && !pending() && data.revision && (changed || forcePage)) loadPage();
   }
   function invalidatePage() {
@@ -185,6 +185,7 @@
       <div class="is-metrics is-report-metrics">${columns.slice(0, 4).map(([key, label]) => `<div><strong>${number(totals[key])}</strong><span>${label}</span></div>`).join("")}</div>
       ${changes ? `<div class="is-report-distribution" role="img" aria-label="${number(totals.added)} added, ${number(totals.updated)} updated, ${number(totals.removed)} removed">${["added", "updated", "removed"].map(key => `<span class="${key}" style="width:${totals[key] / changes * 100}%"></span>`).join("")}</div><div class="is-report-legend">${columns.slice(0, 3).map(([key, label]) => `<span><i class="${key}"></i>${label}</span>`).join("")}</div>` : ""}
       <dl class="is-report-facts"><div><dt>Selected for this run</dt><dd>${number(report.requested)} of ${number(report.proposed)} proposals</dd></div><div><dt>Not selected</dt><dd>${number(report.not_selected)}</dd></div><div><dt>Started</dt><dd>${date(report.started_at)}</dd></div><div><dt>Finished</dt><dd>${date(report.finished_at)}</dd></div><div><dt>API requests</dt><dd>${number(report.requests)}</dd></div><div><dt>Conflict decisions</dt><dd>${number(report.conflicts_reviewed)}</dd></div></dl>
+      ${report.accepted_unverified ? `<p>${number(report.accepted_unverified)} changes were accepted by the provider without a follow-up read. Their final state will be checked on the next sync or explicit refresh.</p>` : ""}
       <section class="is-report-section"><h2>Results by feature and destination</h2><p>Counts reported by the sync engine for this operation.</p><div class="is-table-wrap"><table class="is-table is-report-table"><thead><tr><th scope="col">Feature / destination</th>${columns.map(([, label]) => `<th scope="col">${label}</th>`).join("")}</tr></thead><tbody>${report.features.map(row => `<tr class="is-report-feature"><th scope="row">${esc(row.feature.charAt(0).toUpperCase() + row.feature.slice(1))}</th>${cells(row)}</tr>${row.destinations.map(dst => `<tr><th scope="row" class="is-report-destination">${esc(endpoint(dst.provider, dst.instance))}</th>${cells(dst)}</tr>`).join("")}`).join("") || `<tr><td colspan="8">No completed feature results were reported.</td></tr>`}</tbody></table></div></section>
       ${report.manual_excluded ? `<section class="is-report-section" aria-label="Mapping and manual exclusions"><h2>Mapping and manual exclusions</h2><p>${number(report.manual_excluded)} items were excluded by saved mappings or Editor rules. Old identities stay excluded so their corrected replacements can sync. These exclusions are not failed sync attempts.</p><dl class="is-report-facts">${report.features.filter(row => row.manual_excluded).map(row => `<div><dt>${esc(row.feature.charAt(0).toUpperCase() + row.feature.slice(1))}</dt><dd>${number(row.manual_excluded)} excluded</dd></div>`).join("")}</dl></section>` : ""}
       <section class="is-report-section is-report-attention"><h2>Attention and follow-up</h2><div class="is-report-checks">${[["Unresolved items", totals.unresolved], ["Provider errors", totals.errors], ["Blocked by sync rules", totals.blocked], ["Selected proposals not reached", report.not_reached]].map(([label, n]) => `<div class="${n ? "needs-attention" : ""}"><span>${label}</span><strong>${number(n)}</strong></div>`).join("")}</div>${report.not_reached ? `<p>These selected proposals did not reach execution. Data may have changed, a protection may have stopped them, or the run may have ended early.</p>` : ""}${report.incomplete_note ? `<p class="is-report-warning">${esc(report.incomplete_note)}</p>` : ""}${report.outcome !== "success" ? `<p>${report.issue_count ? "Review the affected items below." : "The engine did not include item-level details. Check Events for the available diagnostics."} Start a new review to see what still needs syncing before retrying.</p>` : ""}</section>
@@ -340,7 +341,7 @@
   });
   window.addEventListener("cw:anime-mappings-changed", () => {
     if (!session || session.report || session.status === "complete") return;
-    if (active() && !pending()) action("refresh"); else mappingDirty = true;
+    if (active() && !pending()) action("refresh", { reread: false }); else mappingDirty = true;
   });
   document.addEventListener("tab-changed", event => {
     if (event.detail.tab !== "interactive_sync") { clearTimeout(timer); clearInterval(progressTimer); invalidatePage(); pageLoading = false; }
@@ -351,7 +352,7 @@
     if (next === route && session) {
       route = `#interactive_sync?session=${encodeURIComponent(session.id)}`;
       history.replaceState(null, "", route);
-      if (mappingDirty && !pending()) { mappingDirty = false; action("refresh"); }
+      if (mappingDirty && !pending()) { mappingDirty = false; action("refresh", { reread: false }); }
       else if (!busy) poll();
       return;
     }

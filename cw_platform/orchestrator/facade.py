@@ -195,7 +195,9 @@ class Orchestrator:
             self.state_path = Path(state_path) if state_path else None
 
             run_ctx = self.context
-            summary = _run_pairs(run_ctx)
+            from ..interactive_reads import use_review_reads
+            with use_review_reads(getattr(self.interactive, "reads", None), collecting=getattr(self.interactive, "collecting", False)):
+                summary = _run_pairs(run_ctx)
 
             if self.interactive is not None and self.interactive.preview:
                 return summary

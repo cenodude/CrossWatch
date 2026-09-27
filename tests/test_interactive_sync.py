@@ -266,24 +266,29 @@ def test_mapping_change_at_execution_boundary_excludes_writes():
     assert not execution.seen
 
 
-def test_session_preflight_drift_returns_to_review(config_base, monkeypatch):
+def test_session_apply_uses_reviewed_snapshot_after_remote_drift(config_base, monkeypatch):
     from services import interactive_sync as svc
     from api import syncAPI
+    from unittest.mock import Mock
 
     src, dst = setup_ops(config_base, monkeypatch, [item(1)])
     session = svc.Session(pair_id="p1", owner="local")
     cfg = _cfg(False)
-    svc.refresh(session, cfg, {})
-    chosen = set(session.plan.rows)
-    next(iter(src.index.values()))["title"] = "Changed"
-    monkeypatch.setattr(syncAPI, "_run_pairs_thread", lambda *a, **k: pytest.fail("stale plan reached execution"))
-    svc.apply(session, cfg, chosen)
-    assert session.status == "review"
-    assert session.revision == 2
-    assert not dst.add_calls
+    monkeypatch.setattr(syncAPI, "_env", lambda: (lambda: deepcopy(cfg), lambda *_: None))
+    monkeypatch.setattr(src, "build_index", Mock(wraps=src.build_index))
+    try:
+        svc.refresh(session, cfg, {})
+        chosen = set(session.plan.rows)
+        next(iter(src.index.values()))["title"] = "Changed"
+        svc.apply(session, cfg, chosen)
+        assert session.status == "complete"
+        assert dst.add_calls[0][0]["title"] == "Movie 1"
+        assert src.build_index.call_count == 1
+    finally:
+        session.close()
 
 
-def test_preflight_explains_selection_loss_without_a_third_provider_read(config_base, monkeypatch, caplog):
+def test_explicit_refresh_explains_selection_loss_without_an_apply_read(config_base, monkeypatch, caplog):
     from api import syncAPI
     from services import interactive_sync as svc
     from services import interactive_sync_progress as progress
@@ -309,6 +314,7 @@ def test_preflight_explains_selection_loss_without_a_third_provider_read(config_
         selected = session.store.selected_ids()
         for row in list(src.index.values())[:1151]:
             row["title"] += " changed"
+        svc.refresh(session, cfg, {})
         svc.apply(session, cfg, selected)
         assert len(reads) == 2
         assert session.status == "review"
@@ -317,11 +323,10 @@ def test_preflight_explains_selection_loss_without_a_third_provider_read(config_
         result = session.public()["apply_review"]
         assert {k: result[k] for k in ("requested", "retained", "needs_review", "applied")} == dict(requested=1431, retained=280, needs_review=1151, applied=0)
         assert session.message.startswith("Nothing was applied.")
-        assert session.public()["progress"]["elapsed_seconds"] == 3000
+        assert session.public()["progress"]["elapsed_seconds"] == 0
         assert not dst.add_calls
         diagnostics = [record.message for record in caplog.records if "interactive_sync_proposal_changed" in record.message]
-        assert len(diagnostics) == 5
-        assert all('"item.title"' in message for message in diagnostics)
+        assert not diagnostics
     finally:
         session.close()
 
@@ -345,7 +350,7 @@ def test_failed_preflight_does_not_report_provider_changes(config_base, monkeypa
         monkeypatch.setattr(syncAPI, "_run_pairs_thread", lambda *a, **k: pytest.fail("failed preflight reached execution"))
         svc.apply(session, cfg, session.store.selected_ids())
         assert session.status == "error"
-        assert "recheck could not be completed" in session.message
+        assert "local plan check could not be completed" in session.message
         assert session.public()["apply_review"]["applied"] == 0
     finally:
         session.close()
