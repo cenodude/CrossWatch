@@ -48,6 +48,23 @@ def test_elapsed_and_quiet_times_work_beyond_an_hour(monkeypatch):
     assert not progress.public()["running"]
 
 
+def test_request_breakdown_tracks_providers_and_resets_with_each_operation():
+    progress = SyncProgress()
+    for provider in ("TRAKT", "SIMKL", "trakt", ""):
+        progress.event(dict(event="api:request", provider=provider))
+    state = progress.public()
+    assert state["requests_by_provider"] == {"TRAKT": 2, "SIMKL": 1, "Unknown": 1}
+    assert sum(state["requests_by_provider"].values()) == state["requests"] == 4
+    progress.finish("review", "Ready")
+    progress.event(dict(event="api:request", provider="SIMKL"))
+    assert progress.public()["requests_by_provider"] == state["requests_by_provider"]
+    state["requests_by_provider"]["SIMKL"] = 100
+    assert progress.public()["requests_by_provider"]["SIMKL"] == 1
+    progress.begin("apply")
+    assert progress.public()["requests"] == 0
+    assert progress.public()["requests_by_provider"] == {}
+
+
 def test_apply_progress_counts_processed_items_and_ignores_duplicate_outer_events():
     progress = SyncProgress()
     progress.begin("apply")
@@ -136,6 +153,7 @@ def test_http_attempts_count_without_verbose_logs_or_health_double_counting(monk
         assert progress.public()["requests"] == 2
         http.get("https://example.invalid/history")
         assert progress.public()["requests"] == 3
+        assert progress.public()["requests_by_provider"] == {"PLEX": 3}
     assert len(events) == (3 if verbose else 0)
 
 
@@ -197,9 +215,12 @@ def test_request_counter_advances_during_preview_and_apply(config_base, monkeypa
         svc.refresh(session, cfg, {})
         assert seen == [1, 2, 3, 4, 5]
         assert session.public()["progress"]["requests"] == 5
+        assert session.public()["progress"]["requests_by_provider"] == {"SRC": 5}
         svc.apply(session, cfg, set(session.plan.rows))
         assert session.status == "complete"
         assert session.public()["progress"]["requests"] == 1
+        assert session.public()["progress"]["requests_by_provider"] == {"DST": 1}
+        assert session.report["requests_by_provider"] == {"DST": 1}
         assert len(dst.add_calls) == 1
     finally:
         session.close()

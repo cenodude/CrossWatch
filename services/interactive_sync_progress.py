@@ -25,6 +25,7 @@ class SyncProgress:
             self.provider = self.feature = ""
             self.done, self.total, self.unit = 0, None, "items"
             self.requests = 0
+            self.requests_by_provider: dict[str, int] = {}
             self.reads = {}
             self.recent = deque(maxlen=6)
             self.recent.append(dict(at=time.time(), text=self.label))
@@ -78,6 +79,8 @@ class SyncProgress:
                 return
             if name == "api:request":
                 self.requests += 1
+                name = provider.strip().upper() or "Unknown"
+                self.requests_by_provider[name] = self.requests_by_provider.get(name, 0) + 1
                 self.activity = time.monotonic()
                 return
             if name == "health":
@@ -118,4 +121,5 @@ class SyncProgress:
                         feature=self.feature, done=self.done, total=self.total, unit=self.unit, percent=percent,
                         elapsed_seconds=int(now - self.started), stage_seconds=int(now - self.changed),
                         quiet_seconds=int(now - self.activity), running=self.finished is None,
-                        items_read=sum(self.reads.values()), requests=self.requests, recent=list(self.recent))
+                        items_read=sum(self.reads.values()), requests=self.requests,
+                        requests_by_provider=dict(self.requests_by_provider), recent=list(self.recent))
