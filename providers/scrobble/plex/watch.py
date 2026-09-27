@@ -2456,6 +2456,9 @@ def process_rating_webhook(
     rating_val = _plex_rating_to_10(rating_raw) if rating_raw is not None else 0
     if rating_val is None:
         rating_val = 0
+    from providers.scrobble.plex.ratings_sync import plex_rating_value
+
+    rating_precise = plex_rating_value(rating_raw)
 
 
     if media_type == "episode" and not (enable_trakt or enable_crosswatch or enable_punchplay or enable_flicklist or enable_scrob or enable_wetrakr):
@@ -2466,9 +2469,9 @@ def process_rating_webhook(
     route_scope = str((route_hook or {}).get("route_id") or watch_cfg.get("route_id") or "global").strip() or "global"
     dedup_key = (route_scope, acc_key, rk or "?", media_type)
     prev = _LAST_RATING_BY_ACC.get(dedup_key) or {}
-    if prev and prev.get("rating") == rating_val and (time.time() - float(prev.get("ts", 0))) < 10:
+    if prev and prev.get("rating") == rating_precise and (time.time() - float(prev.get("ts", 0))) < 10:
         return {"ok": True, "dedup": True}
-    _LAST_RATING_BY_ACC[dedup_key] = {"rating": rating_val, "ts": time.time()}
+    _LAST_RATING_BY_ACC[dedup_key] = {"rating": rating_precise, "ts": time.time()}
 
     ids = _all_ids_from_metadata(md)
 
@@ -2493,7 +2496,7 @@ def process_rating_webhook(
         _emit(logger, "rating event without usable external IDs; ignored", "DEBUG")
         return {"ok": True, "ignored": True}
 
-    results: dict[str, Any] = {"ok": True, "action": "rating", "media_type": media_type, "rating": rating_val, "route_id": route_scope}
+    results: dict[str, Any] = {"ok": True, "action": "rating", "media_type": media_type, "rating": rating_precise, "route_id": route_scope}
     if enable_trakt:
         results["trakt"] = _trakt_send_rating(media_type, ids, rating_val, cfg, logger)
     if enable_simkl and media_type in ("movie", "show"):
@@ -2520,7 +2523,7 @@ def process_rating_webhook(
                 media_type,
                 md,
                 ids,
-                rating_val,
+                rating_precise,
                 cfg,
                 enabled=ops_enabled,
                 instance_for=lambda _sink: sink_inst,

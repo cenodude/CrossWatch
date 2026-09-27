@@ -64,6 +64,7 @@ docker-compose.override.yml
 /.cw_cache/
 /.cw_databases/
 /.cw_provider/
+/state/
 /backups/
 /snapshots/
 /sync_reports/
@@ -84,6 +85,7 @@ coverage.xml
 pytestdebug.log
 .pytest_tmp*/
 pytest-cache-files-*/
+/.tmp-trakt-ids-regression-*/
 
 # Tooling caches
 .mypy_cache/

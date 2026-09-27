@@ -245,6 +245,7 @@ from ._tombstones import clear_items_for_feature
 
 from ._pairs_utils import (
     ratings_step_for,
+    ratings_zero_for,
     config_with_pair_libraries as _config_with_pair_libraries,
     _supports_feature,
     _resolve_flags,
@@ -1328,7 +1329,8 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
         ratings_step = max(ratings_step_for(src_ops), ratings_step_for(dst_ops))
         if ratings_step < 1.0:
             dbg("ratings.step", feature=feature, src=src, dst=dst, step=ratings_step)
-        adds, mirror_removes = diff_ratings(src_idx, dst_full, step=ratings_step)
+        adds, mirror_removes = diff_ratings(src_idx, dst_full, step=ratings_step,
+                                          allow_zero=ratings_zero_for(src_ops) and ratings_zero_for(dst_ops))
         dst_alias_tmp = _alias_index(dst_full)
         updates = [it for it in adds if _present(dst_full, dst_alias_tmp, it)]
         adds = [it for it in adds if not _present(dst_full, dst_alias_tmp, it)]

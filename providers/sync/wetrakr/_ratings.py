@@ -7,7 +7,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from providers.sync._log import log
-from ._common import WeTrakrSyncError, int_value, item_key, media_item, tracking_rows, write_items
+from ._common import WeTrakrSyncError, item_key, media_item, rating_value, tracking_rows, write_items
 
 
 def build_index(adapter: Any, *, force: bool = False) -> dict[str, dict[str, Any]]:
@@ -18,10 +18,9 @@ def build_index(adapter: Any, *, force: bool = False) -> dict[str, dict[str, Any
             interactions = row.get("interactions")
             user = interactions.get("user") if isinstance(interactions, Mapping) else None
             rating = user.get("rating") if isinstance(user, Mapping) else None
-            value = int_value(rating.get("rating")) if isinstance(rating, Mapping) else -1
-            if not 1 <= value <= 10:
+            if not isinstance(rating, Mapping):
                 raise WeTrakrSyncError("invalid_rating_entry")
-            item["rating"] = value
+            item["rating"] = rating_value(rating.get("rating"))
             if isinstance(rating, Mapping) and rating.get("rated_at"):
                 item["rated_at"] = rating["rated_at"]
             key = item_key(adapter, "ratings", item)

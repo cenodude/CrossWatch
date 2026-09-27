@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any
 
 from ..id_map import minimal, ids_from, coalesce_ids
@@ -150,7 +151,13 @@ def _rating_step(value: Any) -> float:
     return step if 0.0 < step <= 1.0 else 1.0
 
 
-def _quantize_rating(v: Any, step: float) -> float | None:
+def _quantize_rating(v: Any, step: float, *, allow_zero: bool = False) -> float | None:
+    if allow_zero:
+        try:
+            if Decimal(str(v)) == 0:
+                return 0.0
+        except InvalidOperation:
+            pass
     if step >= 1.0:
         n = _norm_rating(v)
         return None if n is None else float(n)
@@ -167,16 +174,22 @@ def _quantize_rating(v: Any, step: float) -> float | None:
         return None
     if 10 < f <= 100:
         f = f / 10.0
-    q = round(_round_half_up(f / step) * step, 4)
-    return q if 0 < q <= 10 else None
+    try:
+        value, precision = Decimal(str(f)), Decimal(str(step))
+        if not value.is_finite():
+            return None
+        q = float((value / precision).quantize(Decimal("1"), rounding=ROUND_HALF_UP) * precision)
+    except (InvalidOperation, ValueError, ZeroDivisionError):
+        return None
+    return q if (0 <= q <= 10 if allow_zero else 0 < q <= 10) else None
 
 
-def _pick_rating_quantized(d: Any, step: float) -> float | None:
+def _pick_rating_quantized(d: Any, step: float, *, allow_zero: bool = False) -> float | None:
     if not isinstance(d, dict):
         return None
     for k in ("rating", "user_rating", "score", "value"):
         if k in d and d.get(k) is not None:
-            return _quantize_rating(d.get(k), step)
+            return _quantize_rating(d.get(k), step, allow_zero=allow_zero)
     return None
 
 
@@ -233,18 +246,19 @@ def diff_ratings(
     *,
     propagate_timestamp_updates: bool = False,
     step: float = 1.0,
+    allow_zero: bool = False,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     upserts: list[dict[str, Any]] = []
     unrates: list[dict[str, Any]] = []
     step = _rating_step(step)
 
     for k, sv in (src_idx or {}).items():
-        rs = _pick_rating_quantized(sv, step)
+        rs = _pick_rating_quantized(sv, step, allow_zero=allow_zero)
         if rs is None:
             continue
 
         dv = (dst_idx or {}).get(k)
-        rd = _pick_rating_quantized(dv, step) if dv is not None else None
+        rd = _pick_rating_quantized(dv, step, allow_zero=allow_zero) if dv is not None else None
 
         if dv is None:
             upserts.append(_pack_minimal_with_rating(sv, rs))
@@ -262,7 +276,7 @@ def diff_ratings(
 
     for k, dv in (dst_idx or {}).items():
         if k not in (src_idx or {}):
-            if _pick_rating(dv) is not None:
+            if _pick_rating_quantized(dv, step, allow_zero=allow_zero) is not None:
                 unrates.append(minimal(dv))
 
     return upserts, unrates

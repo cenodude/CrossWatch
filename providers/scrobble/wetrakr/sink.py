@@ -21,7 +21,7 @@ from providers.scrobble._watched_gate import resolve_stop_action
 from providers.scrobble.scrobble import ScrobbleEvent, mask_account
 from providers.sync._mod_WETRAKR import WETRAKRModule
 from providers.sync.wetrakr._common import WeTrakrSyncError, account_key, body_of, identity_tokens, int_value, request, resolve_child, write_lock
-from providers.sync.wetrakr._progress import ignored_reason, number, scrobble_ids
+from providers.sync.wetrakr._progress import ignored_reason, number, scrobble_media
 from services.activity import record_scrobble_event
 
 try:
@@ -72,15 +72,7 @@ def _item(event: ScrobbleEvent) -> dict[str, Any]:
 
 
 def _body(item: Mapping[str, Any], progress: float) -> dict[str, Any]:
-    body: dict[str, Any] = {"progress": progress, "app_version": app_version()}
-    if item["type"] == "episode":
-        season, episode = int_value(item.get("season")), int_value(item.get("episode"))
-        if season < 0 or episode < 1:
-            raise WeTrakrSyncError("invalid_episode_coordinates")
-        body.update(show={"ids": scrobble_ids(item.get("show_ids"))}, episode={"season": season, "number": episode})
-    else:
-        body["movie"] = {"ids": scrobble_ids(item.get("ids"))}
-    return body
+    return {"progress": progress, "app_version": app_version(), **scrobble_media(item)}
 
 
 class WeTrakrSink:
@@ -91,24 +83,30 @@ class WeTrakrSink:
         self.instance_id = normalize_instance_id(instance_id)
         self._lock = threading.RLock()
         self._sessions: OrderedDict[str, dict[str, Any]] = OrderedDict()
-        self._resolved: OrderedDict[str, float] = OrderedDict()
+        self._resolved: OrderedDict[str, tuple[float, int]] = OrderedDict()
 
-    def _resolve(self, adapter: WETRAKRModule, item: Mapping[str, Any], body: Mapping[str, Any]) -> None:
+    def _resolve(self, adapter: WETRAKRModule, item: Mapping[str, Any], body: Mapping[str, Any]) -> int:
         key = json.dumps({k: v for k, v in body.items() if k not in ("progress", "app_version")}, sort_keys=True)
         now = time.time()
-        if now - self._resolved.get(key, 0) < 3600:
-            return
-        if item["type"] == "episode":
-            resolve_child(adapter, {**item, "ids": {}})
+        cached = self._resolved.get(key)
+        if cached and now - cached[0] < 3600:
+            return cached[1]
+        direct = body.get(item["type"], {}).get("id")
+        if direct:
+            resolved_id = int_value(direct)
+        elif item["type"] == "episode":
+            resolved_id = int_value(resolve_child(adapter, {**item, "ids": {}})["ids"]["wetrakr"])
         else:
             source, value = next(iter(body["movie"]["ids"].items()))
             row = body_of(request(adapter, "GET", f"/media/external/{source}/{quote(str(value), safe='')}", params={"type": "movie"}))
             if not isinstance(row, Mapping) or row.get("type") != "movie" or int_value(row.get("id")) < 1:
                 raise WeTrakrSyncError("movie_not_resolved")
-        self._resolved[key] = now
+            resolved_id = int_value(row["id"])
+        self._resolved[key] = (now, resolved_id)
         self._resolved.move_to_end(key)
         while len(self._resolved) > 512:
             self._resolved.popitem(last=False)
+        return resolved_id
 
     def send(self, event: ScrobbleEvent, cfg: Mapping[str, Any] | None = None) -> dict[str, Any]:
         config = dict(cfg if cfg is not None else self._cfg_provider() or {})
@@ -177,8 +175,9 @@ class WeTrakrSink:
             name = _media_name(event)
             user = mask_account(event.account)
             try:
-                self._resolve(adapter, item, body)
-                ids = body["show" if event.media_type == "episode" else "movie"]["ids"]
+                resolved_id = self._resolve(adapter, item, body)
+                identity = body.get("show") or body.get("movie") or body["episode"]
+                ids = identity.get("ids") or {"wetrakr": identity["id"]}
                 description = ",".join(f"{source}:{value}" for source, value in ids.items())
                 _log(f"intent path={path} ids={description} p={body['progress']}", "DEBUG")
                 posted = True
@@ -195,6 +194,14 @@ class WeTrakrSink:
                 expected = "scrobble" if action == "stop" else action
                 if not isinstance(response, Mapping) or response.get("action") != expected or response.get("success") is False:
                     raise WeTrakrSyncError("scrobble_not_confirmed")
+                resolved = response.get("episode" if event.media_type == "episode" else "media")
+                if isinstance(resolved, Mapping):
+                    if int_value(resolved.get("id")) != resolved_id:
+                        raise WeTrakrSyncError("scrobble_identity_mismatch")
+                    if event.media_type == "episode" and "season" in body["episode"]:
+                        if (int_value(resolved.get("season_number")) != int_value(event.season)
+                                or int_value(resolved.get("number")) != int_value(event.number)):
+                            raise WeTrakrSyncError("scrobble_identity_mismatch")
             except WeTrakrSyncError as exc:
                 uncertain = posted and action == "stop" and (not exc.status_code or exc.status_code >= 500)
                 state["uncertain"] = uncertain

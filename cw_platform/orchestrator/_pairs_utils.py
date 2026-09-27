@@ -84,6 +84,13 @@ def ratings_step_for(ops) -> float:
     return 1.0
 
 
+def ratings_zero_for(ops) -> bool:
+    try:
+        return (ops.capabilities().get("ratings") or {}).get("zero_is_rating") is True
+    except Exception:
+        return False
+
+
 def supports_feature(ops, feature: str) -> bool:
     try:
         feats = (ops.capabilities() or {}).get("features", {})

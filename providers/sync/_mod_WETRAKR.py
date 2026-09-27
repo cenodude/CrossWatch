@@ -65,7 +65,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "watchlist": {**shared, "types": {"movies": True, "shows": True, "seasons": False, "episodes": False}, "custom_lists": False},
                 "history": {**shared, "types": {"movies": True, "shows": False, "seasons": False, "episodes": True},
                     "event_history": True, "rewatches": {"read": True, "write": True, "account_gate": False}},
-                "ratings": {**shared, "types": {"movies": True, "shows": True, "seasons": True, "episodes": True}},
+                "ratings": {**shared, "step": 0.1, "zero_is_rating": True, "types": {"movies": True, "shows": True, "seasons": True, "episodes": True}},
                 "progress": {**shared, "types": {"movies": True, "shows": False, "seasons": False, "episodes": True},
                     "accepted_ids": ["tmdb", "imdb", "tvdb"], "requires_duration": False, "batch_size": 1,
                     "completion_policy": {"progress_write": {"mode": "none"}}},

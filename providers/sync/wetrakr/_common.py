@@ -11,6 +11,7 @@ import threading
 import time
 from collections.abc import Callable, Iterable, Mapping
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
@@ -137,6 +138,7 @@ def pages(adapter: Any, path: str, *, from_date: str | None = None,
     expected_total: int | None = None
     expected_pages: int | None = None
     for page in range(1, 10001):
+        raise_if_cancelled()
         params: dict[str, Any] = {"page": page, "limit": 100}
         if from_date is not None:
             params["from_date"] = from_date
@@ -312,7 +314,9 @@ def journal_rows(adapter: Any, feature: str, since: str) -> tuple[list[Mapping[s
             if (stamp is None or stamp <= checkpoint or stamp < latest or row.get("category") != category
                     or row.get("status") not in ("added", "updated", "removed") or int_value(row.get("id")) <= 0):
                 raise WeTrakrSyncError("invalid_journal_entry")
-            signature = json.dumps(row, sort_keys=True)
+            signature = str(row.get("entry_id") or "")
+            if not signature:
+                raise WeTrakrSyncError("invalid_journal_entry")
             if signature in seen:
                 raise WeTrakrSyncError("repeated_journal_entry")
             seen.add(signature)
@@ -581,6 +585,16 @@ def identifier(ids: Any) -> dict[str, Any]:
     raise WeTrakrSyncError("missing_supported_id")
 
 
+def rating_value(value: Any) -> float:
+    try:
+        rating = Decimal(str(value))
+        if isinstance(value, bool) or not rating.is_finite() or not 0 <= rating <= 10:
+            raise ValueError
+        return float(rating.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
+    except (InvalidOperation, ValueError, TypeError):
+        raise WeTrakrSyncError("invalid_rating") from None
+
+
 def payload_item(item: Mapping[str, Any], feature: str, *, include_date: bool = True) -> tuple[str, dict[str, Any]]:
     kind = item.get("type")
     if feature == "ratings":
@@ -592,9 +606,7 @@ def payload_item(item: Mapping[str, Any], feature: str, *, include_date: bool = 
             identifier(item.get("show_ids"))
         row = identifier(item.get("ids")) if kind not in ("season", "episode") or item.get("ids") else {}
         if include_date:
-            rating = int_value(item.get("rating"))
-            if not 1 <= rating <= 10:
-                raise WeTrakrSyncError("invalid_rating")
+            rating = rating_value(item.get("rating"))
             row["rating"] = rating
         return f"{kind}s", row
     allowed = ("movie", "show") if feature == "watchlist" else ("movie", "episode")
@@ -651,7 +663,7 @@ def resolve_child(adapter: Any, item: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def write_matches(feature: str, item: Mapping[str, Any], target: Mapping[str, Any]) -> bool:
-    return feature != "ratings" or int_value(item.get("rating")) == int_value(target.get("rating"))
+    return feature != "ratings" or rating_value(item.get("rating")) == rating_value(target.get("rating"))
 
 
 def write_items(adapter: Any, feature: str, items: Iterable[Mapping[str, Any]], *, remove: bool, dry_run: bool) -> dict[str, Any]:

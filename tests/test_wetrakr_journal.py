@@ -25,7 +25,7 @@ def paged(rows, params):
 
 
 def entry(kind="movie", feature="watchlist", **extra):
-    return {"category": {"watchlist": "planning", "history": "watched", "ratings": "ratings"}[feature],
+    return {"entry_id": f"entry-{extra.get('id', 126)}", "category": {"watchlist": "planning", "history": "watched", "ratings": "ratings"}[feature],
             "type": kind, "id": 126, "action_at": LATER, "status": "removed", **extra}
 
 

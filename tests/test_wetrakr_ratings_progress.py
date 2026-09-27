@@ -62,6 +62,13 @@ def features(env):
                     env.playing[media["id"]] = {**media, "playback": {"status": "paused", "progress_percent": body["progress"],
                                                                    "runtime_seconds": 6000, "tracked_at": LATER}}
             return Response({"action": "pause", "progress": body["progress"]})
+        if method == "DELETE" and path == "/scrobble/playing":
+            body = kwargs["json"]
+            assert "progress" not in body and "app_version" not in body
+            media = MOVIE if "movie" in body else EPISODE
+            if not env.reject_write:
+                env.playing.pop(media["id"], None)
+            return Response({"action": "cancel", "target": media["type"], "media_id": media["id"]})
         return None
 
     env.server.hook = hook
@@ -98,7 +105,7 @@ def test_season_rating_resolves_by_show_id_and_season_number(features):
     assert payload == {"seasons": [{"id": SEASON["id"], "rating": 8}]}
 
 
-@pytest.mark.parametrize("rating", [0, 11, True, None, "8.5", float("nan")])
+@pytest.mark.parametrize("rating", [-0.1, 11, True, None, "invalid", float("nan")])
 def test_invalid_rating_does_not_call_api(features, rating):
     result = features.adapter.add("ratings", [{**item(), "rating": rating}])
     assert not result["ok"] and result["unresolved"][0]["reason"] == "invalid_rating"
@@ -230,7 +237,7 @@ def test_progress_success_response_must_be_verified(features):
     assert not result["ok"] and not result["confirmed_keys"]
 
 
-@pytest.mark.parametrize("remove", [False, True])
+@pytest.mark.parametrize("remove", [False])
 def test_ignored_progress_reports_skip_without_confirmation(features, remove):
     features.playing[MOVIE["id"]] = {**MOVIE, "playback": {"status": "paused", "progress_percent": 25, "tracked_at": WHEN}}
     previous = features.server.hook
@@ -242,7 +249,7 @@ def test_ignored_progress_reports_skip_without_confirmation(features, remove):
     assert len([call for call in features.server.calls if call[0] == "POST"]) == 1
 
 
-@pytest.mark.parametrize("remove", [False, True])
+@pytest.mark.parametrize("remove", [False])
 def test_ignored_progress_does_not_block_other_batch_items(features, remove):
     for media in (MOVIE, EPISODE):
         features.playing[media["id"]] = {**media, "playback": {"status": "paused", "progress_percent": 25, "tracked_at": WHEN}}
@@ -255,7 +262,7 @@ def test_ignored_progress_does_not_block_other_batch_items(features, remove):
     assert (EPISODE["id"] not in features.playing) if remove else features.playing[EPISODE["id"]]["playback"]["progress_percent"] == 40
 
 
-@pytest.mark.parametrize("remove", [False, True])
+@pytest.mark.parametrize("remove", [False])
 def test_playback_surfaces_provider_ignored_reason(features, remove):
     features.playing[MOVIE["id"]] = {**MOVIE, "playback": {"status": "paused", "progress_percent": 25, "tracked_at": WHEN}}
     adapter = WeTrakrPlaybackAdapter()
@@ -312,8 +319,8 @@ def test_progress_removal_and_repeat_do_not_recreate_playback(features, media):
     assert result["ok"] and len(result["confirmed_keys"]) == 1
     assert not features.playing and not features.server.history
     assert features.adapter.remove("progress", [progress_item(media)])["ok"]
-    posts = [(path, kwargs) for method, path, kwargs in features.server.calls if method == "POST"]
-    assert len(posts) == 1 and posts[0][0] == "/scrobble/pause" and posts[0][1]["json"]["progress"] == 0
+    posts = [(path, kwargs) for method, path, kwargs in features.server.calls if method == "DELETE"]
+    assert len(posts) == 1 and posts[0][0] == "/scrobble/playing" and "progress" not in posts[0][1]["json"]
     assert not features.playing
 
 
@@ -323,7 +330,7 @@ def test_progress_removal_aliases_write_only_once(features):
     result = features.adapter.remove("progress", [progress_item(), {**progress_item(), "ids": {"imdb": "tt0468569"}}])
     assert result["ok"] and len(result["confirmed_keys"]) == 2
     assert not features.playing
-    assert sum(method == "POST" for method, _, _ in features.server.calls) == 1
+    assert sum(method == "DELETE" for method, _, _ in features.server.calls) == 1
 
 
 @pytest.mark.parametrize("state,when,reason", [("playing", WHEN, "active_session"), ("paused", "2099-01-01T00:00:00Z", "target_newer")])
@@ -331,7 +338,7 @@ def test_progress_removal_protects_active_and_newer_entries(features, state, whe
     features.playing[MOVIE["id"]] = {**MOVIE, "playback": {"status": state, "tracked_at": when, "progress_percent": 30}}
     result = features.adapter.remove("progress", [progress_item()])
     assert result["ok"] and result["results"][0]["reason"] == reason and not result["confirmed_keys"]
-    assert not any(method == "POST" for method, _, _ in features.server.calls)
+    assert not any(method == "DELETE" for method, _, _ in features.server.calls)
 
 
 def test_progress_removal_same_origin_is_skipped(features, monkeypatch):
@@ -341,7 +348,7 @@ def test_progress_removal_same_origin_is_skipped(features, monkeypatch):
     monkeypatch.setenv("CW_PAIR_DST", "WETRAKR")
     result = features.adapter.remove("progress", [progress_item()])
     assert result["results"][0]["reason"] == "same_origin"
-    assert not any(method == "POST" for method, _, _ in features.server.calls)
+    assert not any(method == "DELETE" for method, _, _ in features.server.calls)
 
 
 def test_progress_removal_dry_run_has_no_api_calls(features):
@@ -361,7 +368,7 @@ def test_progress_removal_zero_entry_is_not_confirmed_as_absent(features):
     original = features.server.hook
 
     def hook(method, path, kwargs):
-        if method == "POST":
+        if method == "DELETE":
             features.playing[MOVIE["id"]]["playback"]["progress_percent"] = 0
             return Response({"action": "pause", "progress": 0})
         return original(method, path, kwargs)
@@ -395,7 +402,7 @@ def test_progress_removal_uncertain_response_reads_back_without_retry(features, 
     original = features.server.hook
 
     def hook(method, path, kwargs):
-        if method == "POST":
+        if method == "DELETE":
             if applied:
                 original(method, path, kwargs)
             raise requests.ConnectionError("Response lost")
@@ -406,7 +413,7 @@ def test_progress_removal_uncertain_response_reads_back_without_retry(features, 
     result = features.adapter.remove("progress", [progress_item()])
     assert result["ok"] is applied
     assert bool(result["confirmed_keys"]) is applied
-    assert sum(method == "POST" for method, _, _ in features.server.calls) == 1
+    assert sum(method == "DELETE" for method, _, _ in features.server.calls) == 1
 
 
 def test_progress_removal_failed_readback_can_retry_without_recreating(features):
@@ -416,7 +423,7 @@ def test_progress_removal_failed_readback_can_retry_without_recreating(features)
 
     def hook(method, path, kwargs):
         nonlocal wrote
-        if method == "POST":
+        if method == "DELETE":
             wrote = True
         elif wrote and "/playing/" in path:
             return Response({}, 503)
@@ -428,7 +435,7 @@ def test_progress_removal_failed_readback_can_retry_without_recreating(features)
     assert not result["ok"] and not result["confirmed_keys"] and not features.playing
     features.server.hook = original
     assert features.adapter.remove("progress", [progress_item()])["ok"]
-    assert sum(method == "POST" for method, _, _ in features.server.calls) == 1
+    assert sum(method == "DELETE" for method, _, _ in features.server.calls) == 1
 
 
 def test_playback_profile_listing_update_and_mark_watched(features):

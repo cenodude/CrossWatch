@@ -121,6 +121,7 @@ from ._history_rewatches import (
 )
 from ._pairs_utils import (
     ratings_step_for,
+    ratings_zero_for,
     config_with_pair_libraries as _config_with_pair_libraries,
     supports_feature as _supports_feature,
     resolve_flags as _resolve_flags,
@@ -298,11 +299,11 @@ def _filter_index_by_libraries(idx: dict[str, Any], libs: list[str], *, allow_un
 
     return out
 
-def _minimal_keep_rating(it: Mapping[str, Any], step: float = 1.0) -> dict[str, Any]:
+def _minimal_keep_rating(it: Mapping[str, Any], step: float = 1.0, *, allow_zero: bool = False) -> dict[str, Any]:
     out = _minimal(it)
     try:
         if "rating" in it:
-            q = _quantize_rating(it.get("rating"), step)
+            q = _quantize_rating(it.get("rating"), step, allow_zero=allow_zero)
             if q is None:
                 out["rating"] = it.get("rating")
             else:
@@ -1072,6 +1073,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
 
     if feature == "ratings":
         ratings_step = max(ratings_step_for(aops), ratings_step_for(bops))
+        ratings_zero = ratings_zero_for(aops) and ratings_zero_for(bops)
         A_f = _rate_filter(A_eff, fcfg)
         B_f = _rate_filter(B_eff, fcfg)
 
@@ -1109,8 +1111,8 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                 matched_A.add(str(ak))
                 matched_B.add(str(bk))
 
-                ra = _pick_rating_quantized(av, ratings_step)
-                rb = _pick_rating_quantized(bv, ratings_step)
+                ra = _pick_rating_quantized(av, ratings_step, allow_zero=ratings_zero)
+                rb = _pick_rating_quantized(bv, ratings_step, allow_zero=ratings_zero)
                 if ra is None and rb is None:
                     continue
                 if ra is None:
@@ -1121,7 +1123,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                     if allow_removals and _deleted_on_B(av):
                         remA.append(_minimal(av))
                     else:
-                        addB.append(_minimal_keep_rating(av, ratings_step))
+                        addB.append(_minimal_keep_rating(av, ratings_step, allow_zero=ratings_zero))
                     continue
                 if ra == rb:
                     continue
@@ -1134,15 +1136,15 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                     win = prefer
                 win = choose_conflict(ctx, feature, ak, a_choice, b_choice, av, bv, win)
                 if win == a_choice:
-                    addB.append(_minimal_keep_rating(av, ratings_step))
+                    addB.append(_minimal_keep_rating(av, ratings_step, allow_zero=ratings_zero))
                 else:
-                    addA.append(_minimal_keep_rating(bv, ratings_step))
+                    addA.append(_minimal_keep_rating(bv, ratings_step, allow_zero=ratings_zero))
                 continue
 
             if allow_removals and _deleted_on_B(av):
                 remA.append(_minimal(av))
             else:
-                addB.append(_minimal_keep_rating(av, ratings_step))
+                addB.append(_minimal_keep_rating(av, ratings_step, allow_zero=ratings_zero))
 
         for bk, bv in (B_f or {}).items():
             if not isinstance(bv, Mapping) or str(bk) in matched_B:
@@ -1153,7 +1155,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             if allow_removals and _deleted_on_A(bv):
                 remB.append(_minimal(bv))
             else:
-                addA.append(_minimal_keep_rating(bv, ratings_step))
+                addA.append(_minimal_keep_rating(bv, ratings_step, allow_zero=ratings_zero))
 
         add_to_A = addA if allow_adds else []
         add_to_B = addB if allow_adds else []

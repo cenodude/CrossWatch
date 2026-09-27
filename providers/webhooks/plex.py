@@ -1268,18 +1268,21 @@ def process_webhook(
         rating_val = _plex_rating_to_trakt(rating_raw) if rating_raw is not None else 0
         if rating_val is None:
             rating_val = 0
+        from providers.scrobble.plex.ratings_sync import plex_rating_value
+
+        rating_precise = plex_rating_value(rating_raw)
 
 
         acc_key_r = _account_key(payload)
         rk_r = str(md.get("ratingKey") or md.get("ratingkey") or "")
         dedup_key = (acc_key_r, rk_r, media_type)
         prev = _LAST_RATING_BY_ACC.get(dedup_key) or {}
-        if prev and prev.get("rating") == rating_val and (time.time() - float(prev.get("ts", 0))) < 10:
+        if prev and prev.get("rating") == rating_precise and (time.time() - float(prev.get("ts", 0))) < 10:
             _emit(logger, "suppress duplicate rating event", "DEBUG")
             return {"ok": True, "dedup": True}
-        _LAST_RATING_BY_ACC[dedup_key] = {"rating": rating_val, "ts": time.time()}
+        _LAST_RATING_BY_ACC[dedup_key] = {"rating": rating_precise, "ts": time.time()}
 
-        results: dict[str, Any] = {"ok": True, "action": "rating", "media_type": media_type, "rating": rating_val}
+        results: dict[str, Any] = {"ok": True, "action": "rating", "media_type": media_type, "rating": rating_precise}
         sent = False
 
         if enable_trakt_ratings:
@@ -1344,7 +1347,7 @@ def process_webhook(
                     media_type,
                     md,
                     ids_all2,
-                    rating_val,
+                    rating_precise,
                     cfg,
                     enabled=ops_enabled,
                     instance_for=lambda sink: webhook_sink_instance(wh, sink),
@@ -1364,13 +1367,13 @@ def process_webhook(
 
         if ok:
             try:
-                if rating_val == 0:
+                if rating_precise == 0:
                     _emit(logger, f"user='{_mask_account(acc_title)}' unrated - {media_name_dbg}", "INFO")
                 else:
-                    _emit(logger, f"user='{_mask_account(acc_title)}' rated {int(rating_val)} - {media_name_dbg}", "INFO")
+                    _emit(logger, f"user='{_mask_account(acc_title)}' rated {rating_precise:g} - {media_name_dbg}", "INFO")
             except Exception:
                 pass
-            _archive("rating_applied", media_type, md, ids_all2, acc_title, None, feature="ratings", operation="rate", rating=(rating_val or None))
+            _archive("rating_applied", media_type, md, ids_all2, acc_title, None, feature="ratings", operation="rate", rating=(rating_precise or None))
             return results
 
         _emit(logger, f"rating forward failed {str(results)[:180]}", "ERROR")
