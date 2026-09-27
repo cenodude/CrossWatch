@@ -326,6 +326,36 @@ def test_tools_clear_collection_retries_remaining_page_tail(tmp_path: Path, monk
     assert ops.current_by_feature["collection"] == {}
 
 
+@pytest.mark.parametrize("eventually_empty", [False, True])
+def test_tools_clear_counts_unique_items_and_reconciles_verification(tmp_path: Path, monkeypatch, eventually_empty) -> None:
+    import services.snapshots as snapshots
+
+    class DelayedCleanupOps(MutableSyncOps):
+        def __init__(self):
+            super().__init__({"history": {str(n): {"id": str(n), "type": "movie"} for n in range(3)}})
+            self.attempts = 0
+
+        def remove(self, _cfg, items, *, feature, dry_run=False):
+            self.attempts += 1
+            if self.attempts == 1:
+                self.current_by_feature[feature].pop("0")
+            elif eventually_empty:
+                self.current_by_feature[feature].clear()
+            return {"ok": False, "count": 1 if self.attempts == 1 else 0,
+                    "unresolved": [{"key": it["id"], "reason": "write_not_verified"} for it in items if it["id"] != "0"]}
+
+    ops = DelayedCleanupOps()
+    _patch_ops(monkeypatch, snapshots, tmp_path, ops)
+    result = snapshots.clear_provider_features("PLEX", ["history"], cfg={"version": "test"})
+    history = result["results"]["history"]
+    assert result["ok"] is eventually_empty
+    assert history["count"] == 3
+    assert history["removed"] == (3 if eventually_empty else 1)
+    assert history["remaining"] == (0 if eventually_empty else 2)
+    assert history["unresolved_count"] == (0 if eventually_empty else 2)
+    assert history["passes"] == 2
+
+
 def test_restore_bundle(tmp_path: Path, monkeypatch) -> None:
     import services.snapshots as snapshots
 

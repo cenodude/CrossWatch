@@ -1677,14 +1677,14 @@ def clear_provider_features(
         except Exception:
             adapter = None
 
-        def _load_current_items(feat: Feature) -> list[Mapping[str, Any]]:
+        def _load_current_items(feat: Feature) -> dict[str, Mapping[str, Any]]:
             with _capture_mode_env(pid=pid, instance=inst, feat=feat):
                 cur_raw = (adapter.build_index(feat) if adapter else ops.build_index(cfg_view, feature=feat)) or {}
-            cur_items: list[Mapping[str, Any]] = []
+            cur_items: dict[str, Mapping[str, Any]] = {}
             if isinstance(cur_raw, Mapping):
-                for v in cur_raw.values():
+                for key, v in cur_raw.items():
                     if isinstance(v, Mapping):
-                        cur_items.append(dict(v))
+                        cur_items[str(key)] = dict(v)
             return cur_items
 
         total_removed = 0
@@ -1703,7 +1703,9 @@ def clear_provider_features(
                 reason = "feature_disabled" if not _state_read_feature_enabled(ops, feat) else "cleanup_not_supported"
                 done["results"][feat] = {"ok": True, "skipped": True, "reason": reason}
                 continue
-            cur = _load_current_items(feat)
+            current = _load_current_items(feat)
+            seen_keys = set(current)
+            cur = list(current.values())
             initial_count = len(cur)
             _capture_progress_update(
                 progress_id,
@@ -1719,7 +1721,6 @@ def clear_provider_features(
             passes = 0
             max_passes = 6 if feat in {"history", "collection"} else 1
             prev_count: int | None = None
-            seen_count = initial_count
 
             while cur and passes < max_passes:
                 passes += 1
@@ -1757,7 +1758,7 @@ def clear_provider_features(
                     else:
                         removed += len(cur)
                     if isinstance(res, Mapping) and isinstance(res.get("unresolved"), list):
-                        unresolved.extend(list(res.get("unresolved") or []))
+                        unresolved = list(res.get("unresolved") or [])
                 except Exception as e:
                     errors.append(str(e))
                     break
@@ -1771,10 +1772,14 @@ def clear_provider_features(
                     percent=_progress_percent(index, len(feature_list) or 1, 0.82),
                 )
 
-                remaining = _load_current_items(feat)
+                current = _load_current_items(feat)
+                seen_keys.update(current)
+                remaining = list(current.values())
                 remaining_count = len(remaining)
+                removed = len(seen_keys) - remaining_count
                 if remaining_count <= 0:
                     cur = []
+                    unresolved = []
                     break
                 if feat not in {"history", "collection"}:
                     cur = remaining
@@ -1783,7 +1788,6 @@ def clear_provider_features(
                     cur = remaining
                     break
                 prev_count = remaining_count
-                seen_count += remaining_count
                 cur = remaining
 
             total_removed += removed
@@ -1792,7 +1796,7 @@ def clear_provider_features(
             done["results"][feat] = {
                 "ok": ok,
                 "removed": removed,
-                "count": max(seen_count, removed),
+                "count": len(seen_keys),
                 "remaining": len(cur),
                 "passes": passes,
                 "unresolved": unresolved,
