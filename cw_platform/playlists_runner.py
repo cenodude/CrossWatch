@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from .config_base import CONFIG_BASE
-from .id_map import any_key_overlap, canonical_key, keys_for_item
+from .id_map import any_key_overlap, canonical_key, typed_keys_for_item
 from .playlists import (
     BUILTIN_RULESETS,
     BUILTIN_TRAKT_FREE_ACCOUNT_RULESET_ID,
@@ -307,6 +307,10 @@ def load_baseline(mapping: Mapping[str, Any]) -> set[str]:
     return {str(k) for k in (managed or []) if str(k).strip()}
 
 
+def _typed_baseline(baseline: set[str], items: Mapping[str, Any]) -> set[str]:
+    return {f"{key}#show" if key not in items and f"{key}#show" in items else key for key in baseline}
+
+
 def save_baseline(mapping: Mapping[str, Any], managed: set[str], *, meta: Mapping[str, Any] | None = None) -> None:
     data = _load_all_state()
     key = scope_key(mapping)
@@ -597,7 +601,7 @@ def _unique_snapshot_items(snapshot: PlaylistSnapshot) -> tuple[list[PlaylistIte
 def _playlist_item_keys(item: PlaylistItem) -> set[str]:
     keys = {str(item.key or "").strip().lower()} if item.key else set()
     try:
-        keys.update(keys_for_item(item.item or {}))
+        keys.update(typed_keys_for_item(item.item or {}))
     except Exception:
         pass
     return {k for k in keys if k}
@@ -912,7 +916,7 @@ def build_plan(
     dst_set = set(dst_by_key.keys())
     src_aliases = _snapshot_key_union(src_by_key.values())
     dst_aliases = _snapshot_key_union(dst_by_key.values())
-    baseline = load_baseline(mapping)
+    baseline = _typed_baseline(load_baseline(mapping), dst_by_key)
 
     plan.source_count = len(src_set)
     plan.target_count = len(dst_set)

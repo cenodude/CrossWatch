@@ -74,7 +74,11 @@ __all__ = [
     "merge_ids",
     "coalesce_ids",
     "canonical_key",
+    "migrate_media_key",
+    "migrate_media_index",
+    "migrate_media_records",
     "keys_for_item",
+    "typed_keys_for_item",
     "unified_keys_from_ids",
     "any_key_overlap",
     "minimal",
@@ -302,9 +306,45 @@ def canonical_key(item: Mapping[str, Any]) -> str:
             return f"{show_id}{frag}".lower()
     idkey = _best_id_key(ids_from(item))
     if idkey:
+        if typ in ("show", "anime") and idkey.startswith("tmdb:"):
+            return f"{idkey}#show"
         return idkey
     ty = _title_year_key(item)
     return ty or "unknown:"
+
+
+def migrate_media_key(key: str, item: Mapping[str, Any]) -> str:
+    base, sep, event = str(key or "").partition("@")
+    if _norm_type(item.get("type")) in ("show", "anime"):
+        tmdb = ids_from(item).get("tmdb")
+        if tmdb and base.lower() == f"tmdb:{tmdb}":
+            return f"{base}#show{sep}{event}"
+    return str(key or "") or canonical_key(item)
+
+
+def migrate_media_index(index: Any) -> dict[str, Any]:
+    if not isinstance(index, Mapping):
+        return {}
+    out: dict[str, Any] = {}
+    for key, value in index.items():
+        previous = str(key)
+        current = migrate_media_key(previous, value) if isinstance(value, Mapping) else previous
+        if current not in out or current == previous:
+            out[current] = value
+    return out
+
+
+def migrate_media_records(records: Any, *fields: str) -> dict[str, Any]:
+    if not isinstance(records, Mapping):
+        return {}
+    out: dict[str, Any] = {}
+    for key, record in records.items():
+        previous = str(key)
+        item = next((record[f] for f in fields if isinstance(record, Mapping) and isinstance(record.get(f), Mapping)), None)
+        current = migrate_media_key(previous, item) if item is not None else previous
+        if current not in out or current == previous:
+            out[current] = record
+    return out
 
 
 def unified_keys_from_ids(idmap: Mapping[str, Any]) -> set[str]:
@@ -328,6 +368,13 @@ def keys_for_item(item: Mapping[str, Any]) -> set[str]:
         if sid and frag:
             out.add(f"{sid}{frag}".lower())
     return out
+
+
+def typed_keys_for_item(item: Mapping[str, Any]) -> set[str]:
+    keys = keys_for_item(item)
+    if _norm_type(item.get("type")) not in ("show", "anime"):
+        return keys
+    return {f"{key}#show" if key.startswith("tmdb:") and "#" not in key else key for key in keys}
 
 
 def any_key_overlap(a: Iterable[str], b: Iterable[str]) -> bool:

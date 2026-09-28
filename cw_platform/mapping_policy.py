@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-from .id_map import keys_for_item
+from .id_map import typed_keys_for_item
 from .local_db.manual_policy import _feature_blocks, _normalize_blocks
 
 
@@ -37,7 +37,7 @@ def effective_policy(policy, pair_id=""):
         items.update(deepcopy((override.get("adds") or {}).get("items") or {}))
         records.update(deepcopy(override.get("mappings") or {}))
         corrected = {alias.lower() for key in (override.get("mappings") or {})
-                     for alias in [key, *keys_for_item(items.get(key) or {})]}
+                     for alias in [key, *typed_keys_for_item(items.get(key) or {})]}
         node["blocks"] = _normalize_blocks([
             *(key for key in blocks if key.lower() not in corrected),
             *(override.get("blocks") or []),
@@ -68,17 +68,17 @@ def update_mappings(raw, edits, *, mappings=None, pair_id="", merge=True):
                     items.pop(key, None)
                     records.pop(key, None)
             records[target] = record
-            if record.get("original_key") and record["original_key"] != target and record["original_key"] not in keys_for_item(additions.get(target) or {}):
+            if record.get("original_key") and record["original_key"] != target and record["original_key"] not in typed_keys_for_item(additions.get(target) or {}):
                 blocks = [*blocks, record["original_key"]]
         items.update(additions)
         node["adds"] = {"items": items}
         node["blocks"] = _normalize_blocks([*(node.get("blocks") or []), *blocks] if merge else blocks)
-        corrected = {alias.lower() for key in incoming_records for alias in [key, *keys_for_item(items.get(key) or {})]}
+        corrected = {alias.lower() for key in incoming_records for alias in [key, *typed_keys_for_item(items.get(key) or {})]}
         node["blocks"] = [key for key in node["blocks"] if key.lower() not in corrected]
         node["mappings"] = {key: value for key, value in records.items() if key in items}
         # A full Editor save can retain a correction without resending its hidden
         # original row. Keep excluding that original while the mapping exists.
         for target, record in node["mappings"].items():
             original = record.get("original_key")
-            if original and original != target and original not in keys_for_item(items[target]):
+            if original and original != target and original not in typed_keys_for_item(items[target]):
                 node["blocks"] = _normalize_blocks([*node["blocks"], original])

@@ -2,11 +2,12 @@
 # Pairs blocklist handling for the orchestrator.
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
+import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 from ..history_events import history_sync_key
 from ..id_map import canonical_key, ID_KEYS
-from ._tombstones import keys_for_feature, filter_with
+from ._tombstones import keys_for_feature, filter_with, media_tombstone_tokens
 
 try:
     from ._unresolved import load_unresolved_keys  # type: ignore
@@ -31,6 +32,13 @@ except Exception:  # pragma: no cover
     ) -> set[str]:
         return set()
 
+_BARE_TMDB_KEY = re.compile(r"tmdb:\d+", re.IGNORECASE)
+
+
+def _typed_item_keys(keys: Iterable[str]) -> set[str]:
+    return {f"{key}#movie" if _BARE_TMDB_KEY.fullmatch(str(key)) else str(key) for key in keys or []}
+
+
 def _breakdown(
     state_store,
     dst: str,
@@ -54,7 +62,7 @@ def _breakdown(
         unresolved = set()
 
     try:
-        blackbox = set(load_blackbox_keys(dst, feature, pair=pair_key, instance=instance) or [])
+        blackbox = _typed_item_keys(load_blackbox_keys(dst, feature, pair=pair_key, instance=instance) or [])
     except Exception:
         blackbox = set()
 
@@ -101,7 +109,7 @@ def _ts_epoch(v: Any) -> int | None:
 def _history_is_blocked_by_tomb(item: dict[str, Any], tomb_ts: Mapping[str, int]) -> bool:
     # Allow re-add if the item has a newer watched_at than the tombstone timestamp.
     watched_ts = _ts_epoch(item.get("watched_at"))
-    tokens: list[str] = []
+    tokens: list[str] = list(media_tombstone_tokens(item))
     try:
         ck = canonical_key(item)
         if ck:
@@ -142,7 +150,7 @@ def _history_is_blocked_by_tomb(item: dict[str, Any], tomb_ts: Mapping[str, int]
 def _ratings_is_blocked_by_tomb(item: dict[str, Any], tomb_ts: Mapping[str, int]) -> bool:
     # Allow re-add if the item has a newer rated_at than the tombstone timestamp.
     rated_ts = _ts_epoch(item.get("rated_at"))
-    tokens: list[str] = []
+    tokens: list[str] = list(media_tombstone_tokens(item))
     try:
         ck = canonical_key(item)
         if ck:
@@ -212,7 +220,7 @@ def apply_blocklist(
         unresolved = set()
 
     try:
-        blackbox = set(load_blackbox_keys(dst, feature, pair=pair_key, instance=instance) or [])
+        blackbox = _typed_item_keys(load_blackbox_keys(dst, feature, pair=pair_key, instance=instance) or [])
     except Exception:
         blackbox = set()
 

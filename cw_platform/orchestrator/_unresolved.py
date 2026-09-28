@@ -11,6 +11,7 @@ import logging
 import time
 
 from ..history_events import history_epoch_from_item, history_event_key, is_history_event_key
+from ..id_map import migrate_media_key, migrate_media_records
 
 __all__ = [
     "load_unresolved_keys",
@@ -46,9 +47,32 @@ def _read_json(path: Path) -> dict[str, Any]:
         if not path.exists():
             return {}
         data = json.loads(path.read_text("utf-8"))
-        return data if isinstance(data, dict) else {}
+        return _migrate_media_keys(data) if isinstance(data, dict) else {}
     except Exception:
         return {}
+
+
+def _migrate_media_keys(data: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(data.get("keys"), list) or isinstance(data.get("items"), Mapping):
+        items = data.get("items")
+        items = items if isinstance(items, Mapping) else {}
+        aliases = {str(key): migrate_media_key(str(key), item)
+                   for key, item in items.items() if isinstance(item, Mapping)}
+        out = dict(data)
+        if isinstance(data.get("keys"), list):
+            out["keys"] = list(dict.fromkeys(aliases.get(str(key), str(key)) for key in data["keys"]))
+        for bucket in ("items", "hints"):
+            rows = data.get(bucket)
+            if not isinstance(rows, Mapping):
+                continue
+            migrated: dict[str, Any] = {}
+            for key, value in rows.items():
+                current = aliases.get(str(key), str(key))
+                if current not in migrated or current == str(key):
+                    migrated[current] = value
+            out[bucket] = migrated
+        return out
+    return migrate_media_records(data, "item", "hint")
 
 
 def _atomic_write(path: Path, data: Mapping[str, Any]) -> tuple[bool, str | None]:
