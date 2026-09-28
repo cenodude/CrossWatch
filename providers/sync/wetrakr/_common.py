@@ -539,6 +539,16 @@ def item_key(adapter: Any, feature: str, item: Mapping[str, Any]) -> str:
     return canonical_key(item)
 
 
+def add_index_item(out: dict[str, dict[str, Any]], feature: str, key: str, item: dict[str, Any]) -> bool:
+    previous = out.get(key)
+    if previous is None:
+        out[key] = item
+        return True
+    ids = item.get("ids") if isinstance(item.get("ids"), Mapping) else {}
+    log("WETRAKR", feature, "warn", "duplicate_media_identity", key=key, media_id=ids.get("wetrakr"))
+    return False
+
+
 def identity_tokens(item: Mapping[str, Any]) -> set[str]:
     kind = str(item.get("type") or "")
     ids = item.get("show_ids") if kind in ("season", "episode") else item.get("ids")

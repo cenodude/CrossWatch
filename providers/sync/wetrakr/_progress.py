@@ -15,7 +15,7 @@ from cw_platform.run_control import raise_if_cancelled
 from providers.sync._log import log
 from providers.sync._mod_common import build_op_result
 from providers.sync._progress_policy import as_epoch, decide_progress_write
-from ._common import WeTrakrSyncError, body_of, identifier, int_value, item_key, matching, media_item, pages, request, write_lock
+from ._common import WeTrakrSyncError, add_index_item, body_of, identifier, int_value, item_key, matching, media_item, pages, request, write_lock
 
 
 def number(value: Any) -> float | None:
@@ -65,9 +65,7 @@ def build_index(adapter: Any, *, force: bool = False) -> dict[str, dict[str, Any
             item.update(progress_percent=percent, progress_at=playback.get("tracked_at"),
                         _wetrakr_playback_status=playback["status"])
             key = item_key(adapter, "progress", item)
-            if key in out:
-                raise WeTrakrSyncError("duplicate_media_identity")
-            out[key] = item
+            add_index_item(out, "progress", key, item)
         completed += len(rows)
     log("WETRAKR", "progress", "info", "index_done", count=len(out))
     return out

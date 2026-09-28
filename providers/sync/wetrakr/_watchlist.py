@@ -9,7 +9,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from providers.sync._log import log
-from ._common import WeTrakrSyncError, item_key, media_item, tracking_rows, write_items
+from ._common import add_index_item, item_key, media_item, tracking_rows, write_items
 
 
 @retained_read
@@ -20,9 +20,7 @@ def build_index(adapter: Any, *, force: bool = False) -> dict[str, dict[str, Any
         for row in snapshot[kind]:
             item = media_item(row, kind)
             key = item_key(adapter, "watchlist", item)
-            if key in out:
-                raise WeTrakrSyncError("duplicate_media_identity")
-            out[key] = item
+            add_index_item(out, "watchlist", key, item)
     log("WETRAKR", "watchlist", "info", "index_done", count=len(out))
     return out
 

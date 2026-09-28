@@ -9,7 +9,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from providers.sync._log import log
-from ._common import WeTrakrSyncError, item_key, media_item, rating_value, tracking_rows, write_items
+from ._common import WeTrakrSyncError, add_index_item, item_key, media_item, rating_value, tracking_rows, write_items
 
 
 @retained_read
@@ -27,9 +27,7 @@ def build_index(adapter: Any, *, force: bool = False) -> dict[str, dict[str, Any
             if isinstance(rating, Mapping) and rating.get("rated_at"):
                 item["rated_at"] = rating["rated_at"]
             key = item_key(adapter, "ratings", item)
-            if key in out:
-                raise WeTrakrSyncError("duplicate_media_identity")
-            out[key] = item
+            add_index_item(out, "ratings", key, item)
     log("WETRAKR", "ratings", "info", "index_done", count=len(out))
     return out
 
