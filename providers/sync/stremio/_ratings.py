@@ -9,7 +9,7 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-from cw_platform.id_map import ids_from, minimal as id_minimal
+from cw_platform.id_map import ids_from, migrate_media_index, minimal as id_minimal
 from providers.auth._auth_STREMIO import StremioAuthError
 from providers.sync._mod_common import build_op_result, unresolved_keys
 
@@ -41,7 +41,7 @@ def _load_cache(adapter: Any) -> dict[str, dict[str, Any]]:
     except Exception:
         return {}
     rows = data.get("items") if isinstance(data, Mapping) else None
-    return {str(k): dict(v) for k, v in (rows or {}).items() if isinstance(v, Mapping)}
+    return {str(k): dict(v) for k, v in migrate_media_index(rows).items() if isinstance(v, Mapping)}
 
 
 def _save_cache(adapter: Any, rows: Mapping[str, Mapping[str, Any]]) -> None:

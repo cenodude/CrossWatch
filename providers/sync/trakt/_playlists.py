@@ -627,8 +627,12 @@ def reorder(adapter: Any, playlist_id: Any, ordered_keys: Sequence[str]) -> dict
     for it in snap.items:
         if it.key and it.playlist_item_id and it.key not in key_to_item_id:
             key_to_item_id[it.key] = it.playlist_item_id
+    for key, item_id in list(key_to_item_id.items()):
+        if key.startswith("tmdb:") and key.endswith("#show"):
+            key_to_item_id.setdefault(key.removesuffix("#show"), item_id)
 
     rank: list[Any] = []
+    seen_ids: set[str] = set()
     if replaying() and any(str(key) not in key_to_item_id for key in ordered_keys):
         return {"ok": False, "count": 0, "error": "playlist_item_ids_unavailable"}
     seen: set[str] = set()
@@ -638,13 +642,15 @@ def reorder(adapter: Any, playlist_id: Any, ordered_keys: Sequence[str]) -> dict
             continue
         seen.add(ks)
         item_id = key_to_item_id.get(ks)
-        if item_id is not None:
+        if item_id is not None and str(item_id) not in seen_ids:
             rank.append(item_id)
+            seen_ids.add(str(item_id))
     for it in snap.items:
         if it.key in seen:
             continue
-        if it.playlist_item_id is not None:
+        if it.playlist_item_id is not None and str(it.playlist_item_id) not in seen_ids:
             rank.append(it.playlist_item_id)
+            seen_ids.add(str(it.playlist_item_id))
             seen.add(it.key)
 
     if not rank:

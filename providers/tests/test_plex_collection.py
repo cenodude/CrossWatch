@@ -250,6 +250,6 @@ def test_collection_index_scans_show_libraries_as_shows_seasons_and_episodes(mon
     idx = collection.build_index(Adapter())
 
     assert calls == [("3", 2), ("3", 3), ("3", 4)]
-    assert idx["tmdb:63639"]["type"] == "show"
+    assert idx["tmdb:63639#show"]["type"] == "show"
     assert idx["tmdb:63639#season:1"]["type"] == "season"
     assert idx["tmdb:63639#s01e01"]["type"] == "episode"

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from cw_platform.anime_mapping.service import mapped_or_default_media_type
-from cw_platform.id_map import minimal as id_minimal
+from cw_platform.id_map import canonical_key, migrate_media_key, minimal as id_minimal
 
 from .._log import log as cw_log
 from .._mod_common import request_with_retries
@@ -178,7 +178,15 @@ def _fetch_last_activities(adapter: Any, *, apikey: str, timeout: float, retries
 def _load_unresolved() -> dict[str, Any]:
     p = _unresolved_path()
     doc = read_json(p)
-    return doc if isinstance(doc, dict) else {}
+    if not isinstance(doc, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for key, record in doc.items():
+        item = record.get("item") if isinstance(record, Mapping) else None
+        current = migrate_media_key(str(key), item) if isinstance(item, Mapping) else str(key)
+        if current not in out or current == str(key):
+            out[current] = record
+    return out
 
 
 def _save_unresolved(data: Mapping[str, Any]) -> None:
@@ -199,7 +207,7 @@ def _key_of(obj: Mapping[str, Any]) -> str:
     ids = dict(ids_src) if isinstance(ids_src, Mapping) else dict(obj)
     tmdb_i = _as_int(ids.get("tmdb") or ids.get("tmdb_id") or ids.get("id"))
     if tmdb_i is not None:
-        return f"tmdb:{tmdb_i}"
+        return canonical_key({"type": obj.get("type"), "ids": {"tmdb": tmdb_i}})
     imdb = _as_str(ids.get("imdb") or ids.get("imdb_id"))
     if imdb:
         return f"imdb:{imdb}"
@@ -694,7 +702,7 @@ def _write(adapter: Any, action: str, items: Iterable[Mapping[str, Any]]) -> tup
                 for obj in value:
                     ids_nf = {k: v for k, v in dict(obj or {}).items() if k in ("tmdb", "imdb", "tvdb")}
                     if ids_nf:
-                        not_found_keys.add(_key_of({"ids": ids_nf}))
+                        not_found_keys.add(_key_of({"type": "movie" if bucket == "movies" else "show", "ids": ids_nf}))
 
             response_nf_total = _not_found_total(nf_any)
             unresolved_now = len(not_found_keys)

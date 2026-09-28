@@ -156,7 +156,7 @@ def test_snapshot_drops_unsupported_and_maps_keys(monkeypatch):
     )
     snap = pl.get_snapshot(FakeAdapter(), "123")
     keys = snap.ordered_keys()
-    assert keys == ["tmdb:438631", "tmdb:95396"]
+    assert keys == ["tmdb:438631", "tmdb:95396#show"]
     first = snap.items[0]
     assert first.playlist_item_id == "9001"
     assert first.position == 1
@@ -179,7 +179,7 @@ def test_add_and_remove_mixed_media(monkeypatch):
     add_res = pl.add(FakeAdapter(), "123", items)
     assert add_res["ok"] is True
     assert add_res["count"] == 2
-    assert set(add_res["confirmed_keys"]) == {"tmdb:438631", "tmdb:95396"}
+    assert set(add_res["confirmed_keys"]) == {"tmdb:438631", "tmdb:95396#show"}
 
     rm_res = pl.remove(FakeAdapter(), "123", items[:1])
     assert rm_res["count"] == 1

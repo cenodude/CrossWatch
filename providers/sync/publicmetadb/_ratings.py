@@ -41,6 +41,10 @@ def _shadow_load() -> dict[str, Any]:
     doc = read_json(_shadow_path())
     if not isinstance(doc.get("items"), dict):
         doc["items"] = {}
+    doc["items"] = {
+        _item_key(rec["item"], label=rec.get("label")) if isinstance(rec, Mapping) and isinstance(rec.get("item"), Mapping) and rec["item"] else key: rec
+        for key, rec in doc["items"].items()
+    }
     return doc
 
 

@@ -932,7 +932,7 @@ def key_of(item: Mapping[str, Any]) -> str:
             show_ids = {k: ids[k] for k in ("tmdb", "imdb", "tvdb", "simkl") if ids.get(k)}
 
         if show_ids and s_num is not None and s_num >= 0 and e_num is not None and e_num > 0:
-            show_key = canonical_key(id_minimal({"type": "show", "ids": _fix_imdb(show_ids)})) or ""
+            show_key = (canonical_key(id_minimal({"type": "show", "ids": _fix_imdb(show_ids)})) or "").removesuffix("#show")
             if show_key:
                 return f"{show_key}#s{s_num:02d}e{e_num:02d}"
 
@@ -957,7 +957,7 @@ def key_of(item: Mapping[str, Any]) -> str:
             show_ids = {k: ids[k] for k in ("tmdb", "imdb", "tvdb", "simkl") if ids.get(k)}
 
         if show_ids and s_num is not None and s_num >= 0:
-            show_key = canonical_key(id_minimal({"type": "show", "ids": _fix_imdb(show_ids)})) or ""
+            show_key = (canonical_key(id_minimal({"type": "show", "ids": _fix_imdb(show_ids)})) or "").removesuffix("#show")
             if show_key:
                 return f"{show_key}#season:{s_num}"
 

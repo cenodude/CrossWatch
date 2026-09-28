@@ -9,7 +9,7 @@ import os
 from typing import Any, Iterable, Mapping
 
 from cw_platform.anime_mapping.service import mapped_or_default_media_type
-from cw_platform.id_map import canonical_key, minimal as id_minimal
+from cw_platform.id_map import canonical_key, migrate_media_records, minimal as id_minimal
 from ._common import (
     state_file,
     chunked,
@@ -57,7 +57,7 @@ def _load() -> dict[str, Any]:
     if cached is None:
         try:
             with open(path, "r", encoding="utf-8") as f:
-                cached = json.load(f) or {}
+                cached = migrate_media_records(json.load(f) or {}, "hint")
         except Exception:
             cached = {}
         _UNRES_CACHE[path] = cached

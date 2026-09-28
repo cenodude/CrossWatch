@@ -100,8 +100,8 @@ def test_collection_resolves_library_id_like_history() -> None:
 
     item_query = next(params for path, params in adapter.client.calls if path == "/Users/user-1/Items" and params.get("Recursive"))
     assert item_query["IncludeItemTypes"] == "Movie,Series,Season,Episode"
-    assert sorted(index) == ["tmdb:12345", "tmdb:12345#s01e01", "tmdb:12345#season:1"]
-    show = index["tmdb:12345"]
+    assert sorted(index) == ["tmdb:12345#s01e01", "tmdb:12345#season:1", "tmdb:12345#show"]
+    show = index["tmdb:12345#show"]
     assert show["type"] == "show"
     assert show["library_id"] == "lib-tv"
     season = index["tmdb:12345#season:1"]

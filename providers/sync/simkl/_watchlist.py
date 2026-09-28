@@ -9,7 +9,7 @@ import time
 from typing import Any, Iterable, Mapping
 
 from cw_platform.anime_mapping.service import mapped_or_default_media_type
-from cw_platform.id_map import minimal as id_minimal
+from cw_platform.id_map import migrate_media_index, minimal as id_minimal
 
 from .._log import log as cw_log
 from ._common import (
@@ -127,6 +127,7 @@ def _shadow_load() -> dict[str, Any]:
         data["buckets_seen"] = {}
     if "items" not in data or not isinstance(data.get("items"), dict):
         data["items"] = {}
+    data["items"] = migrate_media_index(data["items"])
     data.setdefault("ts", None)
     return data
 

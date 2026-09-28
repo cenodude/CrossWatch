@@ -24,7 +24,7 @@ from ._common import (
     _chunk,
     headers_for_adapter,
 )
-from cw_platform.id_map import minimal as id_minimal
+from cw_platform.id_map import migrate_media_index, minimal as id_minimal
 from .._log import log as cw_log
 from ._pagination import TraktPager, TraktPaginationError
 
@@ -87,6 +87,8 @@ def _load_cache_doc() -> dict[str, Any]:
         if not p.exists():
             return {}
         doc = json.loads(p.read_text("utf-8") or "{}")
+        if isinstance(doc, dict) and doc.get("schema") == 1:
+            doc["items"] = migrate_media_index(doc.get("items"))
         return doc if isinstance(doc, dict) and doc.get("schema") == 1 else {}
     except Exception:
         return {}

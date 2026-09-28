@@ -506,7 +506,7 @@ def test_stremio_ops_records_read_drops_as_scoped_unresolved(tmp_path, monkeypat
     assert mod.OPS.build_index({}, feature="history") == {}
 
     pending = _unresolved.load_unresolved_pending("STREMIO", "history")
-    assert [row["key"] for row in pending] == ["tmdb:1396"]
+    assert [row["key"] for row in pending] == ["tmdb:1396#show"]
     assert pending[0]["reason"] == "stremio_read:native_episode_index_unavailable"
     assert pending[0]["item"]["ids"] == {"tmdb": "1396"}
     assert pending[0]["item"]["_stremio_record_id"] == "tmdb:1396"
@@ -528,7 +528,7 @@ def test_stremio_ops_clears_read_drops_once_the_records_resolve(tmp_path, monkey
     blind = FakeStremioModule([record])
     monkeypatch.setattr(mod.OPS, "_adapter", lambda _cfg: blind)
     assert mod.OPS.build_index({}, feature="history") == {}
-    assert [row["key"] for row in _unresolved.load_unresolved_pending("STREMIO", "history")] == ["tmdb:1396"]
+    assert [row["key"] for row in _unresolved.load_unresolved_pending("STREMIO", "history")] == ["tmdb:1396#show"]
 
     monkeypatch.setattr(_history, "video_orders_for_series_record", native_orders(videos))
     resolving = FakeStremioModule([record])
