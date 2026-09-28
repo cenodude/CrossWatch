@@ -975,10 +975,18 @@ async function saveSettings() {
     }
 
     try {
-      const inst = _cwNormInst(_cwEl("emby_instance")?.value || "");
+      const inst = _cwSelectedInst("emby", "cw.ui.emby.auth.instance.v1");
       const prev = _cwInstBlock(serverCfg?.emby, inst);
       cfg.emby = cfg.emby && typeof cfg.emby === "object" ? cfg.emby : {};
       const next = _cwEnsureInstBlock(cfg.emby, inst);
+      const server = _cwReadFirst("emby_server_url", "emby_server");
+      const username = _cwReadFirst("emby_username", "emby_user");
+      const userId = _cwReadFirst("emby_user_id");
+      const verifySsl = _cwEl("emby_verify_ssl") || _cwEl("emby_verify_ssl_dup");
+      if (server && server !== _cwNorm(prev?.server)) { next.server = server; mark(); }
+      if (username && (username !== _cwNorm(prev?.username) || username !== _cwNorm(prev?.user))) { next.username = next.user = username; mark(); }
+      if (userId && userId !== _cwNorm(prev?.user_id)) { next.user_id = userId; mark(); }
+      if (verifySsl && !!verifySsl.checked !== !!prev?.verify_ssl) { next.verify_ssl = !!verifySsl.checked; mark(); }
       const src = _cwHydrated("emby", "sec-emby", window.__embyHydrated === true) ? _cwReadLibrarySource("emby") : null;
       if (_cwApplyLibraryConfig(next, prev, src)) mark();
     } catch (e) {

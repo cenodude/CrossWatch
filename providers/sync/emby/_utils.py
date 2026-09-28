@@ -103,8 +103,9 @@ def inspect_and_persist(cfg: dict[str, Any] | None = None, instance_id: Any = No
     changed = False
     if server and token:
         try:
+            selected_user_id = str(em.get("user_id") or "").strip()
             r = requests.get(
-                urljoin(server, "Users/Me"),
+                urljoin(server, f"Users/{selected_user_id}" if selected_user_id else "Users/Me"),
                 headers=_headers(token, devid),
                 timeout=timeout,
                 verify=verify,
@@ -112,10 +113,11 @@ def inspect_and_persist(cfg: dict[str, Any] | None = None, instance_id: Any = No
             if r.ok:
                 me = r.json() or {}
                 name = (me.get("Name") or out["username"] or "").strip()
-                uid = (me.get("Id") or out["user_id"] or "").strip()
+                uid = selected_user_id or (me.get("Id") or "").strip()
 
-                if name and em.get("user") != name:
+                if name and (em.get("user") != name or em.get("username") != name):
                     em["user"] = name
+                    em["username"] = name
                     changed = True
                 if uid and em.get("user_id") != uid:
                     em["user_id"] = uid
