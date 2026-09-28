@@ -314,13 +314,14 @@ def test_floppy_collection_remove_deletes_all_matching_entries() -> None:
     assert [c["path"] for c in adapter.client.session.calls] == ["collection/91", "collection/92"]
 
 
-def test_floppy_ratings_read_and_write_native_scale() -> None:
+@pytest.mark.parametrize("source", ["", "trakt_export", "crosswatch"])
+def test_floppy_ratings_read_and_write_native_scale(source: str) -> None:
     from providers.sync.floppy import _ratings
 
     adapter = AdapterStub(
         {
-            ("GET", "media/movie"): {"results": [{"item_id": "movie/tmdb/11", "score": 8.5}, {"item_id": "movie/tmdb/12", "score": 0}], "count": 2},
-            ("GET", "media/tv"): {"results": [], "count": 0},
+            ("GET", "media/movie"): {"results": [{"item_id": "movie/tmdb/11", "source": source, "score": 8.5}, {"item_id": "movie/tmdb/12", "source": source, "score": 0}], "count": 2},
+            ("GET", "media/tv"): {"results": [{"item_id": "tv/tmdb/22", "source": source, "score": 7.5}], "count": 1},
             ("POST", "media/movie"): {"item_id": "movie/tmdb/11", "score": 9.0},
         }
     )
@@ -329,6 +330,7 @@ def test_floppy_ratings_read_and_write_native_scale() -> None:
     res = _ratings.add(adapter, [{"type": "movie", "ids": {"tmdb": "11"}, "rating": 9.0}])
 
     assert out["tmdb:11"]["rating"] == 8.5
+    assert out["tmdb:22"]["rating"] == 7.5
     assert "tmdb:12" not in out
     assert res["count"] == 1
     assert adapter.client.session.calls[-1]["json"] == {"source": "tmdb", "media_id": "11", "status": 0, "score": 9.0}
@@ -508,19 +510,36 @@ def test_floppy_progress_resolves_show_imdb_to_tmdb_when_metadata_configured(mon
     assert adapter.client.session.calls[0]["json"]["ids"] == {"tmdb": "1399"}
 
 
-def test_floppy_history_reads_movies_and_episodes() -> None:
+@pytest.mark.parametrize(
+    ("row", "expected"),
+    [
+        ({"item_id": "movie/tmdb/11", "source": "trakt_export"}, {"type": "movie", "ids": {"tmdb": "11"}}),
+        ({"source": "trakt_export", "item": {"source": "tmdb", "media_id": "11", "media_type": "movie"}}, {"type": "movie", "ids": {"tmdb": "11"}}),
+        ({"source": "tmdb", "media_id": "11", "media_type": "movie"}, {"type": "movie", "ids": {"tmdb": "11"}}),
+        ({"item_id": "movie/imdb/tt11", "source": "tmdb"}, None),
+        ({"source": "tmdb", "item": {"source": "imdb", "media_id": "tt11", "media_type": "movie"}}, None),
+    ],
+)
+def test_floppy_item_uses_metadata_source(row: dict[str, Any], expected: dict[str, Any] | None) -> None:
+    from providers.sync.floppy._common import item_from_row
+
+    assert item_from_row(row) == expected
+
+
+@pytest.mark.parametrize("source", ["", "trakt_export", "crosswatch"])
+def test_floppy_history_reads_movies_and_episodes(source: str) -> None:
     from providers.sync.floppy import _history
 
     adapter = AdapterStub(
         {
             ("GET", "media/movie"): {
                 "results": [
-                    {"item_id": "movie/tmdb/11", "status": 3, "end_date": "2026-01-01T00:00:00Z", "consumption_id": 41},
-                    {"item_id": "movie/tmdb/11", "status": 3, "end_date": "2026-01-03T00:00:00Z", "consumption_id": 43},
+                    {"item_id": "movie/tmdb/11", "source": source, "status": 3, "end_date": "2026-01-01T00:00:00Z", "consumption_id": 41},
+                    {"item_id": "movie/tmdb/11", "source": source, "status": 3, "end_date": "2026-01-03T00:00:00Z", "consumption_id": 43},
                 ],
                 "count": 2,
             },
-            ("GET", "media/episode"): {"results": [{"item_id": "tv/tmdb/22/1/2", "end_date": "2026-01-02T00:00:00Z", "consumption_id": 42}], "count": 1},
+            ("GET", "media/episode"): {"results": [{"item_id": "tv/tmdb/22/1/2", "source": source, "end_date": "2026-01-02T00:00:00Z", "consumption_id": 42}], "count": 1},
         }
     )
 
@@ -584,7 +603,8 @@ def test_floppy_movie_history_rewatch_add_uses_movie_watch_api() -> None:
     }
 
 
-def test_floppy_movie_history_rewatch_index_reads_each_movie_play() -> None:
+@pytest.mark.parametrize("source", ["", "trakt_export", "crosswatch"])
+def test_floppy_movie_history_rewatch_index_reads_each_movie_play(source: str) -> None:
     from providers.sync.floppy import _history
 
     adapter = AdapterStub(
@@ -595,8 +615,8 @@ def test_floppy_movie_history_rewatch_index_reads_each_movie_play() -> None:
             },
             ("GET", "media/movie/tmdb/11/history"): {
                 "results": [
-                    {"consumption_id": 51, "end_date": "2026-01-01T00:00:00Z"},
-                    {"consumption_id": 52, "end_date": "2026-01-03T00:00:00Z"},
+                    {"consumption_id": 51, "source": source, "end_date": "2026-01-01T00:00:00Z"},
+                    {"consumption_id": 52, "source": source, "end_date": "2026-01-03T00:00:00Z"},
                 ],
                 "count": 2,
             },
@@ -610,6 +630,31 @@ def test_floppy_movie_history_rewatch_index_reads_each_movie_play() -> None:
     assert sorted(out) == ["tmdb:11@1767225600", "tmdb:11@1767398400"]
     assert out["tmdb:11@1767225600"]["_floppy_consumption_id"] == 51
     assert out["tmdb:11@1767398400"]["_floppy_consumption_id"] == 52
+
+
+@pytest.mark.parametrize("source", ["", "trakt_export", "crosswatch"])
+def test_floppy_episode_history_rewatch_index_reads_each_play(source: str) -> None:
+    from providers.sync.floppy import _history
+
+    adapter = AdapterStub(
+        {
+            ("GET", "media/movie"): {"results": [], "count": 0},
+            ("GET", "media/episode"): {
+                "results": [
+                    {"item_id": "tv/tmdb/22/1/2", "source": source, "end_date": "2026-01-01T00:00:00Z", "consumption_id": 41},
+                    {"item_id": "tv/tmdb/22/1/2", "source": source, "end_date": "2026-01-03T00:00:00Z", "consumption_id": 42},
+                ],
+                "count": 2,
+            },
+        },
+        {"_cw_history_rewatches": True, "floppy": {}},
+    )
+
+    out = _history.build_index(adapter)
+
+    assert sorted(out) == ["tmdb:22#s01e02@1767225600", "tmdb:22#s01e02@1767398400"]
+    assert out["tmdb:22#s01e02@1767225600"]["_floppy_consumption_id"] == 41
+    assert out["tmdb:22#s01e02@1767398400"]["_floppy_consumption_id"] == 42
 
 
 def test_floppy_episode_history_add_prevents_duplicate_play() -> None:
