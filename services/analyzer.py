@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from services.analyzer_mapping import MappingRequest, handle_mapping
 
 from cw_platform.access_policy import filter_pairs_for_user, pair_ids_for_user, request_user
+from cw_platform.id_map import _norm_type, migrate_media_key
 from cw_platform.pair_scope import pair_feature_scope
 from cw_platform.orchestrator._state_store import StateStore
 from cw_platform.orchestrator._scope import scope_safe as endpoint_scope
@@ -1907,7 +1908,9 @@ def _alias_scope_fragment(obj: Mapping[str, Any]) -> str:
 
 
 def _alias_keys(obj: dict[str, Any]) -> list[str]:
-    t = (obj.get("type") or "").lower()
+    t = _norm_type(obj.get("type")) if obj.get("type") else ""
+    if t == "anime":
+        t = "show"
     ids = dict(obj.get("ids") or {})
     show_ids_raw = obj.get("show_ids")
     show_ids = dict(show_ids_raw) if isinstance(show_ids_raw, Mapping) and show_ids_raw else {}
@@ -1915,7 +1918,7 @@ def _alias_keys(obj: dict[str, Any]) -> list[str]:
     seen: set[str] = set()
 
     if obj.get("_key"):
-        out.append(obj["_key"])
+        out.append(migrate_media_key(obj["_key"], obj))
 
     scoped = t in ("season", "episode") and bool(show_ids)
     scope_ids = show_ids if scoped else ids
@@ -1925,7 +1928,7 @@ def _alias_keys(obj: dict[str, Any]) -> list[str]:
         v = scope_ids.get(ns)
         if v:
             vs = f"{v}{frag}"
-            out.append(f"{ns}:{vs}")
+            out.append(f"{ns}:{vs}#show" if ns == "tmdb" and t == "show" else f"{ns}:{vs}")
             if t in ("movie", "show", "season", "episode"):
                 out.append(f"{t}:{ns}:{vs}")
 
@@ -4274,6 +4277,10 @@ def _rekey(b: dict[str, Any], old_key: str, it: dict[str, Any]) -> str:
     suffix = ""
     if "#" in old_key:
         suffix = old_key.split("#", 1)[1]
+    if suffix == "show" and ns != "tmdb":
+        suffix = ""
+    elif not suffix and ns == "tmdb" and _norm_type(it.get("type")) in ("show", "anime"):
+        suffix = "show"
     new_key = f"{ns}:{base}"
     if suffix:
         new_key += f"#{suffix}"

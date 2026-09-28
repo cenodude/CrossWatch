@@ -364,6 +364,8 @@ def _canonical_key(raw_key: str, item: Mapping[str, Any]) -> str:
     for key in ("tmdb", "imdb", "tvdb", "trakt", "simkl", "anilist", "mal", "wetrakr"):
         value = ids.get(key)
         if value not in (None, "", 0, False):
+            if key == "tmdb" and _media_type(item) == "show":
+                return f"{key}:{value}#show"
             return f"{key}:{value}"
     return str(raw_key or _title(item)).strip().lower()
 
