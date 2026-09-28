@@ -214,7 +214,7 @@ def select_baseline_keys(success_keys, result) -> list:
 
 from ..provider_instances import normalize_instance_id
 
-from ..id_map import minimal as _minimal, canonical_key as _ck, merge_ids as _merge_ids
+from ..id_map import migrate_media_index, minimal as _minimal, canonical_key as _ck, merge_ids as _merge_ids, _norm_type
 from ..history_events import history_sync_key, minimal_history_item
 from ..anime_mapping.service import (
     anime_mapping_pair_feature_options as _anime_pair_feature_options,
@@ -241,7 +241,7 @@ from ._chunking import effective_chunk_size
 from ._unresolved import load_unresolved_keys, load_unresolved_map, load_unresolved_pending, record_unresolved, clear_unresolved, clear_matched_history_retries, is_remove_retry_reason
 from ._planner import diff, diff_ratings, diff_progress, _pick_rating, _pick_rated_at, _ts_epoch
 from ._phantoms import PhantomGuard
-from ._tombstones import clear_items_for_feature
+from ._tombstones import clear_items_for_feature, media_tombstone_tokens
 
 
 from ._pairs_utils import (
@@ -399,6 +399,8 @@ def _show_level_tokens(item: Mapping[str, Any]) -> set[str]:
 
 def _matches_dropped_show(item: Mapping[str, Any], dropped_tokens: set[str]) -> bool:
     if not dropped_tokens or not isinstance(item, Mapping):
+        return False
+    if str(item.get("type") or "").strip().lower() in ("movie", "movies"):
         return False
     return bool(_show_level_tokens(item) & dropped_tokens)
 
@@ -876,7 +878,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
     coord_aliases: _HistoryCoordinateAliases = _HistoryCoordinateAliases.disabled()
 
     def _typed_tokens(it: Mapping[str, Any]) -> set[str]:
-        typ = str(it.get("type") or "").strip().lower()
+        typ = _norm_type(it.get("type"))
         show_ids_raw = it.get("show_ids") if isinstance(it.get("show_ids"), Mapping) else {}
         ids_raw = it.get("ids") if isinstance(it.get("ids"), Mapping) else {}
         show_ids = dict(show_ids_raw or {})
@@ -935,7 +937,8 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
             for k, v in ids.items():
                 if v is None or str(v) == "":
                     continue
-                toks.add(f"{str(k).lower()}:{str(v).lower()}")
+                suffix = "#show" if str(k).lower() == "tmdb" and typ in ("show", "anime") else ""
+                toks.add(f"{str(k).lower()}:{str(v).lower()}{suffix}")
 
         return toks
 
@@ -1169,7 +1172,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
             if not isinstance(base, Mapping):
                 return {}
             items = base.get("items") or {}
-            return dict(items) if isinstance(items, Mapping) else {}
+            return migrate_media_index(items)
         except Exception:
             return {}
 
@@ -2095,14 +2098,10 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                         if not it:
                             continue
                         try:
-                            removed_tokens.add(k)
                             if feature == "history" and history_event_mode:
-                                continue
-                            ids = (it.get("ids") or {})
-                            for idk, idv in (ids or {}).items():
-                                if idv is None or str(idv) == "":
-                                    continue
-                                removed_tokens.add(f"{str(idk).lower()}:{str(idv).lower()}")
+                                removed_tokens.add(k)
+                            else:
+                                removed_tokens.update(media_tombstone_tokens(it, k))
                         except Exception:
                             continue
 

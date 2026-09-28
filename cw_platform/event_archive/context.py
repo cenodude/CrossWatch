@@ -13,6 +13,7 @@ from typing import Any, Callable
 from .db import get_conn
 from . import query as _query
 from ..local_db.legacy_files import STATE_MANUAL_JSON
+from ..id_map import _norm_type, migrate_media_index, migrate_media_key
 
 _RELATED_LIMIT = 50
 _CONTEXT_FEATURES = ("history", "watchlist", "ratings", "progress", "collection")
@@ -61,10 +62,13 @@ def _iter_state_files(dst: str | None, feature: str | None, marker: str, exclude
         yield p
 
 
-def _item_variants(item_key: Any) -> set[str]:
+def _item_variants(item_key: Any, media_type: Any = None) -> set[str]:
     ik = str(item_key or "").strip()
+    base = ik.split("@", 1)[0]
+    if base.startswith("tmdb:") and "#" not in base:
+        ik = migrate_media_key(ik, {"type": media_type, "ids": {"tmdb": base[5:]}})
     out = {ik}
-    if "#" in ik:
+    if "#" in ik and not ik.split("@", 1)[0].endswith("#show"):
         out.add(ik.split("#", 1)[0])
     return {v for v in out if v}
 
@@ -118,6 +122,7 @@ def build_context(
     source_instance: str | None = None,
     destination_instance: str | None = None,
     origin_instance: str | None = None,
+    media_type: str | None = None,
     conn: sqlite3.Connection | None = None,
 ) -> dict[str, Any]:
     c = conn or get_conn()
@@ -129,6 +134,7 @@ def build_context(
     out["event"] = event
 
     ev = event or {}
+    media_type = media_type or ev.get("media_type")
     item_key = item_key or ev.get("item_key")
     feature = feature or ev.get("feature")
     pair_key = pair_key or ev.get("pair_key")
@@ -161,8 +167,8 @@ def build_context(
     ctx["pair_state"] = _safe(lambda: current_pair_state(route))
     ctx["manual_block"] = _safe(lambda: current_manual_block(provider, feature, item_key))
     ctx["provider_health"] = _safe(lambda: current_provider_health(route))
-    ctx["analyzer_findings"] = _safe(lambda: current_analyzer_findings(item_key, feature))
-    ctx["item_state"] = _safe(lambda: current_item_state(provider, feature, item_key))
+    ctx["analyzer_findings"] = _safe(lambda: current_analyzer_findings(item_key, feature, media_type))
+    ctx["item_state"] = _safe(lambda: current_item_state(provider, feature, item_key, media_type))
     return out
 
 
@@ -189,6 +195,7 @@ def build_group_context(
             source_provider=g.get("source_provider"), destination_provider=g.get("destination_provider"),
             origin_provider=g.get("origin_provider"), source_instance=g.get("source_instance"),
             destination_instance=g.get("destination_instance"), origin_instance=g.get("origin_instance"),
+            media_type=g.get("media_type"),
             conn=c,
         ))
         out["context"] = (ctx or {}).get("context") or {}
@@ -436,13 +443,13 @@ def current_manual_block(provider: str | None, feature: str | None, item_key: st
     return {"present": present, "count": len(blocked) if isinstance(blocked, (list, dict)) else 0}
 
 
-def current_analyzer_findings(item_key: str | None, feature: str | None) -> dict[str, Any] | None:
+def current_analyzer_findings(item_key: str | None, feature: str | None, media_type: Any = None) -> dict[str, Any] | None:
     if not item_key:
         return None
     from services.analyzer import _load_state
     state = _load_state(None, {str(feature or "").lower()} if feature else None) or {}
     providers = (state.get("providers") or {}) if isinstance(state, dict) else {}
-    variants = _item_variants(item_key)
+    variants = _item_variants(item_key, media_type)
     feat = str(feature or "")
     hits: list[dict[str, Any]] = []
 
@@ -451,7 +458,7 @@ def current_analyzer_findings(item_key: str | None, feature: str | None) -> dict
             return
         fblk = blk.get(feat) if feat else None
         base = ((fblk or {}).get("baseline") or {}).get("items") if isinstance(fblk, Mapping) else None
-        if isinstance(base, Mapping) and any(v in base for v in variants):
+        if isinstance(base, Mapping) and variants.intersection(migrate_media_index(base)):
             hit: dict[str, Any] = {"provider": prov, "present": True}
             if instance:
                 hit["instance"] = instance
@@ -468,10 +475,10 @@ def current_analyzer_findings(item_key: str | None, feature: str | None) -> dict
     return {"present_in": hits, "count": len(hits)}
 
 
-def current_item_state(provider: str | None, feature: str | None, item_key: str | None) -> dict[str, Any] | None:
+def current_item_state(provider: str | None, feature: str | None, item_key: str | None, media_type: Any = None) -> dict[str, Any] | None:
     if not item_key:
         return None
-    finding = current_analyzer_findings(item_key, feature)
+    finding = current_analyzer_findings(item_key, feature, media_type)
     present = bool(finding and finding.get("count"))
     return {"item_key": item_key, "present_somewhere": present}
 
@@ -528,6 +535,7 @@ def _title_index() -> dict[str, dict[str, Any]]:
         k = str(key or "").strip()
         if not k:
             return
+        k = migrate_media_key(k, rec)
         cur = idx.get(k)
         if cur is None or _score(rec) > _score(cur):
             idx[k] = dict(rec)
@@ -539,7 +547,10 @@ def _title_index() -> dict[str, dict[str, Any]]:
             if isinstance(m, Mapping):
                 for ns, v in m.items():
                     if v not in (None, ""):
-                        ks.append(f"{str(ns).strip().lower()}:{str(v).strip().lower()}")
+                        key = f"{str(ns).strip().lower()}:{str(v).strip().lower()}"
+                        if str(ns).strip().lower() == "tmdb" and grp == "show_ids":
+                            key = f"{key}#show"
+                        ks.append(key)
         return ks
 
     def _ingest_items(items: Any) -> None:
@@ -588,9 +599,17 @@ def resolve_title(item_key: Any, media_type: Any = None) -> dict[str, Any] | Non
         return None
     idx = _title_index()
     rec: Mapping[str, Any] | None = None
-    for v in _item_variants(item_key):
+    kind = _norm_type(media_type) if media_type else ""
+    if str(item_key).split("@", 1)[0].endswith("#show") or kind == "anime":
+        kind = "show"
+    for v in sorted(_item_variants(item_key, media_type), key=lambda value: (value != str(item_key), value)):
         cand = idx.get(v) or idx.get(v.lower())
         if isinstance(cand, Mapping):
+            candidate_kind = _norm_type(cand.get("type")) if cand.get("type") else ""
+            if candidate_kind == "anime":
+                candidate_kind = "show"
+            if kind in ("movie", "show") and candidate_kind and candidate_kind != kind:
+                continue
             rec = cand
             break
     if rec is None:

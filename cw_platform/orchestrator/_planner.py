@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any
 
-from ..id_map import minimal, ids_from, coalesce_ids
+from ..id_map import minimal, ids_from, coalesce_ids, _norm_type
 
 
 _STRONG_ID_KEYS: tuple[str, ...] = ("tmdb", "imdb", "tvdb", "trakt")
@@ -22,12 +22,14 @@ def _strong_keys(item: Mapping[str, Any]) -> set[str]:
         s = str(v).strip().lower()
         return f"{k}:{s}" if s else None
 
-    typ = str(item.get("type") or "").strip().lower()
+    typ = _norm_type(item.get("type"))
     ids = ids_from(item)
     if typ not in ("season", "episode"):
         for k in _STRONG_ID_KEYS:
             t = _tok(k, ids.get(k))
             if t:
+                if k == "tmdb" and typ in ("show", "anime"):
+                    t += "#show"
                 out.add(t)
         return out
 

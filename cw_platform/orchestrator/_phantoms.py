@@ -5,13 +5,15 @@ from __future__ import annotations
 from pathlib import Path
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, TypeVar
-import json, os, time
+import json, os, re, time
 import shutil
 
 from ._scope import scope_safe
 
 _DIR = "/config/.cw_state"
 T = TypeVar("T", bound=Mapping[str, Any])
+_SUCCESS_VERSION = 2
+_BARE_TMDB_KEY = re.compile(r"tmdb:\d+", re.IGNORECASE)
 
 class PhantomGuard:
     def __init__(self, src: str, dst: str, feature: str, ttl_days: int | None = None, enabled: bool = True):
@@ -71,7 +73,7 @@ class PhantomGuard:
             pass
         return {}
 
-    def _write_map(self, p: Path, m: Mapping[str, int]) -> None:
+    def _write_map(self, p: Path, m: Mapping[str, Any]) -> None:
         try:
             p.parent.mkdir(parents=True, exist_ok=True)
             tmp = p.with_suffix(".tmp")
@@ -79,6 +81,18 @@ class PhantomGuard:
             os.replace(tmp, p)
         except Exception:
             pass
+
+    def _success_map(self) -> dict[str, int]:
+        try:
+            obj = json.loads(self._lf.read_text("utf-8"))
+        except Exception:
+            obj = None
+        if isinstance(obj, dict) and obj.get("version") == _SUCCESS_VERSION and isinstance(obj.get("items"), dict):
+            try:
+                return {str(k): int(v or 0) for k, v in obj["items"].items()}
+            except Exception:
+                return {}
+        return {k: v for k, v in self._read_map(self._lf).items() if not _BARE_TMDB_KEY.fullmatch(k)}
 
     def _save_minimals(self, items: Iterable[Mapping[str, Any]], minimal) -> None:
         try:
@@ -101,7 +115,8 @@ class PhantomGuard:
     ) -> tuple[list[T], int]:
         if not self._enabled or not adds:
             return list(adds), 0
-        last_ok = self._read_keys(self._lf)
+        cutoff = (self._now() - self._ttl * 86400) if self._ttl else None
+        last_ok = {k for k, ts in self._success_map().items() if cutoff is None or ts >= cutoff}
         ph_file = self._read_keys(self._pf)
         planned = [keyfn(it) for it in adds]
         phantoms = (set(planned) & last_ok) | ph_file
@@ -131,9 +146,9 @@ class PhantomGuard:
     def record_success(self, successful_keys: Iterable[str]) -> None:
         if not self._enabled:
             return
-        cur = self._read_map(self._lf)
+        cur = self._success_map()
         now = self._now()
         for k in successful_keys or []:
             cur[str(k)] = now
-        self._write_map(self._lf, cur)
+        self._write_map(self._lf, {"version": _SUCCESS_VERSION, "items": cur})
         

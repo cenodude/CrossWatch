@@ -16,7 +16,7 @@ from ._scope import pair_scope, scoped_file
 import time
 import datetime as _dt
 
-from ..id_map import canonical_key, KEY_PRIORITY
+from ..id_map import canonical_key, KEY_PRIORITY, _norm_type
 from ..history_events import history_event_key, is_history_event_key
 from ..provider_instances import normalize_instance_id
 from ..run_control import raise_if_cancelled
@@ -216,6 +216,8 @@ def _coalesce_by_shared_ids(idx: SnapIndex, *, feature: str) -> SnapIndex:
             t = _tok(idk, ids.get(idk))
             if not t:
                 continue
+            typ = _norm_type(it.get("type"))
+            t = f"{'show' if typ == 'anime' else typ}|{t}"
             other = seen.get(t)
             if other and other != ck:
                 _union(ck, other)

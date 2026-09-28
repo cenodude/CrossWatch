@@ -7,7 +7,7 @@ from typing import Any
 import importlib
 import threading
 from collections.abc import Mapping as _Mapping
-from ..id_map import canonical_key as _ck, keys_for_item, ID_KEYS
+from ..id_map import canonical_key as _ck, keys_for_item, migrate_media_key, ID_KEYS
 from ._planner import _rating_step
 from ..provider_instances import _config_key_for, normalize_instance_id
 
@@ -261,8 +261,11 @@ def manual_policy(state: _Mapping[str, Any] | None, provider: str, feature: str,
     if isinstance(adds_raw, dict):
         for k, v in adds_raw.items():
             kk = str(k).strip()
-            if kk:
-                adds[kk] = v
+            if not kk:
+                continue
+            current = migrate_media_key(kk, v) if isinstance(v, _Mapping) else kk
+            if current not in adds or current == kk:
+                adds[current] = v
 
     return adds, blocks
 
@@ -300,12 +303,16 @@ def filter_manual_block(items: list[dict[str, Any]] | None, blocked: set[str] | 
             pass
 
         ids = it.get("ids") or {}
+        show = str(it.get("type") or "").strip().lower() in ("show", "shows", "series", "tv", "anime")
         if isinstance(ids, _Mapping):
             for k in ID_KEYS:
                 v = ids.get(k)
                 if v is None or str(v) == "":
                     continue
-                if f"{str(k).lower()}:{str(v).lower()}" in blk:
+                token = f"{str(k).lower()}:{str(v).lower()}"
+                if show and k == "tmdb":
+                    token = f"{token}#show"
+                if token in blk:
                     return True
 
         t = str(it.get("title") or "").strip().lower()

@@ -82,7 +82,7 @@ except Exception:
     def _rate_filter(idx: dict[str, Any], fcfg: Mapping[str, Any]) -> dict[str, Any]:
         return idx
 
-from ..id_map import minimal as _minimal, canonical_key as _ck, merge_ids as _merge_ids
+from ..id_map import migrate_media_index, minimal as _minimal, canonical_key as _ck, merge_ids as _merge_ids, _norm_type
 from ..history_events import history_sync_key, minimal_history_item
 from ..anime_mapping.service import (
     anime_mapping_pair_feature_options as _anime_pair_feature_options,
@@ -103,7 +103,7 @@ from ._snapshots import (
 )
 from ._applier import apply_add, apply_remove, apply_update
 from ._chunking import effective_chunk_size
-from ._tombstones import clear_items_for_feature, keys_for_feature
+from ._tombstones import clear_items_for_feature, keys_for_feature, media_tombstone_tokens
 from ._unresolved import load_unresolved_keys, load_unresolved_pending, record_unresolved, clear_unresolved, clear_matched_history_retries
 from ._phantoms import PhantomGuard  # type: ignore[attr-defined]
 
@@ -561,7 +561,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             if not isinstance(base, Mapping):
                 return {}
             items = base.get("items") or {}
-            return dict(items) if isinstance(items, Mapping) else {}
+            return migrate_media_index(items)
         except Exception:
             return {}
 
@@ -713,15 +713,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                 if feature == "history" and history_event_mode:
                     return toks
                 it = (prevA.get(ck) or prevB.get(ck) or {})
-                ids = (it.get("ids") or {})
-                try:
-                    for k, v in (ids or {}).items():
-                        if v is None or str(v) == "":
-                            continue
-                        toks.add(f"{str(k).lower()}:{str(v).lower()}")
-                except Exception:
-                    pass
-                return toks
+                return media_tombstone_tokens(it, ck)
 
             write_tokens: set[str] = set()
             for ck in set(newly):
@@ -758,7 +750,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         dbg("anime_mapping.history_coords", feature=feature, a=a, b=b, **coord_aliases.stats())
 
     def _typed_tokens(it: Mapping[str, Any]) -> set[str]:
-        typ = str(it.get("type") or "").strip().lower()
+        typ = _norm_type(it.get("type"))
         show_ids_raw = it.get("show_ids") if isinstance(it.get("show_ids"), Mapping) else {}
         ids_raw = it.get("ids") if isinstance(it.get("ids"), Mapping) else {}
         show_ids = dict(show_ids_raw or {})
@@ -807,7 +799,8 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             for k, v in ids.items():
                 if v is None or str(v) == "":
                     continue
-                toks.add(f"{str(k).lower()}:{str(v).lower()}")
+                suffix = "#show" if str(k).lower() == "tmdb" and typ in ("show", "anime") else ""
+                toks.add(f"{str(k).lower()}:{str(v).lower()}{suffix}")
 
         return toks
 
@@ -933,6 +926,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             if ck:
                 toks.add(ck)
             toks |= _typed_tokens(it)
+            toks |= media_tombstone_tokens(it)
         except Exception:
             pass
         return toks
@@ -940,7 +934,11 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
     def _item_tomb_ts(it: Mapping[str, Any]) -> int | None:
         hit_ts: int | None = None
         try:
-            for tok in _tokens(it):
+            tokens = _tokens(it)
+            ck = _ck(it)
+            if ck.endswith("#show"):
+                tokens.add(ck.removesuffix("#show"))
+            for tok in tokens:
                 ts = tomb_map.get(tok)
                 if ts is None:
                     continue
@@ -1970,14 +1968,11 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             for it in (items or []):
                 try:
                     ck = _sync_key(_sync_minimal(it))
-                    if ck:
-                        tokens.add(ck)
                     if feature == "history" and history_event_mode:
-                        continue
-                    for idk, idv in ((it.get("ids") or {}) or {}).items():
-                        if idv is None or str(idv) == "":
-                            continue
-                        tokens.add(f"{str(idk).lower()}:{str(idv).lower()}")
+                        if ck:
+                            tokens.add(ck)
+                    else:
+                        tokens.update(media_tombstone_tokens(it, ck))
                 except Exception:
                     continue
 
