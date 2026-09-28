@@ -859,6 +859,8 @@ def _canonical_item_key(provider: str, feature: Feature, orig_key: str, item: Ma
 
     id_key, id_val, src = picked
     base = f"{id_key}:{id_val}"
+    if id_key == "tmdb" and kind == "show":
+        base = f"{base}#show"
 
     season = _as_int(item.get("season"))
     episode = _as_int(item.get("episode"))

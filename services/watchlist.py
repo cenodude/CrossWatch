@@ -13,6 +13,7 @@ import requests
 
 from cw_platform.app_version import app_version, user_agent as http_user_agent
 from cw_platform.config_base import CONFIG
+from cw_platform.id_map import migrate_media_index, migrate_media_key
 from cw_platform.local_db import watchlist_hide as sqlite_watchlist_hide
 from cw_platform.modules_registry import load_sync_ops, sync_provider_names
 from cw_platform.orchestrator._state_store import StateStore
@@ -155,9 +156,9 @@ def _iter_provider_instance_blocks(
 def _items_from_block(block: dict[str, Any]) -> dict[str, Any]:
     wl = (((block.get("watchlist") or {}).get("baseline") or {}).get("items") or {})
     if isinstance(wl, dict) and wl:
-        return wl
+        return migrate_media_index(wl)
     legacy = block.get("items") or {}
-    return legacy if isinstance(legacy, dict) else {}
+    return migrate_media_index(legacy)
 
 
 def _pick_best_item(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
@@ -299,7 +300,7 @@ def _rich_ids_score(item: dict[str, Any] | None) -> int:
 
 def _ids_from_key_or_item(key: str, item: dict[str, Any]) -> dict[str, Any]:
     ids = dict((item or {}).get("ids") or {})
-    parts = [t for t in str(key or "").split(":") if t]
+    parts = [t for t in str(key or "").split("#", 1)[0].split(":") if t]
     if len(parts) >= 2:
         k = parts[-2].lower().strip()
         v = parts[-1].strip()
@@ -339,6 +340,7 @@ _WATCHLIST_ALIAS_ID_KEYS = ("tmdb", "imdb", "tvdb", "trakt", "simkl", "mdblist",
 
 def _watchlist_alias_tokens(key: str, item: dict[str, Any]) -> set[str]:
     ids = _ids_from_key_or_item(key, item)
+    typ = _type_from_item_or_guess(item, key)
     out: set[str] = set()
     for name in _WATCHLIST_ALIAS_ID_KEYS:
         value = ids.get(name)
@@ -349,7 +351,7 @@ def _watchlist_alias_tokens(key: str, item: dict[str, Any]) -> set[str]:
             continue
         if name == "imdb" and text.isdigit():
             text = f"tt{text}"
-        out.add(f"{name}:{text}")
+        out.add(f"{name}:{text}#show" if name == "tmdb" and typ == "tv" else f"{name}:{text}")
     return out
 
 
@@ -400,7 +402,7 @@ def _preferred_watchlist_key(alias_keys: list[str], info: dict[str, Any], typ: s
             continue
         if name == "imdb" and text.isdigit():
             text = f"tt{text}"
-        return f"{name}:{text}"
+        return f"{name}:{text}#show" if name == "tmdb" and _norm_type(typ) in {"tv", "anime"} else f"{name}:{text}"
 
     return alias_keys[0] if alias_keys else ""
 
@@ -410,6 +412,8 @@ def _type_from_item_or_guess(item: dict[str, Any], key: str) -> str:
     if typ == "movie":
         return "movie"
     if typ in {"tv", "show", "series", "anime"}:
+        return "tv"
+    if str(key or "").split("@", 1)[0].endswith("#show"):
         return "tv"
     ids = item.get("ids") or {}
     if ids.get("tvdb") or ids.get("thetvdb") or ids.get("anilist") or ids.get("mal"):
@@ -483,7 +487,7 @@ def _guid_variants_from_key_or_item(
     key: str,
     item: dict[str, Any] | None = None,
 ) -> list[str]:
-    prov, _, ident = (key or "").partition(":")
+    prov, _, ident = (key or "").split("#", 1)[0].partition(":")
     prov, ident = prov.lower().strip(), ident.strip()
     if not (prov and ident):
         ids = (item or {}).get("ids") or {}
@@ -988,7 +992,7 @@ def build_watchlist(state: dict[str, Any], tmdb_ok: bool) -> list[dict[str, Any]
             if ids_.get("anilist") or ids_.get("mal") or pref in {"anilist", "mal"}:
                 typ = "anime"
             else:
-                typ = "tv" if ids_.get("tvdb") else "movie"
+                typ = "tv" if ids_.get("tvdb") or key.split("@", 1)[0].endswith("#show") else "movie"
 
         key = _preferred_watchlist_key(alias_keys, info, typ)
 
@@ -1068,13 +1072,15 @@ def _del_key_from_provider_items(
     def _del_from(block: dict[str, Any]) -> bool:
         hit = False
         wl = (((block.get("watchlist") or {}).get("baseline") or {}).get("items") or {})
-        if isinstance(wl, dict) and key in wl:
-            wl.pop(key, None)
-            hit = True
         legacy = block.get("items") or {}
-        if isinstance(legacy, dict) and key in legacy:
-            legacy.pop(key, None)
-            hit = True
+        for rows in (wl, legacy):
+            if not isinstance(rows, dict):
+                continue
+            for stored_key, item in list(rows.items()):
+                current = migrate_media_key(stored_key, item) if isinstance(item, Mapping) else stored_key
+                if current == key:
+                    rows.pop(stored_key, None)
+                    hit = True
         return hit
 
     p = providers[prov] or {}
@@ -1101,7 +1107,7 @@ def _delete_on_plex_single(
         raise RuntimeError("plexapi is not available")
 
     def _id_tokens_from_key(k: str) -> set[str]:
-        parts = [t.strip() for t in str(k or "").split(":") if t]
+        parts = [t.strip() for t in str(k or "").split("#", 1)[0].split(":") if t]
         if len(parts) == 2:
             t, v = parts[-2].lower(), parts[-1]
             if t == "imdb" and v.isdigit():
@@ -1152,6 +1158,11 @@ def _delete_on_plex_single(
     account = cast(Any, MyPlexAccount)(token=token)
 
     item = _find_item_in_state(state, key) or {}
+    target_type = _norm_type(item.get("type"))
+    if target_type == "anime":
+        target_type = "tv"
+    if not target_type and (key.startswith("tmdb:") or key.split("@", 1)[0].endswith("#show")):
+        target_type = _type_from_item_or_guess(item, key)
     guid, rk = _extract_plex_identifiers(item)
     variants = _guid_variants_from_key_or_item(key, item)
     if guid:
@@ -1167,6 +1178,9 @@ def _delete_on_plex_single(
     wl = account.watchlist(maxresults=100000)
 
     def matches(m: Any) -> bool:
+        candidate_type = _norm_type(getattr(m, "type", ""))
+        if target_type and candidate_type and ("tv" if candidate_type == "anime" else candidate_type) != target_type:
+            return False
         cand_tokens = _tokens_from_plex_obj(m)
         if targets_guid:
             cand_guids = {

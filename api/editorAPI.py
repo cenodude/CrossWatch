@@ -1226,7 +1226,7 @@ def api_editor_save_state(payload: dict[str, Any] = Body(...), request: Request 
 def api_editor_state_manual_export(request: Request = cast(Request, None)) -> StreamingResponse:
     if not _is_admin_request(request):
         raise HTTPException(status_code=403, detail="profile_scope_denied")
-    pol = _load_policy()
+    pol = {**_load_policy(), "media_identity": sqlite_manual_policy.MEDIA_IDENTITY}
     data = json.dumps(pol, ensure_ascii=False, sort_keys=True).encode("utf-8")
     return StreamingResponse(
         io.BytesIO(data),
@@ -1254,6 +1254,8 @@ async def api_editor_state_manual_import(
     mode_n = str(mode or "merge").strip().lower()
     if mode_n not in ("merge", "replace"):
         raise HTTPException(status_code=400, detail="Invalid mode")
+    if incoming.get("media_identity") != sqlite_manual_policy.MEDIA_IDENTITY:
+        sqlite_manual_policy.migrate_media_policy(incoming)
 
     def _mutate(raw: dict[str, Any]) -> dict[str, Any]:
         merged = _merge_policy(raw, incoming, mode_n)

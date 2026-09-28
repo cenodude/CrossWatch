@@ -14,8 +14,8 @@ export async function readMappingFile(file) {
   if (file.size > 20 * 1024 * 1024) throw new Error("Mapping file must be 20 MB or smaller.");
   let data;
   try { data = JSON.parse(await file.text()); } catch { throw new Error("Choose a valid Mappings & blocks JSON export."); }
-  if (data?.format !== "crosswatch-mappings-blocks" || data.version !== 1 || !Array.isArray(data.records)) {
-    throw new Error("Choose a Mappings & blocks JSON export (version 1).");
+  if (data?.format !== "crosswatch-mappings-blocks" || ![1, 2].includes(data.version) || !Array.isArray(data.records)) {
+    throw new Error("Choose a Mappings & blocks JSON export (version 1 or 2).");
   }
   return data;
 }

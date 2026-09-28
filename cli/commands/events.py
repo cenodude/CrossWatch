@@ -6,6 +6,7 @@ from __future__ import annotations
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import quote
 
 import typer
 from rich.text import Text
@@ -387,7 +388,7 @@ def events_item(
 ) -> None:
     """Show the history of one item."""
     state: Ctx = ctx.obj
-    payload = state.get(f"/api/events/item/{item_key}", params={"limit": limit})
+    payload = state.get(f"/api/events/item/{quote(item_key.strip(), safe='')}", params={"limit": limit})
     if state.out.json_mode:
         state.out.data(payload)
         return

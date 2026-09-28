@@ -11,7 +11,7 @@ from typing import Any, Literal
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cw_platform.id_map import keys_for_item
+from cw_platform.id_map import migrate_media_key, typed_keys_for_item
 from cw_platform.local_db import manual_policy
 from cw_platform.mapping_policy import feature_node
 from cw_platform.provider_instances import normalize_instance_id
@@ -105,7 +105,7 @@ class TransferRule(RuleIdentity):
 class RuleBundle(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     format: Literal["crosswatch-mappings-blocks"]
-    version: Literal[1]
+    version: Literal[1, 2]
     records: list[TransferRule] = Field(max_length=MAX_RECORDS)
 
 
@@ -186,11 +186,26 @@ def export_rules(request, *, provider="", instance="", feature="", pair_id="", u
         records.append(record)
     if len(records) > MAX_RECORDS:
         raise HTTPException(400, "Export is too large. Select a source or feature and try again.")
-    data = RuleBundle.model_validate(dict(format="crosswatch-mappings-blocks", version=1, records=records)).model_dump(exclude_none=True)
+    data = RuleBundle.model_validate(dict(format="crosswatch-mappings-blocks", version=2, records=records)).model_dump(exclude_none=True)
     content = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
     if len(content) > MAX_BYTES:
         raise HTTPException(400, "Export is too large. Select a source or feature and try again.")
     return content
+
+
+def _typed_rules(bundle: RuleBundle) -> list[TransferRule]:
+    if bundle.version != 1:
+        return list(bundle.records)
+    rules: list[TransferRule] = []
+    for rule in bundle.records:
+        if rule.entry_type == "block":
+            rules.extend(rule.model_copy(update={"key": key}) for key in manual_policy.legacy_media_blocks(rule.key))
+            continue
+        update: dict[str, Any] = {"key": migrate_media_key(rule.key, rule.item or {})}
+        if rule.original_key and rule.original:
+            update["original_key"] = migrate_media_key(rule.original_key, rule.original)
+        rules.append(rule.model_copy(update=update))
+    return rules
 
 
 def import_rules(request, bundle: RuleBundle):
@@ -200,7 +215,7 @@ def import_rules(request, bundle: RuleBundle):
     def apply(policy):
         imported = skipped = 0
         # Import mappings first so their automatic blocks cannot become standalone rules.
-        for rule in sorted(bundle.records, key=lambda row: row.entry_type == "block"):
+        for rule in sorted(_typed_rules(bundle), key=lambda row: row.entry_type == "block"):
             node = rule_node(policy, rule)
             items = node.setdefault("adds", {}).setdefault("items", {})
             mappings = node.setdefault("mappings", {})
@@ -220,7 +235,7 @@ def import_rules(request, bundle: RuleBundle):
                 if metadata:
                     mappings[rule.key] = metadata
                 if (rule.original_key and rule.original_key != rule.key
-                        and rule.original_key not in keys_for_item(rule.item or {})
+                        and rule.original_key not in typed_keys_for_item(rule.item or {})
                         and rule.original_key.lower() not in {key.lower() for key in blocks}):
                     blocks.append(rule.original_key)
             imported += 1

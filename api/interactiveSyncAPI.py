@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from cw_platform.access_policy import request_user, user_can_access_pair, pair_profile_id, profile_allows_pair, profile_instances_map
 from cw_platform.provider_instances import normalize_user_profile_id
 from cw_platform.config_base import load_config
-from cw_platform.id_map import canonical_key, coalesce_ids, keys_for_item, ID_KEYS
+from cw_platform.id_map import canonical_key, coalesce_ids, typed_keys_for_item, ID_KEYS
 from cw_platform.value_coercion import coerce_bool
 from services import interactive_sync as svc
 
@@ -290,7 +290,7 @@ def prepare_mapping(row, corrected):
     if key == "unknown:" or not (item["ids"] or item.get("show_ids")):
         raise HTTPException(400, "A media identifier is required")
     original = row["key"]
-    blocks = [original] if original and key != original and original not in keys_for_item(item) else []
+    blocks = [original] if original and key != original and original not in typed_keys_for_item(item) else []
     return key, item, blocks
 
 
