@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-from cw_platform.id_map import canonical_key, minimal as id_minimal
+from cw_platform.id_map import canonical_key, migrate_media_index, minimal as id_minimal
 
 from ._common import (
     _chunk,
@@ -90,7 +90,11 @@ def _shadow_load() -> dict[str, Any]:
         raw = json.loads(_shadow_path().read_text("utf-8"))
         if not isinstance(raw, Mapping) or int(raw.get("schema") or 0) != _SHADOW_SCHEMA:
             return {"etag": None, "ts": 0, "items": {}}
-        return dict(raw)
+        out = dict(raw)
+        out["items"] = migrate_media_index(out.get("items"))
+        if isinstance(out.get("bucket_items"), Mapping):
+            out["bucket_items"] = {k: migrate_media_index(v) for k, v in out["bucket_items"].items()}
+        return out
     except Exception:
         return {"etag": None, "ts": 0, "items": {}}
 

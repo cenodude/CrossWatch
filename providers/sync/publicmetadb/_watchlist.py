@@ -35,7 +35,7 @@ def _shadow_load() -> dict[str, Any]:
 
 
 def _shadow_save(items: Mapping[str, Any], *, list_id: str | None = None) -> None:
-    doc: dict[str, Any] = {"items": dict(items)}
+    doc: dict[str, Any] = {"items": dict(items), "identity_schema": 2}
     if list_id:
         doc["list_id"] = list_id
     write_json(_shadow_path(), doc)
@@ -170,6 +170,8 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
 
     shadow = _shadow_load()
     remote_ids: dict[str, str] = dict(shadow.get("items") or {})
+    if remote_ids and shadow.get("identity_schema") != 2:
+        _, remote_ids = _fetch_all_items(adapter, list_id)
     unresolved: list[dict[str, Any]] = []
     ok = 0
     for it in items_list:
@@ -209,7 +211,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
 
     shadow = _shadow_load()
     remote_ids: dict[str, str] = dict(shadow.get("items") or {})
-    if not remote_ids:
+    if not remote_ids or shadow.get("identity_schema") != 2:
         _, remote_ids = _fetch_all_items(adapter, list_id)
 
     unresolved: list[dict[str, Any]] = []

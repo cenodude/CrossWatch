@@ -9,7 +9,7 @@ from pathlib import Path
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from cw_platform.id_map import canonical_key, ids_from, unified_keys_from_ids
+from cw_platform.id_map import migrate_media_key, canonical_key, ids_from, unified_keys_from_ids
 from providers.sync._mod_common import observation_time
 
 from ._common import (
@@ -170,7 +170,7 @@ def _load_state(adapter: Any) -> dict[str, Any]:
             for key, value in items_raw.items():
                 if not isinstance(value, Mapping):
                     continue
-                ck = str(key) or canonical_key(value)
+                ck = migrate_media_key(str(key), value)
                 if not ck:
                     continue
                 items2[ck] = _accepted(value, observed_at=observed_at)
@@ -183,7 +183,7 @@ def _load_state(adapter: Any) -> dict[str, Any]:
         for key, value in raw.items():
             if not isinstance(value, Mapping):
                 continue
-            ck = str(key) or canonical_key(value)
+            ck = migrate_media_key(str(key), value)
             if not ck:
                 continue
             items3[ck] = _accepted(value, observed_at=observed_at)

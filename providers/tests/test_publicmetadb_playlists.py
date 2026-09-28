@@ -111,7 +111,7 @@ def test_snapshot_reads_movies_and_shows_with_pagination():
 
     snap = pl.get_snapshot(FakeAdapter(client), "list-a")
     assert snap.resource.id == "list-a"
-    assert snap.ordered_keys() == ["tmdb:438631", "tmdb:95396"]
+    assert snap.ordered_keys() == ["tmdb:438631", "tmdb:95396#show"]
     assert snap.items[0].playlist_item_id == "i1"
     assert snap.items[0].position is None
     assert snap.items[1].item["type"] == "show"
@@ -132,7 +132,7 @@ def test_create_private_list_and_add_payloads_require_tmdb():
 
     add = pl.add(ad, "created-1", [_movie(438631, "Dune"), _show(95396, "Severance"), {"type": "movie", "ids": {}}])
     assert add["count"] == 2
-    assert add["confirmed_keys"] == ["tmdb:438631", "tmdb:95396"]
+    assert add["confirmed_keys"] == ["tmdb:438631", "tmdb:95396#show"]
     assert add["unresolved"][0]["hint"] == "missing_tmdb_id"
     post_calls = [c for c in client.calls if c["method"] == "POST" and c["path"].endswith("/items")]
     assert post_calls[0]["json"] == {"tmdb_id": 438631, "media_type": "movie"}

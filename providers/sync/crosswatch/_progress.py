@@ -9,7 +9,7 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-from cw_platform.id_map import canonical_key
+from cw_platform.id_map import migrate_media_key, canonical_key
 
 from ._common import (
     _atomic_write,
@@ -247,7 +247,7 @@ def _load_state(adapter: Any) -> dict[str, Any]:
                     accepted = _accepted(value, adapter)
                 except Exception:
                     continue
-                ck = str(key) or canonical_key(accepted)
+                ck = migrate_media_key(str(key), accepted)
                 if not ck:
                     continue
                 items2[ck] = accepted
@@ -264,7 +264,7 @@ def _load_state(adapter: Any) -> dict[str, Any]:
                 accepted = _accepted(value, adapter)
             except Exception:
                 continue
-            ck = str(key) or canonical_key(accepted)
+            ck = migrate_media_key(str(key), accepted)
             if not ck:
                 continue
             items3[ck] = accepted

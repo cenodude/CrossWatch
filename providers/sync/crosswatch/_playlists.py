@@ -134,6 +134,8 @@ def _normalized_order(order: Sequence[str], items: Mapping[str, Any]) -> list[st
     out: list[str] = []
     for raw_key in order or []:
         key = str(raw_key or "").strip()
+        if key not in items and key.startswith("tmdb:") and f"{key}#show" in items:
+            key = f"{key}#show"
         if key and key in items and key not in seen:
             out.append(key)
             seen.add(key)

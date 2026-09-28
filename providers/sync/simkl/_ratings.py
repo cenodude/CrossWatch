@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping, cast
 
-from cw_platform.id_map import minimal as id_minimal
+from cw_platform.id_map import migrate_media_key, minimal as id_minimal
 from providers.sync._mod_common import observation_time
 
 from .._log import log as cw_log
@@ -164,6 +164,11 @@ def _rshadow_load() -> dict[str, Any]:
     store = sh.get("items")
     if not isinstance(store, dict):
         store = {}
+    store = {
+        migrate_media_key(str(k), rec["item"]) if isinstance(rec, Mapping) and isinstance(rec.get("item"), Mapping) else k: rec
+        for k, rec in store.items()
+    }
+    sh["items"] = store
     cleaned = False
     for k in list(store.keys()):
         if _is_unknown_key(k):

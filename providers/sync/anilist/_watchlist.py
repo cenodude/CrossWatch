@@ -12,7 +12,7 @@ from typing import Any
 
 from pathlib import Path
 
-from cw_platform.id_map import minimal as id_minimal
+from cw_platform.id_map import migrate_media_key, minimal as id_minimal
 from cw_platform.anime_mapping import AnimeMappingService
 from cw_platform.anime_mapping.service import PAIR_FEATURE_OPTIONS_KEY, runtime_pair_feature_options
 
@@ -127,7 +127,15 @@ def _shadow_load() -> dict[str, dict[str, Any]]:
     p = _shadow_path()
     data = read_json(p)
     if isinstance(data, dict) and data:
-        return data
+        out: dict[str, dict[str, Any]] = {}
+        for key, entry in data.items():
+            if not isinstance(entry, Mapping):
+                continue
+            current = str(key)
+            current = migrate_media_key(current, {"type": entry.get("type"), "ids": entry.get("source_ids") or entry.get("ids") or {}})
+            if current not in out or current == str(key):
+                out[current] = dict(entry)
+        return out
     return {}
 
 

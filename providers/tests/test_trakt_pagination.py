@@ -216,7 +216,7 @@ def test_dropped_shows_fetches_all_pages_and_does_not_cache_failures(monkeypatch
             _common.load_dropped_show_tokens(adapter)
         assert saved == []
     else:
-        assert _common.load_dropped_show_tokens(adapter) == {"tmdb:1", "tmdb:2"}
+        assert _common.load_dropped_show_tokens(adapter) == {"tmdb:1", "tmdb:2", "tmdb:1#show", "tmdb:2#show"}
         assert calls == [1, 2, 3]
         assert saved[0][1]["version"] == 2
 

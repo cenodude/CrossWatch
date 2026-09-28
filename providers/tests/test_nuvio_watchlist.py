@@ -54,8 +54,8 @@ def test_watchlist_reads_library_movies_and_series() -> None:
 
     index = _watchlist.build_index(adapter)
 
-    assert sorted(index) == ["imdb:tt0137523", "tmdb:1396"]
-    assert index["tmdb:1396"]["type"] == "show"
+    assert sorted(index) == ["imdb:tt0137523", "tmdb:1396#show"]
+    assert index["tmdb:1396#show"]["type"] == "show"
     assert index["imdb:tt0137523"]["_nuvio_poster"] == "poster.jpg"
 
 
@@ -67,7 +67,7 @@ def test_watchlist_add_preserves_existing_library_rows_and_verifies() -> None:
     result = _watchlist.add(adapter, [{"type": "show", "ids": {"tmdb": "1396"}, "title": "Breaking Bad", "year": 2008}])
 
     assert result["ok"] is True
-    assert set(result["confirmed_keys"]) == {"tmdb:1396"}
+    assert set(result["confirmed_keys"]) == {"tmdb:1396#show"}
     push = [body for name, body in adapter.client.calls if name == "sync_push_library"][0]
     assert [row["content_id"] for row in push["p_items"]] == ["tt0137523", "tmdb:1396"]
     assert push["p_items"][0]["poster"] == "poster.jpg"
@@ -272,7 +272,8 @@ def test_watchlist_remove_matches_stored_imdb_row(content_type: str, item_type: 
         assert not any(name == "sync_push_library" for name, _ in adapter.client.calls)
         assert result["confirmed_keys"] == []
     else:
-        assert result["confirmed_keys"] == ["tmdb:6435"]
+        expected_key = "tmdb:6435" if item_type == "movie" else "tmdb:6435#show"
+        assert result["confirmed_keys"] == [expected_key]
         assert len(adapter.client.rows) == 1
         assert adapter.client.rows[0]["content_id"] == "tmdb:999"
         assert adapter.client.rows[0]["poster"] == "keep.jpg"

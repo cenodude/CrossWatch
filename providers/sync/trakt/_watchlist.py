@@ -2,6 +2,7 @@
 # TRAKT Module for watchlist sync functions
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
+
 import os, json, time
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -25,7 +26,7 @@ from ._common import (
     resolve_watchlist_limit,
 )
 from .._mod_common import request_with_retries
-from cw_platform.id_map import minimal as id_minimal
+from cw_platform.id_map import migrate_media_index, minimal as id_minimal
 from .._log import log as cw_log
 from ._pagination import TraktPager
 
@@ -127,6 +128,7 @@ def _shadow_load() -> dict[str, Any]:
     try:
         doc = json.loads(p.read_text("utf-8"))
         if isinstance(doc, dict) and doc.get("schema") == 1:
+            doc["items"] = migrate_media_index(doc.get("items"))
             return doc
         return {"etag": None, "ts": 0, "items": {}}
     except Exception:

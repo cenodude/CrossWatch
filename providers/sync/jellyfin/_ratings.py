@@ -8,7 +8,7 @@ import os
 import time
 from typing import Any, Iterable, Mapping
 
-from cw_platform.id_map import canonical_key, minimal as id_minimal
+from cw_platform.id_map import canonical_key, migrate_media_records, minimal as id_minimal
 from ._common import (
     state_file,
     jf_get_library_roots,
@@ -64,26 +64,57 @@ def _meta_save(meta: Mapping[str, Mapping[str, Any]]) -> None:
 
 
 # shadow 
-def _shadow_load() -> dict[str, int]:
+def _legacy_shadow_keys(data: Mapping[str, Any]) -> set[str]:
+    if not isinstance(data, Mapping):
+        return set()
+    if data.get("identity_schema") == 2:
+        return {str(key) for key in data.get("legacy_keys", [])}
+    items = data.get("items")
+    rows = items if isinstance(items, Mapping) else data
+    return {str(key) for key in rows if str(key).startswith("tmdb:") and str(key)[5:].isdigit()}
+
+
+def _shadow_load(*, current_items: Mapping[str, Any] | None = None) -> dict[str, int]:
     if _is_capture_mode() or _pair_scope() is None:
         return {}
     try:
         with open(_shadow_path(), "r", encoding="utf-8") as f:
             raw = json.load(f) or {}
-            return {str(k): int(v) for k, v in raw.items()}
+        items = raw.get("items")
+        rows = items if isinstance(items, dict) else raw
+        out = {str(k): int(v) for k, v in rows.items()}
+        legacy = _legacy_shadow_keys(raw)
+        if current_items is not None and legacy:
+            resolved = {key for key in legacy if key in current_items or f"{key}#show" in current_items}
+            for key in resolved:
+                if key not in current_items:
+                    out.pop(key, None)
+            _shadow_save(out, legacy_keys=legacy - resolved)
+        return out
     except Exception:
         return {}
 
 
-def _shadow_save(d: Mapping[str, int]) -> None:
+def _shadow_save(d: Mapping[str, int], *, legacy_keys: set[str] | None = None) -> None:
     if _is_capture_mode() or _pair_scope() is None:
         return
     try:
         path = _shadow_path()
+        if legacy_keys is None:
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    previous = json.load(f) or {}
+                legacy_keys = _legacy_shadow_keys(previous)
+            except (OSError, ValueError, TypeError):
+                legacy_keys = set()
+        doc: dict[str, Any] = {"identity_schema": 2, "items": dict(d)}
+        remaining = sorted(legacy_keys & d.keys())
+        if remaining:
+            doc["legacy_keys"] = remaining
         os.makedirs(os.path.dirname(path), exist_ok=True)
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(d, f, ensure_ascii=False, indent=2, sort_keys=True)
+            json.dump(doc, f, ensure_ascii=False, indent=2, sort_keys=True)
         os.replace(tmp, path)
     except Exception:
         pass
@@ -112,7 +143,7 @@ def _load() -> dict[str, Any]:
     if cached is None:
         try:
             with open(path, "r", encoding="utf-8") as f:
-                cached = json.load(f) or {}
+                cached = migrate_media_records(json.load(f) or {}, "hint")
         except Exception:
             cached = {}
         _UNRES_CACHE[path] = cached
@@ -379,7 +410,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
             seen_libs[lid_s] = seen_libs.get(lid_s, 0) + 1
         _dbg("library_id_distribution", libs=seen_libs)
 
-    shadow = _shadow_load()
+    shadow = _shadow_load(current_items=out)
     if shadow:
         added = 0
         for k in shadow.keys():

@@ -37,7 +37,7 @@ from ._common import (
     find_seed_item_id,
 )
 
-from cw_platform.id_map import minimal as id_minimal, canonical_key
+from cw_platform.id_map import migrate_media_records, minimal as id_minimal, canonical_key
 
 
 def _unresolved_path() -> str:
@@ -61,7 +61,7 @@ def _load() -> dict[str, Any]:
     if cached is None:
         try:
             with open(path, "r", encoding="utf-8") as f:
-                cached = json.load(f) or {}
+                cached = migrate_media_records(json.load(f) or {}, "hint")
         except Exception:
             cached = {}
         _UNRES_CACHE[path] = cached

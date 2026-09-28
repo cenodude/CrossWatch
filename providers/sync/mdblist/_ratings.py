@@ -12,7 +12,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any, Iterable, Mapping, TypeGuard
 
-from cw_platform.id_map import minimal as id_minimal
+from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 from .._log import log as cw_log
 
@@ -317,6 +317,8 @@ def _key_of(obj: Mapping[str, Any]) -> str:
             return f"episode:{base}"
 
     if base:
+        if base.startswith("tmdb:") and kind not in ("season", "episode"):
+            return canonical_key({"type": kind, "ids": {"tmdb": base[5:]}})
         return base
 
     title = str(obj.get("title") or "").strip()
@@ -888,7 +890,7 @@ def build_index(
 
 def _show_key(ids: Mapping[str, Any]) -> str:
     if ids.get("tmdb"):
-        return f"tmdb:{ids['tmdb']}"
+        return canonical_key({"type": "show", "ids": {"tmdb": ids["tmdb"]}})
     if ids.get("imdb"):
         return f"imdb:{ids['imdb']}"
     if ids.get("trakt"):
