@@ -146,6 +146,15 @@ def test_media_server_partial_uses_destination_ticks_and_preserves_watched(media
     assert not any(c[0] == "POST" for c in http.calls)
 
 
+def test_media_server_partial_ignores_stale_play_count_on_unwatched_item(media_server):
+    provider, cls, http, _ = media_server
+    http.rows["10"]["UserData"].update(Played=False, PlayCount=3)
+    result = cls().send(event(action="pause", progress=30, duration_ms=200_000), config(provider))
+    assert result["ok"] and not result.get("skipped")
+    assert http.rows["10"]["UserData"]["PlaybackPositionTicks"] == 300_000_000
+    assert not http.rows["10"]["UserData"]["Played"]
+
+
 @pytest.mark.parametrize("source,target", [("default", "P01"), ("P01", "default"), ("default", "default"), ("P01", "P01")])
 def test_media_server_instance_isolation(media_server, source, target):
     provider, cls, http, configs = media_server
