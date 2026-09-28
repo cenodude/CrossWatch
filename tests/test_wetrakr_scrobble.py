@@ -69,6 +69,25 @@ def test_start_pause_resume_incomplete_stop_completion_and_rewatch(live, episode
     assert len([p for m, p, _ in live.server.calls if m == "GET" and p.startswith("/media/external")]) == 1
 
 
+@pytest.mark.parametrize("episode", [False, True])
+@pytest.mark.parametrize("progress,watched_at", [(38, 90), (85, 90), (95, 96), (100, 90)])
+def test_incomplete_stop_does_not_archive_watched(live, episode, progress, watched_at):
+    cfg = {**live.view, "scrobble": {"trakt": {"watched_at": watched_at}}}
+    ev = event(progress=38, **({"media_type": "episode", "ids": {"tmdb_show": "1396"},
+                              "season": 1, "number": 1} if episode else {}))
+    assert live.sink.send(ev, cfg)["action"] == "start"
+    assert live.sink.send(replace(ev, action="stop", progress=progress), cfg)["action"] == "pause"
+    assert posts(live)[-1][0] == "/scrobble/pause"
+    assert [row["action"] for row in live.archived] == ["start"]
+    assert not live.server.history and not live.completed and not live.removed
+
+    assert live.sink.send(replace(ev, action="stop", progress=100, raw={"_cw_preserve_stop": True}), cfg)["action"] == "scrobble"
+    assert [row["action"] for row in live.archived] == ["start", "stop"]
+    assert live.archived[-1]["status"] == "ok"
+    assert live.archived[-1]["progress"] == 100
+    assert len(live.server.history) == len(live.completed) == 1
+
+
 def test_profile_only_factories_routes_and_credentials(live):
     from providers.scrobble.watch_manager import _make_sink
     from providers.webhooks import config, dispatch

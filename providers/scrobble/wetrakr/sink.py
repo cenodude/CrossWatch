@@ -205,12 +205,12 @@ class WeTrakrSink:
             except WeTrakrSyncError as exc:
                 uncertain = posted and action == "stop" and (not exc.status_code or exc.status_code >= 500)
                 state["uncertain"] = uncertain
-                self._archive(event, config, progress, "fail", exc.reason)
+                self._archive(event, config, action, progress, "fail", exc.reason)
                 _log(f"{path} failed for {name}: status={exc.status_code} reason={exc.reason}", "WARN")
                 return {"ok": False, "error": exc.reason, "retryable": not uncertain and (exc.status_code in (408, 429) or exc.status_code >= 500 or exc.reason == "request_failed"),
                         "retry_after": exc.retry_after}
             state.update(action=action, progress=body["progress"], sent_at=now, completed=action == "stop")
-            self._archive(event, config, progress, "ok")
+            self._archive(event, config, action, progress, "ok")
             if action == "stop":
                 try:
                     record_scrobble_event(event, source=source, source_instance=source_instance, target="wetrakr",
@@ -221,12 +221,12 @@ class WeTrakrSink:
             _log(f"scrobble {response['action']} user='{user}' p={body['progress']:.1f}% media='{name}'")
             return {"ok": True, "action": response["action"]}
 
-    def _archive(self, event: ScrobbleEvent, cfg: Mapping[str, Any], progress: float, status: str, reason: str = "") -> None:
-        if event.action not in ("start", "stop"):
+    def _archive(self, event: ScrobbleEvent, cfg: Mapping[str, Any], action: str, progress: float, status: str, reason: str = "") -> None:
+        if event.action not in ("start", "stop") or (status == "ok" and action not in ("start", "stop")):
             return
         watch = (cfg.get("scrobble") or {}).get("watch") or {}
         try:
-            record_watch(event, action=event.action, source_provider=str(watch.get("route_provider") or "watcher"),
+            record_watch(event, action=action, source_provider=str(watch.get("route_provider") or "watcher"),
                          source_instance=str(watch.get("route_provider_instance") or "default"), destination_provider="wetrakr",
                          destination_instance=self.instance_id, progress=progress, status=status, reason=reason)
         except Exception:
