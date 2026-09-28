@@ -177,7 +177,7 @@ class JellyfinEmbySink(MediaServerSink):
         data = row.get("UserData")
         if not isinstance(data, dict):
             raise DeliveryError("missing_destination_user_data")
-        watched = bool(data.get("Played") or data.get("IsPlayed") or int(data.get("PlayCount") or 0) > 0)
+        watched = bool(data.get("Played") or data.get("IsPlayed"))
         moment = datetime.fromtimestamp(played_at, timezone.utc)
         marked = False
         if complete and not watched:
