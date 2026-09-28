@@ -121,6 +121,27 @@ def test_synced_history_counts_rewatches_once_per_viewing() -> None:
     assert payload["stats"]["watches"] == 4
 
 
+def test_synced_history_keeps_same_title_shows_apart() -> None:
+    def episode(show_ids: dict[str, Any], watched_at: str) -> dict[str, Any]:
+        return {"type": "episode", "series_title": "Doctor Who", "season": 1, "episode": 1,
+                "show_ids": show_ids, "watched_at": watched_at}
+
+    classic = episode({"tmdb": 57243}, "2014-06-12T01:45:00Z")
+    revival = episode({"tmdb": 239770}, "2024-05-11T20:00:00Z")
+    revival_imdb = episode({"imdb": "tt31433814"}, "2024-05-11T20:00:00Z")
+    state = {"providers": {
+        "TRAKT": _history({"tmdb:57243#s01e01@1": classic, "tmdb:239770#s01e01@2": revival}),
+        "SIMKL": _history({"imdb:tt31433814#s01e01@2": revival_imdb}),
+    }}
+    payload = profile_history.build_history_payload(
+        profile_history.build_history_index("synced", state=state, tracker_items={}), resolve_art=False)
+
+    assert payload["counts"]["episode"] == 2
+    assert payload["stats"]["watches"] == 2
+    revival_row = payload["items"][0]
+    assert {ref["provider"] for ref in revival_row["present"]} == {"TRAKT", "SIMKL"}
+
+
 def test_synced_history_filters_and_jumps_to_month() -> None:
     index = _synced_index()
 
