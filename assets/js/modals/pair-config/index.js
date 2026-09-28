@@ -8,7 +8,7 @@ import { createLibraryController } from "./libraries.js";
 import { providerLogoHTML, providerToneRgb, sharedFeatureOrder, sharedFeatureLabel } from "./meta.js";
 import { ensurePairConfigStyles } from "./styles.js";
 import { createTabsController } from "./tabs.js";
-import { collectionDisabledForPair, collectionTypesForPair, commonFeaturesForPair, ratingsDisabledForPair, sanitizeFeaturesForPair } from "./custom-rules.js";
+import { collectionDisabledForPair, collectionTypesForPair, commonFeaturesForPair, featureAllowedForPair, ratingsDisabledForPair, sanitizeFeaturesForPair } from "./custom-rules.js";
 
 const TWO_WAY_WARNING =
   "Two-way sync means both sides can write to each other. It keeps both providers aligned, but it also heavily increases the risk of conflicts, duplicates, overwrites, and deletions. Use with extreme caution.";
@@ -38,7 +38,6 @@ const isPublicMetaDB=(v)=>same(v,"publicmetadb");
 const isFloppy=(v)=>same(v,"floppy");
 const isScrob=(v)=>same(v,"scrob");
 const isStremio=(v)=>same(v,"stremio");
-const isPunchPlay=(v)=>same(v,"punchplay");
 const isPlex = (v) => same(v, "plex");
 const isKodi = (v) => same(v, "kodi");
 const isCrossWatch = (v) => same(v, "crosswatch");
@@ -90,9 +89,7 @@ function globalAnimeMappingEnabled(state){return !!state?.cfgRaw?.anime_mapping?
 function hasAnimeProvider(state){return hasAniList(state)||isSimkl(state?.src)||isSimkl(state?.dst)||isCrossWatch(state?.src)||isCrossWatch(state?.dst)}
 function tmdbMetadataReady(state){return !!String(state?.cfgRaw?.tmdb?.api_key||state?.cfgRaw?.metadata?.tmdb_api_key||"").trim()}
 function collectionRouteSupported(state){
-  const sourceOk=isPlex(state?.src)||isEmby(state?.src)||isJelly(state?.src)||isTrakt(state?.src)||isMDBList(state?.src)||isCrossWatch(state?.src)||isPunchPlay(state?.src);
-  const targetOk=isTrakt(state?.dst)||isMDBList(state?.dst)||isCrossWatch(state?.dst)||isPunchPlay(state?.dst);
-  return sourceOk&&targetOk;
+  return featureAllowedForPair(state,"collection");
 }
 function forceOneWayMode(state){
   state.mode="one-way";
