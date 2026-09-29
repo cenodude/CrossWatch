@@ -22,6 +22,7 @@ from ._common import (
     library_records,
     now_iso,
     positive_int,
+    season_int,
     native_record_ids,
     read_drop_summary,
     read_merge_write,
@@ -176,9 +177,9 @@ def _metadata_enriched(adapter: Any, item: Mapping[str, Any], typ: str) -> dict[
     if duration is None and typ in {"episode", "episodes"}:
         tmdb = str(ids.get("tmdb") or lookup.get("tmdb") or "").strip()
         fetch = getattr(provider, "_get", None)
-        season = positive_int(out.get("season"))
+        season = season_int(out.get("season"))
         episode = positive_int(out.get("episode"))
-        if callable(fetch) and tmdb and season and episode:
+        if callable(fetch) and tmdb and season is not None and episode:
             try:
                 ep = fetch(f"https://api.themoviedb.org/3/tv/{tmdb}/season/{season}/episode/{episode}")
             except Exception:
@@ -230,7 +231,7 @@ def parse_episode_progress_record(record: Mapping[str, Any]) -> dict[str, Any] |
         return None
     show_id = str(record.get("_id") or "").strip()
     video_id = str(state.get("video_id") or state.get("videoId") or "").strip()
-    season = positive_int(state.get("season"))
+    season = season_int(state.get("season"))
     episode = positive_int(state.get("episode"))
     if video_id:
         parts = video_id.split(":")
@@ -238,11 +239,11 @@ def parse_episode_progress_record(record: Mapping[str, Any]) -> dict[str, Any] |
             candidate = ":".join(parts[:-2])
             if ids_from_stremio_id(candidate, "series"):
                 show_id = candidate
-            season = positive_int(parts[-2])
+            season = season_int(parts[-2])
             episode = positive_int(parts[-1])
-    elif show_id and season and episode:
+    elif show_id and season is not None and episode:
         video_id = f"{show_id}:{season}:{episode}"
-    if not show_id or not ids_from_stremio_id(show_id, "series") or not season or not episode:
+    if not show_id or not ids_from_stremio_id(show_id, "series") or season is None or not episode:
         return None
     item = item_from_episode(show_id, season, episode, record, {"id": video_id, "season": season, "episode": episode})
     if not item:
@@ -330,9 +331,9 @@ def _apply_progress(record: dict[str, Any], item: Mapping[str, Any], clear: bool
         if not show_id or not ids_from_stremio_id(show_id, "series"):
             return "stremio_id_missing"
         video_id = video_id_for_episode(item, show_id)
-        season = positive_int(item.get("season"))
+        season = season_int(item.get("season"))
         episode = positive_int(item.get("episode"))
-        if not video_id or not season or not episode:
+        if not video_id or season is None or not episode:
             return "stremio_episode_unresolved"
         state["video_id"] = video_id
         state["season"] = season

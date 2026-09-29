@@ -1458,11 +1458,11 @@
     const route = sourceRouteTitle(item?.sources);
     const rawType = String(item?.type || "").toLowerCase();
     const ratedLabel = relTime(item?.sort_epoch || 0);
-    const season = Number(item?.season || 0);
+    const season = item?.season === null || item?.season === undefined || item?.season === "" ? -1 : Number(item.season);
     const episode = Number(item?.episode || 0);
     const mediaDetail = rawType === "episode"
-      ? (item?.episode_label || (season && episode ? `S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}` : "Episode"))
-      : rawType === "season" && season
+      ? (item?.episode_label || (season >= 0 && episode ? `S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}` : "Episode"))
+      : rawType === "season" && season >= 0
         ? `S${String(season).padStart(2, "0")}`
         : "";
     const titleParts = [title, mediaDetail ? `${rawType === "season" ? "Season" : "Episode"}: ${mediaDetail}` : "", ratedLabel ? `Rated ${ratedLabel}` : ""].filter(Boolean);

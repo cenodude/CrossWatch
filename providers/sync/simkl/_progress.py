@@ -188,7 +188,7 @@ def _item_from_row(row: Mapping[str, Any]) -> tuple[str | None, dict[str, Any] |
                 "title": episode.get("title") or payload.get("title"),
                 "series_title": payload.get("title"),
                 "year": payload.get("year"),
-                "season": episode.get("season") or row.get("season"),
+                "season": next((v for v in (episode.get("season"), row.get("season")) if v is not None), None),
                 "episode": _episode_number(episode, row),
                 "ids": _episode_ids(episode.get("ids")),
                 "show_ids": parent_ids,

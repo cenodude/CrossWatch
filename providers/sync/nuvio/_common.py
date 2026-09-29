@@ -114,6 +114,11 @@ def positive_int(value: Any) -> int | None:
     return number if number is not None and number > 0 else None
 
 
+def season_int(value: Any) -> int | None:
+    number = to_int(value)
+    return number if number is not None and number >= 0 else None
+
+
 def epoch_ms(value: Any) -> int | None:
     number = to_int(value)
     if number is not None:
@@ -328,9 +333,9 @@ def make_item(
     if not ids:
         return None
     ctype = str(content_type or "").strip().lower()
-    season_n = positive_int(season)
+    season_n = season_int(season)
     episode_n = positive_int(episode)
-    if ctype in {"series", "show", "tv"} and not (season_n and episode_n):
+    if ctype in {"series", "show", "tv"} and not (season_n is not None and episode_n):
         item = {"type": "show", "ids": dict(ids)}
         if title:
             item["title"] = str(title)
@@ -338,7 +343,7 @@ def make_item(
             item["year"] = year
         return item
 
-    if ctype in {"episode"} or (season_n and episode_n):
+    if ctype in {"episode"} or (season_n is not None and episode_n):
         if season_n is None or episode_n is None:
             return None
         item: dict[str, Any] = {
@@ -402,9 +407,9 @@ def payload_item_key(payload: Mapping[str, Any]) -> str:
 
 def content_id_key(item: Mapping[str, Any]) -> str:
     content_id = content_id_for_item(item)
-    season = positive_int(item.get("season"))
+    season = season_int(item.get("season"))
     episode = positive_int(item.get("episode"))
-    if content_id and season and episode:
+    if content_id and season is not None and episode:
         return f"{content_id}:{season}:{episode}"
     return str(content_id or "")
 
@@ -416,20 +421,20 @@ def progress_key(item: Mapping[str, Any]) -> str | None:
     content_id = content_id_for_item(item)
     if not content_id:
         return None
-    season = positive_int(item.get("season"))
+    season = season_int(item.get("season"))
     episode = positive_int(item.get("episode"))
-    if season and episode:
+    if season is not None and episode:
         return f"{content_id}_s{season}e{episode}"
     return content_id
 
 
 def resolve_episode(adapter: Any, item: Mapping[str, Any], *, current_rows: Any = None) -> EpisodeMapResult:
     content_id = resolve_content_id_for_item(adapter, item)
-    season = positive_int(item.get("season"))
+    season = season_int(item.get("season"))
     episode = positive_int(item.get("episode"))
     if not content_id:
         return EpisodeMapResult(False, "nuvio_id_missing")
-    if not season or not episode:
+    if season is None or not episode:
         return EpisodeMapResult(False, "nuvio_episode_not_found", content_id=content_id)
 
     video_id = str(item.get("_nuvio_video_id") or item.get("video_id") or "").strip()
@@ -441,7 +446,7 @@ def resolve_episode(adapter: Any, item: Mapping[str, Any], *, current_rows: Any 
             continue
         if str(row.get("content_id") or "").strip() != content_id:
             continue
-        if positive_int(row.get("season")) != season or positive_int(row.get("episode")) != episode:
+        if season_int(row.get("season")) != season or positive_int(row.get("episode")) != episode:
             continue
         row_video = str(row.get("video_id") or "").strip()
         if row_video:

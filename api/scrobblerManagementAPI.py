@@ -51,6 +51,7 @@ ALLOWED_FILTER_KEYS = {
     "server_uuid_blacklist",
     "ignore_live_tv_dvr",
     "ignore_agregarr_trailers",
+    "ignore_specials",
     "ignored_path_prefixes",
     "ignored_filename_patterns",
     "ignored_editions",
@@ -264,6 +265,8 @@ def _normalize_filters(value: Any, provider: str, field: str = "filters") -> dic
         out["ignore_live_tv_dvr"] = bool(value.get("ignore_live_tv_dvr"))
     if "ignore_agregarr_trailers" in value:
         out["ignore_agregarr_trailers"] = bool(value.get("ignore_agregarr_trailers"))
+    if "ignore_specials" in value:
+        out["ignore_specials"] = bool(value.get("ignore_specials"))
     for key in ("ignored_path_prefixes", "ignored_filename_patterns", "ignored_editions", "ignored_marker_files"):
         if key in value:
             out[key] = _as_list(value.get(key))

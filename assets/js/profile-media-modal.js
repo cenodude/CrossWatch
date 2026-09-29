@@ -462,7 +462,7 @@
   const initialsOf = (name) => String(name || "?").split(/\s+/).map((part) => part[0] || "").join("").slice(0, 2).toUpperCase();
 
   function seasonProgress() {
-    const seasons = seasonList();
+    const seasons = seasonList({ specials: true });
     if (!seasons.length) return "";
     const counts = new Map();
     for (const row of state.presence?.synced?.episodes || []) {
@@ -495,10 +495,11 @@
     return `<div class="cw-mm-cast-strip"><h5>Top cast<button type="button" data-mm-goto="cast">See all</button></h5><div>${faces}</div></div>`;
   }
 
-  function seasonList() {
+  function seasonList({ specials = false } = {}) {
     const seasons = (state.meta?.detail?.seasons || []).filter((row) => Number(row?.episode_count) > 0);
     const regular = seasons.filter((row) => Number(row.season) > 0);
-    return regular.length ? regular : seasons;
+    if (!regular.length) return seasons;
+    return specials ? [...regular, ...seasons.filter((row) => Number(row.season) === 0)] : regular;
   }
 
   async function loadSeason(number) {
@@ -521,7 +522,7 @@
 
   function episodesTab() {
     if (!state.meta) return empty("Loading seasons...");
-    const seasons = seasonList();
+    const seasons = seasonList({ specials: true });
     if (!seasons.length) return empty("No season information on TMDB.");
     const watched = watchedMap();
     if (state.season == null) {

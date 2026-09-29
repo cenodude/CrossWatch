@@ -72,6 +72,7 @@ from ..provider_instances import normalize_instance_id
 from ._planner import diff_ratings, diff_progress, _pick_rating, _pick_rating_quantized, _quantize_rating
 from ._interactive import choose_conflict
 from ._progress_completion import fcfg_for_progress_target
+from ._specials import filter_specials_index, specials_excluded
 try:
     from ._pairs_oneway import _media_type_filter_index as _media_filter
     from ._pairs_oneway import _ratings_filter_index as _rate_filter
@@ -632,6 +633,18 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         prevB = _media_filter(prevB, fcfg)
         B_cur = _media_filter(B_cur, fcfg)
         B_eff = _media_filter(B_eff, fcfg)
+
+    specials_keep_A: dict[str, Any] = {}
+    specials_keep_B: dict[str, Any] = {}
+    if specials_excluded(feature, fcfg):
+        prevA, _ = filter_specials_index(prevA)
+        A_cur, specials_cur_A = filter_specials_index(A_cur)
+        A_eff, specials_keep_A = filter_specials_index(A_eff)
+        prevB, _ = filter_specials_index(prevB)
+        B_cur, specials_cur_B = filter_specials_index(B_cur)
+        B_eff, specials_keep_B = filter_specials_index(B_eff)
+        if specials_cur_A or specials_cur_B:
+            emit("debug", msg="specials.filtered", feature=feature, a=a, b=b, side_a=len(specials_cur_A), side_b=len(specials_cur_B))
 
     dropped_A: set[str] = set()
     dropped_B: set[str] = set()
@@ -2627,8 +2640,8 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                 now_cp_A = prev_cp_A
             if review.retain_deferred(feature, b, dst_inst, B_eff, prevB, _sync_key):
                 now_cp_B = prev_cp_B
-        _commit_baseline(provs_block, a, src_inst, feature, A_eff)
-        _commit_baseline(provs_block, b, dst_inst, feature, B_eff)
+        _commit_baseline(provs_block, a, src_inst, feature, specials_keep_A | A_eff)
+        _commit_baseline(provs_block, b, dst_inst, feature, specials_keep_B | B_eff)
         _commit_checkpoint(provs_block, a, src_inst, feature, now_cp_A)
         _commit_checkpoint(provs_block, b, dst_inst, feature, now_cp_B)
 

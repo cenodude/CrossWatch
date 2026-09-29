@@ -46,6 +46,9 @@ export const HELP_TEXT = {
   "cx-pr-maxp": "Progress: Ignore near complete (%)\nOne-way defaults to the target recommendation. Two-way keeps one shared limit and shows per-target recommendations below.",
   "cx-pr-replay": "Replay watched items\nUnwatch the target, then apply resume progress.",
   "cx-pr-tolerance": "Timestamp tolerance\nProtect targets newer by more than this many seconds.",
+  "cx-pr-specials": "Progress: Specials (Season 0)\nInclude Season 0 / specials episodes. Disable to skip them on both sides of this pair.",
+  "cx-hs-specials": "History: Specials (Season 0)\nInclude Season 0 / specials episodes. Disable to skip them on both sides of this pair.",
+  "cx-rt-specials": "Ratings: Specials (Season 0)\nInclude Season 0 / specials seasons and episodes. Disable to skip them on both sides of this pair.",
 
   "cx-jf-wl-mode": "Jellyfin: Watchlist mode\nJellyfin has no native Watchlist. CrossWatch maps it to:\n• Favorites: sets the Favorite flag\n• Playlist: writes to a named playlist (episodes only; no shows)\n• Collections: writes to a named collection\nChanging mode does not move existing items.\nTip: Favorites or Collections are the most compatible.",
   "cx-em-wl-mode": "Emby: Watchlist mode\nEmby has no native Watchlist. CrossWatch maps it to:\n• Favorites: sets the Favorite flag\n• Playlist: writes to a named playlist (episodes only; no shows)\n• Collections: writes to a named collection\nChanging mode does not move existing items.\nTip: Favorites or Collections are the most compatible.",

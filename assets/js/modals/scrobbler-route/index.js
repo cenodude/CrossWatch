@@ -436,6 +436,7 @@ function filtersPanel(r, f) {
   rows.push(filterRow({ title: "Ignored editions", subtitle: "Skip media with these edition names.", id: "scr-ignore-editions", value: listText(f.ignored_editions), placeholder: "Trailer", dot: "scrm-dot-block", addLabel: "edition" }));
   const toggles = [
     `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">movie_filter</span><span><strong>Ignore Agregarr placeholder trailers</strong><small>Skip files marked as Trailer editions or stored beside .comingsoon markers.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-ignore-agregarr" ${f.ignore_agregarr_trailers ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`,
+    `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">star</span><span><strong>Ignore specials (Season 0)</strong><small>Skip scrobbles for Season 0 / specials episodes.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-ignore-specials" ${f.ignore_specials ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`,
   ];
   if (isPlex) toggles.push(`<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">live_tv</span><span><strong>Ignore Plex Live TV &amp; DVR</strong><small>Skip scrobbles from live channels and DVR recordings.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-live" ${f.ignore_live_tv_dvr ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`);
   return `
@@ -682,6 +683,7 @@ function collect() {
     server_uuid_whitelist: allow,
     server_uuid_blacklist: split(root.querySelector("#scr-block")?.value),
     ignore_agregarr_trailers: !!root.querySelector("#scr-ignore-agregarr")?.checked,
+    ignore_specials: !!root.querySelector("#scr-ignore-specials")?.checked,
     ignored_path_prefixes: split(root.querySelector("#scr-ignore-paths")?.value),
     ignored_filename_patterns: split(root.querySelector("#scr-ignore-patterns")?.value),
     ignored_editions: split(root.querySelector("#scr-ignore-editions")?.value),

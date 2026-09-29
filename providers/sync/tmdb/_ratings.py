@@ -164,7 +164,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             if show_id is None:
                 unresolved.append(unresolved_item(it, "missing_show_tmdb_id"))
                 continue
-            season = as_int(it.get("season") or it.get("season_number"))
+            season = as_int(next((v for v in (it.get("season"), it.get("season_number")) if v is not None), None))
             episode = as_int(it.get("episode") or it.get("episode_number"))
             if season is None or episode is None:
                 unresolved.append(unresolved_item(it, "missing_season_episode"))
@@ -216,7 +216,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
             if show_id is None:
                 unresolved.append(unresolved_item(it, "missing_show_tmdb_id"))
                 continue
-            season = as_int(it.get("season") or it.get("season_number"))
+            season = as_int(next((v for v in (it.get("season"), it.get("season_number")) if v is not None), None))
             episode = as_int(it.get("episode") or it.get("episode_number"))
             if season is None or episode is None:
                 unresolved.append(unresolved_item(it, "missing_season_episode"))

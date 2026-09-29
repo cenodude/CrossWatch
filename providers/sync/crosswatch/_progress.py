@@ -134,11 +134,11 @@ def _accepted(obj: Mapping[str, Any], adapter: Any | None = None) -> dict[str, A
             out["series_year"] = obj.get("series_year")
         season = _as_int(obj.get("season"))
         episode = _as_int(obj.get("episode"))
-        if season:
+        if season is not None:
             out["season"] = season
         if episode:
             out["episode"] = episode
-        if season and episode:
+        if season is not None and episode:
             out["title"] = f"S{season:02d}E{episode:02d}"
         elif "title" in obj:
             out["title"] = obj.get("title")

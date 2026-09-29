@@ -1493,7 +1493,8 @@ def process_webhook(
             episode_val = None
             if (media_type or "").lower() == "episode":
                 try:
-                    season_val = int(md.get("parentIndex") or 0) or None
+                    parent_index = md.get("parentIndex")
+                    season_val = None if parent_index is None else int(parent_index)
                 except Exception:
                     season_val = None
                 try:

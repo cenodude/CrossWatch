@@ -33,6 +33,7 @@ from ._common import (
     native_record_ids,
     now_iso,
     positive_int,
+    season_int,
     read_drop_summary,
     record_read_drop,
     record_id,
@@ -122,9 +123,9 @@ def show_id_from_video_id(value: Any) -> str:
     parts = raw.split(":")
     if len(parts) < 3:
         return ""
-    season = positive_int(parts[-2])
+    season = season_int(parts[-2])
     episode = positive_int(parts[-1])
-    if not season or not episode:
+    if season is None or not episode:
         return ""
     return ":".join(parts[:-2]).strip()
 
@@ -451,9 +452,9 @@ def _episode_base_key(key: Any) -> str:
 
 
 def _episode_fragment(item: Mapping[str, Any]) -> str | None:
-    season = positive_int(item.get("season"))
+    season = season_int(item.get("season"))
     episode = positive_int(item.get("episode"))
-    if not season or not episode:
+    if season is None or not episode:
         return None
     return f"#s{season:02d}e{episode:02d}"
 
@@ -663,9 +664,9 @@ def _apply_episode(adapter: Any, record: dict[str, Any], item: Mapping[str, Any]
     video_ids = [str(v.get("id") or "").strip() for v in videos]
     video_id = video_id_for_episode(item, show_id)
     if not video_id or video_id not in video_ids:
-        season = positive_int(item.get("season"))
+        season = season_int(item.get("season"))
         episode = positive_int(item.get("episode"))
-        matched = next((str(v.get("id") or "").strip() for v in videos if positive_int(v.get("season")) == season and positive_int(v.get("episode")) == episode), "")
+        matched = next((str(v.get("id") or "").strip() for v in videos if season is not None and season_int(v.get("season")) == season and positive_int(v.get("episode")) == episode), "")
         video_id = matched or video_id
     if not video_id or video_id not in video_ids:
         return "stremio_episode_unresolved"

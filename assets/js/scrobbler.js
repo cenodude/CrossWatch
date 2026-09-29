@@ -108,6 +108,7 @@
     if (allow.length || filters.server_uuid) parts.push(`${allow.length || 1} UUID allow`);
     if (block.length) parts.push(`${block.length} UUID block`);
     if (filters.ignore_agregarr_trailers) parts.push("Agregarr ignored");
+    if (filters.ignore_specials) parts.push("Specials ignored");
     if (paths.length) parts.push(`${paths.length} path ignored`);
     if (patterns.length) parts.push(`${patterns.length} pattern ignored`);
     if (editions.length) parts.push(`${editions.length} edition ignored`);

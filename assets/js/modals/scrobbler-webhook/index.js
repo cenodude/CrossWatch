@@ -505,6 +505,7 @@ function filtersPanel(provider, filt) {
       </div>
       <div class="scrm-filter-rows">${rows.join("")}</div>
       <label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">movie_filter</span><span><strong>Ignore Agregarr placeholder trailers</strong><small>Skip files marked as Trailer editions or stored beside .comingsoon markers.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scw-ignore-agregarr" ${filt.ignore_agregarr_trailers ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>
+      <label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">star</span><span><strong>Ignore specials (Season 0)</strong><small>Skip scrobbles for Season 0 / specials episodes.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scw-ignore-specials" ${filt.ignore_specials ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>
     </section>
   `;
 }
@@ -728,6 +729,7 @@ function payload() {
   body.filters = {
     username_whitelist: splitValues(root.querySelector("#scw-users")?.value),
     ignore_agregarr_trailers: !!root.querySelector("#scw-ignore-agregarr")?.checked,
+    ignore_specials: !!root.querySelector("#scw-ignore-specials")?.checked,
     ignored_path_prefixes: splitValues(root.querySelector("#scw-ignore-paths")?.value),
     ignored_filename_patterns: splitValues(root.querySelector("#scw-ignore-patterns")?.value),
     ignored_editions: splitValues(root.querySelector("#scw-ignore-editions")?.value),

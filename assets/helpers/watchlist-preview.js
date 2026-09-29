@@ -224,7 +224,9 @@
   }
 
   function seasonNumber(item) {
-    return asNumber(item?.season_number ?? item?.episode?.season_number ?? item?.episode?.season ?? item?.season);
+    const raw = item?.season_number ?? item?.episode?.season_number ?? item?.episode?.season ?? item?.season;
+    const n = raw === null || raw === undefined || raw === "" ? NaN : Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : -1;
   }
 
   function episodeNumber(item) {
@@ -236,14 +238,14 @@
     if (explicit) return explicit;
     const season = seasonNumber(item);
     const episode = episodeNumber(item);
-    return season && episode ? `S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}` : "";
+    return season >= 0 && episode ? `S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}` : "";
   }
 
   function episodeStillUrl(item, size = "w300") {
     const tmdb = tmdbIdOf(item);
     const season = seasonNumber(item);
     const episode = episodeNumber(item);
-    if (!tmdb || !season || !episode || artTypeOf(item) !== "tv") return "";
+    if (!tmdb || season < 0 || !episode || artTypeOf(item) !== "tv") return "";
     return `/art/tmdb/tv/${encodeURIComponent(String(tmdb))}?kind=still&season=${encodeURIComponent(String(season))}&episode=${encodeURIComponent(String(episode))}&size=${encodeURIComponent(size)}${artEvidenceOf(item)}`;
   }
 

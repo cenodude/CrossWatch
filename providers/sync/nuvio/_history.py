@@ -22,6 +22,7 @@ from ._common import (
     metadata_title_for_content_id,
     payload_item_key,
     positive_int,
+    season_int,
     pull_watched_rows,
     resolve_content_id_for_item,
     resolve_episode,
@@ -49,7 +50,7 @@ def _series_title_from_episode_label(value: Any) -> str:
 
 
 def _episode_title(item: Mapping[str, Any], season: Any, episode: Any) -> str:
-    code = f"S{int(season):02d}E{int(episode):02d}" if positive_int(season) and positive_int(episode) else ""
+    code = f"S{int(season):02d}E{int(episode):02d}" if season_int(season) is not None and positive_int(episode) else ""
     series = str(item.get("series_title") or item.get("show_title") or "").strip()
     title = str(item.get("title") or "").strip()
     if series:
@@ -138,9 +139,9 @@ def _delete_key_for_item(adapter: Any, item: Mapping[str, Any]) -> dict[str, Any
     if not content_id:
         return None
     key: dict[str, Any] = {"content_id": content_id}
-    season = positive_int(item.get("season"))
+    season = season_int(item.get("season"))
     episode = positive_int(item.get("episode"))
-    if season and episode:
+    if season is not None and episode:
         key["season"] = season
         key["episode"] = episode
     return key

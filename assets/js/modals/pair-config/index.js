@@ -356,10 +356,10 @@ function defaultState(){
     providers:[],src:null,dst:null,src_instance:"default",dst_instance:"default",instanceMap:{},instancesLoaded:false,savedInstances:{src:null,dst:null},userProfiles:[],selected_user_profile_id:"",feature:"globals",mode:"one-way",enabled:true,
     options:{
       watchlist:{enable:false,add:false,remove:false},
-      ratings:{enable:false,add:false,remove:false,types:["movies","shows","seasons","episodes"],mode:"all",from_date:""},
-      history:{enable:false,add:false,remove:false,rewatches:false},
+      ratings:{enable:false,add:false,remove:false,types:["movies","shows","seasons","episodes"],mode:"all",from_date:"",include_specials:true},
+      history:{enable:false,add:false,remove:false,rewatches:false,include_specials:true},
       playlists:{enable:false,add:true,remove:false},
-      progress:{enable:false,add:false,remove:false,min_seconds:60,delta_seconds:30,max_percent:PROGRESS_LEGACY_MAX_PERCENT,replay_enabled:false,timestamp_tolerance_seconds:30,propagate_timestamp_updates:false},
+      progress:{enable:false,add:false,remove:false,min_seconds:60,delta_seconds:30,max_percent:PROGRESS_LEGACY_MAX_PERCENT,replay_enabled:false,timestamp_tolerance_seconds:30,propagate_timestamp_updates:false,include_specials:true},
       collection:{enable:false,add:false,remove:false,types:["movies"]}
     },
     pairProviders:{},
@@ -610,15 +610,15 @@ const commonFeatures=(state)=>{
 };
 const defaultFor=(k)=>
   k==="watchlist"?{enable:false,add:false,remove:false}:
-  k==="history"?{enable:false,add:false,remove:false,rewatches:false}:
+  k==="history"?{enable:false,add:false,remove:false,rewatches:false,include_specials:true}:
   k==="playlists"?{enable:false,add:true,remove:false}:
-  k==="progress"?{enable:false,add:false,remove:false,min_seconds:60,delta_seconds:30,max_percent:PROGRESS_LEGACY_MAX_PERCENT,replay_enabled:false,timestamp_tolerance_seconds:30,propagate_timestamp_updates:false}:
+  k==="progress"?{enable:false,add:false,remove:false,min_seconds:60,delta_seconds:30,max_percent:PROGRESS_LEGACY_MAX_PERCENT,replay_enabled:false,timestamp_tolerance_seconds:30,propagate_timestamp_updates:false,include_specials:true}:
   k==="collection"?{enable:false,add:false,remove:false,types:["movies"]}:
   {enable:false,add:false,remove:false};
 function getOpts(state,key){
   if(!state.visited.has(key)){
-    if(key==="ratings") state.options.ratings=Object.assign({enable:false,add:false,remove:false,types:["movies","shows","seasons","episodes"],mode:"all",from_date:""},state.options.ratings||{});
-    else if(key==="progress") state.options.progress=Object.assign({enable:false,add:false,remove:false,min_seconds:60,delta_seconds:30,max_percent:PROGRESS_LEGACY_MAX_PERCENT,replay_enabled:false,timestamp_tolerance_seconds:30,propagate_timestamp_updates:false},state.options.progress||{});
+    if(key==="ratings") state.options.ratings=Object.assign({enable:false,add:false,remove:false,types:["movies","shows","seasons","episodes"],mode:"all",from_date:"",include_specials:true},state.options.ratings||{});
+    else if(key==="progress") state.options.progress=Object.assign({enable:false,add:false,remove:false,min_seconds:60,delta_seconds:30,max_percent:PROGRESS_LEGACY_MAX_PERCENT,replay_enabled:false,timestamp_tolerance_seconds:30,propagate_timestamp_updates:false,include_specials:true},state.options.progress||{});
     else state.options[key]=state.options[key]??defaultFor(key);
     state.visited.add(key);
   }
@@ -979,12 +979,12 @@ function applySubDisable(feature){
       "#tr-wl-etag","#tr-wl-ttl","#tr-wl-batch","#tr-wl-log","#tr-wl-freeze"
     ],
     ratings: [
-      "#cx-rt-add","#cx-rt-remove","#cx-rt-anime-map","#cx-rt-anime-only","#cx-rt-type-all","#cx-rt-type-movies","#cx-rt-type-shows","#cx-rt-type-seasons","#cx-rt-type-episodes","#cx-rt-mode","#cx-rt-from-date",
+      "#cx-rt-add","#cx-rt-remove","#cx-rt-anime-map","#cx-rt-anime-only","#cx-rt-type-all","#cx-rt-type-movies","#cx-rt-type-shows","#cx-rt-type-seasons","#cx-rt-type-episodes","#cx-rt-mode","#cx-rt-from-date","#cx-rt-specials",
       "#tr-rt-perpage","#tr-rt-maxpages","#tr-rt-chunk"
     ],
-    history: ["#cx-hs-add", "#cx-hs-remove", "#cx-hs-rewatches", "#cx-hs-anime-map", "#cx-tr-hs-numfb", "#cx-tr-hs-col", "#cx-tr-hs-col-movies", "#cx-tr-hs-col-shows", "#cx-tr-hs-ignore-dropped", "#cx-md-hs-ignore-dropped", "#cx-sm-hs-ignore-dropped", "#cx-tr-hs-unres"],
+    history: ["#cx-hs-add", "#cx-hs-remove", "#cx-hs-rewatches", "#cx-hs-specials", "#cx-hs-anime-map", "#cx-tr-hs-numfb", "#cx-tr-hs-col", "#cx-tr-hs-col-movies", "#cx-tr-hs-col-shows", "#cx-tr-hs-ignore-dropped", "#cx-md-hs-ignore-dropped", "#cx-sm-hs-ignore-dropped", "#cx-tr-hs-unres"],
     playlists:["#cx-pl-add","#cx-pl-remove"],
-    progress:["#cx-pr-add","#cx-pr-remove","#cx-pr-min","#cx-pr-delta","#cx-pr-maxp","#cx-pr-replay","#cx-pr-tolerance","#cx-pr-anime-map"],
+    progress:["#cx-pr-add","#cx-pr-remove","#cx-pr-min","#cx-pr-delta","#cx-pr-maxp","#cx-pr-replay","#cx-pr-tolerance","#cx-pr-specials","#cx-pr-anime-map"],
     collection:["#cx-co-add","#cx-co-remove","#cx-co-type-all","#cx-co-type-movies","#cx-co-type-shows","#cx-co-type-seasons","#cx-co-type-episodes"]
   };
   const on=ID(feature==="ratings"?"cx-rt-enable":feature==="watchlist"?"cx-wl-enable":feature==="history"?"cx-hs-enable":feature==="progress"?"cx-pr-enable":feature==="collection"?"cx-co-enable":"cx-pl-enable")?.checked;
@@ -1644,6 +1644,7 @@ function renderFeaturePanel(state){
         <div class="opt-row"><label for="cx-rt-type-movies">Movies</label><label class="switch"><input id="cx-rt-type-movies" type="checkbox" ${hasType("movies")?"checked":""}><span class="slider"></span></label></div>
         <div class="opt-row"><label for="cx-rt-type-shows">Shows</label><label class="switch"><input id="cx-rt-type-shows" type="checkbox" ${hasType("shows")?"checked":""}><span class="slider"></span></label></div><div class="opt-row"><label for="cx-rt-type-seasons">Seasons</label><label class="switch"><input id="cx-rt-type-seasons" type="checkbox" ${hasType("seasons")?"checked":""}><span class="slider"></span></label></div>
         <div class="opt-row"><label for="cx-rt-type-episodes">Episodes</label><label class="switch"><input id="cx-rt-type-episodes" type="checkbox" ${hasType("episodes")?"checked":""}><span class="slider"></span></label></div>
+        <div class="opt-row"><label for="cx-rt-specials" data-tip-id="cx-rt-specials">Specials (Season 0)</label><label class="switch"><input id="cx-rt-specials" type="checkbox" ${rt.include_specials!==false?"checked":""}><span class="slider"></span></label></div>
       </div>`;
 
     const parts = [`<div class="panel-title">Advanced</div>
@@ -1876,6 +1877,13 @@ left.innerHTML = `
             <span class="slider"></span>
           </label>
         </div>
+        <div class="opt-row" style="grid-column:1/-1">
+          <label for="cx-hs-specials" data-tip-id="cx-hs-specials">Specials (Season 0)</label>
+          <label class="switch">
+            <input id="cx-hs-specials" type="checkbox" ${hs.include_specials !== false ? "checked" : ""}>
+            <span class="slider"></span>
+          </label>
+        </div>
         ${trColRow}
         ${mdDroppedRow}
         ${smDroppedRow}
@@ -2102,6 +2110,8 @@ left.innerHTML = `
           <label class="switch"><input id="cx-pr-replay" type="checkbox" ${replayEnabled ? "checked" : ""}><span class="slider"></span></label></div>
         <div class="opt-row"><label for="cx-pr-tolerance" data-tip-id="cx-pr-tolerance">Timestamp tolerance (s)</label>
           <input id="cx-pr-tolerance" class="input small" type="number" min="0" max="300" step="1" value="${timestampTolerance}"></div>
+        <div class="opt-row"><label for="cx-pr-specials" data-tip-id="cx-pr-specials">Specials (Season 0)</label>
+          <label class="switch"><input id="cx-pr-specials" type="checkbox" ${pr.include_specials !== false ? "checked" : ""}><span class="slider"></span></label></div>
       </div>
       ${progressRecommendation ? `<div class="muted" style="margin-top:10px">${escHTML(progressRecommendation)}</div>` : ""}
       <div class="muted" style="margin-top:10px;color:#f0b35a">Warning: replay progress marks watched targets unwatched before writing the resume position.</div>
@@ -2379,7 +2389,8 @@ function bindChangeHandlers(state,root){
         anime_only_sync:!!ID("cx-rt-anime-map")?.checked && !!ID("cx-rt-anime-only")?.checked && anilistCanReceive(state),
         types,
         mode:ID("cx-rt-mode")?.value||"all",
-        from_date:(ID("cx-rt-from-date")?.value||"").trim()
+        from_date:(ID("cx-rt-from-date")?.value||"").trim(),
+        include_specials:ID("cx-rt-specials")?!!ID("cx-rt-specials").checked:rt.include_specials!==false
       });
       state.visited.add("ratings");
       try{updateRtSummary()}catch{}
@@ -2394,6 +2405,7 @@ function bindChangeHandlers(state,root){
         add:    !!ID("cx-hs-add")?.checked,
         remove: !!ID("cx-hs-remove")?.checked,
         rewatches: !!ID("cx-hs-rewatches")?.checked,
+        include_specials: ID("cx-hs-specials") ? !!ID("cx-hs-specials").checked : prev.include_specials !== false,
         use_anime_mapping: !!(animeEl && animeEl.checked && tmdbMetadataReady(state)),
         anime_only_sync: false,
       });
@@ -2426,7 +2438,8 @@ function bindChangeHandlers(state,root){
         delta_seconds: Number.isFinite(delS)?Math.max(0,delS):30,
         max_percent: Number.isFinite(maxP)?Math.min(100,Math.max(0,maxP)):80,
         replay_enabled:!!ID("cx-pr-replay")?.checked,
-        timestamp_tolerance_seconds:Number.isFinite(tolerance)?Math.max(0,Math.min(300,tolerance)):30
+        timestamp_tolerance_seconds:Number.isFinite(tolerance)?Math.max(0,Math.min(300,tolerance)):30,
+        include_specials:ID("cx-pr-specials")?!!ID("cx-pr-specials").checked:prev.include_specials!==false
       });
       state.visited.add("progress");
     }

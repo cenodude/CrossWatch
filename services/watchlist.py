@@ -257,15 +257,19 @@ def _as_pos_int(value: Any) -> int | None:
     return n if n > 0 else None
 
 
+def _as_season_int(value: Any) -> int | None:
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return None
+    return n if n >= 0 else None
+
+
 def _season_number(item: dict[str, Any]) -> int | None:
     raw_episode = item.get("episode")
     episode: Mapping[str, Any] = raw_episode if isinstance(raw_episode, dict) else {}
-    return (
-        _as_pos_int(item.get("season_number"))
-        or _as_pos_int(episode.get("season_number"))
-        or _as_pos_int(episode.get("season"))
-        or _as_pos_int(item.get("season"))
-    )
+    candidates = (item.get("season_number"), episode.get("season_number"), episode.get("season"), item.get("season"))
+    return next((n for n in map(_as_season_int, candidates) if n is not None), None)
 
 
 def _episode_number(item: dict[str, Any]) -> int | None:
@@ -286,7 +290,7 @@ def _episode_label(item: dict[str, Any]) -> str:
         return explicit
     season = _season_number(item)
     episode = _episode_number(item)
-    return f"S{season:02d}E{episode:02d}" if season and episode else ""
+    return f"S{season:02d}E{episode:02d}" if season is not None and episode else ""
 
 
 def _rich_ids_score(item: dict[str, Any] | None) -> int:

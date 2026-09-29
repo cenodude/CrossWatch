@@ -58,6 +58,11 @@ def positive_int(value: Any) -> int | None:
     return number if number is not None and number > 0 else None
 
 
+def season_int(value: Any) -> int | None:
+    number = to_int(value)
+    return number if number is not None and number >= 0 else None
+
+
 def epoch_ms(value: Any) -> int | None:
     number = to_int(value)
     if number is not None:
@@ -168,9 +173,9 @@ def video_id_for_episode(item: Mapping[str, Any], show_id: str) -> str | None:
     direct = str(item.get("_stremio_video_id") or item.get("video_id") or "").strip()
     if direct and direct.startswith(f"{show_id}:"):
         return direct
-    season = positive_int(item.get("season"))
+    season = season_int(item.get("season"))
     episode = positive_int(item.get("episode"))
-    return f"{show_id}:{season}:{episode}" if season and episode else None
+    return f"{show_id}:{season}:{episode}" if season is not None and episode else None
 
 
 def tmdb_metadata_provider(adapter: Any) -> Any | None:
@@ -529,10 +534,10 @@ def item_from_series_record(record: Mapping[str, Any]) -> dict[str, Any] | None:
 
 
 def item_from_episode(show_id: str, season: Any, episode: Any, record: Mapping[str, Any], video: Mapping[str, Any] | None = None) -> dict[str, Any] | None:
-    sn = positive_int(season)
+    sn = season_int(season)
     ep = positive_int(episode)
     ids = ids_from_stremio_id(show_id, "series")
-    if not ids or not sn or not ep:
+    if not ids or sn is None or not ep:
         return None
     item: dict[str, Any] = {
         "type": "episode",

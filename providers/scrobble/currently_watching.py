@@ -153,7 +153,7 @@ def _payload_key(source: str, payload: dict[str, Any]) -> str:
     raw_ids = payload.get("ids")
     ids: dict[str, Any] = raw_ids if isinstance(raw_ids, dict) else {}
     mt = str(payload.get("media_type") or payload.get("type") or "").lower()
-    season = str(payload.get("season") or "").strip()
+    season = "" if payload.get("season") is None else str(payload.get("season")).strip()
     episode = str(payload.get("episode") or "").strip()
 
     def _id(*keys: str) -> str:
@@ -178,7 +178,7 @@ def _payload_key(source: str, payload: dict[str, Any]) -> str:
     mt = str(payload.get("media_type") or payload.get("type") or "").lower()
     title = str(payload.get("title") or "")
     year = str(payload.get("year") or "")
-    season = str(payload.get("season") or "")
+    season = "" if payload.get("season") is None else str(payload.get("season"))
     episode = str(payload.get("episode") or "")
     pi = f":{provider_instance}" if provider_instance else ""
     return f"{source}{pi}:{mt}:{title}:{year}:{season}:{episode}"
