@@ -295,7 +295,7 @@
     chips.push({ text: mediaTypeLabel(p) });
     const sc = streamCount(p, countByKey);
     if (sc > 1) chips.push({ text: `${sc} streams`, cls: "pc-chip-streams" });
-    if (String(p?.media_type || p?.type || "").toLowerCase() === "episode" && p?.season && p?.episode) {
+    if (String(p?.media_type || p?.type || "").toLowerCase() === "episode" && p?.season !== null && p?.season !== undefined && p?.season !== "" && p?.episode) {
       chips.push({ text: `S${String(p.season).padStart(2, "0")}E${String(p.episode).padStart(2, "0")}` });
       return chips;
     }
