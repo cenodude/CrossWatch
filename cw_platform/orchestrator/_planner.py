@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any
 
-from ..id_map import minimal, ids_from, coalesce_ids, _norm_type
+from ..id_map import minimal, ids_from, coalesce_ids, _norm_type, part_fragment
 
 
 _STRONG_ID_KEYS: tuple[str, ...] = ("tmdb", "imdb", "tvdb", "trakt")
@@ -30,7 +30,7 @@ def _strong_keys(item: Mapping[str, Any]) -> set[str]:
             if t:
                 if k == "tmdb" and typ in ("show", "anime"):
                     t += "#show"
-                out.add(t)
+                out.add(t + part_fragment(item))
         return out
 
     show_ids: Mapping[str, Any] = {}

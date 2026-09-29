@@ -83,7 +83,7 @@ except Exception:
     def _rate_filter(idx: dict[str, Any], fcfg: Mapping[str, Any]) -> dict[str, Any]:
         return idx
 
-from ..id_map import migrate_media_index, minimal as _minimal, canonical_key as _ck, merge_ids as _merge_ids, _norm_type
+from ..id_map import migrate_media_index, minimal as _minimal, canonical_key as _ck, merge_ids as _merge_ids, _norm_type, part_fragment as _part_fragment
 from ..history_events import history_sync_key, minimal_history_item
 from ..anime_mapping.service import (
     anime_mapping_pair_feature_options as _anime_pair_feature_options,
@@ -812,7 +812,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             for k, v in ids.items():
                 if v is None or str(v) == "":
                     continue
-                suffix = "#show" if str(k).lower() == "tmdb" and typ in ("show", "anime") else ""
+                suffix = "#show" if str(k).lower() == "tmdb" and typ in ("show", "anime") else _part_fragment(it)
                 toks.add(f"{str(k).lower()}:{str(v).lower()}{suffix}")
 
         return toks

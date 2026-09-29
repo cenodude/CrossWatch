@@ -28,7 +28,7 @@ class SavedRule(TypedDict):
 
 def mapping_details(item: Mapping[str, Any]) -> dict[str, Any]:
     return {key: deepcopy(item[key]) for key in (
-        "type", "title", "name", "series_title", "show_title", "year", "season", "episode", "ids", "show_ids"
+        "type", "title", "name", "series_title", "show_title", "year", "season", "episode", "part", "ids", "show_ids"
     ) if key in item}
 
 

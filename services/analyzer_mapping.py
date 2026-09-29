@@ -22,9 +22,10 @@ class MappingRequest(BaseModel):
     provider: str = Field(min_length=1, max_length=128)
     feature: Literal["history", "watchlist", "ratings", "progress", "collection"]
     key: str = Field(min_length=1, max_length=1024)
-    action: Literal["context", "catalogs", "search", "episodes", "save"] = "context"
+    action: Literal["context", "catalogs", "search", "episodes", "parts", "save"] = "context"
     version: str = Field(default="", max_length=64)
     q: str = Field(default="", max_length=200)
+    simkl_id: str = Field(default="", max_length=32)
     catalog: Literal["destination", "tmdb"] = "destination"
     item: dict[str, Any] = Field(default_factory=dict)
 
@@ -96,6 +97,9 @@ def handle_mapping(payload: MappingRequest, request):
     if payload.action == "episodes":
         from services.interactive_sync_episodes import suggest_episodes
         return suggest_episodes(cfg, [(row, payload.item)])
+    if payload.action == "parts":
+        from services.interactive_sync_mapping import anime_parts
+        return anime_parts(cfg, row, payload.simkl_id)
 
     from api.interactiveSyncAPI import prepare_mapping
     from api.editorAPI import _require_instance_scope, _save_policy_manual_batch
