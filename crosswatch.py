@@ -1061,6 +1061,15 @@ async def _lifespan(app: Any) -> AsyncIterator[None]:
         except Exception:
             pass
     try:
+        from cw_platform.event_archive.retention import start_worker as _start_event_retention
+
+        _start_event_retention()
+    except Exception as e:
+        try:
+            _UIHostLogger("SYNC")(f"event retention startup error: {e}", level="ERROR")
+        except Exception:
+            pass
+    try:
         from cw_platform.anime_mapping.auto_update import refresh_from_config as _anime_mapping_refresh_auto_update
 
         _anime_mapping_refresh_auto_update(load_config)

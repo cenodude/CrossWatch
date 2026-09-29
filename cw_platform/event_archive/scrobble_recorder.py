@@ -136,6 +136,107 @@ def record(
     if _seen(row["event_hash"]):
         return
     record_events([row])
+    if event_type == "scrobble_completed":
+        _prune_superseded(row)
+
+
+def _prune_superseded(row: Mapping[str, Any], conn: Any = None) -> int:
+    c = conn or get_conn()
+    if c is None:
+        return 0
+    from .groups import _GROUP_LOCK, group_hash
+
+    clauses = [
+        "domain='scrobble'", "event_type=?", "feature IS ?", "created_at<=?",
+        "season IS ?", "episode IS ?",
+        "source_provider IS ?", "source_instance IS ?",
+        "destination_provider IS ?", "destination_instance IS ?",
+    ]
+    params: list[Any] = [
+        _LIVE_TYPE, row.get("feature"), row.get("created_at"),
+        row.get("season"), row.get("episode"),
+        row.get("source_provider"), row.get("source_instance"),
+        row.get("destination_provider"), row.get("destination_instance"),
+    ]
+    if row.get("item_key"):
+        clauses.append("item_key=?")
+        params.append(row["item_key"])
+    elif row.get("title"):
+        clauses.append("(item_key IS NULL OR item_key='') AND lower(title)=?")
+        params.append(str(row["title"]).strip().lower())
+    else:
+        return 0
+    keep = group_hash(row)
+    try:
+        with _GROUP_LOCK, c:
+            rows = c.execute(
+                "SELECT id, group_id, domain, feature, source_kind, source_provider, source_instance, "
+                "destination_provider, destination_instance, pair_key, item_key, title, season, episode, "
+                f"session_key, created_at FROM events WHERE {' AND '.join(clauses)}",
+                params,
+            ).fetchall()
+            stale = [r for r in rows if group_hash(r) != keep]
+            if not stale:
+                return 0
+            gids = sorted({int(r["group_id"]) for r in stale if r["group_id"] is not None})
+            mixed: set[int] = set()
+            if gids:
+                qm = ",".join("?" for _ in gids)
+                mixed = {int(x[0]) for x in c.execute(
+                    f"SELECT DISTINCT group_id FROM events WHERE group_id IN ({qm}) AND event_type<>?",
+                    [*gids, _LIVE_TYPE],
+                ).fetchall()}
+            ids = [int(r["id"]) for r in stale if r["group_id"] is None or int(r["group_id"]) not in mixed]
+            if not ids:
+                return 0
+            c.executemany("DELETE FROM events WHERE id=?", [(i,) for i in ids])
+            gone = [g for g in gids if g not in mixed]
+            if gone:
+                qm = ",".join("?" for _ in gone)
+                c.execute(
+                    f"DELETE FROM event_groups WHERE id IN ({qm}) "
+                    "AND NOT EXISTS (SELECT 1 FROM events e WHERE e.group_id=event_groups.id)",
+                    gone,
+                )
+            return len(ids)
+    except Exception:
+        return 0
+
+
+_BACKFILL_META = "scrobble_superseded_prune_version"
+_BACKFILL_VERSION = 1
+
+
+def prune_superseded_backfill(conn: Any = None) -> int:
+    c = conn or get_conn()
+    if c is None:
+        return 0
+    try:
+        done = c.execute("SELECT value_int FROM local_meta WHERE key=?", (_BACKFILL_META,)).fetchone()
+        if done is not None and int(done[0] or 0) >= _BACKFILL_VERSION:
+            return 0
+        rows = c.execute(
+            "SELECT id, domain, event_type, feature, source_kind, source_provider, source_instance, "
+            "destination_provider, destination_instance, pair_key, item_key, title, season, episode, "
+            "session_key, created_at FROM events WHERE domain='scrobble' AND event_type='scrobble_completed' "
+            "ORDER BY created_at DESC, id DESC"
+        ).fetchall()
+    except Exception:
+        return 0
+    removed = 0
+    for r in rows:
+        removed += _prune_superseded(dict(r), c)
+    try:
+        with c:
+            c.execute(
+                "INSERT INTO local_meta(key,value_int,value_type,updated_at) VALUES(?,?,'int',?) "
+                "ON CONFLICT(key) DO UPDATE SET value_int=excluded.value_int,value_type=excluded.value_type,"
+                "updated_at=excluded.updated_at",
+                (_BACKFILL_META, _BACKFILL_VERSION, int(time.time())),
+            )
+    except Exception:
+        pass
+    return removed
 
 
 def _upsert_live(row: dict[str, Any], progress: int | None) -> None:
