@@ -336,6 +336,48 @@ def test_floppy_ratings_read_and_write_native_scale(source: str) -> None:
     assert adapter.client.session.calls[-1]["json"] == {"source": "tmdb", "media_id": "11", "status": 0, "score": 9.0}
 
 
+def test_floppy_ratings_index_maps_scored_at_to_rated_at() -> None:
+    from providers.sync.floppy import _ratings
+
+    adapter = AdapterStub(
+        {
+            ("GET", "media/movie"): {
+                "results": [
+                    {"item_id": "movie/tmdb/11", "score": 8.4, "scored_at": "2026-09-29T00:31:53.550042Z"},
+                    {"item_id": "movie/tmdb/12", "score": 6.0, "scored_at": None},
+                    {"item_id": "movie/tmdb/13", "score": None, "scored_at": "2026-09-29T00:32:01.073470Z"},
+                ],
+                "count": 3,
+            },
+            ("GET", "media/tv"): {"results": [{"item_id": "tv/tmdb/37854", "score": 7.0, "scored_at": "2026-09-29T02:37:41.250114+02:00"}], "count": 1},
+        }
+    )
+
+    out = _ratings.build_index(adapter)
+
+    assert out["tmdb:11"]["rated_at"] == "2026-09-29T00:31:53Z"
+    assert out["tmdb:12"]["rating"] == 6.0
+    assert "rated_at" not in out["tmdb:12"]
+    assert "tmdb:13" not in out
+    assert out["tmdb:37854#show"]["rated_at"] == "2026-09-29T00:37:41Z"
+
+
+def test_floppy_ratings_index_ignores_malformed_scored_at() -> None:
+    from providers.sync.floppy import _ratings
+
+    adapter = AdapterStub(
+        {
+            ("GET", "media/movie"): {"results": [{"item_id": "movie/tmdb/11", "score": 8.0, "scored_at": "not-a-date"}], "count": 1},
+            ("GET", "media/tv"): {"results": [], "count": 0},
+        }
+    )
+
+    out = _ratings.build_index(adapter)
+
+    assert out["tmdb:11"]["rating"] == 8.0
+    assert "rated_at" not in out["tmdb:11"]
+
+
 def test_floppy_ratings_fallback_patch_existing_and_skip_unsupported_scopes() -> None:
     from providers.sync.floppy import _ratings
 
