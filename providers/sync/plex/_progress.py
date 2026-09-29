@@ -7,6 +7,7 @@ from cw_platform.interactive_reads import replaying
 import os
 import time
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any, Iterable, Mapping
 
 from cw_platform.id_map import canonical_key, ids_from_guid, ids_from, minimal as id_minimal
@@ -137,6 +138,12 @@ def _same_plex_endpoint() -> bool:
     return src == dst == "PLEX" and src_instance == dst_instance
 
 
+def _session_row(elem: Any) -> SimpleNamespace:
+    user = elem.find("User")
+    title = user.get("title") if user is not None else None
+    return SimpleNamespace(ratingKey=elem.get("ratingKey"), usernames=[title] if title else [], user=None)
+
+
 def _currently_playing(
     srv: Any,
     rating_key: str,
@@ -144,9 +151,20 @@ def _currently_playing(
     account_id: int | None = None,
     username: str | None = None,
     fail_on_error: bool = False,
+    token: str | None = None,
 ) -> bool:
     try:
-        for session in srv.sessions() or []:  # type: ignore[attr-defined]
+        if token:
+            data = srv.query("/status/sessions", headers={"X-Plex-Token": token})
+            sessions = [_session_row(elem) for elem in data] if data is not None else []
+        else:
+            sessions = srv.sessions()  # type: ignore[attr-defined]
+    except Exception as exc:
+        if fail_on_error and not str(exc).startswith(("(401)", "(403)")):
+            raise
+        return False
+    try:
+        for session in sessions or []:
             if str(getattr(session, "ratingKey", "") or "") != str(rating_key):
                 continue
             if account_id is not None:
@@ -166,7 +184,6 @@ def _currently_playing(
     except Exception:
         if fail_on_error:
             raise
-        pass
     return False
 
 

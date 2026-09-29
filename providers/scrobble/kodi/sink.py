@@ -77,7 +77,7 @@ class KodiSink(MediaServerSink):
         if row.get("_kind") != item["type"] or not self._in_scope(adapter, feature, row.get("file"), libraries):
             return False
         own, wanted = _ids(row), item.get("ids") or {}
-        if ids_match(wanted, own):
+        if ids_match(wanted, own, movie=item["type"] == "movie"):
             return True
         if (item["type"] != "episode" or not item.get("show_ids") or item.get("season") is None or item.get("episode") is None
                 or row.get("season") != item["season"] or row.get("episode") != item["episode"] or row.get("tvshowid") is None):
@@ -99,13 +99,14 @@ class KodiSink(MediaServerSink):
         if not found:
             rows = self._catalog(profile, lambda: [r for kind in ("movie", "show", "episode") for r in self._query(adapter, kind, {}, catalog=True)])
             shows = {r["tvshowid"] for r in rows if r["_kind"] == "show" and ids_match(item.get("show_ids") or {}, _ids(r))}
-            candidates = [r for r in rows if r["_kind"] == item["type"] and (ids_match(item.get("ids") or {}, _ids(r))
+            candidates = [r for r in rows if r["_kind"] == item["type"] and (ids_match(item.get("ids") or {}, _ids(r), movie=item["type"] == "movie")
                           or (item["type"] == "episode" and r.get("tvshowid") in shows
                               and r.get("season") == item.get("season") and r.get("episode") == item.get("episode")))]
             found = {_key(r): r for r in candidates if self._matches(adapter, r, item, feature, libraries)}
         if not found:
             raise DeliveryError("unmatched_in_kodi")
-        if len(found) > 1 and not (all_copies and identical_copies(item.get("ids") or {}, [_ids(r) for r in found.values()])):
+        if len(found) > 1 and not (all_copies and identical_copies(item.get("ids") or {}, [_ids(r) for r in found.values()],
+                                                                movie=item["type"] == "movie")):
             raise DeliveryError("ambiguous_ids")
         rows = [self._fetch(adapter, key) for key in found]
         if not all(self._matches(adapter, row, item, feature, libraries) for row in rows):
