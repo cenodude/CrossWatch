@@ -10,6 +10,7 @@ from cw_platform.id_map import canonical_key, minimal as id_minimal
 from cw_platform.playlists import PLAYLIST_KIND_REGULAR, PLAYLIST_KIND_SMART, PlaylistItem, PlaylistResource, PlaylistSnapshot
 
 from ._common import (
+    HISTORY_PAGE_MAX,
     URL_LIST,
     URL_LISTS,
     URL_LIST_ITEMS,
@@ -139,7 +140,7 @@ def get_snapshot(adapter: Any, playlist_id: Any) -> PlaylistSnapshot:
     items: list[PlaylistItem] = []
     page = 1
     while True:
-        resp = flicklist_request(adapter, "GET", URL_LIST_ITEMS.format(id=lid), params={"page": page, "limit": 100})
+        resp = flicklist_request(adapter, "GET", URL_LIST_ITEMS.format(id=lid), params={"page": page, "limit": HISTORY_PAGE_MAX})
         if not ok_status(resp):
             raise FlickListPlaylistError(error_of(resp) or f"http:{int(resp.status_code)}")
         items.extend(item for item in (_item_from_row(row) for row in _rows(safe_json(resp)) if isinstance(row, Mapping)) if item is not None)

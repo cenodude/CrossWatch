@@ -469,7 +469,7 @@ DEFAULT_CFG: dict[str, Any] = {
         "timeout": 20.0,
         "max_retries": 3,
         "write_batch_size": 1000,
-        "history_per_page": 100,
+        "history_per_page": 500,
         "history_max_pages": 500,
         "rate_limit": {
             "get_per_sec": 0.2,
