@@ -431,6 +431,26 @@ def clear_reports(base_path: str | Path | None = None) -> int:
     return count
 
 
+_REPORT_CHILDREN = ("sync_run_timeline", "sync_run_provider_counts", "sync_run_feature_lanes", "sync_run_spotlight_items")
+
+
+def prune_reports(keep: int, *, conn: Any = None, base_path: str | Path | None = None) -> tuple[int, int]:
+    c = conn or get_conn(base_path)
+    if c is None:
+        return 0, 0
+    cap = max(0, int(keep or 0))
+    keep_sql = "SELECT run_id FROM sync_run_reports ORDER BY created_at DESC, updated_at DESC LIMIT ?"
+    with c:
+        rows = sum(
+            int(c.execute(f"SELECT COUNT(*) FROM {table} WHERE run_id NOT IN ({keep_sql})", (cap,)).fetchone()[0] or 0)
+            for table in _REPORT_CHILDREN
+        )
+        runs = int(c.execute(f"DELETE FROM sync_run_reports WHERE run_id NOT IN ({keep_sql})", (cap,)).rowcount or 0)
+        for table in _REPORT_CHILDREN:
+            c.execute(f"DELETE FROM {table} WHERE run_id NOT IN (SELECT run_id FROM sync_run_reports)")
+    return runs, runs + rows
+
+
 def report_count(base_path: str | Path | None = None) -> int:
     conn = get_conn(base_path)
     if conn is None:
