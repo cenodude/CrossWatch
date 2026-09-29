@@ -43,7 +43,7 @@ def test_threads_expire_per_domain_and_keep_open_failures(conn):
     _ev(conn, "audit", "audit_login_failed", 100, "audit_old")
     _ev(conn, "audit", "audit_login", 30, "audit_new")
     correlate(conn=conn)
-    out = retention.apply_retention(conn=conn, now=NOW, vacuum=False)
+    out = retention.apply_retention(conn=conn, now=NOW)
     assert out["threads"] == {"sync": 1, "scrobble": 1, "audit": 1}
     assert _groups(conn) == [
         ("audit", "audit_new", "completed"),
@@ -58,7 +58,7 @@ def test_acknowledged_failures_expire(conn, monkeypatch):
     correlate(conn=conn)
     gid = conn.execute("SELECT id FROM event_groups").fetchone()[0]
     acknowledge_group(gid, conn=conn)
-    retention.apply_retention(conn=conn, now=NOW, vacuum=False)
+    retention.apply_retention(conn=conn, now=NOW)
     assert _groups(conn) == []
 
 
@@ -69,7 +69,7 @@ def test_sync_reports_keep_newest(conn, monkeypatch):
         conn.execute("INSERT INTO sync_run_provider_counts(run_id, phase, provider, value, updated_at) VALUES(?,?,?,?,?)",
                      (f"r{i}", "pre", "PLEX", 1, i))
     conn.commit()
-    out = retention.apply_retention(conn=conn, now=NOW, vacuum=False)
+    out = retention.apply_retention(conn=conn, now=NOW)
     assert out["reports"] == 2
     assert [r[0] for r in conn.execute("SELECT run_id FROM sync_run_reports ORDER BY run_id")] == ["r2", "r3"]
     assert [r[0] for r in conn.execute("SELECT run_id FROM sync_run_provider_counts ORDER BY run_id")] == ["r2", "r3"]
@@ -80,7 +80,7 @@ def test_old_sync_runs_without_events_expire(conn):
     conn.execute("INSERT INTO sync_runs(run_id, started_at, finished_at) VALUES('new', ?, ?)", (NOW - DAY, NOW - DAY))
     conn.execute("INSERT INTO run_pairs(run_id, pair_id) VALUES('old', 'p')")
     conn.commit()
-    out = retention.apply_retention(conn=conn, now=NOW, vacuum=False)
+    out = retention.apply_retention(conn=conn, now=NOW)
     assert out["runs"] == 1
     assert [r[0] for r in conn.execute("SELECT run_id FROM sync_runs")] == ["new"]
     assert conn.execute("SELECT COUNT(*) FROM run_pairs").fetchone()[0] == 0

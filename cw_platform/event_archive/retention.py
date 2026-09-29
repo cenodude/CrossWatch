@@ -18,8 +18,8 @@ THREAD_DAYS = {"sync": 365, "scrobble": 365, "audit": 90}
 KEEP_OPEN_DOMAINS = ("sync", "scrobble")
 OPEN_STATUSES = ("failed", "unresolved", "blackboxed")
 REPORT_KEEP = 500
-VACUUM_AT = 5000
 INTERVAL = DAY
+STARTUP_DELAY = 600
 
 _CHUNK = 500
 _worker: threading.Thread | None = None
@@ -61,7 +61,7 @@ def _prune_runs(c: sqlite3.Connection, cutoff: int) -> int:
     return len(run_ids)
 
 
-def apply_retention(*, conn: sqlite3.Connection | None = None, now: int | None = None, vacuum: bool = True) -> dict[str, Any]:
+def apply_retention(*, conn: sqlite3.Connection | None = None, now: int | None = None) -> dict[str, Any]:
     c = conn or get_conn()
     if c is None:
         return {"ok": False, "available": False}
@@ -88,10 +88,6 @@ def apply_retention(*, conn: sqlite3.Connection | None = None, now: int | None =
     except Exception as exc:
         _LOG.warning("sync report retention failed: %s", exc, exc_info=True)
     removed = out["events"] + out["runs"] + report_rows
-    if vacuum and removed >= VACUUM_AT:
-        from .maintenance import optimize
-
-        out["optimize"] = optimize(conn=c)
     if removed:
         _LOG.info(
             "retention removed events=%s threads=%s runs=%s reports=%s",
@@ -101,6 +97,14 @@ def apply_retention(*, conn: sqlite3.Connection | None = None, now: int | None =
 
 
 def _loop() -> None:
+    try:
+        from .groups import refresh_run_summaries
+
+        refresh_run_summaries()
+    except Exception as exc:
+        _LOG.warning("run summary refresh failed: %s", exc, exc_info=True)
+    if _stop.wait(STARTUP_DELAY):
+        return
     try:
         from .scrobble_recorder import prune_superseded_backfill
 
