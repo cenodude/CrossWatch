@@ -879,7 +879,7 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
 
 <header>
   <div class="brand" role="button" tabindex="0" title="Go to Main" onclick="showTab('main')" onkeypress="if(event.key==='Enter'||event.key===' ')showTab('main')">
-    <img class="logo" src="/assets/pwa/favicon-64.png?v=__CW_VERSION__" alt="CrossWatch">
+    <img class="logo" src="/assets/img/CROSSWATCH.svg?v=__CW_VERSION__" alt="CrossWatch">
     <span class="brand-text">
       <span class="name">CrossWatch</span>
       <span class="version">__CW_CURRENT_VERSION__</span>
@@ -2405,7 +2405,7 @@ def get_profile_html(user: dict | None = None) -> str:
 <body class="cw-profile-page">
 <header>
   <div class="brand" role="button" tabindex="0" title="Go to Profile" onclick="location.href='/profile'" onkeypress="if(event.key==='Enter'||event.key===' ')location.href='/profile'">
-    <img class="logo" src="/assets/pwa/favicon-64.png?v=__CW_VERSION__" alt="CrossWatch">
+    <img class="logo" src="/assets/img/CROSSWATCH.svg?v=__CW_VERSION__" alt="CrossWatch">
     <span class="brand-text">
       <span class="name">CrossWatch</span>
       <span class="version">__CW_CURRENT_VERSION__</span>

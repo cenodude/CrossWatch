@@ -1273,9 +1273,10 @@ body{margin:0;padding:16px;display:grid;place-items:center;min-height:100vh;min-
 body::before{content:"";position:fixed;inset:0;pointer-events:none;opacity:.28;background-size:44px 44px;background-image:linear-gradient(rgba(255,255,255,.03) 1px, transparent 1px),linear-gradient(90deg, rgba(255,255,255,.03) 1px, transparent 1px);mask-image:radial-gradient(circle at center, rgba(0,0,0,.85), transparent 82%)}
 .cw-login-shell{width:min(1040px,calc(100vw - 32px));display:grid;grid-template-columns:minmax(0,1.05fr) minmax(360px,.95fr);border:1px solid var(--cw-border);border-radius:28px;overflow:hidden;background:linear-gradient(135deg, rgba(7,15,27,.90), rgba(4,10,20,.78));box-shadow:var(--cw-shadow);backdrop-filter:blur(16px) saturate(135%);-webkit-backdrop-filter:blur(16px) saturate(135%)}
 .cw-hero{position:relative;display:flex;flex-direction:column;padding:34px 34px 30px;border-right:1px solid rgba(255,255,255,.06);background:radial-gradient(420px circle at 14% 10%, rgba(140,109,255,.22), transparent 42%),radial-gradient(460px circle at 80% 28%, rgba(192,140,255,.16), transparent 38%),linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.01))}
-.cw-hero::after{content:"";position:absolute;right:26px;bottom:26px;width:188px;height:188px;border-radius:36px;border:1px solid rgba(255,255,255,.06);opacity:.96;transform:rotate(14deg);pointer-events:none;background:url("/assets/img/CROSSWATCH.svg") center/62% no-repeat, linear-gradient(135deg, rgba(140,109,255,.18), rgba(192,140,255,.05));box-shadow:inset 0 1px 0 rgba(255,255,255,.04);filter:drop-shadow(0 20px 40px rgba(0,0,0,.22))}
 .cw-mark{display:flex;align-items:center;margin-top:6px}
-.cw-mark img{width:min(360px,100%);height:auto;display:block;filter:drop-shadow(0 18px 30px rgba(0,0,0,.34))}
+.cw-mark{gap:14px}
+.cw-mark img{width:64px;height:64px;flex:0 0 auto;display:block;filter:drop-shadow(0 18px 30px rgba(0,0,0,.34))}
+.cw-mark span{font-size:clamp(34px,4.4vw,52px);font-weight:700;letter-spacing:-.02em;line-height:1;background:linear-gradient(90deg,#5eb1ff,#8c6dff);-webkit-background-clip:text;background-clip:text;color:transparent}
 .cw-hero h1{margin:28px 0 12px;max-width:12ch;font-size:clamp(34px,4.6vw,56px);line-height:.98;letter-spacing:-.04em;font-weight:900}
 .cw-hero p{margin:0;max-width:44ch;color:var(--cw-soft);font-size:15px;line-height:1.65}
 .cw-metrics{display:grid;gap:12px;max-width:320px;margin-top:auto;padding-top:32px}
@@ -1332,8 +1333,8 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;opacity:.28;b
   body{display:block;padding:10px}
   .cw-login-shell{width:min(100vw - 20px,1040px);border-radius:22px;margin:0 auto}
   .cw-hero,.cw-login{padding:18px}
-  .cw-hero::after{display:none}
-  .cw-mark img{width:min(220px,72vw)}
+  .cw-mark img{width:44px;height:44px}
+  .cw-mark span{font-size:clamp(26px,8vw,34px)}
   .cw-hero h1{margin:16px 0 8px;font-size:clamp(26px,8vw,36px)}
   .cw-hero p{font-size:13px;line-height:1.5}
   .cw-metrics{gap:10px;margin-top:18px;max-width:none}
@@ -1374,7 +1375,7 @@ def _login_html(*, plex_sso_available: bool = False, oidc_available: bool = Fals
 </head><body>
   <div class="cw-login-shell">
     <section class="cw-hero" aria-hidden="true">
-      <div class="cw-mark"><img src="/assets/img/CrossWatch.png" alt="CrossWatch"></div>
+      <div class="cw-mark"><img src="/assets/img/CROSSWATCH.svg" alt=""><span>CrossWatch</span></div>
       <h1>Sign in to your sync hub</h1>
       <p>CrossWatch keeps your media world synced, simple and self hosted.</p>
       <div class="cw-metrics">
