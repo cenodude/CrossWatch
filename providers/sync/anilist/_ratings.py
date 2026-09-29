@@ -92,6 +92,17 @@ mutation ($mediaId: Int!, $scoreRaw: Int!) {
 }
 """.strip()
 
+GQL_ENTRY_SCORES = """
+query ($ids: [Int]) {
+  Page(perPage: 50) {
+    media(id_in: $ids, type: ANIME) {
+      id
+      mediaListEntry { id status score(format: POINT_100) }
+    }
+  }
+}
+""".strip()
+
 
 def _to_int(v: Any) -> int | None:
     try:
@@ -560,3 +571,60 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
     _done(prog, ok=len(unresolved) == 0, total=len(lst))
     _info("write_done", op="remove", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
     return ok, unresolved
+
+
+def score_raw(v: Any) -> int:
+    return _score_raw(v) or 0
+
+
+def entry_scores(client: Any, anilist_ids: Iterable[int]) -> dict[int, int]:
+    ids = [int(x) for x in dict.fromkeys(anilist_ids) if x]
+    out: dict[int, int] = {}
+    for start in range(0, len(ids), 50):
+        data = client.gql(GQL_ENTRY_SCORES, {"ids": ids[start:start + 50]}, feature="ratings:lookup", tolerate_errors=True)
+        page = (data or {}).get("Page")
+        rows = page.get("media") if isinstance(page, Mapping) else None
+        for media in rows if isinstance(rows, list) else []:
+            if not isinstance(media, Mapping):
+                continue
+            entry = media.get("mediaListEntry")
+            mid = _to_int(media.get("id"))
+            if mid and isinstance(entry, Mapping) and entry.get("id"):
+                out[mid] = _to_int(entry.get("score")) or 0
+    return out
+
+
+def plan_scores(
+    level: str,
+    targets: Iterable[int],
+    listed: Mapping[int, int],
+    raw: int,
+    recorded: Mapping[str, Any] | None = None,
+) -> tuple[dict[int, int], list[int]]:
+    wanted = [int(x) for x in dict.fromkeys(targets) if int(x) in listed]
+    record = recorded if isinstance(recorded, Mapping) else {}
+    recorded_raw = _to_int(record.get("score")) or 0
+    recorded_ids = {int(x) for x in record.get("entries") or [] if _to_int(x)}
+    writes: dict[int, int] = {}
+    owned: list[int] = []
+    if level == "show":
+        for mid in wanted:
+            current = listed[mid]
+            ours = mid in recorded_ids and recorded_raw and current == recorded_raw
+            if current == 0 or ours:
+                owned.append(mid)
+                if current != raw:
+                    writes[mid] = raw
+        return writes, (owned if raw else [])
+    for mid in wanted:
+        if listed[mid] != raw:
+            writes[mid] = raw
+    return writes, []
+
+
+def apply_scores(client: Any, writes: Mapping[int, int]) -> dict[int, int]:
+    done: dict[int, int] = {}
+    for mid, raw in writes.items():
+        client.gql(GQL_SAVE_RATING, {"mediaId": int(mid), "scoreRaw": int(raw)}, feature="ratings:add" if raw else "ratings:remove")
+        done[int(mid)] = int(raw)
+    return done

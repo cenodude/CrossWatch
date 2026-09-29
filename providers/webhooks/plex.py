@@ -65,6 +65,7 @@ _DEF_WEBHOOK: dict[str, Any] = {
     "plex_flicklist_ratings": False,
     "plex_scrob_ratings": False,
     "plex_wetrakr_ratings": False,
+    "plex_anilist_ratings": False,
 }
 
 _DEF_TRAKT: dict[str, Any] = {
@@ -221,6 +222,7 @@ def _ensure_scrobble(cfg: dict[str, Any]) -> dict[str, Any]:
         "plex_flicklist_ratings",
         "plex_scrob_ratings",
         "plex_wetrakr_ratings",
+        "plex_anilist_ratings",
     ):
         if key not in wh:
             wh[key] = _DEF_WEBHOOK.get(key, False)
@@ -1177,6 +1179,7 @@ def process_webhook(
     enable_flicklist_ratings = bool(wh.get("plex_flicklist_ratings", False)) and "flicklist" in selected_rating_sinks
     enable_scrob_ratings = bool(wh.get("plex_scrob_ratings", False)) and "scrob" in selected_rating_sinks
     enable_wetrakr_ratings = bool(wh.get("plex_wetrakr_ratings", False)) and "wetrakr" in selected_rating_sinks
+    enable_anilist_ratings = bool(wh.get("plex_anilist_ratings", False)) and "anilist" in selected_rating_sinks
     flt = (wh.get("filters_plex") or {})
     allow_users = {str(x).strip() for x in (flt.get("username_whitelist") or []) if str(x).strip()}
     srv_uuid_allow = _as_filter_set(flt.get("server_uuid_whitelist"))
@@ -1234,7 +1237,7 @@ def process_webhook(
         return {"ok": True, "ignored": True}
 
     if event == "media.rate":
-        if media_type not in ("movie", "show", "episode"):
+        if media_type not in ("movie", "show", "episode") and not (media_type == "season" and enable_anilist_ratings):
             return {"ok": True, "ignored": True}
     else:
         if media_type not in ("movie", "episode"):
@@ -1258,7 +1261,7 @@ def process_webhook(
     _emit(logger, f"ids resolved: {media_name_dbg} -> {_describe_ids((show_ids or epi_ids) or all_ids)}", "DEBUG")
 
     if event == "media.rate":
-        if not (enable_trakt_ratings or enable_simkl_ratings or enable_mdblist_ratings or enable_crosswatch_ratings or enable_floppy_ratings or enable_punchplay_ratings or enable_flicklist_ratings or enable_scrob_ratings or enable_wetrakr_ratings):
+        if not (enable_trakt_ratings or enable_simkl_ratings or enable_mdblist_ratings or enable_crosswatch_ratings or enable_floppy_ratings or enable_punchplay_ratings or enable_flicklist_ratings or enable_scrob_ratings or enable_wetrakr_ratings or enable_anilist_ratings):
             _emit(logger, "rating forwarding disabled", "DEBUG")
             return {"ok": True, "ignored": True}
 
@@ -1285,7 +1288,19 @@ def process_webhook(
         results: dict[str, Any] = {"ok": True, "action": "rating", "media_type": media_type, "rating": rating_precise}
         sent = False
 
-        if enable_trakt_ratings:
+        if media_type == "season":
+            from providers.scrobble.anilist.ratings import send_plex_rating
+
+            season_show_ids = show_ids or _plex_show_ids_from_metadata(cfg, md, logger)
+            results["anilist"] = send_plex_rating(cfg, webhook_sink_instance(wh, "anilist"), media_type, md, {}, season_show_ids, rating_precise)
+            sent = True
+        elif enable_anilist_ratings and media_type in ("movie", "show"):
+            from providers.scrobble.anilist.ratings import send_plex_rating
+
+            results["anilist"] = send_plex_rating(cfg, webhook_sink_instance(wh, "anilist"), media_type, md, ids_all2, ids_all2 if media_type == "show" else None, rating_precise)
+            sent = True
+
+        if enable_trakt_ratings and media_type != "season":
             if rating_val == 0:
                 body_r = _rating_payload(media_type, md, ids_all2, None, cfg, logger=logger)
                 if body_r:
@@ -1338,7 +1353,7 @@ def process_webhook(
             )
             if on
         ]
-        if ops_enabled:
+        if ops_enabled and media_type != "season":
             from providers.scrobble.plex.ratings_sync import dispatch_ops_ratings
 
             sent = True

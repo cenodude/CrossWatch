@@ -2409,6 +2409,7 @@ def process_rating_webhook(
         enable_flicklist = "flicklist" in custom_targets
         enable_scrob = "scrob" in custom_targets
         enable_wetrakr = "wetrakr" in custom_targets
+        enable_anilist = "anilist" in custom_targets
     else:
         enable_trakt = bool(watch_cfg.get("plex_trakt_ratings"))
         enable_simkl = bool(watch_cfg.get("plex_simkl_ratings"))
@@ -2419,8 +2420,9 @@ def process_rating_webhook(
         enable_flicklist = bool(watch_cfg.get("plex_flicklist_ratings"))
         enable_scrob = bool(watch_cfg.get("plex_scrob_ratings"))
         enable_wetrakr = bool(watch_cfg.get("plex_wetrakr_ratings"))
+        enable_anilist = bool(watch_cfg.get("plex_anilist_ratings"))
 
-    if not (enable_trakt or enable_simkl or enable_mdblist or enable_crosswatch or enable_floppy or enable_punchplay or enable_flicklist or enable_scrob or enable_wetrakr):
+    if not (enable_trakt or enable_simkl or enable_mdblist or enable_crosswatch or enable_floppy or enable_punchplay or enable_flicklist or enable_scrob or enable_wetrakr or enable_anilist):
         return {"ok": True, "ignored": True}
 
     if not payload:
@@ -2451,7 +2453,7 @@ def process_rating_webhook(
         return {"ok": True, "ignored": True}
 
     media_type = str(md.get("type") or "").lower().strip()
-    if media_type not in ("movie", "show", "episode"):
+    if media_type not in ("movie", "show", "episode") and not (media_type == "season" and enable_anilist):
         return {"ok": True, "ignored": True}
 
     rating_raw = md.get("userRating") if "userRating" in md else None
@@ -2476,6 +2478,21 @@ def process_rating_webhook(
     if prev and prev.get("rating") == rating_precise and (time.time() - float(prev.get("ts", 0))) < 10:
         return {"ok": True, "dedup": True}
     _LAST_RATING_BY_ACC[dedup_key] = {"rating": rating_precise, "ts": time.time()}
+
+    sink_inst = str(watch_cfg.get("route_sink_instance") or "default").strip() or "default"
+    if media_type == "season":
+        from providers.scrobble.anilist.ratings import send_plex_rating
+        from providers.webhooks.plex import _plex_show_ids_from_metadata, _show_ids_from_md
+
+        season_show_ids = _show_ids_from_md(md) or _plex_show_ids_from_metadata(cfg, md, logger)
+        return {
+            "ok": True,
+            "action": "rating",
+            "media_type": media_type,
+            "rating": rating_precise,
+            "route_id": route_scope,
+            "anilist": send_plex_rating(cfg, sink_inst, media_type, md, {}, season_show_ids, rating_precise),
+        }
 
     ids = _all_ids_from_metadata(md)
 
@@ -2521,7 +2538,6 @@ def process_rating_webhook(
 
             episode_ids = _episode_ids_from_md(md)
             show_ids = _show_ids_from_md(md) or _plex_show_ids_from_metadata(cfg, md, logger)
-        sink_inst = str(watch_cfg.get("route_sink_instance") or "default").strip() or "default"
         results.update(
             dispatch_ops_ratings(
                 media_type,
@@ -2535,4 +2551,8 @@ def process_rating_webhook(
                 episode_ids=episode_ids,
             )
         )
+    if enable_anilist and media_type in ("movie", "show"):
+        from providers.scrobble.anilist.ratings import send_plex_rating
+
+        results["anilist"] = send_plex_rating(cfg, sink_inst, media_type, md, ids, ids if media_type == "show" else None, rating_precise)
     return results

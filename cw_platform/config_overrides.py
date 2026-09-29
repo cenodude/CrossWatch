@@ -39,6 +39,9 @@ MIGRATION_OVERRIDE_KEYS: tuple[str, ...] = (
     "mdblist.history_max_backoff_ms",
     "mdblist.history_since",
 
+    # AniList
+    "anilist.rate_limit.post_per_sec",
+
     "publicmetadb.watchlist_page_size",
     "publicmetadb.history_per_page",
     "publicmetadb.progress_per_page",

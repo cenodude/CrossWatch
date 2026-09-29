@@ -126,7 +126,7 @@ def _ops(provider: str) -> Any | None:
 
 
 OPS_RATING_SINKS: tuple[str, ...] = ("crosswatch", "floppy", "punchplay", "flicklist", "wetrakr", "scrob")
-RATING_SINKS: tuple[str, ...] = ("trakt", "simkl", "mdblist", *OPS_RATING_SINKS)
+RATING_SINKS: tuple[str, ...] = ("trakt", "simkl", "mdblist", "anilist", *OPS_RATING_SINKS)
 
 
 def dispatch_ops_ratings(

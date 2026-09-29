@@ -291,6 +291,7 @@ function _watchLogKnownTags() {
     "SIMKL-SINK",
     "MDBLIST-SINK",
     "WETRAKR-SINK",
+    "ANILIST-SINK",
     "FLOPPY-SINK",
     "CROSSWATCH-SINK",
     "FLICKLIST-SINK",
