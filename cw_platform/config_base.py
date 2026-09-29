@@ -338,6 +338,9 @@ DEFAULT_CFG: dict[str, Any] = {
         "client_secret": "",                            # From your AniList app
         "access_token": "",                             # OAuth access token (saved after auth)
         "user": {},                                     # Viewer object (id/name)
+        "rate_limit": {
+            "post_per_sec": 0.45,
+        },
     },
 
     "mdblist": {
@@ -847,6 +850,7 @@ DEFAULT_CFG: dict[str, Any] = {
             "plex_simkl_ratings": False,                # Watch mode: forward Plex ratings to SIMKL
             "plex_trakt_ratings": False,                # Watch mode: forward Plex ratings to Trakt
             "plex_wetrakr_ratings": False,
+            "plex_anilist_ratings": False,
             "plex_mdblist_ratings": False,              # Watch mode: forward Plex ratings to MDblist
             "plex_flicklist_ratings": False,            # Watch mode: forward Plex ratings to FlickList
             "plex_scrob_ratings": False,                # Watch mode: forward Plex ratings to Scrob

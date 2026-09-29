@@ -125,6 +125,10 @@ def _make_sink(name: str, instance_id: str, cfg_provider: Callable[[], dict[str,
         from providers.scrobble.wetrakr.sink import WeTrakrSink
 
         cls = WeTrakrSink
+    elif sink == "anilist":
+        from providers.scrobble.anilist.sink import AniListSink
+
+        cls = AniListSink
     elif sink == "scrob":
         from providers.scrobble.scrob.sink import ScrobSink
 

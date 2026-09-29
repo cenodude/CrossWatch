@@ -567,6 +567,36 @@ def _art_debug(row: dict[str, Any], reason: str, **fields: Any) -> None:
         return
 
 
+def _anime_art_ids(row: Mapping[str, Any], ids: Mapping[str, Any]) -> dict[str, str]:
+    if _art_type(row) != "movie":
+        show_ids = _ids(row).get("show_ids")
+        ids = {**dict(show_ids), "tmdb": ids.get("tmdb")} if isinstance(show_ids, Mapping) else {}
+    if ids.get("tmdb") or not any(ids.get(key) for key in ("anidb", "mal", "anilist", "simkl", "kitsu")):
+        return {}
+    try:
+        from cw_platform.anime_mapping import artwork_ids
+        from cw_platform.config_base import load_config
+
+        return artwork_ids(load_config() or {}, ids, media_type=_art_type(row))
+    except Exception:
+        return {}
+
+
+def _apply_resolved_tmdb(
+    row: dict[str, Any], tmdb: Any, *, size: str, episode_still: bool, backdrop_fallback: bool
+) -> None:
+    row["tmdb"] = tmdb
+    current_ids = dict(row.get("ids") or {}) if isinstance(row.get("ids"), Mapping) else {}
+    if _art_type(row) == "movie":
+        current_ids.setdefault("tmdb", tmdb)
+    else:
+        show_ids = dict(current_ids.get("show_ids") or {}) if isinstance(current_ids.get("show_ids"), Mapping) else {}
+        show_ids.setdefault("tmdb", tmdb)
+        current_ids["show_ids"] = show_ids
+    row["ids"] = current_ids
+    row["poster"] = _grid_art_url(row, size=size) if backdrop_fallback else _poster_url(row, size=size, episode_still=episode_still)
+
+
 def _resolve_missing_art(
     row: dict[str, Any], *, size: str, episode_still: bool = False, backdrop_fallback: bool = False
 ) -> None:
@@ -574,6 +604,13 @@ def _resolve_missing_art(
         row["art_reason"] = "existing_tmdb"
         return
     ids = _metadata_lookup_ids(row)
+    mapped = _anime_art_ids(row, ids)
+    if mapped.get("tmdb"):
+        _apply_resolved_tmdb(row, mapped["tmdb"], size=size, episode_still=episode_still, backdrop_fallback=backdrop_fallback)
+        _art_debug(row, "anime_mapping_resolved", tmdb=mapped["tmdb"])
+        return
+    for key, value in mapped.items():
+        ids.setdefault(key, value)
     if not ids.get("title") and not any(ids.get(key) for key in ("imdb", "tmdb")):
         _art_debug(row, "missing_lookup_identity")
         return
@@ -596,16 +633,7 @@ def _resolve_missing_art(
     if tmdb in (None, "", 0, False):
         _art_debug(row, "metadata_no_tmdb", lookup_keys=sorted(ids.keys()))
         return
-    row["tmdb"] = tmdb
-    current_ids = dict(row.get("ids") or {}) if isinstance(row.get("ids"), Mapping) else {}
-    if _art_type(row) == "movie":
-        current_ids.setdefault("tmdb", tmdb)
-    else:
-        show_ids = dict(current_ids.get("show_ids") or {}) if isinstance(current_ids.get("show_ids"), Mapping) else {}
-        show_ids.setdefault("tmdb", tmdb)
-        current_ids.setdefault("show_ids", show_ids)
-    row["ids"] = current_ids
-    row["poster"] = _grid_art_url(row, size=size) if backdrop_fallback else _poster_url(row, size=size, episode_still=episode_still)
+    _apply_resolved_tmdb(row, tmdb, size=size, episode_still=episode_still, backdrop_fallback=backdrop_fallback)
     _art_debug(row, "metadata_resolved", tmdb=tmdb)
 
 

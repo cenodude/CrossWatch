@@ -1,9 +1,9 @@
 /* CrossWatch - Scrobbler Route Modal */
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const label = (v) => ({ plex: "Plex", jellyfin: "Jellyfin", emby: "Emby", kodi: "Kodi", trakt: "Trakt", simkl: "SIMKL", mdblist: "MDBList", crosswatch: "CrossWatch", floppy: "Floppy", punchplay: "PunchPlay", bingebase: "BingeBase", flicklist: "FlickList", wetrakr: "WeTrakr", scrob: "Scrob" }[String(v || "").toLowerCase()] || String(v || "").toUpperCase());
+const label = (v) => ({ plex: "Plex", jellyfin: "Jellyfin", emby: "Emby", kodi: "Kodi", trakt: "Trakt", simkl: "SIMKL", mdblist: "MDBList", crosswatch: "CrossWatch", floppy: "Floppy", punchplay: "PunchPlay", bingebase: "BingeBase", flicklist: "FlickList", wetrakr: "WeTrakr", anilist: "AniList", scrob: "Scrob" }[String(v || "").toLowerCase()] || String(v || "").toUpperCase());
 const sources = ["plex", "jellyfin", "emby", "kodi", "scrob"];
-const sinks = ["plex", "jellyfin", "emby", "kodi", "crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "bingebase", "flicklist", "wetrakr", "scrob"];
-const ratingSinks = ["crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "flicklist", "wetrakr", "scrob"];
+const sinks = ["plex", "jellyfin", "emby", "kodi", "crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "bingebase", "flicklist", "wetrakr", "anilist", "scrob"];
+const ratingSinks = ["crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "flicklist", "wetrakr", "anilist", "scrob"];
 const mediaSinks = ["plex", "jellyfin", "emby", "kodi"];
 
 function flashCopied(btn) {
@@ -504,6 +504,12 @@ function mountDestinationTable() {
   });
 }
 
+function anilistMappingHint(animeGlobalOn) {
+  return animeGlobalOn
+    ? `<div class="scrm-journey scrm-journey-compact"><span class="material-symbols-rounded scrm-journey-icon">animation</span><div><strong>AniList uses Anime ID Mapping</strong><p>Only watched stops update AniList progress. Titles the anime mapping cannot place are skipped.</p></div></div>`
+    : `<div class="scrm-journey scrm-journey-compact"><span class="material-symbols-rounded scrm-journey-icon">warning</span><div><strong>AniList needs Anime ID Mapping</strong><p>Enable global Anime ID Mapping first. Without it nothing is sent to AniList.</p></div></div>`;
+}
+
 function optionsPanel(r) {
   const unresolvedFallback = r.provider === "plex"
     ? `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">person_alert</span><span><strong>Unresolved user fallback</strong><small>Use the configured Plex username when Plex omits the playback user and the session cannot be resolved.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-unresolved-user-fallback" ${r.options.watch?.unresolved_user_fallback ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`
@@ -515,8 +521,10 @@ function optionsPanel(r) {
   const animeMapping = ["crosswatch", "simkl"].includes(r.sink)
     ? `<label class="scrm-toggle-row ${animeGlobalOn ? "" : "is-disabled"}"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">animation</span><span><strong>Anime ID Mapping</strong><small>${animeGlobalOn ? "Use local anime mappings for this route before sending watcher scrobbles." : "Enable global Anime ID Mapping first."}</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-anime-mapping" ${r.options.watch?.anime_mapping ? "checked" : ""} ${animeGlobalOn ? "" : "disabled"}><span class="scrm-switch-track"></span></span></label>`
     : "";
+  const anilistHint = r.sink === "anilist" ? anilistMappingHint(animeGlobalOn) : "";
   return `
     <section class="scrm-panel ${activeTab === "options" ? "active" : ""}" data-panel="options">
+      ${anilistHint}
       <div class="scrm-journey scrm-journey-compact">
         <span class="material-symbols-rounded scrm-journey-icon">tune</span>
         <div><strong>Route-level behavior</strong><p>These settings apply to this route and override the global defaults.<br><b>Leave them at their defaults unless you know what you are doing.</b></p></div>

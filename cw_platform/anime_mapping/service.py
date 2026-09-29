@@ -396,6 +396,28 @@ def enrich_item(item: Mapping[str, Any], cfg: Mapping[str, Any] | None = None) -
     return AnimeMappingService(cfg).enrich_item(item)
 
 
+ART_ID_KEYS = ("tmdb", "tvdb", "imdb")
+ART_SEED_KEYS = ("anidb", "mal", "anilist", "simkl", "kitsu")
+
+
+def artwork_ids(cfg: Mapping[str, Any] | None, ids: Mapping[str, Any] | None, *, media_type: str | None = None) -> dict[str, str]:
+    block = (cfg or {}).get("anime_mapping") if isinstance(cfg, Mapping) else {}
+    if not (isinstance(block, Mapping) and block.get("enabled")):
+        return {}
+    clean = {str(k).strip().lower(): str(v).strip() for k, v in dict(ids or {}).items() if str(v or "").strip()}
+    if clean.get("tmdb") or not any(clean.get(k) for k in ART_SEED_KEYS):
+        return {}
+    kind = "movie" if str(media_type or "").strip().lower() == "movie" else "show"
+    try:
+        svc = AnimeMappingService(cfg)
+        if not svc.ready():
+            return {}
+        found = svc.enrich_ids({k: clean[k] for k in ART_SEED_KEYS if clean.get(k)}, media_type=kind).get("ids") or {}
+    except Exception:
+        return {}
+    return {k: str(found[k]) for k in ART_ID_KEYS if str(found.get(k) or "").strip() and not clean.get(k)}
+
+
 def new_enrich_stats() -> dict[str, int]:
     return {"items": 0, "seeded": 0, "enriched": 0, "dead_end": 0, "rekeyed": 0, "merged": 0, "failed": 0}
 

@@ -9,7 +9,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
 
-from ._mod_common import build_session, make_snapshot_progress, request_with_retries
+from ._mod_common import SimpleRateLimiter, build_session, make_snapshot_progress, request_with_retries
 from ._log import log as cw_log
 from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.id_map import canonical_key, minimal as id_minimal
@@ -135,6 +135,12 @@ def label_anilist(method: str, url: str, kw: Mapping[str, Any]) -> str:
             variables = variables_raw if isinstance(variables_raw, Mapping) else {}
             if "Viewer" in q:
                 return "viewer"
+            if "SaveMediaListEntry" in q and "$progress" in q:
+                return "progress:save"
+            if "mediaListEntry" in q and "score(" in q:
+                return "ratings:lookup"
+            if "mediaListEntry" in q:
+                return "progress:lookup"
             if "MediaListCollection" in q and "score(" in q:
                 return "ratings:index"
             if "MediaListCollection" in q:
@@ -163,6 +169,19 @@ def label_anilist(method: str, url: str, kw: Mapping[str, Any]) -> str:
 
 
 
+DEFAULT_POST_PER_SEC = 0.45
+
+
+def _post_per_sec(raw_cfg: Mapping[str, Any]) -> float:
+    rl_raw = raw_cfg.get("rate_limit")
+    rl: Mapping[str, Any] = rl_raw if isinstance(rl_raw, Mapping) else {}
+    try:
+        value = float(rl.get("post_per_sec", DEFAULT_POST_PER_SEC))
+    except (TypeError, ValueError):
+        return DEFAULT_POST_PER_SEC
+    return value if value > 0 else DEFAULT_POST_PER_SEC
+
+
 @dataclass
 class ANILISTConfig:
     access_token: str
@@ -175,6 +194,12 @@ class ANILISTClient:
         self.cfg = cfg
         self.raw_cfg = raw_cfg
         self.session = build_session("ANILIST", ctx, feature_label=label_anilist)
+        post_rps = _post_per_sec(raw_cfg)
+        try:
+            self.session._rate_limiter = SimpleRateLimiter(rates_per_sec={"POST": post_rps})
+            self.session._rate_limiter_meta = {"post_per_sec": post_rps}
+        except Exception:
+            pass
         self._apply_headers(cfg.access_token)
         self._viewer_cache: dict[str, Any] | None = None
 
