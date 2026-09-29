@@ -260,6 +260,7 @@ from ._pairs_utils import (
 )
 from ._pairs_massdelete import maybe_block_mass_delete as _maybe_block_mass_delete
 from ._pairs_blocklist import apply_blocklist
+from ._specials import filter_specials_index, specials_excluded
 from ._history_rewatches import (
     collapse_history_latest,
     config_with_history_rewatches,
@@ -1245,6 +1246,22 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
         dst_cur = _media_type_filter_index(dst_cur, fcfg)
         eff_dst = _media_type_filter_index(eff_dst, fcfg)
 
+    specials_prev_src: dict[str, Any] = {}
+    specials_cur_src: dict[str, Any] = {}
+    specials_eff_src: dict[str, Any] = {}
+    specials_prev_dst: dict[str, Any] = {}
+    specials_cur_dst: dict[str, Any] = {}
+    specials_eff_dst: dict[str, Any] = {}
+    if specials_excluded(feature, fcfg):
+        prev_src, specials_prev_src = filter_specials_index(prev_src)
+        src_cur, specials_cur_src = filter_specials_index(src_cur)
+        eff_src, specials_eff_src = filter_specials_index(eff_src)
+        prev_dst, specials_prev_dst = filter_specials_index(prev_dst)
+        dst_cur, specials_cur_dst = filter_specials_index(dst_cur)
+        eff_dst, specials_eff_dst = filter_specials_index(eff_dst)
+        if specials_cur_src or specials_cur_dst:
+            emit("debug", msg="specials.filtered", feature=feature, src=src, dst=dst, source=len(specials_cur_src), target=len(specials_cur_dst))
+
     src_dropped_tokens: set[str] = set()
     dst_dropped_tokens: set[str] = set()
     if src in ("TRAKT", "MDBLIST", "SIMKL") and _provider_ignore_dropped_enabled(src_cfg, src, feature):
@@ -1264,6 +1281,8 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
 
     dst_full = (dict(prev_dst) | dict(dst_cur)) if dst_sem == "delta" else dict(eff_dst)
     src_idx = (dict(prev_src) | dict(src_cur)) if src_sem == "delta" else dict(eff_src)
+    specials_keep_dst = (specials_prev_dst | specials_cur_dst) if dst_sem == "delta" else specials_eff_dst
+    specials_keep_src = (specials_prev_src | specials_cur_src) if src_sem == "delta" else specials_eff_src
 
     # Keep metadata when the provider index is presence-only.
     dst_full = _enrich_index_payload(dst_full, prev_dst, feature)
@@ -2288,8 +2307,8 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
 
             if review is not None and review.retain_deferred(feature, src, src_inst, src_idx, prev_src, _sync_key):
                 now_cp_src = prev_checkpoint(prev_state, src, feature, src_inst)
-            _commit_baseline(provs_block, src, src_inst, feature, src_idx)
-            _commit_baseline(provs_block, dst, dst_inst, feature, dst_commit)
+            _commit_baseline(provs_block, src, src_inst, feature, specials_keep_src | src_idx)
+            _commit_baseline(provs_block, dst, dst_inst, feature, specials_keep_dst | dst_commit)
             _commit_checkpoint(provs_block, src, src_inst, feature, now_cp_src)
             _commit_checkpoint(provs_block, dst, dst_inst, feature, now_cp_dst)
 

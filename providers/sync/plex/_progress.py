@@ -431,7 +431,7 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
 
             if typ == "episode":
                 base["series_title"] = a.get("grandparentTitle")
-                base["season"] = _to_int(a.get("parentIndex") or a.get("seasonNumber"))
+                base["season"] = _to_int(next((v for v in (a.get("parentIndex"), a.get("seasonNumber")) if v is not None), None))
                 base["episode"] = _to_int(a.get("index"))
                 show_ids: dict[str, str] = {}
                 gp = a.get("grandparentGuid")

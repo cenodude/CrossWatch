@@ -1446,7 +1446,7 @@ async def webhook_jellyfintrakt(request: Request) -> JSONResponse:
     if mtype == "episode":
         series = (md.get("SeriesName") or md.get("SeriesTitle") or "").strip()
         ep_name = (md.get("Name") or md.get("EpisodeTitle") or "").strip()
-        season = md.get("ParentIndexNumber") or md.get("SeasonIndexNumber")
+        season = next((v for v in (md.get("ParentIndexNumber"), md.get("SeasonIndexNumber")) if v is not None), None)
         number = md.get("IndexNumber")
         if isinstance(season, int) and isinstance(number, int):
             title = f"{series} S{season:02}E{number:02}" + (
@@ -1599,7 +1599,7 @@ async def webhook_embytrakt(request: Request) -> JSONResponse:
     if mtype == "episode":
         series = (md.get("SeriesName") or md.get("SeriesTitle") or "").strip()
         ep_name = (md.get("Name") or md.get("EpisodeTitle") or "").strip()
-        season = md.get("ParentIndexNumber") or md.get("SeasonIndexNumber")
+        season = next((v for v in (md.get("ParentIndexNumber"), md.get("SeasonIndexNumber")) if v is not None), None)
         number = md.get("IndexNumber")
         if isinstance(season, int) and isinstance(number, int):
             title = f"{series} S{season:02}E{number:02}" + (

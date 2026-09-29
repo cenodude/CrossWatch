@@ -168,7 +168,7 @@ def _progress_payload_from_record(record: Mapping[str, Any], progress_percent: f
     if tmdb is None:
         return None, "missing_tmdb_id"
     if media_type in {"episode", "anime_episode"}:
-        season = _int(record.get("season") or resume.get("season") or resume.get("season_number"))
+        season = _int(next((v for v in (record.get("season"), resume.get("season"), resume.get("season_number")) if v is not None), None))
         episode = _int(record.get("episode") or resume.get("episode") or resume.get("episode_number"))
         if season is None or episode is None:
             return None, "missing_episode_numbers"
@@ -301,7 +301,7 @@ class PublicMetaDBPlaybackAdapter(PlaybackProgressAdapter):
         if is_episode:
             series_title = _first_nested_str(row, "series_title", "show_title", "show_name", "name", "title")
             episode_title = _first_nested_str(row, "episode_title", "episode_name", "episodeTitle", "episodeName")
-            season_no = _int(row.get("season") or row.get("season_number"))
+            season_no = _int(next((v for v in (row.get("season"), row.get("season_number")) if v is not None), None))
             episode_no = _int(row.get("episode") or row.get("episode_number"))
             year = _int(row.get("year"))
             if not series_title or not runtime_ms:

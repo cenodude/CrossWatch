@@ -771,7 +771,7 @@ def _tvtime_expand(data: Any, path: str) -> list[tuple[str, Mapping[str, Any], s
         for season in seasons:
             if not isinstance(season, Mapping):
                 continue
-            season_number = season.get("number") or season.get("season")
+            season_number = next((v for v in (season.get("number"), season.get("season")) if v is not None), None)
             episodes = season.get("episodes")
             if not isinstance(episodes, list):
                 continue
@@ -785,7 +785,7 @@ def _tvtime_expand(data: Any, path: str) -> list[tuple[str, Mapping[str, Any], s
                             **dict(ep),
                             "type": "episode",
                             "season": season_number,
-                            "episode": ep.get("number") or ep.get("episode"),
+                            "episode": next((v for v in (ep.get("number"), ep.get("episode")) if v is not None), None),
                             "series_title": show_title,
                             "show_ids": show_ids,
                             "ids": ids_from(ep),

@@ -214,9 +214,10 @@
   const watchlistPreviewArt = (item, size = "w300") => {
     const id = tmdbId(item);
     if (!id) return "";
-    const season = Number(item?.season_number || item?.episode?.season_number || item?.episode?.season || item?.season || 0);
+    const seasonRaw = [item?.season_number, item?.episode?.season_number, item?.episode?.season, item?.season].find((value) => value !== null && value !== undefined && value !== "");
+    const season = seasonRaw === undefined ? -1 : Number(seasonRaw);
     const episode = Number(item?.episode_number || item?.episode?.episode_number || item?.episode?.number || item?.episode || 0);
-    if (mediaType(item) && season > 0 && episode > 0) {
+    if (mediaType(item) && season >= 0 && episode > 0) {
       return `/art/tmdb/tv/${encodeURIComponent(String(id))}?kind=still&season=${encodeURIComponent(String(season))}&episode=${encodeURIComponent(String(episode))}&size=${encodeURIComponent(size)}${watchlistArtEvidence(item)}`;
     }
     const kind = mediaType(item) ? "tv" : "movie";

@@ -146,3 +146,14 @@ def test_empty_import_feature_selection_writes_nothing(transfer_client):
     response = client.post("/api/import/commit", json={"import_id": "preview5000", "features": []})
     assert response.json()["applied"] == 0
     assert calls == []
+
+
+def test_yamtrack_export_keeps_season_zero(monkeypatch):
+    special = {"type": "episode", "series_title": "Curb Your Enthusiasm", "season": 0, "episode": 1, "show_ids": {"tmdb": "4546"}, "watched_at": "2026-01-01T00:00:00Z"}
+    monkeypatch.setattr(exporter, "_iter_items", lambda *_a, **_k: iter([("k", special)]))
+
+    body = exporter._build_yamtrack("JELLYFIN", "history", {}, []).body.decode("utf-8")
+
+    header, row = [line.split(",") for line in body.strip().splitlines()[:2]]
+    assert row[header.index("season_number")] == "0"
+    assert row[header.index("episode_number")] == "1"

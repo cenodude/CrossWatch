@@ -998,7 +998,7 @@ def _bucketize(
             continue
 
         if kind == "seasons":
-            s_raw = item.get("season") or item.get("number")
+            s_raw = next((v for v in (item.get("season"), item.get("number")) if v is not None), None)
             if s_raw is None:
                 continue
             s = int(s_raw)

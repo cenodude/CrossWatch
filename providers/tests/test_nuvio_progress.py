@@ -568,3 +568,14 @@ def test_interactive_progress_uses_retained_rows_for_write_and_remove():
         assert not adapter.client.rows
     finally:
         reads.close()
+
+
+def test_season_zero_episode_keys_and_identity_are_kept() -> None:
+    from providers.sync.nuvio import _common
+
+    item = {"type": "episode", "show_ids": {"tmdb": "69478"}, "season": 0, "episode": 2}
+
+    assert _common.progress_key(item) == "tmdb:69478_s0e2"
+    assert _common.content_id_key(item) == "tmdb:69478:0:2"
+    parsed = _common.make_item(content_id="tmdb:69478", content_type="series", season=0, episode=2)
+    assert parsed is not None and parsed["season"] == 0 and parsed["episode"] == 2

@@ -2461,8 +2461,10 @@ def diff_snapshots_extended(
             typ = str(b.get("type") or "")
             title = str(b.get("series_title") or b.get("show_title") or b.get("title") or "")
             year = int(b.get("year") or 0) if str(b.get("year") or "").isdigit() else 0
-            season = int(b.get("season") or -1) if str(b.get("season") or "").lstrip("-").isdigit() else -1
-            episode = int(b.get("episode") or -1) if str(b.get("episode") or "").lstrip("-").isdigit() else -1
+            season_raw = b.get("season")
+            episode_raw = b.get("episode")
+            season = int(season_raw) if season_raw is not None and str(season_raw).lstrip("-").isdigit() else -1
+            episode = int(episode_raw) if episode_raw is not None and str(episode_raw).lstrip("-").isdigit() else -1
         return (title.lower(), year, season, episode, typ, k)
 
     def _mk_row(status: str, k: str) -> dict[str, Any]:

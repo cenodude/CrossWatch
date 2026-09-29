@@ -326,7 +326,7 @@ class SimklPlaybackAdapter(PlaybackProgressAdapter):
         else:
             series_title = _first_str(container.get("title"), row.get("series_title"), row.get("show_title"))
             episode_title = _first_str(episode.get("title"), row.get("episode_title"))
-            season = _int(episode.get("season") or row.get("season") or row.get("season_number"))
+            season = _int(next((v for v in (episode.get("season"), row.get("season"), row.get("season_number")) if v is not None), None))
             episode_no = _int(episode.get("episode") or episode.get("number") or row.get("episode") or row.get("episode_number"))
             item = id_minimal(
                 {

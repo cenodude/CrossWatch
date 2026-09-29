@@ -3752,8 +3752,8 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
             if typ == "season":
                 show_ids = _raw_show_ids(item)
                 show_entry = _show_scope_entry(adapter, item, show_ids) if show_ids else None
-                s_num = int(item.get("season") or item.get("season_number") or 0)
-                if not show_entry or not s_num:
+                s_num = _int_or_none(item.get("season") if item.get("season") is not None else item.get("season_number"))
+                if not show_entry or s_num is None or s_num < 0:
                     unresolved.append({"item": id_minimal(item), "hint": "missing_show_ids_or_season"})
                     continue
                 group = _merge_show_group(shows_scoped, show_entry)

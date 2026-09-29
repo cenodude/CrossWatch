@@ -885,7 +885,7 @@ def normalize(obj: Mapping[str, Any]) -> dict[str, Any]:
             "title": (payload.get("title") if isinstance(payload, Mapping) else None) or obj.get("title"),
             "year": (payload.get("year") if isinstance(payload, Mapping) else None) or obj.get("year"),
             "ids": {k: v for k, v in ids.items() if v},
-            "season": _to_int(obj.get("season") or obj.get("season_number") or obj.get("number")),
+            "season": _to_int(next((v for v in (obj.get("season"), obj.get("season_number"), obj.get("number")) if v is not None), None)),
             "series_title": obj.get("series_title"),
             "show_ids": {k: v for k, v in show_ids.items() if v},
         }

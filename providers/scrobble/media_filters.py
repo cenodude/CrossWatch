@@ -206,11 +206,25 @@ def media_filter_ignore_reason(
     return None
 
 
+def _event_is_special(event: Any) -> bool:
+    if str(getattr(event, "media_type", "") or "").strip().lower() != "episode":
+        return False
+    season = getattr(event, "season", None)
+    if season is None or isinstance(season, bool):
+        return False
+    try:
+        return int(season) == 0
+    except (TypeError, ValueError):
+        return False
+
+
 def event_ignore_reason(event: Any, cfg: Mapping[str, Any] | None) -> str | None:
     cfg_map = cfg if isinstance(cfg, Mapping) else {}
     filt = (((cfg_map.get("scrobble") or {}).get("watch") or {}).get("filters") or {})
     if not isinstance(filt, Mapping):
         return None
+    if bool(filt.get("ignore_specials")) and _event_is_special(event):
+        return "specials"
     return media_filter_ignore_reason(filt, getattr(event, "raw", None), title=getattr(event, "title", None))
 
 

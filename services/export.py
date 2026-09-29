@@ -803,8 +803,8 @@ def _build_yamtrack(
         media_type = _yamtrack_media_type(t)
         native_title = _yamtrack_title(it, t) or title
         score = "" if t == "episode" else _rating_1_10(it.get("rating") or it.get("user_rating") or "")
-        season_number = str(it.get("season") or "")
-        episode_number = str(it.get("episode") or "")
+        season_number = "" if it.get("season") is None else str(it.get("season"))
+        episode_number = "" if it.get("episode") is None else str(it.get("episode"))
         end_date = actual_watched if feature in {"history", "combined"} else ""
         progressed_at = actual_watched if feature in {"history", "combined"} else ""
         rows.append(
