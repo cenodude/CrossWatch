@@ -224,9 +224,9 @@ def test_sync_write_summary_matches_other_providers(env, monkeypatch, remove):
 def test_watchlist_reads_movies_shows_and_normalizes_ids(env):
     env.server.planning = [MOVIE, SHOW]
     index = env.adapter.build_index("watchlist")
-    assert set(index) == {"tmdb:155", "tmdb:1396"}
+    assert set(index) == {"tmdb:155", "tmdb:1396#show"}
     assert index["tmdb:155"]["ids"]["imdb"] == "tt0468569"
-    assert index["tmdb:1396"]["type"] == "show"
+    assert index["tmdb:1396#show"]["type"] == "show"
 
 
 def test_watchlist_add_remove_and_repeat_are_verified(env):
@@ -428,7 +428,7 @@ def test_changed_section_refresh_detects_removal_without_removed_timestamp(env):
     env.server.planning = [SHOW]
     env.server.activities["movies"] = {"all": LATER, "last_tracking_watched_at": LATER}
     env.server.calls.clear()
-    assert set(env.adapter.build_index("watchlist")) == {"tmdb:1396"}
+    assert set(env.adapter.build_index("watchlist")) == {"tmdb:1396#show"}
     reads = [path for _, path, _ in env.server.calls if "/planning/" in path]
     assert reads == ["/sync/tracking/planning/movies"]
 

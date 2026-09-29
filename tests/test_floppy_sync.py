@@ -330,7 +330,7 @@ def test_floppy_ratings_read_and_write_native_scale(source: str) -> None:
     res = _ratings.add(adapter, [{"type": "movie", "ids": {"tmdb": "11"}, "rating": 9.0}])
 
     assert out["tmdb:11"]["rating"] == 8.5
-    assert out["tmdb:22"]["rating"] == 7.5
+    assert out["tmdb:22#show"]["rating"] == 7.5
     assert "tmdb:12" not in out
     assert res["count"] == 1
     assert adapter.client.session.calls[-1]["json"] == {"source": "tmdb", "media_id": "11", "status": 0, "score": 9.0}

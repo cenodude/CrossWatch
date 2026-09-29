@@ -216,7 +216,7 @@ def test_custom_mapping_converges_with_plex_key(index: Path, custom_mapping: Non
     orphan = enrich_index_for_pair({"o": {"type": "show", "ids": {"simkl": ORPHAN_SIMKL}}}, CFG, "SIMKL", "PLEX")
     plex_side = enrich_index_for_pair({"p": _plex_show()}, CFG, "SIMKL", "PLEX")
     assert set(orphan) == set(plex_side)
-    assert canonical_key(next(iter(orphan.values()))) == f"tmdb:{TMDB}"
+    assert canonical_key(next(iter(orphan.values()))) == f"tmdb:{TMDB}#show"
 
 
 def test_custom_mapping_outranks_the_dataset(index: Path) -> None:

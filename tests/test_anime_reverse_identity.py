@@ -202,7 +202,7 @@ def test_enrich_stats_count_seeds_and_dead_ends(index: Path) -> None:
     assert stats["failed"] == 0
     assert stats["enriched"] == 2
     assert stats["merged"] == 1
-    assert "tmdb:12971" in out
+    assert "tmdb:12971#show" in out
 
 
 def test_enrich_stats_are_absent_when_mapping_does_not_run(index: Path) -> None:
@@ -220,7 +220,7 @@ def test_enrich_stats_are_absent_on_stale_schema(index: Path) -> None:
 
 def test_enrich_without_stats_still_works(index: Path) -> None:
     out = enrich_index_for_pair({"simkl:41487": {"type": "show", "ids": {"simkl": "41487"}}}, _PAIR_CFG, "SIMKL", "PLEX")
-    assert "tmdb:12971" in out
+    assert "tmdb:12971#show" in out
 
 
 # --- startup schema check -----------------------------------------------------
