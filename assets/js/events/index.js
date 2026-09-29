@@ -59,6 +59,17 @@ const RUN_ITEMS_PAGE_SIZE = 100;
 const FEATURE_LABEL = { history: "History", ratings: "Ratings", watchlist: "Watchlist", progress: "Progress", collection: "Collections" };
 const reasonLabel = (reason, label = "") => String(label || reason || "");
 
+const withProviderLogos = (text) => {
+  const meta = window.CW?.ProviderMeta;
+  const parts = String(text ?? "").split(/\b([A-Z][A-Z0-9]{2,})\b/);
+  return parts.map((part, i) => {
+    if (i % 2 === 0 || meta?.get?.(part)?.key !== part) return esc(part);
+    const src = meta.logoPath?.(part) || "";
+    const logo = src ? `<img class="ev-prov-logo" src="${esc(src)}" alt="" width="14" height="14" loading="lazy">` : "";
+    return `<span class="ev-prov">${logo}${esc(part)}</span>`;
+  }).join("");
+};
+
 const provShort = (src, dst) => {
   const a = (src || "").toUpperCase();
   const b = (dst || "").toUpperCase();
@@ -931,8 +942,8 @@ export default {
         <span class="ev-ic ${sv}"><span class="material-symbols-rounded" aria-hidden="true">${groupIcon(g)}</span></span>
         <span class="ev-line">
           <span class="ev-primary"><span class="ev-badge ${sv}">${esc(statusLabel(g.status))}</span><span class="ev-ptext">${esc(headline)}</span></span>
-          ${detail ? `<span class="ev-summary">${esc(detail)}</span>` : ""}
-          <span class="ev-meta"><span class="material-symbols-rounded ev-meta-ic" aria-hidden="true">format_list_bulleted</span>${esc(meta)}</span>
+          ${detail ? `<span class="ev-summary">${withProviderLogos(detail)}</span>` : ""}
+          <span class="ev-meta"><span class="material-symbols-rounded ev-meta-ic" aria-hidden="true">format_list_bulleted</span>${withProviderLogos(meta)}</span>
         </span>
         <span class="ev-time">${esc(TS(g.last_event_at))}</span>
         <span class="ev-rowact">
@@ -953,7 +964,7 @@ export default {
         <span class="ev-ic ${sv}"><span class="material-symbols-rounded" aria-hidden="true">${iconOf(e)}</span></span>
         <span class="ev-line">
           <span class="ev-primary"><span class="ev-badge ${sv}">${esc(badgeOf(e))}</span><span class="ev-ptext">${esc(titleLine(e))}</span></span>
-          <span class="ev-meta">${esc(meta)}</span>
+          <span class="ev-meta">${withProviderLogos(meta)}</span>
           ${item ? `<span class="ev-item">${esc(item)}</span>` : ""}
         </span>
         <span class="ev-time">${esc(TS(e.created_at))}</span>

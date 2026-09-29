@@ -133,7 +133,7 @@ html[data-cw-theme=flat-light] .ev-date input::-webkit-calendar-picker-indicator
 .ev-ic.error{border-color:color-mix(in srgb,var(--ev-err) 30%,transparent)}.ev-ic.rating,.ev-ic.info{border-color:color-mix(in srgb,var(--ev-info) 30%,transparent)}
 .ev-line,.ev-tl-body{min-width:0;display:flex;flex-direction:column;gap:2px}
 .ev-primary{font-size:13px;line-height:1.3;display:flex;align-items:center;gap:7px;min-width:0}
-.ev-ptext,.ev-tl-title,.ev-rel-title{min-width:0}.ev-ptext{font-weight:700}.ev-meta{font-size:11.5px;opacity:.6}.ev-item{font-size:12px;opacity:.82}.ev-summary{font-size:12px;opacity:.78}
+.ev-ptext,.ev-tl-title,.ev-rel-title{min-width:0}.ev-ptext{font-weight:700}.ev-meta{font-size:11.5px;opacity:.6}.ev-item{font-size:12px;opacity:.82}.ev-summary{font-size:12px;opacity:.78}.ev-prov{display:inline-flex;align-items:center;gap:4px;vertical-align:-2px}.ev-prov-logo{width:14px;height:14px;object-fit:contain;flex:none}
 .ev-meta-ic{font-size:13px;opacity:.7;vertical-align:-2px;margin-right:3px}
 .ev-time{font-size:11px;opacity:.5;white-space:nowrap;text-align:right;margin-top:1px}
 .ev-badge,.ev-rel-badge{border-radius:999px;background:var(--ev-fill-2);text-transform:uppercase;font-weight:600;white-space:nowrap}

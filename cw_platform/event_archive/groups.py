@@ -84,7 +84,7 @@ _PROBLEM_TYPES_SQL = "('write_failed','unresolved_recorded','blackbox_promoted',
 _UNRESOLVED_TYPES_SQL = "('write_failed','unresolved_recorded')"
 
 # DO NOT FORGET to update the version when the correlation key/status/summary logic
-CORRELATION_VERSION = 15
+CORRELATION_VERSION = 16
 
 
 def _with_reason_labels(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -276,6 +276,36 @@ def _detail(e: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
+_ROUTES_SHOWN = 3
+
+
+def _endpoint(provider: Any, instance: Any) -> str:
+    p = _P(provider)
+    i = _I(instance)
+    return f"{p} {i}" if p and i != "default" else p
+
+
+def _run_routes(plan_events: list[dict[str, Any]]) -> str:
+    seen: dict[frozenset[str], list[Any]] = {}
+    for e in plan_events:
+        a = _endpoint(e.get("source_provider"), e.get("source_instance"))
+        b = _endpoint(e.get("destination_provider"), e.get("destination_instance"))
+        if not a or not b:
+            continue
+        key = frozenset((a, b))
+        if key in seen:
+            if seen[key][0] == b and seen[key][1] == a:
+                seen[key][2] = True
+            continue
+        seen[key] = [a, b, False]
+    if not seen:
+        return ""
+    parts = [f"{a} {'⇄' if both else '→'} {b}" for a, b, both in seen.values()]
+    more = len(parts) - _ROUTES_SHOWN
+    shown = ", ".join(parts[:_ROUTES_SHOWN])
+    return f"{shown} +{more} more" if more > 0 else shown
+
+
 def _summarize(status: str, events: list[dict[str, Any]], feature: str, dst: str, norm_op: str, reason_code: str, feat_issues: dict[str, int] | None = None) -> str:
     verb = norm_op or "update"
     past = _PAST.get(norm_op, "updated")
@@ -328,7 +358,9 @@ def _summarize(status: str, events: list[dict[str, Any]], feature: str, dst: str
             if fe and fe not in feats:
                 feats.append(fe)
         feat_disp = ", ".join(f.title() for f in feats)
-        tail = f", {pairs} {'pair' if pairs == 1 else 'pairs'}" if pairs else ""
+        routes = _run_routes(plan_events)
+        pairs_txt = routes or (f"{pairs} {'pair' if pairs == 1 else 'pairs'}" if pairs else "")
+        tail = f", {pairs_txt}" if pairs_txt else ""
         if tail and feat_disp:
             tail += f" ({feat_disp})"
         if "sync_run_finished" in types:
@@ -352,7 +384,7 @@ def _summarize(status: str, events: list[dict[str, Any]], feature: str, dst: str
             err_txt = f", {errs} errors" if errs else ""
             bb = f", {blocked} blackboxed" if blocked else ""
             clean = errs == 0 and unres == 0
-            tail_final = tail if clean else (f", {pairs} {'pair' if pairs == 1 else 'pairs'}" if pairs else "")
+            tail_final = tail if clean else (f", {pairs_txt}" if pairs_txt else "")
             return f"{head}{err_txt}{unres_txt}{bb}{tail_final}"
         return f"Sync run in progress{tail}"
 
