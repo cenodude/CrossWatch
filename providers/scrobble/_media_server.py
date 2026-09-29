@@ -18,7 +18,7 @@ from providers.scrobble._auto_remove_watchlist import remove_across_providers_by
 from providers.scrobble._episode_ids import PUBLIC_IDS, episode_ids
 from providers.scrobble._watched_gate import resolve_stop_action
 from providers.scrobble.routes import same_scrobble_endpoint, scrobble_sink_config
-from providers.scrobble.scrobble import ScrobbleEvent
+from providers.scrobble.scrobble import ScrobbleEvent, _log
 from services.activity import record_scrobble_event
 
 CACHE_TTL = 900
@@ -34,13 +34,15 @@ def event_item(event: ScrobbleEvent) -> dict[str, Any]:
     return {"type": "movie", "ids": ids, "title": event.title, "year": event.year}
 
 
-def ids_match(wanted: dict, actual: dict) -> bool:
+def ids_match(wanted: dict, actual: dict, *, movie: bool = False) -> bool:
     common = set(wanted) & set(actual) & set(PUBLIC_IDS)
+    if movie and common & {"tmdb", "imdb"}:
+        common.discard("tvdb")
     return bool(common) and all(str(wanted[key]) == str(actual[key]) for key in common)
 
 
-def identical_copies(wanted: dict, copies: list[dict]) -> bool:
-    if len(copies) < 2 or not all(ids_match(wanted, own) for own in copies):
+def identical_copies(wanted: dict, copies: list[dict], *, movie: bool = False) -> bool:
+    if len(copies) < 2 or not all(ids_match(wanted, own, movie=movie) for own in copies):
         return False
     return all(str(a[key]) == str(b[key])
                for i, a in enumerate(copies) for b in copies[i + 1:]
@@ -225,6 +227,8 @@ class MediaServerSink:
                     self._sent.popitem(last=False)
             except Exception as exc:
                 reason = str(exc) if isinstance(exc, DeliveryError) else f"{self.name}_scrobble_failed"
+                if not isinstance(exc, DeliveryError):
+                    _log(f"{self.name} delivery error: {type(exc).__name__}: {exc}", "WARNING")
                 record_watch(event, **record, status="fail", reason=reason)
                 retryable = not (reason.startswith("unmatched_in_") or reason in {
                     "ambiguous_ids", "missing_destination_duration", "jellyfin_progress_write_unsupported",

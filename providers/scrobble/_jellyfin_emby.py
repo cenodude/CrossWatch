@@ -99,7 +99,7 @@ class JellyfinEmbySink(MediaServerSink):
         if str(row.get("Type") or "").lower() != item["type"] or not self._in_scope(adapter, row, allowed):
             return False
         own, wanted = _ids(row), item.get("ids") or {}
-        if ids_match(wanted, own):
+        if ids_match(wanted, own, movie=item["type"] == "movie"):
             return True
         show_ids = item.get("show_ids") or {}
         if (item["type"] != "episode" or not show_ids or item.get("season") is None or item.get("episode") is None
@@ -142,14 +142,15 @@ class JellyfinEmbySink(MediaServerSink):
         if not found:
             rows = self._catalog("library", lambda: self._query(adapter, {"IncludeItemTypes": "Movie,Episode,Series"}, catalog=True))
             shows = {str(r["Id"]) for r in rows if r.get("Type") == "Series" and ids_match(item.get("show_ids") or {}, _ids(r))}
-            catalog_candidates = [r for r in rows if ids_match(item.get("ids") or {}, _ids(r))
+            catalog_candidates = [r for r in rows if ids_match(item.get("ids") or {}, _ids(r), movie=item["type"] == "movie")
                                   or (item["type"] == "episode" and r.get("Type") == "Episode"
                                       and str(r.get("SeriesId")) in shows
                                       and r.get("ParentIndexNumber") == item.get("season") and r.get("IndexNumber") == item.get("episode"))]
             found = matches(catalog_candidates)
         if not found:
             raise DeliveryError(f"unmatched_in_{self.name}")
-        if len(found) > 1 and not (all_copies and identical_copies(item.get("ids") or {}, [_ids(r) for r in found.values()])):
+        if len(found) > 1 and not (all_copies and identical_copies(item.get("ids") or {}, [_ids(r) for r in found.values()],
+                                                                movie=item["type"] == "movie")):
             raise DeliveryError("ambiguous_ids")
         rows = [self._fetch(adapter, iid) for iid in found]
         if not all(self._matches(adapter, row, item, allowed) for row in rows):

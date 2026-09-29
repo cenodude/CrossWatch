@@ -47,9 +47,17 @@ class Server:
         self.playing = []
         self.fail_write = False
         self.fail_sessions = False
+        self.token_stack = []
+        self.session_tokens = []
         self._session = SimpleNamespace(put=lambda: None, post=lambda: None, close=lambda: None)
 
-    def query(self, path, method=None, params=None):
+    def query(self, path, method=None, params=None, headers=None):
+        if path == "/status/sessions":
+            self.session_tokens.append((headers or {}).get("X-Plex-Token"))
+            root = Element("MediaContainer")
+            for row in self.playing:
+                SubElement(root, "Video", {"ratingKey": str(row.ratingKey)})
+            return root
         verb = "PUT" if method is self._session.put else "POST" if method is self._session.post else method
         self.calls.append((path, verb, params))
         if method:
@@ -75,6 +83,8 @@ class Server:
         return [x for x in self.items.values() if x.type == mediatype]
 
     def sessions(self):
+        if self.fail_sessions == "forbidden":
+            raise RuntimeError("(403) forbidden; https://pms/status/sessions")
         if self.fail_sessions:
             raise RuntimeError("session lookup failed")
         return self.playing
@@ -91,7 +101,7 @@ def harness(monkeypatch):
     def adapter(cfg):
         configs.append(copy.deepcopy(cfg))
         return SimpleNamespace(config=cfg, cfg=SimpleNamespace(client_id="sink-client"),
-                               client=SimpleNamespace(server=server, session=server._session))
+                               client=SimpleNamespace(server=server, session=server._session, _token_stack=server.token_stack))
 
     monkeypatch.setattr(_mod_PLEX, "PLEXModule", adapter)
     monkeypatch.setattr(common, "record_watch", lambda *a, **k: records.append(k))
@@ -199,6 +209,59 @@ def test_rejects_unsafe_or_unresolved_writes(harness, monkeypatch, reason):
     result = plex.PlexSink().send(ev, cfg)
     assert result.get("skipped") or not result["ok"]
     assert not any(x[1] for x in server.calls)
+
+
+@pytest.mark.parametrize("active", [False, True])
+def test_home_user_destination_reads_sessions_with_owner_token(harness, active):
+    server, _, _ = harness
+    server.fail_sessions = True
+    server.token_stack.append(("owner-token", None, None, None, None, False, None))
+    if active:
+        server.playing = [SimpleNamespace(ratingKey="10")]
+    result = plex.PlexSink().send(event(), config())
+    assert server.session_tokens == ["owner-token"]
+    if active:
+        assert result["error"] == "active_destination_session"
+        assert not any(x[1] for x in server.calls)
+    else:
+        assert result == {"ok": True}
+
+
+def test_non_owner_destination_without_session_access_still_delivers(harness):
+    server, _, _ = harness
+    server.fail_sessions = "forbidden"
+    assert plex.PlexSink().send(event(), config()) == {"ok": True}
+    assert any(x[0] == "/:/scrobble" for x in server.calls)
+
+
+@pytest.mark.parametrize("wanted,actual,movie,expected", [
+    ({"tmdb": "1", "imdb": "tt1", "tvdb": "367340"}, {"tmdb": "1", "imdb": "tt1", "tvdb": "99169"}, True, True),
+    ({"tmdb": "1", "imdb": "tt1", "tvdb": "367340"}, {"tmdb": "1", "imdb": "tt1", "tvdb": "99169"}, False, False),
+    ({"tmdb": "1", "tvdb": "5"}, {"tmdb": "2", "tvdb": "5"}, True, False),
+    ({"imdb": "tt1", "tvdb": "5"}, {"imdb": "tt2", "tvdb": "5"}, True, False),
+    ({"tmdb": "1", "imdb": "tt1"}, {"tmdb": "1", "imdb": "tt2"}, True, False),
+    ({"tvdb": "5"}, {"tvdb": "6"}, True, False),
+    ({"tvdb": "5"}, {"tvdb": "5"}, True, True),
+    ({"tmdb": "1"}, {"imdb": "tt1", "tvdb": "5"}, True, False),
+])
+def test_movie_tvdb_conflict_never_overrides_tmdb_or_imdb(wanted, actual, movie, expected):
+    assert common.ids_match(wanted, actual, movie=movie) is expected
+
+
+def test_movie_with_wrong_destination_tvdb_still_matches(harness):
+    server, _, _ = harness
+    server.items["10"] = media(ids={"tmdb": "42", "imdb": "tt6933238", "tvdb": "99169"})
+    ev = event(ids={"tmdb": "42", "imdb": "tt6933238", "tvdb": "367340"})
+    assert plex.PlexSink().send(ev, config()) == {"ok": True}
+    assert any(x[0] == "/:/scrobble" for x in server.calls)
+
+
+def test_episode_tvdb_conflict_still_blocks(harness):
+    server, _, _ = harness
+    server.items["10"] = media(kind="episode", ids={"tmdb": "42", "tvdb": "99169"})
+    ev = event(media_type="episode", ids={"tmdb": "42", "tvdb": "367340"})
+    result = plex.PlexSink().send(ev, config())
+    assert not result["ok"] and result["error"] == "unmatched_in_plex"
 
 
 def test_failed_completion_is_retryable(harness):

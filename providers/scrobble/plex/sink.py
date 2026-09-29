@@ -26,7 +26,7 @@ def _matches(server: Any, obj: Any, item: Mapping[str, Any], allowed: set[str]) 
     own = _object_ids(obj)
     wanted = item.get("ids") or {}
     if item["type"] == "movie":
-        return _id_match(wanted, own)
+        return _id_match(wanted, own, movie=True)
     if _id_match(wanted, own):
         return True
     show_ids = item.get("show_ids") or {}
@@ -39,6 +39,11 @@ def _matches(server: Any, obj: Any, item: Mapping[str, Any], allowed: set[str]) 
         return False
     show = server.fetchItem(int(parent))
     return getattr(show, "type", "") == "show" and _id_match(show_ids, _object_ids(show))
+
+
+def _owner_token(adapter: Any) -> str | None:
+    stack = getattr(adapter.client, "_token_stack", None) or []
+    return str(stack[0][0]) if stack and stack[0][0] else None
 
 
 def _library_key(value: Any) -> str:
@@ -83,7 +88,8 @@ def _resolve(adapter: Any, item: Mapping[str, Any], allowed: set[str], all_copie
             matches[str(obj.ratingKey)] = obj
     if not matches:
         raise DeliveryError("unmatched_in_plex")
-    if len(matches) > 1 and not (all_copies and identical_copies(item.get("ids") or {}, [_object_ids(obj) for obj in matches.values()])):
+    if len(matches) > 1 and not (all_copies and identical_copies(item.get("ids") or {}, [_object_ids(obj) for obj in matches.values()],
+                                                                   movie=item["type"] == "movie")):
         raise DeliveryError("ambiguous_ids")
     return list(matches.values())
 
@@ -131,7 +137,9 @@ class PlexSink(MediaServerSink):
                 matches=lambda row: _matches(server, row, item, allowed),
                 resolve=lambda: _resolve(adapter, item, allowed, all_copies), key_of=lambda row: row.ratingKey,
             )
-            if any(_currently_playing(server, str(obj.ratingKey), account_id=account_id, username=username, fail_on_error=True) for obj in objs):
+            owner_token = _owner_token(adapter)
+            if any(_currently_playing(server, str(obj.ratingKey), account_id=account_id, username=username,
+                                      fail_on_error=True, token=owner_token) for obj in objs):
                 return {"ok": False, "retryable": True, "error": "active_destination_session"}
             return combine_results([self._deliver_row(adapter, server, obj, complete, progress, played_at) for obj in objs])
         finally:
