@@ -8,7 +8,7 @@ from functools import lru_cache
 from pathlib import Path
 
 VERSION_FILE = Path(__file__).resolve().parent.parent / "VERSION"
-FALLBACK_VERSION = "v0.12.5"
+FALLBACK_VERSION = "v0.13.0"
 
 
 @lru_cache(maxsize=16)
