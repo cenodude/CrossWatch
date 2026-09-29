@@ -44,8 +44,9 @@ class MappingRequest(BaseModel):
     feature: Literal["history", "watchlist", "ratings", "progress", "collection"]
     key: str = Field(min_length=1, max_length=1024)
     original: dict[str, Any]
-    action: Literal["catalogs", "search", "episodes", "prepare"]
+    action: Literal["catalogs", "search", "episodes", "parts", "prepare"]
     q: str = Field(default="", max_length=200)
+    simkl_id: str = Field(default="", max_length=32)
     catalog: Literal["destination", "tmdb"] = "tmdb"
     item: dict[str, Any] = Field(default_factory=dict)
 
@@ -116,5 +117,8 @@ def handle_mapping(payload, request):
         return search_candidates(cfg, row, payload.q, catalog=payload.catalog)
     if payload.action == "episodes":
         return suggest_episodes(cfg, [(row, payload.item)])
+    if payload.action == "parts":
+        from services.interactive_sync_mapping import anime_parts
+        return anime_parts(cfg, row, payload.simkl_id)
     key, item, blocks = prepare_mapping(row, payload.item)
     return dict(ok=True, key=key, item=item, blocks=blocks)

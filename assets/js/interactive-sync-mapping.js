@@ -29,6 +29,16 @@ export function correctedItem(original, {ids, title, season, offset = 0}) {
   return item;
 }
 
+export function suggestedPart(original, parts) {
+  const text = value => String(value || "").replace(/\W+/g, "").toLocaleLowerCase();
+  const title = text(original.title);
+  const named = parts.filter(part => text(part.title) && title.includes(text(part.title)));
+  if (named.length === 1) return {number:named[0].number, sure:true};
+  const dated = parts.filter(part => part.year && Number(part.year) === Number(original.year));
+  if (dated.length === 1) return {number:dated[0].number, sure:true};
+  return {number:parts[0].number, sure:false};
+}
+
 export function mappingGroups(rows) {
   const groups = [];
   rows.forEach((row, index) => {
@@ -48,6 +58,7 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
   const api = mappingApi || {
     catalogs: row => json(`/api/interactive-sync/${session.id}/mapping-catalogs?${new URLSearchParams({revision:session.revision, row_id:row.id})}`),
     search: (row, q, catalog, options) => json(`/api/interactive-sync/${session.id}/mapping-search?${new URLSearchParams({revision:session.revision, row_id:row.id, q, catalog})}`, options),
+    parts: (row, simklId, options) => json(`/api/interactive-sync/${session.id}/mapping-parts?${new URLSearchParams({revision:session.revision, row_id:row.id, simkl_id:simklId})}`, options),
     episodes: (edits, options) => json(`/api/interactive-sync/${session.id}/mapping-episodes`, {...options, method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({revision:session.revision, selection_version:session.selection_version, edits})}),
     save: (edits, scope) => post(`/api/interactive-sync/${session.id}/mappings`, {revision:session.revision, selection_version:session.selection_version, edits, scope}),
   };
@@ -68,7 +79,7 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
   const endpoint = row => [row.provider, row.instance !== "default" ? row.instance : ""].filter(Boolean).join(" · ");
   const input = (name, value, type = "text", extra = "") => `<input data-field="${name}" type="${type}" value="${esc(value)}" ${extra}>`;
   const episodeLabel = item => item.type === "episode" ? `S${String(item.season).padStart(2,"0")}E${String(item.episode).padStart(2,"0")}` : item.type;
-  const itemLabel = item => [seriesTitle(item), item.type === "episode" ? episodeLabel(item) : item.year].filter(Boolean).join(" · ");
+  const itemLabel = item => [seriesTitle(item), item.type === "episode" ? episodeLabel(item) : item.year, item.part ? `Part ${item.part}` : ""].filter(Boolean).join(" · ");
   const renderDraft = index => {
     const {row, item} = drafts[index], episodic = ["episode", "season"].includes(item.type), ids = item.show_ids || item.ids || {};
     return `<article class="is-map-row" data-draft="${index}">
@@ -78,7 +89,7 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
         <div class="is-map-actions"><button class="is-btn is-map-action" data-edit-row aria-expanded="false" aria-controls="mapping-edit-${index}" aria-label="Edit ${esc(itemLabel(item))}" title="Edit">${icon("edit")}</button><button class="is-btn is-map-action" data-reset hidden aria-label="Undo changes to ${esc(itemLabel(item))}" title="Undo">${icon("undo")}</button></div>
       </div>
       <div class="is-map-row-editor" id="mapping-edit-${index}" hidden><p data-review-reason hidden></p>
-        <div class="is-map-edit-fields"><label>Title${input("title", seriesTitle(item))}</label>${episodic ? `<label>Season${input("season", item.season, "number", 'min="0"')}</label>` : ""}${item.type === "episode" ? `<label>Episode${input("episode", item.episode, "number", 'min="1"')}</label>` : ""}</div>
+        <div class="is-map-edit-fields"><label>Title${input("title", seriesTitle(item))}</label>${episodic ? `<label>Season${input("season", item.season, "number", 'min="0"')}</label>` : ""}${item.type === "episode" ? `<label>Episode${input("episode", item.episode, "number", 'min="1"')}</label>` : ""}${item.type === "movie" ? `<label data-part-wrap hidden>Part<select data-field="part"></select></label>` : ""}</div>
         <button class="is-btn is-map-action" data-find-row hidden>${icon("search")}Find another title</button>
         <details class="is-map-advanced"><summary>Advanced · Manual IDs</summary><div class="is-map-id-inputs">${idFields.map(key => `<label>${key.toUpperCase()}${input(key, ids[key] || "")}</label>`).join("")}</div></details>
       </div></article>`;
@@ -215,6 +226,27 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
     row.querySelector("[data-reset]").hidden = !draft.dirty;
     $("[data-save]").disabled = !count || saving || searching;
   }
+  function applyParts(draft, match, parts) {
+    delete draft.item.part;
+    for (const key of ["simkl_bucket", "anime_type"]) {
+      if (match[key]) draft.item[key] = match[key];
+      else if (key in draft.row.item) draft.item[key] = draft.row.item[key];
+      else delete draft.item[key];
+    }
+    const row = dialog.querySelector(`[data-draft="${drafts.indexOf(draft)}"]`);
+    const wrap = row.querySelector("[data-part-wrap]");
+    if (!wrap) return;
+    wrap.hidden = !parts.length;
+    wrap.querySelector("select").innerHTML = parts.map(part => `<option value="${esc(part.number)}">${esc([`Part ${part.number}`, part.title, part.year].filter(Boolean).join(" · "))}</option>`).join("");
+    if (!parts.length) return;
+    const suggestion = suggestedPart(draft.row.item, parts);
+    draft.item.ids = {simkl:String(match.ids.simkl)};
+    draft.item.part = suggestion.number;
+    if (!suggestion.sure) draft.review = "Choose the part of this title that matches your movie.";
+    const editor = row.querySelector(".is-map-row-editor");
+    editor.hidden = false;
+    row.querySelector("[data-edit-row]").setAttribute("aria-expanded", "true");
+  }
   function paint(draft) {
     const el = dialog.querySelector(`[data-draft="${drafts.indexOf(draft)}"]`);
     el.querySelectorAll("[data-field]").forEach(field => {
@@ -277,10 +309,20 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
             status("Choose rows with the same destination and media type for this match.");
             return;
           }
+          let parts = [];
+          if (!recovery && api.parts && match.simkl_bucket === "anime" && match.anime_type === "movie" && match.ids?.simkl) {
+            searchController = new AbortController(); searching = true; lock(true);
+            status("Loading the parts of this title…");
+            try { parts = (await api.parts(row, String(match.ids.simkl), {signal:searchController.signal})).parts || []; }
+            catch (error) { if (!closed) status(error.name === "AbortError" ? "Stopped. Choose the title again to load its parts." : `Could not load the parts of this title: ${error.message}`); return; }
+            finally { searching = false; if (!closed) lock(false); }
+            if (closed) return;
+          }
           selected.forEach(draft => {
             draft.review = "";
             draft.item = correctedItem(draft.item, {ids:match.ids, title:match.title});
             if (recovery && match.year) draft.item.year = match.year;
+            applyParts(draft, match, parts);
             paint(draft);
           });
           $("[data-match]").textContent = [match.title, match.year].filter(Boolean).join(" · ");
@@ -341,7 +383,10 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
       if (!editor.hidden) editor.querySelector("input").focus();
     }
     if (button.hasAttribute("data-reset")) {
-      draft.item = structuredClone(draft.row.item); draft.review = ""; paint(draft);
+      draft.item = structuredClone(draft.row.item); draft.review = "";
+      const partWrap = row.querySelector("[data-part-wrap]");
+      if (partWrap) partWrap.hidden = true;
+      paint(draft);
       showSearch();
       row.querySelector("[data-edit-row]").focus();
     }

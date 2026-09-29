@@ -901,6 +901,8 @@ def normalize(obj: Mapping[str, Any]) -> dict[str, Any]:
         "year": payload.get("year") or obj.get("year"),
         "ids": {k: v for k, v in ids.items() if v},
     }
+    if "part" in obj:
+        base["part"] = obj.get("part")
     return id_minimal(base)
 
 

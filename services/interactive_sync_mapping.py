@@ -84,6 +84,43 @@ def _mdblist_metadata(client, cfg, instance, entity, body):
     return rows
 
 
+def _simkl_anime_parts(client, key, simkl_id):
+    from providers.sync.simkl._common import simkl_api_params
+
+    response = client.get(f"https://api.simkl.com/anime/episodes/{simkl_id}", params=simkl_api_params(key), timeout=10)
+    _check_rate_limit(response)
+    if response.status_code >= 400:
+        raise HTTPException(502, f"SIMKL part lookup returned HTTP {response.status_code}. Try again.")
+    episodes = response.json()
+    episodes = [episode for episode in episodes if isinstance(episode, dict) and episode.get("type") == "episode"
+                and isinstance(episode.get("episode"), int) and episode["episode"] > 0] if isinstance(episodes, list) else []
+    if len(episodes) < 2:
+        return []
+    return [dict(number=episode["episode"], title=str(episode.get("title") or "")[:300],
+                 year=int(str(episode.get("date") or "")[:4]) if str(episode.get("date") or "")[:4].isdigit() else None)
+            for episode in sorted(episodes, key=lambda episode: episode["episode"])]
+
+
+def anime_parts(cfg, row, simkl_id):
+    from cw_platform.simkl_http import pace_session
+
+    if str(row["provider"]).upper() != "SIMKL" or not str(simkl_id).isdigit():
+        raise HTTPException(400, "Parts are only available for SIMKL anime movies.")
+    block = provider_block(cfg, "SIMKL", row.get("instance") or "default")
+    key = block.get("api_key") or block.get("client_id")
+    if not key:
+        raise HTTPException(409, "Configure SIMKL search credentials for this destination instance.")
+    try:
+        with requests.Session() as client:
+            pace_session(client)
+            parts = _simkl_anime_parts(client, key, str(simkl_id))
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(502, "SIMKL part lookup is unavailable. Try again.") from error
+    return dict(ok=True, parts=parts)
+
+
 def search_candidates(cfg, row, query, *, catalog="destination"):
     provider = str(row["provider"]).upper()
     instance = row.get("instance") or "default"
@@ -115,12 +152,13 @@ def search_candidates(cfg, row, query, *, catalog="destination"):
                 response = client.get(f"https://api.simkl.com/search/{'movie' if entity == 'movie' else 'tv'}",
                                       params=simkl_api_params(key, q=query, limit=20), timeout=10)
                 _check_rate_limit(response)
-                if entity == "show":
-                    anime = client.get("https://api.simkl.com/search/anime", params=simkl_api_params(key, q=query, limit=20), timeout=10)
-                    _check_rate_limit(anime)
-                    if anime.status_code >= 400:
-                        raise HTTPException(502, f"SIMKL anime search returned HTTP {anime.status_code}. Try again.")
-                    extra = anime.json()
+                anime = client.get("https://api.simkl.com/search/anime", params=simkl_api_params(key, q=query, limit=20), timeout=10)
+                _check_rate_limit(anime)
+                if anime.status_code >= 400 and entity == "show":
+                    raise HTTPException(502, f"SIMKL anime search returned HTTP {anime.status_code}. Try again.")
+                extra = anime.json() if anime.status_code < 400 else []
+                if entity == "movie" and isinstance(extra, list):
+                    extra = [row for row in extra if isinstance(row, dict) and row.get("type") == "movie"]
             elif source == "TRAKT":
                 key = block.get("client_id")
                 if not key:
@@ -177,6 +215,8 @@ def search_candidates(cfg, row, query, *, catalog="destination"):
         exact = bool(normalized_query) and any(re.sub(r"\W+", "", name).casefold() == normalized_query for name in titles if name)
         results.append(dict(title=title, year=int(year) if year.isdigit() else None, ids=ids,
                             type=entity, exact_title=exact))
+        if source == "SIMKL" and entity == "movie" and item.get("endpoint_type") == "anime":
+            results[-1].update(simkl_bucket="anime", anime_type="movie")
         if source == "MDBLIST" and not ids.get("tmdb"):
             results[-1]["mapping_unavailable"] = "TMDb ID could not be retrieved. Try searching again or enter a verified TMDb ID manually."
     results.sort(key=lambda item: not item["exact_title"])

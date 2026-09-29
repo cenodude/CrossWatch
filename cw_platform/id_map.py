@@ -82,6 +82,8 @@ __all__ = [
     "unified_keys_from_ids",
     "any_key_overlap",
     "minimal",
+    "movie_part",
+    "part_fragment",
     "has_external_ids",
     "preferred_id_key",
 ]
@@ -297,6 +299,20 @@ def _se_fragment(item: Mapping[str, Any]) -> str | None:
     return f"#s{str(s).zfill(2)}e{str(e).zfill(2)}"
 
 
+def movie_part(item: Mapping[str, Any]) -> int | None:
+    if _norm_type(item.get("type")) != "movie":
+        return None
+    part = item.get("part")
+    if isinstance(part, bool) or not isinstance(part, int) or part < 1:
+        return None
+    return part
+
+
+def part_fragment(item: Mapping[str, Any]) -> str:
+    part = movie_part(item)
+    return f"#part:{part}" if part else ""
+
+
 def canonical_key(item: Mapping[str, Any]) -> str:
     typ = _norm_type(item.get("type"))
     if typ in ("season", "episode"):
@@ -308,9 +324,9 @@ def canonical_key(item: Mapping[str, Any]) -> str:
     if idkey:
         if typ in ("show", "anime") and idkey.startswith("tmdb:"):
             return f"{idkey}#show"
-        return idkey
+        return f"{idkey}{part_fragment(item)}"
     ty = _title_year_key(item)
-    return ty or "unknown:"
+    return f"{ty}{part_fragment(item)}" if ty else "unknown:"
 
 
 def migrate_media_key(key: str, item: Mapping[str, Any]) -> str:
@@ -367,7 +383,8 @@ def keys_for_item(item: Mapping[str, Any]) -> set[str]:
         frag = _se_fragment(item)
         if sid and frag:
             out.add(f"{sid}{frag}".lower())
-    return out
+    frag = part_fragment(item)
+    return {f"{key}{frag}" for key in out} if frag else out
 
 
 def typed_keys_for_item(item: Mapping[str, Any]) -> set[str]:
@@ -408,6 +425,9 @@ def minimal(item: Mapping[str, Any]) -> dict[str, Any]:
     ):
         if opt in item:
             out[opt] = item.get(opt)
+    part = movie_part(item)
+    if part:
+        out["part"] = part
 
     # Preserve provider-specific raw history ids
     for opt in (

@@ -262,8 +262,11 @@ def prepare_mapping(row, corrected):
     item = deepcopy(row["item"])
     for key in (*ID_KEYS, "_trakt_history_id", "history_id", "_simkl_history_id", "_plex_history_id", "_wetrakr_history_id", "watched_id", "play_id", "provider_item_id", "provider_event_id"):
         item.pop(key, None)
-    for key in ("type", "title", "year", "season", "episode", "series_title", "series_year", "show_ids"):
+    for key in ("type", "title", "year", "season", "episode", "series_title", "series_year", "show_ids", "part"):
         item.pop(key, None)
+        if key in corrected:
+            item[key] = corrected[key]
+    for key in ("simkl_bucket", "anime_type"):
         if key in corrected:
             item[key] = corrected[key]
     ids = corrected.get("ids")
@@ -276,6 +279,14 @@ def prepare_mapping(row, corrected):
         item["show_ids"] = coalesce_ids(item["show_ids"])
     if item.get("type") not in ("movie", "show", "anime", "season", "episode"):
         raise HTTPException(400, "Invalid media type")
+    if "part" in item:
+        part = item["part"]
+        if item["type"] != "movie" or isinstance(part, bool) or not isinstance(part, int) or part < 1:
+            raise HTTPException(400, "Supply a valid part number")
+    if item.get("simkl_bucket", "anime") not in ("movies", "shows", "anime"):
+        raise HTTPException(400, "Invalid SIMKL bucket")
+    if not isinstance(item.get("anime_type", ""), str) or len(item.get("anime_type", "")) > 32:
+        raise HTTPException(400, "Invalid anime type")
     if item["type"] in ("season", "episode"):
         for field in (("season", "episode") if item["type"] == "episode" else ("season",)):
             number = item.get(field)
@@ -385,6 +396,19 @@ def mapping_search(sid: str, request: Request, revision: int = Query(ge=0),
         check_revision(session, revision)
         row = deepcopy(mapping_row(session, row_id))
     return search_candidates(cfg, row, q, catalog=catalog)
+
+
+@router.get("/{sid}/mapping-parts")
+def mapping_parts(sid: str, request: Request, revision: int = Query(ge=0),
+                  row_id: str = Query(min_length=1, max_length=128), simkl_id: str = Query(min_length=1, max_length=32)):
+    from services.interactive_sync_mapping import anime_parts
+
+    cfg = load_config()
+    with svc.LOCK:
+        session = get_session(sid, request, cfg)
+        check_revision(session, revision)
+        row = deepcopy(mapping_row(session, row_id))
+    return anime_parts(cfg, row, simkl_id)
 
 
 @router.delete("/{sid}")

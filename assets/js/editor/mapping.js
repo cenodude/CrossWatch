@@ -44,6 +44,7 @@ export async function openEditorMapping(row, ctx) {
       catalogs:async () => context,
       search:(_row, q, catalog, options) => request("search", {q, catalog}, options),
       episodes:(edits, options) => request("episodes", {item:edits[0].item}, options),
+      parts:(_row, simklId, options) => request("parts", {simkl_id:simklId}, options),
       save:async edits => {
         const result = await request("prepare", {item:edits[0].item});
         checkCurrentRow();

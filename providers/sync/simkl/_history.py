@@ -18,7 +18,7 @@ from cw_platform.anime_mapping.service import (
     runtime_pair_feature_options,
 )
 from cw_platform.anime_mapping.storage import query_native_identity
-from cw_platform.id_map import minimal as id_minimal
+from cw_platform.id_map import minimal as id_minimal, movie_part, part_fragment
 
 from .._log import log as cw_log
 from ._common import (
@@ -160,7 +160,7 @@ def _dedupe_history_movies(out: dict[str, dict[str, Any]]) -> None:
     for event_key, item in out.items():
         if not isinstance(item, Mapping):
             continue
-        if str(item.get("type") or "").lower() != "movie":
+        if str(item.get("type") or "").lower() != "movie" or movie_part(item):
             continue
         bucket_key = event_key.split("@", 1)[0]
         ids = dict(item.get("ids") or {})
@@ -552,6 +552,9 @@ def _inject_adds_into_cache(items_list: list[Mapping[str, Any]]) -> None:
             anime_type = str(item.get("anime_type") or "").strip().lower()
             if anime_type:
                 entry["anime_type"] = anime_type
+            part = movie_part(item)
+            if part:
+                entry["part"] = part
         scope = _history_scope(entry, event_key=event_key)
         if scope:
             entry["_cw_scope"] = scope
@@ -1236,21 +1239,31 @@ def _parse_rows(
             anime_type = _anime_type_from_row(row, show, base)
             if anime_type == "movie":
                 watched_at = (row.get("last_watched_at") or row.get("watched_at") or "").strip()
-                if not watched_at:
-                    best_ts: int | None = None
-                    best = ""
-                    for season in row.get("seasons") or []:
-                        season = season if isinstance(season, Mapping) else {}
-                        for episode in (season.get("episodes") or []):
-                            episode = episode if isinstance(episode, Mapping) else {}
-                            wa = (episode.get("watched_at") or episode.get("last_watched_at") or "").strip()
-                            ts_wa = _as_epoch(wa)
-                            if ts_wa is not None and (best_ts is None or ts_wa > best_ts):
-                                best_ts = ts_wa
-                                best = wa
-                    watched_at = best
-                ts = _as_epoch(watched_at)
-                if ts is not None:
+                part_watches: dict[int, str] = {}
+                best_ts: int | None = None
+                best = ""
+                for season in row.get("seasons") or []:
+                    season = season if isinstance(season, Mapping) else {}
+                    for episode in (season.get("episodes") or []):
+                        episode = episode if isinstance(episode, Mapping) else {}
+                        wa = (episode.get("watched_at") or episode.get("last_watched_at") or "").strip()
+                        ts_wa = _as_epoch(wa)
+                        if ts_wa is None:
+                            continue
+                        if best_ts is None or ts_wa > best_ts:
+                            best_ts = ts_wa
+                            best = wa
+                        number = _int_or_none(episode.get("number") if episode.get("number") is not None else episode.get("episode"))
+                        if number is not None and number > 0 and ts_wa > (_as_epoch(part_watches.get(number, "")) or -1):
+                            part_watches[number] = wa
+                if any(number > 1 for number in part_watches):
+                    watches = [(None if number == 1 else number, wa) for number, wa in sorted(part_watches.items())]
+                else:
+                    watches = [(None, watched_at or best)]
+                for part, part_watched_at in watches:
+                    ts = _as_epoch(part_watched_at)
+                    if ts is None:
+                        continue
                     movie_item: dict[str, Any] = {
                         "type": "movie",
                         "title": series_name,
@@ -1259,21 +1272,27 @@ def _parse_rows(
                         "simkl_bucket": "anime",
                         "anime_type": "movie",
                         "watched": True,
-                        "watched_at": watched_at,
+                        "watched_at": part_watched_at,
                     }
-                    _copy_rewatch_fields(movie_item, row)
+                    if part:
+                        movie_item["part"] = part
+                        if show_ids.get("simkl"):
+                            movie_item["ids"] = {"simkl": show_ids["simkl"]}
+                    else:
+                        _copy_rewatch_fields(movie_item, row)
                     bucket_key = simkl_key_of(movie_item)
                     event_key = f"{bucket_key}@{ts}"
-                    if event_key not in out:
-                        scope = _history_scope(movie_item, event_key=event_key)
-                        if scope:
-                            movie_item["_cw_scope"] = scope
-                        out[event_key] = movie_item
-                        thaw.add(bucket_key)
-                        added += 1
-                        latest_ts_anime = max(latest_ts_anime or 0, ts)
-                        if limit and added >= limit:
-                            return out, thaw, latest_ts_movies, latest_ts_shows, latest_ts_anime, movies_cnt, eps_cnt
+                    if event_key in out:
+                        continue
+                    scope = _history_scope(movie_item, event_key=event_key)
+                    if scope:
+                        movie_item["_cw_scope"] = scope
+                    out[event_key] = movie_item
+                    thaw.add(bucket_key)
+                    added += 1
+                    latest_ts_anime = max(latest_ts_anime or 0, ts)
+                    if limit and added >= limit:
+                        return out, thaw, latest_ts_movies, latest_ts_shows, latest_ts_anime, movies_cnt, eps_cnt
                 continue
         for season in row.get("seasons") or []:
             season = season if isinstance(season, Mapping) else {}
@@ -1804,7 +1823,7 @@ def _not_found_viewings(items: Iterable[Mapping[str, Any]], response: Mapping[st
 def _history_verification_tokens(item: Mapping[str, Any]) -> set[str]:
     typ = str(item.get("type") or "").lower()
     if typ != "episode":
-        return _scope_tokens(typ, _ids_of(item), ID_KEYS)
+        return {f"{token}{part_fragment(item)}" for token in _scope_tokens(typ, _ids_of(item), ID_KEYS)}
     season = _int_or_none(item.get("season"))
     episode = _int_or_none(item.get("episode"))
     show_ids = _show_ids_of_episode(item)
@@ -3088,6 +3107,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     movies: list[dict[str, Any]] = []
     shows_whole: list[dict[str, Any]] = []
     shows_scoped: dict[str, dict[str, Any]] = {}
+    anime_parts: dict[str, dict[str, Any]] = {}
     scoped_items: dict[str, list[Mapping[str, Any]]] = {}  # ids_key for original items (seasons)
     scoped_ep_index: dict[tuple[str, int, int], list[Mapping[str, Any]]] = {}  # (ids_key, season, ep) for original episode item
     scoped_ep_id_index: dict[tuple[str, str], list[Mapping[str, Any]]] = {}  # episode-level lookup ids for original episode item
@@ -3128,6 +3148,26 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     for item in items_list:
         typ = str(item.get("type") or "").lower()
         bucket = str(item.get("simkl_bucket") or "").strip().lower()
+        part = movie_part(item)
+        if typ == "movie" and bucket == "anime" and part:
+            part_ids = _ids_of(item)
+            part_ids = {"simkl": part_ids["simkl"]} if part_ids.get("simkl") else part_ids
+            watched_at = str(item.get("watched_at") or item.get("watchedAt") or "").strip()
+            if not part_ids or not watched_at:
+                unresolved.append({"item": id_minimal(item), "hint": "missing_ids_or_watched_at"})
+                continue
+            ids_key = "part:" + json.dumps(part_ids, sort_keys=True)
+            group = anime_parts.setdefault(ids_key, {"ids": part_ids, "seasons": [{"number": 1, "episodes": []}]})
+            group["seasons"][0]["episodes"].append({"number": part, "watched_at": watched_at})
+            scoped_items.setdefault(ids_key, []).append(item)
+            scoped_ep_index.setdefault((ids_key, 1, part), []).append(item)
+            for _f, _v in part_ids.items():
+                scoped_id_index.setdefault((_f, str(_v)), ids_key)
+            key = _thaw_key(item)
+            thaw_keys.append(key)
+            main_thaw_keys.append(key)
+            main_items_list.append(item)
+            continue
         if typ == "movie" and bucket == "anime":
             entry = _show_add_entry(adapter, item)
             if entry:
@@ -3254,6 +3294,8 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         shows_payload.extend(list(shows_scoped.values()))
     if shows_payload:
         body["shows"] = shows_payload
+    if anime_parts:
+        body["anime"] = list(anime_parts.values())
 
     native_accepted: set[str] = set()
     native_failed: set[str] = set()
@@ -3508,6 +3550,7 @@ def _native_anime_remove_body(
     groups: dict[str, tuple[dict[str, str], list[Mapping[str, Any]]]] = {}
     native_groups: dict[str, list[tuple[Mapping[str, Any], int]]] = {}
     movie_records: dict[str, Mapping[str, Any]] = {}
+    part_records: dict[str, list[tuple[Mapping[str, Any], int]]] = {}
     detected_ids: set[int] = set()
     unmapped_ids: set[int] = set()
     for item in items_list:
@@ -3518,7 +3561,10 @@ def _native_anime_remove_body(
                 continue
             detected_ids.add(id(item))
             record_id = str(_ids_of(item).get("simkl") or "").strip()
-            if record_id:
+            part = movie_part(item)
+            if record_id and part:
+                part_records.setdefault(record_id, []).append((item, part))
+            elif record_id:
                 movie_records.setdefault(record_id, item)
             else:
                 unmapped_ids.add(id(item))
@@ -3558,6 +3604,19 @@ def _native_anime_remove_body(
         anime_out.append(row)
         thaw.append(_thaw_key(item))
         mapped_ids.add(id(item))
+    for record_id, parts in part_records.items():
+        part_episodes: list[dict[str, Any]] = []
+        for item, part in parts:
+            part_row: dict[str, Any] = {"number": part}
+            if rewatches:
+                watched_at = str(item.get("watched_at") or item.get("watchedAt") or "").strip()
+                if watched_at:
+                    part_row["watched_at"] = watched_at
+                _add_rewatch_payload_fields(part_row, item)
+            part_episodes.append(part_row)
+            thaw.append(_thaw_key(item))
+            mapped_ids.add(id(item))
+        anime_out.append({"ids": {"simkl": record_id}, "seasons": [{"number": 1, "episodes": part_episodes}]})
     for record_id, pairs in native_groups.items():
         episodes: list[dict[str, Any]] = []
         for item, number in pairs:
