@@ -84,7 +84,7 @@ _PROBLEM_TYPES_SQL = "('write_failed','unresolved_recorded','blackbox_promoted',
 _UNRESOLVED_TYPES_SQL = "('write_failed','unresolved_recorded')"
 
 # DO NOT FORGET to update the version when the correlation key/status/summary logic
-CORRELATION_VERSION = 16
+CORRELATION_VERSION = 15
 
 
 def _with_reason_labels(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -300,9 +300,16 @@ def _run_routes(plan_events: list[dict[str, Any]]) -> str:
         seen[key] = [a, b, False]
     if not seen:
         return ""
-    parts = [f"{a} {'⇄' if both else '→'} {b}" for a, b, both in seen.values()]
+    segments: dict[str, list[str]] = {}
+    for a, b, both in seen.values():
+        if both:
+            segments[f"{a} ⇄ {b}"] = []
+        else:
+            segments.setdefault(f"{a} →", []).append(b)
+    parts = [f"{head} {', '.join(dsts[:_ROUTES_SHOWN])}" + (f" +{len(dsts) - _ROUTES_SHOWN} more" if len(dsts) > _ROUTES_SHOWN else "")
+             if dsts else head for head, dsts in segments.items()]
     more = len(parts) - _ROUTES_SHOWN
-    shown = ", ".join(parts[:_ROUTES_SHOWN])
+    shown = " · ".join(parts[:_ROUTES_SHOWN])
     return f"{shown} +{more} more" if more > 0 else shown
 
 
@@ -668,6 +675,41 @@ def correlate(*, conn: sqlite3.Connection | None = None, reset: bool = False) ->
         _LOG.warning("event correlation failed: %s", exc, exc_info=True)
         return {"ok": False, "error": "internal_error", "grouped": 0}
     return {"ok": True, "grouped": len(rows), "groups_touched": len(touched)}
+
+
+_RUN_SUMMARY_META = "run_route_summary_version"
+_RUN_SUMMARY_VERSION = 2
+
+
+@_serialized
+def refresh_run_summaries(*, conn: sqlite3.Connection | None = None) -> int:
+    c = conn or get_conn()
+    if c is None:
+        return 0
+    try:
+        done = c.execute("SELECT value_int FROM local_meta WHERE key=?", (_RUN_SUMMARY_META,)).fetchone()
+        if done is not None and int(done[0] or 0) >= _RUN_SUMMARY_VERSION:
+            return 0
+        gids = [int(r[0]) for r in c.execute(
+            "SELECT DISTINCT group_id FROM events WHERE group_id IS NOT NULL "
+            "AND event_type IN ('sync_run_started','sync_run_finished')"
+        ).fetchall()]
+        now = int(time.time())
+        for i in range(0, len(gids), 200):
+            with c:
+                for gid in gids[i:i + 200]:
+                    _recompute(c, gid, now)
+        with c:
+            c.execute(
+                "INSERT INTO local_meta(key,value_int,value_type,updated_at) VALUES(?,?,'int',?) "
+                "ON CONFLICT(key) DO UPDATE SET value_int=excluded.value_int,value_type=excluded.value_type,"
+                "updated_at=excluded.updated_at",
+                (_RUN_SUMMARY_META, _RUN_SUMMARY_VERSION, now),
+            )
+        return len(gids)
+    except Exception as exc:
+        _LOG.warning("run summary refresh failed: %s", exc, exc_info=True)
+        return 0
 
 
 @_serialized
