@@ -28,7 +28,7 @@ def test_tracker_batch_defaults_migrate_without_changing_credentials():
     assert migrated["publicmetadb"]["api_key"] == "test-key"
     assert migrated["flicklist"]["access_token"] == "test-token"
     assert migrated["flicklist"]["credential"] == "session"
-    assert migrated["flicklist"]["history_per_page"] == 100
+    assert migrated["flicklist"]["history_per_page"] == 500
     assert migrated["flicklist"]["write_batch_size"] == 1000
     assert effective_chunk_size(SimpleNamespace(**migrated["runtime"]), "FLICKLIST") == 1000
     assert old["flicklist"]["write_batch_size"] == 100
@@ -106,7 +106,7 @@ def test_flicklist_bulk_defaults_split_1001_items(monkeypatch, feature, operatio
     assert calls == [(method, 1000), (method, 1)]
 
 
-def test_flicklist_session_history_reads_remain_100(monkeypatch):
+def test_flicklist_session_history_reads_use_500(monkeypatch):
     from providers.sync.flicklist import _history
 
     calls = []
@@ -119,4 +119,4 @@ def test_flicklist_session_history_reads_remain_100(monkeypatch):
     monkeypatch.setattr(_history, "flicklist_request", request)
     _history.build_index(SimpleNamespace(config={"flicklist": dict(DEFAULT_CFG["flicklist"], credential="session")}))
 
-    assert calls == [{"page": 1, "limit": 100}]
+    assert calls == [{"page": 1, "limit": 500}]

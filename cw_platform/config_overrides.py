@@ -46,6 +46,7 @@ MIGRATION_OVERRIDE_KEYS: tuple[str, ...] = (
     "publicmetadb.history_per_page",
     "publicmetadb.progress_per_page",
     "flicklist.write_batch_size",
+    "flicklist.history_per_page",
 
     # Tautulli
     "tautulli.history.per_page",
