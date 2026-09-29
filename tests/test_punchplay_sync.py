@@ -380,7 +380,7 @@ def test_collection_index_reads_paged_rows(monkeypatch: pytest.MonkeyPatch) -> N
     assert idx["tmdb:550"]["format"] == "bluray"
     assert idx["tmdb:1399#season:1"]["type"] == "season"
     assert idx["tmdb:1399#season:1"]["show_ids"] == {"tmdb": "1399"}
-    assert idx["tmdb:1402"]["type"] == "show"
+    assert idx["tmdb:1402#show"]["type"] == "show"
     assert http.calls[0]["params"] == {"limit": 200}
     assert http.calls[1]["params"] == {"limit": 200, "cursor": "next"}
 

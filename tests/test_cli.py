@@ -74,6 +74,19 @@ def test_export_file_preserves_download_bytes(tmp_path, capsys, payload):
     assert http.param_calls[0][2]["format"] == "trakt"
 
 
+@pytest.mark.parametrize("item_key,path", [
+    ("tmdb:121#show", "/api/events/item/tmdb%3A121%23show"),
+    ("tmdb:121#s01e02", "/api/events/item/tmdb%3A121%23s01e02"),
+    ("tmdb:121", "/api/events/item/tmdb%3A121"),
+])
+def test_events_item_encodes_key_in_path(capsys, item_key, path):
+    from cli.commands.events import events_item
+
+    http = FakeTransport({("GET", path): {"events": []}})
+    events_item(SimpleNamespace(obj=_ctx(http=http)), item_key=item_key, limit=5)
+    assert http.param_calls == [("GET", path, {"limit": 5}, None)]
+
+
 def test_http_transport_returns_zip_without_decoding(monkeypatch):
     from cli._transport import HttpTransport
 
