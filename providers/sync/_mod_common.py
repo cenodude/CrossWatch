@@ -643,7 +643,8 @@ def request_with_retries(
     except Exception:
         api_feature = None
 
-    last: Any = None
+    last_resp: requests.Response | None = None
+    last_exc: Exception | None = None
     for i in range(max(1, int(max_retries))):
         raise_if_cancelled()
         try:
@@ -697,7 +698,7 @@ def request_with_retries(
                     )
 
                 _sleep_cancellable(wait)
-                last = resp
+                last_resp = resp
                 continue
             return resp
         except Exception as e:
@@ -708,7 +709,7 @@ def request_with_retries(
                 dur_ms = int((time.monotonic() - t0) * 1000)
             except Exception:
                 dur_ms = None
-            last = e
+            last_exc = e
             if i < max_retries - 1:
                 wait = backoff_base * (2**i)
                 _http_log(
@@ -739,11 +740,11 @@ def request_with_retries(
                     error=f"{type(e).__name__}: {e}",
                 )
                 break
-    if isinstance(last, requests.Response):
-        return last
+    if last_resp is not None and last_exc is None:
+        return last_resp
     msg = f"request failed after retries: {method} {url}"
-    if last is not None:
-        msg = f"{msg} ({type(last).__name__}: {last})"
+    if last_exc is not None:
+        msg = f"{msg} ({type(last_exc).__name__}: {last_exc})"
     _http_log(session, "error", "http_request_failed", method=method, url=url, api_feature=api_feature, max_retries=max_retries, error=msg)
     raise requests.RequestException(msg)
 
