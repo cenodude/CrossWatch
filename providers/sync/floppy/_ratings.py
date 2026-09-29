@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import Iterable, Mapping
+from datetime import datetime, timezone
 from typing import Any
 
 from cw_platform.id_map import minimal as id_minimal
@@ -57,6 +58,19 @@ def _remember(adapter: Any, key: str, item: Mapping[str, Any] | None) -> None:
     _WRITE_SHADOW[shadow_key] = {"_ts": time.time(), "item": dict(item)}
 
 
+def _rated_at(value: Any) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
 def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     for media_type in ("movie", "tv"):
@@ -68,6 +82,9 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
             if not item:
                 continue
             item["rating"] = rating
+            rated_at = _rated_at(row.get("scored_at"))
+            if rated_at:
+                item["rated_at"] = rated_at
             item["_floppy_consumption_id"] = row.get("consumption_id")
             out[canonical_item_key(item)] = item
     return _merge_shadow(adapter, out)
