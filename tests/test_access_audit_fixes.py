@@ -1087,7 +1087,8 @@ def test_profile_widget_skin_is_scoped_and_unmuted() -> None:
     assert "cw-dash-title-row>.material-symbols-rounded{display:none}" in skin
     assert ".cw-dash-title-row h3{font-size:16px" in skin
     assert ".cw-dash-widget.is-auto-collapsed{opacity:1}" in skin
-    assert ".cw-dashboard-layout-tools{top:-54px" in skin
+    assert "#dashboard-widgets-card{padding-top:48px}" in skin
+    assert ".cw-dashboard-layout-tools{top:-48px" in skin
     assert '#placeholder-card[data-widget-size="small"][data-widget-view="grid"] .poster{' in skin
     assert "grid-template-columns:clamp(150px,34%,220px) minmax(190px,1fr) auto!important" in skin
     assert "#placeholder-card[data-widget-size=\"small\"][data-widget-view=\"grid\"] .poster .wl-status" in skin

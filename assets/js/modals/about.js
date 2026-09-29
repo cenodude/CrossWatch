@@ -29,15 +29,10 @@ const ABOUT_CSS = `
 .about-backdrop{--bg:#171a22;--panel:#20242d;--border:rgba(255,255,255,.14);--text:#eef1f6;--muted:#a9b0bd;--accent:#7c5cff;position:fixed;inset:0;z-index:30050;display:grid;place-items:center;padding:24px;background:rgba(6,8,13,.66);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text)}
 .about-panel{position:relative;width:min(1080px,100%);max-height:calc(100vh - 48px);max-height:calc(100dvh - 48px);display:grid;grid-template-rows:auto minmax(0,1fr);overflow:hidden;border:1px solid var(--border);border-radius:20px;background:var(--bg);outline:none}
 .material-symbols-rounded{font-family:"Material Symbols Rounded";font-weight:normal;font-style:normal;font-size:20px;line-height:1;letter-spacing:normal;text-transform:none;display:inline-block;white-space:nowrap;word-wrap:normal;direction:ltr;font-feature-settings:"liga";-webkit-font-feature-settings:"liga";-webkit-font-smoothing:antialiased;font-variation-settings:"FILL" 0,"wght" 560,"GRAD" 0,"opsz" 24}
-.about-x{position:absolute;top:19px;right:20px;z-index:4;display:grid;place-items:center;width:36px;height:36px;padding:0;border:1px solid var(--border);border-radius:10px;background:var(--panel);color:var(--muted);cursor:pointer}
+.about-x{position:absolute;top:18px;right:20px;z-index:4;display:grid;place-items:center;width:34px;height:34px;padding:0;border:1px solid var(--border);border-radius:10px;background:var(--panel);color:var(--muted);cursor:pointer}
 .about-x:hover{color:var(--text);border-color:var(--accent)}
-.about-head{display:flex;align-items:center;gap:14px;padding:18px 70px 18px 24px}
-.about-logo-wrap{display:grid;place-items:center;width:48px;height:48px;border:1px solid var(--border);border-radius:14px;background:var(--panel);flex-shrink:0}
-.about-logo{width:34px;height:34px;object-fit:contain}
-.about-heading{min-width:0}
-.about-title{font-size:20px;line-height:1.2;font-weight:800;text-transform:uppercase;letter-spacing:.01em}
-.about-sub{margin-top:4px;font-size:13px;color:var(--muted)}
-.about-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-left:auto;flex-wrap:wrap}
+.about-head{display:flex;align-items:center;padding:18px 70px 18px 24px}
+.about-actions{display:flex;align-items:center;justify-content:flex-start;gap:8px;flex-wrap:wrap}
 .chip,.about-link{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:34px;padding:7px 12px;border:1px solid var(--border);border-radius:10px;background:var(--panel);color:var(--text);text-decoration:none;white-space:nowrap;font-size:12px;line-height:1.2;font-weight:700}
 .chip{border-radius:999px}
 .chip .material-symbols-rounded,.about-link .material-symbols-rounded{font-size:17px}
@@ -57,7 +52,6 @@ const ABOUT_CSS = `
 .lede-brand{display:grid;grid-template-columns:48px auto;grid-template-areas:"logo wordmark" "motto motto" "coffee coffee";align-items:center;gap:12px;min-width:0}
 .lede-logo{grid-area:logo;width:48px;height:48px;object-fit:contain}
 .lede-wordmark{grid-area:wordmark;font-size:28px;line-height:1;font-weight:800;white-space:nowrap}
-.lede-wordmark span{color:#997bff}
 .lede-motto{grid-area:motto;margin:0 0 4px;color:#b4acd3;font:italic 17px/1.5 "Segoe Print","Bradley Hand","Comic Sans MS",cursive}
 .coffee-link{grid-area:coffee;display:inline-flex;align-items:center;justify-content:center;gap:8px;width:max-content;min-height:38px;padding:8px 14px;border:1px solid #4db888;border-radius:11px;background:#1f6b50;color:#f0fff7;text-decoration:none;font-size:13px;font-weight:800}
 .coffee-link:hover{background:#277e5e;border-color:#68d7a4}
@@ -94,8 +88,8 @@ li::marker{color:#997bff}
 .helpSub{color:var(--muted);font-size:12px;line-height:1.45}
 .helpArrow{color:var(--muted);font-size:21px}
 :is(button,a,summary):focus-visible{outline:2px solid var(--accent);outline-offset:3px}
-@media(max-width:1000px){.about-head{flex-wrap:wrap}.about-actions{width:100%;margin-left:0;justify-content:flex-start}.lede-card{grid-template-columns:230px minmax(0,1fr);gap:20px}.lede-copy{padding-left:20px}.lede-wordmark{font-size:24px}}
-@media(max-width:650px){.about-backdrop{padding:12px}.about-panel{max-height:calc(100dvh - 24px);border-radius:16px}.about-head{padding:16px 60px 16px 16px}.about-title{font-size:17px}.about-actions{gap:6px}.chip,.about-link{font-size:11px;padding:7px 10px}.about-body{padding:0 16px 16px}.update{grid-template-columns:42px minmax(0,1fr);padding:14px}.update .about-link{grid-column:2;justify-self:start}.lede-card{grid-template-columns:1fr;gap:20px;padding:18px}.lede-brand{grid-template-columns:48px auto;justify-content:start}.lede-copy{padding:18px 0 0;border-left:0;border-top:1px solid var(--border)}.help-grid{grid-template-columns:1fr}.r{grid-template-columns:minmax(0,1fr) auto}.r span{display:none}}
+@media(max-width:1000px){.lede-card{grid-template-columns:230px minmax(0,1fr);gap:20px}.lede-copy{padding-left:20px}.lede-wordmark{font-size:24px}}
+@media(max-width:650px){.about-backdrop{padding:12px}.about-panel{max-height:calc(100dvh - 24px);border-radius:16px}.about-head{padding:16px 60px 16px 16px}.about-x{top:16px;right:16px}.about-actions{gap:6px}.chip,.about-link{font-size:11px;padding:7px 10px}.about-body{padding:0 16px 16px}.update{grid-template-columns:42px minmax(0,1fr);padding:14px}.update .about-link{grid-column:2;justify-self:start}.lede-card{grid-template-columns:1fr;gap:20px;padding:18px}.lede-brand{grid-template-columns:48px auto;justify-content:start}.lede-copy{padding:18px 0 0;border-left:0;border-top:1px solid var(--border)}.help-grid{grid-template-columns:1fr}.r{grid-template-columns:minmax(0,1fr) auto}.r span{display:none}}
 @media(prefers-reduced-motion:reduce){.about-fold-chevron{transition:none}}
 `;
 
@@ -191,16 +185,11 @@ function view(info, mods, logo) {
 
   return `
     <div class="about-backdrop">
-      <section class="about-panel" role="dialog" aria-modal="true" aria-label="About" tabindex="-1">
+      <section class="about-panel" role="dialog" aria-modal="true" aria-label="About CrossWatch" tabindex="-1">
         <button class="about-x" type="button" data-close aria-label="Close">
           <span class="material-symbols-rounded" aria-hidden="true">close</span>
         </button>
         <header class="about-head">
-          <div class="about-logo-wrap" aria-hidden="true"><img class="about-logo" src="${escapeHtml(logo)}" alt="" /></div>
-          <div class="about-heading">
-            <div class="about-title">About CrossWatch</div>
-            <div class="about-sub">Your media, in sync.</div>
-          </div>
           <div class="about-actions">
             <span class="chip accent"><span class="material-symbols-rounded" aria-hidden="true">bolt</span>Engine v${escapeHtml(info.current || "-")}</span>
             <span class="chip">${latestChip}</span>
@@ -223,7 +212,7 @@ function view(info, mods, logo) {
               <section class="about-card lede-card">
                 <div class="lede-brand">
                   <img class="lede-logo" src="${escapeHtml(logo)}" alt="" />
-                  <div class="lede-wordmark">Cross<span>Watch</span></div>
+                  <div class="lede-wordmark">CrossWatch</div>
                   <p class="lede-motto">Your media. Your data.<br>On your terms.</p>
                   <a class="coffee-link" href="${SUPPORT_URL}" target="_blank" rel="noopener noreferrer"><span class="material-symbols-rounded" aria-hidden="true">local_cafe</span>Buy me a coffee ${externalIcon}</a>
                 </div>
