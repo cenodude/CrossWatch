@@ -177,10 +177,11 @@ def _simkl_get(monkeypatch, bodies):
     calls = []
 
     def get(self, url, **kwargs):
-        calls.append(url)
+        calls.append((url, kwargs.get("headers") or {}))
         return _response(bodies[url.split("api.simkl.com", 1)[1]])
     monkeypatch.setattr(requests.Session, "get", get)
     monkeypatch.setattr("cw_platform.simkl_http.pace_session", lambda client: None)
+    monkeypatch.setattr("providers.auth._auth_SIMKL.ensure_fresh", lambda instance: "")
     return calls
 
 
@@ -199,10 +200,12 @@ def test_movie_search_finds_anime_movies_without_loading_their_parts(monkeypatch
     assert [(r["ids"]["simkl"], r["simkl_bucket"], r["anime_type"]) for r in result["results"]] == [("37137", "anime", "movie")]
     assert "parts" not in result["results"][0]
     assert len(calls) == 2
+    assert all(headers.get("Authorization") == "Bearer token" for _url, headers in calls)
+    assert "token" not in str(result)
 
 
 def test_part_lookup_lists_regular_episodes_only_for_multi_part_titles(monkeypatch):
-    _simkl_get(monkeypatch, {
+    calls = _simkl_get(monkeypatch, {
         "/anime/episodes/37137": [
             {"episode": 1, "type": "episode", "title": "The Egg of the King", "date": "2012-02-04T00:00:00+09:00"},
             {"episode": 2, "type": "episode", "title": "The Battle for Doldrey", "date": "2012-06-23T00:00:00+09:00"},
@@ -213,6 +216,14 @@ def test_part_lookup_lists_regular_episodes_only_for_multi_part_titles(monkeypat
         {"number": 1, "title": "The Egg of the King", "year": 2012},
         {"number": 2, "title": "The Battle for Doldrey", "year": 2012}]
     assert anime_parts(SIMKL_CFG, SIMKL_ROW, "647")["parts"] == []
+    assert all(headers.get("Authorization") == "Bearer token" for _url, headers in calls)
+
+
+def test_search_uses_the_refreshed_token(monkeypatch):
+    calls = _simkl_get(monkeypatch, {"/search/movie": [], "/search/anime": []})
+    monkeypatch.setattr("providers.auth._auth_SIMKL.ensure_fresh", lambda instance: "fresh")
+    search_candidates(SIMKL_CFG, SIMKL_ROW, "berserk")
+    assert {headers.get("Authorization") for _url, headers in calls} == {"Bearer fresh"}
 
 
 @pytest.mark.parametrize("row,simkl_id", [({**SIMKL_ROW, "provider": "TRAKT"}, "37137"), (SIMKL_ROW, "../users")])
