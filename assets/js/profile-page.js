@@ -355,10 +355,36 @@
     }
     return title || `${activityLabel(row)} activity`;
   };
+  const summaryRouteSegments = (summary) => {
+    const text = String(summary || "");
+    const at = text.search(/\s(?:->|→|⇄)\s/);
+    if (at < 0) return [];
+    const start = text.lastIndexOf(", ", at);
+    const body = text.slice(start < 0 ? 0 : start + 2).replace(/\s*\([^)]*\)\s*$/, "");
+    return body.split(" · ").map((segment) => {
+      const match = segment.match(/^(.+?)\s(->|→|⇄)\s(.+)$/);
+      if (!match) return null;
+      const more = match[3].match(/\s\+(\d+) more$/);
+      const dests = match[3].replace(/\s\+\d+ more$/, "").split(/,\s*/).filter(Boolean);
+      return { src: match[1], both: match[2] === "⇄", dests, more: more ? Number(more[1]) : 0 };
+    }).filter(Boolean);
+  };
+  const routeSegmentHtml = (segment) => {
+    const compact = segment.dests.length > 1;
+    const arrow = `<span class="material-symbols-rounded cw-profile-activity-route-arrow" aria-hidden="true">${segment.both ? "sync_alt" : "chevron_right"}</span>`;
+    const dests = segment.dests.map((dest) => activityProviderChip(dest, compact) || esc(dest)).join("");
+    const more = segment.more ? `<span>+${segment.more}</span>` : "";
+    return `${activityProviderChip(segment.src) || esc(segment.src)}${arrow}${dests}${more}`;
+  };
   const syncActivityBits = (row) => {
     const parts = [];
     const route = String(row?.route || "").trim();
     const summary = String(row?.summary || row?.meta || "").trim();
+    const segments = summaryRouteSegments(summary);
+    if (segments.length) {
+      const feature = summary.match(/\(([^)]+)\)\s*$/);
+      return [...segments.map((segment) => ({ html: routeSegmentHtml(segment) })), ...(feature?.[1] ? [feature[1]] : [])];
+    }
     const pairMatch = summary.match(/(\d+\s+pairs?)(?:\s*\(([^)]+)\))?/i);
     if (route) parts.push(route);
     if (pairMatch?.[1]) parts.push(pairMatch[1]);
@@ -378,13 +404,14 @@
     const key = providerKey(value);
     return key && window.CW?.ProviderMeta?.get?.(key) ? key : "";
   };
-  const activityProviderChip = (value) => {
+  const activityProviderChip = (value, iconOnly = false) => {
     const key = activityProviderKey(value);
     if (!key) return "";
     const label = visibleProviderLabel(key) || key;
     const logo = providerLogLogo(key);
     const src = logo ? `<img src="${esc(logo)}" alt="" loading="lazy" onerror="this.onerror=null;this.hidden=true">` : "";
-    return `<span class="cw-profile-activity-provider" data-provider="${esc(key.toLowerCase())}" title="${esc(label)}">${src}<span>${esc(label)}</span></span>`;
+    const text = iconOnly && src ? "" : `<span>${esc(label)}</span>`;
+    return `<span class="cw-profile-activity-provider" data-provider="${esc(key.toLowerCase())}" title="${esc(label)}">${src}${text}</span>`;
   };
   const activityRouteChip = (value) => {
     const parts = String(value || "").split(/\s*(?:->|\u2192)\s*/).map((part) => part.trim()).filter(Boolean);
@@ -394,6 +421,7 @@
     return nodes.map((node, index) => `${index ? `<span class="material-symbols-rounded cw-profile-activity-route-arrow" aria-hidden="true">chevron_right</span>` : ""}${node}`).join("");
   };
   const activityChipHtml = (bit, index) => {
+    if (bit && typeof bit === "object") return `<span class="cw-profile-activity-chip${index === 0 ? " is-primary" : ""} has-route">${bit.html}</span>`;
     const route = activityRouteChip(bit);
     const provider = !route ? activityProviderChip(bit) : "";
     const cls = `cw-profile-activity-chip${index === 0 ? " is-primary" : ""}${route ? " has-route" : ""}${provider ? " has-provider" : ""}`;
