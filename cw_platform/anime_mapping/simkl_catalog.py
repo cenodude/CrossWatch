@@ -116,16 +116,34 @@ def _app_version() -> str:
         return "1.0"
 
 
+def _access_token(instance_id: str) -> str:
+    try:
+        from providers.auth._auth_SIMKL import ensure_fresh
+
+        token = ensure_fresh(instance_id)
+    except Exception:
+        token = ""
+    if token:
+        return token
+    block = get_provider_block(load_config() or {}, "simkl", instance_id) or {}
+    return _text(block.get("access_token"), 500)
+
+
 def _request(path: str, *, instance_id: Any = None, **params: Any) -> Any:
     key = client_id(instance_id)
     if not key:
         raise SimklNotConfigured("SIMKL is not connected")
+    instance = resolve_instance(instance_id)[0]
     try:
         import requests
     except Exception as exc:
         raise SimklCatalogError("HTTP client unavailable") from exc
 
     version = _app_version()
+    headers = {"Accept": "application/json", "User-Agent": http_user_agent("SIMKL", override_env="CW_SIMKL_UA")}
+    token = _access_token(instance)
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     query: dict[str, Any] = {"client_id": key, "app-name": "crosswatch", "app-version": version}
     query.update({k: v for k, v in params.items() if v is not None})
     try:
@@ -133,7 +151,7 @@ def _request(path: str, *, instance_id: Any = None, **params: Any) -> Any:
 
         resp = paced_request(requests.get, "GET",
             f"{BASE}{path}",
-            headers={"Accept": "application/json", "User-Agent": http_user_agent("SIMKL", override_env="CW_SIMKL_UA")},
+            headers=headers,
             params=query,
             timeout=TIMEOUT,
         )

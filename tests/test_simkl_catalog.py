@@ -197,6 +197,29 @@ def test_lookups_require_a_configured_client_id(monkeypatch, config_base: Path) 
         sc._request("/search/anime", q="x")
 
 
+def test_lookups_send_the_user_token(monkeypatch, config_base: Path) -> None:
+    import cw_platform.simkl_http as simkl_http
+
+    seen: dict[str, Any] = {}
+
+    class Response:
+        status_code = 200
+
+        def json(self) -> Any:
+            return []
+
+    def paced(func: Any, method: str, url: str, **kwargs: Any) -> Response:
+        seen.update(kwargs)
+        return Response()
+
+    monkeypatch.setattr(sc, "load_config", lambda: {"simkl": {"api_key": "base-key", "access_token": "stored"}})
+    monkeypatch.setattr(simkl_http, "paced_request", paced)
+    monkeypatch.setattr("providers.auth._auth_SIMKL.ensure_fresh", lambda instance: "")
+    sc._request("/search/anime", q="x")
+    assert seen["headers"]["Authorization"] == "Bearer stored"
+    assert seen["params"]["client_id"] == "base-key"
+
+
 def _with_config(monkeypatch, cfg: dict[str, Any]) -> None:
     monkeypatch.setattr(sc, "load_config", lambda: cfg)
 

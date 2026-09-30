@@ -84,10 +84,22 @@ def _mdblist_metadata(client, cfg, instance, entity, body):
     return rows
 
 
-def _simkl_anime_parts(client, key, simkl_id):
+def _simkl_headers(block, instance):
+    from providers.auth._auth_SIMKL import ensure_fresh
+
+    try:
+        token = ensure_fresh(instance)
+    except Exception:
+        token = ""
+    token = token or str(block.get("access_token") or "").strip()
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
+def _simkl_anime_parts(client, key, simkl_id, headers=None):
     from providers.sync.simkl._common import simkl_api_params
 
-    response = client.get(f"https://api.simkl.com/anime/episodes/{simkl_id}", params=simkl_api_params(key), timeout=10)
+    response = client.get(f"https://api.simkl.com/anime/episodes/{simkl_id}", params=simkl_api_params(key),
+                          headers=headers or {}, timeout=10)
     _check_rate_limit(response)
     if response.status_code >= 400:
         raise HTTPException(502, f"SIMKL part lookup returned HTTP {response.status_code}. Try again.")
@@ -113,7 +125,7 @@ def anime_parts(cfg, row, simkl_id):
     try:
         with requests.Session() as client:
             pace_session(client)
-            parts = _simkl_anime_parts(client, key, str(simkl_id))
+            parts = _simkl_anime_parts(client, key, str(simkl_id), _simkl_headers(block, row.get("instance") or "default"))
     except HTTPException:
         raise
     except Exception as error:
@@ -149,10 +161,12 @@ def search_candidates(cfg, row, query, *, catalog="destination"):
                 key = block.get("api_key") or block.get("client_id")
                 if not key:
                     raise HTTPException(409, "Configure SIMKL search credentials for this destination instance.")
+                headers = _simkl_headers(block, instance)
                 response = client.get(f"https://api.simkl.com/search/{'movie' if entity == 'movie' else 'tv'}",
-                                      params=simkl_api_params(key, q=query, limit=20), timeout=10)
+                                      params=simkl_api_params(key, q=query, limit=20), headers=headers, timeout=10)
                 _check_rate_limit(response)
-                anime = client.get("https://api.simkl.com/search/anime", params=simkl_api_params(key, q=query, limit=20), timeout=10)
+                anime = client.get("https://api.simkl.com/search/anime", params=simkl_api_params(key, q=query, limit=20),
+                                   headers=headers, timeout=10)
                 _check_rate_limit(anime)
                 if anime.status_code >= 400 and entity == "show":
                     raise HTTPException(502, f"SIMKL anime search returned HTTP {anime.status_code}. Try again.")
