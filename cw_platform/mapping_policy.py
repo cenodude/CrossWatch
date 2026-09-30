@@ -48,18 +48,25 @@ def effective_policy(policy, pair_id=""):
 def update_mappings(raw, edits, *, mappings=None, pair_id="", merge=True):
     effective = effective_policy(raw, pair_id)
     scoped = raw.setdefault("pairs", {}).setdefault(pair_id, {"version": 1, "providers": {}}) if pair_id else raw
+    groups = {}
     for feature, provider, additions, blocks, instance in edits:
+        group = groups.setdefault((feature, provider, instance), ({}, []))
+        group[0].update(additions)
+        group[1].extend(blocks)
+    for (feature, provider, instance), (additions, blocks) in groups.items():
         node = feature_node(scoped, provider, instance, feature)
         items = dict((node.get("adds") or {}).get("items") or {}) if merge else {}
         records = dict(node.get("mappings") or {})
         previous = (feature_node(effective, provider, instance, feature).get("mappings") or {})
         incoming_records = (mappings or {}).get((feature, provider, instance), {})
+        dropped = set()
         for target, incoming in incoming_records.items():
             record = deepcopy(incoming)
             replaced = record.get("original_key")
             if replaced != target:
                 items.pop(replaced, None)
                 records.pop(replaced, None)
+                dropped.add(replaced)
             parent = previous.get(record.get("original_key")) or previous.get(target)
             if isinstance(parent, dict) and parent.get("original"):
                 record.update(original=parent["original"], original_key=parent["original_key"])
@@ -67,10 +74,11 @@ def update_mappings(raw, edits, *, mappings=None, pair_id="", merge=True):
                 if key != target and record.get("original_key") and old.get("original_key") == record["original_key"]:
                     items.pop(key, None)
                     records.pop(key, None)
+                    dropped.add(key)
             records[target] = record
             if record.get("original_key") and record["original_key"] != target and record["original_key"] not in typed_keys_for_item(additions.get(target) or {}):
-                blocks = [*blocks, record["original_key"]]
-        items.update(additions)
+                blocks.append(record["original_key"])
+        items.update({key: value for key, value in additions.items() if key in records or key not in dropped})
         node["adds"] = {"items": items}
         node["blocks"] = _normalize_blocks([*(node.get("blocks") or []), *blocks] if merge else blocks)
         corrected = {alias.lower() for key in incoming_records for alias in [key, *typed_keys_for_item(items.get(key) or {})]}
@@ -78,7 +86,7 @@ def update_mappings(raw, edits, *, mappings=None, pair_id="", merge=True):
         node["mappings"] = {key: value for key, value in records.items() if key in items}
         # A full Editor save can retain a correction without resending its hidden
         # original row. Keep excluding that original while the mapping exists.
-        for target, record in node["mappings"].items():
-            original = record.get("original_key")
-            if original and original != target and original not in typed_keys_for_item(items[target]):
-                node["blocks"] = _normalize_blocks([*node["blocks"], original])
+        retained = [record["original_key"] for target, record in node["mappings"].items()
+                    if record.get("original_key") and record["original_key"] != target
+                    and record["original_key"] not in typed_keys_for_item(items[target])]
+        node["blocks"] = _normalize_blocks([*node["blocks"], *retained])
