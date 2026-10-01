@@ -296,8 +296,10 @@
           vip: !!(data?.plexpass || data?.subscription?.plan),
           detail: data?.subscription?.plan ? `Plan: ${titleCase(data.subscription.plan)}` : (data?.plexpass ? "Plan: Plex Pass" : ""),
         };
-      case "TRAKT":
-        return { vip: !!data?.vip, detail: data?.vip ? "Plan: VIP" : "Plan: Free" };
+      case "TRAKT": {
+        const username = txt(data?.username);
+        return { vip: !!data?.vip, detail: [username ? `Account: ${username}` : "", data?.vip ? "Plan: VIP" : "Plan: Free"].filter(Boolean).join("\n") };
+      }
       case "WETRAKR": {
         const plan = txt(data?.plan).toLowerCase();
         const vip = plan === "vip" || !!data?.vip;

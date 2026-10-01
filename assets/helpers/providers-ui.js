@@ -414,8 +414,10 @@
     const rows = AUTH_GROUPS.map((group) => {
       const items = group.keys
         .filter((key) => authProviderKeysWithSections().includes(key))
-        .map((key) => {
-          const info = authProviderInfo(key);
+        .map((key) => authProviderInfo(key))
+        .sort((a, b) => String(a.label || "").localeCompare(String(b.label || ""), undefined, { sensitivity: "base" }))
+        .map((info) => {
+          const key = info.key;
           const status = authStatusFor(key, configured.has(key));
           return `<button type="button" class="cw-auth-picker-card" data-cw-auth-pick="${info.key}">
             <span class="cw-auth-provider-mark">${authProviderLogo(info.key)}</span>

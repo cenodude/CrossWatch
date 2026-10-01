@@ -2040,6 +2040,9 @@ def trakt_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dic
                 limits_out[feature] = {"item_count": limit}
 
         out = {"vip": vip, "vip_type": vip_type}
+        username = str(u.get("username") or u.get("name") or "").strip()
+        if username:
+            out["username"] = username
         if limits_out:
             out["limits"] = limits_out
 
@@ -2711,6 +2714,8 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
             if info_trakt:
                 trakt_block["vip"] = bool(info_trakt.get("vip"))
                 trakt_block["vip_type"] = info_trakt.get("vip_type")
+                if info_trakt.get("username"):
+                    trakt_block["username"] = info_trakt.get("username")
 
                 limits_info = info_trakt.get("limits") or {}
                 if isinstance(limits_info, dict) and limits_info:
