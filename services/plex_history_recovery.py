@@ -37,6 +37,8 @@ class Start(BaseModel):
     model_config = ConfigDict(extra="forbid")
     source_instance: str = Field(default="default", max_length=128)
     target_instance: str = Field(default="default", max_length=128)
+    source: Literal["plex", "tautulli"] = "plex"
+    tautulli_instance: str = Field(default="default", max_length=128)
 
 
 class Commit(importer.ImportCommitFields):
@@ -111,11 +113,13 @@ class Job:
     auto_cooldowns: dict[str, float] = field(default_factory=dict)
     auto_stop: threading.Event = field(default_factory=threading.Event)
     auto_thread: threading.Thread | None = None
+    tautulli: str = ""
 
     def public(self):
         return dict(id=self.id, import_id=self.id, status=self.status, message=self.message, stage=self.stage,
                     done=self.done, total=self.total, revision=self.revision, source_instance=self.source,
                     target_instance=self.target, imported=len(self.receipt),
+                    source="tautulli" if self.tautulli else "plex", tautulli_instance=self.tautulli,
                     activity=dict(self.activity), recent=[dict(item) for item in self.recent], auto_match=dict(self.auto))
 
 
@@ -131,9 +135,24 @@ def _access(cfg, request, provider, instance):
         raise HTTPException(403, "Profile unavailable")
 
 
-def _source_hash(cfg, instance):
+def _source_hash(cfg, instance, tautulli=""):
     block = build_provider_config_view(cfg, "PLEX", instance).get("plex") or {}
+    if tautulli:
+        block = [block, _tautulli_block(cfg, tautulli)]
     return hashlib.sha256(json.dumps(block, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def _tautulli_block(cfg, instance):
+    return build_provider_config_view(cfg, "TAUTULLI", instance).get("tautulli") or {}
+
+
+def _tautulli_ready(block):
+    return bool((block.get("server_url") or block.get("server")) and block.get("api_key"))
+
+
+def _plex_token(cfg, instance):
+    block = build_provider_config_view(cfg, "PLEX", instance).get("plex") or {}
+    return str(block.get("account_token") or block.get("token") or "").strip()
 
 
 def _target_hash(cfg, instance):
@@ -145,7 +164,7 @@ def _search_fingerprint(cfg, job: Job, choice):
     from .interactive_sync_catalogs import provider_block
     route = choice["route"]
     catalog = {"api_key": (cfg.get("tmdb") or {}).get("api_key")} if choice["catalog"] == "tmdb" else provider_block(cfg, route["provider"], route["instance"])
-    dependencies = [_source_hash(cfg, job.source), _target_hash(cfg, job.target), route, catalog]
+    dependencies = [_source_hash(cfg, job.source, job.tautulli), _target_hash(cfg, job.target), route, catalog]
     return hashlib.sha256(json.dumps(dependencies, sort_keys=True, default=str).encode()).hexdigest()
 
 
@@ -174,6 +193,8 @@ def _job(sid, request, cfg):
     if job is None or job.owner != _owner(request):
         raise HTTPException(404, "Recovery expired or not found. Start another scan.")
     _access(cfg, request, "PLEX", job.source)
+    if job.tautulli:
+        _access(cfg, request, "TAUTULLI", job.tautulli)
     _access(cfg, request, "CROSSWATCH", job.target)
     job.touched = time.time()
     return job
@@ -209,6 +230,31 @@ def _shape(job, cfg):
     job.rows = rows
 
 
+def _scan_error(job, error):
+    if not job.tautulli:
+        return "Recovery could not finish. Check that the Plex connection has server-owner access to play history, and check the connection and library access, then retry. Nothing was imported."
+    if isinstance(error, PermissionError):
+        return "Recovery could not finish. Plex rejected the account token. Reconnect Plex, then retry. Nothing was imported."
+    return "Recovery could not finish. Check the Tautulli connection and the Plex account used for the ID lookup, then retry. Nothing was imported."
+
+
+def _scan_tautulli(job, cfg, progress, check_cancel):
+    from providers.sync._mod_TAUTULLI import TAUTULLIModule, _HistoryAdapter
+    from providers.sync.plex import _recovery as plex_recovery
+    from providers.sync.plex._common import configure_plex_context
+    from providers.sync.tautulli import _recovery as tautulli_recovery
+
+    token = _plex_token(cfg, job.source)
+    configure_plex_context(baseurl=None, token=token, account_token=token)
+    module = TAUTULLIModule(build_provider_config_view(cfg, "TAUTULLI", job.tautulli))
+    try:
+        return tautulli_recovery.scan(_HistoryAdapter(cfg=module.client.raw_cfg, client=module.client),
+                                      resolve=plex_recovery.guid_resolver(token), progress=progress,
+                                      check_cancel=check_cancel, max_rows=importer.MAX_ROWS)
+    finally:
+        module.client.session.close()
+
+
 def _scan(job, cfg):
     from api import syncAPI
     from providers.sync._mod_PLEX import PLEXModule
@@ -231,8 +277,11 @@ def _scan(job, cfg):
     try:
         with isolated_plex_context():
             check_cancel()
-            adapter = PLEXModule(build_provider_config_view(cfg, "PLEX", job.source))
-            raw = scan(adapter, progress=progress, check_cancel=check_cancel, max_rows=importer.MAX_ROWS)
+            if job.tautulli:
+                raw = _scan_tautulli(job, cfg, progress, check_cancel)
+            else:
+                adapter = PLEXModule(build_provider_config_view(cfg, "PLEX", job.source))
+                raw = scan(adapter, progress=progress, check_cancel=check_cancel, max_rows=importer.MAX_ROWS)
             check_cancel()
             progress("review", "Checking recovered events against the CW tracker", 0, 0)
             with LOCK:
@@ -244,11 +293,11 @@ def _scan(job, cfg):
     except InterruptedError:
         with LOCK:
             job.status, job.message = "cancelled", "Recovery cancelled. Nothing was imported."
-    except Exception:
+    except Exception as error:
         LOG.exception("plex_recovery_failed job=%s", job.id)
         with LOCK:
             job.status = "error"
-            job.message = "Recovery could not finish. Check that the Plex connection has server-owner access to play history, and check the connection and library access, then retry. Nothing was imported."
+            job.message = _scan_error(job, error)
     finally:
         if adapter is not None:
             for session in (getattr(adapter.client, "session", None), getattr(getattr(adapter.client, "server", None), "_session", None)):
@@ -270,18 +319,27 @@ def options(request: Request):
     _owner(request)
     cfg = load_config() or {}
     sources = []
+    lookups = []
     for instance in list_instance_ids(cfg, "plex"):
         if not user_can_access_instance(cfg, request_user(request), "PLEX", instance):
             continue
         block = build_provider_config_view(cfg, "PLEX", instance).get("plex") or {}
+        if _plex_token(cfg, instance):
+            lookups.append(dict(id=instance, label=block.get("label") or instance, user=block.get("username") or "Plex account"))
         pms = block.get("pms") or {}
         if not (block.get("baseurl") or block.get("server_url") or pms.get("url") or pms.get("baseurl")):
             continue
         sources.append(dict(id=instance, label=block.get("label") or instance,
                             user=block.get("username") or "Server account",
                             libraries=(block.get("history") or {}).get("libraries") or []))
+    tautulli = []
+    for instance in list_instance_ids(cfg, "tautulli"):
+        block = _tautulli_block(cfg, instance)
+        if _tautulli_ready(block) and user_can_access_instance(cfg, request_user(request), "TAUTULLI", instance):
+            tautulli.append(dict(id=instance, label=block.get("label") or instance,
+                                 user=str((block.get("history") or {}).get("user_id") or "")))
     targets = [t for t in importer._target_instances(cfg) if user_can_access_instance(cfg, request_user(request), "CROSSWATCH", t["id"])]
-    return dict(sources=sources, targets=targets)
+    return dict(sources=sources, targets=targets, lookups=lookups, tautulli=tautulli)
 
 
 @router.post("")
@@ -290,8 +348,15 @@ def start(payload: Start, request: Request):
     cfg = load_config() or {}
     owner = _owner(request)
     source, target = normalize_instance_id(payload.source_instance), normalize_instance_id(payload.target_instance)
+    tautulli = normalize_instance_id(payload.tautulli_instance) if payload.source == "tautulli" else ""
     _access(cfg, request, "PLEX", source)
     _access(cfg, request, "CROSSWATCH", target)
+    if tautulli:
+        _access(cfg, request, "TAUTULLI", tautulli)
+        if not _tautulli_ready(_tautulli_block(cfg, tautulli)):
+            raise HTTPException(409, "Connect Tautulli before recovering its history.")
+        if not _plex_token(cfg, source):
+            raise HTTPException(409, "Connect a Plex account before recovering Tautulli history.")
     if not importer._target_connected(cfg, target):
         raise HTTPException(409, "Connect the CrossWatch tracker before recovering history.")
     rt = syncAPI._rt()
@@ -306,7 +371,8 @@ def start(payload: Start, request: Request):
             raise HTTPException(409, "A Plex recovery is already open. Return to it or close it before starting another.")
         if syncAPI._is_sync_running():
             raise HTTPException(409, "Another sync or recovery is running. Try again when it finishes.")
-        job = Job(owner, source, target, _source_hash(cfg, source), target_hash=_target_hash(cfg, target))
+        job = Job(owner, source, target, _source_hash(cfg, source, tautulli), target_hash=_target_hash(cfg, target),
+                  tautulli=tautulli, message="Connecting to Tautulli" if tautulli else "Connecting to Plex")
         JOBS[job.id] = job
         thread = threading.Thread(target=_scan, args=(job, deepcopy(cfg)), daemon=True)
         rt[1]["SYNC"] = thread
@@ -325,6 +391,8 @@ def active(request: Request):
                 continue
             try:
                 _access(cfg, request, "PLEX", job.source)
+                if job.tautulli:
+                    _access(cfg, request, "TAUTULLI", job.tautulli)
                 _access(cfg, request, "CROSSWATCH", job.target)
             except HTTPException:
                 continue
@@ -367,7 +435,7 @@ def _matching_job(sid, revision, request, cfg):
     job = _job(sid, request, cfg)
     if job.cancel.is_set() or job.status != "review" or job.revision != revision:
         raise HTTPException(409, "The recovery changed. Reopen matching.")
-    if job.source_hash != _source_hash(cfg, job.source) or (job.target_hash and job.target_hash != _target_hash(cfg, job.target)):
+    if job.source_hash != _source_hash(cfg, job.source, job.tautulli) or (job.target_hash and job.target_hash != _target_hash(cfg, job.target)):
         raise HTTPException(409, "Connection settings changed. Start a new recovery scan.")
     return job
 
@@ -715,8 +783,8 @@ def commit(sid: str, payload: Commit, request: Request):
             raise HTTPException(409, "Another sync is running. Wait before importing.")
         if job.target_hash and job.target_hash != _target_hash(cfg, job.target):
             raise HTTPException(409, "Tracker settings changed. Start a new recovery scan.")
-        if job.source_hash != _source_hash(cfg, job.source):
-            raise HTTPException(409, "Plex settings changed. Start a new recovery scan.")
+        if job.source_hash != _source_hash(cfg, job.source, job.tautulli):
+            raise HTTPException(409, ("Connection" if job.tautulli else "Plex") + " settings changed. Start a new recovery scan.")
         if normalize_instance_id(payload.target_instance) != job.target or payload.import_id != sid:
             raise HTTPException(400, "The import destination changed. Start a new preview.")
         _shape(job, cfg)

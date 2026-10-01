@@ -43,6 +43,20 @@ def _source_group(row: Any, original: Mapping[str, Any]) -> str:
                        str(title or "").strip().casefold(), str(year or "")], ensure_ascii=True)
 
 
+def guid_resolver(token: str) -> Callable[[str, str], dict[str, str]]:
+    if common._metadata_request(common.METADATA, "0" * 24, token).status_code == 401:
+        raise PermissionError("Plex rejected the account token.")
+
+    def resolve(kind: str, guid: str) -> dict[str, str]:
+        ref = guid.rsplit("/", 1)[-1] if guid.lower().startswith("plex://") else ""
+        if not ref:
+            return {}
+        found = common._hydrate_show_ids_from_episode_rk(token, ref) if kind == "episode" else common.hydrate_external_ids(token, ref)
+        return {key: str(value) for key, value in found.items() if key in {"tmdb", "imdb", "tvdb"} and value}
+
+    return resolve
+
+
 def scan(adapter: Any, *, progress: Callable[..., None], check_cancel: Callable[[], None],
          max_rows: int = 50_000) -> list[dict[str, Any]]:
     need, switched, aid, uname = common.home_scope_enter(adapter)
