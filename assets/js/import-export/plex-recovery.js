@@ -11,8 +11,8 @@ const field = (id, title) => `<label class="ie-field" for="${id}"><span id="${id
 export function mountPlexRecovery(host) {
   host.innerHTML = `<section class="ie-panel cw-page-panel">
     <div class="ie-section-heading"><div><h2>Recover Plex history</h2><p>Recover watched movies and episodes removed from Plex into your CW tracker.</p></div></div>
-    <div class="ie-fields">${field("pr-source","Plex instance")}${field("pr-target","CrossWatch tracker profile")}</div>
-    <p>Plex server owner access required.</p>
+    <div class="ie-fields">${field("pr-kind","History source")}${field("pr-tautulli","Tautulli instance")}${field("pr-source","Plex instance")}${field("pr-target","CrossWatch tracker profile")}</div>
+    <p id="pr-access">Plex server owner access required.</p>
     <div class="pr-actions"><button class="ie-button ie-primary" id="pr-start">Scan older history</button><button class="ie-button" id="pr-cancel" hidden>Cancel scan</button><button class="ie-button" id="pr-close" hidden>Close recovery</button></div>
     <details class="ie-guide"><summary>How recovery works</summary>
       <p id="pr-scope"></p>
@@ -98,9 +98,9 @@ export function mountPlexRecovery(host) {
     host.querySelectorAll("button,input,select").forEach(el => { if (!el.closest("dialog")) el.disabled = busy || reading || (loading && !el.closest(".ie-filters")); });
     $("#pr-cancel").disabled = false;
     $("#pr-cancel").hidden = !reading;
-    $("#pr-start").disabled = locked || !!job || otherRecovery || !$("#pr-source").value || !options?.targets?.find(t => t.id === $("#pr-target").value)?.connected;
+    $("#pr-start").disabled = locked || !!job || otherRecovery || !$("#pr-source").value || ($("#pr-kind").value === "tautulli" && !$("#pr-tautulli").value) || !options?.targets?.find(t => t.id === $("#pr-target").value)?.connected;
     $("#pr-close").hidden = !job || reading;
-    for (const id of ["pr-source","pr-target"]) $(`#${id}`).disabled = locked || !!job;
+    for (const id of ["pr-kind","pr-tautulli","pr-source","pr-target"]) $(`#${id}`).disabled = locked || !!job;
     $("#pr-import").disabled = locked || job?.auto_match?.status === "running" || !count();
     $("#pr-accept-titles").hidden = !data?.summary?.by_status?.needs_review || !["all","needs_review"].includes(filters().status);
     $("#pr-accept-titles").disabled = locked || job?.auto_match?.status === "running";
@@ -156,7 +156,7 @@ export function mountPlexRecovery(host) {
       reading = job.status === "reading";
       $("#pr-progress").hidden = !reading;
       $("#pr-stage").textContent = job.message;
-      $("#pr-count").textContent = job.total ? `${number(job.done)} / ${number(job.total)}` : job.stage === "review" ? "Checking duplicates and existing watch events…" : "Waiting for Plex…";
+      $("#pr-count").textContent = job.total ? `${number(job.done)} / ${number(job.total)}` : job.stage === "review" ? "Checking duplicates and existing watch events…" : job.source === "tautulli" ? "Waiting for Tautulli…" : "Waiting for Plex…";
       const bar=$("#pr-bar"), fill=bar.querySelector("span");
       const percent=job.total ? Math.min(100,Math.max(0,job.done/job.total*100)) : null;
       if (percent !== null) bar.setAttribute("aria-valuenow",String(percent)); else bar.removeAttribute("aria-valuenow");
@@ -197,7 +197,8 @@ export function mountPlexRecovery(host) {
   async function start() {
     busy=true; controls(); message();
     try {
-      job = await request("",{source_instance:$("#pr-source").value,target_instance:$("#pr-target").value});
+      job = await request("",{source_instance:$("#pr-source").value,target_instance:$("#pr-target").value,
+        ...($("#pr-kind").value === "tautulli" ? {source:"tautulli",tautulli_instance:$("#pr-tautulli").value} : {})});
       window.dispatchEvent(new CustomEvent("cw:plex-recovery-changed"));
       data=null; rows=[]; receipt=null; all=false; chosen.clear(); excluded.clear();
       busy=false; reading=true; render(); await poll();
@@ -223,6 +224,8 @@ export function mountPlexRecovery(host) {
       return;
     }
     job=current.job;
+    $("#pr-kind").value=job.source || "plex";
+    if(job.tautulli_instance) $("#pr-tautulli").value=job.tautulli_instance;
     $("#pr-source").value=job.source_instance;
     $("#pr-target").value=job.target_instance;
     updateScope();
@@ -330,7 +333,7 @@ export function mountPlexRecovery(host) {
   on(host,"click",async event=>{
     const button=event.target.closest("button");if(!button || button.disabled || button.closest("dialog")) return;
     try {
-      if(button.id === "pr-cancel") {await request(`/${job.id}`,null,"DELETE");message("Cancelling after the current Plex request…");return;}
+      if(button.id === "pr-cancel") {await request(`/${job.id}`,null,"DELETE");message("Cancelling after the current request…");return;}
       if(busy || reading || loading) return;
       if(button.id === "pr-start") return start();
       if(button.id === "pr-close") return closeRecovery();
@@ -357,7 +360,7 @@ export function mountPlexRecovery(host) {
       render();
     }
     if(event.target.id === "pr-result") {all=false;chosen.clear();excluded.clear();page();}
-    if(["pr-source","pr-target"].includes(event.target.id)) {
+    if(["pr-kind","pr-tautulli","pr-source","pr-target"].includes(event.target.id)) {
       if(job || busy || reading)return;
       clearTimeout(searchTimer);++sequence;loading=false;
       data=null;rows=[];receipt=null;chosen.clear();excluded.clear();all=false;render();
@@ -379,7 +382,25 @@ export function mountPlexRecovery(host) {
     window.CW.pendingPlexRecovery=null;
     $("#pr-source").dispatchEvent(new Event("change",{bubbles:true}));
   }
+  function kind() { return $("#pr-kind").value === "tautulli" ? "tautulli" : "plex"; }
+  let filledKind=null;
+  function fillSources() {
+    if(!options || filledKind === kind()) return;
+    filledKind=kind();
+    const tautulli=kind() === "tautulli", list=(tautulli ? options?.lookups : sources) || [], current=job?.source_instance || $("#pr-source").value;
+    $("#pr-source").innerHTML=list.map(s=>`<option value="${esc(s.id)}">${esc(s.label)} · ${esc(s.user)}</option>`).join("");
+    if(list.some(s=>s.id === current)) $("#pr-source").value=current;
+    $("#pr-source-label").textContent=tautulli ? "Plex account for ID lookup" : "Plex instance";
+    $("#pr-tautulli").closest(".ie-field").hidden=!tautulli;
+    $("#pr-access").textContent=tautulli ? "Reads the Tautulli history and uses the Plex account only to look up IDs, including for items removed from Plex." : "Plex server owner access required.";
+  }
   function updateScope() {
+    fillSources();
+    if(kind() === "tautulli") {
+      const tautulli=options?.tautulli?.find(t=>t.id === $("#pr-tautulli").value);
+      $("#pr-scope").textContent=tautulli ? `${tautulli.user ? `Tautulli user ID: ${tautulli.user}.` : "Reads the history of all Tautulli users."} Checks every watched movie and episode. Items Plex no longer knows need a manual match.` : "";
+      return;
+    }
     const source=sources.find(s=>s.id === $("#pr-source").value);
     $("#pr-scope").textContent=source ? `Plex user: ${source.user}. ${source.libraries.length ? "Uses the configured history library selection." : "Checks all accessible movie and TV libraries."}` : "";
   }
@@ -389,10 +410,13 @@ export function mountPlexRecovery(host) {
     wrap?.querySelector("button")?.setAttribute("aria-labelledby",`${input.id}-label`);
     wrap?.__cwMenu?.setAttribute("aria-labelledby",`${input.id}-label`);
   });
+  for(const id of ["pr-kind","pr-tautulli"]) $(`#${id}`).closest(".ie-field").hidden=true;
   busy=true;controls();
   request("/options").then(async result=>{
     options=result;sources=result.sources;
-    $("#pr-source").innerHTML=sources.map(s=>`<option value="${esc(s.id)}">${esc(s.label)} · ${esc(s.user)}</option>`).join("");
+    $("#pr-kind").innerHTML='<option value="plex">Plex</option><option value="tautulli">Tautulli</option>';
+    $("#pr-tautulli").innerHTML=(result.tautulli || []).map(t=>`<option value="${esc(t.id)}">${esc(t.label)}</option>`).join("");
+    $("#pr-kind").closest(".ie-field").hidden=!(result.tautulli || []).length;
     $("#pr-target").innerHTML=result.targets.map(t=>`<option value="${esc(t.id)}">${esc(t.label)}${t.connected ? "" : " (not connected)"}</option>`).join("");
     const connected=result.targets.find(t=>t.connected);if(connected) $("#pr-target").value=connected.id;
     if(!sources.length) message("Connect a Plex server in Settings to recover its history.");
