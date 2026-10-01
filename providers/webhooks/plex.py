@@ -15,6 +15,7 @@ import requests
 
 from cw_platform.app_version import app_version, user_agent as http_user_agent
 from cw_platform.config_base import load_config, save_config
+from cw_platform.trakt_http import paced_request as trakt_paced_request
 
 try:
     from _logging import log as BASE_LOG
@@ -305,7 +306,7 @@ def _headers(cfg: dict[str, Any]) -> dict[str, str]:
 
 def _del_trakt(path: str, cfg: dict[str, Any]) -> requests.Response:
     url = f"{TRAKT_API}{path}"
-    r = requests.delete(url, headers=_headers(cfg), timeout=12)
+    r = trakt_paced_request(requests.delete, "DELETE", url, headers=_headers(cfg), timeout=12)
     if r.status_code == 401:
         try:
             from providers.auth._auth_TRAKT import PROVIDER as TRAKT_AUTH
@@ -315,7 +316,7 @@ def _del_trakt(path: str, cfg: dict[str, Any]) -> requests.Response:
         except Exception:
             return r
         try:
-            r = requests.delete(url, headers=_headers(cfg), timeout=12)
+            r = trakt_paced_request(requests.delete, "DELETE", url, headers=_headers(cfg), timeout=12)
         except Exception:
             pass
     return r
@@ -323,7 +324,7 @@ def _del_trakt(path: str, cfg: dict[str, Any]) -> requests.Response:
 
 def _get_trakt_watching(cfg: dict[str, Any]) -> None:
     try:
-        r = requests.get(f"{TRAKT_API}/users/me/watching", headers=_headers(cfg), timeout=8)
+        r = trakt_paced_request(requests.get, "GET", f"{TRAKT_API}/users/me/watching", headers=_headers(cfg), timeout=8)
         try:
             body: Any = r.json()
         except Exception:
@@ -336,7 +337,7 @@ def _get_trakt_watching(cfg: dict[str, Any]) -> None:
 def _post_trakt(path: str, body: dict[str, Any], cfg: dict[str, Any]) -> requests.Response:
     url = f"{TRAKT_API}{path}"
     body = {**body, **_app_meta(cfg)}
-    r = requests.post(url, json=body, headers=_headers(cfg), timeout=15)
+    r = trakt_paced_request(requests.post, "POST", url, json=body, headers=_headers(cfg), timeout=15)
 
     if r.status_code == 401:
         try:
@@ -346,7 +347,7 @@ def _post_trakt(path: str, body: dict[str, Any], cfg: dict[str, Any]) -> request
             _save_config(cfg)
         except Exception:
             pass
-        r = requests.post(url, json=body, headers=_headers(cfg), timeout=15)
+        r = trakt_paced_request(requests.post, "POST", url, json=body, headers=_headers(cfg), timeout=15)
 
     if r.status_code in (429, 500, 502, 503, 504):
         try:
@@ -354,7 +355,7 @@ def _post_trakt(path: str, body: dict[str, Any], cfg: dict[str, Any]) -> request
         except Exception:
             ra = 1.0
         time.sleep(min(max(ra, 0.5), 3.0))
-        r = requests.post(url, json=body, headers=_headers(cfg), timeout=15)
+        r = trakt_paced_request(requests.post, "POST", url, json=body, headers=_headers(cfg), timeout=15)
     return r
 
 
@@ -687,7 +688,7 @@ def _resolve_trakt_movie_id(
         if not val:
             continue
         try:
-            r = requests.get(
+            r = trakt_paced_request(requests.get, "GET",
                 f"{TRAKT_API}/search/{k}/{val}",
                 params={"type": "movie", "limit": 1},
                 headers=_headers(cfg),
@@ -722,7 +723,7 @@ def _resolve_trakt_show_id(
         if not val:
             continue
         try:
-            r = requests.get(
+            r = trakt_paced_request(requests.get, "GET",
                 f"{TRAKT_API}/search/{k}/{val}",
                 params={"type": "show", "limit": 1},
                 headers=_headers(cfg),
@@ -760,7 +761,7 @@ def _trakt_show_ids_from_imdb_show(
         return {}
 
     try:
-        r = requests.get(
+        r = trakt_paced_request(requests.get, "GET",
             f"{TRAKT_API}/search/imdb/{imdb_show}",
             params={"type": "show", "limit": 1},
             headers=_headers(cfg),
@@ -797,7 +798,7 @@ def _guid_search_episode(
         if not val:
             continue
         try:
-            r = requests.get(
+            r = trakt_paced_request(requests.get, "GET",
                 f"{TRAKT_API}/search/{key}/{val}",
                 params={"type": "episode", "limit": 1},
                 headers=_headers(cfg),
@@ -830,7 +831,7 @@ def _show_ids_from_episode_hint(
         if not val:
             continue
         try:
-            r = requests.get(
+            r = trakt_paced_request(requests.get, "GET",
                 f"{TRAKT_API}/search/{key}/{val}",
                 params={"type": "episode", "limit": 1},
                 headers=_headers(cfg),
@@ -858,7 +859,7 @@ def _title_search_show_ids(
     try:
         if not title:
             return {}
-        r = requests.get(
+        r = trakt_paced_request(requests.get, "GET",
             f"{TRAKT_API}/search/show",
             params={"query": title, "limit": 1},
             headers=_headers(cfg),
@@ -904,7 +905,7 @@ def _resolve_trakt_episode_id(
     show_tid = _resolve_trakt_show_id(ids_all, cfg, logger=logger)
     if show_tid and isinstance(s, int) and isinstance(e, int):
         try:
-            r = requests.get(
+            r = trakt_paced_request(requests.get, "GET",
                 f"{TRAKT_API}/shows/{show_tid}/seasons/{s}/episodes/{e}",
                 headers=_headers(cfg),
                 timeout=10,

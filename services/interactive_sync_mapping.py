@@ -9,6 +9,7 @@ import requests
 from fastapi import HTTPException
 
 from cw_platform.id_map import coalesce_ids, ID_KEYS
+from cw_platform.trakt_http import paced_request as trakt_paced_request
 from services.interactive_sync_catalogs import destination_rows, provider_block, search_catalogs
 
 
@@ -95,6 +96,34 @@ def _simkl_headers(block, instance):
     return {"Authorization": f"Bearer {token}"} if token else {}
 
 
+def _trakt_headers(key, block, instance):
+    import time
+
+    from cw_platform.app_version import user_agent
+    from cw_platform.config_base import load_config
+    from cw_platform.provider_instances import get_instance_block
+
+    headers = {"Content-Type": "application/json", "trakt-api-key": key, "trakt-api-version": "2",
+               "User-Agent": user_agent("WebUI", override_env="CW_TRAKT_UA")}
+    token = str(block.get("access_token") or "").strip()
+    try:
+        expires_at = int(block.get("expires_at") or 0)
+    except (TypeError, ValueError):
+        expires_at = 0
+    if token and 0 < expires_at <= int(time.time()) + 120:
+        token = ""
+        try:
+            from providers.auth._auth_TRAKT import PROVIDER
+
+            if PROVIDER.refresh(None, instance_id=instance).get("ok"):
+                token = str(get_instance_block(load_config(), "trakt", instance).get("access_token") or "").strip()
+        except Exception:
+            token = ""
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
 def _simkl_anime_parts(client, key, simkl_id, headers=None):
     from providers.sync.simkl._common import simkl_api_params
 
@@ -177,8 +206,9 @@ def search_candidates(cfg, row, query, *, catalog="destination"):
                 key = block.get("client_id")
                 if not key:
                     raise HTTPException(409, "Configure Trakt search credentials for this destination instance.")
-                response = client.get(f"https://api.trakt.tv/search/{entity}", params={"query": query, "limit": 20},
-                                      headers={"trakt-api-key": key, "trakt-api-version": "2"}, timeout=10)
+                response = trakt_paced_request(client.get, "GET", f"https://api.trakt.tv/search/{entity}",
+                                               params={"query": query, "limit": 20},
+                                               headers=_trakt_headers(key, block, instance), timeout=10)
             elif source == "TMDB":
                 key = block.get("api_key") if catalog == "destination" else (cfg.get("tmdb") or {}).get("api_key")
                 if not key:

@@ -54,7 +54,6 @@ DEVICE_CLIENT_ID_ENV = "CROSSWATCH_SIMKL_DEVICE_CLIENT_ID"
 V1_SUNSET = "2027-03-31"
 REFRESH_MARGIN_S = 24 * 3600
 USE_REFRESH_MARGIN_S = 48 * 3600
-REFRESH_WORKER_INTERVAL_S = 3600
 TOKEN_KEYS = (
     "access_token",
     "refresh_token",
@@ -72,8 +71,6 @@ __VERSION__ = "3.0.0"
 
 _REFRESH_LOCKS: dict[str, threading.Lock] = {}
 _REFRESH_LOCKS_GUARD = threading.Lock()
-_WORKER: threading.Thread | None = None
-_WORKER_GUARD = threading.Lock()
 
 
 def app_pin_client_id() -> str:
@@ -277,29 +274,13 @@ def refresh_all(margin_s: int = REFRESH_MARGIN_S) -> dict[str, str]:
     except Exception:
         return out
     for inst in _instance_ids(cfg):
-        if needs_refresh(_lookup_block(cfg, inst), margin_s):
+        blk = _lookup_block(cfg, inst)
+        if str(blk.get("auth_error") or "") == "reconnect_required":
+            continue
+        if needs_refresh(blk, margin_s):
             res = PROVIDER.refresh(None, instance_id=inst, margin_s=margin_s)
             out[inst] = str(res.get("status") or "")
     return out
-
-
-def _refresh_worker_loop() -> None:
-    while True:
-        try:
-            refresh_all()
-        except Exception as e:
-            log(f"SIMKL: refresh worker error: {type(e).__name__}", level="ERROR", module="AUTH")
-        time.sleep(REFRESH_WORKER_INTERVAL_S)
-
-
-def start_refresh_worker() -> bool:
-    global _WORKER
-    with _WORKER_GUARD:
-        if _WORKER is not None and _WORKER.is_alive():
-            return False
-        _WORKER = threading.Thread(target=_refresh_worker_loop, name="simkl-token-refresh", daemon=True)
-        _WORKER.start()
-        return True
 
 
 def revoke_block(block: Mapping[str, Any] | None) -> bool:

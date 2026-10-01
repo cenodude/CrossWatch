@@ -10,6 +10,9 @@ from typing import Any, Mapping
 import pytest
 
 
+os.environ.setdefault("CW_TRAKT_PACING", "0")
+
+
 def _project_root() -> Path:
     here = Path(__file__).resolve()
     for p in here.parents:

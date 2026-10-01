@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from cw_platform.app_version import user_agent as http_user_agent
+from cw_platform.trakt_http import pace_session
 import os
 import time
 from dataclasses import dataclass
@@ -224,7 +225,7 @@ class TRAKTConfig:
     access_token: str
     timeout: float = 15.0
     max_retries: int = 3
-    rate_get_per_sec: float = 3.33
+    rate_get_per_sec: float = 1.66
     rate_post_per_sec: float = 1.0
     watchlist_batch_size: int = 100
     ratings_per_page: int = 250
@@ -249,6 +250,7 @@ class TRAKTClient:
         self.cfg = cfg
         self.raw_cfg = raw_cfg
         self.session: HitSession = build_session("TRAKT", ctx, feature_label=label_trakt)
+        pace_session(self.session)
 
         try:
             self.session._rate_limiter = SimpleRateLimiter(
@@ -408,7 +410,7 @@ class TRAKTModule:
                 f = 0.0
             return f
 
-        rate_get = _rate("get_per_sec", 3.33)
+        rate_get = _rate("get_per_sec", 1.66)
         rate_post = _rate("post_per_sec", 1.0)
 
         self.cfg = TRAKTConfig(

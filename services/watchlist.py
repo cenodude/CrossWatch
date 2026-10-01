@@ -13,6 +13,7 @@ import requests
 
 from cw_platform.app_version import app_version, user_agent as http_user_agent
 from cw_platform.config_base import CONFIG
+from cw_platform.trakt_http import paced_request as trakt_paced_request
 from cw_platform.id_map import migrate_media_index, migrate_media_key
 from cw_platform.local_db import watchlist_hide as sqlite_watchlist_hide
 from cw_platform.modules_registry import load_sync_ops, sync_provider_names
@@ -1331,7 +1332,7 @@ def _delete_on_trakt_batch(
     payload = {k: v for k, v in payload.items() if v}
     if not payload:
         raise RuntimeError("TRAKT delete: no resolvable IDs")
-    r = requests.post(_TRAKT_REMOVE, headers=hdr, json=payload, timeout=45)
+    r = trakt_paced_request(requests.post, "POST", _TRAKT_REMOVE, headers=hdr, json=payload, timeout=45)
     if not r.ok:
         raise RuntimeError(
             f"TRAKT delete failed: {getattr(r, 'text', 'no response')}"

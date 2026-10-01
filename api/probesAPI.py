@@ -19,6 +19,7 @@ import requests
 from cw_platform.app_version import app_version, user_agent as http_user_agent
 from cw_platform import connection_status
 from cw_platform.simkl_http import last_outcome, paced_request
+from cw_platform.trakt_http import record_response as trakt_record_response, request_gate as trakt_request_gate
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 
@@ -665,6 +666,15 @@ def _load_trakt_last_limit_error(
     except Exception:
         return {}
 
+def _trakt_paced(headers: Mapping[str, str], fetch: Callable[[], Any]) -> Any:
+    token = str(headers.get("Authorization") or "")
+    client_id = str(headers.get("trakt-api-key") or "")
+    with trakt_request_gate("GET", token, client_id=client_id):
+        result = fetch()
+    trakt_record_response("GET", token, result[0], result[2] if len(result) > 2 else None, client_id=client_id)
+    return result
+
+
 def _trakt_limits_used(
     client_id: str,
     token: str,
@@ -683,7 +693,7 @@ def _trakt_limits_used(
     base = "https://api.trakt.tv"
 
     def _count_items(url: str) -> int:
-        code, body, hdrs = _http_get_with_headers(f"{url}?page=1&limit=1", headers=headers, timeout=timeout)
+        code, body, hdrs = _trakt_paced(headers, lambda: _http_get_with_headers(f"{url}?page=1&limit=1", headers=headers, timeout=timeout))
         if code != 200:
             return 0
         try:
@@ -692,7 +702,7 @@ def _trakt_limits_used(
             total = -1
         if total >= 0:
             return total
-        code, body = _http_get(url, headers=headers, timeout=timeout)
+        code, body = _trakt_paced(headers, lambda: _http_get(url, headers=headers, timeout=timeout))
         if code != 200:
             return 0
         data = _json_loads(body) or []
@@ -947,6 +957,10 @@ def _probe_trakt_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tu
         with _CACHE_LOCK:
             PROBE_DETAIL_CACHE[key] = (now, False, "TRAKT: missing access token")
         return False, "TRAKT: missing access token"
+    if str((cfg.get("trakt") or {}).get("auth_error") or "") == "reconnect_required":
+        with _CACHE_LOCK:
+            PROBE_DETAIL_CACHE[key] = (now, False, "TRAKT: login expired, reconnect Trakt")
+        return False, "TRAKT: login expired, reconnect Trakt"
 
     #  Refresh expiring tokens across instances.
     try:
@@ -962,7 +976,7 @@ def _probe_trakt_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tu
 
     url = "https://api.trakt.tv/users/settings"
     headers = {**_provider_headers('trakt'), "Content-Type": "application/json", "trakt-api-version": "2", "trakt-api-key": cid, "Authorization": f"Bearer {tok}"}
-    code, _ = _account_fetch("trakt", cfg, lambda: _http_get(url, headers=headers, timeout=HTTP_TIMEOUT))
+    code, _ = _account_fetch("trakt", cfg, lambda: _trakt_paced(headers, lambda: _http_get(url, headers=headers, timeout=HTTP_TIMEOUT)))
 
     # One retry after refresh if token expired/revoked.
     if code in (401, 403):
@@ -977,7 +991,7 @@ def _probe_trakt_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tu
                         headers = {**_provider_headers('trakt'), "Content-Type": "application/json", "trakt-api-version": "2", "trakt-api-key": cid2, "Authorization": f"Bearer {tok2}"}
                         cfg["trakt"] = cfg2["trakt"]
                         key = _probe_key("trakt", cfg)
-                        code, _ = _account_fetch("trakt", cfg, lambda: _http_get(url, headers=headers, timeout=HTTP_TIMEOUT), refresh=True)
+                        code, _ = _account_fetch("trakt", cfg, lambda: _trakt_paced(headers, lambda: _http_get(url, headers=headers, timeout=HTTP_TIMEOUT)), refresh=True)
         except Exception:
             pass
 
@@ -2001,7 +2015,7 @@ def trakt_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dic
         return {}
 
     headers = {**_provider_headers('trakt'), "Authorization": f"Bearer {tok}", "trakt-api-key": cid, "trakt-api-version": "2"}
-    code, body = _account_fetch("trakt", cfg, lambda: _http_get("https://api.trakt.tv/users/settings", headers=headers))
+    code, body = _account_fetch("trakt", cfg, lambda: _trakt_paced(headers, lambda: _http_get("https://api.trakt.tv/users/settings", headers=headers)))
 
     out: dict[str, Any] = {}
     if code == 200:

@@ -1079,12 +1079,12 @@ async def _lifespan(app: Any) -> AsyncIterator[None]:
         except Exception:
             pass
     try:
-        from providers.auth._auth_SIMKL import start_refresh_worker as _simkl_start_refresh_worker
+        from cw_platform.token_refresh import start_worker as _start_token_refresh
 
-        _simkl_start_refresh_worker()
+        _start_token_refresh()
     except Exception as e:
         try:
-            _UIHostLogger("SIMKL", "AUTH")(f"token refresh worker startup error: {e}", level="ERROR")
+            _UIHostLogger("AUTH")(f"token refresh worker startup error: {e}", level="ERROR")
         except Exception:
             pass
     try:

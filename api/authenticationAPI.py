@@ -3059,7 +3059,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
 
 
     # TRAKT
-    def trakt_request_pin(instance_id: Any) -> dict[str, Any]:
+    def trakt_request_pin(instance_id: Any, method: Optional[str] = None) -> dict[str, Any]:
         prov = _import_provider("providers.auth._auth_TRAKT")
         if not prov:
             raise RuntimeError("Trakt provider not available")
@@ -3067,7 +3067,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         cfg = load_config()
         inst = normalize_instance_id(instance_id)
         ensure_instance_block(cfg, "trakt", inst)
-        res = prov.start(cfg, redirect_uri="", instance_id=inst)  # type: ignore[attr-defined]
+        res = prov.start(cfg, redirect_uri="", instance_id=inst, method=method)  # type: ignore[attr-defined]
         save_config(cfg)
 
         pend = (ensure_instance_block(cfg, "trakt", inst).get("_pending_device") or {}) if isinstance(cfg, dict) else {}
@@ -3076,7 +3076,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         verification_url = (
             pend.get("verification_url")
             or (res or {}).get("verification_url")
-            or "https://trakt.tv/activate"
+            or "https://auth.trakt.tv/activate"
         )
         exp_epoch = int((pend.get("expires_at") or 0) or (time.time() + 600))
 
@@ -3170,6 +3170,9 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
     def api_trakt_pin_new(payload: Optional[dict[str, Any]] = Body(None), instance: str = Query("default")) -> dict[str, Any]:
         try:
             inst = normalize_instance_id(instance)
+            method = str((payload or {}).get("auth_method") or "").strip().lower()
+            if method not in ("pin", "app"):
+                method = ""
             if payload:
                 cid = str(payload.get("client_id") or "").strip()
                 secr = str(payload.get("client_secret") or "").strip()
@@ -3177,7 +3180,9 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                     cid = ""
                 if _looks_masked_secret(secr):
                     secr = ""
-                if cid or secr:
+                if not method and (cid or secr):
+                    method = "app"
+                if method != "pin" and (cid or secr):
                     cfg = load_config()
                     tr = ensure_instance_block(cfg, "trakt", inst)
                     if cid:
@@ -3192,16 +3197,16 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                             base["client_secret"] = secr
                     save_config(cfg)
 
-            info = trakt_request_pin(inst)
+            info = trakt_request_pin(inst, method or None)
             user_code = str(info["user_code"])
             verification_url = str(
-                info.get("verification_url") or "https://trakt.tv/activate"
+                info.get("verification_url") or "https://auth.trakt.tv/activate"
             )
             exp_epoch = int(info.get("expires_epoch") or 0)
             device_code = str(info["device_code"])
 
             def waiter(_device_code: str, _inst: str) -> None:
-                token = trakt_wait_for_token(_device_code, instance_id=_inst, timeout_sec=300)
+                token = trakt_wait_for_token(_device_code, instance_id=_inst, timeout_sec=max(300, exp_epoch - int(time.time())))
                 if token:
                     _safe_log(
                         log_fn,
@@ -3244,6 +3249,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             tr["expires_at"] = 0
             try:
                 tr.pop("_pending_device", None)
+                tr.pop("auth_error", None)
             except Exception:
                 pass
             save_config(cfg)
