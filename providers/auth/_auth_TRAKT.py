@@ -4,9 +4,10 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
-from typing import Any
+from typing import Any, Mapping
 
 import requests
 
@@ -44,6 +45,10 @@ def _public_log_message(msg: Any) -> str:
         return "TRAKT: token refresh invalid JSON"
     if text == "TRAKT: token refresh succeeded but no access_token in response":
         return "TRAKT: token refresh succeeded without access token"
+    if text == "TRAKT: reconnect required":
+        return "TRAKT: reconnect required"
+    if text.startswith("TRAKT: config save failed"):
+        return "TRAKT: config save failed"
     if text.startswith("TRAKT[") and text.endswith("]: disconnected"):
         return "TRAKT: disconnected"
     return "TRAKT: auth event"
@@ -64,9 +69,14 @@ API = "https://api.trakt.tv"
 OAUTH_DEVICE_CODE = f"{API}/oauth/device/code"
 OAUTH_DEVICE_TOKEN = f"{API}/oauth/device/token"
 OAUTH_TOKEN = f"{API}/oauth/token"
-VERIFY_URL = "https://trakt.tv/activate"
+VERIFY_URL = "https://auth.trakt.tv/activate"
+DEFAULT_CLIENT_ID = "e9286c08d7a3c84d4df03cf47a9dc464b8b0142844f83f4c4226b9a96e6c49d1"
+CLIENT_ID_ENV = "CROSSWATCH_TRAKT_CLIENT_ID"
+METHOD_PIN = "pin"
+METHOD_APP = "app"
+REFRESH_MARGIN_S = 24 * 3600
 
-__VERSION__ = "2.2.0"
+__VERSION__ = "3.0.0"
 
 _H: dict[str, str] = {
     "Accept": "application/json",
@@ -102,11 +112,30 @@ def _refresh_lock(instance_id: Any) -> threading.Lock:
         return lock
 
 
-def _save_config(cfg: dict[str, Any]) -> None:
+def app_client_id() -> str:
+    return str(os.environ.get(CLIENT_ID_ENV) or DEFAULT_CLIENT_ID).strip()
+
+
+def normalize_auth_method(value: Any = None, block: Mapping[str, Any] | None = None) -> str:
+    text = str(value or "").strip().lower()
+    if text in (METHOD_PIN, METHOD_APP):
+        return text
+    blk = block if isinstance(block, Mapping) else {}
+    stored = str(blk.get("auth_method") or "").strip().lower()
+    if stored in (METHOD_PIN, METHOD_APP):
+        return stored
+    if str(blk.get("client_secret") or "").strip() or str(blk.get("access_token") or "").strip():
+        return METHOD_APP
+    return METHOD_PIN
+
+
+def _save_config(cfg: dict[str, Any]) -> bool:
     try:
         save_config(cfg)
-    except Exception:
-        pass
+        return True
+    except Exception as e:
+        log(f"TRAKT: config save failed: {e}", "ERROR")
+        return False
 
 
 def _blocks(cfg: dict[str, Any], instance_id: Any) -> tuple[str, dict[str, Any], dict[str, Any]]:
@@ -125,12 +154,15 @@ def _client(cfg: dict[str, Any], instance_id: Any) -> dict[str, str]:
     }
 
 
-def _headers(token: str | None = None) -> dict[str, str]:
+def _headers(token: str | None = None, client_id: str | None = None) -> dict[str, str]:
     h: dict[str, str] = {
         "Content-Type": "application/json",
         "Accept": "application/json",
         "trakt-api-version": "2",
+        "User-Agent": http_user_agent("TraktAuth", override_env="CW_TRAKT_UA"),
     }
+    if client_id:
+        h["trakt-api-key"] = client_id
     if token:
         h["Authorization"] = f"Bearer {token}"
     return h
@@ -146,12 +178,12 @@ class _TraktProvider:
             label=self.label,
             flow="device_pin",
             fields=[
-                {"key": "trakt.client_id", "label": "Client ID", "type": "text", "required": True},
-                {"key": "trakt.client_secret", "label": "Client Secret", "type": "password", "required": True},
+                {"key": "trakt.client_id", "label": "Client ID", "type": "text", "required": False},
+                {"key": "trakt.client_secret", "label": "Client Secret", "type": "password", "required": False},
             ],
             actions={"start": True, "finish": True, "refresh": True, "disconnect": True},
             verify_url=VERIFY_URL,
-            notes="Open Trakt, enter the code, then return here. Client ID/Secret are required.",
+            notes="Open Trakt, enter the code, then return here. The PIN flow uses CrossWatch's built-in public client_id. Client ID/Secret are only needed for your own Trakt app.",
         )
 
     def capabilities(self) -> dict[str, Any]:
@@ -197,6 +229,30 @@ class _TraktProvider:
       box-shadow: 0 0 18px rgba(0,224,132,.5);
     }
 
+    /* Method selector */
+    #sec-trakt .trk-method-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;margin-top:14px}
+    #sec-trakt .trk-methods{display:flex;gap:8px;min-width:0}
+    #sec-trakt .trk-actions{display:flex;align-items:center;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+    #sec-trakt .trk-method{
+      appearance:none;cursor:pointer;flex:1 1 0;padding:10px 12px;border-radius:10px;
+      border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.03);
+      color:inherit;font:inherit;display:flex;align-items:center;justify-content:center;gap:8px;
+      transition:border-color .15s ease, background .15s ease;
+    }
+    #sec-trakt .trk-method:hover{border-color:rgba(0,224,132,.5)}
+    #sec-trakt .trk-method.active{
+      border-color:rgba(0,224,132,.7);
+      background:linear-gradient(135deg,rgba(0,224,132,.16),rgba(46,168,89,.10));
+      box-shadow:0 0 12px rgba(0,224,132,.20);
+    }
+    #sec-trakt .trk-method .badge{
+      display:inline-flex;align-items:center;line-height:1;
+      font-size:.72em;text-transform:uppercase;letter-spacing:.05em;padding:3px 7px;border-radius:999px;
+      background:rgba(0,224,132,.22);border:1px solid rgba(0,224,132,.45);color:#8ff0c2;
+    }
+    #sec-trakt .trk-pane{margin-top:12px}
+    @media(max-width:900px){#sec-trakt .trk-method-row{grid-template-columns:1fr}#sec-trakt .trk-actions{justify-content:flex-start}}
+
     /* Quick Connect-style link-code card */
     #sec-trakt .hidden{display:none !important}
     #sec-trakt .trk-qc{margin-top:12px;padding:14px;border-radius:12px;border:1px solid rgba(0,224,132,.35);background:rgba(0,224,132,.06)}
@@ -241,52 +297,68 @@ class _TraktProvider:
             <div class="cw-auth-journey" style="--cw-auth-c1:225,20,60;--cw-auth-c2:159,66,198;--cw-auth-logo:url('/assets/img/TRAKT.svg')">
               <div class="cw-auth-journey-text">
                 <div class="cw-auth-journey-title">Connect to Trakt</div>
-                <div class="cw-auth-journey-copy">Add your Trakt Client ID and Secret, then click Connect TRAKT and open trakt.tv/activate to enter the link code shown here. Once approved, CrossWatch can sync your Trakt watchlist, history and ratings.</div>
+                <div class="cw-auth-journey-copy">Connect with a PIN code (recommended) &mdash; CrossWatch shows a short code you enter at auth.trakt.tv/activate, no keys needed. Connecting with your own Trakt app credentials remains available.</div>
               </div>
             </div>
 
-            <div class="grid2">
-              <div>
-                <label for="trakt_client_id">Client ID</label>
-                <input id="trakt_client_id" name="trakt_client_id" placeholder="Enter your Trakt Client ID" autocomplete="off" spellcheck="false" autocapitalize="off">
-              </div>
-              <div>
-                <label for="trakt_client_secret">Client Secret</label>
-                <input id="trakt_client_secret" name="trakt_client_secret" type="password" placeholder="Enter your Trakt Client Secret" autocomplete="off" spellcheck="false" autocapitalize="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
-              </div>
-            </div>
-
-            <div id="trakt_hint" class="msg warn hidden" style="margin-top:8px">
-              <span class="cw-hint-body">
-                <span class="cw-hint-line"><span>You need a Trakt API application. Create one at <a href="https://app.trakt.tv/settings/apps/api" target="_blank" rel="noopener">Trakt Applications</a></span></span>
-                <span class="cw-hint-line">Set the Redirect URL to <code id="trakt_redirect_uri_preview">urn:ietf:wg:oauth:2.0:oob</code>
-                <button id="btn-copy-trakt-redirect" class="btn" type="button">Copy Redirect URL</button></span>
-              </span>
-            </div>
-
-            <div class="sep"></div>
-
-            <input id="trakt_pin" type="hidden">
-            <div class="inline" style="margin-top:10px">
-              <button id="btn-connect-trakt" class="btn" type="button">Connect TRAKT</button>
-              <button id="btn-trakt-cancel" class="btn danger hidden" type="button">Cancel</button>
-              <button id="btn-trakt-restart" class="btn hidden" type="button">Restart</button>
-              <button id="btn-delete-trakt" class="btn danger" type="button">Delete</button>
-              <div id="trakt_msg" class="msg ok hidden" role="status" aria-live="polite"></div>
-            </div>
-
-            <div id="trakt_qc_state" class="trk-qc hidden">
-              <div class="trk-qc-codewrap">
-                <div class="trk-qc-code" id="trakt_qc_code">------</div>
-                <button type="button" id="trakt_qc_copy" class="trk-qc-copy" title="Copy code" aria-label="Copy code">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            <div class="trk-method-row">
+              <div class="trk-methods" role="tablist" aria-label="Authentication method">
+                <button type="button" class="trk-method active" data-method="pin" role="tab" aria-selected="true">
+                  PIN Flow <span class="badge">Recommended</span>
+                </button>
+                <button type="button" class="trk-method" data-method="app" role="tab" aria-selected="false">
+                  Own app (Client ID)
                 </button>
               </div>
-              <div class="sub" id="trakt_qc_help">Opening trakt.tv/activate &mdash; enter this code there and approve CrossWatch.</div>
-              <div class="trk-qc-meta">
-                <span class="sub" id="trakt_qc_status">Waiting for authorization&hellip;</span>
-                <span class="sub" id="trakt_qc_timer"></span>
+              <div class="trk-actions">
+                <button id="btn-connect-trakt" class="btn" type="button">Connect TRAKT</button>
+                <button id="btn-trakt-cancel" class="btn danger hidden" type="button">Cancel</button>
+                <button id="btn-trakt-restart" class="btn hidden" type="button">Restart</button>
+                <button id="btn-delete-trakt" class="btn danger" type="button">Delete</button>
               </div>
+            </div>
+            <input id="trakt_auth_method" name="trakt_auth_method" type="hidden" value="pin">
+
+            <div id="trakt_app_panel" class="trk-pane" data-method="app" style="display:none">
+              <div class="grid2">
+                <div>
+                  <label for="trakt_client_id">Client ID</label>
+                  <input id="trakt_client_id" name="trakt_client_id" placeholder="Enter your Trakt Client ID" autocomplete="off" spellcheck="false" autocapitalize="off">
+                </div>
+                <div>
+                  <label for="trakt_client_secret">Client Secret</label>
+                  <input id="trakt_client_secret" name="trakt_client_secret" type="password" placeholder="Enter your Trakt Client Secret" autocomplete="off" spellcheck="false" autocapitalize="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
+                </div>
+              </div>
+
+              <div id="trakt_hint" class="msg warn hidden" style="margin-top:8px">
+                <span class="cw-hint-body">
+                  <span class="cw-hint-line"><span>You need your own Trakt API app, which requires a verified GitHub account. Create one at <a href="https://developer.trakt.tv/apps" target="_blank" rel="noopener">Trakt Developer</a></span></span>
+                  <span class="cw-hint-line">Set the Redirect URL to <code id="trakt_redirect_uri_preview">urn:ietf:wg:oauth:2.0:oob</code>
+                  <button id="btn-copy-trakt-redirect" class="btn" type="button">Copy Redirect URL</button></span>
+                </span>
+              </div>
+            </div>
+
+            <div id="trakt_pin_panel" class="trk-pane" data-method="pin">
+              <input id="trakt_pin" type="hidden">
+              <div id="trakt_qc_state" class="trk-qc hidden">
+                <div class="trk-qc-codewrap">
+                  <div class="trk-qc-code" id="trakt_qc_code">------</div>
+                  <button type="button" id="trakt_qc_copy" class="trk-qc-copy" title="Copy code" aria-label="Copy code">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                  </button>
+                </div>
+                <div class="sub" id="trakt_qc_help">Opening auth.trakt.tv/activate &mdash; enter this code there and approve CrossWatch.</div>
+                <div class="trk-qc-meta">
+                  <span class="sub" id="trakt_qc_status">Waiting for authorization&hellip;</span>
+                  <span class="sub" id="trakt_qc_timer"></span>
+                </div>
+              </div>
+            </div>
+
+            <div class="inline" style="margin-top:10px;justify-content:flex-end">
+              <div id="trakt_msg" class="msg ok hidden" role="status" aria-live="polite"></div>
             </div>
           </div>
         </div>
@@ -297,12 +369,13 @@ class _TraktProvider:
 </div>
     '''
 
-    def start(self, cfg: dict[str, Any] | None = None, *, redirect_uri: str | None = None, instance_id: Any = None) -> dict[str, Any]:
+    def start(self, cfg: dict[str, Any] | None = None, *, redirect_uri: str | None = None, instance_id: Any = None, method: str | None = None) -> dict[str, Any]:
         cfg = cfg or _load_config()
         inst, _, tr = _blocks(cfg, instance_id)
         c = _client(cfg, inst)
+        mode = normalize_auth_method(method, tr)
 
-        cid = (c.get("client_id") or "").strip()
+        cid = app_client_id() if mode == METHOD_PIN else (c.get("client_id") or "").strip()
         if not cid:
             return {"ok": False, "error": "missing_client_id"}
 
@@ -345,6 +418,8 @@ class _TraktProvider:
             "interval": interval,
             "expires_at": expires_at,
             "created_at": _now(),
+            "client_id": cid,
+            "auth_method": mode,
         }
         _save_config(cfg)
 
@@ -362,10 +437,13 @@ class _TraktProvider:
         cfg = cfg or _load_config()
         inst, _, tr = _blocks(cfg, instance_id)
         c = _client(cfg, inst)
-        if not c["client_id"] or not c["client_secret"]:
+        pend = tr.get("_pending_device") or {}
+        mode = normalize_auth_method(pend.get("auth_method"), tr)
+        cid = str(pend.get("client_id") or "").strip() or (app_client_id() if mode == METHOD_PIN else c["client_id"])
+        secret = c["client_secret"] if mode == METHOD_APP else ""
+        if not cid:
             return {"ok": False, "status": "missing_client"}
 
-        pend = tr.get("_pending_device") or {}
         dc = (device_code or pend.get("device_code") or "").strip()
         if not dc:
             return {"ok": False, "status": "no_device_code"}
@@ -374,12 +452,10 @@ class _TraktProvider:
 
         log("TRAKT: exchange device code", level="INFO", module="AUTH")
 
-        r = requests.post(
-            OAUTH_DEVICE_TOKEN,
-            json={"code": dc, "client_id": c["client_id"], "client_secret": c["client_secret"]},
-            headers=_headers(),
-            timeout=30,
-        )
+        body: dict[str, Any] = {"code": dc, "client_id": cid}
+        if secret:
+            body["client_secret"] = secret
+        r = requests.post(OAUTH_DEVICE_TOKEN, json=body, headers=_headers(client_id=cid), timeout=30)
 
         if r.status_code == 429:
             try:
@@ -417,8 +493,13 @@ class _TraktProvider:
                 "scope": tok.get("scope") or "public",
                 "token_type": tok.get("token_type") or "bearer",
                 "expires_at": _now() + int(tok.get("expires_in", 0) or 0),
+                "client_id": cid,
+                "auth_method": mode,
             }
         )
+        if mode == METHOD_PIN:
+            tr["client_secret"] = ""
+        tr.pop("auth_error", None)
 
         try:
             tr.pop("_pending_device", None)
@@ -429,7 +510,7 @@ class _TraktProvider:
         log("TRAKT: tokens stored", level="SUCCESS", module="AUTH")
         return {"ok": True, "status": "ok"}
 
-    def refresh(self, cfg: dict[str, Any] | None = None, *, instance_id: Any = None) -> dict[str, Any]:
+    def refresh(self, cfg: dict[str, Any] | None = None, *, instance_id: Any = None, margin_s: int = 120) -> dict[str, Any]:
         inst_key = normalize_instance_id(instance_id)
         with _refresh_lock(inst_key):
             cfg = cfg or _load_config()
@@ -440,14 +521,15 @@ class _TraktProvider:
                 exp = int(tr.get("expires_at") or 0)
             except Exception:
                 exp = 0
-            if str(tr.get("access_token") or "").strip() and exp and exp > (_now() + 120):
+            if str(tr.get("access_token") or "").strip() and exp and exp > (_now() + max(0, int(margin_s))):
                 return {"ok": True, "status": "fresh", "expires_at": exp}
 
+            mode = normalize_auth_method(None, tr)
             rt = str(tr.get("refresh_token") or "").strip()
-            cid = str(c.get("client_id") or "").strip()
-            secr = str(c.get("client_secret") or "").strip()
+            cid = str(c.get("client_id") or "").strip() or (app_client_id() if mode == METHOD_PIN else "")
+            secr = str(c.get("client_secret") or "").strip() if mode == METHOD_APP else ""
 
-            if not (cid and secr and rt):
+            if not (cid and rt):
                 log("TRAKT: missing client_id/client_secret/refresh_token for refresh", "ERROR")
                 return {"ok": False, "status": "missing_refresh"}
 
@@ -456,12 +538,13 @@ class _TraktProvider:
             payload: dict[str, Any] = {
                 "refresh_token": rt,
                 "client_id": cid,
-                "client_secret": secr,
                 "grant_type": "refresh_token",
             }
+            if secr:
+                payload["client_secret"] = secr
 
             try:
-                r = requests.post(OAUTH_TOKEN, json=payload, headers=_headers(), timeout=30)
+                r = requests.post(OAUTH_TOKEN, json=payload, headers=_headers(client_id=cid), timeout=30)
             except Exception as e:
                 log(f"TRAKT: token refresh network error: {e}", "ERROR")
                 return {"ok": False, "status": "network_error", "error": str(e)}
@@ -474,6 +557,11 @@ class _TraktProvider:
                     body = {}
                 err = str(body.get("error") or "") or str(body.get("error_description") or "") or (r.text or "")[:400]
                 log(f"TRAKT: token refresh failed {r.status_code}: {err}", "ERROR")
+                if str(body.get("error") or "") == "invalid_grant":
+                    tr["auth_error"] = "reconnect_required"
+                    _save_config(cfg)
+                    log("TRAKT: reconnect required", "ERROR")
+                    return {"ok": False, "status": f"refresh_failed:{r.status_code}", "error": err, "reconnect_required": True}
                 return {"ok": False, "status": f"refresh_failed:{r.status_code}", "error": err}
 
             try:
@@ -500,6 +588,7 @@ class _TraktProvider:
                     "expires_at": expires_at,
                 }
             )
+            tr.pop("auth_error", None)
             _save_config(cfg)
             log("TRAKT: refresh ok", level="SUCCESS", module="AUTH")
             return {"ok": True, "status": "ok"}
@@ -507,7 +596,7 @@ class _TraktProvider:
     def disconnect(self, cfg: dict[str, Any] | None = None, *, instance_id: Any = None) -> AuthStatus:
         cfg = cfg or _load_config()
         inst, _, tr = _blocks(cfg, instance_id)
-        for key in ("access_token", "refresh_token", "scope", "token_type", "expires_at", "_pending_device"):
+        for key in ("access_token", "refresh_token", "scope", "token_type", "expires_at", "_pending_device", "auth_error"):
             tr.pop(key, None)
         _save_config(cfg)
         log(f"TRAKT[{inst}]: disconnected", level="INFO", module="AUTH")
@@ -515,6 +604,36 @@ class _TraktProvider:
 
 
 PROVIDER = _TraktProvider()
+
+
+def needs_refresh(block: Mapping[str, Any] | None, margin_s: int = REFRESH_MARGIN_S) -> bool:
+    blk = block if isinstance(block, Mapping) else {}
+    if not str(blk.get("access_token") or "").strip() or not str(blk.get("refresh_token") or "").strip():
+        return False
+    if str(blk.get("auth_error") or "") == "reconnect_required":
+        return False
+    try:
+        exp = int(blk.get("expires_at") or 0)
+    except (TypeError, ValueError):
+        exp = 0
+    return bool(exp) and (exp - _now()) <= max(0, int(margin_s))
+
+
+def refresh_all(margin_s: int = REFRESH_MARGIN_S) -> dict[str, str]:
+    out: dict[str, str] = {}
+    base = _load_config().get("trakt")
+    if not isinstance(base, Mapping):
+        return out
+    blocks: dict[str, Any] = {"default": base}
+    insts = base.get("instances")
+    if isinstance(insts, Mapping):
+        for key, blk in insts.items():
+            blocks.setdefault(normalize_instance_id(key), blk)
+    for inst, blk in blocks.items():
+        if needs_refresh(blk, margin_s):
+            res = PROVIDER.refresh(None, instance_id=inst, margin_s=margin_s)
+            out[inst] = str(res.get("status") or "")
+    return out
 __all__ = ["PROVIDER", "_TraktProvider", "html", "__VERSION__"]
 
 

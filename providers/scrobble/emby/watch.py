@@ -13,8 +13,9 @@ try:
 except Exception:
     BASE_LOG = None
 
-from cw_platform.app_version import app_version
+from cw_platform.app_version import app_version, user_agent as http_user_agent
 from cw_platform.config_base import load_config
+from cw_platform.trakt_http import paced_request as trakt_paced_request
 from providers.scrobble._log_dedupe import LogDeduplicator
 from providers.scrobble.scrobble import Dispatcher, ScrobbleSink, ScrobbleEvent, MediaType, mask_account as _mask_account
 from providers.scrobble.currently_watching import update_from_event as _cw_update, update_from_payload as _cw_update_payload
@@ -106,6 +107,7 @@ def _trakt_headers(cfg: dict[str, Any]) -> dict[str, str]:
         "Content-Type": "application/json",
         "trakt-api-version": "2",
         "trakt-api-key": t["client_id"],
+        "User-Agent": http_user_agent("Scrobble", override_env="CW_TRAKT_UA"),
     }
     if t["access_token"]:
         headers["Authorization"] = f"Bearer {t['access_token']}"
@@ -320,7 +322,7 @@ def _guid_search_episode(epi_hint: dict[str, Any], cfg: dict[str, Any], logger=N
         q = {k: epi_hint.get(k) for k in ("tmdb", "imdb", "tvdb") if epi_hint.get(k)}
         if not q:
             return {}
-        r = _HTTP.get(
+        r = trakt_paced_request(_HTTP.get, "GET",
             f"{TRAKT_API}/search/episode",
             params=q,
             headers=_trakt_headers(cfg),
@@ -370,7 +372,7 @@ def _show_ids_from_episode_hint(ids_hint: dict[str, Any], cfg: dict[str, Any], l
         if not val:
             continue
         try:
-            r = _HTTP.get(
+            r = trakt_paced_request(_HTTP.get, "GET",
                 f"{TRAKT_API}/search/{key}/{val}",
                 params={"type": "episode", "limit": 1},
                 headers=_trakt_headers(cfg),

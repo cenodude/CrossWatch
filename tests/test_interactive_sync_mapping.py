@@ -215,7 +215,10 @@ def test_destination_search_normalizes_and_uses_instance(monkeypatch, provider, 
     assert result["results"][0]["exact_title"]
     assert "key" not in str(result)
     if provider == "SIMKL": assert calls[0][1]["params"]["client_id"] == "second-key"
-    if provider == "TRAKT": assert calls[0][1]["headers"]["trakt-api-key"] == "second-key"
+    if provider == "TRAKT":
+        assert calls[0][1]["headers"]["trakt-api-key"] == "second-key"
+        assert calls[0][1]["headers"]["Authorization"] == "Bearer second-token"
+        assert calls[0][1]["headers"]["User-Agent"]
     if provider == "PLEX": assert calls[0][1]["headers"]["X-Plex-Token"] == "plex-second-token"
 
 

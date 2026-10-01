@@ -645,12 +645,12 @@
     TRAKT: {
       provider: "trakt", logo: "TRAKT", help: window.CW.HelpLinks.url("trakt"), deleteSelector: "#btn-delete-trakt",
       tabs: { auth: ["lock", "Authentication", "Connect your Trakt account"] },
-      copy: { auth: ["Trakt Authentication", "Connect your Trakt account with your API credentials."] },
-      journey: ["Connect to Trakt", "Add your Trakt Client ID and Secret, then click Connect Trakt and approve the link code at trakt.tv/activate. Once approved, CrossWatch can sync your Trakt watchlist, history and ratings.", "225,20,60", "159,66,198", "TRAKT"],
-      steps: [["1", "Add API app", "Enter your Trakt Client ID and Secret"], ["2", "Approve code", "Open trakt.tv/activate and enter the code"], ["3", "Sync account", "CrossWatch stores the approved token"]],
-      order: [".grid2", "#trakt_hint", ".sep", ".inline", "#trakt_qc_state"],
-      code: ["#trakt_qc_state"],
-      actions: [{ row: ".inline", status: "#trakt_msg", buttons: "#btn-connect-trakt, #btn-trakt-cancel, #btn-trakt-restart" }]
+      copy: { auth: ["Trakt Authentication", "Connect Trakt with a PIN code or your own app credentials."] },
+      journey: ["Connect to Trakt", "Connect with a PIN code (recommended) - CrossWatch shows a short code you enter at auth.trakt.tv/activate, no keys needed. Connecting with your own Trakt app credentials remains available.", "225,20,60", "159,66,198", "TRAKT"],
+      steps: [["1", "Choose method", "Use PIN flow or your own Trakt app"], ["2", "Approve code", "Open auth.trakt.tv/activate and enter the code"], ["3", "Sync account", "CrossWatch stores the approved token"]],
+      order: [".trk-method-row", "#trakt_app_panel", "#trakt_pin_panel", ".cw-connection-method-action-row", ".inline"],
+      code: ["#trakt_pin_panel"],
+      actions: [{ row: ".trk-method-row", status: "#trakt_msg", buttons: "#btn-connect-trakt, #btn-trakt-cancel, #btn-trakt-restart", extract: ".trk-actions", order: "6" }]
     },
     SIMKL: {
       provider: "simkl", logo: "SIMKL", help: window.CW.HelpLinks.url("simkl"), deleteSelector: "#btn-delete-simkl, #btn-delete-simkl-oauth",

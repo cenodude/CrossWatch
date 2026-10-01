@@ -15,6 +15,7 @@ import requests
 
 from cw_platform.app_version import app_version, user_agent as http_user_agent
 from cw_platform.config_base import load_config
+from cw_platform.trakt_http import paced_request as trakt_paced_request
 from cw_platform.local_db.ttl_dedupe import once_per_ttl
 from cw_platform.provider_instances import normalize_instance_id
 
@@ -153,11 +154,11 @@ def _hdr(cfg: dict[str, Any], instance_id: Any = None) -> dict[str, str]:
 
 
 def _get(path: str, cfg: dict[str, Any], instance_id: Any = None) -> requests.Response:
-    return requests.get(f"{TRAKT_API}{path}", headers=_hdr(cfg, instance_id), timeout=10)
+    return trakt_paced_request(requests.get, "GET", f"{TRAKT_API}{path}", headers=_hdr(cfg, instance_id), timeout=10)
 
 
 def _post(path: str, body: dict[str, Any], cfg: dict[str, Any], instance_id: Any = None) -> requests.Response:
-    return requests.post(f"{TRAKT_API}{path}", headers=_hdr(cfg, instance_id), json=body, timeout=10)
+    return trakt_paced_request(requests.post, "POST", f"{TRAKT_API}{path}", headers=_hdr(cfg, instance_id), json=body, timeout=10)
 
 
 def _tok_refresh(instance_id: Any = None) -> bool:

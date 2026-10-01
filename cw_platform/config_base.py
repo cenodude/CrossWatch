@@ -567,6 +567,7 @@ DEFAULT_CFG: dict[str, Any] = {
     "trakt": {
         "client_id": "",                                # From your Trakt app
         "client_secret": "",                            # From your Trakt app
+        "auth_method": "",
         "access_token": "",                             # OAuth2 access token
         "refresh_token": "",                            # OAuth2 refresh token
         "scope": "public",                              # OAuth2 scope (usually "public" or "private")
@@ -578,7 +579,7 @@ DEFAULT_CFG: dict[str, Any] = {
 
         # Rate limits
         "rate_limit": {
-            "get_per_sec": 3.33,
+            "get_per_sec": 1.66,
             "post_per_sec": 1,
         },
 
@@ -604,7 +605,7 @@ DEFAULT_CFG: dict[str, Any] = {
         "_pending_device": {
             "user_code": "",                            # Temporary device code state for PIN login
             "device_code": "",                          # Temporary device code state for PIN login
-            "verification_url": "https://trakt.tv/activate",
+            "verification_url": "https://auth.trakt.tv/activate",
             "interval": 5,                              # Polling interval (seconds)
             "expires_at": 0,                            # Epoch when device_code expires
             "created_at": 0,                            # Epoch when device_code was created
@@ -1595,7 +1596,9 @@ def _normalize_trakt(cfg: dict[str, Any]) -> None:
 
     # Allow 0 to disable throttling.
     post_rps = _rate("post_per_sec", 1.0)
-    get_rps = _rate("get_per_sec", 3.33)
+    get_rps = _rate("get_per_sec", 1.66)
+    if get_rps == 3.33:
+        get_rps = 1.66
     rl["post_per_sec"] = int(post_rps) if float(post_rps).is_integer() else float(post_rps)
     rl["get_per_sec"] = int(get_rps) if float(get_rps).is_integer() else float(get_rps)
 

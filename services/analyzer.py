@@ -22,6 +22,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from services.analyzer_mapping import MappingRequest, handle_mapping
 
 from cw_platform.access_policy import filter_pairs_for_user, pair_ids_for_user, request_user
+from cw_platform.app_version import user_agent as http_user_agent
+from cw_platform.trakt_http import paced_request as trakt_paced_request
 from cw_platform.id_map import _norm_type, migrate_media_key
 from cw_platform.pair_scope import pair_feature_scope
 from cw_platform.orchestrator._state_store import StateStore
@@ -300,8 +302,10 @@ def _trakt_headers() -> dict[str, str]:
             break
 
     h: dict[str, str] = {
+        "Content-Type": "application/json",
         "trakt-api-version": "2",
         "trakt-api-key": client_id,
+        "User-Agent": http_user_agent("Analyzer", override_env="CW_TRAKT_UA"),
     }
     if token:
         h["Authorization"] = f"Bearer {token}"
@@ -4313,7 +4317,9 @@ def _trakt(path: str, params: dict[str, Any]) -> list[dict[str, Any]]:
     h = _trakt_headers()
     if not h.get("trakt-api-key"):
         raise HTTPException(400, "trakt.client_id missing in config.json")
-    r = requests.get(
+    r = trakt_paced_request(
+        requests.get,
+        "GET",
         f"https://api.trakt.tv{path}",
         params=params,
         headers=h,
