@@ -184,9 +184,10 @@ def test_pkc_autoplay_stop_carries_the_new_item(monkeypatch: pytest.MonkeyPatch)
     _pkc_stop(service, rating_key="1002", imdb="tt0000002", offset=50_000)
 
     stops = [e for e in sink.events if e.action == "stop"]
-    assert len(stops) == 1
-    assert stops[0].ids.get("imdb") == "tt0000002"
-    assert stops[0].account == "owner"
+    assert [stop.ids.get("imdb") for stop in stops] == ["tt0000001", "tt0000002"]
+    assert stops[0].raw["_cw_replaced_stop"] is True
+    assert "_cw_replaced_stop" not in stops[1].raw
+    assert [stop.account for stop in stops] == ["owner", "owner"]
     assert plex.queries == ["/status/sessions", "/status/sessions"]
 
 
@@ -251,4 +252,7 @@ def test_pkc_autoplay_resolves_user_again(monkeypatch: pytest.MonkeyPatch) -> No
     _start(service, rating_key="1002", imdb="tt0000002", offset=12_619)
     _pkc_stop(service, rating_key="1002", imdb="tt0000002")
 
-    assert [event.action for event in sink.events] == ["start"]
+    assert [(event.action, event.account, event.ids.get("imdb")) for event in sink.events] == [
+        ("start", "owner", "tt0000001"),
+        ("stop", "owner", "tt0000001"),
+    ]
