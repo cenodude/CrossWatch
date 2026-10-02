@@ -2724,17 +2724,19 @@ def test_connection_cards_show_default_and_friendly_profile_names() -> None:
     ui = Path("assets/helpers/providers-ui.js").read_text("utf-8")
 
     assert "function profileFriendlyName(cfg, provider, id)" in ui
-    assert "PROFILE_PILL_LIMIT" in ui
-    assert 'is-overflow' in ui
-    # default is no longer stripped from the card badges
+    assert "function authProfileSummary(card, cfg)" in ui
+    assert "PROFILE_NAME_LIMIT" in ui
+    assert "${names.length} profiles" in ui
+    assert "const onlyDefault = names.length === 1" in ui
+    assert "cw-auth-profile-pill" not in ui
+    assert "cw-auth-profile-strip" not in ui
     assert '.filter((id) => String(id || "").trim().toLowerCase() !== "default")' not in ui
 
     css = Path("assets/css/auth-providers.css").read_text("utf-8")
-    pill = css.split(".cw-auth-profile-pill{", 1)[1].split("}", 1)[0]
-    assert "text-overflow:ellipsis" in pill
-    assert "overflow:hidden" in pill
-    strip = css.split(".cw-auth-profile-strip{", 1)[1].split("}", 1)[0]
-    assert "max-width:" in strip and "overflow:hidden" in strip
+    assert ".cw-auth-profile-summary{" in css
+    assert ".cw-auth-profile-pill" not in css
+    assert ".cw-auth-profile-strip" not in css
+    assert ".cw-auth-profile-pill" not in Path("assets/themes/flat.css").read_text("utf-8")
 
 
 def test_connection_cards_name_failed_profiles_and_dot_each_profile() -> None:
@@ -2745,15 +2747,13 @@ def test_connection_cards_name_failed_profiles_and_dot_each_profile() -> None:
     assert "Check connection: ${shown}${overflow}" in ui
     assert "if (entry.configured === true) return \"ok\";" in ui
     assert "data?.instances && typeof data.instances === \"object\"" in ui
-    assert "cw-auth-profile-dot" in ui
-    assert "cw-auth-profile-name" in ui
-    assert "is-connected" in ui
-    assert "is-failed" in ui
+    assert "${okCount} of ${names.length} connected" in ui
+    assert 'dot: "warn"' in ui
+    assert 'item.state === "ok" ? "Connected" : "Check connection"' in ui
 
     css = Path("assets/css/auth-providers.css").read_text("utf-8")
-    assert ".cw-auth-profile-dot.ok" in css
-    assert ".cw-auth-profile-dot.fail" in css
-    assert ".cw-auth-profile-name" in css
+    assert ".cw-auth-status-dot.ok" in css
+    assert ".cw-auth-status-dot.warn" in css
     status_text = css.split(".cw-auth-status-text{", 1)[1].split("}", 1)[0]
     assert "text-overflow:ellipsis" in status_text
 

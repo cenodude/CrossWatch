@@ -272,25 +272,28 @@
     return label || (isDefault ? "Default" : profileDisplayName(raw));
   }
 
-  const PROFILE_PILL_LIMIT = 3;
+  const PROFILE_NAME_LIMIT = 2;
 
-  function authProfileBadges(card, cfg) {
+  function authProfileSummary(card, cfg) {
+    const base = { text: card.status.text, detail: "", title: card.status.text, dot: card.status.ok ? "ok" : "" };
+    if (card.type !== "provider") return base;
     const data = statusProviderData(card.key || card.provider);
     const ids = authProfileIds(cfg, card.provider, data, !!card.status?.ok);
-    if (!ids.length) return "";
-    const label = ids.length === 1 ? "Configured profile" : "Configured profiles";
     const names = ids.map((id) => {
-      const name = profileFriendlyName(cfg, card.provider, id);
       const state = authProfileState(cfg, card.provider, id, data, !!card.status?.ok);
-      return { id, name, state, stateLabel: state === "ok" ? "Connected" : "Check connection" };
+      return { id, name: profileFriendlyName(cfg, card.provider, id), state };
     });
-    const shown = names.slice(0, PROFILE_PILL_LIMIT);
-    const rest = names.slice(PROFILE_PILL_LIMIT);
-    const pills = shown.map((item) => `<span class="cw-auth-profile-pill ${item.state === "ok" ? "is-connected" : "is-failed"}" title="${escHtml(`${item.name}: ${item.stateLabel}`)}"><span class="cw-auth-profile-dot ${item.state === "ok" ? "ok" : "fail"}" aria-hidden="true"></span><span class="cw-auth-profile-name">${escHtml(item.name)}</span></span>`);
-    if (rest.length) {
-      pills.push(`<span class="cw-auth-profile-pill is-overflow" title="${escHtml(`${label}: ${rest.map((item) => `${item.name} (${item.stateLabel})`).join(", ")}`)}">+${rest.length}</span>`);
+    const onlyDefault = names.length === 1 && String(names[0].id).toLowerCase() === "default";
+    if (!names.length || onlyDefault) return base;
+    const title = `${card.status.text} - ${names.map((item) => `${item.name}: ${item.state === "ok" ? "Connected" : "Check connection"}`).join(", ")}`;
+    const okCount = names.filter((item) => item.state === "ok").length;
+    if (okCount < names.length) {
+      if (!okCount) return { ...base, title };
+      return { text: `${okCount} of ${names.length} connected`, detail: "", title, dot: "warn" };
     }
-    return `<span class="cw-auth-profile-strip" aria-label="${escHtml(`${label}: ${names.map((item) => `${item.name} ${item.stateLabel}`).join(", ")}`)}">${pills.join("")}</span>`;
+    if (!card.status.ok) return { ...base, title };
+    const detail = names.length > PROFILE_NAME_LIMIT ? `${names.length} profiles` : names.map((item) => item.name).join(", ");
+    return { ...base, detail, title };
   }
 
   function authProviderKeysWithSections() {
@@ -520,7 +523,8 @@
     </div>`).join("");
     const renderCard = (card) => {
       const attr = card.type === "metadata" ? `data-cw-meta-open="${card.key}"` : `data-cw-auth-open="${card.key}"`;
-      const profiles = card.type === "provider" ? authProfileBadges(card, cfg) : "";
+      const summary = authProfileSummary(card, cfg);
+      const detail = summary.detail ? `<span class="cw-auth-profile-summary"> · ${escHtml(summary.detail)}</span>` : "";
       const meta = card.type === "provider" && typeof providerMeta().get === "function" ? providerMeta().get(card.key) : null;
       const scrobbleOnly = meta?.scrobbleOnly === true
         ? '<span class="cw-auth-scrobble-only-badge material-symbols-rounded" title="Scrobble only (Watcher or Webhook)" aria-label="Scrobble only (Watcher or Webhook)">sync</span>'
@@ -530,9 +534,8 @@
         <span class="cw-auth-provider-mark">${card.logo}</span>
         <span class="cw-auth-service-copy">
           <strong>${card.label}</strong>
-          <small title="${escHtml(card.status.text)}"><span class="cw-auth-status-dot ${card.status.ok ? "ok" : ""}"></span><span class="cw-auth-status-text">${escHtml(card.status.text)}</span></small>
+          <small title="${escHtml(summary.title)}"><span class="cw-auth-status-dot ${summary.dot}"></span><span class="cw-auth-status-text">${escHtml(summary.text)}${detail}</span></small>
         </span>
-        ${profiles}
         <span class="material-symbols-rounded cw-auth-chevron" aria-hidden="true">chevron_right</span>
       </button>`;
     };
