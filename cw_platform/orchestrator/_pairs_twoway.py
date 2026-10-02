@@ -87,6 +87,7 @@ from ..id_map import migrate_media_index, minimal as _minimal, canonical_key as 
 from ..history_events import history_sync_key, minimal_history_item
 from ..anime_mapping.service import (
     anime_mapping_pair_feature_options as _anime_pair_feature_options,
+    anime_only_adds as _anime_only_adds,
     config_with_pair_feature_options as _anime_config_with_pair_feature_options,
     enrich_index_for_pair as _anime_enrich_index_for_pair,
 )
@@ -1934,6 +1935,16 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         suspect_ratio=float((cfg.get("runtime") or {}).get("suspect_shrink_ratio", 0.10)),
         emit=emit, dbg=dbg, dst_name=b, feature=feature,
     )
+
+    if a == "ANILIST" or b == "ANILIST":
+        anime_only_skipped = 0
+        if a == "ANILIST":
+            add_to_A, anime_only_skipped = _anime_only_adds(add_to_A, provider_cfg, anime_pair_opts)
+        if b == "ANILIST":
+            add_to_B, skipped_b = _anime_only_adds(add_to_B, provider_cfg, anime_pair_opts)
+            anime_only_skipped += skipped_b
+        if anime_only_skipped:
+            emit("debug", msg="anime_mapping.anime_only_filtered", feature=feature, a=a, b=b, skipped=anime_only_skipped)
 
     emit("two:plan", a=a, b=b, feature=feature,
          add_to_A=len(add_to_A), add_to_B=len(add_to_B),

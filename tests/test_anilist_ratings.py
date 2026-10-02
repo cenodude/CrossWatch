@@ -215,3 +215,35 @@ def test_plex_webhook_sends_movie_ratings_to_anilist(monkeypatch: Any) -> None:
 
     assert result["anilist"] == {"ok": True}
     assert calls[0][2] == "movie" and calls[0][4]["tmdb"] == 372058 and calls[0][5] is None
+
+
+def _anime_only_rows() -> list[dict[str, Any]]:
+    return [
+        {"type": "show", "title": "Shingeki no Kyojin", "ids": {"simkl": "39687", "mal": "16498", "anilist": "16498"}},
+        {"type": "movie", "title": "Kimi no Na wa.", "ids": {"mal": "32281"}},
+        {"type": "show", "title": "Dark", "ids": {"tmdb": "70523", "simkl": "715234"}},
+    ]
+
+
+def test_anime_only_plan_keeps_only_items_with_an_anilist_identity(monkeypatch: Any) -> None:
+    from cw_platform.anime_mapping import service
+
+    monkeypatch.setattr(service.AnimeMappingService, "ready", lambda self: True)
+    kept, skipped = service.anime_only_adds(_anime_only_rows(), {}, {"use_anime_mapping": True, "anime_only_sync": True})
+
+    assert [row["title"] for row in kept] == ["Shingeki no Kyojin", "Kimi no Na wa."]
+    assert skipped == 1
+
+
+@pytest.mark.parametrize("ready,options", [
+    (True, {"use_anime_mapping": True, "anime_only_sync": False}),
+    (True, {}),
+    (False, {"use_anime_mapping": True, "anime_only_sync": True}),
+])
+def test_anime_only_plan_filter_is_off_without_the_option_or_the_mapping_data(monkeypatch: Any, ready: bool, options: dict[str, Any]) -> None:
+    from cw_platform.anime_mapping import service
+
+    monkeypatch.setattr(service.AnimeMappingService, "ready", lambda self: ready)
+    kept, skipped = service.anime_only_adds(_anime_only_rows(), {}, options)
+
+    assert len(kept) == 3 and skipped == 0

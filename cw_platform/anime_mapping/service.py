@@ -122,6 +122,29 @@ def runtime_pair_feature_options(cfg: Mapping[str, Any], feature: Any = "watchli
     return opts
 
 
+ANIME_ONLY_TARGET_KEYS = ("anilist", "mal")
+
+
+def anime_only_adds(
+    items: Any,
+    cfg: Mapping[str, Any] | None,
+    options: Mapping[str, Any] | None,
+) -> tuple[list[Any], int]:
+    rows = list(items or [])
+    if not rows or not bool((options or {}).get("anime_only_sync")):
+        return rows, 0
+    try:
+        if not AnimeMappingService(cfg).ready():
+            return rows, 0
+    except Exception:
+        return rows, 0
+    kept = [
+        row for row in rows
+        if not isinstance(row, Mapping) or any(str(ids_from(row).get(key) or "").strip() for key in ANIME_ONLY_TARGET_KEYS)
+    ]
+    return kept, len(rows) - len(kept)
+
+
 def mapped_media_type(item: Mapping[str, Any]) -> str | None:
     detail = item.get("detail") if isinstance(item.get("detail"), Mapping) else {}
     amap = detail.get("anime_mapping") if isinstance(detail, Mapping) else {}
