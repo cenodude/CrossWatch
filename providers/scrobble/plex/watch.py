@@ -414,6 +414,7 @@ class WatchService:
         self._best_offset: dict[str, tuple[int, int, float]] = {}
         self._dur_cache: dict[int, tuple[int, float]] = {}
         self._last_event: dict[str, ScrobbleEvent] = {}
+        self._stop_sent: set[str] = set()
         self._session_playback: dict[str, tuple[dict[str, str], float]] = {}
         self._stop_fallback: dict[str, tuple[ScrobbleEvent, dict[str, str], float]] = {}
         self._identity_recovery: dict[str, tuple[ScrobbleEvent, dict[str, str], float]] = {}
@@ -711,7 +712,8 @@ class WatchService:
             state.pop(sk, None)
         if not keep_stop:
             self._identity_logged.pop(sk, None)
-        self._allowed_sessions = {key for key in self._allowed_sessions if not key.startswith(f"{sk}|")}
+        self._stop_sent.discard(sk)
+        self._allowed_sessions ={key for key in self._allowed_sessions if not key.startswith(f"{sk}|")}
         self._pkc_pending = {
             client: pending for client, pending in self._pkc_pending.items()
             if pending.get("session_key") != sk
@@ -741,8 +743,38 @@ class WatchService:
         best = self._best_offset.get(sk)
         return offset is not None and best is not None and offset < best[0]
 
+    def _close_replaced_playback(self, sk: str, ts: float) -> None:
+        base = self._last_event.get(sk)
+        if not isinstance(base, ScrobbleEvent) or sk in self._stop_sent or self._stop.is_set():
+            return
+        if not 0 <= time.time() - ts < ACTIVE_PLAYBACK_SECONDS:
+            return
+        changes: dict[str, Any] = {"action": "stop", "raw": {**(base.raw or {}), "_cw_replaced_stop": True}}
+        progress = self._best_progress_for_session(sk)
+        best = self._best_offset.get(sk)
+        if progress is not None and best:
+            changes.update(progress=progress, position_ms=best[0], duration_ms=best[1])
+        else:
+            changes["progress"] = self._last_emit.get(sk, ("start", base.progress))[1]
+        ev = ScrobbleEvent(**{**base.__dict__, **changes})
+        self._stop_sent.add(sk)
+        if not self._dispatch.dispatch(ev):
+            return
+        try:
+            _cw_update("plex", ev, duration_ms=ev.duration_ms, provider_instance=str(self._instance_id or "default"))
+        except Exception:
+            pass
+        self._last_emit[sk] = ("stop", ev.progress)
+        self._log(f"event stop {ev.media_type} user={_mask_account(ev.account)} p={ev.progress} sess={sk} reason=replaced")
+
     def _prepare_session(self, sk: str, fingerprint: dict[str, str], action: str, entry: dict[str, Any] | None = None) -> None:
         self._expire_session_identity(sk)
+        replaced = self._session_playback.get(sk)
+        if replaced and not self._same_playback(replaced[0], fingerprint) and not any(
+            replaced[0].get(key) and fingerprint.get(key) and replaced[0][key] != fingerprint[key]
+            for key in ("clientIdentifier", "account")
+        ):
+            self._close_replaced_playback(sk, replaced[1])
         if entry is not None and self._playback_rewound(sk, entry):
             self._suspend_session_identity(sk)
         now = time.time()
@@ -1928,6 +1960,9 @@ class WatchService:
             if sk and ev.action == "start":
                 self._last_event[sk] = ev
                 self._stop_fallback.pop(sk, None)
+                self._stop_sent.discard(sk)
+            elif sk and ev.action == "stop":
+                self._stop_sent.add(sk)
             self._log(f"event {ev.action} {ev.media_type} user={_mask_account(ev.account)} p={ev.progress} sess={ev.session_key}")
             if sk:
                 self._last_emit[sk] = (ev.action, ev.progress)

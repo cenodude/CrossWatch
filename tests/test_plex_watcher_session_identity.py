@@ -1341,7 +1341,9 @@ def test_recycled_session_does_not_inherit_owner(monkeypatch: pytest.MonkeyPatch
     second["PlaySessionStateNotification"][0]["viewOffset"] = 60_000
     service._handle_alert(second)
 
-    assert len(sink.events) == 1
+    closed = change == "item" and not cache_only
+    assert [event.action for event in sink.events] == (["start", "stop"] if closed else ["start"])
+    assert all(event.account == "owner" and event.raw["PlaySessionStateNotification"][0]["ratingKey"] == 101 for event in sink.events)
     assert plex.queries == ["/status/sessions", "/status/sessions"]
 
 
@@ -1407,7 +1409,7 @@ def test_recycled_session_resets_previous_progress(monkeypatch: pytest.MonkeyPat
     clock[0] += 10
     service._handle_alert(_alert_with_rating_key("8", 202))
 
-    assert [event.progress for event in sink.events] == [90, 5]
+    assert [(event.action, event.progress) for event in sink.events] == [("start", 90), ("stop", 90), ("start", 5)]
     assert service._max_seen["8"] == 5
     assert service._first_seen["8"] == clock[0]
 
@@ -1424,7 +1426,8 @@ def test_changed_item_cannot_use_stale_identity_on_lookup_failure(monkeypatch: p
     clock[0] += 30
     service._handle_alert(_alert_with_rating_key("8", 202))
 
-    assert len(sink.events) == 1
+    assert [event.action for event in sink.events] == ["start", "stop"]
+    assert all(event.account == "owner" and event.raw["PlaySessionStateNotification"][0]["ratingKey"] == 101 for event in sink.events)
     assert plex.queries == ["/status/sessions", "/status/sessions"]
 
 
