@@ -19,6 +19,7 @@ except Exception:
 from providers.scrobble.currently_watching import update_from_payload as _cw_update
 from providers.scrobble._auto_remove_watchlist import remove_across_providers_by_ids as _rm_across
 from providers.scrobble.scrobble import mask_account as _mask_account
+from providers.scrobble._show_tmdb import show_tmdb_id
 from providers.scrobble.sources import source_enabled
 from providers.webhooks.config import configured_webhook_sinks, profile_scoped_webhook
 from providers.webhooks.dispatch import dispatch_scrobble as _dispatch_scrobble
@@ -594,44 +595,6 @@ def _resolve_trakt_show_id(ids_all: dict[str, Any], cfg: dict[str, Any], logger:
     return None
 
 
-def _trakt_show_ids_from_imdb_show(imdb_show: str, cfg: dict[str, Any], logger: Callable[..., None] | Any | None = None) -> dict[str, Any]:
-    imdb_show = str(imdb_show or "").strip()
-    if not imdb_show:
-        return {}
-
-    key = ("show_ids_imdb", imdb_show)
-    c = _cache_get(key)
-    if isinstance(c, dict):
-        return c
-    if c is not None:
-        return {}
-
-    try:
-        r = trakt_paced_request(requests.get, "GET",
-            f"{TRAKT_API}/search/imdb/{imdb_show}",
-            params={"type": "show", "limit": 1},
-            headers=_headers(cfg),
-            timeout=10,
-        )
-        if r.status_code != 200:
-            _cache_put(key, None)
-            return {}
-        arr = r.json() or []
-        if not arr:
-            _cache_put(key, None)
-            return {}
-        ids = (((arr[0] or {}).get("show") or {}).get("ids") or {})
-        out = {k: ids[k] for k in ("trakt", "tmdb", "imdb", "tvdb") if ids.get(k)}
-        _cache_put(key, out if out else None)
-        if out:
-            _emit(logger, f"trakt show ids from imdb_show {imdb_show}: {out}", "DEBUG")
-        return out
-    except Exception as e:
-        _emit(logger, f"trakt show ids from imdb_show {imdb_show} error: {e}", "DEBUG")
-        _cache_put(key, None)
-        return {}
-
-
 def _resolve_trakt_episode_id(
     md: dict[str, Any],
     ids_all: dict[str, Any],
@@ -781,18 +744,10 @@ def _cw_ids_for_payload(
             hint = {**(_ids_from_providerids(md, root) or {}), **(ids_all or {})}
         except Exception:
             hint = dict(ids_all or {})
-        extra = _show_ids_from_episode_hint(hint, cfg, logger=logger) or {}
-        for key in ("tmdb", "imdb", "tvdb"):
-            val = extra.get(key)
-            if val is not None:
-                cw_ids.setdefault(f"{key}_show", val)
-
-    if "tmdb_show" not in cw_ids and cw_ids.get("imdb_show"):
-        extra2 = _trakt_show_ids_from_imdb_show(str(cw_ids["imdb_show"]), cfg, logger=logger)
-        for key in ("tmdb", "imdb", "tvdb"):
-            val = extra2.get(key)
-            if val is not None:
-                cw_ids.setdefault(f"{key}_show", val)
+        known = {key: cw_ids.get(f"{key}_show") for key in ("imdb", "tvdb")}
+        tmdb_show = show_tmdb_id(cfg, known, hint)
+        if tmdb_show:
+            cw_ids["tmdb_show"] = tmdb_show
 
     return cw_ids
 

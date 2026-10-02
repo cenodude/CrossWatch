@@ -35,6 +35,7 @@ from providers.scrobble.scrobble import (
 from providers.scrobble.currently_watching import update_from_event as _cw_update, update_from_payload as _cw_update_payload
 from providers.scrobble.media_filters import event_ignore_reason, log_media_filter_drop
 from providers.scrobble.sources import source_enabled
+from providers.scrobble._show_tmdb import show_tmdb_id
 from providers.sync.plex._common import stable_client_id
 from providers.sync.plex._utils import _build_session, _resolve_verify_from_cfg, fetch_cloud_home_users, fetch_cloud_account_users
 from cw_platform.provider_instances import get_instance_block, sanitize_instance_label
@@ -1572,6 +1573,11 @@ class WatchService:
                     show_ids_raw = _ids_from_guids_any(getattr(show, "guids", []))
                     for k, v in show_ids_raw.items():
                         ids.setdefault(f"{k}_show", str(v))
+                if not ids.get("tmdb_show"):
+                    known = {key: ids.get(f"{key}_show") for key in ("imdb", "tvdb")}
+                    tmdb_show = show_tmdb_id(self._active_cfg(), known, ids)
+                    if tmdb_show:
+                        ids["tmdb_show"] = str(tmdb_show)
 
             return ScrobbleEvent(
                 action=ev.action,
@@ -1662,7 +1668,7 @@ class WatchService:
         try:
             _cw_update_payload(
                 "plex",
-                ev.media_type,
+                str(ev.media_type),
                 ev.title or "",
                 ev.year,
                 ev.season,

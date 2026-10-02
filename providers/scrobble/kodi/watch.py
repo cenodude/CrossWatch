@@ -17,6 +17,7 @@ except Exception:
 from cw_platform.config_base import load_config
 from providers.auth._auth_KODI import KodiAuthError, clean_base, jsonrpc_call
 from providers.scrobble._log_dedupe import LogDeduplicator
+from providers.scrobble._show_tmdb import show_tmdb_id
 from providers.scrobble.currently_watching import update_from_event as _cw_update
 from providers.scrobble.currently_watching import update_from_payload as _cw_update_payload
 from providers.scrobble.scrobble import Dispatcher, ScrobbleEvent, ScrobbleSink, mask_account
@@ -399,19 +400,24 @@ class KodiWatchService:
         if meta.get("media_type") != "episode":
             return
         ids = meta.get("ids")
-        if not isinstance(ids, dict) or _has_show_ids(ids):
+        if not isinstance(ids, dict):
             return
-        tvshow_id = self._episode_tvshow_id(item)
-        if not tvshow_id:
-            return
-        details = self._tvshow_details(tvshow_id)
-        show_ids = _show_ids_from_uniqueids(_dict(details).get("uniqueid")) if details else {}
-        ids.update(show_ids)
-        if details:
-            if not meta.get("title"):
-                meta["title"] = str(details.get("title") or "").strip() or meta.get("title")
-            if meta.get("year") is None:
-                meta["year"] = _to_int(details.get("year"))
+        if not _has_show_ids(ids):
+            tvshow_id = self._episode_tvshow_id(item)
+            details = self._tvshow_details(tvshow_id) if tvshow_id else None
+            show_ids = _show_ids_from_uniqueids(_dict(details).get("uniqueid")) if details else {}
+            ids.update(show_ids)
+            if details:
+                if not meta.get("title"):
+                    meta["title"] = str(details.get("title") or "").strip() or meta.get("title")
+                if meta.get("year") is None:
+                    meta["year"] = _to_int(details.get("year"))
+        if not str(ids.get("tmdb_show") or "").strip():
+            known = {key: ids.get(f"{key}_show") for key in ("imdb", "tvdb")}
+            episode = {key: ids.get(f"{key}_episode") for key in ("imdb", "tvdb")}
+            tmdb_show = show_tmdb_id(self._active_cfg(), known, episode)
+            if tmdb_show:
+                ids["tmdb_show"] = str(tmdb_show)
 
     def _dispatch_event(self, ev: ScrobbleEvent, duration_ms: int | None = None) -> bool:
         key = (ev.server_uuid, ev.session_key)
@@ -436,7 +442,7 @@ class KodiWatchService:
             try:
                 _cw_update_payload(
                     "kodi",
-                    ev.media_type,
+                    str(ev.media_type),
                     ev.title or "",
                     ev.year,
                     ev.season,
