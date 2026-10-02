@@ -392,26 +392,35 @@ def _axis_coordinates(tag: str, ids: Mapping[str, str], absolute: int) -> dict[t
     return {k: v for k, v in found.items() if v is not None}
 
 
-def resolve_axis_coordinates(
+def resolve_axis_coordinate_map(
     ids: Mapping[str, Any] | None,
     absolute: Any,
     *,
     release_tag: str = "v3",
-) -> set[tuple[int, int]]:
+) -> dict[tuple[str, str], tuple[int, int]]:
     abs_num = _as_int(absolute)
     if abs_num is None or abs_num <= 0:
-        return set()
+        return {}
     clean = {
         str(k).strip().lower(): str(v).strip()
         for k, v in dict(ids or {}).items()
         if str(v or "").strip()
     }
     if not clean:
-        return set()
+        return {}
     ruled = _override_source_coordinate(clean, abs_num)
     if ruled is not None:
-        return {(ruled.season, ruled.episode)}
-    return set(_axis_coordinates(normalize_release_tag(release_tag), clean, abs_num).values())
+        return {(ruled.provider, ruled.ident): (ruled.season, ruled.episode)}
+    return _axis_coordinates(normalize_release_tag(release_tag), clean, abs_num)
+
+
+def resolve_axis_coordinates(
+    ids: Mapping[str, Any] | None,
+    absolute: Any,
+    *,
+    release_tag: str = "v3",
+) -> set[tuple[int, int]]:
+    return set(resolve_axis_coordinate_map(ids, absolute, release_tag=release_tag).values())
 
 
 def resolve_source_coordinate(

@@ -100,6 +100,20 @@ except Exception as e:
         error=str(e),
     )
 
+try:
+    from .anilist import _history as feat_history
+except Exception as e:
+    feat_history = None
+    cw_log(
+        "ANILIST",
+        "module",
+        "warn",
+        "feature_import_failed",
+        import_feature="history",
+        error_type=e.__class__.__name__,
+        error=str(e),
+    )
+
 
 GQL_URL = "https://graphql.anilist.co"
 UA = os.environ.get("CW_ANILIST_UA") or os.environ.get("CW_UA") or http_user_agent("AniList", override_env="CW_ANILIST_UA")
@@ -137,6 +151,8 @@ def label_anilist(method: str, url: str, kw: Mapping[str, Any]) -> str:
                 return "viewer"
             if "SaveMediaListEntry" in q and "$progress" in q:
                 return "progress:save"
+            if "MediaListCollection" in q and "progress" in q:
+                return "history:index"
             if "mediaListEntry" in q and "score(" in q:
                 return "ratings:lookup"
             if "mediaListEntry" in q:
@@ -276,7 +292,20 @@ class ANILISTClient:
 
 
 def supported_features() -> dict[str, bool]:
-    return {"watchlist": bool(feat_watchlist), "ratings": bool(feat_ratings), "history": False, "playlists": False}
+    return {"watchlist": bool(feat_watchlist), "ratings": bool(feat_ratings), "history": bool(feat_history), "playlists": False}
+
+
+_HISTORY_CAPS: dict[str, Any] = {
+    "types": {"movies": True, "shows": False, "seasons": False, "episodes": True},
+    "upsert": False,
+    "remove": False,
+    "observed_deletes": False,
+    "rewatches": {"read": False, "write": False},
+}
+
+
+def _feature_modules() -> dict[str, Any]:
+    return {"watchlist": feat_watchlist, "ratings": feat_ratings, "history": feat_history}
 
 
 def get_manifest() -> Mapping[str, Any]:
@@ -299,6 +328,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "unrate": True,
                 "from_date": False,
             },
+            "history": dict(_HISTORY_CAPS),
         },
     }
 
@@ -405,7 +435,7 @@ class ANILISTModule:
         features = {
             "watchlist": bool(feats.get("watchlist") and ok),
             "ratings": bool(feats.get("ratings") and ok),
-            "history": False,
+            "history": bool(feats.get("history") and ok),
             "playlists": False,
         }
 
@@ -438,7 +468,7 @@ class ANILISTModule:
         return tuple(k for k, v in feats.items() if v)
 
     def build_index(self, feature: str, **kwargs: Any) -> dict[str, dict[str, Any]]:
-        mod = {"watchlist": feat_watchlist, "ratings": feat_ratings}.get(str(feature or "").strip().lower())
+        mod = _feature_modules().get(str(feature or "").strip().lower())
         if not mod:
             _info("index_skipped", feature=feature, reason="disabled_or_missing")
             return {}
@@ -457,7 +487,7 @@ class ANILISTModule:
         if dry_run:
             return {"ok": True, "count": len(lst), "dry_run": True}
         feature_name = str(feature or "").strip().lower()
-        mod = {"watchlist": feat_watchlist, "ratings": feat_ratings}.get(feature_name)
+        mod = _feature_modules().get(feature_name)
         if not mod:
             _info("write_skipped", op="add", feature=feature, reason="disabled_or_missing")
             return {"ok": True, "count": 0, "unresolved": []}
@@ -492,7 +522,7 @@ class ANILISTModule:
         if dry_run:
             return {"ok": True, "count": len(lst), "dry_run": True}
         feature_name = str(feature or "").strip().lower()
-        mod = {"watchlist": feat_watchlist, "ratings": feat_ratings}.get(feature_name)
+        mod = _feature_modules().get(feature_name)
         if not mod:
             _info("write_skipped", op="remove", feature=feature, reason="disabled_or_missing")
             return {"ok": True, "count": 0, "unresolved": []}
@@ -522,6 +552,7 @@ class _ANILISTOPS:
                 "unrate": True,
                 "from_date": False,
             },
+            "history": dict(_HISTORY_CAPS),
         }
 
     def is_configured(self, cfg: Mapping[str, Any]) -> bool:
