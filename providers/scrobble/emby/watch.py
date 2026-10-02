@@ -13,16 +13,15 @@ try:
 except Exception:
     BASE_LOG = None
 
-from cw_platform.app_version import app_version, user_agent as http_user_agent
+from cw_platform.app_version import app_version
 from cw_platform.config_base import load_config
-from cw_platform.trakt_http import paced_request as trakt_paced_request
 from providers.scrobble._log_dedupe import LogDeduplicator
+from providers.scrobble._show_tmdb import show_tmdb_id
 from providers.scrobble.scrobble import Dispatcher, ScrobbleSink, ScrobbleEvent, MediaType, mask_account as _mask_account
 from providers.scrobble.currently_watching import update_from_event as _cw_update, update_from_payload as _cw_update_payload
 from providers.scrobble.media_filters import event_ignore_reason, log_media_filter_drop
 from providers.scrobble.sources import source_enabled
 
-TRAKT_API = "https://api.trakt.tv"
 _HTTP = requests.Session()
 
 _CFG_CACHE: dict[str, Any] = {"ts": 0.0, "cfg": {}}
@@ -31,7 +30,6 @@ OFFLINE_INITIAL_RETRY_SECONDS = 30.0
 OFFLINE_MAX_RETRY_SECONDS = 300.0
 OFFLINE_TIMEOUT_SECONDS = 2.0
 
-_TRAKT_ID_CACHE: dict[tuple, Any] = {}
 _VIEW_CACHE_TTL_SECS = 60.0
 _SERIES_IDS_CACHE: dict[tuple[str, str, str], tuple[float, dict[str, Any] | None]] = {}
 _SERIES_IDS_CACHE_TTL_SECS = 60 * 60
@@ -87,45 +85,6 @@ def _series_ids_cache_put(base: str, uid: str, series_id: str, val: dict[str, An
         v = dict(val or {})
         ttl = _SERIES_IDS_CACHE_TTL_SECS if v else _SERIES_IDS_NEG_TTL_SECS
         _SERIES_IDS_CACHE[key] = (time.time() + float(ttl), (v or None))
-    except Exception:
-        pass
-
-
-def _trakt_tokens(cfg: dict[str, Any]) -> dict[str, str]:
-    tr = cfg.get("trakt") or {}
-    au = (cfg.get("auth") or {}).get("trakt") or {}
-    return {
-        "client_id": str(tr.get("client_id") or "").strip(),
-        "access_token": str(au.get("access_token") or tr.get("access_token") or "").strip(),
-    }
-
-
-def _trakt_headers(cfg: dict[str, Any]) -> dict[str, str]:
-    t = _trakt_tokens(cfg)
-    headers: dict[str, str] = {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-        "trakt-api-version": "2",
-        "trakt-api-key": t["client_id"],
-        "User-Agent": http_user_agent("Scrobble", override_env="CW_TRAKT_UA"),
-    }
-    if t["access_token"]:
-        headers["Authorization"] = f"Bearer {t['access_token']}"
-    return headers
-
-
-def _cache_get(key: tuple) -> Any | None:
-    try:
-        return _TRAKT_ID_CACHE.get(key)
-    except Exception:
-        return None
-
-
-def _cache_put(key: tuple, value: Any) -> None:
-    try:
-        if len(_TRAKT_ID_CACHE) > 2048:
-            _TRAKT_ID_CACHE.clear()
-        _TRAKT_ID_CACHE[key] = value
     except Exception:
         pass
 
@@ -314,92 +273,6 @@ def _series_ids_from_payload(md: Mapping[str, Any], root: Mapping[str, Any]) -> 
     return out
 
 
-def _guid_search_episode(epi_hint: dict[str, Any], cfg: dict[str, Any], logger=None) -> dict[str, Any]:
-    try:
-        t = _trakt_tokens(cfg)
-        if not t.get("client_id"):
-            return {}
-        q = {k: epi_hint.get(k) for k in ("tmdb", "imdb", "tvdb") if epi_hint.get(k)}
-        if not q:
-            return {}
-        r = trakt_paced_request(_HTTP.get, "GET",
-            f"{TRAKT_API}/search/episode",
-            params=q,
-            headers=_trakt_headers(cfg),
-            timeout=10,
-        )
-        if r.status_code != 200:
-            return {}
-        arr = r.json() or []
-        for it in arr:
-            ep = (it or {}).get("episode") or {}
-            ids = (ep.get("ids") or {})
-            if ids.get("trakt"):
-                return {k: ids[k] for k in ("trakt", "tmdb", "imdb", "tvdb") if ids.get(k)}
-    except Exception:
-        pass
-    return {}
-
-
-def _show_ids_from_episode_hint(ids_hint: dict[str, Any], cfg: dict[str, Any], logger=None) -> dict[str, Any]:
-    cache_key = (
-        "show_ids_from_episode_hint",
-        ids_hint.get("imdb"),
-        ids_hint.get("tmdb"),
-        ids_hint.get("tvdb"),
-    )
-    c = _cache_get(cache_key)
-    if isinstance(c, dict):
-        return c
-    if c is not None:
-        return {}
-
-    t = _trakt_tokens(cfg)
-    if not t.get("client_id"):
-        _cache_put(cache_key, None)
-        return {}
-
-    try:
-        out = _guid_search_episode(ids_hint, cfg, logger=logger)
-        if out:
-            _cache_put(cache_key, out)
-            return out
-    except Exception:
-        pass
-
-    for key in ("tmdb", "imdb", "tvdb"):
-        val = ids_hint.get(key)
-        if not val:
-            continue
-        try:
-            r = trakt_paced_request(_HTTP.get, "GET",
-                f"{TRAKT_API}/search/{key}/{val}",
-                params={"type": "episode", "limit": 1},
-                headers=_trakt_headers(cfg),
-                timeout=10,
-            )
-            if r.status_code != 200:
-                continue
-            arr = r.json() or []
-        except Exception:
-            continue
-
-        for hit in arr:
-            show_ids = ((hit.get("show") or {}).get("ids") or {})
-            out = {k: show_ids[k] for k in ("trakt", "tmdb", "imdb", "tvdb") if show_ids.get(k)}
-            if out:
-                if logger and _is_debug():
-                    try:
-                        logger(f"resolved SHOW ids from episode hint: {out}", "DEBUG")
-                    except Exception:
-                        pass
-                _cache_put(cache_key, out)
-                return out
-
-    _cache_put(cache_key, None)
-    return {}
-
-
 def _enrich_episode_ids(
     item: dict[str, Any],
     sess: dict[str, Any],
@@ -458,12 +331,10 @@ def _enrich_episode_ids(
                         hint[key] = val
             except Exception:
                 pass
-            if hint:
-                extra = _show_ids_from_episode_hint(hint, cfg, logger=logger) or {}
-                for key in ("tmdb", "imdb", "tvdb"):
-                    val = extra.get(key)
-                    if val is not None and f"{key}_show" not in cw_ids:
-                        cw_ids[f"{key}_show"] = val
+            known = {key: cw_ids.get(f"{key}_show") for key in ("imdb", "tvdb")}
+            tmdb_show = show_tmdb_id(cfg, known, hint)
+            if tmdb_show:
+                cw_ids["tmdb_show"] = tmdb_show
         except Exception:
             pass
 
@@ -991,7 +862,7 @@ class EmbyWatchService:
         try:
             _cw_update_payload(
                 "emby",
-                ev.media_type,
+                str(ev.media_type),
                 ev.title or "",
                 ev.year,
                 ev.season,

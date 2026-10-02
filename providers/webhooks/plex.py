@@ -25,6 +25,7 @@ except Exception:
 from providers.scrobble.currently_watching import update_from_payload as _cw_update
 from providers.scrobble._auto_remove_watchlist import remove_across_providers_by_ids as _rm_across
 from providers.scrobble.scrobble import mask_account as _mask_account
+from providers.scrobble._show_tmdb import show_tmdb_id
 from providers.scrobble.plex.ratings_sync import RATING_SINKS
 from providers.scrobble.sources import source_enabled
 from providers.webhooks.config import configured_webhook_sinks, profile_scoped_webhook, webhook_sink_instance
@@ -565,12 +566,11 @@ def _cw_ids_for_payload(
             if val is not None:
                 cw_ids.setdefault(f"{key}_show", val)
 
-    if "tmdb_show" not in cw_ids and cw_ids.get("imdb_show"):
-        extra2 = _trakt_show_ids_from_imdb_show(str(cw_ids["imdb_show"]), cfg, logger=logger)
-        for key in ("tmdb", "imdb", "tvdb"):
-            val = extra2.get(key)
-            if val is not None:
-                cw_ids.setdefault(f"{key}_show", val)
+    if "tmdb_show" not in cw_ids:
+        known = {key: cw_ids.get(f"{key}_show") for key in ("imdb", "tvdb")}
+        tmdb_show = show_tmdb_id(cfg, known, ids_all)
+        if tmdb_show:
+            cw_ids["tmdb_show"] = tmdb_show
 
     return cw_ids
 
@@ -742,50 +742,6 @@ def _resolve_trakt_show_id(
             _emit(logger, f"trakt show id resolve error: {e}", "DEBUG")
     _cache_put(key, None)
     return None
-
-
-def _trakt_show_ids_from_imdb_show(
-    imdb_show: str,
-    cfg: dict[str, Any],
-    logger: Callable[..., None] | Any | None = None,
-) -> dict[str, Any]:
-    imdb_show = str(imdb_show or "").strip()
-    if not imdb_show:
-        return {}
-
-    key = ("show_ids_imdb", imdb_show)
-    c = _cache_get(key)
-    if isinstance(c, dict):
-        return c
-    if c is not None:
-        return {}
-
-    try:
-        r = trakt_paced_request(requests.get, "GET",
-            f"{TRAKT_API}/search/imdb/{imdb_show}",
-            params={"type": "show", "limit": 1},
-            headers=_headers(cfg),
-            timeout=10,
-        )
-        if r.status_code != 200:
-            _cache_put(key, None)
-            return {}
-        arr = r.json() or []
-        if not arr:
-            _cache_put(key, None)
-            return {}
-
-        ids = (((arr[0] or {}).get("show") or {}).get("ids") or {})
-        out = {k: ids[k] for k in ("trakt", "tmdb", "imdb", "tvdb") if ids.get(k)}
-
-        _cache_put(key, out if out else None)
-        if out:
-            _emit(logger, f"trakt show ids from imdb_show {imdb_show}: {out}", "DEBUG")
-        return out
-    except Exception as e:
-        _emit(logger, f"trakt show ids from imdb_show {imdb_show} error: {e}", "DEBUG")
-        _cache_put(key, None)
-        return {}
 
 
 def _guid_search_episode(
