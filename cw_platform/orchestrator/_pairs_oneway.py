@@ -218,6 +218,7 @@ from ..id_map import migrate_media_index, minimal as _minimal, canonical_key as 
 from ..history_events import history_sync_key, minimal_history_item
 from ..anime_mapping.service import (
     anime_mapping_pair_feature_options as _anime_pair_feature_options,
+    anime_only_adds as _anime_only_adds,
     config_with_pair_feature_options as _anime_config_with_pair_feature_options,
     enrich_index_for_pair as _anime_enrich_index_for_pair,
 )
@@ -1746,6 +1747,11 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
         if retried:
             emit("debug", msg="unresolved.retry", feature=feature, dst=dst, retried=retried)
             
+    if dst == "ANILIST":
+        adds, anime_only_skipped = _anime_only_adds(adds, provider_cfg, anime_pair_opts)
+        if anime_only_skipped:
+            emit("debug", msg="anime_mapping.anime_only_filtered", feature=feature, dst=dst, skipped=anime_only_skipped)
+
     emit("one:plan", src=src, dst=dst, feature=feature,
         adds=len(adds), removes=len(removes), updates=len(updates),
         src_count=len(src_idx), dst_count=len(dst_full))
