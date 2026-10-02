@@ -1845,7 +1845,14 @@ function renderFeaturePanel(state){
           <span class="slider"></span>
         </label>
       </div>
-      ${animeNote ? `<div class="muted">${animeNote}</div>` : ""}`
+      ${animeNote ? `<div class="muted">${animeNote}</div>` : ""}
+      ${hsRemoveLocked ? `<div class="opt-row muted" title="AniList only holds anime, so this is always on for history.">
+        <label for="cx-hs-anime-only">Anime-only sync</label>
+        <label class="switch">
+          <input id="cx-hs-anime-only" type="checkbox" checked disabled>
+          <span class="slider"></span>
+        </label>
+      </div>` : ""}`
       : "";
 left.innerHTML = `
       <div class="panel-title">History | Basics</div>
@@ -1881,7 +1888,7 @@ left.innerHTML = `
         <div class="opt-row" style="grid-column:1/-1">
           <label for="cx-hs-specials" data-tip-id="cx-hs-specials">Specials (Season 0)</label>
           <label class="switch">
-            <input id="cx-hs-specials" type="checkbox" ${hs.include_specials !== false ? "checked" : ""}>
+            <input id="cx-hs-specials" type="checkbox" ${hs.include_specials !== false && !hsRemoveLocked ? "checked" : ""} ${hsRemoveLocked ? 'disabled data-locked="1"' : ""}>
             <span class="slider"></span>
           </label>
         </div>
@@ -1890,6 +1897,7 @@ left.innerHTML = `
         ${smDroppedRow}
       </div>
       ${animeRow}
+      ${hsRemoveLocked && !globalAnimeMappingEnabled(state) ? `<div class="muted"><b>Enable global Anime ID Mapping first.</b> Without it no history is synced to AniList.</div>` : ""}
       ${hsRemoveLocked ? `<div class="muted">AniList history is one-way and anime only. It needs global Anime ID Mapping, sets the episode progress per title and never removes. Specials are skipped.</div>` : ""}
       <div class="muted">${rwSupported ? "Synchronize plays between providers. Rewatches require event-capable providers; SIMKL requires Pro/VIP. Remove is not recommended." : "Synchronize plays between providers. Rewatches are available only when both sides support event history; SIMKL requires Pro/VIP."}</div>
     `;

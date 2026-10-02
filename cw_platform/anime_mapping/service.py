@@ -189,12 +189,16 @@ def anime_only_adds(
     history = str(feature or "").strip().lower() == "history"
     if not rows or not (history or bool((options or {}).get("anime_only_sync"))):
         return rows, 0
+    unavailable: tuple[list[Any], int] = ([], len(rows)) if history else (rows, 0)
+    block = cfg.get("anime_mapping") if isinstance(cfg, Mapping) else None
+    if history and not bool((block if isinstance(block, Mapping) else {}).get("enabled", False)):
+        return unavailable
     try:
         svc = AnimeMappingService(cfg)
         if not svc.ready():
-            return rows, 0
+            return unavailable
     except Exception:
-        return rows, 0
+        return unavailable
     cache: dict[tuple[str, str], bool] = {}
     kept = [row for row in rows if not isinstance(row, Mapping) or _anime_only_keep(svc, row, history, cache)]
     return kept, len(rows) - len(kept)
