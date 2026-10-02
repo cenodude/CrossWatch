@@ -144,8 +144,12 @@ def _fuzzy(day: date) -> dict[str, int]:
 
 
 def _mapping_service(adapter: Any) -> AnimeMappingService | None:
+    cfg = getattr(adapter, "raw_cfg", None)
+    block = cfg.get("anime_mapping") if isinstance(cfg, Mapping) else None
+    if not bool((block if isinstance(block, Mapping) else {}).get("enabled", False)):
+        return None
     try:
-        svc = AnimeMappingService(getattr(adapter, "raw_cfg", None))
+        svc = AnimeMappingService(cfg)
         return svc if svc.ready() else None
     except Exception:
         return None

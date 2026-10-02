@@ -131,11 +131,11 @@ def _movie(ids: dict[str, str], watched_at: str = "2026-09-02T20:00:00Z") -> dic
     return {"type": "movie", "title": "Your Name.", "year": 2016, "ids": dict(ids), "watched": True, "watched_at": watched_at}
 
 
-def _cfg() -> dict[str, Any]:
+def _cfg(mapping_enabled: bool = True) -> dict[str, Any]:
     return {
         "runtime": {"debug": False, "snapshot_ttl_sec": 0, "apply_chunk_size": 0, "apply_chunk_pause_ms": 0},
         "anilist": {"access_token": "token"},
-        "anime_mapping": {"enabled": True, "release_tag": "v3", "use_for_pairs": ["anilist", "simkl"]},
+        "anime_mapping": {"enabled": mapping_enabled, "release_tag": "v3", "use_for_pairs": ["anilist", "simkl"]},
         "sync": {"dry_run": False, "enable_add": True, "enable_remove": False,
                  "include_observed_deletes": False, "allow_mass_delete": False},
         "pairs": [{"id": "p1", "enabled": True, "source": "JELLYFIN", "target": "ANILIST", "mode": "one-way",
@@ -143,11 +143,11 @@ def _cfg() -> dict[str, Any]:
     }
 
 
-def _sync(monkeypatch: pytest.MonkeyPatch, source: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _sync(monkeypatch: pytest.MonkeyPatch, source: list[dict[str, Any]], *, mapping_enabled: bool = True) -> list[dict[str, Any]]:
     src = FakeSource({canonical_key(item): item for item in source})
     monkeypatch.setattr("cw_platform.orchestrator.facade.load_sync_providers", lambda: {"JELLYFIN": src, "ANILIST": anilist_mod.OPS})
     before = len(FakeAniList.saves)
-    Orchestrator(_cfg()).run()
+    Orchestrator(_cfg(mapping_enabled)).run()
     assert src.add_calls == []
     return FakeAniList.saves[before:]
 
@@ -210,6 +210,16 @@ def test_anime_movie_is_marked_completed_and_then_stays_quiet(anilist: type[Fake
 
     assert [(save["mediaId"], save["progress"], save["status"]) for save in first] == [(21519, 1, "COMPLETED")]
     assert second == []
+
+
+def test_nothing_is_planned_or_written_without_anime_mapping(anilist: type[FakeAniList], monkeypatch: pytest.MonkeyPatch) -> None:
+    anilist.entries = {16498: _entry("CURRENT", 2)}
+
+    assert _sync(monkeypatch, [_episode(AOT, 1, 5), _episode(DARK, 1, 1)], mapping_enabled=False) == []
+    assert anilist_mod.OPS.build_index(_cfg(False), feature="history") == {}
+    result = anilist_mod.OPS.add(_cfg(False), [_episode(AOT, 1, 5)], feature="history")
+    assert (result["count"], result["unresolved"][0]["reason"]) == (0, "anime_mapping_unavailable")
+    assert anilist.saves == []
 
 
 def test_remove_is_refused(anilist: type[FakeAniList]) -> None:
