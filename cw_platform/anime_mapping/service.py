@@ -125,23 +125,78 @@ def runtime_pair_feature_options(cfg: Mapping[str, Any], feature: Any = "watchli
 ANIME_ONLY_TARGET_KEYS = ("anilist", "mal")
 
 
+ANIME_ONLY_AIRED_KEYS = ("tvdb", "tmdb")
+
+
+def _clean_id_map(raw: Any) -> dict[str, str]:
+    return {
+        str(k).strip().lower(): str(v).strip()
+        for k, v in dict(raw if isinstance(raw, Mapping) else {}).items()
+        if str(v or "").strip()
+    }
+
+
+def _show_has_anilist_entry(release_tag: str, show_ids: Mapping[str, str], cache: dict[tuple[str, str], bool]) -> bool:
+    if any(show_ids.get(key) for key in ANIME_ONLY_TARGET_KEYS):
+        return True
+    for provider in ANIME_ONLY_AIRED_KEYS:
+        ident = show_ids.get(provider)
+        if not ident:
+            continue
+        hit = cache.get((provider, ident))
+        if hit is None:
+            try:
+                rows = query_edges(release_tag, provider, ident)
+            except Exception:
+                rows = []
+            hit = any(
+                str(row.get("source_kind") or "").strip().lower() == "show"
+                and str(row.get("target_provider") or "").strip().lower() == "anilist"
+                for row in rows
+            )
+            cache[(provider, ident)] = hit
+        if hit:
+            return True
+    return False
+
+
+def _anime_only_keep(svc: "AnimeMappingService", row: Mapping[str, Any], history: bool, cache: dict[tuple[str, str], bool]) -> bool:
+    media_type = str(row.get("type") or "").strip().lower()
+    if not history or media_type not in ("episode", "season"):
+        ids = ids_from(row)
+        if history:
+            try:
+                ids = svc.enrich_ids(ids, media_type=media_type or "movie").get("ids") or ids
+            except Exception:
+                pass
+        return any(str(ids.get(key) or "").strip() for key in ANIME_ONLY_TARGET_KEYS)
+    try:
+        if int(str(row.get("season")).strip()) == 0:
+            return False
+    except Exception:
+        pass
+    show_ids = _clean_id_map(row.get("show_ids")) or _clean_id_map(row.get("ids"))
+    return _show_has_anilist_entry(svc.release_tag, show_ids, cache)
+
+
 def anime_only_adds(
     items: Any,
     cfg: Mapping[str, Any] | None,
     options: Mapping[str, Any] | None,
+    feature: Any = None,
 ) -> tuple[list[Any], int]:
     rows = list(items or [])
-    if not rows or not bool((options or {}).get("anime_only_sync")):
+    history = str(feature or "").strip().lower() == "history"
+    if not rows or not (history or bool((options or {}).get("anime_only_sync"))):
         return rows, 0
     try:
-        if not AnimeMappingService(cfg).ready():
+        svc = AnimeMappingService(cfg)
+        if not svc.ready():
             return rows, 0
     except Exception:
         return rows, 0
-    kept = [
-        row for row in rows
-        if not isinstance(row, Mapping) or any(str(ids_from(row).get(key) or "").strip() for key in ANIME_ONLY_TARGET_KEYS)
-    ]
+    cache: dict[tuple[str, str], bool] = {}
+    kept = [row for row in rows if not isinstance(row, Mapping) or _anime_only_keep(svc, row, history, cache)]
     return kept, len(rows) - len(kept)
 
 

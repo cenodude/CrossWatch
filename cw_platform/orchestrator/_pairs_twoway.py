@@ -1939,9 +1939,9 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
     if a == "ANILIST" or b == "ANILIST":
         anime_only_skipped = 0
         if a == "ANILIST":
-            add_to_A, anime_only_skipped = _anime_only_adds(add_to_A, provider_cfg, anime_pair_opts)
+            add_to_A, anime_only_skipped = _anime_only_adds(add_to_A, provider_cfg, anime_pair_opts, feature)
         if b == "ANILIST":
-            add_to_B, skipped_b = _anime_only_adds(add_to_B, provider_cfg, anime_pair_opts)
+            add_to_B, skipped_b = _anime_only_adds(add_to_B, provider_cfg, anime_pair_opts, feature)
             anime_only_skipped += skipped_b
         if anime_only_skipped:
             emit("debug", msg="anime_mapping.anime_only_filtered", feature=feature, a=a, b=b, skipped=anime_only_skipped)

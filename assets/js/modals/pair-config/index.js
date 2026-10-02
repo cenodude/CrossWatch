@@ -8,7 +8,7 @@ import { createLibraryController } from "./libraries.js";
 import { providerLogoHTML, providerToneRgb, sharedFeatureOrder, sharedFeatureLabel } from "./meta.js";
 import { ensurePairConfigStyles } from "./styles.js";
 import { createTabsController } from "./tabs.js";
-import { collectionDisabledForPair, collectionTypesForPair, commonFeaturesForPair, featureAllowedForPair, ratingsDisabledForPair, sanitizeFeaturesForPair } from "./custom-rules.js";
+import { collectionDisabledForPair, collectionTypesForPair, commonFeaturesForPair, featureAllowedForPair, historyRemoveLockedForPair, ratingsDisabledForPair, sanitizeFeaturesForPair } from "./custom-rules.js";
 
 const TWO_WAY_WARNING =
   "Two-way sync means both sides can write to each other. It keeps both providers aligned, but it also heavily increases the risk of conflicts, duplicates, overwrites, and deletions. Use with extreme caution.";
@@ -988,7 +988,7 @@ function applySubDisable(feature){
     collection:["#cx-co-add","#cx-co-remove","#cx-co-type-all","#cx-co-type-movies","#cx-co-type-shows","#cx-co-type-seasons","#cx-co-type-episodes"]
   };
   const on=ID(feature==="ratings"?"cx-rt-enable":feature==="watchlist"?"cx-wl-enable":feature==="history"?"cx-hs-enable":feature==="progress"?"cx-pr-enable":feature==="collection"?"cx-co-enable":"cx-pl-enable")?.checked;
-  (map[feature]||[]).forEach(sel=>{const n=Q(sel);if(n){n.disabled=!on;n.closest?.(".opt-row")?.classList.toggle("muted",!on)}});
+  (map[feature]||[]).forEach(sel=>{const n=Q(sel);if(n){const off=!on||n.dataset.locked==="1";n.disabled=off;if(n.dataset.locked==="1")n.checked=false;n.closest?.(".opt-row")?.classList.toggle("muted",off)}});
   const onlyId=feature==="watchlist"?"cx-wl-anime-only":feature==="ratings"?"cx-rt-anime-only":"";
   const mapId=feature==="watchlist"?"cx-wl-anime-map":feature==="ratings"?"cx-rt-anime-map":"";
   const only=onlyId?ID(onlyId):null;
@@ -1831,6 +1831,7 @@ function renderFeaturePanel(state){
           </label>
         </div>`
       : "";
+    const hsRemoveLocked = historyRemoveLockedForPair(state);
     const animeOpts = normalizeAnimeHistoryOptions(state);
     const animeBlocked = !tmdbMetadataReady(state) || !globalAnimeMappingEnabled(state);
     const animeNote = animeHistoryBlockReason(state);
@@ -1863,10 +1864,10 @@ left.innerHTML = `
             <span class="slider"></span>
           </label>
         </div>
-        <div class="opt-row">
+        <div class="opt-row ${hsRemoveLocked ? "muted" : ""}" ${hsRemoveLocked ? 'title="AniList keeps one episode counter per title, so history can only be added."' : ""}>
           <label for="cx-hs-remove">Remove</label>
           <label class="switch">
-            <input id="cx-hs-remove" type="checkbox" ${hs.remove ? "checked" : ""}>
+            <input id="cx-hs-remove" type="checkbox" ${hs.remove && !hsRemoveLocked ? "checked" : ""} ${hsRemoveLocked ? 'disabled data-locked="1"' : ""}>
             <span class="slider"></span>
           </label>
         </div>
@@ -1889,6 +1890,7 @@ left.innerHTML = `
         ${smDroppedRow}
       </div>
       ${animeRow}
+      ${hsRemoveLocked ? `<div class="muted">AniList history is one-way and anime only. It needs global Anime ID Mapping, sets the episode progress per title and never removes. Specials are skipped.</div>` : ""}
       <div class="muted">${rwSupported ? "Synchronize plays between providers. Rewatches require event-capable providers; SIMKL requires Pro/VIP. Remove is not recommended." : "Synchronize plays between providers. Rewatches are available only when both sides support event history; SIMKL requires Pro/VIP."}</div>
     `;
 
@@ -2248,8 +2250,8 @@ function bindChangeHandlers(state,root){
     if(map[id]){
       const rm=ID(map[id]);
       if(rm){
-        rm.disabled=!e.target.checked;
-        if(!e.target.checked) rm.checked=false;
+        rm.disabled=!e.target.checked||rm.dataset.locked==="1";
+        if(rm.disabled) rm.checked=false;
       }
     }
 

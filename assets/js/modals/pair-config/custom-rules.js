@@ -47,8 +47,19 @@ export function stremioRatingsAllowed(state) {
   return same(state?.dst, "stremio") && !same(state?.src, "stremio") && !isTwoWay(state);
 }
 
+export function anilistHistoryAllowed(state) {
+  return same(state?.dst, "anilist") && !same(state?.src, "anilist") && !isTwoWay(state);
+}
+
+export function historyRemoveLockedForPair(state) {
+  return same(state?.src, "anilist") || same(state?.dst, "anilist");
+}
+
 export function featureAllowedForPair(state, feature) {
   const key = String(feature || "").trim().toLowerCase();
+  if (key === "history" && historyRemoveLockedForPair(state)) {
+    return anilistHistoryAllowed(state);
+  }
   if (key === "ratings" && (same(state?.src, "stremio") || same(state?.dst, "stremio"))) {
     return stremioRatingsAllowed(state);
   }
@@ -75,6 +86,10 @@ export function sanitizeFeaturesForPair(state, features) {
   const out = features && typeof features === "object" ? features : {};
   if (!featureAllowedForPair(state, "ratings") && out.ratings && typeof out.ratings === "object") {
     Object.assign(out.ratings, { enable: false, add: false, remove: false });
+  }
+  if (out.history && typeof out.history === "object" && historyRemoveLockedForPair(state)) {
+    if (!featureAllowedForPair(state, "history")) Object.assign(out.history, { enable: false, add: false, remove: false, rewatches: false });
+    else Object.assign(out.history, { remove: false, rewatches: false });
   }
   if (out.collection && typeof out.collection === "object") {
     if (!featureAllowedForPair(state, "collection")) {
