@@ -178,13 +178,13 @@
       const names = failed.map((id) => profileFriendlyName(cfg, String(key || "").toLowerCase(), id));
       const shown = names.slice(0, 2).join(", ");
       const overflow = names.length > 2 ? ` +${names.length - 2}` : "";
-      return { text: `Check connection: ${shown}${overflow}`, ok: false };
+      return { text: `Check connection: ${shown}${overflow}`, ok: false, failed: true };
     }
     if (String(key || "").toUpperCase() === "NUVIO" && configured) {
       return { text: "Connected", ok: true };
     }
     if (data && typeof data.connected === "boolean") {
-      return data.connected ? { text: "Connected", ok: true } : { text: "Check connection", ok: false };
+      return data.connected ? { text: "Connected", ok: true } : { text: "Check connection", ok: false, failed: true };
     }
     return configured ? { text: "Configured", ok: true } : { text: "Not configured", ok: false };
   }
@@ -275,7 +275,7 @@
   const PROFILE_NAME_LIMIT = 2;
 
   function authProfileSummary(card, cfg) {
-    const base = { text: card.status.text, detail: "", title: card.status.text, dot: card.status.ok ? "ok" : "" };
+    const base = { text: card.status.text, detail: "", title: card.status.text, dot: card.status.ok ? "ok" : (card.status.failed ? "fail" : "") };
     if (card.type !== "provider") return base;
     const data = statusProviderData(card.key || card.provider);
     const ids = authProfileIds(cfg, card.provider, data, !!card.status?.ok);

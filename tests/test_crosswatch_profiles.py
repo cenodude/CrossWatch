@@ -2754,6 +2754,8 @@ def test_connection_cards_name_failed_profiles_and_dot_each_profile() -> None:
     css = Path("assets/css/auth-providers.css").read_text("utf-8")
     assert ".cw-auth-status-dot.ok" in css
     assert ".cw-auth-status-dot.warn" in css
+    assert ".cw-auth-status-dot.fail" in css
+    assert 'card.status.failed ? "fail" : ""' in ui
     status_text = css.split(".cw-auth-status-text{", 1)[1].split("}", 1)[0]
     assert "text-overflow:ellipsis" in status_text
 
