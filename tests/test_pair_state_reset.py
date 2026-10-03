@@ -122,6 +122,49 @@ def test_deleting_pair_purges_its_state(config_base, monkeypatch):
     assert len(keys) == 2 and all(scopes[("p2", key.split(":", 1)[0])].upper() in key for key in keys)
 
 
+def test_deleting_pair_drops_inventory_no_other_pair_covers(config_base, monkeypatch):
+    from cw_platform import config_base as cb
+
+    plex_simkl = {"id": "p1", "source": "PLEX", "target": "SIMKL", "mode": "two-way", "features": {"watchlist": {"enable": True}}}
+    simkl_anilist = {"id": "p2", "source": "SIMKL", "source_instance": "SIMKL-P01", "target": "ANILIST", "mode": "one-way",
+                     "features": {"ratings": {"enable": True}, "history": {"enable": False}}}
+    plex_trakt = {"id": "p3", "source": "PLEX", "target": "TRAKT", "mode": "one-way", "features": {"history": {"enable": True}}}
+    cfg = {"pairs": [plex_simkl, simkl_anilist, plex_trakt]}
+    state_dir = config_base / ".cw_state"
+    state_dir.mkdir(exist_ok=True)
+    store = StateStore(config_base)
+    store.save_feature_blocks({
+        ("PLEX", "default", "watchlist"): block(1),
+        ("PLEX", "default", "history"): block(1, "history"),
+        ("SIMKL", "default", "watchlist"): block(1),
+        ("SIMKL", "default", "ratings"): block(1, "ratings"),
+        ("SIMKL", "SIMKL-P01", "ratings"): block(1, "ratings"),
+        ("ANILIST", "default", "ratings"): block(1, "ratings"),
+        ("ANILIST", "default", "history"): block(1, "history"),
+        ("TRAKT", "default", "history"): block(1, "history"),
+    })
+    monkeypatch.setattr(cb, "CONFIG", config_base)
+    monkeypatch.setattr(syncAPI, "_env", lambda: (lambda: cfg, lambda _cfg: None))
+    monkeypatch.setattr(syncAPI, "_cw_state_dir", lambda: state_dir)
+    monkeypatch.setattr(syncAPI, "_managed_pair_blocked", lambda *_a, **_k: False)
+
+    def inventory():
+        return {(row["provider"], row["instance"], row["feature"]) for row in store.feature_inventory()}
+
+    result = syncAPI.api_pairs_delete("p2", True, None)
+
+    assert result["ok"] and result["inventory_removed"] == 3 and result["state_errors"] == 0
+    assert inventory() == {
+        ("PLEX", "default", "watchlist"), ("PLEX", "default", "history"),
+        ("SIMKL", "default", "watchlist"), ("SIMKL", "default", "ratings"), ("TRAKT", "default", "history"),
+    }
+
+    result = syncAPI.api_pairs_delete("p3", True, None)
+
+    assert result["inventory_removed"] == 2
+    assert inventory() == {("PLEX", "default", "watchlist"), ("SIMKL", "default", "watchlist"), ("SIMKL", "default", "ratings")}
+
+
 @pytest.mark.parametrize("mode", ["one-way", "two-way"])
 def test_reset_pair_does_not_propagate_old_deletes(config_base, monkeypatch, mode):
     one, two = feature_item("watchlist", 1), feature_item("watchlist", 2)

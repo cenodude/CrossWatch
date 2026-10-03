@@ -727,6 +727,26 @@ def remove_baseline_items(base_path: str | Path, provider: str, instance: str, f
         _invalidate()
 
 
+def remove_feature_states(base_path: str | Path, keys: Iterable[tuple[str, str, str]]) -> tuple[int, int]:
+    wanted = {_feature_key(provider, instance, feature) for provider, instance, feature in keys}
+    if not wanted:
+        return 0, 0
+    with _LOCK:
+        conn = get_conn(base_path)
+        if conn is None:
+            raise RuntimeError("State database is unavailable")
+        rows = conn.execute("SELECT id,provider,instance,feature FROM provider_feature_state").fetchall()
+        ids = [int(row["id"]) for row in rows if _feature_key(row["provider"], row["instance"], row["feature"]) in wanted]
+        if not ids:
+            return 0, 0
+        placeholders = ",".join("?" for _ in ids)
+        items = conn.execute(f"SELECT COUNT(*) FROM baseline_items WHERE provider_state_id IN ({placeholders})", ids).fetchone()[0]
+        with conn:
+            conn.execute(f"DELETE FROM provider_feature_state WHERE id IN ({placeholders})", ids)
+        _invalidate()
+        return len(ids), int(items or 0)
+
+
 def save_feature_blocks(
     base_path: str | Path,
     blocks: Mapping[tuple[str, str, str], Mapping[str, Any]],

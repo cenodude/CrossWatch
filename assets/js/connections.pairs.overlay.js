@@ -258,6 +258,14 @@
       let data = null;
       try { data = await res.json(); } catch {}
       if (!res.ok || data?.ok === false || Number(data?.deleted || 0) < 1) throw new Error(data?.error || "pair delete failed");
+      if (Number(data?.inventory_removed || 0) > 0) {
+        try {
+          localStorage.removeItem("cw.dashboardWidgets.data.v1");
+          localStorage.removeItem("cw.profileWidgets.data.v1");
+        } catch {}
+        try { window.CW?.DashboardWidgets?.clear?.(); } catch {}
+        try { window.CW?.DashboardWidgets?.refresh?.({ force: true, forceConfig: true, preserve: false }); } catch {}
+      }
     } catch (e) {
       console.warn("delete api failed", e);
       el.classList.remove("removing");
