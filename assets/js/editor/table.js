@@ -39,22 +39,23 @@
     const repeated = new Set(targets.map(target => target.provider).filter((name, index, all) => all.indexOf(name) !== index));
     const wrap = document.createElement("div");
     wrap.className = "cw-presence";
+    const missing = [];
     targets.forEach((target, index) => {
       const entry = present.get(index);
       if (!entry && !target.can_send) return;
       const chip = document.createElement(entry ? "span" : "button");
       chip.className = `cw-presence-chip ${entry ? "is-on" : "is-off"}`;
       const name = target.display || target.label || target.provider;
-      const src = meta.logLogoPath?.(target.provider) || meta.logoPath?.(target.provider) || "";
+      const src = meta.logoPath?.(target.provider) || meta.logLogoPath?.(target.provider) || "";
       if (src) {
         const img = document.createElement("img");
         img.src = src;
         img.alt = "";
         chip.appendChild(img);
       }
-      if (!src || repeated.has(target.provider)) {
+      if (entry || !src || repeated.has(target.provider)) {
         const text = document.createElement("span");
-        text.textContent = src ? target.instance_label || target.instance : name;
+        text.textContent = entry || !src ? name : target.instance_label || target.instance;
         chip.appendChild(text);
       }
       if (entry) {
@@ -67,8 +68,10 @@
         chip.setAttribute("aria-label", chip.title);
         chip.onclick = () => call(ctx, "sendRow", row, target);
       }
-      wrap.appendChild(chip);
+      if (entry) wrap.appendChild(chip);
+      else missing.push(chip);
     });
+    wrap.append(...missing);
     return wrap;
   }
 
@@ -192,7 +195,14 @@
       const visual = call(ctx, "formatEpisodeVisualTitle", row);
       if (visual) titleIn.value = visual;
     };
-    titleRow.appendChild(titleIn);
+    if (ctx.merged) {
+      const text = document.createElement("strong");
+      text.className = "cw-merged-title";
+      text.textContent = titleIn.value || row.key || "";
+      titleRow.appendChild(text);
+    } else {
+      titleRow.appendChild(titleIn);
+    }
     if (row._mappingScope) {
       const indicator = document.createElement("span");
       indicator.className = "material-symbols-rounded cw-mapping-indicator";
@@ -289,7 +299,10 @@
     }
     dataCells.title = cell(titleCell, "cw-col-title");
 
-    const yearTd = cell(yearIn);
+    const yearText = document.createElement("span");
+    yearText.className = "cw-merged-year";
+    yearText.textContent = row.year || "";
+    const yearTd = cell(ctx.merged ? yearText : yearIn);
     yearTd.className = "cw-col-year";
     dataCells.year = yearTd;
     dataCells.id = cell(idAIn, "cw-col-id");

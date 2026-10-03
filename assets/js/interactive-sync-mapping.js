@@ -39,6 +39,24 @@ export function suggestedPart(original, parts) {
   return {number:parts[0].number, sure:false};
 }
 
+export function matchedIds(current, next) {
+  const shared = Object.keys(next || {}).filter(key => current?.[key]);
+  if (!shared.length || shared.some(key => String(current[key]) !== String(next[key]))) return null;
+  return {...current, ...next};
+}
+
+export function changeSummary(original, item) {
+  const before = original.show_ids || original.ids || {}, after = item.show_ids || item.ids || {};
+  const parts = [];
+  if (seriesTitle(original) !== seriesTitle(item)) parts.push("title");
+  if (["season", "episode", "part"].some(key => (original[key] ?? "") !== (item[key] ?? ""))) parts.push("numbering");
+  for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
+    if (String(before[key] ?? "") === String(after[key] ?? "")) continue;
+    parts.push(!after[key] ? `${key.toUpperCase()} removed` : before[key] ? `${key.toUpperCase()} ${before[key]} → ${after[key]}` : `${key.toUpperCase()} ${after[key]} added`);
+  }
+  return parts.slice(0, 4).join(", ");
+}
+
 export function mappingGroups(rows) {
   const groups = [];
   rows.forEach((row, index) => {
@@ -211,7 +229,8 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
   function draftStatus(draft, reason = "") {
     const cell = dialog.querySelector(`[data-draft="${drafts.indexOf(draft)}"] [data-draft-status]`);
     cell.className = `is-map-status${draft.review ? " is-review" : draft.dirty ? " is-edited" : ""}`;
-    cell.textContent = draft.review ? "Needs review" : draft.dirty ? "Changed" : "No change yet";
+    const summary = draft.dirty ? changeSummary(draft.row.item, draft.item) : "";
+    cell.textContent = draft.review ? "Needs review" : draft.dirty ? `Changed${summary ? `: ${summary}` : ""}` : "No change yet";
     cell.title = reason || draft.review || "";
     const explanation = $(`[data-draft="${drafts.indexOf(draft)}"] [data-review-reason]`);
     explanation.textContent = draft.review || "";
@@ -321,9 +340,19 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
             finally { searching = false; if (!closed) lock(false); }
             if (closed) return;
           }
-          selected.forEach(draft => {
+          const pending = recovery || parts.length ? selected : selected.filter(draft => {
+            const current = draft.item.show_ids || draft.item.ids || {};
+            const merged = matchedIds(current, match.ids);
+            return !merged || Object.keys(merged).length !== Object.keys(current).length;
+          });
+          if (!pending.length) {
+            status("This is already the title these items are matched to. Nothing to fix; choose another title or edit the numbering below.");
+            return;
+          }
+          pending.forEach(draft => {
             draft.review = "";
-            draft.item = correctedItem(draft.item, {ids:match.ids, title:match.title});
+            const current = draft.item.show_ids || draft.item.ids || {};
+            draft.item = correctedItem(draft.item, {ids:(!recovery && !parts.length && matchedIds(current, match.ids)) || match.ids, title:match.title});
             if (recovery && match.year) draft.item.year = match.year;
             applyParts(draft, match, parts);
             paint(draft);
@@ -336,8 +365,8 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
           searchController = new AbortController(); searching = true; lock(true);
           status("Checking episode numbering…");
           try {
-            const review = await matchEpisodes(selected);
-            if (!closed) status(`${selected.length} item${selected.length === 1 ? "" : "s"} updated. ${review ? `${review} need episode review.` : "Review your changes below."}`);
+            const review = await matchEpisodes(pending);
+            if (!closed) status(`${pending.length} item${pending.length === 1 ? "" : "s"} updated. ${review ? `${review} need episode review.` : "Review your changes below."}`);
           } catch (error) { if (!closed) status(error.name === "AbortError" ? "Stopped. Your changes are kept; check episode numbers before saving." : `Title updated. Could not check episode numbers: ${error.message}`); }
           finally { searching = false; if (!closed) lock(false); }
         };

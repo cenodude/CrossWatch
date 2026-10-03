@@ -12,19 +12,29 @@
     if (!label) {
       label = document.createElement("label");
       label.id = "cw-mapping-scope-label";
-      label.textContent = "Mapping scope";
-      const select = document.createElement("select");
-      select.id = "cw-mapping-scope";
-      select.className = "cw-select";
-      select.setAttribute("aria-label", "Mapping scope");
-      label.append(select);
-      parent.append(label);
+      label.className = "cw-advanced-only";
+      label.htmlFor = "cw-mapping-scope";
+      label.textContent = "Fixes for";
+      label.title = "Which syncs use the fixes you make here";
+      const created = document.createElement("select");
+      created.id = "cw-mapping-scope";
+      created.name = "cw-mapping-scope";
+      created.className = "cw-select cw-advanced-only";
+      parent.append(label, created);
     }
-    label.hidden = !ctx.isPolicySource();
-    const select = label.querySelector("select");
-    select.replaceChildren(new Option("All pairs using this provider instance", ""),
-      ...(data.mapping_scopes || []).map(pair => new Option(pair.label, pair.id)));
+    const select = document.getElementById("cw-mapping-scope");
+    const pairs = data.mapping_scopes || [];
+    const hide = !ctx.isPolicySource() || !!ctx.isMergedView?.() || !pairs.length;
+    label.hidden = select.hidden = hide;
+    select.replaceChildren(new Option("Every sync with this account", ""),
+      ...pairs.map(pair => new Option(`Only ${pair.label}`, pair.id)));
     select.value = ctx.state.mappingPair || "";
+    window.CW?.IconSelect?.enhance(select, {className:"cw-plain-select"});
+    const wrap = select.nextElementSibling?.classList?.contains("cw-icon-select") ? select.nextElementSibling : null;
+    if (wrap) {
+      wrap.classList.add("cw-advanced-only");
+      wrap.style.display = hide ? "none" : "";
+    }
     select.onchange = async () => {
       if (ctx.state.loading || ctx.state.saving || (ctx.state.hasChanges && !window.confirm("Discard unsaved Editor changes and switch mapping scope?"))) {
         select.value = ctx.state.mappingPair || "";
@@ -131,7 +141,6 @@
       } else if (merged) {
         ctx.syncMergedScope(data);
         renderInstanceSharingNote(null);
-        document.getElementById("cw-mapping-scope-label").hidden = true;
         state.baselineItems = data.items || {};
         state.manualAdds = {};
         state.manualBlocks = [];

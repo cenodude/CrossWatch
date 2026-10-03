@@ -63,6 +63,8 @@
     const index = Math.max(0, stages.findIndex(([key]) => key === p.stage));
     const determinate = p.percent != null && p.total > 0;
     const detailsOpen = host.querySelector(".is-progress-details")?.open;
+    const recent = (p.recent || []).slice().reverse();
+    const clock = row => esc(new Date(row.at * 1000).toLocaleTimeString());
     return `<section class="is-run-progress" aria-label="Sync progress">
       <div class="is-progress-top"><div><div class="is-eyebrow">${applying ? "APPLYING YOUR SYNC" : "PREPARING YOUR SYNC"}</div><h2>${esc(p.label || "Checking provider connections")}</h2></div><span class="is-live"><i></i><span data-progress-connection>Connected</span></span></div>
       <ol class="is-progress-stages">${stages.map(([key, label], i) => `<li class="${i === index ? "current" : i < index ? "finished" : ""}" ${i === index ? 'aria-current="step"' : ""}><span>${i < index ? '<span class="material-symbols-rounded" aria-hidden="true">check</span>' : i + 1}</span>${label}</li>`).join("")}</ol>
@@ -70,7 +72,7 @@
       <div class="is-progress-track ${determinate ? "" : "indeterminate"}" role="progressbar" aria-label="${esc(p.label || "Current sync activity")}" aria-valuemin="0" aria-valuemax="100" ${determinate ? `aria-valuenow="${p.percent}"` : 'aria-valuetext="In progress; total not yet available"'}><span style="width:${determinate ? p.percent : 30}%"></span></div>
       <div class="is-progress-stats"><div><span>Elapsed</span><strong data-progress-elapsed>${duration(p.elapsed_seconds)}</strong></div><div><span>Current activity</span><strong data-progress-stage>${duration(p.stage_seconds)}</strong></div><div><span>Items read</span><strong>${number(p.items_read)}</strong></div><div><span>API requests</span><strong>${number(p.requests)}</strong><small>${requestBreakdown(p.requests_by_provider)}</small></div></div>
       <div class="is-progress-note"><span class="material-symbols-rounded" aria-hidden="true">info</span><p><span data-progress-quiet>Waiting for the next provider update.</span><br>This operation continues on the server. Return using the notification bell or Sync reviews below your pairs in Synchronization settings.</p></div>
-      ${(p.recent || []).length ? `<details class="is-progress-details" ${detailsOpen ? "open" : ""}><summary>Recent activity</summary><ol>${p.recent.slice().reverse().map(row => `<li><time>${esc(new Date(row.at * 1000).toLocaleTimeString())}</time><span>${esc(row.text)}</span></li>`).join("")}</ol></details>` : ""}
+      ${recent.length ? `<details class="is-progress-details" ${detailsOpen ? "open" : ""}><summary aria-label="Recent activity"><span class="is-latest-label">Latest</span><time>${clock(recent[0])}</time><span class="is-latest-text">${esc(recent[0].text)}</span><span class="is-latest-toggle">${recent.length > 1 ? `All ${recent.length}` : "Details"}<span class="material-symbols-rounded" aria-hidden="true">expand_more</span></span></summary><ol>${recent.map(row => `<li><time>${clock(row)}</time><span>${esc(row.text)}</span></li>`).join("")}</ol></details>` : ""}
     </section>`;
   }
   function updateProgressClock() {
