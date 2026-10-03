@@ -53,7 +53,7 @@
     }
 
     const sub = root?.querySelector(".cw-sub");
-    if (sub) sub.textContent = "Edit your current state or playlist endpoints";
+    if (sub) sub.textContent = "Fix, add or remove what CrossWatch syncs";
   }
 
   function addTrackerNotice(root) {

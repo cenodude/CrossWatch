@@ -32,6 +32,46 @@
     return out;
   }
 
+  function presenceChips(row, ctx) {
+    const meta = window.CW?.ProviderMeta || {};
+    const targets = Array.isArray(ctx.state?.mergedTargets) ? ctx.state.mergedTargets : [];
+    const present = new Map((row.presence || []).map(entry => [entry[0], entry]));
+    const repeated = new Set(targets.map(target => target.provider).filter((name, index, all) => all.indexOf(name) !== index));
+    const wrap = document.createElement("div");
+    wrap.className = "cw-presence";
+    targets.forEach((target, index) => {
+      const entry = present.get(index);
+      if (!entry && !target.can_send) return;
+      const chip = document.createElement(entry ? "span" : "button");
+      chip.className = `cw-presence-chip ${entry ? "is-on" : "is-off"}`;
+      const name = target.display || target.label || target.provider;
+      const src = meta.logLogoPath?.(target.provider) || meta.logoPath?.(target.provider) || "";
+      if (src) {
+        const img = document.createElement("img");
+        img.src = src;
+        img.alt = "";
+        chip.appendChild(img);
+      }
+      if (!src || repeated.has(target.provider)) {
+        const text = document.createElement("span");
+        text.textContent = src ? target.instance_label || target.instance : name;
+        chip.appendChild(text);
+      }
+      if (entry) {
+        chip.title = [`On ${name}`, entry[1] > 1 ? `${entry[1]} entries` : "", entry[2] != null ? String(entry[2]) : ""].filter(Boolean).join(" · ");
+        chip.setAttribute("role", "img");
+        chip.setAttribute("aria-label", chip.title);
+      } else {
+        chip.type = "button";
+        chip.title = `Not on ${name}. Click to send it there.`;
+        chip.setAttribute("aria-label", chip.title);
+        chip.onclick = () => call(ctx, "sendRow", row, target);
+      }
+      wrap.appendChild(chip);
+    });
+    return wrap;
+  }
+
   function createRowElement(row, ctx = {}) {
     const state = ctx.state || {};
     const anilistMode = !!ctx.anilistMode;
@@ -74,12 +114,22 @@
     };
     const actionWrap = document.createElement("div");
     actionWrap.className = "cw-action-buttons";
-    actionWrap.appendChild(delBtn);
+    if (!ctx.merged) actionWrap.appendChild(delBtn);
     const delTd = cell(actionWrap);
     delTd.className = "cw-action-cell";
     if (ctx.wideActions) delTd.classList.add("cw-action-wide");
 
-    if (blockMode) {
+    if (blockMode && (ctx.simple || ctx.merged) && typeof ctx.sendRow === "function") {
+      const sendBtn = document.createElement("button");
+      sendBtn.type = "button";
+      sendBtn.className = "cw-btn cw-btn-del cw-btn-send";
+      sendBtn.innerHTML = '<span class="material-symbol">send</span>';
+      sendBtn.title = "Send to or remove from providers";
+      sendBtn.setAttribute("aria-label", sendBtn.title);
+      sendBtn.disabled = !!row.deleted;
+      sendBtn.onclick = () => call(ctx, "sendRow", row);
+      actionWrap.appendChild(sendBtn);
+    } else if (blockMode) {
       const rawBtn = document.createElement("button");
       rawBtn.type = "button";
       rawBtn.className = "cw-btn cw-btn-del";
@@ -222,7 +272,8 @@
         typeBtn,
       });
     };
-    titleRow.appendChild(searchBtn);
+    if (!ctx.merged) titleRow.appendChild(searchBtn);
+    if (ctx.merged) titleCell.appendChild(presenceChips(row, ctx));
 
     const subType = (((row.raw && row.raw.type) || row.type || "") + "").toLowerCase();
     if (subType === "season" && row.raw && row.raw.series_title) {
@@ -274,7 +325,7 @@
       td.dataset.column = column;
       td.dataset.label = ({key: 'Key', type: 'Type', title: 'Title', year: 'Year',
         id: anilistMode ? 'AniList' : 'TMDB', imdb: 'IMDb', tvdb: 'TVDB', trakt: 'Trakt',
-        simkl: 'SIMKL', anilist: 'AniList', extra: 'Extra'})[column];
+        simkl: 'SIMKL', anilist: 'AniList', extra: call(ctx, 'columnLabel', 'extra') || 'Extra'})[column];
       tr.appendChild(td);
     });
 

@@ -125,7 +125,8 @@
     if (providerPicker) {
       const list = Array.isArray(state.snapshots) ? state.snapshots : [];
       const label = typeof ctx.providerLabel === "function" ? ctx.providerLabel : ((p, fallback) => fallback || p);
-      snapSel.innerHTML = list.map(p => `<option value="${p}">${label(p, p)}</option>`).join("");
+      const all = ctx.allProviders && list.length > 1 ? `<option value="${ctx.allProviders}">All providers</option>` : "";
+      snapSel.innerHTML = all + list.map(p => `<option value="${p}">${label(p, p)}</option>`).join("");
       const opts = Array.from(snapSel.options).map(o => o.value);
       const next = opts.includes(state.snapshot) ? state.snapshot : opts[0] || "";
       if (next !== state.snapshot) state.snapshot = next;
@@ -164,7 +165,7 @@
 
     const sub = ctx.host?.querySelector(".cw-sub");
     if (sub) {
-      sub.textContent = "Edit your current state or playlist endpoints";
+      sub.textContent = "Fix, add or remove what CrossWatch syncs";
     }
 
     if (isPlaylist) {
@@ -232,7 +233,9 @@
         rebuildSnapshots(ctx);
 
         const prov = state.snapshot || (ctx.snapSel ? (ctx.snapSel.value || "") : "");
-        if (prov) {
+        if (prov && prov === ctx.allProviders) {
+          if (prov !== state.snapshot) state.snapshot = prov;
+        } else if (prov) {
           const nextInst = await ctx.loadInstanceOptions?.(prov, ctx.instanceSel, state.instance);
           if (prov !== state.snapshot || nextInst !== state.instance) {
             state.snapshot = prov;

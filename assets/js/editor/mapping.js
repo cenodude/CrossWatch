@@ -4,6 +4,7 @@
 export async function openEditorMapping(row, ctx) {
   const {state} = ctx;
   const scope = state.mappingPair ? "pair" : "shared";
+  const direct = !state.hasChanges && typeof ctx.saveChanges === "function";
   const original = structuredClone(row.raw || {});
   original.type = row.type || original.type;
   original.title = row.title || original.title;
@@ -37,7 +38,7 @@ export async function openEditorMapping(row, ctx) {
   checkCurrentRow();
   return openMappingWorkspace({
     rows:[context.row],
-    total:1, standalone:true, staged:true, scope,
+    total:1, standalone:true, staged:true, direct, scope,
     scopes:[{id:scope, label:scope === "pair" ? "This sync pair" : "All pairs using this provider instance"}],
     onClose:() => { state.mappingEditing = false; }, onSaved:() => { state.mappingEditing = false; },
     mappingApi:{
@@ -50,6 +51,7 @@ export async function openEditorMapping(row, ctx) {
         checkCurrentRow();
         const error = ctx.commitReplacement(row, result.item, result.key, "Correction ready. Save changes to apply it.");
         if (error) throw new Error(error);
+        if (direct) await ctx.saveChanges();
         return result;
       },
     },

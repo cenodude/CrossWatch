@@ -54,7 +54,7 @@ export function correctedEpisode(original, match) {
   return {...correctedItem(original, {...match, ids: sameShow ? {...ids, ...match.ids} : match.ids}), episode:match.episode};
 }
 
-export function openMappingWorkspace({rows, session = {}, json, post, onSaved, onClose, total, mappingApi, standalone = false, scope = "pair", scopes = [{id:"pair", label:"This sync pair"}, {id:"shared", label:"All pairs using this provider instance"}], staged = false, recovery = false}) {
+export function openMappingWorkspace({rows, session = {}, json, post, onSaved, onClose, total, mappingApi, standalone = false, scope = "pair", scopes = [{id:"pair", label:"This sync pair"}, {id:"shared", label:"All pairs using this provider instance"}], staged = false, direct = false, recovery = false}) {
   const api = mappingApi || {
     catalogs: row => json(`/api/interactive-sync/${session.id}/mapping-catalogs?${new URLSearchParams({revision:session.revision, row_id:row.id})}`),
     search: (row, q, catalog, options) => json(`/api/interactive-sync/${session.id}/mapping-search?${new URLSearchParams({revision:session.revision, row_id:row.id, q, catalog})}`, options),
@@ -64,7 +64,7 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
   };
   const dialog = document.createElement("dialog");
   dialog.className = "is-page is-mapping-dialog";
-  dialog.setAttribute("aria-label", recovery ? "Match recovered history" : "Edit mappings");
+  dialog.setAttribute("aria-label", recovery ? "Match recovered history" : "Fix a wrong match");
   const drafts = rows.map(row => ({row, item: structuredClone(row.item), checked: true, dirty: false}));
   const saveable = draft => draft.dirty && (!recovery || draft.checked);
   const cache = new Map();
@@ -76,6 +76,7 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
   const groups = mappingGroups(rows);
   const idFields = recovery ? ["tmdb", "tvdb", "imdb"] : ID_FIELDS;
   const first = rows[0];
+  const single = !recovery && rows.length === 1;
   const endpoint = row => [row.provider, row.instance !== "default" ? row.instance : ""].filter(Boolean).join(" · ");
   const input = (name, value, type = "text", extra = "") => `<input data-field="${name}" type="${type}" value="${esc(value)}" ${extra}>`;
   const episodeLabel = item => item.type === "episode" ? `S${String(item.season).padStart(2,"0")}E${String(item.episode).padStart(2,"0")}` : item.type;
@@ -85,7 +86,7 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
     return `<article class="is-map-row" data-draft="${index}">
       <div class="is-map-row-preview"><input type="checkbox" data-edit checked aria-label="Select ${esc(itemLabel(item))}">
         <div class="is-map-before"><strong>${esc(itemLabel(item))}</strong><small>${recovery ? `${row.recovery_count} ${row.recovery_count === 1 ? "item" : "items"} · ${row.item.type === "show" ? "Series" : "Movie"}` : `${esc(endpoint(row))} · ${esc(row.feature)}`}</small></div>
-        ${icon("arrow_forward")}<div class="is-map-after"><strong data-after>${esc(itemLabel(item))}</strong><span data-draft-status class="is-map-status">Unchanged</span></div>
+        ${icon("arrow_forward")}<div class="is-map-after"><strong data-after>${esc(itemLabel(item))}</strong><span data-draft-status class="is-map-status">No change yet</span></div>
         <div class="is-map-actions"><button class="is-btn is-map-action" data-edit-row aria-expanded="false" aria-controls="mapping-edit-${index}" aria-label="Edit ${esc(itemLabel(item))}" title="Edit">${icon("edit")}</button><button class="is-btn is-map-action" data-reset hidden aria-label="Undo changes to ${esc(itemLabel(item))}" title="Undo">${icon("undo")}</button></div>
       </div>
       <div class="is-map-row-editor" id="mapping-edit-${index}" hidden><p data-review-reason hidden></p>
@@ -94,20 +95,20 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
         <details class="is-map-advanced"><summary>Advanced · Manual IDs</summary><div class="is-map-id-inputs">${idFields.map(key => `<label>${key.toUpperCase()}${input(key, ids[key] || "")}</label>`).join("")}</div></details>
       </div></article>`;
   };
-  dialog.innerHTML = `<header class="is-mapping-head"><div><div class="is-eyebrow">MAPPING</div><h2>${recovery ? "Match recovered history" : "Edit mappings"}</h2><p>Choose the correct title and review your changes.</p></div><button class="is-btn is-map-close" data-close aria-label="Close" title="Close">${icon("close")}</button></header>
+  dialog.innerHTML = `<header class="is-mapping-head"><div><div class="is-eyebrow">MAPPING</div><h2>${recovery ? "Match recovered history" : "Fix a wrong match"}</h2><p>${recovery ? "Choose the correct title and review your changes." : "Find the right title, check the result, then save."}</p></div><button class="is-btn is-map-close" data-close aria-label="Close" title="Close">${icon("close")}</button></header>
     <div class="is-mapping-body">
     <div class="is-map-intro"><span>${rows.length} ${recovery ? `title${rows.length === 1 ? "" : "s"}` : `item${rows.length === 1 ? "" : "s"}`}${total > rows.length ? ` from ${total} results` : ""}</span><details class="is-map-help" ${recovery ? "hidden" : ""}><summary aria-label="About saved mappings" title="About saved mappings">${icon("info")}</summary><p>Pair mappings override shared corrections for that pair. Shared corrections apply to every pair using the source provider instance. Watched dates and ratings are kept. ${standalone ? "Run the pair again to retry with your correction. Saving does not start a sync." : "Saving updates your sync review; it does not start a sync."}</p></details></div>
     ${recovery ? "<p>Confirm a movie or series once for its unresolved items. Recovery keeps one record per movie or episode, using its most recent watch date. Episode numbers are kept. Review suggestions, then save the checked matches. Saving does not import history.</p><p><strong>API traffic warning:</strong> Auto match can generate heavy API traffic and consume your provider's request quota. Each distinct movie or show may require a separate search, plus extra requests for details or retries. Cached results are reused. Matching runs in the background; return through the notification bell.</p>" : ""}
-    <label class="is-map-scope" ${recovery ? "hidden" : ""}>Apply correction to<select data-mapping-scope ${scopes.length < 2 ? "disabled" : ""}>${scopes.map(option => `<option value="${esc(option.id)}" ${option.id === scope ? "selected" : ""}>${esc(option.label)}</option>`).join("")}</select><small data-scope-note></small></label>
-    <section class="is-map-bulk" aria-label="Choose a title"><div class="is-map-search-heading"><h3>Choose a title</h3><div class="is-map-actions"><button class="is-btn" data-suggest hidden>${icon("auto_fix_high")}Auto match</button><button class="is-btn" data-stop-search hidden>Stop search</button></div></div>
+    <section class="is-map-bulk" aria-label="Choose a title"><div class="is-map-search-heading"><h3>${recovery ? "Choose a title" : `<span class="is-map-step">1</span>Find the right title`}</h3><div class="is-map-actions"><button class="is-btn" data-suggest hidden>${icon("auto_fix_high")}Auto match</button><button class="is-btn" data-stop-search hidden>Stop search</button></div></div>
       <div data-chosen hidden class="is-map-chosen"><span>${icon("check_circle")}<strong data-match></strong></span><button class="is-btn is-small" data-change-match>Change match</button></div>
       <div data-search-panel><div class="is-map-search-bar" hidden><label>Search title<input data-search-query value="${esc(seriesTitle(first.item))}" maxlength="200"></label><label>Search in<select data-catalog></select></label>${recovery ? `<label data-language-wrap hidden title="Match the language used for titles in Plex. Films and series from all countries are included.">Metadata language<select data-language>${Object.entries({"en-US":"English","nl-NL":"Dutch","de-DE":"German","fr-FR":"French","es-ES":"Spanish","it-IT":"Italian","pt-PT":"Portuguese","pt-BR":"Portuguese (Brazil)","pl-PL":"Polish","da-DK":"Danish","sv-SE":"Swedish","nb-NO":"Norwegian","fi-FI":"Finnish","cs-CZ":"Czech","tr-TR":"Turkish","ja-JP":"Japanese","ko-KR":"Korean","zh-CN":"Chinese (Simplified)","zh-TW":"Chinese (Traditional)"}).map(([value,label])=>`<option value="${value}">${label}</option>`).join("")}</select></label>` : ""}<button class="is-btn" data-search>Find matches</button></div><div class="is-map-candidates"></div></div>
       <p data-search-status role="status">Choose a match or try Auto match.</p>
     </section>
-    <div class="is-map-row-tools"><strong data-selection-count></strong><button class="is-btn is-small" data-check-all>Select all</button><button class="is-btn is-small" data-check-none>Clear selection</button></div>
+    <div class="is-map-row-tools">${recovery ? "" : `<h3><span class="is-map-step">2</span>Check the result</h3>`}<strong data-selection-count ${single ? "hidden" : ""}></strong><button class="is-btn is-small" data-check-all ${single ? "hidden" : ""}>Select all</button><button class="is-btn is-small" data-check-none ${single ? "hidden" : ""}>Clear selection</button></div>
     <details class="is-map-numbering" hidden><summary>Adjust episode numbering</summary><div class="is-map-numbering-fields"><label>Season<input data-season type="number" min="0" placeholder="Keep current"></label><label>Shift episode numbers by<input data-offset type="number" value="0"></label><button class="is-btn" data-bulk>Apply numbering</button></div><p>Use 0 to keep episode numbers, or a shift such as −10 to change episode 11 to 1. Applies to selected episodes.</p></details>
     <div class="is-map-review">${groups.map((indices, groupIndex) => indices.length === 1 ? renderDraft(indices[0]) : `<details class="is-map-group" data-group="${groupIndex}"><summary><span><strong>${esc(seriesTitle(rows[indices[0]].item))} · Season ${esc(rows[indices[0]].item.season)}</strong><small>${indices.length} episodes · ${esc(endpoint(rows[indices[0]]))}</small></span><span data-group-after>Review episodes</span></summary><div class="is-map-group-tools"><button class="is-btn is-small" data-select-group="${groupIndex}">Select this season</button><span data-group-count></span></div>${indices.map(renderDraft).join("")}</details>`).join("")}</div>
-    </div><footer class="is-map-save"><div><strong data-count>No changes yet</strong><p data-error role="alert"></p></div><button class="is-btn is-primary" data-save disabled>${recovery ? "Save checked matches" : staged ? "Use correction" : "Save mappings"}</button></footer>`;
+    <label class="is-map-scope" ${recovery ? "hidden" : ""}>Use this fix for<select data-mapping-scope ${scopes.length < 2 ? "disabled hidden" : ""}>${scopes.map(option => `<option value="${esc(option.id)}" ${option.id === scope ? "selected" : ""}>${esc(option.label)}</option>`).join("")}</select>${scopes.length < 2 ? `<strong>${esc(scopes[0]?.label || "")}</strong>` : ""}<small data-scope-note></small></label>
+    </div><footer class="is-map-save"><div><strong data-count>No changes yet</strong><p data-error role="alert"></p></div><button class="is-btn is-primary" data-save disabled>${recovery ? "Save checked matches" : staged ? (direct ? "Save fix" : "Use correction") : "Save mappings"}</button></footer>`;
   document.body.append(dialog);
   dialog.showModal();
   const $ = selector => dialog.querySelector(selector);
@@ -146,7 +147,7 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
     $("[data-scope-note]").textContent = (shared
       ? "Shared correction for every pair using this provider instance."
       : "Only this pair uses the correction; shared mappings stay available to other pairs.")
-      + (staged ? " Use Save changes in Editor to save it." : " Applies to future syncs too.");
+      + (!staged ? " Applies to future syncs too." : direct ? " Saved right away and used from the next sync." : " The Editor has other unsaved changes; use Save changes there to keep this fix.");
   }
   $("[data-mapping-scope]").onchange = updateScopeNote;
   updateScopeNote();
@@ -181,6 +182,7 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
     if (results.some(result => result.status === "rejected")) status("Could not check available catalogs. Reopen mapping to retry. Manual editing is available.");
     else if (![...catalogs.values()].some(options => options.length)) status("No configured search catalog is available. You can still edit IDs and episode numbers below.");
     if(recoveryState) syncBackground(recoveryState);
+    if (!recovery && groups.length === 1 && (catalogs.get(routeKey(first)) || []).length) find(first);
   }
   loadCatalogs();
   function status(message) { $("[data-search-status]").textContent = message; }
@@ -209,7 +211,7 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
   function draftStatus(draft, reason = "") {
     const cell = dialog.querySelector(`[data-draft="${drafts.indexOf(draft)}"] [data-draft-status]`);
     cell.className = `is-map-status${draft.review ? " is-review" : draft.dirty ? " is-edited" : ""}`;
-    cell.textContent = draft.review ? "Needs review" : draft.dirty ? "Changed" : "Unchanged";
+    cell.textContent = draft.review ? "Needs review" : draft.dirty ? "Changed" : "No change yet";
     cell.title = reason || draft.review || "";
     const explanation = $(`[data-draft="${drafts.indexOf(draft)}"] [data-review-reason]`);
     explanation.textContent = draft.review || "";
@@ -295,7 +297,8 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
           button.disabled = true;
         }
         button.title = [match.title, match.year, match.mapping_unavailable].filter(Boolean).join(" · ");
-        button.innerHTML = `<strong>${esc(match.title)}</strong>${match.year ? `<span class="is-map-candidate-year">${esc(match.year)}</span>` : ""}`;
+        button.innerHTML = `${match.ids?.tmdb ? `<img class="is-map-candidate-art" src="/art/tmdb/${row.item.type === "movie" ? "movie" : "tv"}/${encodeURIComponent(match.ids.tmdb)}?size=w92" alt="" loading="lazy">` : ""}<strong>${esc(match.title)}</strong>${match.year ? `<span class="is-map-candidate-year">${esc(match.year)}</span>` : ""}`;
+        button.querySelector("img")?.addEventListener("error", event => event.target.remove());
         button.onclick = async () => {
           if (match.mapping_unavailable) { status(match.mapping_unavailable); return; }
           const selected = drafts.filter(d => d.checked);

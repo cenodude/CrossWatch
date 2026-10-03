@@ -163,6 +163,8 @@
     let confirmUntil = 0;
     let confirmTimer;
     const providerKey = p => `${String(p.provider || "").toUpperCase()}:${String(p.instance || "default")}`;
+    const scoped = url => ctx.sendQuery ? `${url}${url.includes("?") ? "&" : "?"}${ctx.sendQuery}` : url;
+    const inScope = p => !ctx.sendScope || ctx.sendScope.has(providerKey(p));
     const currentSourceProviderKey = () => {
       if (ctx.isProviderPickerSource() && state.snapshot) {
         return providerKey({ provider: state.snapshot, instance: state.instance || "default" });
@@ -294,7 +296,7 @@
         const providerClass = `provider-${String(p.provider || "").toLowerCase().replace(/[^a-z0-9_-]+/g, "")}`;
         return `<button type="button" class="cw-editor-send-provider ${providerClass} ${selected.has(key) ? "active" : ""}" data-provider-key="${esc(key)}" aria-pressed="${selected.has(key) ? "true" : "false"}" style="${providerToneStyle(p, esc)}">
           <span class="cw-editor-send-provider-icon">${providerLogoHtml(p, esc)}</span>
-          <span><strong>${esc(providerDisplayName(p))}</strong><small>${esc(p.instance_label || String(p.instance || "default"))}${operation === "remove" ? ` · ${p.matched} of ${rows.length} selected` : ""}</small></span>
+          <span><strong>${esc(providerDisplayName(p))}</strong><small>${esc(p.instance_label || String(p.instance || "default"))}${operation === "remove" ? ` · ${p.matched} of ${rows.length} selected` : ""}${ctx.sendNotes?.[key] ? ` · ${esc(ctx.sendNotes[key])}` : ""}</small></span>
           <span class="cw-editor-send-check"><span class="material-symbols-rounded" aria-hidden="true">check</span></span>
         </button>`;
       }).join("") : `<div class="cw-editor-send-empty">${operation === "remove"
@@ -359,13 +361,13 @@
         scrollSendStatusIntoView();
       }
       try {
-        const data = await ctx.fetchJSON("/api/editor/send", {
+        const data = await ctx.fetchJSON(scoped("/api/editor/send"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ kind, operation, providers: targets, items: rows.map(ctx.rowToSendItem),
             ...(operation === "remove" ? { confirmed: true, preview_id: previewId, ...removalScope() } : {}) }),
         });
-        if (operation === "add") {
+        if (operation === "add" && !ctx.preselect) {
           try { localStorage.setItem(rememberedKey, JSON.stringify([...selected])); } catch (_) {}
         }
         const confirmed = Number(data.confirmed || 0);
@@ -428,25 +430,27 @@
       syncButtons();
       try {
         const data = operation === "remove"
-          ? await ctx.fetchJSON("/api/editor/send/preview", { method: "POST", headers: { "Content-Type": "application/json" },
+          ? await ctx.fetchJSON(scoped("/api/editor/send/preview"), { method: "POST", headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ kind, items: rows.map(ctx.rowToSendItem), ...removalScope() }) })
-          : await ctx.fetchJSON(`/api/editor/send/providers?kind=${encodeURIComponent(kind)}`);
+          : await ctx.fetchJSON(scoped(`/api/editor/send/providers?kind=${encodeURIComponent(kind)}`));
         if (revision !== generation || !shell.isConnected) return;
         const capKey = providerCapabilityKey(kind);
         const sourceKey = currentSourceProviderKey();
         if (operation === "remove") {
-          providers = Array.isArray(data.providers) ? data.providers : [];
+          providers = (Array.isArray(data.providers) ? data.providers : []).filter(inScope);
           previewId = data.preview_id;
           removalEmptyReason = data.empty_reason || "";
         } else {
           providers = (Array.isArray(data.providers) ? data.providers : [])
             .filter(p => !!p?.[capKey])
+            .filter(inScope)
             .filter(p => providerKey(p) !== sourceKey);
           try {
             const saved = JSON.parse(localStorage.getItem(rememberedKey) || "[]");
             if (Array.isArray(saved)) selected = new Set(saved.map(String));
           } catch (_) {}
         }
+        if (operation === "add" && ctx.preselect) selected = new Set([ctx.preselect]);
         selected = new Set([...selected].filter(k => providers.some(p => providerKey(p) === k)));
         if (operation === "add" && !selected.size && providers.length === 1) selected.add(providerKey(providers[0]));
         if (status && !preserveStatus && operation === "add") status.innerHTML = providers.length
