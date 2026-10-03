@@ -723,7 +723,7 @@ html[data-cw-role=user][data-cw-perm-write=off] #cw-editor-quick-add{display:non
 .pl-publish-block{display:grid;gap:6px;margin-bottom:18px}
 .pl-publish-line{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:start}
 .pl-publish-line :is(input,textarea){box-sizing:border-box;width:100%;min-width:0;padding:8px 10px;border:1px solid var(--cw-theme-border-strong,rgba(255,255,255,.16));border-radius:8px;background:var(--cw-theme-input,transparent);color:inherit;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.5;resize:none}
-.pl-simple #pl-new-endpoint,.pl-simple #pl-new-mapping,.pl-simple #pl-activity-overview{display:none}
+.pl-simple #pl-activity-overview{display:none}
 .pl-simple #pl-mappings-overview{order:1}
 .pl-simple #pl-playlist-endpoints{order:2}
 .pl-simple #pl-published-lists{order:3}
@@ -765,3 +765,19 @@ html[data-cw-role=user][data-cw-perm-write=off] #cw-editor-quick-add{display:non
 #page-playlists .pl-wizard-check input{width:16px;min-width:16px;height:16px;min-height:0;padding:0;accent-color:var(--cw-theme-accent,#7c5cff)}
 #page-playlists .pl-wizard-pair{margin-bottom:14px}
 #page-playlists #pl-wz-new-toggle-row{margin:10px 0 0}
+#page-playlists .cw-editor-hero-summary{display:inline-flex;align-items:stretch;min-height:58px;max-width:100%;min-width:0;overflow:hidden;flex-wrap:wrap}
+#page-playlists .cw-editor-hero-seg{display:grid;place-items:center;align-content:center;gap:4px;min-width:0;padding:9px 16px;border-left:1px solid rgba(218,227,245,0.13);font-size:12px;font-weight:800;line-height:1.05;text-align:center;white-space:nowrap}
+#page-playlists .cw-editor-hero-seg:first-child{border-left:0}
+#page-playlists .cw-editor-hero-seg strong{display:block;font-size:18px;font-weight:900;line-height:1.05}
+#page-playlists .cw-editor-hero-count strong{font-size:22px;line-height:1}
+#page-playlists .cw-editor-hero-seg span{display:block;font-size:12px;font-weight:800;line-height:1.1}
+#page-playlists .cw-editor-hero-sync{min-width:112px}
+#page-playlists .cw-editor-refresh{display:inline-flex;align-items:center;justify-content:center;width:58px;min-height:58px;margin:0;padding:0;border:0;border-left:1px solid rgba(218,227,245,0.13);border-radius:0;cursor:pointer}
+#page-playlists .cw-editor-refresh .material-symbols-rounded{font-size:23px;line-height:1;color:#aebdff;-webkit-text-fill-color:#aebdff}
+#page-playlists .cw-editor-refresh.is-refreshing .material-symbols-rounded{animation:cwEditorRefreshSpin 0.8s linear infinite}
+#page-playlists .cw-editor-refresh[disabled]{opacity:var(--cw-disabled-opacity,0.55);cursor:not-allowed}
+#page-playlists .pl-hero-toggle{border-top:0;border-right:0;border-bottom:0;border-radius:0;cursor:pointer;font:inherit;font-size:12px}
+#page-playlists .pl-hero-toggle .material-symbols-rounded{font-size:20px;line-height:1}
+#page-playlists .pl-hero-toggle.active{background:color-mix(in srgb,var(--cw-theme-accent,#7c5cff) 18%,transparent);color:var(--cw-theme-text,inherit)}
+html[data-cw-theme="flat-light"] #page-playlists .cw-editor-refresh .material-symbols-rounded{color:#172033;-webkit-text-fill-color:#172033}
+#page-playlists .pl-header-actions{align-self:end;justify-self:end}

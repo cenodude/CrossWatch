@@ -750,9 +750,8 @@
 
   function syncAdvancedUI() {
     host.classList.toggle("cw-editor-simple", !state.advanced);
-    advancedBtn.classList.toggle("active", state.advanced);
-    advancedBtn.setAttribute("aria-pressed", state.advanced ? "true" : "false");
-    advancedBtn.title = state.advanced ? "Hide keys, IDs and maintenance tools" : "Show keys, IDs and maintenance tools";
+    advancedBtn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">${state.advanced ? "view_agenda" : "tune"}</span><span>${state.advanced ? "Simple" : "Advanced"}</span>`;
+    advancedBtn.title = state.advanced ? "Back to the simple view" : "Show keys, IDs and maintenance tools";
   }
 
   function sendRow(row, target) {
