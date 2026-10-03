@@ -153,6 +153,25 @@ def invalidate_provider_caches(provider_id: str) -> None:
     STATUS_SCOPE_CACHE.clear()
 
 
+def _token_expired(block: Mapping[str, Any]) -> bool:
+    expires = block.get("expires_at") or block.get("token_expires_at")
+    if block.get("api_key") and str(block.get("auth_method") or "api_key") == "api_key":
+        return False
+    now = time.time()
+    try:
+        if not (expires and float(expires) <= now):
+            return False
+    except (TypeError, ValueError):
+        return False
+    if not str(block.get("refresh_token") or "").strip():
+        return True
+    try:
+        refresh_expires = float(block.get("refresh_expires_at") or 0)
+    except (TypeError, ValueError):
+        refresh_expires = 0.0
+    return bool(refresh_expires and refresh_expires <= now)
+
+
 def _persistent_probe(provider: str):
     def decorate(fn):
         @wraps(fn)
@@ -167,14 +186,8 @@ def _persistent_probe(provider: str):
                     block = cfg.get(_cfg_key(provider)) or {}
                     if block.get("auth_error") == "reconnect_required" or block.get("reauth_required") is True:
                         return False, f"{provider}: reconnect required"
-                    expires = block.get("expires_at") or block.get("token_expires_at")
-                    if block.get("api_key") and str(block.get("auth_method") or "api_key") == "api_key":
-                        expires = None
-                    try:
-                        if expires and float(expires) <= time.time():
-                            return False, f"{provider}: access token expired"
-                    except (TypeError, ValueError):
-                        pass
+                    if _token_expired(block):
+                        return False, f"{provider}: access token expired"
                     return bool(cached["connected"]), str(cached.get("reason") or "")
                 previous = getattr(_HTTP_TL, "account_responses", None)
                 _HTTP_TL.account_responses = {}

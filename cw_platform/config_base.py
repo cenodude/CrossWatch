@@ -9,6 +9,7 @@ import os
 import re
 import secrets
 import stat
+import sys
 import base64
 import hashlib
 import threading
@@ -3010,13 +3011,27 @@ _TOKEN_LINEAGE_KEY = "_rotated_refresh_tokens"
 _TOKEN_LINEAGE_MAX = 8
 
 
-def _log_config_warning(msg: str) -> None:
+def _log_config_debug(msg: str) -> None:
     try:
         from _logging import log
 
-        log(msg, level="WARN", module="CONFIG")
+        log(msg, level="DEBUG", module="CONFIG")
     except Exception:
         pass
+
+
+def _save_caller() -> str:
+    try:
+        here = os.path.normcase(os.path.abspath(__file__))
+        frame = sys._getframe(1)
+        while frame is not None:
+            filename = frame.f_code.co_filename
+            if os.path.normcase(os.path.abspath(filename)) != here and "contextlib" not in filename:
+                return f"{Path(filename).name}:{frame.f_code.co_name}:{frame.f_lineno}"
+            frame = frame.f_back
+    except Exception:
+        pass
+    return "unknown"
 
 
 def _token_digest(token: str) -> str:
@@ -3138,7 +3153,7 @@ def _save_config_locked(cfg: dict[str, Any]) -> None:
     try:
         kept = _preserve_rotated_tokens(data, prev_cfg)
         if kept:
-            _log_config_warning(f"kept newer rotated tokens over a stale config write: {', '.join(kept)}")
+            _log_config_debug(f"kept newer rotated tokens over a stale config write: {', '.join(kept)} (caller={_save_caller()})")
     except Exception:
         pass
 
