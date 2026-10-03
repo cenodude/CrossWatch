@@ -109,7 +109,13 @@
       }
       if (state.source === "playlist" && state.snapshot) params.set("endpoint", state.snapshot);
 
-      const data = await ctx.fetchJSON(`/api/editor?${params.toString()}`);
+      const merged = !!ctx.isMergedView?.();
+      if (merged) {
+        ["source", "provider", "provider_instance", "pair_id"].forEach(name => params.delete(name));
+        const profile = ctx.mergedProfile();
+        if (profile) params.set("user_profile", profile);
+      }
+      const data = await ctx.fetchJSON(`/api/editor${merged ? "/merged" : ""}?${params.toString()}`);
       if (data && data.ok === false) throw new Error(data.error || data.detail || "Load failed");
       renderMappingScope(ctx, data);
 
@@ -122,6 +128,23 @@
         state.pageRids = [];
         state.ridSeq = 1;
         state.rows = ctx.buildRows(state.items);
+      } else if (merged) {
+        ctx.syncMergedScope(data);
+        renderInstanceSharingNote(null);
+        document.getElementById("cw-mapping-scope-label").hidden = true;
+        state.baselineItems = data.items || {};
+        state.manualAdds = {};
+        state.manualBlocks = [];
+        state.preservedBlocks = [];
+        state.selected = new Set();
+        state.pageRids = [];
+        state.ridSeq = 1;
+        state.items = state.baselineItems;
+        state.rows = ctx.buildRows(state.items);
+        for (const row of state.rows) {
+          row._origin = "baseline";
+          row.presence = (data.presence && data.presence[row.key]) || [];
+        }
       } else if (ctx.isPolicySource()) {
         if (ctx.isProviderPickerSource() && data && typeof data.provider === "string" && data.provider.trim()) {
           state.snapshot = data.provider.trim();

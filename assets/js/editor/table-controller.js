@@ -159,6 +159,10 @@
       isRowLocked: ctx.isRowLocked,
       isExtraKindEditable: ctx.isExtraKindEditable,
       canReplaceRow: ctx.canReplaceRow,
+      simple: !ctx.state?.advanced,
+      merged: !!ctx.isMergedView?.(),
+      sendRow: ctx.sendRow,
+      columnLabel: ctx.columnLabel,
       markChanged: ctx.markChanged,
       renderRows: ctx.renderRows,
       syncBulkBar: ctx.syncBulkBar,
@@ -224,7 +228,7 @@
         const label = ctx.empty.querySelector(".cw-empty-text");
         const icon = ctx.empty.querySelector(".cw-empty-icon");
         if (label) label.textContent = state.loadError ? "Could not load Editor data. Try Refresh."
-          : state.loading ? "Loading Editor data…" : "No rows match this view.";
+          : state.loading ? "Loading Editor data…" : "Nothing to show here. Try another list or provider, or use Quick add.";
         if (icon) icon.textContent = state.loadError ? "error_outline" : state.loading ? "hourglass_empty" : "table_rows";
         const main = ctx.empty.closest(".cw-main");
         if (main) main.classList.add("cw-main-empty");

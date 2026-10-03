@@ -70,7 +70,7 @@ const closeModalAfterTap = () => {
 };
 
 export default {
-  async mount(root) {
+  async mount(root, props = {}) {
     if (!document.getElementById("cw-quick-add-style")) {
       const style = document.createElement("link");
       style.id = "cw-quick-add-style";
@@ -129,6 +129,9 @@ export default {
       status: "",
       statusTone: "",
     };
+    if (ACTIONS.some(([key]) => key === props?.action)) {
+      state.actions = { history: false, watchlist: false, rating: false, [props.action]: true };
+    }
 
     const PM = window.CW?.ProviderMeta;
     const logoHtml = (p) => {

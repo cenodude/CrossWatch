@@ -918,6 +918,12 @@ def _normalize_blocks(blocks_raw: Any) -> list[str]:
     return blocks
 
 
+@router.get("/merged")
+def api_editor_merged(kind: str = "watchlist", request: Request = cast(Request, None)) -> dict[str, Any]:
+    from services.editor_merged import merged_view
+    return merged_view(kind, request)
+
+
 @router.get("/state/providers")
 def api_editor_state_providers(request: Request = cast(Request, None)) -> dict[str, Any]:
     cfg = load_config() or {}
