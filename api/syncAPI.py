@@ -2633,9 +2633,21 @@ def api_pairs_delete(pair_id: str, purge_state: bool = True, request: Request = 
             save_config(cfg)
         if purge_state:
             state = _purge_pair_state(pair_id, scopes if deleted else ())
+        inventory_removed = 0
+        if purge_state and deleted and pair is not None:
+            try:
+                from cw_platform.config_base import CONFIG
+                from services.pair_state import clear_uncovered_inventory
+
+                inventory_removed = int(clear_uncovered_inventory(CONFIG, cfg, pair).get("baselines") or 0)
+                if inventory_removed:
+                    clear_caches()
+            except Exception as e:
+                state.setdefault("errors", []).append(f"inventory: {e}")
         return {
             "ok": True,
             "deleted": deleted,
+            "inventory_removed": inventory_removed,
             "state_removed": len(state.get("removed") or []),
             "state_errors": len(state.get("errors") or []),
             "state_removed_preview": (state.get("removed") or [])[:25],

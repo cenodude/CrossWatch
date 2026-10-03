@@ -8,8 +8,10 @@ from pathlib import Path
 from typing import Any
 
 from cw_platform.local_db import state as sqlite_state
+from cw_platform.orchestrator._pairs import _feature_list_for_pair
 from cw_platform.orchestrator._state_store import StateStore
 from cw_platform.pair_scope import pair_feature_scope
+from cw_platform.provider_instances import normalize_instance_id
 
 FEATURES = ("watchlist", "history", "ratings", "progress", "collection", "playlists")
 
@@ -21,6 +23,39 @@ def pair_scopes(cfg: Mapping[str, Any], pair_id: str, features: Iterable[str] | 
         if isinstance(pair, Mapping) and str(pair.get("id") or "") == str(pair_id):
             return {feature: pair_feature_scope(cfg, pair, feature, index) for feature in wanted}
     return None
+
+
+def _endpoints(pair: Mapping[str, Any]) -> list[tuple[str, str]]:
+    out = []
+    for side in ("source", "target"):
+        provider = str(pair.get(side) or "").strip().upper()
+        if provider:
+            out.append((provider, normalize_instance_id(pair.get(f"{side}_instance"))))
+    return out
+
+
+def uncovered_inventory(config_dir: str | Path, cfg: Mapping[str, Any], pair: Mapping[str, Any]) -> list[tuple[str, str, str]]:
+    covered: set[tuple[str, str, str]] = set()
+    pairs = cfg.get("pairs")
+    for other in pairs if isinstance(pairs, list) else []:
+        if not isinstance(other, Mapping):
+            continue
+        for feature in _feature_list_for_pair(other):
+            for provider, instance in _endpoints(other):
+                covered.add((provider, instance, str(feature).strip().lower()))
+    endpoints = set(_endpoints(pair))
+    return [
+        (row["provider"], row["instance"], row["feature"])
+        for row in sqlite_state.feature_inventory(config_dir)
+        if (row["provider"], normalize_instance_id(row["instance"])) in endpoints
+        and (row["provider"], normalize_instance_id(row["instance"]), row["feature"]) not in covered
+    ]
+
+
+def clear_uncovered_inventory(config_dir: str | Path, cfg: Mapping[str, Any], pair: Mapping[str, Any]) -> dict[str, Any]:
+    keys = uncovered_inventory(config_dir, cfg, pair)
+    baselines, items = sqlite_state.remove_feature_states(config_dir, keys)
+    return {"baselines": baselines, "items": items, "features": [list(key) for key in keys]}
 
 
 def _clear_tombstones(config_dir: Path, scopes: set[str]) -> int:
