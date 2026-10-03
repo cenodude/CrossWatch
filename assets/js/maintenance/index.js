@@ -89,6 +89,14 @@ const OPS = [
     desc: "Starts every sync pair from fresh provider baselines.",
   },
   {
+    key: "pair-state",
+    kind: "pair-state",
+    icon: "restart_alt",
+    title: "Reset a sync pair",
+    desc: "Starts one sync pair from fresh baselines and leaves the other pairs alone.",
+    panel: "cxm-pair-panel",
+  },
+  {
     key: "cache",
     kind: "cache",
     icon: "network_node",
@@ -129,6 +137,7 @@ const OPS = [
     icon: "deployed_code",
     title: "CW tracker archive",
     desc: "Manage local tracker state files, snapshots, exports and imports.",
+    panel: "cxm-archive-panel",
     extra: `
       <div class="action-options tracker-archive-options">
         <label class="tracker-profile-control">
@@ -223,7 +232,7 @@ const GROUPS = [
     icon: "sync",
     title: "Sync",
     desc: "Keep sync state healthy and up to date.",
-    keys: ["state", "cache"],
+    keys: ["state", "pair-state", "cache"],
   },
   {
     id: "playback",
@@ -299,8 +308,8 @@ const groupFor = op => GROUPS.find(group => group.keys.includes(op.key));
 const icon = name => `<span class="material-symbols-rounded" aria-hidden="true">${name}</span>`;
 const renderActionRow = op => `<article class="maint-task" data-op="${op.key}" data-kind="${op.kind}" aria-label="${op.title}">
   <div class="task-copy"><strong>${op.title}</strong><p>${op.desc}</p><div class="task-meta"><span class="risk-pill ${riskFor(op)}">${({safe:"Safe",review:"Review first",destructive:"Destructive"})[riskFor(op)]}</span><span class="task-status" data-status="idle">Not run</span><span data-last-run></span></div></div>
-  <div class="task-actions">${op.kind === "tracker"
-    ? `<button type="button" class="archive-configure" aria-controls="cxm-archive-panel" aria-expanded="false">${icon("tune")}Configure</button>`
+  <div class="task-actions">${op.panel
+    ? `<button type="button" class="archive-configure" aria-controls="${op.panel}" aria-expanded="false">${icon("tune")}Configure</button>`
     : `<button type="button" class="run-btn action-run-btn" data-label="${op.title}" data-idle-label="Run">${icon("play_arrow")}Run</button>`}<button type="button" class="details-btn" aria-label="Details for ${op.title}" title="Task details">${icon("info")}</button></div>
 </article>`;
 const renderCategory = group => `<details class="maint-group ${group.id === "danger" ? "danger-group" : ""}" data-group="${group.id}"><summary><span class="action-icon">${icon(group.icon)}</span><span class="group-copy"><strong>${group.title}</strong><span>${group.desc}</span></span><span class="group-count"></span><button type="button" class="run-btn group-run-btn" data-run-group="${group.id}" aria-label="${group.id === "archive" ? "Configure" : "Run all tasks in"} ${group.title}">${icon(group.id === "archive" ? "tune" : "play_arrow")}<span>${group.id === "archive" ? "Configure" : "Run all"}</span></button>${icon("expand_more")}</summary><div class="group-tasks">${group.keys.map(key => renderActionRow(OPS_BY_KEY[key])).join("")}</div></details>`;
@@ -356,6 +365,16 @@ const MaintenancePage = {
           <div class="archive-panel-footer">${OPS_BY_KEY.tracker.sideActions}<button type="button" class="run-btn archive-clear" id="cxm-cw-clear" data-kind="tracker" data-label="CW tracker archive" data-idle-label="Clear selected">${icon("delete_sweep")}Clear selected</button></div>
           <div id="cxm-archive-status" class="status-message" role="status" hidden></div>
         </section>
+        <section id="cxm-pair-panel" class="archive-panel" aria-labelledby="cxm-pair-title" hidden>
+          <div class="archive-panel-heading"><span class="action-icon">${icon("restart_alt")}</span><div><h2 id="cxm-pair-title" tabindex="-1">Reset a sync pair</h2><p>Choose a pair and the features that should start from fresh baselines.</p></div><button type="button" id="cxm-pair-close" aria-label="Close pair reset options">${icon("close")}</button></div>
+          <div class="action-options pair-reset-options">
+            <label class="tracker-profile-control"><span>Sync pair</span><select id="cxm-pair-select" class="input"><option value="">Loading sync pairs...</option></select></label>
+            <div class="pair-reset-features" id="cxm-pair-features" role="group" aria-label="Features"></div>
+            <label class="tracker-archive-check"><input type="checkbox" id="cxm-pair-retry" checked><span>Also clear retry and blocked items for this pair</span></label>
+          </div>
+          <div class="archive-panel-footer"><p class="pair-reset-note">Other pairs keep their state. A two-way pair adds items back that are missing on one side.</p><button type="button" class="run-btn archive-clear" id="cxm-pair-reset" data-kind="pair-state" data-label="Reset a sync pair" data-idle-label="Reset pair" disabled>${icon("restart_alt")}Reset pair</button></div>
+          <div id="cxm-pair-status" class="status-message" role="status" hidden></div>
+        </section>
         <section id="cxm-action-insight" class="action-insight" aria-live="polite" hidden><div class="insight-head"><span class="material-symbols-rounded insight-icon" aria-hidden="true"></span><h2 class="insight-title"></h2><button type="button" id="cxm-insight-close" aria-label="Close task details">${icon("close")}</button></div><div class="insight-metrics"></div><p class="insight-note"></p></section>
         <details class="storage-details" id="cxm-overview-status"><summary>Storage details</summary><div class="status-lines"><span id="cxm-tracker-count">Loading tracker status...</span><span id="cxm-cache-count">Loading cache status...</span></div><dl><dt>Tracker</dt><dd><code id="cxm-tracker-root"></code></dd><dt>Provider cache</dt><dd><code id="cxm-cache-root"></code></dd></dl></details>
       </div>`;
@@ -404,11 +423,58 @@ const MaintenancePage = {
     }
     const rows = [...root.querySelectorAll(".maint-task")];
     const archivePanel = $("#cxm-archive-panel", root);
-    const archiveConfigure = $(".archive-configure", root);
+    const archiveConfigure = $('.archive-configure[aria-controls="cxm-archive-panel"]', root);
+    const pairPanel = $("#cxm-pair-panel", root);
+    const pairConfigure = $('.archive-configure[aria-controls="cxm-pair-panel"]', root);
+    let pairList = [];
+    const selectedPair = () => pairList.find(pair => pair.id === $("#cxm-pair-select", root).value);
+    function renderPairFeatures() {
+      const pair = selectedPair();
+      $("#cxm-pair-features", root).innerHTML = (pair?.features || []).map(feature =>
+        `<label class="tracker-archive-check"><input type="checkbox" value="${escapeHtml(feature)}" checked><span>${escapeHtml(feature.charAt(0).toUpperCase() + feature.slice(1))}</span></label>`).join("");
+      if (!operationBusy) $("#cxm-pair-reset", root).disabled = !pair?.features?.length;
+    }
+    async function loadPairs() {
+      const select = $("#cxm-pair-select", root);
+      const current = select.value;
+      try {
+        const data = await fjson("/api/maintenance/support/scopes");
+        pairList = (Array.isArray(data?.pairs) ? data.pairs : []).filter(pair => pair?.id).map((pair, index) => ({
+          id: String(pair.id),
+          label: `${index + 1} · ${pair.label || pair.id}${pair.enabled === false ? " (disabled)" : ""}`,
+          features: Array.isArray(pair.features) ? pair.features.map(String) : [],
+        }));
+      } catch {
+        pairList = [];
+      }
+      select.innerHTML = pairList.length
+        ? pairList.map(pair => `<option value="${escapeHtml(pair.id)}">${escapeHtml(pair.label)}</option>`).join("")
+        : '<option value="">No sync pairs configured</option>';
+      if (pairList.some(pair => pair.id === current)) select.value = current;
+      window.CW?.IconSelect?.enhance(select, { className: "cw-plain-select cxm-pair-select", menuMinWidth: 260 });
+      renderPairFeatures();
+    }
+    function setPairOpen(open) {
+      pairPanel.hidden = !open;
+      pairConfigure.setAttribute("aria-expanded", String(open));
+      if (open) {
+        setArchiveOpen(false);
+        showOverviewStatus();
+        $("#cxm-pair-status", root).hidden = true;
+        pairPanel.scrollIntoView({behavior:"smooth", block:"nearest"});
+        $("#cxm-pair-title", root).focus({preventScroll:true});
+        void loadPairs();
+      }
+    }
+    pairConfigure.addEventListener("click", () => setPairOpen(pairPanel.hidden));
+    $("#cxm-pair-close", root).addEventListener("click", () => { setPairOpen(false); pairConfigure.focus(); });
+    $("#cxm-pair-select", root).addEventListener("change", renderPairFeatures);
+    $("#cxm-pair-reset", root).addEventListener("click", event => runOp("pair-state", event.currentTarget));
     function setArchiveOpen(open) {
       archivePanel.hidden = !open;
       archiveConfigure.setAttribute("aria-expanded", String(open));
       if (open) {
+        setPairOpen(false);
         showOverviewStatus();
         $("#cxm-archive-status", root).hidden = true;
         archivePanel.scrollIntoView({behavior:"smooth", block:"nearest"});
@@ -439,6 +505,7 @@ const MaintenancePage = {
       $("#cxm-empty", root).hidden = visible > 0;
       if (selectedInsightKind && rows.find(row => row.dataset.kind === selectedInsightKind)?.hidden) showOverviewStatus();
       if (!operationBusy && rows.find(row => row.dataset.kind === "tracker")?.hidden) setArchiveOpen(false);
+      if (!operationBusy && rows.find(row => row.dataset.kind === "pair-state")?.hidden) setPairOpen(false);
       $("#cxm-range", root).textContent = `${visible} of ${OPS.length} tasks`;
       root.querySelectorAll("[data-group]").forEach(group => {
         const count = [...group.querySelectorAll(".maint-task")].filter(row => !row.hidden).length;
@@ -505,20 +572,22 @@ const MaintenancePage = {
       statusEl.textContent = msg;
       statusEl.className = "status-message" + (kind ? " " + kind : "");
       statusEl.hidden = !msg;
-      const archiveStatus = $("#cxm-archive-status", root);
-      if (!archivePanel.hidden) {
-        archiveStatus.textContent = msg;
-        archiveStatus.className = statusEl.className;
-        archiveStatus.hidden = !msg;
-      }
+      const panelStatuses = [[archivePanel, $("#cxm-archive-status", root)], [pairPanel, $("#cxm-pair-status", root)]].map(([panel, el]) => {
+        if (!panel.hidden) {
+          el.textContent = msg;
+          el.className = statusEl.className;
+          el.hidden = !msg;
+        }
+        return el;
+      });
       if (msg && kind === "ok") {
         statusFadeTimer = window.setTimeout(() => {
           statusEl.classList.add("is-fading");
-          archiveStatus.classList.add("is-fading");
+          panelStatuses.forEach(el => el.classList.add("is-fading"));
           const duration = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 700;
           statusHideTimer = window.setTimeout(() => {
             statusEl.hidden = true;
-            archiveStatus.hidden = true;
+            panelStatuses.forEach(el => { el.hidden = true; });
           }, duration);
         }, 5000);
       }
@@ -588,7 +657,7 @@ const MaintenancePage = {
     function setOperationBusy(busy) {
       if (operationBusy === busy) return;
       operationBusy = busy;
-      const controls = root.querySelectorAll(".run-btn, .archive-btn, .archive-configure, #cxm-cw-profile, #cxm-cw-state, #cxm-cw-snaps, #cxm-archive-close");
+      const controls = root.querySelectorAll(".run-btn, .archive-btn, .archive-configure, #cxm-cw-profile, #cxm-cw-state, #cxm-cw-snaps, #cxm-archive-close, #cxm-pair-select, #cxm-pair-panel input, #cxm-pair-close");
       controls.forEach((control) => {
         if (busy) {
           control.dataset.cwWasDisabled = control.disabled ? "1" : "0";
@@ -824,7 +893,7 @@ const MaintenancePage = {
     }
 
     function actionRow(btn) {
-      return btn.closest(".maint-task") || (btn.dataset.kind === "tracker" ? root.querySelector('.maint-task[data-kind="tracker"]') : null);
+      return btn.closest(".maint-task") || (btn.dataset.kind ? root.querySelector(`.maint-task[data-kind="${btn.dataset.kind}"]`) : null);
     }
 
     function resetActionFeedback(btn) {
@@ -935,6 +1004,24 @@ const MaintenancePage = {
             provider_instance: trackerProfile(),
           });
           trackerStateChanged = clearState;
+        } else if (kind === "pair-state") {
+          const pair = selectedPair();
+          const features = [...root.querySelectorAll("#cxm-pair-features input:checked")].map(input => input.value);
+          if (!pair || !features.length) {
+            setStatus("Select a sync pair and at least one feature.", "err");
+            finishActionFeedback(btn, "error");
+            return false;
+          }
+          if (!confirm(`Reset sync state for pair ${pair.label}?\n\nFeatures: ${features.join(", ")}\n\nThe next sync reads fresh provider data for this pair. Deletions made since the last sync are not propagated, and a two-way pair adds items back that are missing on one side.\n\nOther pairs keep their state.`)) {
+            setStatus("Cancelled.", "");
+            finishActionFeedback(btn, "cancel");
+            return false;
+          }
+          res = await post("/api/maintenance/clear-pair-state", {
+            pair_id: pair.id,
+            features,
+            clear_retry: !!$("#cxm-pair-retry", root)?.checked,
+          });
         } else if (kind === "defaults") {
           const warn = [
             "WARNING Reset all to default",
@@ -1022,7 +1109,7 @@ const MaintenancePage = {
         setArchiveOpen(true);
         return;
       }
-      const tasks = group.keys.map(key => rows.find(row => row.dataset.op === key))
+      const tasks = group.keys.filter(key => !OPS_BY_KEY[key].panel).map(key => rows.find(row => row.dataset.op === key))
         .filter(row => row && !row.hidden && row.querySelector(".action-run-btn"));
       if (!tasks.length) return;
       const taskList = tasks.map(row => {

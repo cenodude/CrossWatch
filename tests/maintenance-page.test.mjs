@@ -32,7 +32,7 @@ test('Maintenance keeps its caller and category, including the old entry point',
 test('all existing tools have one category and bulk recommendations exclude resets',()=>{
   const ctx={};
   vm.runInNewContext(catalog+';globalThis.ops=OPS;globalThis.groups=GROUPS;globalThis.recommended=recommendedKeys([]);',ctx);
-  assert.equal(ctx.ops.length,16);
+  assert.equal(ctx.ops.length,17);
   for (const op of ctx.ops) assert.equal(ctx.groups.filter(group=>group.keys.includes(op.key)).length,1,op.key);
   assert.deepEqual(Array.from(ctx.recommended),['cache','database-health','playing']);
 });
