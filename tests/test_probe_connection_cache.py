@@ -239,6 +239,21 @@ def test_expired_token_is_reported_without_refreshing_it(monkeypatch):
     assert probes._probe_trakt_detail(cfg) == (False, "trakt: access token expired")
 
 
+def test_expired_access_token_with_refresh_token_keeps_last_status(monkeypatch):
+    now = time.time()
+    cfg = {"punchplay": {"access_token": "token", "refresh_token": "refresh", "expires_at": 1, "refresh_expires_at": now + 3600}}
+    connections.update("punchplay", cfg, connected=True, checked_at=now)
+    monkeypatch.setattr(probes, "_authenticated_account", lambda *a, **kw: pytest.fail("expired token polled"))
+    assert probes._probe_punchplay_detail(cfg) == (True, "")
+
+    cfg["punchplay"]["refresh_expires_at"] = 1
+    assert probes._probe_punchplay_detail(cfg) == (False, "punchplay: access token expired")
+
+    cfg["punchplay"]["refresh_expires_at"] = now + 3600
+    cfg["punchplay"]["auth_error"] = "reconnect_required"
+    assert probes._probe_punchplay_detail(cfg) == (False, "punchplay: reconnect required")
+
+
 def test_authenticated_calls_update_only_the_matching_profile(monkeypatch):
     from providers.auth import runtime
 
