@@ -56,17 +56,22 @@ html[data-cw-theme="flat-light"] .cw-maint select { color-scheme:light; }
 .cw-maint .archive-panel { margin-top:20px; background:var(--maint-panel); border:1px solid var(--maint-border); border-radius:12px; padding:24px; scroll-margin-top:100px; }
 .cw-maint .archive-panel-heading { display:flex; align-items:center; gap:14px; }
 .cw-maint .archive-panel-heading h2 { font-size:20px; margin:0 0 5px; }
-.cw-maint .archive-panel-heading #cxm-archive-close { margin-left:auto; }
+.cw-maint .archive-panel-heading :is(#cxm-archive-close,#cxm-pair-close) { margin-left:auto; }
 .cw-maint .tracker-archive-options { display:grid; grid-template-columns:minmax(200px,280px) repeat(2,minmax(180px,1fr)); align-items:end; gap:20px; margin:24px 0; }
 .cw-maint .tracker-profile-control { display:grid; gap:8px; color:var(--maint-muted); font-size:13px; }
-.cw-maint .tracker-profile-control .cxm-tracker-profile-select { min-width:180px; width:100%; }
+.cw-maint .tracker-profile-control .cxm-tracker-profile-select,.cw-maint .tracker-profile-control .cxm-pair-select { min-width:180px; width:100%; }
 .cw-maint .tracker-profile-control :is(select,.cw-icon-select-btn) { min-height:48px; background:var(--maint-panel)!important; border-color:var(--maint-border)!important; box-shadow:none!important; }
 .cxm-tracker-profile-menu { min-width:220px; }
 .cw-maint .tracker-archive-check { display:flex; gap:12px; align-items:center; min-height:48px; padding:10px 14px; border:1px solid var(--maint-border); border-radius:10px; }
 .cw-maint .archive-panel-footer { display:flex; align-items:center; justify-content:space-between; gap:20px; padding-top:20px; border-top:1px solid var(--maint-border); }
 .cw-maint .archive-actions { display:flex; gap:10px; flex-wrap:wrap; }
 .cw-maint .archive-clear { color:var(--maint-danger); border-color:color-mix(in srgb,var(--maint-danger) 35%,var(--maint-border)); }
-.cw-maint #cxm-archive-status { margin:20px 0 0; }
+.cw-maint :is(#cxm-archive-status,#cxm-pair-status) { margin:20px 0 0; }
+.cw-maint .pair-reset-options { display:grid; gap:16px; margin:24px 0; }
+.cw-maint .pair-reset-options .tracker-profile-control { max-width:420px; }
+.cw-maint .pair-reset-features { display:flex; flex-wrap:wrap; gap:12px; }
+.cw-maint .pair-reset-features:empty { display:none; }
+.cw-maint .pair-reset-note { margin:0; color:var(--maint-muted); font-size:13px; }
 @keyframes maint-pulse { to { opacity:.35; } }
 @media (prefers-reduced-motion:reduce) { .cw-maint .busy .material-symbols-rounded { animation:none; } }
 @media (prefers-reduced-motion:reduce) { .cw-maint .status-message { transition:none; } }

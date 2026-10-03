@@ -2555,15 +2555,28 @@ def _cw_state_dir() -> Path:
         p = Path('/config/.cw_state')
         return p if p.exists() else Path('.cw_state')
 
-def _purge_pair_state(pair_id: str) -> dict[str, Any]:
+def _purge_pair_state(pair_id: str, scopes: Sequence[str] = ()) -> dict[str, Any]:
     state_dir = _cw_state_dir()
     token = str(pair_id or '').strip()
-    if not token or not state_dir.exists():
-        return {'removed': [], 'errors': []}
-
-    paths: list[Path] = []
     removed: list[str] = []
     errors: list[str] = []
+
+    if scopes:
+        try:
+            from cw_platform.config_base import CONFIG
+            from services.pair_state import clear_pair_state
+
+            scoped = clear_pair_state(CONFIG, state_dir, scopes)
+            removed.extend(scoped.get('files') or [])
+            errors.extend(scoped.get('errors') or [])
+            clear_caches()
+        except Exception as e:
+            errors.append(f'pair_state: {e}')
+
+    if not token or not state_dir.exists():
+        return {'removed': removed, 'errors': errors}
+
+    paths: list[Path] = []
 
     try:
         for p in state_dir.rglob('*'):
@@ -2573,7 +2586,7 @@ def _purge_pair_state(pair_id: str) -> dict[str, Any]:
             except Exception:
                 continue
     except Exception as e:
-        return {'removed': [], 'errors': [f'scan_failed: {e}']}
+        return {'removed': removed, 'errors': [*errors, f'scan_failed: {e}']}
 
     paths.sort(key=lambda x: len(x.parts), reverse=True)
 
@@ -2605,13 +2618,21 @@ def api_pairs_delete(pair_id: str, purge_state: bool = True, request: Request = 
             return {"ok": False, "error": "profile_scope_denied"}
         if pair is not None and _playlist_managed_pair(pair):
             return {"ok": False, "error": "playlist_managed_pair"}
+        scopes: list[str] = []
+        if purge_state and pair is not None:
+            try:
+                from services.pair_state import pair_scopes
+
+                scopes = list((pair_scopes(cfg, pair_id) or {}).values())
+            except Exception:
+                scopes = []
         before = len(arr)
         arr[:] = [it for it in arr if str(it.get("id")) != str(pair_id)]
         deleted = before - len(arr)
         if deleted:
             save_config(cfg)
         if purge_state:
-            state = _purge_pair_state(pair_id)
+            state = _purge_pair_state(pair_id, scopes if deleted else ())
         return {
             "ok": True,
             "deleted": deleted,

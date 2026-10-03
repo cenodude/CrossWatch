@@ -1267,6 +1267,41 @@ def test_maintenance_factory_reset_posts_reset_endpoint() -> None:
     assert http.calls == [("POST", "/api/maintenance/reset-all-default", {"restart": True})]
 
 
+def test_maintenance_reset_pair_posts_selected_features() -> None:
+    from cli.commands.maintenance import maintenance_reset_pair
+
+    pairs = {"pairs": [{"id": "p1", "label": "PLEX <-> SIMKL", "mode": "two-way", "features": ["history", "watchlist"]}]}
+    http = FakeTransport({
+        ("GET", "/api/maintenance/support/scopes"): pairs,
+        ("POST", "/api/maintenance/clear-pair-state"): {"ok": True, "removed": {"baselines": 2}},
+    })
+    state = _ctx(http)
+
+    maintenance_reset_pair(SimpleNamespace(obj=state), pair="p1", feature=["history"], keep_retry=True, yes=True)
+    maintenance_reset_pair(SimpleNamespace(obj=state), pair="p1", feature=[], keep_retry=False, yes=True)
+
+    posts = [call for call in http.calls if call[0] == "POST"]
+    assert posts == [
+        ("POST", "/api/maintenance/clear-pair-state", {"pair_id": "p1", "features": ["history"], "clear_retry": False}),
+        ("POST", "/api/maintenance/clear-pair-state", {"pair_id": "p1", "features": ["history", "watchlist"], "clear_retry": True}),
+    ]
+
+
+def test_maintenance_reset_pair_lists_pairs_and_rejects_unknown_input() -> None:
+    from cli.commands.maintenance import maintenance_reset_pair
+
+    http = FakeTransport({("GET", "/api/maintenance/support/scopes"): {"pairs": [{"id": "p1", "features": ["history"]}]}})
+    state = _ctx(http)
+
+    maintenance_reset_pair(SimpleNamespace(obj=state), pair="", feature=[], keep_retry=False, yes=True)
+    with pytest.raises(CLIError):
+        maintenance_reset_pair(SimpleNamespace(obj=state), pair="nope", feature=[], keep_retry=False, yes=True)
+    with pytest.raises(CLIError):
+        maintenance_reset_pair(SimpleNamespace(obj=state), pair="p1", feature=["bogus"], keep_retry=False, yes=True)
+
+    assert not [call for call in http.calls if call[0] == "POST"]
+
+
 def test_parse_field_args_requires_key_equals_value() -> None:
     from cli.commands.auth import _parse_field_args
 

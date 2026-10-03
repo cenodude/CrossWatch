@@ -25,9 +25,11 @@ CACHES = {
 }
 
 PROVIDER_CLEANUP_FEATURES = ("watchlist", "ratings", "history", "progress", "collection")
+PAIR_RESET_FEATURES = ("watchlist", "history", "ratings", "progress", "collection", "playlists")
 
 MAINTENANCE_TOOLS = [
     ("Sync", "Rebuild sync state", "cw maintenance cache state --yes"),
+    ("Sync", "Reset a sync pair", "cw maintenance reset-pair <pair-id> --yes"),
     ("Sync", "Retry provider items", "cw maintenance cache all --yes"),
     ("Playback", "Clear currently playing", "cw maintenance reset-watching"),
     ("Playback", "Clear Recent Scrobbles", "cw maintenance cache scrobbles --yes"),
@@ -354,6 +356,91 @@ def maintenance_provider_cleanup(
             _print_cleanup_result(state, {"progress": progress, "start": result})
             return
     state.out.warn("Still running, stopped waiting.")
+
+
+def _split_pair_features(values: list[str]) -> list[str]:
+    out: list[str] = []
+    for value in values:
+        for chunk in str(value or "").split(","):
+            feature = chunk.strip().lower()
+            if not feature:
+                continue
+            if feature not in PAIR_RESET_FEATURES:
+                raise CLIError(
+                    f"Unknown feature '{feature}'",
+                    hint=f"Try: {', '.join(PAIR_RESET_FEATURES)}",
+                    exit_code=EXIT_USAGE,
+                )
+            if feature not in out:
+                out.append(feature)
+    return out
+
+
+@maintenance_app.command("reset-pair")
+def maintenance_reset_pair(
+    ctx: typer.Context,
+    pair: str = typer.Argument("", help="Sync pair id. Leave empty to list the pairs."),
+    feature: list[str] = typer.Option([], "--feature", "-F", help="Features to reset. Repeat or comma-separate. Default: all enabled features."),
+    keep_retry: bool = typer.Option(False, "--keep-retry", help="Keep retry and blocked items for this pair."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Do not ask for confirmation."),
+) -> None:
+    """Start one sync pair from fresh baselines."""
+    state: Ctx = ctx.obj
+    features = _split_pair_features(feature)
+    pairs = [as_dict(row) for row in as_dict(state.get("/api/maintenance/support/scopes")).get("pairs") or []]
+    pair_id = pair.strip()
+    if not pair_id:
+        if state.out.json_mode:
+            state.out.data({"pairs": pairs})
+            return
+        state.out.records(
+            pairs,
+            [
+                ("PAIR", lambda r: str(r.get("id") or "-")),
+                ("ROUTE", lambda r: str(r.get("label") or "-")),
+                ("MODE", lambda r: str(r.get("mode") or "-")),
+                ("FEATURES", lambda r: ", ".join(r.get("features") or []) or "-"),
+            ],
+            title="Sync pairs",
+            empty="No sync pairs configured.",
+        )
+        return
+
+    state.require_service("Resetting a sync pair")
+    found = next((row for row in pairs if str(row.get("id") or "") == pair_id), None)
+    if found is None:
+        raise CLIError(f"Unknown sync pair '{pair_id}'", hint="Run cw maintenance reset-pair to list the pairs.", exit_code=EXIT_USAGE)
+    features = features or [str(name) for name in found.get("features") or []]
+    if not features:
+        raise CLIError("This pair has no enabled features", hint="Pick one with --feature.", exit_code=EXIT_USAGE)
+    label = str(found.get("label") or pair_id)
+    if not yes:
+        state.out.warn("A two-way pair adds items back that are missing on one side.")
+        if not typer.confirm(f"Reset {', '.join(features)} for {label}?", default=False):
+            raise CLIError("Cancelled", exit_code=0)
+    result = as_dict(
+        state.post(
+            "/api/maintenance/clear-pair-state",
+            json_body={"pair_id": pair_id, "features": features, "clear_retry": not keep_retry},
+        )
+    )
+    if result.get("ok") is False:
+        raise CLIError(error_text(result, "Reset rejected"))
+    if state.out.json_mode:
+        state.out.data(result or {"ok": True})
+        return
+    removed = as_dict(result.get("removed"))
+    state.out.success(f"Reset {label}.")
+    state.out.kv(
+        [
+            ("Features", ", ".join(features)),
+            ("Baselines", removed.get("baselines") or 0),
+            ("Baseline items", removed.get("items") or 0),
+            ("Tombstones", removed.get("tombstones") or 0),
+            ("Files", len(removed.get("files") or [])),
+        ],
+        title="Pair reset",
+    )
 
 
 @maintenance_app.command("factory-reset")

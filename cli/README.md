@@ -397,6 +397,7 @@ cw maintenance provider-cache
 cw maintenance provider-cleanup    clear provider watchlist, ratings, history, progress or collection
 cw maintenance state-file --prune|--compact
 cw maintenance tracker [--clear]
+cw maintenance reset-pair [id]     start one sync pair from fresh baselines, -F to pick features
 cw maintenance reset-stats
 cw maintenance reset-watching
 cw maintenance support [--scopes]

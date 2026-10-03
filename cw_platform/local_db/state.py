@@ -785,14 +785,30 @@ def save_pair_blocks(base_path: str | Path, pair_scope: str, blocks: Mapping[tup
         _invalidate()
 
 
-def clear_pair_state(base_path: str | Path, pair_scope: str) -> None:
+def pair_state_counts(base_path: str | Path, pair_scope: str | None = None) -> tuple[int, int]:
+    with _LOCK:
+        conn = get_conn(base_path)
+        if conn is None:
+            return 0, 0
+        where, params = (" WHERE pair_scope=?", (pair_scope,)) if pair_scope is not None else ("", ())
+        baselines = conn.execute(f"SELECT COUNT(*) FROM pair_feature_state{where}", params).fetchone()[0]
+        items = conn.execute(
+            f"SELECT COUNT(*) FROM pair_baseline_items WHERE provider_state_id IN (SELECT id FROM pair_feature_state{where})",
+            params,
+        ).fetchone()[0]
+        return int(baselines or 0), int(items or 0)
+
+
+def clear_pair_state(base_path: str | Path, pair_scope: str) -> tuple[int, int]:
     with _LOCK:
         conn = get_conn(base_path)
         if conn is None:
             raise RuntimeError("Pair state database is unavailable")
+        removed = pair_state_counts(base_path, pair_scope)
         with conn:
             conn.execute("DELETE FROM pair_feature_state WHERE pair_scope=?", (pair_scope,))
         _invalidate()
+        return removed
 
 
 def set_last_sync_epoch(base_path: str | Path, value: Any) -> None:

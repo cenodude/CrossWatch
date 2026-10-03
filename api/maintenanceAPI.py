@@ -656,6 +656,21 @@ def maintenance_action_status(action: str) -> dict[str, Any]:
                 _metric("Last updated", scoped_usage["modified"], "datetime"),
             ],
         )
+    elif action == "pair-state":
+        from cw_platform.local_db.state import pair_state_counts
+
+        cfg = _load_config_for_state_prune(CONFIG_DIR) or {}
+        pairs = [pair for pair in cfg.get("pairs") or [] if isinstance(pair, Mapping)]
+        baselines, items = pair_state_counts(CONFIG_DIR)
+        response.update(
+            title="Reset a sync pair",
+            note="Removes the baselines, history aliases, mapping caches, watermarks and tombstones of one sync pair for the features you select. Other pairs keep their state. On the next sync a two-way pair adds items back that are missing on one side.",
+            metrics=[
+                _metric("Sync pairs", len(pairs)),
+                _metric("Pair baselines", baselines),
+                _metric("Pair baseline items", items),
+            ],
+        )
     elif action in {"state-file", "state-file-prune"}:
         usage = _paths_usage(_sync_state_storage_paths(CONFIG_DIR))
         inv = _sync_state_baseline_inventory(CONFIG_DIR)
@@ -1490,6 +1505,56 @@ def clear_provider_sync_cache() -> dict[str, Any]:
             for key in ("removed_files", "removed_items", "freed_bytes")
         },
     }
+
+@router.post("/clear-pair-state")
+def clear_pair_state_route(
+    pair_id: str = Body(...),
+    features: list[str] | None = Body(None),
+    clear_retry: bool = Body(True),
+) -> dict[str, Any]:
+    from services.pair_state import clear_pair_state, pair_scopes
+
+    _, CONFIG_DIR, CW_STATE_DIR, *_ = _cw()
+    cfg = _load_config_for_state_prune(CONFIG_DIR) or {}
+    scopes = pair_scopes(cfg, pair_id, features)
+    if scopes is None:
+        return {"ok": False, "error": "pair_not_found"}
+    if not scopes:
+        return {"ok": False, "error": "no_features_selected"}
+
+    def keep(name: str) -> bool:
+        if name in CW_STATE_KEEP_FILES:
+            return True
+        if _is_sync_state_file(name):
+            return False
+        return not clear_retry or name.startswith("plex_fallback_memo.")
+
+    result = clear_pair_state(CONFIG_DIR, CW_STATE_DIR, scopes.values(), keep_file=keep)
+    clear_caches()
+    release_memory()
+    errors = list(result.get("errors") or [])
+    if errors:
+        _LOG.warning("pair state reset pair=%s errors=%s", pair_id, errors)
+    response: dict[str, Any] = {
+        "ok": not errors,
+        "pair_id": str(pair_id),
+        "features": sorted(scopes),
+        "removed": {
+            "baselines": result["baselines"],
+            "items": result["items"],
+            "tombstones": result["tombstones"],
+            "files": result["files"],
+        },
+        "summary": {
+            "removed_files": len(result["files"]),
+            "removed_items": int(result["items"]) + int(result["tombstones"]),
+            "freed_bytes": int(result["bytes"]),
+        },
+    }
+    if errors:
+        response["error"] = "clear_pair_state_failed"
+    return response
+
 
 @router.get("/provider-cache")
 def provider_cache_status() -> dict[str, Any]:
