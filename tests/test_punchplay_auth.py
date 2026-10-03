@@ -252,7 +252,7 @@ def test_refresh_rate_limit_keeps_tokens(punchplay, monkeypatch: pytest.MonkeyPa
     assert store["cfg"]["punchplay"]["refresh_token"] == "rt-old"
 
 
-def test_refresh_invalid_grant_clears_tokens_for_reconnect(punchplay, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_refresh_invalid_grant_keeps_tokens_and_flags_reconnect(punchplay, monkeypatch: pytest.MonkeyPatch) -> None:
     pp, store = punchplay
     store["cfg"]["punchplay"].update({
         "access_token": "at-old",
@@ -266,35 +266,142 @@ def test_refresh_invalid_grant_clears_tokens_for_reconnect(punchplay, monkeypatc
     assert res["ok"] is False
     assert res["status"] == "invalid_grant"
     assert res["reconnect_required"] is True
-    assert store["cfg"]["punchplay"]["access_token"] == ""
-    assert store["cfg"]["punchplay"]["refresh_token"] == ""
+    blk = store["cfg"]["punchplay"]
+    assert blk["access_token"] == "at-old"
+    assert blk["refresh_token"] == "rt-dead"
+    assert blk["auth_error"] == "reconnect_required"
+    assert pp.is_configured(blk) is True
+    assert pp.status_for_block(blk)["reconnect_required"] is True
+
+
+def test_refresh_is_not_retried_while_reconnect_is_required(punchplay, monkeypatch: pytest.MonkeyPatch) -> None:
+    pp, store = punchplay
+    store["cfg"]["punchplay"].update({
+        "access_token": "at-old",
+        "refresh_token": "rt-dead",
+        "expires_at": int(time.time()) + 10,
+        "auth_error": "reconnect_required",
+    })
+
+    def _boom(*_a: Any, **_k: Any):
+        raise AssertionError("a flagged connection must not refresh")
+
+    monkeypatch.setattr(pp.requests, "post", _boom)
+
+    res = pp.refresh_token(store["cfg"], instance_id="default", force=True)
+
+    assert res["status"] == "reconnect_required"
+    assert res["reconnect_required"] is True
+
+
+def test_refresh_invalid_grant_uses_token_rotated_meanwhile(punchplay, monkeypatch: pytest.MonkeyPatch) -> None:
+    pp, store = punchplay
+    store["cfg"]["punchplay"].update({
+        "access_token": "at-old",
+        "refresh_token": "rt-old",
+        "expires_at": int(time.time()) + 10,
+    })
+
+    def post(url: str, **kwargs: Any) -> ResponseStub:
+        store["cfg"] = {"punchplay": {"access_token": "at-new", "refresh_token": "rt-new", "expires_at": int(time.time()) + 3600}}
+        return ResponseStub(400, {"error": "invalid_grant", "request_id": "req-1"})
+
+    monkeypatch.setattr(pp.requests, "post", post)
+
+    res = pp.refresh_token(store["cfg"], instance_id="default")
+
+    assert res["ok"] is True
+    assert res["status"] == "fresh"
+    assert store["cfg"]["punchplay"]["refresh_token"] == "rt-new"
+    assert "auth_error" not in store["cfg"]["punchplay"]
+
+
+def test_refresh_success_clears_reconnect_flag_on_reconnect(punchplay, monkeypatch: pytest.MonkeyPatch) -> None:
+    pp, store = punchplay
+    store["cfg"]["punchplay"].update({
+        "access_token": "at-old",
+        "refresh_token": "rt-old",
+        "auth_error": "reconnect_required",
+        "_pending_device": {"device_code": "dc", "expires_at": int(time.time()) + 600},
+    })
+    tok = {"access_token": "at-1", "refresh_token": "rt-1", "token_type": "bearer", "expires_in": 3600, "refresh_expires_in": 31536000, "scope": "x"}
+    monkeypatch.setattr(pp.requests, "post", FakePost([ResponseStub(200, tok)]))
+
+    res = pp.poll_device_code(store["cfg"], instance_id="default")
+
+    assert res["ok"] is True
+    assert "auth_error" not in store["cfg"]["punchplay"]
+
+
+def test_refresh_with_rejected_token_skips_network_when_already_rotated(punchplay, monkeypatch: pytest.MonkeyPatch) -> None:
+    pp, store = punchplay
+    store["cfg"]["punchplay"].update({
+        "access_token": "at-new",
+        "refresh_token": "rt-new",
+        "expires_at": int(time.time()) + 3600,
+    })
+
+    def _boom(*_a: Any, **_k: Any):
+        raise AssertionError("another caller already refreshed")
+
+    monkeypatch.setattr(pp.requests, "post", _boom)
+
+    res = pp.refresh_token(store["cfg"], instance_id="default", force=True, rejected_token="at-old")
+
+    assert res["ok"] is True
+    assert res["status"] == "fresh"
+
+
+def test_request_with_auth_retries_401_with_token_rotated_meanwhile(punchplay, monkeypatch: pytest.MonkeyPatch) -> None:
+    pp, store = punchplay
+    store["cfg"]["punchplay"].update({
+        "access_token": "at-old",
+        "refresh_token": "rt-old",
+        "expires_at": int(time.time()) + 3600,
+    })
+    monkeypatch.setattr(pp, "refresh_token", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no refresh needed")))
+    seen: list[str] = []
+
+    def fake_call(session, method, url, **kw):
+        seen.append(kw["headers"]["Authorization"])
+        if len(seen) == 1:
+            store["cfg"]["punchplay"]["access_token"] = "at-new"
+            return ResponseStub(401, {"error": "invalid_token"})
+        return ResponseStub(200, {})
+
+    import requests as _requests
+
+    resp = pp.request_with_auth(_requests.Session(), "GET", "https://punchplay.tv/x", cfg=store["cfg"], instance_id="default", request_func=fake_call)
+
+    assert resp.status_code == 200
+    assert seen == ["Bearer at-old", "Bearer at-new"]
 
 
 def test_auth_budgets_match_the_documented_limits() -> None:
     import providers.auth._auth_PUNCHPLAY as pp
 
-    assert pp.DEVICE_CODE_BUDGET == (10, 3600.0)
-    assert pp.DEVICE_TOKEN_BUDGET == (200, 600.0)
+    assert pp.DEVICE_CODE_BUDGET == (60, 3600.0)
+    assert pp.DEVICE_TOKEN_BUDGET == (1200, 600.0)
     assert pp.REFRESH_BUDGET == (20, 3600.0)
 
 
-def test_device_code_is_capped_locally_at_ten_per_hour(punchplay, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_device_code_is_capped_locally_at_sixty_per_hour(punchplay, monkeypatch: pytest.MonkeyPatch) -> None:
     pp, store = punchplay
     ok = ResponseStub(200, {
         "user_code": "AAAA-BBBB", "device_code": "dc", "verification_uri": "https://punchplay.tv/link",
         "verification_uri_complete": "", "verification_uri_qr": "", "expires_in": 600, "scope": "profile:read",
     })
-    post = FakePost([ok] * 20)
+    post = FakePost([ok] * 70)
     monkeypatch.setattr(pp.requests, "post", post)
 
-    results = [pp.start_device_code(store["cfg"], instance_id="default") for _ in range(12)]
+    results = [pp.start_device_code(store["cfg"], instance_id="default") for _ in range(62)]
 
-    assert len(post.calls) == 10
-    assert all(r["ok"] for r in results[:10])
-    assert results[10]["error"] == "rate_limited"
-    assert results[10]["local"] is True
-    assert results[10]["rate_limit_source"] == "local"
-    assert results[10]["retry_after"] > 0
+    assert len(post.calls) == 60
+    assert all(r["ok"] for r in results[:60])
+    assert results[60]["error"] == "rate_limited"
+    assert results[60]["local"] is True
+    assert results[60]["rate_limit_source"] == "local"
+    assert results[60]["retry_after"] > 0
 
 
 def test_refresh_is_capped_locally_at_twenty_per_hour(punchplay, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -310,6 +417,10 @@ def test_refresh_is_capped_locally_at_twenty_per_hour(punchplay, monkeypatch: py
     assert len(post.calls) == 20
     assert results[20]["status"] == "rate_limited"
     assert results[20]["local"] is True
+
+    store["cfg"]["punchplay"]["instances"] = {"second": {"access_token": "at", "refresh_token": "rt", "expires_at": 0}}
+    other = pp.refresh_token(store["cfg"], instance_id="second", force=True)
+    assert other["ok"] is True
 
 
 def test_server_429_blocks_further_local_attempts(punchplay, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -2990,7 +2990,92 @@ def load_config() -> dict[str, Any]:
     return cfg
 
 
+_ROTATING_TOKEN_EXPIRY: dict[str, str] = {
+    "trakt": "expires_at",
+    "simkl": "token_expires_at",
+    "mdblist": "expires_at",
+    "wetrakr": "expires_at",
+    "nuvio": "expires_at",
+    "punchplay": "expires_at",
+}
+_ROTATING_TOKEN_FIELDS: tuple[str, ...] = (
+    "access_token",
+    "refresh_token",
+    "token_type",
+    "scope",
+    "refresh_expires_at",
+    "auth_error",
+)
+_TOKEN_LINEAGE_KEY = "_rotated_refresh_tokens"
+_TOKEN_LINEAGE_MAX = 8
+
+
+def _log_config_warning(msg: str) -> None:
+    try:
+        from _logging import log
+
+        log(msg, level="WARN", module="CONFIG")
+    except Exception:
+        pass
+
+
+def _token_digest(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
+
+
+def _token_lineage(block: dict[str, Any]) -> list[str]:
+    raw = block.get(_TOKEN_LINEAGE_KEY)
+    return [str(x) for x in raw if str(x or "").strip()] if isinstance(raw, list) else []
+
+
+def _keep_newer_token(new: dict[str, Any], old: dict[str, Any], expiry_key: str) -> bool:
+    new_rt = str(new.get("refresh_token") or "").strip()
+    old_rt = str(old.get("refresh_token") or "").strip()
+    old_lineage = _token_lineage(old)
+    if not new_rt or not old_rt:
+        return False
+    if new_rt == old_rt:
+        if old_lineage:
+            new[_TOKEN_LINEAGE_KEY] = old_lineage
+        return False
+    if _token_digest(new_rt) in old_lineage:
+        for key in (*_ROTATING_TOKEN_FIELDS, expiry_key, _TOKEN_LINEAGE_KEY):
+            if key in old:
+                new[key] = copy.deepcopy(old[key])
+            else:
+                new.pop(key, None)
+        return True
+    new[_TOKEN_LINEAGE_KEY] = ([_token_digest(old_rt)] + old_lineage)[:_TOKEN_LINEAGE_MAX]
+    return False
+
+
+def _preserve_rotated_tokens(data: dict[str, Any], prev: dict[str, Any]) -> list[str]:
+    kept: list[str] = []
+    for provider, expiry_key in _ROTATING_TOKEN_EXPIRY.items():
+        new_root = data.get(provider)
+        old_root = prev.get(provider)
+        if not isinstance(new_root, dict) or not isinstance(old_root, dict):
+            continue
+        pairs: list[tuple[str, dict[str, Any], dict[str, Any]]] = [("default", new_root, old_root)]
+        new_insts = new_root.get("instances")
+        old_insts = old_root.get("instances")
+        if isinstance(new_insts, dict) and isinstance(old_insts, dict):
+            for inst, blk in new_insts.items():
+                old_blk = old_insts.get(inst)
+                if isinstance(blk, dict) and isinstance(old_blk, dict):
+                    pairs.append((str(inst), blk, old_blk))
+        for inst, blk, old_blk in pairs:
+            if _keep_newer_token(blk, old_blk, expiry_key):
+                kept.append(f"{provider}:{inst}")
+    return kept
+
+
 def save_config(cfg: dict[str, Any]) -> None:
+    with _config_io_lock():
+        _save_config_locked(cfg)
+
+
+def _save_config_locked(cfg: dict[str, Any]) -> None:
     data: dict[str, Any] = dict(cfg or {})
     prev_version = str(data.get("version") or "").strip()
     try:
@@ -3040,14 +3125,22 @@ def save_config(cfg: dict[str, Any]) -> None:
     except Exception:
         prev_raw = {}
 
+    try:
+        prev_cfg = cast(dict[str, Any], _transform_secret_tree(prev_raw, decrypt=True)) if isinstance(prev_raw, dict) else {}
+    except Exception:
+        prev_cfg = {}
+
     if not bool(getattr(_CONFIG_FILE_LOCK_STATE, "atomic_update", False)):
-        try:
-            prev_cfg = cast(dict[str, Any], _transform_secret_tree(prev_raw, decrypt=True)) if isinstance(prev_raw, dict) else {}
-            prev_auth = prev_cfg.get("app_auth") if isinstance(prev_cfg, dict) else None
-            if isinstance(prev_auth, dict):
-                data["app_auth"] = prev_auth
-        except Exception:
-            pass
+        prev_auth = prev_cfg.get("app_auth") if isinstance(prev_cfg, dict) else None
+        if isinstance(prev_auth, dict):
+            data["app_auth"] = prev_auth
+
+    try:
+        kept = _preserve_rotated_tokens(data, prev_cfg)
+        if kept:
+            _log_config_warning(f"kept newer rotated tokens over a stale config write: {', '.join(kept)}")
+    except Exception:
+        pass
 
     final_data = _order_config_for_write(cast(dict[str, Any], _encrypt_secret_tree_stable(data, prev_raw)))
     _write_json_atomic(_cfg_file(), final_data)

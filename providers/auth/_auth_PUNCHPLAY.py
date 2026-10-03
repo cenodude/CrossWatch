@@ -82,8 +82,8 @@ _TOKEN_KEYS = (
 _REFRESH_LOCKS: dict[str, threading.Lock] = {}
 _REFRESH_LOCKS_GUARD = threading.Lock()
 
-DEVICE_CODE_BUDGET = (10, 3600.0)
-DEVICE_TOKEN_BUDGET = (200, 600.0)
+DEVICE_CODE_BUDGET = (60, 3600.0)
+DEVICE_TOKEN_BUDGET = (1200, 600.0)
 REFRESH_BUDGET = (20, 3600.0)
 FORCED_REFRESH_MIN_INTERVAL = 60.0
 
@@ -101,8 +101,11 @@ class _IPRateGuard:
         self._hits: dict[str, list[float]] = {}
         self._blocked: dict[str, float] = {}
 
+    def _budget(self, name: str) -> tuple[int, float] | None:
+        return self._budgets.get(name.split(":", 1)[0])
+
     def _prune(self, name: str, now: float) -> list[float]:
-        limit_window = self._budgets.get(name)
+        limit_window = self._budget(name)
         hits = self._hits.setdefault(name, [])
         if limit_window:
             cutoff = now - limit_window[1]
@@ -114,7 +117,7 @@ class _IPRateGuard:
         with self._lock:
             now = time.monotonic()
             wait = max(0.0, self._blocked.get(name, 0.0) - now)
-            budget = self._budgets.get(name)
+            budget = self._budget(name)
             if budget:
                 hits = self._prune(name, now)
                 if len(hits) >= budget[0]:
@@ -125,7 +128,7 @@ class _IPRateGuard:
         with self._lock:
             now = time.monotonic()
             wait = max(0.0, self._blocked.get(name, 0.0) - now)
-            budget = self._budgets.get(name)
+            budget = self._budget(name)
             hits = self._prune(name, now) if budget else []
             if budget and len(hits) >= budget[0]:
                 wait = max(wait, hits[0] + budget[1] - now)
@@ -206,6 +209,20 @@ def _error_of(r: requests.Response) -> str:
     return str(body.get("error") or "").strip()
 
 
+def _request_id_of(r: requests.Response) -> str:
+    try:
+        body = r.json() or {}
+    except Exception:
+        body = {}
+    rid = str(body.get("request_id") or "").strip() if isinstance(body, Mapping) else ""
+    if not rid:
+        try:
+            rid = str(r.headers.get("X-PunchPlay-Request-Id") or "").strip()
+        except Exception:
+            rid = ""
+    return rid
+
+
 def _retry_after(r: requests.Response) -> int:
     try:
         return max(0, int(float(r.headers.get("Retry-After") or 0)))
@@ -251,6 +268,11 @@ def clear_oauth(block: MutableMapping[str, Any]) -> None:
         if key in block:
             block[key] = 0 if key in {"expires_at", "refresh_expires_at"} else ""
     block.pop("_pending_device", None)
+    block.pop("auth_error", None)
+
+
+def needs_reconnect(block: Mapping[str, Any] | None) -> bool:
+    return str((block or {}).get("auth_error") or "") == "reconnect_required"
 
 
 def is_configured(block: Mapping[str, Any] | None) -> bool:
@@ -275,6 +297,7 @@ def status_for_block(block: Mapping[str, Any] | None) -> dict[str, Any]:
     out: dict[str, Any] = {
         "auth_method": "device_code",
         "connected": is_configured(b),
+        "reconnect_required": needs_reconnect(b),
         "client_id_configured": bool(app_client_id()),
         "expires_at": int(b.get("expires_at") or 0),
         "refresh_expires_at": int(b.get("refresh_expires_at") or 0),
@@ -311,6 +334,7 @@ def _apply_token_response(block: MutableMapping[str, Any], tok: Mapping[str, Any
     block["expires_at"] = now() + expires_in if expires_in > 0 else 0
     block["refresh_expires_at"] = now() + refresh_expires_in if refresh_expires_in > 0 else 0
     block["auth_method"] = "device_code"
+    block.pop("auth_error", None)
 
 
 def fetch_identity(access_token: str, *, timeout: float = HTTP_TIMEOUT) -> dict[str, Any]:
@@ -545,14 +569,21 @@ def refresh_token(
     instance_id: Any = None,
     update_cfg: dict[str, Any] | None = None,
     force: bool = False,
+    rejected_token: str | None = None,
     timeout: float = HTTP_TIMEOUT,
 ) -> dict[str, Any]:
     inst = normalize_instance_id(instance_id)
     with _refresh_lock(inst):
         full = _load_full_cfg()
         block = writable_block(full, inst)
+        current = str(block.get("access_token") or "").strip()
 
-        if not force and str(block.get("access_token") or "").strip() and not about_to_expire(block):
+        if needs_reconnect(block):
+            return {"ok": False, "status": "reconnect_required", "instance": inst, "reconnect_required": True}
+        if not force and current and not about_to_expire(block):
+            return {"ok": True, "status": "fresh", "instance": inst, "expires_at": int(block.get("expires_at") or 0)}
+        rejected = str(rejected_token or "").strip()
+        if rejected and current and current != rejected and not about_to_expire(block):
             return {"ok": True, "status": "fresh", "instance": inst, "expires_at": int(block.get("expires_at") or 0)}
 
         cid = app_client_id()
@@ -562,7 +593,7 @@ def refresh_token(
         if not cid or not rt:
             return {"ok": False, "status": "missing_refresh", "instance": inst}
 
-        wait = _AUTH_GUARD.reserve("refresh")
+        wait = _AUTH_GUARD.reserve(f"refresh:{inst}")
         if wait:
             log(f"PUNCHPLAY: refresh throttled locally (instance={inst})", level="WARN", module="AUTH")
             return {"ok": False, "status": "rate_limited", "retry_after": wait, "local": True, "instance": inst}
@@ -579,17 +610,25 @@ def refresh_token(
 
         if r.status_code == 429:
             retry = _retry_after(r)
-            _AUTH_GUARD.note_429("refresh", retry or 300)
-            log(f"PUNCHPLAY: refresh rate limited (instance={inst})", level="WARN", module="AUTH")
+            _AUTH_GUARD.note_429(f"refresh:{inst}", retry or 300)
+            log(f"PUNCHPLAY: refresh rate limited (instance={inst} retry_after={retry or 300}s request_id={_request_id_of(r) or '-'})", level="WARN", module="AUTH")
             return {"ok": False, "status": "rate_limited", "retry_after": retry, "instance": inst}
 
         if r.status_code >= 400:
             err = _error_of(r)
+            request_id = _request_id_of(r)
             if err in {"invalid_grant", "invalid_client", "unauthorized_client"}:
-                clear_oauth(block)
-                _save_full_cfg(full)
-                log(f"PUNCHPLAY: refresh rejected ({err}); reconnect required (instance={inst})", level="ERROR", module="AUTH")
+                latest = _load_full_cfg()
+                latest_block = writable_block(latest, inst)
+                latest_rt = str(latest_block.get("refresh_token") or "").strip()
+                if latest_rt and latest_rt != rt and str(latest_block.get("access_token") or "").strip():
+                    log(f"PUNCHPLAY: refresh token was already rotated; using the stored one (instance={inst} request_id={request_id or '-'})", level="WARN", module="AUTH")
+                    return {"ok": True, "status": "fresh", "instance": inst, "expires_at": int(latest_block.get("expires_at") or 0)}
+                latest_block["auth_error"] = "reconnect_required"
+                _save_full_cfg(latest)
+                log(f"PUNCHPLAY: refresh rejected ({err}); reconnect required (instance={inst} status={r.status_code} request_id={request_id or '-'})", level="ERROR", module="AUTH")
                 return {"ok": False, "status": err, "instance": inst, "reconnect_required": True}
+            log(f"PUNCHPLAY: refresh failed (instance={inst} status={r.status_code} error={err or '-'} request_id={request_id or '-'})", level="WARN", module="AUTH")
             return {"ok": False, "status": f"refresh_failed:{r.status_code}", "error": err, "instance": inst}
 
         try:
@@ -601,7 +640,12 @@ def refresh_token(
             return {"ok": False, "status": "no_access_token", "instance": inst}
 
         _apply_token_response(block, tok, fallback_refresh=rt)
-        _save_full_cfg(full)
+        latest = _load_full_cfg()
+        latest_block = writable_block(latest, inst)
+        _copy_token_fields(latest_block, block)
+        latest_block["auth_method"] = "device_code"
+        latest_block.pop("auth_error", None)
+        _save_full_cfg(latest)
 
         for target in (cfg, update_cfg):
             if isinstance(target, dict):
@@ -712,10 +756,18 @@ def request_with_auth(
     if getattr(resp, "status_code", None) != 401:
         return resp
 
+    used = str((req_kwargs.get("headers") or {}).get("Authorization") or "").removeprefix("Bearer ").strip()
+    if used:
+        latest = _load_full_cfg()
+        current = str(provider_block(latest, instance_id).get("access_token") or "").strip()
+        if current and current != used:
+            req_kwargs = merge_auth_kwargs(latest, instance_id=instance_id, kwargs=kwargs, refresh=False)
+            return call(session, method, url, timeout=timeout, max_retries=max_retries, **req_kwargs)
+
     if not _allow_forced_refresh(instance_id):
         return resp
 
-    res = refresh_token(dict(cfg or {}), instance_id=instance_id, force=True)
+    res = refresh_token(dict(cfg or {}), instance_id=instance_id, force=True, rejected_token=used or None)
     if not res.get("ok"):
         return resp
     req_kwargs = merge_auth_kwargs(_load_full_cfg(), instance_id=instance_id, kwargs=kwargs, refresh=False)

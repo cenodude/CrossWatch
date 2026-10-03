@@ -26,7 +26,7 @@ from providers.sync.punchplay._common import (
     request_id_of,
 )
 
-__VERSION__ = "0.4"
+__VERSION__ = "0.5"
 __all__ = ["get_manifest", "PUNCHPLAYModule", "OPS", "feat_collection", "feat_history", "feat_progress", "feat_ratings", "feat_watchlist"]
 
 if "ctx" not in globals():
