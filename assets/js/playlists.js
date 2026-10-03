@@ -147,12 +147,9 @@
     activity: [],
     advanced: (() => { try { return localStorage.getItem("cw.playlists.advanced") === "1"; } catch { return false; } })(),
     runningEndpoints: new Set(),
-    runningMappings: new Set(),
     syncSummary: null,
     syncPollTimer: 0,
     syncPollBusy: false,
-    localSyncStartedAt: 0,
-    syncObservedRunning: false,
     modal: null,
     loaded: false,
     loading: false,
@@ -296,30 +293,15 @@
   }
 
   function sharedSyncBusy() {
-    return state.runningMappings.size > 0 || syncSummaryRunning();
+    return syncSummaryRunning();
   }
 
   function mappingIsRunning(mapping) {
-    const id = String((mapping && mapping.id) || "");
-    if (id && state.runningMappings.has(id)) return true;
     if (!syncSummaryRunning()) return false;
     const pair = String((mapping && mapping.assigned_pair) || "").trim();
     if (!pair) return false;
     const scope = syncSummaryPairScopeIds();
     return scope.size > 0 && scope.has(pair);
-  }
-
-  function reconcileSyncSummary() {
-    if (syncSummaryRunning()) {
-      state.syncObservedRunning = true;
-      return;
-    }
-    if (!state.runningMappings.size) return;
-    if (state.syncObservedRunning || Date.now() - state.localSyncStartedAt > 4000) {
-      state.runningMappings.clear();
-      state.syncObservedRunning = false;
-      state.localSyncStartedAt = 0;
-    }
   }
 
   function scheduleSyncSummaryPoll(delayMs) {
@@ -338,7 +320,6 @@
     const wasBusy = sharedSyncBusy();
     try {
       state.syncSummary = await API.runSummary();
-      reconcileSyncSummary();
       const root = $("#page-playlists");
       if (root && root.querySelector(".pl-page")) {
         if (wasBusy && !sharedSyncBusy()) await refreshOverview(["endpoints", "mappings", "activity"]);
@@ -350,7 +331,7 @@
       return state.syncSummary;
     } finally {
       state.syncPollBusy = false;
-      if (renderOnly) scheduleSyncSummaryPoll(syncSummaryRunning() || state.runningMappings.size ? 1500 : 6000);
+      if (renderOnly) scheduleSyncSummaryPoll(syncSummaryRunning() ? 1500 : 6000);
     }
   }
 
@@ -2927,7 +2908,6 @@
     state.overview = overview || {};
     state.activity = activity.activity || [];
     state.syncSummary = runSummary || null;
-    reconcileSyncSummary();
     state.loaded = true;
   }
 
@@ -2974,7 +2954,7 @@
     updateMappingActions(root);
     [...sections, "published"].forEach((key) => refreshSection(root, key));
     refreshHero(root);
-    scheduleSyncSummaryPoll(syncSummaryRunning() || state.runningMappings.size ? 1500 : 6000);
+    scheduleSyncSummaryPoll(syncSummaryRunning() ? 1500 : 6000);
     window.scrollTo(scrollX, scrollY);
   }
 
@@ -2990,7 +2970,7 @@
     } finally {
       state.loading = false;
       render(root);
-      scheduleSyncSummaryPoll(syncSummaryRunning() || state.runningMappings.size ? 1500 : 6000);
+      scheduleSyncSummaryPoll(syncSummaryRunning() ? 1500 : 6000);
     }
   }
 
