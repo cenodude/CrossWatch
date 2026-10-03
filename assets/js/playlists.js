@@ -535,6 +535,42 @@
     `;
   }
 
+  function agoText(ts) {
+    if (!ts) return "never";
+    const mins = Math.floor(Math.max(0, Date.now() / 1000 - Number(ts)) / 60);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins} min ago`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    return `${days} day${days === 1 ? "" : "s"} ago`;
+  }
+
+  function heroSummary() {
+    const published = ((state.published && state.published.lists) || []).filter((row) => row.feed).length;
+    const last = Math.max(0, ...state.mappings.map((m) => Number((m.last_result && m.last_result.finished_at) || 0)));
+    const seg = (value, label, extra = "") => `<div class="cw-editor-hero-seg ${extra}"><strong>${esc(value)}</strong><span>${esc(label)}</span></div>`;
+    return `
+      ${seg(state.loaded ? state.mappings.length : "-", state.mappings.length === 1 ? "sync" : "syncs", "cw-editor-hero-count")}
+      ${seg(state.loaded ? state.endpoints.length : "-", state.endpoints.length === 1 ? "list" : "lists", "cw-editor-hero-count")}
+      ${seg(state.loaded ? published : "-", "published", "cw-editor-hero-count")}
+      <div class="cw-editor-hero-seg cw-editor-hero-sync"><span>Synced</span><strong>${esc(agoText(last))}</strong></div>
+      <button class="cw-editor-refresh" id="pl-hero-refresh" type="button" data-action="hero-refresh" title="Refresh playlists" aria-label="Refresh playlists"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
+      <button class="cw-editor-hero-seg pl-hero-toggle" id="pl-advanced-toggle" type="button" data-action="toggle-advanced" title="${state.advanced ? "Back to the simple view" : "Show endpoints, mappings, rulesets and activity"}"><span class="material-symbols-rounded" aria-hidden="true">${state.advanced ? "view_agenda" : "tune"}</span><span>${state.advanced ? "Simple" : "Advanced"}</span></button>
+    `;
+  }
+
+  function refreshHero(root) {
+    const el = $("#pl-hero-summary", root || $("#page-playlists"));
+    if (el) el.innerHTML = heroSummary();
+  }
+
+  async function heroRefresh(btn) {
+    btn.disabled = true;
+    btn.classList.add("is-refreshing");
+    try { await refreshOverview(); } finally { refreshHero(); }
+  }
+
   function render(root) {
     const simple = !state.advanced;
     const mappingDisabled = !state.loaded || state.endpoints.length < 2;
@@ -548,9 +584,7 @@
             <div class="pl-sub cw-page-hero-sub">Sync your playlists between services</div>
           </div>
           <div class="pl-header-actions cw-page-hero-actions">
-            <button class="pl-btn${simple ? "" : " active"}" id="pl-advanced-toggle" type="button" aria-pressed="${simple ? "false" : "true"}" title="${simple ? "Show endpoints, mappings, rulesets and activity" : "Back to the simple view"}"><span class="material-symbols-rounded" aria-hidden="true">tune</span>Advanced</button>
-            <button class="pl-btn" id="pl-new-endpoint"><span class="material-symbols-rounded" aria-hidden="true">add</span>New endpoint</button>
-            <button class="pl-btn" id="pl-new-mapping" ${mappingDisabled ? "disabled" : ""} title="${esc(mappingTitle)}"><span class="material-symbols-rounded" aria-hidden="true">add</span>New mapping</button>
+            <div class="cw-editor-hero-summary" id="pl-hero-summary" aria-label="Playlists summary">${heroSummary()}</div>
           </div>
         </div>
         ${renderBanners()}
@@ -690,6 +724,7 @@
     try { state.published = await API.published(); } catch { state.published = { lists: [], formats: [] }; }
     const root = $("#page-playlists");
     if (root) refreshSection(root, "published");
+    refreshHero(root);
   }
 
   function openPublishedModal(row, trigger) {
@@ -865,13 +900,6 @@
   }
 
   function wirePage(root) {
-    $("#pl-advanced-toggle", root)?.addEventListener("click", () => {
-      state.advanced = !state.advanced;
-      try { localStorage.setItem("cw.playlists.advanced", state.advanced ? "1" : "0"); } catch {}
-      render(root);
-    });
-    $("#pl-new-endpoint", root)?.addEventListener("click", (e) => openEndpointModal({ trigger: e.currentTarget }));
-    $("#pl-new-mapping", root)?.addEventListener("click", (e) => openMappingModal({ trigger: e.currentTarget }));
     if (!root.__plActionWired) {
       root.addEventListener("click", onPageClick);
       root.__plActionWired = true;
@@ -901,6 +929,12 @@
     if (action === "activity-all") openActivityModal(btn);
     if (action === "activity-clear") openActivityClear(btn);
     if (action === "open-connections") openConnections();
+    if (action === "hero-refresh") heroRefresh(btn);
+    if (action === "toggle-advanced") {
+      state.advanced = !state.advanced;
+      try { localStorage.setItem("cw.playlists.advanced", state.advanced ? "1" : "0"); } catch {}
+      render($("#page-playlists"));
+    }
     if (action.startsWith("publish-")) publishedAction(action, id, btn);
   }
 
@@ -2899,7 +2933,7 @@
 
   function updateMappingActions(root) {
     const disabled = !state.loaded || state.endpoints.length < 2;
-    $$("[data-action='mapping-new'], #pl-new-mapping", root).forEach((btn) => {
+    $$("[data-action='mapping-new']", root).forEach((btn) => {
       btn.disabled = disabled;
       btn.title = !state.loaded ? "Playlist data is still loading." : disabled ? "Create at least two endpoints before adding a mapping." : "Create playlist mapping";
     });
@@ -2939,6 +2973,7 @@
     if (banners) banners.outerHTML = renderBanners();
     updateMappingActions(root);
     [...sections, "published"].forEach((key) => refreshSection(root, key));
+    refreshHero(root);
     scheduleSyncSummaryPoll(syncSummaryRunning() || state.runningMappings.size ? 1500 : 6000);
     window.scrollTo(scrollX, scrollY);
   }

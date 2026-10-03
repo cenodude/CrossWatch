@@ -30,7 +30,7 @@ def test_playlists_page_is_modal_first_overview():
     assert "Playlist endpoints" in js
     assert "Mappings" in js
     assert "Activity overview" in js
-    assert "New endpoint" in js
+    assert "Add endpoint" in js
     assert "New mapping" in js
     assert 'data-action="endpoint-new">+ New endpoint' not in js
     assert 'data-action="mapping-new" ${need ? "disabled" : ""}' not in js
@@ -49,8 +49,6 @@ def test_playlists_page_is_modal_first_overview():
     assert "#page-playlists .pl-title{margin:0;font-weight:800}" in css
     assert "#page-playlists .pl-sub{margin-top:6px;font-size:16px" in css
     assert "#page-playlists .pl-header .pl-btn{padding:10px 14px;font-weight:800;gap:8px" in css
-    assert '<button class="pl-btn" id="pl-new-endpoint"><span class="material-symbols-rounded" aria-hidden="true">add</span>New endpoint</button>' in js
-    assert '<button class="pl-btn" id="pl-new-mapping"' in js
     assert "--pl-shell-bg" in css
     theme_css = (REPO / "assets/css/page-theme.css").read_text(encoding="utf-8")
     assert "--pl-shell-bg: var(--cw-theme-surface)" in theme_css
