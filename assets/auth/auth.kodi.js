@@ -122,6 +122,7 @@
       ],
       getLibs: () => lastLibraries,
       isOn: (fk, id) => setFor(fk).has(String(id)),
+      selectedIds: () => ["hist", "rate", "prog", "coll", "scr"].flatMap((fk) => [...(setFor(fk) || [])]),
       setOn: (fk, id, on) => { const s = setFor(fk); if (!s) return; if (on) s.add(String(id)); else s.delete(String(id)); },
       commit: syncHidden,
       load: async () => { await loadLibraries(true); },

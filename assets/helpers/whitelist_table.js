@@ -28,11 +28,26 @@
     const getLibs = opts.getLibs || (() => []);
     const isOn = opts.isOn || (() => false);
     const setOn = opts.setOn || (() => {});
+    const selectedIds = opts.selectedIds || (() => []);
     const commit = opts.commit || (() => {});
     const load = opts.load || (async () => {});
 
     const libId = (l) => String(l.id != null ? l.id : l.key);
     const libTitle = (l) => String(l.title || l.name || libId(l));
+    const missingTitle = (id) => `Missing library (${id})`;
+
+    function withMissing(libs) {
+      if (!libs.length) return libs;
+      const known = new Set(libs.map(libId));
+      const missing = [];
+      for (const raw of selectedIds() || []) {
+        const id = String(raw == null ? "" : raw).trim();
+        if (!id || known.has(id)) continue;
+        known.add(id);
+        missing.push({ id, title: missingTitle(id), missing: true });
+      }
+      return libs.concat(missing);
+    }
     const featureCount = Math.max(1, features.length);
 
     if (host.__cwWlTimer) { clearInterval(host.__cwWlTimer); host.__cwWlTimer = 0; }
@@ -58,7 +73,8 @@
           const on = isOn(f.key, id);
           return `<label class="cw-wl-check cw-wl-${f.key}"><input type="checkbox" data-feat="${f.key}" ${on ? "checked" : ""} aria-label="${esc(f.label)} — ${esc(libTitle(l))}"><span class="cw-wl-box"></span></label>`;
         }).join("");
-        return `<div class="cw-wl-row" data-id="${esc(id)}" title="${esc(libTitle(l))} · #${esc(id)}">
+        const tip = l.missing ? `${libTitle(l)} · no longer on the server. Untick it to remove it.` : `${libTitle(l)} · #${id}`;
+        return `<div class="cw-wl-row" data-id="${esc(id)}"${l.missing ? ' data-missing="1"' : ""} title="${esc(tip)}">
           <span class="cw-wl-handle" aria-hidden="true"></span>
           <span class="cw-wl-ic">${LIB_ICON}</span>
           <span class="cw-wl-name">${esc(libTitle(l))}</span>
@@ -81,7 +97,7 @@
               <div class="cw-wl-collib">Library</div>
               <div class="cw-wl-cols">${colHeadHTML()}</div>
             </div>
-            <div class="cw-wl-rows">${rowsHTML(libs)}</div>
+            <div class="cw-wl-rows">${rowsHTML(withMissing(libs))}</div>
           </div>
           <div class="cw-wl-foot">
             <div class="cw-wl-note">${esc(opts.note || "Empty = all libraries.")}</div>
@@ -140,6 +156,7 @@
       if (!id) return;
       setOn(cb.dataset.feat, id, cb.checked);
       commit();
+      if (row.dataset.missing === "1" && !features.some((f) => isOn(f.key, id))) render();
     };
     host.addEventListener("click", host.__cwWlClickHandler);
     host.addEventListener("change", host.__cwWlChangeHandler);
