@@ -392,7 +392,7 @@ def test_floppy_ratings_fallback_patch_existing_and_skip_unsupported_scopes() ->
         adapter,
         [
             {"type": "movie", "ids": {"tmdb": "11"}, "rating": 7.0},
-            {"type": "episode", "show_ids": {"tmdb": "22"}, "season": 1, "episode": 2, "rating": 8.0},
+            {"type": "person", "ids": {"tmdb": "22"}, "rating": 8.0},
         ],
     )
 
@@ -444,6 +444,169 @@ def test_floppy_ratings_remove_clears_score_with_null() -> None:
     assert res["count"] == 1
     assert [c["method"] for c in adapter.client.session.calls] == ["PATCH"]
     assert adapter.client.session.calls[0]["json"] == {"score": None}
+
+
+def test_floppy_ratings_index_reads_rated_seasons_and_episodes() -> None:
+    from providers.sync.floppy import _ratings
+
+    adapter = AdapterStub(
+        {
+            ("GET", "media/movie"): {"results": [], "count": 0},
+            ("GET", "media/tv"): {"results": [], "count": 0},
+            ("GET", "media/season"): {"results": [{"item_id": "tv/tmdb/37854/22", "score": 6.0, "scored_at": "2026-10-02T23:33:09Z"}], "count": 1},
+            ("GET", "media/episode"): {
+                "results": [
+                    {"item_id": "tv/tmdb/37854/21/1007", "score": 7.5, "scored_at": "2026-10-02T23:33:08Z"},
+                    {"item_id": "tv/tmdb/37854/2/62", "score": None, "scored_at": "2026-10-02T23:40:00Z"},
+                ],
+                "count": 2,
+            },
+        }
+    )
+
+    out = _ratings.build_index(adapter)
+
+    assert out["tmdb:37854#season:22"]["rating"] == 6.0
+    assert out["tmdb:37854#s21e1007"]["rating"] == 7.5
+    assert out["tmdb:37854#s21e1007"]["rated_at"] == "2026-10-02T23:33:08Z"
+    assert "tmdb:37854#s02e62" not in out
+    nested = [c for c in adapter.client.session.calls if c["path"] in {"media/season", "media/episode"}]
+    assert all(c["params"]["rating"] == "rated" for c in nested)
+
+
+def test_floppy_ratings_index_survives_servers_without_season_and_episode_lists() -> None:
+    from providers.sync.floppy import _ratings
+
+    adapter = AdapterStub(
+        {
+            ("GET", "media/movie"): {"results": [{"item_id": "movie/tmdb/11", "score": 8.0}], "count": 1},
+            ("GET", "media/tv"): {"results": [], "count": 0},
+        }
+    )
+
+    assert list(_ratings.build_index(adapter)) == ["tmdb:11"]
+
+
+def test_floppy_ratings_write_episode_and_season_scores() -> None:
+    from providers.sync.floppy import _ratings
+
+    adapter = AdapterStub(
+        {
+            ("PATCH", "media/tv/tmdb/22/1/episodes/2/score"): {"score": "8.0"},
+            ("PATCH", "media/tv/tmdb/22/3"): {"item_id": "tv/tmdb/22/3"},
+        }
+    )
+
+    res = _ratings.add(
+        adapter,
+        [
+            {"type": "episode", "show_ids": {"tmdb": "22"}, "season": 1, "episode": 2, "rating": 8.0},
+            {"type": "season", "show_ids": {"tmdb": "22"}, "season": 3, "rating": 6.5},
+        ],
+    )
+
+    assert res["count"] == 2
+    assert res["confirmed_keys"] == ["tmdb:22#s01e02", "tmdb:22#season:3"]
+    assert [(c["method"], c["path"], c["json"]) for c in adapter.client.session.calls] == [
+        ("PATCH", "media/tv/tmdb/22/1/episodes/2/score", {"score": 8.0}),
+        ("PATCH", "media/tv/tmdb/22/3", {"score": 6.5}),
+    ]
+
+
+def test_floppy_ratings_remove_clears_episode_and_season_scores() -> None:
+    from providers.sync.floppy import _ratings
+
+    adapter = AdapterStub(
+        {
+            ("PATCH", "media/tv/tmdb/22/1/episodes/2/score"): {"score": None},
+            ("PATCH", "media/tv/tmdb/22/3"): {"item_id": "tv/tmdb/22/3"},
+        }
+    )
+
+    res = _ratings.remove(
+        adapter,
+        [
+            {"type": "episode", "show_ids": {"tmdb": "22"}, "season": 1, "episode": 2, "rating": 8.0},
+            {"type": "season", "show_ids": {"tmdb": "22"}, "season": 3, "rating": 6.5},
+        ],
+    )
+
+    assert res["count"] == 2
+    assert [c["json"] for c in adapter.client.session.calls] == [{"score": None}, {"score": None}]
+
+
+def test_floppy_ratings_untracked_season_is_created_as_planning_with_the_score() -> None:
+    from providers.sync.floppy import _ratings
+
+    adapter = AdapterStub(
+        {
+            ("PATCH", "media/tv/tmdb/70523/1"): ResponseStub(404, {"detail": "No matching item."}),
+            ("POST", "media/season"): ResponseStub(201, {"item_id": "tv/tmdb/70523/1", "status": 0, "score": 7.0}),
+        }
+    )
+
+    res = _ratings.add(adapter, [{"type": "season", "show_ids": {"tmdb": "70523"}, "season": 1, "rating": 7.0}])
+
+    assert res["count"] == 1
+    assert [(c["method"], c["path"]) for c in adapter.client.session.calls] == [("PATCH", "media/tv/tmdb/70523/1"), ("POST", "media/season")]
+    assert adapter.client.session.calls[1]["json"] == {"source": "tmdb", "media_id": "70523", "season_number": 1, "status": 0, "score": 7.0}
+
+
+def test_floppy_ratings_clearing_an_untracked_season_creates_nothing() -> None:
+    from providers.sync.floppy import _ratings
+
+    adapter = AdapterStub({("PATCH", "media/tv/tmdb/70523/1"): ResponseStub(404, {"detail": "No matching item."})})
+
+    res = _ratings.remove(adapter, [{"type": "season", "show_ids": {"tmdb": "70523"}, "season": 1, "rating": 7.0}])
+
+    assert res["count"] == 1
+    assert [c["method"] for c in adapter.client.session.calls] == ["PATCH"]
+
+
+def test_floppy_ratings_untracked_episode_is_unresolved() -> None:
+    from providers.sync.floppy import _ratings
+
+    adapter = AdapterStub(
+        {("PATCH", "media/tv/tmdb/70523/1/episodes/1/score"): ResponseStub(404, {"detail": "Season not found or not tracked."})}
+    )
+
+    res = _ratings.add(adapter, [{"type": "episode", "show_ids": {"tmdb": "70523"}, "season": 1, "episode": 1, "rating": 7.0}])
+
+    assert res["count"] == 0
+    assert res["unresolved"][0]["reason"].startswith("floppy_http_404")
+    assert "not tracked" in res["unresolved"][0]["reason"]
+
+
+def test_floppy_ratings_episode_uses_the_history_episode_mapping(monkeypatch: Any) -> None:
+    from providers.sync.floppy import _history, _ratings
+
+    monkeypatch.setattr(
+        _history,
+        "resolve_source_coordinate",
+        lambda *_args, **_kwargs: SimpleNamespace(provider="tmdb", ident="37854", season=23, episode=1),
+    )
+    monkeypatch.setattr(
+        _history,
+        "show_layout",
+        lambda *_args, **_kwargs: [(1, n) for n in range(1, 1156)] + [(23, n) for n in range(1156, 1182)],
+    )
+    _history.prepare_source_snapshot([])
+    _history.reset_layout_cache()
+    adapter = AdapterStub(
+        {
+            ("GET", "media/tv/tmdb/37854/23/episodes"): {
+                "results": [{"item_id": f"tv/tmdb/37854/23/{n}", "episode_number": n} for n in range(1156, 1182)],
+                "count": 26,
+            },
+            ("PATCH", "media/tv/tmdb/37854/23/episodes/1156/score"): {"score": "9.0"},
+        },
+        _anime_history_cfg(),
+    )
+
+    res = _ratings.add(adapter, [{**_one_piece_s23_source(), "rating": 9.0}])
+
+    assert res["count"] == 1
+    assert [c["path"] for c in adapter.client.session.calls if c["method"] == "PATCH"] == ["media/tv/tmdb/37854/23/episodes/1156/score"]
 
 
 def test_floppy_ratings_zero_is_not_written_as_rating() -> None:
