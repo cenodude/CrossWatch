@@ -48,7 +48,7 @@ URL_ADD = f"{BASE}/sync/history"
 URL_REMOVE = f"{BASE}/sync/history/remove"
 URL_REDIRECT = f"{BASE}/redirect"
 URL_ANIME_EPISODES = f"{BASE}/anime/episodes"
-_CACHE_SCHEMA = 5
+_CACHE_SCHEMA = 6
 
 
 def _unresolved_path() -> str:
@@ -909,6 +909,44 @@ def _source_episode_id_aliases() -> dict[tuple[str, str], dict[str, Any]]:
     return out
 
 
+def _source_native_aliases() -> dict[str, dict[tuple[int, int], dict[str, Any]]]:
+    out: dict[str, dict[tuple[int, int], dict[str, Any]]] = {}
+    for key, rec in _load_source_aliases().items():
+        show_ids_raw = rec.get("show_ids")
+        simkl_id = str(show_ids_raw.get("simkl") or "").strip() if isinstance(show_ids_raw, Mapping) else ""
+        s_num = _int_or_none(rec.get("season"))
+        e_num = _int_or_none(rec.get("episode"))
+        if not simkl_id or s_num is None or s_num < 0 or e_num is None or e_num <= 0:
+            continue
+        out.setdefault(simkl_id, {})[(s_num, e_num)] = _alias_view(rec, key)
+    return out
+
+
+def _tvdb_coordinate(node: Any) -> tuple[int, int] | None:
+    tvdb = node.get("tvdb") if isinstance(node, Mapping) else None
+    if not isinstance(tvdb, Mapping):
+        return None
+    s_num = _int_or_none(tvdb.get("season"))
+    e_num = _int_or_none(tvdb.get("episode"))
+    if s_num is None or s_num < 0 or e_num is None or e_num <= 0:
+        return None
+    return s_num, e_num
+
+
+def _row_tvdb_coordinates(row: Mapping[str, Any], cached_rows: Iterable[Any]) -> set[tuple[int, int]]:
+    coords: set[tuple[int, int]] = set()
+    for season in row.get("seasons") or []:
+        for episode in (season.get("episodes") if isinstance(season, Mapping) else None) or []:
+            coord = _tvdb_coordinate(episode)
+            if coord is not None:
+                coords.add(coord)
+    for cached in cached_rows or []:
+        coord = _tvdb_coordinate(cached)
+        if coord is not None:
+            coords.add(coord)
+    return coords
+
+
 _AIRED_ID_KEYS = ("tmdb", "tvdb", "imdb")
 
 
@@ -1172,6 +1210,8 @@ def _parse_rows(
     source_abs_alias_cache: dict[str, dict[int, dict[str, Any]]] = {}
     source_ep_id_alias_cache: dict[tuple[str, str], dict[str, Any]] | None = None
     source_coord_cache: dict[tuple[str, int], SourceCoordinate | None] = {}
+    source_native_alias_cache: dict[str, dict[tuple[int, int], dict[str, Any]]] | None = None
+    stat_native_alias = 0
     watched_coords_by_show = _watched_coordinates_by_show(show_rows)
     stat_with_ids = 0
     stat_no_ids = 0
@@ -1294,6 +1334,16 @@ def _parse_rows(
                     if limit and added >= limit:
                         return out, thaw, latest_ts_movies, latest_ts_shows, latest_ts_anime, movies_cnt, eps_cnt
                 continue
+        row_native_aliases: dict[tuple[int, int], dict[str, Any]] = {}
+        row_tvdb_coords: set[tuple[int, int]] = set()
+        if row_kind == "anime":
+            row_simkl_id = str(show_ids.get("simkl") or "").strip()
+            if row_simkl_id:
+                if source_native_alias_cache is None:
+                    source_native_alias_cache = _source_native_aliases()
+                row_native_aliases = source_native_alias_cache.get(row_simkl_id) or {}
+            if row_native_aliases:
+                row_tvdb_coords = _row_tvdb_coordinates(row, anime_episode_cache.get(row_simkl_id) or [])
         for season in row.get("seasons") or []:
             season = season if isinstance(season, Mapping) else {}
             raw_season = season.get("number") if season.get("number") is not None else season.get("season")
@@ -1334,6 +1384,18 @@ def _parse_rows(
                         break
                 else:
                     stat_no_ids += 1
+                if row_native_aliases:
+                    native_coord = (s_num_internal, e_num_internal)
+                    native_alias = row_native_aliases.get(native_coord)
+                    own_tvdb = _tvdb_coordinate(episode)
+                    if (
+                        native_alias is not None
+                        and own_tvdb is not None
+                        and own_tvdb != native_coord
+                        and native_coord not in row_tvdb_coords
+                    ):
+                        alias = native_alias
+                        stat_native_alias += 1
                 if row_kind == "anime":
                     if alias is None:
                         alias_key = _anime_episode_alias_key(show_ids, e_num_internal)
@@ -1471,6 +1533,7 @@ def _parse_rows(
         alias_applied=stat_exact_hit,
         alias_rejected_collision=stat_collision,
         alias_table_size=len(source_ep_id_alias_cache or {}),
+        native_alias_applied=stat_native_alias,
     )
     if stat_coord_override or stat_coord_bridge:
         _info("anibridge_readback", overrides=stat_coord_override, reverse=stat_coord_bridge)

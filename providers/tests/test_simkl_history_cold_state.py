@@ -373,3 +373,138 @@ def test_cold_state_preserves_winter_vol_liefde_collision_protection(monkeypatch
     eps = [v for v in out.values() if str(v.get("type")) == "episode"]
 
     assert sorted((e["season"], e["episode"]) for e in eps) == [(3, 5), (3, 7)]
+
+
+_OAD_TVDB = {1: 7, 2: 12, 3: 13, 4: 15}
+
+
+def _oad_row():
+    return {
+        "show": {
+            "title": "Shingeki no Kyojin OAD",
+            "ids": {"simkl": 38688, "tmdb": "256378", "tvdb": "267440", "mal": "18397", "anidb": "9826"},
+        },
+        "anime_type": "ova",
+        "seasons": [
+            {
+                "number": 1,
+                "episodes": [
+                    {
+                        "number": n,
+                        "watched_at": WATCHED,
+                        "tvdb": {"season": 0, "episode": special},
+                        "ids": {"tvdb_id": 4600000 + special},
+                    }
+                    for n, special in _OAD_TVDB.items()
+                ],
+            }
+        ],
+    }
+
+
+def _oad_mapped_items():
+    return [
+        _src_episode(
+            show_ids={"simkl": "38688", "tmdb": "256378"},
+            season=1,
+            episode=n,
+            series_title="Attack on Titan OAD",
+        )
+        for n in _OAD_TVDB
+    ]
+
+
+def test_native_anime_readback_uses_tvdb_numbering_without_mapping(monkeypatch):
+    import sync.simkl._history as m
+
+    _alias_store(monkeypatch, m)
+
+    out, *_ = m._parse_rows([], [], [_oad_row()], limit=None)
+    eps = [v for v in out.values() if str(v.get("type")) == "episode"]
+
+    assert sorted((e["season"], e["episode"]) for e in eps) == [(0, 7), (0, 12), (0, 13), (0, 15)]
+
+
+def test_native_anime_readback_keeps_mapped_numbering(monkeypatch):
+    import sync.simkl._history as m
+
+    _alias_store(monkeypatch, m)
+    m._remember_source_aliases(_oad_mapped_items())
+
+    out, *_ = m._parse_rows([], [], [_oad_row()], limit=None)
+    eps = [v for v in out.values() if str(v.get("type")) == "episode"]
+
+    assert sorted((e["season"], e["episode"]) for e in eps) == [(1, 1), (1, 2), (1, 3), (1, 4)]
+    assert all(e["show_ids"] == {"simkl": "38688", "tmdb": "256378"} for e in eps)
+    assert sorted(e["_simkl_episode_number"] for e in eps) == [1, 2, 3, 4]
+
+
+def test_native_anime_mapping_outranks_original_source_episode_id(monkeypatch):
+    import sync.simkl._history as m
+
+    _alias_store(monkeypatch, m)
+    original = [
+        _src_episode(
+            show_ids={"tvdb": "267440", "tmdb": "1429"},
+            season=0,
+            episode=special,
+            ep_tvdb=4600000 + special,
+            series_title="Attack on Titan",
+        )
+        for special in _OAD_TVDB.values()
+    ]
+    m.prepare_source_snapshot(original)
+    m._remember_source_aliases(_oad_mapped_items()[:2])
+
+    out, *_ = m._parse_rows([], [], [_oad_row()], limit=None)
+    coords = sorted((e["season"], e["episode"]) for e in out.values() if str(e.get("type")) == "episode")
+
+    assert coords == [(0, 13), (0, 15), (1, 1), (1, 2)]
+
+
+def test_native_anime_mapping_ignored_when_numbering_is_ambiguous(monkeypatch):
+    import sync.simkl._history as m
+
+    _alias_store(monkeypatch, m)
+    m.prepare_source_snapshot(
+        [_src_episode(show_ids={"simkl": "777", "tvdb": "999"}, season=1, episode=13, series_title="Split Cour")]
+    )
+    row = {
+        "show": {"title": "Split Cour Part 2", "ids": {"simkl": 777, "tvdb": "999"}},
+        "anime_type": "tv",
+        "seasons": [
+            {
+                "number": 1,
+                "episodes": [
+                    {"number": 1, "watched_at": WATCHED, "tvdb": {"season": 1, "episode": 13}},
+                    {"number": 13, "watched_at": WATCHED, "tvdb": {"season": 1, "episode": 25}},
+                ],
+            }
+        ],
+    }
+
+    out, *_ = m._parse_rows([], [], [row], limit=None)
+    coords = sorted((e["season"], e["episode"]) for e in out.values() if str(e.get("type")) == "episode")
+
+    assert coords == [(1, 13), (1, 25)]
+
+
+def test_native_anime_mapping_requires_matching_simkl_id(monkeypatch):
+    import sync.simkl._history as m
+
+    _alias_store(monkeypatch, m)
+    m.prepare_source_snapshot(
+        [_src_episode(show_ids={"tmdb": "1429", "tvdb": "267440"}, season=1, episode=5, series_title="Attack on Titan")]
+    )
+    row = {
+        "show": {"title": "Shingeki no Kyojin Season 2", "ids": {"simkl": 439744, "tmdb": "1429", "tvdb": "267440"}},
+        "anime_type": "tv",
+        "seasons": [
+            {"number": 1, "episodes": [{"number": 5, "watched_at": WATCHED, "tvdb": {"season": 2, "episode": 5}}]}
+        ],
+    }
+
+    out, *_ = m._parse_rows([], [], [row], limit=None)
+    coords = sorted((e["season"], e["episode"]) for e in out.values() if str(e.get("type")) == "episode")
+
+    assert coords == [(2, 5)]
