@@ -197,7 +197,7 @@ def _cli_only_mode() -> bool:
 
 def _webui_disabled_path(path: str) -> bool:
     path = str(path or "/")
-    if path.startswith("/api/") or path.startswith("/webhook/"):
+    if path.startswith(("/api/", "/webhook/", "/published/")):
         return False
     if path == "/callback" or path.startswith("/callback/"):
         return False
@@ -588,7 +588,7 @@ async def conditional_access_logger(request: Request, call_next):
                 if should_log:
                     dt_ms = int((time.time() - t0) * 1000)
                     host = f"{client.host}:{client.port}" if client else "-"
-                    if path.startswith("/webhook/"):
+                    if path.startswith(("/webhook/", "/published/")):
                         path_qs = path
                     else:
                         qs = _redact_query_string(request.url.query)
@@ -628,7 +628,7 @@ async def app_auth_gate(request: Request, call_next):
         return await call_next(request)
     
     # exclude webhooks from auth
-    if path.startswith("/webhook/"):
+    if path.startswith(("/webhook/", "/published/")):
         return await call_next(request)
 
     if app_auth_setup_lock_required(cfg):

@@ -220,7 +220,8 @@ def test_request_counter_advances_during_preview_and_apply(config_base, monkeypa
         assert session.status == "complete"
         assert session.public()["progress"]["requests"] == 1
         assert session.public()["progress"]["requests_by_provider"] == {"DST": 1}
-        assert session.report["requests_by_provider"] == {"DST": 1}
+        assert session.report["requests_by_provider"] == {"SRC": 5, "DST": 1}
+        assert session.report["requests"] == 6
         assert len(dst.add_calls) == 1
     finally:
         session.close()

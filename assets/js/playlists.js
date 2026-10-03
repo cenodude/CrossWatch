@@ -28,7 +28,7 @@
   const EMPTY_PROVIDER_RETRY_MS = 300;
   const SAFE_NAME_CHARS = " _.'-&()";
   const PLAYLIST_COMPATIBLE_PROVIDERS = new Set(["PLEX", "TRAKT", "MDBLIST", "JELLYFIN", "EMBY", "PUBLICMETADB", "SIMKL", "CROSSWATCH"]);
-  const SIMKL_PLAYLIST_WARNING = "SIMKL Custom Lists are not supported. These endpoints use SIMKL's built in status buckets, which are not true playlists. Changes may move or remove items from your SIMKL library. Use with caution.";
+  const SIMKL_PLAYLIST_WARNING = "SIMKL status buckets are not true playlists. Changes may move or remove items from your SIMKL library. Use with caution. SIMKL custom lists are read only and need SIMKL PRO or VIP.";
   const RULESET_PRESETS = {
     direct: {
       label: "Direct sync",
@@ -103,12 +103,15 @@
     mapUpsert: (body) => request(`${BASE}/mappings`, { method: "POST", body: JSON.stringify(body) }),
     mapDelete: (id) => request(`${BASE}/mappings/${encodeURIComponent(id)}`, { method: "DELETE" }),
     run: (id) => request(`${BASE}/mappings/${encodeURIComponent(id)}/run`, { method: "POST" }),
-    runPair: (id) => request("/api/run", { method: "POST", body: JSON.stringify({ pair_id: id }) }),
     runSummary: () => request("/api/run/summary"),
     pairMappings: (id) => request(`${BASE}/pairs/${encodeURIComponent(id)}/mappings`),
     rulesets: () => request(`${BASE}/rulesets`),
     rulesetUpsert: (body) => request(`${BASE}/rulesets`, { method: "POST", body: JSON.stringify(body) }),
     rulesetDelete: (id) => request(`${BASE}/rulesets/${encodeURIComponent(id)}`, { method: "DELETE" }),
+    published: () => request(`${BASE}/published`),
+    publish: (instance, listId) => request(`${BASE}/published`, { method: "POST", body: JSON.stringify({ instance, list_id: listId }) }),
+    publishKey: (id) => request(`${BASE}/published/${encodeURIComponent(id)}/key`, { method: "POST" }),
+    unpublish: (id) => request(`${BASE}/published/${encodeURIComponent(id)}`, { method: "DELETE" }),
   };
 
   const $ = (sel, root) => (root || document).querySelector(sel);
@@ -142,6 +145,7 @@
     rulesets: [],
     overview: {},
     activity: [],
+    advanced: (() => { try { return localStorage.getItem("cw.playlists.advanced") === "1"; } catch { return false; } })(),
     runningEndpoints: new Set(),
     runningMappings: new Set(),
     syncSummary: null,
@@ -358,7 +362,7 @@
     if (unresolved > 0) warningBits.push(`${unresolved} unresolved`);
     const warnings = Array.isArray(result.warnings) ? result.warnings.length : 0;
     if (warnings) warningBits.push(`${warnings} warning${warnings === 1 ? "" : "s"}`);
-    if (result.capacity_error || errors > 0 || (result.ok === false && !warningBits.length)) return `<span class="pl-pill err">Failed</span>`;
+    if (result.capacity_error || errors > 0 || (result.ok === false && !warningBits.length)) return `<span class="pl-pill err" title="${esc(result.error || "")}">Failed</span>`;
     if (warningBits.length) return `<span class="pl-pill warn" title="${esc(warningBits.join(", "))}"><span class="material-symbols-rounded" aria-hidden="true">warning</span>${esc(warningBits[0])}</span>`;
     return `<span class="pl-pill ok">Success</span>`;
   }
@@ -426,11 +430,117 @@
     return `<div class="pl-main-text">${esc(titleize(rule || "direct"))}</div><div class="pl-muted">${esc(targetText)}</div>`;
   }
 
+  function listTypeLabel(ep) {
+    if (endpointIsDiscovery(ep)) return "Discovery";
+    const id = String(ep.playlist_id || "").toLowerCase();
+    const raw = String(ep.playlist_type || ep.endpoint_type || ep.kind || "").toLowerCase();
+    if (id.includes("watchlist") || raw === "watchlist") return "Watchlist";
+    if (raw === "custom_list") return "Custom list";
+    if (raw === "status_bucket") return "Status";
+    if (raw === "collection") return "Collection";
+    if (raw === "smart") return "Smart playlist";
+    return "Playlist";
+  }
+
+  function listRef(ep, fallback) {
+    if (!ep || !ep.provider) return `<div class="pl-muted">${esc(fallback || "-")}</div>`;
+    const profile = String(ep.instance || "default");
+    const sub = [ep.provider_label || providerLabel(ep.provider), profile !== "default" ? profile : ""].filter(Boolean).join(" · ");
+    return `<div class="pl-provider">${icon(ep.provider)}<div><div class="pl-main-text">${esc(ep.playlist_name || ep.playlist_id || ep.name || "-")}</div><div class="pl-muted">${esc(sub)}</div></div></div>`;
+  }
+
+  function syncModeLabel(mapping) {
+    const rule = mapping.ruleset || rulesetById(mapping.ruleset_id || "");
+    if (rule) return [rule.name, "Uses a ruleset"];
+    const modes = {
+      add_only: ["Add only", "Adds missing items, never removes"],
+      managed_only: ["Keep in sync", "Adds and removes what CrossWatch added"],
+      mirror: ["Exact copy", "Makes the destination match the source"],
+    };
+    return modes[String(mapping.membership || "managed_only")] || modes.managed_only;
+  }
+
+  function renderListsSimple() {
+    if (state.loading && !state.loaded) return renderSkeleton("Loading lists");
+    if (!state.endpoints.length) {
+      return `<div class="pl-empty"><strong>No lists yet</strong><span>Add the provider lists you want to sync. You need two before you can create a sync.</span></div>`;
+    }
+    const rows = state.endpoints.map((ep) => {
+      const usedBy = state.mappings.filter((m) => mappingUsesEndpoint(m, ep.id)).length;
+      const refreshing = state.runningEndpoints.has(String(ep.id || ""));
+      return `
+        <tr>
+          <td>${listRef(ep)}</td>
+          <td><span class="pl-pill type">${esc(listTypeLabel(ep))}</span>${ep.playlist_id ? "" : ` ${endpointStatus(ep)}`}</td>
+          <td><div class="pl-muted">${ep.item_count != null ? `${esc(ep.item_count)} items<br>` : ""}${refreshing ? "Refreshing..." : ep.last_synced ? `Checked ${esc(timeText(ep.last_synced))}` : "Not checked yet"}</div></td>
+          <td>
+            <div class="pl-actions">
+              ${actionButton("endpoint-sync", ep.id, refreshing ? "Refresh running" : "Refresh list", "refresh", "refresh", refreshing ? "running" : "", refreshing)}
+              ${actionButton("endpoint-edit", ep.id, "Change list", "edit", "edit")}
+              ${actionButton("endpoint-delete", ep.id, usedBy ? `Remove list. ${usedBy} sync(s) use it` : "Remove list", "delete", "delete")}
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join("");
+    return `
+      <div class="pl-table-wrap cw-page-table">
+        <table class="pl-lists-table">
+          <thead><tr><th>List</th><th>Type</th><th>Contents</th><th aria-label="Actions">Actions</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  function renderSyncsSimple() {
+    if (state.loading && !state.loaded) return renderSkeleton("Loading list syncs");
+    if (!state.mappings.length) {
+      const need = state.endpoints.length < 2;
+      return `<div class="pl-empty"><strong>No list syncs yet</strong><span>Select New sync to keep one list up to date with another.</span></div>`;
+    }
+    const rows = state.mappings.map((m) => {
+      const src = endpointById(m.source_endpoint) || m.source || {};
+      const targets = (m.target_endpoints || []).map((id) => endpointById(id)).filter(Boolean);
+      const res = m.last_result || null;
+      const busy = sharedSyncBusy();
+      const running = mappingIsRunning(m);
+      const mode = syncModeLabel(m);
+      const result = running ? statusPill("run", "Running", "sync") : !m.enabled ? statusPill("off", "Paused", "pause_circle") : statusForResult(res);
+      return `
+        <tr class="${running ? "is-running" : ""}">
+          <td>${listRef(src, m.source_endpoint)}</td>
+          <td class="pl-sync-arrow"><span class="material-symbols-rounded" aria-hidden="true">${directionFor(m) === "Bidirectional" ? "sync_alt" : "east"}</span></td>
+          <td>${targets.length ? `<div class="pl-endpoint-stack">${targets.map((t) => listRef(t)).join("")}</div>` : mappingTargetRefs(m)}</td>
+          <td><div class="pl-main-text">${esc(mode[0])}</div><div class="pl-muted">${esc(mode[1])}</div></td>
+          <td><div class="pl-result-cell">${result}<div class="pl-muted">${running ? "Running now..." : compactTime(res && res.finished_at)}</div></div></td>
+          <td>
+            <div class="pl-actions">
+              <button class="pl-btn small" data-action="mapping-sync" data-id="${esc(m.id)}" ${busy ? "disabled" : ""} title="${esc(busy ? "Synchronization is already running" : "Check the changes and sync")}"><span class="material-symbols-rounded" aria-hidden="true">fact_check</span>Review and sync</button>
+              ${actionButton("mapping-toggle", m.id, m.enabled ? "Pause this sync" : "Resume this sync", m.enabled ? "pause" : "play_arrow", "toggle", m.enabled ? "on" : "")}
+              ${actionButton("mapping-edit", m.id, "Edit sync", "edit", "edit")}
+              ${actionButton("mapping-delete", m.id, "Delete sync", "delete", "delete")}
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join("");
+    return `
+      <div class="pl-table-wrap cw-page-table">
+        <table class="pl-syncs-table">
+          <thead><tr><th>From</th><th aria-hidden="true"></th><th>To</th><th>How</th><th>Last result</th><th aria-label="Actions">Actions</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+  }
+
   function render(root) {
+    const simple = !state.advanced;
     const mappingDisabled = !state.loaded || state.endpoints.length < 2;
     const mappingTitle = !state.loaded ? "Playlist data is still loading." : mappingDisabled ? "Create at least two endpoints before adding a mapping." : "Create playlist mapping";
     root.innerHTML = `
-      <div class="pl-page">
+      <div class="pl-page${simple ? " pl-simple" : ""}">
         <div class="pl-header cw-page-hero cw-page-hero-playlists" data-hero-icon="queue_music">
           <div class="cw-page-hero-copy">
             <div class="cw-page-hero-kicker">PLAYLISTS</div>
@@ -438,6 +548,7 @@
             <div class="pl-sub cw-page-hero-sub">Sync your playlists between services</div>
           </div>
           <div class="pl-header-actions cw-page-hero-actions">
+            <button class="pl-btn${simple ? "" : " active"}" id="pl-advanced-toggle" type="button" aria-pressed="${simple ? "false" : "true"}" title="${simple ? "Show endpoints, mappings, rulesets and activity" : "Back to the simple view"}"><span class="material-symbols-rounded" aria-hidden="true">tune</span>Advanced</button>
             <button class="pl-btn" id="pl-new-endpoint"><span class="material-symbols-rounded" aria-hidden="true">add</span>New endpoint</button>
             <button class="pl-btn" id="pl-new-mapping" ${mappingDisabled ? "disabled" : ""} title="${esc(mappingTitle)}"><span class="material-symbols-rounded" aria-hidden="true">add</span>New mapping</button>
           </div>
@@ -446,17 +557,29 @@
         <main class="pl-grid">
           <section class="pl-section cw-page-panel" id="pl-playlist-endpoints">
             <div class="pl-section-head">
-              <div><div class="pl-section-title">Playlist endpoints</div><div class="pl-section-sub">Connect provider playlists to use in CrossWatch.</div></div>
-              <button class="pl-btn small accent" data-action="endpoint-new"><span class="material-symbols-rounded" aria-hidden="true">add</span>Add endpoint</button>
+              <div><div class="pl-section-title">${simple ? "Lists" : "Playlist endpoints"}</div><div class="pl-section-sub">${simple ? "The provider lists CrossWatch can sync." : "Connect provider playlists to use in CrossWatch."}</div></div>
+              <button class="pl-btn small${simple ? "" : " accent"}" data-action="endpoint-new"><span class="material-symbols-rounded" aria-hidden="true">add</span>${simple ? "Add list" : "Add endpoint"}</button>
             </div>
             <div class="pl-section-body">${renderEndpoints()}</div>
           </section>
           <section class="pl-section cw-page-panel" id="pl-mappings-overview">
             <div class="pl-section-head">
-              <div><div class="pl-section-title">Mappings</div><div class="pl-section-sub">Sync relationships between playlist endpoints.</div></div>
-              <button class="pl-btn small accent" data-action="mapping-new" ${mappingDisabled ? "disabled" : ""} title="${esc(mappingTitle)}"><span class="material-symbols-rounded" aria-hidden="true">add</span>New mapping</button>
+              <div><div class="pl-section-title">${simple ? "List syncs" : "Mappings"}</div><div class="pl-section-sub">${simple ? "Keep one list up to date with another." : "Sync relationships between playlist endpoints."}</div></div>
+              <div class="pl-section-actions">
+                ${simple ? `<button class="pl-btn small" data-action="activity-all">History</button>` : ""}
+                ${simple
+                  ? `<button class="pl-btn small accent" data-action="sync-wizard" ${state.loaded ? "" : "disabled"}><span class="material-symbols-rounded" aria-hidden="true">add</span>New sync</button>`
+                  : `<button class="pl-btn small accent" data-action="mapping-new" ${mappingDisabled ? "disabled" : ""} title="${esc(mappingTitle)}"><span class="material-symbols-rounded" aria-hidden="true">add</span>New mapping</button>`}
+              </div>
             </div>
             <div class="pl-section-body">${renderMappings()}</div>
+          </section>
+          <section class="pl-section cw-page-panel" id="pl-published-lists">
+            <div class="pl-section-head">
+              <div><div class="pl-section-title">Published lists</div><div class="pl-section-sub">Let Kometa, Radarr and Sonarr read a CrossWatch list.</div></div>
+              <button class="pl-btn small" data-action="sync-wizard-publish" ${state.loaded ? "" : "disabled"}><span class="material-symbols-rounded" aria-hidden="true">add</span>Publish a list</button>
+            </div>
+            <div class="pl-section-body">${renderPublished()}</div>
           </section>
           <section class="pl-section cw-page-panel" id="pl-activity-overview">
             <div class="pl-section-head">
@@ -485,6 +608,7 @@
   }
 
   function renderEndpoints() {
+    if (!state.advanced) return renderListsSimple();
     if (state.loading && !state.loaded) return renderSkeleton("Loading playlist endpoints");
     if (!state.endpoints.length) {
       return `<div class="pl-empty"><strong>No playlist endpoints yet</strong><span>Add the first provider playlist before creating mappings.</span></div>`;
@@ -522,7 +646,118 @@
     `;
   }
 
+  function publishedRow(key) {
+    return ((state.published && state.published.lists) || []).find((row) => `${row.instance}|${row.list_id}` === key) || null;
+  }
+
+  function renderPublished() {
+    if (state.loading && !state.loaded) return renderSkeleton("Loading published lists");
+    const lists = (state.published && state.published.lists) || [];
+    if (!lists.length) {
+      return `<div class="pl-empty"><strong>Nothing published yet</strong><span>Select Publish a list to make a list readable by Kometa, Radarr or Sonarr.</span></div>`;
+    }
+    const rows = lists.map((row) => {
+      const key = `${row.instance}|${row.list_id}`;
+      const feed = row.feed;
+      const tool = { "kometa-movies.json": "Kometa (movies)", "kometa-shows.json": "Kometa (shows)", "radarr.json": "Radarr", "sonarr.json": "Sonarr" }[feed && feed.last_fetch_format] || "";
+      const read = feed && feed.last_fetch_at ? `${timeText(feed.last_fetch_at)}<br>${esc(tool ? `by ${tool}` : "")}` : feed ? "Not read yet" : "-";
+      return `
+        <tr>
+          <td><div class="pl-provider">${icon("CROSSWATCH")}<div><div class="pl-main-text">${esc(row.name || row.list_id)}</div><div class="pl-muted">${[row.item_count != null ? `${row.item_count} items` : "", row.instance && row.instance !== "default" ? row.instance : ""].filter(Boolean).map(esc).join(" · ")}</div></div></div></td>
+          <td>${feed ? `<span class="pl-pill ok">Published</span>` : `<span class="pl-pill off">Not published</span>`}</td>
+          <td><div class="pl-muted">${read}</div></td>
+          <td>
+            <div class="pl-actions">
+              ${feed
+                ? `<button class="pl-btn small" data-action="publish-show" data-id="${esc(key)}"><span class="material-symbols-rounded" aria-hidden="true">link</span>Addresses</button>${actionButton("publish-key", key, "New access key", "key", "refresh")}${actionButton("publish-off", key, "Stop publishing", "link_off", "delete")}`
+                : `<button class="pl-btn small" data-action="publish-on" data-id="${esc(key)}"><span class="material-symbols-rounded" aria-hidden="true">publish</span>Publish</button>`}
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join("");
+    return `
+      <div class="pl-table-wrap cw-page-table">
+        <table class="pl-published-table">
+          <thead><tr><th>CrossWatch list</th><th>Status</th><th>Last read</th><th aria-label="Actions">Actions</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  async function reloadPublished() {
+    try { state.published = await API.published(); } catch { state.published = { lists: [], formats: [] }; }
+    const root = $("#page-playlists");
+    if (root) refreshSection(root, "published");
+  }
+
+  function openPublishedModal(row, trigger) {
+    if (!row || !row.feed) return;
+    const urls = row.feed.urls || {};
+    const name = row.name || "CrossWatch list";
+    const kometa = (url) => `collections:\n  ${name}:\n    text_file: ${url}\n    sync_mode: sync`;
+    const block = (title, hint, text, area) => `
+      <div class="pl-publish-block">
+        <div class="pl-main-text">${esc(title)}</div>
+        <div class="pl-muted">${esc(hint)}</div>
+        <div class="pl-publish-line">
+          ${area ? `<textarea readonly rows="4" wrap="off" spellcheck="false">${esc(text)}</textarea>` : `<input readonly spellcheck="false" value="${esc(text)}">`}
+          <button class="pl-btn small" type="button" data-copy="${esc(text)}">Copy</button>
+        </div>
+      </div>`;
+    openModal({
+      title: `Publish ${name}`,
+      description: "These addresses contain an access key. Anyone who has an address can read this list.",
+      width: "760px",
+      cancelText: "Close",
+      trigger,
+      body: `
+        ${block("Kometa, movie library", "Paste into a collection file of your movie library. Needs Kometa 2.4.5 or newer.", kometa(urls["kometa-movies.json"] || ""), true)}
+        ${block("Kometa, show library", "Paste into a collection file of your show library.", kometa(urls["kometa-shows.json"] || ""), true)}
+        ${block("Radarr (movies)", "Settings, Import Lists, add a Custom List (StevenLu Custom) and paste this address. Movies without an IMDb ID are left out.", urls["radarr.json"] || "", false)}
+        ${block("Sonarr (shows)", "Settings, Import Lists, add a Custom List and paste this address. Shows without a TVDB ID are left out.", urls["sonarr.json"] || "", false)}
+      `,
+      onOpen: (ctx) => {
+        ctx.modal.addEventListener("click", async (e) => {
+          const btn = e.target.closest("[data-copy]");
+          if (!btn) return;
+          const text = btn.dataset.copy || "";
+          try {
+            await navigator.clipboard.writeText(text);
+          } catch {
+            const field = btn.parentElement.querySelector("input,textarea");
+            field.select();
+            document.execCommand("copy");
+          }
+          btn.textContent = "Copied";
+          setTimeout(() => { btn.textContent = "Copy"; }, 1500);
+        });
+      },
+    });
+  }
+
+  async function publishedAction(action, key, btn) {
+    const row = publishedRow(key);
+    if (!row) return;
+    if (action === "publish-show") return openPublishedModal(row, btn);
+    if (action === "publish-key" && !confirm("Create a new access key? Kometa, Radarr and Sonarr stop reading this list until you paste the new addresses.")) return;
+    if (action === "publish-off" && !confirm("Stop publishing this list? The addresses stop working.")) return;
+    btn.disabled = true;
+    try {
+      if (action === "publish-on") await API.publish(row.instance, row.list_id);
+      if (action === "publish-key") await API.publishKey(row.feed.id);
+      if (action === "publish-off") await API.unpublish(row.feed.id);
+      await reloadPublished();
+      if (action !== "publish-off") openPublishedModal(publishedRow(key), null);
+    } catch (err) {
+      window.cxToast?.(err && err.message ? err.message : "Could not update the published list.");
+      btn.disabled = false;
+    }
+  }
+
   function renderMappings() {
+    if (!state.advanced) return renderSyncsSimple();
     if (state.loading && !state.loaded) return renderSkeleton("Loading playlist mappings");
     if (!state.mappings.length) {
       const need = state.endpoints.length < 2;
@@ -534,7 +769,7 @@
       const res = m.last_result || null;
       const busy = sharedSyncBusy();
       const running = mappingIsRunning(m);
-      const syncTitle = running ? "Sync running" : (busy ? "Synchronization is already running" : "Sync now");
+      const syncTitle = running ? "Sync running" : (busy ? "Synchronization is already running" : "Review and sync");
       return `
         <tr class="${running ? "is-running" : ""}">
           <td>${endpointIdentity({ name: m.name || m.id, id: m.id, provider: (src && src.provider) || "" }, m.id)}</td>
@@ -630,6 +865,11 @@
   }
 
   function wirePage(root) {
+    $("#pl-advanced-toggle", root)?.addEventListener("click", () => {
+      state.advanced = !state.advanced;
+      try { localStorage.setItem("cw.playlists.advanced", state.advanced ? "1" : "0"); } catch {}
+      render(root);
+    });
     $("#pl-new-endpoint", root)?.addEventListener("click", (e) => openEndpointModal({ trigger: e.currentTarget }));
     $("#pl-new-mapping", root)?.addEventListener("click", (e) => openMappingModal({ trigger: e.currentTarget }));
     if (!root.__plActionWired) {
@@ -648,13 +888,20 @@
     if (action === "endpoint-delete") openEndpointDelete(endpointById(id), btn);
     if (action === "endpoint-sync") syncEndpoint(endpointById(id), btn);
     if (action === "mapping-new") openMappingModal({ trigger: btn });
-    if (action === "mapping-edit") openMappingModal({ mapping: state.mappings.find((m) => m.id === id), trigger: btn });
+    if (action === "sync-wizard") openSyncWizard({ trigger: btn });
+    if (action === "sync-wizard-publish") openSyncWizard({ trigger: btn, publish: true });
+    if (action === "mapping-edit") {
+      const mapping = state.mappings.find((m) => m.id === id);
+      if (state.advanced || (mapping && mapping.ruleset_id)) openMappingModal({ mapping, trigger: btn });
+      else openSyncEdit(mapping, btn);
+    }
     if (action === "mapping-toggle") toggleMapping(state.mappings.find((m) => m.id === id), btn);
     if (action === "mapping-delete") openMappingDelete(state.mappings.find((m) => m.id === id), btn);
     if (action === "mapping-sync") syncMapping(state.mappings.find((m) => m.id === id), btn);
     if (action === "activity-all") openActivityModal(btn);
     if (action === "activity-clear") openActivityClear(btn);
     if (action === "open-connections") openConnections();
+    if (action.startsWith("publish-")) publishedAction(action, id, btn);
   }
 
   function openConnections() {
@@ -672,7 +919,7 @@
       <div class="pl-dialog" role="dialog" aria-modal="true" aria-labelledby="pl-dialog-title" style="--modal-width:${esc(opts.width || "880px")}">
         <div class="pl-dialog-head">
           <div><div class="pl-dialog-title" id="pl-dialog-title">${esc(opts.title || "")}</div><div class="pl-dialog-sub">${esc(opts.description || "")}</div></div>
-          <button class="pl-btn icon" data-modal-close aria-label="Close">x</button>
+          <button class="pl-btn icon" data-modal-close aria-label="Close"><span class="material-symbols-rounded" aria-hidden="true">close</span></button>
         </div>
         <div class="pl-dialog-body">
           <div class="pl-dialog-error" data-modal-error></div>
@@ -1274,15 +1521,18 @@
     const provider = seed.provider || (providers[0] && providers[0].value) || "";
     const instances = instancesFor(provider);
     const instance = seed.instance || instances[0] || "default";
-    const title = isEdit ? "Edit playlist endpoint" : "Create playlist endpoint";
-    const description = isEdit ? "Update the provider playlist used by this endpoint." : "Connect one or more provider playlists as reusable endpoints.";
+    const simple = !state.advanced;
+    const title = simple ? (isEdit ? "Change list" : "Add a list") : isEdit ? "Edit playlist endpoint" : "Create playlist endpoint";
+    const description = simple
+      ? (isEdit ? "Pick the provider list to use." : "Pick the provider lists you want to sync.")
+      : isEdit ? "Update the provider playlist used by this endpoint." : "Connect one or more provider playlists as reusable endpoints.";
     const endpointName = isEdit ? (seed.name || seed.id || "") : nextEndpointName();
     const body = `
       <div class="pl-endpoint-wizard">
         <section class="pl-endpoint-step">
-          <div class="pl-step-head"><span class="pl-step-index">1</span><div><b>Endpoint details</b><span>Name uses the next available endpoint number and can be edited.</span></div></div>
+          <div class="pl-step-head"><span class="pl-step-index">1</span><div>${simple ? "<b>Provider</b><span>Where the list lives.</span>" : "<b>Endpoint details</b><span>Name uses the next available endpoint number and can be edited.</span>"}</div></div>
           <div class="pl-form">
-            <div class="pl-field full">
+            <div class="pl-field full" ${simple ? "hidden" : ""}>
               <label for="pl-ep-name">Endpoint name <span aria-hidden="true">*</span></label>
               <input id="pl-ep-name" maxlength="${NAME_MAX}" value="${esc(endpointName)}" placeholder="Enter endpoint name" aria-describedby="pl-ep-name-error">
               <div class="pl-field-error" id="pl-ep-name-error"></div>
@@ -1293,8 +1543,8 @@
             </div>
           </div>
         </section>
-        <section class="pl-endpoint-step">
-          <div class="pl-step-head"><span class="pl-step-index">2</span><div><b>Provider profile</b><span>Use the profile that owns the provider playlists.</span></div></div>
+        <section class="pl-endpoint-step" id="pl-ep-instance-step">
+          <div class="pl-step-head"><span class="pl-step-index">2</span><div>${simple ? "<b>Profile</b><span>The account that owns the list.</span>" : "<b>Provider profile</b><span>Use the profile that owns the provider playlists.</span>"}</div></div>
           <div class="pl-form">
             <div class="pl-field full">
               <label for="pl-ep-instance">Provider profile <span aria-hidden="true">*</span></label>
@@ -1305,7 +1555,7 @@
         <section class="pl-endpoint-step" id="pl-ep-resource-wrap">
           <div class="pl-step-head with-actions">
             <span class="pl-step-index">3</span>
-            <div><b>Select provider playlists</b><span>${isEdit ? "Choose one playlist for this endpoint." : "Choose one or more playlists to create endpoints."}</span></div>
+            <div>${simple ? `<b>List</b><span>${isEdit ? "Choose the list." : "Choose one or more lists."}</span>` : `<b>Select provider playlists</b><span>${isEdit ? "Choose one playlist for this endpoint." : "Choose one or more playlists to create endpoints."}</span>`}</div>
             <div class="pl-playlist-tools" aria-label="Provider playlist actions">
               <button type="button" class="pl-icon-tool" id="pl-ep-list-create" title="Create provider playlist" aria-label="Create provider playlist"><span class="material-symbols-rounded" aria-hidden="true">add</span></button>
               <button type="button" class="pl-icon-tool" id="pl-ep-list-edit" title="Edit provider playlist" aria-label="Edit provider playlist"><span class="material-symbols-rounded" aria-hidden="true">edit</span></button>
@@ -1369,7 +1619,7 @@
       body,
       trigger,
       width: "760px",
-      primaryText: isEdit ? "Save endpoint" : "Create endpoint",
+      primaryText: simple ? (isEdit ? "Save" : "Add list") : isEdit ? "Save endpoint" : "Create endpoint",
       savingText: "Saving endpoint...",
       onOpen: (ctx) => hydrateEndpointModal(ctx, seed, isEdit, provider, instance),
       onPrimary: async (ctx) => saveEndpointFromModal(ctx, seed, isEdit),
@@ -1409,6 +1659,14 @@
       const list = instancesFor(providerSelect.value);
       instanceSelect.innerHTML = selectOptions(list.map((x) => ({ value: x, label: x })), list.includes(instanceSelect.value) ? instanceSelect.value : (list[0] || "default"));
       window.CW?.ProfileSelect?.enhanceProfile?.(instanceSelect);
+      syncProfileStep(list);
+    };
+    const syncProfileStep = (list) => {
+      const single = !state.advanced && list.length <= 1;
+      const step = $("#pl-ep-instance-step", root);
+      if (step) step.hidden = single;
+      const index = $("#pl-ep-resource-wrap .pl-step-index", root);
+      if (index) index.textContent = single ? "2" : "3";
     };
     const updateCreateTypes = () => {
       const wrap = $("#pl-ep-create-type-wrap", root);
@@ -1432,6 +1690,7 @@
     $("#pl-ep-name", root)?.addEventListener("input", () => { root.dataset.epNameDirty = "1"; });
     window.CW?.ProfileSelect?.enhanceProvider?.(providerSelect);
     window.CW?.ProfileSelect?.enhanceProfile?.(instanceSelect);
+    syncProfileStep(instancesFor(providerSelect.value));
     providerSelect.addEventListener("change", () => {
       setEndpointManageMode(root, "");
       updateInstances();
@@ -1801,25 +2060,281 @@
       openNotice("Sync pair missing", "Save the mapping once so CrossWatch can create its playlist sync pair.", btn);
       return;
     }
-    const id = String(mapping.id || "");
-    const root = $("#page-playlists");
-    state.runningMappings.add(id);
-    state.localSyncStartedAt = Date.now();
-    state.syncObservedRunning = false;
-    state.syncSummary = { ...(state.syncSummary || {}), running: true, pair_scope_ids: [String(mapping.assigned_pair || "")] };
-    if (root) refreshSection(root, "mappings");
-    try {
-      const res = await API.runPair(mapping.assigned_pair);
-      if (res && res.run_id) state.syncSummary = { ...(state.syncSummary || {}), running: true, run_id: res.run_id, pair_scope_ids: [String(mapping.assigned_pair || "")] };
-      scheduleSyncSummaryPoll(800);
-    } catch (err) {
-      state.runningMappings.delete(id);
-      state.localSyncStartedAt = 0;
-      state.syncObservedRunning = false;
-      openNotice("Sync failed", err && err.message ? err.message : "Could not run this mapping.", btn);
-      const freshRoot = $("#page-playlists");
-      if (freshRoot) refreshSection(freshRoot, "mappings");
+    location.hash = `interactive_sync?pair=${encodeURIComponent(mapping.assigned_pair)}&from=playlists`;
+  }
+
+  const SYNC_MODES = [
+    ["add_only", "Add only", "Adds missing items. Never removes anything from the destination."],
+    ["managed_only", "Keep in sync", "Adds missing items and removes the ones CrossWatch added earlier."],
+    ["mirror", "Exact copy", "Makes the destination match the source. Can remove items you added there yourself."],
+  ];
+
+  function wizardAccounts() {
+    return state.providers
+      .filter((p) => p && p.configured && PLAYLIST_COMPATIBLE_PROVIDERS.has(String(p.provider || "").toUpperCase()))
+      .map((p) => ({ provider: String(p.provider).toUpperCase(), instance: p.instance || "default", label: p.label || providerLabel(p.provider) }))
+      .sort((a, b) => Number(a.provider === "CROSSWATCH") - Number(b.provider === "CROSSWATCH"));
+  }
+
+  function wizardResourceType(resource) {
+    return String(resource.discovery ? "discovery" : ((resource.extra && resource.extra.endpoint_type) || resource.endpoint_type || resource.playlist_type || resource.kind || "")).toLowerCase();
+  }
+
+  function wizardResourceWritable(resource) {
+    return !resource.discovery && !resource.smart && !!(resource.can_add || resource.can_remove);
+  }
+
+  async function wizardEnsureEndpoint(account, resource, offset) {
+    const existing = state.endpoints.find((ep) => String(ep.provider || "").toUpperCase() === account.provider
+      && String(ep.instance || "default") === account.instance && String(ep.playlist_id || "") === String(resource.id));
+    if (existing) return existing;
+    const res = await API.epUpsert({
+      id: "", name: nextEndpointName(offset), provider: account.provider, instance: account.instance,
+      playlist_id: resource.id, playlist_name: resource.name || resource.id, playlist_type: wizardResourceType(resource),
+      media_types: resource.media_types || [],
+    });
+    return res.endpoint;
+  }
+
+  function openSyncWizard({ trigger = null, publish = false } = {}) {
+    const accounts = wizardAccounts();
+    if (!accounts.length) {
+      openNotice("No provider connected", "Connect a provider that supports playlists first.", trigger);
+      return;
     }
+    const key = (a) => `${a.provider}|${a.instance}`;
+    const accountOptions = (list) => list.map((a) => `<option value="${esc(key(a))}">${esc(a.label)}${a.instance !== "default" ? ` · ${esc(a.instance)}` : ""}</option>`).join("");
+    const cwAccounts = accounts.filter((a) => a.provider === "CROSSWATCH");
+    const lists = new Map();
+    const failed = new Set();
+    const wizard = { publish: publish && cwAccounts.length > 0 };
+    const body = `
+      <div class="pl-form pl-wizard">
+        <section class="pl-endpoint-step">
+          <div class="pl-step-head"><span class="pl-step-index">1</span><div><b>From</b><span>The list to read.</span></div></div>
+          <div class="pl-wizard-row">
+            <div class="pl-field"><label for="pl-wz-src-account">Provider</label><select id="pl-wz-src-account"><option value="">Choose a provider</option>${accountOptions(accounts)}</select></div>
+            <div class="pl-field"><label for="pl-wz-src-list">List</label><select id="pl-wz-src-list"></select></div>
+          </div>
+        </section>
+        <section class="pl-endpoint-step">
+          <div class="pl-step-head"><span class="pl-step-index">2</span><div><b>To</b><span>Where the items should go.</span></div></div>
+          <div class="pl-wizard-choice" role="radiogroup" aria-label="Destination">
+            <label><input type="radio" name="pl-wz-dest" value="list" ${wizard.publish ? "" : "checked"}><span><b>A list on a provider</b><small>Plex, Trakt, MDBList and others.</small></span></label>
+            <label class="${cwAccounts.length ? "" : "is-disabled"}"><input type="radio" name="pl-wz-dest" value="publish" ${wizard.publish ? "checked" : ""} ${cwAccounts.length ? "" : "disabled"}><span><b>Kometa, Radarr or Sonarr</b><small>${cwAccounts.length ? "Publish the list so these tools can read it." : "Needs the CrossWatch provider to be connected."}</small></span></label>
+          </div>
+          <div class="pl-wizard-row" id="pl-wz-dst-list-row">
+            <div class="pl-field"><label for="pl-wz-dst-account">Provider</label><select id="pl-wz-dst-account"><option value="">Choose a provider</option>${accountOptions(accounts)}</select></div>
+            <div class="pl-field"><label for="pl-wz-dst-list">List</label><select id="pl-wz-dst-list"></select></div>
+          </div>
+          <div id="pl-wz-new-toggle-row"><button type="button" class="pl-link" id="pl-wz-new-toggle">+ Create a new list</button><span class="pl-muted" id="pl-wz-new-none"></span></div>
+          <div class="pl-warning" id="pl-wz-simkl-warning" hidden>${esc(SIMKL_PLAYLIST_WARNING)}</div>
+          <div class="pl-wizard-row" id="pl-wz-new-row">
+            ${cwAccounts.length > 1 ? `<div class="pl-field" id="pl-wz-cw-wrap"><label for="pl-wz-cw-account">CrossWatch profile</label><select id="pl-wz-cw-account">${accountOptions(cwAccounts)}</select></div>` : ""}
+            <div class="pl-field"><label for="pl-wz-new-name">Name of the new list</label><input id="pl-wz-new-name" maxlength="${PLAYLIST_NAME_MAX}" autocomplete="off"><div class="pl-field-error"></div></div>
+          </div>
+        </section>
+        <section class="pl-endpoint-step">
+          <div class="pl-step-head"><span class="pl-step-index">3</span><div><b>How</b><span>What CrossWatch may change in the destination.</span></div></div>
+          <div class="pl-wizard-choice" role="radiogroup" aria-label="Sync mode">
+            ${SYNC_MODES.map(([value, label, hint]) => `<label><input type="radio" name="pl-wz-mode" value="${value}" ${value === "managed_only" ? "checked" : ""}><span><b>${esc(label)}</b><small>${esc(hint)}</small></span></label>`).join("")}
+          </div>
+          <div class="pl-muted" id="pl-wz-note"></div>
+        </section>
+      </div>
+    `;
+    const ctx = openModal({
+      title: "Sync a list",
+      description: "Pick a list, pick where it should go, and choose how.",
+      width: "720px",
+      body,
+      primaryText: "Create sync",
+      savingText: "Creating...",
+      trigger,
+      onPrimary: (modalCtx) => saveSyncWizard(modalCtx, lists),
+    });
+    const root = ctx.modal;
+    const accountOf = (id) => accounts.find((a) => key(a) === val(id, root));
+    const destination = () => (root.querySelector('input[name="pl-wz-dest"]:checked') || {}).value || "list";
+    const sourceResource = () => (lists.get(val("#pl-wz-src-account", root)) || []).find((r) => String(r.id) === val("#pl-wz-src-list", root));
+
+    async function fill(selectId, accountId, { writable = false } = {}) {
+      const select = $(selectId, root);
+      const account = accountOf(accountId);
+      if (!select) return;
+      if (!account) {
+        select.innerHTML = `<option value="">Choose a provider first</option>`;
+        select.disabled = true;
+        if (writable) select.dataset.canCreate = "";
+        sync();
+        return;
+      }
+      const cacheKey = key(account);
+      select.innerHTML = `<option value="">Loading...</option>`;
+      select.disabled = true;
+      if (!lists.has(cacheKey)) {
+        try {
+          const data = await API.resources(account.provider, account.instance);
+          lists.set(cacheKey, data.resources || []);
+          failed.delete(cacheKey);
+        } catch (err) {
+          failed.add(cacheKey);
+        }
+      }
+      if (val(accountId, root) !== cacheKey) return;
+      const broken = [val("#pl-wz-src-account", root), val("#pl-wz-dst-account", root)].filter((id) => failed.has(id)).map((id) => (accounts.find((a) => key(a) === id) || {}).label || id);
+      setModalError(broken.length ? `Could not load the lists of ${[...new Set(broken)].join(" and ")}. Check that provider in Connections, or pick another one.` : "");
+      if (failed.has(cacheKey)) {
+        select.innerHTML = `<option value="">Could not load lists</option>`;
+        select.disabled = true;
+        sync();
+        return;
+      }
+      const rows = (lists.get(cacheKey) || []).filter((r) => !writable || wizardResourceWritable(r));
+      const canCreate = writable && creatableEndpointTypes(account.provider).length > 0 && account.provider !== "SIMKL";
+      select.innerHTML = (canCreate ? `<option value="__new__">+ Create a new list</option>` : "")
+        + rows.map((r) => `<option value="${esc(r.id)}">${esc(r.name || r.id)}${wizardResourceType(r) === "watchlist" || String(r.id).toLowerCase().includes("watchlist") ? "" : ` (${esc(titleize(wizardResourceType(r) || "list"))})`}</option>`).join("")
+        || `<option value="">No lists found</option>`;
+      if (rows.length) select.value = String(rows[0].id);
+      if (writable) select.dataset.canCreate = canCreate ? "1" : "";
+      select.disabled = false;
+      sync();
+    }
+
+    function sync() {
+      const publishing = destination() === "publish";
+      const creating = !publishing && val("#pl-wz-dst-list", root) === "__new__";
+      $("#pl-wz-dst-list-row", root).hidden = publishing;
+      $("#pl-wz-new-row", root).hidden = !(publishing || creating);
+      const toggle = $("#pl-wz-new-toggle", root);
+      const dstAccount = accountOf("#pl-wz-dst-account");
+      const canCreate = !!$("#pl-wz-dst-list", root).dataset.canCreate;
+      $("#pl-wz-new-toggle-row", root).hidden = publishing || !dstAccount;
+      toggle.hidden = !canCreate;
+      toggle.textContent = creating ? "Use an existing list" : "+ Create a new list";
+      $("#pl-wz-new-none", root).textContent = canCreate || !dstAccount ? "" : `New lists cannot be created on ${dstAccount.label} from CrossWatch. Pick an existing one.`;
+      $("#pl-wz-simkl-warning", root).hidden = publishing || !dstAccount || dstAccount.provider !== "SIMKL";
+      const cwWrap = $("#pl-wz-cw-wrap", root);
+      if (cwWrap) cwWrap.hidden = !publishing;
+      const nameInput = $("#pl-wz-new-name", root);
+      const src = sourceResource();
+      if (nameInput && !nameInput.dataset.dirty && src) nameInput.value = String(src.name || "").replace(/[^A-Za-z0-9 _.'&()-]/g, "").trim().slice(0, PLAYLIST_NAME_MAX);
+      const discovery = !!(src && src.discovery);
+      root.querySelectorAll('input[name="pl-wz-mode"]').forEach((input) => {
+        input.disabled = discovery && input.value !== "mirror";
+        if (discovery && input.value === "mirror") input.checked = true;
+      });
+      $("#pl-wz-note", root).textContent = discovery
+        ? "This source is a discovery list, so the destination is always an exact copy."
+        : publishing ? "After creating, run Review and sync once to fill the list, then paste the address into your tool." : "";
+      syncModalPrimary(ctx);
+    }
+
+    ctx.validators = [() => {
+      if (!val("#pl-wz-src-list", root)) return "Choose the list to read.";
+      const publishing = destination() === "publish";
+      const target = val("#pl-wz-dst-list", root);
+      if (!publishing && !target) return "Choose the destination list.";
+      if (publishing || target === "__new__") return playlistNameError(val("#pl-wz-new-name", root));
+      if (val("#pl-wz-src-account", root) === val("#pl-wz-dst-account", root) && val("#pl-wz-src-list", root) === target) return "Source and destination must be different lists.";
+      return "";
+    }];
+    root.addEventListener("change", (e) => {
+      if (e.target.id === "pl-wz-src-account") fill("#pl-wz-src-list", "#pl-wz-src-account");
+      else if (e.target.id === "pl-wz-dst-account") fill("#pl-wz-dst-list", "#pl-wz-dst-account", { writable: true });
+      else sync();
+    });
+    $("#pl-wz-new-toggle", root).addEventListener("click", () => {
+      const select = $("#pl-wz-dst-list", root);
+      const existing = Array.from(select.options).find((o) => o.value && o.value !== "__new__");
+      select.value = select.value === "__new__" ? (existing ? existing.value : "__new__") : "__new__";
+      sync();
+      if (select.value === "__new__") $("#pl-wz-new-name", root)?.focus();
+    });
+    root.addEventListener("input", (e) => {
+      if (e.target.id === "pl-wz-new-name") e.target.dataset.dirty = "1";
+      syncModalPrimary(ctx);
+    });
+    fill("#pl-wz-src-list", "#pl-wz-src-account");
+    fill("#pl-wz-dst-list", "#pl-wz-dst-account", { writable: true });
+    ctx.initial = snapshot($(".pl-dialog-body", root));
+    sync();
+  }
+
+  function openSyncEdit(mapping, trigger) {
+    if (!mapping) return;
+    const src = endpointById(mapping.source_endpoint) || mapping.source || {};
+    const targets = (mapping.target_endpoints || []).map((id) => endpointById(id)).filter(Boolean);
+    const discovery = endpointIsDiscovery(src);
+    const current = discovery ? "mirror" : String(mapping.membership || "managed_only");
+    const ctx = openModal({
+      title: "Edit sync",
+      description: "Change how this list is kept up to date.",
+      width: "640px",
+      primaryText: "Save",
+      trigger,
+      body: `
+        <div class="pl-form pl-wizard">
+          <div class="pl-wizard-pair">${listRef(src, mapping.source_endpoint)}<span class="material-symbols-rounded" aria-hidden="true">east</span>${targets.map((t) => listRef(t)).join("") || mappingTargetRefs(mapping)}</div>
+          <div class="pl-wizard-choice" role="radiogroup" aria-label="Sync mode">
+            ${SYNC_MODES.map(([value, label, hint]) => `<label><input type="radio" id="pl-se-mode-${value}" name="pl-se-mode" value="${value}" ${value === current ? "checked" : ""} ${discovery && value !== "mirror" ? "disabled" : ""}><span><b>${esc(label)}</b><small>${esc(hint)}</small></span></label>`).join("")}
+          </div>
+          ${discovery ? `<div class="pl-muted">This source is a discovery list, so the destination is always an exact copy.</div>` : ""}
+          <label class="pl-wizard-check"><input type="checkbox" id="pl-se-enabled" ${mapping.enabled ? "checked" : ""}><span>Active. A paused sync is skipped.</span></label>
+          <div><button type="button" class="pl-link" data-sync-advanced>More settings</button></div>
+        </div>
+      `,
+      onPrimary: async (modalCtx) => {
+        const root = modalCtx.modal;
+        const mode = (root.querySelector('input[name="pl-se-mode"]:checked') || {}).value || current;
+        const res = await API.mapUpsert({
+          id: mapping.id, name: mapping.name, source_endpoint: mapping.source_endpoint,
+          target_endpoints: mapping.target_endpoints || [], ruleset_id: "", membership: mode,
+          order: mapping.order || "ignore", enabled: checked("#pl-se-enabled", root),
+        });
+        notifyPairsChanged({ source: "playlists", mapping_id: mapping.id, pair_id: res.pair_id || (res.mapping && res.mapping.assigned_pair) || "" });
+        closeModal(true);
+        await refreshOverview();
+      },
+    });
+    $("[data-sync-advanced]", ctx.modal)?.addEventListener("click", () => {
+      if (closeModal(false)) openMappingModal({ mapping, trigger });
+    });
+  }
+
+  async function saveSyncWizard(ctx, lists) {
+    const root = ctx.modal;
+    const accounts = wizardAccounts();
+    const byKey = (value) => accounts.find((a) => `${a.provider}|${a.instance}` === value);
+    const srcAccount = byKey(val("#pl-wz-src-account", root));
+    const srcResource = (lists.get(val("#pl-wz-src-account", root)) || []).find((r) => String(r.id) === val("#pl-wz-src-list", root));
+    if (!srcAccount || !srcResource) throw new Error("Choose the list to read.");
+    const publishing = ((root.querySelector('input[name="pl-wz-dest"]:checked') || {}).value || "list") === "publish";
+    const mode = (root.querySelector('input[name="pl-wz-mode"]:checked') || {}).value || "managed_only";
+    const newName = val("#pl-wz-new-name", root);
+    const source = await wizardEnsureEndpoint(srcAccount, srcResource, 0);
+    let target;
+    if (publishing || val("#pl-wz-dst-list", root) === "__new__") {
+      const account = publishing
+        ? (byKey(val("#pl-wz-cw-account", root)) || accounts.find((a) => a.provider === "CROSSWATCH"))
+        : byKey(val("#pl-wz-dst-account", root));
+      if (!account) throw new Error("Choose where the new list should be created.");
+      const mediaType = (srcResource.media_types || []).find((t) => creatableEndpointTypes(account.provider).includes(t)) || creatableEndpointTypes(account.provider)[0];
+      const res = await API.epUpsert({ id: "", name: nextEndpointName(1), provider: account.provider, instance: account.instance, create: true, create_name: newName, media_type: mediaType });
+      target = res.endpoint;
+    } else {
+      const account = byKey(val("#pl-wz-dst-account", root));
+      const resource = (lists.get(val("#pl-wz-dst-account", root)) || []).find((r) => String(r.id) === val("#pl-wz-dst-list", root));
+      if (!account || !resource) throw new Error("Choose the destination list.");
+      target = await wizardEnsureEndpoint(account, resource, 1);
+    }
+    if (!source || !target || !source.id || !target.id) throw new Error("Could not prepare the lists for this sync.");
+    const res = await API.mapUpsert({ id: "", name: nextMappingName(0), source_endpoint: source.id, target_endpoints: [target.id], ruleset_id: "", membership: mode, order: "ignore", enabled: true });
+    notifyPairsChanged({ source: "playlists", mapping_id: (res.mapping && res.mapping.id) || "", pair_id: res.pair_id || (res.mapping && res.mapping.assigned_pair) || "" });
+    if (publishing && target.playlist_id) await API.publish(target.instance || "default", target.playlist_id).catch(() => null);
+    closeModal(true);
+    await refreshOverview();
+    if (publishing) openPublishedModal(publishedRow(`${target.instance || "default"}|${target.playlist_id}`), null);
   }
 
   function openMappingDelete(mapping, trigger) {
@@ -2358,6 +2873,7 @@
       API.activity(),
       API.runSummary().catch(() => null),
     ]);
+    state.published = await API.published().catch(() => ({ lists: [], formats: [] }));
     return { providers, endpoints, mappings, rulesets, overview, activity, runSummary };
   }
 
@@ -2394,6 +2910,7 @@
       endpoints: ["#pl-playlist-endpoints .pl-section-body", renderEndpoints],
       mappings: ["#pl-mappings-overview .pl-section-body", renderMappings],
       activity: ["#pl-activity-overview .pl-section-body", renderActivity],
+      published: ["#pl-published-lists .pl-section-body", renderPublished],
     };
     const spec = targets[key];
     if (!spec) return;
@@ -2421,7 +2938,7 @@
     const banners = $(".pl-banners", root);
     if (banners) banners.outerHTML = renderBanners();
     updateMappingActions(root);
-    sections.forEach((key) => refreshSection(root, key));
+    [...sections, "published"].forEach((key) => refreshSection(root, key));
     scheduleSyncSummaryPoll(syncSummaryRunning() || state.runningMappings.size ? 1500 : 6000);
     window.scrollTo(scrollX, scrollY);
   }

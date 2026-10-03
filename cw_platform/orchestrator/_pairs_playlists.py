@@ -3,15 +3,29 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import time
 from collections.abc import Mapping
 from typing import Any
 
-from ..playlists_runner import PlaylistRunError, resolve_pair_mappings, run_mapping
+from ..playlists_runner import resolve_pair_mappings, run_mapping, store_result
 
 
 def _emit(ctx, event: str, **fields: Any) -> None:
     try:
         ctx.emit(event, **fields)
+    except Exception:
+        pass
+
+
+def _store_failure(mapping: Mapping[str, Any], error: Exception, *, dry_run: bool) -> None:
+    if dry_run:
+        return
+    try:
+        store_result(mapping, {
+            "ok": False, "mapping_id": str(mapping.get("id") or ""), "errors": 1, "error": str(error),
+            "added": 0, "removed": 0, "reordered": 0, "unresolved": [], "warnings": [],
+            "finished_at": int(time.time()),
+        })
     except Exception:
         pass
 
@@ -91,13 +105,10 @@ def run_playlist_mappings(
                     playlists_svc.refresh_mapping_endpoints(full_cfg, mapping)
                 except Exception:
                     pass
-        except PlaylistRunError as e:
-            totals["errors"] += 1
-            _emit(ctx, "playlist:mapping:error", src=src, dst=dst, mapping=mapping_id, error=str(e))
-            continue
         except Exception as e:
             totals["errors"] += 1
             _emit(ctx, "playlist:mapping:error", src=src, dst=dst, mapping=mapping_id, error=str(e))
+            _store_failure(mapping, e, dry_run=dry_run)
             continue
 
         totals["mappings"] += 1
