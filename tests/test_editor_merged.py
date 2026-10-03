@@ -52,6 +52,17 @@ def test_anime_and_show_types_merge() -> None:
     assert len(items) == 1
 
 
+def test_accounts_linked_by_an_enabled_pair_join_the_view_one_hop_only() -> None:
+    cfg = {"pairs": [
+        {"source": "SIMKL", "source_instance": "SIMKL-P01", "target": "ANILIST", "target_instance": "default", "feature": "history"},
+        {"source": "TRAKT", "source_instance": "p9", "target": "SIMKL", "target_instance": "SIMKL-P01", "feature": "history"},
+        {"source": "PLEX", "source_instance": "p2", "target": "ANILIST", "target_instance": "default", "feature": "history", "enabled": False},
+        {"source": "MDBLIST", "source_instance": "p3", "target": "ANILIST", "target_instance": "default", "feature": "watchlist"},
+    ]}
+    assert editor_merged._linked(cfg, "history", None) == {("SIMKL", "SIMKL-P01")}
+    assert editor_merged._linked(cfg, "history", {"SIMKL": ["SIMKL-P01"]}) == {("ANILIST", "default"), ("TRAKT", "p9")}
+
+
 def test_scope_is_one_profile_and_defaults_to_default_instances(monkeypatch) -> None:
     cfg = {}
     monkeypatch.setattr(editor_merged, "profile_instances_map", lambda _cfg, pid: {"TRAKT": ["p2"]} if pid == "anna" else {})

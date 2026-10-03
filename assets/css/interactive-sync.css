@@ -53,12 +53,20 @@
 .is-progress-stats strong { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .is-progress-note { display: flex; gap: 10px; padding-top: 18px; border-top: 1px solid var(--is-line); color: var(--is-muted); font-size: 12px; line-height: 1.7; }
 .is-progress-note p { margin: 0; }
-.is-progress-details { margin-top: 18px; color: var(--is-muted); font-size: 12px; }
-.is-progress-details summary { cursor: pointer; }
-.is-progress-details ol { display: grid; gap: 10px; list-style: none; padding: 0; margin: 16px 0 0; }
+.is-progress-details { margin-top: 18px; border: 1px solid var(--is-line); border-radius: 10px; font-size: 13px; overflow: hidden; }
+.is-progress-details summary { display: flex; align-items: center; gap: 12px; padding: 12px 14px; list-style: none; cursor: pointer; }
+.is-progress-details summary::-webkit-details-marker { display: none; }
+.is-progress-details summary:hover { background: color-mix(in srgb, var(--is-accent) 8%, transparent); }
+.is-latest-label { flex-shrink: 0; padding: 2px 8px; border-radius: 999px; background: color-mix(in srgb, var(--is-accent) 18%, transparent); color: var(--is-accent); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.is-latest-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.is-latest-toggle { display: inline-flex; flex-shrink: 0; align-items: center; gap: 4px; color: var(--is-muted); font-size: 12px; }
+.is-latest-toggle .material-symbols-rounded { transition: transform .15s; }
+.is-progress-details[open] .is-latest-toggle .material-symbols-rounded { transform: rotate(180deg); }
+.is-progress-details ol { display: grid; gap: 8px; max-height: 240px; margin: 0; padding: 12px 14px; overflow: auto; border-top: 1px solid var(--is-line); list-style: none; color: var(--is-muted); font-size: 12px; }
 .is-progress-details li { display: flex; align-items: baseline; gap: 16px; }
-.is-progress-details time { font-variant-numeric: tabular-nums; white-space: nowrap; opacity: .7; }
+.is-progress-details time { flex-shrink: 0; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--is-muted); }
 .is-progress-details li > span { overflow-wrap: anywhere; }
+@media (max-width: 700px) { .is-progress-details summary { flex-wrap: wrap; } .is-latest-text { flex-basis: 100%; order: 5; white-space: normal; } }
 @keyframes is-progress-travel { from { transform: translateX(-110%); } to { transform: translateX(440%); } }
 @media (prefers-reduced-motion: reduce) { .is-progress-track > span { transition: none; } .is-progress-track.indeterminate > span { animation: none; width: 100% !important; opacity: .4; } }
 @media (max-width: 600px) { .is-page .is-run-progress { padding: 18px; } .is-progress-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } .is-progress-top { flex-direction: column; gap: 12px; } }
@@ -153,7 +161,11 @@ html:has(dialog.is-mapping-dialog[open]) { overflow: hidden; }
 .is-mapping-dialog .is-map-row-tools h3 { margin: 0 auto 0 0; font-size: 15px; }
 .is-map-row-tools h3 + strong:not([hidden]) { margin-left: 12px; }
 .is-map-numbering { margin-bottom: 16px; padding: 12px 14px; border: 1px solid var(--is-line); border-radius: 8px; background: var(--is-card); }
-.is-map-numbering summary, .is-map-advanced summary { cursor: pointer; color: var(--is-muted); font-size: 12px; }
+.is-map-numbering summary, .is-map-advanced summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; list-style: none; cursor: pointer; color: var(--fg, #edf0f8); font-size: 13px; }
+.is-map-numbering summary::-webkit-details-marker, .is-map-advanced summary::-webkit-details-marker { display: none; }
+.is-map-numbering summary::after, .is-map-advanced summary::after { content: "expand_more"; font-family: "Material Symbols Rounded"; font-size: 20px; font-weight: 400; line-height: 1; color: var(--is-muted); transition: transform .15s; }
+.is-map-numbering[open] summary::after, .is-map-advanced[open] summary::after { transform: rotate(180deg); }
+.is-map-numbering summary:hover, .is-map-advanced summary:hover { color: var(--is-accent); }
 .is-map-numbering-fields { margin-top: 14px; }
 .is-map-numbering-fields label { width: 160px; }
 .is-map-review { display: grid; gap: 10px; }
@@ -248,7 +260,7 @@ html:has(dialog.is-mapping-dialog[open]) { overflow: hidden; }
 .is-map-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .is-page .is-map-action { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 5px 9px; border-radius: 6px; font-size: 12px; font-weight: 400; white-space: nowrap; }
 .is-map-action .material-symbols-rounded, .is-map-status .material-symbols-rounded { font-size: 17px; flex-shrink: 0; }
-.is-map-status { display: inline-flex; align-items: center; gap: 6px; color: var(--is-muted); font-size: 12px; white-space: nowrap; }
+.is-map-status { display: inline-flex; align-items: center; gap: 6px; color: var(--is-muted); font-size: 12px; overflow-wrap: anywhere; }
 .is-map-status.is-edited { color: var(--is-accent); }
 .is-map-status.is-review { color: var(--cw-theme-warning, #e8bb69); }
 

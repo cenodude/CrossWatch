@@ -304,7 +304,7 @@
   columnsBtn.type = "button";
   columnsBtn.title = "Columns";
   columnsBtn.setAttribute("aria-label", "Columns");
-  columnsBtn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">filter_alt</span>`;
+  columnsBtn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">view_column</span>`;
   pageSizeSel?.closest(".cw-page-size-control")?.insertAdjacentElement("afterend", columnsBtn);
 
   const wideBtn = document.createElement("button");
@@ -361,7 +361,7 @@
 
   if (backupCard) backupCard.remove();
   [summaryStateFiles, summarySnapshots].forEach(el => el?.closest(".metric")?.remove());
-  [columnsBtn, addBtn, stateBulkRow, importRow, stateBackupCard, blockedOnlyBtn, tag?.closest(".ins-card")]
+  [columnsBtn, addBtn, stateBulkRow, importRow, stateBackupCard, blockedOnlyBtn]
     .forEach(el => el?.classList.add("cw-advanced-only"));
 
   editorChrome.decorateImportPanel({
@@ -409,7 +409,23 @@
       },
     },
   });
-  $("cw-saved-mappings")?.classList.add("cw-advanced-only");
+  [$("cw-saved-mappings"), stateBackupCard].forEach(el => el?.classList.add("cw-advanced-only"));
+  const typeAllBtn = document.createElement("button");
+  typeAllBtn.id = "cw-type-all";
+  typeAllBtn.type = "button";
+  typeAllBtn.textContent = "All";
+  if (typeFilterWrap) {
+    const typeBar = document.createElement("div");
+    typeBar.className = "cw-type-bar";
+    typeBar.setAttribute("aria-label", "Filter by type");
+    const typeRow = typeFilterWrap.closest(".ins-row");
+    host.querySelector(".cw-controls")?.appendChild(typeBar);
+    typeFilterWrap.className = "cw-type-filter";
+    typeFilterWrap.prepend(typeAllBtn);
+    typeFilterWrap.querySelectorAll("button").forEach(btn => { btn.className = `cw-filter-chip${btn.classList.contains("cw-advanced-only") ? " cw-advanced-only" : ""}`; });
+    typeBar.appendChild(typeFilterWrap);
+    typeRow?.remove();
+  }
   let sortHeaders = Array.from(host.querySelectorAll(".cw-table th[data-sort]"));
   let columnLayoutResizeTimer = 0;
   const providerMeta = window.CW?.ProviderMeta || {};
@@ -1008,14 +1024,31 @@
     enforceKindTypeRules();
     const allowed = allowedTypesForKind(state.kind);
     const buttons = typeFilterWrap.querySelectorAll("button[data-type]");
+    const allOn = allowed.every(t => state.typeFilter[t] !== false);
     buttons.forEach(btn => {
       const t = btn.dataset.type;
       const visible = allowed.includes(t);
       btn.style.display = visible ? "" : "none";
-      const on = state.typeFilter[t] !== false;
+      const on = !allOn && state.typeFilter[t] !== false;
       btn.classList.toggle("active", on);
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
     });
+    typeAllBtn.classList.toggle("active", allOn && !state.blockedOnly);
+    typeAllBtn.setAttribute("aria-pressed", allOn && !state.blockedOnly ? "true" : "false");
     if (blockedOnlyBtn) blockedOnlyBtn.classList.toggle("active", !!state.blockedOnly);
+    syncTypeChipVisibility();
+  }
+
+  function syncTypeChipVisibility() {
+    if (!typeFilterWrap) return;
+    const allowed = allowedTypesForKind(state.kind);
+    const allOn = allowed.every(t => state.typeFilter[t] !== false);
+    const present = new Set((state.rows || []).map(row => String(row.type || "").toLowerCase()));
+    typeFilterWrap.querySelectorAll("button[data-type]").forEach(btn => {
+      const t = btn.dataset.type;
+      const used = present.has(t) || (!allOn && state.typeFilter[t] !== false);
+      btn.style.display = allowed.includes(t) && (state.loading || !present.size || used) ? "" : "none";
+    });
   }
 
   function syncPageSizeUI() {
@@ -1173,8 +1206,9 @@
       btn.setAttribute("aria-label", label);
     };
     setIconOnly(bulkSendBtn, "send", "Send to...");
-    bulkRemoveBtn.style.display = isMergedView() ? "none" : "";
-    bulkRestoreBtn.style.display = isMergedView() ? "none" : "";
+    const picked = (state.rows || []).filter(row => state.selected.has(row._rid));
+    bulkRemoveBtn.style.display = !isMergedView() && picked.some(row => !row.deleted) ? "" : "none";
+    bulkRestoreBtn.style.display = !isMergedView() && picked.some(row => row.deleted) ? "" : "none";
     if (isPolicySource()) {
       setIconOnly(bulkRemoveBtn, "block", "Block selected");
       setIconOnly(bulkRestoreBtn, "undo", "Unblock selected");
@@ -1249,7 +1283,7 @@
       sendNotes: Object.fromEntries((merged ? state.mergedTargets || [] : [])
         .filter(target => (target.shared_with || []).length)
         .map(target => [`${target.provider}:${target.instance}`, `Shared by ${target.shared_with.join(", ")}`])),
-      sendScope: merged ? new Set((state.mergedTargets || []).map(target => `${target.provider}:${target.instance}`)) : null,
+      sendScope: merged && profile ? new Set((state.mergedTargets || []).filter(target => target.can_send).map(target => `${target.provider}:${target.instance}`)) : null,
       selectedRowsForSend,
       rowToSendItem,
       fetchJSON,
@@ -1909,7 +1943,9 @@
   }
 
   function renderRows() {
-    return editorTableController.renderRows(tableControllerContext());
+    const result = editorTableController.renderRows(tableControllerContext());
+    syncTypeChipVisibility();
+    return result;
   }
 
   function formatSnapshotLabel(s) {
@@ -2057,18 +2093,28 @@ function bindFileImport(btn, input, url, done) {
       const btn = e.target.closest("button[data-type]");
       if (!btn) return;
       const t = btn.dataset.type;
-      const current = !!state.typeFilter[t];
-      if (current) {
-        const enabledCount = Object.values(state.typeFilter).filter(Boolean).length;
-        if (enabledCount <= 1) return;
+      const allowed = allowedTypesForKind(state.kind);
+      if (allowed.every(x => state.typeFilter[x] !== false)) {
+        allowed.forEach(x => { state.typeFilter[x] = x === t; });
+      } else {
+        state.typeFilter[t] = !state.typeFilter[t];
+        if (!allowed.some(x => state.typeFilter[x])) allowed.forEach(x => { state.typeFilter[x] = true; });
       }
-      state.typeFilter[t] = !current;
       syncTypeFilterUI();
       state.page = 0;
       persistUIState();
       renderRows();
     });
   }
+
+  typeAllBtn.addEventListener("click", () => {
+    allowedTypesForKind(state.kind).forEach(t => { state.typeFilter[t] = true; });
+    state.blockedOnly = false;
+    syncTypeFilterUI();
+    state.page = 0;
+    persistUIState();
+    renderRows();
+  });
 
   if (blockedOnlyBtn) {
     blockedOnlyBtn.addEventListener("click", () => {
@@ -2259,11 +2305,21 @@ if (importProviderSel) {
     clearSelection();
     await loadState();
   });
-  on(advancedBtn, "click", () => {
+  on(advancedBtn, "click", async () => {
+    const resetScope = state.advanced && !!state.mappingPair;
+    if (resetScope && state.hasChanges) {
+      window.cxToast?.("Save or discard your changes before leaving Advanced.");
+      return;
+    }
     state.advanced = !state.advanced;
     closePopup();
     syncAdvancedUI();
     persistUIState();
+    if (resetScope) {
+      state.mappingPair = "";
+      await loadState();
+      return;
+    }
     renderRows();
   });
   on(quickAddBtn, "click", () => {

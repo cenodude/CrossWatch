@@ -6,9 +6,12 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from cw_platform.access_policy import managed_profile_id, profile_instances_map, profile_label_for_id, request_user
+from cw_platform.access_policy import (
+    managed_profile_id, pair_refs, profile_instances_map, profile_label_for_id, request_user,
+)
 from cw_platform.history_events import EVENT_ID_FIELDS, base_key_from_history_event
 from cw_platform.id_map import canonical_key, merge_ids, minimal
+from cw_platform.orchestrator._pairs import _feature_list_for_pair
 from cw_platform.provider_instances import list_user_profiles, normalize_instance_id
 from services.editor_removal import LOCAL_ID_NAMESPACES, _tokens
 
@@ -34,6 +37,20 @@ def _in_scope(instances: Mapping[str, list[str]] | None, provider: str, instance
     if instances is None:
         return instance == "default"
     return instance in list(instances.get(provider) or [])
+
+
+def _linked(cfg: Mapping[str, Any], feature: str, instances: Mapping[str, list[str]] | None) -> set[tuple[str, str]]:
+    out: set[tuple[str, str]] = set()
+    for pair in cfg.get("pairs") or []:
+        if not isinstance(pair, Mapping) or pair.get("enabled") is False or feature not in _feature_list_for_pair(pair):
+            continue
+        left, right = pair_refs(pair)
+        inside = [_in_scope(instances, *left), _in_scope(instances, *right)]
+        if inside == [True, False]:
+            out.add(right)
+        elif inside == [False, True]:
+            out.add(left)
+    return out
 
 
 def _shared_tokens(key: str, item: Mapping[str, Any]) -> set[str]:
@@ -138,22 +155,26 @@ def merged_view(kind: str, request: Any = None) -> dict[str, Any]:
     raw_state = api._load_current_state_features({feature})
     raw_policy = api._load_policy()
 
+    linked = _linked(cfg, feature, instances) if chooser else set()
     targets: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
     for target in api._editor_send_targets(cfg, feature):
         provider = str(target.get("provider") or "").upper()
         instance = normalize_instance_id(target.get("instance"))
-        if not _in_scope(instances, provider, instance):
+        inside = _in_scope(instances, provider, instance)
+        if not inside and (provider, instance) not in linked:
             continue
         seen.add((provider, instance))
         targets.append({"provider": provider, "instance": instance, "label": target.get("label") or provider,
                         "instance_label": target.get("instance_label") or instance,
-                        "display": target.get("display") or provider, "can_send": True})
+                        "display": target.get("display") or provider, "can_send": inside or instances is None,
+                        "linked": not inside})
 
     names = [str(name or "").strip().upper() for name in api._union_providers(raw_state, raw_policy)]
     names.extend(name.upper() for name in api._always_listed_providers())
     for provider in dict.fromkeys(name for name in names if name):
         scoped = ["default"] if instances is None else list(instances.get(provider) or [])
+        scoped.extend(instance for name, instance in sorted(linked) if name == provider)
         for instance in scoped:
             if (provider, instance) in seen:
                 continue
@@ -162,7 +183,7 @@ def merged_view(kind: str, request: Any = None) -> dict[str, Any]:
             targets.append({"provider": provider, "instance": instance, "label": provider.title(),
                             "instance_label": label,
                             "display": provider.title() if instance == "default" else f"{provider.title()} ({label})",
-                            "can_send": False})
+                            "can_send": False, "linked": (provider, instance) in linked})
 
     for target in targets:
         owners = api._instance_owner_labels(cfg, target["provider"], target["instance"])

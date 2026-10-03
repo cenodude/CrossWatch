@@ -259,3 +259,89 @@ body.cw-profile-page :is(.cw-tl-action,.cw-tl-remove-submit)[data-action-result=
 
 #profile-remove-dialog .cw-tl-remove-submit[data-action-result="success"]{background:var(--cw-page-good-bg);color:var(--cw-theme-good)}
 #profile-remove-dialog .cw-tl-remove-submit[data-action-result="failure"]{background:var(--cw-page-danger-bg);color:var(--cw-theme-danger)}
+
+#layout .cw-themed-page .cw-page-table .cw-action-buttons {
+  gap: 4px;
+}
+#layout .cw-themed-page .cw-page-table .cw-action-buttons .cw-btn-del {
+  --cw-control-bg: transparent;
+  --cw-control-border: transparent;
+  --cw-control-text: var(--cw-theme-muted);
+  display: inline-grid;
+  place-items: center;
+  min-height: 32px !important;
+  height: 32px !important;
+  border-radius: 9px !important;
+  transition: background .15s, border-color .15s, color .15s;
+}
+#layout .cw-themed-page .cw-page-table .cw-action-buttons .cw-btn-del:hover:not(:disabled) {
+  --cw-control-bg: var(--cw-page-hover-bg);
+  --cw-control-border: var(--cw-theme-border-strong);
+  --cw-control-text: var(--cw-theme-text);
+}
+#layout .cw-themed-page .cw-page-table .cw-action-buttons .cw-btn-del.danger:hover:not(:disabled),
+#layout .cw-themed-page .cw-page-table .cw-row-deleted .cw-action-buttons .cw-btn-del.danger {
+  --cw-control-bg: var(--cw-page-danger-bg);
+  --cw-control-border: var(--cw-theme-danger);
+  --cw-control-text: var(--cw-page-danger-text);
+}
+#layout .cw-themed-page .cw-page-table .cw-action-buttons .cw-btn-send:hover:not(:disabled) {
+  --cw-control-border: var(--cw-theme-accent);
+  --cw-control-text: var(--cw-theme-accent);
+}
+#layout .cw-themed-page .cw-page-table .cw-action-buttons .cw-btn-del .material-symbol {
+  font-size: 19px !important;
+  line-height: 1 !important;
+}
+@media (min-width: 761px) {
+  #layout .cw-themed-page .cw-page-table .cw-action-buttons .cw-btn-del {
+    min-width: 32px !important;
+    width: 32px !important;
+  }
+}
+@media (max-width: 760px) {
+  #layout .cw-themed-page .cw-page-table .cw-action-buttons .cw-btn-del {
+    min-height: 44px !important;
+    height: 44px !important;
+  }
+}
+
+#layout .cw-themed-page .cw-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--cw-theme-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--cw-theme-muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background .15s, border-color .15s, color .15s;
+}
+#layout .cw-themed-page .cw-filter-chip .material-symbol {
+  font-size: 16px;
+  line-height: 1;
+}
+#layout .cw-themed-page .cw-filter-chip:hover {
+  border-color: var(--cw-theme-border-strong);
+  color: var(--cw-theme-text);
+}
+#layout .cw-themed-page .cw-filter-chip.active {
+  background: var(--cw-page-selected-bg);
+  border-color: var(--cw-page-selected-border);
+  color: var(--cw-page-selected-text);
+}
+#layout .cw-themed-page .cw-filter-chip:focus-visible {
+  outline: 2px solid var(--cw-theme-accent);
+  outline-offset: 2px;
+}
+
+#layout .cw-themed-page .cw-page-toolbar .cw-advanced-toggle.active {
+  --cw-control-bg: transparent;
+  --cw-control-hover: var(--cw-page-hover-bg);
+  --cw-control-border: var(--cw-theme-accent);
+  --cw-control-text: var(--cw-theme-text);
+}

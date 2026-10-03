@@ -39,7 +39,7 @@ export async function openEditorMapping(row, ctx) {
   return openMappingWorkspace({
     rows:[context.row],
     total:1, standalone:true, staged:true, direct, scope,
-    scopes:[{id:scope, label:scope === "pair" ? "This sync pair" : "All pairs using this provider instance"}],
+    scopes:[{id:scope, label:scope === "pair" ? "Only this sync pair" : "Every sync with this account"}],
     onClose:() => { state.mappingEditing = false; }, onSaved:() => { state.mappingEditing = false; },
     mappingApi:{
       catalogs:async () => context,
