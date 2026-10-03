@@ -1075,6 +1075,7 @@ const tags = [
       ],
       getLibs: () => getPlexState().libs || [],
       isOn: (fk, id) => st[setKey[fk]].has(String(id)),
+      selectedIds: () => Object.values(setKey).flatMap((k) => [...st[k]]),
       setOn: (fk, id, on) => { const s = st[setKey[fk]]; if (on) s.add(String(id)); else s.delete(String(id)); },
       commit: syncSelects,
       load: async () => { await plexLoadLibraries(); syncSelects(); },

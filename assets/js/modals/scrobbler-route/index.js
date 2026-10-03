@@ -493,6 +493,7 @@ function mountDestinationTable() {
     note: "Empty = use the connection History and Progress libraries.",
     getLibs: () => destinationLibraries.get(key) || [],
     isOn: (_feature, id) => selected().has(String(id)),
+    selectedIds: () => [...selected()],
     setOn: (_feature, id, on) => {
       const next = selected();
       if (on) next.add(String(id));

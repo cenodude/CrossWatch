@@ -138,13 +138,16 @@ export function createLibraryController({
       host.appendChild(group);
       const info = getFeatureLibraries(state, feature, kind, instance);
       const selected = new Set(info.selected);
-      const list = libraries.length ? libraries : info.selected.map((id) => ({key: id, title: id}));
+      const known = new Set(libraries.map((lib) => String(lib.key)));
+      const missing = libraries.length ? info.selected.filter((id) => !known.has(String(id))).map((id) => ({key: id, title: `Missing library (${id})`, missing: true})) : [];
+      const list = libraries.length ? libraries.concat(missing) : info.selected.map((id) => ({key: id, title: id}));
       for (const lib of list) {
         const key = String(lib.key);
         const button = document.createElement("button");
         button.type = "button";
         button.className = "chip" + (selected.has(key) ? " on" : "");
         button.textContent = lib.title || key;
+        if (lib.missing) button.title = "No longer available for this pair. Click to remove it.";
         button.dataset.key = key;
         button.addEventListener("click", () => {
           const current = getFeatureLibraries(state, feature, kind, instance);

@@ -1353,6 +1353,7 @@
         ],
         getLibs: () => host.__cwConnectionWhitelistLibs || [],
         isOn: (feature, id) => sets[feature]?.has(String(id)),
+        selectedIds: () => Object.values(sets).flatMap((set) => [...(set || [])]),
         setOn: (feature, id, on) => { if (on) sets[feature]?.add(String(id)); else sets[feature]?.delete(String(id)); },
         commit: syncHidden,
         load: async () => { host.__cwConnectionWhitelistLibs = await ensureLibs(true); syncHidden(); },
