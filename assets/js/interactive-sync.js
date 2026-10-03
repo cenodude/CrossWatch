@@ -5,6 +5,10 @@
   const API = "/api/interactive-sync";
   const host = document.getElementById("page-interactive_sync");
   const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  const ORIGINS = { settings: ["settings/sync", "Synchronization"], playlists: ["playlists", "Playlists"] };
+  const origin = () => {
+    try { return ORIGINS[sessionStorage.getItem("cw.interactive_sync.origin")] || ORIGINS.settings; } catch { return ORIGINS.settings; }
+  };
   const labels = { add: "Add", remove: "Remove", update: "Update", unresolved: "Needs attention", blocked: "Blocked", conflict: "Conflict" };
   let session = null, busy = false, timer = null, page = 0, route = "", generation = 0;
   let feature = "", result = "", query = "", mappingDirty = false, mappingWorkspace = null;
@@ -202,7 +206,7 @@
       ${(report.review_notices || []).length ? `<details class="is-notices"><summary>Protections and notices from the preview (${number(report.review_notices.length)})</summary>${report.review_notices.map(n => `<p>${esc(n.feature)} ${esc(n.provider)} · ${esc(n.reason)}</p>`).join("")}</details>` : ""}
       ${reportIssuesHTML()}
       <p class="is-report-accounting">${esc(report.accounting_note)}</p>
-      <footer class="is-report-footer"><div><strong>Keep a copy of this report</strong><small>Available while this review session is retained. Download it for your records.</small></div><div class="is-header-actions"><button class="is-btn" data-action="download-report"><span class="material-symbols-rounded" aria-hidden="true">download</span>Download JSON</button><a class="is-btn is-primary" href="#settings/sync">Back to Synchronization</a></div></footer>
+      <footer class="is-report-footer"><div><strong>Keep a copy of this report</strong><small>Available while this review session is retained. Download it for your records.</small></div><div class="is-header-actions"><button class="is-btn" data-action="download-report"><span class="material-symbols-rounded" aria-hidden="true">download</span>Download JSON</button><a class="is-btn is-primary" href="#${origin()[0]}">Back to ${origin()[1]}</a></div></footer>
     </section>`;
   }
   function render() {
@@ -218,7 +222,7 @@
     const focused = host.contains(document.activeElement) && document.activeElement?.dataset?.filter === "query";
     const cursor = focused ? document.activeElement.selectionStart : null;
     host.innerHTML = `<div class="is-page">
-      <a class="is-back" href="#settings/sync"><span class="material-symbols-rounded" aria-hidden="true">arrow_back</span>Synchronization</a>
+      <a class="is-back" href="#${origin()[0]}"><span class="material-symbols-rounded" aria-hidden="true">arrow_back</span>${origin()[1]}</a>
       <header class="is-header"><div><div class="is-eyebrow">INTERACTIVE SYNC</div><h1>${session?.report ? "Sync report" : "Review your sync"}</h1></div><div class="is-header-actions">${[pair.source,pair.target].includes("PLEX") ? `<button class="is-btn" data-action="recover-plex" title="Open a separate recovery activity for titles no longer in your Plex libraries. Review matches and import selected history into the CrossWatch tracker. This does not run this sync pair." ${pending() ? "disabled" : ""}>Recover Plex history</button>` : ""}${session?.report ? "" : `<button class="is-btn" data-action="refresh" ${pending() || done || !session ? "disabled" : ""}><span class="material-symbols-rounded" aria-hidden="true">refresh</span>Refresh plan</button>`}<button class="is-btn" data-action="discard" ${pending() || !session ? "disabled" : ""}>${session?.report ? "Close report" : "Close review"}</button></div></header>
       <div class="is-route"><span class="material-symbols-rounded" aria-hidden="true">sync_alt</span><strong>${esc(endpoint(pair.source, pair.source_instance))}</strong><span>${pair.mode === "two-way" ? "↔" : "→"}</span><strong>${esc(endpoint(pair.target, pair.target_instance))}</strong><span class="is-route-mode">${pair.mode === "two-way" ? "Two-way" : "One-way"}</span></div>
       ${session?.report ? "" : `<div class="is-progress-host">${progressHTML()}</div>`}
@@ -233,7 +237,7 @@
         return `<tr><td><input type="checkbox" data-select="${row.id}" aria-label="Select ${esc(title(row.item))}" ${row.selected ? "checked" : ""} ${locked || !row.selectable ? "disabled" : ""}></td><td><strong>${esc(title(row.item))}</strong><small>${esc(row.item.type || "")} ${esc(row.item.year || "")} · ${esc(row.key)}</small>${row.reason ? `<small class="is-reason">${esc(row.reason)}</small>` : ""}</td><td>${esc(row.feature)}</td><td><span class="is-badge ${esc(row.result)}">${labels[row.result] || esc(row.result)}</span><span class="is-destination">${esc(endpoint(row.provider, row.instance))}</span>${row.destination_label ? `<small>${esc(row.destination_label)}</small>` : ""}<small>${esc(value(row.before, row.feature))} → ${row.operation === "remove" ? "Removed" : esc(value(row.item, row.feature))}</small></td><td>${["add", "update"].includes(row.operation) && row.feature !== "playlists" ? `<button class="is-btn is-small" data-map="${row.id}" ${locked ? "disabled" : ""}>Mapping</button>` : "—"}</td></tr>`;
       }).join("") || `<tr><td colspan="5"><div class="is-empty"><span class="material-symbols-rounded" aria-hidden="true">${pending() ? "sync" : "done_all"}</span><strong>${pending() ? "Reading your providers" : count || session?.counts?.conflicts ? "No items match these filters" : "No changes proposed"}</strong><p>${pending() ? "Your sync rules and mappings are being checked." : "Refresh the plan after changing sync settings or mappings."}</p></div></td></tr>`}</tbody></table></div>
       <div class="is-pagination"><button class="is-btn is-small" data-action="first" ${pageLoading || page === 0 ? "disabled" : ""}>First</button><button class="is-btn is-small" data-action="prev" ${pageLoading || page === 0 ? "disabled" : ""}>Previous</button><label>Page <input data-page type="number" min="1" max="${pages}" value="${page + 1}" aria-label="Page number" ${pageLoading ? "disabled" : ""}> of ${pages}</label><button class="is-btn is-small" data-action="next" ${pageLoading || page + 1 >= pages ? "disabled" : ""}>Next</button><button class="is-btn is-small" data-action="last" ${pageLoading || page + 1 >= pages ? "disabled" : ""}>Last</button></div>
-      <footer class="is-footer"><div><strong>${done ? "Operation finished" : `${selectedCount} changes selected`}</strong><small>${done ? "Provider results are also available in Events." : "Mappings are saved permanently. Only selected sync changes will be applied."}</small></div>${done ? `<a class="is-btn is-primary" href="#settings/sync">Back to Synchronization</a>` : `<button class="is-btn is-primary" data-action="apply" ${locked || !selectedCount ? "disabled" : ""}><span class="material-symbols-rounded" aria-hidden="true">check</span>Apply selected (${selectedCount})</button>`}</footer>
+      <footer class="is-footer"><div><strong>${done ? "Operation finished" : `${selectedCount} changes selected`}</strong><small>${done ? "Provider results are also available in Events." : "Mappings are saved permanently. Only selected sync changes will be applied."}</small></div>${done ? `<a class="is-btn is-primary" href="#${origin()[0]}">Back to ${origin()[1]}</a>` : `<button class="is-btn is-primary" data-action="apply" ${locked || !selectedCount ? "disabled" : ""}><span class="material-symbols-rounded" aria-hidden="true">check</span>Apply selected (${selectedCount})</button>`}</footer>
       </div>`}
     </div>`;
     if (focused) {
@@ -344,7 +348,7 @@
     if (name === "prev" || name === "next") { page += name === "prev" ? -1 : 1; loadPage(); }
     if (name === "first" || name === "last") { page = name === "first" ? 0 : Math.max(0, Math.ceil(pageData.total / PAGE_SIZE) - 1); loadPage(); }
     if (name === "discard") {
-      try { await json(`${API}/${session.id}`, { method: "DELETE" }); location.hash = "settings/sync"; }
+      try { await json(`${API}/${session.id}`, { method: "DELETE" }); location.hash = origin()[0]; }
       catch (error) { showError(error); }
     }
   });
@@ -370,6 +374,9 @@
     const current = ++generation;
     clearTimeout(timer); clearInterval(progressTimer); pollFailures = 0;
     const params = new URLSearchParams(next.split("?")[1] || "");
+    if (params.has("pair")) {
+      try { sessionStorage.setItem("cw.interactive_sync.origin", ORIGINS[params.get("from")] ? params.get("from") : "settings"); } catch {}
+    }
     invalidatePage();
     session = null; pageData = { items: [], total: 0 }; pageLoading = false; page = 0; feature = ""; result = ""; query = ""; busy = true;
     render();

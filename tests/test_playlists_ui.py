@@ -72,7 +72,7 @@ def test_playlists_modals_cover_create_edit_delete_flows():
     assert "Built in rulesets cannot be edited." in js
     assert "Built in rulesets cannot be deleted." in js
     assert "mappingDraft.ruleset_id" in js
-    assert 'runPair: (id) => request("/api/run"' in js
+    assert 'location.hash = `interactive_sync?pair=${encodeURIComponent(mapping.assigned_pair)}&from=playlists`;' in js
     assert "m.assigned_pair" in js
     assert "const NAME_MAX = 10" in js
     assert "const PLAYLIST_NAME_MAX = 20" in js
@@ -194,7 +194,7 @@ def test_playlists_provider_banner():
     assert "Playlists need at least one compatible provider" in js
     assert "Plex, Trakt, MDBList, Jellyfin, Emby, PublicMetaDB, SIMKL or CrossWatch" in js
     assert "Playlists are highly experimental and cause issues" not in js
-    assert "SIMKL Custom Lists are not supported" in js
+    assert "SIMKL custom lists are read only and need SIMKL PRO or VIP" in js
     assert "pl-ep-simkl-warning" in js
     assert "pl-map-simkl-warning" in js
     assert "data-action=\"open-connections\"" in js
@@ -217,7 +217,6 @@ def test_endpoint_and_mapping_tables_use_compact_icon_actions():
     assert "API.runSummary()" in js
     assert "Synchronization is already running" in js
     assert 'if (wasBusy && !sharedSyncBusy()) await refreshOverview(["endpoints", "mappings", "activity"]);' in js
-    assert 'state.syncSummary = { ...(state.syncSummary || {}), running: true, pair_scope_ids: [String(mapping.assigned_pair || "")] };' in js
     assert "async function syncEndpoint" in js
     assert '"endpoint-sync"' in js
     assert "await API.epSync(id)" in js
@@ -518,3 +517,30 @@ def test_playlists_api_routes_registered():
     assert "/api/playlists/mappings/{mapping_id}/preview" in paths
     assert "/api/playlists/mappings/{mapping_id}/run" in paths
     assert "/api/playlists/pairs/{pair_id}/mappings" in paths
+
+
+def test_playlists_simple_view_is_default_and_keeps_advanced_tables():
+    js = (REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8")
+    css = (REPO / "assets" / "css" / "pages.css").read_text(encoding="utf-8")
+    assert 'localStorage.getItem("cw.playlists.advanced") === "1"' in js
+    assert "if (!state.advanced) return renderListsSimple();" in js
+    assert "if (!state.advanced) return renderSyncsSimple();" in js
+    assert 'id="pl-advanced-toggle"' in js
+    assert "<th>From</th>" in js and "<th>How</th>" in js
+    assert 'return "Watchlist";' in js
+    assert '["Keep in sync", "Adds and removes what CrossWatch added"]' in js
+    assert "<th>Mapping</th><th>Source</th><th>Direction</th>" in js
+    assert ".pl-simple #pl-activity-overview" in css
+
+
+def test_playlists_sync_wizard_creates_lists_and_sync_in_one_flow():
+    js = (REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8")
+    assert "function openSyncWizard" in js
+    assert 'data-action="sync-wizard"' in js
+    assert 'data-action="sync-wizard-publish"' in js
+    assert '["managed_only", "Keep in sync"' in js
+    assert "async function wizardEnsureEndpoint" in js
+    assert 'membership: mode, order: "ignore", enabled: true' in js
+    assert "await API.publish(target.instance" in js
+    assert 'input.disabled = discovery && input.value !== "mirror";' in js
+    assert "return !resource.discovery && !resource.smart && !!(resource.can_add || resource.can_remove);" in js

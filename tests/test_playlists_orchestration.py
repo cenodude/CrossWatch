@@ -351,3 +351,18 @@ def test_manual_and_scheduled_share_core_runner():
 
     assert glue.run_mapping is playlists_runner.run_mapping
     assert svc.runner.run_mapping is playlists_runner.run_mapping
+
+
+def test_failed_mapping_run_is_stored_so_activity_can_count_it(monkeypatch):
+    from cw_platform.orchestrator import _pairs_playlists as pairs_playlists
+
+    stored = []
+    monkeypatch.setattr(pairs_playlists, "store_result", lambda mapping, result: stored.append((mapping["id"], result)))
+    pairs_playlists._store_failure({"id": "MAP-01"}, RuntimeError("plex playlist not found: 48643"), dry_run=True)
+    assert stored == []
+    pairs_playlists._store_failure({"id": "MAP-01"}, RuntimeError("plex playlist not found: 48643"), dry_run=False)
+    mapping_id, result = stored[0]
+    assert mapping_id == "MAP-01"
+    assert result["ok"] is False and result["errors"] == 1
+    assert result["error"] == "plex playlist not found: 48643"
+    assert result["finished_at"] > 0

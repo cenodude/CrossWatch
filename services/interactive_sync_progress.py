@@ -13,6 +13,8 @@ from typing import Any, overload
 class SyncProgress:
     def __init__(self):
         self.lock = threading.RLock()
+        self.total_requests = 0
+        self.total_requests_by_provider: dict[str, int] = {}
         self.begin("preview")
 
     def begin(self, operation):
@@ -81,6 +83,8 @@ class SyncProgress:
                 self.requests += 1
                 name = provider.strip().upper() or "Unknown"
                 self.requests_by_provider[name] = self.requests_by_provider.get(name, 0) + 1
+                self.total_requests += 1
+                self.total_requests_by_provider[name] = self.total_requests_by_provider.get(name, 0) + 1
                 self.activity = time.monotonic()
                 return
             if name == "health":
@@ -122,4 +126,5 @@ class SyncProgress:
                         elapsed_seconds=int(now - self.started), stage_seconds=int(now - self.changed),
                         quiet_seconds=int(now - self.activity), running=self.finished is None,
                         items_read=sum(self.reads.values()), requests=self.requests,
-                        requests_by_provider=dict(self.requests_by_provider), recent=list(self.recent))
+                        requests_by_provider=dict(self.requests_by_provider), total_requests=self.total_requests,
+                        total_requests_by_provider=dict(self.total_requests_by_provider), recent=list(self.recent))

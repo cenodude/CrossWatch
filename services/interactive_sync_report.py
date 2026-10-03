@@ -176,7 +176,7 @@ class SyncReport:
                     issue_count=self.store.report_page(limit=1)["total"] if self.store is not None else 0,
                     issue_details_omitted=sum(self.detail_omitted.values()),
                     review_notices=session.plan.notices[:100],
-                    requests=session.progress.public().get("requests", 0),
-                    requests_by_provider=session.progress.public().get("requests_by_provider", {}),
+                    requests=session.progress.public().get("total_requests", 0),
+                    requests_by_provider=session.progress.public().get("total_requests_by_provider", {}),
                     accounting_note="Totals use the existing sync engine's provider results. Mapping and manual exclusions are shown separately from blocked items; the raw engine blocked count includes both. Skips can include items already present. Errors and protection counts can overlap or describe a whole batch; they are not an item-by-item receipt. Playlist totals count playlist contents and ordering operations.",
                     incomplete_note="Some writes may have completed before the interruption without final counts. Check Events before starting another sync." if outcome in ("cancelled", "incomplete") else "")
