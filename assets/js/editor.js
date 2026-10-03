@@ -477,6 +477,7 @@
       if (wrap) wrap.style.display = "none";
       return;
     }
+    selectEl.classList.add("cw-icon-select-native");
     helper(selectEl, {
       className: "cw-editor-icon-select",
     });
@@ -497,6 +498,7 @@
       if (wrap) wrap.style.display = "none";
       return;
     }
+    selectEl.classList.add("cw-icon-select-native");
     helper(selectEl, {
       className: "cw-editor-icon-select",
       menuClassName: "cw-editor-icon-select-menu",
