@@ -710,7 +710,7 @@ html[data-cw-role=user][data-cw-perm-write=off] #cw-editor-quick-add{display:non
 #page-editor .cw-merged-year{font-family:Arial,Helvetica,sans-serif;font-size:12px;color:var(--cw-theme-muted,inherit)}
 #page-editor .cw-table input:not(.cw-checkbox),#page-editor .cw-table .cw-extra-display-value,#page-editor .cw-viewing-summary{font-family:Arial,Helvetica,sans-serif;font-size:12px;font-weight:400;letter-spacing:normal;font-variant-numeric:normal}
 #page-editor .cw-controls{flex-wrap:wrap!important}
-#page-editor .cw-controls>.cw-type-bar{flex:1 0 100%;order:10;margin:0;padding:0}
+#page-editor .cw-controls>.cw-type-bar{flex:1 0 100%;order:10;margin:0;padding:0;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px 12px;min-height:44px}
 #page-editor .cw-type-bar .cw-type-filter{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
 #page-editor .ins-kv>select[hidden]{display:none}
 #page-editor .cw-collapse>summary{display:flex!important;align-items:center;gap:10px;margin:-6px -8px;padding:6px 8px;border-radius:10px;cursor:pointer}
