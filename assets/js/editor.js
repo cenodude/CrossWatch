@@ -424,6 +424,7 @@
     typeFilterWrap.prepend(typeAllBtn);
     typeFilterWrap.querySelectorAll("button").forEach(btn => { btn.className = `cw-filter-chip${btn.classList.contains("cw-advanced-only") ? " cw-advanced-only" : ""}`; });
     typeBar.appendChild(typeFilterWrap);
+    if (bulkWrap) typeBar.appendChild(bulkWrap);
     typeRow?.remove();
   }
   let sortHeaders = Array.from(host.querySelectorAll(".cw-table th[data-sort]"));
