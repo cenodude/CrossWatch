@@ -2,15 +2,12 @@
 /* CrossWatch Backup & Restore UI */
 (function(){
   const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-  const SPLIT_STORAGE_KEY = "cw.backups.controlsHeight.v4";
-  const SPLIT_DEFAULTS = { manual: 215, scheduled: 315 };
-  const SPLIT_MINS = { manual: 145, scheduled: 285 };
   const SCOPES = [
-    ["config_only", "Config"],
-    ["app_state", "Normal"],
-    ["full", "Full"]
+    ["config_only", "Settings only", "Your settings and connections. Small, but no fixes, blocks or sync state."],
+    ["app_state", "Settings and data", "Everything CrossWatch needs to carry on: settings, sync state, fixes, blocks and published lists."],
+    ["full", "Everything", "Also snapshots, sync reports and caches. The largest backup."]
   ];
-  const state = { backups: [], schedule: {}, selected: "", controlsHeight: {}, rowStatus: {}, rowFlash: {}, message: "", mode: "manual", refreshing: false };
+  const state = { backups: [], schedule: {}, rowStatus: {}, rowFlash: {}, selected: new Set(), message: "", messageKind: "", scope: "app_state", refreshing: false, busy: false };
   const flashTimers = {};
 
   function $(id){ return document.getElementById(id); }
@@ -38,7 +35,6 @@
       if (v === false || v === null || v === undefined) continue;
       if (k === "class") node.className = String(v);
       else if (k === "text") node.textContent = String(v);
-      else if (k === "title" || k === "aria-label" || k === "type" || k === "value" || k === "name" || k === "id" || k === "for" || k === "accept") node.setAttribute(k, String(v));
       else if (k === "checked") node.checked = !!v;
       else if (k === "disabled") node.disabled = !!v;
       else if (k === "on") {
@@ -53,7 +49,7 @@
     return node;
   }
 
-  function icon(name){ return el("span", { class: "material-symbols-rounded br-icon", text: name }); }
+  function icon(name){ return el("span", { class: "material-symbols-rounded br-icon", "aria-hidden": "true", text: name }); }
 
   function flashRowIcon(path, action, ok){
     const key = `${path}::${action}`;
@@ -76,7 +72,7 @@
       type: "button",
       title,
       "aria-label": title,
-      on: { click: (e) => { e.stopPropagation(); handler(path); } }
+      on: { click: () => handler(path) }
     }, [icon(shown)]);
   }
 
@@ -103,52 +99,32 @@
     return found ? found[1] : (scope || "Unknown");
   }
 
-  function toast(text, delay){
+  function toast(text, kind, delay){
     state.message = String(text || "");
+    state.messageKind = kind || "";
     clearTimeout(toast._lt);
-    const local = $("br-msg");
-    if (local) {
-      local.textContent = state.message;
-      local.classList.remove("hidden");
-    }
+    showMessage();
     toast._lt = setTimeout(() => {
       state.message = "";
-      const cur = $("br-msg");
-      if (cur) cur.classList.add("hidden");
+      showMessage();
     }, delay || 4200);
   }
 
-
-  function scopeSelect(id, value){
-    const sel = el("select", { id });
-    for (const [v, label] of SCOPES) sel.appendChild(el("option", { value: v, text: label }));
-    sel.value = value || "app_state";
-    return sel;
-  }
-
-  function check(id, label, checked){
-    const input = el("input", { id, type: "checkbox", checked: !!checked });
-    return el("label", { class: "br-check", for: id }, [input, el("span", { text: label })]);
-  }
-
-  function switcher(id, label, checked){
-    const input = el("input", { id, type: "checkbox", checked: !!checked });
-    return el("label", { class: "br-switch", for: id }, [
-      input,
-      el("span", { class: "br-switch-ui", "aria-hidden": "true" }),
-      el("span", { class: "br-switch-text", text: label }),
-      el("span", { class: "br-switch-state", "aria-hidden": "true" })
-    ]);
+  function showMessage(){
+    const box = $("br-msg");
+    if (!box) return;
+    box.textContent = state.message;
+    box.className = `br-msg ${state.messageKind} ${state.message ? "" : "hidden"}`.trim();
   }
 
   function buildShell(){
     if ($("cw-backups-modal")) return;
     const modal = el("div", { id: "cw-backups-modal", class: "hidden", "aria-hidden": "true" });
-    const dialog = el("div", { class: "br-dialog", role: "dialog", "aria-modal": "true", "aria-label": "Backup and Restore" });
+    const dialog = el("div", { class: "br-dialog", role: "dialog", "aria-modal": "true", "aria-label": "Backups" });
     const head = el("div", { class: "br-head" }, [
       el("div", {}, [
-        el("div", { class: "br-title", text: "Backup & Restore" }),
-        el("div", { class: "br-sub", text: "Back up CrossWatch config, Normal state, or a Full archive." })
+        el("div", { class: "br-title", text: "Backups" }),
+        el("div", { class: "br-sub", text: "Save a copy of CrossWatch and bring it back when you need it." })
       ]),
       el("button", { class: "br-close", type: "button", title: "Close", "aria-label": "Close", on: { click: close } }, [icon("close")])
     ]);
@@ -159,6 +135,7 @@
     ["input", "change"].forEach((name) => {
       modal.addEventListener(name, (e) => e.stopPropagation());
     });
+    modal.addEventListener("mousedown", (e) => { if (e.target === modal) close(); });
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape" && !modal.classList.contains("hidden")) close();
     });
@@ -169,247 +146,189 @@
   function renderBody(){
     const body = $("br-body");
     if (!body) return;
-    const listTop = $("br-list")?.scrollTop || 0;
-    body.replaceChildren();
-    applySplitHeight(body);
-    body.appendChild(renderControls());
-    body.appendChild(renderSplitter(body));
-    body.appendChild(renderListPanel());
-    const list = $("br-list");
-    if (list && listTop) list.scrollTop = listTop;
+    const top = body.scrollTop;
+    const label = $("br-label")?.value;
+    const draft = readScheduleDraft();
+    body.replaceChildren(renderCreate(label), renderSchedule(draft), renderList());
+    body.scrollTop = top;
+    showMessage();
   }
 
-  function splitMode(){
-    return state.mode === "scheduled" ? "scheduled" : "manual";
+  function sectionHead(glyph, title, sub, extra){
+    return el("div", { class: "br-card-head" }, [
+      el("span", { class: "br-card-icon" }, [icon(glyph)]),
+      el("div", { class: "br-card-copy" }, [el("h3", { text: title }), el("p", { text: sub })]),
+      extra || null
+    ]);
   }
 
-  function splitStorageKey(mode){
-    return `${SPLIT_STORAGE_KEY}.${mode || splitMode()}`;
-  }
-
-  function splitDefault(mode){
-    return SPLIT_DEFAULTS[mode || splitMode()] || SPLIT_DEFAULTS.manual;
-  }
-
-  function splitMin(mode){
-    return SPLIT_MINS[mode || splitMode()] || SPLIT_MINS.manual;
-  }
-
-  function clampSplitHeight(body, value){
-    const mode = splitMode();
-    const min = splitMin(mode);
-    const max = Math.max(min, body.clientHeight - 220);
-    return Math.min(Math.max(Number(value) || splitDefault(mode), min), max);
-  }
-
-  function storedSplitHeight(){
-    const mode = splitMode();
-    if (state.controlsHeight[mode]) return state.controlsHeight[mode];
-    try {
-      const raw = Number(window.localStorage?.getItem(splitStorageKey(mode)) || 0);
-      return Number.isFinite(raw) && raw > 0 ? raw : splitDefault(mode);
-    } catch {
-      return splitDefault(mode);
-    }
-  }
-
-  function applySplitHeight(body, value){
-    const wanted = value || storedSplitHeight();
-    if (body.clientHeight <= 0) {
-      body.style.setProperty("--br-controls-height", `${Number(wanted) || splitDefault()}px`);
-      return;
-    }
-    const height = clampSplitHeight(body, wanted);
-    const mode = splitMode();
-    state.controlsHeight[mode] = height;
-    body.style.setProperty("--br-controls-height", `${height}px`);
-    try { window.localStorage?.setItem(splitStorageKey(mode), String(height)); } catch {}
-  }
-
-  function renderSplitter(body){
-    const splitter = el("button", {
-      class: "br-splitter",
-      type: "button",
-      title: "Resize panels",
-      "aria-label": "Resize backup panels",
-      "aria-orientation": "horizontal"
+  function renderCreate(label){
+    const card = el("section", { class: "br-card" });
+    card.appendChild(sectionHead("backup", "Create a backup", "Choose what to save."));
+    const choices = el("div", { class: "br-choices", role: "radiogroup", "aria-label": "What to back up" });
+    SCOPES.forEach(([value, title, hint]) => {
+      const input = el("input", { type: "radio", name: "br-scope", value, checked: state.scope === value, on: { change: () => { state.scope = value; renderBody(); } } });
+      choices.appendChild(el("label", { class: `br-choice ${state.scope === value ? "active" : ""}` }, [
+        input,
+        el("span", {}, [
+          el("b", {}, [title, value === "app_state" ? el("em", { text: "Recommended" }) : null]),
+          el("small", { text: hint })
+        ])
+      ]));
     });
-    splitter.addEventListener("pointerdown", (e) => {
-      if (e.button !== 0) return;
-      e.preventDefault();
-      const modal = $("cw-backups-modal");
-      const startY = e.clientY;
-      const startHeight = state.controlsHeight[splitMode()] || body.getBoundingClientRect().height * 0.42;
-      splitter.setPointerCapture(e.pointerId);
-      modal?.classList.add("br-resizing");
-      const move = (ev) => applySplitHeight(body, startHeight + ev.clientY - startY);
-      const stop = () => {
-        modal?.classList.remove("br-resizing");
-        splitter.removeEventListener("pointermove", move);
-        splitter.removeEventListener("pointerup", stop);
-        splitter.removeEventListener("pointercancel", stop);
-      };
-      splitter.addEventListener("pointermove", move);
-      splitter.addEventListener("pointerup", stop);
-      splitter.addEventListener("pointercancel", stop);
-    });
-    splitter.addEventListener("keydown", (e) => {
-      if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
-      e.preventDefault();
-      applySplitHeight(body, (state.controlsHeight[splitMode()] || storedSplitHeight()) + (e.key === "ArrowDown" ? 20 : -20));
-    });
-    return splitter;
+    card.appendChild(choices);
+    card.appendChild(el("div", { class: "br-create-row" }, [
+      el("input", { id: "br-label", class: "br-input", type: "text", maxlength: "60", placeholder: "Name (optional)", "aria-label": "Backup name", value: label || "" }),
+      el("button", { class: "br-btn primary", type: "button", disabled: state.busy, on: { click: createNow } }, [icon("add"), "Create backup"]),
+      el("button", { class: "br-btn", type: "button", disabled: state.busy, on: { click: () => $("br-upload")?.click() } }, [icon("upload"), "Import a file"]),
+      el("input", { id: "br-upload", class: "br-upload", type: "file", accept: ".zip", on: { change: uploadBackup } })
+    ]));
+    card.appendChild(el("div", { id: "br-msg", class: "br-msg hidden", role: "status" }));
+    return card;
   }
 
-  function renderControls(){
-    const schedule = state.schedule || {};
-    const panel = el("div", { class: "br-panel br-controls" });
-    const activeMode = state.mode === "scheduled" ? "scheduled" : "manual";
-    const setMode = (mode) => {
-      state.mode = mode === "scheduled" ? "scheduled" : "manual";
-      renderBody();
-    };
-    const tab = (mode, label) => el("button", {
-      class: `br-mode-tab ${activeMode === mode ? "active" : ""}`,
-      type: "button",
-      "aria-pressed": activeMode === mode ? "true" : "false",
-      on: { click: () => setMode(mode) }
-    }, [label]);
-    panel.appendChild(el("div", { class: "br-mode-top" }, [
-      el("div", { class: "br-mode-tabs", role: "group", "aria-label": "Backup mode" }, [
-        tab("manual", "Manual Backup"),
-        tab("scheduled", "Scheduled Backups")
-      ]),
-      el("div", { id: "br-msg", class: `br-msg ${state.message ? "" : "hidden"}`, text: state.message })
-    ]));
+  function scheduleSummary(schedule){
+    if (!schedule.active) return "Off";
+    const days = (Array.isArray(schedule.days) ? schedule.days.map(Number) : []).filter((n) => n >= 1 && n <= 7);
+    const when = !days.length || days.length === 7 ? "Every day" : days.map((n) => DAY_NAMES[n - 1]).join(", ");
+    return `${when} at ${schedule.at || "03:00"} · ${scopeLabel(schedule.scope || "app_state")}`;
+  }
 
-    const create = el("div", { class: "br-mode-pane br-section" });
-    create.appendChild(el("div", { class: "br-manual-grid" }, [
-      el("div", { class: "br-field" }, [el("label", { for: "br-scope", text: "Scope" }), scopeSelect("br-scope", "app_state")]),
-      el("div", { class: "br-field" }, [el("label", { for: "br-label", text: "Label" }), el("input", { id: "br-label", type: "text", value: "manual" })]),
-      el("div", { class: "br-actions" }, [
-        el("button", { class: "br-btn primary", type: "button", on: { click: createNow } }, ["Create Backup"]),
-        el("button", { class: "br-btn", type: "button", on: { click: () => $("br-upload")?.click() } }, ["Import"]),
-        el("input", { id: "br-upload", class: "br-upload", type: "file", accept: ".zip", on: { change: uploadBackup } })
-      ])
-    ]));
+  function readScheduleDraft(){
+    if (!$("br-sch-at")) return null;
+    return readScheduleForm();
+  }
 
-    const scheduled = el("div", { class: "br-mode-pane br-section br-scheduled" });
-    scheduled.appendChild(el("div", { class: "br-section-head" }, [
-      el("h3", { text: "Scheduled Backups" }),
-      switcher("br-sch-enabled", "Enable", !!schedule.active),
-      el("div", { class: "br-actions" }, [
-        el("button", { class: "br-btn primary", type: "button", on: { click: saveSchedule } }, ["Save Schedule"])
-      ])
-    ]));
-    scheduled.appendChild(el("div", { class: "br-schedule-grid" }, [
-      el("div", { class: "br-field" }, [el("label", { for: "br-sch-scope", text: "Scope" }), scopeSelect("br-sch-scope", schedule.scope || "app_state")]),
-      el("div", { class: "br-field" }, [el("label", { for: "br-sch-at", text: "Time" }), el("input", { id: "br-sch-at", type: "time", value: schedule.at || "03:00" })]),
-      el("div", { class: "br-field" }, [el("label", { for: "br-ret-days", text: "Retention days" }), el("input", { id: "br-ret-days", type: "number", value: String(schedule.retention_days ?? 30), min: "0" })]),
-      el("div", { class: "br-field" }, [el("label", { for: "br-max-backups", text: "Max backups" }), el("input", { id: "br-max-backups", type: "number", value: String(schedule.max_backups ?? 10), min: "0" })])
-    ]));
-    const days = Array.isArray(schedule.days) ? schedule.days.map(Number) : [];
+  function renderSchedule(draft){
+    const saved = state.schedule || {};
+    const schedule = draft
+      ? { active: draft.enabled, scope: draft.scope, at: draft.at, days: draft.days, retention_days: draft.retention_days, max_backups: draft.max_backups }
+      : saved;
+    const stored = Array.isArray(schedule.days) ? schedule.days.map(Number) : [];
+    const days = draft || stored.length ? stored : [1, 2, 3, 4, 5, 6, 7];
+    const card = el("section", { class: "br-card" });
+    const toggle = el("label", { class: "br-switch" }, [
+      el("input", { id: "br-sch-enabled", type: "checkbox", checked: !!schedule.active, on: { change: () => renderBody() } }),
+      el("span", { class: "br-switch-ui", "aria-hidden": "true" }),
+      el("span", { class: "br-switch-text", text: schedule.active ? "On" : "Off" })
+    ]);
+    card.appendChild(sectionHead("schedule", "Automatic backups", `Now: ${scheduleSummary(saved)}${draft && draft.enabled !== !!saved.active ? " · not saved yet" : ""}`, toggle));
+    const scopeSel = el("select", { id: "br-sch-scope", class: "br-input" });
+    SCOPES.forEach(([value, title]) => scopeSel.appendChild(el("option", { value, text: title })));
+    scopeSel.value = schedule.scope || "app_state";
     const daysBox = el("div", { class: "br-days" });
     DAY_NAMES.forEach((name, i) => {
       const n = i + 1;
-      const cb = el("input", { type: "checkbox", value: String(n), checked: days.includes(n) });
-      daysBox.appendChild(el("label", { class: "br-day" }, [cb, el("span", { text: name })]));
+      daysBox.appendChild(el("label", { class: "br-day" }, [
+        el("input", { type: "checkbox", value: String(n), checked: days.includes(n) }),
+        el("span", { text: name })
+      ]));
     });
-    scheduled.appendChild(el("div", { class: "br-field br-days-field" }, [el("label", { text: "Days" }), daysBox]));
-    panel.appendChild(el("div", { class: "br-mode-window" }, [
-      el("div", { class: `br-mode-track ${activeMode}` }, [create, scheduled])
-    ]));
-    return panel;
+    const field = (labelText, control, hint) => el("div", { class: "br-field" }, [
+      el("label", { for: control.id || null, text: labelText }),
+      hint ? el("div", { class: "br-affix" }, [control, el("small", { text: hint })]) : control
+    ]);
+    const fields = el("div", { class: `br-schedule ${schedule.active ? "" : "is-off"}` }, [
+      el("div", { class: "br-schedule-grid" }, [
+        field("What", scopeSel),
+        field("Time", el("input", { id: "br-sch-at", class: "br-input", type: "time", value: schedule.at || "03:00" })),
+        field("Keep for", el("input", { id: "br-ret-days", class: "br-input", type: "number", min: "0", value: String(schedule.retention_days ?? 30) }), "days"),
+        field("Keep at most", el("input", { id: "br-max-backups", class: "br-input", type: "number", min: "0", value: String(schedule.max_backups ?? 10) }), "backups")
+      ]),
+      el("div", { class: "br-field" }, [el("label", { text: "Days" }), daysBox]),
+      el("div", { class: "br-schedule-foot" }, [
+        el("small", { text: "Older automatic backups are removed when a limit is reached." }),
+        el("button", { class: "br-btn primary", type: "button", on: { click: saveSchedule } }, ["Save schedule"])
+      ])
+    ]);
+    card.appendChild(fields);
+    return card;
   }
 
-  function renderStatus(panel){
-    const latest = state.backups[0] || {};
+  function renderList(){
+    const card = el("section", { class: "br-card" });
     const total = state.backups.reduce((n, b) => n + Number(b.size || 0), 0);
-    const ext = latest.external_key_required ? "External key" : (latest.master_key_included ? "Key included" : "No key needed");
-    const next = (state.schedule || {}).active ? `${state.schedule.at || "03:00"}` : "Disabled";
-    panel.appendChild(el("div", { class: "br-status" }, [
-      el("div", { class: "br-stat" }, [el("b", { text: fmtDate(latest.created_at, latest.mtime) }), el("span", { text: "Last backup" })]),
-      el("div", { class: "br-stat" }, [el("b", { text: next }), el("span", { text: "Schedule" })]),
-      el("div", { class: "br-stat" }, [el("b", { text: fmtBytes(total) }), el("span", { text: "Stored" })]),
-      el("div", { class: "br-stat" }, [el("b", { text: ext }), el("span", { text: "Key status" })])
-    ]));
-  }
-
-  function renderListPanel(){
-    const panel = el("div", { class: "br-panel br-list-panel" });
-    panel.appendChild(el("div", { class: "br-list-head" }, [
-      el("h3", { text: "Backup List" }),
-      el("button", {
-        class: `br-iconbtn ${state.refreshing ? "spin" : ""}`,
-        type: "button",
-        title: "Refresh",
-        "aria-label": "Refresh",
-        disabled: state.refreshing,
-        on: { click: () => refresh({ busy: true }) }
-      }, [icon("refresh")])
-    ]));
-    renderStatus(panel);
-    const list = el("div", { class: "br-list cw-scrollbars", id: "br-list" });
-    if (!state.backups.length) {
-      list.appendChild(el("div", { class: "br-row" }, [el("div", { class: "br-main" }, [el("div", { class: "br-name", text: "No backups yet" }), el("div", { class: "br-meta" }, [el("span", { text: "Create one manually or enable the schedule." })])])]));
+    const count = state.backups.length;
+    const sub = count ? `${count} backup${count === 1 ? "" : "s"} · ${fmtBytes(total)} in total` : "Nothing saved yet.";
+    const paths = state.backups.map((b) => String(b.path || ""));
+    state.selected = new Set([...state.selected].filter((path) => paths.includes(path)));
+    const picked = state.selected.size;
+    card.appendChild(sectionHead("inventory_2", "Your backups", sub, el("button", {
+      class: `br-iconbtn ${state.refreshing ? "spin" : ""}`,
+      type: "button",
+      title: "Refresh",
+      "aria-label": "Refresh",
+      disabled: state.refreshing,
+      on: { click: () => refresh({ busy: true }) }
+    }, [icon("refresh")])));
+    if (count) {
+      const all = el("input", { type: "checkbox", checked: picked === count, "aria-label": "Select all backups", on: { change: (e) => {
+        state.selected = new Set(e.currentTarget.checked ? paths : []);
+        renderBody();
+      } } });
+      all.indeterminate = picked > 0 && picked < count;
+      card.appendChild(el("div", { class: "br-select-bar" }, [
+        el("label", { class: "br-select-all" }, [all, el("span", { text: picked ? `${picked} selected` : "Select all" })]),
+        picked ? el("button", { class: "br-btn small danger", type: "button", disabled: state.busy, on: { click: deleteSelected } }, [icon("delete"), `Delete ${picked}`]) : null
+      ]));
+    }
+    const list = el("div", { class: "br-list", id: "br-list" });
+    if (!count) {
+      list.appendChild(el("div", { class: "br-empty" }, [icon("cloud_off"), el("span", { text: "Create your first backup above, or switch on automatic backups." })]));
     } else {
       state.backups.forEach((b) => list.appendChild(renderBackupRow(b)));
     }
-    panel.appendChild(list);
-    return panel;
+    card.appendChild(list);
+    return card;
   }
 
   function renderBackupRow(b){
     const path = String(b.path || "");
-    const row = el("div", { class: `br-row ${state.selected === path ? "active" : ""}` });
+    const row = el("div", { class: `br-row ${state.selected.has(path) ? "selected" : ""}` });
+    row.appendChild(el("input", { type: "checkbox", class: "br-row-check", checked: state.selected.has(path), "aria-label": `Select ${b.label || pathName(path)}`, on: { change: (e) => {
+      if (e.currentTarget.checked) state.selected.add(path); else state.selected.delete(path);
+      renderBody();
+    } } }));
+    const meta = [scopeLabel(b.scope), fmtBytes(b.size), fmtDate(b.created_at, b.mtime)].join(" · ");
     const main = el("div", { class: "br-main" }, [
-      el("div", { class: "br-name", text: b.label || PathName(path) }),
+      el("div", { class: "br-name", text: b.label || pathName(path) }),
       el("div", { class: "br-meta" }, [
-        el("span", { class: "br-pill", text: scopeLabel(b.scope) }),
-        el("span", { class: "br-pill", text: fmtBytes(b.size) }),
-        el("span", { class: "br-pill", text: fmtDate(b.created_at, b.mtime) }),
-        el("span", { class: "br-pill", text: b.external_key_required ? "External key required" : (b.master_key_included ? "Key included" : "No key") })
+        el("span", { text: meta }),
+        b.external_key_required ? el("span", { class: "br-pill warn", title: "This backup can only be restored with your own key file.", text: "Needs your key" }) : null
       ])
     ]);
     const note = state.rowStatus[path];
-    if (note?.text) {
-      main.appendChild(el("div", { class: `br-row-note ${note.kind || ""}`, text: note.text }));
-    }
-    const actions = el("div", { class: "br-row-actions" }, [
-      rowAction(path, "download", "Download", "download", downloadBackup),
-      rowAction(path, "validate", "Validate", "verified", validateBackup),
-      rowAction(path, "restore", "Restore", "settings_backup_restore", restoreBackup),
-      rowAction(path, "delete", "Delete", "delete", deleteBackup, "danger")
-    ]);
+    if (note?.text) main.appendChild(el("div", { class: `br-row-note ${note.kind || ""}`, text: note.text }));
     row.appendChild(main);
-    row.appendChild(actions);
-    row.addEventListener("click", () => { state.selected = path; renderBody(); });
+    row.appendChild(el("div", { class: "br-row-actions" }, [
+      el("button", { class: "br-btn small", type: "button", title: "Put CrossWatch back to this backup", on: { click: () => restoreBackup(path) } }, [icon("settings_backup_restore"), "Restore"]),
+      rowAction(path, "download", "Download", "download", downloadBackup),
+      rowAction(path, "validate", "Check this backup", "verified", validateBackup),
+      rowAction(path, "delete", "Delete", "delete", deleteBackup, "danger")
+    ]));
     return row;
   }
 
-  function PathName(path){
+  function pathName(path){
     const parts = String(path || "").split("/");
     return parts[parts.length - 1] || "Backup";
   }
 
-  function currentCreateOptions(){
-    return {
-      scope: $("br-scope")?.value || "app_state",
-      label: $("br-label")?.value || "manual",
-      include_snapshots: false,
-      include_reports: false,
-      include_cache: false
-    };
-  }
-
   async function createNow(){
+    const label = String($("br-label")?.value || "").trim() || "manual";
+    state.busy = true;
+    renderBody();
     try {
-      toast("Creating backup...");
-      await postJSON("/api/backups/create", currentCreateOptions());
-      toast("Backup created");
-      await refresh();
+      toast("Creating backup...", "", 60000);
+      await postJSON("/api/backups/create", { scope: state.scope, label, include_snapshots: false, include_reports: false, include_cache: false });
+      const input = $("br-label");
+      if (input) input.value = "";
+      toast("Backup created.", "ok");
     } catch (e) {
-      toast(`Backup failed: ${e.message || e}`, 3200);
+      toast(`Backup failed: ${e.message || e}`, "warn");
+    } finally {
+      state.busy = false;
+      await refresh().catch(() => renderBody());
     }
   }
 
@@ -420,13 +339,13 @@
     try {
       const form = new FormData();
       form.append("file", file);
-      toast("Importing backup...");
+      toast("Importing backup...", "", 60000);
       await api("/api/backups/upload", { method: "POST", body: form });
-      toast("Backup imported");
+      toast("Backup imported. It is in the list below.", "ok");
       input.value = "";
       await refresh();
     } catch (err) {
-      toast(`Import failed: ${err.message || err}`, 3200);
+      toast(`Import failed: ${err.message || err}`, "warn");
     }
   }
 
@@ -438,52 +357,74 @@
 
   async function validateBackup(path){
     try {
-      state.rowStatus[path] = { kind: "", text: "Validating backup..." };
+      state.rowStatus[path] = { kind: "", text: "Checking backup..." };
       renderBody();
       const res = await postJSON("/api/backups/validate", { path });
       const errors = res?.validation?.errors || [];
       state.rowStatus[path] = errors.length
-        ? { kind: "warn", text: `Validation found ${errors.length} issue(s).` }
-        : { kind: "ok", text: "Successfully validated." };
+        ? { kind: "warn", text: `Found ${errors.length} problem${errors.length === 1 ? "" : "s"}. Do not rely on this backup.` }
+        : { kind: "ok", text: "This backup is complete and can be restored." };
       flashRowIcon(path, "validate", !errors.length);
     } catch (e) {
-      state.rowStatus[path] = { kind: "warn", text: `Validation failed: ${e.message || e}` };
+      state.rowStatus[path] = { kind: "warn", text: `Check failed: ${e.message || e}` };
       flashRowIcon(path, "validate", false);
     }
   }
 
   async function restoreBackup(path){
     if (!path) return;
-    const ok = window.confirm("Restore this CrossWatch backup?\n\nA pre-restore backup will be created first and CrossWatch will restart after restore.");
+    const backup = state.backups.find((b) => String(b.path || "") === path) || {};
+    const ok = window.confirm(`Restore "${backup.label || pathName(path)}" (${scopeLabel(backup.scope)})?\n\nCrossWatch first saves a backup of how things are now, then restores and restarts.`);
     if (!ok) return;
     try {
-      toast("Restoring backup...");
+      state.rowStatus[path] = { kind: "", text: "Restoring..." };
+      renderBody();
       await postJSON("/api/backups/restore", { path, restart: true });
-      toast("Restore applied. Restarting...");
-      flashRowIcon(path, "restore", true);
+      state.rowStatus[path] = { kind: "ok", text: "Restored. CrossWatch is restarting..." };
+      renderBody();
       setTimeout(() => { try { window.location.reload(); } catch {} }, 2400);
     } catch (e) {
-      toast(`Restore failed: ${e.message || e}`, 4200);
-      flashRowIcon(path, "restore", false);
+      state.rowStatus[path] = { kind: "warn", text: `Restore failed: ${e.message || e}` };
+      renderBody();
     }
   }
 
   async function deleteBackup(path){
     if (!path) return;
-    if (!window.confirm("Delete this backup?")) return;
+    if (!window.confirm("Delete this backup? This cannot be undone.")) return;
     try {
       await postJSON("/api/backups/delete", { path });
-      toast("Backup deleted");
       flashRowIcon(path, "delete", true);
       setTimeout(() => { refresh().catch(() => {}); }, 800);
     } catch (e) {
-      toast(`Delete failed: ${e.message || e}`, 3200);
+      state.rowStatus[path] = { kind: "warn", text: `Delete failed: ${e.message || e}` };
       flashRowIcon(path, "delete", false);
     }
   }
 
+  async function deleteSelected(){
+    const paths = [...state.selected];
+    if (!paths.length) return;
+    if (!window.confirm(`Delete ${paths.length} backup${paths.length === 1 ? "" : "s"}? This cannot be undone.`)) return;
+    state.busy = true;
+    renderBody();
+    let failed = 0;
+    for (const path of paths) {
+      try {
+        await postJSON("/api/backups/delete", { path });
+        state.selected.delete(path);
+      } catch (e) {
+        failed += 1;
+        state.rowStatus[path] = { kind: "warn", text: `Delete failed: ${e.message || e}` };
+      }
+    }
+    state.busy = false;
+    await refresh().catch(() => renderBody());
+    toast(failed ? `${paths.length - failed} deleted, ${failed} could not be deleted.` : `${paths.length} backup${paths.length === 1 ? "" : "s"} deleted.`, failed ? "warn" : "ok");
+  }
+
   function readScheduleForm(){
-    const dayChecks = Array.from(document.querySelectorAll(".br-days input[type=checkbox]"));
+    const dayChecks = Array.from(document.querySelectorAll("#cw-backups-modal .br-days input[type=checkbox]"));
     const days = dayChecks.filter((x) => x.checked).map((x) => Number(x.value)).filter((n) => n >= 1 && n <= 7);
     return {
       enabled: !!$("br-sch-enabled")?.checked,
@@ -500,13 +441,18 @@
   }
 
   async function saveSchedule(){
+    const form = readScheduleForm();
+    if (form.enabled && !form.days.length) {
+      toast("Pick at least one day for automatic backups.", "warn");
+      return;
+    }
     try {
-      const res = await postJSON("/api/backups/schedule", readScheduleForm());
+      const res = await postJSON("/api/backups/schedule", form);
       state.schedule = res.schedule || {};
-      toast("Backup schedule saved");
+      toast(form.enabled ? "Automatic backups saved." : "Automatic backups are off.", "ok");
       renderBody();
     } catch (e) {
-      toast(`Schedule failed: ${e.message || e}`, 3200);
+      toast(`Could not save the schedule: ${e.message || e}`, "warn");
     }
   }
 
@@ -525,6 +471,8 @@
       state.schedule = sched.schedule || {};
     } finally {
       if (busy) state.refreshing = false;
+      const body = $("br-body");
+      if (body) body.replaceChildren();
       renderBody();
     }
   }
@@ -536,7 +484,7 @@
     document.body.classList.add("br-backups-open", "cx-modal-open");
     modal.classList.remove("hidden");
     modal.setAttribute("aria-hidden", "false");
-    refresh().catch((e) => toast(`Refresh failed: ${e.message || e}`, 3200));
+    refresh().catch((e) => toast(`Could not load backups: ${e.message || e}`, "warn"));
   }
 
   function close(){
