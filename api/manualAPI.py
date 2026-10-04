@@ -507,7 +507,7 @@ def api_manual_watched(payload: dict[str, Any] = Body(...), request: Request = c
 
     collection_payload = dict(item_payload)
     collection_payload.pop("watched_at", None)
-    collection_payload["collected_at"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    collection_payload["collected_at"] = watched_at
 
     results: list[dict[str, Any]] = []
     success_count = 0

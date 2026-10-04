@@ -36,7 +36,6 @@
     const meta = window.CW?.ProviderMeta || {};
     const targets = Array.isArray(ctx.state?.mergedTargets) ? ctx.state.mergedTargets : [];
     const present = new Map((row.presence || []).map(entry => [entry[0], entry]));
-    const repeated = new Set(targets.map(target => target.provider).filter((name, index, all) => all.indexOf(name) !== index));
     const wrap = document.createElement("div");
     wrap.className = "cw-presence";
     const missing = [];
@@ -54,14 +53,16 @@
         img.alt = "";
         chip.appendChild(img);
       }
-      if (entry || !src || repeated.has(target.provider)) {
+      const friendly = String(target.instance_label || "").trim();
+      const account = target.instance !== "default" ? friendly || target.instance : /^default$/i.test(friendly) ? "" : friendly;
+      if (!src || account) {
         const text = document.createElement("span");
-        text.textContent = entry || !src ? name : target.instance_label || target.instance;
+        text.textContent = src ? account : name;
         chip.appendChild(text);
       }
       if (entry) {
         chip.title = [unverified ? `Sent to ${name}` : `On ${name}`, entry[1] > 1 ? `${entry[1]} entries` : "", entry[2] != null ? String(entry[2]) : ""].filter(Boolean).join(" · ")
-          + (unverified ? ". Not checked since, because no sync pair uses this account." : "");
+          + (unverified ? ". Not validated, missing sync pair." : "");
         chip.setAttribute("role", "img");
         chip.setAttribute("aria-label", chip.title);
       } else {

@@ -178,6 +178,7 @@ export default {
     const seasonName = (season) => Number(season) === 0 ? "Specials" : `Season ${season}`;
     const isShow = () => String(state.selectedItem?.type || "").toLowerCase() === "show";
     const episodeChoice = () => isShow() && !!state.actions.history;
+    const dated = () => !!(state.actions.history || state.actions.collection);
     const pickingEpisodes = () => episodeChoice() && state.scope === "episodes";
     const listSources = () => [
       { key: "tmdb", label: "TMDB" },
@@ -205,7 +206,7 @@ export default {
       if (!state.selectedItem) return "Select a movie or show first.";
       if (!selectedActionKeys().length) return "Select at least one action.";
       if (!selectedCompatibleTargets().length) return "Select at least one compatible provider.";
-      if (state.actions.history && state.dateMode === "custom" && !state.watchedOn) return "Choose a watched date.";
+      if (dated() && state.dateMode === "custom" && !state.watchedOn) return "Choose a date.";
       if (pickingEpisodes() && !state.picked.size) return "Pick at least one episode.";
       if (pickingEpisodes() && state.listSource !== "tmdb") {
         const targets = selectedCompatibleTargets();
@@ -397,7 +398,7 @@ export default {
         ${selectedItemHtml()}
         <div class="cw-mw-field"><span class="cw-mw-label">What</span><div class="cw-mw-chips">${actionChips()}</div></div>
         <div class="cw-mw-field"><span class="cw-mw-label">Where</span><div class="cw-mw-where">${providerChips()}</div></div>
-        ${state.actions.history ? `<div class="cw-mw-field"><span class="cw-mw-label">When</span><div class="cw-mw-chips">
+        ${dated() ? `<div class="cw-mw-field"><span class="cw-mw-label">When</span><div class="cw-mw-chips">
           <button type="button" class="cw-mw-chip ${state.dateMode === "today" ? "active" : ""}" data-date-mode="today">Today</button>
           <button type="button" class="cw-mw-chip ${state.dateMode === "release" ? "active" : ""}" data-date-mode="release">Release date</button>
           <button type="button" class="cw-mw-chip ${state.dateMode === "custom" ? "active" : ""}" data-date-mode="custom">Choose date</button>
@@ -617,8 +618,8 @@ export default {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             item: state.selectedItem,
-            date_mode: state.actions.history ? state.dateMode : "today",
-            watched_on: state.actions.history && state.dateMode === "custom" ? state.watchedOn : null,
+            date_mode: dated() ? state.dateMode : "today",
+            watched_on: dated() && state.dateMode === "custom" ? state.watchedOn : null,
             actions: {
               history: !!state.actions.history,
               watchlist: !!state.actions.watchlist,

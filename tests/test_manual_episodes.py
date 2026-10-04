@@ -120,13 +120,15 @@ def test_manual_collection_is_sent_only_where_it_is_supported(calls) -> None:
         "item": SHOW,
         "providers": [SIMKL, TRAKT],
         "actions": {"history": False, "collection": True},
+        "date_mode": "custom",
+        "watched_on": "2024-05-06",
     })
 
     body = _body(res)
     assert res.status_code == 200 and body["ok"] is True
     assert [(provider, feature) for provider, feature, _items in calls] == [("TRAKT", "collection")]
     sent = calls[0][2][0]
-    assert sent["type"] == "show" and sent["collected_at"] and "watched_at" not in sent
+    assert sent["type"] == "show" and sent["collected_at"] == "2024-05-06T12:00:00Z" and "watched_at" not in sent
     assert body["results"][0]["collection_skipped"] == "collection_not_supported"
 
 
