@@ -2462,7 +2462,7 @@ def _history_body_to_collection(body: Mapping[str, Any], types: set[str]) -> dic
             out.setdefault("movies", []).append(
                 {
                     "ids": ids,
-                    "watched_at": m.get("watched_at") or _now_iso(),
+                    "collected_at": m.get("watched_at") or _now_iso(),
                 }
             )
 
@@ -2479,7 +2479,7 @@ def _history_body_to_collection(body: Mapping[str, Any], types: set[str]) -> dic
             out.setdefault("episodes", []).append(
                 {
                     "ids": ids,
-                    "watched_at": e.get("watched_at") or _now_iso(),
+                    "collected_at": e.get("watched_at") or _now_iso(),
                 }
             )
 
@@ -2505,7 +2505,7 @@ def _history_body_to_collection(body: Mapping[str, Any], types: set[str]) -> dic
                         eps_out.append(
                             {
                                 "number": int(n),
-                                "watched_at": ep.get("watched_at") or _now_iso(),
+                                "collected_at": ep.get("watched_at") or _now_iso(),
                             }
                         )
                     if eps_out:
