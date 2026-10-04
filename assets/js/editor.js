@@ -2326,7 +2326,7 @@ if (importProviderSel) {
   });
   on(quickAddBtn, "click", () => {
     if (typeof window.openManualWatchedModal !== "function") return;
-    const action = { history: "history", watchlist: "watchlist", ratings: "rating" }[state.kind];
+    const action = { history: "history", watchlist: "watchlist", ratings: "rating", collection: "collection" }[state.kind];
     window.openManualWatchedModal(action ? { action } : {});
   });
   window.addEventListener("cw:manual-watched-saved", () => {

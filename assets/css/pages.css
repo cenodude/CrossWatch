@@ -700,6 +700,7 @@ html[data-cw-role=user][data-cw-perm-write=off] #cw-editor-quick-add{display:non
 #page-editor .cw-presence{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:8px}
 #page-editor .cw-presence-chip{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 9px 0 6px;border:1px solid var(--cw-theme-border-strong,rgba(255,255,255,.16));border-radius:999px;background:var(--cw-theme-surface-raised,transparent);color:var(--cw-theme-text,inherit);font:inherit;font-size:12px;line-height:1}
 #page-editor .cw-presence-chip img{width:16px;height:16px;object-fit:contain}
+.cw-presence-chip.is-unverified{border-style:dashed;background:transparent}
 #page-editor .cw-presence-chip.is-off{width:24px;padding:0;justify-content:center;border-style:dashed;border-color:var(--cw-theme-border,rgba(255,255,255,.1));background:transparent;opacity:.45;cursor:pointer}
 #page-editor .cw-presence-chip.is-off:has(span){width:auto;padding:0 8px 0 5px}
 #page-editor .cw-presence-chip.is-off img{filter:grayscale(1)}

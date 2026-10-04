@@ -63,6 +63,16 @@ def test_accounts_linked_by_an_enabled_pair_join_the_view_one_hop_only() -> None
     assert editor_merged._linked(cfg, "history", {"SIMKL": ["SIMKL-P01"]}) == {("ANILIST", "default"), ("TRAKT", "p9")}
 
 
+def test_only_accounts_in_an_enabled_pair_for_the_list_count_as_checked() -> None:
+    cfg = {"pairs": [
+        {"source": "SIMKL", "source_instance": "SIMKL-P01", "target": "ANILIST", "features": {"history": {"enable": True}}},
+        {"source": "TRAKT", "target": "PUNCHPLAY", "enabled": False, "features": {"history": {"enable": True}}},
+    ]}
+
+    assert editor_merged._paired(cfg, "history") == {("CROSSWATCH", "default"), ("SIMKL", "SIMKL-P01"), ("ANILIST", "default")}
+    assert editor_merged._paired(cfg, "watchlist") == {("CROSSWATCH", "default")}
+
+
 def test_scope_is_one_profile_and_defaults_to_default_instances(monkeypatch) -> None:
     cfg = {}
     monkeypatch.setattr(editor_merged, "profile_instances_map", lambda _cfg, pid: {"TRAKT": ["p2"]} if pid == "anna" else {})

@@ -23,6 +23,7 @@ _LOG = logging.getLogger("crosswatch.api.manual")
 
 MANUAL_EPISODES_MAX = 500
 EPISODE_LIST_PROVIDERS = frozenset({"SIMKL"})
+COLLECTION_READ_ONLY_PROVIDERS = frozenset({"PLEX", "EMBY", "JELLYFIN", "KODI"})
 _EPISODE_LIST_TTL = 3600
 _EPISODE_LIST_CACHE: dict[tuple[str, str, int], tuple[float, list[dict[str, Any]]]] = {}
 _EPISODE_LIST_LOCK = threading.Lock()
@@ -328,7 +329,8 @@ def _manual_history_targets(cfg: dict[str, Any], user: Any = None) -> list[dict[
         history_ok = bool(supported.get("history"))
         ratings_ok = bool(supported.get("ratings"))
         watchlist_ok = bool(supported.get("watchlist"))
-        if not history_ok and not ratings_ok and not watchlist_ok:
+        collection_ok = bool(supported.get("collection")) and provider not in COLLECTION_READ_ONLY_PROVIDERS
+        if not history_ok and not ratings_ok and not watchlist_ok and not collection_ok:
             continue
 
         try:
@@ -360,10 +362,11 @@ def _manual_history_targets(cfg: dict[str, Any], user: Any = None) -> list[dict[
                 "history_enabled": history_ok,
                 "ratings_enabled": ratings_ok,
                 "watchlist_enabled": watchlist_ok,
+                "collection_enabled": collection_ok,
                 "episode_list": history_ok and provider in EPISODE_LIST_PROVIDERS,
             }
 
-    out = [v for v in merged.values() if bool(v.get("history_enabled") or v.get("watchlist_enabled"))]
+    out = [v for v in merged.values() if bool(v.get("history_enabled") or v.get("watchlist_enabled") or v.get("collection_enabled"))]
     out.sort(key=lambda item: (str(item.get("label") or "").lower(), str(item.get("instance") or "")))
     return out
 
@@ -437,7 +440,8 @@ def api_manual_watched(payload: dict[str, Any] = Body(...), request: Request = c
     do_history = bool(actions.get("history", True))
     do_watchlist = bool(actions.get("watchlist"))
     do_rating = bool(actions.get("rating"))
-    if not (do_history or do_watchlist or do_rating):
+    do_collection = bool(actions.get("collection"))
+    if not (do_history or do_watchlist or do_rating or do_collection):
         return JSONResponse({"ok": False, "error": "missing_actions"}, status_code=400)
 
     raw_episodes = payload.get("episodes")
@@ -501,6 +505,10 @@ def api_manual_watched(payload: dict[str, Any] = Body(...), request: Request = c
         for row in episodes
     ] or [item_payload]
 
+    collection_payload = dict(item_payload)
+    collection_payload.pop("watched_at", None)
+    collection_payload["collected_at"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
     results: list[dict[str, Any]] = []
     success_count = 0
 
@@ -562,10 +570,24 @@ def api_manual_watched(payload: dict[str, Any] = Body(...), request: Request = c
             else:
                 rating_skipped = "ratings_not_supported"
 
+        collection_res: dict[str, Any] | None = None
+        collection_skipped: str | None = None
+        if do_collection:
+            if bool(target.get("collection_enabled")):
+                try:
+                    cr = ops.add(cfg_view, [collection_payload], feature="collection")
+                    collection_res = dict(cr) if isinstance(cr, dict) else {"ok": bool(cr)}
+                except Exception:
+                    _LOG.exception("manual collection add failed for %s:%s", provider, instance)
+                    collection_res = {"ok": False, "error": "collection_add_failed"}
+            else:
+                collection_skipped = "collection_not_supported"
+
         history_ok = bool(history_res is None or bool(history_res.get("ok")) or history_skipped)
         watchlist_ok = bool(watchlist_res is None or bool(watchlist_res.get("ok")) or watchlist_skipped)
         rating_ok = bool(rating_res is None or bool(rating_res.get("ok")) or rating_skipped)
-        ok = history_ok and watchlist_ok and rating_ok
+        collection_ok = bool(collection_res is None or bool(collection_res.get("ok")) or collection_skipped)
+        ok = history_ok and watchlist_ok and rating_ok and collection_ok
         if ok:
             success_count += 1
 
@@ -582,6 +604,10 @@ def api_manual_watched(payload: dict[str, Any] = Body(...), request: Request = c
             entry["rating"] = rating_res
         if rating_skipped:
             entry["rating_skipped"] = rating_skipped
+        if collection_res is not None:
+            entry["collection"] = collection_res
+        if collection_skipped:
+            entry["collection_skipped"] = collection_skipped
         results.append(entry)
 
     return JSONResponse(
