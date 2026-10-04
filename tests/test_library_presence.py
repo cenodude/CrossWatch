@@ -90,10 +90,14 @@ def test_checkable_requires_usable_ids():
     assert not lp.checkable(dict(type="episode", season=None, episode=1, show_ids=SHOW_IDS))
 
 
-def test_requested_and_supported_are_history_only():
+def test_requested_and_supported_follow_feature_and_capability():
     ops = SimpleNamespace(library_presence=lambda *a, **k: [], capabilities=lambda: {"library_presence": {"features": ["history"]}})
     assert lp.requested("history", {lp.OPTION: True})
-    assert not lp.requested("ratings", {lp.OPTION: True})
+    assert lp.requested("ratings", {lp.OPTION: True})
+    assert lp.requested("progress", {lp.OPTION: True})
+    assert lp.requested("watchlist", {lp.OPTION: True})
+    assert not lp.requested("collection", {lp.OPTION: True})
+    assert not lp.requested("playlists", {lp.OPTION: True})
     assert not lp.requested("history", {})
     assert lp.supported(ops, "history")
     assert not lp.supported(ops, "ratings")
@@ -455,3 +459,394 @@ def test_plex_presence_falls_back_to_the_library_listing(monkeypatch):
     result = presence.presence(adapter, [episode(1, 1), episode(1, 2)])
     assert [row["status"] for row in result] == [lp.PRESENT, lp.ABSENT]
     assert library_loads == [1]
+
+
+def rated(number, rating, rated_at="2024-01-01T12:00:00Z"):
+    return item(number, rating=rating, rated_at=rated_at)
+
+
+def ratings_setup(config_base, monkeypatch, source, target, *, mode="one-way", options=None):
+    src, dst = setup_ops(config_base, monkeypatch, source, target)
+    for ops in (src, dst):
+        ops.features = lambda: {"ratings": True}
+        ops.capabilities = lambda: {"features": {"ratings": True}, "index_semantics": "present"}
+        ops.health = lambda *_a, **_k: {"ok": True, "status": "ok", "features": {"ratings": True}}
+    cfg = _cfg(False)
+    feature = {"enable": True, "add": True, "remove": False, "types": ["movies", "shows"], "mode": "all"}
+    feature.update(options or {})
+    cfg["pairs"][0].update(mode=mode, feature="ratings", features={"ratings": feature})
+    return cfg, src, dst
+
+
+def enable_ratings_presence(ops, absent_keys):
+    calls = []
+
+    def presence(cfg, items, *, feature):
+        rows = list(items)
+        calls.append((feature, sorted(canonical_key(row) for row in rows)))
+        return [lp.verdict(lp.ABSENT, reason=lp.REASON) if canonical_key(row) in absent_keys
+                else lp.verdict(lp.PRESENT, item_id="1") for row in rows]
+
+    ops.library_presence = presence
+    ops.capabilities = lambda: {"features": {"ratings": True}, "index_semantics": "present",
+                                "library_presence": {"features": ["history", "ratings"]}}
+    return calls
+
+
+@pytest.mark.parametrize("mode", ["one-way", "two-way"])
+def test_ratings_option_skips_new_ratings_but_keeps_rating_changes(config_base, monkeypatch, mode):
+    changed = rated(1, 7, "2024-06-01T12:00:00Z")
+    source = [changed, rated(2, 8), rated(3, 9)]
+    target = [rated(1, 6, "2024-01-01T12:00:00Z")]
+    cfg, src, dst = ratings_setup(config_base, monkeypatch, source, target, mode=mode, options={lp.OPTION: True})
+    every_key = {canonical_key(row) for row in source}
+    calls = enable_ratings_presence(dst, every_key)
+    plan = InteractivePlan()
+    run(cfg, plan)
+    assert calls == [("ratings", sorted([canonical_key(rated(2, 8)), canonical_key(rated(3, 9))]))]
+    by_key = {row["key"]: row for row in plan.rows.values()}
+    assert by_key[canonical_key(changed)]["result"] == "update"
+    assert by_key[canonical_key(changed)]["item"]["rating"] == 7
+    assert by_key[canonical_key(rated(2, 8))]["result"] == lp.REASON
+    assert by_key[canonical_key(rated(3, 9))]["result"] == lp.REASON
+
+
+def test_ratings_update_is_written_when_every_new_rating_is_skipped(config_base, monkeypatch):
+    from cw_platform.orchestrator import Orchestrator
+
+    changed = rated(1, 7, "2024-06-01T12:00:00Z")
+    source = [changed, rated(2, 8), rated(3, 9)]
+    cfg, src, dst = ratings_setup(config_base, monkeypatch, source, [rated(1, 6)], options={lp.OPTION: True})
+    enable_ratings_presence(dst, {canonical_key(rated(2, 8))})
+    Orchestrator(cfg).run(dry_run=False, pair_scope_ids=["p1"], write_state_json=False)
+    written = {canonical_key(row): row.get("rating") for batch in dst.add_calls for row in batch}
+    assert written == {canonical_key(changed): 7, canonical_key(rated(3, 9)): 9}
+
+
+def test_ratings_option_off_keeps_the_normal_plan(config_base, monkeypatch):
+    cfg, src, dst = ratings_setup(config_base, monkeypatch, [rated(1, 7), rated(2, 8)], [])
+    calls = enable_ratings_presence(dst, {canonical_key(rated(2, 8))})
+    plan = InteractivePlan()
+    run(cfg, plan)
+    assert not calls
+    assert sorted(row["result"] for row in plan.rows.values()) == ["add", "add"]
+
+
+def test_ratings_option_is_ignored_when_the_server_only_supports_history(config_base, monkeypatch):
+    cfg, src, dst = ratings_setup(config_base, monkeypatch, [rated(1, 7)], [], options={lp.OPTION: True})
+    calls = enable_ratings_presence(dst, {canonical_key(rated(1, 7))})
+    dst.capabilities = lambda: {"features": {"ratings": True}, "index_semantics": "present",
+                                "library_presence": {"features": ["history"]}}
+    plan = InteractivePlan()
+    run(cfg, plan)
+    assert not calls
+    assert [row["result"] for row in plan.rows.values()] == ["add"]
+
+
+def test_kodi_presence_works_for_ratings(monkeypatch):
+    from providers.sync.kodi import _presence
+
+    seen = []
+    found = {canonical_key(movie(1)): ({"_kodi_id": 7}, "ok")}
+    index = SimpleNamespace(resolve=lambda row: found.get(canonical_key(row), (None, "not_found")))
+
+    def library_index(adapter, feature):
+        seen.append(feature)
+        return index
+
+    monkeypatch.setattr(_presence, "library_index", library_index)
+    result = _presence.presence(SimpleNamespace(), [rated(1, 7), rated(2, 8)], feature="ratings")
+    assert [row["status"] for row in result] == [lp.PRESENT, lp.ABSENT]
+    assert seen == ["ratings"]
+
+
+def plex_ratings_setup(monkeypatch, index, coordinates=None, *, shared=False):
+    from providers.sync.plex import _history as history
+    from providers.sync.plex import _presence, _ratings
+
+    loads = []
+
+    def find(kind, guids):
+        table = index.get("shows" if kind == "show" else "movies", {})
+        return next((table[guid] for guid in guids if guid in table), None)
+
+    def show_coordinates(adapter, allow, show_rks):
+        loads.append(sorted(show_rks))
+        return coordinates
+
+    monkeypatch.setattr(_presence, "home_scope_enter", lambda adapter: (False, False, None, None))
+    monkeypatch.setattr(_presence, "home_scope_exit", lambda adapter, switched: None)
+    monkeypatch.setattr(_presence, "plex_feature_library_ids", lambda adapter, feature: set())
+    monkeypatch.setattr(_ratings, "_shared_user_scope_active", lambda adapter: shared)
+    monkeypatch.setattr(history, "_build_guid_index", lambda adapter, allow, **kwargs: index)
+    monkeypatch.setattr(history, "_pms_find_in_guid_index", find)
+    monkeypatch.setattr(_presence, "_show_coordinates", show_coordinates)
+    return _presence, loads
+
+
+def test_plex_ratings_presence_checks_movies_shows_seasons_and_episodes(monkeypatch):
+    index = {"movies": {"imdb://tt0000001": "10"}, "shows": {"tmdb://500": "20", "tvdb://600": "20"}}
+    presence, loads = plex_ratings_setup(monkeypatch, index, {"20": {(1, 1), (1, 2)}})
+    adapter = SimpleNamespace(client=SimpleNamespace(server=object()))
+    show = dict(type="show", title="Show", ids=dict(SHOW_IDS), rating=8)
+    season = lambda number: dict(type="season", season=number, ids={}, show_ids=dict(SHOW_IDS), rating=8)
+    rows = [rated(1, 7), rated(2, 8), show, dict(show, ids={"tmdb": "999"}), dict(episode(1, 1), rating=9),
+            dict(episode(1, 5), rating=9), season(1), season(4), dict(episode(1, 1, {"tvdb": "999"}), rating=9),
+            dict(type="movie", title="No ids", ids={}, rating=5),
+            dict(type="episode", season=1, episode=1, ids={"tvdb": "5"}, rating=5),
+            dict(rated(3, 6), ids={"imdb": "tt0000003", "plex": "77"})]
+    result = presence.presence(adapter, rows, feature="ratings")
+    assert [row["status"] for row in result] == [
+        lp.PRESENT, lp.ABSENT, lp.PRESENT, lp.ABSENT, lp.PRESENT, lp.ABSENT, lp.PRESENT, lp.ABSENT, lp.ABSENT,
+        lp.UNKNOWN, lp.UNKNOWN, lp.UNKNOWN]
+    assert result[0]["item_id"] == "10"
+    assert loads == [["20"]]
+
+
+def test_plex_ratings_presence_fails_open(monkeypatch):
+    index = {"movies": {"imdb://tt0000001": "10"}, "shows": {"tmdb://500": "20"}}
+    adapter = SimpleNamespace(client=SimpleNamespace(server=object()))
+    presence, _loads = plex_ratings_setup(monkeypatch, index, None)
+    result = presence.presence(adapter, [rated(1, 7), dict(episode(1, 1), rating=9)], feature="ratings")
+    assert [row["status"] for row in result] == [lp.PRESENT, lp.UNKNOWN]
+    presence, _loads = plex_ratings_setup(monkeypatch, index, {}, shared=True)
+    result = presence.presence(adapter, [rated(1, 7), rated(2, 8)], feature="ratings")
+    assert [row["status"] for row in result] == [lp.UNKNOWN, lp.UNKNOWN]
+
+
+def resumed(number, percent, at="2024-01-01T12:00:00Z"):
+    return item(number, progress_percent=percent, progress_ms=percent * 6000, duration_ms=600000, progress_at=at)
+
+
+def progress_setup(config_base, monkeypatch, source, target, *, mode="one-way", options=None):
+    src, dst = setup_ops(config_base, monkeypatch, source, target)
+    for ops in (src, dst):
+        ops.features = lambda: {"progress": True}
+        ops.capabilities = lambda: {"features": {"progress": True}, "index_semantics": "present"}
+        ops.health = lambda *_a, **_k: {"ok": True, "status": "ok", "features": {"progress": True}}
+    cfg = _cfg(False)
+    feature = {"enable": True, "add": True, "remove": False, "mode": "all"}
+    feature.update(options or {})
+    cfg["pairs"][0].update(mode=mode, feature="progress", features={"progress": feature})
+    return cfg, src, dst
+
+
+def enable_progress_presence(ops, absent_keys):
+    calls = []
+
+    def presence(cfg, items, *, feature):
+        rows = list(items)
+        calls.append((feature, sorted(canonical_key(row) for row in rows)))
+        return [lp.verdict(lp.ABSENT, reason=lp.REASON) if canonical_key(row) in absent_keys
+                else lp.verdict(lp.PRESENT, item_id="1") for row in rows]
+
+    ops.library_presence = presence
+    ops.capabilities = lambda: {"features": {"progress": True}, "index_semantics": "present",
+                                "library_presence": {"features": ["history", "progress"]}}
+    return calls
+
+
+def test_split_absent_never_checks_items_the_destination_already_tracks():
+    seen = []
+
+    def presence(cfg, rows, *, feature):
+        seen.append(list(rows))
+        return [lp.verdict(lp.ABSENT) for _ in rows]
+
+    ops = SimpleNamespace(library_presence=presence)
+    kept, skipped, error = lp.split_absent(ops, {}, "progress", ["a", "b", "c"], known=lambda value: value == "b")
+    assert seen == [["a", "c"]]
+    assert kept == ["b"]
+    assert [value for value, _reason in skipped] == ["a", "c"]
+    assert error == ""
+    kept, skipped, error = lp.split_absent(ops, {}, "progress", ["b"], known=lambda value: True)
+    assert (kept, skipped, error) == (["b"], [], "")
+    assert len(seen) == 1
+
+
+@pytest.mark.parametrize("mode", ["one-way", "two-way"])
+def test_progress_option_skips_new_positions_but_keeps_position_changes(config_base, monkeypatch, mode):
+    moved = resumed(1, 60, "2024-06-01T12:00:00Z")
+    source = [moved, resumed(2, 30), resumed(3, 40)]
+    target = [resumed(1, 20, "2024-01-01T12:00:00Z")]
+    cfg, src, dst = progress_setup(config_base, monkeypatch, source, target, mode=mode, options={lp.OPTION: True})
+    calls = enable_progress_presence(dst, {canonical_key(row) for row in source})
+    plan = InteractivePlan()
+    run(cfg, plan)
+    assert calls == [("progress", sorted([canonical_key(resumed(2, 30)), canonical_key(resumed(3, 40))]))]
+    by_key = {row["key"]: row for row in plan.rows.values()}
+    assert by_key[canonical_key(moved)]["result"] in ("add", "update")
+    assert by_key[canonical_key(moved)]["item"]["progress_percent"] == 60
+    assert by_key[canonical_key(resumed(2, 30))]["result"] == lp.REASON
+    assert by_key[canonical_key(resumed(3, 40))]["result"] == lp.REASON
+
+
+def test_progress_option_off_keeps_the_normal_plan(config_base, monkeypatch):
+    cfg, src, dst = progress_setup(config_base, monkeypatch, [resumed(1, 30), resumed(2, 40)], [])
+    calls = enable_progress_presence(dst, {canonical_key(resumed(2, 40))})
+    plan = InteractivePlan()
+    run(cfg, plan)
+    assert not calls
+    assert sorted(row["result"] for row in plan.rows.values()) == ["add", "add"]
+
+
+def test_jellyfin_progress_presence_uses_the_progress_resolver(monkeypatch):
+    from providers.sync.jellyfin import _common as common
+    from providers.sync.jellyfin import _id_lookup, _presence
+
+    seen = []
+
+    def resolve_many(adapter, want, *, feature="history"):
+        seen.append((adapter.cfg.strict_id_matching, feature, "watched_at" in want))
+        return ["jf-9", "jf-10"] if (want.get("ids") or {}).get("imdb") == "tt0000001" else []
+
+    def never(adapter, want, *, feature="history"):
+        raise AssertionError("progress must use resolve_item_ids")
+
+    monkeypatch.setattr(_presence, "_index_ready", lambda adapter, feature: True)
+    monkeypatch.setattr(_id_lookup, "prepare", lambda adapter, feature, items: None)
+    monkeypatch.setattr(common, "resolve_item_ids", resolve_many)
+    monkeypatch.setattr(common, "resolve_item_id", never)
+    show = dict(type="show", title="Show", ids=dict(SHOW_IDS))
+    result = _presence.presence(jellyfin_adapter(), [resumed(1, 30), resumed(2, 30), show], feature="progress")
+    assert [row["status"] for row in result] == [lp.PRESENT, lp.ABSENT, lp.UNKNOWN]
+    assert result[0]["item_id"] == "jf-9"
+    assert seen == [(True, "progress", False), (True, "progress", False)]
+
+
+def test_emby_progress_presence_batches_id_queries(monkeypatch):
+    from providers.sync.emby import _presence
+
+    queries = emby_library(monkeypatch)
+    rows = [resumed(n, 30) for n in range(1, 41)] + [dict(episode(1, 1), progress_percent=30),
+                                                    dict(episode(1, 2), progress_percent=30)]
+    result = _presence.presence(emby_adapter(), rows, feature="progress")
+    statuses = [row["status"] for row in result]
+    assert statuses[0] == lp.PRESENT and result[0]["item_id"] == "m1"
+    assert statuses[1:40] == [lp.ABSENT] * 39
+    assert statuses[40:] == [lp.PRESENT, lp.ABSENT]
+    assert sorted(types for _pairs, types in queries) == ["Movie", "Series"]
+
+
+def test_plex_progress_presence_checks_movies_and_episodes_only(monkeypatch):
+    index = {"movies": {"imdb://tt0000001": "10"}, "shows": {"tmdb://500": "20", "tvdb://600": "20"}}
+    presence, loads = plex_ratings_setup(monkeypatch, index, {"20": {(1, 1)}}, shared=True)
+    adapter = SimpleNamespace(client=SimpleNamespace(server=object()))
+    rows = [resumed(1, 30), resumed(2, 30), dict(episode(1, 1), progress_percent=30),
+            dict(episode(1, 2), progress_percent=30), dict(episode(1, 1), type="anime", progress_percent=30),
+            dict(type="show", title="Show", ids=dict(SHOW_IDS)), dict(type="movie", title="No ids", ids={})]
+    result = presence.presence(adapter, rows, feature="progress")
+    assert [row["status"] for row in result] == [
+        lp.PRESENT, lp.ABSENT, lp.PRESENT, lp.ABSENT, lp.PRESENT, lp.UNKNOWN, lp.UNKNOWN]
+    assert loads == [["20"]]
+
+
+def watchlist_setup(config_base, monkeypatch, source, target, *, mode="one-way", options=None):
+    src, dst = setup_ops(config_base, monkeypatch, source, target)
+    cfg = _cfg(False)
+    feature = {"enable": True, "add": True, "remove": False}
+    feature.update(options or {})
+    cfg["pairs"][0].update(mode=mode, feature="watchlist", features={"watchlist": feature})
+    return cfg, src, dst
+
+
+def enable_watchlist_presence(ops, absent_keys, features=("history", "progress", "watchlist")):
+    calls = []
+
+    def presence(cfg, items, *, feature):
+        rows = list(items)
+        calls.append((feature, sorted(canonical_key(row) for row in rows)))
+        return [lp.verdict(lp.ABSENT, reason=lp.REASON) if canonical_key(row) in absent_keys
+                else lp.verdict(lp.PRESENT, item_id="1") for row in rows]
+
+    ops.library_presence = presence
+    ops.capabilities = lambda: {"features": {"watchlist": True}, "index_semantics": "present",
+                                "library_presence": {"features": list(features)}}
+    return calls
+
+
+@pytest.mark.parametrize("mode", ["one-way", "two-way"])
+def test_watchlist_option_skips_titles_that_are_not_in_the_library(config_base, monkeypatch, mode):
+    cfg, src, dst = watchlist_setup(config_base, monkeypatch, [item(1), item(2), item(3)], [item(1)], mode=mode,
+                                    options={lp.OPTION: True})
+    calls = enable_watchlist_presence(dst, {canonical_key(item(3))})
+    plan = InteractivePlan()
+    run(cfg, plan)
+    assert calls == [("watchlist", sorted([canonical_key(item(2)), canonical_key(item(3))]))]
+    by_key = {row["key"]: row for row in plan.rows.values()}
+    assert by_key[canonical_key(item(2))]["result"] == "add"
+    assert by_key[canonical_key(item(3))]["result"] == lp.REASON
+    assert by_key[canonical_key(item(3))]["selectable"] is False
+    assert canonical_key(item(1)) not in by_key
+
+
+def test_watchlist_option_off_keeps_the_normal_plan(config_base, monkeypatch):
+    cfg, src, dst = watchlist_setup(config_base, monkeypatch, [item(1), item(2)], [])
+    calls = enable_watchlist_presence(dst, {canonical_key(item(2))})
+    plan = InteractivePlan()
+    run(cfg, plan)
+    assert not calls
+    assert sorted(row["result"] for row in plan.rows.values()) == ["add", "add"]
+
+
+def test_watchlist_option_is_ignored_for_servers_without_a_library_watchlist(config_base, monkeypatch):
+    cfg, src, dst = watchlist_setup(config_base, monkeypatch, [item(1)], [], options={lp.OPTION: True})
+    calls = enable_watchlist_presence(dst, {canonical_key(item(1))}, features=("history", "ratings", "progress"))
+    plan = InteractivePlan()
+    run(cfg, plan)
+    assert not calls
+    assert [row["result"] for row in plan.rows.values()] == ["add"]
+
+
+def test_only_jellyfin_and_emby_offer_the_watchlist_option():
+    from providers.sync._mod_EMBY import _EmbyOPS
+    from providers.sync._mod_JELLYFIN import _JellyfinOPS
+    from providers.sync._mod_KODI import OPS as kodi
+    from providers.sync._mod_PLEX import _PlexOPS
+
+    support = {name: sorted(f for f in lp.FEATURES if lp.supported(ops, f)) for name, ops in (
+        ("jellyfin", _JellyfinOPS()), ("emby", _EmbyOPS()), ("plex", _PlexOPS()), ("kodi", kodi))}
+    assert support == {
+        "jellyfin": ["history", "progress", "watchlist"],
+        "emby": ["history", "progress", "watchlist"],
+        "plex": ["history", "progress", "ratings"],
+        "kodi": ["history", "progress", "ratings"],
+    }
+
+
+def test_jellyfin_watchlist_presence_checks_movies_and_shows(monkeypatch):
+    from providers.sync.jellyfin import _common as common
+    from providers.sync.jellyfin import _id_lookup, _presence
+
+    seen = []
+
+    def resolve(adapter, want, *, feature="history"):
+        seen.append((adapter.cfg.strict_id_matching, feature, want.get("type")))
+        ids = want.get("ids") or {}
+        return "jf-1" if ids.get("imdb") == "tt0000001" or ids.get("tmdb") == "500" else None
+
+    monkeypatch.setattr(_presence, "_index_ready", lambda adapter, feature: feature == "history")
+    monkeypatch.setattr(_id_lookup, "prepare", lambda adapter, feature, items: None)
+    monkeypatch.setattr(common, "resolve_item_id", resolve)
+    show = dict(type="show", title="Show", ids=dict(SHOW_IDS))
+    rows = [item(1), item(2), show, dict(show, ids={"tvdb": "999"}), dict(type="movie", title="No ids", ids={}),
+            episode(1, 1), dict(type="season", title="Season", ids=dict(SHOW_IDS))]
+    result = _presence.presence(jellyfin_adapter(), rows, feature="watchlist")
+    assert [row["status"] for row in result] == [
+        lp.PRESENT, lp.ABSENT, lp.PRESENT, lp.ABSENT, lp.UNKNOWN, lp.UNKNOWN, lp.UNKNOWN]
+    assert seen == [(True, "history", "movie"), (True, "history", "movie"), (True, "history", "show"), (True, "history", "show")]
+
+
+def test_emby_watchlist_presence_batches_id_queries(monkeypatch):
+    from providers.sync.emby import _presence
+
+    queries = emby_library(monkeypatch)
+    show = dict(type="show", title="Show", ids=dict(SHOW_IDS))
+    rows = [item(n) for n in range(1, 41)] + [show, dict(show, ids={"tvdb": "999"}), episode(1, 1)]
+    result = _presence.presence(emby_adapter(), rows, feature="watchlist")
+    statuses = [row["status"] for row in result]
+    assert statuses[0] == lp.PRESENT and result[0]["item_id"] == "m1"
+    assert statuses[1:40] == [lp.ABSENT] * 39
+    assert statuses[40:] == [lp.PRESENT, lp.ABSENT, lp.UNKNOWN]
+    assert sorted(types for _pairs, types in queries) == ["Movie", "Series"]
+

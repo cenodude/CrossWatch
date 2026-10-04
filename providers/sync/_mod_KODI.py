@@ -75,7 +75,7 @@ def get_manifest() -> Mapping[str, Any]:
             "observed_deletes": True,
             "notes": "Kodi collection is the local video library inventory. CrossWatch can read movies and episodes but cannot add or remove files from Kodi.",
         },
-        "library_presence": {"features": ["history"]},
+        "library_presence": {"features": ["history", "ratings", "progress"]},
     }
     return {
         "name": "KODI",

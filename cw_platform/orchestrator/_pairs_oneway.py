@@ -1755,8 +1755,10 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
 
     library_skipped: list[tuple[Any, str]] = []
     if adds and not dst_down and _library_presence.requested(feature, fcfg) and _library_presence.supported(dst_ops, feature):
+        known_alias = _alias_index(dst_full) if feature == "progress" else {}
         adds, library_skipped, presence_error = _library_presence.split_absent(
             dst_ops, dst_cfg, feature, adds, call=provider_call,
+            known=(lambda it: _present(dst_full, known_alias, it)) if feature == "progress" else None,
         )
         emit("debug", msg="library_only.filtered", feature=feature, dst=dst,
              kept=len(adds), skipped=len(library_skipped), error=presence_error or None)

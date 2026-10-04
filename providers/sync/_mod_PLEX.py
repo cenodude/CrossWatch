@@ -560,7 +560,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "remove": False,
             },
             "playlists": _PLAYLIST_CAPABILITIES,
-            "library_presence": {"features": ["history"]},
+            "library_presence": {"features": ["history", "ratings", "progress"]},
         },
     }
 
@@ -1576,7 +1576,7 @@ class _PlexOPS:
                 "remove": False,
             },
             "playlists": _PLAYLIST_CAPABILITIES,
-            "library_presence": {"features": ["history"]},
+            "library_presence": {"features": ["history", "ratings", "progress"]},
         }
 
     def index_semantics(self, cfg: Mapping[str, Any], *, feature: str) -> str | None:

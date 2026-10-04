@@ -1954,12 +1954,14 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         if add_to_A and not a_down and _library_presence.supported(aops, feature):
             add_to_A, library_skipped_A, presence_error = _library_presence.split_absent(
                 aops, a_cfg, feature, add_to_A, call=provider_call,
+                known=(lambda it: _present(A_eff, A_alias, it)) if feature == "progress" else None,
             )
             emit("debug", msg="library_only.filtered", feature=feature, dst=a, pair=f"{a}-{b}",
                  kept=len(add_to_A), skipped=len(library_skipped_A), error=presence_error or None)
         if add_to_B and not b_down and _library_presence.supported(bops, feature):
             add_to_B, library_skipped_B, presence_error = _library_presence.split_absent(
                 bops, b_cfg, feature, add_to_B, call=provider_call,
+                known=(lambda it: _present(B_eff, B_alias, it)) if feature == "progress" else None,
             )
             emit("debug", msg="library_only.filtered", feature=feature, dst=b, pair=f"{a}-{b}",
                  kept=len(add_to_B), skipped=len(library_skipped_B), error=presence_error or None)

@@ -16,6 +16,9 @@ from ._history import _want_item
 
 _NATIVE_KEYS = ("jellyfin_item_id", "_jellyfin_item_id", "jellyfin")
 _TYPES = frozenset({"movie", "show", "series", "episode"})
+_PROGRESS_TYPES = frozenset({"movie", "episode"})
+_WATCHLIST_RAW_TYPES = frozenset({"movie", "movies", "show", "shows", "series", "tv", "anime"})
+_WATCHLIST_TYPES = frozenset({"movie", "show"})
 
 
 def _ids_only(adapter: Any) -> Any:
@@ -46,22 +49,28 @@ def presence(adapter: Any, items: Iterable[Mapping[str, Any]], *, feature: str =
     def has_ids(ids: Any) -> bool:
         return bool(common.all_ext_pairs(ids or {}, priority)) if isinstance(ids, Mapping) else False
 
+    progress = feature == "progress"
+    watchlist = feature == "watchlist"
+    lookup_feature = "history" if watchlist else feature
+    types = _PROGRESS_TYPES if progress else _WATCHLIST_TYPES if watchlist else _TYPES
     wants: list[dict[str, Any] | None] = []
     for row in rows:
         raw_iid = str(row.get("jellyfin_item_id") or row.get("_jellyfin_item_id") or "").strip() or None
-        want = _want_item(row, raw_iid=raw_iid)
-        usable = common._lookup_type(want) in _TYPES and lp.checkable(want, native_keys=_NATIVE_KEYS, has_ids=has_ids)
+        want = dict(row) if progress or watchlist else _want_item(row, raw_iid=raw_iid)
+        usable = common._lookup_type(want) in types and lp.checkable(want, native_keys=_NATIVE_KEYS, has_ids=has_ids)
+        if watchlist and str(row.get("type") or "").strip().lower() not in _WATCHLIST_RAW_TYPES:
+            usable = False
         wants.append(want if usable else None)
 
     pending = [want for want in wants if want is not None]
     if not pending:
         return lp.all_unknown(rows, "not_checkable")
     try:
-        if not _index_ready(probe, feature):
+        if not _index_ready(probe, lookup_feature):
             return lp.all_unknown(rows, "index_unavailable")
         from ._id_lookup import prepare
 
-        prepare(probe, feature, pending)
+        prepare(probe, lookup_feature, pending)
     except Exception as exc:
         common._dbg("presence_index_failed", lookup_feature=feature, error_type=type(exc).__name__)
         return lp.all_unknown(rows, "index_unavailable")
@@ -74,7 +83,11 @@ def presence(adapter: Any, items: Iterable[Mapping[str, Any]], *, feature: str =
                 out.append(lp.unknown("not_checkable"))
                 continue
             try:
-                iid = common.resolve_item_id(probe, want, feature=feature)
+                if progress:
+                    found = common.resolve_item_ids(probe, want, feature=feature)
+                    iid = found[0] if found else None
+                else:
+                    iid = common.resolve_item_id(probe, want, feature=lookup_feature)
             except Exception as exc:
                 out.append(lp.unknown(type(exc).__name__))
                 continue
