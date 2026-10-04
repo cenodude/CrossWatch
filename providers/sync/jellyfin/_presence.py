@@ -53,18 +53,23 @@ def presence(adapter: Any, items: Iterable[Mapping[str, Any]], *, feature: str =
     watchlist = feature == "watchlist"
     lookup_feature = "history" if watchlist else feature
     types = _PROGRESS_TYPES if progress else _WATCHLIST_TYPES if watchlist else _TYPES
+    strict = bool(getattr(adapter.cfg, "strict_id_matching", False))
     wants: list[dict[str, Any] | None] = []
+    skipped: list[dict[str, Any]] = []
     for row in rows:
         raw_iid = str(row.get("jellyfin_item_id") or row.get("_jellyfin_item_id") or "").strip() or None
         want = dict(row) if progress or watchlist else _want_item(row, raw_iid=raw_iid)
-        usable = common._lookup_type(want) in types and lp.checkable(want, native_keys=_NATIVE_KEYS, has_ids=has_ids)
+        known_type = common._lookup_type(want) in types
         if watchlist and str(row.get("type") or "").strip().lower() not in _WATCHLIST_RAW_TYPES:
-            usable = False
+            known_type = False
+        usable = known_type and lp.checkable(want, native_keys=_NATIVE_KEYS, has_ids=has_ids)
         wants.append(want if usable else None)
+        unmatchable = strict and known_type and lp.without_ids(want, native_keys=_NATIVE_KEYS, has_ids=has_ids)
+        skipped.append(lp.verdict(lp.ABSENT, reason=lp.REASON) if unmatchable else lp.unknown("not_checkable"))
 
     pending = [want for want in wants if want is not None]
     if not pending:
-        return lp.all_unknown(rows, "not_checkable")
+        return skipped
     try:
         if not _index_ready(probe, lookup_feature):
             return lp.all_unknown(rows, "index_unavailable")
@@ -78,9 +83,10 @@ def presence(adapter: Any, items: Iterable[Mapping[str, Any]], *, feature: str =
     out: list[dict[str, Any]] = []
     present = absent = 0
     with quiet_log():
-        for want in wants:
+        for want, fallback in zip(wants, skipped):
             if want is None:
-                out.append(lp.unknown("not_checkable"))
+                absent += fallback["status"] == lp.ABSENT
+                out.append(fallback)
                 continue
             try:
                 if progress:

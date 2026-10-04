@@ -282,3 +282,15 @@ def test_build_watchlist_merges_cross_provider_id_aliases(monkeypatch) -> None:
     assert rows[0]["key"] == "tmdb:1662317"
     assert rows[0]["sources"] == ["stremio", "trakt"]
     assert rows[0]["ids"] == {"tmdb": "1662317", "imdb": "tt40792117"}
+
+
+def test_jellyfin_and_emby_delete_headers_carry_the_token_in_authorization():
+    from services import watchlist
+
+    headers = watchlist._jf_headers({"access_token": "jf-token", "device_id": "dev-1"})
+    assert headers["Authorization"].startswith("MediaBrowser ")
+    assert 'DeviceId="dev-1"' in headers["Authorization"]
+    assert headers["Authorization"].endswith('Token="jf-token"')
+    assert headers["X-Emby-Token"] == "jf-token"
+    assert "Token=" not in headers["X-Emby-Authorization"]
+    assert "Authorization" not in watchlist._jf_headers({})

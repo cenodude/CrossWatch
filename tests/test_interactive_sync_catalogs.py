@@ -157,3 +157,30 @@ def test_tmdb_sync_uses_sync_instance_key_not_metadata_key(monkeypatch):
     result = search_candidates(cfg, row, "Monster", catalog="tmdb")
     assert keys == ["sync-key", "metadata-key"]
     assert "not been checked" in result["note"]
+
+
+@pytest.mark.parametrize("provider, modern", [("JELLYFIN", True), ("EMBY", False)])
+def test_media_server_library_search_sends_the_right_auth_headers(provider, modern):
+    from services.interactive_sync_catalogs import destination_rows, provider_block
+
+    cfg, row = context(provider)
+    seen = {}
+
+    class Response:
+        status_code = 200
+        headers = {}
+
+        def json(self):
+            return {"Items": [{"Name": "Movie", "ProductionYear": 2020, "ProviderIds": {"Tmdb": "1"}}]}
+
+    class Client:
+        def get(self, url, **kwargs):
+            seen.update(url=url, headers=kwargs["headers"])
+            return Response()
+
+    rows = destination_rows(Client(), cfg, row, provider_block(cfg, provider, "second"), "Movie", "movie")
+    token = CONNECTIONS[provider]["access_token"]
+    assert rows == [{"title": "Movie", "year": 2020, "ids": {"tmdb": "1"}}]
+    assert seen["headers"]["X-Emby-Token"] == token
+    assert (f'Token="{token}"' in seen["headers"].get("Authorization", "")) is modern
+    assert seen["headers"].get("Authorization", "").startswith("MediaBrowser ") is modern

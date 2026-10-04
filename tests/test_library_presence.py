@@ -257,7 +257,7 @@ def test_plex_presence_checks_movies_and_episodes(monkeypatch):
             dict(type="episode", season=1, episode=1, ids={"tvdb": "5"}, watched_at=WATCHED_AT)]
     result = presence.presence(adapter, rows)
     assert [row["status"] for row in result] == [
-        lp.PRESENT, lp.ABSENT, lp.PRESENT, lp.ABSENT, lp.ABSENT, lp.ABSENT, lp.UNKNOWN, lp.UNKNOWN]
+        lp.PRESENT, lp.ABSENT, lp.PRESENT, lp.ABSENT, lp.ABSENT, lp.ABSENT, lp.ABSENT, lp.UNKNOWN]
     assert result[0]["item_id"] == "10"
     assert result[2]["item_id"] == "21"
     assert loads == [1]
@@ -849,4 +849,69 @@ def test_emby_watchlist_presence_batches_id_queries(monkeypatch):
     assert statuses[1:40] == [lp.ABSENT] * 39
     assert statuses[40:] == [lp.PRESENT, lp.ABSENT, lp.UNKNOWN]
     assert sorted(types for _pairs, types in queries) == ["Movie", "Series"]
+
+
+SIMKL_ONLY = dict(type="movie", title="World Premiere", year=2025, ids={"simkl": "2840931"})
+SIMKL_PART = dict(type="movie", title="Planet of the Monsters", ids={"simkl": "605671"}, part=2)
+
+
+def test_without_ids_needs_no_usable_and_no_native_id():
+    assert lp.without_ids(SIMKL_ONLY)
+    assert lp.without_ids(dict(type="episode", season=1, episode=1, ids={}, show_ids={"simkl": "1"}))
+    assert not lp.without_ids(movie(1))
+    assert not lp.without_ids(dict(type="episode", season=1, episode=1, ids={"tvdb": "5"}))
+    assert not lp.without_ids(dict(SIMKL_ONLY, ids={"simkl": "1", "jellyfin": "abc"}), native_keys=("jellyfin",))
+
+
+@pytest.mark.parametrize("strict, expected", [(True, lp.ABSENT), (False, lp.UNKNOWN)])
+def test_jellyfin_skips_items_without_ids_only_with_strict_matching(monkeypatch, strict, expected):
+    from providers.sync.jellyfin import _common as common
+    from providers.sync.jellyfin import _id_lookup, _presence
+
+    monkeypatch.setattr(_presence, "_index_ready", lambda adapter, feature: True)
+    monkeypatch.setattr(_id_lookup, "prepare", lambda adapter, feature, items: None)
+    monkeypatch.setattr(common, "resolve_item_id", lambda adapter, want, *, feature="history": "jf-1")
+    adapter = jellyfin_adapter(strict_id_matching=strict)
+    native = dict(SIMKL_ONLY, jellyfin_item_id="abc")
+    result = _presence.presence(adapter, [movie(1), SIMKL_ONLY, SIMKL_PART, native, dict(type="season", ids={})])
+    assert [row["status"] for row in result] == [lp.PRESENT, expected, expected, lp.UNKNOWN, lp.UNKNOWN]
+    alone = _presence.presence(adapter, [SIMKL_ONLY, SIMKL_PART])
+    assert [row["status"] for row in alone] == [expected, expected]
+
+
+@pytest.mark.parametrize("strict, expected", [(True, lp.ABSENT), (False, lp.UNKNOWN)])
+def test_emby_skips_items_without_ids_only_with_strict_matching(monkeypatch, strict, expected):
+    from dataclasses import replace
+
+    from providers.sync.emby import _presence
+
+    emby_library(monkeypatch)
+    adapter = emby_adapter()
+    adapter.cfg = replace(adapter.cfg, strict_id_matching=strict)
+    result = _presence.presence(adapter, [movie(1), SIMKL_ONLY, SIMKL_PART], feature="watchlist")
+    assert [row["status"] for row in result] == [lp.PRESENT, expected, expected]
+
+
+@pytest.mark.parametrize("strict, expected", [(True, lp.ABSENT), (False, lp.UNKNOWN)])
+@pytest.mark.parametrize("feature", ["ratings", "progress"])
+def test_plex_skips_items_without_ids_only_with_strict_matching(monkeypatch, strict, expected, feature):
+    index = {"movies": {"imdb://tt0000001": "10"}, "shows": {}}
+    presence, _loads = plex_ratings_setup(monkeypatch, index, {})
+    monkeypatch.setattr(presence, "plex_cfg_get", lambda adapter, key, default=None: strict if key == "strict_id_matching" else default)
+    adapter = SimpleNamespace(client=SimpleNamespace(server=object()))
+    simkl_episode = dict(type="episode", season=1, episode=1, ids={"simkl": "9"}, show_ids={"simkl": "8"})
+    plex_native = dict(SIMKL_ONLY, ids={"simkl": "1", "plex": "55"})
+    result = presence.presence(adapter, [rated(1, 7), SIMKL_ONLY, simkl_episode, plex_native], feature=feature)
+    assert [row["status"] for row in result] == [lp.PRESENT, expected, expected, lp.UNKNOWN]
+
+
+def test_plex_history_always_skips_items_without_ids(monkeypatch):
+    from providers.sync.plex import _history as history
+
+    presence, _loads = plex_setup(monkeypatch, plex_catalog(history))
+    adapter = SimpleNamespace(client=SimpleNamespace(server=object()))
+    simkl_episode = dict(type="episode", season=1, episode=1, ids={"simkl": "9"}, show_ids={"simkl": "8"})
+    plex_native = dict(type="movie", title="Native", ids={"plex": "55"})
+    result = presence.presence(adapter, [SIMKL_ONLY, simkl_episode, plex_native, dict(type="show", ids={})])
+    assert [row["status"] for row in result] == [lp.ABSENT, lp.ABSENT, lp.UNKNOWN, lp.UNKNOWN]
 

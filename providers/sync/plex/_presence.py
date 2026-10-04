@@ -13,6 +13,7 @@ from cw_platform.id_map import ids_from, ids_from_guid
 from . import _history as history
 from ._common import (
     _as_base_url,
+    plex_cfg_get,
     _xml_to_container,
     extract_show_ids,
     home_scope_enter,
@@ -161,10 +162,23 @@ def _verdict(rk: Any, klass: str) -> dict[str, Any]:
     return lp.unknown(klass)
 
 
+def _unmatchable(item: Mapping[str, Any]) -> bool:
+    kind = str(item.get("type") or "movie").strip().lower()
+    if kind in _EPISODE_TYPES:
+        return not history._item_show_tokens(item)
+    if kind != "movie":
+        return False
+    return not history._id_tokens(ids_from(item))
+
+
+def _skipped(item: Mapping[str, Any]) -> dict[str, Any]:
+    return lp.verdict(lp.ABSENT, reason=lp.REASON) if _unmatchable(item) else lp.unknown("not_checkable")
+
+
 def _history_presence(adapter: Any, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     usable = [_checkable(row) for row in rows]
     if not any(usable):
-        return lp.all_unknown(rows, "not_checkable")
+        return [_skipped(row) for row in rows]
 
     need_home_scope, did_home_switch, _sel_aid, _sel_uname = home_scope_enter(adapter)
     try:
@@ -183,7 +197,7 @@ def _history_presence(adapter: Any, rows: list[dict[str, Any]]) -> list[dict[str
         pending: list[int] = []
         for index, (row, ok) in enumerate(zip(rows, usable)):
             if not ok:
-                out[index] = lp.unknown("not_checkable")
+                out[index] = _skipped(row)
                 continue
             try:
                 rk, klass = cat.resolve(row, strict=True)
@@ -274,6 +288,13 @@ def _guid_presence(adapter: Any, rows: list[dict[str, Any]], feature: str) -> li
             history._dbg("presence_index_failed", lookup_feature=feature, error_type=type(exc).__name__)
             return lp.all_unknown(rows, "index_unavailable")
 
+        strict = bool(plex_cfg_get(adapter, "strict_id_matching", False))
+
+        def uncheckable(guids: list[str]) -> dict[str, Any]:
+            if strict and not guids:
+                return lp.verdict(lp.ABSENT, reason=lp.REASON)
+            return lp.unknown("not_checkable")
+
         out: list[dict[str, Any] | None] = [None] * len(rows)
         pending: list[tuple[int, str, str, int | None, int | None]] = []
         for index, row in enumerate(rows):
@@ -285,7 +306,7 @@ def _guid_presence(adapter: Any, rows: list[dict[str, Any]], feature: str) -> li
                 continue
             if kind in ("movie", "show"):
                 if not lp.external_ids(ids):
-                    out[index] = lp.unknown("not_checkable")
+                    out[index] = uncheckable(item_guid_candidates(ids, {}, row))
                     continue
                 rk = history._pms_find_in_guid_index(kind, item_guid_candidates(ids, {}, row))
                 out[index] = lp.verdict(lp.PRESENT, item_id=rk) if rk else lp.verdict(lp.ABSENT, reason=lp.REASON)
@@ -294,7 +315,10 @@ def _guid_presence(adapter: Any, rows: list[dict[str, Any]], feature: str) -> li
             show_ids = ids_from({"ids": dict(raw_show_ids)}) if isinstance(raw_show_ids, Mapping) else {}
             season = _number(row.get("season") if row.get("season") is not None else row.get("season_number"))
             episode = _number(row.get("episode") if row.get("episode") is not None else row.get("episode_number"))
-            if not lp.external_ids(show_ids) or season is None or (kind == "episode" and episode is None):
+            if not lp.external_ids(show_ids):
+                out[index] = uncheckable(item_guid_candidates(ids, show_ids, row))
+                continue
+            if season is None or (kind == "episode" and episode is None):
                 out[index] = lp.unknown("not_checkable")
                 continue
             show_rk = history._pms_find_in_guid_index("show", item_guid_candidates(ids, show_ids, row))
