@@ -6,27 +6,27 @@ export const HELP_TEXT = {
   "gl-dry": "Dry run\nPlan and log only; no writes. Reset states after testing (in maintenance).",
   "gl-verify": "Verify after write\nRe-check the destination after writes (when supported).",
   "gl-drop": "Drop guard\nProtects against sudden inventory drops by pausing delete plans.",
-  "gl-mass": "Allow mass delete\nIf off, blocks large delete plans (roughly >10%). Enable for first runs.\n It's either mass-delete or drop-guard or none; not both.",
+  "gl-mass": "Allow mass delete\nIf off, blocks large delete plans (roughly >10%). Enable for first runs.\nIt's either mass-delete or drop-guard or none; not both.",
   "gl-oneway-remove": "Deletions based on Source\nWhen enabled, this pair only removes items after CrossWatch observed them disappear from the source.\nWhen disabled, this pair runs mirror mode and removes target items missing from the source (destructive; use with care).",
   "gl-observed": "Include observed deletes\nIf off, observed deletes are ignored and delta-delete providers are disabled (safer).",
   "gl-bb-enable": "Blackbox: Enabled\nAutomatic flapper protection and failure quarantine.",
   "gl-bb-pair": "Blackbox: Pair scoped\nKeep blackbox decisions per pair instead of global.",
-  "gl-bb-section": "Blackbox\nUnresolved is only a reporting state: items that fail to write are recorded, shown in diagnostics, and retried on every sync. Blackbox is the quarantine state and the only thing that stops an item from being planned again.",
-  "gl-bb-promote": "Promote after (failed writes)\nNumber of consecutive failed write attempts before an item is moved to the blackbox. Until then the item keeps being retried; unresolved alone never blocks it.",
+  "gl-bb-section": "Blackbox\nUnresolved is only a reporting state: items that fail to write are recorded, shown in diagnostics, and retried on every sync.\nBlackbox is the quarantine state and the only thing that stops an item from being planned again.",
+  "gl-bb-promote": "Promote after (failed writes)\nNumber of consecutive failed write attempts before an item is moved to the blackbox.\nUntil then the item keeps being retried; unresolved alone never blocks it.",
   "gl-section-main": "Globals\nThese are the overall safety and behavior settings for this connection. The defaults are good enough for most users, so only change them when you have a specific reason.",
   "gl-section-advanced": "Advanced\nThese are extra retention and blackbox safety controls. The defaults are good enough for most users, so you usually do not need to change anything here.",
 
   "cx-wl-enable": "Watchlist: Enable\nCompare watchlists and write missing items to the target.",
   "cx-wl-add": "Watchlist: Add\nAdds missing items to the target watchlist.",
   "cx-wl-remove": "Watchlist: Remove\nRemoves items from the target.",
-  "cx-wl-anime-map": "Use Anime ID Mapping\nUse the local Anime ID database to match anime for this watchlist pair. Requires global Anime ID Mapping to be enabled first.",
+  "cx-wl-anime-map": "Use Anime ID Mapping\nUse the local Anime ID database to match anime for this watchlist pair.\nRequires global Anime ID Mapping to be enabled first.",
   "cx-wl-anime-only": "Anime-only sync\nOnly sync items that Anime ID Mapping can confirm as anime. Non-anime and unmapped items are skipped before falling back to a title search.",
   "cx-rt-enable": "Ratings: Enable\nCompare and write ratings to the target.",
   "cx-rt-add": "Ratings: Add / Update\nWrites ratings/updates to the target.",
   "cx-rt-remove": "Ratings: Remove\nClears ratings on the target (destructive and only for very specific needs).",
-  "cx-rt-anime-map": "Use Anime ID Mapping\nUse the local Anime ID database to match anime for this ratings pair. Requires global Anime ID Mapping to be enabled first.",
-  "cx-hs-anime-map": "Anime episode mapping\nTranslate anime episode numbering when this history pair writes to an anime tracker, using the local Anime ID database. Requires a TMDB metadata key and global Anime ID Mapping. This can heavily increase API calls when additional anime ID and episode lookups are needed.",
-  "cx-pr-anime-map": "Anime episode mapping\nTranslate anime episode numbering before writing progress to SIMKL, using the local Anime ID database. Requires global Anime ID Mapping. This can heavily increase API calls when additional anime ID and episode lookups are needed.",
+  "cx-rt-anime-map": "Use Anime ID Mapping\nUse the local Anime ID database to match anime for this ratings pair.\nRequires global Anime ID Mapping to be enabled first.",
+  "cx-hs-anime-map": "Anime episode mapping\nTranslate anime episode numbering when this history pair writes to an anime tracker, using the local Anime ID database.\nRequires a TMDB metadata key and global Anime ID Mapping.\nThis can heavily increase API calls when additional anime ID and episode lookups are needed.",
+  "cx-pr-anime-map": "Anime episode mapping\nTranslate anime episode numbering before writing progress to SIMKL, using the local Anime ID database.\nRequires global Anime ID Mapping.\nThis can heavily increase API calls when additional anime ID and episode lookups are needed.",
   "cx-rt-anime-only": "Anime-only sync\nOnly sync ratings for items that Anime ID Mapping can confirm as anime. Non-anime and unmapped items are skipped before falling back to a title search.",
 
   "cx-hs-enable": "History: Enable\nCompare and write watch history to the target.",
@@ -34,9 +34,9 @@ export const HELP_TEXT = {
   "cx-hs-remove": "History: Remove\nRemoving history is discouraged (destructive and only for very specific needs).",
   "cx-hs-rewatches": "History: Rewatches\nSync separate play events when both providers support it. SIMKL requires Pro/VIP.",
   "cx-tr-hs-col": "Trakt: Add to library\nAlso add items to your Trakt library when writing history (if enabled).",
-  "cx-tr-hs-ignore-dropped": "Trakt: Ignore dropped shows\nWhen enabled, shows marked as dropped on Trakt are skipped during history sync. This suppresses sync for those shows; it does not remove them elsewhere.",
-  "cx-md-hs-ignore-dropped": "MDBList: Ignore dropped shows\nWhen enabled, shows marked as dropped on MDBList are skipped during history sync. This suppresses sync for those shows; it does not remove them elsewhere.",
-  "cx-sm-hs-ignore-dropped": "Simkl: Ignore dropped shows\nWhen enabled, shows marked as dropped on Simkl are skipped during history sync. This suppresses sync for those shows; it does not remove them elsewhere.",
+  "cx-tr-hs-ignore-dropped": "Trakt: Ignore dropped shows\nWhen enabled, shows marked as dropped on Trakt are skipped during history sync.\nThis suppresses sync for those shows; it does not remove them elsewhere.",
+  "cx-md-hs-ignore-dropped": "MDBList: Ignore dropped shows\nWhen enabled, shows marked as dropped on MDBList are skipped during history sync.\nThis suppresses sync for those shows; it does not remove them elsewhere.",
+  "cx-sm-hs-ignore-dropped": "Simkl: Ignore dropped shows\nWhen enabled, shows marked as dropped on Simkl are skipped during history sync.\nThis suppresses sync for those shows; it does not remove them elsewhere.",
 
   "cx-pr-enable": "Progress: Enable\nSync resume position (where you left off) between providers.",
   "cx-pr-add": "Progress: Add / Update\nWrite resume position to the target.",
@@ -48,6 +48,7 @@ export const HELP_TEXT = {
   "cx-pr-tolerance": "Timestamp tolerance\nProtect targets newer by more than this many seconds.",
   "cx-pr-specials": "Progress: Specials (Season 0)\nInclude Season 0 / specials episodes. Disable to skip them on both sides of this pair.",
   "cx-hs-specials": "History: Specials (Season 0)\nInclude Season 0 / specials episodes. Disable to skip them on both sides of this pair.",
+  "cx-hs-library-only": "History: Only items in destination library\nSkip movies and episodes that are not in the media server library.\nMatches on IDs only, so titles stored under a different ID are skipped too.",
   "cx-rt-specials": "Ratings: Specials (Season 0)\nInclude Season 0 / specials seasons and episodes. Disable to skip them on both sides of this pair.",
 
   "cx-jf-wl-mode": "Jellyfin: Watchlist mode\nJellyfin has no native Watchlist. CrossWatch maps it to:\n• Favorites: sets the Favorite flag\n• Playlist: writes to a named playlist (episodes only; no shows)\n• Collections: writes to a named collection\nChanging mode does not move existing items.\nTip: Favorites or Collections are the most compatible.",
@@ -55,8 +56,8 @@ export const HELP_TEXT = {
 
   "plx-marked-watched": "Plex: Marked watched\nInclude items you manually marked as watched in Plex when syncing history.\nDisable if you only want actual play history.",
   "plx-strict-ids": "Plex: Strict ID matching\nWhen enabled, CrossWatch only matches by IDs (Plex IDs + external IDs). Title/year searches are disabled.",
-  "jf-strict-ids": "Jellyfin: Strict ID matching\nRequire Jellyfin or external IDs to confirm matches. Title searches and path matching are disabled. Episodes can match by series ID plus season and episode numbers.",
-  "jf-targeted-lookup": "Jellyfin: Targeted library lookup\nMatch through a cached movie and series ID catalogue, then fetch episodes only for matched series. The catalogue checks for metadata changes on each sync that needs matching and refreshes fully every 24 hours. Disable to allow a full episode index. Title and path fallback require Strict ID matching to be off.",
+  "jf-strict-ids": "Jellyfin: Strict ID matching\nRequire Jellyfin or external IDs to confirm matches. Title searches and path matching are disabled.\nEpisodes can match by series ID plus season and episode numbers.",
+  "jf-targeted-lookup": "Jellyfin: Targeted library lookup\nMatch through a cached movie and series ID catalogue, then fetch episodes only for matched series.\nThe catalogue checks for metadata changes on each sync that needs matching and refreshes fully every 24 hours.\nDisable to allow a full episode index. Title and path fallback require Strict ID matching to be off.",
   "em-strict-ids": "Emby: Strict ID matching\nWhen enabled, CrossWatch only matches by IDs (Emby IDs + external IDs). Title/year searches are disabled.",
 };
 
@@ -75,14 +76,7 @@ function formatHelpTip(text) {
   if (!lines.length) return "";
   const title = lines.shift();
   if (!lines.length) return title;
-  const body = lines.join(" ").replace(/\s+/g, " ").trim();
-  const sentences = body
-    .split(/(?<=[.!?])\s+/)
-    .map((part) => part.trim())
-    .filter(Boolean);
-  const lead = sentences[0] || body;
-  const follow = sentences.slice(1).join(" ").trim();
-  return follow ? `${title}: ${lead}\n${follow}` : `${title}: ${lead}`;
+  return `${title}\n\n${lines.join("\n")}`;
 }
 
 export function injectHelpIcons(root, { QA } = {}) {

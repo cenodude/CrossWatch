@@ -73,6 +73,8 @@ from ._planner import diff_ratings, diff_progress, _pick_rating, _pick_rating_qu
 from ._interactive import choose_conflict
 from ._progress_completion import fcfg_for_progress_target
 from ._specials import filter_specials_index, specials_excluded
+from ._scope import provider_call
+from .. import library_presence as _library_presence
 try:
     from ._pairs_oneway import _media_type_filter_index as _media_filter
     from ._pairs_oneway import _ratings_filter_index as _rate_filter
@@ -1946,6 +1948,22 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         if anime_only_skipped:
             emit("debug", msg="anime_mapping.anime_only_filtered", feature=feature, a=a, b=b, skipped=anime_only_skipped)
 
+    library_skipped_A: list[tuple[Any, str]] = []
+    library_skipped_B: list[tuple[Any, str]] = []
+    if _library_presence.requested(feature, fcfg):
+        if add_to_A and not a_down and _library_presence.supported(aops, feature):
+            add_to_A, library_skipped_A, presence_error = _library_presence.split_absent(
+                aops, a_cfg, feature, add_to_A, call=provider_call,
+            )
+            emit("debug", msg="library_only.filtered", feature=feature, dst=a, pair=f"{a}-{b}",
+                 kept=len(add_to_A), skipped=len(library_skipped_A), error=presence_error or None)
+        if add_to_B and not b_down and _library_presence.supported(bops, feature):
+            add_to_B, library_skipped_B, presence_error = _library_presence.split_absent(
+                bops, b_cfg, feature, add_to_B, call=provider_call,
+            )
+            emit("debug", msg="library_only.filtered", feature=feature, dst=b, pair=f"{a}-{b}",
+                 kept=len(add_to_B), skipped=len(library_skipped_B), error=presence_error or None)
+
     emit("two:plan", a=a, b=b, feature=feature,
          add_to_A=len(add_to_A), add_to_B=len(add_to_B),
          upd_to_A=len(upd_to_A), upd_to_B=len(upd_to_B),
@@ -1964,6 +1982,8 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
     if review is not None:
         args_A = dict(source=b, source_instance=dst_inst, before=A_eff, down=a_down)
         args_B = dict(source=a, source_instance=src_inst, before=B_eff, down=b_down)
+        review.excluded(feature, a, src_inst, "add", library_skipped_A, **args_A)
+        review.excluded(feature, b, dst_inst, "add", library_skipped_B, **args_B)
         add_to_A = review.filter(feature, a, src_inst, "add", add_to_A, **args_A)
         add_to_B = review.filter(feature, b, dst_inst, "add", add_to_B, **args_B)
         upd_to_A = review.filter(feature, a, src_inst, "update", upd_to_A, **args_A)
@@ -1971,7 +1991,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         rem_from_A = review.filter(feature, a, src_inst, "remove", rem_from_A, **args_A)
         rem_from_B = review.filter(feature, b, dst_inst, "remove", rem_from_B, **args_B)
         if review.preview:
-            return {"cancelled": cancelled}
+            return {"cancelled": cancelled, "library_skipped": len(library_skipped_A) + len(library_skipped_B)}
 
     resA_rem: dict[str, Any] = {"ok": True, "count": 0}
     resB_rem: dict[str, Any] = {"ok": True, "count": 0}
@@ -2697,6 +2717,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         "skipped": skipped_total,
         "blocked": int(blocked_total),
         "manual_excluded": int(manual_blocked),
+        "library_skipped": len(library_skipped_A) + len(library_skipped_B),
         "errors": errors_total,
         "cancelled": bool(cancelled or cancel_requested()),
     }

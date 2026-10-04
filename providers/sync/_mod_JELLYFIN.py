@@ -314,6 +314,7 @@ def get_manifest() -> Mapping[str, Any]:
             "progress": _PROGRESS_CAPABILITIES,
             "collection": _COLLECTION_CAPABILITIES,
             "playlists": _PLAYLIST_CAPABILITIES,
+            "library_presence": {"features": ["history"]},
         },
     }
 
@@ -776,6 +777,11 @@ class JELLYFINModule:
             pass
         cnt, unres = mod.remove(self, lst)
         return _finalize_result(self, self.key_of, f, lst, cnt, unres, op="remove")
+
+    def library_presence(self, feature: str, items: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+        from .jellyfin import _presence
+
+        return _presence.presence(self, items, feature=(feature or "history").lower())
 class _JellyfinOPS:
     def name(self) -> str:
         return "JELLYFIN"
@@ -801,6 +807,7 @@ class _JellyfinOPS:
             "progress": _PROGRESS_CAPABILITIES,
             "collection": _COLLECTION_CAPABILITIES,
             "playlists": _PLAYLIST_CAPABILITIES,
+            "library_presence": {"features": ["history"]},
         }
 
     def is_configured(self, cfg: Mapping[str, Any]) -> bool:
@@ -851,6 +858,15 @@ class _JellyfinOPS:
         dry_run: bool = False,
     ) -> Mapping[str, Any]:
         return self._adapter(cfg).remove(feature, items, dry_run=dry_run)
+
+    def library_presence(
+        self,
+        cfg: Mapping[str, Any],
+        items: Iterable[Mapping[str, Any]],
+        *,
+        feature: str,
+    ) -> list[dict[str, Any]]:
+        return self._adapter(cfg).library_presence(feature, items)
 
     def health(self, cfg: Mapping[str, Any]) -> Mapping[str, Any]:
         return self._adapter(cfg).health()

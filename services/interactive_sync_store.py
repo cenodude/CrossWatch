@@ -12,6 +12,8 @@ import tempfile
 import threading
 import weakref
 
+from cw_platform.library_presence import REASON as NOT_IN_LIBRARY
+
 
 class ReviewRows(MutableMapping):
     def __init__(self, store, kind):
@@ -114,9 +116,12 @@ class ReviewStore:
             self.db.execute("CREATE INDEX IF NOT EXISTS review_selection ON review(selected,id)")
             self.db.commit()
             groups = self.db.execute("SELECT kind,result,COUNT(*),SUM(selected),SUM(selectable) FROM review GROUP BY kind,result").fetchall()
-            self.counts = dict(changes=0, conflicts=0, attention=0, selected=0)
+            self.counts = dict(changes=0, conflicts=0, attention=0, selected=0, not_in_library=0)
             self.selectable_count = 0
             for kind, result, count, selected, selectable in groups:
+                if result == NOT_IN_LIBRARY:
+                    self.counts["not_in_library"] += count
+                    continue
                 self.counts["conflicts" if kind == "conflict" else "changes"] += count
                 self.counts["selected"] += selected
                 self.selectable_count += selectable
@@ -131,6 +136,9 @@ class ReviewStore:
             if value:
                 clauses.append(f"{name}=?")
                 args.append(value)
+        if not result:
+            clauses.append("result!=?")
+            args.append(NOT_IN_LIBRARY)
         if q:
             clauses.append("instr(search,?)>0")
             args.append(q.casefold())
@@ -143,7 +151,7 @@ class ReviewStore:
         if editable_only:
             where += " AND kind='change' AND feature!='playlists' AND json_extract(payload,'$.operation') IN ('add','update')"
         with self.lock:
-            if not args and not selected_only and not editable_only:
+            if not feature and not result and not q and not selected_only and not editable_only:
                 total = self.counts["changes"] + self.counts["conflicts"]
                 selectable, selected = self.selectable_count, self.counts["selected"]
             else:
