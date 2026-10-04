@@ -32,7 +32,7 @@ export function renderInlineMarkup(value) {
 }
 
 export function parseReleaseNotes(source) {
-  const highlights = [], note = [], wikiLinks = [];
+  const highlights = [], note = [], summary = [], wikiLinks = [];
   let section = "", current = null, child = false, fence = false;
   for (const raw of String(source || "").replace(/\r\n?/g, "\n").split("\n")) {
     const line = raw.trim();
@@ -41,13 +41,16 @@ export function parseReleaseNotes(source) {
     const heading = line.match(/^#{1,6}\s+(.+)$/);
     if (heading) {
       const name = heading[1].replace(/[^\p{L}\p{N}\s]/gu, "").trim().toLowerCase();
-      section = name === "highlights" ? "highlights" : name === "upgrade note" ? "upgrade" : name === "updated wiki" ? "wiki" : "";
+      section = name === "highlights" ? "highlights" : name === "upgrade note" ? "upgrade" : name === "release" ? "release" : name === "updated wiki" ? "wiki" : "";
       current = null;
       continue;
     }
     const upgrade = line.match(/^(?:\*\*)?Upgrade note:?(?:\*\*)?:?\s*(.*)$/i);
     if (upgrade) { section = "upgrade"; if (upgrade[1]) note.push(upgrade[1]); continue; }
+    const release = line.match(/^\*\*Release:?\*\*:?\s*(.*)$/i);
+    if (release) { section = "release"; if (release[1]) summary.push(release[1]); continue; }
     if (section === "upgrade") { note.push(line); continue; }
+    if (section === "release") { summary.push(line); continue; }
     if (section === "wiki") {
       const entry = line.replace(/^[-*+]\s+/, "");
       const link = entry.match(/^(.*?)\[([^\]\n]+)\]\(([^\s)]+)\)\s*$/);
@@ -69,5 +72,5 @@ export function parseReleaseNotes(source) {
       else current.text += ` ${line}`;
     }
   }
-  return {highlights, upgradeNote: note.join("\n").trim(), wikiLinks};
+  return {highlights, upgradeNote: note.join("\n").trim(), summary: summary.join("\n").trim(), wikiLinks};
 }

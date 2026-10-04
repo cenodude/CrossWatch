@@ -78,12 +78,13 @@ test("failed migration stays visible with Continue disabled and Close available"
 });
 
 test("five highlights expand to all; upgrade notes remain visible separately", async () => {
-  const body = "**Upgrade note:**\nThe next sync will rebuild baselines.\n## ✨ Highlights\n" +
+  const body = "**Release:**\nA release with <b>new</b> sync features.\n**Upgrade note:**\nThe next sync will rebuild baselines.\n## ✨ Highlights\n" +
     Array.from({length:7}, (_, i) => `- Change ${i + 1}\n  - Detail ${i + 1}`).join("\n") + "\n## Fixes\n- A fix";
   const app = await setup({body});
   app.resolveMigration({ok:true});
   await app.settle();
   assert.match(app.host.innerHTML, /The next sync will rebuild baselines/);
+  assert.match(app.host.innerHTML, /<div class="upg-summary"><p>A release with &lt;b&gt;new&lt;\/b&gt; sync features\.<\/p><\/div>/);
   assert.match(app.host.innerHTML, /Review the upgrade note below/);
   assert.match(app.host.innerHTML, /<details><summary>Change 1<\/summary>/);
   assert.match(app.host.innerHTML, /Change 5/);

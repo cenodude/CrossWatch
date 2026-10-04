@@ -125,6 +125,7 @@ export default {
       highlights: [],
       wikiLinks: [],
       upgradeNote: "",
+      summary: "",
       showAllHighlights: false,
       backup: "",
       adjustedSettings: false,
@@ -159,6 +160,7 @@ export default {
           state.highlights = notes.highlights;
           state.wikiLinks = notes.wikiLinks;
           state.upgradeNote = notes.upgradeNote;
+          state.summary = notes.summary;
         }
       } catch {} finally {
         state.notesLoading = false;
@@ -267,6 +269,7 @@ export default {
         </section>
         ${state.upgradeNote ? `<section class="upg-upgrade-note" aria-label="Upgrade note"><h2><span class="material-symbols-rounded" aria-hidden="true">info</span>Upgrade note</h2><div>${state.upgradeNote.split(/\n\s*\n/).map(text => `<p>${renderInlineMarkup(text.replace(/\n/g, " "))}</p>`).join("")}</div></section>` : ""}
         <section class="upg-changes" aria-label="What changed"><h2>What changed</h2>
+          ${state.summary ? `<div class="upg-summary">${state.summary.split(/\n\s*\n/).map(text => `<p>${renderInlineMarkup(text.replace(/\n/g, " "))}</p>`).join("")}</div>` : ""}
           ${highlights.length ? `<ul class="upg-highlights">${highlights.map((item, index) => `<li><span class="material-symbols-rounded" aria-hidden="true">${["auto_awesome", "tune", "sync_alt", "dashboard", "insights"][index % 5]}</span><div>${item.children.length ? `<details><summary>${renderInlineMarkup(item.text)}</summary><ul>${item.children.map(text => `<li>${renderInlineMarkup(text)}</li>`).join("")}</ul></details>` : renderInlineMarkup(item.text)}</div></li>`).join("")}</ul>` : `<p class="upg-muted">${state.notesLoading ? "Loading release highlights..." : "Highlights are unavailable for this build. You can check the full release notes below."}</p>`}
           ${state.highlights.length > 5 ? `<button class="upg-show-all" type="button" data-x="highlights" aria-expanded="${state.showAllHighlights}">${state.showAllHighlights ? "Show fewer highlights" : `Show all highlights (${state.highlights.length})`}</button>` : ""}
           <a class="upg-release-link" href="${escapeHtml(state.notesUrl)}" target="_blank" rel="noopener noreferrer">View full release notes <span class="material-symbols-rounded" aria-hidden="true">arrow_forward</span></a>

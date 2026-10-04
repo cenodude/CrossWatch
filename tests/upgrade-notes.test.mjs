@@ -32,8 +32,17 @@ test("older release notes without an upgrade note keep only the highlights", () 
 });
 
 test("missing sections and code samples do not become highlights", () => {
-  assert.deepEqual(parseReleaseNotes("## Fixes\n- Fixed something"), {highlights:[], upgradeNote:"", wikiLinks:[]});
-  assert.deepEqual(parseReleaseNotes("```md\n## Highlights\n- Example\n```"), {highlights:[], upgradeNote:"", wikiLinks:[]});
+  assert.deepEqual(parseReleaseNotes("## Fixes\n- Fixed something"), {highlights:[], upgradeNote:"", summary:"", wikiLinks:[]});
+  assert.deepEqual(parseReleaseNotes("```md\n## Highlights\n- Example\n```"), {highlights:[], upgradeNote:"", summary:"", wikiLinks:[]});
+});
+
+test("Release marker captures the intro and stops at the upgrade note", () => {
+  const notes = parseReleaseNotes("# CrossWatch v0.13.2\nIgnored intro.\n\n**Release:**\nNew sync features.\nA reworked Playlists page.\n\n**Upgrade note:**\nYou cannot downgrade.\n\n## ✨ Highlights\n- **Quick add** has a fourth choice.");
+  assert.equal(notes.summary, "New sync features.\nA reworked Playlists page.");
+  assert.equal(notes.upgradeNote, "You cannot downgrade.");
+  assert.equal(notes.highlights.length, 1);
+  assert.equal(parseReleaseNotes("**Release:** One line.\n## Highlights\n- Change").summary, "One line.");
+  assert.equal(parseReleaseNotes("**Upgrade note:**\nRebuild.\n**Release:**\nAfter the note.").summary, "After the note.");
 });
 
 test("release markup escapes HTML and rejects executable links", () => {

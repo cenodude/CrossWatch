@@ -335,6 +335,9 @@ html[data-cw-theme] #setup-host.sw-welcome .sw-password-toggle,#setup-host.sw-we
 #upg-host .upg-checks .material-symbols-rounded{font-size:20px;align-self:flex-start}
 #upg-host code{overflow-wrap:anywhere;white-space:normal;padding:3px 6px;border-radius:6px;background:rgba(130,150,180,.12);font-size:12px}
 #upg-host .upg-changes{padding:24px 4px;border-top:1px solid var(--cw-modal-border,rgba(150,170,210,.14));margin-top:22px}
+#upg-host .upg-summary{margin:0 0 18px}
+#upg-host .upg-summary p{margin:0 0 8px;line-height:1.6;font-size:14px}
+#upg-host .upg-summary a{color:var(--cw-modal-accent,#8aafff)}
 #upg-host .upg-highlights{display:grid;gap:15px;padding:0;margin:0 0 20px;list-style:none}
 #upg-host .upg-highlights>li{display:grid;grid-template-columns:24px minmax(0,1fr);gap:14px;align-items:start;line-height:1.55;font-size:14px}
 #upg-host .upg-highlights>li>.material-symbols-rounded{font-size:22px;color:var(--cw-modal-muted,#aab5cb)}
