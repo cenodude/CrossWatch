@@ -14,7 +14,7 @@ TRAKT = {"provider": "TRAKT", "instance": "default"}
 def _targets(_cfg: Any, _user: Any = None) -> list[dict[str, Any]]:
     return [
         {**SIMKL, "history_enabled": True, "ratings_enabled": True, "watchlist_enabled": True, "episode_list": True},
-        {**TRAKT, "history_enabled": True, "ratings_enabled": True, "watchlist_enabled": True, "episode_list": False},
+        {**TRAKT, "history_enabled": True, "ratings_enabled": True, "watchlist_enabled": True, "collection_enabled": True, "episode_list": False},
     ]
 
 
@@ -113,6 +113,21 @@ def test_manual_watched_keeps_the_whole_show_without_episodes(calls) -> None:
 
     assert _body(res)["episodes"] == 0
     assert calls[0][2][0]["type"] == "show"
+
+
+def test_manual_collection_is_sent_only_where_it_is_supported(calls) -> None:
+    res = manualAPI.api_manual_watched(payload={
+        "item": SHOW,
+        "providers": [SIMKL, TRAKT],
+        "actions": {"history": False, "collection": True},
+    })
+
+    body = _body(res)
+    assert res.status_code == 200 and body["ok"] is True
+    assert [(provider, feature) for provider, feature, _items in calls] == [("TRAKT", "collection")]
+    sent = calls[0][2][0]
+    assert sent["type"] == "show" and sent["collected_at"] and "watched_at" not in sent
+    assert body["results"][0]["collection_skipped"] == "collection_not_supported"
 
 
 def test_provider_episode_list_only_goes_to_that_provider(calls) -> None:

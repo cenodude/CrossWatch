@@ -44,7 +44,8 @@
       const entry = present.get(index);
       if (!entry && !target.can_send) return;
       const chip = document.createElement(entry ? "span" : "button");
-      chip.className = `cw-presence-chip ${entry ? "is-on" : "is-off"}`;
+      const unverified = !!entry && target.verified === false;
+      chip.className = `cw-presence-chip ${entry ? "is-on" : "is-off"}${unverified ? " is-unverified" : ""}`;
       const name = target.display || target.label || target.provider;
       const src = meta.logoPath?.(target.provider) || meta.logLogoPath?.(target.provider) || "";
       if (src) {
@@ -59,7 +60,8 @@
         chip.appendChild(text);
       }
       if (entry) {
-        chip.title = [`On ${name}`, entry[1] > 1 ? `${entry[1]} entries` : "", entry[2] != null ? String(entry[2]) : ""].filter(Boolean).join(" · ");
+        chip.title = [unverified ? `Sent to ${name}` : `On ${name}`, entry[1] > 1 ? `${entry[1]} entries` : "", entry[2] != null ? String(entry[2]) : ""].filter(Boolean).join(" · ")
+          + (unverified ? ". Not checked since, because no sync pair uses this account." : "");
         chip.setAttribute("role", "img");
         chip.setAttribute("aria-label", chip.title);
       } else {

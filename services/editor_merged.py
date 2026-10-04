@@ -53,6 +53,15 @@ def _linked(cfg: Mapping[str, Any], feature: str, instances: Mapping[str, list[s
     return out
 
 
+def _paired(cfg: Mapping[str, Any], feature: str) -> set[tuple[str, str]]:
+    out: set[tuple[str, str]] = {("CROSSWATCH", "default")}
+    for pair in cfg.get("pairs") or []:
+        if not isinstance(pair, Mapping) or pair.get("enabled") is False or feature not in _feature_list_for_pair(pair):
+            continue
+        out.update(pair_refs(pair))
+    return out
+
+
 def _shared_tokens(key: str, item: Mapping[str, Any]) -> set[str]:
     if str(item.get("type") or "").lower() == "anime":
         item = {**item, "type": "show"}
@@ -185,7 +194,9 @@ def merged_view(kind: str, request: Any = None) -> dict[str, Any]:
                             "display": provider.title() if instance == "default" else f"{provider.title()} ({label})",
                             "can_send": False, "linked": (provider, instance) in linked})
 
+    paired = _paired(cfg, feature)
     for target in targets:
+        target["verified"] = target["provider"] == "CROSSWATCH" or (target["provider"], target["instance"]) in paired
         owners = api._instance_owner_labels(cfg, target["provider"], target["instance"])
         target["shared_with"] = owners if len(owners) > 1 else []
 

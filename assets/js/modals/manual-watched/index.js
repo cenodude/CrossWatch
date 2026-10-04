@@ -7,6 +7,7 @@ const ACTIONS = [
   ["history", "History", "history", "Mark the item as watched", "history_enabled"],
   ["watchlist", "Watchlist", "bookmark_add", "Add the item to watchlists", "watchlist_enabled"],
   ["rating", "Rating", "star", "Send a score to providers", "ratings_enabled"],
+  ["collection", "Collection", "inventory_2", "Add the item to collections", "collection_enabled"],
 ];
 
 const fjson = async (url, opts = {}) => {
@@ -106,7 +107,7 @@ export default {
       selectedItem: null,
       dateMode: "today",
       watchedOn: todayLocal(),
-      actions: { history: true, watchlist: false, rating: false },
+      actions: { history: true, watchlist: false, rating: false, collection: false },
       rating: 8,
       scope: "show",
       listSource: "tmdb",
@@ -122,7 +123,7 @@ export default {
       statusTone: "",
     };
     if (ACTIONS.some(([key]) => key === props?.action)) {
-      state.actions = { history: false, watchlist: false, rating: false, [props.action]: true };
+      state.actions = { history: false, watchlist: false, rating: false, collection: false, [props.action]: true };
     }
 
     const PM = window.CW?.ProviderMeta;
@@ -222,7 +223,7 @@ export default {
       if (state.saving) return "Sending...";
       const keys = selectedActionKeys();
       const verb = keys.length === 1
-        ? { history: "Mark watched", watchlist: "Add to watchlist", rating: `Rate ${state.rating}/10` }[keys[0]]
+        ? { history: "Mark watched", watchlist: "Add to watchlist", rating: `Rate ${state.rating}/10`, collection: "Add to collection" }[keys[0]]
         : "Save";
       const count = selectedCompatibleTargets().length;
       return count ? `${verb} on ${count} provider${count === 1 ? "" : "s"}` : verb;
@@ -622,6 +623,7 @@ export default {
               history: !!state.actions.history,
               watchlist: !!state.actions.watchlist,
               rating: !!state.actions.rating,
+              collection: !!state.actions.collection,
             },
             rating: state.actions.rating ? state.rating : null,
             providers,
