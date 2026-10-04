@@ -35,6 +35,7 @@ MANIFEST_NAME = "manifest.json"
 _APP_STATE_FILES = (
     "config.json",
     ".cw_master_key",
+    "published_lists.json",
 )
 _APP_STATE_DIRS = (
     ".cw_state",

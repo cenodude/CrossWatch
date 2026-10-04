@@ -221,3 +221,19 @@ def test_scheduler_backup_job_payload(monkeypatch) -> None:
     status = scheduler.status()
     assert status["last_backup_job_id"] == "morning-backup"
     assert status["last_backup_scope"] == "app_state"
+
+
+def test_normal_backup_includes_published_lists_but_config_only_does_not(tmp_path: Path, monkeypatch) -> None:
+    _patch_config_dir(monkeypatch, tmp_path)
+    import services.backups as backups
+
+    (tmp_path / "config.json").write_text("{}\n", encoding="utf-8")
+    (tmp_path / ".cw_master_key").write_text("test-key", encoding="utf-8")
+    (tmp_path / "published_lists.json").write_text('{"version":1,"feeds":{}}', encoding="utf-8")
+
+    def paths(scope: str) -> set[str]:
+        res = backups.create_backup(scope=scope, label="unit", trigger="test")
+        return {row["path"] for row in backups.validate_backup(res["path"])["manifest"]["files"]}
+
+    assert "published_lists.json" in paths("app_state")
+    assert "published_lists.json" not in paths("config_only")
