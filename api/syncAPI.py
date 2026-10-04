@@ -211,6 +211,8 @@ def _normalize_features(f: dict | None) -> dict:
             v["remove"] = coerce_bool(v.get("remove", False))
         if k == "history" and isinstance(f.get(k), dict):
             f[k]["rewatches"] = coerce_bool(f[k].get("rewatches", False))
+            if "use_source_status" in f[k]:
+                f[k]["use_source_status"] = coerce_bool(f[k].get("use_source_status", False))
         if k in ("history", "progress", "ratings") and isinstance(f.get(k), dict):
             f[k]["include_specials"] = coerce_bool(f[k].get("include_specials", True), True)
         if isinstance(f.get(k), dict) and "remove_mode" in f[k]:

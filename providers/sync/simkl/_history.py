@@ -1540,7 +1540,60 @@ def _parse_rows(
     return out, thaw, latest_ts_movies, latest_ts_shows, latest_ts_anime, movies_cnt, eps_cnt
 
 
+_WATCH_STATUS = {"watching": "watching", "completed": "completed", "hold": "on_hold", "dropped": "dropped", "plantowatch": "planning"}
+
+
+def _source_status_enabled(adapter: Any) -> bool:
+    cfg = getattr(adapter, "raw_cfg", None)
+    if not isinstance(cfg, Mapping) or PAIR_FEATURE_OPTIONS_KEY not in cfg:
+        return False
+    return bool(runtime_pair_feature_options(cfg, "history").get("use_source_status"))
+
+
+def _watch_status_by_record(adapter: Any) -> dict[str, str]:
+    headers = _headers(adapter, force_refresh=True)
+    try:
+        resp = adapter.client.session.get(URL_ALL_ITEMS, headers=headers, params=_params(headers), timeout=adapter.cfg.timeout)
+        body = resp.json() if resp.ok else None
+    except Exception as exc:
+        _warn("watch_status_fetch_failed", error=str(exc))
+        return {}
+    out: dict[str, str] = {}
+    for kind in ("movies", "shows", "anime"):
+        rows = body.get(kind) if isinstance(body, Mapping) else None
+        for row in rows if isinstance(rows, list) else []:
+            if not isinstance(row, Mapping):
+                continue
+            media = row.get("movie") if kind == "movies" else row.get("show")
+            ids = media.get("ids") if isinstance(media, Mapping) else None
+            record = str(ids.get("simkl") or ids.get("simkl_id") or "").strip() if isinstance(ids, Mapping) else ""
+            status = _WATCH_STATUS.get(str(row.get("status") or "").strip().lower())
+            if record and status:
+                out[record] = status
+    return out
+
+
+def _with_watch_status(adapter: Any, index: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    if not index or not _source_status_enabled(adapter):
+        return index
+    statuses = _watch_status_by_record(adapter)
+    if not statuses:
+        return index
+    for item in index.values():
+        if not isinstance(item, dict):
+            continue
+        ids = _show_ids_of_episode(item) if str(item.get("type") or "").lower() == "episode" else _ids_of(item)
+        status = statuses.get(str(ids.get("simkl") or "").strip())
+        if status:
+            item["watch_status"] = status
+    return index
+
+
 def build_index(adapter: Any, since: int | None = None, limit: int | None = None) -> dict[str, dict[str, Any]]:
+    return _with_watch_status(adapter, _build_index(adapter, since=since, limit=limit))
+
+
+def _build_index(adapter: Any, since: int | None = None, limit: int | None = None) -> dict[str, dict[str, Any]]:
     session = adapter.client.session
     timeout = adapter.cfg.timeout
     normalize_flat_watermarks()
