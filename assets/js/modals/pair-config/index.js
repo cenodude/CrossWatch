@@ -982,7 +982,7 @@ function applySubDisable(feature){
       "#cx-rt-add","#cx-rt-remove","#cx-rt-anime-map","#cx-rt-anime-only","#cx-rt-type-all","#cx-rt-type-movies","#cx-rt-type-shows","#cx-rt-type-seasons","#cx-rt-type-episodes","#cx-rt-mode","#cx-rt-from-date","#cx-rt-specials",
       "#tr-rt-perpage","#tr-rt-maxpages","#tr-rt-chunk"
     ],
-    history: ["#cx-hs-add", "#cx-hs-remove", "#cx-hs-rewatches", "#cx-hs-specials", "#cx-hs-anime-map", "#cx-tr-hs-numfb", "#cx-tr-hs-col", "#cx-tr-hs-col-movies", "#cx-tr-hs-col-shows", "#cx-tr-hs-ignore-dropped", "#cx-md-hs-ignore-dropped", "#cx-sm-hs-ignore-dropped", "#cx-tr-hs-unres"],
+    history: ["#cx-hs-add", "#cx-hs-remove", "#cx-hs-rewatches", "#cx-hs-specials", "#cx-hs-anime-map", "#cx-hs-source-status", "#cx-tr-hs-numfb", "#cx-tr-hs-col", "#cx-tr-hs-col-movies", "#cx-tr-hs-col-shows", "#cx-tr-hs-ignore-dropped", "#cx-md-hs-ignore-dropped", "#cx-sm-hs-ignore-dropped", "#cx-tr-hs-unres"],
     playlists:["#cx-pl-add","#cx-pl-remove"],
     progress:["#cx-pr-add","#cx-pr-remove","#cx-pr-min","#cx-pr-delta","#cx-pr-maxp","#cx-pr-replay","#cx-pr-tolerance","#cx-pr-specials","#cx-pr-anime-map"],
     collection:["#cx-co-add","#cx-co-remove","#cx-co-type-all","#cx-co-type-movies","#cx-co-type-shows","#cx-co-type-seasons","#cx-co-type-episodes"]
@@ -1832,6 +1832,7 @@ function renderFeaturePanel(state){
         </div>`
       : "";
     const hsRemoveLocked = historyRemoveLockedForPair(state);
+    const hsSourceStatus = isAniList(state?.dst) && isSimkl(state?.src);
     const animeOpts = normalizeAnimeHistoryOptions(state);
     const animeBlocked = !tmdbMetadataReady(state) || !globalAnimeMappingEnabled(state);
     const animeNote = animeHistoryBlockReason(state);
@@ -1846,6 +1847,13 @@ function renderFeaturePanel(state){
         </label>
       </div>
       ${animeNote ? `<div class="muted">${animeNote}</div>` : ""}
+      ${hsSourceStatus ? `<div class="opt-row" title="Dropped and on-hold titles keep that status on AniList. Applied when progress is written; a title dropped later without new episodes does not change.">
+        <label for="cx-hs-source-status">Use source watch status</label>
+        <label class="switch">
+          <input id="cx-hs-source-status" type="checkbox" ${hs.use_source_status ? "checked" : ""}>
+          <span class="slider"></span>
+        </label>
+      </div>` : ""}
       ${hsRemoveLocked ? `<div class="opt-row muted" title="AniList only holds anime, so this is always on for history.">
         <label for="cx-hs-anime-only">Anime-only sync</label>
         <label class="switch">
@@ -2418,6 +2426,7 @@ function bindChangeHandlers(state,root){
         include_specials: ID("cx-hs-specials") ? !!ID("cx-hs-specials").checked : prev.include_specials !== false,
         use_anime_mapping: !!(animeEl && animeEl.checked && tmdbMetadataReady(state)),
         anime_only_sync: false,
+        use_source_status: !!ID("cx-hs-source-status")?.checked && isAniList(state?.dst) && isSimkl(state?.src),
       });
       state.visited.add("history");
     }

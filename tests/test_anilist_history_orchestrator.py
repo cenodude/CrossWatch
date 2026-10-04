@@ -131,7 +131,7 @@ def _movie(ids: dict[str, str], watched_at: str = "2026-09-02T20:00:00Z") -> dic
     return {"type": "movie", "title": "Your Name.", "year": 2016, "ids": dict(ids), "watched": True, "watched_at": watched_at}
 
 
-def _cfg(mapping_enabled: bool = True) -> dict[str, Any]:
+def _cfg(mapping_enabled: bool = True, source_status: bool = False) -> dict[str, Any]:
     return {
         "runtime": {"debug": False, "snapshot_ttl_sec": 0, "apply_chunk_size": 0, "apply_chunk_pause_ms": 0},
         "anilist": {"access_token": "token"},
@@ -139,15 +139,17 @@ def _cfg(mapping_enabled: bool = True) -> dict[str, Any]:
         "sync": {"dry_run": False, "enable_add": True, "enable_remove": False,
                  "include_observed_deletes": False, "allow_mass_delete": False},
         "pairs": [{"id": "p1", "enabled": True, "source": "JELLYFIN", "target": "ANILIST", "mode": "one-way",
-                   "feature": "history", "features": {"history": {"enable": True, "add": True, "remove": False}}}],
+                   "feature": "history", "features": {"history": {"enable": True, "add": True, "remove": False,
+                                                                 "use_source_status": source_status}}}],
     }
 
 
-def _sync(monkeypatch: pytest.MonkeyPatch, source: list[dict[str, Any]], *, mapping_enabled: bool = True) -> list[dict[str, Any]]:
+def _sync(monkeypatch: pytest.MonkeyPatch, source: list[dict[str, Any]], *, mapping_enabled: bool = True,
+          source_status: bool = False) -> list[dict[str, Any]]:
     src = FakeSource({canonical_key(item): item for item in source})
     monkeypatch.setattr("cw_platform.orchestrator.facade.load_sync_providers", lambda: {"JELLYFIN": src, "ANILIST": anilist_mod.OPS})
     before = len(FakeAniList.saves)
-    Orchestrator(_cfg(mapping_enabled)).run()
+    Orchestrator(_cfg(mapping_enabled, source_status)).run()
     assert src.add_calls == []
     return FakeAniList.saves[before:]
 
@@ -220,6 +222,83 @@ def test_nothing_is_planned_or_written_without_anime_mapping(anilist: type[FakeA
     result = anilist_mod.OPS.add(_cfg(False), [_episode(AOT, 1, 5)], feature="history")
     assert (result["count"], result["unresolved"][0]["reason"]) == (0, "anime_mapping_unavailable")
     assert anilist.saves == []
+
+
+def _with_status(items: list[dict[str, Any]], status: str) -> list[dict[str, Any]]:
+    return [{**item, "watch_status": status} for item in items]
+
+
+@pytest.mark.parametrize("status,expected", [("dropped", "DROPPED"), ("on_hold", "PAUSED"), ("watching", "CURRENT"), ("planning", "CURRENT")])
+def test_source_watch_status_is_used_when_the_option_is_on(anilist: type[FakeAniList], monkeypatch: pytest.MonkeyPatch,
+                                                           status: str, expected: str) -> None:
+    source = _with_status([_episode(AOT, 1, 1), _episode(AOT, 1, 2), _episode(AOT, 1, 3), _episode(AOT, 1, 4)], status)
+
+    [save] = _sync(monkeypatch, source, source_status=True)
+
+    assert (save["mediaId"], save["progress"], save["status"]) == (16498, 4, expected)
+
+
+def test_source_watch_status_is_ignored_when_the_option_is_off(anilist: type[FakeAniList], monkeypatch: pytest.MonkeyPatch) -> None:
+    [save] = _sync(monkeypatch, _with_status([_episode(AOT, 1, 1), _episode(AOT, 1, 2)], "dropped"))
+
+    assert (save["progress"], save["status"]) == (2, "CURRENT")
+
+
+def test_a_finished_title_is_completed_even_when_the_source_says_dropped(anilist: type[FakeAniList], monkeypatch: pytest.MonkeyPatch) -> None:
+    source = _with_status([_episode(AOT, 3, 12 + number) for number in range(1, 11)], "dropped")
+
+    [save] = _sync(monkeypatch, source, source_status=True)
+
+    assert (save["progress"], save["status"]) == (10, "COMPLETED")
+
+
+@pytest.mark.parametrize("option,expected", [(True, "DROPPED"), (False, "CURRENT")])
+def test_an_entry_dropped_on_anilist_stays_dropped_only_with_the_option(anilist: type[FakeAniList], monkeypatch: pytest.MonkeyPatch,
+                                                                        option: bool, expected: str) -> None:
+    anilist.entries = {16498: _entry("DROPPED", 2)}
+
+    [save] = _sync(monkeypatch, [_episode(AOT, 1, 3), _episode(AOT, 1, 4)], source_status=option)
+
+    assert (save["progress"], save["status"]) == (4, expected)
+
+
+def test_simkl_history_attaches_the_watch_status_only_when_asked() -> None:
+    from types import SimpleNamespace
+
+    from cw_platform.anime_mapping.service import config_with_pair_feature_options
+    from providers.sync.simkl import _history as simkl_history
+
+    body = {"anime": [{"status": "dropped", "show": {"ids": {"simkl": 9001}}}, {"status": "hold", "show": {"ids": {"simkl": 9002}}}],
+            "shows": [{"status": "watching", "show": {"ids": {"simkl": 9003}}}], "movies": [{"status": "completed", "movie": {"ids": {"simkl": 9004}}}]}
+    calls: list[str] = []
+
+    def get(url: str, **_kwargs: Any) -> Any:
+        calls.append(url)
+        return SimpleNamespace(ok=True, json=lambda: body)
+
+    def adapter(option: bool) -> Any:
+        raw = config_with_pair_feature_options({}, {"use_source_status": option, "feature": "history"})
+        return SimpleNamespace(client=SimpleNamespace(session=SimpleNamespace(get=get)), cfg=SimpleNamespace(timeout=5), raw_cfg=raw)
+
+    def index() -> dict[str, dict[str, Any]]:
+        return {"a": {"type": "episode", "show_ids": {"simkl": "9001"}, "season": 1, "episode": 1},
+                "b": {"type": "episode", "show_ids": {"simkl": "9002"}, "season": 1, "episode": 1},
+                "c": {"type": "episode", "show_ids": {"simkl": "9003"}, "season": 1, "episode": 1},
+                "d": {"type": "movie", "ids": {"simkl": "9004"}},
+                "e": {"type": "movie", "ids": {"simkl": "1"}}}
+
+    original = simkl_history._headers
+    simkl_history._headers = lambda *_a, **_k: {}
+    try:
+        off = simkl_history._with_watch_status(adapter(False), index())
+        on = simkl_history._with_watch_status(adapter(True), index())
+    finally:
+        simkl_history._headers = original
+
+    assert all("watch_status" not in item for item in off.values())
+    assert {key: item.get("watch_status") for key, item in on.items()} == {
+        "a": "dropped", "b": "on_hold", "c": "watching", "d": "completed", "e": None}
+    assert len(calls) == 1
 
 
 def test_remove_is_refused(anilist: type[FakeAniList]) -> None:

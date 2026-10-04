@@ -10,6 +10,7 @@ from typing import Any
 
 from cw_platform.anime_mapping import AnimeMappingService
 from cw_platform.anime_mapping.episodes import resolve_axis_coordinate_map
+from cw_platform.anime_mapping.service import PAIR_FEATURE_OPTIONS_KEY, runtime_pair_feature_options
 from cw_platform.anime_mapping.storage import normalize_release_tag
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
@@ -60,6 +61,7 @@ query ($ids: [Int], $page: Int) {
 """.strip()
 
 _MEDIA_PAGE = 50
+_HELD_STATUS = {"dropped": "DROPPED", "on_hold": "PAUSED"}
 REMOVE_UNSUPPORTED = "anilist_history_remove_unsupported"
 SPECIALS_UNSUPPORTED = "anilist_history_specials_unsupported"
 NOT_MAPPED = "not_anime_or_no_match"
@@ -283,6 +285,29 @@ def _media_states(adapter: Any, wanted: Iterable[int]) -> dict[int, dict[str, An
     return states
 
 
+def _source_status_enabled(adapter: Any) -> bool:
+    cfg = getattr(adapter, "raw_cfg", None)
+    if not isinstance(cfg, Mapping) or PAIR_FEATURE_OPTIONS_KEY not in cfg:
+        return False
+    return bool(runtime_pair_feature_options(cfg, "history").get("use_source_status"))
+
+
+def _status_override(items: Iterable[Mapping[str, Any]], media: Mapping[str, Any], planned: Any) -> str | None:
+    if str(planned or "").upper() != "CURRENT":
+        return None
+    statuses = {str(item.get("watch_status") or "").strip().lower() for item in items}
+    statuses.discard("")
+    if len(statuses) == 1:
+        held = _HELD_STATUS.get(next(iter(statuses)))
+        if held:
+            return held
+    if statuses:
+        return None
+    entry = media.get("mediaListEntry") if isinstance(media.get("mediaListEntry"), Mapping) else {}
+    current = str((entry or {}).get("status") or "").strip().upper()
+    return current if current in _HELD_STATUS.values() else None
+
+
 def _unresolved(item: Mapping[str, Any], reason: str) -> dict[str, Any]:
     out = dict(id_minimal(item))
     out["reason"] = reason
@@ -301,6 +326,7 @@ def add_detailed(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, 
     prog_mk = getattr(adapter, "progress_factory", None)
     prog = prog_mk("history", total=len(rows)) if callable(prog_mk) else None
     cfg = getattr(adapter, "raw_cfg", None)
+    use_source_status = _source_status_enabled(adapter)
     groups: dict[int, list[tuple[int, str, date | None, Mapping[str, Any]]]] = {}
     skipped_keys: list[str] = []
     unresolved: list[dict[str, Any]] = []
@@ -333,6 +359,10 @@ def add_detailed(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, 
             variables = dict(plan["variables"])
             if "startedAt" in variables and days:
                 variables["startedAt"] = _fuzzy(min(days))
+            if use_source_status:
+                override = _status_override([item for _ep, _key, _day, item in group], media, variables.get("status"))
+                if override:
+                    variables["status"] = override
             try:
                 adapter.client.gql(GQL_SAVE_PROGRESS, variables, feature="history:add")
             except Exception as exc:
