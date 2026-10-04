@@ -12,6 +12,8 @@ from typing import Any
 from collections.abc import Callable, MutableMapping
 
 from ..id_map import canonical_key
+from ..library_presence import REASON as NOT_IN_LIBRARY
+from ..reason_labels import reason_message
 
 
 def fingerprint(value: Any) -> str:
@@ -93,6 +95,20 @@ class InteractivePlan:
         if done:
             report()
         return kept
+
+    def excluded(self, feature, provider, instance, operation, entries, *, source="", source_instance="default", before=None, scope="", down=False, destination_label=""):
+        if not self.record_rows or not entries:
+            return
+        for item, reason in entries:
+            key = canonical_key(item)
+            payload = dict(feature=feature, provider=provider, instance=instance, operation=operation,
+                           item=item, before=(before or {}).get(key), scope=scope,
+                           source=source, source_instance=source_instance, destination_label=destination_label)
+            rid = fingerprint(payload)
+            self.rows[rid] = dict(deepcopy(payload) if self.copy_rows else payload,
+                                  id=rid, key=key, result=NOT_IN_LIBRARY,
+                                  reason=reason_message(reason, provider=provider, feature=feature) or reason,
+                                  selectable=False)
 
     def retain_deferred(self, feature, provider, instance, current, previous, key_fn=canonical_key):
         retained = False

@@ -262,6 +262,7 @@ from ._pairs_utils import (
 from ._pairs_massdelete import maybe_block_mass_delete as _maybe_block_mass_delete
 from ._pairs_blocklist import apply_blocklist
 from ._specials import filter_specials_index, specials_excluded
+from .. import library_presence as _library_presence
 from ._history_rewatches import (
     collapse_history_latest,
     config_with_history_rewatches,
@@ -1752,6 +1753,14 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
         if anime_only_skipped:
             emit("debug", msg="anime_mapping.anime_only_filtered", feature=feature, dst=dst, skipped=anime_only_skipped)
 
+    library_skipped: list[tuple[Any, str]] = []
+    if adds and not dst_down and _library_presence.requested(feature, fcfg) and _library_presence.supported(dst_ops, feature):
+        adds, library_skipped, presence_error = _library_presence.split_absent(
+            dst_ops, dst_cfg, feature, adds, call=provider_call,
+        )
+        emit("debug", msg="library_only.filtered", feature=feature, dst=dst,
+             kept=len(adds), skipped=len(library_skipped), error=presence_error or None)
+
     emit("one:plan", src=src, dst=dst, feature=feature,
         adds=len(adds), removes=len(removes), updates=len(updates),
         src_count=len(src_idx), dst_count=len(dst_full))
@@ -1768,11 +1777,13 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
     review = getattr(ctx, "interactive", None)
     if review is not None:
         review_args = dict(source=src, source_instance=src_inst, before=dst_full, down=dst_down)
+        review.excluded(feature, dst, dst_inst, "add", library_skipped, **review_args)
         adds = review.filter(feature, dst, dst_inst, "add", adds, **review_args)
         updates = review.filter(feature, dst, dst_inst, "update", updates, **review_args)
         removes = review.filter(feature, dst, dst_inst, "remove", removes, **review_args)
         if review.preview:
-            return {"blocked": blocked_total, "manual_excluded": int(manual_blocked), "cancelled": cancelled}
+            return {"blocked": blocked_total, "manual_excluded": int(manual_blocked),
+                    "library_skipped": len(library_skipped), "cancelled": cancelled}
 
     attempted_keys: list[str] = []
     key2item: dict[str, Any] = {}
@@ -2348,6 +2359,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
         "skipped_inferred": int((res_update or {}).get("skipped_inferred", 0)) + int((res_add or {}).get("skipped_inferred", 0)),
         "blocked": int(blocked_total),
         "manual_excluded": int(manual_blocked),
+        "library_skipped": len(library_skipped),
         "res_add": res_add,
         "res_update": res_update,
         "res_remove": res_remove,

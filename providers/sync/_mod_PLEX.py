@@ -560,6 +560,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "remove": False,
             },
             "playlists": _PLAYLIST_CAPABILITIES,
+            "library_presence": {"features": ["history"]},
         },
     }
 
@@ -1531,6 +1532,11 @@ class PLEXModule:
         except Exception as e:
             return {"ok": False, "error": str(e), "count": 0, "errors": len(lst), "confirmed_keys": []}
 
+    def library_presence(self, feature: str, items: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+        from .plex import _presence
+
+        return _presence.presence(self, items, feature=(feature or "history").lower())
+
 
 class _PlexOPS:
     def name(self) -> str:
@@ -1570,6 +1576,7 @@ class _PlexOPS:
                 "remove": False,
             },
             "playlists": _PLAYLIST_CAPABILITIES,
+            "library_presence": {"features": ["history"]},
         }
 
     def index_semantics(self, cfg: Mapping[str, Any], *, feature: str) -> str | None:
@@ -1648,6 +1655,15 @@ class _PlexOPS:
         dry_run: bool = False,
     ) -> dict[str, Any]:
         return self._adapter(cfg).remove(feature, items, dry_run=dry_run)
+
+    def library_presence(
+        self,
+        cfg: Mapping[str, Any],
+        items: Iterable[Mapping[str, Any]],
+        *,
+        feature: str,
+    ) -> list[dict[str, Any]]:
+        return self._adapter(cfg).library_presence(feature, items)
 
     def health(self, cfg: Mapping[str, Any]) -> Mapping[str, Any]:
         return self._adapter(cfg).health()

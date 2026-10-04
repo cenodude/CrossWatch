@@ -550,6 +550,14 @@ function pairSupportsHistoryRewatches(state, src = state?.src, dst = state?.dst,
     && providerSupportsHistoryRewatch(state, dst, "read")
     && providerSupportsHistoryRewatch(state, dst, "write");
 }
+function providerSupportsLibraryOnly(state, providerName){
+  const features = byName(state, providerName)?.capabilities?.library_presence?.features;
+  return Array.isArray(features) && features.includes("history");
+}
+function pairSupportsLibraryOnly(state, src = state?.src, dst = state?.dst, twoWay = isTwoWayMode(state)){
+  if(!src || !dst) return false;
+  return providerSupportsLibraryOnly(state, dst) || (twoWay && providerSupportsLibraryOnly(state, src));
+}
 function progressCompletionPercentFromCaps(caps){
   const progress = (caps && typeof caps === "object") ? caps : {};
   const policy = (progress.completion_policy && typeof progress.completion_policy === "object") ? progress.completion_policy : {};
@@ -982,7 +990,7 @@ function applySubDisable(feature){
       "#cx-rt-add","#cx-rt-remove","#cx-rt-anime-map","#cx-rt-anime-only","#cx-rt-type-all","#cx-rt-type-movies","#cx-rt-type-shows","#cx-rt-type-seasons","#cx-rt-type-episodes","#cx-rt-mode","#cx-rt-from-date","#cx-rt-specials",
       "#tr-rt-perpage","#tr-rt-maxpages","#tr-rt-chunk"
     ],
-    history: ["#cx-hs-add", "#cx-hs-remove", "#cx-hs-rewatches", "#cx-hs-specials", "#cx-hs-anime-map", "#cx-hs-source-status", "#cx-tr-hs-numfb", "#cx-tr-hs-col", "#cx-tr-hs-col-movies", "#cx-tr-hs-col-shows", "#cx-tr-hs-ignore-dropped", "#cx-md-hs-ignore-dropped", "#cx-sm-hs-ignore-dropped", "#cx-tr-hs-unres"],
+    history: ["#cx-hs-add", "#cx-hs-remove", "#cx-hs-rewatches", "#cx-hs-specials", "#cx-hs-library-only", "#cx-hs-anime-map", "#cx-hs-source-status", "#cx-tr-hs-numfb", "#cx-tr-hs-col", "#cx-tr-hs-col-movies", "#cx-tr-hs-col-shows", "#cx-tr-hs-ignore-dropped", "#cx-md-hs-ignore-dropped", "#cx-sm-hs-ignore-dropped", "#cx-tr-hs-unres"],
     playlists:["#cx-pl-add","#cx-pl-remove"],
     progress:["#cx-pr-add","#cx-pr-remove","#cx-pr-min","#cx-pr-delta","#cx-pr-maxp","#cx-pr-replay","#cx-pr-tolerance","#cx-pr-specials","#cx-pr-anime-map"],
     collection:["#cx-co-add","#cx-co-remove","#cx-co-type-all","#cx-co-type-movies","#cx-co-type-shows","#cx-co-type-seasons","#cx-co-type-episodes"]
@@ -1762,6 +1770,7 @@ function renderFeaturePanel(state){
   if (state.feature === "history") {
     const hs = getOpts(state, "history");
     const rwSupported = pairSupportsHistoryRewatches(state);
+    const libSupported = pairSupportsLibraryOnly(state);
     const trCfg = (state.cfgRaw?.trakt) || {};
     const emCfg = (state.cfgRaw?.emby?.history) || {};
 
@@ -1900,6 +1909,13 @@ left.innerHTML = `
             <span class="slider"></span>
           </label>
         </div>
+        ${libSupported ? `<div class="opt-row" style="grid-column:1/-1">
+          <label for="cx-hs-library-only" data-tip-id="cx-hs-library-only">Only items in destination library</label>
+          <label class="switch">
+            <input id="cx-hs-library-only" type="checkbox" ${hs.library_only ? "checked" : ""}>
+            <span class="slider"></span>
+          </label>
+        </div>` : ""}
         ${trColRow}
         ${mdDroppedRow}
         ${smDroppedRow}
@@ -2424,6 +2440,7 @@ function bindChangeHandlers(state,root){
         remove: !!ID("cx-hs-remove")?.checked,
         rewatches: !!ID("cx-hs-rewatches")?.checked,
         include_specials: ID("cx-hs-specials") ? !!ID("cx-hs-specials").checked : prev.include_specials !== false,
+        library_only: ID("cx-hs-library-only") ? !!ID("cx-hs-library-only").checked : !!prev.library_only,
         use_anime_mapping: !!(animeEl && animeEl.checked && tmdbMetadataReady(state)),
         anime_only_sync: false,
         use_source_status: !!ID("cx-hs-source-status")?.checked && isAniList(state?.dst) && isSimkl(state?.src),
@@ -2865,6 +2882,7 @@ function buildPayload(state,wrap){
   if(ratings&&Array.isArray(ratings.types)&&dis.size)ratings.types=ratings.types.filter(t=>!dis.has(String(t)));
   const history=get("history");
   if(history && !pairSupportsHistoryRewatches(state, src, dst, modeTwo)) history.rewatches=false;
+  if(history) history.library_only=!!history.library_only&&pairSupportsLibraryOnly(state, src, dst, modeTwo);
   const collection=get("collection");
   if(collection){
     const allowedCollectionTypes=collectionTypesForPair({src,dst,twoWay:modeTwo});

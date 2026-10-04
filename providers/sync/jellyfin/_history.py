@@ -882,13 +882,12 @@ def _try_resolve_iid(adapter: Any, m: Mapping[str, Any]) -> str | None:
         return None
 
 
-def _prepare_want(
-    base: Mapping[str, Any],
+def _want_item(
+    base_d: Mapping[str, Any],
     *,
     raw_key: str | None = None,
     raw_iid: str | None = None,
-) -> tuple[str | None, dict[str, Any] | None, dict[str, Any] | None]:
-    base_d: dict[str, Any] = dict(base or {})
+) -> dict[str, Any]:
     base_ids_raw = base_d.get("ids")
     base_ids = dict(base_ids_raw) if isinstance(base_ids_raw, Mapping) else {}
     has_ids = bool(base_ids) and any(v not in (None, "", 0) for v in base_ids.values())
@@ -914,6 +913,17 @@ def _prepare_want(
             m["ids"] = ids
 
     _coerce_anime_type(m)
+    return m
+
+
+def _prepare_want(
+    base: Mapping[str, Any],
+    *,
+    raw_key: str | None = None,
+    raw_iid: str | None = None,
+) -> tuple[str | None, dict[str, Any] | None, dict[str, Any] | None]:
+    base_d: dict[str, Any] = dict(base or {})
+    m = _want_item(base_d, raw_key=raw_key, raw_iid=raw_iid)
 
     key_opt: str | None
     if raw_key:

@@ -7,7 +7,9 @@ import json
 import os
 import sys
 import threading
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any
 
@@ -28,6 +30,7 @@ GREEN = "\033[92m"
 YELLOW = "\033[33m"
 BLUE = "\033[94m"
 _CAPTURE_PROGRESS_LOCAL = threading.local()
+_MIN_LEVEL: ContextVar[int] = ContextVar("cw_provider_log_min_level", default=0)
 
 _LEVEL_COLOR: dict[str, str] = {
     "ERROR": RED,
@@ -144,12 +147,21 @@ def _append_capture_progress(provider: str, feature: str, msg: str, fields: Mapp
         pass
 
 
+@contextmanager
+def quiet(level: str = "info") -> Iterator[None]:
+    token = _MIN_LEVEL.set(max(_MIN_LEVEL.get(), _level_num(level)))
+    try:
+        yield
+    finally:
+        _MIN_LEVEL.reset(token)
+
+
 def log(provider: str, feature: str, level: str, msg: str, **fields: Any) -> None:
     provider_s = str(provider).strip().upper()
     feature_s = str(feature).strip().lower()
     level_s = str(level).strip().upper()
 
-    if _level_num(level_s) < _env_level(provider_s):
+    if _level_num(level_s) < max(_env_level(provider_s), _MIN_LEVEL.get()):
         return
 
     fmt = (os.getenv("CW_LOG_FORMAT") or "kv").strip().lower()

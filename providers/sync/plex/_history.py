@@ -981,6 +981,31 @@ def _iter_live_watched(adapter: Any, allow: set[str]) -> list[dict[str, Any]]:
     return out
 
 
+def _catalog_episode_entry(cat: HistoryCatalog, row: Mapping[str, Any], token: str) -> dict[str, Any] | None:
+    meta = normalize_discover_row(row, token=token, hydrate_item_ids=False) or {}
+    ids = dict(meta.get("ids") or {})
+    rk = str(ids.get("plex") or row.get("ratingKey") or "").strip()
+    if not rk:
+        return None
+    existing = cat.by_rk.get(rk) or {}
+    return {
+        "rk": rk,
+        "type": "episode",
+        "title": meta.get("title") or row.get("grandparentTitle") or row.get("title"),
+        "series_title": meta.get("series_title") or meta.get("show_title") or row.get("grandparentTitle"),
+        "library_id": meta.get("library_id"),
+        "ids": ids,
+        "show_ids": dict(meta.get("show_ids") or {}),
+        "show_rk": (meta.get("show_ids") or {}).get("plex") if isinstance(meta.get("show_ids"), Mapping) else None,
+        "season": meta.get("season"),
+        "episode": meta.get("episode"),
+        "watched": bool(existing.get("watched")),
+        "write_accepted": bool(existing.get("write_accepted")),
+        "view_count": existing.get("view_count"),
+        "last_viewed_at": existing.get("last_viewed_at"),
+    }
+
+
 def _populate_catalog_episode_leaves(adapter: Any, allow: set[str], cat: HistoryCatalog) -> int:
     srv = getattr(getattr(adapter, "client", None), "server", None)
     if not srv:
@@ -1052,28 +1077,9 @@ def _populate_catalog_episode_leaves(adapter: Any, allow: set[str], cat: History
                 "section_id": section_id, "scanned": scanned, "total": total_i,
             })
             for row in rows:
-                meta = normalize_discover_row(row, token=token, hydrate_item_ids=False) or {}
-                ids = dict(meta.get("ids") or {})
-                rk = str(ids.get("plex") or row.get("ratingKey") or "").strip()
-                if not rk:
+                entry = _catalog_episode_entry(cat, row, token)
+                if entry is None:
                     continue
-                existing = cat.by_rk.get(rk) or {}
-                entry = {
-                    "rk": rk,
-                    "type": "episode",
-                    "title": meta.get("title") or row.get("grandparentTitle") or row.get("title"),
-                    "series_title": meta.get("series_title") or meta.get("show_title") or row.get("grandparentTitle"),
-                    "library_id": meta.get("library_id"),
-                    "ids": ids,
-                    "show_ids": dict(meta.get("show_ids") or {}),
-                    "show_rk": (meta.get("show_ids") or {}).get("plex") if isinstance(meta.get("show_ids"), Mapping) else None,
-                    "season": meta.get("season"),
-                    "episode": meta.get("episode"),
-                    "watched": bool(existing.get("watched")),
-                    "write_accepted": bool(existing.get("write_accepted")),
-                    "view_count": existing.get("view_count"),
-                    "last_viewed_at": existing.get("last_viewed_at"),
-                }
                 cat.add(entry)
                 added += 1
             start += len(rows)

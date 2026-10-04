@@ -75,6 +75,7 @@ def get_manifest() -> Mapping[str, Any]:
             "observed_deletes": True,
             "notes": "Kodi collection is the local video library inventory. CrossWatch can read movies and episodes but cannot add or remove files from Kodi.",
         },
+        "library_presence": {"features": ["history"]},
     }
     return {
         "name": "KODI",
@@ -132,6 +133,11 @@ class KODIModule:
             return build_op_result(ok=True, count=0, unsupported=True)
         return mod.remove(self, items, dry_run=dry_run)
 
+    def library_presence(self, feature: str, items: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+        from .kodi import _presence
+
+        return _presence.presence(self, items, feature=str(feature or "history").strip().lower())
+
 
 class _KODIOPS:
     def name(self) -> str:
@@ -166,6 +172,9 @@ class _KODIOPS:
 
     def remove(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool = False) -> dict[str, Any]:
         return self._adapter(cfg).remove(feature, items, dry_run=dry_run)
+
+    def library_presence(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str) -> list[dict[str, Any]]:
+        return self._adapter(cfg).library_presence(feature, items)
 
 
 OPS = _KODIOPS()

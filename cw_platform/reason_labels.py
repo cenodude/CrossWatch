@@ -114,7 +114,7 @@ def reason_message(raw: Any, *, provider: Any = None, feature: Any = None) -> st
         if low == "not_in_plex_catalog":
             return f"{msg} {TRACKER_TO_MEDIA_SERVER_MESSAGE}"
         return msg
-    if provider_base in {"PLEX", "EMBY", "JELLYFIN"} and low in _MEDIA_SERVER_LIBRARY_MESSAGES:
+    if provider_base in {"PLEX", "EMBY", "JELLYFIN", "KODI"} and low in _MEDIA_SERVER_LIBRARY_MESSAGES:
         return _MEDIA_SERVER_LIBRARY_MESSAGES[low]
     if provider_base == "SIMKL" and feature_key == "history":
         if low in _SIMKL_HISTORY_MESSAGES:
