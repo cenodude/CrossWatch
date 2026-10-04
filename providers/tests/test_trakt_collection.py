@@ -125,7 +125,7 @@ def test_collection_write_uses_collection_endpoint_and_shared_nested_body(monkey
                 "seasons": [
                     {
                         "number": 1,
-                        "episodes": [{"number": 2, "watched_at": "2026-01-02T03:04:05Z"}],
+                        "episodes": [{"number": 2, "collected_at": "2026-01-02T03:04:05Z"}],
                     }
                 ],
             }
@@ -160,6 +160,34 @@ def test_collection_write_reports_existing_as_skipped_not_added(monkeypatch: Any
     assert res["skipped"] == 1
     assert res["skipped_keys"] == ["tmdb:438631"]
     assert res["unresolved"] == []
+
+
+def test_collection_write_counts_updated_as_confirmed(monkeypatch: Any) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def fake_request(_sess: Any, method: str, url: str, **kwargs: Any) -> FakeResp:
+        calls.append({"method": method, "url": url, "json": kwargs.get("json")})
+        return FakeResp(201, {"added": {"movies": 0}, "updated": {"movies": 1}, "existing": {"movies": 0}, "not_found": {}})
+
+    monkeypatch.setattr(collection, "request_with_retries", fake_request)
+    monkeypatch.setattr(collection, "_shadow_bust", lambda: None)
+
+    res = collection.add(
+        _adapter(),
+        [
+            {
+                "type": "movie",
+                "title": "Dune",
+                "ids": {"tmdb": "438631"},
+                "collected_at": "2026-01-02T03:04:05Z",
+            }
+        ],
+    )
+
+    assert calls[0]["json"] == {"movies": [{"ids": {"tmdb": 438631}, "collected_at": "2026-01-02T03:04:05Z"}]}
+    assert res["count"] == 1
+    assert res["confirmed_keys"] == ["tmdb:438631"]
+    assert res["skipped_keys"] == []
 
 
 def test_collection_write_small_delta_maps_existing_and_not_found_exactly(monkeypatch: Any) -> None:
@@ -213,7 +241,7 @@ def test_history_add_to_library_uses_trakt_collection_write_date_field() -> None
 
     out = history._history_body_to_collection(body, {"movies", "shows"})
 
-    assert out["movies"][0]["watched_at"] == "2026-01-02T03:04:05Z"
-    assert "collected_at" not in out["movies"][0]
-    assert out["shows"][0]["seasons"][0]["episodes"][0]["watched_at"] == "2026-01-03T03:04:05Z"
-    assert "collected_at" not in out["shows"][0]["seasons"][0]["episodes"][0]
+    assert out["movies"][0]["collected_at"] == "2026-01-02T03:04:05Z"
+    assert "watched_at" not in out["movies"][0]
+    assert out["shows"][0]["seasons"][0]["episodes"][0]["collected_at"] == "2026-01-03T03:04:05Z"
+    assert "watched_at" not in out["shows"][0]["seasons"][0]["episodes"][0]

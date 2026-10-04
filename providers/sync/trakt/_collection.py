@@ -383,7 +383,6 @@ def _batch_payload(items: Iterable[Mapping[str, Any]]) -> tuple[list[dict[str, A
         collected_at = it.get("collected_at")
         if collected_at:
             m["collected_at"] = str(collected_at)
-            m["watched_at"] = str(collected_at)
         kind = pick_trakt_kind(m)
         ids = ids_for_trakt(m)
         show_ids = dict(m.get("show_ids") or {})
@@ -438,7 +437,7 @@ def _write(adapter: Any, op: str, items: Iterable[Mapping[str, Any]]) -> dict[st
     else:
         chunks = _chunk(accepted, batch)
     for sl in chunks:
-        payload = build_watchlist_body(sl, date_field="watched_at" if op == "add" else None)
+        payload = build_watchlist_body(sl, date_field="collected_at" if op == "add" else None)
         if not payload:
             continue
         r = request_with_retries(adapter.client.session, "POST", url, headers=headers_for_adapter(adapter), json=payload, timeout=adapter.cfg.timeout, max_retries=adapter.cfg.max_retries)
@@ -446,9 +445,11 @@ def _write(adapter: Any, op: str, items: Iterable[Mapping[str, Any]]) -> dict[st
             body = r.json() if (r.text or "").strip() else {}
             result = body.get("added") if op == "add" else body.get("deleted") or body.get("removed")
             existing = body.get("existing") if op == "add" else {}
+            updated = body.get("updated") if op == "add" else {}
             result = result if isinstance(result, Mapping) else {}
             existing = existing if isinstance(existing, Mapping) else {}
-            added_count = sum(int(result.get(k) or 0) for k in ("movies", "shows", "seasons", "episodes"))
+            updated = updated if isinstance(updated, Mapping) else {}
+            added_count = sum(int(result.get(k) or 0) + int(updated.get(k) or 0) for k in ("movies", "shows", "seasons", "episodes"))
             existing_count = sum(int(existing.get(k) or 0) for k in ("movies", "shows", "seasons", "episodes"))
             ok += added_count
             skipped += existing_count
