@@ -17,6 +17,9 @@ from ._history import _normalize_for_write
 
 _NATIVE_KEYS = ("emby",)
 _TYPES = frozenset({"movie", "show", "series", "episode"})
+_PROGRESS_TYPES = frozenset({"movie", "episode"})
+_WATCHLIST_RAW_TYPES = frozenset({"movie", "movies", "show", "shows", "series", "tv", "anime"})
+_WATCHLIST_TYPES = frozenset({"movie", "show"})
 _EXACT_EPISODE_PROVIDERS = ("tmdb", "imdb", "tvdb")
 _BATCH = 200
 
@@ -61,16 +64,18 @@ def _prime(adapter: Any, feature: str, wants: list[dict[str, Any]]) -> bool:
     allowed = sorted(common.emby_selected_library_ids(adapter.cfg, feature))
     cache = common._lookup_cache(adapter, feature).setdefault("queries", {})
     groups: dict[tuple[str, str], dict[str, Any]] = {}
+    feature_scope = dict(common.emby_library_scope(adapter.cfg, feature))
     for want in wants:
         scope = _scope(adapter, want, feature, allowed)
-        scope_key = json.dumps(dict(scope), sort_keys=True)
         for pairs, include_types in _query_keys(want, priority):
-            if (pairs, include_types, scope_key) in cache:
-                continue
-            group = groups.setdefault((include_types, scope_key), {"scope": scope, "keys": set(), "pairs": {}})
-            group["keys"].add(pairs)
-            for pair in pairs:
-                group["pairs"][pair] = None
+            for query_scope in ((scope, feature_scope) if include_types == "Movie" else (scope,)):
+                scope_key = json.dumps(dict(query_scope), sort_keys=True)
+                if (pairs, include_types, scope_key) in cache:
+                    continue
+                group = groups.setdefault((include_types, scope_key), {"scope": query_scope, "keys": set(), "pairs": {}})
+                group["keys"].add(pairs)
+                for pair in pairs:
+                    group["pairs"][pair] = None
 
     http, uid = adapter.client, adapter.cfg.user_id
     requests_made = 0
@@ -109,17 +114,23 @@ def presence(adapter: Any, items: Iterable[Mapping[str, Any]], *, feature: str =
     def has_ids(ids: Any) -> bool:
         return bool(common.all_ext_pairs(ids or {}, priority)) if isinstance(ids, Mapping) else False
 
+    progress = feature == "progress"
+    watchlist = feature == "watchlist"
+    lookup_feature = "history" if watchlist else feature
+    types = _PROGRESS_TYPES if progress else _WATCHLIST_TYPES if watchlist else _TYPES
     wants: list[dict[str, Any] | None] = []
     for row in rows:
-        want, _base = _normalize_for_write(row)
-        usable = common._lookup_type(want) in _TYPES and lp.checkable(want, native_keys=_NATIVE_KEYS, has_ids=has_ids)
+        want = dict(row) if progress or watchlist else _normalize_for_write(row)[0]
+        usable = common._lookup_type(want) in types and lp.checkable(want, native_keys=_NATIVE_KEYS, has_ids=has_ids)
+        if watchlist and str(row.get("type") or "").strip().lower() not in _WATCHLIST_RAW_TYPES:
+            usable = False
         wants.append(want if usable else None)
 
     pending = [want for want in wants if want is not None]
     if not pending:
         return lp.all_unknown(rows, "not_checkable")
     try:
-        if not _prime(probe, feature, pending):
+        if not _prime(probe, lookup_feature, pending):
             return lp.all_unknown(rows, "index_unavailable")
     except Exception as exc:
         common.cw_log("EMBY", "common", "debug", "presence_index_failed", lookup_feature=feature,
@@ -134,7 +145,11 @@ def presence(adapter: Any, items: Iterable[Mapping[str, Any]], *, feature: str =
                 out.append(lp.unknown("not_checkable"))
                 continue
             try:
-                iid = common.resolve_item_id(probe, want, feature=feature)
+                if progress:
+                    found = common.resolve_item_ids(probe, want, feature=feature)
+                    iid = found[0] if found else None
+                else:
+                    iid = common.resolve_item_id(probe, want, feature=lookup_feature)
             except Exception as exc:
                 out.append(lp.unknown(type(exc).__name__))
                 continue

@@ -12,6 +12,7 @@ UNKNOWN = "unknown"
 
 OPTION = "library_only"
 REASON = "not_in_library"
+FEATURES = frozenset({"history", "ratings", "progress", "watchlist"})
 
 _STATUSES = frozenset({PRESENT, ABSENT, UNKNOWN})
 _EXTERNAL_ID_KEYS = ("tmdb", "imdb", "tvdb")
@@ -70,7 +71,7 @@ def checkable(item: Any, *, native_keys: Iterable[str] = (), has_ids: Callable[[
 
 
 def requested(feature: Any, fcfg: Any) -> bool:
-    return str(feature or "").strip().lower() == "history" and bool((fcfg or {}).get(OPTION))
+    return str(feature or "").strip().lower() in FEATURES and bool((fcfg or {}).get(OPTION))
 
 
 def supported(ops: Any, feature: Any) -> bool:
@@ -94,23 +95,28 @@ def split_absent(
     items: Sequence[Any],
     *,
     call: Any = None,
+    known: Callable[[Any], bool] | None = None,
 ) -> tuple[list[Any], list[tuple[Any, str]], str]:
     rows = list(items or [])
     if not rows:
         return rows, [], ""
     try:
-        fn = ops.library_presence
-        raw = call(fn, cfg, rows, feature=feature) if call is not None else fn(cfg, rows, feature=feature)
+        check = [item for item in rows if not known(item)] if known is not None else rows
     except Exception as exc:
         return rows, [], f"{type(exc).__name__}"
-    if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)) or len(raw) != len(rows):
+    if not check:
+        return rows, [], ""
+    try:
+        fn = ops.library_presence
+        raw = call(fn, cfg, check, feature=feature) if call is not None else fn(cfg, check, feature=feature)
+    except Exception as exc:
+        return rows, [], f"{type(exc).__name__}"
+    if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)) or len(raw) != len(check):
         return rows, [], "invalid_result"
-    kept: list[Any] = []
-    skipped: list[tuple[Any, str]] = []
-    for item, row in zip(rows, raw):
-        status = row.get("status") if isinstance(row, Mapping) else None
-        if status == ABSENT:
-            skipped.append((item, str(row.get("reason") or REASON)))
-        else:
-            kept.append(item)
+    reasons: dict[int, str] = {}
+    for item, row in zip(check, raw):
+        if isinstance(row, Mapping) and row.get("status") == ABSENT:
+            reasons[id(item)] = str(row.get("reason") or REASON)
+    kept = [item for item in rows if id(item) not in reasons]
+    skipped = [(item, reasons[id(item)]) for item in rows if id(item) in reasons]
     return kept, skipped, ""

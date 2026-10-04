@@ -304,7 +304,7 @@ def get_manifest() -> Mapping[str, Any]:
             "progress": _PROGRESS_CAPABILITIES,
             "collection": _COLLECTION_CAPABILITIES,
             "playlists": _PLAYLIST_CAPABILITIES,
-            "library_presence": {"features": ["history"]},
+            "library_presence": {"features": ["history", "progress", "watchlist"]},
         },
     }
 
@@ -780,7 +780,7 @@ class _EmbyOPS:
             "progress": _PROGRESS_CAPABILITIES,
             "collection": _COLLECTION_CAPABILITIES,
             "playlists": _PLAYLIST_CAPABILITIES,
-            "library_presence": {"features": ["history"]},
+            "library_presence": {"features": ["history", "progress", "watchlist"]},
         }
 
     def is_configured(self, cfg: Mapping[str, Any]) -> bool:
