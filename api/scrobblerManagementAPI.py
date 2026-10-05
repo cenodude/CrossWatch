@@ -144,8 +144,9 @@ def _profile_exists(cfg: Mapping[str, Any], provider: str, instance: str) -> boo
 def _scrobble_source_connected(cfg: Mapping[str, Any], provider: str, instance: str) -> bool:
     key = str(provider or "").strip().lower()
     if key == "kodi":
-        block = get_provider_block(_dict(cfg), "kodi", normalize_instance_id(instance))
-        return bool(str(block.get("server") or "").strip() and block.get("connection_verified") is True)
+        from providers.scrobble.kodi.addon import source_ready as kodi_source_ready
+
+        return kodi_source_ready(cfg, instance)
     if key == "scrob":
         block = get_provider_block(_dict(cfg), "scrob", normalize_instance_id(instance))
         return auth_runtime.is_configured("scrob", block)

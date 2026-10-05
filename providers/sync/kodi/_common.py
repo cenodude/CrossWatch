@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 from collections import Counter
 from collections.abc import Iterable, Mapping
@@ -256,12 +257,27 @@ def uniqueid_namespace(name: str, text: str) -> str | None:
     return None
 
 
+PLACEHOLDER_IDS: frozenset[str] = frozenset({"none", "null", "nan", "unknown", "0", "-1"})
+
+_PATH_USERINFO = re.compile(r"^([a-z][a-z0-9+.\-]*://)[^/]*@", re.IGNORECASE)
+
+
+def is_placeholder_id(value: Any) -> bool:
+    text = str(value if value is not None else "").strip().lower()
+    return not text or text in PLACEHOLDER_IDS
+
+
+def strip_path_userinfo(path: Any) -> str:
+    text = str(path or "")
+    return _PATH_USERINFO.sub(r"\1", text, count=1)
+
+
 def normalize_uniqueids(uniqueid: Any) -> dict[str, str]:
     raw = uniqueid if isinstance(uniqueid, Mapping) else {}
     out: dict[str, str] = {}
     for key, value in raw.items():
         text = str(value or "").strip()
-        if not text:
+        if is_placeholder_id(text):
             continue
         namespace = uniqueid_namespace(uniqueid_name(key), text)
         if namespace:

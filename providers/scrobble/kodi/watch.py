@@ -18,11 +18,19 @@ from cw_platform.config_base import load_config
 from providers.auth._auth_KODI import KodiAuthError, clean_base, jsonrpc_call
 from providers.scrobble._log_dedupe import LogDeduplicator
 from providers.scrobble._show_tmdb import show_tmdb_id
+from providers.scrobble.kodi import addon as kodi_addon
 from providers.scrobble.currently_watching import update_from_event as _cw_update
 from providers.scrobble.currently_watching import update_from_payload as _cw_update_payload
 from providers.scrobble.scrobble import Dispatcher, ScrobbleEvent, ScrobbleSink, mask_account
 from providers.scrobble.sources import source_enabled
-from providers.sync.kodi._common import EXTERNAL_ID_KEYS, path_scope_status, uniqueid_name, uniqueid_namespace
+from providers.sync.kodi._common import (
+    EXTERNAL_ID_KEYS,
+    is_placeholder_id,
+    path_scope_status,
+    strip_path_userinfo,
+    uniqueid_name,
+    uniqueid_namespace,
+)
 
 BASE_POLL_SECONDS = 1.75
 MIN_POLL_SECONDS = 1.5
@@ -149,7 +157,7 @@ def _normalize_uniqueids(uniqueid: Any, media_type: str) -> dict[str, str]:
 
     for key, value in raw.items():
         text = str(value or "").strip()
-        if not text:
+        if is_placeholder_id(text):
             continue
         nk = _norm_unique_key(key)
         is_show = media_type == "episode" and any(part in nk for part in ("show", "tvshow", "series"))
@@ -254,6 +262,21 @@ class KodiWatchService:
     def _configured(self, cfg: Mapping[str, Any]) -> bool:
         kodi = self._kodi_cfg(cfg)
         return bool(str(kodi.get("server") or "").strip() and kodi.get("connection_verified") is True)
+
+    def _addon_enabled(self, cfg: Mapping[str, Any]) -> bool:
+        return kodi_addon.instance_enabled(cfg, self._instance_id)
+
+    def _addon_active(self, cfg: Mapping[str, Any]) -> bool:
+        return self._addon_enabled(cfg) and kodi_addon.is_active(self._instance_id)
+
+    def _server_uuid(self, cfg: Mapping[str, Any]) -> str:
+        device = kodi_addon.device_uuid(self._instance_id) if self._addon_enabled(cfg) else None
+        return device or _stable_server_uuid(str(self._kodi_cfg(cfg).get("server") or ""))
+
+    def _drop_sessions(self) -> None:
+        self._sessions.clear()
+        self._player_session.clear()
+        self._empty_success_polls = 0
 
     def _rpc(self, method: str, params: Mapping[str, Any] | None = None) -> Any:
         cfg = self._active_cfg()
@@ -478,7 +501,6 @@ class KodiWatchService:
             return None
         player_id = int(player.get("playerid") or 0)
         start_ts = time.time()
-        server = str(self._kodi_cfg(self._active_cfg()).get("server") or "")
         session_key = f"kodi:{self._instance_id}:{player_id}:{meta['media_type']}:{meta['item_identity']}:{int(start_ts * 1000)}"
         pct, duration_ms = _progress_from_props(props)
         if duration_ms is None:
@@ -491,7 +513,7 @@ class KodiWatchService:
             "meta": meta,
             "item": dict(item),
             "account": self._current_profile(),
-            "server_uuid": _stable_server_uuid(server),
+            "server_uuid": self._server_uuid(self._active_cfg()),
             "last_action": "",
             "state": "",
             "last_progress": pct,
@@ -518,7 +540,10 @@ class KodiWatchService:
         item = _dict(result).get("item")
         if not isinstance(item, Mapping):
             raise KodiAuthError("Kodi returned an invalid player item response", reason="invalid_response")
-        return dict(item)
+        out = dict(item)
+        if out.get("file"):
+            out["file"] = strip_path_userinfo(out.get("file"))
+        return out
 
     def _player_props(self, player_id: int) -> dict[str, Any]:
         result = self._rpc(
@@ -580,6 +605,9 @@ class KodiWatchService:
 
     def _tick(self) -> bool:
         cfg = self._active_cfg()
+        if self._addon_active(cfg):
+            self._drop_sessions()
+            return False
         if not self._configured(cfg):
             return False
 
@@ -638,7 +666,7 @@ class KodiWatchService:
             if not self._quiet_startup:
                 _log("Watcher source is disabled; Kodi watcher not started.", "INFO")
             return
-        if not self._configured(cfg):
+        if not self._configured(cfg) and not self._addon_enabled(cfg):
             if not self._quiet_startup:
                 _log("Kodi is not connected; watcher not started.", "WARNING")
             return

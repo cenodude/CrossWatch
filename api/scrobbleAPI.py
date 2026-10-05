@@ -1888,4 +1888,45 @@ async def webhook_plexwatcher(request: Request) -> JSONResponse:
         {"ok": True, **{k: v for k, v in res.items() if k != "error"}},
         status_code=200,
     )
-    
+
+
+@router.post("/webhook/kodiwatcher")
+async def webhook_kodiwatcher(request: Request) -> JSONResponse:
+    from starlette.concurrency import run_in_threadpool
+
+    from providers.scrobble.kodi import addon as kodi_addon
+
+    cfg = load_config() or {}
+    version = kodi_addon.reported_version()
+    if not kodi_addon.feature_enabled(cfg):
+        return JSONResponse({"ok": True, "ignored": True, "error": "addon_disabled", "crosswatch_version": version}, status_code=200)
+
+    token = str(request.headers.get(kodi_addon.TOKEN_HEADER) or "").strip() or str(_extract_url_params(request).get("token") or "").strip()
+    instance = kodi_addon.instance_for_token(cfg, token)
+    if instance is None:
+        client = request.client.host if request.client else "-"
+        if BASE_LOG:
+            try:
+                BASE_LOG(f"Rejected Kodi add-on request, reason=invalid_token, client={client}", level="WARN", module="WEBHOOK")
+            except Exception:
+                pass
+        return JSONResponse({"ok": False, "error": "invalid_token", "crosswatch_version": version}, status_code=401)
+
+    raw = await request.body()
+    try:
+        payload = json.loads(raw.decode("utf-8", errors="replace")) if raw else {}
+    except Exception:
+        payload = None
+    if not isinstance(payload, dict):
+        return JSONResponse({"ok": True, "ignored": True, "error": "invalid_payload", "crosswatch_version": version}, status_code=200)
+
+    try:
+        result = await run_in_threadpool(kodi_addon.handle, request.app, cfg, instance, payload)
+    except Exception as e:
+        if BASE_LOG:
+            try:
+                BASE_LOG(f"Kodi add-on event failed: {type(e).__name__}: {e}", level="ERROR", module="KODI-WATCH")
+            except Exception:
+                pass
+        return JSONResponse({"ok": False, "error": "internal_error", "crosswatch_version": version}, status_code=500)
+    return JSONResponse(result, status_code=200)

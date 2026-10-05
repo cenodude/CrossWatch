@@ -369,6 +369,7 @@ def html() -> str:
 
         <div class="cw-subpanels">
           <div class="cw-subpanel active" data-sub="auth">
+            <div id="kodi_addon_block" hidden></div>
             <div class="grid2">
               <div style="grid-column:1 / -1">
                 <label for="kodi_server">Server URL</label>

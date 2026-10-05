@@ -60,6 +60,15 @@ def route_destination(cfg: dict[str, Any]) -> dict[str, Any]:
     return {"libraries": libraries, "all_copies": destination.get("update_all_copies") is not False}
 
 
+def _played_at(event: ScrobbleEvent) -> int:
+    now = int(time.time())
+    raw = event.raw if isinstance(event.raw, dict) else {}
+    value = raw.get("_cw_watched_at")
+    if isinstance(value, int) and not isinstance(value, bool) and 0 < value <= now:
+        return value
+    return now
+
+
 def combine_results(results: list[dict[str, Any]]) -> dict[str, Any]:
     written = [result for result in results if result.get("ok") and not result.get("skipped")]
     combined = dict(written[0] if written else results[0])
@@ -218,7 +227,7 @@ class MediaServerSink:
                     if event.action == "start" and sent[1] == "start" and abs(progress - sent[2]) < step:
                         reason = "duplicate" if progress == sent[2] else "progress_step_not_reached"
                         return {"ok": True, "skipped": True, "reason": reason}
-                result = self._deliver(adapter, item, complete, progress, route_destination(cfg), int(time.time()))
+                result = self._deliver(adapter, item, complete, progress, route_destination(cfg), _played_at(event))
                 if not result.get("ok") or result.get("skipped"):
                     return result
                 self._sent[session] = (now, "complete" if complete else event.action, progress)
