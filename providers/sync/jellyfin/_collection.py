@@ -104,6 +104,7 @@ def _fetch_rows(adapter: Any) -> tuple[list[tuple[Mapping[str, Any], str | None]
     base_params: dict[str, Any] = {
         "Recursive": True,
         "IncludeItemTypes": "Movie,Series,Season,Episode",
+        "CollapseBoxSetItems": False,
         "Fields": _ITEM_FIELDS,
         "EnableUserData": False,
     }

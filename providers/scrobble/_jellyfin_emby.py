@@ -62,7 +62,7 @@ class JellyfinEmbySink(MediaServerSink):
         limit = 500 if catalog else 100
         for start in range(0, 100_000 if catalog else 100, limit):
             body = self._body(adapter.client.get(path, params={**user, "Recursive": True,
-                "Fields": _FIELDS,
+                "CollapseBoxSetItems": False, "Fields": _FIELDS,
                 "EnableUserData": not catalog, "EnableImages": False,
                 **params, "StartIndex": start, "Limit": limit, "EnableTotalRecordCount": True}))
             if not isinstance(body, dict) or not isinstance(body.get("Items"), list):

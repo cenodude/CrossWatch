@@ -282,6 +282,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
             "userId": uid,
             "recursive": True,
             "includeItemTypes": "Movie,Series,Episode",
+            "collapseBoxSetItems": False,
             "enableUserData": True,
             "fields": (
                 "ProviderIds,ProductionYear,UserData,UserRating,Type,"

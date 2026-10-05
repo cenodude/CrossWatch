@@ -899,6 +899,7 @@ def _jf_lookup_by_provider_ids(
             headers,
             {
                 "Recursive": "true",
+                "CollapseBoxSetItems": "false",
                 "IncludeItemTypes": "Movie,Series",
                 "AnyProviderIdEquals": ",".join(f"{k}.{v}" for k, v in wanted.items()),
                 "Limit": 500,
