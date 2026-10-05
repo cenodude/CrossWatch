@@ -1323,6 +1323,62 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             "instance": inst,
         }
 
+    def _kodi_addon_status(request: Request, cfg: dict[str, Any], inst: str) -> dict[str, Any]:
+        from providers.scrobble.kodi import addon as kodi_addon
+
+        base = str(request.base_url).rstrip("/")
+        proto = str(request.headers.get("x-forwarded-proto") or "").split(",", 1)[0].strip().lower()
+        if proto == "https" and base.startswith("http://"):
+            base = "https://" + base[7:]
+        return kodi_addon.status(cfg, inst, base)
+
+    @app.get("/api/kodi/addon", tags=["media providers"], response_model=None)
+    def api_kodi_addon(request: Request, instance: str | None = Query(None)) -> Any:
+        from providers.scrobble.kodi import addon as kodi_addon
+
+        inst = normalize_instance_id(instance)
+        cfg = load_config()
+        if not kodi_addon.feature_enabled(cfg):
+            raise HTTPException(status_code=404, detail="Not found")
+        return _kodi_addon_status(request, cfg, inst)
+
+    @app.post("/api/kodi/addon", tags=["media providers"], response_model=None)
+    def api_kodi_addon_update(request: Request, payload: dict[str, Any] = Body(...), instance: str | None = Query(None)) -> Any:
+        from providers.scrobble.kodi import addon as kodi_addon
+
+        inst = normalize_instance_id(instance)
+        cfg = load_config()
+        if not kodi_addon.feature_enabled(cfg):
+            raise HTTPException(status_code=404, detail="Not found")
+        if not isinstance(payload, dict):
+            return JSONResponse({"ok": False, "error": "Malformed request"}, 400)
+        was_enabled = kodi_addon.instance_enabled(cfg, inst)
+        enabled = coerce_bool(payload.get("enabled")) if "enabled" in payload else was_enabled
+        regenerate = coerce_bool(payload.get("regenerate")) if "regenerate" in payload else False
+        if not enabled:
+            conflict = usage_conflict_response(cfg, "kodi", inst) if was_enabled and not kodi_addon.jsonrpc_connected(cfg, inst) else None
+            if conflict is not None:
+                return conflict
+        ensure_provider_block(cfg, "kodi")
+        ensure_instance_block(cfg, "kodi", inst)
+        kodi_addon.set_instance_enabled(cfg, inst, bool(enabled), regenerate=bool(regenerate))
+        save_config(cfg)
+        if not enabled:
+            kodi_addon.forget_instance(inst)
+        _probe_bust("kodi")
+        if bool(enabled) != was_enabled:
+            try:
+                from providers.scrobble import watch_manager as wm
+                from providers.scrobble.sources import source_enabled
+
+                running = any(bool(g.get("running")) for g in (wm.status(request.app) or {}).get("groups") or [])
+                autostart = bool(((cfg.get("scrobble") or {}).get("watch") or {}).get("autostart"))
+                if source_enabled(cfg, "watcher") and (running or autostart):
+                    wm.start_from_config(request.app)
+            except Exception as exc:
+                _safe_log(log_fn, "KODI", f"[KODI:{inst}] watcher refresh failed error_type={type(exc).__name__}")
+        return _kodi_addon_status(request, load_config(), inst)
+
     @app.get("/api/kodi/libraries", tags=["media providers"])
     def api_kodi_libraries(instance: str | None = Query(None), server: str | None = Query(None), verify_ssl: bool | None = Query(None)) -> dict[str, Any]:
         inst = normalize_instance_id(instance)
@@ -1337,7 +1393,13 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         cfg = load_config()
         _apply_media_overrides(cfg, "kodi", inst, server, verify_ssl)
         kcfg = kodi_make_config(cfg, inst)
+        from providers.scrobble.kodi import addon as kodi_addon
+
+        addon_on = kodi_addon.instance_enabled(cfg, inst)
+        viewers = [{"id": name, "name": name, "current": False, "source": "addon"} for name in kodi_addon.known_viewers(inst)] if addon_on else []
         if not (kcfg.server and kcfg.connection_verified):
+            if addon_on:
+                return {"users": viewers, "instance": inst}
             raise HTTPException(status_code=401, detail="Not connected to Kodi.")
         client = KodiClient(kcfg)
         try:
@@ -1356,6 +1418,10 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                 continue
             seen.add(name)
             users.append({"id": name, "name": name, "current": name == current_label})
+        for row in viewers:
+            if row["name"] not in seen:
+                seen.add(row["name"])
+                users.append(row)
         return {"users": users, "instance": inst}
 
     @app.post("/api/kodi/disconnect", tags=["auth"])

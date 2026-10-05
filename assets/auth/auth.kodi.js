@@ -154,6 +154,104 @@
     }
   }
 
+  const ADDON_HTML = `
+    <div class="grid2">
+      <div style="grid-column:1 / -1">
+        <label class="verify"><input id="kodi_addon_enabled" type="checkbox"> Use the Kodi add-on</label>
+        <div class="muted" style="margin-top:4px">The add-on reports playback and viewers to CrossWatch. Scrobbling from Kodi then works without a JSON-RPC connection.</div>
+      </div>
+      <div id="kodi_addon_details" style="grid-column:1 / -1" hidden>
+        <label for="kodi_addon_url">Add-on URL</label>
+        <div class="inp-row">
+          <input id="kodi_addon_url" class="grow" readonly autocomplete="off" spellcheck="false">
+          <button id="kodi_addon_copy" class="btn" type="button">Copy</button>
+          <button id="kodi_addon_regen" class="btn" type="button">Regenerate</button>
+        </div>
+        <div class="inline" style="margin-top:12px;flex-wrap:wrap">
+          <div id="kodi_addon_info" class="muted"></div>
+          <div id="kodi_addon_msg" class="msg hidden" role="status" aria-live="polite"></div>
+        </div>
+      </div>
+    </div>
+    <div class="muted" style="margin:16px 0 10px">JSON-RPC connection. Needed for sync, whitelisting and for using Kodi as a destination.</div>`;
+
+  function addonAge(seconds) {
+    const n = Number(seconds);
+    if (!Number.isFinite(n) || n < 0) return "";
+    if (n < 90) return "just now";
+    if (n < 5400) return `${Math.round(n / 60)} min ago`;
+    if (n < 129600) return `${Math.round(n / 3600)} h ago`;
+    return `${Math.round(n / 86400)} d ago`;
+  }
+
+  function renderAddon(data) {
+    const host = el("kodi_addon_block");
+    if (!host) return;
+    if (!data) {
+      host.hidden = true;
+      host.textContent = "";
+      return;
+    }
+    if (!el("kodi_addon_enabled")) {
+      host.innerHTML = ADDON_HTML;
+      el("kodi_addon_enabled")?.addEventListener("change", (ev) => { void updateAddon({ enabled: !!ev.target.checked }); });
+      el("kodi_addon_copy")?.addEventListener("click", () => {
+        void Shared.copyText(el("kodi_addon_url")?.value || "", el("kodi_addon_copy"), { copiedText: "Copied", emptyMessage: "No add-on URL yet." });
+      });
+      el("kodi_addon_regen")?.addEventListener("click", () => {
+        if (window.confirm("Regenerate the add-on URL? The current URL stops working and must be replaced in Kodi.")) void updateAddon({ enabled: true, regenerate: true });
+      });
+    }
+    host.hidden = false;
+    const enabled = !!data.enabled;
+    el("kodi_addon_enabled").checked = enabled;
+    el("kodi_addon_details").hidden = !enabled;
+    el("kodi_addon_url").value = enabled ? txt(data.url) : "";
+    if (!enabled) return;
+    const seen = addonAge(data.age_seconds);
+    const mode = txt(data.mode);
+    let msg = "Waiting for the add-on";
+    if (mode === "addon") msg = `Add-on active${seen ? `, last seen ${seen}` : ""}`;
+    else if (mode === "polling") msg = seen ? `Polling, add-on last seen ${seen}` : "Polling, add-on not seen yet";
+    else if (seen) msg = `Add-on last seen ${seen}`;
+    Shared.setStatus("kodi_addon_msg", mode === "addon", msg);
+    const info = [];
+    if (txt(data.device_name)) info.push(txt(data.device_name));
+    if (txt(data.addon_version)) info.push(`Add-on ${txt(data.addon_version)}`);
+    const viewers = Array.isArray(data.viewers) ? data.viewers.map(txt).filter(Boolean) : [];
+    if (viewers.length) info.push(`Viewers: ${viewers.join(", ")}`);
+    if (Number(data.pkc_skipped) > 0) info.push(`PKC playback skipped: ${Number(data.pkc_skipped)}`);
+    el("kodi_addon_info").textContent = info.join(" | ");
+  }
+
+  async function loadAddon() {
+    if (!el("kodi_addon_block")) return;
+    try {
+      const r = await fetchJSON(api("/api/kodi/addon"), { cache: "no-store" });
+      renderAddon(r.ok && r.data && r.data.ok ? r.data : null);
+    } catch {
+      renderAddon(null);
+    }
+  }
+
+  async function updateAddon(body) {
+    try {
+      const r = await fetchJSON(api("/api/kodi/addon"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body || {}),
+        cache: "no-store",
+      });
+      if (Shared.reportProviderUsage(r)) return void loadAddon();
+      if (!r.ok || !r.data || r.data.ok === false) throw new Error(txt(r.data?.error) || "Kodi add-on update failed");
+      renderAddon(r.data);
+      note(body?.regenerate ? "Kodi add-on URL regenerated" : (r.data.enabled ? "Kodi add-on enabled" : "Kodi add-on disabled"));
+    } catch (e) {
+      note(e && e.message ? e.message : "Kodi add-on update failed");
+      void loadAddon();
+    }
+  }
+
   function friendlyError(data) {
     const reason = txt(data?.reason || data?.error);
     switch (reason) {
@@ -183,6 +281,7 @@
     S = new Set((k?.scrobble?.libraries || []).map(String));
     syncHidden();
     renderLibraries(lastLibraries);
+    void loadAddon();
 
     try {
       const r = await fetchJSON(api("/api/kodi/status"), { cache: "no-store" });
