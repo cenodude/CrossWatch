@@ -984,13 +984,15 @@ function applySubDisable(feature){
       "#cx-floppy-wl-name",
       "#cx-scrob-wl-name",
       "#cx-wl-q","#cx-wl-delay","#cx-wl-guid",
-      "#tr-wl-etag","#tr-wl-ttl","#tr-wl-batch","#tr-wl-log","#tr-wl-freeze"
+      "#tr-wl-etag","#tr-wl-ttl","#tr-wl-batch","#tr-wl-log","#tr-wl-freeze",
+      "#cx-pmdb-wl-name","#sm-wl-batch","#md-wl-batch"
     ],
     ratings: [
       "#cx-rt-add","#cx-rt-remove","#cx-rt-library-only","#cx-rt-anime-map","#cx-rt-anime-only","#cx-rt-type-all","#cx-rt-type-movies","#cx-rt-type-shows","#cx-rt-type-seasons","#cx-rt-type-episodes","#cx-rt-mode","#cx-rt-from-date","#cx-rt-specials",
-      "#tr-rt-perpage","#tr-rt-maxpages","#tr-rt-chunk"
+      "#tr-rt-perpage","#tr-rt-maxpages","#tr-rt-chunk",
+      "#sm-rt-chunk","#st-rt-liked-min","#st-rt-loved-min","#md-rt-perpage","#md-rt-maxpages","#md-rt-chunk"
     ],
-    history: ["#cx-hs-add", "#cx-hs-remove", "#cx-hs-rewatches", "#cx-hs-specials", "#cx-hs-library-only", "#cx-hs-anime-map", "#cx-hs-source-status", "#cx-tr-hs-numfb", "#cx-tr-hs-col", "#cx-tr-hs-col-movies", "#cx-tr-hs-col-shows", "#cx-tr-hs-ignore-dropped", "#cx-md-hs-ignore-dropped", "#cx-sm-hs-ignore-dropped", "#cx-tr-hs-unres"],
+    history: ["#cx-hs-add", "#cx-hs-remove", "#cx-hs-rewatches", "#cx-hs-specials", "#cx-hs-library-only", "#cx-hs-anime-map", "#cx-hs-source-status", "#cx-tr-hs-numfb", "#cx-tr-hs-col", "#cx-tr-hs-col-movies", "#cx-tr-hs-col-shows", "#cx-tr-hs-ignore-dropped", "#cx-md-hs-ignore-dropped", "#cx-sm-hs-ignore-dropped", "#cx-tr-hs-unres", "#tr-hs-perpage", "#tr-hs-maxpages", "#tr-hs-chunk", "#sm-hs-chunk", "#md-hs-perpage", "#md-hs-maxpages", "#md-hs-chunk", "#cx-em-hs-limit", "#cx-em-hs-delay", "#cx-em-hs-guid"],
     playlists:["#cx-pl-add","#cx-pl-remove"],
     progress:["#cx-pr-add","#cx-pr-remove","#cx-pr-min","#cx-pr-delta","#cx-pr-maxp","#cx-pr-replay","#cx-pr-tolerance","#cx-pr-specials","#cx-pr-library-only","#cx-pr-anime-map"],
     collection:["#cx-co-add","#cx-co-remove","#cx-co-type-all","#cx-co-type-movies","#cx-co-type-shows","#cx-co-type-seasons","#cx-co-type-episodes"]
@@ -1398,8 +1400,11 @@ function renderFeaturePanel(state){
       <div class="grid2">
         <div class="opt-row"><label for="cx-wl-add">Add</label><label class="switch"><input id="cx-wl-add" type="checkbox" ${wl.add?"checked":""}><span class="slider"></span></label></div>
         <div class="opt-row"><label for="cx-wl-remove">Remove</label><label class="switch"><input id="cx-wl-remove" type="checkbox" ${wl.remove?"checked":""}><span class="slider"></span></label></div>
-        ${pairSupportsLibraryOnly(state, state?.src, state?.dst, isTwoWayMode(state), "watchlist") ? `<div class="opt-row" style="grid-column:1/-1"><label for="cx-wl-library-only" data-tip-id="cx-wl-library-only">Only items in destination library</label><label class="switch"><input id="cx-wl-library-only" type="checkbox" ${wl.library_only?"checked":""}><span class="slider"></span></label></div>` : ""}
       </div>
+    `;
+
+    const wlOptions = `
+      ${pairSupportsLibraryOnly(state, state?.src, state?.dst, isTwoWayMode(state), "watchlist") ? `<div class="grid2 compact"><div class="opt-row" style="grid-column:1/-1"><label for="cx-wl-library-only" data-tip-id="cx-wl-library-only">Only items in destination library</label><label class="switch"><input id="cx-wl-library-only" type="checkbox" ${wl.library_only?"checked":""}><span class="slider"></span></label></div></div>` : ""}
 
       ${showAnime?`
         <div class="panel-title small" style="margin-top:6px">Anime options</div>
@@ -1492,7 +1497,7 @@ function renderFeaturePanel(state){
       `:""}
     `;
 
-    const parts = [`<div class="panel-title">Advanced</div>`];
+    const parts = [`<div class="panel-title">Watchlist | Options</div>`, wlOptions];
     
     if (hasPlex(state)) {
       const plex = (state.cfgRaw?.plex) || {};
@@ -1632,8 +1637,8 @@ function renderFeaturePanel(state){
     left.innerHTML=`<div class="panel-title">Ratings | Basics</div>
       <div class="opt-row"><label for="cx-rt-enable">Enable</label><label class="switch"><input id="cx-rt-enable" type="checkbox" ${rt.enable?"checked":""}><span class="slider"></span></label></div>
       <div class="grid2"><div class="opt-row"><label for="cx-rt-add">Add / Update</label><label class="switch"><input id="cx-rt-add" type="checkbox" ${rt.add?"checked":""}><span class="slider"></span></label></div>
-      <div class="opt-row"><label for="cx-rt-remove">Remove (clear)</label><label class="switch"><input id="cx-rt-remove" type="checkbox" ${rt.remove?"checked":""}><span class="slider"></span></label></div></div>
-      ${showAnime?`
+      <div class="opt-row"><label for="cx-rt-remove">Remove (clear)</label><label class="switch"><input id="cx-rt-remove" type="checkbox" ${rt.remove?"checked":""}><span class="slider"></span></label></div></div>`;
+    const rtAnime = `${showAnime?`
         <div class="panel-title small" style="margin-top:6px">Anime options</div>
         <div class="grid2 compact">
           <div class="opt-row">
@@ -1646,8 +1651,8 @@ function renderFeaturePanel(state){
             <label class="switch"><input id="cx-rt-anime-only" type="checkbox" ${rt.anime_only_sync?"checked":""} ${animeOnlyDisabled?"disabled":""}><span class="slider"></span></label>
           </div>`:""}
         </div>
-      `:""}
-      <div class="panel-title small">Scope</div>
+      `:""}`;
+    const rtScope = `<div class="panel-title small">Scope</div>
       <div class="grid2 compact">
         <div class="opt-row"><label for="cx-rt-type-all">All</label><label class="switch"><input id="cx-rt-type-all" type="checkbox" ${(hasType("movies")&&hasType("shows")&&hasType("seasons")&&hasType("episodes"))?"checked":""}><span class="slider"></span></label></div>
         <div class="opt-row"><label for="cx-rt-type-movies">Movies</label><label class="switch"><input id="cx-rt-type-movies" type="checkbox" ${hasType("movies")?"checked":""}><span class="slider"></span></label></div>
@@ -1657,10 +1662,12 @@ function renderFeaturePanel(state){
         ${pairSupportsLibraryOnly(state, state?.src, state?.dst, isTwoWayMode(state), "ratings") ? `<div class="opt-row" style="grid-column:1/-1"><label for="cx-rt-library-only" data-tip-id="cx-rt-library-only">Only items in destination library</label><label class="switch"><input id="cx-rt-library-only" type="checkbox" ${rt.library_only?"checked":""}><span class="slider"></span></label></div>` : ""}
       </div>`;
 
-    const parts = [`<div class="panel-title">Advanced</div>
+    const parts = [`<div class="panel-title">Ratings | Options</div>
       <details id="cx-rt-adv" open>
         <summary class="muted" style="margin-bottom:10px;"></summary>
-        <div class="panel-title small">History window</div>
+        ${rtScope}
+        ${rtAnime}
+        <div class="panel-title small" style="margin-top:6px">History window</div>
         <div class="grid2">
           <div class="opt-row"><label for="cx-rt-mode">Mode</label>
             <select id="cx-rt-mode" class="input">
@@ -1897,14 +1904,22 @@ left.innerHTML = `
             <span class="slider"></span>
           </label>
         </div>
-        <div class="opt-row" style="grid-column:1/-1">
+      </div>
+      ${hsRemoveLocked && !globalAnimeMappingEnabled(state) ? `<div class="muted"><b>Enable global Anime ID Mapping first.</b> Without it no history is synced to AniList.</div>` : ""}
+      ${hsRemoveLocked ? `<div class="muted">AniList history is one-way and anime only. It needs global Anime ID Mapping, sets the episode progress per title and never removes. Specials are skipped.</div>` : ""}
+      <div class="muted">${rwSupported ? "Synchronize plays between providers. Rewatches require event-capable providers; SIMKL requires Pro/VIP. Remove is not recommended." : "Synchronize plays between providers. Rewatches are available only when both sides support event history; SIMKL requires Pro/VIP."}</div>
+    `;
+
+    const parts = [`<div class="panel-title">History | Options</div>
+      <div class="grid2 compact">
+        <div class="opt-row">
           <label for="cx-hs-rewatches">Rewatches</label>
           <label class="switch">
             <input id="cx-hs-rewatches" type="checkbox" ${hs.rewatches && rwSupported ? "checked" : ""} ${rwSupported ? "" : "disabled"}>
             <span class="slider"></span>
           </label>
         </div>
-        <div class="opt-row" style="grid-column:1/-1">
+        <div class="opt-row">
           <label for="cx-hs-specials" data-tip-id="cx-hs-specials">Specials (Season 0)</label>
           <label class="switch">
             <input id="cx-hs-specials" type="checkbox" ${hs.include_specials !== false && !hsRemoveLocked ? "checked" : ""} ${hsRemoveLocked ? 'disabled data-locked="1"' : ""}>
@@ -1918,21 +1933,13 @@ left.innerHTML = `
             <span class="slider"></span>
           </label>
         </div>` : ""}
-        ${trColRow}
-        ${mdDroppedRow}
-        ${smDroppedRow}
       </div>
-      ${animeRow}
-      ${hsRemoveLocked && !globalAnimeMappingEnabled(state) ? `<div class="muted"><b>Enable global Anime ID Mapping first.</b> Without it no history is synced to AniList.</div>` : ""}
-      ${hsRemoveLocked ? `<div class="muted">AniList history is one-way and anime only. It needs global Anime ID Mapping, sets the episode progress per title and never removes. Specials are skipped.</div>` : ""}
-      <div class="muted">${rwSupported ? "Synchronize plays between providers. Rewatches require event-capable providers; SIMKL requires Pro/VIP. Remove is not recommended." : "Synchronize plays between providers. Rewatches are available only when both sides support event history; SIMKL requires Pro/VIP."}</div>
-    `;
-
-    const parts = [`<div class="panel-title">Advanced</div>`];
+      ${animeRow}`];
 
     if (hasTrakt(state)) {
       parts.push(`
         <div class="panel-title small" style="margin-top:6px">Trakt</div>
+        <div class="grid2 compact">${trColRow}</div>
         <details id="cx-tr-hs">
           <summary class="muted" style="margin-bottom:10px;">Trakt history controls</summary>
           <div class="grid2 compact">
@@ -1965,6 +1972,7 @@ left.innerHTML = `
       const sm = (state.cfgRaw?.simkl) || {};
       parts.push(`
         <div class="panel-title small" style="margin-top:6px">SIMKL</div>
+        <div class="grid2 compact">${smDroppedRow}</div>
         <details id="cx-sm-hs">
           <summary class="muted" style="margin-bottom:10px;">SIMKL history controls</summary>
           <div class="grid2 compact">
@@ -1981,6 +1989,7 @@ left.innerHTML = `
       const md = (state.cfgRaw?.mdblist) || {};
       parts.push(`
         <div class="panel-title small" style="margin-top:6px">MDBList</div>
+        <div class="grid2 compact">${mdDroppedRow}</div>
         <details id="cx-md-hs">
           <summary class="muted" style="margin-bottom:10px;">MDBList history controls</summary>
           <div class="grid2 compact">
@@ -2023,10 +2032,6 @@ left.innerHTML = `
           </div>
         </details>
       `);
-    }
-
-    if (parts.length === 1) {
-      parts.push(`<div class="muted">More controls coming later.</div>`);
     }
 
     right.innerHTML = parts.join("");
@@ -2093,7 +2098,8 @@ left.innerHTML = `
           <label class="switch"><input id="cx-co-remove" type="checkbox" ${co.remove ? "checked" : ""}><span class="slider"></span></label>
         </div>
       </div>`;
-    right.innerHTML = `<div class="panel-title">Collection Scope</div>
+    right.innerHTML = `<div class="panel-title">Collections | Options</div>
+      <div class="panel-title small">Scope</div>
       <div class="grid2 compact">
         <div class="opt-row"><label for="cx-co-type-all">All available</label><label class="switch"><input id="cx-co-type-all" type="checkbox" ${(hasType("movies")&&hasType("shows")&&hasType("seasons")&&hasType("episodes"))?"checked":""}><span class="slider"></span></label></div>
         <div class="opt-row"><label for="cx-co-type-movies">Movies</label><label class="switch"><input id="cx-co-type-movies" type="checkbox" ${hasType("movies")?"checked":""}><span class="slider"></span></label></div>
@@ -2119,22 +2125,22 @@ left.innerHTML = `
     const timestampTolerance = Number.isFinite(Number(pr.timestamp_tolerance_seconds)) ? Math.max(0, Math.min(300, Math.round(Number(pr.timestamp_tolerance_seconds)))) : 30;
 
     left.innerHTML = `<div class="panel-title">Progress | Basics</div>
+      <div class="opt-row"><label for="cx-pr-enable" data-tip-id="cx-pr-enable">Enable</label>
+        <label class="switch"><input id="cx-pr-enable" type="checkbox" ${progressEnabled ? "checked" : ""}><span class="slider"></span></label></div>
       <div class="grid2">
-        <div class="opt-row"><label for="cx-pr-enable" data-tip-id="cx-pr-enable">Enable</label>
-          <label class="switch"><input id="cx-pr-enable" type="checkbox" ${progressEnabled ? "checked" : ""}><span class="slider"></span></label></div>
         <div class="opt-row"><label for="cx-pr-add" data-tip-id="cx-pr-add">Add / Update</label>
           <label class="switch"><input id="cx-pr-add" type="checkbox" ${progressAdd ? "checked" : ""}><span class="slider"></span></label></div>
         <div class="opt-row"><label for="cx-pr-remove" data-tip-id="cx-pr-remove">Remove</label>
           <label class="switch"><input id="cx-pr-remove" type="checkbox" ${pr.remove ? "checked" : ""}><span class="slider"></span></label></div>
-      </div>
-      ${simklCanReceiveProgress(state) ? `<div class="panel-title small">Anime</div>
+      </div>`;
+    const prAnime = `${simklCanReceiveProgress(state) ? `<div class="panel-title small" style="margin-top:6px">Anime</div>
       <div class="opt-row ${globalAnimeMappingEnabled(state) ? "" : "muted"}">
         <label for="cx-pr-anime-map" data-tip-id="cx-pr-anime-map">Anime episode mapping</label>
         <label class="switch"><input id="cx-pr-anime-map" type="checkbox" ${pr.use_anime_mapping ? "checked" : ""} ${globalAnimeMappingEnabled(state) ? "" : "disabled"}><span class="slider"></span></label>
       </div>
       ${globalAnimeMappingEnabled(state) ? "" : `<div class="muted">Enable global Anime ID Mapping first.</div>`}` : ""}`;
 
-    right.innerHTML = `<div class="panel-title">Advanced Playback Progress</div>
+    right.innerHTML = `<div class="panel-title">Progress | Options</div>
       <div class="grid2 compact">
         <div class="opt-row"><label for="cx-pr-min" data-tip-id="cx-pr-min">Minimum seconds</label>
           <input id="cx-pr-min" class="input small" type="number" min="0" max="36000" value="${minS}"></div>
@@ -2151,7 +2157,8 @@ left.innerHTML = `
         ${pairSupportsLibraryOnly(state, state?.src, state?.dst, isTwoWayMode(state), "progress") ? `<div class="opt-row" style="grid-column:1/-1"><label for="cx-pr-library-only" data-tip-id="cx-pr-library-only">Only items in destination library</label>
           <label class="switch"><input id="cx-pr-library-only" type="checkbox" ${pr.library_only ? "checked" : ""}><span class="slider"></span></label></div>` : ""}
       </div>
-      ${progressRecommendation ? `<div class="muted" style="margin-top:10px">${escHTML(progressRecommendation)}</div>` : ""}
+      ${prAnime}
+      ${progressRecommendation ?`<div class="muted" style="margin-top:10px">${escHTML(progressRecommendation)}</div>` : ""}
       <div class="muted" style="margin-top:10px;color:#f0b35a">Warning: replay progress marks watched targets unwatched before writing the resume position.</div>
       <div class="muted" style="margin-top:10px">Tip: Progress does not infer clears from absence. It only syncs resume positions.</div>`;
 
