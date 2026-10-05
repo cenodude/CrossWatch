@@ -49,7 +49,7 @@ def _fetch(adapter: Any, feature: str, *, after: float | None = None) -> dict[st
             params = {
                 "userId": adapter.cfg.user_id, "Recursive": True,
                 "IncludeItemTypes": "Movie,Series", "Fields": _FIELDS,
-                "EnableImages": False, "EnableUserData": False,
+                "EnableImages": False, "EnableUserData": False, "CollapseBoxSetItems": False,
                 "EnableTotalRecordCount": False, "StartIndex": start, "Limit": _PAGE_SIZE,
             }
             if parent:

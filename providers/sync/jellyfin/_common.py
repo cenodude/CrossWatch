@@ -763,6 +763,7 @@ def build_provider_index(adapter: Any, *, feature: str | None = None) -> dict[st
         params: dict[str, Any] = {
             "IncludeItemTypes": "Movie,Series,Episode",
             "Recursive": True,
+            "CollapseBoxSetItems": False,
             "Fields": (
                 "ProviderIds,ProductionYear,Type,IndexNumber,ParentIndexNumber,SeriesId,"
                 "SeriesName,ParentId,Path,CollectionFolderId,AncestorIds,LibraryId,Name"
@@ -1298,6 +1299,7 @@ def _direct_query_by_pairs(
         "AnyProviderIdEquals": ",".join(pairs),
         "IncludeItemTypes": include_types,
         "Recursive": True,
+        "CollapseBoxSetItems": False,
         "Fields": "ProviderIds,ProductionYear,Type,IndexNumber,ParentIndexNumber,SeriesId,ParentId,CollectionFolderId,AncestorIds,LibraryId,Name",
         "Limit": 50,
     }

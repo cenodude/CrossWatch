@@ -35,6 +35,7 @@ class Server:
                 rows = [row for iid, row in self.rows.items() if iid in params["Ids"].split(",")]
             else:
                 assert params["IncludeItemTypes"] == "Movie,Series", "No library-wide episode scan"
+                assert params.get("CollapseBoxSetItems") is False, "Collection members must not collapse into box sets"
                 rows = [row for row in self.rows.values() if not params.get("ParentId") or row["LibraryId"] == params["ParentId"]]
             if params.get("MinDateLastSaved") and not self.ignore_delta:
                 after = datetime.fromisoformat(params["MinDateLastSaved"]).timestamp()
