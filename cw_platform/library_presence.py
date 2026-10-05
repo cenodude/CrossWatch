@@ -70,6 +70,18 @@ def checkable(item: Any, *, native_keys: Iterable[str] = (), has_ids: Callable[[
     return bool(usable(ids))
 
 
+def without_ids(item: Any, *, native_keys: Iterable[str] = (), has_ids: Callable[[Any], bool] | None = None) -> bool:
+    if not isinstance(item, Mapping):
+        return False
+    usable = has_ids or (lambda ids: bool(external_ids(ids)))
+    raw_ids = item.get("ids")
+    ids: Mapping[str, Any] = raw_ids if isinstance(raw_ids, Mapping) else {}
+    for key in native_keys:
+        if str(item.get(key) or ids.get(key) or "").strip():
+            return False
+    return not usable(ids) and not usable(item.get("show_ids"))
+
+
 def requested(feature: Any, fcfg: Any) -> bool:
     return str(feature or "").strip().lower() in FEATURES and bool((fcfg or {}).get(OPTION))
 

@@ -73,8 +73,12 @@ def destination_rows(client, cfg, row, block, query, entity):
     provider = str(row["provider"]).upper()
     instance = row.get("instance") or "default"
     if provider in {"JELLYFIN", "EMBY"}:
+        headers = {"X-Emby-Token": block["access_token"], "Accept": "application/json"}
+        if provider == "JELLYFIN":
+            from providers.sync.jellyfin._auth_http import auth_headers
+            headers = auth_headers(block["access_token"], str(block.get("device_id") or "crosswatch"))
         response = client.get(f"{str(block['server']).rstrip('/')}/Users/{quote(str(block['user_id']), safe='')}/Items",
-                              headers={"X-Emby-Token": block["access_token"], "Accept": "application/json"},
+                              headers=headers,
                               params={"SearchTerm": query, "IncludeItemTypes": "Movie" if entity == "movie" else "Series",
                                       "Recursive": "true", "Fields": "ProviderIds", "Limit": 20, "EnableImages": "false"},
                               timeout=10, verify=bool(block.get("verify_ssl", True)))

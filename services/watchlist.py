@@ -547,15 +547,17 @@ def _jf_headers(cfg: dict[str, Any]) -> dict[str, str]:
         cfg.get("access_token") or cfg.get("api_key") or cfg.get("token") or ""
     ).strip()
     dev = (cfg.get("device_id") or "CrossWatch").strip() or "CrossWatch"
+    client = (
+        'MediaBrowser Client="CrossWatch", '
+        f'Device="WebUI", DeviceId="{dev}", Version="{app_version()}"'
+    )
     headers: dict[str, str] = {
         "Accept": "application/json",
         "Content-Type": "application/json",
-        "X-Emby-Authorization": (
-            'MediaBrowser Client="CrossWatch", '
-            f'Device="WebUI", DeviceId="{dev}", Version="{app_version()}"'
-        ),
+        "X-Emby-Authorization": client,
     }
     if token:
+        headers["Authorization"] = f'{client}, Token="{token}"'
         headers["X-Emby-Token"] = token
     return headers
 
