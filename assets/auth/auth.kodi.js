@@ -176,6 +176,7 @@
     <div class="muted" style="margin:16px 0 10px">JSON-RPC connection. Needed for sync, whitelisting and for using Kodi as a destination.</div>`;
 
   function addonAge(seconds) {
+    if (seconds === null || seconds === undefined || seconds === "") return "";
     const n = Number(seconds);
     if (!Number.isFinite(n) || n < 0) return "";
     if (n < 90) return "just now";
