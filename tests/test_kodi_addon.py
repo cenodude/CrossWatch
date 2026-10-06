@@ -275,6 +275,8 @@ def test_ping_lists_routes_and_stores_viewers() -> None:
 
     info = addon.status(cfg, "default", "https://cw.example")
     assert info["mode"] == "addon" and info["pkc_skipped"] == 3 and info["addon_version"] == "1.2.0"
+    assert info["paired"] is True
+    assert addon.status(cfg, "bedroom", "https://cw.example")["paired"] is False
     assert info["url"] == f"https://cw.example/webhook/kodiwatcher?token={TOKEN}"
 
 
@@ -446,6 +448,160 @@ def test_kodi_users_offers_addon_viewers_without_jsonrpc(monkeypatch) -> None:
     assert _auth_client(monkeypatch, make_cfg(feature=False)).get("/api/kodi/users").status_code == 401
 
 
+def test_pair_code_shape_and_single_use() -> None:
+    code, ttl = addon.create_pair_code("default", now=1000.0)
+    assert len(code) == addon.PAIR_CODE_LENGTH and set(code) <= set(addon.PAIR_ALPHABET)
+    assert not set("0O1I") & set(addon.PAIR_ALPHABET)
+    assert ttl == 600
+    assert addon.active_pair_code("default", now=1100.0) == (code, 500)
+
+    assert addon.redeem_pair_code(f" {code[:3].lower()} {code[3:].lower()} ", "kodi-1", now=1100.0) == ("default", "")
+    assert addon.redeem_pair_code(code, "kodi-1", now=1101.0) == (None, "invalid_code")
+    assert addon.active_pair_code("default", now=1101.0) == ("", 0)
+
+
+def test_pair_code_expires_and_is_replaced_per_instance() -> None:
+    first, _ = addon.create_pair_code("default", now=1000.0)
+    other, _ = addon.create_pair_code("bedroom", now=1000.0)
+    second, _ = addon.create_pair_code("default", now=1001.0)
+
+    assert addon.redeem_pair_code(first, "a", now=1002.0) == (None, "invalid_code")
+    assert addon.redeem_pair_code(other, "a", now=1002.0) == ("bedroom", "")
+    assert addon.redeem_pair_code(second, "a", now=1001.0 + addon.PAIR_TTL_SECONDS + 1) == (None, "invalid_code")
+
+
+def test_pair_rate_limit_is_per_client() -> None:
+    code, _ = addon.create_pair_code("default", now=1000.0)
+    for _ in range(addon.PAIR_MAX_FAILURES):
+        assert addon.redeem_pair_code("ZZZZZZ", "attacker", now=1001.0) == (None, "invalid_code")
+    assert addon.redeem_pair_code(code, "attacker", now=1002.0) == (None, "rate_limited")
+    assert addon.redeem_pair_code(code, "kodi-1", now=1002.0) == ("default", "")
+    again, _ = addon.create_pair_code("default", now=1003.0)
+    assert addon.redeem_pair_code(again, "attacker", now=1001.0 + addon.PAIR_TTL_SECONDS + 1) == ("default", "")
+
+
+def test_clean_base_url_accepts_only_plain_addresses() -> None:
+    assert addon.clean_base_url("http://192.168.1.10:8787/") == "http://192.168.1.10:8787"
+    assert addon.clean_base_url("https://cw.example/webhook/kodiwatcher") == "https://cw.example"
+    assert addon.clean_base_url("https://cw.example/webhook/kodiwatcher/pair") == "https://cw.example"
+    assert addon.clean_base_url("192.168.1.10:8787") == ""
+    assert addon.clean_base_url("http://cw.example/?token=abc") == ""
+    assert addon.clean_base_url("http://") == ""
+    assert addon.link_params("http://cw:8787", TOKEN) == ["action=link", "url=http://cw:8787/webhook/kodiwatcher", f"token={TOKEN}"]
+
+
+def test_pair_webhook_swaps_code_for_token(monkeypatch) -> None:
+    client = _webhook_client(monkeypatch, make_cfg())
+    code, _ = addon.create_pair_code("bedroom")
+
+    wrong = client.post("/webhook/kodiwatcher/pair", json={"code": "ZZZZZZ"})
+    assert wrong.status_code == 401 and wrong.json() == {"ok": False, "error": "invalid_code", "crosswatch_version": wrong.json()["crosswatch_version"]}
+
+    ok = client.post("/webhook/kodiwatcher/pair", json={"code": code.lower()})
+    assert ok.status_code == 200
+    body = ok.json()
+    assert body["ok"] is True and body["token"] == BEDROOM_TOKEN and body["instance"] == "bedroom"
+    assert body["url"].endswith("/webhook/kodiwatcher") and "token" not in body["url"]
+
+    assert client.post("/webhook/kodiwatcher/pair", json={"code": code}).status_code == 401
+    assert client.post("/webhook/kodiwatcher/pair", content=b"{nope").status_code == 401
+
+
+def test_pair_webhook_rate_limits_and_respects_the_switch(monkeypatch) -> None:
+    client = _webhook_client(monkeypatch, make_cfg())
+    for _ in range(addon.PAIR_MAX_FAILURES):
+        assert client.post("/webhook/kodiwatcher/pair", json={"code": "ZZZZZZ"}).status_code == 401
+    limited = client.post("/webhook/kodiwatcher/pair", json={"code": "ZZZZZZ"})
+    assert limited.status_code == 429 and limited.json()["error"] == "rate_limited"
+
+    addon.clear_pair_codes()
+    code, _ = addon.create_pair_code("default")
+    off = _webhook_client(monkeypatch, make_cfg(feature=False)).post("/webhook/kodiwatcher/pair", json={"code": code})
+    assert off.status_code == 200 and off.json()["error"] == "addon_disabled"
+    assert addon.active_pair_code("default")[0] == code
+
+
+def test_pair_api_turns_the_addon_on_and_returns_a_code(monkeypatch) -> None:
+    cfg: dict[str, Any] = {"runtime": {"kodi_addon": True}, "kodi": {}}
+    client = _auth_client(monkeypatch, cfg)
+
+    assert client.get("/api/kodi/addon").json()["enabled"] is False
+    first = client.post("/api/kodi/addon/pair").json()
+    assert first["enabled"] is True and first["paired"] is False
+    assert len(first["pair_code"]) == 6 and 0 < first["pair_expires_in"] <= 600
+    assert "/webhook/kodiwatcher?token=" in first["url"]
+    assert first["address"] == "http://testserver"
+    assert client.get("/api/kodi/addon").json()["pair_code"] == first["pair_code"]
+    assert client.post("/api/kodi/addon/pair").json()["pair_code"] != first["pair_code"]
+
+    client.post("/api/kodi/addon", json={"enabled": False})
+    assert addon.active_pair_code("default") == ("", 0)
+    assert _auth_client(monkeypatch, make_cfg(feature=False)).post("/api/kodi/addon/pair").status_code == 404
+
+
+def test_link_api_pushes_endpoint_and_token_over_jsonrpc(monkeypatch) -> None:
+    calls: list[tuple[str, Any]] = []
+
+    def rpc(_server: str, method: str, **kwargs: Any) -> Any:
+        calls.append((method, kwargs.get("params")))
+        if method == "Addons.GetAddonDetails":
+            return {"addon": {"addonid": "service.crosswatch", "enabled": True}}
+        return "OK"
+
+    def pushes() -> list[Any]:
+        return [params for method, params in calls if method == "Addons.ExecuteAddon"]
+
+    monkeypatch.setattr("providers.sync.kodi._common.jsonrpc_call", rpc)
+    cfg = make_cfg(kodi={"server": "http://kodi.local:8080", "connection_verified": True})
+    client = _auth_client(monkeypatch, cfg)
+
+    res = client.post("/api/kodi/addon/link", json={"address": "http://192.168.1.10:8787/"})
+    assert res.status_code == 200 and res.json()["address"] == "http://192.168.1.10:8787"
+    assert calls[0][0] == "Addons.GetAddonDetails"
+    assert pushes() == [
+        {"addonid": "service.crosswatch", "params": ["action=link", "url=http://192.168.1.10:8787/webhook/kodiwatcher", f"token={TOKEN}"], "wait": False}
+    ]
+
+    assert client.post("/api/kodi/addon/link", json={"address": "nas:8787"}).status_code == 400
+    assert client.post("/api/kodi/addon/link", json={}).json()["address"] == "http://testserver"
+    assert len(pushes()) == 2
+
+    fresh: dict[str, Any] = {"runtime": {"kodi_addon": True}, "kodi": {"server": "http://kodi.local:8080", "connection_verified": True}}
+    first = _auth_client(monkeypatch, fresh).post("/api/kodi/addon/link", json={"address": "http://cw:8787"})
+    assert first.status_code == 200 and addon.instance_enabled(fresh, "default") is True
+    assert pushes()[-1]["params"][2] == "token=" + addon.instance_token(fresh, "default")
+
+
+def test_link_api_needs_jsonrpc_and_an_installed_addon(monkeypatch) -> None:
+    from providers.auth._auth_KODI import KodiAuthError
+
+    assert _auth_client(monkeypatch, make_cfg()).post("/api/kodi/addon/link", json={}).status_code == 400
+
+    calls: list[str] = []
+
+    def missing(_server: str, method: str, **_kwargs: Any) -> Any:
+        calls.append(method)
+        raise KodiAuthError("Kodi JSON-RPC error", reason="jsonrpc_error")
+
+    monkeypatch.setattr("providers.sync.kodi._common.jsonrpc_call", missing)
+    fresh: dict[str, Any] = {"runtime": {"kodi_addon": True}, "kodi": {"server": "http://kodi.local:8080", "connection_verified": True}}
+    res = _auth_client(monkeypatch, fresh).post("/api/kodi/addon/link", json={})
+    assert res.status_code == 400 and res.json()["reason"] == "addon_missing" and "not installed" in res.json()["error"]
+    assert calls == ["Addons.GetAddonDetails"]
+    assert addon.instance_enabled(fresh, "default") is False
+
+    monkeypatch.setattr("providers.sync.kodi._common.jsonrpc_call", lambda _s, _m, **_k: {"addon": {"enabled": False}})
+    off = _auth_client(monkeypatch, fresh).post("/api/kodi/addon/link", json={})
+    assert off.status_code == 400 and off.json()["reason"] == "addon_disabled"
+    assert addon.instance_enabled(fresh, "default") is False
+
+    def down(*_a: Any, **_k: Any) -> Any:
+        raise KodiAuthError("Kodi server is unreachable", reason="unreachable")
+
+    monkeypatch.setattr("providers.sync.kodi._common.jsonrpc_call", down)
+    assert _auth_client(monkeypatch, fresh).post("/api/kodi/addon/link", json={}).status_code == 502
+
+
 def test_route_source_accepts_addon_only_instance() -> None:
     from api.scrobblerManagementAPI import _scrobble_source_connected
 
@@ -466,3 +622,61 @@ def test_media_server_played_at_uses_replayed_watch_time() -> None:
     assert _media_server._played_at(event({"_cw_watched_at": now - 3600})) == now - 3600
     assert abs(_media_server._played_at(event({})) - now) <= 2
     assert abs(_media_server._played_at(event({"_cw_watched_at": now + 9999})) - now) <= 2
+
+
+def test_kodi_disconnect_also_turns_the_addon_off(monkeypatch) -> None:
+    cfg = make_cfg(kodi={"server": "http://kodi.local:8080", "connection_verified": True})
+    addon.create_pair_code("default")
+    client = _auth_client(monkeypatch, cfg)
+
+    assert client.post("/api/kodi/disconnect").json()["ok"] is True
+    assert addon.instance_enabled(cfg, "default") is False
+    assert addon.instance_enabled(cfg, "bedroom") is True
+    assert addon.active_pair_code("default") == ("", 0)
+
+
+def test_settings_save_keeps_the_addon_token_when_the_ui_posts_its_mask(monkeypatch) -> None:
+    import copy
+
+    from api import configAPI as cfg_api
+    from cw_platform import config_base
+
+    current = make_cfg()
+    saved: dict[str, Any] = {}
+    monkeypatch.setattr(
+        cfg_api,
+        "_env",
+        lambda: {
+            "CW": None,
+            "cfg_base": config_base,
+            "load": lambda: copy.deepcopy(current),
+            "save": lambda cfg: saved.update(cfg),
+            "prune": lambda *_: None,
+            "ensure": lambda *_: None,
+            "norm_pair": lambda *_: None,
+            "probes_cache": None,
+            "probes_status_cache": None,
+            "scheduler": None,
+        },
+    )
+    mask = "•" * 8
+    posted = {"security": {"webhook_ids": {"kodiwatcher:default": mask, "kodiwatcher:bedroom": mask}}}
+
+    res = cfg_api.api_config_save(SimpleNamespace(app=SimpleNamespace()), posted)
+
+    assert res["ok"] is True
+    assert addon.instance_token(saved, "default") == TOKEN
+    assert addon.instance_token(saved, "bedroom") == BEDROOM_TOKEN
+
+
+def test_paired_survives_silence_and_resets_on_regenerate(monkeypatch) -> None:
+    cfg: dict[str, Any] = {"runtime": {"kodi_addon": True}, "kodi": {}}
+    client = _auth_client(monkeypatch, cfg)
+    client.post("/api/kodi/addon/pair")
+    addon.mark_seen("default", {"event": "ping", "viewers": []}, now=time.time() - addon.ADDON_FRESH_SECONDS - 60)
+
+    quiet = client.get("/api/kodi/addon").json()
+    assert quiet["paired"] is True and quiet["active"] is False
+
+    again = client.post("/api/kodi/addon", json={"enabled": True, "regenerate": True}).json()
+    assert again["enabled"] is True and again["paired"] is False

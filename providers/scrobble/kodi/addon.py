@@ -39,6 +39,13 @@ TOKEN_HEADER = "x-crosswatch-token"
 ENDPOINT_PATH = "/webhook/kodiwatcher"
 MAX_VIEWERS = 64
 MIN_TOKEN_LENGTH = 16
+ADDON_ID = "service.crosswatch"
+PAIR_PATH = "/webhook/kodiwatcher/pair"
+PAIR_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+PAIR_CODE_LENGTH = 6
+PAIR_TTL_SECONDS = 600.0
+PAIR_MAX_FAILURES = 10
+PAIR_MAX_CLIENTS = 1024
 
 _ACTIONS = {"start": "start", "resume": "start", "progress": "start", "pause": "pause", "stop": "stop"}
 _PERSISTED = ("last_seen", "addon_version", "device_id", "device_name", "viewers", "pkc_skipped")
@@ -46,6 +53,10 @@ _PERSISTED = ("last_seen", "addon_version", "device_id", "device_name", "viewers
 _STATE: dict[str, dict[str, Any]] = {}
 _STATE_LOCK = threading.Lock()
 _STATE_LOADED = False
+
+_PAIR_CODES: dict[str, tuple[str, float]] = {}
+_PAIR_FAILURES: dict[str, list[float]] = {}
+_PAIR_LOCK = threading.Lock()
 
 
 def _log(msg: str, level: str = "INFO") -> None:
@@ -169,10 +180,121 @@ def source_ready(cfg: Mapping[str, Any] | None, instance_id: Any) -> bool:
     return jsonrpc_connected(cfg, instance_id) or instance_enabled(cfg, instance_id)
 
 
+def clean_base_url(value: Any) -> str:
+    base = _text(value, 400).rstrip("/")
+    for tail in (PAIR_PATH, ENDPOINT_PATH):
+        if base.lower().endswith(tail):
+            base = base[: -len(tail)].rstrip("/")
+    lowered = base.lower()
+    if not lowered.startswith(("http://", "https://")) or not base.split("://", 1)[1]:
+        return ""
+    if any(ch.isspace() or ch in "?#," for ch in base):
+        return ""
+    return base
+
+
+def plain_endpoint(base_url: Any) -> str:
+    base = clean_base_url(base_url)
+    return f"{base}{ENDPOINT_PATH}" if base else ""
+
+
 def endpoint_url(base_url: Any, token: Any) -> str:
     base = str(base_url or "").rstrip("/")
     value = _text(token, 256)
     return f"{base}{ENDPOINT_PATH}?token={value}" if value else ""
+
+
+def normalize_pair_code(value: Any) -> str:
+    return "".join(ch for ch in _text(value, 64).upper() if not ch.isspace())
+
+
+def _prune_pair_locked(now: float) -> None:
+    for code, (_inst, expires) in list(_PAIR_CODES.items()):
+        if expires <= now:
+            _PAIR_CODES.pop(code, None)
+    for client, stamps in list(_PAIR_FAILURES.items()):
+        kept = [ts for ts in stamps if now - ts < PAIR_TTL_SECONDS]
+        if kept:
+            _PAIR_FAILURES[client] = kept
+        else:
+            _PAIR_FAILURES.pop(client, None)
+
+
+def create_pair_code(instance_id: Any, *, now: float | None = None) -> tuple[str, int]:
+    inst = normalize_instance_id(instance_id)
+    current = float(now if now is not None else time.time())
+    with _PAIR_LOCK:
+        _prune_pair_locked(current)
+        for code, (owner, _expires) in list(_PAIR_CODES.items()):
+            if owner == inst:
+                _PAIR_CODES.pop(code, None)
+        code = ""
+        while not code or code in _PAIR_CODES:
+            code = "".join(secrets.choice(PAIR_ALPHABET) for _ in range(PAIR_CODE_LENGTH))
+        _PAIR_CODES[code] = (inst, current + PAIR_TTL_SECONDS)
+    return code, int(PAIR_TTL_SECONDS)
+
+
+def active_pair_code(instance_id: Any, *, now: float | None = None) -> tuple[str, int]:
+    inst = normalize_instance_id(instance_id)
+    current = float(now if now is not None else time.time())
+    with _PAIR_LOCK:
+        _prune_pair_locked(current)
+        for code, (owner, expires) in _PAIR_CODES.items():
+            if owner == inst:
+                return code, max(0, int(expires - current))
+    return "", 0
+
+
+def clear_pair_codes(instance_id: Any = None) -> None:
+    with _PAIR_LOCK:
+        if instance_id is None:
+            _PAIR_CODES.clear()
+            _PAIR_FAILURES.clear()
+            return
+        inst = normalize_instance_id(instance_id)
+        for code, (owner, _expires) in list(_PAIR_CODES.items()):
+            if owner == inst:
+                _PAIR_CODES.pop(code, None)
+
+
+def redeem_pair_code(code: Any, client: Any = "", *, now: float | None = None) -> tuple[str | None, str]:
+    wanted = normalize_pair_code(code)
+    who = _text(client, 80) or "-"
+    current = float(now if now is not None else time.time())
+    with _PAIR_LOCK:
+        _prune_pair_locked(current)
+        if len(_PAIR_FAILURES.get(who) or []) >= PAIR_MAX_FAILURES:
+            return None, "rate_limited"
+        found: str | None = None
+        for known in list(_PAIR_CODES):
+            if hmac.compare_digest(known.encode("utf-8"), wanted.encode("utf-8")):
+                found = known
+        if found is None:
+            if len(_PAIR_FAILURES) >= PAIR_MAX_CLIENTS and who not in _PAIR_FAILURES:
+                _PAIR_FAILURES.pop(next(iter(_PAIR_FAILURES)), None)
+            _PAIR_FAILURES.setdefault(who, []).append(current)
+            return None, "invalid_code"
+        inst, _expires = _PAIR_CODES.pop(found)
+        return inst, ""
+
+
+def pair(cfg: Mapping[str, Any] | None, code: Any, base_url: Any, client: Any = "") -> tuple[int, dict[str, Any]]:
+    out: dict[str, Any] = {"ok": False, "crosswatch_version": reported_version()}
+    inst, reason = redeem_pair_code(code, client)
+    if reason == "rate_limited":
+        out["error"] = reason
+        return 429, out
+    token = instance_token(cfg, inst) if inst is not None and feature_enabled(cfg) else ""
+    if inst is None or not token:
+        out["error"] = "invalid_code"
+        return 401, out
+    out.update({"ok": True, "url": plain_endpoint(base_url), "token": token, "instance": _instance_name(_dict(cfg), inst)})
+    return 200, out
+
+
+def link_params(base_url: Any, token: Any) -> list[str]:
+    return ["action=link", f"url={plain_endpoint(base_url)}", f"token={_text(token, 256)}"]
 
 
 def _state_file() -> Path:
@@ -207,12 +329,14 @@ def _save_state_locked() -> None:
 
 def reset_state() -> None:
     global _STATE_LOADED
+    clear_pair_codes()
     with _STATE_LOCK:
         _STATE.clear()
         _STATE_LOADED = True
 
 
 def forget_instance(instance_id: Any) -> None:
+    clear_pair_codes(instance_id)
     with _STATE_LOCK:
         _load_state_locked()
         if _STATE.pop(normalize_instance_id(instance_id), None) is not None:
@@ -291,6 +415,7 @@ def status(cfg: Mapping[str, Any] | None, instance_id: Any, base_url: Any = "", 
     current = float(now if now is not None else time.time())
     last_seen = float(snap.get("last_seen") or 0.0)
     active = enabled and is_active(inst, now=current)
+    paired = enabled and last_seen > 0
     if active:
         mode = "addon"
     elif connected:
@@ -302,8 +427,12 @@ def status(cfg: Mapping[str, Any] | None, instance_id: Any, base_url: Any = "", 
         "instance": inst,
         "enabled": enabled,
         "url": endpoint_url(base_url, instance_token(cfg, inst)) if enabled else "",
+        "address": clean_base_url(base_url),
+        "pair_code": active_pair_code(inst, now=current)[0] if enabled else "",
+        "pair_expires_in": active_pair_code(inst, now=current)[1] if enabled else 0,
         "mode": mode,
         "active": active,
+        "paired": paired,
         "jsonrpc_connected": connected,
         "last_seen": int(last_seen) if last_seen else None,
         "age_seconds": int(max(0.0, current - last_seen)) if last_seen else None,

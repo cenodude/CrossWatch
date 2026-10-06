@@ -1890,6 +1890,35 @@ async def webhook_plexwatcher(request: Request) -> JSONResponse:
     )
 
 
+@router.post("/webhook/kodiwatcher/pair")
+async def webhook_kodiwatcher_pair(request: Request) -> JSONResponse:
+    from providers.scrobble.kodi import addon as kodi_addon
+
+    cfg = load_config() or {}
+    if not kodi_addon.feature_enabled(cfg):
+        return JSONResponse({"ok": True, "ignored": True, "error": "addon_disabled", "crosswatch_version": kodi_addon.reported_version()}, status_code=200)
+
+    raw = await request.body()
+    try:
+        payload = json.loads(raw.decode("utf-8", errors="replace")) if raw else {}
+    except Exception:
+        payload = None
+    code = payload.get("code") if isinstance(payload, dict) else None
+
+    base = str(request.base_url).rstrip("/")
+    proto = str(request.headers.get("x-forwarded-proto") or "").split(",", 1)[0].strip().lower()
+    if proto == "https" and base.startswith("http://"):
+        base = "https://" + base[7:]
+    client = request.client.host if request.client else "-"
+    status_code, body = kodi_addon.pair(cfg, code, base, client)
+    if status_code != 200 and BASE_LOG:
+        try:
+            BASE_LOG(f"Rejected Kodi add-on pairing, reason={body.get('error')}, client={client}", level="WARN", module="WEBHOOK")
+        except Exception:
+            pass
+    return JSONResponse(body, status_code=status_code)
+
+
 @router.post("/webhook/kodiwatcher")
 async def webhook_kodiwatcher(request: Request) -> JSONResponse:
     from starlette.concurrency import run_in_threadpool

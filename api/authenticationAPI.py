@@ -1332,6 +1332,30 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             base = "https://" + base[7:]
         return kodi_addon.status(cfg, inst, base)
 
+    def _kodi_addon_apply(request: Request, cfg: dict[str, Any], inst: str, enabled: bool, regenerate: bool = False) -> None:
+        from providers.scrobble.kodi import addon as kodi_addon
+
+        was_enabled = kodi_addon.instance_enabled(cfg, inst)
+        ensure_provider_block(cfg, "kodi")
+        ensure_instance_block(cfg, "kodi", inst)
+        kodi_addon.set_instance_enabled(cfg, inst, enabled, regenerate=regenerate)
+        save_config(cfg)
+        if not enabled or regenerate:
+            kodi_addon.forget_instance(inst)
+        _probe_bust("kodi")
+        if enabled == was_enabled:
+            return
+        try:
+            from providers.scrobble import watch_manager as wm
+            from providers.scrobble.sources import source_enabled
+
+            running = any(bool(g.get("running")) for g in (wm.status(request.app) or {}).get("groups") or [])
+            autostart = bool(((cfg.get("scrobble") or {}).get("watch") or {}).get("autostart"))
+            if source_enabled(cfg, "watcher") and (running or autostart):
+                wm.start_from_config(request.app)
+        except Exception as exc:
+            _safe_log(log_fn, "KODI", f"[KODI:{inst}] watcher refresh failed error_type={type(exc).__name__}")
+
     @app.get("/api/kodi/addon", tags=["media providers"], response_model=None)
     def api_kodi_addon(request: Request, instance: str | None = Query(None)) -> Any:
         from providers.scrobble.kodi import addon as kodi_addon
@@ -1359,25 +1383,73 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             conflict = usage_conflict_response(cfg, "kodi", inst) if was_enabled and not kodi_addon.jsonrpc_connected(cfg, inst) else None
             if conflict is not None:
                 return conflict
-        ensure_provider_block(cfg, "kodi")
-        ensure_instance_block(cfg, "kodi", inst)
-        kodi_addon.set_instance_enabled(cfg, inst, bool(enabled), regenerate=bool(regenerate))
-        save_config(cfg)
-        if not enabled:
-            kodi_addon.forget_instance(inst)
-        _probe_bust("kodi")
-        if bool(enabled) != was_enabled:
-            try:
-                from providers.scrobble import watch_manager as wm
-                from providers.scrobble.sources import source_enabled
-
-                running = any(bool(g.get("running")) for g in (wm.status(request.app) or {}).get("groups") or [])
-                autostart = bool(((cfg.get("scrobble") or {}).get("watch") or {}).get("autostart"))
-                if source_enabled(cfg, "watcher") and (running or autostart):
-                    wm.start_from_config(request.app)
-            except Exception as exc:
-                _safe_log(log_fn, "KODI", f"[KODI:{inst}] watcher refresh failed error_type={type(exc).__name__}")
+        _kodi_addon_apply(request, cfg, inst, bool(enabled), bool(regenerate))
         return _kodi_addon_status(request, load_config(), inst)
+
+    @app.post("/api/kodi/addon/pair", tags=["media providers"], response_model=None)
+    def api_kodi_addon_pair(request: Request, instance: str | None = Query(None)) -> Any:
+        from providers.scrobble.kodi import addon as kodi_addon
+
+        inst = normalize_instance_id(instance)
+        cfg = load_config()
+        if not kodi_addon.feature_enabled(cfg):
+            raise HTTPException(status_code=404, detail="Not found")
+        if not kodi_addon.instance_enabled(cfg, inst):
+            _kodi_addon_apply(request, cfg, inst, True)
+            cfg = load_config()
+        if not kodi_addon.instance_enabled(cfg, inst):
+            return JSONResponse({"ok": False, "error": "Could not turn on the Kodi add-on", "instance": inst}, 500)
+        kodi_addon.create_pair_code(inst)
+        return _kodi_addon_status(request, cfg, inst)
+
+    @app.post("/api/kodi/addon/link", tags=["media providers"], response_model=None)
+    def api_kodi_addon_link(request: Request, payload: dict[str, Any] = Body(default={}), instance: str | None = Query(None)) -> Any:
+        from providers.scrobble.kodi import addon as kodi_addon
+
+        inst = normalize_instance_id(instance)
+        cfg = load_config()
+        if not kodi_addon.feature_enabled(cfg):
+            raise HTTPException(status_code=404, detail="Not found")
+        kcfg = kodi_make_config(cfg, inst)
+        if not (kcfg.server and kcfg.connection_verified):
+            return JSONResponse({"ok": False, "error": "Kodi is not connected over JSON-RPC", "instance": inst}, 400)
+        given = str((payload.get("address") if isinstance(payload, dict) else "") or "").strip()
+        base = kodi_addon.clean_base_url(given) if given else str(_kodi_addon_status(request, cfg, inst).get("address") or "")
+        if not base:
+            return JSONResponse({"ok": False, "error": "Enter the CrossWatch address as http(s)://host:port", "instance": inst}, 400)
+
+        def failed(exc: KodiAuthError, missing: str) -> JSONResponse:
+            reason = str(getattr(exc, "reason", "") or "link_failed")
+            _safe_log(log_fn, "KODI", f"[KODI:{inst}] add-on link failed reason={reason}")
+            if reason == "jsonrpc_error":
+                return JSONResponse({"ok": False, "error": missing, "reason": "addon_missing", "instance": inst}, 400)
+            return JSONResponse({"ok": False, "error": "Kodi server is unreachable", "reason": reason, "instance": inst}, 502)
+
+        client = KodiClient(kcfg)
+        try:
+            details = client.rpc("Addons.GetAddonDetails", {"addonid": kodi_addon.ADDON_ID, "properties": ["enabled"]})
+        except KodiAuthError as exc:
+            return failed(exc, "The CrossWatch add-on is not installed on this Kodi. Install it first, then link again.")
+        found = details.get("addon") if isinstance(details, dict) else None
+        if isinstance(found, dict) and found.get("enabled") is False:
+            return JSONResponse(
+                {"ok": False, "error": "The CrossWatch add-on is disabled on this Kodi. Enable it first, then link again.", "reason": "addon_disabled", "instance": inst},
+                400,
+            )
+
+        if not kodi_addon.instance_enabled(cfg, inst):
+            _kodi_addon_apply(request, cfg, inst, True)
+            cfg = load_config()
+        if not kodi_addon.instance_enabled(cfg, inst):
+            return JSONResponse({"ok": False, "error": "Could not turn on the Kodi add-on", "instance": inst}, 500)
+        try:
+            client.rpc(
+                "Addons.ExecuteAddon",
+                {"addonid": kodi_addon.ADDON_ID, "params": kodi_addon.link_params(base, kodi_addon.instance_token(cfg, inst)), "wait": False},
+            )
+        except KodiAuthError as exc:
+            return failed(exc, "Kodi could not start the CrossWatch add-on.")
+        return {"ok": True, "instance": inst, "address": base}
 
     @app.get("/api/kodi/libraries", tags=["media providers"])
     def api_kodi_libraries(instance: str | None = Query(None), server: str | None = Query(None), verify_ssl: bool | None = Query(None)) -> dict[str, Any]:
@@ -1436,7 +1508,14 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         if not prov:
             return JSONResponse({"ok": False, "error": "Provider missing", "instance": inst}, 500)
         prov.disconnect(cfg, instance_id=inst)
+        from providers.scrobble.kodi import addon as kodi_addon
+
+        addon_was_on = kodi_addon.instance_enabled(cfg, inst)
+        if addon_was_on:
+            kodi_addon.set_instance_enabled(cfg, inst, False)
         save_config(cfg)
+        if addon_was_on:
+            kodi_addon.forget_instance(inst)
         _probe_bust("kodi")
         _safe_log(log_fn, "KODI", f"[KODI:{inst}] disconnected")
         return {"ok": True, "instance": inst}
