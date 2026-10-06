@@ -278,6 +278,17 @@ def test_ping_lists_routes_and_stores_viewers() -> None:
     assert info["url"] == f"https://cw.example/webhook/kodiwatcher?token={TOKEN}"
 
 
+def test_ping_without_routes_is_a_plain_ok() -> None:
+    cfg = make_cfg([])
+    out = addon.handle(SimpleNamespace(state=SimpleNamespace(watch_groups={})), cfg, "default", {"event": "ping", "viewers": ["anna"]})
+    assert out["ok"] is True and out["ignored"] is False
+    assert out["routes"] == [] and "error" not in out
+
+    cfg["scrobble"]["sources"]["watcher"] = False
+    off = addon.handle(SimpleNamespace(state=SimpleNamespace(watch_groups={})), cfg, "default", {"event": "ping", "viewers": ["anna"]})
+    assert off["ignored"] is True and off["error"] == "watcher_disabled"
+
+
 def test_is_active_expires_after_fresh_window() -> None:
     addon.mark_seen("default", {"event": "progress"}, now=1000.0)
     assert addon.is_active("default", now=1000.0 + addon.ADDON_FRESH_SECONDS - 1) is True
