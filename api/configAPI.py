@@ -110,6 +110,8 @@ def _log_scrobble_source_state(env: dict[str, Any], cfg: dict[str, Any]) -> None
 
 def _is_sensitive_config_path(path: tuple[str, ...]) -> bool:
     clean = [str(part or "").strip().lower() for part in path if str(part or "").strip()]
+    if len(clean) >= 3 and clean[0] == "security" and clean[1] == "webhook_ids":
+        return True
     if len(clean) >= 3 and clean[0] == "scheduling" and clean[1] == "webhooks":
         return clean[-1] in {"url", "default_url", "base_url", "healthchecks_base_url", "start_url", "success_url", "failure_url"}
     return False

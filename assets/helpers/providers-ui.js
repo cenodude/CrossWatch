@@ -768,7 +768,7 @@
       copy: { auth: ["Kodi Authentication", "Connect a Kodi media client over HTTP JSON-RPC."], whitelist: ["Kodi Whitelisting", "Choose which Kodi video sources CrossWatch can use for history, ratings, progress, collections and scrobbling."] },
       journey: ["Connect to Kodi", "Enter your Kodi server URL and optional HTTP Basic Auth credentials. Make sure Kodi's web server and JSON RPC access are enabled before connecting.", "23,181,209", "20,150,200", "KODI"],
       steps: [["1", "Enable JSON-RPC", "Allow control of Kodi via HTTP"], ["2", "Enter server", "Add the Kodi web server URL"], ["3", "Verify", "CrossWatch checks Kodi and JSON-RPC versions"]],
-      order: [".grid2", ".inline"],
+      order: [".kodi-method-row", "#kodi_addon_block", ".grid2", ".inline"],
       actions: [{ row: ".inline", status: "#kodi_msg", buttons: "#kodi_connect" }]
     },
     STREMIO: {

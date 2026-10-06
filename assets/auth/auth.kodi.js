@@ -154,26 +154,164 @@
     }
   }
 
+  const METHOD_KEY = "cw.ui.kodi.auth.method.v1";
+  const ADDON_COPY = {
+    code: {
+      title: "Connect the Kodi add-on",
+      copy: "The add-on reports playback and viewers to CrossWatch, so scrobbling from Kodi works without a JSON-RPC connection. Pair it with a short code.",
+      steps: [["Install add-on", "Install the CrossWatch add-on on Kodi"], ["Get a code", "Press Connect add-on below"], ["Pair", "Enter the address and code in the add-on"]],
+    },
+    link: {
+      title: "Connect the Kodi add-on",
+      copy: "The add-on reports playback and viewers to CrossWatch. This Kodi is connected over JSON-RPC, so CrossWatch can send the add-on its settings directly.",
+      steps: [["Install add-on", "Install the CrossWatch add-on on Kodi"], ["Link", "Press Link add-on below"], ["Confirm", "Confirm on your TV"]],
+    },
+  };
+
   const ADDON_HTML = `
-    <div class="grid2">
-      <div style="grid-column:1 / -1">
-        <label class="verify"><input id="kodi_addon_enabled" type="checkbox"> Use the Kodi add-on</label>
-        <div class="muted" style="margin-top:4px">The add-on reports playback and viewers to CrossWatch. Scrobbling from Kodi then works without a JSON-RPC connection.</div>
+    <div class="kodi-addon">
+      <div id="kodi_addon_live" class="kodi-addon-status" hidden>
+        <div id="kodi_addon_info" class="muted"></div>
+        <button id="kodi_addon_repair" class="btn" type="button">Pair again</button>
+        <div id="kodi_addon_msg" class="msg cw-connection-status-pill hidden" role="status" aria-live="polite"></div>
       </div>
-      <div id="kodi_addon_details" style="grid-column:1 / -1" hidden>
-        <label for="kodi_addon_url">Add-on URL</label>
+
+      <div id="kodi_addon_link_row" hidden>
+        <label for="kodi_addon_address">CrossWatch address this Kodi can reach</label>
         <div class="inp-row">
-          <input id="kodi_addon_url" class="grow" readonly autocomplete="off" spellcheck="false">
-          <button id="kodi_addon_copy" class="btn" type="button">Copy</button>
-          <button id="kodi_addon_regen" class="btn" type="button">Regenerate</button>
+          <input id="kodi_addon_address" class="grow" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="http://host:8787">
+          <button id="kodi_addon_link" class="btn kodi-addon-primary cw-connection-primary-action" type="button">Link add-on</button>
         </div>
-        <div class="inline" style="margin-top:12px;flex-wrap:wrap">
-          <div id="kodi_addon_info" class="muted"></div>
-          <div id="kodi_addon_msg" class="msg hidden" role="status" aria-live="polite"></div>
-        </div>
+        <div class="muted" id="kodi_addon_link_note" style="margin-top:6px"></div>
       </div>
-    </div>
-    <div class="muted" style="margin:16px 0 10px">JSON-RPC connection. Needed for sync, whitelisting and for using Kodi as a destination.</div>`;
+
+      <details id="kodi_addon_alt">
+        <summary id="kodi_addon_alt_sum" class="muted" hidden>Other ways to connect</summary>
+        <div class="kodi-addon kodi-addon-alt">
+          <div id="kodi_addon_start" class="kodi-addon-status" hidden>
+            <button id="kodi_addon_connect" class="btn" type="button">Connect add-on</button>
+            <span class="muted">Shows a short code to enter in the add-on on your Kodi.</span>
+          </div>
+
+          <div id="kodi_addon_codecard" class="kodi-qc" hidden>
+            <div class="kodi-qc-codewrap">
+              <div class="kodi-qc-code" id="kodi_addon_code">------</div>
+              <button id="kodi_addon_pair" class="btn" type="button">New code</button>
+              <button id="kodi_addon_cancel" class="btn danger" type="button">Cancel</button>
+            </div>
+            <div class="kodi-qc-meta">
+              <span class="muted">In the add-on, enter the address <strong id="kodi_addon_address_text"></strong> and this code.</span>
+              <span class="muted" id="kodi_addon_code_note"></span>
+            </div>
+          </div>
+
+          <details id="kodi_addon_manual" hidden>
+            <summary class="muted">Manual setup</summary>
+            <label for="kodi_addon_url" style="margin-top:8px;display:block">Add-on URL</label>
+            <div class="inp-row">
+              <input id="kodi_addon_url" class="grow" readonly autocomplete="off" spellcheck="false">
+              <button id="kodi_addon_copy" class="btn" type="button">Copy</button>
+              <button id="kodi_addon_regen" class="btn" type="button">Regenerate</button>
+            </div>
+            <div class="muted" style="margin-top:6px">Paste this into the Webhook URL setting of the add-on. Regenerating unlinks the add-on until it is paired again.</div>
+            <div id="kodi_addon_disable_row" class="inp-row" style="margin-top:12px" hidden>
+              <button id="kodi_addon_disable" class="btn danger" type="button">Turn off add-on</button>
+            </div>
+          </details>
+        </div>
+      </details>
+    </div>`;
+
+  let addonMethod = "";
+  let addonPaired = null;
+  let addonInstance = "";
+  let addonPoll = null;
+  let addonPollUntil = 0;
+  let addonLinkUntil = 0;
+  let addonRpc = false;
+
+  function authSubpanel() {
+    return Q('#sec-kodi .cw-subpanel[data-sub="auth"]');
+  }
+
+  function swapText(node, value) {
+    if (!node) return;
+    if (value === null) {
+      if (node.dataset.kodiOrig !== undefined) {
+        node.textContent = node.dataset.kodiOrig;
+        delete node.dataset.kodiOrig;
+      }
+      return;
+    }
+    if (node.dataset.kodiOrig === undefined) node.dataset.kodiOrig = node.textContent || "";
+    node.textContent = value;
+  }
+
+  function applyMethodCopy(method) {
+    const sub = authSubpanel();
+    if (!sub) return;
+    const addon = method === "addon";
+    const copy = addonRpc ? ADDON_COPY.link : ADDON_COPY.code;
+    swapText(sub.querySelector(".cw-auth-journey-title"), addon ? copy.title : null);
+    swapText(sub.querySelector(".cw-auth-journey-copy"), addon ? copy.copy : null);
+    sub.querySelectorAll(".cw-connection-steps > div").forEach((step, idx) => {
+      const text = copy.steps[idx];
+      swapText(step.querySelector("strong"), addon && text ? text[0] : null);
+      swapText(step.querySelector("small"), addon && text ? text[1] : null);
+    });
+  }
+
+  function setMethod(method, opts = {}) {
+    const sub = authSubpanel();
+    const row = sub?.querySelector(".kodi-method-row");
+    if (!sub || !row) return;
+    const m = method === "addon" ? "addon" : "jsonrpc";
+    addonMethod = m;
+    sub.dataset.kodiMethod = m;
+    row.querySelectorAll(".kodi-method").forEach((btn) => {
+      const on = btn.dataset.method === m;
+      btn.classList.toggle("active", on);
+      btn.setAttribute("aria-selected", on ? "true" : "false");
+    });
+    applyMethodCopy(m);
+    if (opts.persist) {
+      try { localStorage.setItem(METHOD_KEY, m); } catch {}
+    }
+  }
+
+  function clearMethod() {
+    const sub = authSubpanel();
+    if (!sub) return;
+    applyMethodCopy("jsonrpc");
+    delete sub.dataset.kodiMethod;
+    addonMethod = "";
+    addonPaired = null;
+    const row = sub.querySelector(".kodi-method-row");
+    if (row) row.hidden = true;
+  }
+
+  function showMethods(data) {
+    const row = authSubpanel()?.querySelector(".kodi-method-row");
+    if (!row) return;
+    row.hidden = false;
+    if (!row.__kodiWired) {
+      row.__kodiWired = true;
+      row.querySelectorAll(".kodi-method").forEach((btn) => btn.addEventListener("click", () => setMethod(btn.dataset.method, { persist: true })));
+      const sub = authSubpanel();
+      if (sub && typeof MutationObserver === "function") {
+        new MutationObserver(() => {
+          const title = sub.querySelector(".cw-auth-journey-title");
+          if (addonMethod === "addon" && title && title.dataset.kodiOrig === undefined) applyMethodCopy("addon");
+        }).observe(sub, { childList: true, subtree: true });
+      }
+    }
+    let wanted = addonMethod;
+    if (!wanted) {
+      try { wanted = localStorage.getItem(METHOD_KEY) || ""; } catch {}
+    }
+    if (!wanted) wanted = data.paired && !data.jsonrpc_connected ? "addon" : "jsonrpc";
+    setMethod(wanted);
+  }
 
   function addonAge(seconds) {
     if (seconds === null || seconds === undefined || seconds === "") return "";
@@ -185,44 +323,115 @@
     return `${Math.round(n / 86400)} d ago`;
   }
 
+  function stopAddonPoll() {
+    if (addonPoll) clearInterval(addonPoll);
+    addonPoll = null;
+  }
+
+  function watchAddon(seconds) {
+    addonPollUntil = Date.now() + Math.max(0, Number(seconds) || 0) * 1000;
+    if (addonPoll) return;
+    addonPoll = setInterval(() => {
+      if (Date.now() > addonPollUntil + 5000 || !el("kodi_addon_codecard")) return stopAddonPoll();
+      void loadAddon();
+    }, 4000);
+  }
+
+  function wireAddon() {
+    el("kodi_addon_connect")?.addEventListener("click", () => { void pairAddon(); });
+    el("kodi_addon_repair")?.addEventListener("click", () => { void pairAddon(); });
+    el("kodi_addon_pair")?.addEventListener("click", () => { void pairAddon(); });
+    el("kodi_addon_cancel")?.addEventListener("click", () => { void updateAddon({ enabled: false }, "Pairing cancelled"); });
+    el("kodi_addon_link")?.addEventListener("click", () => { void linkAddon(); });
+    el("kodi_addon_copy")?.addEventListener("click", () => {
+      void Shared.copyText(el("kodi_addon_url")?.value || "", el("kodi_addon_copy"), { copiedText: "Copied", emptyMessage: "No add-on URL yet." });
+    });
+    el("kodi_addon_regen")?.addEventListener("click", () => {
+      if (window.confirm("Regenerate the add-on URL? The add-on stops working until it is paired again.")) void updateAddon({ enabled: true, regenerate: true }, "Kodi add-on URL regenerated");
+    });
+    el("kodi_addon_disable")?.addEventListener("click", () => {
+      if (window.confirm("Turn off the add-on for this Kodi? The add-on stops working until it is paired again.")) void updateAddon({ enabled: false }, "Kodi add-on turned off");
+    });
+  }
+
   function renderAddon(data) {
     const host = el("kodi_addon_block");
     if (!host) return;
     if (!data) {
+      stopAddonPoll();
+      clearMethod();
       host.hidden = true;
       host.textContent = "";
       return;
     }
-    if (!el("kodi_addon_enabled")) {
+    if (!el("kodi_addon_codecard")) {
       host.innerHTML = ADDON_HTML;
-      el("kodi_addon_enabled")?.addEventListener("change", (ev) => { void updateAddon({ enabled: !!ev.target.checked }); });
-      el("kodi_addon_copy")?.addEventListener("click", () => {
-        void Shared.copyText(el("kodi_addon_url")?.value || "", el("kodi_addon_copy"), { copiedText: "Copied", emptyMessage: "No add-on URL yet." });
-      });
-      el("kodi_addon_regen")?.addEventListener("click", () => {
-        if (window.confirm("Regenerate the add-on URL? The current URL stops working and must be replaced in Kodi.")) void updateAddon({ enabled: true, regenerate: true });
-      });
+      wireAddon();
     }
     host.hidden = false;
-    const enabled = !!data.enabled;
-    el("kodi_addon_enabled").checked = enabled;
-    el("kodi_addon_details").hidden = !enabled;
-    el("kodi_addon_url").value = enabled ? txt(data.url) : "";
-    if (!enabled) return;
-    const seen = addonAge(data.age_seconds);
-    const mode = txt(data.mode);
-    let msg = "Waiting for the add-on";
-    if (mode === "addon") msg = `Add-on active${seen ? `, last seen ${seen}` : ""}`;
-    else if (mode === "polling") msg = seen ? `Polling, add-on last seen ${seen}` : "Polling, add-on not seen yet";
-    else if (seen) msg = `Add-on last seen ${seen}`;
-    Shared.setStatus("kodi_addon_msg", mode === "addon", msg);
-    const info = [];
-    if (txt(data.device_name)) info.push(txt(data.device_name));
-    if (txt(data.addon_version)) info.push(`Add-on ${txt(data.addon_version)}`);
-    const viewers = Array.isArray(data.viewers) ? data.viewers.map(txt).filter(Boolean) : [];
-    if (viewers.length) info.push(`Viewers: ${viewers.join(", ")}`);
-    if (Number(data.pkc_skipped) > 0) info.push(`PKC playback skipped: ${Number(data.pkc_skipped)}`);
-    el("kodi_addon_info").textContent = info.join(" | ");
+    addonRpc = !!data.jsonrpc_connected;
+    showMethods(data);
+
+    const instance = txt(data.instance);
+    const paired = !!data.paired;
+    const rpc = !!data.jsonrpc_connected;
+    const code = txt(data.pair_code);
+    const left = Number(data.pair_expires_in) || 0;
+    const open = paired || !!code;
+
+    const alt = el("kodi_addon_alt");
+    el("kodi_addon_alt_sum").hidden = !rpc;
+    if (!rpc || code) alt.open = true;
+    else if (alt.dataset.kodiRpc !== "1") alt.open = false;
+    alt.dataset.kodiRpc = rpc ? "1" : "0";
+
+    const connectBtn = el("kodi_addon_connect");
+    connectBtn.textContent = rpc ? "Use a pairing code" : "Connect add-on";
+    connectBtn.classList.toggle("kodi-addon-primary", !rpc);
+    connectBtn.classList.toggle("cw-connection-primary-action", !rpc);
+    el("kodi_addon_start").hidden = rpc ? !!code : open;
+    el("kodi_addon_live").hidden = !paired;
+    el("kodi_addon_repair").hidden = !!code || rpc;
+    el("kodi_addon_codecard").hidden = !code;
+    el("kodi_addon_cancel").hidden = paired;
+    if (paired && addonPaired === false) addonLinkUntil = 0;
+    const linking = Date.now() < addonLinkUntil;
+    el("kodi_addon_link_row").hidden = !rpc;
+    el("kodi_addon_link").textContent = paired ? "Link again" : "Link add-on";
+    el("kodi_addon_link_note").textContent = linking
+      ? "Sent to Kodi. Confirm on the TV to finish."
+      : "Sends the address and token to the Kodi of this profile. You only confirm on the TV.";
+    el("kodi_addon_manual").hidden = !open;
+    el("kodi_addon_disable_row").hidden = !paired;
+    el("kodi_addon_url").value = open ? txt(data.url) : "";
+
+    el("kodi_addon_code").textContent = code || "------";
+    el("kodi_addon_code_note").textContent = code ? `Waiting for the add-on, valid for ${Math.max(1, Math.ceil(left / 60))} more min` : "";
+    el("kodi_addon_address_text").textContent = txt(data.address);
+    const address = el("kodi_addon_address");
+    if (address && !txt(address.value) && document.activeElement !== address) address.value = txt(data.address);
+
+    if (paired) {
+      const seen = addonAge(data.age_seconds);
+      let msg = "Add-on connected";
+      if (!data.active && seen) msg = `Add-on connected, last seen ${seen}`;
+      Shared.setStatus("kodi_addon_msg", true, msg);
+      const info = [];
+      if (txt(data.device_name)) info.push(txt(data.device_name));
+      if (txt(data.addon_version)) info.push(`Add-on ${txt(data.addon_version)}`);
+      const viewers = Array.isArray(data.viewers) ? data.viewers.map(txt).filter(Boolean) : [];
+      if (viewers.length) info.push(`Viewers: ${viewers.join(", ")}`);
+      if (Number(data.pkc_skipped) > 0) info.push(`PKC playback skipped: ${Number(data.pkc_skipped)}`);
+      el("kodi_addon_info").textContent = info.join(" | ");
+    } else {
+      Shared.setStatusPill("kodi_addon_msg", "hidden");
+      el("kodi_addon_info").textContent = "";
+    }
+
+    if (paired && addonPaired === false && addonInstance === instance) note("Kodi add-on connected");
+    addonPaired = paired;
+    addonInstance = instance;
+    if (code) watchAddon(left);
   }
 
   async function loadAddon() {
@@ -235,7 +444,40 @@
     }
   }
 
-  async function updateAddon(body) {
+  async function pairAddon() {
+    try {
+      const r = await fetchJSON(api("/api/kodi/addon/pair"), { method: "POST", cache: "no-store" });
+      if (!r.ok || !r.data || r.data.ok === false) throw new Error(txt(r.data?.error) || "Could not create a pairing code");
+      renderAddon(r.data);
+    } catch (e) {
+      note(e && e.message ? e.message : "Could not create a pairing code");
+      void loadAddon();
+    }
+  }
+
+  async function linkAddon() {
+    const btn = el("kodi_addon_link");
+    try {
+      if (btn) btn.disabled = true;
+      const r = await fetchJSON(api("/api/kodi/addon/link"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address: txt(el("kodi_addon_address")?.value || "") }),
+        cache: "no-store",
+      });
+      if (!r.ok || !r.data || r.data.ok === false) throw new Error(txt(r.data?.error) || "Could not reach the add-on");
+      note("Sent to Kodi. Confirm on the TV.");
+      addonLinkUntil = Date.now() + 120000;
+      watchAddon(120);
+      await loadAddon();
+    } catch (e) {
+      note(e && e.message ? e.message : "Could not reach the add-on");
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  async function updateAddon(body, done) {
     try {
       const r = await fetchJSON(api("/api/kodi/addon"), {
         method: "POST",
@@ -245,8 +487,9 @@
       });
       if (Shared.reportProviderUsage(r)) return void loadAddon();
       if (!r.ok || !r.data || r.data.ok === false) throw new Error(txt(r.data?.error) || "Kodi add-on update failed");
+      addonPaired = null;
       renderAddon(r.data);
-      note(body?.regenerate ? "Kodi add-on URL regenerated" : (r.data.enabled ? "Kodi add-on enabled" : "Kodi add-on disabled"));
+      if (done) note(done);
     } catch (e) {
       note(e && e.message ? e.message : "Kodi add-on update failed");
       void loadAddon();
@@ -346,6 +589,7 @@
       wlHost = null;
       renderLibraries([]);
       setConn(false, "Not connected");
+      await loadAddon();
       note("Kodi disconnected");
       await window.CW?.ProvidersUI?.refreshAuthPresentation?.(true);
     } catch (e) {
