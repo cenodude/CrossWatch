@@ -54,7 +54,7 @@ _STATE: dict[str, dict[str, Any]] = {}
 _STATE_LOCK = threading.Lock()
 _STATE_LOADED = False
 
-_PAIR_CODES: dict[str, tuple[str, float]] = {}
+_PAIR_CODES: dict[str, tuple[str, float, bool]] = {}
 _PAIR_FAILURES: dict[str, list[float]] = {}
 _PAIR_LOCK = threading.Lock()
 
@@ -209,7 +209,7 @@ def normalize_pair_code(value: Any) -> str:
 
 
 def _prune_pair_locked(now: float) -> None:
-    for code, (_inst, expires) in list(_PAIR_CODES.items()):
+    for code, (_inst, expires, _link) in list(_PAIR_CODES.items()):
         if expires <= now:
             _PAIR_CODES.pop(code, None)
     for client, stamps in list(_PAIR_FAILURES.items()):
@@ -220,18 +220,18 @@ def _prune_pair_locked(now: float) -> None:
             _PAIR_FAILURES.pop(client, None)
 
 
-def create_pair_code(instance_id: Any, *, now: float | None = None) -> tuple[str, int]:
+def create_pair_code(instance_id: Any, *, link: bool = False, now: float | None = None) -> tuple[str, int]:
     inst = normalize_instance_id(instance_id)
     current = float(now if now is not None else time.time())
     with _PAIR_LOCK:
         _prune_pair_locked(current)
-        for code, (owner, _expires) in list(_PAIR_CODES.items()):
-            if owner == inst:
+        for code, (owner, _expires, for_link) in list(_PAIR_CODES.items()):
+            if owner == inst and for_link == bool(link):
                 _PAIR_CODES.pop(code, None)
         code = ""
         while not code or code in _PAIR_CODES:
             code = "".join(secrets.choice(PAIR_ALPHABET) for _ in range(PAIR_CODE_LENGTH))
-        _PAIR_CODES[code] = (inst, current + PAIR_TTL_SECONDS)
+        _PAIR_CODES[code] = (inst, current + PAIR_TTL_SECONDS, bool(link))
     return code, int(PAIR_TTL_SECONDS)
 
 
@@ -240,8 +240,8 @@ def active_pair_code(instance_id: Any, *, now: float | None = None) -> tuple[str
     current = float(now if now is not None else time.time())
     with _PAIR_LOCK:
         _prune_pair_locked(current)
-        for code, (owner, expires) in _PAIR_CODES.items():
-            if owner == inst:
+        for code, (owner, expires, for_link) in _PAIR_CODES.items():
+            if owner == inst and not for_link:
                 return code, max(0, int(expires - current))
     return "", 0
 
@@ -253,7 +253,7 @@ def clear_pair_codes(instance_id: Any = None) -> None:
             _PAIR_FAILURES.clear()
             return
         inst = normalize_instance_id(instance_id)
-        for code, (owner, _expires) in list(_PAIR_CODES.items()):
+        for code, (owner, _expires, _link) in list(_PAIR_CODES.items()):
             if owner == inst:
                 _PAIR_CODES.pop(code, None)
 
@@ -275,7 +275,7 @@ def redeem_pair_code(code: Any, client: Any = "", *, now: float | None = None) -
                 _PAIR_FAILURES.pop(next(iter(_PAIR_FAILURES)), None)
             _PAIR_FAILURES.setdefault(who, []).append(current)
             return None, "invalid_code"
-        inst, _expires = _PAIR_CODES.pop(found)
+        inst, _expires, _link = _PAIR_CODES.pop(found)
         return inst, ""
 
 
@@ -293,8 +293,8 @@ def pair(cfg: Mapping[str, Any] | None, code: Any, base_url: Any, client: Any = 
     return 200, out
 
 
-def link_params(base_url: Any, token: Any) -> list[str]:
-    return ["action=link", f"url={plain_endpoint(base_url)}", f"token={_text(token, 256)}"]
+def link_params(base_url: Any, code: Any) -> list[str]:
+    return ["action=link", f"url={plain_endpoint(base_url)}", f"code={normalize_pair_code(code)}"]
 
 
 def _state_file() -> Path:

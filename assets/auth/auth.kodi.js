@@ -400,7 +400,7 @@
     el("kodi_addon_link").textContent = paired ? "Link again" : "Link add-on";
     el("kodi_addon_link_note").textContent = linking
       ? "Sent to Kodi. Confirm on the TV to finish."
-      : "Sends the address and token to the Kodi of this profile. You only confirm on the TV.";
+      : "Sends the address and a one-time code to the Kodi of this profile. You only confirm on the TV.";
     el("kodi_addon_manual").hidden = !open;
     el("kodi_addon_disable_row").hidden = !paired;
     el("kodi_addon_url").value = open ? txt(data.url) : "";

@@ -487,7 +487,7 @@ def test_clean_base_url_accepts_only_plain_addresses() -> None:
     assert addon.clean_base_url("192.168.1.10:8787") == ""
     assert addon.clean_base_url("http://cw.example/?token=abc") == ""
     assert addon.clean_base_url("http://") == ""
-    assert addon.link_params("http://cw:8787", TOKEN) == ["action=link", "url=http://cw:8787/webhook/kodiwatcher", f"token={TOKEN}"]
+    assert addon.link_params("http://cw:8787", "abc 234") == ["action=link", "url=http://cw:8787/webhook/kodiwatcher", "code=ABC234"]
 
 
 def test_pair_webhook_swaps_code_for_token(monkeypatch) -> None:
@@ -558,9 +558,13 @@ def test_link_api_pushes_endpoint_and_token_over_jsonrpc(monkeypatch) -> None:
     res = client.post("/api/kodi/addon/link", json={"address": "http://192.168.1.10:8787/"})
     assert res.status_code == 200 and res.json()["address"] == "http://192.168.1.10:8787"
     assert calls[0][0] == "Addons.GetAddonDetails"
-    assert pushes() == [
-        {"addonid": "service.crosswatch", "params": ["action=link", "url=http://192.168.1.10:8787/webhook/kodiwatcher", f"token={TOKEN}"], "wait": False}
-    ]
+    sent = pushes()[0]
+    assert sent["addonid"] == "service.crosswatch" and sent["wait"] is False
+    assert sent["params"][:2] == ["action=link", "url=http://192.168.1.10:8787/webhook/kodiwatcher"]
+    link_code = sent["params"][2].removeprefix("code=")
+    assert len(link_code) == addon.PAIR_CODE_LENGTH and TOKEN not in str(sent)
+    assert client.get("/api/kodi/addon").json()["pair_code"] == ""
+    assert addon.redeem_pair_code(link_code, "kodi-1") == ("default", "")
 
     assert client.post("/api/kodi/addon/link", json={"address": "nas:8787"}).status_code == 400
     assert client.post("/api/kodi/addon/link", json={}).json()["address"] == "http://testserver"
@@ -569,7 +573,9 @@ def test_link_api_pushes_endpoint_and_token_over_jsonrpc(monkeypatch) -> None:
     fresh: dict[str, Any] = {"runtime": {"kodi_addon": True}, "kodi": {"server": "http://kodi.local:8080", "connection_verified": True}}
     first = _auth_client(monkeypatch, fresh).post("/api/kodi/addon/link", json={"address": "http://cw:8787"})
     assert first.status_code == 200 and addon.instance_enabled(fresh, "default") is True
-    assert pushes()[-1]["params"][2] == "token=" + addon.instance_token(fresh, "default")
+    fresh_code = pushes()[-1]["params"][2].removeprefix("code=")
+    assert addon.instance_token(fresh, "default") not in str(pushes()[-1])
+    assert addon.pair(fresh, fresh_code, "http://cw:8787", "kodi-1")[1]["token"] == addon.instance_token(fresh, "default")
 
 
 def test_link_api_needs_jsonrpc_and_an_installed_addon(monkeypatch) -> None:
@@ -680,3 +686,14 @@ def test_paired_survives_silence_and_resets_on_regenerate(monkeypatch) -> None:
 
     again = client.post("/api/kodi/addon", json={"enabled": True, "regenerate": True}).json()
     assert again["enabled"] is True and again["paired"] is False
+
+
+def test_link_code_and_typed_code_do_not_replace_each_other() -> None:
+    typed, _ = addon.create_pair_code("default", now=1000.0)
+    linked, _ = addon.create_pair_code("default", link=True, now=1000.0)
+    relinked, _ = addon.create_pair_code("default", link=True, now=1001.0)
+
+    assert addon.active_pair_code("default", now=1002.0)[0] == typed
+    assert addon.redeem_pair_code(linked, "a", now=1002.0) == (None, "invalid_code")
+    assert addon.redeem_pair_code(relinked, "a", now=1002.0) == ("default", "")
+    assert addon.redeem_pair_code(typed, "a", now=1002.0) == ("default", "")

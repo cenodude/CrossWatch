@@ -1445,7 +1445,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         try:
             client.rpc(
                 "Addons.ExecuteAddon",
-                {"addonid": kodi_addon.ADDON_ID, "params": kodi_addon.link_params(base, kodi_addon.instance_token(cfg, inst)), "wait": False},
+                {"addonid": kodi_addon.ADDON_ID, "params": kodi_addon.link_params(base, kodi_addon.create_pair_code(inst, link=True)[0]), "wait": False},
             )
         except KodiAuthError as exc:
             return failed(exc, "Kodi could not start the CrossWatch add-on.")
