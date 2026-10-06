@@ -1917,6 +1917,72 @@ def _merge_show_season(group: dict[str, Any], season_number: int, *, watched_at:
     return season
 
 
+def _library_tokens() -> tuple[set[tuple[str, str]], set[tuple[str, str]]]:
+    movies: set[tuple[str, str]] = set()
+    shows: set[tuple[str, str]] = set()
+    for item in _cache_load().values():
+        typ = str(item.get("type") or "").lower()
+        anime = str(item.get("simkl_bucket") or "").strip().lower() == "anime"
+        if typ == "episode":
+            ids, targets = _show_ids_of_episode(item), [shows]
+        elif typ == "movie":
+            ids, targets = _ids_of(item), [movies, shows] if anime else [movies]
+        else:
+            ids, targets = _ids_of(item), [shows]
+        for field, value in ids.items():
+            for target in targets:
+                target.add((str(field), str(value)))
+    return movies, shows
+
+
+def _earliest_watched_at(entry: Mapping[str, Any]) -> tuple[int, str] | None:
+    stamps: list[Any] = [entry.get("watched_at")]
+    episodes = entry.get("episodes")
+    stamps.extend(ep.get("watched_at") for ep in (episodes if isinstance(episodes, list) else []) if isinstance(ep, Mapping))
+    seasons = entry.get("seasons")
+    for season in seasons if isinstance(seasons, list) else []:
+        if not isinstance(season, Mapping):
+            continue
+        stamps.append(season.get("watched_at"))
+        episodes = season.get("episodes")
+        stamps.extend(ep.get("watched_at") for ep in (episodes if isinstance(episodes, list) else []) if isinstance(ep, Mapping))
+    dated: list[tuple[int, str]] = []
+    for stamp in stamps:
+        epoch = _as_epoch(stamp) if isinstance(stamp, str) and stamp else None
+        if epoch is not None:
+            dated.append((epoch, stamp))
+    return min(dated) if dated else None
+
+
+def _stamp_added_at(body: Mapping[str, Any]) -> int:
+    try:
+        movie_tokens, show_tokens = _library_tokens()
+    except Exception as exc:
+        _warn("added_at_skipped", error=str(exc))
+        return 0
+    fresh: dict[str, tuple[tuple[int, str], list[dict[str, Any]]]] = {}
+    for kind in ("movies", "shows", "anime"):
+        known = movie_tokens if kind == "movies" else show_tokens
+        rows = body.get(kind)
+        for entry in rows if isinstance(rows, list) else []:
+            ids = entry.get("ids") if isinstance(entry, dict) else None
+            if not isinstance(ids, Mapping) or not ids:
+                continue
+            if any((str(field), str(value)) in known for field, value in ids.items() if value not in (None, "")):
+                continue
+            earliest = _earliest_watched_at(entry)
+            if earliest is None:
+                continue
+            ids_key = kind + ":" + json.dumps({str(k): str(v) for k, v in ids.items()}, sort_keys=True)
+            best, entries = fresh.get(ids_key, (earliest, []))
+            entries.append(entry)
+            fresh[ids_key] = (min(best, earliest), entries)
+    for best, entries in fresh.values():
+        for entry in entries:
+            entry["added_at"] = best[1]
+    return len(fresh)
+
+
 def _write_failure_hint(resp: Any = None, exc: Exception | None = None, *, reason: str = "write_failed") -> str:
     if exc is not None:
         name = exc.__class__.__name__ or "Exception"
@@ -3108,6 +3174,7 @@ def _add_native_anime(
     if not body:
         return set(), unmapped_keys, set(), unmapped_unresolved
     retry_keys = {_thaw_key(item) for item in retry_items}
+    _stamp_added_at(body)
     try:
         resp = session.post(
             URL_ADD,
@@ -3450,6 +3517,10 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             _remember_source_aliases(_items_to_inject)
         _info("write_skipped", op="add", reason="empty_payload", unresolved=len(unresolved))
         return len(confirmed_keys), unresolved
+
+    stamped = _stamp_added_at(body)
+    if stamped:
+        _dbg("write_prepare", op="add", added_at=stamped)
 
     try:
         resp = session.post(
