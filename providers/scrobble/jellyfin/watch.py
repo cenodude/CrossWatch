@@ -20,6 +20,7 @@ from providers.scrobble._show_tmdb import show_tmdb_id
 from providers.scrobble.scrobble import Dispatcher, ScrobbleSink, ScrobbleEvent, MediaType, mask_account as _mask_account
 from providers.scrobble.currently_watching import update_from_event as _cw_update, update_from_payload as _cw_update_payload
 from providers.scrobble.media_filters import event_ignore_reason, log_media_filter_drop
+from providers.scrobble.routes import watch_poll_seconds
 from providers.scrobble.sources import source_enabled
 
 _HTTP = requests.Session()
@@ -412,7 +413,7 @@ class JellyfinWatchService:
     def __init__(
         self,
         sinks: Iterable[ScrobbleSink] | None = None,
-        poll_secs: float = 1.5,
+        poll_secs: float = 10.0,
         dispatcher: Any | None = None,
         cfg_provider: Any | None = None,
         instance_id: Any = None,
@@ -434,9 +435,11 @@ class JellyfinWatchService:
             self._sinks,
             cfg_provider=lambda: _cfg_for_dispatch(self._active_cfg(), self._server_id),
         )
-        self._poll = max(0.5, float(poll_secs))
+        self._default_poll = max(0.5, float(poll_secs))
+        self._poll = self._default_poll
         self._idle_steps = 0
-        self._max_idle_sleep = 6.0
+        self._default_idle_sleep = 30.0
+        self._max_idle_sleep = self._default_idle_sleep
 
         self._stop = threading.Event()
         self._bg: threading.Thread | None = None
@@ -713,7 +716,7 @@ class JellyfinWatchService:
 
     def _current_sessions(self, cfg: dict[str, Any]) -> list[dict[str, Any]] | None:
         try:
-            q = "/Sessions?ActiveWithinSeconds=15"
+            q = f"/Sessions?ActiveWithinSeconds={max(15, int(self._poll * 2))}"
             all_sessions = _get_json(self._base, self._tok, q, cfg, timeout=self._request_timeout(cfg)) or []
             self._mark_online()
             playing: list[dict[str, Any]] = []
@@ -876,9 +879,58 @@ class JellyfinWatchService:
         except Exception:
             pass
 
+    def _emit_synthetic_stop(
+        self,
+        sid: str,
+        memo: Mapping[str, Any],
+        cfg: dict[str, Any],
+        now: float,
+        best_offset: tuple[int, int, float] | None,
+    ) -> None:
+        meta = memo.get("meta") or {}
+        if not meta:
+            return
+        last_em = self._last_emit.get(sid)
+        if last_em and last_em[0] == "stop":
+            return
+        last_p = max(1, int(memo.get("p") or 0))
+        dt = now - float(memo.get("ts", 0))
+        preserve_stop = str(memo.get("state") or "").strip().lower() == "playing" and dt <= max(5.0, self._poll * 2)
+        fake = {
+            "Id": sid,
+            "UserName": meta.get("account"),
+            "NowPlayingItem": {},
+            "PlayState": {},
+            "_cw_preserve_stop": preserve_stop,
+            "_cw_stop_src": "poll-disappear",
+        }
+        mt_raw = str(meta.get("media_type") or "").strip().lower()
+        mt: MediaType = "episode" if mt_raw == "episode" else "movie"
+        position_ms = int(best_offset[0]) if best_offset and best_offset[0] is not None else None
+        duration_ms = int(best_offset[1]) if best_offset and best_offset[1] is not None and best_offset[1] > 0 else None
+        ev = ScrobbleEvent(
+            action="stop",
+            media_type=mt,
+            ids=_normalize_ids(dict(meta.get("ids") or {})),
+            title=meta.get("title"),
+            year=meta.get("year"),
+            season=meta.get("season"),
+            number=meta.get("number"),
+            progress=last_p,
+            account=meta.get("account"),
+            server_uuid=self._server_id,
+            session_key=sid,
+            raw=fake,
+            position_ms=position_ms,
+            duration_ms=duration_ms,
+        )
+        self._emit(ev, cfg)
+
     def _tick(self) -> bool:
         now = time.time()
         cfg = self._active_cfg()
+        self._poll = watch_poll_seconds(cfg, self._default_poll)
+        self._max_idle_sleep = watch_poll_seconds(cfg, self._default_idle_sleep, "idle_poll_seconds")
         cur = self._current_sessions(cfg)
         if cur is None:
             return False
@@ -928,6 +980,11 @@ class JellyfinWatchService:
             emit_action: str | None = None
             did_emit = False
             seek_emitted = False
+
+            if last_key and key != last_key:
+                self._emit_synthetic_stop(sid, last, cfg, now, self._best_offset.get(sid))
+                self._best_offset.pop(sid, None)
+                self._last_seek_emit.pop(sid, None)
 
             if off_ms is not None and dur_ms is not None and dur_ms > 0:
                 prev = self._best_offset.get(sid)
@@ -1058,42 +1115,7 @@ class JellyfinWatchService:
                 continue
 
             if last_p >= force_at or dt >= 2.0:
-                preserve_stop = str(memo.get("state") or "").strip().lower() == "playing" and dt <= 5.0
-                fake = {
-                    "Id": sid,
-                    "UserName": meta.get("account"),
-                    "NowPlayingItem": {},
-                    "PlayState": {},
-                    "_cw_preserve_stop": preserve_stop,
-                    "_cw_stop_src": "poll-disappear",
-                }
-                mt_raw = str(meta.get("media_type") or "").strip().lower()
-                mt: MediaType = "episode" if mt_raw == "episode" else "movie"
-
-                ids_stop = _normalize_ids(dict(meta.get("ids") or {}))
-                best_offset = self._best_offset.get(sid)
-                position_ms = int(best_offset[0]) if best_offset and best_offset[0] is not None else None
-                duration_ms = int(best_offset[1]) if best_offset and best_offset[1] is not None and best_offset[1] > 0 else None
-
-                ev = ScrobbleEvent(
-                    action="stop",
-                    media_type=mt,
-                    ids=ids_stop,
-                    title=meta.get("title"),
-                    year=meta.get("year"),
-                    season=meta.get("season"),
-                    number=meta.get("number"),
-                    progress=last_p,
-                    account=meta.get("account"),
-                    server_uuid=self._server_id,
-                    session_key=sid,
-                    raw=fake,
-                    position_ms=position_ms,
-                    duration_ms=duration_ms,
-                )
-                last_em = self._last_emit.get(sid)
-                if not (last_em and last_em[0] == "stop"):
-                    self._emit(ev, cfg)
+                self._emit_synthetic_stop(sid, memo, cfg, now, self._best_offset.get(sid))
 
                 del self._last[sid]
                 try:
@@ -1140,8 +1162,8 @@ class JellyfinWatchService:
                 self._idle_steps = 0
                 sleep_for = self._poll
             else:
-                self._idle_steps = min(self._idle_steps + 1, 10)
-                sleep_for = min(self._poll * (1.0 + (0.5 * self._idle_steps)), self._max_idle_sleep)
+                self._idle_steps = min(self._idle_steps + 1, 12)
+                sleep_for = min(self._poll * (1.5 ** self._idle_steps), max(self._max_idle_sleep, self._poll))
             if self._offline:
                 sleep_for = self._offline_retry
             self._stop.wait(sleep_for)

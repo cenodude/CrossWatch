@@ -23,7 +23,11 @@ ROUTE_SCROBBLE_POLICY_KEYS = set(ROUTE_SCROBBLE_POLICY_RANGES)
 ROUTE_WATCH_POLICY_RANGES = {
     "pause_debounce_seconds": (0, 3600),
     "suppress_start_at": (0, 100),
+    "poll_seconds": (5, 60),
+    "idle_poll_seconds": (5, 120),
 }
+ROUTE_POLL_KEYS = ("poll_seconds", "idle_poll_seconds")
+ROUTE_POLL_PROVIDERS = {"emby", "jellyfin", "kodi", "scrob"}
 ROUTE_WATCH_BOOLEAN_KEYS = {"unresolved_user_fallback", "anime_mapping", "simkl_rewatches", "plexkodiconnect_support"}
 ROUTE_WATCH_STRICT_BOOLEAN_KEYS = {"simkl_rewatches", "plexkodiconnect_support"}
 
@@ -203,6 +207,9 @@ def normalize_route(route: dict[str, Any], fallback_id: str) -> dict[str, Any]:
     options = normalize_route_options(raw_options)
     if prov == "plex" and not route_options_has_watch_key(raw_options, "unresolved_user_fallback"):
         options["watch"]["unresolved_user_fallback"] = True
+    if prov not in ROUTE_POLL_PROVIDERS:
+        for key in ROUTE_POLL_KEYS:
+            options["watch"].pop(key, None)
     if sink not in ROUTE_MEDIA_SINKS:
         options.pop("destination", None)
     profile_id = normalize_user_profile_id(r.get("profile_id") or r.get("profileId"))
@@ -261,6 +268,36 @@ def route_needs_account_filter(cfg: dict[str, Any], route: dict[str, Any]) -> bo
     raw = filters.get("username_whitelist") if isinstance(filters, dict) else None
     values = raw if isinstance(raw, list) else ([raw] if raw else [])
     return not any(str(value or "").strip() for value in values)
+
+
+def group_poll_seconds(cfg: dict[str, Any], provider: Any, provider_instance: Any, key: str = "poll_seconds") -> int | None:
+    prov = str(provider or "").strip().lower()
+    if prov not in ROUTE_POLL_PROVIDERS:
+        return None
+    inst = normalize_instance_id(provider_instance)
+    values: list[int] = []
+    for route in normalize_routes(cfg):
+        if not route.get("enabled") or route.get("provider") != prov or route.get("provider_instance") != inst:
+            continue
+        if not route.get("sink") or route_is_self_target(route):
+            continue
+        val = ((route.get("options") or {}).get("watch") or {}).get(key)
+        if isinstance(val, int):
+            values.append(val)
+    return min(values) if values else None
+
+
+def watch_poll_seconds(cfg: Any, default: float, key: str = "poll_seconds") -> float:
+    watch = ((cfg.get("scrobble") or {}).get("watch") or {}) if isinstance(cfg, dict) else {}
+    raw = watch.get(key) if isinstance(watch, dict) else None
+    if raw is None or isinstance(raw, bool):
+        return default
+    try:
+        val = float(raw)
+    except Exception:
+        return default
+    low, high = ROUTE_WATCH_POLICY_RANGES[key]
+    return val if low <= val <= high else default
 
 
 def find_route(cfg: dict[str, Any], route_id: str | None) -> dict[str, Any] | None:

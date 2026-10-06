@@ -15,7 +15,7 @@ except Exception:
     BASE_LOG = None
 
 from cw_platform.config_base import load_config
-from providers.scrobble.routes import build_route_cfg, build_route_cfg_by_id, find_route, normalize_routes, route_is_self_target
+from providers.scrobble.routes import ROUTE_POLL_KEYS, build_route_cfg, build_route_cfg_by_id, find_route, group_poll_seconds, normalize_routes, route_is_self_target
 from providers.scrobble.scrobble import Dispatcher, ScrobbleEvent
 from providers.scrobble.sources import source_enabled
 
@@ -391,10 +391,19 @@ class WatchManager:
                 md = MultiDispatcher([rr.dispatcher for rr in runners])
 
                 def group_cfg_provider(p: str = prov, i: str = inst) -> dict[str, Any]:
-                    return build_route_cfg(
-                        load_config() or {},
+                    cfg = load_config() or {}
+                    built = build_route_cfg(
+                        cfg,
                         {"provider": p, "provider_instance": i, "sink": "", "sink_instance": "default", "filters": {}},
                     )
+                    watch_cfg = built.setdefault("scrobble", {}).setdefault("watch", {})
+                    for key in ROUTE_POLL_KEYS:
+                        poll = group_poll_seconds(cfg, p, i, key)
+                        if poll is None:
+                            watch_cfg.pop(key, None)
+                        else:
+                            watch_cfg[key] = poll
+                    return built
 
                 watcher = _make_watcher(prov, md, group_cfg_provider, inst)
                 if hasattr(watcher, "start_async"):
