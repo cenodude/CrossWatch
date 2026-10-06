@@ -595,8 +595,6 @@ def handle(app: Any, cfg: dict[str, Any], instance_id: Any, payload: Mapping[str
         out["routes"] = _route_rows(cfg, group, clean_viewers(body.get("viewers"))) if group is not None else []
         if not source_enabled(cfg, "watcher"):
             return ignored("watcher_disabled")
-        if not out["routes"]:
-            return ignored("no_routes")
         return out
 
     if not source_enabled(cfg, "watcher"):
