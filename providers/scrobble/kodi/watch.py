@@ -22,6 +22,7 @@ from providers.scrobble.kodi import addon as kodi_addon
 from providers.scrobble.currently_watching import update_from_event as _cw_update
 from providers.scrobble.currently_watching import update_from_payload as _cw_update_payload
 from providers.scrobble.scrobble import Dispatcher, ScrobbleEvent, ScrobbleSink, mask_account
+from providers.scrobble.routes import watch_poll_seconds
 from providers.scrobble.sources import source_enabled
 from providers.sync.kodi._common import (
     EXTERNAL_ID_KEYS,
@@ -32,10 +33,10 @@ from providers.sync.kodi._common import (
     uniqueid_namespace,
 )
 
-BASE_POLL_SECONDS = 1.75
+BASE_POLL_SECONDS = 10.0
 MIN_POLL_SECONDS = 1.5
-MAX_BASE_POLL_SECONDS = 2.0
-MAX_IDLE_POLL_SECONDS = 6.0
+MAX_BASE_POLL_SECONDS = 60.0
+MAX_IDLE_POLL_SECONDS = 30.0
 OFFLINE_INITIAL_RETRY_SECONDS = 30.0
 OFFLINE_MAX_RETRY_SECONDS = 300.0
 OFFLINE_TIMEOUT_SECONDS = 2.0
@@ -225,7 +226,9 @@ class KodiWatchService:
         self._cfg_provider = cfg_provider
         self._instance_id = str(instance_id or "default").strip() or "default"
         self._dispatch = dispatcher or Dispatcher(list(sinks or []), cfg_provider=self._active_cfg)
-        self._base_poll = _clamp_float(poll_secs, BASE_POLL_SECONDS, MIN_POLL_SECONDS, MAX_BASE_POLL_SECONDS)
+        self._default_poll = _clamp_float(poll_secs, BASE_POLL_SECONDS, MIN_POLL_SECONDS, MAX_BASE_POLL_SECONDS)
+        self._base_poll = self._default_poll
+        self._max_idle_poll = MAX_IDLE_POLL_SECONDS
         self._stop = threading.Event()
         self._bg: threading.Thread | None = None
         self._sessions: dict[str, dict[str, Any]] = {}
@@ -595,16 +598,27 @@ class KodiWatchService:
                 session["last_emitted_progress"] = emit_progress
             session["seek_pending"] = False
 
+    def _stop_session(self, sk: str, session: dict[str, Any]) -> None:
+        pct = float(session.get("last_progress") or 0.0)
+        ev = self._event(session, "stop", pct, _dict(session.get("last_properties")))
+        self._dispatch_event(ev, session.get("duration_ms"))
+        self._sessions.pop(sk, None)
+
     def _stop_missing_sessions(self) -> None:
         for sk, session in list(self._sessions.items()):
-            pct = float(session.get("last_progress") or 0.0)
-            ev = self._event(session, "stop", pct, _dict(session.get("last_properties")))
-            self._dispatch_event(ev, session.get("duration_ms"))
-            self._sessions.pop(sk, None)
+            self._stop_session(sk, session)
         self._player_session.clear()
+
+    def _item_changed(self, session: Mapping[str, Any], item: Mapping[str, Any]) -> bool:
+        if item.get("id") in (None, "", -1) and not item.get("file"):
+            return False
+        media_type = str(item.get("type") or "").strip().lower()
+        return _item_identity(item, media_type) != session.get("item_identity")
 
     def _tick(self) -> bool:
         cfg = self._active_cfg()
+        self._base_poll = watch_poll_seconds(cfg, self._default_poll)
+        self._max_idle_poll = watch_poll_seconds(cfg, MAX_IDLE_POLL_SECONDS, "idle_poll_seconds")
         if self._addon_active(cfg):
             self._drop_sessions()
             return False
@@ -646,6 +660,16 @@ class KodiWatchService:
                     session["last_properties"] = props
                 else:
                     props = self._player_props(player_id)
+                    try:
+                        item = self._player_item(player_id)
+                    except Exception:
+                        item = {}
+                    if self._item_changed(session, item):
+                        self._stop_session(str(sk), session)
+                        self._player_session.pop(player_id, None)
+                        session = self._create_session(player, item, props)
+                        if session is None:
+                            continue
                     if bool(props.get("live")):
                         continue
                     active_supported = True
@@ -679,7 +703,7 @@ class KodiWatchService:
             if active:
                 self._idle_poll = self._base_poll
             else:
-                self._idle_poll = min(MAX_IDLE_POLL_SECONDS, max(self._base_poll, self._idle_poll + 0.75))
+                self._idle_poll = min(max(self._max_idle_poll, self._base_poll), max(self._base_poll, self._idle_poll * 1.5))
             self._stop.wait(self._idle_poll)
 
     def start_async(self) -> None:
