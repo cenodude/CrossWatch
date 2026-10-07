@@ -11,6 +11,8 @@ from typing import Any, Iterable, Mapping
 import pytest
 
 from cw_platform.anime_mapping import storage
+from cw_platform.anime_mapping.overrides import upsert_override
+from cw_platform.anime_mapping.service import anime_only_adds
 from cw_platform.id_map import canonical_key
 from cw_platform.orchestrator.facade import Orchestrator
 from providers.sync import _mod_ANILIST as anilist_mod
@@ -188,6 +190,176 @@ def test_non_anime_and_specials_never_reach_anilist(anilist: type[FakeAniList], 
     saves = _sync(monkeypatch, [_episode(DARK, 1, 1), _episode(AOT, 0, 7), _episode(AOT, 1, 1)])
 
     assert [(save["mediaId"], save["progress"]) for save in saves] == [(16498, 1)]
+
+
+@pytest.mark.parametrize("provider,season", [("tvdb", 1), ("tmdb", 2), ("imdb", 3)])
+def test_custom_episode_mapping_syncs_without_anibridge_entry(anilist: type[FakeAniList], monkeypatch: pytest.MonkeyPatch,
+                                                             provider: str, season: int) -> None:
+    target_id = 999901
+    source_id = "tt9999999" if provider == "imdb" else "999999"
+    monkeypatch.setitem(MEDIA, target_id, {**MEDIA[16498], "id": target_id})
+    upsert_override({"media_type": "show", "match_provider": provider, "match_id": source_id, "match_season": season,
+                     "target_namespace": "anilist", "target_id": str(target_id), "episode_from": 5,
+                     "episode_to": 10, "episode_start_at": 1})
+    source = [_episode({provider: source_id}, season, 7)]
+
+    [save] = _sync(monkeypatch, source)
+
+    assert (save["mediaId"], save["progress"]) == (target_id, 3)
+    assert _sync(monkeypatch, source) == []
+
+
+@pytest.mark.parametrize("enabled,season,episode", [(False, 2, 5), (True, 1, 5), (True, 2, 4), (True, 2, 11), (True, 0, 5)])
+def test_custom_episode_mapping_does_not_sync_disabled_or_unmatched_rules(anilist: type[FakeAniList], monkeypatch: pytest.MonkeyPatch,
+                                                                        enabled: bool, season: int, episode: int) -> None:
+    upsert_override({"enabled": enabled, "media_type": "show", "match_provider": "tvdb", "match_id": "999999",
+                     "match_season": 0 if season == 0 else 2, "target_namespace": "anilist", "target_id": "16498",
+                     "episode_from": 5, "episode_to": 10, "episode_start_at": 1})
+
+    assert _sync(monkeypatch, [_episode({"tvdb": "999999"}, season, episode)]) == []
+
+
+def _rule(**fields: Any) -> None:
+    upsert_override({"media_type": "show", "match_provider": "tvdb", "match_id": "999999", "match_season": 2,
+                     "target_namespace": "anilist", "target_id": "999901", "episode_from": 5, "episode_to": 10,
+                     "episode_start_at": 1, **fields})
+
+
+def test_custom_episode_mapping_takes_priority_over_anibridge(anilist: type[FakeAniList], monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(MEDIA, 999901, {**MEDIA[16498], "id": 999901})
+    _rule(match_id="267440", match_season=1)
+    source = [_episode(AOT, 1, 7)]
+
+    [save] = _sync(monkeypatch, source)
+
+    assert (save["mediaId"], save["progress"]) == (999901, 3)
+    assert _sync(monkeypatch, source) == []
+
+
+def test_custom_episode_mapping_applies_when_the_anibridge_entry_is_already_ahead(anilist: type[FakeAniList],
+                                                                                 monkeypatch: pytest.MonkeyPatch) -> None:
+    anilist.entries = {16498: _entry("CURRENT", 25)}
+    monkeypatch.setitem(MEDIA, 999901, {**MEDIA[16498], "id": 999901})
+    _rule(match_id="267440", match_season=1)
+    source = [_episode(AOT, 1, 4), _episode(AOT, 1, 7)]
+
+    [save] = _sync(monkeypatch, source)
+
+    assert (save["mediaId"], save["progress"]) == (999901, 3)
+    assert anilist.entries[16498]["progress"] == 25
+    assert _sync(monkeypatch, source) == []
+    index = anilist_mod.OPS.build_index(_cfg(), feature="history")
+    assert {"tvdb:267440#s01e04", "tvdb:267440#s01e07", "tvdb:267440#s01e11"} <= set(index)
+    assert "tvdb:267440#s01e08" not in index
+
+
+def test_disabled_custom_episode_mapping_falls_back_to_anibridge(anilist: type[FakeAniList], monkeypatch: pytest.MonkeyPatch) -> None:
+    _rule(match_id="267440", match_season=1, enabled=False)
+
+    [save] = _sync(monkeypatch, [_episode(AOT, 1, 7)])
+
+    assert (save["mediaId"], save["progress"]) == (16498, 7)
+
+
+@pytest.mark.parametrize("enabled,season,episode", [(False, 2, 5), (True, 1, 5), (True, 2, 4), (True, 2, 11)])
+def test_history_filter_drops_disabled_or_unmatched_custom_mappings(anilist: type[FakeAniList], enabled: bool,
+                                                                   season: int, episode: int) -> None:
+    _rule(enabled=enabled)
+    item = _episode({"tvdb": "999999"}, season, episode)
+
+    assert anime_only_adds([item], _cfg(), {}, "history") == ([], 1)
+    _rule(match_season=season, episode_from=episode, episode_to=episode)
+    assert anime_only_adds([item], _cfg(), {}, "history") == ([item], 0)
+
+
+def test_history_filter_drops_specials_even_with_a_custom_mapping(anilist: type[FakeAniList]) -> None:
+    _rule(match_season=0)
+
+    assert anime_only_adds([_episode({"tvdb": "999999"}, 0, 7)], _cfg(), {}, "history") == ([], 1)
+
+
+@pytest.mark.parametrize("namespace", ["simkl", "kitsu", "mal", "anidb"])
+def test_history_filter_drops_custom_mappings_that_cannot_reach_anilist(anilist: type[FakeAniList], namespace: str) -> None:
+    _rule(target_namespace=namespace, target_id="777")
+
+    assert anime_only_adds([_episode({"tvdb": "999999"}, 2, 7)], _cfg(), {}, "history") == ([], 1)
+    assert anime_only_adds([_episode(AOT, 1, 7)], _cfg(), {}, "history")[1] == 0
+    _rule(match_id="267440", match_season=1, target_namespace=namespace, target_id="777")
+    assert anime_only_adds([_episode(AOT, 1, 7)], _cfg(), {}, "history") == ([], 1)
+
+
+def test_custom_mapping_to_a_mal_id_syncs_once(anilist: type[FakeAniList], monkeypatch: pytest.MonkeyPatch) -> None:
+    storage.paths("v3")["mappings"].write_text(json.dumps({**MAPPINGS, "mal:777": {"anilist:999901": {"1-25": "1-25"}}}), encoding="utf-8")
+    storage.rebuild_sqlite_from_mappings(release_tag="v3")
+    monkeypatch.setitem(MEDIA, 999901, {**MEDIA[16498], "id": 999901, "idMal": 777})
+    _rule(target_namespace="mal", target_id="777")
+    source = [_episode({"tvdb": "999999"}, 2, 7)]
+
+    [save] = _sync(monkeypatch, source)
+
+    assert (save["mediaId"], save["progress"]) == (999901, 3)
+    assert _sync(monkeypatch, source) == []
+    assert "tvdb:999999#s02e07" in anilist_mod.OPS.build_index(_cfg(), feature="history")
+
+
+def _remap(extra: dict[str, Any]) -> None:
+    storage.paths("v3")["mappings"].write_text(json.dumps({**MAPPINGS, **extra}), encoding="utf-8")
+    storage.rebuild_sqlite_from_mappings(release_tag="v3")
+
+
+def test_a_lower_priority_custom_mapping_does_not_hide_the_winning_one(anilist: type[FakeAniList],
+                                                                      monkeypatch: pytest.MonkeyPatch) -> None:
+    anilist.entries = {16498: _entry("CURRENT", 25)}
+    monkeypatch.setitem(MEDIA, 999901, {**MEDIA[16498], "id": 999901})
+    _rule()
+    _rule(target_id="16498")
+    source = [_episode({"tvdb": "999999"}, 2, 7)]
+
+    [save] = _sync(monkeypatch, source)
+
+    assert (save["mediaId"], save["progress"]) == (999901, 3)
+    assert _sync(monkeypatch, source) == []
+
+
+def test_custom_mapping_to_a_mal_id_respects_the_mal_episode_offset(anilist: type[FakeAniList],
+                                                                   monkeypatch: pytest.MonkeyPatch) -> None:
+    _remap({"mal:777": {"anilist:999901": {"1-20": "6-25"}}})
+    monkeypatch.setitem(MEDIA, 999901, {**MEDIA[16498], "id": 999901, "idMal": 777})
+    anilist.entries = {999901: _entry("CURRENT", 8)}
+    _rule(target_namespace="mal", target_id="777", episode_from=1, episode_to=20)
+    source = [_episode({"tvdb": "999999"}, 2, 6)]
+
+    index = anilist_mod.OPS.build_index(_cfg(), feature="history")
+    [save] = _sync(monkeypatch, source)
+
+    assert sorted(index) == ["tvdb:999999#s02e01", "tvdb:999999#s02e02", "tvdb:999999#s02e03"]
+    assert (save["mediaId"], save["progress"]) == (999901, 11)
+    assert _sync(monkeypatch, source) == []
+
+
+def test_custom_mapping_to_an_anidb_id_syncs_once(anilist: type[FakeAniList], monkeypatch: pytest.MonkeyPatch) -> None:
+    _remap({"anidb:555:R": {"anilist:999901": {"1-25": "1-25"}}})
+    monkeypatch.setitem(MEDIA, 999901, {**MEDIA[16498], "id": 999901})
+    _rule(target_namespace="anidb", target_id="555")
+    source = [_episode({"tvdb": "999999"}, 2, 7)]
+
+    [save] = _sync(monkeypatch, source)
+
+    assert (save["mediaId"], save["progress"]) == (999901, 3)
+    assert _sync(monkeypatch, source) == []
+    assert "tvdb:999999#s02e07" in anilist_mod.OPS.build_index(_cfg(), feature="history")
+
+
+def test_two_custom_mappings_for_one_entry_are_both_indexed(anilist: type[FakeAniList], monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(MEDIA, 999901, {**MEDIA[16498], "id": 999901})
+    _rule()
+    _rule(match_provider="tmdb", match_id="555")
+
+    [save] = _sync(monkeypatch, [_episode({"tvdb": "999999", "tmdb": "555"}, 2, 7)])
+    index = anilist_mod.OPS.build_index(_cfg(), feature="history")
+
+    assert (save["mediaId"], save["progress"]) == (999901, 3)
+    assert {"tvdb:999999#s02e07", "tmdb:555#s02e07"} <= set(index)
 
 
 def test_finishing_an_entry_completes_it_with_the_real_watch_dates(anilist: type[FakeAniList], monkeypatch: pytest.MonkeyPatch) -> None:
