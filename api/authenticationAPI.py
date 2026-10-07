@@ -1634,9 +1634,12 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         was_enabled = stremio_addon.instance_enabled(cfg, inst)
         enabled = coerce_bool(payload.get("enabled")) if "enabled" in payload else was_enabled
         regenerate = coerce_bool(payload.get("regenerate")) if "regenerate" in payload else False
-        if was_enabled and not enabled and stremio_addon.route_count(cfg, inst):
+        from cw_platform.provider_usage import find_provider_usage
+
+        routed = any(u.get("feature") == "watcher" and u.get("role") == "provider" for u in find_provider_usage(cfg, "stremio", inst))
+        if was_enabled and not enabled and routed:
             return JSONResponse(
-                {"ok": False, "error": "provider_in_use", "message": "This add-on feeds a Watcher route. Remove or disable that route first.", "instance": inst},
+                {"ok": False, "error": "provider_in_use", "message": "This add-on feeds a Watcher route. Remove that route first.", "instance": inst},
                 409,
             )
         ensure_provider_block(cfg, "stremio")
