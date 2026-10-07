@@ -110,15 +110,15 @@
 
     box = d.createElement("div");
     box.id = "anilist_mapping_recommendation";
-    box.className = "anilist-mapping-rec hidden";
+    box.className = "anime-mapping-rec hidden";
     box.innerHTML =
-      '<div class="anilist-mapping-rec-copy">' +
-        '<div class="anilist-mapping-rec-kicker">Recommended for AniList</div>' +
+      '<div class="anime-mapping-rec-copy">' +
+        '<div class="anime-mapping-rec-kicker">Recommended for AniList</div>' +
         '<strong>Use Anime ID Mapping</strong>' +
         '<div class="muted">Improves matching by translating AniList IDs to IDs your media servers and trackers understand.</div>' +
-        '<div class="anilist-mapping-rec-state" id="anilist_mapping_recommendation_state"></div>' +
+        '<div class="anime-mapping-rec-state" id="anilist_mapping_recommendation_state"></div>' +
       '</div>' +
-      '<div class="anilist-mapping-rec-actions">' +
+      '<div class="anime-mapping-rec-actions">' +
         '<button class="btn primary" type="button" id="btn-anilist-enable-mapping">Enable Anime ID Mapping</button>' +
         '<button class="btn" type="button" id="btn-anilist-dismiss-mapping">Not now</button>' +
       '</div>';

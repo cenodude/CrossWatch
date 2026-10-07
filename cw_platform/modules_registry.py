@@ -24,6 +24,7 @@ MODULES: dict[str, dict[str, str]] = {
         "_auth_NUVIO":    "providers.auth._auth_NUVIO",
         "_auth_STREMIO":  "providers.auth._auth_STREMIO",
         "_auth_FLOPPY":   "providers.auth._auth_FLOPPY",
+        "_auth_KITSU":    "providers.auth._auth_KITSU",
         "_auth_ANILIST":  "providers.auth._auth_ANILIST",
         "_auth_TMDB":     "providers.auth._auth_TMDB",
         "_auth_WETRAKR": "providers.auth._auth_WETRAKR",
@@ -47,6 +48,7 @@ MODULES: dict[str, dict[str, str]] = {
         "_mod_CROSSWATCH": "providers.sync._mod_CROSSWATCH",
         "_mod_TAUTULLI":   "providers.sync._mod_TAUTULLI",
         "_mod_TRACEARR":   "providers.sync._mod_TRACEARR",
+        "_mod_KITSU":      "providers.sync._mod_KITSU",
         "_mod_ANILIST":    "providers.sync._mod_ANILIST",
         "_mod_TMDB":       "providers.sync._mod_TMDB",
         "_mod_PUNCHPLAY":  "providers.sync._mod_PUNCHPLAY",
@@ -59,6 +61,7 @@ MODULES: dict[str, dict[str, str]] = {
 
 PROVIDER_CONNECTION_FIELDS: dict[str, tuple[tuple[str, ...], ...]] = {
     "anilist": (("access_token", "token"),),
+    "kitsu": (("access_token",),),
     "bingebase": (("access_token",), ("webhook_url",), ("api_key",)),
     "crosswatch": (("root_dir",), ("profile_id",), ("enabled",), ("connected",)),
     "emby": (("server",), ("access_token", "token", "api_key"), ("user_id",), ("verify_ssl",)),

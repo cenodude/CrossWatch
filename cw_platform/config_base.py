@@ -334,6 +334,14 @@ DEFAULT_CFG: dict[str, Any] = {
         },
     },
     
+    "kitsu": {
+        "access_token": "",
+        "refresh_token": "",
+        "expires_at": 0,
+        "scope": "",
+        "user": {},
+        "reauth_required": False,
+    },
     "anilist": {
         "client_id": "",                                # From your AniList app
         "client_secret": "",                            # From your AniList app
@@ -835,7 +843,7 @@ DEFAULT_CFG: dict[str, Any] = {
         "release_tag": "v3",                            # AniBridge release tag
         "refresh_hours": 24,                            # Minimum age before an automatic refresh is considered
         "stale_after_days": 14,                         # UI/status warning threshold
-        "use_for_pairs": ["anilist", "simkl", "crosswatch"],  # Providers that activate anime mapping when present in a pair ("*" = any pair)
+        "use_for_pairs": ["anilist", "kitsu", "simkl", "crosswatch"],  # Providers that activate anime mapping when present in a pair ("*" = any pair)
         "features": ["watchlist", "ratings", "history"],  # Sync features where anime mapping may apply; history is opt-in per pair
     },
 
@@ -973,6 +981,7 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
         "plex": {"account_token", "pms_token", "home_pin", "webhook_secret"},
         "simkl": {"access_token", "refresh_token", "client_secret", "_pending_pin"},
         "anilist": {"access_token", "client_secret"},
+        "kitsu": {"access_token", "refresh_token", "password"},
         "mdblist": {"api_key", "access_token", "refresh_token", "_pending_device"},
         "publicmetadb": {"api_key"},
         "wetrakr": {"access_token", "refresh_token"},
@@ -1097,6 +1106,7 @@ CONFIG_TOP_LEVEL_ORDER: tuple[str, ...] = (
     "simkl",
     "mdblist",
     "anilist",
+    "kitsu",
     "tmdb_sync",
     "publicmetadb",
     "wetrakr",
@@ -2150,7 +2160,7 @@ def _normalize_scheduling(cfg: dict[str, Any]) -> None:
     adv["workflows"] = wf_out
 
 
-ANIME_MAPPING_PAIRS_DEFAULT: list[str] = ["anilist", "simkl", "crosswatch"]
+ANIME_MAPPING_PAIRS_DEFAULT: list[str] = ["anilist", "kitsu", "simkl", "crosswatch"]
 ANIME_MAPPING_FEATURES_DEFAULT: list[str] = ["watchlist", "ratings", "history"]
 
 

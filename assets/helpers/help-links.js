@@ -13,6 +13,7 @@
     tmdb: "crosswatch/settings/connections/trackers/tmdb",
     mdblist: "crosswatch/settings/connections/trackers/mdblist",
     publicmetadb: "crosswatch/settings/connections/trackers/publicmetadb",
+    kitsu: "https://hummingbird-me.github.io/api-docs/",
     anilist: "crosswatch/settings/connections/trackers/anilist",
     wetrakr: "https://api.wetrakr.com/",
     punchplay: "crosswatch/settings/connections/trackers/punchplay",

@@ -77,6 +77,7 @@ PROVIDERS: tuple[str, ...] = (
     "simkl",
     "trakt",
     "anilist",
+    "kitsu",
     "jellyfin",
     "emby",
     "tmdb",
@@ -274,6 +275,7 @@ PROBE_CFG_KEY: dict[str, str] = {
     "SIMKL": "simkl",
     "TRAKT": "trakt",
     "ANILIST": "anilist",
+    "KITSU": "kitsu",
     "JELLYFIN": "jellyfin",
     "EMBY": "emby",
     "TMDB": "tmdb_sync",
@@ -381,6 +383,10 @@ def _probe_key(provider_id: str, cfg: Mapping[str, Any]) -> str:
         tok = str((t.get("access_token") or t.get("token") or "")).strip()
         return f"trakt|cid:{_secret_cache_tag(cid)}|tok:{_secret_cache_tag(tok)}" if (cid and tok) else "trakt|unconfigured"
 
+    if p == "kitsu":
+        block = cfg.get("kitsu") or {}
+        token = str(block.get("access_token") or "")
+        return f"kitsu|tok:{_secret_cache_tag(token)}|exp:{block.get('expires_at', 0)}" if token else "kitsu|unconfigured"
     if p == "anilist":
         a = cfg.get("anilist") or {}
         tok = str((a.get("access_token") or a.get("token") or "")).strip()
@@ -1013,6 +1019,45 @@ def _probe_trakt_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tu
     with _CACHE_LOCK:
         PROBE_DETAIL_CACHE[key] = (now, ok, rsn)
     return ok, rsn
+
+@_persistent_probe("kitsu")
+def _probe_kitsu_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
+    key = _probe_key("kitsu", cfg)
+    bust_ts = _consume_bust("kitsu")
+    now = time.time()
+    cached = PROBE_DETAIL_CACHE.get(key)
+    if cached and now - cached[0] < max_age_sec and (not bust_ts or cached[0] >= bust_ts):
+        return cached[1], cached[2]
+    if not _provider_auth().is_configured("kitsu", cfg.get("kitsu") or {}):
+        ok, reason = False, "Kitsu: reconnect required" if (cfg.get("kitsu") or {}).get("reauth_required") else "Kitsu: missing authentication"
+    else:
+        code, body = _authenticated_account("kitsu", cfg, "https://kitsu.io/api/edge/users?filter[self]=true")
+        data = (_json_loads(body) or {}).get("data")
+        ok = bool(code == 200 and isinstance(data, list) and len(data) == 1 and data[0].get("id") and data[0].get("type") == "users")
+        reason = "" if ok else "Kitsu: reconnect required" if code == 401 else "Kitsu: identity verification failed"
+    with _CACHE_LOCK:
+        PROBE_DETAIL_CACHE[key] = (now, ok, reason)
+    return ok, reason
+
+
+@_persistent_userinfo("kitsu")
+def kitsu_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict[str, Any]:
+    key = _probe_key("kitsu", cfg)
+    bust_ts = _consume_bust("kitsu")
+    now = time.time()
+    cached = _USERINFO_CACHE.get(key)
+    if cached and now - cached[0] < max_age_sec and (not bust_ts or cached[0] >= bust_ts):
+        return cached[1]
+    code, body = _authenticated_account("kitsu", cfg, "https://kitsu.io/api/edge/users?filter[self]=true")
+    data = (_json_loads(body) or {}).get("data")
+    out = {}
+    if code == 200 and isinstance(data, list) and len(data) == 1 and data[0].get("id") and data[0].get("type") == "users":
+        row = data[0]
+        out = {"user": {"id": str(row["id"]), "name": str((row.get("attributes") or {}).get("name") or "")}}
+    with _CACHE_LOCK:
+        _USERINFO_CACHE[key] = (now, out)
+    return out
+
 
 @_persistent_probe("anilist")
 def _probe_anilist_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
@@ -2210,6 +2255,8 @@ def _prov_configured(cfg: dict[str, Any], name: str, instance_id: Any = "default
     if ck == "simkl":
         return bool(str(blk.get("access_token") or "").strip() and str(blk.get("client_id") or "").strip())
 
+    if ck == "kitsu":
+        return _provider_auth().is_configured("kitsu", blk)
     if ck == "anilist":
         return bool(str(blk.get("access_token") or blk.get("token") or "").strip())
 
@@ -2327,6 +2374,7 @@ DETAIL_PROBES: dict[str, Callable[..., tuple[bool, str]]] = {
     "SIMKL": _probe_simkl_detail,
     "TRAKT": _probe_trakt_detail,
     "ANILIST": _probe_anilist_detail,
+    "KITSU": _probe_kitsu_detail,
     "JELLYFIN": _probe_jellyfin_detail,
     "EMBY": _probe_emby_detail,
     "KODI": _probe_kodi_detail,
@@ -2349,6 +2397,7 @@ USERINFO_FNS: dict[str, Callable[..., dict[str, Any]]] = {
     "SIMKL": simkl_user_info,
     "TRAKT": trakt_user_info,
     "ANILIST": anilist_user_info,
+    "KITSU": kitsu_user_info,
     "EMBY": emby_user_info,
     "MDBLIST": mdblist_user_info,
     "WETRAKR": wetrakr_user_info,
@@ -2673,6 +2722,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
             taut_ok, taut_reason, cfg_taut = _provider_tuple("TAUTULLI")
             tracearr_ok, tracearr_reason, cfg_tracearr = _provider_tuple("TRACEARR")
             anilist_ok, anilist_reason, cfg_anilist = _provider_tuple("ANILIST")
+            kitsu_ok, kitsu_reason, cfg_kitsu = _provider_tuple("KITSU")
 
             userinfo_jobs: dict[str, tuple[Callable[..., dict[str, Any]], dict[str, Any]]] = {}
             if plex_ok:
@@ -2681,6 +2731,8 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 userinfo_jobs["SIMKL"] = (simkl_user_info, cfg_simkl)
             if trakt_ok:
                 userinfo_jobs["TRAKT"] = (trakt_user_info, cfg_trakt)
+            if kitsu_ok:
+                userinfo_jobs["KITSU"] = (kitsu_user_info, cfg_kitsu)
             if anilist_ok:
                 userinfo_jobs["ANILIST"] = (anilist_user_info, cfg_anilist)
             if emby_ok:
@@ -2716,6 +2768,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
             info_simkl = userinfo.get("SIMKL", {})
             info_trakt = userinfo.get("TRAKT", {})
             info_anilist = userinfo.get("ANILIST", {})
+            info_kitsu = userinfo.get("KITSU", {})
             info_emby = userinfo.get("EMBY", {})
             info_mdbl = userinfo.get("MDBLIST", {})
             info_bingebase = userinfo.get("BINGEBASE", {})
@@ -2834,6 +2887,16 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                     "connected": anilist_ok,
                     **({} if anilist_ok else {"reason": anilist_reason}),
                     **({} if not info_anilist else {"user": (info_anilist.get("user") or {})}),
+                    "instances": inst_map,
+                    "instances_summary": inst_sum,
+                    "rep_instance": inst_sum.get("rep"),
+                }
+            if "KITSU" in active_providers:
+                inst_map, inst_sum = _instances_payload("KITSU")
+                providers_out["KITSU"] = {
+                    "connected": kitsu_ok,
+                    **({} if kitsu_ok else {"reason": kitsu_reason}),
+                    **({} if not info_kitsu else {"user": (info_kitsu.get("user") or {})}),
                     "instances": inst_map,
                     "instances_summary": inst_sum,
                     "rep_instance": inst_sum.get("rep"),
@@ -3110,6 +3173,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 "simkl_connected": simkl_ok,
                 "trakt_connected": trakt_ok,
                 "anilist_connected": anilist_ok,
+                "kitsu_connected": kitsu_ok,
                 "jellyfin_connected": jelly_ok,
                 "emby_connected": emby_ok,
                 "kodi_connected": kodi_ok,
