@@ -3450,6 +3450,48 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             _safe_log(log_fn, "TRAKT", f"[TRAKT] ERROR token delete: {e}")
             return {"ok": False, "error": "internal"}
 
+    @app.post("/api/kitsu/connect", tags=["auth"])
+    def api_kitsu_connect(payload: dict[str, Any] = Body(...), instance: str = Query("default")) -> Any:
+        from providers.auth import _auth_KITSU as kitsu
+
+        try:
+            username = str(payload.pop("username", ""))
+            password = str(payload.pop("password", ""))
+            connection = kitsu.login(username, password)
+            return JSONResponse({"ok": True, "connection": connection}, headers={"Cache-Control": "no-store"})
+        except kitsu.KitsuAuthError as exc:
+            message = "Kitsu rejected the login" if str(exc) == "invalid_grant" else "Kitsu connection failed"
+            return JSONResponse({"ok": False, "error": message}, status_code=400, headers={"Cache-Control": "no-store"})
+        except Exception:
+            return JSONResponse({"ok": False, "error": "Kitsu connection failed"}, status_code=502)
+        finally:
+            password = ""
+            payload.clear()
+
+    @app.get("/api/kitsu/status", tags=["auth"])
+    def api_kitsu_status(instance: str = Query("default")) -> dict[str, Any]:
+        from providers.auth import _auth_KITSU as kitsu
+        from cw_platform.provider_instances import resolve_provider_block
+
+        return kitsu.status_for_block(resolve_provider_block(load_config(), "kitsu", instance))
+
+    @app.post("/api/kitsu/disconnect", tags=["auth"])
+    def api_kitsu_disconnect(instance: str = Query("default")) -> Any:
+        from providers.auth import _auth_KITSU as kitsu
+
+        inst = normalize_instance_id(instance)
+        with kitsu.instance_lock(inst):
+            cfg = load_config()
+            conflict = usage_conflict_response(cfg, "kitsu", inst)
+            if conflict is not None:
+                return conflict
+            block = ensure_instance_block(cfg, "kitsu", inst)
+            kitsu.clear_oauth(block)
+            block["reauth_required"] = False
+            save_config(cfg)
+        _probe_bust("kitsu")
+        return {"ok": True}
+
     # ANILIST
     @app.post("/api/anilist/save", tags=["auth"])
     def api_anilist_save(payload: dict[str, Any] = Body(...), instance: str = Query("default")) -> dict[str, Any]:

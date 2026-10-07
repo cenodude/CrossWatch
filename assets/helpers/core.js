@@ -80,6 +80,7 @@
     { key: "PLEX", paths: [["plex"]], keys: ["account_token", "token"] },
     { key: "SIMKL", paths: [["simkl"], ["auth", "simkl"]], keys: ["access_token"] },
     { key: "TRAKT", paths: [["trakt"], ["auth", "trakt"]], keys: ["access_token"] },
+    { key: "KITSU", paths: [["kitsu"]], keys: ["access_token"] },
     { key: "ANILIST", paths: [["anilist"], ["auth", "anilist"]], keys: ["access_token", "token"] },
     { key: "JELLYFIN", paths: [["jellyfin"], ["auth", "jellyfin"]], keys: ["access_token"] },
     { key: "EMBY", paths: [["emby"], ["auth", "emby"]], keys: ["access_token", "api_key", "token"] },

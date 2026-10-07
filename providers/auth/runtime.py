@@ -46,6 +46,10 @@ def _backend(provider: Any) -> Any:
         from providers.auth import _auth_FLICKLIST as flicklist_auth
 
         return flicklist_auth
+    if name == "kitsu":
+        from providers.auth import _auth_KITSU
+
+        return _auth_KITSU
     if name == "scrob":
         from providers.auth import _auth_SCROB as scrob_auth
 

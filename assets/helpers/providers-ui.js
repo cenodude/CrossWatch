@@ -47,7 +47,7 @@
 
   const AUTH_GROUPS = Object.freeze([
     { id: "sec-auth-media", title: "Media servers", keys: ["PLEX", "JELLYFIN", "EMBY"] },
-    { id: "sec-auth-trackers", title: "Trackers", keys: ["CROSSWATCH", "TRAKT", "SIMKL", "TMDB", "MDBLIST", "PUBLICMETADB", "ANILIST", "WETRAKR", "PUNCHPLAY", "BINGEBASE", "FLICKLIST", "FLOPPY", "SCROB"] },
+    { id: "sec-auth-trackers", title: "Trackers", keys: ["CROSSWATCH", "TRAKT", "SIMKL", "TMDB", "MDBLIST", "PUBLICMETADB", "ANILIST", "KITSU", "WETRAKR", "PUNCHPLAY", "BINGEBASE", "FLICKLIST", "FLOPPY", "SCROB"] },
     { id: "sec-auth-clients", title: "Media clients", keys: ["NUVIO", "KODI", "STREMIO"] },
     { id: "sec-auth-others", title: "Others", keys: ["TAUTULLI", "TRACEARR"] },
   ]);
@@ -246,6 +246,7 @@
     if (p === "plex") return hasConfiguredValue(b.account_token) || hasConfiguredValue(b.token) || hasConfiguredValue(b.access_token);
     if (p === "emby" || p === "jellyfin") return hasConfiguredValue(b.access_token) || hasConfiguredValue(b.api_key) || hasConfiguredValue(b.token);
     if (p === "trakt" || p === "simkl") return hasConfiguredValue(b.access_token) || hasConfiguredValue(b.refresh_token);
+    if (p === "kitsu") return hasConfiguredValue(b.access_token) && !b.reauth_required;
     if (p === "anilist") return hasConfiguredValue(b.access_token) || hasConfiguredValue(b.token);
     if (p === "mdblist") return hasConfiguredValue(b.api_key) || hasConfiguredValue(b.access_token);
     if (p === "wetrakr") return hasConfiguredValue(b.access_token) && !b.reauth_required;
@@ -803,6 +804,15 @@
       steps: [["1", "Enter account", "Use your Stremio email and password"], ["2", "Exchange key", "CrossWatch requests an auth key"], ["3", "Store key", "Only the auth key is saved"]],
       order: [".grid2", ".inline"],
       actions: [{ row: ".inline", status: "#stremio_msg", buttons: "#stremio_connect" }]
+    },
+    KITSU: {
+      provider: "kitsu", logo: "KITSU", help: window.CW.HelpLinks.url("kitsu"), deleteSelector: "#kitsu_disconnect",
+      tabs: { auth: ["lock", "Authentication", "Connect your Kitsu account"] },
+      copy: { auth: ["Kitsu Authentication", "Sync anime watchlist, ratings and watched episodes."] },
+      journey: ["Connect to Kitsu", "Sign in once, then save your connection. Only tokens are retained. Enable Anime ID Mapping for anime matching and episode numbering.", "253,117,92", "253,117,92", "KITSU"],
+      steps: [["1", "Sign in", "Use your Kitsu email or username and password"], ["2", "Save connection", "Store tokens for this account"], ["3", "Sync anime", "Use Anime ID Mapping and custom rules"]],
+      order: [".grid2", ".inline"],
+      actions: [{ row: ".inline", status: "#kitsu_msg", buttons: "#kitsu_connect" }]
     },
     ANILIST: {
       provider: "anilist", logo: "ANILIST", help: window.CW.HelpLinks.url("anilist"), deleteSelector: "#btn-delete-anilist",

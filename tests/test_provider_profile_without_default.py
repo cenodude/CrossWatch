@@ -13,6 +13,7 @@ PROFILE = "P01"
 
 PROVIDER_BLOCKS: dict[str, dict[str, Any]] = {
     "anilist": {"access_token": "T"},
+    "kitsu": {"access_token": "T", "refresh_token": "R"},
     "crosswatch": {"connected": True, "root_dir": "/config/.cw_provider/profiles/P01"},
     "floppy": {"server_url": "http://floppy:8080", "api_token": "T"},
     "kodi": {"server": "http://kodi:8080", "connection_verified": True},
