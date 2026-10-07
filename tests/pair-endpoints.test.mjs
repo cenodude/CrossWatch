@@ -17,18 +17,17 @@ const sourceFor = name => {
 };
 
 for (const feature of ["watchlist", "ratings"]) {
-  for (const [src, dst] of [["SIMKL", "KITSU"], ["KITSU", "SIMKL"]]) {
-    test(`${feature} shows the Kitsu anime-only restriction for ${src} to ${dst}`, () => {
+  for (const [src, dst] of [["SIMKL", "KITSU"], ["KITSU", "SIMKL"], ["SIMKL", "ANILIST"], ["ANILIST", "SIMKL"]]) {
+    test(`${feature} shows the anime-only restriction for ${src} to ${dst}`, () => {
       const nodes = new Map();
       const context = vm.createContext({
         same: (a, b) => String(a).toLowerCase() === String(b).toLowerCase(),
-        anilistCanReceive: () => false,
         ID: id => nodes.get(id), Q: selector => nodes.get(selector.slice(1)),
       });
       vm.runInContext([sourceFor("renderAnimeOnlyOption"), sourceFor("applySubDisable")].join(";"), context);
       const prefix = feature === "ratings" ? "cx-rt" : "cx-wl";
       for (const mapping of [false, true]) {
-        const html = context.renderAnimeOnlyOption({src, dst}, feature, {use_anime_mapping: mapping, anime_only_sync: false});
+        const html = context.renderAnimeOnlyOption({src, dst}, feature);
         assert.match(html, /Anime-only sync/);
         assert.match(html, /data-anime-only="1" checked disabled/);
         const only = {checked: true, disabled: true, dataset: {animeOnly: "1"}};
@@ -45,13 +44,10 @@ for (const feature of ["watchlist", "ratings"]) {
   }
 }
 
-test("AniList keeps its optional anime-only control", () => {
-  const context = vm.createContext({same: (a, b) => a === b, anilistCanReceive: state => state.dst === "ANILIST"});
+test("Pairs without an anime-only provider omit the restriction", () => {
+  const context = vm.createContext({same: (a, b) => a === b});
   vm.runInContext(sourceFor("renderAnimeOnlyOption"), context);
-  const html = context.renderAnimeOnlyOption({src: "SIMKL", dst: "ANILIST"}, "watchlist", {use_anime_mapping: true, anime_only_sync: true});
-  assert.match(html, /data-anime-only="0" checked/);
-  assert.doesNotMatch(html, /disabled/);
-  assert.equal(context.renderAnimeOnlyOption({src: "SIMKL", dst: "TRAKT"}, "watchlist", {}), "");
+  assert.equal(context.renderAnimeOnlyOption({src: "SIMKL", dst: "TRAKT"}, "watchlist"), "");
 });
 
 for (const scenario of [

@@ -240,7 +240,7 @@ def anime_only_adds(
     rows = list(items or [])
     target = _norm_provider(target)
     history = str(feature or "").strip().lower() == "history"
-    if not rows or not (history or target == "kitsu" or bool((options or {}).get("anime_only_sync"))):
+    if not rows or not (history or target in ANIME_ONLY_TARGET_KEYS or bool((options or {}).get("anime_only_sync"))):
         return rows, 0
     unavailable: tuple[list[Any], int] = ([], len(rows)) if history else (rows, 0)
     block = cfg.get("anime_mapping") if isinstance(cfg, Mapping) else None
@@ -248,7 +248,7 @@ def anime_only_adds(
         return unavailable
     try:
         svc = AnimeMappingService(cfg)
-        if target != "kitsu" and not svc.ready():
+        if target != "kitsu" and history and not svc.ready():
             return unavailable
     except Exception:
         return unavailable

@@ -278,6 +278,23 @@ def test_history_filter_drops_specials_even_with_a_custom_mapping(anilist: type[
     assert anime_only_adds([_episode({"tvdb": "999999"}, 0, 7)], _cfg(), {}, "history") == ([], 1)
 
 
+@pytest.mark.parametrize("feature", ["watchlist", "ratings"])
+@pytest.mark.parametrize("options", [{}, {"use_anime_mapping": False, "anime_only_sync": False}])
+def test_anilist_title_filter_is_always_anime_only(anilist: type[FakeAniList], feature: str, options: dict) -> None:
+    anime = _movie(YOUR_NAME)
+    other = {"type": "movie", "ids": {"tmdb": "101"}, "title": "Leon"}
+
+    assert anime_only_adds([anime, other], _cfg(), options, feature) == ([anime], 1)
+
+
+@pytest.mark.parametrize("feature", ["watchlist", "ratings"])
+def test_anilist_title_filter_keeps_native_ids_without_mapping(config_base: Path, feature: str) -> None:
+    anime = _movie(YOUR_NAME)
+    other = {"type": "movie", "ids": {"tmdb": "101"}, "title": "Leon"}
+
+    assert anime_only_adds([anime, other], {}, {}, feature) == ([anime], 1)
+
+
 @pytest.mark.parametrize("namespace", ["simkl", "kitsu", "mal", "anidb"])
 def test_history_filter_drops_custom_mappings_that_cannot_reach_anilist(anilist: type[FakeAniList], namespace: str) -> None:
     _rule(target_namespace=namespace, target_id="777")
