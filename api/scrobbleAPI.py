@@ -1959,3 +1959,65 @@ async def webhook_kodiwatcher(request: Request) -> JSONResponse:
                 pass
         return JSONResponse({"ok": False, "error": "internal_error", "crosswatch_version": version}, status_code=500)
     return JSONResponse(result, status_code=200)
+
+
+_STREMIO_ADDON_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, OPTIONS",
+    "Access-Control-Allow-Headers": "*",
+    "Cache-Control": "no-store",
+}
+
+
+def _stremio_addon_instance(request: Request, cfg: dict[str, Any], token: str) -> str | None:
+    from providers.scrobble.stremio import addon as stremio_addon
+
+    instance = stremio_addon.instance_for_token(cfg, token)
+    if instance is None and BASE_LOG:
+        client = request.client.host if request.client else "-"
+        try:
+            BASE_LOG(f"Rejected Stremio add-on request, reason=invalid_token, client={client}", level="WARN", module="WEBHOOK")
+        except Exception:
+            pass
+    return instance
+
+
+@router.options("/webhook/stremio/{token}/{rest:path}")
+async def webhook_stremio_options(token: str, rest: str) -> JSONResponse:
+    return JSONResponse({}, status_code=200, headers=_STREMIO_ADDON_HEADERS)
+
+
+@router.get("/webhook/stremio/{token}/manifest.json")
+async def webhook_stremio_manifest(request: Request, token: str) -> JSONResponse:
+    from providers.scrobble.stremio import addon as stremio_addon
+
+    cfg = load_config() or {}
+    instance = _stremio_addon_instance(request, cfg, token)
+    if instance is None:
+        return JSONResponse({"err": "invalid_token"}, status_code=401, headers=_STREMIO_ADDON_HEADERS)
+    stremio_addon.mark_seen(instance)
+    return JSONResponse(stremio_addon.manifest(cfg, instance), status_code=200, headers=_STREMIO_ADDON_HEADERS)
+
+
+@router.get("/webhook/stremio/{token}/player/{rest:path}")
+async def webhook_stremio_player(request: Request, token: str, rest: str) -> JSONResponse:
+    from starlette.concurrency import run_in_threadpool
+
+    from providers.scrobble.stremio import addon as stremio_addon
+
+    cfg = load_config() or {}
+    instance = _stremio_addon_instance(request, cfg, token)
+    if instance is None:
+        return JSONResponse({"success": False, "err": "invalid_token"}, status_code=401, headers=_STREMIO_ADDON_HEADERS)
+
+    media_type, video_id, args = stremio_addon.split_resource_path(rest)
+    try:
+        result = await run_in_threadpool(stremio_addon.handle, request.app, cfg, instance, media_type, video_id, args)
+    except Exception as e:
+        if BASE_LOG:
+            try:
+                BASE_LOG(f"Stremio add-on event failed: {type(e).__name__}: {e}", level="ERROR", module="STREMIO-WATCH")
+            except Exception:
+                pass
+        return JSONResponse({"success": False, "err": "internal_error"}, status_code=500, headers=_STREMIO_ADDON_HEADERS)
+    return JSONResponse(result, status_code=200, headers=_STREMIO_ADDON_HEADERS)

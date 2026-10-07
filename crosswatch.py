@@ -588,7 +588,9 @@ async def conditional_access_logger(request: Request, call_next):
                 if should_log:
                     dt_ms = int((time.time() - t0) * 1000)
                     host = f"{client.host}:{client.port}" if client else "-"
-                    if path.startswith(("/webhook/", "/published/")):
+                    if path.startswith("/webhook/stremio/"):
+                        path_qs = "/webhook/stremio/***" + "".join(f"/{part}" for part in path.split("/")[4:])
+                    elif path.startswith(("/webhook/", "/published/")):
                         path_qs = path
                     else:
                         qs = _redact_query_string(request.url.query)
@@ -733,6 +735,7 @@ WATCH_LOG_TAGS = {
     "EMBY-WATCH",
     "KODI-WATCH",
     "SCROB-WATCH",
+    "STREMIO-WATCH",
     "ANIME-WATCH",
     "TRAKT-SINK",
     "SIMKL-SINK",
@@ -754,6 +757,7 @@ WATCH_LOG_DEFAULT_TAGS = [
     "EMBY-WATCH",
     "KODI-WATCH",
     "SCROB-WATCH",
+    "STREMIO-WATCH",
     "ANIME-WATCH",
     "TRAKT-SINK",
     "SIMKL-SINK",

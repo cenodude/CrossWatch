@@ -18,6 +18,7 @@ from cw_platform.account_match import media_account_allowed, normalize_media_acc
 from providers.scrobble._log_dedupe import LogDeduplicator
 from providers.scrobble.anime_mapping import maybe_enrich_event_for_sink, sink_name_for_mapping
 from providers.scrobble.media_filters import event_ignore_reason, log_media_filter_drop
+from providers.scrobble.routes import ROUTE_SINGLE_ACCOUNT_PROVIDERS as SINGLE_ACCOUNT_PROVIDERS
 
 try:
     from _logging import log as BASE_LOG
@@ -631,14 +632,16 @@ class Dispatcher:
                 self._log_filter_drop(ev, cfg, "user_id", identity)
             return False
 
+        provider = str(((cfg.get("scrobble") or {}).get("watch") or {}).get("route_provider") or "plex").lower()
         scoped = bool(str(((cfg.get("scrobble") or {}).get("watch") or {}).get("route_profile_id") or "").strip())
+        if provider in SINGLE_ACCOUNT_PROVIDERS:
+            scoped = False
         if not wl and scoped:
             self._log_filter_drop(ev, cfg, "profile_scoped_without_whitelist", identity, "WARNING")
             return False
 
         accounts = [account]
         aliases = ident.get("user_aliases")
-        provider = str(((cfg.get("scrobble") or {}).get("watch") or {}).get("route_provider") or "plex").lower()
         if provider == "plex" and isinstance(aliases, list):
             accounts.extend(alias for alias in aliases if isinstance(alias, str) and alias.strip())
         if not any(

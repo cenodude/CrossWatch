@@ -298,6 +298,8 @@ def _make_watcher(provider: str, group_dispatcher: MultiDispatcher, cfg_provider
         from providers.scrobble.kodi.watch import make_default_watch as make_watch
     elif prov == "scrob":
         from providers.scrobble.scrob.watch import make_default_watch as make_watch
+    elif prov == "stremio":
+        from providers.scrobble.stremio.watch import make_default_watch as make_watch
     else:
         from providers.scrobble.plex.watch import make_default_watch as make_watch
         prov = "plex"
