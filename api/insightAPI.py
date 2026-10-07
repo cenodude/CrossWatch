@@ -17,7 +17,7 @@ from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 
 from cw_platform.memory_release import register_cache
-from cw_platform.modules_registry import sync_provider_names
+from cw_platform.modules_registry import provider_names, sync_provider_names
 from cw_platform.provider_instances import (
     ensure_instance_block,
     get_provider_block,
@@ -223,7 +223,6 @@ _AUTH_KEYS = {
     "publicmetadb": ("api_key",),
     "nuvio": ("access_token", "refresh_token", "profile_id"),
 }
-_SETTINGS_PROVIDERS = [*_AUTH_KEYS, "tmdb", "tautulli", "tracearr"]
 
 
 def _txt(v: Any) -> str:
@@ -267,7 +266,7 @@ def _settings_auth_summary(cfg: dict[str, Any]) -> dict[str, Any]:
         return _has(block, *_AUTH_KEYS.get(provider, ("access_token", "api_key", "token")))
 
     profiles: list[dict[str, Any]] = []
-    for provider in _SETTINGS_PROVIDERS:
+    for provider in provider_names(upper=False):
         base = _dict(cfg.get(provider))
         instances = _dict(base.get("instances"))
         blocks = [base, *instances.values()]
@@ -1547,8 +1546,8 @@ def register_insights(app: FastAPI) -> None:
                             )
                             is_anime = bool(
                                 typ == "anime"
-                                or ids.get("anilist") or ids.get("mal")
-                                or show_ids_field.get("anilist") or show_ids_field.get("mal")
+                                or ids.get("anilist") or ids.get("mal") or ids.get("kitsu")
+                                or show_ids_field.get("anilist") or show_ids_field.get("mal") or show_ids_field.get("kitsu")
                             )
 
                             if typ == "episode":
@@ -1560,7 +1559,7 @@ def register_insights(app: FastAPI) -> None:
                                     title=show_title,
                                     year=show_year,
                                     ids=show_ids_field or ids,
-                                    id_keys=("tmdb", "imdb", "tvdb", "anilist", "mal", "slug"),
+                                    id_keys=("tmdb", "imdb", "tvdb", "anilist", "mal", "kitsu", "slug"),
                                     prefix="episode",
                                     suffix=f"|s{s}e{ep}",
                                 )
@@ -1571,7 +1570,7 @@ def register_insights(app: FastAPI) -> None:
                                     title=show_title,
                                     year=show_year,
                                     ids=show_ids_field or ids,
-                                    id_keys=("tmdb", "imdb", "tvdb", "anilist", "mal", "slug"),
+                                    id_keys=("tmdb", "imdb", "tvdb", "anilist", "mal", "kitsu", "slug"),
                                     prefix="show",
                                 )
                                 if show_sig:
@@ -1579,12 +1578,12 @@ def register_insights(app: FastAPI) -> None:
                                 continue
 
                             if is_anime:
-                                ids_anime = show_ids_field if (show_ids_field.get("anilist") or show_ids_field.get("mal")) else ids
+                                ids_anime = show_ids_field if (show_ids_field.get("anilist") or show_ids_field.get("mal") or show_ids_field.get("kitsu")) else ids
                                 sig = _pick_identity(
                                     title=rec.get("title") or rec.get("name"),
                                     year=rec.get("year"),
                                     ids=ids_anime,
-                                    id_keys=("anilist", "mal", "slug", "tmdb", "imdb", "tvdb"),
+                                    id_keys=("anilist", "mal", "kitsu", "slug", "tmdb", "imdb", "tvdb"),
                                     prefix="anime",
                                 )
                                 if sig:
@@ -1676,8 +1675,8 @@ def register_insights(app: FastAPI) -> None:
                             show_ids_field = _id_map(rec, "show_ids")
                             is_anime = bool(
                                 typ == "anime"
-                                or ids.get("anilist") or ids.get("mal")
-                                or show_ids_field.get("anilist") or show_ids_field.get("mal")
+                                or ids.get("anilist") or ids.get("mal") or ids.get("kitsu")
+                                or show_ids_field.get("anilist") or show_ids_field.get("mal") or show_ids_field.get("kitsu")
                             )
                             if typ == "episode":
                                 episodes.add(sig)
@@ -1711,8 +1710,8 @@ def register_insights(app: FastAPI) -> None:
             )
             is_anime = bool(
                 typ == "anime"
-                or ids.get("anilist") or ids.get("mal")
-                or show_ids_field.get("anilist") or show_ids_field.get("mal")
+                or ids.get("anilist") or ids.get("mal") or ids.get("kitsu")
+                or show_ids_field.get("anilist") or show_ids_field.get("mal") or show_ids_field.get("kitsu")
             )
             if typ == "episode":
                 s = int(rec.get("season") or 0)
@@ -1721,7 +1720,7 @@ def register_insights(app: FastAPI) -> None:
                     title=rec.get("series_title") or rec.get("show_title") or rec.get("title") or rec.get("name"),
                     year=rec.get("series_year") or rec.get("year"),
                     ids=show_ids_field or ids,
-                    id_keys=("tmdb", "imdb", "tvdb", "anilist", "mal", "slug"),
+                    id_keys=("tmdb", "imdb", "tvdb", "anilist", "mal", "kitsu", "slug"),
                     prefix="episode",
                     suffix=f"|s{s}e{ep}",
                 )
@@ -1731,17 +1730,17 @@ def register_insights(app: FastAPI) -> None:
                     title=rec.get("series_title") or rec.get("show_title") or rec.get("title") or rec.get("name"),
                     year=rec.get("series_year") or rec.get("year"),
                     ids=show_ids_field or ids,
-                    id_keys=("tmdb", "imdb", "tvdb", "anilist", "mal", "slug"),
+                    id_keys=("tmdb", "imdb", "tvdb", "anilist", "mal", "kitsu", "slug"),
                     prefix="season",
                     suffix=f"|s{s}",
                 )
             if is_anime:
-                ids_anime = show_ids_field if (show_ids_field.get("anilist") or show_ids_field.get("mal")) else ids
+                ids_anime = show_ids_field if (show_ids_field.get("anilist") or show_ids_field.get("mal") or show_ids_field.get("kitsu")) else ids
                 return _pick_identity(
                     title=rec.get("title") or rec.get("name"),
                     year=rec.get("year"),
                     ids=ids_anime,
-                    id_keys=("anilist", "mal", "slug", "tmdb", "imdb", "tvdb"),
+                    id_keys=("anilist", "mal", "kitsu", "slug", "tmdb", "imdb", "tvdb"),
                     prefix="anime",
                 )
             if typ == "movie" and not has_show_meta:
@@ -1779,8 +1778,8 @@ def register_insights(app: FastAPI) -> None:
                 )
                 is_anime = bool(
                     typ == "anime"
-                    or ids.get("anilist") or ids.get("mal")
-                    or show_ids_field.get("anilist") or show_ids_field.get("mal")
+                    or ids.get("anilist") or ids.get("mal") or ids.get("kitsu")
+                    or show_ids_field.get("anilist") or show_ids_field.get("mal") or show_ids_field.get("kitsu")
                 )
                 sig: str | None = None
 
@@ -1791,17 +1790,17 @@ def register_insights(app: FastAPI) -> None:
                         title=rec.get("series_title") or rec.get("show_title") or rec.get("title") or rec.get("name"),
                         year=rec.get("series_year") or rec.get("year"),
                         ids=show_ids_field or ids,
-                        id_keys=("tmdb", "imdb", "tvdb", "anilist", "mal", "slug"),
+                        id_keys=("tmdb", "imdb", "tvdb", "anilist", "mal", "kitsu", "slug"),
                         prefix="episode",
                         suffix=f"|s{s}e{ep}",
                     )
                 elif is_anime:
-                    ids_anime = show_ids_field if (show_ids_field.get("anilist") or show_ids_field.get("mal")) else ids
+                    ids_anime = show_ids_field if (show_ids_field.get("anilist") or show_ids_field.get("mal") or show_ids_field.get("kitsu")) else ids
                     sig = _pick_identity(
                         title=rec.get("title") or rec.get("name"),
                         year=rec.get("year"),
                         ids=ids_anime,
-                        id_keys=("anilist", "mal", "slug", "tmdb", "imdb", "tvdb"),
+                        id_keys=("anilist", "mal", "kitsu", "slug", "tmdb", "imdb", "tvdb"),
                         prefix="anime",
                     )
                 elif typ == "movie" and not has_show_meta:

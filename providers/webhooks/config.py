@@ -24,6 +24,7 @@ _SINK_CREDENTIALS: dict[str, tuple[str, ...]] = {
     "punchplay": ("access_token",),
     "wetrakr": ("access_token",),
     "anilist": ("access_token",),
+    "kitsu": ("access_token",),
     "bingebase": ("webhook_url",),
     "flicklist": ("api_key", "access_token", "token"),
     "scrob": ("api_key",),
