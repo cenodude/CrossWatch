@@ -356,6 +356,10 @@ a[href="#content"],
   background: var(--cw-violet);
 }
 
+.cw-provider-card.is-kitsu {
+  border-color: rgba(253, 117, 92, .28);
+}
+
 .cw-provider-card.is-plex,
 .cw-provider-card.is-mdblist,
 .cw-provider-card.is-tmdb {

@@ -87,6 +87,12 @@
     <span>Tracker</span>
     <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
   </article>
+  <article class="cw-provider-card is-kitsu">
+    <img class="cw-provider-mark" src="images/providers/KITSU.svg" alt="" aria-hidden="true">
+    <strong>Kitsu</strong>
+    <span>Anime tracker</span>
+    <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
+  </article>
   <article class="cw-provider-card is-crosswatch">
     <img class="cw-provider-mark" src="images/providers/CROSSWATCH.svg" alt="" aria-hidden="true">
     <strong>CrossWatch</strong>
@@ -247,7 +253,7 @@
   <article>
     <span class="cw-token">ANIME</span>
     <h3>Anime ID mapping</h3>
-    <p>Match anime across AniList, SIMKL and CW tracker pairs with AniBridge, animeApi and custom mappings. Watcher and webhooks also support anime mapping for supported providers.</p>
+    <p>Match anime across AniList, Kitsu, SIMKL and CW tracker pairs with AniBridge, animeApi and custom mappings. Watcher and webhooks also support anime mapping for supported providers.</p>
   </article>
 </section>
 

@@ -41,7 +41,7 @@
 </p>
 
 
-**CrossWatch (CW)** is a synchronization engine that act as a bridge and keeps your **Plex, Jellyfin, Emby, SIMKL, Floppy, FlickList, Trakt, WeTrakr, AniList, TMDb, MDBList, PublicMetaDB, PunchPlay, BingeBase, Scrob, Tautulli, Tracearr, Kodi, Nuvio, Stremio and CW local tracker** in sync. It runs locally with a web UI or/and Command-Line Interface (CLI) where you link accounts, define sync pairs, run them manually or on a schedule, and review stats and history. CW also includes its own tracker to keep your data safe with snapshots. With Profiles, you can manage separate sync setups for yourself and for friends or family too, with their own servers and/or tracker API's.
+**CrossWatch (CW)** is a synchronization engine that act as a bridge and keeps your **Plex, Jellyfin, Emby, SIMKL, Floppy, FlickList, Trakt, WeTrakr, AniList, Kitsu, TMDb, MDBList, PublicMetaDB, PunchPlay, BingeBase, Scrob, Tautulli, Tracearr, Kodi, Nuvio, Stremio and CW local tracker** in sync. It runs locally with a web UI or/and Command-Line Interface (CLI) where you link accounts, define sync pairs, run them manually or on a schedule, and review stats and history. CW also includes its own tracker to keep your data safe with snapshots. With Profiles, you can manage separate sync setups for yourself and for friends or family too, with their own servers and/or tracker API's.
 
 ### CW in a nutshell:
 
@@ -53,7 +53,7 @@
 * **Synchronization**
   * Watchlists, Ratings, History, Progress and Collections
   * Rewatches: keep separate plays in sync for supported trackers.
-  * Anime ID mapping (powered by AniBridge and animeApi) for AniList, SIMKL and CW tracker pairs, with custom mappings.
+  * Anime ID mapping (powered by AniBridge and animeApi) for AniList, Kitsu, SIMKL and CW tracker pairs, with custom mappings.
 * **Interactive Sync**
   * Review additions, updates and removals before applying them.
   * Resolve conflicts and correct titles, IDs, seasons and episodes.
