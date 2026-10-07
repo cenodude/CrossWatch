@@ -9,13 +9,15 @@ from datetime import date, datetime, timezone
 from typing import Any
 
 from cw_platform.anime_mapping import AnimeMappingService
+from cw_platform.anime_mapping.coordinates import translate
 from cw_platform.anime_mapping.episodes import resolve_axis_coordinate_map
+from cw_platform.anime_mapping.overrides import find_episode_override, find_source_overrides
 from cw_platform.anime_mapping.service import PAIR_FEATURE_OPTIONS_KEY, runtime_pair_feature_options
-from cw_platform.anime_mapping.storage import normalize_release_tag
+from cw_platform.anime_mapping.storage import normalize_release_tag, query_edges
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 from .._log import log as cw_log
-from ._progress import GQL_SAVE_PROGRESS, plan_progress, resolve_target
+from ._progress import GQL_SAVE_PROGRESS, native_to_anilist, plan_progress, resolve_target
 
 GQL_HISTORY_LIST = """
 query ($userId: Int!, $type: MediaType!) {
@@ -210,17 +212,72 @@ def _movie_item(svc: AnimeMappingService, entry: Mapping[str, Any], watched_at: 
     return {"type": "movie", "title": _title(media), "year": _year(media) or 0, "ids": ids, "watched": True, "watched_at": watched_at}
 
 
+def _ruled_elsewhere(tag: str, media_id: int | None, watched: int, provider: str, ident: str, season: int, episode: int) -> bool:
+    try:
+        ruled = find_episode_override({str(provider): str(ident)}, season, episode)
+    except Exception:
+        return False
+    if ruled is None:
+        return False
+    hit = native_to_anilist(tag, ruled.namespace, ruled.target_id, ruled.absolute)
+    if hit is None:
+        return False
+    return hit[0] != media_id or hit[1] > watched
+
+
+def _native_edges(tag: str, anilist_id: str) -> list[dict[str, Any]]:
+    try:
+        rows = query_edges(tag, "anilist", anilist_id)
+    except Exception:
+        return []
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        namespace = str(row.get("target_provider") or "").strip().lower()
+        if namespace not in ("mal", "anidb") or not str(row.get("target_id") or "").strip():
+            continue
+        if namespace == "anidb" and str(row.get("target_scope") or "").strip().upper() != "R":
+            continue
+        out.append(row)
+    return out
+
+
+def _native_numbers(anilist_id: str, edges: list[dict[str, Any]], number: int) -> list[tuple[str, str, int]]:
+    out: list[tuple[str, str, int]] = [("anilist", anilist_id, number)]
+    for row in edges:
+        mapped = translate(row.get("source_range"), row.get("target_range"), number)
+        if not mapped or int(mapped) <= 0:
+            continue
+        native = (str(row.get("target_provider") or "").strip().lower(), str(row.get("target_id") or "").strip(), int(mapped))
+        if native not in out:
+            out.append(native)
+    return out
+
+
 def _episode_items(tag: str, entry: Mapping[str, Any], watched: int, watched_at: str) -> list[dict[str, Any]]:
     media = entry["media"]
     title = _title(media)
     ids = {"anilist": str(media.get("id"))}
+    media_id = _to_int(media.get("id"))
+    edges = _native_edges(tag, ids["anilist"])
     out: list[dict[str, Any]] = []
     for number in range(1, watched + 1):
+        coords: list[tuple[str, str, int, int]] = []
         try:
-            axes = resolve_axis_coordinate_map(ids, number, release_tag=tag)
+            for namespace, native_id, absolute in _native_numbers(ids["anilist"], edges, number):
+                for hit in find_source_overrides(namespace, native_id, absolute):
+                    coord = (hit.provider, hit.ident, hit.season, hit.episode)
+                    if coord not in coords and not _ruled_elsewhere(tag, media_id, watched, *coord):
+                        coords.append(coord)
         except Exception:
-            axes = {}
-        for (provider, ident), (season, episode) in axes.items():
+            coords = []
+        if not coords:
+            try:
+                axes = resolve_axis_coordinate_map(ids, number, release_tag=tag)
+            except Exception:
+                axes = {}
+            coords = [(provider, ident, season, episode) for (provider, ident), (season, episode) in axes.items()
+                      if not _ruled_elsewhere(tag, media_id, watched, provider, ident, season, episode)]
+        for provider, ident, season, episode in coords:
             out.append({"type": "episode", "title": title, "series_title": title, "season": int(season), "episode": int(episode),
                         "ids": {}, "show_ids": {str(provider): str(ident)}, "watched": True, "watched_at": watched_at})
     return out

@@ -8,8 +8,9 @@ from typing import Any
 
 from cw_platform.id_map import canonical_key, ids_from, merge_ids, minimal
 
+from .coordinates import translate
 from .descriptors import descriptor_candidates_for_id, parse_descriptor
-from .overrides import find_identity_overrides
+from .overrides import EpisodeOverride, find_episode_override, find_identity_overrides
 from .storage import index_ready, query_edges, query_identity_natives, query_native_identity
 
 ANIME_NATIVE_PROVIDERS = {"anilist", "simkl", "crosswatch"}
@@ -160,6 +161,29 @@ def _show_has_anilist_entry(release_tag: str, show_ids: Mapping[str, str], cache
     return False
 
 
+def _override_reaches_anilist(release_tag: str, ruled: EpisodeOverride) -> bool:
+    namespace = str(ruled.namespace or "").strip().lower()
+    if namespace == "anilist":
+        return bool(str(ruled.target_id or "").strip())
+    if namespace not in ("mal", "anidb"):
+        return False
+    try:
+        rows = query_edges(release_tag, namespace, str(ruled.target_id))
+    except Exception:
+        return False
+    hits: set[tuple[str, int]] = set()
+    for row in rows:
+        if str(row.get("target_provider") or "").strip().lower() != "anilist":
+            continue
+        if namespace == "anidb" and str(row.get("source_scope") or "").strip().upper() != "R":
+            continue
+        mapped = translate(row.get("source_range"), row.get("target_range"), ruled.absolute)
+        target_id = str(row.get("target_id") or "").strip()
+        if mapped and target_id:
+            hits.add((target_id, int(mapped)))
+    return len(hits) == 1
+
+
 def _anime_only_keep(svc: "AnimeMappingService", row: Mapping[str, Any], history: bool, cache: dict[tuple[str, str], bool]) -> bool:
     media_type = str(row.get("type") or "").strip().lower()
     if not history or media_type not in ("episode", "season"):
@@ -176,6 +200,12 @@ def _anime_only_keep(svc: "AnimeMappingService", row: Mapping[str, Any], history
     except Exception:
         pass
     show_ids = _clean_id_map(row.get("show_ids")) or _clean_id_map(row.get("ids"))
+    try:
+        ruled = find_episode_override(show_ids, row.get("season"), row.get("episode"))
+    except Exception:
+        ruled = None
+    if ruled is not None:
+        return _override_reaches_anilist(svc.release_tag, ruled)
     return _show_has_anilist_entry(svc.release_tag, show_ids, cache)
 
 

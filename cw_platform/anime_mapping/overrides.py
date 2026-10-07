@@ -449,6 +449,48 @@ def find_source_override(
     return found
 
 
+def find_source_overrides(
+    namespace: Any,
+    target_id: Any,
+    absolute: Any,
+    *,
+    rows: list[dict[str, Any]] | None = None,
+) -> list[SourceOverride]:
+    ns = str(namespace or "").strip().lower()
+    tid = str(target_id or "").strip()
+    abs_num = _as_int(absolute)
+    if not ns or not tid or abs_num is None or abs_num <= 0:
+        return []
+    out: list[SourceOverride] = []
+    seen: set[tuple[str, str, int, int]] = set()
+    for row in rows if rows is not None else load_overrides():
+        if not row.get("enabled", True) or row.get("media_type") != "show":
+            continue
+        if str(row.get("target_namespace") or "") != ns or str(row.get("target_id") or "") != tid:
+            continue
+        ep_from = row.get("episode_from")
+        ep_start = row.get("episode_start_at")
+        season = row.get("match_season")
+        if ep_from is None or ep_start is None or season is None:
+            continue
+        offset = abs_num - int(ep_start)
+        if offset < 0:
+            continue
+        episode = int(ep_from) + offset
+        ep_to = row.get("episode_to")
+        if ep_to is not None and episode > int(ep_to):
+            continue
+        provider = str(row.get("match_provider") or "")
+        ident = str(row.get("match_id") or "")
+        coord = (provider, ident, int(season), episode)
+        if not provider or not ident or coord in seen:
+            continue
+        seen.add(coord)
+        out.append(SourceOverride(provider=provider, ident=ident, season=int(season), episode=episode,
+                                  rule_id=str(row.get("id") or "")))
+    return out
+
+
 def find_identity_overrides(
     ids: Mapping[str, str],
     *,
