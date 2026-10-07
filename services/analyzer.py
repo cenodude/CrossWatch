@@ -73,7 +73,7 @@ def _clear_analyzer_caches() -> None:
 register_cache("analyzer", _clear_analyzer_caches)
 
 _LOG = logging.getLogger("crosswatch.analyzer")
-_TRACKER_PROVIDER_BASES = {"CROSSWATCH", "TRAKT", "SIMKL", "MDBLIST", "ANILIST", "WETRAKR"}
+_TRACKER_PROVIDER_BASES = {"CROSSWATCH", "TRAKT", "SIMKL", "MDBLIST", "ANILIST", "KITSU", "WETRAKR"}
 _MEDIA_SERVER_PROVIDER_BASES = {"PLEX", "EMBY", "JELLYFIN"}
 _STRICT_PAIRS_PREFIX = "__cw_strict_pairs__:"
 
@@ -1891,7 +1891,7 @@ def _system_diagnostics() -> list[dict[str, Any]]:
 
 
 _ALIAS_ID_NAMESPACES = (
-    "tmdb", "imdb", "tvdb", "trakt", "simkl", "mal", "anilist",
+    "tmdb", "imdb", "tvdb", "trakt", "simkl", "mal", "anilist", "kitsu",
     "plex", "emby", "guid", "mdblist", "publicmetadb", "wetrakr",
 )
 
@@ -4259,7 +4259,7 @@ def _norm(ns: str, v: Any) -> str | None:
     if ns == "imdb":
         m = re.search(r"(\d+)", s)
         return f"tt{m.group(1)}" if m else None
-    if ns in ("tmdb", "tvdb", "trakt", "plex", "simkl", "mal", "anilist"):
+    if ns in ("tmdb", "tvdb", "trakt", "plex", "simkl", "mal", "anilist", "kitsu"):
         m = re.search(r"(\d+)", s)
         return m.group(1) if m else None
     return s or None

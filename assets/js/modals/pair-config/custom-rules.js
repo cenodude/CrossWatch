@@ -9,6 +9,7 @@ const RATINGS_TYPE_RULES = {
   SIMKL: { disable: ["seasons", "episodes"] },
   TMDB: { disable: ["seasons"] },
   ANILIST: { disable: ["seasons", "episodes"] },
+  KITSU: { disable: ["seasons", "episodes"] },
   STREMIO: { disable: ["seasons", "episodes"] },
 };
 
@@ -51,12 +52,20 @@ export function anilistHistoryAllowed(state) {
 }
 
 export function historyRemoveLockedForPair(state) {
-  return same(state?.src, "anilist") || same(state?.dst, "anilist");
+  return [state?.src, state?.dst].some(provider => same(provider, "anilist"));
+}
+
+export function hasCumulativeAnimeHistory(state) {
+  return [state?.src, state?.dst].some(provider => same(provider, "anilist") || same(provider, "kitsu"));
+}
+
+export function sourceWatchStatusAllowed(state) {
+  return same(state?.src, "simkl") && (same(state?.dst, "anilist") || same(state?.dst, "kitsu"));
 }
 
 export function featureAllowedForPair(state, feature) {
   const key = String(feature || "").trim().toLowerCase();
-  if (key === "history" && historyRemoveLockedForPair(state)) {
+  if (key === "history" && (same(state?.src, "anilist") || same(state?.dst, "anilist"))) {
     return anilistHistoryAllowed(state);
   }
   if (key === "ratings" && (same(state?.src, "stremio") || same(state?.dst, "stremio"))) {
@@ -86,9 +95,12 @@ export function sanitizeFeaturesForPair(state, features) {
   if (!featureAllowedForPair(state, "ratings") && out.ratings && typeof out.ratings === "object") {
     Object.assign(out.ratings, { enable: false, add: false, remove: false });
   }
-  if (out.history && typeof out.history === "object" && historyRemoveLockedForPair(state)) {
+  if (out.history && typeof out.history === "object" && hasCumulativeAnimeHistory(state)) {
     if (!featureAllowedForPair(state, "history")) Object.assign(out.history, { enable: false, add: false, remove: false, rewatches: false });
-    else Object.assign(out.history, { remove: false, rewatches: false });
+    else {
+      out.history.rewatches = false;
+      if (historyRemoveLockedForPair(state)) out.history.remove = false;
+    }
   }
   if (out.collection && typeof out.collection === "object") {
     if (!featureAllowedForPair(state, "collection")) {

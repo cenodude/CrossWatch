@@ -12,7 +12,6 @@
   const Meta = () => w.CW?.ProviderMeta || null;
   const $ = (s, r = d) => r.querySelector(s);
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const PROVIDERS = ['plex', 'emby', 'jellyfin', 'trakt', 'simkl', 'mdblist', 'publicmetadb', 'wetrakr', 'anilist', 'tmdb', 'tautulli', 'tracearr'];
 
   const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
   const has = (v) => typeof v === 'string' ? v.trim().length > 0 : !!v;
@@ -91,7 +90,8 @@
   }
 
   function authSummary(cfg) {
-    const profiles = PROVIDERS.map((provider) => ({ provider, count: countProfiles(cfg, provider) })).filter((x) => x.count);
+    const providers = (Meta()?.authProviders?.() || []).map(({ key }) => key.toLowerCase());
+    const profiles = providers.map((provider) => ({ provider, count: countProfiles(cfg, provider) })).filter((x) => x.count);
     return { configured: profiles.length, profiles };
   }
 

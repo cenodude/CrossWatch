@@ -8,7 +8,7 @@ import { createLibraryController } from "./libraries.js";
 import { providerLogoHTML, providerToneRgb, sharedFeatureOrder, sharedFeatureLabel } from "./meta.js";
 import { ensurePairConfigStyles } from "./styles.js";
 import { createTabsController } from "./tabs.js";
-import { collectionDisabledForPair, collectionTypesForPair, commonFeaturesForPair, featureAllowedForPair, historyRemoveLockedForPair, ratingsDisabledForPair, sanitizeFeaturesForPair } from "./custom-rules.js";
+import { collectionDisabledForPair, collectionTypesForPair, commonFeaturesForPair, featureAllowedForPair, hasCumulativeAnimeHistory, historyRemoveLockedForPair, ratingsDisabledForPair, sanitizeFeaturesForPair, sourceWatchStatusAllowed } from "./custom-rules.js";
 
 const TWO_WAY_WARNING =
   "Two-way sync means both sides can write to each other. It keeps both providers aligned, but it also heavily increases the risk of conflicts, duplicates, overwrites, and deletions. Use with extreme caution.";
@@ -86,7 +86,7 @@ function applyPairRemoveMode(features, mode){
 function isTwoWayMode(state){return !!ID("cx-mode-two")?.checked||String(state?.mode||"").toLowerCase().startsWith("two")}
 function anilistCanReceive(state){return isAniList(state?.dst)||(hasAniList(state)&&isTwoWayMode(state))}
 function globalAnimeMappingEnabled(state){return !!state?.cfgRaw?.anime_mapping?.enabled}
-function hasAnimeProvider(state){return hasAniList(state)||isSimkl(state?.src)||isSimkl(state?.dst)||isCrossWatch(state?.src)||isCrossWatch(state?.dst)}
+function hasAnimeProvider(state){return hasAniList(state)||same(state?.src,"kitsu")||same(state?.dst,"kitsu")||isSimkl(state?.src)||isSimkl(state?.dst)||isCrossWatch(state?.src)||isCrossWatch(state?.dst)}
 function tmdbMetadataReady(state){return !!String(state?.cfgRaw?.tmdb?.api_key||state?.cfgRaw?.metadata?.tmdb_api_key||"").trim()}
 function collectionRouteSupported(state){
   return featureAllowedForPair(state,"collection");
@@ -1850,7 +1850,8 @@ function renderFeaturePanel(state){
         </div>`
       : "";
     const hsRemoveLocked = historyRemoveLockedForPair(state);
-    const hsSourceStatus = isAniList(state?.dst) && isSimkl(state?.src);
+    const hsCumulative = hasCumulativeAnimeHistory(state);
+    const hsSourceStatus = sourceWatchStatusAllowed(state);
     const animeOpts = normalizeAnimeHistoryOptions(state);
     const animeBlocked = !tmdbMetadataReady(state) || !globalAnimeMappingEnabled(state);
     const animeNote = animeHistoryBlockReason(state);
@@ -1865,14 +1866,14 @@ function renderFeaturePanel(state){
         </label>
       </div>
       ${animeNote ? `<div class="muted">${animeNote}</div>` : ""}
-      ${hsSourceStatus ? `<div class="opt-row" title="Dropped and on-hold titles keep that status on AniList. Applied when progress is written; a title dropped later without new episodes does not change.">
+      ${hsSourceStatus ? `<div class="opt-row" title="Dropped and on-hold titles keep that status on ${isAniList(state?.dst) ? "AniList" : "Kitsu"}. Applied when watched episodes are synced; status-only changes are not synced. Completed titles stay completed.">
         <label for="cx-hs-source-status">Use source watch status</label>
         <label class="switch">
           <input id="cx-hs-source-status" type="checkbox" ${hs.use_source_status ? "checked" : ""}>
           <span class="slider"></span>
         </label>
       </div>` : ""}
-      ${hsRemoveLocked ? `<div class="opt-row muted" title="AniList only holds anime, so this is always on for history.">
+      ${hsCumulative ? `<div class="opt-row muted" title="This provider only holds anime, so this is always on for history.">
         <label for="cx-hs-anime-only">Anime-only sync</label>
         <label class="switch">
           <input id="cx-hs-anime-only" type="checkbox" checked disabled>
@@ -1897,7 +1898,7 @@ left.innerHTML = `
             <span class="slider"></span>
           </label>
         </div>
-        <div class="opt-row ${hsRemoveLocked ? "muted" : ""}" ${hsRemoveLocked ? 'title="AniList keeps one episode counter per title, so history can only be added."' : ""}>
+        <div class="opt-row ${hsRemoveLocked ? "muted" : ""}" ${hsRemoveLocked ? 'title="This provider keeps one episode counter per title, so history can only be added."' : ""}>
           <label for="cx-hs-remove">Remove</label>
           <label class="switch">
             <input id="cx-hs-remove" type="checkbox" ${hs.remove && !hsRemoveLocked ? "checked" : ""} ${hsRemoveLocked ? 'disabled data-locked="1"' : ""}>
@@ -1905,8 +1906,8 @@ left.innerHTML = `
           </label>
         </div>
       </div>
-      ${hsRemoveLocked && !globalAnimeMappingEnabled(state) ? `<div class="muted"><b>Enable global Anime ID Mapping first.</b> Without it no history is synced to AniList.</div>` : ""}
-      ${hsRemoveLocked ? `<div class="muted">AniList history is one-way and anime only. It needs global Anime ID Mapping, sets the episode progress per title and never removes. Specials are skipped.</div>` : ""}
+      ${hsCumulative && !globalAnimeMappingEnabled(state) ? `<div class="muted"><b>Enable global Anime ID Mapping for episode history.</b></div>` : ""}
+      ${hasAniList(state) ? `<div class="muted">AniList history is one-way and anime only. It needs global Anime ID Mapping, sets the episode progress per title and never removes. Specials are skipped.</div>` : hsCumulative ? `<div class="muted">Kitsu history uses watched status and the episode count per title. Remove reduces progress only for the latest watched episodes, or resets a movie to unwatched; ratings and notes are preserved. Gaps are reported unresolved. Specials and rewatches are skipped.</div>` : ""}
       <div class="muted">${rwSupported ? "Synchronize plays between providers. Rewatches require event-capable providers; SIMKL requires Pro/VIP. Remove is not recommended." : "Synchronize plays between providers. Rewatches are available only when both sides support event history; SIMKL requires Pro/VIP."}</div>
     `;
 
@@ -1922,7 +1923,7 @@ left.innerHTML = `
         <div class="opt-row">
           <label for="cx-hs-specials" data-tip-id="cx-hs-specials">Specials (Season 0)</label>
           <label class="switch">
-            <input id="cx-hs-specials" type="checkbox" ${hs.include_specials !== false && !hsRemoveLocked ? "checked" : ""} ${hsRemoveLocked ? 'disabled data-locked="1"' : ""}>
+            <input id="cx-hs-specials" type="checkbox" ${hs.include_specials !== false && !hsCumulative ? "checked" : ""} ${hsCumulative ? 'disabled data-locked="1"' : ""}>
             <span class="slider"></span>
           </label>
         </div>
@@ -2456,7 +2457,7 @@ function bindChangeHandlers(state,root){
         library_only: ID("cx-hs-library-only") ? !!ID("cx-hs-library-only").checked : !!prev.library_only,
         use_anime_mapping: !!(animeEl && animeEl.checked && tmdbMetadataReady(state)),
         anime_only_sync: false,
-        use_source_status: !!ID("cx-hs-source-status")?.checked && isAniList(state?.dst) && isSimkl(state?.src),
+        use_source_status: !!ID("cx-hs-source-status")?.checked && sourceWatchStatusAllowed(state),
       });
       state.visited.add("history");
     }
