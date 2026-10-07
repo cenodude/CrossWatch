@@ -159,14 +159,12 @@ function normalizeAnimeFeatureOptions(state, feature){
   return opts;
 }
 
-function renderAnimeOnlyOption(state, feature, options){
-  const forced=same(state?.src,"kitsu")||same(state?.dst,"kitsu");
-  if(!forced&&!anilistCanReceive(state)) return "";
+function renderAnimeOnlyOption(state, feature){
+  if(![state?.src,state?.dst].some(provider=>same(provider,"kitsu")||same(provider,"anilist"))) return "";
   const id=feature==="ratings"?"cx-rt-anime-only":"cx-wl-anime-only";
-  const disabled=forced||!options.use_anime_mapping;
-  return `<div class="opt-row ${disabled?"muted":""}" ${forced?'title="Kitsu only holds anime, so this is always on."':""}>
+  return `<div class="opt-row muted" title="This provider only holds anime, so this is always on.">
     <label for="${id}">Anime-only sync</label>
-    <label class="switch"><input id="${id}" type="checkbox" data-anime-only="${forced?"1":"0"}" ${forced||options.anime_only_sync?"checked":""} ${disabled?"disabled":""}><span class="slider"></span></label>
+    <label class="switch"><input id="${id}" type="checkbox" data-anime-only="1" checked disabled><span class="slider"></span></label>
   </div>`;
 }
 
@@ -1423,7 +1421,7 @@ function renderFeaturePanel(state){
             <label class="switch"><input id="cx-wl-anime-map" type="checkbox" ${wl.use_anime_mapping?"checked":""} ${animeMapDisabled?"disabled":""}><span class="slider"></span></label>
           </div>
           ${animeMapDisabled?`<div class="muted" style="grid-column:1/-1">Enable global Anime ID Mapping first.</div>`:""}
-          ${renderAnimeOnlyOption(state,"watchlist",wl)}
+          ${renderAnimeOnlyOption(state,"watchlist")}
         </div>
       `:""}
 
@@ -1650,7 +1648,7 @@ function renderFeaturePanel(state){
             <label class="switch"><input id="cx-rt-anime-map" type="checkbox" ${rt.use_anime_mapping?"checked":""} ${animeMapDisabled?"disabled":""}><span class="slider"></span></label>
           </div>
           ${animeMapDisabled?`<div class="muted" style="grid-column:1/-1">Enable global Anime ID Mapping first.</div>`:""}
-          ${renderAnimeOnlyOption(state,"ratings",rt)}
+          ${renderAnimeOnlyOption(state,"ratings")}
         </div>
       `:""}`;
     const rtScope = `<div class="panel-title small">Scope</div>
