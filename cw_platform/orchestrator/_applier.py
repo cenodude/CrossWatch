@@ -716,6 +716,9 @@ def apply_remove(
     chunk_pause_ms: int,
 ) -> dict[str, Any]:
     emit("apply:remove:start", dst=dst_name, feature=feature, count=len(items))
+    order_items = getattr(dst_ops, "order_remove_items", None)
+    if callable(order_items) and not dry_run:
+        items = provider_call(order_items, cfg, items, feature=feature)
     res = _apply_chunked(
         "apply:remove",
         dst=dst_name,

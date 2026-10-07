@@ -512,6 +512,29 @@ def find_identity_overrides(
     return out
 
 
+def find_source_identity_overrides(
+    ids: Mapping[str, str],
+    *,
+    media_type: str,
+    rows: list[dict[str, Any]] | None = None,
+) -> dict[str, str]:
+    rules = rows if rows is not None else load_overrides()
+    candidates: dict[str, set[str]] = {}
+    for row in rules:
+        if not row.get("enabled", True) or row.get("media_type") != media_type:
+            continue
+        namespace = str(row.get("target_namespace") or "")
+        target_id = str(row.get("target_id") or "")
+        if not target_id or str(ids.get(namespace) or "") != target_id:
+            continue
+        provider = str(row.get("match_provider") or "")
+        ident = str(row.get("match_id") or "")
+        forward = find_identity_overrides({provider: ident}, media_type=media_type, rows=rules)
+        if forward.get(namespace) == target_id:
+            candidates.setdefault(provider, set()).add(ident)
+    return {provider: next(iter(values)) for provider, values in candidates.items() if len(values) == 1}
+
+
 def override_for_item(item: Mapping[str, Any]) -> EpisodeOverride | None:
     ids = _ids_of(item)
     if not ids:

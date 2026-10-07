@@ -1,8 +1,8 @@
 /* CrossWatch - Scrobbler Route Modal */
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const label = (v) => ({ plex: "Plex", jellyfin: "Jellyfin", emby: "Emby", kodi: "Kodi", trakt: "Trakt", simkl: "SIMKL", mdblist: "MDBList", crosswatch: "CrossWatch", floppy: "Floppy", punchplay: "PunchPlay", bingebase: "BingeBase", flicklist: "FlickList", wetrakr: "WeTrakr", anilist: "AniList", scrob: "Scrob", stremio: "Stremio" }[String(v || "").toLowerCase()] || String(v || "").toUpperCase());
+const label = (v) => ({ plex: "Plex", jellyfin: "Jellyfin", emby: "Emby", kodi: "Kodi", trakt: "Trakt", simkl: "SIMKL", mdblist: "MDBList", crosswatch: "CrossWatch", floppy: "Floppy", punchplay: "PunchPlay", bingebase: "BingeBase", flicklist: "FlickList", wetrakr: "WeTrakr", anilist: "AniList", kitsu: "Kitsu", scrob: "Scrob", stremio: "Stremio" }[String(v || "").toLowerCase()] || String(v || "").toUpperCase());
 const sources = ["plex", "jellyfin", "emby", "kodi", "scrob", "stremio"];
-const sinks = ["plex", "jellyfin", "emby", "kodi", "crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "bingebase", "flicklist", "wetrakr", "anilist", "scrob"];
+const sinks = ["kitsu", "plex", "jellyfin", "emby", "kodi", "crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "bingebase", "flicklist", "wetrakr", "anilist", "scrob"];
 const ratingSinks = ["crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "flicklist", "wetrakr", "anilist", "scrob"];
 const mediaSinks = ["plex", "jellyfin", "emby", "kodi"];
 
