@@ -475,6 +475,12 @@ def api_provider_instances_delete(provider: str, instance_id: str, request: Requ
         if cleanup.get("ok") is False:
             return cleanup
 
+    if _cfg_key(provider) == "stremio":
+        from providers.scrobble.stremio import addon as stremio_addon
+
+        stremio_addon.set_instance_enabled(cfg, inst, False)
+        stremio_addon.forget_instance(inst)
+
     insts.pop(inst, None)
     remove_instance_from_user_profiles(cfg, provider, inst)
     remove_provider_instance_uid(cfg, provider, inst)
