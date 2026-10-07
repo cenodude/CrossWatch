@@ -287,7 +287,10 @@ function _cwWireAuthPair() {
 function _cwReadSecret(id, previousValue) {
   const el = _cwEl(id);
   if (!el) return { changed: false };
-  const raw = _cwNorm(el.value), masked = el.dataset?.masked === "1" || raw.startsWith("•");
+  const overlay = _cwEl("cw-auth-connection-overlay");
+  const form = _cwEl("cw-auth-provider-form");
+  if (overlay && !overlay.classList.contains("hidden") && form && !form.classList.contains("hidden") && !form.contains(el)) return { changed: false };
+  const raw = _cwNorm(el.value), masked = el.dataset?.masked === "1" || /^[*•]+$/.test(raw) || raw.startsWith("•");
   if (el.dataset?.clear === "1") return { changed: true, clear: true };
   if (el.dataset?.loaded === "0" || !el.dataset?.touched || masked) return { changed: false };
   if (!raw) return previousValue ? { changed: true, clear: true } : { changed: false };
@@ -1098,6 +1101,11 @@ async function saveSettings() {
         console.warn("saveSettings: scheduling merge failed", e);
       }
     }
+
+    const beforeCollect = JSON.stringify(cfg);
+    if (typeof window.__emitSettingsCollect === "function") window.__emitSettingsCollect(cfg);
+    else document.dispatchEvent(new CustomEvent("settings-collect", { detail: { cfg } }));
+    if (JSON.stringify(cfg) !== beforeCollect) mark();
 
     if (changed) {
       await _cwSaveConfig(cfg);
