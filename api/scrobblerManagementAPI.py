@@ -42,7 +42,7 @@ from .scrobbleAPI import _ensure_media_profile_webhook_ids, _ensure_route_rating
 router = APIRouter(prefix="/api/scrobbler", tags=["scrobbler-management"])
 
 SOURCE_PROVIDERS = tuple(WEBHOOK_SOURCE_PROVIDERS)
-WATCHER_SOURCE_PROVIDERS = ("plex", "jellyfin", "emby", "kodi", "scrob")
+WATCHER_SOURCE_PROVIDERS = ("plex", "jellyfin", "emby", "kodi", "scrob", "stremio")
 SINK_PROVIDERS = tuple(sorted(ROUTE_SINKS))
 ALLOWED_FILTER_KEYS = {
     "username_whitelist",
@@ -150,6 +150,10 @@ def _scrobble_source_connected(cfg: Mapping[str, Any], provider: str, instance: 
     if key == "scrob":
         block = get_provider_block(_dict(cfg), "scrob", normalize_instance_id(instance))
         return auth_runtime.is_configured("scrob", block)
+    if key == "stremio":
+        from providers.scrobble.stremio.addon import source_ready as stremio_source_ready
+
+        return stremio_source_ready(cfg, instance)
     return media_source_connected(cfg, key, instance)
 
 

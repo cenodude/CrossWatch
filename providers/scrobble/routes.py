@@ -8,7 +8,8 @@ from cw_platform.provider_instances import get_provider_block, normalize_instanc
 
 
 DEFAULT_INSTANCE_ID = "default"
-ROUTE_PROVIDERS = {"plex", "emby", "jellyfin", "kodi", "scrob"}
+ROUTE_PROVIDERS = {"plex", "emby", "jellyfin", "kodi", "scrob", "stremio"}
+ROUTE_SINGLE_ACCOUNT_PROVIDERS = {"stremio"}
 ROUTE_SINKS = {"plex", "jellyfin", "emby", "kodi", "trakt", "simkl", "mdblist", "crosswatch", "floppy", "punchplay", "bingebase", "flicklist", "wetrakr", "anilist", "scrob"}
 ROUTE_MEDIA_SINKS = {"plex", "jellyfin", "emby", "kodi"}
 ROUTE_RATING_SINKS = {"trakt", "simkl", "mdblist", "crosswatch", "floppy", "punchplay", "flicklist", "wetrakr", "anilist", "scrob"}
@@ -263,6 +264,8 @@ def route_assigned_profile_id(cfg: dict[str, Any], route: dict[str, Any]) -> str
 
 def route_needs_account_filter(cfg: dict[str, Any], route: dict[str, Any]) -> bool:
     if not route_assigned_profile_id(cfg, route):
+        return False
+    if str((route or {}).get("provider") or "").strip().lower() in ROUTE_SINGLE_ACCOUNT_PROVIDERS:
         return False
     filters = (route or {}).get("filters")
     raw = filters.get("username_whitelist") if isinstance(filters, dict) else None

@@ -96,13 +96,32 @@
     return getCachedConfig();
   }
 
+  function stremioAddonIds(cfg) {
+    const ids = cfg?.security?.webhook_ids;
+    if (!ids || typeof ids !== "object") return [];
+    return Object.keys(ids)
+      .filter((key) => key.startsWith("stremioaddon:") && hasConfiguredValue(ids[key]))
+      .map((key) => key.slice("stremioaddon:".length) || "default");
+  }
+
+  function stremioAddonOnly(cfg, provider, id) {
+    if (String(provider || "").toLowerCase() !== "stremio") return false;
+    const raw = String(id || "default");
+    if (!stremioAddonIds(cfg).some((item) => item === raw)) return false;
+    const block = providerConfigBlock(cfg, "stremio");
+    const source = raw.toLowerCase() === "default" ? block : block?.instances?.[raw];
+    return !profileConfigured("stremio", source, cfg);
+  }
+
   function configuredProviderKeys(cfg = getCachedConfig()) {
+    let set = new Set();
     try {
       if (typeof window.getConfiguredProviders === "function") {
-        return new Set(Array.from(window.getConfiguredProviders(cfg) || []).map((key) => authProviderInfo(key).key).filter(Boolean));
+        set = new Set(Array.from(window.getConfiguredProviders(cfg) || []).map((key) => authProviderInfo(key).key).filter(Boolean));
       }
     } catch {}
-    return new Set();
+    if (stremioAddonIds(cfg).length) set.add("STREMIO");
+    return set;
   }
 
   function statusProviderData(key) {
@@ -151,6 +170,7 @@
   }
 
   function authProfileState(cfg, provider, id, data = statusProviderData(provider), connected = false) {
+    if (stremioAddonOnly(cfg, provider, id)) return "ok";
     const entry = profileStatusEntry(data, id);
     const entryConnected = profileStatusEntryConnected(entry);
     if (entryConnected === true) return "ok";
@@ -182,6 +202,9 @@
     }
     if (String(key || "").toUpperCase() === "NUVIO" && configured) {
       return { text: "Connected", ok: true };
+    }
+    if (String(key || "").toUpperCase() === "STREMIO" && data?.connected !== true && stremioAddonIds(cfg).some((id) => stremioAddonOnly(cfg, "stremio", id))) {
+      return { text: "Scrobble add-on", ok: true };
     }
     if (data && typeof data.connected === "boolean") {
       return data.connected ? { text: "Connected", ok: true } : { text: "Check connection", ok: false, failed: true };
@@ -258,6 +281,7 @@
         if (String(id || "").trim() && profileConfigured(provider, instBlock, cfg)) out.push(String(id));
       });
     }
+    if (String(provider || "").toLowerCase() === "stremio") out.push(...stremioAddonIds(cfg));
     if (!out.length && connected) out.push("default");
     return sortProfileIds(out);
   }
@@ -773,8 +797,8 @@
     },
     STREMIO: {
       provider: "stremio", logo: "STREMIO", help: window.CW.HelpLinks.url("stremio"), deleteSelector: "#stremio_disconnect",
-      tabs: { auth: ["lock", "Authentication", "Connect with Stremio account"] },
-      copy: { auth: ["Stremio Authentication", "Connect with your Stremio account. CrossWatch stores only the returned auth key."] },
+      tabs: { auth: ["lock", "Authentication", "Connect with Stremio account"], scrobble: ["podcasts", "Scrobbling", "Install the CrossWatch add-on"] },
+      copy: { auth: ["Stremio Authentication", "Connect with your Stremio account. CrossWatch stores only the returned auth key."], scrobble: ["Stremio Scrobbling", "Let Stremio report playback to CrossWatch through an add-on."] },
       journey: ["Connect to Stremio", "Enter your Stremio email and password once. CrossWatch exchanges them for an auth key and does not retain the password.", "114,44,254", "22,182,255", "STREMIO"],
       steps: [["1", "Enter account", "Use your Stremio email and password"], ["2", "Exchange key", "CrossWatch requests an auth key"], ["3", "Store key", "Only the auth key is saved"]],
       order: [".grid2", ".inline"],

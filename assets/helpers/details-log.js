@@ -286,6 +286,7 @@ function _watchLogKnownTags() {
     "EMBY-WATCH",
     "KODI-WATCH",
     "SCROB-WATCH",
+    "STREMIO-WATCH",
     "ANIME-WATCH",
     "TRAKT-SINK",
     "SIMKL-SINK",

@@ -1600,11 +1600,53 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         prov = _import_provider("providers.auth._auth_STREMIO")
         if not prov:
             return JSONResponse({"ok": False, "error": "Provider missing", "instance": inst}, 500)
+        from providers.scrobble.stremio import addon as stremio_addon
+
         prov.disconnect(cfg, instance_id=inst)
+        stremio_addon.set_instance_enabled(cfg, inst, False)
         save_config(cfg)
+        stremio_addon.forget_instance(inst)
         _probe_bust("stremio")
         _safe_log(log_fn, "STREMIO", f"[STREMIO:{inst}] disconnected")
         return {"ok": True, "instance": inst}
+
+    def _stremio_addon_status(request: Request, cfg: dict[str, Any], inst: str) -> dict[str, Any]:
+        from providers.scrobble.stremio import addon as stremio_addon
+
+        base = str(request.base_url).rstrip("/")
+        proto = str(request.headers.get("x-forwarded-proto") or "").split(",", 1)[0].strip().lower()
+        if proto == "https" and base.startswith("http://"):
+            base = "https://" + base[7:]
+        return stremio_addon.status(cfg, inst, base)
+
+    @app.get("/api/stremio/addon", tags=["auth"], response_model=None)
+    def api_stremio_addon(request: Request, instance: str | None = Query(None)) -> Any:
+        return _stremio_addon_status(request, load_config(), normalize_instance_id(instance))
+
+    @app.post("/api/stremio/addon", tags=["auth"], response_model=None)
+    def api_stremio_addon_update(request: Request, payload: dict[str, Any] = Body(...), instance: str | None = Query(None)) -> Any:
+        from providers.scrobble.stremio import addon as stremio_addon
+
+        if not isinstance(payload, dict):
+            return JSONResponse({"ok": False, "error": "Malformed request"}, 400)
+        inst = normalize_instance_id(instance)
+        cfg = load_config()
+        was_enabled = stremio_addon.instance_enabled(cfg, inst)
+        enabled = coerce_bool(payload.get("enabled")) if "enabled" in payload else was_enabled
+        regenerate = coerce_bool(payload.get("regenerate")) if "regenerate" in payload else False
+        if was_enabled and not enabled and stremio_addon.route_count(cfg, inst):
+            return JSONResponse(
+                {"ok": False, "error": "provider_in_use", "message": "This add-on feeds a Watcher route. Remove or disable that route first.", "instance": inst},
+                409,
+            )
+        ensure_provider_block(cfg, "stremio")
+        ensure_instance_block(cfg, "stremio", inst)
+        stremio_addon.set_instance_enabled(cfg, inst, bool(enabled), regenerate=bool(regenerate))
+        save_config(cfg)
+        if not enabled or regenerate:
+            stremio_addon.forget_instance(inst)
+        _safe_log(log_fn, "STREMIO", f"[STREMIO:{inst}] scrobble add-on {'on' if enabled else 'off'}{' (new URL)' if enabled and regenerate else ''}")
+        return _stremio_addon_status(request, load_config(), inst)
 
     @app.get("/api/emby/inspect", tags=["media providers"])
     def emby_inspect(instance: str | None = Query(None)) -> dict[str, Any]:
