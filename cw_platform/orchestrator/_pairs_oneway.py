@@ -1748,8 +1748,8 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
         if retried:
             emit("debug", msg="unresolved.retry", feature=feature, dst=dst, retried=retried)
             
-    if dst == "ANILIST":
-        adds, anime_only_skipped = _anime_only_adds(adds, provider_cfg, anime_pair_opts, feature)
+    if dst in {"ANILIST", "KITSU"}:
+        adds, anime_only_skipped = _anime_only_adds(adds, provider_cfg, anime_pair_opts, feature, target=dst)
         if anime_only_skipped:
             emit("debug", msg="anime_mapping.anime_only_filtered", feature=feature, dst=dst, skipped=anime_only_skipped)
 

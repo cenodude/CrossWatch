@@ -16,6 +16,44 @@ const sourceFor = name => {
   return index.slice(node.start, node.end);
 };
 
+for (const feature of ["watchlist", "ratings"]) {
+  for (const [src, dst] of [["SIMKL", "KITSU"], ["KITSU", "SIMKL"]]) {
+    test(`${feature} shows the Kitsu anime-only restriction for ${src} to ${dst}`, () => {
+      const nodes = new Map();
+      const context = vm.createContext({
+        same: (a, b) => String(a).toLowerCase() === String(b).toLowerCase(),
+        anilistCanReceive: () => false,
+        ID: id => nodes.get(id), Q: selector => nodes.get(selector.slice(1)),
+      });
+      vm.runInContext([sourceFor("renderAnimeOnlyOption"), sourceFor("applySubDisable")].join(";"), context);
+      const prefix = feature === "ratings" ? "cx-rt" : "cx-wl";
+      for (const mapping of [false, true]) {
+        const html = context.renderAnimeOnlyOption({src, dst}, feature, {use_anime_mapping: mapping, anime_only_sync: false});
+        assert.match(html, /Anime-only sync/);
+        assert.match(html, /data-anime-only="1" checked disabled/);
+        const only = {checked: true, disabled: true, dataset: {animeOnly: "1"}};
+        nodes.set(`${prefix}-anime-only`, only);
+        nodes.set(`${prefix}-anime-map`, {checked: mapping, dataset: {}});
+        for (const enabled of [false, true]) {
+          nodes.set(`${prefix}-enable`, {checked: enabled});
+          context.applySubDisable(feature);
+          assert.equal(only.checked, true);
+          assert.equal(only.disabled, true);
+        }
+      }
+    });
+  }
+}
+
+test("AniList keeps its optional anime-only control", () => {
+  const context = vm.createContext({same: (a, b) => a === b, anilistCanReceive: state => state.dst === "ANILIST"});
+  vm.runInContext(sourceFor("renderAnimeOnlyOption"), context);
+  const html = context.renderAnimeOnlyOption({src: "SIMKL", dst: "ANILIST"}, "watchlist", {use_anime_mapping: true, anime_only_sync: true});
+  assert.match(html, /data-anime-only="0" checked/);
+  assert.doesNotMatch(html, /disabled/);
+  assert.equal(context.renderAnimeOnlyOption({src: "SIMKL", dst: "TRAKT"}, "watchlist", {}), "");
+});
+
 for (const scenario of [
   {name: "defaults off", dst: "SIMKL", expected: false},
   {name: "explicitly enabled", dst: "SIMKL", enabled: true, expected: true},
@@ -27,6 +65,7 @@ for (const scenario of [
   test(`progress anime mapping: ${scenario.name}`, () => {
     const context = vm.createContext({
       ID: id => id === "cx-mode-two" ? {checked: !!scenario.twoWay} : null,
+      same: (a, b) => String(a).toLowerCase() === String(b).toLowerCase(),
       isSimkl: value => value === "SIMKL", isAniList: () => false, isMDBList: () => false, isCrossWatch: () => false,
       hasOwn: (value, key) => Object.hasOwn(value, key), defaultFor: () => ({}),
       applyProgressMaxRecommendation: () => ({maxPercent: 90}), ratingsDisabledFor: () => new Set(),
@@ -59,6 +98,7 @@ for (const scenario of [
   test(`watchlist and ratings anime mapping survives a save: ${scenario.name}`, () => {
     const context = vm.createContext({
       ID: () => null,
+      same: (a, b) => String(a).toLowerCase() === String(b).toLowerCase(),
       isSimkl: value => value === "SIMKL", isAniList: value => value === "ANILIST",
       isCrossWatch: value => value === "CROSSWATCH", isMDBList: () => false,
       hasOwn: (value, key) => Object.hasOwn(value, key), defaultFor: () => ({}),

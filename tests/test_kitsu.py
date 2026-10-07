@@ -378,6 +378,86 @@ def test_history_runs_through_orchestrator_and_second_run_is_idempotent(mapping,
     assert not source.add_calls
 
 
+@pytest.mark.parametrize("feature", ["watchlist", "ratings", "history"])
+@pytest.mark.parametrize("direction", ["one-way", "two-way", "two-way-reversed"])
+def test_anime_only_filter_applies_before_interactive_review(mapping, config_base, monkeypatch, feature, direction):
+    from cw_platform.orchestrator.facade import Orchestrator
+    from cw_platform.orchestrator._interactive import InteractivePlan
+    from tests.test_orchestrator_dry_run_no_side_effects import FakeOps, _install
+
+    library = Library()
+    library.media_rows["3"] = {**library.media_rows["2"], "id": "3"}
+    library.media_rows["4"] = {**library.media_rows["2"], "id": "4"}
+    upsert_override({"media_type": "movie", "match_provider": "tmdb", "match_id": "999",
+                     "target_namespace": "kitsu", "target_id": "4"})
+    anime = [{"type": "movie", "ids": {"tmdb": "20"}, "title": "Mapped anime"},
+             {"type": "movie", "ids": {"kitsu": "3"}, "title": "Native anime"},
+             {"type": "movie", "ids": {"tmdb": "999"}, "title": "Custom anime"}]
+    other = [{"type": "movie", "ids": {"tmdb": ident}, "title": title}
+             for ident, title in [("101", "Leon"), ("425", "Ice Age"), ("550", "Fight Club")]]
+    if feature == "history":
+        upsert_override({"media_type": "show", "match_provider": "tvdb", "match_id": "999", "match_season": 1,
+                         "target_namespace": "kitsu", "target_id": "1", "episode_from": 1,
+                         "episode_to": 10, "episode_start_at": 1})
+        anime.extend([episode(), {**episode(2), "show_ids": {"tvdb": "999"}, "season": 1, "title": "Custom episode"}])
+        other.extend([{**episode(), "show_ids": {"tvdb": "888"}, "title": "Non-anime episode"},
+                      {**episode(), "season": 0, "title": "Special"}])
+    rows = [{**item, "rating": 8, "watched": True, "watched_at": "2026-10-07T12:00:00Z"} for item in anime + other]
+    source = FakeOps("SIMKL", {canonical_key(item): item for item in rows})
+    _install(monkeypatch, source, source, config_base / ".cw_state")
+    monkeypatch.setattr(source, "features", module.supported_features)
+    monkeypatch.setattr(source, "capabilities", lambda: {"features": module.supported_features(), "index_semantics": "present"})
+    health = lambda cfg, **kwargs: {"ok": True, "status": "ok", "features": module.supported_features(), "api": {}}
+    monkeypatch.setattr(source, "health", health)
+    monkeypatch.setattr(module.OPS, "health", health)
+    monkeypatch.setattr(module, "KitsuClient", lambda *args: library)
+    monkeypatch.setattr("cw_platform.orchestrator.facade.load_sync_providers", lambda: {"SIMKL": source, "KITSU": module.OPS})
+    src, dst = ("KITSU", "SIMKL") if direction == "two-way-reversed" else ("SIMKL", "KITSU")
+    cfg = {**mapping, "runtime": {"snapshot_ttl_sec": 0, "apply_chunk_pause_ms": 0},
+           "sync": {"dry_run": False, "enable_add": True, "enable_remove": False},
+           "pairs": [{"id": "p1", "enabled": True, "source": src, "target": dst,
+                      "mode": "one-way" if direction == "one-way" else "two-way", "feature": feature,
+                      "features": {feature: {"enable": True, "add": True, "remove": False,
+                                             "use_anime_mapping": True, "anime_only_sync": True}}}]}
+    plan = InteractivePlan()
+    Orchestrator(cfg, interactive=plan).run(dry_run=True, write_state_json=False)
+    assert {row["item"]["title"] for row in plan.rows.values()} == {item["title"] for item in anime}
+    assert all(row["provider"] == "KITSU" and row["operation"] == "add" for row in plan.rows.values())
+    assert not library.writes and not source.add_calls
+    Orchestrator(cfg, interactive=InteractivePlan(preview=False, selected=set(plan.rows))).run()
+    assert set(library.rows) == ({"1", "2", "3", "4"} if feature == "history" else {"2", "3", "4"})
+    assert not source.add_calls
+
+
+def test_anime_only_filter_keeps_native_movie_without_mapping(config_base):
+    from cw_platform.anime_mapping.service import anime_only_adds
+
+    other = {"type": "movie", "ids": {"tmdb": "101"}, "title": "Leon"}
+    assert anime_only_adds([movie(), other, episode()], {}, {}, "history", target="KITSU") == ([movie()], 2)
+
+
+def test_shared_anime_filter_uses_destination_ids(mapping):
+    from cw_platform.anime_mapping.service import anime_only_adds
+
+    upsert_override({"media_type": "show", "match_provider": "tvdb", "match_id": "999", "match_season": 1,
+                     "target_namespace": "kitsu", "target_id": "3", "episode_from": 1,
+                     "episode_to": 10, "episode_start_at": 1})
+    items = [{**movie(), "ids": {"kitsu": "3"}},
+             {**episode(2), "show_ids": {"tvdb": "999"}, "season": 1}]
+    assert anime_only_adds(items, mapping, {}, "history", target="KITSU") == (items, 0)
+    assert anime_only_adds(items, mapping, {}, "history", target="ANILIST") == ([], 2)
+
+
+@pytest.mark.parametrize("feature", ["watchlist", "ratings", "history"])
+def test_shared_anime_filter_keeps_custom_mapping_without_dataset(config_base, feature):
+    from cw_platform.anime_mapping.service import anime_only_adds
+
+    upsert_override({"media_type": "movie", "match_provider": "tmdb", "match_id": "999",
+                     "target_namespace": "kitsu", "target_id": "4"})
+    item = {"type": "movie", "ids": {"tmdb": "999"}, "title": "Custom anime"}
+    assert anime_only_adds([item], {"anime_mapping": {"enabled": True}}, {}, feature, target="KITSU") == ([item], 0)
+
+
 @pytest.mark.parametrize("status", ["current", "completed", "on_hold", "dropped"])
 def test_history_removal_reduces_tail_preserving_library_fields(adapter, status):
     adapter.client.save("1", None, {"status": status, "progress": 10, "ratingTwenty": 18,
