@@ -159,6 +159,17 @@ function normalizeAnimeFeatureOptions(state, feature){
   return opts;
 }
 
+function renderAnimeOnlyOption(state, feature, options){
+  const forced=same(state?.src,"kitsu")||same(state?.dst,"kitsu");
+  if(!forced&&!anilistCanReceive(state)) return "";
+  const id=feature==="ratings"?"cx-rt-anime-only":"cx-wl-anime-only";
+  const disabled=forced||!options.use_anime_mapping;
+  return `<div class="opt-row ${disabled?"muted":""}" ${forced?'title="Kitsu only holds anime, so this is always on."':""}>
+    <label for="${id}">Anime-only sync</label>
+    <label class="switch"><input id="${id}" type="checkbox" data-anime-only="${forced?"1":"0"}" ${forced||options.anime_only_sync?"checked":""} ${disabled?"disabled":""}><span class="slider"></span></label>
+  </div>`;
+}
+
 function ratingsDisabledFor(state){
   return ratingsDisabledForPair(Object.assign({}, state || {}, {twoWay:isTwoWayMode(state)}));
 }
@@ -998,12 +1009,12 @@ function applySubDisable(feature){
     collection:["#cx-co-add","#cx-co-remove","#cx-co-type-all","#cx-co-type-movies","#cx-co-type-shows","#cx-co-type-seasons","#cx-co-type-episodes"]
   };
   const on=ID(feature==="ratings"?"cx-rt-enable":feature==="watchlist"?"cx-wl-enable":feature==="history"?"cx-hs-enable":feature==="progress"?"cx-pr-enable":feature==="collection"?"cx-co-enable":"cx-pl-enable")?.checked;
-  (map[feature]||[]).forEach(sel=>{const n=Q(sel);if(n){const off=!on||n.dataset.locked==="1";n.disabled=off;if(n.dataset.locked==="1")n.checked=false;n.closest?.(".opt-row")?.classList.toggle("muted",off)}});
+  (map[feature]||[]).forEach(sel=>{const n=Q(sel);if(n){const off=!on||n.dataset.locked==="1"||n.dataset.animeOnly==="1";n.disabled=off;if(n.dataset.locked==="1")n.checked=false;n.closest?.(".opt-row")?.classList.toggle("muted",off)}});
   const onlyId=feature==="watchlist"?"cx-wl-anime-only":feature==="ratings"?"cx-rt-anime-only":"";
   const mapId=feature==="watchlist"?"cx-wl-anime-map":feature==="ratings"?"cx-rt-anime-map":"";
   const only=onlyId?ID(onlyId):null;
   if(only){
-    only.disabled=!on||!ID(mapId)?.checked;
+    only.disabled=only.dataset.animeOnly==="1"||!on||!ID(mapId)?.checked;
     only.closest?.(".opt-row")?.classList.toggle("muted",only.disabled);
   }
 }
@@ -1387,9 +1398,7 @@ function renderFeaturePanel(state){
     const scrobName = (scrobw.watchlist_name || state.cfgRaw?.scrob?.watchlist_name || "Watchlist");
     const trPair = (state.pairProviders?.trakt) || {};
     const showAnime = hasAnimeProvider(state);
-    const canAnimeOnly = anilistCanReceive(state);
     const animeMapDisabled = !globalAnimeMappingEnabled(state);
-    const animeOnlyDisabled = !wl.use_anime_mapping || !canAnimeOnly;
 
     left.innerHTML = `
       <div class="panel-title">Watchlist | Basics</div>
@@ -1414,10 +1423,7 @@ function renderFeaturePanel(state){
             <label class="switch"><input id="cx-wl-anime-map" type="checkbox" ${wl.use_anime_mapping?"checked":""} ${animeMapDisabled?"disabled":""}><span class="slider"></span></label>
           </div>
           ${animeMapDisabled?`<div class="muted" style="grid-column:1/-1">Enable global Anime ID Mapping first.</div>`:""}
-          ${canAnimeOnly?`<div class="opt-row ${animeOnlyDisabled?"muted":""}">
-            <label for="cx-wl-anime-only">Anime-only sync</label>
-            <label class="switch"><input id="cx-wl-anime-only" type="checkbox" ${wl.anime_only_sync?"checked":""} ${animeOnlyDisabled?"disabled":""}><span class="slider"></span></label>
-          </div>`:""}
+          ${renderAnimeOnlyOption(state,"watchlist",wl)}
         </div>
       `:""}
 
@@ -1630,9 +1636,7 @@ function renderFeaturePanel(state){
     getOpts(state,"ratings");
     const rt=normalizeAnimeFeatureOptions(state,"ratings"),hasType=t=>Array.isArray(rt.types)&&rt.types.includes(t);
     const showAnime = hasAnimeProvider(state);
-    const canAnimeOnly = anilistCanReceive(state);
     const animeMapDisabled = !globalAnimeMappingEnabled(state);
-    const animeOnlyDisabled = !rt.use_anime_mapping || !canAnimeOnly;
 
     left.innerHTML=`<div class="panel-title">Ratings | Basics</div>
       <div class="opt-row"><label for="cx-rt-enable">Enable</label><label class="switch"><input id="cx-rt-enable" type="checkbox" ${rt.enable?"checked":""}><span class="slider"></span></label></div>
@@ -1646,10 +1650,7 @@ function renderFeaturePanel(state){
             <label class="switch"><input id="cx-rt-anime-map" type="checkbox" ${rt.use_anime_mapping?"checked":""} ${animeMapDisabled?"disabled":""}><span class="slider"></span></label>
           </div>
           ${animeMapDisabled?`<div class="muted" style="grid-column:1/-1">Enable global Anime ID Mapping first.</div>`:""}
-          ${canAnimeOnly?`<div class="opt-row ${animeOnlyDisabled?"muted":""}">
-            <label for="cx-rt-anime-only">Anime-only sync</label>
-            <label class="switch"><input id="cx-rt-anime-only" type="checkbox" ${rt.anime_only_sync?"checked":""} ${animeOnlyDisabled?"disabled":""}><span class="slider"></span></label>
-          </div>`:""}
+          ${renderAnimeOnlyOption(state,"ratings",rt)}
         </div>
       `:""}`;
     const rtScope = `<div class="panel-title small">Scope</div>
@@ -2322,7 +2323,7 @@ function bindChangeHandlers(state,root){
     if (id === "cx-wl-anime-map") {
       const mapOn = !!ID("cx-wl-anime-map")?.checked;
       const only = ID("cx-wl-anime-only");
-      if (only) {
+      if (only && only.dataset.animeOnly !== "1") {
         only.disabled = !mapOn || !anilistCanReceive(state);
         if (!mapOn || !anilistCanReceive(state)) only.checked = false;
         else if (mapOn) only.checked = true;
@@ -2334,7 +2335,7 @@ function bindChangeHandlers(state,root){
       applySubDisable("ratings");
       const mapOn = !!ID("cx-rt-anime-map")?.checked;
       const only = ID("cx-rt-anime-only");
-      if (only) {
+      if (only && only.dataset.animeOnly !== "1") {
         only.disabled = !mapOn || !anilistCanReceive(state) || !ID("cx-rt-enable")?.checked;
         if (only.disabled) only.checked = false;
         only.closest?.(".opt-row")?.classList.toggle("muted", only.disabled);
@@ -2344,7 +2345,7 @@ function bindChangeHandlers(state,root){
     if (id === "cx-rt-anime-map") {
       const mapOn = !!ID("cx-rt-anime-map")?.checked;
       const only = ID("cx-rt-anime-only");
-      if (only) {
+      if (only && only.dataset.animeOnly !== "1") {
         only.disabled = !mapOn || !anilistCanReceive(state) || !ID("cx-rt-enable")?.checked;
         if (!mapOn || !anilistCanReceive(state) || !ID("cx-rt-enable")?.checked) only.checked = false;
         else if (mapOn) only.checked = true;
