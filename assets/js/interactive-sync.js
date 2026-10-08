@@ -14,6 +14,7 @@
   let feature = "", result = "", query = "", mappingDirty = false, mappingWorkspace = null;
   let pageData = { items: [], total: 0 }, pageLoading = false, pageRequest = 0, pageController = null, searchTimer = null;
   let progressTimer = null, progressReceived = Date.now(), pollFailures = 0;
+  let downloadOpen = false, downloadScope = "all", downloadFormat = "csv", downloading = false;
   const PAGE_SIZE = 75;
   const css = document.createElement("link");
   css.rel = "stylesheet";
@@ -170,6 +171,45 @@
     const box = host.querySelector(".is-error");
     if (box) { box.textContent = error.message || String(error); box.hidden = false; }
   }
+  async function downloadReview() {
+    if (!session || pending() || pageLoading || downloading || session.status !== "review") return;
+    const sid = session.id, revision = session.revision, current = generation;
+    const format = downloadFormat, scope = downloadScope;
+    const params = new URLSearchParams({ revision, selection_version: session.selection_version, format, scope });
+    if (scope === "filtered") {
+      params.set("feature", feature); params.set("result", result); params.set("q", query);
+    }
+    downloading = true;
+    render();
+    try {
+      const response = await fetch(`${API}/${sid}/export?${params}`, { credentials: "same-origin", cache: "no-store" });
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.detail || "Could not download the review");
+      }
+      const blob = await response.blob();
+      if (current !== generation) return;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `crosswatch-review-${sid}-r${revision}-${scope}.${format}`;
+      document.body.append(link); link.click(); link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (error) {
+      if (current === generation) {
+        downloading = false;
+        render();
+        showError(error);
+      }
+      return;
+    } finally {
+      downloading = false;
+    }
+    if (current === generation) {
+      render();
+      host.querySelector('[data-action="download-review"]')?.focus();
+    }
+  }
   function reportIssuesHTML() {
     const report = session.report;
     if (!report.issue_count && !report.issue_details_omitted) return "";
@@ -224,7 +264,8 @@
     const cursor = focused ? document.activeElement.selectionStart : null;
     host.innerHTML = `<div class="is-page">
       <a class="is-back" href="#${origin()[0]}"><span class="material-symbols-rounded" aria-hidden="true">arrow_back</span>${origin()[1]}</a>
-      <header class="is-header"><div><div class="is-eyebrow">INTERACTIVE SYNC</div><h1>${session?.report ? "Sync report" : "Review your sync"}</h1></div><div class="is-header-actions">${[pair.source,pair.target].includes("PLEX") ? `<button class="is-btn" data-action="recover-plex" title="Open a separate recovery activity for titles no longer in your Plex libraries. Review matches and import selected history into the CrossWatch tracker. This does not run this sync pair." ${pending() ? "disabled" : ""}>Recover Plex history</button>` : ""}${session?.report ? "" : `<button class="is-btn" data-action="refresh" ${pending() || done || !session ? "disabled" : ""}><span class="material-symbols-rounded" aria-hidden="true">refresh</span>Refresh plan</button>`}<button class="is-btn" data-action="discard" ${pending() || !session ? "disabled" : ""}>${session?.report ? "Close report" : "Close review"}</button></div></header>
+      <header class="is-header"><div><div class="is-eyebrow">INTERACTIVE SYNC</div><h1>${session?.report ? "Sync report" : "Review your sync"}</h1></div><div class="is-header-actions">${[pair.source,pair.target].includes("PLEX") ? `<button class="is-btn" data-action="recover-plex" title="Open a separate recovery activity for titles no longer in your Plex libraries. Review matches and import selected history into the CrossWatch tracker. This does not run this sync pair." ${pending() ? "disabled" : ""}>Recover Plex history</button>` : ""}${session?.report ? "" : `<button class="is-btn" data-action="refresh" ${pending() || done || !session ? "disabled" : ""}><span class="material-symbols-rounded" aria-hidden="true">refresh</span>Refresh plan</button>`}${session?.report ? "" : `<button class="is-btn" data-action="toggle-download" aria-expanded="${downloadOpen}" aria-controls="is-download-options" ${locked ? "disabled" : ""}><span class="material-symbols-rounded" aria-hidden="true">download</span>Download review</button>`}<button class="is-btn" data-action="discard" ${pending() || !session ? "disabled" : ""}>${session?.report ? "Close report" : "Close review"}</button></div></header>
+      ${downloadOpen && !done ? `<section id="is-download-options" class="is-notices" aria-label="Download review"><div class="is-toolbar"><label>Scope<select data-download="scope" ${downloading ? "disabled" : ""}><option value="all" ${downloadScope === "all" ? "selected" : ""}>Entire review</option><option value="filtered" ${downloadScope === "filtered" ? "selected" : ""}>Filtered results</option></select></label><label>Format<select data-download="format" ${downloading ? "disabled" : ""}><option value="csv" ${downloadFormat === "csv" ? "selected" : ""}>CSV</option><option value="json" ${downloadFormat === "json" ? "selected" : ""}>JSON</option></select></label><button class="is-btn" data-action="download-review" ${locked || downloading ? "disabled" : ""}>${downloading ? "Downloading..." : "Download"}</button></div><p>Entire review includes hidden items. Filtered results includes all matching pages. Both include selection state.</p></section>` : ""}
       <div class="is-route"><span class="material-symbols-rounded" aria-hidden="true">sync_alt</span><strong>${esc(endpoint(pair.source, pair.source_instance))}</strong><span>${pair.mode === "two-way" ? "↔" : "→"}</span><strong>${esc(endpoint(pair.target, pair.target_instance))}</strong><span class="is-route-mode">${pair.mode === "two-way" ? "Two-way" : "One-way"}</span></div>
       ${session?.report ? "" : `<div class="is-progress-host">${progressHTML()}</div>`}
       <div class="is-error" role="alert" hidden></div>
@@ -292,6 +333,8 @@
   }
   host?.addEventListener("change", event => {
     const el = event.target;
+    if (el.dataset.download === "scope") downloadScope = el.value;
+    if (el.dataset.download === "format") downloadFormat = el.value;
     if (el.dataset.select) action("selection", { selected: el.checked, ids: [el.dataset.select] });
     if (el.dataset.filter === "feature") { feature = el.value; page = 0; loadPage(); }
     if (el.dataset.filter === "result") { result = el.value; page = 0; loadPage(); }
@@ -310,6 +353,11 @@
     searchTimer = setTimeout(loadPage, 300);
   });
   host?.addEventListener("keydown", event => {
+    if (event.key === "Escape" && downloadOpen) {
+      downloadOpen = false;
+      render();
+      host.querySelector('[data-action="toggle-download"]')?.focus();
+    }
     if (event.key === "Enter" && event.target.hasAttribute("data-page")) { event.preventDefault(); event.target.blur(); }
   });
   host?.addEventListener("click", async event => {
@@ -317,6 +365,13 @@
     if (!button || button.disabled) return;
     if (button.dataset.map) return mapping(pageData.items.find(row => row.id === button.dataset.map));
     const name = button.dataset.action;
+    if (name === "toggle-download") {
+      downloadOpen = !downloadOpen;
+      render();
+      host.querySelector(downloadOpen ? '[data-download="scope"]' : '[data-action="toggle-download"]')?.focus();
+      return;
+    }
+    if (name === "download-review") return downloadReview();
     if (name === "map-selected") return mapping();
     if (name === "download-report" && session.report) {
       const report = session.report, sid = session.id, issues = [];
@@ -374,6 +429,7 @@
     if (next === route && busy) return;
     route = next;
     const current = ++generation;
+    downloadOpen = false; downloadScope = "all"; downloadFormat = "csv";
     clearTimeout(timer); clearInterval(progressTimer); pollFailures = 0;
     const params = new URLSearchParams(next.split("?")[1] || "");
     if (params.has("pair")) {
