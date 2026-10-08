@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextlib import nullcontext
 from typing import Any
 
 from cw_platform.anime_mapping import AnimeMappingService
@@ -137,18 +138,34 @@ def episode_items(cfg: Mapping[str, Any], ident: str, count: int, title: str) ->
 
 def apply_items(adapter: Any, feature: str, items: Any, writer: Any) -> dict[str, Any]:
     confirmed, unresolved = [], []
+    resolved = []
+
+    def failed(item: Any, exc: Exception) -> None:
+        reason = str(exc) if isinstance(exc, ValueError) else f"request_failed:{type(exc).__name__}"
+        unresolved.append({**minimal(item), "reason": reason})
+
     for item in items:
-        key = canonical_key(item)
         try:
             target = resolve_target(adapter.raw_cfg, item)
             if target is None:
                 raise ValueError("not_anime_or_no_mapping")
-            writer(adapter, item, *target)
-            if key and key not in confirmed:
-                confirmed.append(key)
+            resolved.append((item, *target))
         except Exception as exc:
-            reason = str(exc) if isinstance(exc, ValueError) else f"request_failed:{type(exc).__name__}"
-            unresolved.append({**minimal(item), "reason": reason})
+            failed(item, exc)
+    try:
+        batch = adapter.client.library_batch(ident for _, ident, _ in resolved) if feature in ("watchlist", "ratings") else nullcontext()
+        with batch:
+            for item, ident, episode in resolved:
+                try:
+                    writer(adapter, item, ident, episode)
+                    key = canonical_key(item)
+                    if key and key not in confirmed:
+                        confirmed.append(key)
+                except Exception as exc:
+                    failed(item, exc)
+    except Exception as exc:
+        for item, _, _ in resolved:
+            failed(item, exc)
     log("KITSU", feature, "info", "write_done", applied=len(confirmed), unresolved=len(unresolved))
     return build_op_result(count=len(confirmed), confirmed_keys=confirmed, unresolved=unresolved,
                            unresolved_keys=[canonical_key(item) for item in unresolved])

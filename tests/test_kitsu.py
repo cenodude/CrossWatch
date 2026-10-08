@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import copy
+from contextlib import nullcontext
 from dataclasses import replace
 import json
 from types import SimpleNamespace
@@ -40,6 +41,9 @@ def movie():
 
 
 class Library:
+    def library_batch(self, identifiers):
+        return nullcontext()
+
     def __init__(self):
         self.rows = {}
         self.writes = []
@@ -237,6 +241,192 @@ def test_unmapped_and_failed_writes_are_unresolved(adapter):
     assert _history.remove(adapter, [movie()])["unresolved"]
 
 
+@pytest.mark.parametrize("existing", [False, True])
+def test_history_batch_writes_one_progress_update_per_title(mapping, monkeypatch, existing):
+    client = module.KitsuClient(mapping, "default")
+    client._user = {"id": "7"}
+    calls = []
+    stored = {"id": "entry", "type": "libraryEntries", "attributes": {"progress": 0, "status": "current", "ratingTwenty": 18}} if existing else None
+    media = {"id": "1", "type": "anime", "attributes": {"subtype": "TV", "episodeCount": 200, "status": "finished"}}
+
+    def request(method, path, **kwargs):
+        nonlocal stored
+        calls.append((method, path, copy.deepcopy(kwargs)))
+        if method == "GET" and path == "/library-entries":
+            return {"data": [copy.deepcopy(stored)] if stored else []}
+        if method == "GET" and path == "/anime/1":
+            return {"data": copy.deepcopy(media)}
+        if method in ("PATCH", "POST"):
+            stored = stored or {"id": "entry", "type": "libraryEntries", "attributes": {}}
+            stored["attributes"].update(kwargs["json"]["data"]["attributes"])
+            return {"data": copy.deepcopy(stored)}
+        raise AssertionError((method, path))
+
+    monkeypatch.setattr(client, "request", request)
+    items = [{"type": "episode", "show_ids": {"kitsu": "1"}, "season": 1, "episode": n} for n in range(1, 101)]
+    adapter = SimpleNamespace(raw_cfg=mapping, client=client)
+    result = _history.add(adapter, items)
+    assert result["count"] == 100 and not result["unresolved"]
+    assert set(result["confirmed_keys"]) == {canonical_key(item) for item in items}
+    assert [call[0] for call in calls] == ["GET", "GET", "PATCH" if existing else "POST"]
+    assert calls[-1][2]["json"]["data"]["attributes"] == {"progress": 100, "status": "current"}
+    if existing:
+        assert stored["attributes"]["ratingTwenty"] == 18
+    stored["attributes"]["progress"] = 150
+    calls.clear()
+    assert _history.add(adapter, items)["count"] == 100
+    assert [call[0] for call in calls] == ["GET", "GET"]
+    assert stored["attributes"]["progress"] == 150
+
+
+def test_grouped_history_validates_each_episode_before_writing(adapter):
+    valid = [episode(13), episode(15)]
+    bad = {**episode(30), "show_ids": {"kitsu": "1"}, "season": 1}
+    wrong_kind = {"type": "movie", "ids": {"kitsu": "1"}}
+    result = _history.add(adapter, [bad, *valid, wrong_kind, movie()])
+    assert set(result["confirmed_keys"]) == {canonical_key(item) for item in [*valid, movie()]}
+    assert {row["reason"] for row in result["unresolved"]} == {"episode_out_of_range", "anime_media_type_mismatch"}
+    assert adapter.client.writes == [("1", {"progress": 3, "status": "current"}), ("2", {"progress": 1, "status": "completed"})]
+
+
+@pytest.mark.parametrize("failure", ["lookup", "media", "save"])
+def test_grouped_history_failure_only_affects_that_title(adapter, monkeypatch, failure):
+    original = getattr(adapter.client, failure)
+
+    def fail(ident, *args):
+        if ident == "1":
+            raise RuntimeError("request failed")
+        return original(ident, *args)
+
+    monkeypatch.setattr(adapter.client, failure, fail)
+    episodes = [episode(13), episode(15)]
+    result = _history.add(adapter, [*episodes, movie()])
+    assert result["confirmed_keys"] == [canonical_key(movie())]
+    assert set(result["unresolved_keys"]) == {canonical_key(item) for item in episodes}
+
+
+def test_grouped_history_uses_custom_episode_offsets(adapter):
+    upsert_override({"media_type": "show", "match_provider": "tvdb", "match_id": "99", "match_season": 2,
+                     "target_namespace": "kitsu", "target_id": "1", "episode_from": 5,
+                     "episode_to": 10, "episode_start_at": 4})
+    items = [episode(15), {**episode(7), "show_ids": {"tvdb": "99"}, "season": 2}]
+    result = _history.add(adapter, items)
+    assert result["count"] == 2 and not result["unresolved"]
+    assert adapter.client.writes == [("1", {"progress": 6, "status": "current"})]
+
+
+def test_grouped_history_preserves_source_status(status_adapter):
+    items = [{**episode(n), "watch_status": "dropped"} for n in range(13, 18)]
+    result = _history.add(status_adapter, items)
+    assert result["count"] == 5 and not result["unresolved"]
+    assert status_adapter.client.writes == [("1", {"progress": 5, "status": "current"}), ("1", {"status": "dropped"})]
+
+
+@pytest.mark.parametrize("feature", ["watchlist", "ratings"])
+def test_title_batches_use_one_lookup_and_keep_cache_current(mapping, monkeypatch, feature):
+    client = module.KitsuClient(mapping, "default")
+    client._user = {"id": "7"}
+    calls = []
+    entries = {}
+
+    def request(method, path, **kwargs):
+        calls.append((method, path, copy.deepcopy(kwargs)))
+        if method == "GET":
+            assert kwargs["params"]["include"] == "anime"
+            ids = kwargs["params"]["filter[animeId]"].split(",")
+            return {"data": [copy.deepcopy(entries[i]) for i in ids if i in entries]}
+        if method == "DELETE":
+            del entries[path.rsplit("/", 1)[1]]
+            return {}
+        payload = kwargs["json"]["data"]
+        ident = payload["id"] if method == "PATCH" else payload["relationships"]["anime"]["data"]["id"]
+        entry = entries.setdefault(ident, {"id": ident, "type": "libraryEntries", "attributes": {},
+            "relationships": {"anime": {"data": {"type": "anime", "id": ident}}}})
+        entry["attributes"].update(payload["attributes"])
+        return {"data": copy.deepcopy(entry)}
+
+    monkeypatch.setattr(client, "request", request)
+    adapter = SimpleNamespace(raw_cfg={}, client=client)
+    writer = _watchlist if feature == "watchlist" else _ratings
+    items = [{"type": "show", "ids": {"kitsu": str(i)}, "rating": 8} for i in range(1, 101)]
+    items.append({**items[0], "ids": {"kitsu": "1", "imdb": "tt999"}, "rating": 9})
+    result = writer.add(adapter, items)
+    assert not result["unresolved"]
+    assert sum(method == "GET" for method, _, _ in calls) == 1
+    assert sum(method == "POST" for method, _, _ in calls) == 100
+    assert sum(method == "PATCH" for method, _, _ in calls) == (1 if feature == "ratings" else 0)
+    if feature == "ratings":
+        assert entries["1"]["attributes"]["ratingTwenty"] == 18
+    assert client._entry_cache is None
+    calls.clear()
+    result = writer.remove(adapter, items)
+    assert not result["unresolved"]
+    assert sum(method == "GET" for method, _, _ in calls) == 1
+    if feature == "watchlist":
+        assert not entries
+        assert sum(method == "DELETE" for method, _, _ in calls) == 100
+    else:
+        assert all(row["attributes"]["ratingTwenty"] is None for row in entries.values())
+    assert client._entry_cache is None
+
+
+@pytest.mark.parametrize("bad", ["partial", "duplicate", "foreign", "empty_next"])
+def test_batch_lookup_never_writes_after_incomplete_or_invalid_read(monkeypatch, bad):
+    client = module.KitsuClient({}, "default")
+    client._user = {"id": "7"}
+    calls = []
+    row = {"id": "1", "type": "libraryEntries", "attributes": {"status": "planned"},
+           "relationships": {"anime": {"data": {"type": "anime", "id": "1"}}}}
+
+    def request(method, path, **kwargs):
+        calls.append(method)
+        assert method == "GET"
+        if kwargs["params"]["page[offset]"]:
+            raise RuntimeError("later page failed")
+        if bad == "foreign":
+            row["relationships"]["anime"]["data"]["id"] = "3"
+        return {"data": [] if bad == "empty_next" else [row, row] if bad == "duplicate" else [row],
+                "links": {"next": "more"} if bad in ("partial", "empty_next") else {}}
+
+    monkeypatch.setattr(client, "request", request)
+    items = [{"type": "show", "ids": {"kitsu": str(i)}} for i in (1, 2)]
+    result = _watchlist.add(SimpleNamespace(raw_cfg={}, client=client), items)
+    assert not result["confirmed_keys"]
+    assert len(result["unresolved_keys"]) == 2
+    assert client._entry_cache is None
+
+
+def test_batch_lookup_bounds_filters_and_rechecks_failed_writes(monkeypatch):
+    client = module.KitsuClient({}, "default")
+    client._user = {"id": "7"}
+    filters = []
+    row = {"id": "entry", "type": "libraryEntries", "attributes": {"progress": 4},
+           "relationships": {"anime": {"data": {"type": "anime", "id": "1"}}}}
+
+    def request(method, path, **kwargs):
+        if method != "GET":
+            raise RuntimeError("write failed")
+        ids = kwargs["params"]["filter[animeId]"].split(",")
+        filters.append(ids)
+        return {"data": [copy.deepcopy(row)] if "1" in ids else []}
+
+    monkeypatch.setattr(client, "request", request)
+    with client.library_batch(map(str, range(1, 202))):
+        assert [len(ids) for ids in filters] == [100, 100, 1]
+        assert client.lookup("2") is None
+        entry = client.lookup("1")
+        with pytest.raises(RuntimeError):
+            client.save("1", entry, {"progress": 6})
+        row["attributes"]["progress"] = 5
+        assert client.lookup("1")["attributes"]["progress"] == 5
+        assert filters[-1] == ["1"]
+        with pytest.raises(RuntimeError):
+            client.delete(client.lookup("1"))
+        assert client.lookup("1") is not None
+        assert filters[-2:] == [["1"], ["1"]]
+    assert client._entry_cache is None
+
+
 def test_library_pagination_and_partial_response_failure(monkeypatch):
     client = module.KitsuClient({}, "default")
     client._user = {"id": "7"}
@@ -246,6 +436,7 @@ def test_library_pagination_and_partial_response_failure(monkeypatch):
         offset = kwargs["params"]["page[offset]"]
         offsets.append(offset)
         assert kwargs["params"]["filter[kind]"] == "anime"
+        assert kwargs["params"]["page[limit]"] == 500
         if offset:
             raise RuntimeError("page failed")
         return {"data": [{"id": "entry", "type": "libraryEntries", "attributes": {},
@@ -469,6 +660,62 @@ def test_history_removal_reduces_tail_preserving_library_fields(adapter, status)
     assert attr["finishedAt"] is None
     assert (attr["ratingTwenty"], attr["notes"], attr["private"]) == (18, "Keep", True)
     assert {item["episode"] for item in _history.build_index(adapter).values()} == set(range(13, 20))
+    assert len(adapter.client.writes) == 2
+
+
+@pytest.mark.parametrize("reset", [False, True])
+def test_history_removal_batch_request_count(mapping, monkeypatch, reset):
+    client = module.KitsuClient(mapping, "default")
+    client._user = {"id": "7"}
+    calls = []
+    stored = {"id": "entry", "type": "libraryEntries", "attributes": {
+        "progress": 100, "status": "completed", "ratingTwenty": 18, "notes": "Keep"}}
+
+    def request(method, path, **kwargs):
+        calls.append((method, path))
+        if method == "GET" and path == "/library-entries":
+            return {"data": [copy.deepcopy(stored)]}
+        if method == "GET" and path == "/anime/1":
+            return {"data": {"id": "1", "type": "anime", "attributes": {"subtype": "TV", "episodeCount": 100}}}
+        assert method == "PATCH"
+        stored["attributes"].update(kwargs["json"]["data"]["attributes"])
+        return {"data": copy.deepcopy(stored)}
+
+    monkeypatch.setattr(client, "request", request)
+    items = [{"type": "episode", "show_ids": {"kitsu": "1"}, "season": 1, "episode": n}
+             for n in range(1 if reset else 2, 101)]
+    result = _history.remove(SimpleNamespace(raw_cfg=mapping, client=client), items)
+    assert result["count"] == len(items) and not result["unresolved"]
+    assert [method for method, _ in calls] == ["GET", "GET", "PATCH"] + (["PATCH"] if reset else [])
+    assert stored["attributes"] == {"progress": 0 if reset else 1, "status": "on_hold" if reset else "current",
+                                    "ratingTwenty": 18, "notes": "Keep", "finishedAt": None}
+
+
+@pytest.mark.parametrize("failure", [None, "lookup", "media", "save", "reset_status"])
+def test_grouped_removal_failures_duplicates_and_gaps(adapter, monkeypatch, failure):
+    adapter.client.save("1", None, {"status": "current", "progress": 4})
+    adapter.client.save("2", None, {"status": "completed", "progress": 1})
+    if failure:
+        method = "save" if failure == "reset_status" else failure
+        original = getattr(adapter.client, method)
+
+        def fail(ident, *args):
+            if ident == "1" and (failure != "reset_status" or args[-1] == {"status": "on_hold"}):
+                raise RuntimeError("request failed")
+            return original(ident, *args)
+
+        monkeypatch.setattr(adapter.client, method, fail)
+    items = [episode(16), episode(16), episode(15), episode(13), movie()]
+    if failure == "reset_status":
+        items.append(episode(14))
+    result = _history.remove(adapter, items)
+    if failure:
+        assert result["confirmed_keys"] == [canonical_key(movie())]
+    else:
+        assert set(result["confirmed_keys"]) == {canonical_key(item) for item in [episode(16), episode(15), movie()]}
+        assert result["unresolved"][0]["reason"] == "kitsu_history_remove_would_erase_later_episodes"
+        assert adapter.client.rows["1"]["attributes"]["progress"] == 2
+    assert adapter.client.rows["2"]["attributes"]["progress"] == 0
 
 
 def test_history_removal_rejects_gaps_and_does_not_confirm_failed_writes(adapter):

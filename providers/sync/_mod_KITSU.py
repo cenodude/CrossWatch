@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import Mapping
+from contextlib import contextmanager
 from typing import Any
 
 from cw_platform.id_map import canonical_key, minimal
@@ -58,6 +59,7 @@ class KitsuClient:
         self.instance_id = instance_id
         self.session = build_session("KITSU", globals().get("ctx"))
         self._user: dict[str, str] | None = None
+        self._entry_cache: dict[str, dict[str, Any] | None] | None = None
 
     def request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         response = request_with_auth("kitsu", self.session, method, auth.API_URL + path,
@@ -85,7 +87,7 @@ class KitsuClient:
         seen: set[str] = set()
         while True:
             data = self.request("GET", "/library-entries", params={"filter[userId]": self.user()["id"],
-                "filter[kind]": "anime", "include": "anime", "page[limit]": 20, "page[offset]": offset, "sort": "id"})
+                "filter[kind]": "anime", "include": "anime", "page[limit]": 500, "page[offset]": offset, "sort": "id"})
             rows = data.get("data")
             if not isinstance(rows, list):
                 raise RuntimeError("Kitsu returned an invalid library")
@@ -108,7 +110,45 @@ class KitsuClient:
                 raise RuntimeError("Kitsu returned an empty continuation page")
             offset += len(rows)
 
+    @contextmanager
+    def library_batch(self, identifiers: Any):
+        self._entry_cache = None
+        ids = list(dict.fromkeys(str(ident) for ident in identifiers))
+        cache: dict[str, dict[str, Any] | None] = dict.fromkeys(ids)
+        try:
+            for start in range(0, len(ids), 100):
+                batch = ids[start:start + 100]
+                offset = 0
+                seen: set[str] = set()
+                while True:
+                    data = self.request("GET", "/library-entries", params={"filter[userId]": self.user()["id"],
+                        "filter[animeId]": ",".join(batch), "filter[kind]": "anime", "include": "anime", "page[limit]": 500,
+                        "page[offset]": offset, "sort": "id"})
+                    rows = data.get("data")
+                    if not isinstance(rows, list):
+                        raise RuntimeError("Kitsu returned an invalid library")
+                    for row in rows:
+                        if not isinstance(row, dict) or row.get("type") != "libraryEntries" or not row.get("id") or not isinstance(row.get("attributes"), dict):
+                            raise RuntimeError("Kitsu returned an invalid library entry")
+                        relation = ((row.get("relationships") or {}).get("anime") or {}).get("data") or {}
+                        ident = str(relation.get("id") or "")
+                        if relation.get("type") != "anime" or ident not in batch or ident in seen:
+                            raise RuntimeError("Kitsu returned an ambiguous library batch")
+                        seen.add(ident)
+                        cache[ident] = row
+                    if not (data.get("links") or {}).get("next"):
+                        break
+                    if not rows:
+                        raise RuntimeError("Kitsu returned an empty continuation page")
+                    offset += len(rows)
+            self._entry_cache = cache
+            yield
+        finally:
+            self._entry_cache = None
+
     def lookup(self, ident: str) -> dict[str, Any] | None:
+        if self._entry_cache is not None and ident in self._entry_cache:
+            return self._entry_cache[ident]
         data = self.request("GET", "/library-entries", params={"filter[userId]": self.user()["id"],
                             "filter[animeId]": ident, "page[limit]": 2})
         rows = data.get("data")
@@ -117,7 +157,10 @@ class KitsuClient:
         if rows and (not isinstance(rows[0], dict) or rows[0].get("type") != "libraryEntries"
                      or not rows[0].get("id") or not isinstance(rows[0].get("attributes"), dict)):
             raise RuntimeError("Kitsu returned an invalid library entry")
-        return rows[0] if rows else None
+        entry = rows[0] if rows else None
+        if self._entry_cache is not None:
+            self._entry_cache[ident] = entry
+        return entry
 
     def media(self, ident: str) -> dict[str, Any]:
         row = self.request("GET", f"/anime/{ident}")["data"]
@@ -126,6 +169,8 @@ class KitsuClient:
         return row
 
     def save(self, ident: str, entry: dict[str, Any] | None, attributes: dict[str, Any]) -> None:
+        if self._entry_cache is not None:
+            self._entry_cache.pop(ident, None)
         payload: dict[str, Any] = {"type": "libraryEntries", "attributes": attributes}
         if entry:
             payload["id"] = str(entry["id"])
@@ -140,9 +185,19 @@ class KitsuClient:
         actual = row.get("attributes") or {}
         if any(actual.get(key) != value for key, value in attributes.items()):
             raise RuntimeError("Kitsu returned different library values")
+        if self._entry_cache is not None:
+            self._entry_cache[ident] = row
 
     def delete(self, entry: dict[str, Any]) -> None:
+        cache = self._entry_cache
+        cached_ids = [ident for ident, row in (cache or {}).items() if row and row.get("id") == entry["id"]]
+        if cache is not None:
+            for ident in cached_ids:
+                cache.pop(ident, None)
         self.request("DELETE", f"/library-entries/{entry['id']}")
+        if self._entry_cache is not None:
+            for ident in cached_ids:
+                self._entry_cache[ident] = None
 
 
 class KITSUModule:
