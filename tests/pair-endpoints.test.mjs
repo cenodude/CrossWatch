@@ -16,6 +16,27 @@ const sourceFor = name => {
   return index.slice(node.start, node.end);
 };
 
+for (const peer of ["SIMKL", "FLOPPY", "KITSU"]) {
+  for (const twoWay of [false, true]) {
+    for (const reverse of [false, true]) {
+      test(`AniList history remains enabled with ${peer}, reverse=${reverse}, twoWay=${twoWay}`, () => {
+        const source = readFileSync(new URL("../assets/js/modals/pair-config/custom-rules.js", import.meta.url), "utf8")
+          .replace(/export function/g, "function");
+        const context = vm.createContext({pair: {src: reverse ? peer : "ANILIST", dst: reverse ? "ANILIST" : peer, twoWay}});
+        vm.runInContext(source, context);
+        assert.equal(vm.runInContext('featureAllowedForPair(pair, "history")', context), true);
+        const features = vm.runInContext('sanitizeFeaturesForPair(pair, {history: {enable: true, add: true, remove: true, rewatches: true}})', context);
+        assert.equal(features.history.enable, true);
+        assert.equal(features.history.add, true);
+        assert.equal(features.history.remove, true);
+        assert.equal(features.history.rewatches, false);
+        const common = vm.runInContext('commonFeaturesForPair(pair, () => ({history: true}), () => false)', context);
+        assert.equal(common.includes("history"), true);
+      });
+    }
+  }
+}
+
 for (const feature of ["watchlist", "ratings"]) {
   for (const [src, dst] of [["SIMKL", "KITSU"], ["KITSU", "SIMKL"], ["SIMKL", "ANILIST"], ["ANILIST", "SIMKL"]]) {
     test(`${feature} shows the anime-only restriction for ${src} to ${dst}`, () => {

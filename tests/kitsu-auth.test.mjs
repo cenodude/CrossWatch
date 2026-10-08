@@ -160,7 +160,6 @@ test("Kitsu allows history removal in both directions but locks rewatches and ep
   for (const pair of [{src: "KITSU", dst: "TRAKT", twoWay: true}, {src: "TRAKT", dst: "KITSU"}]) {
     context.pair = pair;
     assert.equal(vm.runInContext('featureAllowedForPair(pair, "history")', context), true);
-    assert.equal(vm.runInContext('historyRemoveLockedForPair(pair)', context), false);
     assert.equal(vm.runInContext('ratingsDisabledForPair(pair).has("episodes")', context), true);
     const features = vm.runInContext('sanitizeFeaturesForPair(pair, {history: {enable: true, add: true, remove: true, rewatches: true}})', context);
     assert.equal(features.history.enable, true);
@@ -168,10 +167,9 @@ test("Kitsu allows history removal in both directions but locks rewatches and ep
     assert.equal(features.history.rewatches, false);
   }
   context.pair = {src: "SIMKL", dst: "ANILIST"};
-  assert.equal(vm.runInContext('historyRemoveLockedForPair(pair)', context), true);
-  assert.equal(vm.runInContext('sanitizeFeaturesForPair(pair, {history: {remove: true}}).history.remove', context), false);
+  assert.equal(vm.runInContext('sanitizeFeaturesForPair(pair, {history: {remove: true}}).history.remove', context), true);
   context.pair = {src: "ANILIST", dst: "KITSU"};
-  assert.equal(vm.runInContext('featureAllowedForPair(pair, "history")', context), false);
+  assert.equal(vm.runInContext('featureAllowedForPair(pair, "history")', context), true);
 });
 
 

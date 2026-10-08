@@ -1,5 +1,5 @@
 # /providers/sync/anilist/_history.py
-# AniList one-way history writer
+# AniList watched status and episode history
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
@@ -64,7 +64,16 @@ query ($ids: [Int], $page: Int) {
 
 _MEDIA_PAGE = 50
 _HELD_STATUS = {"dropped": "DROPPED", "on_hold": "PAUSED"}
-REMOVE_UNSUPPORTED = "anilist_history_remove_unsupported"
+GQL_REMOVE_HISTORY = """
+mutation ($id: Int!, $status: MediaListStatus!, $progress: Int!, $completedAt: FuzzyDateInput) {
+  SaveMediaListEntry(id: $id, status: $status, progress: $progress, completedAt: $completedAt) {
+    id
+    status
+    progress
+    completedAt { year month day }
+  }
+}
+""".strip()
 SPECIALS_UNSUPPORTED = "anilist_history_specials_unsupported"
 NOT_MAPPED = "not_anime_or_no_match"
 
@@ -171,20 +180,32 @@ def _tick(prog: Any, value: int, total: int | None = None, *, force: bool = Fals
         pass
 
 
-def _entries(adapter: Any) -> dict[int, dict[str, Any]]:
+def _entries(adapter: Any, *, strict: bool = False) -> dict[int, dict[str, Any]]:
     viewer = adapter.client.viewer()
     user_id = viewer.get("id") if isinstance(viewer, dict) else None
     if not user_id:
+        if strict:
+            raise ValueError("missing_viewer")
         return {}
     data = adapter.client.gql(GQL_HISTORY_LIST, {"userId": int(user_id), "type": "ANIME"}, feature="history:index")
     collection = (data or {}).get("MediaListCollection")
     lists = collection.get("lists") if isinstance(collection, Mapping) else None
+    if strict and not isinstance(lists, list):
+        raise ValueError("invalid_history_list")
     out: dict[int, dict[str, Any]] = {}
     for bucket in lists if isinstance(lists, list) else []:
+        if strict and (not isinstance(bucket, Mapping) or not isinstance(bucket.get("entries"), list)):
+            raise ValueError("invalid_history_list")
         for entry in (bucket.get("entries") if isinstance(bucket, Mapping) else None) or []:
             if not isinstance(entry, Mapping) or not isinstance(entry.get("media"), Mapping):
+                if strict:
+                    raise ValueError("invalid_history_entry")
                 continue
             media_id = _to_int(entry["media"].get("id") or entry.get("mediaId"))
+            if strict and (not media_id or not _to_int(entry.get("id")) or (_to_int(entry.get("progress")) or 0) < 0
+                           or _to_int(entry.get("progress")) is None or not entry["media"].get("format")
+                           or entry.get("status") not in {"CURRENT", "PLANNING", "COMPLETED", "DROPPED", "PAUSED", "REPEATING"}):
+                raise ValueError("invalid_history_entry")
             if media_id and media_id not in out:
                 out[media_id] = dict(entry)
     return out
@@ -447,8 +468,119 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     return int(res.get("confirmed") or 0), list(res.get("unresolved") or [])
 
 
+def order_removals(cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    def position(item: Mapping[str, Any]) -> int:
+        try:
+            target = resolve_target(cfg, item)
+            return target[1] if target else 0
+        except Exception:
+            return 0
+
+    return sorted(items, key=position, reverse=True)
+
+
+def remove_detailed(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    rows = [dict(item) for item in items or [] if isinstance(item, Mapping)]
+    confirmed: list[str] = []
+    unresolved: list[dict[str, Any]] = []
+    groups: dict[int, list[tuple[Mapping[str, Any], int]]] = {}
+    cfg = getattr(adapter, "raw_cfg", None)
+    prog_mk = getattr(adapter, "progress_factory", None)
+    prog = prog_mk("history", total=len(rows)) if callable(prog_mk) else None
+
+    def failed(item: Mapping[str, Any], exc: Exception) -> None:
+        reason = str(exc) if isinstance(exc, ValueError) else f"request_failed:{exc.__class__.__name__}"
+        unresolved.append(_unresolved(item, reason))
+
+    def confirm(item: Mapping[str, Any]) -> None:
+        key = str(adapter.key_of(item) or "")
+        if key and key not in confirmed:
+            confirmed.append(key)
+
+    ready = _mapping_service(adapter) is not None
+    for item in rows:
+        try:
+            if not ready:
+                raise ValueError("anime_mapping_unavailable")
+            kind = str(item.get("type") or "").lower()
+            if kind not in ("movie", "episode"):
+                raise ValueError("unsupported_media_type")
+            if kind == "episode" and _to_int(item.get("season")) == 0:
+                raise ValueError(SPECIALS_UNSUPPORTED)
+            target = resolve_target(cfg, item)
+            if not target or target[1] <= 0:
+                raise ValueError(NOT_MAPPED)
+            groups.setdefault(target[0], []).append((item, target[1]))
+        except Exception as exc:
+            failed(item, exc)
+
+    try:
+        entries = _entries(adapter, strict=True) if groups else {}
+    except Exception as exc:
+        for group in groups.values():
+            for item, _ in group:
+                failed(item, exc)
+        groups = {}
+        entries = {}
+
+    done = len(rows) - sum(len(group) for group in groups.values())
+    for media_id, group in groups.items():
+        entry = entries.get(media_id)
+        if not entry:
+            for item, _ in group:
+                confirm(item)
+        else:
+            media = entry["media"]
+            total = _to_int(media.get("episodes")) or 0
+            movie = str(media.get("format") or "").upper() == "MOVIE"
+            watched = max(0, _watched_count(entry))
+            if movie and entry.get("status") == "COMPLETED":
+                watched = max(1, watched)
+            progress = watched
+            pending = []
+            for item, episode in sorted(group, key=lambda row: row[1], reverse=True):
+                is_movie = str(item.get("type") or "").lower() == "movie"
+                if (is_movie and not (movie or total == 1)) or (not is_movie and movie):
+                    failed(item, ValueError("anime_media_type_mismatch"))
+                elif entry.get("status") == "COMPLETED" and not movie and not total:
+                    failed(item, ValueError("anilist_history_unknown_completed_total"))
+                elif not watched or episode > watched:
+                    confirm(item)
+                elif not is_movie and episode < progress:
+                    failed(item, ValueError("anilist_history_remove_would_erase_later_episodes"))
+                else:
+                    progress = 0 if is_movie else min(progress, episode - 1)
+                    pending.append(item)
+            if pending:
+                status = "CURRENT" if progress else "PAUSED"
+                variables = {"id": int(entry["id"]), "progress": progress, "status": status,
+                             "completedAt": {"year": None, "month": None, "day": None}}
+                try:
+                    data = adapter.client.gql(GQL_REMOVE_HISTORY, variables, feature="history:remove")
+                    saved = (data or {}).get("SaveMediaListEntry")
+                    if not isinstance(saved, Mapping) or _to_int(saved.get("id")) != variables["id"] or _to_int(saved.get("progress")) != progress or saved.get("status") != status:
+                        raise RuntimeError("AniList did not confirm the history update")
+                    completed = saved.get("completedAt")
+                    if "completedAt" not in saved or (completed is not None and (not isinstance(completed, Mapping) or any(k not in completed or completed[k] is not None for k in ("year", "month", "day")))):
+                        raise RuntimeError("AniList did not clear the completion date")
+                except Exception as exc:
+                    for item in pending:
+                        failed(item, exc)
+                else:
+                    for item in pending:
+                        confirm(item)
+        done += len(group)
+        _tick(prog, done, total=len(rows))
+
+    _tick(prog, len(rows), total=len(rows), force=True)
+    _info("write_done", op="remove", applied=len(confirmed), unresolved=len(unresolved), entries=len(groups))
+    return {"ok": True, "count": len(confirmed), "confirmed": len(confirmed), "confirmed_keys": confirmed,
+            "unresolved": unresolved}
+
+
 def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
-    return 0, [_unresolved(item, REMOVE_UNSUPPORTED) for item in items or [] if isinstance(item, Mapping)]
+    result = remove_detailed(adapter, items)
+    return result["count"], result["unresolved"]
 
 
-__all__ = ["build_index", "add_detailed", "add", "remove"]
+__all__ = ["build_index", "add_detailed", "add", "remove_detailed", "remove", "order_removals"]

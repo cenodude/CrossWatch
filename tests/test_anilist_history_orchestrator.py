@@ -1,5 +1,5 @@
 # /tests/test_anilist_history_orchestrator.py
-# CrossWatch - One-way history sync to AniList through the orchestrator
+# CrossWatch - History sync to and from AniList through the orchestrator
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
@@ -38,6 +38,7 @@ YOUR_NAME = {"anilist": "21519", "mal": "32281"}
 class FakeAniList:
     entries: dict[int, dict[str, Any]] = {}
     saves: list[dict[str, Any]] = []
+    calls: list[str] = []
 
     def __init__(self, *_args: Any, **_kwargs: Any) -> None:
         pass
@@ -47,14 +48,19 @@ class FakeAniList:
 
     def gql(self, query: str, variables: Mapping[str, Any] | None = None, **_kwargs: Any) -> dict[str, Any]:
         variables = dict(variables or {})
+        self.calls.append(query)
         if "MediaListCollection" in query:
             rows = [{**entry, "mediaId": media_id, "media": MEDIA[media_id]} for media_id, entry in self.entries.items()]
             return {"MediaListCollection": {"lists": [{"entries": rows}]}}
         if "SaveMediaListEntry" in query:
             self.saves.append(variables)
-            entry = self.entries.setdefault(int(variables["mediaId"]), {"id": len(self.entries) + 1, "updatedAt": 1790000000})
+            if "mediaId" in variables:
+                entry = self.entries.setdefault(int(variables["mediaId"]), {"id": len(self.entries) + 1, "updatedAt": 1790000000})
+            else:
+                entry = next(row for row in self.entries.values() if row["id"] == variables["id"])
             entry.update({key: variables[key] for key in ("status", "progress", "startedAt", "completedAt") if key in variables})
-            return {"SaveMediaListEntry": {"id": entry["id"], "status": entry.get("status"), "progress": entry.get("progress")}}
+            return {"SaveMediaListEntry": {"id": entry["id"], "status": entry.get("status"), "progress": entry.get("progress"),
+                                          "completedAt": entry.get("completedAt")}}
         if "id_in" in query:
             return {"Page": {"media": [MEDIA[i] for i in variables.get("ids") or [] if i in MEDIA]}}
         raise AssertionError(f"unexpected query: {query[:60]}")
@@ -110,6 +116,7 @@ def anilist(config_base: Path, monkeypatch: pytest.MonkeyPatch) -> type[FakeAniL
     storage.rebuild_sqlite_from_mappings(release_tag="v3")
     FakeAniList.entries = {}
     FakeAniList.saves = []
+    FakeAniList.calls = []
     monkeypatch.setattr(anilist_mod, "ANILISTClient", FakeAniList)
     monkeypatch.setattr(type(anilist_mod.OPS), "health", lambda self, cfg: {
         "ok": True, "status": "ok", "features": {"watchlist": True, "ratings": True, "history": True}, "api": {}})
@@ -164,6 +171,58 @@ def test_index_reports_list_progress_as_aired_episodes(anilist: type[FakeAniList
                              "tvdb:267440#s03e13", "tvdb:267440#s03e14", "tvdb:267440#s03e15"]
     assert index["mal:32281"]["type"] == "movie"
     assert all(item["watched_at"] for item in index.values())
+
+
+@pytest.mark.parametrize("target", ["SIMKL", "FLOPPY"])
+@pytest.mark.parametrize("mode", ["one-way", "two-way"])
+@pytest.mark.parametrize("custom", [False, True])
+def test_history_syncs_from_anilist_and_stays_stable(anilist, monkeypatch, target, mode, custom):
+    paths = storage.paths("v3")
+    paths["mappings"].write_text(json.dumps({
+        "tmdb_show:1429:s1": {"anilist:16498": {"1-25": "1-25"}},
+        "tmdb_show:1429:s3": {"anilist:104578": {"13-22": "1-10"}},
+        "tmdb_movie:372058": {"anilist:21519": {"1": "1"}},
+    }), encoding="utf-8")
+    storage.rebuild_sqlite_from_mappings(release_tag="v3")
+    if custom:
+        upsert_override({"media_type": "show", "match_provider": "tmdb", "match_id": "4242", "match_season": 2,
+                         "episode_from": 5, "episode_to": 29, "episode_start_at": 1,
+                         "target_namespace": "anilist", "target_id": "16498"})
+
+    class Peer(FakeSource):
+        def name(self):
+            return target
+
+        def label(self):
+            return target
+
+        def add(self, cfg, items, *, feature, dry_run=False):
+            rows = [dict(item) for item in items]
+            self.add_calls.append(rows)
+            confirmed = [canonical_key(item) for item in rows]
+            self.index.update(zip(confirmed, rows))
+            return {"ok": True, "count": len(confirmed), "confirmed_keys": confirmed}
+
+    seed = [_episode({"tmdb": "1429"}, 3, n) for n in (13, 14)] if mode == "two-way" else []
+    peer = Peer({canonical_key(item): item for item in seed})
+    anilist.entries = {16498: _entry("CURRENT", 2), 21519: _entry("COMPLETED", 1)}
+    cfg = _cfg()
+    cfg["pairs"][0].update(source="ANILIST", target=target, mode=mode)
+    monkeypatch.setattr("cw_platform.orchestrator.facade.load_sync_providers", lambda: {target: peer, "ANILIST": anilist_mod.OPS})
+    Orchestrator(cfg).run()
+    added = [item for batch in peer.add_calls for item in batch]
+    episodes = [item for item in added if item["type"] == "episode"]
+    assert {(item["show_ids"]["tmdb"], item["season"], item["episode"]) for item in episodes} == (
+        {("4242", 2, 5), ("4242", 2, 6)} if custom else {("1429", 1, 1), ("1429", 1, 2)})
+    assert [item["ids"]["tmdb"] for item in added if item["type"] == "movie"] == ["372058"]
+    assert all(item.get("watched_at") for item in added)
+    if mode == "two-way":
+        assert anilist.entries[104578]["progress"] == 2
+    else:
+        assert not anilist.saves
+    writes = (len(peer.add_calls), len(anilist.saves))
+    Orchestrator(cfg).run()
+    assert (len(peer.add_calls), len(anilist.saves)) == writes
 
 
 def test_only_episodes_beyond_anilist_progress_are_written_once_per_entry(anilist: type[FakeAniList], monkeypatch: pytest.MonkeyPatch) -> None:
@@ -490,9 +549,152 @@ def test_simkl_history_attaches_the_watch_status_only_when_asked() -> None:
     assert len(calls) == 1
 
 
-def test_remove_is_refused(anilist: type[FakeAniList]) -> None:
-    result = anilist_mod.OPS.remove(_cfg(), [_episode(AOT, 1, 1)], feature="history")
+@pytest.mark.parametrize("status", ["CURRENT", "COMPLETED", "PAUSED", "DROPPED", "REPEATING"])
+def test_history_remove_batches_tail_and_preserves_fields(anilist, status):
+    anilist.entries = {16498: {**_entry(status, 25), "score": 8, "notes": "Keep", "repeat": 2,
+                             "startedAt": {"year": 2025}, "completedAt": {"year": 2026, "month": 1, "day": 1}}}
+    items = [_episode(AOT, 1, n) for n in range(2, 26)]
+    result = anilist_mod.OPS.remove(_cfg(), items, feature="history")
+    assert result["count"] == 24 and not result["unresolved"]
+    assert len(anilist.calls) == 2 and len(anilist.saves) == 1
+    entry = anilist.entries[16498]
+    assert (entry["progress"], entry["status"]) == (1, "CURRENT")
+    assert (entry["score"], entry["notes"], entry["repeat"], entry["startedAt"]) == (8, "Keep", 2, {"year": 2025})
+    assert entry["completedAt"] == {"year": None, "month": None, "day": None}
+    assert set(anilist.saves[0]) == {"id", "progress", "status", "completedAt"}
+    assert anilist_mod.OPS.capabilities()["history"]["remove"] is True
 
-    assert result["count"] == 0
-    assert result["unresolved"][0]["reason"] == history.REMOVE_UNSUPPORTED
-    assert anilist.saves == []
+
+@pytest.mark.parametrize("movie", [False, True])
+def test_history_remove_reset_and_repeat_are_idempotent(anilist, movie):
+    ident = 21519 if movie else 104578
+    anilist.entries = {ident: {**_entry("COMPLETED", 0), "notes": "Keep"}}
+    items = [_movie(YOUR_NAME)] if movie else [_episode(AOT, 3, n) for n in range(13, 23)]
+    result = anilist_mod.OPS.remove(_cfg(), items, feature="history")
+    assert result["count"] == len(items) and not result["unresolved"]
+    assert len(anilist.calls) == 2
+    assert (anilist.entries[ident]["progress"], anilist.entries[ident]["status"]) == (0, "PAUSED")
+    assert anilist.entries[ident]["notes"] == "Keep"
+    assert anilist_mod.OPS.remove(_cfg(), items, feature="history")["count"] == len(items)
+    assert len(anilist.saves) == 1
+
+
+def test_history_remove_keeps_gaps_and_deduplicates_aliases(anilist):
+    anilist.entries = {16498: _entry("CURRENT", 5)}
+    items = [_episode(AOT, 1, n) for n in (5, 5, 4, 2, 7)]
+    result = anilist_mod.OPS.remove(_cfg(), items, feature="history")
+    assert result["count"] == 3
+    assert result["unresolved"][0]["reason"] == "anilist_history_remove_would_erase_later_episodes"
+    assert anilist.entries[16498]["progress"] == 3
+    assert len(anilist.saves) == 1
+
+
+@pytest.mark.parametrize("bad", ["raise", "null", "wrong_progress", "wrong_id", "wrong_status", "kept_date", "missing_date"])
+def test_history_remove_never_confirms_failed_or_unverified_writes(anilist, monkeypatch, bad):
+    anilist.entries = {16498: _entry("CURRENT", 3)}
+    original = anilist.gql
+
+    def gql(self, query, variables=None, **kwargs):
+        if query != history.GQL_REMOVE_HISTORY:
+            return original(self, query, variables, **kwargs)
+        if bad == "raise":
+            raise RuntimeError("write failed")
+        saved = {"id": variables["id"], "status": variables["status"], "progress": variables["progress"], "completedAt": None}
+        if bad == "null":
+            return {"SaveMediaListEntry": None}
+        if bad == "wrong_progress":
+            saved["progress"] = 3
+        if bad == "wrong_id":
+            saved["id"] = 999
+        if bad == "wrong_status":
+            saved["status"] = "COMPLETED"
+        if bad == "kept_date":
+            saved["completedAt"] = {"year": 2026}
+        if bad == "missing_date":
+            saved.pop("completedAt")
+        return {"SaveMediaListEntry": saved}
+
+    monkeypatch.setattr(anilist, "gql", gql)
+    result = anilist_mod.OPS.remove(_cfg(), [_episode(AOT, 1, n) for n in (1, 2, 3)], feature="history")
+    assert not result["confirmed_keys"] and len(result["unresolved"]) == 3
+
+
+@pytest.mark.parametrize("bad", ["raise", "null", "bad_bucket", "bad_entry", "missing_id"])
+def test_history_remove_does_not_treat_failed_reads_as_absent(anilist, monkeypatch, bad):
+    def gql(self, query, variables=None, **kwargs):
+        assert query == history.GQL_HISTORY_LIST
+        if bad == "raise":
+            raise RuntimeError("read failed")
+        return {"MediaListCollection": None if bad == "null" else {"lists": [
+            None if bad == "bad_bucket" else {"entries": [None if bad == "bad_entry" else {"media": {"id": 16498}, "progress": 3}]}]}}
+
+    monkeypatch.setattr(anilist, "gql", gql)
+    result = anilist_mod.OPS.remove(_cfg(), [_episode(AOT, 1, n) for n in (1, 2)], feature="history")
+    assert not result["confirmed_keys"] and len(result["unresolved"]) == 2
+    assert not anilist.saves
+
+
+def test_history_remove_absent_mapping_disabled_specials_and_unknown_total(anilist, monkeypatch):
+    item = _episode(AOT, 1, 1)
+    assert anilist_mod.OPS.remove(_cfg(), [item], feature="history")["count"] == 1
+    result = anilist_mod.OPS.remove(_cfg(False), [item], feature="history")
+    assert result["unresolved"][0]["reason"] == "anime_mapping_unavailable"
+    anilist.entries = {16498: _entry("COMPLETED", 3), 21519: _entry("COMPLETED", 1)}
+    monkeypatch.setitem(MEDIA[16498], "episodes", None)
+    items = [item, _episode(AOT, 0, 7), _movie({"anilist": "16498"}), _episode(DARK, 1, 1)]
+    result = anilist_mod.OPS.remove(_cfg(), items, feature="history")
+    assert not result["confirmed_keys"] and len(result["unresolved"]) == 4
+    assert {row["reason"] for row in result["unresolved"]} == {
+        "anilist_history_unknown_completed_total", history.SPECIALS_UNSUPPORTED, "anime_media_type_mismatch", history.NOT_MAPPED}
+    assert not anilist.saves
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_history_remove_custom_mapping_is_ordered_before_chunking(anilist, dry_run):
+    from cw_platform.orchestrator._applier import apply_remove
+
+    anilist.entries = {16498: _entry("CURRENT", 3)}
+    upsert_override({"media_type": "show", "match_provider": "tmdb", "match_id": "999", "match_season": 2,
+                     "episode_from": 1, "episode_to": 1, "episode_start_at": 3,
+                     "target_namespace": "anilist", "target_id": "16498"})
+    items = [_episode(AOT, 1, 1), _episode({"tmdb": "999"}, 2, 1), _episode(AOT, 1, 2)]
+    result = apply_remove(dst_ops=anilist_mod.OPS, cfg=_cfg(), dst_name="ANILIST", feature="history",
+                          items=items, dry_run=dry_run, emit=lambda *a, **k: None, dbg=lambda *a, **k: None,
+                          chunk_size=1, chunk_pause_ms=0)
+    assert not result["unresolved"] and result["count"] == (0 if dry_run else 3)
+    assert [row["progress"] for row in anilist.saves] == ([] if dry_run else [2, 1, 0])
+
+
+def test_history_remove_failure_is_isolated_to_one_title(anilist, monkeypatch):
+    anilist.entries = {16498: {**_entry("CURRENT", 3), "id": 16498}, 21519: {**_entry("COMPLETED", 1), "id": 21519}}
+    original = anilist.gql
+
+    def gql(self, query, variables=None, **kwargs):
+        if query == history.GQL_REMOVE_HISTORY and variables["id"] == 16498:
+            raise RuntimeError("write failed")
+        return original(self, query, variables, **kwargs)
+
+    monkeypatch.setattr(anilist, "gql", gql)
+    items = [_episode(AOT, 1, n) for n in (1, 2, 3, 5)] + [_movie(YOUR_NAME)]
+    result = anilist_mod.OPS.remove(_cfg(), items, feature="history")
+    assert result["count"] == 2 and len(result["unresolved"]) == 3
+    assert set(result["confirmed_keys"]) == {canonical_key(items[-1]), canonical_key(items[-2])}
+    assert anilist.entries[16498]["progress"] == 3
+    assert anilist.entries[21519]["progress"] == 0
+
+
+def test_history_remove_runs_through_orchestrator_and_stays_stable(anilist, monkeypatch):
+    source = FakeSource({canonical_key(item): item for item in [_episode(AOT, 1, n) for n in (1, 2, 3)]})
+    monkeypatch.setattr("cw_platform.orchestrator.facade.load_sync_providers", lambda: {"JELLYFIN": source, "ANILIST": anilist_mod.OPS})
+    cfg = _cfg()
+    cfg["sync"].update(enable_remove=True, allow_mass_delete=True)
+    cfg["pairs"][0]["features"]["history"].update(remove=True, remove_mode="mirror")
+    Orchestrator(cfg).run()
+    assert anilist.entries[16498]["progress"] == 3
+    remaining = _episode(AOT, 1, 1)
+    source.index = {canonical_key(remaining): remaining}
+    Orchestrator(cfg).run()
+    assert anilist.entries[16498]["progress"] == 1
+    assert len(anilist.saves) == 2
+    Orchestrator(cfg).run()
+    assert len(anilist.saves) == 2
