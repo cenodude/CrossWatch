@@ -48,7 +48,7 @@ const template = `
         <details class="ie-guide"><summary>How do I get an export file?</summary><div id="ie-guide"></div></details>
       </div>
     </section>
-    <section id="ie-export-setup" class="ie-panel" hidden><div class="ie-section-heading"><div><h2>Choose what to export</h2><p>Download from saved provider data. Run a sync first if you need a fresh snapshot.</p></div>${icon("download")}</div>
+    <section id="ie-export-setup" class="ie-panel" hidden><div class="ie-section-heading"><div><h2>Choose what to export</h2><p>Download from saved provider data. Run a sync first if you need a fresh snapshot.</p></div><button type="button" id="ie-download" class="ie-button ie-primary" aria-label="Download selected items" title="Download selected items" disabled>${icon("download")}</button></div>
       <div class="ie-fields ie-export-fields">${select("ie-provider", "Provider")}${select("ie-instance", "Instance")}${select("ie-feature", "Feature", ["watchlist", "history", "ratings", "combined"].map(value => option(value, value === "combined" ? "History & ratings" : human(value))).join(""))}${select("ie-format", "Export format")}</div>
       <div class="ie-export-extras"><label id="ie-date-wrap"><input id="ie-date" type="checkbox" checked>Include watched dates</label><label id="ie-rewatch-wrap"><input id="ie-rewatch" type="checkbox" checked>Keep repeat watches</label></div>
     </section>
@@ -179,6 +179,7 @@ const ImportExport = {
       $("#ie-selected").textContent = `${number(count)} ${count === 1 ? "item" : "items"} selected`;
       $("#ie-apply").innerHTML = `${icon(isImport() ? "upload" : "download")}${isImport() ? "Import" : "Download"} ${number(count)} ${count === 1 ? "item" : "items"}`;
       $("#ie-apply").disabled = busy || loading || !data || !count;
+      $("#ie-download").disabled = mode !== "export" || $("#ie-apply").disabled;
       $("#ie-apply-note").textContent = isImport() ? `Into ${$("#ie-target").selectedOptions[0]?.textContent || "CrossWatch"}. Only selected, importable items will be added.` : "Your selection is downloaded as a file. Provider data stays unchanged.";
       $("#ie-select-all").disabled = loading || !selectableTotal();
       $("#ie-select-none").disabled = loading || !count;
@@ -358,7 +359,7 @@ const ImportExport = {
       else if (button.id==="ie-preview-file") previewFile();
       else if (button.id==="ie-refresh") isImport() ? previewFile() : refresh();
       else if (button.id==="ie-select-all" || button.id==="ie-select-none") { all=button.id==="ie-select-all"; selected.clear(); excluded.clear(); render(); }
-      else if (button.id==="ie-apply") apply();
+      else if (button.id==="ie-apply" || (button.id==="ie-download" && mode==="export")) apply();
     });
     on(host,"change",event=> {
       const input=event.target;
