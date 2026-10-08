@@ -587,7 +587,7 @@
       </section>`;
     const serviceSections = sections.map((section) => {
       const addCard = section.cards.length < section.total ? renderAddCard(section) : "";
-      const cards = `${section.cards.map(renderCard).join("")}${addCard}`;
+      const cards = `${[...section.cards].sort((a, b) => String(a.label || "").localeCompare(String(b.label || ""), undefined, { sensitivity: "base", numeric: true })).map(renderCard).join("")}${addCard}`;
       return `<section class="cw-auth-service-section" data-cw-auth-group="${section.id}">
         <div class="cw-auth-service-head">
           <h4>${section.title}</h4>
