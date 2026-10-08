@@ -1362,8 +1362,6 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
 
         inst = normalize_instance_id(instance)
         cfg = load_config()
-        if not kodi_addon.feature_enabled(cfg):
-            raise HTTPException(status_code=404, detail="Not found")
         return _kodi_addon_status(request, cfg, inst)
 
     @app.post("/api/kodi/addon", tags=["media providers"], response_model=None)
@@ -1372,8 +1370,6 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
 
         inst = normalize_instance_id(instance)
         cfg = load_config()
-        if not kodi_addon.feature_enabled(cfg):
-            raise HTTPException(status_code=404, detail="Not found")
         if not isinstance(payload, dict):
             return JSONResponse({"ok": False, "error": "Malformed request"}, 400)
         was_enabled = kodi_addon.instance_enabled(cfg, inst)
@@ -1392,8 +1388,6 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
 
         inst = normalize_instance_id(instance)
         cfg = load_config()
-        if not kodi_addon.feature_enabled(cfg):
-            raise HTTPException(status_code=404, detail="Not found")
         if not kodi_addon.instance_enabled(cfg, inst):
             _kodi_addon_apply(request, cfg, inst, True)
             cfg = load_config()
@@ -1408,8 +1402,6 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
 
         inst = normalize_instance_id(instance)
         cfg = load_config()
-        if not kodi_addon.feature_enabled(cfg):
-            raise HTTPException(status_code=404, detail="Not found")
         kcfg = kodi_make_config(cfg, inst)
         if not (kcfg.server and kcfg.connection_verified):
             return JSONResponse({"ok": False, "error": "Kodi is not connected over JSON-RPC", "instance": inst}, 400)

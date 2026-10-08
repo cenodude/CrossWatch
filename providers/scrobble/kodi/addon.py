@@ -25,7 +25,6 @@ from cw_platform.account_match import media_account_allowed
 from cw_platform.app_version import app_version
 from cw_platform.config_base import CONFIG
 from cw_platform.provider_instances import get_provider_block, normalize_instance_id
-from cw_platform.value_coercion import coerce_bool
 from providers.scrobble.currently_watching import update_from_event as _cw_update
 from providers.scrobble.currently_watching import update_from_payload as _cw_update_payload
 from providers.scrobble.routes import build_route_cfg_by_id
@@ -109,14 +108,6 @@ def reported_version() -> str:
     return str(app_version() or "").strip().lstrip("vV")
 
 
-def feature_enabled(cfg: Mapping[str, Any] | None) -> bool:
-    runtime = _dict(_dict(cfg).get("runtime"))
-    try:
-        return bool(coerce_bool(runtime.get("kodi_addon")))
-    except Exception:
-        return False
-
-
 def token_key(instance_id: Any) -> str:
     return f"{TOKEN_PREFIX}{normalize_instance_id(instance_id)}"
 
@@ -135,7 +126,7 @@ def instance_token(cfg: Mapping[str, Any] | None, instance_id: Any) -> str:
 
 
 def instance_enabled(cfg: Mapping[str, Any] | None, instance_id: Any) -> bool:
-    return feature_enabled(cfg) and bool(instance_token(cfg, instance_id))
+    return bool(instance_token(cfg, instance_id))
 
 
 def set_instance_enabled(cfg: dict[str, Any], instance_id: Any, enabled: bool, regenerate: bool = False) -> str:
@@ -285,7 +276,7 @@ def pair(cfg: Mapping[str, Any] | None, code: Any, base_url: Any, client: Any = 
     if reason == "rate_limited":
         out["error"] = reason
         return 429, out
-    token = instance_token(cfg, inst) if inst is not None and feature_enabled(cfg) else ""
+    token = instance_token(cfg, inst) if inst is not None else ""
     if inst is None or not token:
         out["error"] = "invalid_code"
         return 401, out
@@ -784,7 +775,6 @@ __all__ = [
     "clean_ids",
     "device_uuid",
     "endpoint_url",
-    "feature_enabled",
     "handle",
     "instance_enabled",
     "instance_for_token",

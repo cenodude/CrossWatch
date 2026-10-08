@@ -1895,8 +1895,6 @@ async def webhook_kodiwatcher_pair(request: Request) -> JSONResponse:
     from providers.scrobble.kodi import addon as kodi_addon
 
     cfg = load_config() or {}
-    if not kodi_addon.feature_enabled(cfg):
-        return JSONResponse({"ok": True, "ignored": True, "error": "addon_disabled", "crosswatch_version": kodi_addon.reported_version()}, status_code=200)
 
     raw = await request.body()
     try:
@@ -1927,8 +1925,6 @@ async def webhook_kodiwatcher(request: Request) -> JSONResponse:
 
     cfg = load_config() or {}
     version = kodi_addon.reported_version()
-    if not kodi_addon.feature_enabled(cfg):
-        return JSONResponse({"ok": True, "ignored": True, "error": "addon_disabled", "crosswatch_version": version}, status_code=200)
 
     token = str(request.headers.get(kodi_addon.TOKEN_HEADER) or "").strip() or str(_extract_url_params(request).get("token") or "").strip()
     instance = kodi_addon.instance_for_token(cfg, token)
