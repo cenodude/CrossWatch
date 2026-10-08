@@ -16,8 +16,10 @@ from cw_platform.anime_mapping.overrides import upsert_override
 def anime_mapping(config_base, tmp_path, monkeypatch):
     paths = storage.paths("v3")
     paths["root"].mkdir(parents=True, exist_ok=True)
-    paths["mappings"].write_text(json.dumps({"tvdb_show:10:s1": {"anilist:100": {"1-10": "1-10"}}}), encoding="utf-8")
-    paths["identity"].write_text("anidb\tmyanimelist\tanilist\tsimkl\tkitsu\n\t\t100\t\t1\n", encoding="utf-8")
+    paths["mappings"].write_text(json.dumps({"tvdb_show:10:s1": {
+        "anilist:100": {"1-10": "1-10"}, "mal:25777": {"1-10": "1-10"},
+    }}), encoding="utf-8")
+    paths["identity"].write_text("anidb\tmyanimelist\tanilist\tsimkl\tkitsu\n\t25777\t100\t\t1\n", encoding="utf-8")
     storage.rebuild_sqlite_from_mappings(release_tag="v3")
     monkeypatch.setattr(A, "CWS_DIR", tmp_path)
     return {"anime_mapping": {"enabled": True}}
@@ -119,3 +121,61 @@ def test_two_way_reverse_route_still_reports_missing_anime(anime_mapping, target
     ctx = A._analysis_context(state, anime_mapping)
     row = state["providers"][target]["ratings"]["baseline"]["items"]["other"]
     assert A._missing_targets(ctx, target, "ratings", "other", row) == ["SIMKL@SIMKL-P01"]
+
+
+@pytest.mark.parametrize("target", ["KITSU", "ANILIST"])
+@pytest.mark.parametrize("direction", ["forward", "reverse", "two-way"])
+def test_history_health_excludes_non_anime(anime_mapping, target, direction):
+    state, items = setup_pair(anime_mapping, target, "history")
+    items.update({f"live-{i}": {**items["excluded"], "show_ids": {"tvdb": str(1000 + i)}} for i in range(20)})
+    state["providers"][target]["history"]["baseline"]["items"] = {"valid": dict(items["valid"])}
+    pair = anime_mapping["pairs"][0]
+    if direction == "reverse":
+        pair.update(source=target, source_instance="default", target="SIMKL", target_instance="SIMKL-P01")
+    elif direction == "two-way":
+        pair["mode"] = "two-way"
+    problems = A._problems(state, cfg=anime_mapping, include_system=False, include_hints=False)
+    assert not [row for row in problems if row["type"] == "history_show_normalization"]
+
+
+@pytest.mark.parametrize("target", ["KITSU", "ANILIST"])
+def test_history_health_keeps_real_anime_gaps_and_regular_pair_gaps(anime_mapping, target):
+    state, items = setup_pair(anime_mapping, target, "history")
+    items.update({f"live-{i}": {**items["excluded"], "show_ids": {"tvdb": str(1000 + i)}} for i in range(20)})
+    anime_mapping["pairs"].append({**anime_mapping["pairs"][0], "id": "regular", "target": "TRAKT"})
+    state["providers"]["TRAKT"] = {"history": {"baseline": {"items": {}}}}
+    issues = A._history_normalization_issues(state, anime_mapping)
+    by_target = {row["target"]: row for row in issues}
+    assert by_target["TRAKT"]["show_delta"]["source"] == 22
+    assert target not in by_target
+    upsert_override({"media_type": "show", "match_provider": "tvdb", "match_id": "999", "match_season": 1,
+                     "episode_from": 1, "episode_to": 10, "episode_start_at": 1,
+                     "target_namespace": target.lower(), "target_id": "100" if target == "ANILIST" else "1"})
+    issues = A._history_normalization_issues(state, anime_mapping)
+    gap = next(row for row in issues if row["target"] == target)
+    assert gap["show_delta"] == {"source": 2, "target": 0}
+
+
+@pytest.mark.parametrize("target", ["KITSU", "ANILIST"])
+@pytest.mark.parametrize("feature", ["ratings", "watchlist"])
+@pytest.mark.parametrize("namespace,ident", [("mal", "25777"), ("anilist", "100"), ("kitsu", "1")])
+def test_health_accepts_mapped_anime_ids(anime_mapping, target, feature, namespace, ident):
+    state, items = setup_pair(anime_mapping, target, feature)
+    items["valid"] = {"type": "show", "title": "Anime", "ids": {namespace: ident}}
+    state["providers"][target][feature]["baseline"]["items"] = {"valid": dict(items["valid"])}
+    problems = A._problems(state, cfg=anime_mapping, include_system=False, include_hints=False)
+    assert not [row for row in problems if row["type"] == "key_missing_ids"]
+    assert items["valid"]["ids"] == {namespace: ident}
+
+
+@pytest.mark.parametrize("target", ["KITSU", "ANILIST"])
+def test_health_keeps_unusable_id_findings(anime_mapping, target):
+    state, items = setup_pair(anime_mapping, target, "ratings")
+    items["valid"] = {"type": "show", "ids": {"simkl": "123"}}
+    problems = A._problems(state, cfg=anime_mapping, include_system=False, include_hints=False)
+    assert any(row["type"] == "key_missing_ids" and row["key"] == "valid" for row in problems)
+    items["valid"]["ids"] = {"mal": "25777"}
+    anime_mapping["pairs"].append({**anime_mapping["pairs"][0], "id": "regular", "target": "TRAKT"})
+    state["providers"]["TRAKT"] = {"ratings": {"baseline": {"items": {}}}}
+    problems = A._problems(state, cfg=anime_mapping, include_system=False, include_hints=False)
+    assert any(row["type"] == "key_missing_ids" and row["key"] == "valid" for row in problems)
