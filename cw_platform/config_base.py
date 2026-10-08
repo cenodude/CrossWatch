@@ -802,7 +802,6 @@ DEFAULT_CFG: dict[str, Any] = {
         "telemetry": {"enabled": True},                 # Usage stats
         "max_profiles_per_provider": 10,                # Total profiles per provider incl. default (1-100)
         "history_timestamp_tolerance_seconds": 60,      # Same-viewing history match window; 0 requires exact timestamps
-        "kodi_addon": False,
 
         # progress
         "snapshot_ttl_sec": 300,                        # Reuse snapshots within 5 min
@@ -1132,14 +1131,18 @@ CONFIG_TOP_LEVEL_ORDER: tuple[str, ...] = (
     "ui",
 )
 
-OBSOLETE_CONFIG_KEYS: tuple[str, ...] = ("mobile_auth",)
+OBSOLETE_CONFIG_KEYS: tuple[str, ...] = ("mobile_auth", "runtime.kodi_addon")
 
 
 def cleanup_obsolete_config_keys(cfg: dict[str, Any]) -> list[str]:
     changed: list[str] = []
     for key in OBSOLETE_CONFIG_KEYS:
-        if key in cfg:
-            cfg.pop(key, None)
+        *parents, leaf = key.split(".")
+        node: Any = cfg
+        for part in parents:
+            node = node.get(part) if isinstance(node, dict) else None
+        if isinstance(node, dict) and leaf in node:
+            node.pop(leaf, None)
             changed.append(key)
     return changed
 
