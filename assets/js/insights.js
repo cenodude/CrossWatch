@@ -424,7 +424,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     const keys = [...new Set([...Object.keys(totals), ...Object.keys(active), ...conf])]
       .filter(k => conf.has(canonical(k)) && providerSelected(k, instancesByProvider))
       .filter(k => providerOnSyncSurface(k))
-      .sort((a, b) => a === "crosswatch" ? -1 : b === "crosswatch" ? 1 : a.localeCompare(b));
+      .sort((a, b) => String(providerLabel(a) || a).localeCompare(String(providerLabel(b) || b), undefined, { sensitivity: "base", numeric: true }));
 
     if (!keys.length) {
       host.hidden = true;
@@ -794,7 +794,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     try { localStorage.setItem(CW_SNAPSHOT_PROFILE_KEY, inst); } catch {}
 
     body.innerHTML = `${profiles.length > 1
-      ? `<label class="cw-snap-profile"><span>Profile</span><select class="cw-snap-profile-select">${profiles.map(p => `<option value="${esc(p.id || "default")}"${String(p.id || "default") === inst ? " selected" : ""}>${esc(p.label || p.id || "Default")}</option>`).join("")}</select></label>`
+      ? `<label class="cw-snap-profile"><span>Profile</span><select class="cw-snap-profile-select" data-cw-sort="alphabetical">${profiles.map(p => `<option value="${esc(p.id || "default")}"${String(p.id || "default") === inst ? " selected" : ""}>${esc(p.label || p.id || "Default")}</option>`).join("")}</select></label>`
       : `<div class="cw-snap-profile is-single"><span>Profile</span><strong>${esc(profile.label || inst)}</strong></div>`}<div class="cw-snap-list"><div class="cw-snap-empty muted">Loading snapshots...</div></div>`;
     const list = $(".cw-snap-list", body);
 

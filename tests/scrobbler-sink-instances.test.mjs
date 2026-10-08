@@ -20,6 +20,34 @@ const overview = {
   destination_availability: [{provider: "plex", profiles: [{instance: "default", configured: true}, {instance: "P01", configured: true}]}],
 };
 
+test("watcher provider options sort by label without changing the selected destination", () => {
+  const run = modal("route");
+  const data = {
+    destination_availability: ["kitsu", "plex", "jellyfin", "emby", "crosswatch", "trakt", "simkl", "anilist"]
+      .map(provider => ({provider, profiles: [{instance: "default", configured: true}]})),
+  };
+  run(`props = {overview: ${JSON.stringify(data)}}; draft = {provider: "kodi", provider_instance: "default"}; null`);
+  const html = run('optionsForProviders("sink", "kitsu", "kodi")');
+  assert.deepEqual([...html.matchAll(/value="([^"]+)"/g)].map(match => match[1]),
+    ["anilist", "crosswatch", "emby", "jellyfin", "kitsu", "plex", "simkl", "trakt"]);
+  assert.match(html, /value="kitsu" selected/);
+});
+
+test("watcher and webhook profile options sort naturally by displayed name", () => {
+  const profiles = [
+    {instance: "P01", label: "Zulu", configured: true},
+    {instance: "P02", label: "alpha 10", configured: true},
+    {instance: "P03", label: "Alpha 2", configured: true},
+  ];
+  for (const name of ["route", "webhook"]) {
+    const run = modal(name);
+    run(`props = {overview: {destination_availability: [{provider: "kitsu", profiles: ${JSON.stringify(profiles)}}]}}; null`);
+    const html = run(name === "route" ? 'optionsForProfiles("kitsu", "P01", "sink")' : 'sinkProfileSelect("kitsu", "P01")');
+    assert.deepEqual([...html.matchAll(/value="([^"]+)"/g)].map(match => match[1]), ["P03", "P02", "P01"]);
+    assert.match(html, /value="P01"[^>]*selected/);
+  }
+});
+
 test("WeTrakr appears as a scrobble and Plex rating destination with its configured profile", () => {
   const data = {...overview, destination_availability: [{provider: "wetrakr", profiles: [{instance: "WETRAKR-P01", label: "Test", configured: true}]}]};
   const route = modal("route");

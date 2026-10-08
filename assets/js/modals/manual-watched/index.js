@@ -588,7 +588,8 @@ export default {
     const loadProviders = async () => {
       try {
         const data = await fjson("/api/manual/providers");
-        state.providers = Array.isArray(data.providers) ? data.providers : [];
+        state.providers = (Array.isArray(data.providers) ? [...data.providers] : [])
+          .sort((a, b) => String(a.display || a.label || a.provider).localeCompare(String(b.display || b.label || b.provider), undefined, { sensitivity: "base", numeric: true }));
         state.remembered = loadRemembered();
         const allowed = new Set(state.providers.map(providerKey));
         state.selectedProviders = new Set(state.remembered.filter((key) => allowed.has(key)));

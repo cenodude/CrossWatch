@@ -451,7 +451,7 @@ const MaintenancePage = {
         ? pairList.map(pair => `<option value="${escapeHtml(pair.id)}">${escapeHtml(pair.label)}</option>`).join("")
         : '<option value="">No sync pairs configured</option>';
       if (pairList.some(pair => pair.id === current)) select.value = current;
-      window.CW?.IconSelect?.enhance(select, { className: "cw-plain-select cxm-pair-select", menuMinWidth: 260 });
+      window.CW?.IconSelect?.enhance(select, { className: "cw-plain-select cxm-pair-select", menuMinWidth: 260, sortAlphabetically: true });
       renderPairFeatures();
     }
     function setPairOpen(open) {

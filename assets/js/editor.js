@@ -448,6 +448,7 @@
     }
     selectEl.classList.add("cw-icon-select-native");
     helper(selectEl, {
+      sortFirstValues: [ALL_PROVIDERS],
       className: "cw-editor-icon-select",
       getOptionData: (value, option) => {
         if (value === ALL_PROVIDERS) return { label: "All providers", icons: [], disabled: false };
@@ -503,6 +504,7 @@
     helper(selectEl, {
       className: "cw-editor-icon-select",
       menuClassName: "cw-editor-icon-select-menu",
+      sortAlphabetically: true,
       getOptionData: (value, option) => {
         const ep = (state.playlistEndpoints || []).find(x => String(x?.id || "") === String(value || "")) || {};
         const provider = ep.provider || option?.dataset?.provider || "";

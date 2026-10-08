@@ -1679,6 +1679,7 @@
   function enhanceCollectionProviderSelect(select = $("#profile-collection-provider")) {
     if (!select || typeof window.CW?.IconSelect?.enhance !== "function") return;
     window.CW.IconSelect.enhance(select, {
+      sortAlphabetically: true,
       className: "cw-profile-collection-select",
       menuClassName: "cw-profile-collection-menu",
       menuMinWidth: 260,

@@ -191,7 +191,7 @@ const LogsPage = {
         let listing = await api('', {channel, ...scope()});
         if (!alive || token !== sequence) return;
         pairs=listing.pairs || [];latestRunId=listing.latest_run_id || '';
-        const options='<option value="">All pairs</option>'+pairs.map(p=>`<option value="${esc(p.id)}">${esc(p.label)}</option>`).join('')+(pairId&&!pairs.some(p=>p.id===pairId)?`<option value="${esc(pairId)}" disabled>Pair unavailable</option>`:'');
+        const options='<option value="">All pairs</option>'+[...pairs].sort((a,b)=>String(a.label).localeCompare(String(b.label),undefined,{sensitivity:"base",numeric:true})).map(p=>`<option value="${esc(p.id)}">${esc(p.label)}</option>`).join('')+(pairId&&!pairs.some(p=>p.id===pairId)?`<option value="${esc(pairId)}" disabled>Pair unavailable</option>`:'');
         if($('[data-pair]').innerHTML!==options){$('[data-pair]').innerHTML=options;$('[data-pair]').value=pairId;$('[data-pair]').dispatchEvent(new Event('change'));}
         if(latestRequested){
           latestRequested=false;

@@ -33,7 +33,7 @@
   function profileOptions(selected) {
     const sid = txt(selected);
     if (!profiles.length) return `<option value="">No profiles</option>`;
-    return profiles.map((p) => `<option value="${esc(p.id)}"${p.id === sid ? " selected" : ""}>${esc(p.label || p.id)}</option>`).join("");
+    return [...profiles].sort((a, b) => String(a.label || a.id).localeCompare(String(b.label || b.id), undefined, { sensitivity: "base", numeric: true })).map((p) => `<option value="${esc(p.id)}"${p.id === sid ? " selected" : ""}>${esc(p.label || p.id)}</option>`).join("");
   }
 
   function createReady() {

@@ -71,7 +71,7 @@
     const source = key(_pick.source);
     const target = key(_pick.target);
 
-    board.innerHTML = visibleProviders.map((item) => {
+    board.innerHTML = [...visibleProviders].sort((a, b) => providerLabel(a, key(a.key || a.name || a.label)).localeCompare(providerLabel(b, key(b.key || b.name || b.label)), undefined, { sensitivity: "base", numeric: true })).map((item) => {
       const providerKey = key(item.key || item.name || item.label);
       const label = providerLabel(item, providerKey);
       const cls = providerClass(providerKey);

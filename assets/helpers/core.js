@@ -404,7 +404,8 @@
       });
     }
 
-    const wanted = PROVIDER_ORDER.filter((key) => allowed.has(key));
+    const wanted = PROVIDER_ORDER.filter((key) => allowed.has(key))
+      .sort((a, b) => providerLabel(a).localeCompare(providerLabel(b), undefined, { sensitivity: "base", numeric: true }));
 
     ["source-provider", "target-provider"].forEach((id) => {
       const select = byId(id);

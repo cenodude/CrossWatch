@@ -240,7 +240,7 @@
     placeholder.disabled = true;
     placeholder.selected = true;
     sel.appendChild(placeholder);
-    rows.forEach((row) => {
+    [...rows].sort((a, b) => String(a.name || `Profile ${a.profile_id || a.profile_index || ""}`).localeCompare(String(b.name || `Profile ${b.profile_id || b.profile_index || ""}`), undefined, { sensitivity: "base", numeric: true })).forEach((row) => {
       const option = document.createElement("option");
       option.value = String(row.profile_id || row.profile_index || "");
       option.textContent = String(row.name || `Profile ${option.value}`);

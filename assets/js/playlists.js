@@ -1521,7 +1521,7 @@
   function enhanceMappingSelects(root) {
     ["#pl-map-source", "#pl-map-targets"].forEach((sel) => {
       const select = $(sel, root);
-      if (select) window.CW?.IconSelect?.enhance?.(select, { className: "pl-endpoint-select", menuClassName: "pl-endpoint-select-menu", getOptionData: endpointOptionData });
+      if (select) window.CW?.IconSelect?.enhance?.(select, { className: "pl-endpoint-select", menuClassName: "pl-endpoint-select-menu", sortAlphabetically: true, getOptionData: endpointOptionData });
     });
     ["#pl-map-direction", "#pl-map-ruleset", "#pl-map-membership", "#pl-map-order"].forEach((sel) => {
       const select = $(sel, root);
@@ -1780,7 +1780,7 @@
         refreshEndpointResourceSelection(root, root.__plEndpointCtx);
         return;
       }
-      select.innerHTML = resources.map((r) => {
+      select.innerHTML = [...resources].sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id), undefined, { sensitivity: "base", numeric: true })).map((r) => {
         const caps = resourceCaps(r);
         const endpointType = r.discovery ? "discovery" : ((r.extra && r.extra.endpoint_type) || r.endpoint_type || r.playlist_type || r.kind || "");
         const shouldSelect = selected ? r.id === selected : (!isEdit && resources[0] && r.id === resources[0].id);
@@ -2118,7 +2118,7 @@
       return;
     }
     const key = (a) => `${a.provider}|${a.instance}`;
-    const accountOptions = (list) => list.map((a) => `<option value="${esc(key(a))}">${esc(a.label)}${a.instance !== "default" ? ` · ${esc(a.instance)}` : ""}</option>`).join("");
+    const accountOptions = (list) => [...list].sort((a, b) => String(a.label).localeCompare(String(b.label), undefined, { sensitivity: "base", numeric: true }) || String(a.instance).localeCompare(String(b.instance), undefined, { sensitivity: "base", numeric: true })).map((a) => `<option value="${esc(key(a))}">${esc(a.label)}${a.instance !== "default" ? ` · ${esc(a.instance)}` : ""}</option>`).join("");
     const cwAccounts = accounts.filter((a) => a.provider === "CROSSWATCH");
     const lists = new Map();
     const failed = new Set();
@@ -2208,7 +2208,7 @@
       const rows = (lists.get(cacheKey) || []).filter((r) => !writable || wizardResourceWritable(r));
       const canCreate = writable && creatableEndpointTypes(account.provider).length > 0 && account.provider !== "SIMKL";
       select.innerHTML = (canCreate ? `<option value="__new__">+ Create a new list</option>` : "")
-        + rows.map((r) => `<option value="${esc(r.id)}">${esc(r.name || r.id)}${wizardResourceType(r) === "watchlist" || String(r.id).toLowerCase().includes("watchlist") ? "" : ` (${esc(titleize(wizardResourceType(r) || "list"))})`}</option>`).join("")
+        + [...rows].sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id), undefined, { sensitivity: "base", numeric: true })).map((r) => `<option value="${esc(r.id)}">${esc(r.name || r.id)}${wizardResourceType(r) === "watchlist" || String(r.id).toLowerCase().includes("watchlist") ? "" : ` (${esc(titleize(wizardResourceType(r) || "list"))})`}</option>`).join("")
         || `<option value="">No lists found</option>`;
       if (rows.length) select.value = String(rows[0].id);
       if (writable) select.dataset.canCreate = canCreate ? "1" : "";
