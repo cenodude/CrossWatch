@@ -3190,12 +3190,13 @@ def _history_show_sets(s: dict[str, Any]) -> tuple[dict[str, set[str]], dict[str
 
     return show_sets, labels
 
-def _history_normalization_issues(s: dict[str, Any], cfg: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+def _history_normalization_issues(
+    s: dict[str, Any], cfg: dict[str, Any] | None = None, *, ctx: _AnalysisContext | None = None,
+) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
 
-    config = cfg if cfg is not None else _cfg()
-    pairs = _pair_map(config, s)
-    show_sets, labels = _history_show_sets(s)
+    analysis = ctx or _analysis_context(s, cfg)
+    pairs = analysis.pairs
     tmdb_enabled = bool(_tmdb_key())
 
     seen: set[tuple[str, str]] = set()
@@ -3219,6 +3220,21 @@ def _history_normalization_issues(s: dict[str, Any], cfg: dict[str, Any] | None 
                 continue
             seen.add(key)
 
+            scoped: dict[str, Any] = {"providers": {}}
+            for provider, peer in ((a, b), (b, a)):
+                items = {
+                    k: row for k, row in (_bucket(s, provider, "history") or {}).items()
+                    if isinstance(row, dict)
+                    and analysis.passes_anime_filter(provider, "history", peer, row)
+                    and _passes_pair_type_filter(analysis.pair_types, a, "history", b, row)
+                    and (provider != a or _passes_pair_lib_filter(analysis.pair_libs, a, "history", b, row))
+                }
+                base, instance = _split_prov_token(provider)
+                block = scoped["providers"].setdefault(base, {})
+                if instance != _DEFAULT_INSTANCE:
+                    block = block.setdefault("instances", {}).setdefault(instance, {})
+                block["history"] = {"baseline": {"items": items}}
+            show_sets, labels = _history_show_sets(scoped)
             sa = show_sets.get(a) or set()
             sb = show_sets.get(b) or set()
             if not sa and not sb:
@@ -4082,6 +4098,24 @@ def _missing_peer_hints(
     return hints
 
 
+def _usable_anime_ids(ctx: _AnalysisContext, provider: str, feature: str, item: dict[str, Any]) -> bool:
+    ids = _id_view_for_item(item)
+    if not any(ids.get(ns) for ns in ("anilist", "mal", "kitsu", "anidb")):
+        return False
+    provider = _norm_prov_token(provider)
+    routes = [
+        (src, dst) for (src, feat), targets in ctx.pairs.items() if feat == feature
+        for dst in targets if provider in (src, dst)
+    ]
+    if not routes:
+        return False
+    for src, dst in routes:
+        anime = next((p for p in (dst, src) if _provider_base(p).lower() in ANIME_ONLY_TARGET_KEYS), None)
+        if anime is None or not ctx.passes_anime_filter(provider, feature, anime, item):
+            return False
+    return True
+
+
 def _problems(
     s: dict[str, Any],
     allowed_scopes: set[str] | None = None,
@@ -4224,7 +4258,7 @@ def _problems(
                     }
                 )
         id_view = _id_view_for_item(it, ids)
-        if ids and not any((id_view.get(ns) or ids.get(ns)) for ns in core):
+        if ids and not any((id_view.get(ns) or ids.get(ns)) for ns in core) and not _usable_anime_ids(analysis, p, f, it):
             probs.append(
                 {
                     "severity": "info",
@@ -4239,7 +4273,7 @@ def _problems(
             )
 
     try:
-        probs.extend(_history_normalization_issues(s, analysis.cfg))
+        probs.extend(_history_normalization_issues(s, analysis.cfg, ctx=analysis))
     except Exception:
         pass
     try:
