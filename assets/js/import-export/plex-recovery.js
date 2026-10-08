@@ -406,7 +406,7 @@ export function mountPlexRecovery(host) {
   }
   on(window,"cw:open-plex-recovery",openRequestedSource);
   host.querySelectorAll("select").forEach(input=>{
-    const wrap=window.CW?.IconSelect?.enhance(input,{className:"ie-select",menuClassName:"ie-select-menu"});
+    const wrap=window.CW?.IconSelect?.enhance(input,{className:"ie-select",menuClassName:"ie-select-menu",sortAlphabetically:["pr-source","pr-target","pr-tautulli"].includes(input.id)});
     wrap?.querySelector("button")?.setAttribute("aria-labelledby",`${input.id}-label`);
     wrap?.__cwMenu?.setAttribute("aria-labelledby",`${input.id}-label`);
   });

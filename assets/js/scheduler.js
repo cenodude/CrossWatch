@@ -865,7 +865,7 @@ const ensureStdEnabledToggle = () => {
     const missingLabel = source === "webhook" ? "No webhooks configured" : "No routes configured";
     const options = [["", routes.length ? emptyLabel : missingLabel]];
     if (current && !routes.some(r => String(r?.id || "") === String(current))) options.push([current, `Missing route (${current})`, { disabled: true, selected: true }]);
-    routes.forEach(route => options.push([route.id, route.label || route.id]));
+    [...routes].sort((a, b) => String(a.label || a.id).localeCompare(String(b.label || b.id), undefined, { sensitivity: "base", numeric: true })).forEach(route => options.push([route.id, route.label || route.id]));
     return options;
   };
   const eventRuleIssue = rule => {
@@ -1184,7 +1184,7 @@ const ensureStdEnabledToggle = () => {
   };
   const pairOptions = (selected, includeNoneText = "Select sync pair") => [
     ["", includeNoneText],
-    ..._pairs.map(p => [p.id, p.label + (p.enabled ? "" : " (disabled)"), { disabled: !p.enabled }])
+    ...[..._pairs].sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base", numeric: true })).map(p => [p.id, p.label + (p.enabled ? "" : " (disabled)"), { disabled: !p.enabled }])
   ];
   const softenStatus = (value = "") => {
     const text = String(value || "").trim();
@@ -1321,7 +1321,7 @@ const ensureStdEnabledToggle = () => {
     const want = String(current || "").trim() || "default";
     if (want && !seen.has(want)) out.unshift([want, instanceLabel(want), { selected: true }]);
     if (!out.length) out.push(["default", "Default"]);
-    return out;
+    return out.sort((a, b) => String(a[1]).localeCompare(String(b[1]), undefined, { sensitivity: "base", numeric: true }));
   };
   const captureFeatureOptions = (provider, current = "") => {
     const meta = captureProviderById(provider);
@@ -1335,7 +1335,7 @@ const ensureStdEnabledToggle = () => {
   };
   const captureProviderOptions = (current = "") => {
     const rows = [["", "Select provider"]];
-    _captureProviders.forEach((provider) => {
+    [..._captureProviders].sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base", numeric: true })).forEach((provider) => {
       rows.push([
         provider.id,
         provider.label + (provider.configured ? "" : " (not configured)"),

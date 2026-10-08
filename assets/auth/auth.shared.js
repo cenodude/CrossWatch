@@ -462,6 +462,7 @@
     async function refreshOptions(preserve) {
       const sel = el(selectId);
       if (!sel) return;
+      sel.dataset.cwSort = "alphabetical";
       addDefaultOption(sel);
       let want = preserve === false ? "default" : getInstance();
       try {

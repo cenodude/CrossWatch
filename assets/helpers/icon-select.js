@@ -205,8 +205,13 @@
     const menu = wrap.__cwMenu;
     if (!menu) return;
     menu.innerHTML = "";
-    [...(select.options || [])].forEach((option) => {
-      const data = dataForOption(select, option, cfg);
+    const options = [...(select.options || [])].map((option) => dataForOption(select, option, cfg));
+    if (cfg.sortAlphabetically ?? (select.dataset.cwSort === "alphabetical")) {
+      const first = new Set(["", ...(cfg.sortFirstValues || [])]);
+      options.sort((a, b) => Number(first.has(b.value)) - Number(first.has(a.value))
+        || a.label.localeCompare(b.label, undefined, { sensitivity: "base", numeric: true }));
+    }
+    options.forEach((data) => {
       const item = d.createElement("button");
       item.type = "button";
       item.className = "cw-icon-select-item";

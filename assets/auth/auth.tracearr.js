@@ -78,6 +78,7 @@
     const sel = el("tracearr_user_id");
     if (!sel) return;
     const keep = String(selected || "");
+    sel.dataset.cwSort = "alphabetical";
     sel.innerHTML = "";
     const all = document.createElement("option");
     all.value = "";

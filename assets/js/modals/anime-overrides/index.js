@@ -245,7 +245,7 @@ export default {
     }
 
     function fillSelect(node, values, current) {
-      node.innerHTML = values.map((v) => `<option value="${esc(v)}">${esc(label(v))}</option>`).join("");
+      node.innerHTML = [...values].sort((a, b) => label(a).localeCompare(label(b), undefined, { sensitivity: "base", numeric: true })).map((v) => `<option value="${esc(v)}">${esc(label(v))}</option>`).join("");
       if (current) node.value = current;
     }
 

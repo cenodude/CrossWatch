@@ -584,7 +584,7 @@ const Analyzer = {
         $("#an-pair").innerHTML = `<option value="">All sync pairs (${pairs.length})</option>${pairs.map(pair => `<option value="${esc(pair.id)}">${esc(pairName(pair))}</option>`).join("")}`;
         $("#an-pair").value = array(saved).length > 1 ? "" : previous?.id || recent?.id || "";
         $("#an-pair").disabled = !pairs.length;
-        window.CW?.IconSelect?.enhance?.($("#an-pair"), { className: "cw-plain-select", menuClassName: "an-pair-menu" });
+        window.CW?.IconSelect?.enhance?.($("#an-pair"), { className: "cw-plain-select", menuClassName: "an-pair-menu", sortAlphabetically: true });
         updateSnapshot();
         await analyzeItems();
       } catch (error) {

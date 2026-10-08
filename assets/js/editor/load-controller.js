@@ -29,7 +29,7 @@
     select.replaceChildren(new Option("Every sync with this account", ""),
       ...pairs.map(pair => new Option(`Only ${pair.label}`, pair.id)));
     select.value = ctx.state.mappingPair || "";
-    window.CW?.IconSelect?.enhance(select, {className:"cw-plain-select"});
+    window.CW?.IconSelect?.enhance(select, {className:"cw-plain-select",sortAlphabetically:true});
     const wrap = select.nextElementSibling?.classList?.contains("cw-icon-select") ? select.nextElementSibling : null;
     if (wrap) {
       wrap.classList.add("cw-advanced-only");

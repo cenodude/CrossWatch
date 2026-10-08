@@ -496,7 +496,7 @@ async function loadUserProfiles(state){
 async function loadProviders(state){
   const list=await getJSON("/api/sync/providers?cb="+Date.now());
   if(!Array.isArray(list)) throw new Error("Invalid sync providers response");
-  state.providers=list
+  state.providers=[...list].sort((a,b)=>String(a.label||a.name).localeCompare(String(b.label||b.name),undefined,{sensitivity:"base",numeric:true}))
 }
 
 async function loadConfigBits(state){

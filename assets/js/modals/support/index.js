@@ -227,7 +227,8 @@ export default {
       } catch {
         setStatus("Could not read sync pairs; the full export is still available.", "warn");
       }
-      const pairs = Array.isArray(payload?.pairs) ? payload.pairs : [];
+      const pairs = (Array.isArray(payload?.pairs) ? [...payload.pairs] : [])
+        .sort((a, b) => String(a.label || a.id).localeCompare(String(b.label || b.id), undefined, { sensitivity: "base", numeric: true }));
       const options = ['<option value="all">All pairs</option>'].concat(pairs.map((p) => {
         const items = Number(p?.items || 0);
         const suffix = `${p?.enabled === false ? " · disabled" : ""} · ${items} item${items === 1 ? "" : "s"}`;

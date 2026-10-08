@@ -77,7 +77,8 @@
         id: txt(row?.id || "default") || "default",
         label: txt(row?.display_label || row?.label || row?.id || "Default"),
       }))
-      .filter((row) => row.id && !isDefaultInstanceId(row.id));
+      .filter((row) => row.id && !isDefaultInstanceId(row.id))
+      .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base", numeric: true }));
   }
 
   function allInstanceRows() {
@@ -383,7 +384,7 @@
     }
     setHostHtml(host, `
       <div class="cw-auth-service-grid cw-upm-service-grid">
-        ${userProfiles.map(renderProfileCard).join("")}
+        ${[...userProfiles].sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base", numeric: true })).map(renderProfileCard).join("")}
         ${renderAddCard()}
       </div>
       <div class="cw-upm-status" id="cw-upm-status"></div>

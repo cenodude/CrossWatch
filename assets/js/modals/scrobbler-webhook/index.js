@@ -220,14 +220,14 @@ function sourceProfiles(provider) {
 }
 
 function sourceProviderSelect(current) {
-  const provs = sourceProviders();
+  const provs = sourceProviders().sort((a, b) => label(a).localeCompare(label(b), undefined, { sensitivity: "base", numeric: true }));
   const dis = props.mode === "edit" ? "disabled" : "";
   if (!provs.length) return `<select class="input" id="scw-source-provider" disabled><option value="">No configured media profile</option></select>`;
   return `<select class="input" id="scw-source-provider" ${dis}>${provs.map((p) => `<option value="${esc(p)}" ${p === current.provider ? "selected" : ""}>${esc(label(p))}</option>`).join("")}</select>`;
 }
 
 function sourceProfileSelect(provider, currentInst) {
-  const list = sourceProfiles(provider);
+  const list = sourceProfiles(provider).sort((a, b) => profileOptionLabel(a).localeCompare(profileOptionLabel(b), undefined, { sensitivity: "base", numeric: true }));
   const dis = props.mode === "edit" ? "disabled" : "";
   const cur = String(currentInst || "default");
   if (!list.length) return `<select class="input" id="scw-source-instance" ${dis}><option value="default">Default</option></select>`;
@@ -368,7 +368,8 @@ function visibleRatingSinks(selected = []) {
   const self = sourceProviderKey();
   const available = availableRatingSinks();
   const selectedList = selected.map((x) => String(x || "").toLowerCase()).filter((x) => ratingSinks.includes(x) && x !== self);
-  return [...selectedList.filter((x) => !available.includes(x)), ...available];
+  return [...selectedList.filter((x) => !available.includes(x)), ...available]
+    .sort((a, b) => label(a).localeCompare(label(b), undefined, { sensitivity: "base", numeric: true }));
 }
 
 function selectedSinkKey() {
@@ -387,13 +388,13 @@ function selectedSinkInstance(sink) {
 }
 
 function sinkSelect(current) {
-  const available = availableSinks();
+  const available = availableSinks().sort((a, b) => label(a).localeCompare(label(b), undefined, { sensitivity: "base", numeric: true }));
   if (!available.length) return `<option value="" selected disabled>No configured destination provider</option>`;
   return available.map((s) => `<option value="${esc(s)}" ${s === current ? "selected" : ""}>${esc(label(s))}</option>`).join("");
 }
 
 function sinkProfileSelect(sink, currentInst) {
-  const profiles = sinkProfiles(sink);
+  const profiles = sinkProfiles(sink).sort((a, b) => profileOptionLabel(a).localeCompare(profileOptionLabel(b), undefined, { sensitivity: "base", numeric: true }));
   if (!profiles.length) return `<option value="" selected disabled>No configured profile</option>`;
   const cur = String(currentInst || "default");
   return profiles.map((p) => `<option value="${esc(p.instance)}" title="${esc(p.instance)}" ${p.instance === cur ? "selected" : ""}>${esc(profileOptionLabel(p))}</option>`).join("");

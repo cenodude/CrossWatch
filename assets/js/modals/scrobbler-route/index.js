@@ -156,7 +156,8 @@ function ensureDraft() {
 }
 
 function optionsForProfiles(provider, selected, kind) {
-  const list = kind === "source" ? allSourceProfiles(provider) : allSinkProfiles(provider);
+  const list = (kind === "source" ? allSourceProfiles(provider) : allSinkProfiles(provider))
+    .sort((a, b) => profileOptionLabel(a).localeCompare(profileOptionLabel(b), undefined, { sensitivity: "base", numeric: true }));
   const current = String(selected || "");
   const selectedExists = list.some((p) => p.instance === current);
   const missing = current && !selectedExists ? `<option value="${esc(current)}" selected disabled>${esc(profileLabel(provider, current, kind))} (not configured)</option>` : "";
@@ -166,7 +167,8 @@ function optionsForProfiles(provider, selected, kind) {
 
 function optionsForProviders(kind, selected, source = "") {
   const current = String(selected || "").toLowerCase();
-  const list = kind === "source" ? sourceProviders(current) : sinkProviders(current, source);
+  const list = (kind === "source" ? sourceProviders(current) : sinkProviders(current, source))
+    .sort((a, b) => label(a).localeCompare(label(b), undefined, { sensitivity: "base", numeric: true }));
   const configured = kind === "source" ? allSourceProfiles : allSinkProfiles;
   const empty = kind === "source" ? "No configured source provider" : "No configured destination provider";
   if (!list.length) return `<option value="">${empty}</option>`;
@@ -556,7 +558,8 @@ function globalRatingTargets() {
 
 function ratingsPanel(r, ratings, ratingTargets) {
   if (r.provider !== "plex") return "";
-  const ratingSinkList = ratingSinkProviders(ratingTargets, r.provider);
+  const ratingSinkList = ratingSinkProviders(ratingTargets, r.provider)
+    .sort((a, b) => label(a).localeCompare(label(b), undefined, { sensitivity: "base", numeric: true }));
   const isOff = ratings.mode !== "custom";
   const globalTargets = globalRatingTargets();
   const globalWarn = globalTargets.length

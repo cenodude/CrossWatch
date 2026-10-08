@@ -115,7 +115,7 @@ const ImportExport = {
     $("#ie-page-size").value = "50";
     function refreshSelects() {
       $$("select").forEach(input => {
-        const wrap = window.CW?.IconSelect?.enhance(input, {className:"ie-select",menuClassName:"ie-select-menu"});
+        const wrap = window.CW?.IconSelect?.enhance(input, {className:"ie-select",menuClassName:"ie-select-menu",sortAlphabetically:["ie-source","ie-target","ie-provider","ie-instance"].includes(input.id),sortFirstValues:["all"]});
         const label = input.closest("label").querySelector("span");
         label.id = `${input.id}-label`;
         wrap?.querySelector("button")?.setAttribute("aria-labelledby", label.id);
