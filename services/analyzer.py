@@ -34,6 +34,9 @@ from cw_platform.anime_mapping.history_coords import (
     native_anime_absolute,
 )
 from cw_platform.anime_mapping.storage import index_ready as anime_index_ready
+from cw_platform.anime_mapping.service import (
+    ANIME_ONLY_TARGET_KEYS, AnimeMappingService, anime_only_adds, mapping_enabled_for_pair,
+)
 from cw_platform.config_base import CONFIG as CONFIG_DIR, load_config
 from cw_platform.orchestrator._history_rewatches import history_event_matches, history_timestamp_tolerance_seconds
 from cw_platform.orchestrator._unresolved import is_remove_retry
@@ -2058,15 +2061,6 @@ _TYPE_TOKEN_MAP: dict[str, str] = {
     "animes": "anime",
 }
 
-_PROVIDER_ALLOWED_TYPES: dict[str, set[str]] = {
-    "ANILIST": {"anime"},
-}
-
-def _provider_allowed_types(prov: str, feat: str) -> set[str] | None:
-    _ = feat
-    base, _ = _split_prov_token(prov)
-    return _PROVIDER_ALLOWED_TYPES.get(base)
-
 def _item_type(it: dict[str, Any]) -> str:
     t = str((it or {}).get("type") or "").strip().lower()
     return _TYPE_TOKEN_MAP.get(t, t)
@@ -2156,14 +2150,6 @@ def _pair_type_filters(cfg: dict[str, Any]) -> dict[tuple[str, str, str], set[st
                     merge_dir(src_tok, dst_tok, feat, norm_types(raw_types))
                     if mode in two_way:
                         merge_dir(dst_tok, src_tok, feat, norm_types(raw_types))
-
-            prov_types = _provider_allowed_types(dst_tok, feat)
-            if prov_types:
-                merge_dir(src_tok, dst_tok, feat, prov_types)
-            if mode in two_way:
-                prov_types_rev = _provider_allowed_types(src_tok, feat)
-                if prov_types_rev:
-                    merge_dir(dst_tok, src_tok, feat, prov_types_rev)
 
     return out
 
@@ -2654,6 +2640,36 @@ class _AnalysisContext:
     history_matches: dict[tuple[str, str], dict[str, str]] = field(default_factory=dict)
     history_identity_items: dict[str, dict[str, list[tuple[str, Mapping[str, Any]]]]] = field(default_factory=dict)
     anime_coords: _AnimeHistoryCoords | None = None
+    anime_eligibility: dict[tuple[str, str, str], dict[int, bool]] = field(default_factory=dict)
+
+    def passes_anime_filter(self, src: str, feat: str, dst: str, item: dict[str, Any]) -> bool:
+        target = _provider_base(dst).lower()
+        if target not in ANIME_ONLY_TARGET_KEYS:
+            return True
+
+        def eligibility(rows: list[dict[str, Any]]) -> dict[int, bool]:
+            prepared = rows
+            if mapping_enabled_for_pair(self.cfg, _provider_base(src), target):
+                svc = AnimeMappingService(self.cfg)
+                if svc.ready():
+                    prepared = []
+                    for row in rows:
+                        try:
+                            prepared.append(svc.enrich_item(row))
+                        except Exception:
+                            prepared.append(row)
+            kept, _ = anime_only_adds(prepared, self.cfg, {}, feat, target=target)
+            accepted = {id(row) for row in kept}
+            return {id(row): id(candidate) in accepted for row, candidate in zip(rows, prepared)}
+
+        route = (_norm_prov_token(src), str(feat).lower(), _norm_prov_token(dst))
+        if route not in self.anime_eligibility:
+            rows = [row for row in (_bucket(self.state, src, feat) or {}).values() if isinstance(row, dict)]
+            self.anime_eligibility[route] = eligibility(rows)
+        cached = self.anime_eligibility[route].get(id(item))
+        if cached is not None:
+            return cached
+        return eligibility([item])[id(item)]
 
     def anime_history_match(self, src_tok: str, dst_tok: str, item: Mapping[str, Any], *, require_minute: bool = False) -> bool:
         coords = self.anime_coords
@@ -2693,6 +2709,7 @@ def _history_peer_matches(ctx: _AnalysisContext, src: str, dst: str) -> dict[str
             if source and (
                 not _passes_pair_lib_filter(ctx.pair_libs, src, "history", dst, item)
                 or not _passes_pair_type_filter(ctx.pair_types, src, "history", dst, item)
+                or not ctx.passes_anime_filter(src, "history", dst, item)
             ):
                 continue
             alias = _alias_peer_key(ctx, src, dst, key, item) if source else None
@@ -2729,6 +2746,8 @@ def _target_peer_match(
     if not _passes_pair_lib_filter(ctx.pair_libs, prov_key, feat_key, dst_key, item):
         return "filtered"
     if not _passes_pair_type_filter(ctx.pair_types, prov_key, feat_key, dst_key, item):
+        return "filtered"
+    if not ctx.passes_anime_filter(prov_key, feat_key, dst_key, item):
         return "filtered"
 
     vv = dict(item)
@@ -2809,6 +2828,7 @@ def _eligible_targets(ctx: _AnalysisContext, prov: str, feat: str, item: dict[st
         if _bucket(ctx.state, dst, feat_key) is not None
         and _passes_pair_lib_filter(ctx.pair_libs, prov_key, feat_key, dst, item)
         and _passes_pair_type_filter(ctx.pair_types, prov_key, feat_key, dst, item)
+        and ctx.passes_anime_filter(prov_key, feat_key, dst, item)
     ]
 
 
@@ -2886,6 +2906,8 @@ def _pair_stats(
                     continue
                 if not _passes_pair_lib_filter(analysis.pair_libs, prov, feat, dst, v) or not _passes_pair_type_filter(analysis.pair_types, prov, feat, dst, v):
                     continue
+                if not analysis.passes_anime_filter(prov, feat, dst, v):
+                    continue
 
                 total += 1
                 match = _target_peer_match(analysis, prov, feat, k, v, dst)
@@ -2939,6 +2961,7 @@ def _pair_exclusions(
         for dst in targets:
             excluded_types: dict[str, int] = {}
             excluded_libs: dict[str, int] = {}
+            excluded_anime = 0
 
             scanned_total = 0
             accepted_total = 0
@@ -2960,8 +2983,12 @@ def _pair_exclusions(
                     excluded_libs[lid] = excluded_libs.get(lid, 0) + 1
                     continue
 
+                if not analysis.passes_anime_filter(prov, feat, dst, v):
+                    excluded_anime += 1
+                    continue
+
                 accepted_total += 1
-            total = sum(excluded_types.values()) + sum(excluded_libs.values())
+            total = sum(excluded_types.values()) + sum(excluded_libs.values()) + excluded_anime
             if not total:
                 continue
 
@@ -2977,6 +3004,8 @@ def _pair_exclusions(
                 rec["excluded_types"] = excluded_types
             if excluded_libs:
                 rec["excluded_libraries"] = excluded_libs
+            if excluded_anime:
+                rec["excluded_anime_only"] = excluded_anime
 
             allowed_types = analysis.pair_types.get((prov, feat, dst))
             allowed_libs = analysis.pair_libs.get((prov, feat, dst))

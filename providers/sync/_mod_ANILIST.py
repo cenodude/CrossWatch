@@ -298,7 +298,7 @@ def supported_features() -> dict[str, bool]:
 _HISTORY_CAPS: dict[str, Any] = {
     "types": {"movies": True, "shows": False, "seasons": False, "episodes": True},
     "upsert": False,
-    "remove": False,
+    "remove": True,
     "observed_deletes": False,
     "rewatches": {"read": False, "write": False},
 }
@@ -526,6 +526,12 @@ class ANILISTModule:
         if not mod:
             _info("write_skipped", op="remove", feature=feature, reason="disabled_or_missing")
             return {"ok": True, "count": 0, "unresolved": []}
+        detailed = getattr(mod, "remove_detailed", None)
+        if callable(detailed):
+            result = detailed(self, lst)
+            if not isinstance(result, dict):
+                raise TypeError("AniList detailed removal returned an invalid result")
+            return result
         count, unresolved = mod.remove(self, lst)
         confirmed_keys = _confirmed_keys(self.key_of, lst, unresolved)
         return {"ok": True, "count": int(count), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
@@ -599,6 +605,9 @@ class _ANILISTOPS:
 
     def health(self, cfg: Mapping[str, Any]) -> Mapping[str, Any]:
         return self._adapter(cfg).health()
+
+    def order_remove_items(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str) -> list[Mapping[str, Any]]:
+        return feat_history.order_removals(cfg, items) if feature == "history" and feat_history is not None else list(items)
 
 
 OPS = _ANILISTOPS()

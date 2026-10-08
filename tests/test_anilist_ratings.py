@@ -240,10 +240,10 @@ def test_anime_only_plan_keeps_only_items_with_an_anilist_identity(monkeypatch: 
     (True, {}),
     (False, {"use_anime_mapping": True, "anime_only_sync": True}),
 ])
-def test_anime_only_plan_filter_is_off_without_the_option_or_the_mapping_data(monkeypatch: Any, ready: bool, options: dict[str, Any]) -> None:
+def test_anime_only_plan_filter_stays_on_without_the_option_or_the_mapping_data(monkeypatch: Any, ready: bool, options: dict[str, Any]) -> None:
     from cw_platform.anime_mapping import service
 
     monkeypatch.setattr(service.AnimeMappingService, "ready", lambda self: ready)
     kept, skipped = service.anime_only_adds(_anime_only_rows(), {}, options)
 
-    assert len(kept) == 3 and skipped == 0
+    assert kept == _anime_only_rows()[:2] and skipped == 1

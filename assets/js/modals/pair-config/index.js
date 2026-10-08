@@ -8,7 +8,7 @@ import { createLibraryController } from "./libraries.js";
 import { providerLogoHTML, providerToneRgb, sharedFeatureOrder, sharedFeatureLabel } from "./meta.js";
 import { ensurePairConfigStyles } from "./styles.js";
 import { createTabsController } from "./tabs.js";
-import { collectionDisabledForPair, collectionTypesForPair, commonFeaturesForPair, featureAllowedForPair, hasCumulativeAnimeHistory, historyRemoveLockedForPair, ratingsDisabledForPair, sanitizeFeaturesForPair, sourceWatchStatusAllowed } from "./custom-rules.js";
+import { collectionDisabledForPair, collectionTypesForPair, commonFeaturesForPair, featureAllowedForPair, hasCumulativeAnimeHistory, ratingsDisabledForPair, sanitizeFeaturesForPair, sourceWatchStatusAllowed } from "./custom-rules.js";
 
 const TWO_WAY_WARNING =
   "Two-way sync means both sides can write to each other. It keeps both providers aligned, but it also heavily increases the risk of conflicts, duplicates, overwrites, and deletions. Use with extreme caution.";
@@ -1848,7 +1848,6 @@ function renderFeaturePanel(state){
           </label>
         </div>`
       : "";
-    const hsRemoveLocked = historyRemoveLockedForPair(state);
     const hsCumulative = hasCumulativeAnimeHistory(state);
     const hsSourceStatus = sourceWatchStatusAllowed(state);
     const animeOpts = normalizeAnimeHistoryOptions(state);
@@ -1897,16 +1896,16 @@ left.innerHTML = `
             <span class="slider"></span>
           </label>
         </div>
-        <div class="opt-row ${hsRemoveLocked ? "muted" : ""}" ${hsRemoveLocked ? 'title="This provider keeps one episode counter per title, so history can only be added."' : ""}>
+        <div class="opt-row">
           <label for="cx-hs-remove">Remove</label>
           <label class="switch">
-            <input id="cx-hs-remove" type="checkbox" ${hs.remove && !hsRemoveLocked ? "checked" : ""} ${hsRemoveLocked ? 'disabled data-locked="1"' : ""}>
+            <input id="cx-hs-remove" type="checkbox" ${hs.remove ? "checked" : ""}>
             <span class="slider"></span>
           </label>
         </div>
       </div>
       ${hsCumulative && !globalAnimeMappingEnabled(state) ? `<div class="muted"><b>Enable global Anime ID Mapping for episode history.</b></div>` : ""}
-      ${hasAniList(state) ? `<div class="muted">AniList history is one-way and anime only. It needs global Anime ID Mapping, sets the episode progress per title and never removes. Specials are skipped.</div>` : hsCumulative ? `<div class="muted">Kitsu history uses watched status and the episode count per title. Remove reduces progress only for the latest watched episodes, or resets a movie to unwatched; ratings and notes are preserved. Gaps are reported unresolved. Specials and rewatches are skipped.</div>` : ""}
+      ${hsCumulative ? `<div class="muted">${hasAniList(state) ? "AniList" : "Kitsu"} history supports both directions and is anime only. It uses watched status and episode progress per title. Remove reduces progress only for the latest watched episodes, or resets a movie to unwatched; ratings and notes are preserved. Gaps are reported unresolved. Specials and rewatches are skipped.</div>` : ""}
       <div class="muted">${rwSupported ? "Synchronize plays between providers. Rewatches require event-capable providers; SIMKL requires Pro/VIP. Remove is not recommended." : "Synchronize plays between providers. Rewatches are available only when both sides support event history; SIMKL requires Pro/VIP."}</div>
     `;
 

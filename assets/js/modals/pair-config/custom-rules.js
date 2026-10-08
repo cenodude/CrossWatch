@@ -47,14 +47,6 @@ export function stremioRatingsAllowed(state) {
   return same(state?.dst, "stremio") && !same(state?.src, "stremio") && !isTwoWay(state);
 }
 
-export function anilistHistoryAllowed(state) {
-  return same(state?.dst, "anilist") && !same(state?.src, "anilist") && !isTwoWay(state);
-}
-
-export function historyRemoveLockedForPair(state) {
-  return [state?.src, state?.dst].some(provider => same(provider, "anilist"));
-}
-
 export function hasCumulativeAnimeHistory(state) {
   return [state?.src, state?.dst].some(provider => same(provider, "anilist") || same(provider, "kitsu"));
 }
@@ -65,9 +57,6 @@ export function sourceWatchStatusAllowed(state) {
 
 export function featureAllowedForPair(state, feature) {
   const key = String(feature || "").trim().toLowerCase();
-  if (key === "history" && (same(state?.src, "anilist") || same(state?.dst, "anilist"))) {
-    return anilistHistoryAllowed(state);
-  }
   if (key === "ratings" && (same(state?.src, "stremio") || same(state?.dst, "stremio"))) {
     return stremioRatingsAllowed(state);
   }
@@ -99,7 +88,6 @@ export function sanitizeFeaturesForPair(state, features) {
     if (!featureAllowedForPair(state, "history")) Object.assign(out.history, { enable: false, add: false, remove: false, rewatches: false });
     else {
       out.history.rewatches = false;
-      if (historyRemoveLockedForPair(state)) out.history.remove = false;
     }
   }
   if (out.collection && typeof out.collection === "object") {

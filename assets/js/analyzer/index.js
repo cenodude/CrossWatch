@@ -269,7 +269,7 @@ const Analyzer = {
       $("#an-clear").hidden = !($("#an-search").value || $("#an-feature").value || $("#an-severity").value);
       const excluded = exclusions.reduce((sum, row) => sum + Number(row.excluded_total || 0), 0);
       $("#an-scope-notes").hidden = !excluded;
-      $("#an-scope-notes").innerHTML = `<summary>${excluded.toLocaleString()} items excluded by the pair?s sync rules</summary>${exclusions.map(row => `<p>${esc(providerName(row.source))} ? ${esc(providerName(row.target))} ? ${esc(human(row.feature))}: ${Number(row.excluded_total || 0).toLocaleString()} excluded${row.excluded_types ? ` ? Types: ${esc(Object.keys(row.excluded_types).join(", "))}` : ""}${row.excluded_libraries ? ` ? Libraries: ${esc(Object.keys(row.excluded_libraries).join(", "))}` : ""}</p>`).join("")}`;
+      $("#an-scope-notes").innerHTML = `<summary>${excluded.toLocaleString()} items excluded by the pair?s sync rules</summary>${exclusions.map(row => `<p>${esc(providerName(row.source))} ? ${esc(providerName(row.target))} ? ${esc(human(row.feature))}: ${Number(row.excluded_total || 0).toLocaleString()} excluded${row.excluded_types ? ` ? Types: ${esc(Object.keys(row.excluded_types).join(", "))}` : ""}${row.excluded_libraries ? ` ? Libraries: ${esc(Object.keys(row.excluded_libraries).join(", "))}` : ""}${row.excluded_anime_only ? ` · Anime-only sync: ${Number(row.excluded_anime_only).toLocaleString()}` : ""}</p>`).join("")}`;
       renderStatus();
     }
     function emptyState(title, message, symbol = "search_off") {
