@@ -174,6 +174,29 @@ class ReviewStore:
             items.append(row)
         return dict(items=items, total=total, selectable=selectable, selected=selected, offset=offset, limit=limit)
 
+    def snapshot(self):
+        snapshot = ReviewStore()
+        try:
+            with self.lock:
+                self.db.commit()
+                self.db.backup(snapshot.db)
+            return snapshot
+        except BaseException:
+            snapshot.close()
+            raise
+
+    def export_rows(self, *, scope="all", feature="", result="", q=""):
+        where, args = self.where(feature, result, q) if scope == "filtered" else ("1=1", [])
+        with self.lock:
+            cursor = self.db.execute(f"SELECT payload,kind,selected FROM review WHERE {where} ORDER BY seq", args)
+            while batch := cursor.fetchmany(256):
+                for payload, kind, chosen in batch:
+                    row = json.loads(payload)
+                    row["selected"] = bool(chosen)
+                    if kind == "conflict":
+                        row.update(result="conflict", item=row["left"], selectable=False)
+                    yield row
+
     def select(self, selected, *, ids=None, feature="", result="", q=""):
         where, args = self.where(feature, result, q)
         with self.lock:

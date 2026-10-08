@@ -9,7 +9,9 @@ import time
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from starlette.background import BackgroundTask
 
 from cw_platform.access_policy import request_user, user_can_access_pair, pair_profile_id, profile_allows_pair, profile_instances_map
 from cw_platform.provider_instances import normalize_user_profile_id
@@ -215,6 +217,30 @@ def rows(sid: str, request: Request, revision: int = Query(ge=0), offset: int = 
         return dict(ok=True, revision=session.revision, selection_version=session.selection_version,
                     counts=dict(session.store.counts), **session.store.page(offset=offset, limit=limit, feature=feature, result=result, q=q,
                                                                           selected_only=selected_only, editable_only=editable_only))
+
+
+@router.get("/{sid}/export")
+def export_review(sid: str, request: Request, revision: int = Query(ge=0),
+                  selection_version: int = Query(ge=0), format: Literal["csv", "json"] = "csv",
+                  scope: Literal["all", "filtered"] = "all", feature: str = Query(default="", max_length=32),
+                  result: str = Query(default="", max_length=32), q: str = Query(default="", max_length=256)):
+    from services.interactive_sync_export import build_export, capture_export, export_chunks
+
+    with svc.LOCK:
+        session = get_session(sid, request, load_config())
+        check_revision(session, revision)
+        check_selection(session, selection_version)
+        if session.status != "review" or session.store is None:
+            raise HTTPException(409, "Build a complete plan before downloading")
+        filename = f"crosswatch-review-{session.id}-r{session.revision}-{scope}.{format}"
+        snapshot = capture_export(session, scope=scope, feature=feature, result=result, q=q)
+    try:
+        output = build_export(snapshot, format=format)
+    finally:
+        snapshot.store.close()
+    return StreamingResponse(export_chunks(output), media_type="text/csv" if format == "csv" else "application/json",
+                             headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"},
+                             background=BackgroundTask(output.close))
 
 
 @router.post("/{sid}/selection")
