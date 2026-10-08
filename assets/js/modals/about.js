@@ -217,7 +217,7 @@ function view(info, mods, logo) {
                   <a class="coffee-link" href="${SUPPORT_URL}" target="_blank" rel="noopener noreferrer"><span class="material-symbols-rounded" aria-hidden="true">local_cafe</span>Buy me a coffee ${externalIcon}</a>
                 </div>
                 <div class="lede-copy">
-                  <div class="lede"><strong>CrossWatch (CW)</strong> is a synchronization engine that acts as a bridge and keeps your <strong>Plex, Jellyfin, Emby, SIMKL, Floppy, FlickList, Trakt, AniList, TMDb, MDBList, PublicMetaDB, PunchPlay, BingeBase, Scrob, Tautulli, Tracearr, Kodi, Nuvio, Stremio and CW local tracker</strong> in sync.</div>
+                  <div class="lede"><strong>CrossWatch (CW)</strong> is a synchronization engine that acts as a bridge to keep your <strong>AniList, BingeBase, CW local tracker, Emby, FlickList, Floppy, Jellyfin, Kitsu, Kodi, MDBList, Nuvio, Plex, PublicMetaDB, PunchPlay, Scrob, SIMKL, Stremio, Tautulli, TMDb, Tracearr, Trakt and WeTrakr</strong> in sync.</div>
                   <div class="lede"><strong>Please note:</strong> this software is still beta/experimental and may behave unpredictably. Make sure you have solid, tested backups before using it.</div>
                 </div>
               </section>
