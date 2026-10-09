@@ -746,6 +746,15 @@ async function saveSettings() {
       }
     }
 
+    const mediaCardEl = _cwEl("ui_media_card");
+    if (mediaCardEl) {
+      const next = mediaCardEl.value === "compact" ? "compact" : "full";
+      if (next !== (prevUi.media_card || "full")) {
+        ensureObj(cfg, "ui").media_card = next;
+        mark();
+      }
+    }
+
     const protoEl = _cwEl("ui_protocol");
     if (protoEl) {
       const nextProto = _cwNorm(protoEl.value).toLowerCase() === "https" ? "https" : "http";

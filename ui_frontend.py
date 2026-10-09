@@ -1695,7 +1695,7 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
                             <option value="full">Full media card</option>
                             <option value="compact">Compact media card</option>
                           </select>
-                          <div class="sub">Applies to Main and profile media details. Saved in this browser.</div>
+                          <div class="sub">Applies to Main and profile media details. Save to apply.</div>
                         </div>
                         <div>
                           <div class="cw-field-label-row">
@@ -2194,6 +2194,17 @@ __CW_ASSET_BLOCK__
 
 """
 
+def _seed_media_card_style(html: str, user: dict | None = None) -> str:
+    from cw_platform.config_base import load_config
+
+    cfg = load_config() or {}
+    value = (cfg.get("ui") or {}).get("media_card", "full")
+    if isinstance(user, dict) and user.get("is_admin") is False:
+        value = (user.get("preferences") or {}).get("media_card", value)
+    style = "compact" if value == "compact" else "full"
+    return html.replace('<html lang="en"', f'<html lang="en" data-cw-media-card="{style}"', 1)
+
+
 def get_index_html(include_admin: bool = True, user: dict | None = None) -> str:
     html = _get_index_html_static().replace("__CW_ASSET_BLOCK__", _asset_block(include_admin=include_admin, user=user))
     if not include_admin:
@@ -2213,7 +2224,7 @@ def get_index_html(include_admin: bool = True, user: dict | None = None) -> str:
     else:
         html = _seed_nav_profile_avatar(html, user)
     return (
-        html
+        _seed_media_card_style(html, user)
         .replace("__CW_CURRENT_VERSION__", CURRENT_VERSION)
         .replace("__CW_VERSION__", _asset_version_token())
     )
@@ -2245,7 +2256,7 @@ def get_profile_html(user: dict | None = None) -> str:
     settings_interface = f"""        <section id="settings-interface" class="cw-set-card" data-settings-section="interface">
           <header class="cw-set-head"><div><h2>Display</h2><p>Choose how your profile pages look.</p></div></header>
 {settings_interface_controls}          <div class="cw-set-row">
-            <label class="cw-set-copy" for="profile-media-card"><strong>Media details</strong><small>Choose the full modal or compact card on Main and your profile. Saved in this browser.</small></label>
+            <label class="cw-set-copy" for="profile-media-card"><strong>Media details</strong><small>Choose the full or compact card on Main and your profile.</small></label>
             <span class="cw-set-inline"><select id="profile-media-card" class="cw-set-input" data-cw-media-card><option value="full">Full media card</option><option value="compact">Compact media card</option></select></span>
           </div>
           <div class="cw-set-row">
@@ -2839,7 +2850,7 @@ def get_profile_html(user: dict | None = None) -> str:
 </body>
 </html>"""
     return (
-        html
+        _seed_media_card_style(html, user)
         .replace("__CW_CURRENT_VERSION__", CURRENT_VERSION)
         .replace("__CW_VERSION__", _asset_version_token())
     )
