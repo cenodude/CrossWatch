@@ -708,6 +708,7 @@ async function saveSettings() {
       recent_syncs_display: normalizeUiDisplay(serverCfg?.ui?.recent_syncs_display, Number(serverCfg?.ui?.recent_syncs_limit)),
       show_quick_add_desktop: typeof serverCfg?.ui?.show_quick_add_desktop === "boolean" ? !!serverCfg.ui.show_quick_add_desktop : true,
       show_quick_add_mobile: typeof serverCfg?.ui?.show_quick_add_mobile === "boolean" ? !!serverCfg.ui.show_quick_add_mobile : true,
+      media_card: serverCfg?.ui?.media_card === "compact" ? "compact" : "full",
       theme: (() => {
         const theme = _cwNorm(serverCfg?.ui?.theme).toLowerCase();
         return theme === "flat-light" || theme === "original" ? theme : "flat-dark";
@@ -749,7 +750,7 @@ async function saveSettings() {
     const mediaCardEl = _cwEl("ui_media_card");
     if (mediaCardEl) {
       const next = mediaCardEl.value === "compact" ? "compact" : "full";
-      if (next !== (prevUi.media_card || "full")) {
+      if (next !== prevUi.media_card) {
         ensureObj(cfg, "ui").media_card = next;
         mark();
       }

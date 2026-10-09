@@ -139,7 +139,7 @@
 
   function setMediaCardStyle(value) {
     compactMediaCard = value === "compact";
-    document.querySelectorAll("[data-cw-media-card]").forEach((control) => {
+    document.querySelectorAll("select[data-cw-media-card]").forEach((control) => {
       control.value = compactMediaCard ? "compact" : "full";
       window.CW?.IconSelect?.enhance?.(control, { className: "cw-plain-select" });
     });

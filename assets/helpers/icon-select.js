@@ -269,7 +269,7 @@
   }
 
   function enhance(select, cfg = {}) {
-    if (!select) return select;
+    if (!select || select.tagName !== "SELECT") return select;
     bindAway();
     select.__cwIconSelectCfg = cfg;
 
