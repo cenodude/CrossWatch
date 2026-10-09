@@ -97,3 +97,36 @@ test("profile page provider filters sort by label and keep All providers first",
   h.select.options.push({ value: "", textContent: "All providers" });
   assert.deepEqual(h.render(h.context.cfg), ["", "CrossWatch Default", "MDBList Default", "SIMKL Default", "Trakt Default"]);
 });
+
+
+test("dropdown enhancement ignores the document root and other non-select elements", () => {
+  const h = harness();
+  for (const tagName of ["HTML", "BODY", "DIV", "INPUT"]) {
+    const node = { tagName, dataset: { cwMediaCard: "full" } };
+    assert.equal(h.window.CW.IconSelect.enhance(node), node);
+    assert.equal(node.__cwIconSelectCfg, undefined);
+  }
+});
+
+test("media card preference refresh only enhances dropdowns, never the page root", () => {
+  const root = { tagName: "HTML", dataset: { cwMediaCard: "full" } };
+  const controls = [{ tagName: "SELECT", value: "full" }, { tagName: "SELECT", value: "full" }];
+  const enhanced = [];
+  const window = { CW: { IconSelect: { enhance(node) { enhanced.push(node); } } } };
+  const document = {
+    documentElement: root,
+    querySelectorAll(selector) {
+      return selector === "select[data-cw-media-card]" ? controls : [root, ...controls];
+    },
+  };
+  const context = vm.createContext({ window, document, navigator: { language: "en" }, Intl });
+  vm.runInContext(read("js/profile-media-modal.js"), context);
+  for (const style of ["compact", "full", "compact"]) {
+    window.CW.ProfileMediaModal.setStyle(style);
+    assert.ok(controls.every((control) => control.value === style));
+    assert.equal(window.CW.ProfileMediaModal.canOpen({ tmdb: "123" }), style === "full");
+  }
+  assert.equal(enhanced.length, 6);
+  assert.ok(enhanced.every((node) => node.tagName === "SELECT"));
+  assert.equal(root.value, undefined);
+});
