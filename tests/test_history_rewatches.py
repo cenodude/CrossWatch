@@ -184,3 +184,26 @@ def test_rewatch_pair_requires_read_write_capabilities() -> None:
     assert history_rewatch_pair_enabled("history", {"rewatches": True}, "A", _Ops(True, False), "B", _Ops(True, True))
     assert not history_rewatch_pair_enabled("history", {"rewatches": True}, "A", _Ops(True, False), "B", _Ops(True, False))
     assert not history_rewatch_pair_enabled("history", {"rewatches": False}, "A", _Ops(True, True), "B", _Ops(True, True))
+
+
+def test_undated_watched_state_requires_explicit_opt_in():
+    from cw_platform.history_events import has_history_watch
+    from cw_platform.id_map import minimal
+
+    base = {"type": "episode", "show_ids": {"tmdb": "42"}, "season": 1, "episode": 2, "watched": True}
+    for status in (None, "watching", "completed", "on_hold", "dropped"):
+        item = {**base, "watch_status": status}
+        assert not has_history_watch(item)
+        assert filter_history_events({"tmdb:42#s01e02": item}, event_mode=False) == {}
+    marked = {**base, "_cw_watched_state": True}
+    normalized = minimal(marked)
+    assert normalized["_cw_watched_state"] is True
+    assert has_history_watch(normalized)
+    state = filter_history_events({"tmdb:42#s01e02": normalized}, event_mode=False)
+    assert len(state) == 1 and state["tmdb:42#s01e02"]["_cw_watched_state"] is True
+    assert filter_history_events(state, event_mode=True) == {}
+    for invalid in ({"watched": False}, {"type": "show"}, {"type": "season"}, {"_cw_watched_state": "true"}):
+        assert not has_history_watch({**marked, **invalid})
+    dated = {**base, "watched_at": "2026-10-09T12:00:00Z"}
+    assert has_history_watch(dated)
+    assert filter_history_events({"tmdb:42#s01e02": dated}, event_mode=True)

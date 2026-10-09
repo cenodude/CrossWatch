@@ -645,6 +645,7 @@ def test_simkl_accepts_undated_tracker_progress_without_inventing_dates(env, ena
     session.post.return_value = _response({"added": {"episodes": 1}, "not_found": {}})
     item = {**_episode(1, rewatches=False), "watched": True, "watch_status": "on_hold"}
     item.pop("watched_at")
+    item["_cw_watched_state"] = True
     count, unresolved = history.add(adapter, [item])
     assert count == 1 and not unresolved
     entry = session.post.call_args.kwargs["json"]["shows"][0]
@@ -657,6 +658,7 @@ def test_undated_history_events_still_require_a_date(env):
     adapter, session = env
     item = {**_episode(1), "watched": True, "watch_status": "on_hold"}
     item.pop("watched_at")
+    item["_cw_watched_state"] = True
     count, unresolved = history.add(adapter, [item])
     assert count == 0 and unresolved
     session.post.assert_not_called()
@@ -666,6 +668,7 @@ def test_simkl_native_anime_accepts_undated_tracker_progress(env, monkeypatch):
     adapter, session = env
     item = {**_episode(1, rewatches=False), "watched": True, "watch_status": "dropped"}
     item.pop("watched_at")
+    item["_cw_watched_state"] = True
     key = history._thaw_key(item)
     monkeypatch.setattr(history, "_anime_retry_show_ids", lambda _: {"simkl": "12345"})
     monkeypatch.setattr(history, "_anime_retry_episode_numbers_for_group", lambda *a, **kw: {key: 1})

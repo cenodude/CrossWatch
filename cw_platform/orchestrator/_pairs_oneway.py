@@ -2,6 +2,7 @@
 # One-way synchronization logic for data pairs.
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
+
 from ._pairs_utils import pair_endpoint_config, pair_feature_libraries
 from ._scope import provider_call
 from collections.abc import Mapping
@@ -215,7 +216,7 @@ def select_baseline_keys(success_keys, result) -> list:
 from ..provider_instances import normalize_instance_id
 
 from ..id_map import migrate_media_index, minimal as _minimal, canonical_key as _ck, merge_ids as _merge_ids, _norm_type, part_fragment as _part_fragment
-from ..history_events import history_sync_key, minimal_history_item
+from ..history_events import has_history_watch, history_sync_key, minimal_history_item
 from ..anime_mapping.service import (
     anime_mapping_pair_feature_options as _anime_pair_feature_options,
     anime_only_adds as _anime_only_adds,
@@ -1450,7 +1451,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
         elif feature == "history" and not history_event_mode:
             src_idx = {
                 k: dict(v) for k, v in src_idx.items()
-                if isinstance(v, Mapping) and (v.get("watched_at") or v.get("last_watched_at"))
+                if has_history_watch(v)
             }
             if _history_upsert_supported(dst_ops, feature):
                 history_update_idx = dst_canonical if dst_canonical else dst_full
@@ -1511,7 +1512,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                 if tsb is None:
                     # Skip synthetic entries (e.g. season keys with no watched_at)
                     # — they exist for dst key-matching only and have no watch event to propagate.
-                    if not (sv.get("watched_at") or sv.get("last_watched_at")):
+                    if not has_history_watch(sv):
                         continue
                     if str(sk) not in (dst_full or {}):
                         adds.append(_minimal(sv))

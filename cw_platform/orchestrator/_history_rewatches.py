@@ -3,11 +3,13 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+
 from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Mapping
 from typing import Any
 
 from ..history_events import (
+    has_history_watch,
     base_key_from_history_event,
     history_epoch_from_item,
     history_epoch_from_key,
@@ -121,7 +123,7 @@ def filter_history_events(idx: Mapping[str, Any], *, event_mode: bool) -> dict[s
     for key, value in (idx or {}).items():
         if not isinstance(value, Mapping):
             continue
-        if not (value.get("watched_at") or value.get("last_watched_at")):
+        if not has_history_watch(value) or (event_mode and not (value.get("watched_at") or value.get("last_watched_at"))):
             continue
         item = minimal_history_item(value, key, event_mode=event_mode)
         sync_key = history_sync_key(item, key, event_mode=event_mode)

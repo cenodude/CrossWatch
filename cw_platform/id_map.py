@@ -444,6 +444,7 @@ def minimal(item: Mapping[str, Any]) -> dict[str, Any]:
         "simkl_bucket",
         "anime_type",
         "watch_status",
+        "_cw_watched_state",
         "_simkl_episode_number",
         "_floppy_consumption_id",
         "consumption_id",

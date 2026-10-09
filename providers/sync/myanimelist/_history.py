@@ -28,6 +28,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
             items = episode_items(adapter.raw_cfg, str(media["id"]), watched, str(media.get("title") or ""))
         for item in items:
             item["watched"] = True
+            item["_cw_watched_state"] = True
             item["watch_status"] = attr.get("status")
             out[canonical_key(item)] = item
     return out
