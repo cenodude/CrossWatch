@@ -1,6 +1,8 @@
 # SIMKL Module for history sync
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
+
+from cw_platform.history_events import has_history_watch
 from cw_platform.interactive_reads import replaying, retaining
 
 import json
@@ -1831,16 +1833,14 @@ def replay_index(adapter: Any, items: Mapping[str, Mapping[str, Any]]) -> dict[s
     return out
 
 
-def _undated_status_history(item: Mapping[str, Any]) -> bool:
-    return bool(item.get("watched")) and not item.get("_cw_rewatch_sync") and str(item.get("watch_status") or "") in {
-        "watching", "completed", "on_hold", "dropped", "planning", "plan_to_watch",
-    }
+def _undated_watched_state(item: Mapping[str, Any]) -> bool:
+    return has_history_watch(item) and not item.get("_cw_rewatch_sync")
 
 
 def _movie_add_entry(item: Mapping[str, Any]) -> dict[str, Any] | None:
     ids = {k: v for k, v in _ids_of(item).items() if k in _MOVIE_ID_KEYS}
     watched_at = (item.get("watched_at") or item.get("watchedAt") or "").strip()
-    if not ids or (not watched_at and not _undated_status_history(item)):
+    if not ids or (not watched_at and not _undated_watched_state(item)):
         return None
     return {"ids": ids, **({"watched_at": watched_at} if watched_at else {})}
 
@@ -1918,7 +1918,7 @@ def _episode_add_entry(
     if not e_num:
         return None, "missing_episode_number"
     if not isinstance(watched_at, str) or not watched_at:
-        if not _undated_status_history(item):
+        if not _undated_watched_state(item):
             return None, "missing_watched_at"
         watched_at = ""
     if not s_num:
@@ -3155,7 +3155,7 @@ def _build_anime_retry_payload(
             if mapped_episode is None:
                 continue
             if not isinstance(watched_at, str) or not watched_at:
-                if not _undated_status_history(item):
+                if not _undated_watched_state(item):
                     continue
                 watched_at = ""
             group = groups.setdefault(group_key, {"ids": dict(ids), "episodes": []})
@@ -3393,7 +3393,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             part_ids = _ids_of(item)
             part_ids = {"simkl": part_ids["simkl"]} if part_ids.get("simkl") else part_ids
             watched_at = str(item.get("watched_at") or item.get("watchedAt") or "").strip()
-            if not part_ids or (not watched_at and not _undated_status_history(item)):
+            if not part_ids or (not watched_at and not _undated_watched_state(item)):
                 unresolved.append({"item": id_minimal(item), "hint": "missing_ids_or_watched_at"})
                 continue
             ids_key = "part:" + json.dumps(part_ids, sort_keys=True)

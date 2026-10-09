@@ -388,14 +388,17 @@ def test_insights_include_myanimelist_profiles_and_native_anime_ids(config_base,
 
 
 
+@pytest.mark.parametrize("preexisting", [False, True])
 @pytest.mark.parametrize("interactive", [False, True])
 @pytest.mark.parametrize("enabled", [False, True])
 @pytest.mark.parametrize("status", ["dropped", "on_hold"])
-def test_simkl_source_status_reaches_myanimelist_through_orchestrator(adapter, mapping, monkeypatch, enabled, status, interactive):
+def test_simkl_source_status_reaches_myanimelist_through_orchestrator(adapter, mapping, monkeypatch, enabled, status, interactive, preexisting):
     from cw_platform.orchestrator.facade import Orchestrator
     from tests.test_anilist_history_orchestrator import FakeSource
 
     library = adapter.client
+    if preexisting:
+        library.rows["1"].update(num_episodes_watched=3, status=status if enabled else "watching")
     watched = {**episode(15), "season": 3, "show_ids": {"tvdb": "10"}, "watched": True, "watched_at": "2026-10-07T12:00:00Z"}
     source = FakeSource({canonical_key(watched): watched})
     from providers.sync.simkl import _history as simkl_history
@@ -419,14 +422,18 @@ def test_simkl_source_status_reaches_myanimelist_through_orchestrator(adapter, m
         from cw_platform.orchestrator._interactive import InteractivePlan
         plan = InteractivePlan()
         Orchestrator(cfg, interactive=plan).run(dry_run=True, write_state_json=False)
-        assert plan.rows and not any(call[0] == "PATCH" for call in library.calls)
+        assert bool(plan.rows) is (not preexisting)
+        assert not any(call[0] == "PATCH" for call in library.calls)
         Orchestrator(cfg, interactive=InteractivePlan(preview=False, selected=set(plan.rows))).run()
     else:
-        Orchestrator(cfg).run()
+        result = Orchestrator(cfg).run()
+        if preexisting:
+            assert result["added"] == 0
     assert library.rows["1"]["num_episodes_watched"] == 3
     assert library.rows["1"]["status"] == (status if enabled else "watching")
     writes = len([call for call in library.calls if call[0] == "PATCH"])
-    Orchestrator(cfg).run()
+    repeated = Orchestrator(cfg).run()
+    assert repeated["added"] == 0
     assert len([call for call in library.calls if call[0] == "PATCH"]) == writes
     assert not source.add_calls
 
@@ -492,3 +499,42 @@ def test_anime_tracker_history_transfers_source_status(adapter, mapping, monkeyp
         count, unresolved = simkl_history.add(dest, items)
         assert count == 3 and not unresolved
         assert session.post.call_args.kwargs["json"]["shows"][0].get("status") == ("hold" if enabled else None)
+
+
+@pytest.mark.parametrize("mode", ["one-way", "two-way"])
+def test_undated_mal_history_can_be_used_as_source(adapter, mapping, monkeypatch, mode):
+    from cw_platform.orchestrator.facade import Orchestrator
+    from tests.test_anilist_history_orchestrator import FakeSource
+
+    adapter.client.rows["1"].update(num_episodes_watched=3)
+    target = FakeSource({})
+    monkeypatch.setattr(target, "name", lambda: "SIMKL")
+    monkeypatch.setattr(module, "MyAnimeListClient", lambda *a: adapter.client)
+    monkeypatch.setattr(module.OPS, "health", lambda cfg: {"ok": True, "status": "ok", "features": module.supported_features(), "api": {}})
+    monkeypatch.setattr("cw_platform.orchestrator.facade.load_sync_providers", lambda: {"SIMKL": target, "MYANIMELIST": module.OPS})
+    monkeypatch.setattr("cw_platform.orchestrator._snapshots.provider_configured", lambda *a: True)
+    cfg = {**mapping, "runtime": {"snapshot_ttl_sec": 0, "apply_chunk_pause_ms": 0},
+           "sync": {"dry_run": False, "enable_add": True, "enable_remove": False},
+           "pairs": [{"id": "undated-source", "enabled": True, "source": "MYANIMELIST", "target": "SIMKL", "mode": mode,
+                      "feature": "history", "features": {"history": {"enable": True, "add": True, "remove": False}}}]}
+    Orchestrator(cfg).run()
+    sent = [item for batch in target.add_calls for item in batch]
+    assert len(sent) == 3
+    assert {item["episode"] for item in sent} == {13, 14, 15}
+    assert all(item["watched"] is True and not item.get("watched_at") for item in sent)
+
+
+def test_history_filters_keep_explicit_undated_watches_but_not_synthetic_rows():
+    from cw_platform.orchestrator._history_rewatches import filter_history_events
+    from cw_platform.orchestrator._snapshots import _eventish_count
+
+    rows = {
+        "tmdb:1": {"type": "movie", "ids": {"tmdb": "1"}, "watched": True, "_cw_watched_state": True},
+        "tvdb:10#s01e01": {"type": "episode", "show_ids": {"tvdb": "10"}, "season": 1, "episode": 1, "watched": True, "_cw_watched_state": True},
+        "tmdb:2": {"type": "movie", "ids": {"tmdb": "2"}},
+        "tmdb:3": {"type": "movie", "ids": {"tmdb": "3"}, "watched": False},
+        "tvdb:20": {"type": "show", "ids": {"tvdb": "20"}, "watched": True, "_cw_watched_state": True},
+    }
+    assert set(filter_history_events(rows, event_mode=False)) == {"tmdb:1", "tvdb:10#s01e01"}
+    assert filter_history_events(rows, event_mode=True) == {}
+    assert _eventish_count("history", rows) == 2

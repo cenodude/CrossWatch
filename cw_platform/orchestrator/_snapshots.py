@@ -2,6 +2,7 @@
 # snapshot management for orchestrator.
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
+
 from ._scope import provider_call
 from ..interactive_reads import read_once, replaying
 
@@ -17,7 +18,7 @@ import time
 import datetime as _dt
 
 from ..id_map import canonical_key, KEY_PRIORITY, _norm_type
-from ..history_events import history_event_key, is_history_event_key
+from ..history_events import has_history_watch, history_event_key, is_history_event_key
 from ..provider_instances import normalize_instance_id
 from ..run_control import raise_if_cancelled
 from ._types import InventoryOps
@@ -444,7 +445,7 @@ def _eventish_count(feature: str, idx: Mapping[str, Any]) -> int:
         return sum(
             1
             for v in idx.values()
-            if isinstance(v, Mapping) and (v.get("watched_at") or v.get("last_watched_at"))
+            if has_history_watch(v)
         )
     if feature == "ratings":
         return sum(

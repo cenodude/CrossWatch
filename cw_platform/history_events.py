@@ -66,6 +66,16 @@ EVENT_META_FIELDS = (
 )
 
 
+def has_history_watch(item: Any) -> bool:
+    if not isinstance(item, Mapping):
+        return False
+    return bool(item.get("watched_at") or item.get("last_watched_at")) or (
+        item.get("watched") is True
+        and item.get("type") in {"movie", "episode"}
+        and item.get("_cw_watched_state") is True
+    )
+
+
 def is_history_event_key(key: Any) -> bool:
     return split_history_event_key(key) is not None
 

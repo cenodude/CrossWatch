@@ -32,6 +32,8 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
             item["watch_status"] = {"current": "watching", "planned": "planning"}.get(attr.get("status"), attr.get("status"))
             if stamp:
                 item["watched_at"] = stamp
+            else:
+                item["_cw_watched_state"] = True
             out[canonical_key(item)] = item
     return out
 

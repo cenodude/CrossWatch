@@ -2,6 +2,7 @@
 # Two-way synchronization logic for data pairs.
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
+
 from ._pairs_utils import pair_endpoint_config, pair_feature_libraries
 from collections.abc import Mapping
 from typing import Any
@@ -86,7 +87,7 @@ except Exception:
         return idx
 
 from ..id_map import migrate_media_index, minimal as _minimal, canonical_key as _ck, merge_ids as _merge_ids, _norm_type, part_fragment as _part_fragment
-from ..history_events import history_sync_key, minimal_history_item
+from ..history_events import has_history_watch, history_sync_key, minimal_history_item
 from ..anime_mapping.service import (
     anime_mapping_pair_feature_options as _anime_pair_feature_options,
     anime_only_adds as _anime_only_adds,
@@ -1595,11 +1596,11 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         elif feature == "history":
             A_eff = {
                 k: v for k, v in A_eff.items()
-                if isinstance(v, Mapping) and (v.get("watched_at") or v.get("last_watched_at"))
+                if has_history_watch(v)
             }
             B_eff = {
                 k: v for k, v in B_eff.items()
-                if isinstance(v, Mapping) and (v.get("watched_at") or v.get("last_watched_at"))
+                if has_history_watch(v)
             }
             A_alias = _alias_index(A_eff)
             B_alias = _alias_index(B_eff)
@@ -1673,7 +1674,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                         continue
                 else:
                     # Skip synthetic entries (no watched_at) key-matching helpers only.
-                    if not (v.get("watched_at") or v.get("last_watched_at")):
+                    if not has_history_watch(v):
                         continue
                     if _present(B_eff, B_alias, v):
                         continue
@@ -1694,7 +1695,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                         continue
                 else:
                     # Skip synthetic entries (no watched_at) key-matching helpers only.
-                    if not (v.get("watched_at") or v.get("last_watched_at")):
+                    if not has_history_watch(v):
                         continue
                     if _present(A_eff, A_alias, v):
                         continue
