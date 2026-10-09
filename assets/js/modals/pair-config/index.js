@@ -112,6 +112,13 @@ function syncCollectionModeLock(state){
     two.closest?.("label")?.classList.toggle("muted",locked);
   }
 }
+function defaultAnimeMappingOptions(state, pair){
+  if(pair?.id || !globalAnimeMappingEnabled(state)) return;
+  for(const feature of ["watchlist","ratings","history","progress"]){
+    const opts=state.options[feature];
+    if(!hasOwn(opts,"use_anime_mapping")) opts.use_anime_mapping=feature!=="history"||tmdbMetadataReady(state);
+  }
+}
 function animeHistoryBlockReason(state){
   if(!tmdbMetadataReady(state)) return "Requires a TMDB metadata key. Add one under Settings &rsaquo; Metadata first.";
   if(!globalAnimeMappingEnabled(state)) return "Enable global Anime ID Mapping first.";
@@ -2894,6 +2901,7 @@ function buildPayload(state,wrap){
   const dis=ratingsDisabledFor({src,dst});
   if(ratings&&Array.isArray(ratings.types)&&dis.size)ratings.types=ratings.types.filter(t=>!dis.has(String(t)));
   const history=get("history");
+  history.use_anime_mapping=!!history.use_anime_mapping&&animePair&&globalAnimeMappingEnabled(state)&&tmdbMetadataReady(state);
   if(history && !pairSupportsHistoryRewatches(state, src, dst, modeTwo)) history.rewatches=false;
   if(history) history.library_only=!!history.library_only&&pairSupportsLibraryOnly(state, src, dst, modeTwo);
   if(ratings) ratings.library_only=!!ratings.library_only&&pairSupportsLibraryOnly(state, src, dst, modeTwo, "ratings");
@@ -3043,6 +3051,7 @@ export default{
     }
 
     await loadConfigBits(state);
+    defaultAnimeMappingOptions(state, pair);
     state.pair_remove_mode=pairRemoveModeFromFeatures(pair?.features,state.globals.one_way_remove_mode);
     await loadProviders(state);
     await loadProviderInstances(state);

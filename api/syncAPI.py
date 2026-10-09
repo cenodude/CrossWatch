@@ -2427,6 +2427,25 @@ def api_pairs_list(request: Request = cast(Request, None)) -> JSONResponse:
             pass
         return JSONResponse({"ok": False, "error": _public_error("pairs_list_failed")}, status_code=500)
 
+def _default_pair_anime_mapping(cfg: Mapping[str, Any], item: dict[str, Any]) -> None:
+    source = str(item.get("source") or "").strip().lower()
+    target = str(item.get("target") or "").strip().lower()
+    anime_pair = bool({source, target} & {"simkl", "myanimelist", "kitsu", "anilist", "crosswatch"})
+    enabled = bool((cfg.get("anime_mapping") or {}).get("enabled")) and anime_pair
+    tmdb_ready = bool(str((cfg.get("tmdb") or {}).get("api_key") or (cfg.get("metadata") or {}).get("tmdb_api_key") or "").strip())
+    two_way = str(item.get("mode") or "").lower().startswith("two")
+    for feature in ("watchlist", "ratings", "history", "progress"):
+        block = (item.get("features") or {}).get(feature)
+        if not isinstance(block, dict):
+            continue
+        eligible = enabled
+        if feature == "history":
+            eligible = eligible and tmdb_ready
+        elif feature == "progress":
+            eligible = eligible and (target == "simkl" or (two_way and source == "simkl"))
+        block.setdefault("use_anime_mapping", eligible)
+
+
 @router.post("/pairs")
 def api_pairs_add(payload: PairIn = Body(...), request: Request = cast(Request, None)) -> dict[str, Any]:
     load_config, save_config = _env()
@@ -2443,6 +2462,7 @@ def api_pairs_add(payload: PairIn = Body(...), request: Request = cast(Request, 
         item["enabled"] = coerce_bool(item.get("enabled", False))
         item["features"] = _normalize_features(item.get("features") or {"watchlist": True})
         _apply_pair_profile_scope(cfg, request, item)
+        _default_pair_anime_mapping(cfg, item)
         _enforce_pair_feature_constraints(item)
         if _managed_pair_blocked(cfg, request, item):
             return {"ok": False, "error": "profile_scope_denied"}
