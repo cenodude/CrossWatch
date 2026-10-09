@@ -1550,6 +1550,45 @@ def _source_status_enabled(adapter: Any) -> bool:
     return bool(runtime_pair_feature_options(cfg, "history").get("use_source_status"))
 
 
+def _apply_source_watch_status(
+    adapter: Any,
+    body: Mapping[str, Any],
+    groups: Mapping[str, list[Mapping[str, Any]]],
+    context: dict[str, Any],
+) -> None:
+    if adapter is None or not _source_status_enabled(adapter):
+        return
+    pending = []
+    for bucket in ("shows", "anime"):
+        for entry in body.get(bucket) or []:
+            key = json.dumps(dict(entry.get("ids") or {}), sort_keys=True)
+            statuses = {str(item.get("watch_status") or "").strip().lower() for item in groups.get(key, groups.get("part:" + key, []))}
+            if len(statuses) != 1:
+                continue
+            status = {"on_hold": "hold", "dropped": "dropped"}.get(next(iter(statuses)))
+            if status:
+                pending.append((entry, status))
+    if not pending:
+        return
+    if "rows" not in context:
+        headers = _headers(adapter)
+        resp = adapter.client.session.get(URL_ALL_ITEMS, headers=headers, params=_params(headers), timeout=adapter.cfg.timeout)
+        if not resp.ok:
+            raise RuntimeError("simkl_source_status_lookup_failed")
+        data = resp.json()
+        if not isinstance(data, Mapping):
+            raise RuntimeError("simkl_source_status_invalid_response")
+        context["rows"] = [row for bucket in ("shows", "anime") for row in (data.get(bucket) or []) if isinstance(row, Mapping)]
+    for entry, status in pending:
+        ids = {key: str(value) for key, value in (entry.get("ids") or {}).items()}
+        matched = [row for row in context["rows"] if any(
+            ids.get(key) == str(value) for key, value in ((row.get("show") or {}).get("ids") or {}).items()
+        )]
+        if any(str(row.get("status") or "").lower() == "completed" for row in matched):
+            continue
+        entry["status"] = status
+
+
 def _watch_status_by_record(adapter: Any) -> dict[str, str]:
     headers = _headers(adapter, force_refresh=True)
     try:
@@ -1792,12 +1831,18 @@ def replay_index(adapter: Any, items: Mapping[str, Mapping[str, Any]]) -> dict[s
     return out
 
 
+def _undated_status_history(item: Mapping[str, Any]) -> bool:
+    return bool(item.get("watched")) and not item.get("_cw_rewatch_sync") and str(item.get("watch_status") or "") in {
+        "watching", "completed", "on_hold", "dropped", "planning", "plan_to_watch",
+    }
+
+
 def _movie_add_entry(item: Mapping[str, Any]) -> dict[str, Any] | None:
     ids = {k: v for k, v in _ids_of(item).items() if k in _MOVIE_ID_KEYS}
     watched_at = (item.get("watched_at") or item.get("watchedAt") or "").strip()
-    if not ids or not watched_at:
+    if not ids or (not watched_at and not _undated_status_history(item)):
         return None
-    return {"ids": ids, "watched_at": watched_at}
+    return {"ids": ids, **({"watched_at": watched_at} if watched_at else {})}
 
 
 def _is_anime_like(item: Mapping[str, Any], ids: Mapping[str, Any]) -> bool:
@@ -1873,7 +1918,9 @@ def _episode_add_entry(
     if not e_num:
         return None, "missing_episode_number"
     if not isinstance(watched_at, str) or not watched_at:
-        return None, "missing_watched_at"
+        if not _undated_status_history(item):
+            return None, "missing_watched_at"
+        watched_at = ""
     if not s_num:
         if _int_or_none(raw_season) == 0:
             s_num = 0
@@ -3105,10 +3152,14 @@ def _build_anime_retry_payload(
             item_key = _thaw_key(item)
             mapped_episode = mapped_by_key.get(item_key)
             watched_at = item.get("watched_at") or item.get("watchedAt")
-            if mapped_episode is None or not isinstance(watched_at, str) or not watched_at:
+            if mapped_episode is None:
                 continue
+            if not isinstance(watched_at, str) or not watched_at:
+                if not _undated_status_history(item):
+                    continue
+                watched_at = ""
             group = groups.setdefault(group_key, {"ids": dict(ids), "episodes": []})
-            group.setdefault("episodes", []).append({"number": mapped_episode, "watched_at": watched_at})
+            group.setdefault("episodes", []).append({"number": mapped_episode, **({"watched_at": watched_at} if watched_at else {})})
             index[(group_key, mapped_episode)] = item
             retry_items.append(item)
     if not groups:
@@ -3150,6 +3201,8 @@ def _add_native_anime(
     native_identity: dict[str, dict[str, Any]] | None = None,
     rewatches: bool = False,
     resolve_state: _AnimeResolveState | None = None,
+    adapter: Any = None,
+    status_context: dict[str, Any] | None = None,
 ) -> tuple[set[str], set[str], set[str], list[dict[str, Any]]]:
     body, retry_index, retry_items = _build_anime_retry_payload(
         retry_candidates,
@@ -3176,6 +3229,10 @@ def _add_native_anime(
     retry_keys = {_thaw_key(item) for item in retry_items}
     _stamp_added_at(body)
     try:
+        status_groups: dict[str, list[Mapping[str, Any]]] = {}
+        for (group_key, _episode), item in retry_index.items():
+            status_groups.setdefault(group_key, []).append(item)
+        _apply_source_watch_status(adapter, body, status_groups, status_context if status_context is not None else {})
         resp = session.post(
             URL_ADD,
             headers=headers,
@@ -3336,12 +3393,12 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             part_ids = _ids_of(item)
             part_ids = {"simkl": part_ids["simkl"]} if part_ids.get("simkl") else part_ids
             watched_at = str(item.get("watched_at") or item.get("watchedAt") or "").strip()
-            if not part_ids or not watched_at:
+            if not part_ids or (not watched_at and not _undated_status_history(item)):
                 unresolved.append({"item": id_minimal(item), "hint": "missing_ids_or_watched_at"})
                 continue
             ids_key = "part:" + json.dumps(part_ids, sort_keys=True)
             group = anime_parts.setdefault(ids_key, {"ids": part_ids, "seasons": [{"number": 1, "episodes": []}]})
-            group["seasons"][0]["episodes"].append({"number": part, "watched_at": watched_at})
+            group["seasons"][0]["episodes"].append({"number": part, **({"watched_at": watched_at} if watched_at else {})})
             scoped_items.setdefault(ids_key, []).append(item)
             scoped_ep_index.setdefault((ids_key, 1, part), []).append(item)
             for _f, _v in part_ids.items():
@@ -3434,7 +3491,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             ids_key = json.dumps(dict(show_entry.get("ids") or {}), sort_keys=True)
             group = _merge_show_group(shows_scoped, show_entry)
             season = _merge_show_season(group, s_num)
-            ep_payload: dict[str, Any] = {"number": e_num, "watched_at": watched_at}
+            ep_payload: dict[str, Any] = {"number": e_num, **({"watched_at": watched_at} if watched_at else {})}
             if episode_ids:
                 ep_payload["ids"] = dict(episode_ids)
             season.setdefault("episodes", []).append(ep_payload)
@@ -3480,6 +3537,9 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     if anime_parts:
         body["anime"] = list(anime_parts.values())
 
+    status_context: dict[str, Any] = {}
+    _apply_source_watch_status(adapter, body, scoped_items, status_context)
+
     native_accepted: set[str] = set()
     native_failed: set[str] = set()
     native_skipped: set[str] = set()
@@ -3495,6 +3555,8 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             native_identity=native_identity,
             rewatches=rewatches,
             resolve_state=native_resolve_state,
+            adapter=adapter,
+            status_context=status_context,
         )
         unresolved.extend(native_unresolved)
         failed_thaw_keys.update(native_failed)

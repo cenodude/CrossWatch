@@ -95,7 +95,7 @@ def test_mapped_part_is_written_as_that_single_anime_episode(env):
     adapter, session = env
     count, unresolved = history.add(adapter, [_part(2)])
     body = session.post.call_args.kwargs["json"]
-    assert body == {"anime": [{"ids": {"simkl": "37137"}, "seasons": [{"number": 1, "episodes": [
+    assert body == {"anime": [{"ids": {"simkl": "37137"}, "added_at": "2026-09-01T12:00:00Z", "seasons": [{"number": 1, "episodes": [
         {"number": 2, "watched_at": "2026-09-01T12:00:00Z"}]}]}]}
     assert count == 1 and unresolved == []
 

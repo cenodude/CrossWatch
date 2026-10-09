@@ -330,6 +330,8 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         for item in items:
             mini = id_minimal(item)
             mini["watched"] = True
+            mini["watch_status"] = {"CURRENT": "watching", "REPEATING": "watching", "PAUSED": "on_hold",
+                                    "DROPPED": "dropped", "COMPLETED": "completed", "PLANNING": "planning"}.get(str(entry.get("status") or "").upper())
             mini["watched_at"] = watched_at
             key = canonical_key(mini)
             if key and key not in out:

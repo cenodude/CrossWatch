@@ -140,14 +140,14 @@ test("Closing Kitsu during login prevents a late response from staging tokens", 
   assert.deepEqual(cfg, {});
 });
 
-test("Kitsu is selectable for watcher and webhook scrobbles without Plex rating forwarding", () => {
+test("Kitsu is selectable for watcher and webhook scrobbles and Plex rating forwarding", () => {
   for (const name of ["route", "webhook"]) {
     const source = readFileSync(new URL(`../assets/js/modals/scrobbler-${name}/index.js`, import.meta.url), "utf8")
       .replace(/export default \{ mount, unmount \};/, "").replace(/export (async )?function/g, "$1function");
     const context = vm.createContext({window: {}, console});
     vm.runInContext(source, context);
     assert.equal(vm.runInContext('sinks.includes("kitsu")', context), true);
-    assert.equal(vm.runInContext('ratingSinks.includes("kitsu")', context), false);
+    assert.equal(vm.runInContext('ratingSinks.includes("kitsu")', context), true);
     assert.equal(vm.runInContext('label("kitsu")', context), "Kitsu");
   }
 });
@@ -173,13 +173,13 @@ test("Kitsu allows history removal in both directions but locks rewatches and ep
 });
 
 
-test("Source watch status is offered for SIMKL to Kitsu and AniList", () => {
+test("Source watch status is offered between anime trackers", () => {
   const source = readFileSync(new URL("../assets/js/modals/pair-config/custom-rules.js", import.meta.url), "utf8")
     .replace(/export function/g, "function");
   const context = vm.createContext({});
   vm.runInContext(source, context);
   for (const [src, dst, expected] of [["SIMKL", "KITSU", true], ["simkl", "anilist", true],
-    ["KITSU", "SIMKL", false], ["TRAKT", "KITSU", false], ["SIMKL", "TRAKT", false]]) {
+    ["KITSU", "SIMKL", true], ["TRAKT", "KITSU", false], ["SIMKL", "TRAKT", false]]) {
     context.pair = {src, dst};
     assert.equal(vm.runInContext('sourceWatchStatusAllowed(pair)', context), expected);
   }
