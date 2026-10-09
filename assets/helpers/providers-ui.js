@@ -47,7 +47,7 @@
 
   const AUTH_GROUPS = Object.freeze([
     { id: "sec-auth-media", title: "Media servers", keys: ["PLEX", "JELLYFIN", "EMBY"] },
-    { id: "sec-auth-trackers", title: "Trackers", keys: ["CROSSWATCH", "TRAKT", "SIMKL", "TMDB", "MDBLIST", "PUBLICMETADB", "ANILIST", "KITSU", "WETRAKR", "PUNCHPLAY", "BINGEBASE", "FLICKLIST", "FLOPPY", "SCROB"] },
+    { id: "sec-auth-trackers", title: "Trackers", keys: ["CROSSWATCH", "TRAKT", "SIMKL", "TMDB", "MDBLIST", "PUBLICMETADB", "ANILIST", "MYANIMELIST", "KITSU", "WETRAKR", "PUNCHPLAY", "BINGEBASE", "FLICKLIST", "FLOPPY", "SCROB"] },
     { id: "sec-auth-clients", title: "Media clients", keys: ["NUVIO", "KODI", "STREMIO"] },
     { id: "sec-auth-others", title: "Others", keys: ["TAUTULLI", "TRACEARR"] },
   ]);
@@ -249,6 +249,7 @@
     if (p === "kitsu") return hasConfiguredValue(b.access_token) && !b.reauth_required;
     if (p === "anilist") return hasConfiguredValue(b.access_token) || hasConfiguredValue(b.token);
     if (p === "mdblist") return hasConfiguredValue(b.api_key) || hasConfiguredValue(b.access_token);
+    if (p === "myanimelist") return hasConfiguredValue(b.access_token) && !b.reauth_required;
     if (p === "wetrakr") return hasConfiguredValue(b.access_token) && !b.reauth_required;
     if (p === "punchplay") return hasConfiguredValue(b.access_token);
     if (p === "bingebase") return hasConfiguredValue(b.access_token) || hasConfiguredValue(b.webhook_url);
@@ -719,6 +720,15 @@
       steps: [["1", "Enter server URL", "The address you open Scrob with"], ["2", "Paste the API key", "Scrob > Connections > API Key"], ["3", "Sign in", "Scrob only accepts writes from a signed in session"]],
       order: [".grid2", "#scrob_totp_row", "#scrob_reauth", ".verify", "#scrob_actions_row"],
       actions: [{ row: "#scrob_actions_row", status: "#scrob_msg", buttons: "#scrob_connect" }]
+    },
+    MYANIMELIST: {
+      provider: "myanimelist", logo: "MYANIMELIST", help: window.CW.HelpLinks.url("myanimelist"), deleteSelector: "#myanimelist_disconnect",
+      tabs: { auth: ["lock", "Authentication", "Approve in your browser"] },
+      copy: { auth: ["MyAnimeList Authentication", "Connect your MyAnimeList account."] },
+      journey: ["Connect to MyAnimeList", "Approve CrossWatch in MyAnimeList. Your connection will appear here automatically.", "47,82,162", "47,82,162", "MYANIMELIST"],
+      steps: [["1", "Open MyAnimeList", "Sign in with your account"], ["2", "Approve access", "Allow CrossWatch to connect"], ["3", "Return to CrossWatch", "Your account is verified automatically"]],
+      order: ["#myanimelist_oauth_panel", ".mal-actions"],
+      actions: [{ row: ".mal-actions", status: "#myanimelist_msg", buttons: "#myanimelist_oauth_start, #myanimelist_oauth_cancel" }]
     },
     WETRAKR: {
       provider: "wetrakr", logo: "WETRAKR", help: window.CW.HelpLinks.url("wetrakr"), deleteSelector: "#wetrakr_disconnect",

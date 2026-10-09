@@ -2205,6 +2205,72 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             _safe_log(log_fn, "MDBLIST", f"[MDBLIST] ERROR disconnect: {e}")
             return {"ok": False, "error": "internal"}
 
+    @app.post("/api/myanimelist/oauth/start", tags=["auth"])
+    def api_myanimelist_oauth_start(instance: str | None = Query(None)) -> dict[str, Any]:
+        from providers.auth import _auth_MYANIMELIST as myanimelist_auth
+
+        return myanimelist_auth.start_oauth(instance_id=normalize_instance_id(instance))
+
+    @app.post("/api/myanimelist/oauth/poll", tags=["auth"])
+    def api_myanimelist_oauth_poll(payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            from providers.auth import _auth_MYANIMELIST as myanimelist_auth
+
+            res = myanimelist_auth.poll_oauth(flow_id=str(payload.get("flow_id") or ""), instance_id=inst)
+            if res.get("status") == "authorized" and isinstance(probe_cache, dict):
+                probe_cache["myanimelist"] = (0.0, False)
+            return res
+        except Exception as e:
+            _safe_log(log_fn, "MYANIMELIST", f"[MYANIMELIST] ERROR OAuth poll: {type(e).__name__}")
+            return {"ok": False, "error": "internal", "instance": inst}
+
+    @app.post("/api/myanimelist/oauth/cancel", tags=["auth"])
+    def api_myanimelist_oauth_cancel(payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
+        from providers.auth import _auth_MYANIMELIST as myanimelist_auth
+
+        return myanimelist_auth.cancel_oauth(flow_id=str(payload.get("flow_id") or ""), instance_id=normalize_instance_id(instance))
+
+    @app.post("/api/myanimelist/refresh", tags=["auth"])
+    def api_myanimelist_refresh(instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            res = _provider_auth().refresh_token("myanimelist", cfg, instance_id=inst)
+            if res.get("ok") and isinstance(probe_cache, dict):
+                probe_cache["myanimelist"] = (0.0, False)
+            return res
+        except Exception as e:
+            _safe_log(log_fn, "MYANIMELIST", f"[MYANIMELIST] ERROR refresh: {type(e).__name__}")
+            return {"ok": False, "status": "internal", "instance": inst}
+
+    @app.get("/api/myanimelist/status", tags=["auth"])
+    def api_myanimelist_status(instance: str | None = Query(None)) -> dict[str, Any]:
+        cfg = load_config()
+        inst = normalize_instance_id(instance)
+        from providers.auth import _auth_MYANIMELIST as myanimelist_auth
+
+        return myanimelist_auth.account_status(cfg, instance_id=inst)
+
+    @app.post("/api/myanimelist/disconnect", tags=["auth"])
+    def api_myanimelist_disconnect(instance: str | None = Query(None)) -> Any:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            conflict = usage_conflict_response(cfg, "myanimelist", inst)
+            if conflict is not None:
+                return conflict
+            from providers.auth import _auth_MYANIMELIST as myanimelist_auth
+
+            myanimelist_auth.PROVIDER.disconnect(cfg, instance_id=inst)
+            _safe_log(log_fn, "MYANIMELIST", f"[MYANIMELIST] disconnected instance={inst}")
+            if isinstance(probe_cache, dict):
+                probe_cache["myanimelist"] = (0.0, False)
+            return {"ok": True, "instance": inst}
+        except Exception as e:
+            _safe_log(log_fn, "MYANIMELIST", f"[MYANIMELIST] ERROR disconnect: {type(e).__name__}")
+            return {"ok": False, "error": "internal"}
+
     @app.post("/api/wetrakr/oauth/start", tags=["auth"])
     def api_wetrakr_oauth_start(instance: str | None = Query(None)) -> dict[str, Any]:
         from providers.auth import _auth_WETRAKR as wetrakr_auth

@@ -30,6 +30,10 @@ def _backend(provider: Any) -> Any:
         from providers.auth import _auth_STREMIO as stremio_auth
 
         return stremio_auth
+    if name in {"myanimelist", "mal"}:
+        from providers.auth import _auth_MYANIMELIST as mal_auth
+
+        return mal_auth
     if name == "wetrakr":
         from providers.auth import _auth_WETRAKR as wetrakr_auth
 
