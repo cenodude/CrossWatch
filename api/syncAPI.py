@@ -1951,7 +1951,7 @@ def _finalize_spotlight_item(it: dict[str, Any]) -> None:
             return False
         if key and s == key.lower():
             return True
-        return bool(re.match(r"^(tmdb|imdb|tvdb|trakt|slug|mdblist|kitsu):", s))
+        return bool(re.match(r"^(tmdb|imdb|tvdb|trakt|slug|mdblist|mal|anilist|kitsu):", s))
 
     def _to_int(v: Any) -> int | None:
         if isinstance(v, int):

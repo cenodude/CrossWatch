@@ -49,6 +49,7 @@ MODULES: dict[str, dict[str, str]] = {
         "_mod_CROSSWATCH": "providers.sync._mod_CROSSWATCH",
         "_mod_TAUTULLI":   "providers.sync._mod_TAUTULLI",
         "_mod_TRACEARR":   "providers.sync._mod_TRACEARR",
+        "_mod_MYANIMELIST": "providers.sync._mod_MYANIMELIST",
         "_mod_KITSU":      "providers.sync._mod_KITSU",
         "_mod_ANILIST":    "providers.sync._mod_ANILIST",
         "_mod_TMDB":       "providers.sync._mod_TMDB",
@@ -124,6 +125,26 @@ def load_sync_ops(name: str) -> Any | None:
         return None
     mod = import_module(path)
     return getattr(mod, "OPS", None)
+
+
+def provider_display_label(name: str) -> str:
+    key = str(name or "").strip().upper()
+    try:
+        ops = load_sync_ops(key)
+        label = str(ops.label() or "").strip() if ops is not None else ""
+        if label:
+            return label
+    except Exception:
+        pass
+    try:
+        from providers.auth.registry import auth_provider_manifest
+
+        label = str(auth_provider_manifest(key).get("label") or "").strip()
+        if label:
+            return label
+    except Exception:
+        pass
+    return key or "provider"
 
 
 def sync_provider_supports_feature(name: str, feature: str) -> bool:

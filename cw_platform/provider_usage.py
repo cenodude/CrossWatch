@@ -6,6 +6,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from cw_platform.modules_registry import provider_display_label
 from cw_platform.provider_instances import list_instance_ids, normalize_instance_id, provider_key
 from cw_platform.value_coercion import coerce_bool
 
@@ -21,33 +22,13 @@ __all__ = [
 
 WEBHOOK_SOURCE_PROVIDERS: tuple[str, ...] = ("plex", "jellyfin", "emby")
 
-_PROVIDER_LABELS = {
-    "plex": "Plex",
-    "emby": "Emby",
-    "jellyfin": "Jellyfin",
-    "kodi": "Kodi",
-    "stremio": "Stremio",
-    "trakt": "Trakt",
-    "simkl": "SIMKL",
-    "mdblist": "MDBList",
-    "crosswatch": "CrossWatch",
-    "floppy": "Floppy",
-    "wetrakr": "WeTrakr",
-    "punchplay": "PunchPlay",
-    "bingebase": "BingeBase",
-    "flicklist": "FlickList",
-    "scrob": "Scrob",
-    "tracearr": "Tracearr",
-}
-
-
 def _dict(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, Mapping) else {}
 
 
 def _label(provider: str, instance: str) -> str:
     key = provider_key(provider)
-    name = _PROVIDER_LABELS.get(key, key.upper() or "provider")
+    name = provider_display_label(key)
     inst = normalize_instance_id(instance)
     return name if inst == "default" else f"{name} {inst}"
 

@@ -1938,11 +1938,11 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         emit=emit, dbg=dbg, dst_name=b, feature=feature,
     )
 
-    if a in {"ANILIST", "KITSU"} or b in {"ANILIST", "KITSU"}:
+    if a in {"ANILIST", "KITSU", "MYANIMELIST"} or b in {"ANILIST", "KITSU", "MYANIMELIST"}:
         anime_only_skipped = 0
-        if a in {"ANILIST", "KITSU"}:
+        if a in {"ANILIST", "KITSU", "MYANIMELIST"}:
             add_to_A, anime_only_skipped = _anime_only_adds(add_to_A, provider_cfg, anime_pair_opts, feature, target=a)
-        if b in {"ANILIST", "KITSU"}:
+        if b in {"ANILIST", "KITSU", "MYANIMELIST"}:
             add_to_B, skipped_b = _anime_only_adds(add_to_B, provider_cfg, anime_pair_opts, feature, target=b)
             anime_only_skipped += skipped_b
         if anime_only_skipped:
