@@ -292,6 +292,8 @@ def _public_profile(cfg: dict[str, Any], a: dict[str, Any], uid: str, raw: dict[
     user["recovery_codes_count"] = len(raw.get("recovery_codes") or []) if isinstance(raw.get("recovery_codes"), list) else 0
     user["created_at"] = int(raw.get("created_at") or 0)
     user["preferences"] = clean_user_preferences(raw.get("preferences"))
+    if (user.get("is_admin") or "media_card" not in user["preferences"]) and "media_card" in (cfg.get("ui") or {}):
+        user["preferences"]["media_card"] = "compact" if (cfg.get("ui") or {}).get("media_card") == "compact" else "full"
     return user
 
 
@@ -1117,10 +1119,12 @@ def api_profile_update(request: Request, payload: dict[str, Any] = Body(default_
             incoming = (payload or {}).get("preferences")
             merged = dict(current)
             if isinstance(incoming, dict):
-                for key in ("playing_card", "quick_add", "timezone", "time_format"):
+                for key in ("playing_card", "quick_add", "timezone", "time_format", "media_card"):
                     if key in incoming:
                         merged[key] = bool(incoming[key]) if key in {"playing_card", "quick_add"} else incoming[key]
             raw["preferences"] = clean_user_preferences(merged)
+            if user.get("is_admin") and isinstance(incoming, dict) and "media_card" in incoming:
+                cfg.setdefault("ui", {})["media_card"] = "compact" if incoming["media_card"] == "compact" else "full"
         return a, uid, raw, user, token
 
     updated = _profile_write(request, _mutate)

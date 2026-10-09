@@ -125,3 +125,33 @@ def test_progress_month_counts_and_navigation_follow_timezone(monkeypatch):
     assert local["months"] == [{"month": "2026-01", "count": 1}, {"month": "2025-12", "count": 1}]
     assert local["page"] == 2
     assert local["items"][0]["updated_at"] == "2026-01-01T00:30:00Z"
+
+
+@pytest.mark.parametrize("admin", [False, True])
+@pytest.mark.parametrize("style", ["compact", "full"])
+def test_media_card_preference_persists_and_seeds_pages(monkeypatch, tmp_path, admin, style):
+    from tests.test_app_auth_api import _request, _json_body
+    from cw_platform import config_base
+    from ui_frontend import _seed_media_card_style
+
+    cfg = _auth_cfg()
+    cfg["ui"] = {"media_card": "full"}
+    cfg["app_auth"]["users"] = {"alice": {"username": "Alice", "password": cfg["app_auth"]["password"]}}
+    monkeypatch.setattr(config_base, "CONFIG", tmp_path)
+    monkeypatch.setattr(config_base, "_get_cipher", lambda **kwargs: None)
+    config_base.save_config(cfg)
+    monkeypatch.setattr(profileAPI, "current_user", lambda *args: {"id": "alice", "username": "Alice", "is_admin": admin})
+    monkeypatch.setattr(profileAPI, "_audit", lambda *args, **kwargs: None)
+    result = profileAPI.api_profile_update(_request("/api/profile"), {"preferences": {"media_card": style}})
+    user = _json_body(result)["user"]
+    assert user["preferences"]["media_card"] == style
+    saved = config_base.load_config()
+    assert saved["ui"]["media_card"] == (style if admin else "full")
+    assert f'data-cw-media-card="{style}"' in _seed_media_card_style('<html lang="en">', user)
+    response = profileAPI.api_profile_get(_request("/api/profile"))
+    assert _json_body(response)["user"]["preferences"]["media_card"] == style
+
+
+@pytest.mark.parametrize("value", [None, "invalid", [], {}])
+def test_invalid_media_card_preference_is_ignored(value):
+    assert "media_card" not in clean_user_preferences({"media_card": value})

@@ -739,6 +739,7 @@
 
   function renderPreferences(user) {
     const prefs = user?.preferences || {};
+    window.CW?.ProfileMediaModal?.setStyle?.(prefs.media_card);
     const card = $("#profile-pref-playing-card");
     const quick = $("#profile-pref-quick-add");
     if (card) card.checked = prefs.playing_card !== false;
@@ -5089,7 +5090,7 @@
 
   function wirePreferences() {
     $("#profile-timezone-search")?.addEventListener("input", () => renderTimezoneOptions());
-    const inputs = [$("#profile-pref-playing-card"), $("#profile-pref-quick-add"), $("#profile-pref-timezone"), $("#profile-pref-time-format")].filter(Boolean);
+    const inputs = [$("#profile-pref-playing-card"), $("#profile-pref-quick-add"), $("#profile-pref-timezone"), $("#profile-pref-time-format"), $("#profile-media-card")].filter(Boolean);
     for (const input of inputs) {
       const isTimezone = input.id === "profile-pref-timezone";
       input.addEventListener(isTimezone ? "blur" : "change", async () => {
@@ -5107,6 +5108,7 @@
                 quick_add: $("#profile-pref-quick-add")?.checked ?? profile?.preferences?.quick_add ?? true,
                 timezone: $("#profile-pref-timezone")?.value || "auto",
                 time_format: $("#profile-pref-time-format")?.value || "auto",
+                media_card: $("#profile-media-card")?.value || "full",
               },
             }),
           });

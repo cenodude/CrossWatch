@@ -131,6 +131,7 @@ function cwUiSettingsHubInit() {
     "ui_show_quick_add_desktop",
     "ui_show_quick_add_mobile",
     "ui_theme",
+    "ui_media_card",
     "ui_protocol",
     "app_auth_username",
     "app_auth_password",
@@ -1780,6 +1781,8 @@ async function loadConfig() {
       } catch {}
       const normalizedTheme = storedTheme || ((theme === "flat-light" || theme === "original") ? theme : "flat-dark");
       _setSelectValue("ui_theme", normalizedTheme);
+      _setSelectValue("ui_media_card", ui.media_card === "compact" ? "compact" : "full");
+      window.CW?.ProfileMediaModal?.setStyle?.(ui.media_card);
       try { window.CWTheme?.apply?.(normalizedTheme, { persist: true }); } catch {}
     }
 

@@ -36,6 +36,7 @@ def clean_user_preferences(raw: Any) -> dict[str, Any]:
     src = raw if isinstance(raw, dict) else {}
     time_format = str(src.get("time_format") or "auto")
     return {
+        **({"media_card": src["media_card"]} if src.get("media_card") in ("full", "compact") else {}),
         "playing_card": src.get("playing_card") is not False,
         "quick_add": src.get("quick_add") is not False,
         "timezone": clean_timezone(src.get("timezone")),
