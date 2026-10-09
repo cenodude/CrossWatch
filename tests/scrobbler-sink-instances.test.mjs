@@ -135,3 +135,20 @@ test("webhook rewatch option defaults off and round trips the destination settin
   run('root = {querySelector: (id) => id === "#scw-sink" ? {value: "simkl"} : id === "#scw-simkl-rewatches" ? {checked: true} : null}; null');
   assert.equal(run('payload().simkl_rewatches'), true);
 });
+
+for (const provider of ["kitsu", "myanimelist"]) {
+  test(`${provider} is available for Plex ratings with its named profile`, () => {
+    const data = {destination_availability: [{provider, profiles: [{instance: "P01", configured: true}]}]};
+    for (const name of ["route", "webhook"]) {
+      const run = modal(name);
+      run(`props = {overview: ${JSON.stringify(data)}, webhook: {provider: "plex"}}; draft = {provider: "plex"}; null`);
+      assert.equal(run(`ratingSinks.includes("${provider}")`), true);
+      if (name === "webhook") {
+        assert.deepEqual(run('availableRatingSinks()'), [provider]);
+        assert.equal(run(`selectedSinkInstance("${provider}")`), "P01");
+      } else {
+        assert.deepEqual(run(`allSinkProfiles("${provider}").map(p => p.instance)`), ["P01"]);
+      }
+    }
+  });
+}
