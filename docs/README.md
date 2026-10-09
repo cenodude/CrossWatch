@@ -84,7 +84,13 @@
   <article class="cw-provider-card is-anilist">
     <img class="cw-provider-mark" src="images/providers/ANILIST.svg" alt="" aria-hidden="true">
     <strong>AniList</strong>
-    <span>Tracker</span>
+    <span>Anime tracker</span>
+    <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
+  </article>
+  <article class="cw-provider-card is-myanimelist">
+    <img class="cw-provider-mark" src="images/providers/MYANIMELIST.svg" alt="" aria-hidden="true">
+    <strong>MyAnimeList (MAL)</strong>
+    <span>Anime tracker</span>
     <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
   </article>
   <article class="cw-provider-card is-kitsu">
@@ -253,7 +259,7 @@
   <article>
     <span class="cw-token">ANIME</span>
     <h3>Anime ID mapping</h3>
-    <p>Match anime across AniList, Kitsu, SIMKL and CW tracker pairs with AniBridge, animeApi and custom mappings. Watcher and webhooks also support anime mapping for supported providers.</p>
+    <p>Match anime across AniList, MyAnimeList (MAL), Kitsu, SIMKL and CW tracker pairs with AniBridge, animeApi and custom mappings. Watcher and webhooks also support anime mapping for supported providers.</p>
   </article>
 </section>
 
@@ -277,6 +283,20 @@
     <span>04</span>
     <strong>Follow up</strong>
     <p>Open notifications for sync progress, pending reviews, reports and release updates. Use Events and Logs to investigate problems.</p>
+  </div>
+</section>
+
+<section class="cw-section cw-intro">
+  <div>
+    <p class="cw-kicker">Kodi add-on</p>
+    <h2>One Kodi profile, separate watch histories.</h2>
+  </div>
+  <div>
+    <p>CrossWatch for Kodi reports playback and household viewers to CrossWatch. Set up a Watcher route for each viewer to keep their watch history separate. The add-on is currently in beta.</p>
+    <div class="cw-actions">
+      <a class="cw-button" href="https://github.com/crosswatch-app/kodi-addon">Get the Kodi add-on</a>
+      <a class="cw-button" href="https://github.com/crosswatch-app/kodi-addon#install">Installation and pairing</a>
+    </div>
   </div>
 </section>
 

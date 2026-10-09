@@ -41,7 +41,7 @@
 </p>
 
 
-**CrossWatch (CW)** is a synchronization engine that act as a bridge and keeps your **Plex, Jellyfin, Emby, SIMKL, Floppy, FlickList, Trakt, WeTrakr, AniList, Kitsu, TMDb, MDBList, PublicMetaDB, PunchPlay, BingeBase, Scrob, Tautulli, Tracearr, Kodi, Nuvio, Stremio and CW local tracker** in sync. It runs locally with a web UI or/and Command-Line Interface (CLI) where you link accounts, define sync pairs, run them manually or on a schedule, and review stats and history. CW also includes its own tracker to keep your data safe with snapshots. With Profiles, you can manage separate sync setups for yourself and for friends or family too, with their own servers and/or tracker API's.
+**CrossWatch (CW)** is a synchronization engine that act as a bridge and keeps your **Plex, Jellyfin, Emby, SIMKL, Floppy, FlickList, Trakt, WeTrakr, AniList, MyAnimeList (MAL), Kitsu, TMDb, MDBList, PublicMetaDB, PunchPlay, BingeBase, Scrob, Tautulli, Tracearr, Kodi, Nuvio, Stremio and CW local tracker** in sync. It runs locally with a web UI or/and Command-Line Interface (CLI) where you link accounts, define sync pairs, run them manually or on a schedule, and review stats and history. CW also includes its own tracker to keep your data safe with snapshots. With Profiles, you can manage separate sync setups for yourself and for friends or family too, with their own servers and/or tracker API's.
 
 ### CW in a nutshell:
 
@@ -53,7 +53,7 @@
 * **Synchronization**
   * Watchlists, Ratings, History, Progress and Collections
   * Rewatches: keep separate plays in sync for supported trackers.
-  * Anime ID mapping (powered by AniBridge and animeApi) for AniList, Kitsu, SIMKL and CW tracker pairs, with custom mappings.
+  * Anime ID mapping (powered by AniBridge and animeApi) for AniList, MyAnimeList (MAL), Kitsu, SIMKL and CW tracker pairs, with custom mappings.
 * **Interactive Sync**
   * Review additions, updates and removals before applying them.
   * Resolve conflicts and correct titles, IDs, seasons and episodes.
@@ -80,6 +80,9 @@ And much more...such as:
 * Unified Watchlist: View all watchlist items in one place.
 * Player card: Shows what you are currently watching in real time.
 * Recover Plex history: Import history for removed Plex items into your CW tracker.
+
+### Kodi add-on
+[CrossWatch for Kodi](https://github.com/crosswatch-app/kodi-addon) reports playback and household viewers to CrossWatch. Set up a Watcher route for each viewer to keep their watch history separate, even when sharing one Kodi profile.
 
 ### Download
 [![Guide: Installation](https://img.shields.io/badge/Guide-INSTALLATION-0d6efd?style=for-the-badge)](https://wiki.crosswatch.app/getting-started/installation)
