@@ -12,6 +12,7 @@ from fastapi import APIRouter, Body, Path as FPath, Query, Request
 from fastapi.responses import JSONResponse
 
 from cw_platform.provider_instances import instances_for_user_profile, normalize_instance_id, provider_display_key
+from services.media_scope import MediaScope
 from services.watchlist import (
     _feat_enabled,
     _find_item_in_state,
@@ -35,7 +36,7 @@ def _watchlist_version(
     max_meta: int = 250,
 ) -> str:
     try:
-        from cw_platform.config_base import CONFIG, config_path
+        from cw_platform.config_base import CONFIG, config_path, load_config
         from cw_platform.local_db import manual_policy as sqlite_manual_policy
         from cw_platform.local_db import state as sqlite_state
         from cw_platform.local_db import watchlist_hide as sqlite_watchlist_hide
@@ -61,6 +62,7 @@ def _watchlist_version(
             "policy": sqlite_manual_policy.fingerprint(CONFIG, {"watchlist"}),
             "hidden": sqlite_watchlist_hide.fingerprint(CONFIG),
             "config": cfg_stamp,
+            "media_scope": MediaScope(load_config() or {}).fingerprint(),
             "profile": requested_profile,
             "overview": overview,
             "locale": locale,
@@ -672,7 +674,7 @@ def api_watchlist(
             status_code=200,
             headers={"Cache-Control": "no-store"},
         )
-    st = _load_watchlist_state()
+    st = MediaScope(cfg).state(_load_watchlist_state())
 
     if not st:
         return JSONResponse(

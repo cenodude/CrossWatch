@@ -205,10 +205,13 @@ def register_wall(app: FastAPI) -> None:
     ) -> dict[str, Any]:
         from api.appAuthAPI import COOKIE_NAME, effective_user_profile_id
 
+        from services.media_scope import MediaScope
+
         cfg = load_config() or {}
+        media_scope = MediaScope(cfg)
         token = request.cookies.get(COOKIE_NAME) if request is not None else None
         profile = effective_user_profile_id(cfg, token, user_profile)
-        key = _cache_key(both_only=both_only, active_only=active_only, limit=limit, user_profile=profile)
+        key = _cache_key(both_only=both_only, active_only=active_only, limit=limit, user_profile=profile) + (media_scope.fingerprint(),)
         version = _cache_version(key)
         if known_version and str(known_version).strip() == version:
             return {"ok": True, "not_modified": True, "version": version}
@@ -216,7 +219,7 @@ def register_wall(app: FastAPI) -> None:
         if cached is not None:
             return cached
 
-        st = _load_state()
+        st = media_scope.state(_load_state())
         api_key = _tmdb_api_key(cfg)
         scoped = bool(str(profile or "").strip())
         user_filter = instances_for_user_profile(cfg, profile) if scoped else {}

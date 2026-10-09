@@ -62,6 +62,7 @@ from api.watchlistAPI import _item_for_user_filter as _watchlist_item_for_user_f
 from api.watchlistAPI import _load_watchlist_state, _tmdb_api_key, _watchlist_version
 from cw_platform.access_policy import clean_managed_permissions
 from services import profile_history
+from services.media_scope import MediaScope
 from services.dashboard_widgets import _tracker_feature_items
 from services.watchlist import build_watchlist
 
@@ -807,7 +808,7 @@ def _history_user_filter(cfg: dict[str, Any], profile_id: str) -> dict[str, Any]
 
 def _watchlist_items(cfg: dict[str, Any], user_filter: dict[str, Any]) -> list[dict[str, Any]]:
     try:
-        items = build_watchlist(_load_watchlist_state(), tmdb_ok=bool(_tmdb_api_key(cfg))) or []
+        items = build_watchlist(MediaScope(cfg).state(_load_watchlist_state()), tmdb_ok=bool(_tmdb_api_key(cfg))) or []
     except Exception:
         return []
     if not user_filter:
@@ -844,18 +845,21 @@ def history_cache_version(cfg: dict[str, Any], source: str, profile_id: str) -> 
 def _profile_history_index(cfg: dict[str, Any], profile_id: str, source: str) -> tuple[dict[str, Any], str]:
     wanted = profile_history.normalize_source(source)
     ratings = wanted == "ratings"
+    media_scope = MediaScope(cfg)
     user_filter = _history_user_filter(cfg, profile_id)
     version = history_cache_version(cfg, wanted, profile_id)
     if wanted == "watchlist":
         state_source: Any = lambda: _watchlist_items(cfg, user_filter)
     else:
-        state_source = _ratings_state if ratings else _history_state
+        state_source = lambda: media_scope.state(_ratings_state() if ratings else _history_state())
     index = profile_history.cached_history_index(
         (wanted, profile_id, version) if version else None,
         lambda: profile_history.build_history_index(
             wanted,
             state=state_source,
-            tracker_items=lambda: _tracker_feature_items("ratings" if ratings else "history"),
+            tracker_items=lambda: media_scope.tracker(
+                _tracker_feature_items("ratings" if ratings else "history"), "ratings" if ratings else "history"
+            ),
             user_filter=user_filter,
         ),
     )

@@ -1301,12 +1301,15 @@ def register_insights(app: FastAPI) -> None:
                 out["wall"] = [item for item in wall_items if isinstance(item, dict) and _item_matches_scope(item)]
             return out
 
+        from services.media_scope import MediaScope
+
+        media_scope = MediaScope(cfg)
         _state_holder: dict[str, Any] = {}
 
         def _state() -> dict[str, Any]:
             if "v" not in _state_holder:
                 loaded = _load_state_features(state_features)
-                scoped = _scope_state(loaded if isinstance(loaded, dict) else {})
+                scoped = _scope_state(media_scope.state(loaded if isinstance(loaded, dict) else {}))
                 _state_holder["v"] = scoped if isinstance(scoped, dict) else {}
             value = _state_holder["v"]
             return value if isinstance(value, dict) else {}
@@ -1318,6 +1321,7 @@ def register_insights(app: FastAPI) -> None:
                 derived_key = (
                     fp,
                     tuple(feature_keys),
+                    media_scope.fingerprint(),
                     tuple(sorted((p, tuple(sorted(v))) for p, v in wanted_instances.items())),
                 )
         except Exception:
@@ -2009,14 +2013,19 @@ def register_insights(app: FastAPI) -> None:
         except Exception as e:
             _append_log("INSIGHTS", f"[!] report load failed: {e}")
 
-        wall_raw = _load_wall_snapshot()
+        if media_scope.active({"watchlist"}):
+            from services.watchlist import build_watchlist
+
+            wall_raw = build_watchlist(_state(), tmdb_ok=False)
+        else:
+            wall_raw = _load_wall_snapshot()
         wall: list[Any]
         if isinstance(wall_raw, list):
             wall = wall_raw
         else:
             wall = []
 
-        if not wall:
+        if not wall and not media_scope.active({"watchlist"}):
             cached_wall = (derived or {}).get("wall")
             wall = list(cached_wall) if isinstance(cached_wall, list) else list((_state() or {}).get("wall") or [])
         if wanted_instances:
