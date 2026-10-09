@@ -1244,13 +1244,14 @@
   }
 
   function openProfileWidgetPreview(kind, index) {
-    if (!ON_PROFILE_PAGE || !["history", "ratings", "scrobble", "progress"].includes(kind)) return false;
+    if (!["history", "ratings", "scrobble", "progress"].includes(kind)) return false;
     const item = latestItems[kind]?.[Number(index)];
     const modal = window.CW?.ProfileMediaModal;
     if (item && modal?.canOpen?.(item)) {
       void modal.open(item);
       return true;
     }
+    if (!ON_PROFILE_PAGE) return false;
     const open = window.CW?.WatchlistPreview?.openPreviewDrawer || window.openPreviewDrawer;
     if (!item || !open) return false;
     void open(item);

@@ -968,6 +968,13 @@
     node.dataset.previewBound = "1";
     const openLast = (event) => {
       const current = posterItems.get(node.dataset.profilePosterKey || "");
+      const modal = window.CW?.ProfileMediaModal;
+      if (current && modal?.canOpen?.(current)) {
+        event?.preventDefault?.();
+        event?.stopPropagation?.();
+        void modal.open(current);
+        return;
+      }
       const open = window.CW?.WatchlistPreview?.openPreviewDrawer || window.openPreviewDrawer;
       if (!current || !open) return;
       event?.preventDefault?.();
