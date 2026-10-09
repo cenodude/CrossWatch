@@ -135,8 +135,32 @@
     if (state.tab === "overview") renderPanel();
   }
 
+  const MEDIA_CARD_KEY = "cw.ui.mediaCard";
+  let compactMediaCard = false;
+  try { compactMediaCard = localStorage.getItem(MEDIA_CARD_KEY) === "compact"; } catch {}
+
+  function bindMediaCardPreference() {
+    const controls = document.querySelectorAll("[data-cw-media-card]");
+    const refresh = () => controls.forEach((control) => { control.value = compactMediaCard ? "compact" : "full"; });
+    refresh();
+    controls.forEach((control) => control.addEventListener("change", () => {
+      compactMediaCard = control.value === "compact";
+      try { localStorage.setItem(MEDIA_CARD_KEY, compactMediaCard ? "compact" : "full"); } catch {}
+      refresh();
+      close();
+    }));
+    window.addEventListener("storage", (event) => {
+      if (event.key !== MEDIA_CARD_KEY && event.key !== null) return;
+      compactMediaCard = event.newValue === "compact";
+      refresh();
+    });
+  }
+
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", bindMediaCardPreference, { once: true });
+  else bindMediaCardPreference();
+
   function canOpen(item) {
-    return !!tmdbOf(item);
+    return !compactMediaCard && !!tmdbOf(item);
   }
 
   async function open(item) {

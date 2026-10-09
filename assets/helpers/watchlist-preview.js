@@ -200,6 +200,11 @@
       const item = window.__cwWallPreviewItems?.get?.(key);
       if (!item) return;
       event.preventDefault();
+      const modal = window.CW?.ProfileMediaModal;
+      if (modal?.canOpen?.(item)) {
+        void modal.open(item);
+        return;
+      }
       void openPreviewDrawer(item);
     }, true);
     row.addEventListener("wheel", (e) => {

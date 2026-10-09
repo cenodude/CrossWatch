@@ -132,20 +132,20 @@ def register_ui_root(app: FastAPI) -> None:
 
 _HELPER_SCRIPTS = (
     "help-links.js", "provider-meta.js", "feature-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "account-menu.js", "notifications.js", "update-notifications.js", "api.js", "core.js", "details-log.js",
-    "media-meta.js", "trailer.js", "playing-card.js", "watchlist-preview.js", "providers-ui.js", "settings-ui.js", "settings-save.js", "maintenance.js", "backups.js",
+    "media-meta.js", "trailer.js", "playing-card.js", "watchlist-preview.js", "profile-datetime.js", "providers-ui.js", "settings-ui.js", "settings-save.js", "maintenance.js", "backups.js",
     "restart_apply.js",
 )
 _APP_SCRIPTS = (
     "syncbar.js", "run-summary-stream.js", "overview-profile.js", "sync-reviews.js", "plex-recovery-notifications.js", "main.js", "connections.overlay.js", "connections.pairs.overlay.js", "scheduler.js",
-    "schedulerbanner.js", "playingcard.js", "insights.js", "activity.js", "dashboard-widgets.js", "auth-dots.js", "main-status.js",
+    "schedulerbanner.js", "playingcard.js", "insights.js", "activity.js", "profile-media-modal.js", "dashboard-widgets.js", "auth-dots.js", "main-status.js",
     "scrobbler.js", "user-profiles.js", "app-users.js",
 )
 _USER_HELPER_SCRIPTS = (
     "help-links.js", "provider-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "account-menu.js", "notifications.js", "update-notifications.js", "api.js", "core.js",
-    "media-meta.js", "trailer.js", "playing-card.js", "watchlist-preview.js",
+    "media-meta.js", "trailer.js", "playing-card.js", "watchlist-preview.js", "profile-datetime.js",
 )
 _USER_APP_SCRIPTS = (
-    "overview-profile.js", "sync-reviews.js", "plex-recovery-notifications.js", "main.js", "playingcard.js", "insights.js", "activity.js", "dashboard-widgets.js", "auth-dots.js", "main-status.js",
+    "overview-profile.js", "sync-reviews.js", "plex-recovery-notifications.js", "main.js", "playingcard.js", "insights.js", "activity.js", "profile-media-modal.js", "dashboard-widgets.js", "auth-dots.js", "main-status.js",
 )
 _FULL_USER_HELPER_SCRIPTS = tuple(dict.fromkeys((*_USER_HELPER_SCRIPTS, "details-log.js")))
 _FULL_USER_APP_SCRIPTS = tuple(dict.fromkeys(("syncbar.js", "run-summary-stream.js", "schedulerbanner.js", *_USER_APP_SCRIPTS)))
@@ -747,6 +747,7 @@ def _get_index_html_static() -> str:
 <link rel="stylesheet" href="/assets/css/page-theme.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/ui-shell.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/css/account-menu.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/css/profile-media-modal.css?v=__CW_VERSION__">
 <link id="cw-notifications-css" rel="stylesheet" href="/assets/css/notifications.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/css/app-users.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/css/topology.css?v=__CW_VERSION__">
@@ -1689,6 +1690,14 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
                           </select>
                         </div>
                         <div>
+                          <div class="cw-field-label-row"><label for="ui_media_card">Media details</label></div>
+                          <select id="ui_media_card" data-cw-media-card>
+                            <option value="full">Full media card</option>
+                            <option value="compact">Compact media card</option>
+                          </select>
+                          <div class="sub">Applies to Main and profile media details. Saved in this browser.</div>
+                        </div>
+                        <div>
                           <div class="cw-field-label-row">
                             <label for="ui_protocol">UI protocol</label>
                             <button type="button" class="cw-field-help material-symbols-rounded" title="UI protocol: HTTP is simplest. HTTPS serves CrossWatch with a self-signed certificate for encrypted browser traffic." aria-label="UI protocol setting help">help</button>
@@ -2236,6 +2245,10 @@ def get_profile_html(user: dict | None = None) -> str:
     settings_interface = f"""        <section id="settings-interface" class="cw-set-card" data-settings-section="interface">
           <header class="cw-set-head"><div><h2>Display</h2><p>Choose how your profile pages look.</p></div></header>
 {settings_interface_controls}          <div class="cw-set-row">
+            <label class="cw-set-copy" for="profile-media-card"><strong>Media details</strong><small>Choose the full modal or compact card on Main and your profile. Saved in this browser.</small></label>
+            <span class="cw-set-inline"><select id="profile-media-card" class="cw-set-input" data-cw-media-card><option value="full">Full media card</option><option value="compact">Compact media card</option></select></span>
+          </div>
+          <div class="cw-set-row">
             <label class="cw-set-copy" for="profile-pref-timezone"><strong>Timezone</strong><small>Used for dates and day/month grouping on your profile pages.</small></label>
             <div class="cw-set-inline cw-set-field">
               <input id="profile-timezone-search" class="cw-set-input" type="search" placeholder="Search timezones" aria-label="Search timezones" aria-controls="profile-pref-timezone" autocomplete="off">
