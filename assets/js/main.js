@@ -175,7 +175,7 @@
       const s = String(v || "").trim().toLowerCase();
       if (!s) return false;
       if (key && s === key.trim().toLowerCase()) return true;
-      return /^(tmdb|imdb|tvdb|trakt|slug|mdblist|kitsu):/.test(s);
+      return /^(tmdb|imdb|tvdb|trakt|slug|mdblist|mal|anilist|kitsu):/.test(s);
     };
     const mKey = key.match(/#s(\d{1,3})e(\d{1,3})/i);
     const mRaw = rawTitle.match(/^s(\d{1,3})e(\d{1,3})$/i);

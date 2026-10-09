@@ -9,6 +9,7 @@ const RATINGS_TYPE_RULES = {
   SIMKL: { disable: ["seasons", "episodes"] },
   TMDB: { disable: ["seasons"] },
   ANILIST: { disable: ["seasons", "episodes"] },
+  MYANIMELIST: { disable: ["seasons", "episodes"] },
   KITSU: { disable: ["seasons", "episodes"] },
   STREMIO: { disable: ["seasons", "episodes"] },
 };
@@ -48,11 +49,11 @@ export function stremioRatingsAllowed(state) {
 }
 
 export function hasCumulativeAnimeHistory(state) {
-  return [state?.src, state?.dst].some(provider => same(provider, "anilist") || same(provider, "kitsu"));
+  return [state?.src, state?.dst].some(provider => same(provider, "anilist") || same(provider, "kitsu") || same(provider, "myanimelist"));
 }
 
 export function sourceWatchStatusAllowed(state) {
-  return same(state?.src, "simkl") && (same(state?.dst, "anilist") || same(state?.dst, "kitsu"));
+  return [state?.src, state?.dst].every(provider => ["simkl", "anilist", "kitsu", "myanimelist"].some(name => same(provider, name)));
 }
 
 export function featureAllowedForPair(state, feature) {

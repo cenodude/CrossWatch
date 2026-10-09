@@ -86,7 +86,7 @@ function applyPairRemoveMode(features, mode){
 function isTwoWayMode(state){return !!ID("cx-mode-two")?.checked||String(state?.mode||"").toLowerCase().startsWith("two")}
 function anilistCanReceive(state){return isAniList(state?.dst)||(hasAniList(state)&&isTwoWayMode(state))}
 function globalAnimeMappingEnabled(state){return !!state?.cfgRaw?.anime_mapping?.enabled}
-function hasAnimeProvider(state){return hasAniList(state)||same(state?.src,"kitsu")||same(state?.dst,"kitsu")||isSimkl(state?.src)||isSimkl(state?.dst)||isCrossWatch(state?.src)||isCrossWatch(state?.dst)}
+function hasAnimeProvider(state){return same(state?.src,"myanimelist")||same(state?.dst,"myanimelist")||hasAniList(state)||same(state?.src,"kitsu")||same(state?.dst,"kitsu")||isSimkl(state?.src)||isSimkl(state?.dst)||isCrossWatch(state?.src)||isCrossWatch(state?.dst)}
 function tmdbMetadataReady(state){return !!String(state?.cfgRaw?.tmdb?.api_key||state?.cfgRaw?.metadata?.tmdb_api_key||"").trim()}
 function collectionRouteSupported(state){
   return featureAllowedForPair(state,"collection");
@@ -160,7 +160,7 @@ function normalizeAnimeFeatureOptions(state, feature){
 }
 
 function renderAnimeOnlyOption(state, feature){
-  if(![state?.src,state?.dst].some(provider=>same(provider,"kitsu")||same(provider,"anilist"))) return "";
+  if(![state?.src,state?.dst].some(provider=>same(provider,"myanimelist")||same(provider,"kitsu")||same(provider,"anilist"))) return "";
   const id=feature==="ratings"?"cx-rt-anime-only":"cx-wl-anime-only";
   return `<div class="opt-row muted" title="This provider only holds anime, so this is always on.">
     <label for="${id}">Anime-only sync</label>
@@ -1864,7 +1864,7 @@ function renderFeaturePanel(state){
         </label>
       </div>
       ${animeNote ? `<div class="muted">${animeNote}</div>` : ""}
-      ${hsSourceStatus ? `<div class="opt-row" title="Dropped and on-hold titles keep that status on ${isAniList(state?.dst) ? "AniList" : "Kitsu"}. Applied when watched episodes are synced; status-only changes are not synced. Completed titles stay completed.">
+      ${hsSourceStatus ? `<div class="opt-row">
         <label for="cx-hs-source-status">Use source watch status</label>
         <label class="switch">
           <input id="cx-hs-source-status" type="checkbox" ${hs.use_source_status ? "checked" : ""}>
@@ -1905,7 +1905,7 @@ left.innerHTML = `
         </div>
       </div>
       ${hsCumulative && !globalAnimeMappingEnabled(state) ? `<div class="muted"><b>Enable global Anime ID Mapping for episode history.</b></div>` : ""}
-      ${hsCumulative ? `<div class="muted">${hasAniList(state) ? "AniList" : "Kitsu"} history supports both directions and is anime only. It uses watched status and episode progress per title. Remove reduces progress only for the latest watched episodes, or resets a movie to unwatched; ratings and notes are preserved. Gaps are reported unresolved. Specials and rewatches are skipped.</div>` : ""}
+      ${hsCumulative ? `<div class="muted">${hasAniList(state) ? "AniList" : [state?.src,state?.dst].some(p=>same(p,"myanimelist")) ? "MyAnimeList" : "Kitsu"} history supports both directions and is anime only. It uses watched status and episode progress per title. Remove reduces progress only for the latest watched episodes, or resets a movie to unwatched; ratings and notes are preserved. Gaps are reported unresolved. Specials and rewatches are skipped.</div>` : ""}
       <div class="muted">${rwSupported ? "Synchronize plays between providers. Rewatches require event-capable providers; SIMKL requires Pro/VIP. Remove is not recommended." : "Synchronize plays between providers. Rewatches are available only when both sides support event history; SIMKL requires Pro/VIP."}</div>
     `;
 
