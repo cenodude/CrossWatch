@@ -583,3 +583,107 @@ def test_interactive_session_reports_simkl_receipts_as_success(env, config_base,
         failed.assert_not_called()
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("source_status,expected", [("dropped", "dropped"), ("on_hold", "hold"), ("watching", None), ("completed", None), ("planning", None)])
+@pytest.mark.parametrize("enabled", [False, True])
+def test_simkl_history_uses_source_status_in_existing_batch(env, source_status, expected, enabled):
+    adapter, session = env
+    adapter.config = {"_cw_history_rewatches": False}
+    adapter.raw_cfg = {"_cw_pair_feature_options": {"feature": "history", "use_source_status": enabled}}
+    session.post.return_value = _response({"added": {"episodes": 2}, "not_found": {}})
+    items = [{**_episode(n, rewatches=False), "watch_status": source_status} for n in (1, 2)]
+    count, unresolved = history.add(adapter, items)
+    assert count == 2 and not unresolved
+    session.post.assert_called_once()
+    entry = session.post.call_args.kwargs["json"]["shows"][0]
+    assert entry.get("status") == (expected if enabled else None)
+    assert len(entry["seasons"][0]["episodes"]) == 2
+    assert session.get.call_count == int(enabled and expected is not None)
+
+
+def test_simkl_source_status_preserves_completed_destination(env):
+    adapter, session = env
+    adapter.config = {"_cw_history_rewatches": False}
+    adapter.raw_cfg = {"_cw_pair_feature_options": {"feature": "history", "use_source_status": True}}
+    session.get.return_value = _response({"shows": [{"show": {"ids": {"tvdb": 399959}}, "status": "completed"}]})
+    session.post.return_value = _response({"added": {"episodes": 1}, "not_found": {}})
+    count, unresolved = history.add(adapter, [{**_episode(1, rewatches=False), "watch_status": "dropped"}])
+    assert count == 1 and not unresolved
+    assert "status" not in session.post.call_args.kwargs["json"]["shows"][0]
+
+
+def test_simkl_source_status_native_anime_batch(env, monkeypatch):
+    adapter, session = env
+    adapter.raw_cfg = {"_cw_pair_feature_options": {"feature": "history", "use_source_status": True}}
+    item = {**_episode(1, rewatches=False), "watch_status": "on_hold"}
+    key = history._thaw_key(item)
+    ids = {"simkl": "12345"}
+    group_key = json.dumps(ids, sort_keys=True)
+    body = {"anime": [{"ids": ids, "episodes": [{"number": 1, "watched_at": item["watched_at"]}]}]}
+    monkeypatch.setattr(history, "_build_anime_retry_payload", lambda *a, **kw: (body, {(group_key, 1): item}, [item]))
+    session.post.return_value = _response({"added": {"episodes": 1}, "not_found": {}})
+    history._add_native_anime(session, {}, 5, [item], confirmed_keys={key}, adapter=adapter)
+    assert session.post.call_args.kwargs["json"]["anime"][0]["status"] == "hold"
+    session.get.assert_called_once()
+
+
+def test_simkl_source_status_failure_does_not_write_unchecked_status(env):
+    adapter, session = env
+    adapter.raw_cfg = {"_cw_pair_feature_options": {"feature": "history", "use_source_status": True}}
+    session.get.return_value = _response({}, 503)
+    with pytest.raises(RuntimeError, match="simkl_source_status_lookup_failed"):
+        history.add(adapter, [{**_episode(1, rewatches=False), "watch_status": "dropped"}])
+    session.post.assert_not_called()
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_simkl_accepts_undated_tracker_progress_without_inventing_dates(env, enabled):
+    adapter, session = env
+    adapter.config = {"_cw_history_rewatches": False}
+    adapter.raw_cfg = {"_cw_pair_feature_options": {"feature": "history", "use_source_status": enabled}}
+    session.post.return_value = _response({"added": {"episodes": 1}, "not_found": {}})
+    item = {**_episode(1, rewatches=False), "watched": True, "watch_status": "on_hold"}
+    item.pop("watched_at")
+    count, unresolved = history.add(adapter, [item])
+    assert count == 1 and not unresolved
+    entry = session.post.call_args.kwargs["json"]["shows"][0]
+    assert entry["seasons"][0]["episodes"] == [{"number": 1}]
+    assert entry.get("status") == ("hold" if enabled else None)
+    assert "added_at" not in entry
+
+
+def test_undated_history_events_still_require_a_date(env):
+    adapter, session = env
+    item = {**_episode(1), "watched": True, "watch_status": "on_hold"}
+    item.pop("watched_at")
+    count, unresolved = history.add(adapter, [item])
+    assert count == 0 and unresolved
+    session.post.assert_not_called()
+
+
+def test_simkl_native_anime_accepts_undated_tracker_progress(env, monkeypatch):
+    adapter, session = env
+    item = {**_episode(1, rewatches=False), "watched": True, "watch_status": "dropped"}
+    item.pop("watched_at")
+    key = history._thaw_key(item)
+    monkeypatch.setattr(history, "_anime_retry_show_ids", lambda _: {"simkl": "12345"})
+    monkeypatch.setattr(history, "_anime_retry_episode_numbers_for_group", lambda *a, **kw: {key: 1})
+    body, index, items = history._build_anime_retry_payload([item], session=session, headers={}, timeout=5, confirmed_keys={key})
+    assert body["anime"][0]["episodes"] == [{"number": 1}]
+    assert items == [item] and len(index) == 1
+
+
+def test_simkl_source_status_shares_lookup_and_rejects_conflicting_statuses(env):
+    adapter, session = env
+    adapter.raw_cfg = {"_cw_pair_feature_options": {"feature": "history", "use_source_status": True}}
+    ids = {"simkl": "12345"}
+    key = json.dumps(ids, sort_keys=True)
+    body = {"anime": [{"ids": ids, "episodes": [{"number": 1}]}]}
+    context = {}
+    for status in ("dropped", "on_hold"):
+        history._apply_source_watch_status(adapter, body, {key: [{"watch_status": status}]}, context)
+    session.get.assert_called_once()
+    body["anime"][0].pop("status")
+    history._apply_source_watch_status(adapter, body, {key: [{"watch_status": "on_hold"}, {"watch_status": "dropped"}]}, context)
+    assert "status" not in body["anime"][0]
