@@ -782,6 +782,11 @@ class Dispatcher:
             ev = self._route_event(ev, cfg)
             if not self._passes_filters(ev, cfg):
                 return False
+        if retry_key is None:
+            from cw_platform.event_archive.playback_recorder import prepare_playback, record_playback
+
+            ev = prepare_playback(ev)
+            record_playback(ev, cfg)
         sent = False
         failed = False
         queued = False
@@ -830,6 +835,9 @@ class Dispatcher:
                     pending = self._pending.get(sk)
                     newer = pending is not None and pending[1] is not ev
                     if isinstance(result, dict) and result.get("ok") is False:
+                        from cw_platform.event_archive.playback_recorder import record_playback
+
+                        record_playback(ev, cfg, delivery="failed", reason=str(result.get("error") or "unknown"))
                         failed = True
                         self._failed_ids[sk] = dict(ev.ids)
                         self._failed_ids.move_to_end(sk)

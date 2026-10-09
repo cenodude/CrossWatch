@@ -32,6 +32,7 @@ except Exception:
 from providers.scrobble.scrobble import ScrobbleEvent, ScrobbleSink
 from services.activity import record_scrobble_event
 from cw_platform.event_archive import record_watch
+from cw_platform.event_archive.playback_recorder import record_playback
 from providers.scrobble._auto_remove_watchlist import remove_across_providers_by_ids as _rm_across
 try:
     from api.watchlistAPI import remove_across_providers_by_ids as _rm_across_api
@@ -804,6 +805,7 @@ class TraktSink(ScrobbleSink):
                 _log(f"intent path={path} ids={_body_ids_desc(body)} p={body.get('progress')}", "DEBUG")
             res = self._send_http(path, body, cfg)
             if res.get("ok"):
+                record_playback(ev, cfg, delivery="succeeded")
                 if res.get("duplicate"):
                     _log(f"send path={path} status=409 duplicate", "DEBUG")
                     self._a_sess[(sk, mk)] = action
@@ -859,6 +861,7 @@ class TraktSink(ScrobbleSink):
                     _log(f"intent path={path} ids={_ids_desc_map(epi_ids)} p={body.get('progress')}", "DEBUG")
                 res = self._send_http(path, body, cfg)
                 if res.get("ok"):
+                    record_playback(ev, cfg, delivery="succeeded")
                     if res.get("duplicate"):
                         _log(f"send path={path} status=409 duplicate", "DEBUG")
                         self._a_sess[(sk, mk)] = action
@@ -899,6 +902,7 @@ class TraktSink(ScrobbleSink):
                 last_err = res
 
         if last_err:
+            record_playback(ev, cfg, delivery="failed", reason=str(last_err.get("status") or ""))
             _log(f"{path} {last_err.get('status')} err={_safe_log_repr(last_err.get('resp'))}", "ERROR")
             if action in ("start", "stop"):
                 self._note_watch(ev, action, cfg, p_send, status="fail", reason=str(last_err.get("status") or ""))
