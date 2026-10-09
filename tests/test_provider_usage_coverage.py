@@ -2,15 +2,16 @@
 from __future__ import annotations
 
 from typing import Any
+from types import SimpleNamespace
 
 import pytest
 
 from cw_platform.provider_usage import (
     WEBHOOK_SOURCE_PROVIDERS,
-    _PROVIDER_LABELS,
     find_provider_usage,
     provider_label,
 )
+from cw_platform.modules_registry import provider_names
 from providers.scrobble.routes import ROUTE_PROVIDERS, ROUTE_SINKS
 
 
@@ -59,13 +60,60 @@ def test_every_watcher_route_sink_is_protected(sink: str):
     assert any(u["feature"] == "watcher" and u["role"] == "sink" for u in usages), usages
 
 
-@pytest.mark.parametrize("provider", sorted(ROUTE_PROVIDERS | ROUTE_SINKS | set(WEBHOOK_SOURCE_PROVIDERS)))
-def test_scrobbler_providers_have_a_display_label(provider: str):
-    assert provider in _PROVIDER_LABELS, (
-        f"{provider} can appear in the Scrobbler screen and the delete-conflict message, "
-        "so it needs a label or it renders as an uppercase key"
-    )
-    assert provider_label(provider) == _PROVIDER_LABELS[provider]
+@pytest.mark.parametrize("provider", provider_names(upper=False))
+def test_registered_providers_use_their_declared_label(provider: str):
+    from cw_platform.modules_registry import load_sync_ops
+    from providers.auth.registry import auth_provider_manifest
+
+    ops = load_sync_ops(provider)
+    expected = ops.label() if ops is not None else auth_provider_manifest(provider)["label"]
+    assert provider_label(provider) == expected
+    assert provider_label(provider, "P01") == f"{expected} P01"
+
+
+@pytest.mark.parametrize("provider", provider_names(upper=False))
+@pytest.mark.parametrize("role", ["source", "target"])
+@pytest.mark.parametrize("enabled", [True, False])
+def test_all_registered_providers_share_instance_scoped_delete_guard(provider, role, enabled):
+    from api.provider_guard import usage_conflict_response
+    import json
+
+    cfg = {"pairs": [{"id": "shared", "enabled": enabled, role: provider.upper(), f"{role}_instance": "P01"}]}
+    response = usage_conflict_response(cfg, provider, "P01")
+    assert response is not None and response.status_code == 409
+    payload = json.loads(response.body)
+    assert payload["error"] == "provider_in_use"
+    assert payload["usages"][0]["role"] == role
+    assert payload["usages"][0]["enabled"] is enabled
+    assert provider_label(provider, "P01") in payload["message"]
+    assert usage_conflict_response(cfg, provider, "P02") is None
+
+
+def test_new_sync_registration_needs_no_usage_label_entry(monkeypatch):
+    from cw_platform import modules_registry
+
+    monkeypatch.setitem(modules_registry.MODULES["SYNC"], "_mod_NEW", "test.new")
+    monkeypatch.setattr(modules_registry, "import_module", lambda path: SimpleNamespace(OPS=SimpleNamespace(label=lambda: "New Provider")))
+    assert provider_label("new", "P01") == "New Provider P01"
+
+
+def test_new_auth_only_registration_needs_no_usage_label_entry(monkeypatch):
+    from cw_platform import modules_registry
+    from providers.auth import registry
+
+    monkeypatch.setitem(modules_registry.MODULES["AUTH"], "_auth_NEW", "test.auth_new")
+    monkeypatch.setattr(registry, "_safe_import", lambda path: SimpleNamespace(PROVIDER=SimpleNamespace(manifest=lambda: {"label": "New Auth Provider"})))
+    assert provider_label("new") == "New Auth Provider"
+
+
+def test_unavailable_sync_module_falls_back_to_auth_manifest(monkeypatch):
+    from cw_platform import modules_registry
+
+    def unavailable(name):
+        raise ImportError("unavailable")
+
+    monkeypatch.setattr(modules_registry, "load_sync_ops", unavailable)
+    assert provider_label("kitsu") == "Kitsu"
 
 
 def test_label_falls_back_without_crashing():

@@ -26,6 +26,7 @@ from providers.scrobble.routes import (
     route_needs_account_filter,
     same_scrobble_endpoint,
 )
+from providers.scrobble.plex.ratings_sync import RATING_SINKS
 from providers.scrobble.sources import legacy_mode_for_sources, scrobble_sources
 from providers.webhooks.config import (
     media_source_connected,
@@ -73,6 +74,8 @@ WEBHOOK_SETTING_KEYS = {
     "plex_flicklist_ratings",
     "plex_wetrakr_ratings",
     "plex_anilist_ratings",
+    "plex_kitsu_ratings",
+    "plex_myanimelist_ratings",
     "plex_scrob_ratings",
     "pause_debounce_seconds",
     "suppress_start_at",
@@ -333,7 +336,7 @@ def _normalize_webhook_settings(cfg: Mapping[str, Any], provider: str, body: Map
         if key in body:
             out[key] = _normalize_filters(body.get(key), provider, key)
     if provider == "plex":
-        for key in ("plex_trakt_ratings", "plex_simkl_ratings", "plex_mdblist_ratings", "plex_crosswatch_ratings", "plex_floppy_ratings", "plex_punchplay_ratings", "plex_flicklist_ratings", "plex_wetrakr_ratings", "plex_anilist_ratings", "plex_scrob_ratings"):
+        for key in ("plex_trakt_ratings", "plex_simkl_ratings", "plex_mdblist_ratings", "plex_crosswatch_ratings", "plex_floppy_ratings", "plex_punchplay_ratings", "plex_flicklist_ratings", "plex_wetrakr_ratings", "plex_anilist_ratings", "plex_kitsu_ratings", "plex_myanimelist_ratings", "plex_scrob_ratings"):
             if key in body:
                 out[key] = bool(body.get(key))
     selected_sinks = [str(s or "").strip().lower() for s in (out.get("sinks") or _as_list(body.get("sinks")) or current_sinks)]
@@ -618,6 +621,8 @@ def build_overview(cfg: dict[str, Any], request: Request) -> dict[str, Any]:
             "flicklist": bool(watch.get("plex_flicklist_ratings")),
             "wetrakr": bool(watch.get("plex_wetrakr_ratings")),
             "anilist": bool(watch.get("plex_anilist_ratings")),
+            "kitsu": bool(watch.get("plex_kitsu_ratings")),
+            "myanimelist": bool(watch.get("plex_myanimelist_ratings")),
             "scrob": bool(watch.get("plex_scrob_ratings")),
             "endpoint_url": _global_plex_ratings_url(request, cfg),
         },
@@ -1040,7 +1045,7 @@ def api_scrobbler_settings(request: Request, payload: dict[str, Any] = Body(...)
             watch["autostart"] = bool(payload.get("watch_autostart"))
         ratings_raw = payload.get("global_plex_ratings")
         if isinstance(ratings_raw, Mapping):
-            for sink in ("trakt", "simkl", "mdblist", "crosswatch", "floppy", "punchplay", "flicklist", "wetrakr", "anilist", "scrob"):
+            for sink in RATING_SINKS:
                 watch[f"plex_{sink}_ratings"] = bool(ratings_raw.get(sink))
         if bool(payload.get("regenerate_global_plex_ratings_webhook")):
             sec = after.setdefault("security", {})

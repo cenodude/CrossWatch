@@ -13,7 +13,7 @@ from .descriptors import descriptor_candidates_for_id, parse_descriptor
 from .overrides import EpisodeOverride, find_episode_override, find_identity_overrides
 from .storage import index_ready, query_edges, query_identity_natives, query_native_identity
 
-ANIME_NATIVE_PROVIDERS = {"kitsu", "anilist", "simkl", "crosswatch"}
+ANIME_NATIVE_PROVIDERS = {"kitsu", "myanimelist", "anilist", "simkl", "crosswatch"}
 DEFAULT_FEATURES = {"watchlist", "ratings"}
 OPT_IN_FEATURES = {"history", "progress"}
 ANY_PAIR = "*"
@@ -123,7 +123,7 @@ def runtime_pair_feature_options(cfg: Mapping[str, Any], feature: Any = "watchli
     return opts
 
 
-ANIME_ONLY_TARGET_KEYS = {"anilist": ("anilist", "mal"), "kitsu": ("kitsu",)}
+ANIME_ONLY_TARGET_KEYS = {"anilist": ("anilist", "mal"), "kitsu": ("kitsu",), "myanimelist": ("mal",)}
 
 
 ANIME_ONLY_AIRED_KEYS = ("tvdb", "tmdb")
@@ -138,6 +138,8 @@ def _clean_id_map(raw: Any) -> dict[str, str]:
 
 
 def _anime_target_id(release_tag: str, namespace: str, ident: str, target: str) -> str:
+    if target == "myanimelist" and namespace == "mal":
+        return ident
     if namespace == target:
         return ident
     if target == "kitsu" and namespace in ("anilist", "mal", "anidb"):
@@ -200,11 +202,11 @@ def _anime_only_keep(svc: "AnimeMappingService", row: Mapping[str, Any], history
                      cache: dict[tuple[str, str], bool], target: str) -> bool:
     media_type = str(row.get("type") or "").strip().lower()
     mapping_enabled = bool((svc.cfg.get("anime_mapping") or {}).get("enabled", False))
-    if target == "kitsu" and media_type not in ({"movie", "episode"} if history else {"movie", "show"}):
+    if target in {"kitsu", "myanimelist"} and media_type not in ({"movie", "episode"} if history else {"movie", "show"}):
         return False
     if not history or media_type not in ("episode", "season"):
         ids = ids_from(row)
-        if (history and target == "anilist") or (target == "kitsu" and mapping_enabled):
+        if (history and target == "anilist") or (target in {"kitsu", "myanimelist"} and mapping_enabled):
             try:
                 ids = svc.enrich_ids(ids, media_type=media_type or "movie").get("ids") or ids
                 if target == "kitsu" and not ids.get(target):
@@ -212,7 +214,7 @@ def _anime_only_keep(svc: "AnimeMappingService", row: Mapping[str, Any], history
             except Exception:
                 pass
         return any(str(ids.get(key) or "").strip() for key in ANIME_ONLY_TARGET_KEYS[target])
-    if target == "kitsu" and not mapping_enabled:
+    if target in {"kitsu", "myanimelist"} and not mapping_enabled:
         return False
     try:
         if int(str(row.get("season")).strip()) == 0:
@@ -244,11 +246,11 @@ def anime_only_adds(
         return rows, 0
     unavailable: tuple[list[Any], int] = ([], len(rows)) if history else (rows, 0)
     block = cfg.get("anime_mapping") if isinstance(cfg, Mapping) else None
-    if target != "kitsu" and history and not bool((block if isinstance(block, Mapping) else {}).get("enabled", False)):
+    if target not in {"kitsu", "myanimelist"} and history and not bool((block if isinstance(block, Mapping) else {}).get("enabled", False)):
         return unavailable
     try:
         svc = AnimeMappingService(cfg)
-        if target != "kitsu" and history and not svc.ready():
+        if target not in {"kitsu", "myanimelist"} and history and not svc.ready():
             return unavailable
     except Exception:
         return unavailable

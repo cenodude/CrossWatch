@@ -32,7 +32,7 @@ def setup_pair(cfg, target, feature, mode="one-way"):
         valid = {"type": "episode", "show_ids": {"tvdb": "10"}, "season": 1, "episode": 1}
         excluded = {**valid, "show_ids": {"tvdb": "999"}, "title": "1883"}
     else:
-        valid = {"type": "movie", "ids": {target.lower(): "100" if target == "ANILIST" else "1"}}
+        valid = {"type": "movie", "ids": {("mal" if target == "MYANIMELIST" else target.lower()): "100" if target == "ANILIST" else "1"}}
         excluded = {"type": "movie", "ids": {"tmdb": "999"}, "title": "Live action"}
     items = {"valid": valid, "excluded": excluded}
     state = {"providers": {
@@ -42,7 +42,7 @@ def setup_pair(cfg, target, feature, mode="one-way"):
     return state, items
 
 
-@pytest.mark.parametrize("target", ["KITSU", "ANILIST"])
+@pytest.mark.parametrize("target", ["KITSU", "ANILIST", "MYANIMELIST"])
 @pytest.mark.parametrize("feature", ["history", "watchlist", "ratings"])
 @pytest.mark.parametrize("mode", ["one-way", "two-way"])
 def test_anime_only_findings_stats_and_exclusions(anime_mapping, target, feature, mode):
@@ -62,29 +62,29 @@ def test_anime_only_findings_stats_and_exclusions(anime_mapping, target, feature
     assert [row["key"] for row in problems if row["type"] == "missing_peer"] == ["valid"]
 
 
-@pytest.mark.parametrize("target", ["KITSU", "ANILIST"])
+@pytest.mark.parametrize("target", ["KITSU", "ANILIST", "MYANIMELIST"])
 def test_custom_episode_mapping_is_eligible(anime_mapping, target):
     state, items = setup_pair(anime_mapping, target, "history")
     upsert_override({"media_type": "show", "match_provider": "tvdb", "match_id": "999", "match_season": 1,
                      "episode_from": 1, "episode_to": 10, "episode_start_at": 1,
-                     "target_namespace": target.lower(), "target_id": "100" if target == "ANILIST" else "1"})
+                     "target_namespace": ("mal" if target == "MYANIMELIST" else target.lower()), "target_id": "100" if target == "ANILIST" else "1"})
     ctx = A._analysis_context(state, anime_mapping)
     assert A._missing_targets(ctx, "SIMKL@SIMKL-P01", "history", "excluded", items["excluded"]) == [target]
     assert A._pair_exclusions(state, ctx=ctx) == []
 
 
-@pytest.mark.parametrize("target", ["KITSU", "ANILIST"])
+@pytest.mark.parametrize("target", ["KITSU", "ANILIST", "MYANIMELIST"])
 @pytest.mark.parametrize("feature", ["watchlist", "ratings"])
 def test_custom_title_mapping_is_eligible_without_native_snapshot_id(anime_mapping, target, feature):
     state, items = setup_pair(anime_mapping, target, feature)
     upsert_override({"media_type": "movie", "match_provider": "tmdb", "match_id": "999",
-                     "target_namespace": target.lower(), "target_id": "100" if target == "ANILIST" else "1"})
+                     "target_namespace": ("mal" if target == "MYANIMELIST" else target.lower()), "target_id": "100" if target == "ANILIST" else "1"})
     ctx = A._analysis_context(state, anime_mapping)
     assert A._missing_targets(ctx, "SIMKL@SIMKL-P01", feature, "excluded", items["excluded"]) == [target]
     assert items["excluded"]["ids"] == {"tmdb": "999"}
 
 
-@pytest.mark.parametrize("target", ["KITSU", "ANILIST"])
+@pytest.mark.parametrize("target", ["KITSU", "ANILIST", "MYANIMELIST"])
 def test_present_anime_is_counted_as_synced(anime_mapping, target):
     state, items = setup_pair(anime_mapping, target, "ratings")
     state["providers"][target]["ratings"]["baseline"]["items"] = {"valid": dict(items["valid"])}
@@ -113,17 +113,17 @@ def test_anime_filter_is_scoped_to_target_and_cached(anime_mapping, monkeypatch)
     assert calls == [2]
 
 
-@pytest.mark.parametrize("target", ["KITSU", "ANILIST"])
+@pytest.mark.parametrize("target", ["KITSU", "ANILIST", "MYANIMELIST"])
 def test_two_way_reverse_route_still_reports_missing_anime(anime_mapping, target):
     state, items = setup_pair(anime_mapping, target, "ratings", "two-way")
     state["providers"][target]["ratings"]["baseline"]["items"] = {"other": {
-        "type": "movie", "ids": {target.lower(): "500"}}}
+        "type": "movie", "ids": {("mal" if target == "MYANIMELIST" else target.lower()): "500"}}}
     ctx = A._analysis_context(state, anime_mapping)
     row = state["providers"][target]["ratings"]["baseline"]["items"]["other"]
     assert A._missing_targets(ctx, target, "ratings", "other", row) == ["SIMKL@SIMKL-P01"]
 
 
-@pytest.mark.parametrize("target", ["KITSU", "ANILIST"])
+@pytest.mark.parametrize("target", ["KITSU", "ANILIST", "MYANIMELIST"])
 @pytest.mark.parametrize("direction", ["forward", "reverse", "two-way"])
 def test_history_health_excludes_non_anime(anime_mapping, target, direction):
     state, items = setup_pair(anime_mapping, target, "history")
@@ -138,7 +138,7 @@ def test_history_health_excludes_non_anime(anime_mapping, target, direction):
     assert not [row for row in problems if row["type"] == "history_show_normalization"]
 
 
-@pytest.mark.parametrize("target", ["KITSU", "ANILIST"])
+@pytest.mark.parametrize("target", ["KITSU", "ANILIST", "MYANIMELIST"])
 def test_history_health_keeps_real_anime_gaps_and_regular_pair_gaps(anime_mapping, target):
     state, items = setup_pair(anime_mapping, target, "history")
     items.update({f"live-{i}": {**items["excluded"], "show_ids": {"tvdb": str(1000 + i)}} for i in range(20)})
@@ -150,13 +150,13 @@ def test_history_health_keeps_real_anime_gaps_and_regular_pair_gaps(anime_mappin
     assert target not in by_target
     upsert_override({"media_type": "show", "match_provider": "tvdb", "match_id": "999", "match_season": 1,
                      "episode_from": 1, "episode_to": 10, "episode_start_at": 1,
-                     "target_namespace": target.lower(), "target_id": "100" if target == "ANILIST" else "1"})
+                     "target_namespace": ("mal" if target == "MYANIMELIST" else target.lower()), "target_id": "100" if target == "ANILIST" else "1"})
     issues = A._history_normalization_issues(state, anime_mapping)
     gap = next(row for row in issues if row["target"] == target)
     assert gap["show_delta"] == {"source": 2, "target": 0}
 
 
-@pytest.mark.parametrize("target", ["KITSU", "ANILIST"])
+@pytest.mark.parametrize("target", ["KITSU", "ANILIST", "MYANIMELIST"])
 @pytest.mark.parametrize("feature", ["ratings", "watchlist"])
 @pytest.mark.parametrize("namespace,ident", [("mal", "25777"), ("anilist", "100"), ("kitsu", "1")])
 def test_health_accepts_mapped_anime_ids(anime_mapping, target, feature, namespace, ident):
@@ -168,7 +168,7 @@ def test_health_accepts_mapped_anime_ids(anime_mapping, target, feature, namespa
     assert items["valid"]["ids"] == {namespace: ident}
 
 
-@pytest.mark.parametrize("target", ["KITSU", "ANILIST"])
+@pytest.mark.parametrize("target", ["KITSU", "ANILIST", "MYANIMELIST"])
 def test_health_keeps_unusable_id_findings(anime_mapping, target):
     state, items = setup_pair(anime_mapping, target, "ratings")
     items["valid"] = {"type": "show", "ids": {"simkl": "123"}}
