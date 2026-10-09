@@ -90,6 +90,7 @@ PROVIDERS: tuple[str, ...] = (
     "kodi",
     "stremio",
     "floppy",
+    "myanimelist",
     "wetrakr",
     "punchplay",
     "bingebase",
@@ -288,6 +289,7 @@ PROBE_CFG_KEY: dict[str, str] = {
     "KODI": "kodi",
     "STREMIO": "stremio",
     "FLOPPY": "floppy",
+    "MYANIMELIST": "myanimelist",
     "WETRAKR": "wetrakr",
     "PUNCHPLAY": "punchplay",
     "BINGEBASE": "bingebase",
@@ -434,6 +436,10 @@ def _probe_key(provider_id: str, cfg: Mapping[str, Any]) -> str:
         key = str((f.get("api_token") or f.get("token") or "")).strip()
         return f"floppy|srv:{_secret_cache_tag(base)}|key:{_secret_cache_tag(key)}" if (base and key) else "floppy|unconfigured"
 
+    if p == "myanimelist":
+        block = cfg.get("myanimelist") or {}
+        token = str(block.get("access_token") or "")
+        return f"myanimelist|tok:{_secret_cache_tag(token)}|exp:{block.get('expires_at', 0)}|reauth:{bool(block.get('reauth_required'))}" if token else "myanimelist|unconfigured"
     if p == "wetrakr":
         pp = cfg.get("wetrakr") or {}
         tok = str((pp.get("access_token") or "")).strip()
@@ -1536,6 +1542,40 @@ def _probe_scrob_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tu
     return ok, rsn
 
 
+@_persistent_probe("myanimelist")
+def _probe_myanimelist_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
+    key = _probe_key("myanimelist", cfg)
+    bust_ts = _consume_bust("myanimelist")
+    now = time.time()
+    cached = PROBE_DETAIL_CACHE.get(key)
+    if cached and (now - cached[0]) < max_age_sec and (not bust_ts or cached[0] >= bust_ts):
+        return cached[1], cached[2]
+
+    from providers.auth import _auth_MYANIMELIST as myanimelist
+
+    p: Mapping[str, Any] = (cfg.get("myanimelist") or {}) if isinstance(cfg.get("myanimelist"), Mapping) else {}
+    if not myanimelist.is_configured(p):
+        rsn = "MyAnimeList: missing authentication"
+        with _CACHE_LOCK:
+            PROBE_DETAIL_CACHE[key] = (now, False, rsn)
+        return False, rsn
+
+    code, body = _authenticated_account("myanimelist", cfg, myanimelist.ME_URL)
+
+    if code != 200:
+        rsn = "MyAnimeList: reconnect required" if code == 401 else _reason_http(code, "MyAnimeList")
+        with _CACHE_LOCK:
+            PROBE_DETAIL_CACHE[key] = (now, False, rsn)
+        return False, rsn
+
+    j = _json_loads(body) or {}
+    ok = bool(isinstance(j, dict) and myanimelist.valid_account(j))
+    rsn = "" if ok else "MyAnimeList: invalid response"
+    with _CACHE_LOCK:
+        PROBE_DETAIL_CACHE[key] = (now, ok, rsn)
+    return ok, rsn
+
+
 @_persistent_probe("wetrakr")
 def _probe_wetrakr_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
     key = _probe_key("wetrakr", cfg)
@@ -1874,6 +1914,37 @@ def scrob_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dic
     with _CACHE_LOCK:
         _USERINFO_CACHE[key] = (now, dict(out))
     return dict(out)
+
+
+@_persistent_userinfo("myanimelist")
+def myanimelist_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict[str, Any]:
+    key = _probe_key("myanimelist", cfg)
+    bust_ts = _consume_bust("myanimelist")
+    now = time.time()
+    cached = _USERINFO_CACHE.get(key)
+    if cached and (now - cached[0]) < max_age_sec and (not bust_ts or cached[0] >= bust_ts) and isinstance(cached[1], dict):
+        return cached[1]
+
+    from providers.auth import _auth_MYANIMELIST as myanimelist
+
+    pp = (cfg.get("myanimelist") or cfg.get("MYANIMELIST") or {}) or {}
+    if not myanimelist.is_configured(pp):
+        with _CACHE_LOCK:
+            _USERINFO_CACHE[key] = (now, {})
+        return {}
+
+    code, body = _authenticated_account("myanimelist", cfg, myanimelist.ME_URL)
+
+    out: dict[str, Any] = {}
+    if code == 200:
+        j = _json_loads(body) or {}
+        if isinstance(j, dict):
+            if myanimelist.valid_account(j):
+                out = myanimelist.account_info(j)
+
+    with _CACHE_LOCK:
+        _USERINFO_CACHE[key] = (now, out)
+    return out
 
 
 @_persistent_userinfo("wetrakr")
@@ -2284,6 +2355,8 @@ def _prov_configured(cfg: dict[str, Any], name: str, instance_id: Any = "default
     if ck == "floppy":
         return bool(str(blk.get("server_url") or blk.get("server") or "").strip() and str(blk.get("api_token") or blk.get("token") or "").strip())
 
+    if ck == "myanimelist":
+        return _provider_auth().is_configured("myanimelist", blk)
     if ck == "wetrakr":
         return _provider_auth().is_configured("wetrakr", blk)
 
@@ -2386,6 +2459,7 @@ DETAIL_PROBES: dict[str, Callable[..., tuple[bool, str]]] = {
     "NUVIO": _probe_nuvio_detail,
     "STREMIO": _probe_stremio_detail,
     "FLOPPY": _probe_floppy_detail,
+    "MYANIMELIST": _probe_myanimelist_detail,
     "WETRAKR": _probe_wetrakr_detail,
     "PUNCHPLAY": _probe_punchplay_detail,
     "BINGEBASE": _probe_bingebase_detail,
@@ -2400,6 +2474,7 @@ USERINFO_FNS: dict[str, Callable[..., dict[str, Any]]] = {
     "KITSU": kitsu_user_info,
     "EMBY": emby_user_info,
     "MDBLIST": mdblist_user_info,
+    "MYANIMELIST": myanimelist_user_info,
     "WETRAKR": wetrakr_user_info,
     "PUNCHPLAY": punchplay_user_info,
     "BINGEBASE": bingebase_user_info,
@@ -2714,6 +2789,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
             nuvio_ok, nuvio_reason, cfg_nuvio = _provider_tuple("NUVIO")
             stremio_ok, stremio_reason, cfg_stremio = _provider_tuple("STREMIO")
             floppy_ok, floppy_reason, cfg_floppy = _provider_tuple("FLOPPY")
+            myanimelist_ok, myanimelist_reason, cfg_myanimelist = _provider_tuple("MYANIMELIST")
             wetrakr_ok, wetrakr_reason, cfg_wetrakr = _provider_tuple("WETRAKR")
             punchplay_ok, punchplay_reason, cfg_punchplay = _provider_tuple("PUNCHPLAY")
             bingebase_ok, bingebase_reason, cfg_bingebase = _provider_tuple("BINGEBASE")
@@ -2739,6 +2815,8 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 userinfo_jobs["EMBY"] = (emby_user_info, cfg_emby)
             if mdbl_ok:
                 userinfo_jobs["MDBLIST"] = (mdblist_user_info, cfg_mdbl)
+            if myanimelist_ok:
+                userinfo_jobs["MYANIMELIST"] = (myanimelist_user_info, cfg_myanimelist)
             if wetrakr_ok:
                 userinfo_jobs["WETRAKR"] = (wetrakr_user_info, cfg_wetrakr)
             if punchplay_ok:
@@ -3057,6 +3135,18 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                     "rep_instance": inst_sum.get("rep"),
                 }
 
+            if "MYANIMELIST" in active_providers:
+                inst_map, inst_sum = _instances_payload("MYANIMELIST")
+                providers_out["MYANIMELIST"] = {
+                    "connected": myanimelist_ok,
+                    **({} if myanimelist_ok else {"reason": myanimelist_reason}),
+                    **userinfo.get("MYANIMELIST", {}),
+                    "experimental": True,
+                    "instances": inst_map,
+                    "instances_summary": inst_sum,
+                    "rep_instance": inst_sum.get("rep"),
+                }
+
             if "WETRAKR" in active_providers:
                 from providers.auth import _auth_WETRAKR as wetrakr_auth
 
@@ -3184,6 +3274,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 "nuvio_connected": nuvio_ok,
                 "stremio_connected": stremio_ok,
                 "floppy_connected": floppy_ok,
+                "myanimelist_connected": myanimelist_ok,
                 "wetrakr_connected": wetrakr_ok,
                 "punchplay_connected": punchplay_ok,
                 "bingebase_connected": bingebase_ok,

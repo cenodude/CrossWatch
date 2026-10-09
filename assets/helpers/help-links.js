@@ -14,6 +14,7 @@
     mdblist: "crosswatch/settings/connections/trackers/mdblist",
     publicmetadb: "crosswatch/settings/connections/trackers/publicmetadb",
     kitsu: "crosswatch/settings/connections/trackers/kitsu",
+    myanimelist: "crosswatch/settings/connections/trackers/myanimelist",
     anilist: "crosswatch/settings/connections/trackers/anilist",
     wetrakr: "crosswatch/settings/connections/trackers/wetrakr",
     punchplay: "crosswatch/settings/connections/trackers/punchplay",

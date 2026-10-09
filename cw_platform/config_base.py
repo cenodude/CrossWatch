@@ -416,6 +416,18 @@ DEFAULT_CFG: dict[str, Any] = {
         },
     },
 
+    "myanimelist": {
+        "auth_method": "hosted_oauth",
+        "access_token": "",
+        "refresh_token": "",
+        "token_type": "bearer",
+        "expires_at": 0,
+        "username": "",
+        "user_id": "",
+        "auth_broker": "",
+        "reauth_required": False,
+    },
+
     "wetrakr": {
         "auth_method": "pkce",
         "access_token": "",
@@ -983,6 +995,7 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
         "kitsu": {"access_token", "refresh_token", "password"},
         "mdblist": {"api_key", "access_token", "refresh_token", "_pending_device"},
         "publicmetadb": {"api_key"},
+        "myanimelist": {"access_token", "refresh_token"},
         "wetrakr": {"access_token", "refresh_token"},
         "punchplay": {"access_token", "refresh_token", "_pending_device"},
         "bingebase": {"access_token", "webhook_url", "api_key", "_pending_device"},
@@ -1105,6 +1118,7 @@ CONFIG_TOP_LEVEL_ORDER: tuple[str, ...] = (
     "simkl",
     "mdblist",
     "anilist",
+    "myanimelist",
     "kitsu",
     "tmdb_sync",
     "publicmetadb",
@@ -3009,6 +3023,7 @@ _ROTATING_TOKEN_EXPIRY: dict[str, str] = {
     "trakt": "expires_at",
     "simkl": "token_expires_at",
     "mdblist": "expires_at",
+    "myanimelist": "expires_at",
     "wetrakr": "expires_at",
     "nuvio": "expires_at",
     "punchplay": "expires_at",
