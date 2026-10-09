@@ -1171,6 +1171,14 @@ class PlaybackProgressService:
             if not r.ok
         ]
         items = [_with_remaining_fallback(item.to_dict()) for result in results if result.ok for item in result.items]
+        from services.media_scope import MediaScope
+
+        media_scope = MediaScope(cfg)
+        items = [
+            item for item in items
+            if media_scope.keep({**item, "type": item.get("media_type")},
+                                item["provider"], item["instance_id"], "progress")
+        ]
         _share_artwork_metadata(items)
         _overlay_live_streams(items)
         summary_rows = [dict(item) for item in items]

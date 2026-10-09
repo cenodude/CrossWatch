@@ -16,6 +16,7 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 
 from services.dashboard_widgets import dashboard_widgets_payload
+from services.media_scope import MediaScope
 
 try:
     from _logging import log as _base_log
@@ -215,6 +216,7 @@ def _dashboard_widgets_version(
         "policy": policy_fp,
         "activity": _dashboard_activity_stamp(base_path, requested),
         "config": _dashboard_config_stamp(base_path),
+        "media_scope": MediaScope(cfg).fingerprint(),
         "tracker": _dashboard_tracker_stamp(base_path, cfg, requested),
         "alias": _dashboard_alias_stamp(requested),
     }
@@ -271,14 +273,17 @@ def dashboard_widgets(
                     build_event.wait(timeout=_PAYLOAD_BUILD_WAIT_SECONDS)
                     payload = _cached_widgets_payload(version)
                 if payload is None:
+                    media_scope = MediaScope(cfg)
+                    scoped_features = {feature for feature in state_features if media_scope.active({feature})}
                     state = (
-                        StateStore(CONFIG).load_state_features(state_features, recent_limit=_STATE_RECENT_LIMIT)
+                        StateStore(CONFIG).load_state_features(state_features, recent_limit=None if scoped_features else _STATE_RECENT_LIMIT)
                         if state_features
                         else {}
                     )
                     user_filter = instances_for_user_profile(cfg, profile) if scoped else {}
                     if scoped and not user_filter:
                         user_filter = {"__NONE__": ["__NONE__"]}
+                    state = media_scope.state(state)
                     payload = dashboard_widgets_payload(
                         state,
                         history_limit=history_limit,
@@ -288,8 +293,11 @@ def dashboard_widgets(
                         playlists_limit=playlists_limit,
                         include=requested,
                         user_filter=user_filter,
+                        media_scope=media_scope,
                     )
-                    for feature, total in _feature_library_totals(CONFIG, requested, user_filter).items():
+                    totals = _feature_library_totals(CONFIG, requested - scoped_features, user_filter)
+                    totals.update(media_scope.totals(state, scoped_features, user_filter))
+                    for feature, total in totals.items():
                         block = payload.get(_COUNT_FEATURES[feature])
                         if isinstance(block, dict):
                             block["library_total"] = total

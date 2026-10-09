@@ -1626,6 +1626,7 @@ def dashboard_widgets_payload(
     playlists_limit: int = 8,
     include: set[str] | None = None,
     user_filter: Mapping[str, Any] | None = None,
+    media_scope: Any = None,
 ) -> dict[str, Any]:
     requested = {str(key).strip().lower() for key in include} if include is not None else {
         "history",
@@ -1634,12 +1635,17 @@ def dashboard_widgets_payload(
         "progress",
         "playlists",
     }
+
+    def tracker(feature: str) -> dict[str, Any]:
+        items = _tracker_feature_items(feature)
+        return media_scope.tracker(items, feature) if media_scope else items
+
     payload: dict[str, Any] = {"ok": True}
     if "history" in requested:
         payload["recent_history"] = recent_history_widget(
             state,
             limit=history_limit,
-            tracker_items=_tracker_feature_items("history"),
+            tracker_items=tracker("history"),
             user_filter=user_filter,
         )
     if "scrobble" in requested:
@@ -1648,14 +1654,14 @@ def dashboard_widgets_payload(
         payload["latest_ratings"] = latest_ratings_widget(
             state,
             limit=ratings_limit,
-            tracker_items=_tracker_feature_items("ratings"),
+            tracker_items=tracker("ratings"),
             user_filter=user_filter,
         )
     if "progress" in requested:
         payload["recent_progress"] = recent_progress_widget(
             state,
             limit=progress_limit,
-            tracker_items=_tracker_feature_items("progress"),
+            tracker_items=tracker("progress"),
             user_filter=user_filter,
         )
     if "playlists" in requested:
