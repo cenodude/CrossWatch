@@ -298,6 +298,9 @@ def record_watch(
         event_type = "scrobble_failed"
         severity = "error"
     try:
+        from .playback_recorder import archive_event
+
+        ev = archive_event(ev)
         raw = getattr(ev, "raw", None)
         source_kind = "watcher"
         if isinstance(raw, Mapping):
@@ -342,6 +345,7 @@ def record_webhook(
     feature: str = "scrobble",
     operation: str = "watch",
     destination_instance: str = "default",
+    source_instance: str = "default",
     title: Any = None,
     year: Any = None,
     season: Any = None,
@@ -366,6 +370,7 @@ def record_webhook(
             operation=operation,
             source_kind="webhook",
             source_provider=source_provider,
+            source_instance=source_instance,
             destination_provider=destination_provider,
             destination_instance=destination_instance,
             ids=ids or {},

@@ -322,12 +322,16 @@ def record_scrobble_event(
         }
     )
     try:
+        from cw_platform.event_archive.playback_recorder import archive_event
+
+        ev = archive_event(ev)
         if method == "webhook":
             from cw_platform.event_archive import record_webhook
 
             record_webhook(
                 event_type="scrobble_completed" if status == "ok" else "scrobble_failed",
                 source_provider=source,
+                source_instance=source_instance,
                 destination_provider=target,
                 destination_instance=target_instance,
                 media_type=media_type,

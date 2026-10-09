@@ -21,7 +21,7 @@ from providers.scrobble._auto_remove_watchlist import remove_across_providers_by
 from providers.scrobble.scrobble import mask_account as _mask_account
 from providers.scrobble._show_tmdb import show_tmdb_id
 from providers.scrobble.sources import source_enabled
-from providers.webhooks.config import configured_webhook_sinks, profile_scoped_webhook
+from providers.webhooks.config import configured_webhook_sinks, profile_scoped_webhook, webhook_sink_instance
 from providers.webhooks.dispatch import dispatch_scrobble as _dispatch_scrobble
 try:
     from api.watchlistAPI import remove_across_providers_by_ids as _rm_across_api
@@ -991,7 +991,7 @@ def _completion_replay_key(
     return f"jellyfin:{provider_instance}|u:{acc_key}|s:{session_token}|m:{media_key}"
 
 
-def _archive(event_type: str, media_type: str, md: dict[str, Any], payload: dict[str, Any], ids: dict[str, Any], account: Any, prog: Any, reason: str | None = None) -> None:
+def _archive(event_type: str, media_type: str, md: dict[str, Any], payload: dict[str, Any], ids: dict[str, Any], account: Any, prog: Any, reason: str | None = None, **kw: Any) -> None:
     try:
         from cw_platform.event_archive import record_webhook
 
@@ -1003,10 +1003,45 @@ def _archive(event_type: str, media_type: str, md: dict[str, Any], payload: dict
         record_webhook(
             event_type=event_type, source_provider="jellyfin", destination_provider="trakt",
             media_type=media_type, ids=ids, account=account, progress=prog, reason=reason,
-            title=title, year=md.get("ProductionYear"), season=season, episode=episode,
+            title=title, year=md.get("ProductionYear"), season=season, episode=episode, **kw,
         )
     except Exception:
         pass
+
+
+def _archive_scrobble_result(
+    intended: str,
+    status: int,
+    activity_recorded: bool,
+    sinks: set[str],
+    watched_at: float,
+    args: tuple[Any, ...],
+    *,
+    session_key: str,
+    provider_instance: str | None,
+    settings: dict[str, Any],
+) -> None:
+    if "trakt" not in sinks:
+        return
+    reason = None
+    if status >= 400:
+        if intended not in ("/scrobble/start", "/scrobble/stop"):
+            return
+        event_type = "scrobble_failed"
+        reason = str(status)
+    elif not activity_recorded:
+        return
+    elif intended == "/scrobble/start":
+        event_type = "scrobble_started"
+    elif intended == "/scrobble/stop" and args[-1] >= watched_at:
+        event_type = "scrobble_completed"
+    else:
+        return
+    _archive(
+        event_type, *args, reason=reason, session_key=session_key,
+        source_instance=provider_instance or "default",
+        destination_instance=webhook_sink_instance(settings, "trakt"),
+    )
 
 
 def process_webhook(
@@ -1505,6 +1540,11 @@ def process_webhook(
             "DEBUG",
         )
         activity_recorded = bool(rj.get("activity_recorded")) if isinstance(rj, dict) else False
+        _archive_scrobble_result(
+            intended, r.status_code, activity_recorded, sinks_cfg, watched_at,
+            (media_type, md, payload, cw_ids or ids_all, acc_title, prog),
+            session_key=sess, provider_instance=provider_instance, settings=wh,
+        )
 
         if r.status_code < 400:
             completed_success = activity_recorded and intended == "/scrobble/stop" and prog >= watched_at
@@ -1540,15 +1580,9 @@ def process_webhook(
             except Exception:
                 pass
 
-            if activity_recorded and "trakt" in sinks_cfg and intended == "/scrobble/start":
-                _archive("scrobble_started", media_type, md, payload, ids_all, acc_title, prog)
-            elif activity_recorded and "trakt" in sinks_cfg and intended == "/scrobble/stop" and prog >= watched_at:
-                _archive("scrobble_completed", media_type, md, payload, ids_all, acc_title, prog)
             return {"ok": True, "status": 200, "action": intended, "trakt": rj, "ignored": not activity_recorded}
 
         _emit(logger, f"{intended} {r.status_code} {(str(rj)[:180])}", "ERROR")
-        if "trakt" in sinks_cfg and intended in ("/scrobble/start", "/scrobble/stop"):
-            _archive("scrobble_failed", media_type, md, payload, ids_all, acc_title, prog, reason=str(r.status_code))
         _SCROBBLE_STATE[sess] = {**st,            "ts": now,
             "last_event": ev_lc,
             "last_pause_ts": st.get("last_pause_ts", 0),

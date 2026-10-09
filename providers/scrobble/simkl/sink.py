@@ -19,6 +19,7 @@ from cw_platform.local_db.ttl_dedupe import once_per_ttl
 from cw_platform.provider_instances import normalize_instance_id
 from services.activity import record_scrobble_event
 from cw_platform.event_archive import record_watch
+from cw_platform.event_archive.playback_recorder import record_playback
 
 try:
     from _logging import log as BASE_LOG
@@ -820,6 +821,7 @@ class SimklSink(ScrobbleSink):
             if rewatch_mode:
                 self._rewatch_log(ev, cfg, "response", path=path, http_status=res.get("status"), outcome=res.get("diagnostic"), api_error=res.get("api_error"), elapsed_ms=res.get("elapsed_ms"))
             if res.get("ok"):
+                record_playback(ev, cfg, delivery="succeeded")
                 if rewatch_mode and record_complete:
                     response = res.get("resp")
                     response = response if isinstance(response, dict) else {}
@@ -912,6 +914,7 @@ class SimklSink(ScrobbleSink):
             return
 
         if last_err:
+            record_playback(ev, cfg, delivery="failed", reason=str(last_err.get("status") or ""))
             _log(f"{path} {last_err.get('status')} err={last_err.get('resp')}", "ERROR")
             if action in ("start", "stop"):
                 self._note_watch(ev, action, cfg, p_send, status="fail", reason=str(last_err.get("status") or ""))

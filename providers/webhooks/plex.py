@@ -1692,14 +1692,14 @@ def process_webhook(
         except Exception:
             pass
         if activity_recorded and "trakt" in sinks_cfg and intended == "/scrobble/start":
-            _archive("scrobble_started", media_type, md, ids_all2, acc_title, prog)
+            _archive("scrobble_started", media_type, md, ids_all2, acc_title, prog, session_key=sess, source_instance=provider_instance or "default", destination_instance=webhook_sink_instance(wh, "trakt"))
         elif activity_recorded and "trakt" in sinks_cfg and intended == "/scrobble/stop" and prog >= watched_at:
-            _archive("scrobble_completed", media_type, md, ids_all2, acc_title, prog)
+            _archive("scrobble_completed", media_type, md, ids_all2, acc_title, prog, session_key=sess, source_instance=provider_instance or "default", destination_instance=webhook_sink_instance(wh, "trakt"))
         return {"ok": True, "status": 200, "action": intended, "trakt": rj, "ignored": not activity_recorded}
 
     _emit(logger, f"{intended} {r.status_code} {(str(rj)[:180])}", "ERROR")
     if "trakt" in sinks_cfg and intended in ("/scrobble/start", "/scrobble/stop"):
-        _archive("scrobble_failed", media_type, md, ids_all2, acc_title, prog, reason=str(r.status_code))
+        _archive("scrobble_failed", media_type, md, ids_all2, acc_title, prog, reason=str(r.status_code), session_key=sess, source_instance=provider_instance or "default", destination_instance=webhook_sink_instance(wh, "trakt"))
     _SCROBBLE_STATE[sess] = {**st,        "ts": now,
         "last_event": event,
         "last_pause_ts": st.get("last_pause_ts", 0),

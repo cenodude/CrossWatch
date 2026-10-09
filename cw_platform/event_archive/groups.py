@@ -51,6 +51,7 @@ _SCROBBLE_STATUS = {
     "scrobble_completed": "completed",
     "scrobble_failed": "failed",
     "scrobble_started": "running",
+    "scrobble_playback": "running",
     "rating_applied": "rated",
     "rating_failed": "failed",
 }
@@ -215,6 +216,13 @@ def _derive_status(events: list[dict[str, Any]], extra_problems: int = 0) -> str
         return best
 
     if types & set(_SCROBBLE_STATUS):
+        playback = next((e for e in reversed(events) if e.get("event_type") == "scrobble_playback"), None)
+        if playback is not None:
+            detail = _detail(playback)
+            if "scrobble_completed" in types:
+                return "completed"
+            if detail.get("state") in {"running", "paused", "stopped"}:
+                return str(detail["state"])
         best, best_ts = None, -1
         for e in events:
             st = _SCROBBLE_STATUS.get(str(e.get("event_type") or ""))
@@ -493,10 +501,15 @@ def _summarize_scrobble(status: str, events: list[dict[str, Any]], dst: str) -> 
         reason = str(_pick(events, "reason_code") or _pick(events, "reason") or "")
         head = "Rating forward failed" if rating_thread else "Scrobble failed"
         return f"{head}{to}, {reason}" if reason else f"{head}{to}"
-    prog = _detail(last).get("progress")
+    playback = next((e for e in reversed(events) if e.get("event_type") == "scrobble_playback"), None)
+    prog = _detail(playback or last).get("progress")
     tail = f", {prog}%" if prog not in (None, "") else ""
     if status == "completed":
         return f"Watched {name}{to}{tail}"
+    if status == "paused":
+        return f"Paused {name}{to}{tail}"
+    if status == "stopped":
+        return f"Stopped before completion: {name}{to}{tail}"
     return f"Watching {name}{to}{tail}"
 
 
@@ -532,6 +545,11 @@ def _recompute(conn: sqlite3.Connection, group_id: int, now: int) -> None:
     if not events:
         return
     ts = [int(e.get("created_at") or 0) for e in events]
+    for e in events:
+        if e.get("event_type") == "scrobble_playback":
+            history = _detail(e).get("playback") or []
+            if history:
+                ts.append(int(history[0][0]))
     types = {e.get("event_type") for e in events}
     is_run = bool(types & set(_RUN_TYPES))
     feature = str(_pick(events, "feature") or "")
@@ -540,6 +558,10 @@ def _recompute(conn: sqlite3.Connection, group_id: int, now: int) -> None:
     feat_issues = _run_feature_issues(conn, _pick(events, "run_id")) if is_run else {}
     status = _derive_status(events, sum(feat_issues.values()))
     severity = _SEVERITY.get(status, "info")
+    playback = next((e for e in reversed(events) if e.get("event_type") == "scrobble_playback"), None)
+    delivery = (_detail(playback).get("delivery") or {}) if playback else {}
+    if delivery.get("status") == "failed":
+        severity = "error"
     fail_evt = None
     for e in events:
         if e.get("event_type") in _FAIL_TYPES:
@@ -547,6 +569,8 @@ def _recompute(conn: sqlite3.Connection, group_id: int, now: int) -> None:
     reason_code = str((fail_evt or {}).get("reason_code") or _pick(events, "reason_code") or "")
     reason = str((fail_evt or {}).get("reason") or _pick(events, "reason") or "")
     summary = _summarize(status, events, feature, dst, norm_op, reason_code, feat_issues)
+    if delivery.get("status") == "failed":
+        summary += "; delivery failed"
     domain = str(_pick(events, "domain") or "sync")
     is_playlist_batch = feature.strip().lower() == "playlists" and any(_is_playlist_batch_event(e) for e in events)
 
@@ -802,7 +826,10 @@ def list_groups(
 
     eq("domain", domain)
     eq("feature", feature)
-    eq("status", status)
+    if domain == "scrobble" and status == "failed":
+        clauses.append("(g.status='failed' OR g.severity='error')")
+    else:
+        eq("status", status)
     eq("item_key", item_key)
     eq("pair_key", pair_key)
 

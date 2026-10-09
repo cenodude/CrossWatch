@@ -1923,7 +1923,7 @@ class WatchService:
                 thr = _stop_pause_threshold(cfg)
                 maxp = self._max_seen.get(skd, ev.progress)
                 if ev.progress >= 98 and maxp < thr:
-                    ev = ScrobbleEvent(**{**ev.__dict__, "action": "pause", "progress": maxp})
+                    ev = ScrobbleEvent(**{**ev.__dict__, "action": "pause", "progress": maxp, "raw": {**(ev.raw or {}), "_cw_playback_action": "stop"}})
                     self._dbg(f"demote stop/pause sess={skd} p={ev.progress} max_seen={maxp} thr={thr}")
                 else:
                     first = self._first_seen.get(skd)
@@ -1941,7 +1941,7 @@ class WatchService:
                     if ev.action == "stop" and last_action == "stop" and abs(ev.progress - last_prog) <= 1:
                         self._dbg(f"suppress duplicate stop sess={sk} p={ev.progress}")
                         return
-                    if ev.action == last_action and ev.progress == last_prog:
+                    if ev.action == last_action and ev.progress == last_prog and not (ev.raw or {}).get("_cw_playback_action"):
                         if ev.action == "stop":
                             self._dbg(f"suppress duplicate stop sess={sk} p={ev.progress}")
                         return

@@ -3,6 +3,7 @@
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 import {pageBackLink, statisticsReturn, returnFromEvents} from '../page-return.js';
+import {playbackDetail, playbackTimeline} from './playback-timeline.js';
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => (
   { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
@@ -144,6 +145,10 @@ const BADGE = {
   watcher_event: "Watcher",
   webhook_event: "Webhook",
   scrobble_started: "Started",
+  scrobble_playback: "Playback",
+  scrobble_paused: "Paused",
+  scrobble_resumed: "Resumed",
+  scrobble_stopped: "Stopped",
   scrobble_completed: "Watched",
   scrobble_failed: "Scrobble failed",
   rating_applied: "Rated",
@@ -259,6 +264,10 @@ const titleLine = (e) => {
     case "sync_run_started": return "Sync run started";
     case "sync_run_finished": return "Sync run finished";
     case "scrobble_started": return "Started watching";
+    case "scrobble_playback": return "Playback session";
+    case "scrobble_paused": return "Playback paused";
+    case "scrobble_resumed": return "Playback resumed";
+    case "scrobble_stopped": return "Playback stopped";
     case "scrobble_completed": return "Watched";
     case "scrobble_failed": return `Scrobble failed${e.reason_code ? ` · ${e.reason_code}` : ""}`;
     case "rating_applied": return "Rating forwarded";
@@ -278,11 +287,11 @@ const EVENT_TYPES = [
   "blackbox_promoted", "blackbox_blocked", "tombstone_created", "plan_created",
   "provider_health", "sync_run_started", "sync_run_finished",
 ];
-const SCROBBLE_TYPES = ["", "scrobble_started", "scrobble_completed", "scrobble_failed", "rating_applied", "rating_failed"];
+const SCROBBLE_TYPES = ["", "scrobble_playback", "scrobble_started", "scrobble_completed", "scrobble_failed", "rating_applied", "rating_failed"];
 const AUDIT_TYPES = ["", "audit_login", "audit_login_failed", "audit_login_blocked", "audit_2fa_required", "audit_2fa_failed", "audit_logout", "audit_logout_all", "audit_logout_others", "audit_user_created", "audit_user_updated", "audit_user_deleted", "audit_credentials_updated", "audit_totp_setup", "audit_totp_enabled", "audit_totp_disabled", "audit_plex_sso_linked", "audit_plex_sso_unlinked", "audit_api_action"];
 const OUTCOME_ITEMS = {
   sync: [{ value: "", label: "Any outcome" }, { value: "successful", label: "Successful" }, { value: "problems", label: "Problems" }, { value: "informational", label: "Informational" }],
-  scrobble: [{ value: "", label: "Any outcome" }, { value: "completed", label: "Watched" }, { value: "failed", label: "Failed" }, { value: "rated", label: "Rated" }, { value: "running", label: "In progress" }],
+  scrobble: [{ value: "", label: "Any outcome" }, { value: "completed", label: "Watched" }, { value: "failed", label: "Failed" }, { value: "rated", label: "Rated" }, { value: "running", label: "In progress" }, { value: "paused", label: "Paused" }, { value: "stopped", label: "Stopped (Incomplete)" }],
   audit: [{ value: "", label: "Any outcome" }, { value: "completed", label: "Successful" }, { value: "failed", label: "Failed" }, { value: "informational", label: "Informational" }],
 };
 const typeItems = (dom) => (dom === "audit" ? AUDIT_TYPES : (dom === "scrobble" ? SCROBBLE_TYPES : EVENT_TYPES)).map((t) => ({ value: t, label: t ? BADGE[t] || t.replace(/_/g, " ") : "All types" }));
@@ -295,12 +304,12 @@ const groupSev = (g) => {
 };
 const STATUS_ICON = {
   completed: "task_alt", resolved: "check_circle", blackboxed: "inventory_2", unresolved: "shield",
-  failed: "cancel", running: "sync", pending: "hourglass_top", informational: "bolt", rated: "star",
+  paused: "pause", stopped: "stop", failed: "cancel", running: "sync", pending: "hourglass_top", informational: "bolt", rated: "star",
   warning: "warning",
 };
 const groupIcon = (g) => STATUS_ICON[String(g.status || "").toLowerCase()] || "bolt";
-const STATUS_LABEL = { running: "In progress", warning: "Completed · issues" };
-const statusLabel = (s) => { const k = String(s || "informational").toLowerCase(); return STATUS_LABEL[k] || (k.charAt(0).toUpperCase() + k.slice(1)); };
+const STATUS_LABEL = { paused: "Paused", stopped: "Stopped (Incomplete)", running: "In progress", warning: "Completed · issues" };
+const statusLabel = (s, domain) => { if (domain === "scrobble" && s === "completed") return "Watched"; const k = String(s || "informational").toLowerCase(); return STATUS_LABEL[k] || (k.charAt(0).toUpperCase() + k.slice(1)); };
 const modeLabel = (m) => {
   const s = String(m || "").toLowerCase();
   if (s.includes("two")) return "Two-way";
@@ -932,7 +941,7 @@ export default {
         if (i > 0) { headline = s.slice(0, i); detail = s.slice(i + 2); }
         else { headline = s; detail = ""; }
       }
-      headline = headline || statusLabel(g.status);
+      headline = headline || statusLabel(g.status, g.domain);
       const twist = opts.expandable
         ? `<button class="ev-twist${opts.expanded ? " open" : ""}" type="button" data-twist="${g.id}" aria-label="${opts.expanded ? "Collapse" : "Expand"}"><span class="material-symbols-rounded" aria-hidden="true">chevron_right</span></button>`
         : `<span class="ev-twist-sp" aria-hidden="true"></span>`;
@@ -941,7 +950,7 @@ export default {
         ${twist}
         <span class="ev-ic ${sv}"><span class="material-symbols-rounded" aria-hidden="true">${groupIcon(g)}</span></span>
         <span class="ev-line">
-          <span class="ev-primary"><span class="ev-badge ${sv}">${esc(statusLabel(g.status))}</span><span class="ev-ptext">${esc(headline)}</span></span>
+          <span class="ev-primary"><span class="ev-badge ${sv}">${esc(statusLabel(g.status, g.domain))}</span><span class="ev-ptext">${esc(headline)}</span></span>
           ${detail ? `<span class="ev-summary">${withProviderLogos(detail)}</span>` : ""}
           <span class="ev-meta"><span class="material-symbols-rounded ev-meta-ic" aria-hidden="true">format_list_bulleted</span>${withProviderLogos(meta)}</span>
         </span>
@@ -1401,7 +1410,9 @@ export default {
       const player = instLabel(g.source_provider, g.source_instance) || "–";
       const route = (player !== "–" && target !== "–") ? `${player} → ${target}` : (target !== "–" ? target : player);
       const isRating = String(g.feature || "") === "ratings";
-      const isProblem = st === "failed";
+      const playback = playbackDetail(events);
+      const delivery = playback.delivery || {};
+      const isProblem = st === "failed" || delivery.status === "failed";
       let account = "", progress = null, rating = null;
       for (const e of events) {
         const d = parseDetail(e);
@@ -1409,6 +1420,8 @@ export default {
         if (d.progress != null) progress = d.progress;
         if (d.rating != null) rating = d.rating;
       }
+
+      if (playback.progress != null) progress = playback.progress;
 
       const scard = (icon, cls, title, mainHTML, subs) => `
         <div class="ev-scard">
@@ -1422,18 +1435,21 @@ export default {
         ? scard("star", isProblem ? "error" : "ok", "Rating", rating != null ? `${esc(rating)}/10` : "–", [])
         : scard("bar_chart", sv, "Progress", progress != null ? `${esc(progress)}%` : "–", []);
       const summaryCards =
-        scard(isProblem ? "error" : (isRating ? "star" : "check_circle"), isProblem ? "error" : "ok", "Outcome", `<span>${esc(statusLabel(g.status))}</span>`, [esc(g.reason || g.summary || "")]) +
+        scard(isProblem ? "error" : (isRating ? "star" : groupIcon(g)), isProblem ? "error" : sv, "Outcome", `<span>${esc(statusLabel(g.status, g.domain))}</span>`, [esc(g.summary || ""), delivery.status ? esc("Last delivery: " + delivery.status + " (" + delivery.action + ")" + (delivery.reason ? " · " + delivery.reason : "")) : ""]) +
         scard("swap_horiz", "info", "Route", esc(route), [account ? `by ${esc(account)}` : ""]) +
         scard("movie", "info", "Item", item ? esc(item) : "–", [g.year ? esc(String(g.year)) : ""]) +
         valueCard;
 
-      const timeline = events.slice().reverse().map((e) => {
-        const es = sevOf(e); const desc = eventDesc(e);
+      const timeline = playbackTimeline(events).slice().reverse().map((e) => {
+        const es = sevOf(e);
+        const pct = detailOf(e).progress;
+        const desc = [eventDesc(e), pct != null ? String(pct) + "%" : ""].filter(Boolean).join(" · ");
         return `<div class="ev-tl" data-id="${e.id}"><span class="ev-tl-time">${esc(TS(e.created_at))}</span><span class="ev-tl-dot ${es}"></span><span class="ev-tl-body"><span class="ev-tl-head"><span class="ev-tl-title">${esc(titleLine(e))}</span><span class="ev-badge ${es}">${esc(badgeOf(e))}</span></span>${desc ? `<span class="ev-tl-desc">${esc(desc)}</span>` : ""}</span></div>`;
       }).join("");
 
       const detailsPane = kvGrid([
-        ["Status", `<span class="ev-pill ${sv}">${esc(statusLabel(g.status))}</span>`],
+        delivery.status ? ["Last delivery", esc(delivery.status + " (" + delivery.action + ")")] : null,
+        ["Status", `<span class="ev-pill ${sv}">${esc(statusLabel(g.status, g.domain))}</span>`],
         ["Title", item ? esc(item) : "–"],
         ["Player", esc(player)],
         ["Target", esc(target)],
@@ -1445,7 +1461,7 @@ export default {
       ]);
       const rawPane = `<div class="ev-dsec"><h5>Raw data</h5><details class="ev-tech"><summary>Full payload</summary><div class="ev-tech-body"><pre>${esc(JSON.stringify({ group: g, events }, null, 2))}</pre></div></details></div>`;
 
-      const relRow = (r) => `<button class="ev-rel" type="button" data-gid="${r.id}"><span class="ev-rel-ic ${groupSev(r)}"><span class="material-symbols-rounded" aria-hidden="true">${groupIcon(r)}</span></span><span class="ev-rel-badge ${groupSev(r)}">${esc(statusLabel(r.status))}</span><span class="ev-rel-title">${esc(r.summary || titleOf(r) || "")}</span><span class="ev-rel-time">${esc(TS(r.last_event_at))}</span></button>`;
+      const relRow = (r) => `<button class="ev-rel" type="button" data-gid="${r.id}"><span class="ev-rel-ic ${groupSev(r)}"><span class="material-symbols-rounded" aria-hidden="true">${groupIcon(r)}</span></span><span class="ev-rel-badge ${groupSev(r)}">${esc(statusLabel(r.status, r.domain))}</span><span class="ev-rel-title">${esc(r.summary || titleOf(r) || "")}</span><span class="ev-rel-time">${esc(TS(r.last_event_at))}</span></button>`;
       const relHTML = related.length ? related.slice(0, 12).map(relRow).join("") : "";
 
       const ackLabel = g.acknowledged_at ? "Acknowledged" : "Acknowledge";
@@ -1455,7 +1471,7 @@ export default {
       detailEl.innerHTML = `
         <div class="ev-dhead">
           <div class="ev-dhead-row">
-            <span class="ev-badge ${sv}">${esc(statusLabel(g.status))}</span>
+            <span class="ev-badge ${sv}">${esc(statusLabel(g.status, g.domain))}</span>
             <span class="ev-dhead-spacer"></span>
             <span class="ev-dtime">${esc(TS(g.last_event_at))}</span>
             <button class="ev-hbtn ev-hbtn-accent${g.acknowledged_at ? " on" : ""}" id="ev-ack-detail" type="button"><span class="material-symbols-rounded" aria-hidden="true">${ackIcon}</span><span>${ackLabel}</span></button>
@@ -1470,7 +1486,7 @@ export default {
           <button class="ev-tab${detailTab === "raw" ? " on" : ""}" data-tab="raw" type="button"><span class="material-symbols-rounded" aria-hidden="true">data_object</span>Raw data</button>
         </div>
         <div class="ev-tabpanes">
-          <div class="ev-tabpane" data-pane="timeline"${tabAttr("timeline")}><div class="ev-timeline">${timeline || `<div class="ev-empty ev-empty-inline">No events in this thread.</div>`}</div></div>
+          <div class="ev-tabpane" data-pane="timeline"${tabAttr("timeline")}>${playback.omitted ? `<p>${esc(playback.omitted)} earlier transitions omitted.</p>` : ""}<div class="ev-timeline">${timeline || `<div class="ev-empty ev-empty-inline">No events in this thread.</div>`}</div></div>
           <div class="ev-tabpane" data-pane="details"${tabAttr("details")}>${detailsPane}</div>
           <div class="ev-tabpane" data-pane="raw"${tabAttr("raw")}>${rawPane}</div>
         </div>
@@ -1530,7 +1546,7 @@ export default {
         </div>`;
       const summaryCards =
         scard(isProblem ? "error" : "check_circle", isProblem ? "error" : "ok", "Outcome",
-          `<span>${esc(reasonLabel(reason, g.reason_label) || statusLabel(g.status))}</span>`, [esc(problemSub)]) +
+          `<span>${esc(reasonLabel(reason, g.reason_label) || statusLabel(g.status, g.domain))}</span>`, [esc(problemSub)]) +
         ((g.source_provider || g.destination_provider) ? scard("swap_horiz", "info", "Route", esc(routeShort), cx.pairMode ? [esc(modeTxt)] : [],
           g.feature ? `<span class="ev-badge info">${esc(feat)}</span>` : "") : "") +
         ((g.item_key || item) ? scard("inventory_2", "info", "Item", esc(item || g.item_key),
@@ -1564,7 +1580,7 @@ export default {
 
       const detailsPane =
         `<div class="ev-dsec"><h5>Event</h5>${kvGrid([
-          ["Status", `<span class="ev-pill ${sv}">${esc(statusLabel(g.status))}</span>`],
+          ["Status", `<span class="ev-pill ${sv}">${esc(statusLabel(g.status, g.domain))}</span>`],
           ["Title", esc(g.summary || "–")],
           ["Item", item ? esc(item) : "–"],
           ["Reason", esc(reason || "–")],
@@ -1614,7 +1630,7 @@ export default {
       const relRow = (r, primary) => `
           <button class="ev-rel" type="button" data-gid="${r.id}">
             <span class="ev-rel-ic ${groupSev(r)}"><span class="material-symbols-rounded" aria-hidden="true">${groupIcon(r)}</span></span>
-            <span class="ev-rel-badge ${groupSev(r)}">${esc(statusLabel(r.status))}</span>
+            <span class="ev-rel-badge ${groupSev(r)}">${esc(statusLabel(r.status, r.domain))}</span>
             <span class="ev-rel-title">${esc(primary || "")}</span>
             <span class="ev-rel-time">${esc(TS(r.last_event_at))}</span>
           </button>`;
@@ -1661,7 +1677,7 @@ export default {
       detailEl.innerHTML = `
         <div class="ev-dhead">
           <div class="ev-dhead-row">
-            <span class="ev-badge ${sv}">${esc(statusLabel(g.status))}</span>
+            <span class="ev-badge ${sv}">${esc(statusLabel(g.status, g.domain))}</span>
             <span class="ev-dhead-spacer"></span>
             <span class="ev-dtime">${esc(TS(g.last_event_at))}</span>
             ${runId ? `<button class="ev-hbtn" id="ev-open-logs" type="button"><span class="material-symbols-rounded" aria-hidden="true">terminal</span><span>View logs</span></button>` : ""}

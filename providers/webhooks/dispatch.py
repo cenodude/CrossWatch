@@ -224,6 +224,11 @@ def _event(
     raw2 = dict(raw or {})
     raw2["_cw_activity_method"] = "webhook"
     raw2["_cw_source_provider"] = provider
+    source_event = str(raw2.get("NotificationType") or raw2.get("Event") or raw2.get("event") or "").lower().replace(".", "").replace("_", "")
+    if source_event in {"mediastop", "mediascrobble", "playbackstop", "playbackstopped", "playbackscrobble", "stop", "stopped", "scrobble"}:
+        raw2["_cw_playback_action"] = "stop"
+    elif source_event in {"mediapause", "playbackpause", "playbackpaused", "pause", "paused"}:
+        raw2["_cw_playback_action"] = "pause"
     return ScrobbleEvent(
         action=_action(path),
         media_type="episode" if str(media_type or "").strip().lower() == "episode" else "movie",
@@ -297,6 +302,10 @@ def dispatch_scrobble(
             targets.append({"target": sink, "target_instance": inst, "ok": False, "skipped": True, "error": "not_configured"})
             _emit(logger, f"webhook sink {sink}:{inst} skipped: not configured in Connections", "WARNING")
             continue
+        from cw_platform.event_archive.playback_recorder import prepare_playback, record_playback
+
+        ev = prepare_playback(ev)
+        record_playback(ev, route_cfg)
         dispatched.append(sink)
 
         def _provider(route_cfg: dict[str, Any] = route_cfg) -> dict[str, Any]:
@@ -312,6 +321,8 @@ def dispatch_scrobble(
             target["ok"] = False
             target["error"] = str(e)
             _emit(logger, f"webhook sink {sink}:{inst} failed: {e}", "ERROR")
+        if target.get("ok") is False and not target.get("skipped"):
+            record_playback(ev, route_cfg, delivery="failed", reason=str(target.get("error") or "unknown"))
         targets.append(target)
     ok = not targets or any(bool(t.get("ok")) for t in targets)
     if any(not bool(t.get("ok")) and not bool(t.get("skipped")) for t in targets):
