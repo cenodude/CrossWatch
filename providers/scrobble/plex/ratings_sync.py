@@ -29,7 +29,7 @@ def _as_int(value: Any) -> int | None:
 
 def _clean_ids(ids: Mapping[str, Any] | None) -> dict[str, Any]:
     out: dict[str, Any] = {}
-    for key in ("tmdb", "imdb", "tvdb", "trakt", "simkl", "mdblist", "fldb", "plex"):
+    for key in ("tmdb", "imdb", "tvdb", "trakt", "simkl", "mdblist", "fldb", "plex", "mal", "kitsu", "anilist", "anidb"):
         value = (ids or {}).get(key)
         if value in (None, ""):
             continue
@@ -98,34 +98,12 @@ def item_from_plex_rating(
 
 
 def _ops(provider: str) -> Any | None:
-    if provider == "crosswatch":
-        from providers.sync._mod_CROSSWATCH import OPS
+    from cw_platform.modules_registry import load_sync_ops
 
-        return OPS
-    if provider == "floppy":
-        from providers.sync._mod_FLOPPY import OPS
-
-        return OPS
-    if provider == "punchplay":
-        from providers.sync._mod_PUNCHPLAY import OPS
-
-        return OPS
-    if provider == "flicklist":
-        from providers.sync._mod_FLICKLIST import OPS
-
-        return OPS
-    if provider == "wetrakr":
-        from providers.sync._mod_WETRAKR import OPS
-
-        return OPS
-    if provider == "scrob":
-        from providers.sync._mod_SCROB import OPS
-
-        return OPS
-    return None
+    return load_sync_ops(provider) if provider in OPS_RATING_SINKS else None
 
 
-OPS_RATING_SINKS: tuple[str, ...] = ("crosswatch", "floppy", "punchplay", "flicklist", "wetrakr", "scrob")
+OPS_RATING_SINKS: tuple[str, ...] = ("crosswatch", "floppy", "punchplay", "flicklist", "wetrakr", "scrob", "kitsu", "myanimelist")
 RATING_SINKS: tuple[str, ...] = ("trakt", "simkl", "mdblist", "anilist", *OPS_RATING_SINKS)
 
 
@@ -172,7 +150,11 @@ def send_rating(provider: str, cfg: Mapping[str, Any], instance: Any, item: Mapp
     if ops is None:
         return {"ok": False, "error": "unsupported_rating_sink"}
 
-    view = build_provider_config_view(dict(cfg or {}), sink, normalize_instance_id(instance))
+    if sink in {"kitsu", "myanimelist"} and item.get("type") not in {"movie", "show"}:
+        return {"ok": True, "skipped": True, "reason": "unsupported_media_type"}
+    inst = normalize_instance_id(instance)
+    view = build_provider_config_view(dict(cfg or {}), sink, inst)
+    view["_cw_provider_instance"] = inst
     clear = rating is None or float(rating) <= 0
     try:
         from cw_platform.orchestrator._pairs_utils import ratings_step_for

@@ -87,6 +87,22 @@ def _manifest_to_dict(man: Any) -> dict[str, Any]:
     return manifest_to_dict(man)
 
 
+def auth_provider_manifest(name: str) -> dict[str, Any]:
+    from cw_platform.modules_registry import MODULES
+
+    path = MODULES.get("AUTH", {}).get(f"_auth_{str(name or '').strip().upper()}")
+    mod = _safe_import(path) if path else None
+    if mod is None:
+        return {}
+    provider = _provider_from_module(mod)
+    if provider is None:
+        return {}
+    try:
+        return _manifest_to_dict(provider.manifest())
+    except Exception:
+        return {}
+
+
 def auth_providers_manifests() -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for mod in _iter_auth_modules():

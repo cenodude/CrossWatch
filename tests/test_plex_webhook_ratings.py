@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import re
+
+import pytest
 from pathlib import Path
 from typing import Any
 
@@ -203,7 +205,7 @@ def test_scrobbler_rating_modals_keep_enabled_unconfigured_sinks_visible() -> No
     webhook_block = webhook.split("function visibleRatingSinks(selected = [])", 1)[1].split("function selectedSinkKey()", 1)[0]
     assert "const available = availableRatingSinks();" in webhook_block
     assert "ratingSinks.includes(x) && x !== self" in webhook_block
-    assert "return [...selectedList.filter((x) => !available.includes(x)), ...available];" in webhook_block
+    assert "return [...selectedList.filter((x) => !available.includes(x)), ...available]" in webhook_block
 
     webhook_panel = webhook.split("function ratingsPanel(provider, ratingsTargets)", 1)[1].split("function optionsPanel()", 1)[0]
     assert "const targets = visibleRatingSinks(ratingsTargets);" in webhook_panel
@@ -304,6 +306,8 @@ def test_plex_webhook_ratings_forward_to_every_dispatcher_sink(monkeypatch) -> N
         "punchplay": {"access_token": "punchplay-token", "instances": {"punchplay-profile": {"access_token": "punchplay-token"}}},
         "flicklist": {"api_key": "flicklist-token", "instances": {"flicklist-profile": {"api_key": "flicklist-token"}}},
         "wetrakr": {"instances": {"wetrakr-profile": {"access_token": "wetrakr-token"}}},
+        "kitsu": {"instances": {"kitsu-profile": {"access_token": "kitsu-token"}}},
+        "myanimelist": {"instances": {"myanimelist-profile": {"access_token": "mal-token"}}},
         "scrob": {
             "server_url": "http://scrob.test",
             "api_key": "scrob-token",
@@ -339,3 +343,66 @@ def test_plex_webhook_ratings_forward_to_every_dispatcher_sink(monkeypatch) -> N
     assert trakt_calls and trakt_calls[0]["path"] == "/sync/ratings"
     assert {call["provider"] for call in ops_calls} == set(ratings_sync.OPS_RATING_SINKS)
     assert {call["instance"] for call in ops_calls} == {f"{sink}-profile" for sink in ratings_sync.OPS_RATING_SINKS}
+
+
+@pytest.mark.parametrize("provider", ["kitsu", "myanimelist"])
+@pytest.mark.parametrize("custom", [False, True])
+@pytest.mark.parametrize("rating", [8.5, 0])
+def test_anime_watcher_ratings_route_to_selected_profile(monkeypatch, provider, custom, rating):
+    from providers.scrobble.plex import ratings_sync, watch
+
+    calls = []
+    monkeypatch.setattr(ratings_sync, "send_rating", lambda *args: calls.append(args) or {"ok": True})
+    watch._LAST_RATING_BY_ACC.clear()
+    cfg = {"scrobble": {"enabled": True, "sources": {"watcher": True}, "watch": {
+        f"plex_{provider}_ratings": True,
+        "route_provider": "plex", "route_sink_instance": "P01",
+        "route_options": {"ratings": {"mode": "custom", "targets": [provider]}},
+    }}}
+    payload = {"event": "media.rate", "Metadata": {
+        "type": "show", "title": "Cowboy Bebop", "ratingKey": "test",
+        "userRating": rating, "Guid": [{"id": "tvdb://76885"}],
+    }}
+    result = watch.process_rating_webhook(payload, {}, cfg_override=cfg, route_hook={} if custom else None)
+    assert result[provider]["ok"]
+    assert len(calls) == 1
+    assert calls[0][0] == provider and calls[0][2] == "P01"
+    assert calls[0][3]["ids"] == {"tvdb": 76885}
+    assert calls[0][4] == rating
+
+
+@pytest.mark.parametrize("provider", ["kitsu", "myanimelist"])
+@pytest.mark.parametrize("rating", [8.5, 0])
+def test_anime_rating_dispatch_preserves_profile_and_handles_unrating(monkeypatch, provider, rating):
+    from providers.scrobble.plex import ratings_sync
+
+    calls = []
+    class Ops:
+        def add(self, cfg, items, **kwargs):
+            calls.append(("add", cfg, items, kwargs))
+            return {"confirmed_keys": ["mal:1"]}
+        def remove(self, cfg, items, **kwargs):
+            calls.append(("remove", cfg, items, kwargs))
+            return {"confirmed_keys": ["mal:1"]}
+    monkeypatch.setattr(ratings_sync, "_ops", lambda name: Ops())
+    cfg = {provider: {"access_token": "default-token", "instances": {"P01": {"access_token": "selected-token"}}}}
+    item = {"type": "show", "ids": {"mal": "1", "kitsu": "1"}}
+    result = ratings_sync.send_rating(provider, cfg, "P01", item, rating)
+    assert result["ok"]
+    action, view, items, kwargs = calls[0]
+    assert action == ("add" if rating else "remove")
+    assert view["_cw_provider_instance"] == "P01"
+    assert view[provider]["access_token"] == "selected-token"
+    assert items[0]["ids"] == item["ids"]
+    assert kwargs == {"feature": "ratings", "dry_run": False}
+    if rating:
+        assert items[0]["rating"] == 9
+
+
+@pytest.mark.parametrize("provider", ["kitsu", "myanimelist"])
+@pytest.mark.parametrize("media_type", ["season", "episode"])
+def test_anime_rating_dispatch_skips_unsupported_media(provider, media_type):
+    from providers.scrobble.plex.ratings_sync import send_rating
+
+    result = send_rating(provider, {}, "default", {"type": media_type, "ids": {"mal": "1"}}, 8)
+    assert result == {"ok": True, "skipped": True, "reason": "unsupported_media_type"}

@@ -948,3 +948,11 @@ def test_simkl_source_status_reaches_kitsu_through_orchestrator(mapping, monkeyp
     Orchestrator(cfg).run()
     assert len(library.writes) == writes
     assert not source.add_calls
+
+
+@pytest.mark.parametrize("status,expected", [("current", "watching"), ("on_hold", "on_hold"), ("dropped", "dropped"), ("completed", "completed")])
+def test_kitsu_exports_normalized_source_watch_status(adapter, status, expected):
+    adapter.client.rows["1"] = {"id": "1", "attributes": {"status": status, "progress": 3}}
+    index = _history.build_index(adapter)
+    assert index
+    assert {item["watch_status"] for item in index.values()} == {expected}

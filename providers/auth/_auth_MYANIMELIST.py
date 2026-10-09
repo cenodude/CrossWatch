@@ -407,7 +407,7 @@ def html() -> str:
     <div class="cw-panel-head"><div><div class="cw-panel-title">MyAnimeList</div><div class="muted">Connect your MyAnimeList account.</div></div></div>
     <div class="cw-subtiles"><button type="button" class="cw-subtile active" data-sub="auth">Authentication</button></div>
     <div class="cw-subpanels"><div class="cw-subpanel active" data-sub="auth">
-      <p class="muted">Account connection preview. Sync and scrobbling are not available yet.</p>
+      <p class="muted">Sync anime watchlists, ratings and watched episodes. Enable Anime ID Mapping for episode numbering.</p>
       <div id="myanimelist_oauth_panel" class="hidden">
         <p>Sign in to MyAnimeList and approve CrossWatch. This window will update automatically.</p>
         <a id="myanimelist_approval_link" target="_blank" rel="noopener noreferrer">Open MyAnimeList approval page</a>

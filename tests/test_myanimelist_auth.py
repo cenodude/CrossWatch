@@ -225,7 +225,7 @@ def test_registration_routes_and_probe(store, monkeypatch):
     from providers.auth.runtime import _backend
     assert _backend("myanimelist") is mal
     assert "_auth_MYANIMELIST" in MODULES["AUTH"]
-    assert "MYANIMELIST" not in sync_provider_names()
+    assert "MYANIMELIST" in sync_provider_names()
     assert any(m["name"] == "MYANIMELIST" for m in auth_providers_manifests())
     monkeypatch.setattr(api, "load_config", lambda: copy.deepcopy(store["cfg"]))
     app = FastAPI()

@@ -10,9 +10,9 @@ from cw_platform.provider_instances import get_provider_block, normalize_instanc
 DEFAULT_INSTANCE_ID = "default"
 ROUTE_PROVIDERS = {"plex", "emby", "jellyfin", "kodi", "scrob", "stremio"}
 ROUTE_SINGLE_ACCOUNT_PROVIDERS = {"stremio"}
-ROUTE_SINKS = {"kitsu", "plex", "jellyfin", "emby", "kodi", "trakt", "simkl", "mdblist", "crosswatch", "floppy", "punchplay", "bingebase", "flicklist", "wetrakr", "anilist", "scrob"}
+ROUTE_SINKS = {"myanimelist", "kitsu", "plex", "jellyfin", "emby", "kodi", "trakt", "simkl", "mdblist", "crosswatch", "floppy", "punchplay", "bingebase", "flicklist", "wetrakr", "anilist", "scrob"}
 ROUTE_MEDIA_SINKS = {"plex", "jellyfin", "emby", "kodi"}
-ROUTE_RATING_SINKS = {"trakt", "simkl", "mdblist", "crosswatch", "floppy", "punchplay", "flicklist", "wetrakr", "anilist", "scrob"}
+ROUTE_RATING_SINKS = {"kitsu", "myanimelist", "trakt", "simkl", "mdblist", "crosswatch", "floppy", "punchplay", "flicklist", "wetrakr", "anilist", "scrob"}
 ROUTE_OPTION_STATES = {"inherit", "on", "off"}
 ROUTE_RATINGS_MODES = {"off", "custom"}
 ROUTE_SCROBBLE_POLICY_RANGES = {
