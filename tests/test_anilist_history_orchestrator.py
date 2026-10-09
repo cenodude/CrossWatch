@@ -698,3 +698,11 @@ def test_history_remove_runs_through_orchestrator_and_stays_stable(anilist, monk
     assert len(anilist.saves) == 2
     Orchestrator(cfg).run()
     assert len(anilist.saves) == 2
+
+
+@pytest.mark.parametrize("status,expected", [("CURRENT", "watching"), ("PAUSED", "on_hold"), ("DROPPED", "dropped"), ("REPEATING", "watching"), ("COMPLETED", "completed")])
+def test_anilist_exports_normalized_source_watch_status(anilist, status, expected):
+    anilist.entries = {16498: _entry(status, 3)}
+    index = anilist_mod.OPS.build_index(_cfg(), feature="history")
+    assert index
+    assert {item["watch_status"] for item in index.values()} == {expected}
