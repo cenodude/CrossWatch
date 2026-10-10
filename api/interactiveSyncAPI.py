@@ -281,6 +281,8 @@ def mapping_row(session, row_id):
     row = session.plan.rows.get(row_id)
     if not row or row["operation"] not in ("add", "update") or row["feature"] == "playlists":
         raise HTTPException(400, "This change cannot be remapped")
+    if row["item"].get("_cw_episode_group"):
+        raise HTTPException(409, "Edit this episode group under Editor → Mappings & blocks → Episode groups.")
     return row
 
 

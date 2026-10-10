@@ -36,6 +36,7 @@ from cw_platform.provider_instances import (
 from services import playlists as playlist_svc
 from services.editor_mapping import MappingRequest as EditorMappingRequest, BlockRequest
 from services.mapping_transfer import RuleIdentity
+from services.episode_groups import GroupRequest
 
 from services.editor import (
     Kind,
@@ -44,6 +45,18 @@ from services.editor import (
 router = APIRouter(prefix="/api/editor", tags=["editor"])
 
 _STATE_BASE = Path(CONFIG_DIR)
+
+@router.get("/episode-groups")
+def api_episode_groups(request: Request):
+    from services.episode_groups import list_groups
+    return list_groups(request)
+
+
+@router.post("/episode-groups")
+def api_update_episode_group(payload: GroupRequest, request: Request):
+    from services.episode_groups import update_group
+    return update_group(payload, request)
+
 
 @router.post("/mapping")
 def api_editor_mapping(payload: EditorMappingRequest, request: Request):
@@ -135,7 +148,7 @@ async def api_import_mappings(request: Request, file: UploadFile = File(...)):
     try:
         bundle = RuleBundle.model_validate_json(content)
     except ValidationError:
-        raise HTTPException(400, "Invalid mapping file. Use a Mappings & blocks JSON export (version 1).") from None
+        raise HTTPException(400, "Invalid mapping file. Use a Mappings & blocks JSON export (version 1, 2 or 3).") from None
     return import_rules(request, bundle)
 
 
@@ -405,6 +418,8 @@ def _save_policy_manual_batch(edits, *, merge=True, mappings=None, pair_id=""):
             raw, prepared, mappings=mappings, pair_id=pair_id, merge=merge))
     except HTTPException:
         raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to write policy: {e}")
 
@@ -433,6 +448,11 @@ def _merge_policy(into: dict[str, Any], src: dict[str, Any], mode: str) -> dict[
         if isinstance(policy, dict):
             pairs = out.setdefault("pairs", {})
             pairs[pair_id] = _merge_policy(pairs.get(pair_id) or {}, policy, "merge")
+    if "episode_groups" in src:
+        from cw_platform.episode_groups import validate_groups
+        groups = {group["id"]: group for group in out.get("episode_groups") or []}
+        groups.update({group["id"]: group for group in src["episode_groups"]})
+        out["episode_groups"] = validate_groups(list(groups.values()))
     prov_in = src.get("providers") if isinstance(src, dict) else None
     if not isinstance(prov_in, dict):
         return out
@@ -956,6 +976,7 @@ def api_editor_get_state(
         return api_editor_playlist_endpoint((endpoint or snapshot or "").strip(), request=request)
 
     from services.editor_mapping import require_mapping_pair, scope_options
+    from services.episode_groups import editor_badges, editor_group_index
     cfg = load_config() or {}
     if src in ("state", "current"):
         raw_state = _load_current_state_features({k})
@@ -1040,6 +1061,8 @@ def api_editor_get_state(
             "mapping_scopes": scope_options(cfg, request, chosen, inst, k),
             "mapping_origins": {**({key: "shared" for key in inherited} if pair_id else {}),
                                 **{key: "pair" if pair_id else "shared" for key in manual_adds}},
+            "episode_groups": editor_badges({**items, **manual_adds},
+                editor_group_index(cfg, request, raw_policy, k, pair_id), [(chosen, inst)]),
         }
     if src in ("manual", "manual-overrides", "policy", "overrides"):
         raw_state = _load_current_state_features({k})
@@ -1093,6 +1116,8 @@ def api_editor_get_state(
             "pair_id": pair_id,
             "mapping_scopes": scope_options(cfg, request, chosen, inst, k),
             "mapping_origins": {key: "pair" if pair_id else "shared" for key in manual_adds},
+            "episode_groups": editor_badges(manual_adds,
+                editor_group_index(cfg, request, raw_policy, k, pair_id), [(chosen, inst)]),
         }
     raise HTTPException(status_code=400, detail=f"Unsupported source: {src}")
 
