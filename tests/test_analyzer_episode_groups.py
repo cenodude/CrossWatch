@@ -228,7 +228,7 @@ def test_group_retry_cannot_open_an_ordinary_mapping(setup_groups, monkeypatch):
 def test_same_number_with_different_episode_ids_is_reported_once_per_pair(setup_groups):
     store, cfg, _ = setup_groups
     row = lambda number, episode_id: {**watched(number), "series_title": "Example", "ids": {"tvdb": str(episode_id)}}
-    rows = [[row(5, 501), row(6, 502)], [row(5, 501), row(6, 999)]]
+    rows = [[row(5, 501), row(6, 502), row(7, 503)], [row(5, 501), row(6, 503)]]
     save_pair(store, cfg, "p1", {(cfg["pairs"][0][side], "default", "history"):
         {"baseline": {"items": {canonical_key(item): item for item in items}}} for side, items in zip(("source", "target"), rows)})
     found = [row for row in A._cached_analysis("p1")["problems"] if row["type"] == "history_episode_identity_conflict"]

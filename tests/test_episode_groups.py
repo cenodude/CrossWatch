@@ -362,8 +362,8 @@ def test_same_number_with_different_episode_ids_is_flagged_until_corrected(confi
 
 @pytest.mark.parametrize("mode", ["one-way", "two-way"])
 def test_unattended_sync_warns_once_per_distinct_mismatch(config_base, monkeypatch, mode):
-    source = [identified(1, 501), identified(2, 502)]
-    src, dst, cfg = setup(config_base, monkeypatch, source, [identified(1, 501), identified(2, 999)], mode)
+    source = [identified(1, 501), identified(2, 502), identified(3, 503)]
+    src, dst, cfg = setup(config_base, monkeypatch, source, [identified(1, 501), identified(2, 503)], mode)
     manual_policy.save_policy(config_base, dict(version=1, providers={}, pairs={}))
     lines = []
     def sync(dry=False):
@@ -374,8 +374,8 @@ def test_unattended_sync_warns_once_per_distinct_mismatch(config_base, monkeypat
     warned, events = sync()
     assert len(warned) == len(events) == 1 and "Example S01E02" in warned[0] and "Fix numbering" in warned[0]
     assert sync() == ([], [])
-    for index in (src.index, dst.index):
-        index.update({canonical_key(identified(3, 0)): identified(3, 503 if index is src.index else 998)})
+    src.index.update({canonical_key(identified(4, 0)): identified(4, 504)})
+    dst.index.update({canonical_key(identified(3, 0)): identified(3, 504)})
     assert len(sync()[0]) == 1
     assert sync() == ([], [])
 
@@ -387,11 +387,11 @@ def test_mismatch_warning_returns_after_it_was_resolved(config_base):
     lines = []
     ctx = SimpleNamespace(state_store=SimpleNamespace(base_path=config_base, pair_scope="scope"), interactive=None,
                           emit=lambda *a, **k: None, emit_info=lines.append)
-    good, bad = index([identified(2, 502)]), index([identified(2, 999)])
-    for target, expected in ((bad, 1), (bad, 1), (good, 1), (bad, 2)):
+    good, bad, fixed = index([identified(2, 502), identified(3, 503)]), index([identified(2, 503)]), index([identified(2, 502)])
+    for target, expected in ((bad, 1), (bad, 1), (fixed, 1), (bad, 2)):
         note_identity_conflicts(ctx, "history", [good, target], [{}, {}], [set(), set()], announce=True)
         assert len(lines) == expected
-    note_identity_conflicts(ctx, "history", [good, index([identified(2, 777)])], [{}, {}], [set(), set()])
+    note_identity_conflicts(ctx, "history", [good, index([identified(2, 501), identified(1, 502)])], [{}, {}], [set(), set()])
     assert len(lines) == 2
 
 
@@ -404,6 +404,18 @@ def test_episode_identity_ignores_missing_or_show_level_ids():
     bare = {key: value for key, value in base.items() if key != "show_ids"}
     for other in (same, copied, {**base, "ids": {}}, bare, None):
         assert not conflicts(index([base]), {canonical_key(base): other} if other else {})
-    assert len(conflicts(index([base]), index([identified(2, 777)]))) == 1
+    assert not conflicts(index([base]), index([identified(2, 777)]))
+    stale = [{**identified(n, 600 + n), "ids": {"tvdb": str(600 + n)}} for n in range(1, 9)]
+    fresh = [{**identified(n, 600 + n), "ids": {"tvdb": str(600 + n if n == 1 else 900 + n)}} for n in range(1, 9)]
+    assert not conflicts(index(stale), index(fresh))
+    shifted = conflicts(index([base, identified(3, 503)]), index([identified(2, 503)]))
+    assert [key for key, _, _ in shifted] == [canonical_key(base)]
     reused = [{**identified(n, 600), "ids": {"tmdb": "4242"}} for n in (2, 3)]
     assert not conflicts(index(reused), index([{**identified(2, 777), "ids": {"tmdb": "8"}}]))
+
+
+def test_mismatch_summary_groups_episodes_by_show():
+    from cw_platform.episode_identity import summary
+
+    rows = [(canonical_key(identified(n, n)), identified(n, n), None) for n in (4, 2, 3)]
+    assert "(Example S01E02, S01E03, S01E04)" in summary(rows) and summary(rows).startswith("3 episodes share")
