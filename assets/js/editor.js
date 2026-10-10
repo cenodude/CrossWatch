@@ -409,7 +409,7 @@
       },
     },
   });
-  [$("cw-saved-mappings"), stateBackupCard].forEach(el => el?.classList.add("cw-advanced-only"));
+  stateBackupCard?.classList.add("cw-advanced-only");
   const typeAllBtn = document.createElement("button");
   typeAllBtn.id = "cw-type-all";
   typeAllBtn.type = "button";
@@ -1665,7 +1665,6 @@
   }
 
   function canReplaceRow(row) {
-    if (isMergedView()) return false;
     return !!editorMetadataReplacer.canReplaceRow(row, { isPolicySource });
   }
 
@@ -1722,7 +1721,74 @@
     if (!state.hasChanges) window.cxToast?.("Fix saved. It is used from the next sync.");
   }
 
+  async function openMappingProvider(row, target) {
+    if (state.loading || state.saving || state.mappingEditing) return;
+    if (state.hasChanges) {
+      setStatusSticky("Save or discard Editor changes before choosing a mapping provider.", 6000);
+      return;
+    }
+    const previous = {...state, typeFilter:{...state.typeFilter}};
+    try {
+      state.snapshot = target.provider;
+      state.instance = target.instance || "default";
+      state.mappingPair = "";
+      state.blockedOnly = false;
+      state.filter = row.title || row.raw?.series_title || row.key;
+      for (const type of Object.keys(state.typeFilter)) state.typeFilter[type] = true;
+      syncSourceUI();
+      await loadSnapshots();
+      if (state.snapshot !== target.provider || state.instance !== (target.instance || "default")) {
+        throw new Error("This provider account is no longer available in the Editor.");
+      }
+      await loadState();
+      if (state.loadError) throw new Error("Could not load this provider. Refresh and try again.");
+      if (filterInput) filterInput.value = state.filter;
+      syncTypeFilterUI();
+      persistUIState();
+      renderRows();
+      setStatusSticky("Choose the search icon beside the item to create or edit its mapping.", 6000);
+    } catch (error) {
+      Object.assign(state, previous);
+      syncSourceUI(); rebuildSnapshots();
+      if (instanceSel) instanceSel.value = state.instance;
+      if (filterInput) filterInput.value = state.filter;
+      syncProfileIconSelect(instanceSel, true); syncTypeFilterUI(); renderRows();
+      setStatusSticky(error.message, 6000);
+    }
+  }
+
   function openItemReplacer(row, anchor) {
+    if (isMergedView()) {
+      if (state.loading || state.saving || state.mappingEditing) return;
+      const targets = (row.presence || []).map(entry => state.mergedTargets?.[entry[0]])
+        .filter(target => target && target.verified !== false);
+      openPopup(anchor, (pop, close) => {
+        appendPopupTitle(pop, "Choose a mapping provider");
+        const note = document.createElement("p");
+        note.textContent = targets.length
+          ? "Open this provider’s items, then use the row’s search icon to create or edit a mapping."
+          : "No confirmed provider has this item. Select a provider in the Editor to create a mapping.";
+        pop.appendChild(note);
+        const select = document.createElement("select");
+        select.className = "cw-select";
+        select.setAttribute("aria-label", "Mapping provider account");
+        targets.forEach((target, index) => {
+          const option = document.createElement("option");
+          option.value = String(index);
+          option.textContent = target.display || target.label || target.provider;
+          select.appendChild(option);
+        });
+        if (targets.length) pop.appendChild(select);
+        appendPopupActions(pop, [
+          {label:"Cancel", onClick:close},
+          ...(targets.length ? [{label:"Open provider", kind:"primary", onClick:() => {
+            const target = targets[Number(select.value)];
+            close(); openMappingProvider(row, target);
+          }}] : []),
+        ]);
+      });
+      return;
+    }
     return editorMetadataReplacer.openItemReplacer(row, anchor, metadataReplacerContext());
   }
 

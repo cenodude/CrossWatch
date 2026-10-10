@@ -324,7 +324,7 @@
         typeBtn,
       });
     };
-    if (!ctx.merged) titleRow.appendChild(searchBtn);
+    if (!ctx.merged || searchUsesCorrection) titleRow.appendChild(searchBtn);
     if (ctx.merged) titleCell.appendChild(presenceChips(row, ctx));
     if (row._episodeGroups?.length) titleCell.appendChild(episodeGroupBadges(row, ctx));
 
