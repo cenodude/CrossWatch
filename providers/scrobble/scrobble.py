@@ -824,8 +824,14 @@ class Dispatcher:
             try:
                 log_delivery = bool(getattr(s, "log_delivery", True))
                 try:
-                    ev_for_sink = maybe_enrich_event_for_sink(ev, sink_name_for_mapping(s), cfg)
-                    result = self._send_sink(s, ev_for_sink, cfg)
+                    from providers.scrobble.episode_groups import send_grouped
+
+                    def send_event(event):
+                        mapped = bool((event.raw or {}).get("_cw_episode_group"))
+                        outgoing = event if mapped else maybe_enrich_event_for_sink(event, sink_name_for_mapping(s), cfg)
+                        return self._send_sink(s, outgoing, cfg)
+
+                    result = send_grouped(ev, cfg, send_event)
                 except Exception as e:
                     result = {"ok": False, "error": str(e), "retryable": True}
                 delivered = True

@@ -295,6 +295,10 @@ def record_scrobble_event(
     media_type = str(getattr(ev, "media_type", "") or "").strip().lower()
     if media_type not in {"movie", "episode"}:
         return None
+    if status == "ok" and (getattr(ev, "raw", None) or {}).get("_cw_episode_group_delivery"):
+        from cw_platform.scrobble_ack import confirm_scrobble
+
+        confirm_scrobble(ev, target, target_instance)
     raw = getattr(ev, "raw", None)
     if not method and isinstance(raw, Mapping):
         method = str(raw.get("_cw_activity_method") or "").strip().lower() or None

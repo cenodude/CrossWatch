@@ -176,6 +176,8 @@ def _payload(ev: ScrobbleEvent, watched_at: float = DEFAULT_WATCHED_AT) -> dict[
         body["position_seconds"] = max(0, round(position / 1000.0))
     if body["action"] == "stop":
         complete = _completed(position, duration, progress, watched_at)
+        if (ev.raw or {}).get("_cw_episode_group") and progress >= watched_at:
+            complete = True
         if complete is not None:
             body["completed"] = complete
         body["played_at"] = utc_now_iso()
@@ -276,7 +278,7 @@ class FloppySink(ScrobbleSink):
             return {"ok": True, "log_status": "skipped", "reason": "missing_media_identity"}
         complete_key = self._key(ev)
         is_complete_stop = body.get("action") == "stop" and body.get("completed") is True
-        if is_complete_stop and not once_per_ttl(
+        if is_complete_stop and not (ev.raw or {}).get("_cw_episode_group") and not once_per_ttl(
             _dedupe_base_path(), "floppy_scrobble_completed", complete_key, ttl_seconds=_COMPLETE_TTL
         ):
             return {"ok": True, "log_status": "skipped", "reason": "session_completed"}
