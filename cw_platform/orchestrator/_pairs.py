@@ -7,6 +7,9 @@ from typing import Any
 from contextlib import contextmanager
 import copy
 import os
+import re
+import traceback
+from pathlib import Path
 
 from ._pairs_utils import (
     inject_ctx_into_provider,
@@ -26,6 +29,39 @@ from ..pair_scope import pair_feature_scope
 from ..log_context import log_pair_id
 from ..connection_status import identity as connection_identity, record_health
 from ..interactive_reads import read_once, replaying
+
+_SAFE_ERROR_REASON = re.compile(r"[a-z0-9][a-z0-9_.:-]{0,79}")
+_SOURCE_ROOTS = ("providers", "cw_platform", "services", "api")
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def error_detail(exc: BaseException) -> str:
+    parts = [type(exc).__name__]
+    try:
+        if str(type(exc).__module__).split(".")[0] in _SOURCE_ROOTS:
+            reason = getattr(exc, "reason", None)
+            if isinstance(reason, str) and _SAFE_ERROR_REASON.fullmatch(reason):
+                parts.append(reason)
+            status = getattr(exc, "status_code", None)
+            if isinstance(status, int) and not isinstance(status, bool) and 100 <= status <= 599:
+                parts.append(f"HTTP {status}")
+    except Exception:
+        del parts[1:]
+    try:
+        frames = traceback.extract_tb(exc.__traceback__)
+        if frames:
+            path = Path(frames[-1].filename)
+            name = path.name
+            if path.is_absolute():
+                try:
+                    name = path.resolve().relative_to(_REPO_ROOT).as_posix()
+                except (ValueError, OSError):
+                    pass
+            parts.append(f"{name}:{frames[-1].lineno}")
+    except Exception:
+        pass
+    return " · ".join(parts)[:300]
+
 
 def _deep_merge_provider_overrides(dst: dict[str, Any], src: Mapping[str, Any]) -> None:
     for k, v in (src or {}).items():
@@ -623,8 +659,7 @@ def run_pairs(ctx) -> dict[str, Any]:
                         emit("feature:cancelled", src=src, dst=dst, feature=feature)
                         cancelled = True
                     except Exception as e:
-                        import traceback as _tb
-                        emit("feature:error", src=src, dst=dst, feature=feature, error=str(e), traceback=_tb.format_exc())
+                        emit("feature:error", src=src, dst=dst, feature=feature, error=str(e), detail=error_detail(e), traceback=traceback.format_exc())
                         errors_total += 1
                         continue
                 finally:

@@ -87,6 +87,62 @@ def test_notices_are_bounded_and_do_not_export_raw_provider_errors():
     assert "secret-token" not in json.dumps(list(collector.notices.values()))
 
 
+def test_feature_error_notice_carries_safe_detail_only():
+    from cw_platform.orchestrator._pairs import error_detail
+    from providers.sync.wetrakr._common import WeTrakrSyncError
+
+    def detail(exc):
+        try:
+            raise exc
+        except Exception as caught:
+            return error_detail(caught)
+
+    rejected = detail(WeTrakrSyncError("request_rejected", status=404))
+    assert rejected.startswith("WeTrakrSyncError · request_rejected · HTTP 404 · ")
+    assert "test_interactive_sync_report.py:" in rejected
+    assert detail(RuntimeError("Bearer secret-token")).startswith("RuntimeError · ")
+    assert "secret-token" not in detail(RuntimeError("Bearer secret-token"))
+
+    assert "request_rejected" not in detail(WeTrakrSyncError("request_rejected" + chr(10)))
+
+    class Foreign(Exception):
+        reason = "secret-token"
+        status_code = 404
+
+    Foreign.__module__ = "somelib.errors"
+    assert detail(Foreign()).startswith("Foreign · tests/")
+
+    class Hostile(WeTrakrSyncError):
+        @property
+        def reason(self):
+            raise RuntimeError("boom")
+
+        @reason.setter
+        def reason(self, value):
+            pass
+
+    Hostile.__module__ = "providers.sync.fake"
+    assert detail(Hostile("x")).startswith("Hostile · tests/")
+    huge = WeTrakrSyncError("request_rejected")
+    huge.status_code = 10 ** 5000
+    assert "HTTP" not in detail(huge)
+
+    def outside():
+        code = compile("raise ValueError('x')", "C:/Users/alice/api/private/customer/module.py", "exec")
+        try:
+            exec(code, {})
+        except Exception as caught:
+            return error_detail(caught)
+
+    assert outside() == "ValueError · module.py:1"
+
+    collector = SyncReport()
+    collector.event(dict(event="feature:error", feature="history", dst="WETRAKR", error="secret-token", detail=rejected))
+    notice = next(iter(collector.notices.values()))
+    assert notice["detail"] == rejected
+    assert "secret-token" not in json.dumps(notice)
+
+
 def test_report_is_session_scoped_and_survives_other_runs(config_base, monkeypatch):
     from api import syncAPI
     from services import interactive_sync as svc
