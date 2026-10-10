@@ -25,7 +25,6 @@ html[data-cw-theme=flat-light] #page-events{--ev-color-scheme:light}
 .ev-eyebrow{font-size:10px;font-weight:800;letter-spacing:.16em;color:var(--ev-accent)}
 .ev-header h1{font-size:32px;line-height:1.2;letter-spacing:-.035em;font-weight:800;margin:5px 0 0}
 .ev-header p{margin:0;color:var(--ev-muted);font-size:14px}
-.ev-header-icon{font-size:32px;color:var(--ev-accent);opacity:var(--cw-content-opacity,.6);margin-right:8px}
 .ev-head-left,.ev-actions,.ev-toolbar-row,.ev-vis,.ev-list-head,.ev-list-head-left,.ev-list-head-right,.ev-pagemini,.ev-pagenums,.ev-dhead-row,.ev-card-head,.ev-tl-head,.ev-toast{display:flex;align-items:center}
 .ev-actions{gap:8px}
 .ev-tbtn.busy{opacity:.6;pointer-events:none}
@@ -248,7 +247,6 @@ html[data-cw-theme=flat-light] .ev-date input::-webkit-calendar-picker-indicator
   .ev-layout.show-detail .ev-col-list{display:none}
   .ev-layout.show-detail .ev-col-detail{display:flex}
   .ev-detail-back{display:inline-flex;align-self:flex-start;flex-shrink:0;margin:12px 16px 0}
-  .ev-header-icon{display:none}
   .ev-detail{padding:16px}
   .ev-viewtabs{width:100%;flex-wrap:wrap}
   .ev-vtab{flex-shrink:0}
