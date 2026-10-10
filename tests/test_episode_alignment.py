@@ -111,6 +111,56 @@ def test_catalog_is_only_trusted_when_every_comparable_episode_agrees():
     assert not _follows_catalog([row(16, 1, "")], entries, "1668")
 
 
+def specials(translate=False):
+    name = lambda number: f"Aflevering naam {number}" if translate else NAMES[number]
+    regular = [row(number, 303940 + number, NAMES[number]) for number in range(13, 20)]
+    other = [row(number, 303940 + number, name(number)) for number in range(13, 20)]
+    extras = [("Full Animatic", 1), ("Character Models 1", 2), ("Character Models 2", 3), ("Agent 12", 4)]
+    mine = [{**row(5 + at, 800 + at, title), "season": 0} for at, (title, _) in enumerate(extras)]
+    theirs = [{**row(5 + at, 800 + wrong if at else 800, title), "season": 0} for at, (title, wrong) in enumerate(extras)]
+    return index(regular + mine), index(other + theirs)
+
+
+def test_id_matches_between_different_titles_are_proposed_but_flagged():
+    source, target = specials()
+    result = align(source, target, SHOW)
+    doubts = {(item["season"], item["episode"]): item["doubt"] for item in result["corrections"]}
+    assert doubts and all(doubts.values()) and all(season == 0 for season, _ in doubts)
+    assert not result["groups"]
+    assert not any(item["doubt"] for item in result["rows"] if item["status"] == "same")
+    assert sum(item["doubt"] for item in result["rows"]) == len(doubts)
+
+
+def test_titles_in_another_language_do_not_flag_every_match():
+    source, target = specials(translate=True)
+    assert not any(item["doubt"] for item in align(source, target, SHOW)["corrections"])
+
+
+def test_split_part_titles_are_not_flagged():
+    result = align(library(), tracker(), SHOW, tmdb_key="key", fetch=catalog)
+    assert not any(item["doubt"] for item in result["corrections"]) and len(result["groups"]) == 2
+
+
+def test_doubtful_shifted_episode_never_enters_a_group():
+    source = library()
+    source[key_of(17)] = {**source[key_of(17)], "title": "Ross Dates a Student"}
+    result = align(source, tracker(), SHOW, tmdb_key="key", fetch=catalog)
+    assert [item["key"] for item in result["corrections"] if item["doubt"]] == [key_of(17)]
+    members = {key for group in result["groups"] for option in group["options"].values() for key in option["source"]}
+    assert key_of(17) not in members
+    assert [group["orphans"] for group in result["groups"]] == [[key_of(25)]]
+
+
+def test_same_number_match_with_a_different_title_stays_a_group_anchor():
+    source = library()
+    source[key_of(15)] = {**source[key_of(15)], "title": "Alternate localized title"}
+    result = align(source, tracker(), SHOW, tmdb_key="key", fetch=catalog)
+    assert not any(item["doubt"] for item in result["rows"])
+    double = result["groups"][0]
+    assert double["suggested"] == "previous" and double["options"]["previous"]["source"] == [key_of(15), key_of(16)]
+    assert len(result["groups"]) == 2
+
+
 def test_combined_save_stores_groups_and_corrections_then_nothing_is_left(client, monkeypatch):
     client, api, cfg = client
     from cw_platform.local_db import state
@@ -123,9 +173,10 @@ def test_combined_save_stores_groups_and_corrections_then_nothing_is_left(client
     groups = [dict(name="Double", **proposal["groups"][0]["options"]["previous"]),
               dict(name="Finale", source=[key_of(24), key_of(25)], target=[key_of(23)])]
     grouped = {key for group in groups for key in group["source"]}
-    body = dict(pair_id="p1", show_ids=SHOW, groups=groups, corrections=proposal["corrections"])
+    chosen = [{name: item[name] for name in ("key", "season", "episode")} for item in proposal["corrections"]]
+    body = dict(pair_id="p1", show_ids=SHOW, groups=groups, corrections=chosen)
     assert client.post("/api/editor/episode-alignment/apply", json=body).status_code == 409
-    body["corrections"] = [item for item in proposal["corrections"] if item["key"] not in grouped]
+    body["corrections"] = [item for item in chosen if item["key"] not in grouped]
     assert client.post("/api/editor/episode-alignment/apply", json=body).json() == dict(ok=True, groups=2, corrections=7)
     policy = api._load_policy()
     saved = policy["pairs"]["p1"]["episode_groups"]

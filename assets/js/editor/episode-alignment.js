@@ -4,11 +4,12 @@
 const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const code = item => `S${String(item.season).padStart(2,"0")}E${String(item.episode).padStart(2,"0")}`;
 
-export function selection(proposal, picks = {}, unchecked = new Set()) {
+export function selection(proposal, picks = {}, unchecked = new Set(), confirmed = new Set()) {
   const groups = proposal.groups.map((group, index) => ({group, option:group.options[picks[index] ?? group.suggested]}))
     .filter(entry => entry.option).map(({group, option}) => ({name:group.name, source:option.source, target:option.target}));
   const covered = new Set(groups.flatMap(group => group.source));
-  const corrections = proposal.corrections.filter(item => !covered.has(item.key) && !unchecked.has(item.key));
+  const corrections = proposal.corrections.filter(item => !covered.has(item.key) && !unchecked.has(item.key)
+    && (!item.doubt || confirmed.has(item.key))).map(({key, season, episode}) => ({key, season, episode}));
   return {groups, corrections, covered};
 }
 
@@ -22,7 +23,7 @@ export async function openEpisodeAlignment(trigger, {pairId, showIds, onSaved} =
   document.body.append(dialog);
   const $ = selector => dialog.querySelector(selector);
   const controller = new AbortController();
-  const picks = {}, unchecked = new Set();
+  const picks = {}, unchecked = new Set(), confirmed = new Set();
   let proposal = null, busy = false, changed = false;
   const request = async (path, body) => {
     const response = await fetch(`/api/editor/episode-alignment${path}`, {method:"POST", credentials:"same-origin", cache:"no-store",
@@ -36,7 +37,8 @@ export async function openEpisodeAlignment(trigger, {pairId, showIds, onSaved} =
     const sides = {source:new Map(), target:new Map()};
     for (const row of proposal.rows) for (const side of ["source", "target"]) if (row[side]) sides[side].set(row[side].key, row[side]);
     const list = (side, keys) => keys.map(key => code(sides[side].get(key))).join(" + ");
-    const chosen = selection(proposal, picks, unchecked);
+    const chosen = selection(proposal, picks, unchecked, confirmed);
+    const matches = new Map(proposal.rows.filter(row => row.source && row.target).map(row => [row.source.key, row.target]));
     const note = {missing_key:"Add a TMDb metadata key in Settings to get suggestions for split episodes, including season finales.",
       no_tmdb_id:"This show has no TMDb ID, so split episodes cannot be suggested.",
       unavailable:"TMDb could not be reached, so split episode suggestions are limited."}[proposal.metadata] || "";
@@ -53,7 +55,11 @@ export async function openEpisodeAlignment(trigger, {pairId, showIds, onSaved} =
     }).join("");
     const corrections = proposal.corrections.length ? `<section class="eg-saved"><div class="eg-saved-head"><h3>Shifted episodes</h3><span class="eg-muted">${chosen.corrections.length} selected</span></div>${proposal.corrections.map(item => {
       const from = sides.source.get(item.key), covered = chosen.covered.has(item.key);
-      return `<label class="eg-scrobble"><input type="checkbox" data-correction="${esc(item.key)}" ${covered ? "disabled" : unchecked.has(item.key) ? "" : "checked"}><span><strong>${esc(name("source"))} ${esc(code(from))} → ${esc(name("target"))} ${esc(code(item))}</strong><small>${esc(covered ? "Handled by the episode group above." : from.title)}</small></span></label>`;
+      const ticked = item.doubt ? confirmed.has(item.key) : !unchecked.has(item.key);
+      const detail = covered ? "Handled by the episode group above." : item.doubt
+        ? `Titles differ: “${from.title}” on ${name("source")}, “${matches.get(item.key)?.title || ""}” on ${name("target")}. One provider may have a wrong episode ID. Select only if these are the same episode.`
+        : from.title;
+      return `<label class="eg-scrobble"><input type="checkbox" data-correction="${esc(item.key)}" ${item.doubt ? "data-doubt" : ""} ${covered ? "disabled" : ticked ? "checked" : ""}><span><strong>${esc(name("source"))} ${esc(code(from))} → ${esc(name("target"))} ${esc(code(item))}${item.doubt ? " · check this one" : ""}</strong><small>${esc(detail)}</small></span></label>`;
     }).join("")}</section>` : "";
     const all = `<details class="eg-help"><summary>All watched episodes (${proposal.rows.length})</summary><ul>${proposal.rows.map(row =>
       `<li>${esc(row.source ? `${code(row.source)} ${row.source.title}` : "—")} ↔ ${esc(row.target ? `${code(row.target)} ${row.target.title}` : "—")}${row.status === "same" ? "" : ` (${esc(row.status)})`}</li>`).join("")}</ul></details>`;
@@ -64,13 +70,14 @@ export async function openEpisodeAlignment(trigger, {pairId, showIds, onSaved} =
   dialog.addEventListener("change", event => {
     const input = event.target;
     if (input.dataset.group != null) picks[input.dataset.group] = input.value;
+    else if (input.dataset.correction && input.dataset.doubt != null) input.checked ? confirmed.add(input.dataset.correction) : confirmed.delete(input.dataset.correction);
     else if (input.dataset.correction) input.checked ? unchecked.delete(input.dataset.correction) : unchecked.add(input.dataset.correction);
     else return;
     render();
   });
   $("[data-save]").onclick = async () => {
     if (busy || !proposal) return;
-    const chosen = selection(proposal, picks, unchecked);
+    const chosen = selection(proposal, picks, unchecked, confirmed);
     busy = true; $("[data-save]").disabled = true; $(".eg-error").textContent = "";
     try {
       await request("/apply", {pair_id:pairId, show_ids:showIds, groups:chosen.groups, corrections:chosen.corrections});
