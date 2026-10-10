@@ -698,3 +698,143 @@ def test_old_addon_switch_is_removed_from_saved_config() -> None:
     assert config_base.cleanup_obsolete_config_keys(cfg) == ["mobile_auth", "runtime.kodi_addon"]
     assert cfg == {"runtime": {"debug": False}}
     assert config_base.cleanup_obsolete_config_keys({"ui": {}}) == []
+
+
+def rate(rating: Any = 8, viewers: list[str] | None = None, **media: Any) -> dict[str, Any]:
+    body = playback("rate", percent=None, position_ms=None, duration_ms=None, file=None, **media)
+    body["rating"] = rating
+    body["viewers"] = ["anna"] if viewers is None else viewers
+    return body
+
+
+def sink_route(route_id: str, sink: str, whitelist: list[str] | None = None) -> dict[str, Any]:
+    out = route(route_id, "default", whitelist)
+    out["sink"] = sink
+    return out
+
+
+@pytest.fixture()
+def sent_ratings(monkeypatch) -> list[dict[str, Any]]:
+    from providers.scrobble import route_ratings
+
+    calls: list[dict[str, Any]] = []
+
+    def fake_send(cfg: Any, sink: Any, instance: Any, item: Any, rating: Any) -> dict[str, Any]:
+        calls.append({"sink": sink, "instance": instance, "item": dict(item), "rating": rating})
+        return {"ok": True}
+
+    monkeypatch.setattr(route_ratings, "send", fake_send)
+    return calls
+
+
+def test_parse_rating_accepts_only_whole_numbers_from_0_to_10() -> None:
+    assert [addon.parse_rating(v) for v in (0, 1, 10, "7", 8.0)] == [0, 1, 10, 7, 8]
+    assert [addon.parse_rating(v) for v in (None, True, -1, 11, 7.5, "x", "")] == [None] * 7
+
+
+def test_rating_support_per_destination() -> None:
+    from providers.scrobble import route_ratings
+
+    from providers.scrobble.routes import ROUTE_RATING_SINKS
+
+    assert set(route_ratings.RATING_SINKS) == ROUTE_RATING_SINKS | {"plex"}
+    for sink in route_ratings.RATING_SINKS:
+        assert route_ratings.supports(sink, "movie") is True
+    for sink in ("emby", "jellyfin", "kodi", "bingebase", ""):
+        assert route_ratings.supports(sink, "movie") is False
+    movie_only = {s for s in route_ratings.RATING_SINKS if not route_ratings.supports(s, "episode")}
+    assert movie_only == {"simkl", "anilist", "kitsu", "myanimelist"}
+
+
+def test_rate_goes_to_the_viewers_route_with_show_scoped_episode(sent_ratings) -> None:
+    cfg = make_cfg([sink_route("R1", "trakt", ["anna"]), sink_route("R2", "trakt", ["tom"]), sink_route("R3", "plex")])
+    disps = {rid: FakeDispatcher() for rid in ("R1", "R2", "R3")}
+    out = addon.handle(make_app(cfg, disps), cfg, "default", rate(8))
+
+    assert out["ignored"] is False
+    assert [(r["id"], r["sink"], r["ok"]) for r in out["rated"]] == [("R1", "trakt", True), ("R3", "plex", True)]
+    assert [c["sink"] for c in sent_ratings] == ["trakt", "plex"]
+    item = sent_ratings[0]["item"]
+    assert item["type"] == "episode" and item["season"] == 2 and item["episode"] == 5 and item["rating"] == 8.0
+    assert item["show_ids"] == {"tmdb": "63639", "tvdb": "280619", "imdb": "tt3230854"}
+    assert "ids" not in item and item["series_title"] == "The Expanse" and item["title"] == "Home"
+    assert all(disp.events == [] for disp in disps.values())
+
+
+def test_rate_zero_removes_and_movie_ids_are_passed(sent_ratings) -> None:
+    cfg = make_cfg([sink_route("R1", "simkl", ["anna"])])
+    body = rate(0, type="movie", title="Arrival", year=2016, season=None, episode=None, episode_title=None, ids={"imdb": "tt2543164", "tmdb": "329865"})
+    out = addon.handle(make_app(cfg, {"R1": FakeDispatcher()}), cfg, "default", body)
+
+    assert out["ignored"] is False and out["rated"] == [{"id": "R1", "sink": "simkl", "ok": True}]
+    assert sent_ratings[0]["rating"] is None
+    assert sent_ratings[0]["item"] == {"type": "movie", "ids": {"imdb": "tt2543164", "tmdb": "329865"}, "title": "Arrival", "year": 2016}
+
+
+def test_rate_without_a_destination_that_takes_it(sent_ratings) -> None:
+    cfg = make_cfg([sink_route("R1", "simkl", ["anna"]), sink_route("R2", "emby", ["anna"])])
+    disps = {"R1": FakeDispatcher(), "R2": FakeDispatcher()}
+    out = addon.handle(make_app(cfg, disps), cfg, "default", rate(9))
+
+    assert out["ignored"] is True and out["error"] == "no_rating_target"
+    assert sent_ratings == []
+
+    other = addon.handle(make_app(cfg, disps), cfg, "default", rate(9, viewers=["kim"]))
+    assert other["error"] == "no_matching_route"
+
+
+def test_rate_rejects_bad_values_and_missing_ids(sent_ratings) -> None:
+    cfg = make_cfg([sink_route("R1", "trakt")])
+    app = make_app(cfg, {"R1": FakeDispatcher()})
+
+    assert addon.handle(app, cfg, "default", rate(11))["error"] == "invalid_rating"
+    assert addon.handle(app, cfg, "default", rate("great"))["error"] == "invalid_rating"
+    assert addon.handle(app, cfg, "default", rate(8, ids={"unknown": "1"}))["error"] == "no_ids"
+    assert sent_ratings == []
+    assert addon.is_active("default") is True
+
+
+def test_same_rating_twice_in_a_row_is_sent_once(sent_ratings) -> None:
+    cfg = make_cfg([sink_route("R1", "trakt", ["anna"])])
+    app = make_app(cfg, {"R1": FakeDispatcher()})
+
+    first = addon.handle(app, cfg, "default", rate(8))
+    again = addon.handle(app, cfg, "default", rate(8))
+    changed = addon.handle(app, cfg, "default", rate(6))
+
+    assert first["rated"][0].get("repeated") is None
+    assert again["rated"][0]["repeated"] is True and again["ignored"] is False
+    assert [c["rating"] for c in sent_ratings] == [8.0, 6.0]
+    assert changed["rated"][0]["ok"] is True
+
+
+def test_rate_reports_a_failed_write(monkeypatch) -> None:
+    from providers.scrobble import route_ratings
+
+    monkeypatch.setattr(route_ratings, "send", lambda *a, **k: {"ok": False, "error": "boom"})
+    cfg = make_cfg([sink_route("R1", "trakt", ["anna"])])
+    out = addon.handle(make_app(cfg, {"R1": FakeDispatcher()}), cfg, "default", rate(8))
+    assert out["ignored"] is False and out["rated"] == [{"id": "R1", "sink": "trakt", "ok": False}]
+
+
+def test_route_ratings_send_uses_the_sync_writer_and_anilist_for_movies(monkeypatch) -> None:
+    from providers.scrobble import route_ratings
+    from providers.scrobble.anilist import ratings as anilist_ratings
+    from providers.scrobble.plex import ratings_sync
+
+    seen: list[tuple[Any, ...]] = []
+    monkeypatch.setattr(ratings_sync, "send_rating", lambda provider, cfg, inst, item, rating, sinks=None: seen.append((provider, inst, rating, tuple(sinks))) or {"ok": True})
+    monkeypatch.setattr(anilist_ratings, "send_plex_rating", lambda cfg, inst, kind, md, ids, show_ids, rating: seen.append(("anilist", inst, kind, md, ids, rating)) or {"ok": True})
+
+    movie = route_ratings.build_item("movie", ids={"imdb": "tt2543164"}, title="Arrival", year=2016, rating=7.0)
+    episode = route_ratings.build_item("episode", show_ids={"tmdb": "63639"}, title="Home", series_title="The Expanse", season=2, episode=5, rating=7.0)
+
+    assert route_ratings.send({}, "plex", "P1", movie, 7.0) == {"ok": True}
+    assert route_ratings.send({}, "anilist", "default", movie, 7.0) == {"ok": True}
+    assert route_ratings.send({}, "simkl", "default", episode, 7.0)["skipped"] is True
+    assert route_ratings.send({}, "kitsu", "default", episode, 7.0)["skipped"] is True
+    assert route_ratings.send({}, "emby", "default", movie, 7.0)["skipped"] is True
+    assert seen == [
+        ("plex", "P1", 7.0, route_ratings.OPS_SINKS),
+        ("anilist", "default", "movie", {"title": "Arrival"}, {"imdb": "tt2543164"}, 7.0),
+    ]

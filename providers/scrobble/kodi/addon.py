@@ -49,6 +49,12 @@ PAIR_MAX_CLIENTS = 1024
 _ACTIONS = {"start": "start", "resume": "start", "progress": "start", "pause": "pause", "stop": "stop"}
 _PERSISTED = ("last_seen", "addon_version", "device_id", "device_name", "viewers", "pkc_skipped")
 
+RATING_REPEAT_SECONDS = 10.0
+RATING_MEMORY = 512
+
+_LAST_RATINGS: dict[str, tuple[int, float]] = {}
+_RATING_LOCK = threading.Lock()
+
 _STATE: dict[str, dict[str, Any]] = {}
 _STATE_LOCK = threading.Lock()
 _STATE_LOADED = False
@@ -321,6 +327,7 @@ def _save_state_locked() -> None:
 def reset_state() -> None:
     global _STATE_LOADED
     clear_pair_codes()
+    clear_ratings()
     with _STATE_LOCK:
         _STATE.clear()
         _STATE_LOADED = True
@@ -663,6 +670,138 @@ def _clear_card(event: ScrobbleEvent, instance_id: str) -> None:
         pass
 
 
+def parse_rating(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(str(value).strip())
+    except Exception:
+        return None
+    if not math.isfinite(number) or number != int(number) or not 0 <= number <= 10:
+        return None
+    return int(number)
+
+
+def _rating_repeated(key: str, rating: int, *, now: float | None = None) -> bool:
+    current = float(now if now is not None else time.time())
+    with _RATING_LOCK:
+        last = _LAST_RATINGS.get(key)
+        if last and last[0] == rating and 0 <= current - last[1] < RATING_REPEAT_SECONDS:
+            return True
+        _LAST_RATINGS.pop(key, None)
+        _LAST_RATINGS[key] = (rating, current)
+        while len(_LAST_RATINGS) > RATING_MEMORY:
+            _LAST_RATINGS.pop(next(iter(_LAST_RATINGS)), None)
+    return False
+
+
+def clear_ratings() -> None:
+    with _RATING_LOCK:
+        _LAST_RATINGS.clear()
+
+
+def _split_ids(ids: Mapping[str, Any], media_type: str) -> tuple[dict[str, str], dict[str, str]]:
+    own: dict[str, str] = {}
+    show: dict[str, str] = {}
+    for key, value in ids.items():
+        name = str(key)
+        if name.endswith("_show"):
+            show[name[: -len("_show")]] = str(value)
+        elif name.endswith("_episode"):
+            own[name[: -len("_episode")]] = str(value)
+        elif media_type == "movie":
+            own[name] = str(value)
+    return own, show
+
+
+def _handle_rate(cfg: dict[str, Any], inst: str, body: Mapping[str, Any], runners: list[Any], out: dict[str, Any]) -> dict[str, Any]:
+    from providers.scrobble import route_ratings
+
+    def ignored(reason: str) -> dict[str, Any]:
+        out["ignored"] = True
+        out["error"] = reason
+        return out
+
+    rating = parse_rating(body.get("rating"))
+    if rating is None:
+        return ignored("invalid_rating")
+    media = _dict(body.get("media"))
+    probe = {**body, "event": "stop", "media": {**media, "percent": 100.0}}
+    item, reason = build_event(probe, inst)
+    if item is None:
+        return ignored(reason)
+    event = item.event
+    media_type = str(event.media_type)
+    own_ids, show_ids = _split_ids(event.ids, media_type)
+    episode_title = _text(media.get("episode_title"), 300) or None
+    rating_item = route_ratings.build_item(
+        media_type,
+        ids=own_ids,
+        show_ids=show_ids,
+        title=episode_title if media_type == "episode" else event.title,
+        series_title=event.title if media_type == "episode" else None,
+        year=event.year,
+        season=event.season,
+        episode=event.number,
+        rating=float(rating) if rating > 0 else None,
+    )
+    if not rating_item:
+        return ignored("no_ids")
+
+    matched = 0
+    results: list[dict[str, Any]] = []
+    media_key = json.dumps([media_type, sorted(event.ids.items()), event.season, event.number], sort_keys=True)
+    for runner in runners:
+        dispatcher = getattr(runner, "dispatcher", None)
+        route_id = str(getattr(runner, "route_id", "") or "")
+        if dispatcher is None:
+            continue
+        route_cfg = build_route_cfg_by_id(cfg, route_id)
+        wanted, account = route_account(route_cfg, item.viewers)
+        if not wanted:
+            continue
+        routed = replace(event, account=account)
+        try:
+            if not dispatcher.accepts(routed):
+                continue
+        except Exception as exc:
+            _log(f"add-on rating route check error: {type(exc).__name__}: {exc}", "ERROR")
+            continue
+        matched += 1
+        watch = _watch_block(route_cfg)
+        sink = _text(watch.get("route_sink"), 40).lower()
+        sink_inst = normalize_instance_id(watch.get("route_sink_instance"))
+        if not route_ratings.supports(sink, media_type):
+            continue
+        row: dict[str, Any] = {"id": route_id, "sink": sink}
+        if _rating_repeated(json.dumps([inst, route_id, account, media_key]), rating):
+            row.update({"ok": True, "repeated": True})
+            results.append(row)
+            continue
+        try:
+            res = route_ratings.send(cfg, sink, sink_inst, rating_item, float(rating) if rating > 0 else None)
+        except Exception as exc:
+            res = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        ok = bool(_dict(res).get("ok"))
+        row["ok"] = ok
+        if _dict(res).get("skipped"):
+            row["skipped"] = True
+        results.append(row)
+        verb = "removed" if rating == 0 else f"set to {rating}"
+        _log(
+            f"add-on rating {verb} route={route_id} sink={sink} user={mask_account(account)} "
+            f"media={event.title or '?'} ok={ok}" + ("" if ok else f" reason={str(_dict(res).get('error') or _dict(res).get('resp') or 'unknown')[:160]}"),
+            "INFO" if ok else "WARNING",
+        )
+
+    if not matched:
+        return ignored("no_matching_route")
+    if not results:
+        return ignored("no_rating_target")
+    out["rated"] = results
+    return out
+
+
 def _update_card(item: AddonEvent, event: ScrobbleEvent, instance_id: str, matched: bool) -> None:
     if item.replayed:
         return
@@ -705,7 +844,7 @@ def handle(app: Any, cfg: dict[str, Any], instance_id: Any, payload: Mapping[str
         out["error"] = reason
         return out
 
-    if name != "ping" and name not in _ACTIONS:
+    if name not in ("ping", "rate") and name not in _ACTIONS:
         return ignored("unsupported_event")
     mark_seen(inst, body)
 
@@ -723,6 +862,8 @@ def handle(app: Any, cfg: dict[str, Any], instance_id: Any, payload: Mapping[str
     runners = list(getattr(group, "routes", None) or []) if group is not None else []
     if not runners:
         return ignored("no_routes")
+    if name == "rate":
+        return _handle_rate(cfg, inst, body, runners, out)
 
     try:
         force_stop_at = float(_dict(_dict(cfg.get("scrobble")).get("trakt")).get("force_stop_at") or 95)
