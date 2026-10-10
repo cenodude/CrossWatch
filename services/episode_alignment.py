@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import re
 import secrets
+from difflib import SequenceMatcher
 import statistics
 import time
 
@@ -60,6 +61,23 @@ def _coords(item) -> tuple[int, int]:
 def _base_title(item):
     text = re.sub(r"\(\s*\d+\s*\)|\b(?:part|pt)\.?\s*\d+\b", "", str(item.get("title") or ""), flags=re.I)
     return re.sub(r"\W+", "", text).casefold()
+
+
+def _titles_differ(left, right):
+    mine, theirs = _base_title(left), _base_title(right)
+    generic = r"(?:episode|aflevering|folge|episodio|épisode)?\d*|s\d+e\d+"
+    if not mine or not theirs or re.fullmatch(generic, mine) or re.fullmatch(generic, theirs):
+        return None
+    return re.sub(r"\D", "", mine) != re.sub(r"\D", "", theirs) or SequenceMatcher(None, mine, theirs).ratio() < 0.8
+
+
+def _doubtful(views, forward):
+    verdicts = {key: _titles_differ(views[0][key], views[1][hit]) for key, hit in forward.items()}
+    known = [value for value in verdicts.values() if value is not None]
+    if len(known) < 4 or known.count(False) / len(known) < 0.6:
+        return set()
+    return {key for key, value in verdicts.items()
+            if value and _coords(views[0][key]) != _coords(views[1][forward[key]])}
 
 
 def _show_episodes(index, show_ids):
@@ -124,12 +142,17 @@ def _long(catalog, item):
     return bool(runtimes) and isinstance(entry.get("runtime"), (int, float)) and entry["runtime"] >= LONG_RUNTIME * statistics.median(runtimes)
 
 
-def _orphans(split, combined, forward, has_ids, season, catalog):
+def _orphans(split, combined, forward, has_ids, season, catalog, skip):
     reverse = {hit: key for key, hit in forward.items()}
     by_coords = {_coords(item): key for key, item in combined.items()}
     ordered = sorted((key for key, item in split.items() if _coords(item)[0] == season), key=lambda key: _coords(split[key]))
     runs, offset, run = [], 0, []
     for key in ordered:
+        if key in skip:
+            if run:
+                runs.append(run)
+                run = []
+            continue
         number = _coords(split[key])[1]
         hit = forward.get(key)
         if hit and _coords(combined[hit])[0] == season:
@@ -157,7 +180,9 @@ def _side(key, item):
 
 def align(source, target, show_ids, *, tmdb_key="", fetch=tmdb_season):
     views = [_show_episodes(source, show_ids), _show_episodes(target, show_ids)]
-    forward, source_ids = _matches(*views)
+    matched, source_ids = _matches(*views)
+    doubtful = _doubtful(views, matched)
+    forward = {key: hit for key, hit in matched.items() if key not in doubtful}
     backward = {hit: key for key, hit in forward.items()}
     target_ids = unique_ids(views[1])
     show_tmdb = next((str((item.get("show_ids") or {}).get("tmdb")) for view in views for item in view.values()
@@ -179,7 +204,8 @@ def align(source, target, show_ids, *, tmdb_key="", fetch=tmdb_season):
             split, combined = views[split_index], views[1 - split_index]
             trusted = catalog if catalog and _follows_catalog(
                 [item for item in combined.values() if _coords(item)[0] == season], catalog, show_tmdb) else None
-            runs, ordered = _orphans(split, combined, links, ids, season, trusted)
+            skip = doubtful if split_index == 0 else {matched[key] for key in doubtful}
+            runs, ordered = _orphans(split, combined, links, ids, season, trusted, skip)
             for run in runs:
                 first, last = ordered.index(run[0]), ordered.index(run[-1])
                 near = {"previous": ordered[first - 1] if first else None,
@@ -212,14 +238,17 @@ def align(source, target, show_ids, *, tmdb_key="", fetch=tmdb_season):
                     options={where: dict(source=option["source"], target=option["target"]) for where, option in options.items()}))
     rows = []
     for key, item in views[0].items():
-        hit = forward.get(key)
+        hit = matched.get(key)
         other = views[1].get(hit) if hit else None
         status = "unmatched" if not other else "same" if _coords(other) == _coords(item) else "shifted"
-        rows.append(dict(source=_side(key, item), target=_side(hit, other) if other else None, status=status))
-    rows.extend(dict(source=None, target=_side(key, item), status="unmatched") for key, item in views[1].items() if key not in backward)
+        rows.append(dict(source=_side(key, item), target=_side(hit, other) if other else None, status=status,
+                         doubt=key in doubtful))
+    paired = set(matched.values())
+    rows.extend(dict(source=None, target=_side(key, item), status="unmatched", doubt=False)
+                for key, item in views[1].items() if key not in paired)
     rows.sort(key=lambda row: ((row["source"] or row["target"])["season"], (row["source"] or row["target"])["episode"], row["source"] is None))
-    corrections = [dict(key=row["source"]["key"], season=row["target"]["season"], episode=row["target"]["episode"])
-                   for row in rows if row["status"] == "shifted"]
+    corrections = [dict(key=row["source"]["key"], season=row["target"]["season"], episode=row["target"]["episode"],
+                        doubt=row["doubt"]) for row in rows if row["status"] == "shifted"]
     return dict(rows=rows, corrections=corrections, groups=suggestions, metadata=metadata)
 
 

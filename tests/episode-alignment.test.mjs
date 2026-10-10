@@ -30,6 +30,13 @@ test("choosing another group drops the corrections it covers, and declining keep
   assert.deepEqual(declined.corrections.map(item => item.key), ["s17"]);
 });
 
+test("a correction whose titles differ is left out until the user confirms it", () => {
+  const value = proposal();
+  value.corrections[1].doubt = true;
+  assert.deepEqual(selection(value).corrections, [{key:"s17", season:6, episode:16}]);
+  assert.deepEqual(selection(value, {}, new Set(), new Set(["s18"])).corrections.map(item => item.key), ["s17", "s18"]);
+});
+
 test("a group without a suggestion is not selected until the user picks one", () => {
   const value = proposal();
   value.groups[0].suggested = null;
