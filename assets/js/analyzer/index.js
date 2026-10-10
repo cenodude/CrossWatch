@@ -563,6 +563,7 @@ const Analyzer = {
           reference:{pair_id:pairId, provider:row.provider, feature:row.feature, key:row.key},
           signal:controller.signal,
           onClose: () => { notice.hidden = true; finish(); },
+          onGroupsChanged: () => { if (!lifetime.signal.aborted) analyzeItems(); },
           onSaved: () => {
             finish();
             if (!lifetime.signal.aborted) {
