@@ -1674,8 +1674,10 @@
   }
 
   function commitReplacement(row, corrected, key, sameMessage) {
+    const groupPart = r => r._origin === "baseline" && !!state.mappingPair
+      && (r._episodeGroups || []).some(group => group.pair_id === state.mappingPair);
     const clash = (state.rows || []).some(
-      r => r !== row && !r.deleted && String(r.key || "").toLowerCase() === key.toLowerCase()
+      r => r !== row && !r.deleted && String(r.key || "").toLowerCase() === key.toLowerCase() && !groupPart(r)
     );
     if (clash) return "A row for that item already exists.";
 

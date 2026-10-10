@@ -179,6 +179,14 @@ def test_scheduler_webhook_payload_includes_context_and_summary_counts() -> None
     assert payload["summary"] == {"added": 5, "removed": 1, "updated": 1}
 
 
+def test_scheduler_webhook_payload_carries_sync_notices_only_when_present() -> None:
+    from services.scheduler_webhooks import build_payload
+
+    assert "notices" not in build_payload("success", {}, {"exit_code": 0})
+    payload = build_payload("success", {}, {"exit_code": 0, "notices": ["2 episodes share a number", ""]})
+    assert payload["notices"] == ["2 episodes share a number"] and payload["status"] == "ok"
+
+
 def test_scheduler_webhook_notifiarr_payload_shape() -> None:
     from services.scheduler_webhooks import build_payload
 

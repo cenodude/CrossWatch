@@ -7,17 +7,53 @@ import importlib
 from types import SimpleNamespace
 
 from cw_platform.episode_groups import endpoint, tokens, watched
+from cw_platform.episode_identity import conflicts, label, summary
 from cw_platform.mapping_policy import effective_policy
 from cw_platform.modules_registry import get_sync_module_path_by_name
 from cw_platform.orchestrator._episode_groups import HistoryGroups
 from cw_platform.orchestrator._history_rewatches import collapse_history_latest, filter_history_events, history_rewatch_pair_enabled
-from cw_platform.orchestrator._pairs_utils import manual_policy
+from cw_platform.orchestrator._pairs_utils import manual_policy, merge_manual_adds
 from cw_platform.pair_scope import pair_feature_scope
 
 
 def provider_ops(provider):
     path = get_sync_module_path_by_name(provider)
     return getattr(importlib.import_module(path), "OPS", None) if path else None
+
+
+def identity_problems(analysis):
+    from services import analyzer as an
+
+    problems = []
+    policy = an._load_manual_state()
+    groups = analysis.groups()
+    for pair in analysis.cfg.get("pairs") or []:
+        pair_id = an._pair_id(pair)
+        directions = an._pair_map({"pairs": [pair]}, analysis.state)
+        routes = [(src, dst) for (src, feature), targets in directions.items() if feature == "history" for dst in targets]
+        if not routes:
+            continue
+        src, dst = routes[0]
+        effective = effective_policy(policy, pair_id)
+        views = []
+        for token, peer in ((src, dst), (dst, src)):
+            adds, blocked = manual_policy(effective, an._split_prov_token(token)[0], "history", an._split_prov_token(token)[1])
+            rows = {key: item for key, item in (an._bucket(analysis.state, token, "history") or {}).items() if isinstance(item, dict)
+                    and an._passes_pair_type_filter(analysis.pair_types, token, "history", peer, item)
+                    and an._passes_pair_lib_filter(analysis.pair_libs, token, "history", peer, item)}
+            views.append({key: item for key, item in merge_manual_adds(rows, adds).items()
+                          if str(key).lower() not in blocked and not groups.contains(token, peer, item)})
+        found = conflicts(*views)
+        if found:
+            shows = {}
+            for _, item, _ in found:
+                ids = {str(key): str(value) for key, value in (item.get("show_ids") or {}).items() if value}
+                shows.setdefault(tuple(sorted(ids.items())), dict(title=str(item.get("series_title") or item.get("title") or ""), show_ids=ids))
+            problems.append(dict(type="history_episode_identity_conflict", severity="warn", provider=src, feature="history",
+                pair_id=pair_id, source=src, target=dst, title="Same episode number, different episode",
+                message=summary(found), count=len(found), shows=list(shows.values())[:10],
+                affected_items=[dict(key=key, label=label(item) or key) for key, item, _ in found]))
+    return problems
 
 
 class AnalyzerEpisodeGroups:
@@ -42,9 +78,8 @@ class AnalyzerEpisodeGroups:
             fcfg = fcfg if isinstance(fcfg, dict) else {}
             reverse = (dst, src) in routes
             effective = effective_policy(policy, pair_id)
-            blocks = manual_policy(effective, ends[0][0], "history", ends[0][1])[1]
-            if reverse:
-                blocks |= manual_policy(effective, ends[1][0], "history", ends[1][1])[1]
+            blocks = [manual_policy(effective, ends[0][0], "history", ends[0][1])[1],
+                      manual_policy(effective, ends[1][0], "history", ends[1][1])[1] if reverse else set()]
             buckets = [an._bucket(analysis.state, token, "history") for token in (src, dst)]
             reason = "A History snapshot is missing. Refresh this pair before comparing its episode groups." if any(bucket is None for bucket in buckets) else ""
             try:

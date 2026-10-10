@@ -181,3 +181,21 @@ test("episode group changes refresh the Editor after leaving the preserved mappi
   assert.equal(reloads,1);
   assert.equal(state.mappingEditing,false);
 });
+
+test("a shifted episode can take the number of a grouped part only in that pair", () => {
+  const editorSource = readFileSync(new URL("../assets/js/editor.js", import.meta.url), "utf8");
+  const source = editorSource.slice(editorSource.indexOf("  function commitReplacement("), editorSource.indexOf("  function metadataReplacerContext()"));
+  const commit = (mappingPair, other) => {
+    const row = {key:"tmdb:1#s06e17", _origin:"baseline"};
+    const state = {mappingPair, rows:[other, row]};
+    const sandbox = vm.createContext({state, buildManualRow:(item, key) => ({key, _origin:"manual"}), applyManualRow() {},
+      setStatusSticky() {}, markChanged() {}, renderRows() {}});
+    vm.runInContext(source, sandbox);
+    return [sandbox.commitReplacement(row, {}, "tmdb:1#s06e16", ""), state.rows.length];
+  };
+  const part = {key:"tmdb:1#s06e16", _origin:"baseline", _episodeGroups:[{pair_id:"p1"}]};
+  assert.deepEqual(commit("p1", part), ["", 3]);
+  for (const [pair, other] of [["", part], ["p2", part], ["p1", {...part, _episodeGroups:[]}], ["p1", {...part, _origin:"manual"}]]) {
+    assert.deepEqual(commit(pair, other), ["A row for that item already exists.", 2]);
+  }
+});

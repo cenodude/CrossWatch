@@ -3,12 +3,36 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from ..episode_identity import conflicts, summary
 from ..episode_groups import check_corrections, coverage, endpoint, plan_group, tokens, validate_groups
 from ..local_db import episode_groups as storage
 from ..local_db.manual_policy import load_policy
+from ..local_db.ttl_dedupe import clear_namespace, once_per_ttl
 from ._interactive import fingerprint
 from ._specials import specials_excluded
-from ._pairs_utils import filter_manual_block
+from ._pairs_utils import filter_manual_block, merge_manual_adds
+
+
+def note_identity_conflicts(ctx, feature, indexes, adds, blocks, *, announce=False):
+    if feature != "history":
+        return
+    views = [{key: item for key, item in merge_manual_adds(index, extra).items() if str(key).lower() not in blocked}
+             for index, extra, blocked in zip(indexes, adds, blocks)]
+    rows = conflicts(*views)
+    scope = getattr(ctx.state_store, "pair_scope", None)
+    review = getattr(ctx, "interactive", None)
+    if announce and scope and review is None:
+        base, namespace = ctx.state_store.base_path, f"history_identity:{scope}"
+        if not rows:
+            clear_namespace(base, namespace)
+        elif once_per_ttl(base, namespace, fingerprint(sorted(key for key, _, _ in rows)), ttl_seconds=315360000):
+            ctx.emit_info(f"[!] History: {summary(rows)} Open the Analyzer and choose Fix numbering.")
+            ctx.emit("history:episode_identity", feature=feature, count=len(rows), reason=summary(rows))
+    if not rows:
+        return
+    ctx.emit("debug", msg="history.episode_identity_conflict", feature=feature, count=len(rows))
+    if review is not None:
+        review.notices.append(dict(event="history:episode_identity", feature="history", reason=summary(rows), provider=""))
 
 
 class HistoryGroups:
@@ -63,8 +87,8 @@ class HistoryGroups:
             group_blocked = blocked
             if specials_excluded(feature, fcfg) and any(ep["season"] == 0 for side in ("source", "target") for ep in group[side]["episodes"]):
                 group_blocked = "This group includes specials excluded by the pair."
-            if any(len(filter_manual_block(group[side]["episodes"], set(blocks or []))) != len(group[side]["episodes"])
-                   for side in ("source", "target")):
+            if any(len(filter_manual_block(group[side]["episodes"], set((blocks or [(), ()])[index]))) != len(group[side]["episodes"])
+                   for side, index in zip(("source", "target"), order)):
                 group_blocked = "An episode in this group is blocked for this pair."
             planned, state, reason = plan_group(group, current, old, reverse=True, blocked=group_blocked)
             self.states[group["id"]] = {**state, "mapping": signature}
@@ -91,6 +115,10 @@ class HistoryGroups:
 
     def ordinary(self, index, items):
         return [item for item in items if not self.contains(index, item)] if self.groups else items
+
+    def unblocked(self, items, blocks):
+        grouped = [item for item in items if item.get("_cw_episode_group")]
+        return filter_manual_block([item for item in items if not item.get("_cw_episode_group")], blocks) + grouped
 
     def restore(self, index, items):
         return {**self.strip(index, items), **self.kept[index]} if self.groups else items

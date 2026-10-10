@@ -70,6 +70,34 @@ def editor_badges(items, index, sources):
     return result
 
 
+def group_warnings(cfg, pair, group):
+    from api.editorAPI import _STATE_BASE, _load_state_items
+    from cw_platform.local_db import state
+    from cw_platform.pair_scope import pair_feature_scope
+
+    try:
+        raw = state.load_pair_state(_STATE_BASE, pair_feature_scope(cfg, pair, "history", cfg["pairs"].index(pair) + 1), {"history"})
+    except Exception:
+        return []
+    warnings = []
+    for side in ("source", "target"):
+        provider, instance = endpoint(group[side])
+        rows = [item for item in _load_state_items("history", provider, instance, raw_state=raw).values()
+                if isinstance(item, dict) and item.get("type") == "episode"]
+        if not rows:
+            continue
+        ids = {(key, str(value).lower()) for key, value in group[side]["episodes"][0]["show_ids"].items()}
+        seasons = {item.get("season") for item in rows
+                   if ids & {(key, str(value).lower()) for key, value in (item.get("show_ids") or {}).items()}}
+        label = ", ".join(f"{key.upper()} {value}" for key, value in sorted(ids))
+        if not seasons:
+            warnings.append(f"{provider}: no watched episodes use show ID {label}. Check the ID type and number.")
+            continue
+        for number in sorted({episode["season"] for episode in group[side]["episodes"]} - seasons):
+            warnings.append(f"{provider}: no watched episodes in season {number} of this show. Check the season number.")
+    return warnings
+
+
 def authorized(request):
     from api.editorAPI import load_config
 
@@ -137,4 +165,4 @@ def update_group(payload, request):
         manual_policy.update_policy(_STATE_BASE, apply)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
-    return dict(ok=True, id=group_id)
+    return dict(ok=True, id=group_id, warnings=group_warnings(cfg, pair, group) if payload.action == "save" else [])

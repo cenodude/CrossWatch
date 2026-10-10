@@ -58,6 +58,10 @@ test("episode entry selects a pair containing the exact provider instance and pr
     const side = reverse ? "target" : "source";
     assert.equal(get(side + "[data-show-id]").value,"100");
     assert.equal(get(side + "[data-episodes]").value,"S04E23");
+    const other = reverse ? "source" : "target";
+    assert.equal(get(other + "[data-show-id]").value,"100");
+    assert.equal(get(other + "[data-namespace]").value,"tmdb");
+    assert.equal(get(other + "[data-episodes]").value,"");
   }
 });
 

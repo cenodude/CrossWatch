@@ -4291,6 +4291,9 @@ def _problems(
                 probs.append(prob)
 
     probs.extend(analysis.groups().problems)
+    from services.analyzer_episode_groups import identity_problems
+
+    probs.extend(identity_problems(analysis))
 
     for p, f, k, it in _iter_items(s):
         if (analysis_scope or analysis.cfg.get("_analyzer_pairs_selected")) and (_norm_prov_token(p), f) not in analysis_scope:

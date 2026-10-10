@@ -42,6 +42,17 @@ def effective_policy(policy, pair_id=""):
             *(key for key in blocks if key.lower() not in corrected),
             *(override.get("blocks") or []),
         ])
+    for provider, instance, feature, _block in _feature_blocks(result):
+        node = feature_node(result, provider, instance, feature)
+        items = (node.get("adds") or {}).get("items") or {}
+        records = {key: record for key, record in (node.get("mappings") or {}).items() if key in items}
+        originals = {str(record.get("original_key") or "").lower() for record in records.values()}
+        targets = {alias.lower() for key in records for alias in [key, *typed_keys_for_item(items[key])]}
+        kept = {alias.lower() for key, record in records.items() if record.get("blocked")
+                for alias in [key, *typed_keys_for_item(items[key])]}
+        chained = (originals & targets) - kept
+        if chained:
+            node["blocks"] = [key for key in node.get("blocks") or [] if str(key).lower() not in chained]
     return result
 
 

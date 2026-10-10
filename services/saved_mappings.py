@@ -43,13 +43,18 @@ def correction_block_keys(block):
             if target in items and record.get("original_key") and record["original_key"] != target}
 
 
+def deliberate_record(block, key):
+    return next((record for target, record in (block.get("mappings") or {}).items()
+                 if str(target).lower() == str(key).lower() and isinstance(record, dict)), None)
+
+
 def saved_blocks(policy: Mapping[str, Any]) -> Iterator[SavedRule]:
     for pair_id, scoped in [("", policy), *(policy.get("pairs") or {}).items()]:
         for provider, instance, feature, block in _feature_blocks(scoped):
             automatic = correction_block_keys(block)
             items = (block.get("adds") or {}).get("items") or {}
             for key in block.get("blocks") or []:
-                if key.lower() in automatic:
+                if key.lower() in automatic and not (deliberate_record(block, key) or {}).get("blocked"):
                     continue
                 yield SavedRule(pair_id=pair_id, scope="pair" if pair_id else "shared", provider=provider,
                            instance=instance, feature=feature, key=key, entry_type="block",
@@ -60,7 +65,9 @@ def saved_blocks(policy: Mapping[str, Any]) -> Iterator[SavedRule]:
 def _scoped_corrections(policy: Mapping[str, Any], pair_id: str) -> Iterator[SavedRule]:
     for provider, instance, feature, block in _feature_blocks(policy):
         records = block.get("mappings") or {}
-        blocks = set(block.get("blocks") or [])
+        automatic = correction_block_keys(block)
+        blocks = {key for key in block.get("blocks") or []
+                  if key.lower() not in automatic or (deliberate_record(block, key) or {}).get("blocked")}
         for key, item in ((block.get("adds") or {}).get("items") or {}).items():
             if not isinstance(item, Mapping):
                 continue
