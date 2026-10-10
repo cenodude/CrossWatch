@@ -114,6 +114,11 @@ class StateStore:
                     s_adds["items"] = s_items
                     s_feat["adds"] = s_adds
 
+            p_mappings = f_node.get("mappings")
+            if isinstance(p_mappings, dict):
+                s_mappings = s_feat.get("mappings")
+                s_feat["mappings"] = {**(s_mappings if isinstance(s_mappings, dict) else {}), **p_mappings}
+
         for prov, p_node_any in p_provs.items():
             if not isinstance(p_node_any, dict):
                 continue

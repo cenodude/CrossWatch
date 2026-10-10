@@ -326,6 +326,29 @@ def test_deliberately_blocked_correction_in_a_chain_is_not_synced(config_base, m
 
 
 @pytest.mark.parametrize("mode", ["one-way", "two-way"])
+def test_numbering_corrections_do_not_rewrite_existing_watch_dates(config_base, monkeypatch, mode):
+    older = [episode(n, watched_at="2018-12-05T20:00:00Z") for n in range(15, 24)]
+    src, dst, cfg = shift_season(config_base, monkeypatch, mode, older, True)
+    for ops in (src, dst):
+        ops.capabilities = lambda: {"features": {"history": True}, "index_semantics": "present",
+                                    "observed_deletes": True, "history": {"upsert": True}}
+    review = InteractivePlan()
+    assert run(cfg, review)["ok"]
+    assert not review.rows
+    assert run(cfg)["ok"]
+    assert not dst.add_calls and not src.add_calls
+    assert all(item["watched_at"] == "2018-12-05T20:00:00Z" for item in dst.index.values())
+    policy = manual_policy.load_policy(config_base)
+    edited = episode(13, watched_at="2020-01-01T10:00:00Z")
+    for index_, when in ((src.index, "2019-01-01T10:00:00Z"), (dst.index, "2019-01-01T10:00:00Z")):
+        index_[canonical_key(edited)] = episode(13, watched_at=when)
+    policy["pairs"]["p1"]["providers"]["SRC"]["history"]["adds"]["items"][canonical_key(edited)] = edited
+    manual_policy.save_policy(config_base, policy)
+    assert run(cfg)["ok"]
+    assert [call[0]["watched_at"] for call in dst.add_calls] == ["2020-01-01T10:00:00Z"]
+
+
+@pytest.mark.parametrize("mode", ["one-way", "two-way"])
 def test_shifted_season_already_in_sync_plans_nothing(config_base, monkeypatch, mode):
     src, dst, cfg = shift_season(config_base, monkeypatch, mode, [stamped(n) for n in range(15, 24)], True)
     review = InteractivePlan()
