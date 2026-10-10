@@ -53,6 +53,37 @@ def test_correction_blocks_stay_with_mapping_but_corrected_item_can_be_blocked(e
     assert target in node["mappings"]
 
 
+def test_deliberate_block_inside_a_correction_chain_is_kept_and_can_be_lifted(editor_client):
+    client, api, cfg = editor_client
+    save(api, item(1), item(2), "p1")
+    save(api, item(3), item(1), "p1")
+    middle = canonical_key(item(1))
+    blocks = lambda: effective_policy(api._load_policy(), "p1")["providers"]["SRC"]["watchlist"]["blocks"]
+    saved = lambda: {row["key"]: row["excluded"] for row in client.get("/api/editor/mappings?pair_id=p1").json()["items"]}
+    assert middle not in blocks() and canonical_key(item(3)) in blocks()
+    assert saved()[middle] is False
+    listed = lambda: [row["key"] for row in client.get("/api/editor/mappings?entry_type=block&pair_id=p1").json()["items"]]
+    assert listed() == []
+    assert client.post("/api/editor/mapping-block", json=rule(middle)).status_code == 200
+    assert middle in blocks() and saved()[middle] is True
+    assert listed() == [middle]
+    exported = client.get("/api/editor/mappings/export").content
+    manual_policy.save_policy(api._STATE_BASE, dict(version=1, providers={}, pairs={}))
+    upload = lambda: client.post("/api/editor/mappings/import", files={"file": ("rules.json", exported, "application/json")}).json()
+    assert upload()["imported"] == 3
+    assert middle in blocks() and listed() == [middle]
+    assert upload()["imported"] == 0
+    assert client.post("/api/editor/mapping-block", json={**rule(middle), "blocked": False}).status_code == 200
+    assert middle not in blocks() and saved()[middle] is False and listed() == []
+    assert client.post("/api/editor/mapping-block", json={**rule(middle), "blocked": False}).status_code == 409
+    identity = {key: value for key, value in rule(middle).items() if key != "blocked"} | {"entry_type": "block"}
+    assert client.post("/api/editor/mappings/delete", json=identity).status_code == 409
+    assert client.post("/api/editor/mapping-block", json=rule(middle)).status_code == 200
+    assert client.post("/api/editor/mappings/delete", json=identity).status_code == 200
+    assert middle not in blocks() and listed() == []
+    assert middle in api._load_policy()["pairs"]["p1"]["providers"]["SRC"]["watchlist"]["blocks"]
+
+
 @pytest.mark.parametrize("mode", ["one-way", "two-way"])
 def test_blocked_correction_is_excluded_in_real_sync(config_base, monkeypatch, editor_client, mode):
     client, api, cfg = editor_client

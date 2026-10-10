@@ -72,7 +72,7 @@ except Exception:  # pragma: no cover
 from ..provider_instances import normalize_instance_id
 from ._planner import diff_ratings, diff_progress, _pick_rating, _pick_rating_quantized, _quantize_rating
 from ._interactive import choose_conflict
-from ._episode_groups import HistoryGroups
+from ._episode_groups import HistoryGroups, note_identity_conflicts
 from ._progress_completion import fcfg_for_progress_target
 from ._specials import filter_specials_index, specials_excluded
 from ._scope import provider_call
@@ -707,12 +707,14 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             B_eff = collapse_history_latest(B_eff)
 
     groups = HistoryGroups(ctx, feature, [(a, src_inst), (b, dst_inst)], [A_eff, B_eff], reverse=True,
-                           fcfg=fcfg, blocks=manual_blocks_A | manual_blocks_B,
+                           fcfg=fcfg, blocks=[manual_blocks_A, manual_blocks_B],
                            blocked="Grouped rewatches are not supported. Disable History rewatches for this pair." if history_event_mode else
                            "A provider is unavailable or its snapshot is incomplete." if a_down or b_down or A_suspect or B_suspect else "")
     A_eff, B_eff = groups.strip(0, A_eff), groups.strip(1, B_eff)
     A_cur, B_cur = groups.strip(0, A_cur), groups.strip(1, B_cur)
     prevA, prevB = groups.strip(0, prevA), groups.strip(1, prevB)
+    note_identity_conflicts(ctx, feature, [A_eff, B_eff], [manual_adds_A, manual_adds_B], [manual_blocks_A, manual_blocks_B],
+                            announce=not dry_run_flag)
 
     review = getattr(ctx, "interactive", None)
     now = review.planned_at if review is not None else int(_t.time())
@@ -1838,7 +1840,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
     manual_blocks = manual_blocks_A | manual_blocks_B
     if manual_blocks:
         pre_add, pre_rem = len(add_to_A), len(rem_from_A)
-        add_to_A = _filter_manual_block(add_to_A, manual_blocks)
+        add_to_A = groups.unblocked(add_to_A, manual_blocks)
         rem_from_A = _filter_manual_block(rem_from_A, manual_blocks)
         blk = (pre_add - len(add_to_A)) + (pre_rem - len(rem_from_A))
         if blk:
@@ -1848,7 +1850,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
 
     if manual_blocks:
         pre_add, pre_rem = len(add_to_B), len(rem_from_B)
-        add_to_B = _filter_manual_block(add_to_B, manual_blocks)
+        add_to_B = groups.unblocked(add_to_B, manual_blocks)
         rem_from_B = _filter_manual_block(rem_from_B, manual_blocks)
         blk = (pre_add - len(add_to_B)) + (pre_rem - len(rem_from_B))
         if blk:

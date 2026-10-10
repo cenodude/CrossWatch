@@ -265,3 +265,145 @@ def test_one_to_many_mapping_and_failed_part_retry(config_base, monkeypatch, mod
 def test_unknown_watched_dates_remain_unknown():
     adds, _, _ = plan_group(group(), {"source": index([episode(2, watched=True), episode(3, watched=True)]), "target": {}}, {})
     assert adds["target"][0]["watched_at"] == "unknown"
+
+
+def season_groups():
+    side = lambda provider, numbers: dict(provider=provider, instance="default", episodes=[episode(n) for n in numbers])
+    return [dict(id="double", name="Double", scrobble=False, source=side("SRC", [15, 16]), target=side("DST", [15])),
+            dict(id="finale", name="Finale", scrobble=False, source=side("SRC", [24, 25]), target=side("DST", [23]))]
+
+
+def stamped(number):
+    return episode(number, watched_at=f"2026-10-{number:02d}T12:00:00Z")
+
+
+def shift_season(config_base, monkeypatch, mode, target, stepwise):
+    from api import editorAPI
+
+    src, dst, cfg = setup(config_base, monkeypatch, [stamped(n) for n in range(15, 26)], target, mode)
+    manual_policy.save_policy(config_base, dict(version=1, providers={}, pairs={"p1": dict(providers={}, episode_groups=season_groups())}))
+    monkeypatch.setattr(editorAPI, "_STATE_BASE", config_base)
+    edits = []
+    for number in range(17, 24):
+        original, corrected = stamped(number), {**stamped(number), "episode": number - 1}
+        edits.append(([("history", "SRC", index([corrected]), [canonical_key(original)], "default")],
+                      {("history", "SRC", "default"): {canonical_key(corrected): dict(original_key=canonical_key(original), original=original)}}))
+    if stepwise:
+        for rows, records in edits:
+            editorAPI._save_policy_manual_batch(rows, pair_id="p1", mappings=records)
+    else:
+        merged = {}
+        for _, records in edits:
+            merged.update(records[("history", "SRC", "default")])
+        editorAPI._save_policy_manual_batch([row for rows, _ in edits for row in rows], pair_id="p1",
+                                            mappings={("history", "SRC", "default"): merged})
+    return src, dst, cfg
+
+
+@pytest.mark.parametrize("mode", ["one-way", "two-way"])
+@pytest.mark.parametrize("stepwise", [False, True])
+def test_shifted_season_between_two_groups_syncs_every_episode(config_base, monkeypatch, mode, stepwise):
+    src, dst, cfg = shift_season(config_base, monkeypatch, mode, [], stepwise)
+    assert run(cfg)["ok"]
+    assert set(dst.index) == set(index([episode(n) for n in range(15, 24)]))
+    assert dst.index[canonical_key(episode(16))]["watched_at"] == stamped(17)["watched_at"]
+    assert dst.index[canonical_key(episode(22))]["watched_at"] == stamped(23)["watched_at"]
+    assert dst.index[canonical_key(episode(23))]["watched_at"] == stamped(25)["watched_at"]
+    calls = len(dst.add_calls)
+    assert run(cfg)["ok"]
+    assert len(dst.add_calls) == calls and not src.add_calls
+    assert set(src.index) == set(index([episode(n) for n in range(15, 26)]))
+
+
+@pytest.mark.parametrize("mode", ["one-way", "two-way"])
+def test_deliberately_blocked_correction_in_a_chain_is_not_synced(config_base, monkeypatch, mode):
+    src, dst, cfg = shift_season(config_base, monkeypatch, mode, [], True)
+    policy = manual_policy.load_policy(config_base)
+    policy["pairs"]["p1"]["providers"]["SRC"]["history"]["mappings"][canonical_key(episode(17))]["blocked"] = True
+    manual_policy.save_policy(config_base, policy)
+    assert run(cfg)["ok"]
+    assert set(dst.index) == set(index([episode(n) for n in range(15, 24) if n != 17]))
+
+
+@pytest.mark.parametrize("mode", ["one-way", "two-way"])
+def test_shifted_season_already_in_sync_plans_nothing(config_base, monkeypatch, mode):
+    src, dst, cfg = shift_season(config_base, monkeypatch, mode, [stamped(n) for n in range(15, 24)], True)
+    review = InteractivePlan()
+    assert run(cfg, review)["ok"]
+    assert not review.rows
+    assert not any("blocked" in notice["reason"] for notice in review.notices)
+
+
+def identified(number, episode_id):
+    return {**stamped(number), "series_title": "Example", "ids": {"tvdb": str(episode_id), "imdb": f"tt{episode_id}"}}
+
+
+@pytest.mark.parametrize("mode", ["one-way", "two-way"])
+def test_same_number_with_different_episode_ids_is_flagged_until_corrected(config_base, monkeypatch, mode):
+    from api import editorAPI
+
+    source = [identified(1, 501), identified(2, 502), identified(3, 503)]
+    target = [identified(1, 501), identified(2, 503)]
+    src, dst, cfg = setup(config_base, monkeypatch, source, target, mode)
+    manual_policy.save_policy(config_base, dict(version=1, providers={}, pairs={}))
+    review = InteractivePlan()
+    assert run(cfg, review)["ok"]
+    notices = [notice["reason"] for notice in review.notices if notice["event"] == "history:episode_identity"]
+    assert len(notices) == 1 and notices[0].startswith("1 episode share") and "Example S01E02" in notices[0]
+    monkeypatch.setattr(editorAPI, "_STATE_BASE", config_base)
+    original, corrected = source[2], {**source[2], "episode": 2}
+    editorAPI._save_policy_manual_batch([("history", "SRC", index([corrected]), [canonical_key(original)], "default")],
+        pair_id="p1", mappings={("history", "SRC", "default"): {canonical_key(corrected): dict(
+            original_key=canonical_key(original), original=original)}})
+    review = InteractivePlan()
+    assert run(cfg, review)["ok"]
+    assert not [notice for notice in review.notices if notice["event"] == "history:episode_identity"]
+
+
+@pytest.mark.parametrize("mode", ["one-way", "two-way"])
+def test_unattended_sync_warns_once_per_distinct_mismatch(config_base, monkeypatch, mode):
+    source = [identified(1, 501), identified(2, 502)]
+    src, dst, cfg = setup(config_base, monkeypatch, source, [identified(1, 501), identified(2, 999)], mode)
+    manual_policy.save_policy(config_base, dict(version=1, providers={}, pairs={}))
+    lines = []
+    def sync(dry=False):
+        lines.clear()
+        assert Orchestrator(cfg).run(dry_run=dry, pair_scope_ids=["p1"], progress=lines.append)["ok"]
+        return [line for line in lines if line.startswith("[!] History:")], [line for line in lines if '"history:episode_identity"' in line]
+    assert sync(dry=True) == ([], [])
+    warned, events = sync()
+    assert len(warned) == len(events) == 1 and "Example S01E02" in warned[0] and "Fix numbering" in warned[0]
+    assert sync() == ([], [])
+    for index in (src.index, dst.index):
+        index.update({canonical_key(identified(3, 0)): identified(3, 503 if index is src.index else 998)})
+    assert len(sync()[0]) == 1
+    assert sync() == ([], [])
+
+
+def test_mismatch_warning_returns_after_it_was_resolved(config_base):
+    from types import SimpleNamespace
+    from cw_platform.orchestrator._episode_groups import note_identity_conflicts
+
+    lines = []
+    ctx = SimpleNamespace(state_store=SimpleNamespace(base_path=config_base, pair_scope="scope"), interactive=None,
+                          emit=lambda *a, **k: None, emit_info=lines.append)
+    good, bad = index([identified(2, 502)]), index([identified(2, 999)])
+    for target, expected in ((bad, 1), (bad, 1), (good, 1), (bad, 2)):
+        note_identity_conflicts(ctx, "history", [good, target], [{}, {}], [set(), set()], announce=True)
+        assert len(lines) == expected
+    note_identity_conflicts(ctx, "history", [good, index([identified(2, 777)])], [{}, {}], [set(), set()])
+    assert len(lines) == 2
+
+
+def test_episode_identity_ignores_missing_or_show_level_ids():
+    from cw_platform.episode_identity import conflicts
+
+    base = identified(2, 502)
+    same = {**base, "ids": {"tvdb": "999", "imdb": "tt502"}}
+    copied = {**base, "ids": {"tmdb": "100"}}
+    bare = {key: value for key, value in base.items() if key != "show_ids"}
+    for other in (same, copied, {**base, "ids": {}}, bare, None):
+        assert not conflicts(index([base]), {canonical_key(base): other} if other else {})
+    assert len(conflicts(index([base]), index([identified(2, 777)]))) == 1
+    reused = [{**identified(n, 600), "ids": {"tmdb": "4242"}} for n in (2, 3)]
+    assert not conflicts(index(reused), index([{**identified(2, 777), "ids": {"tmdb": "8"}}]))

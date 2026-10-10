@@ -3,7 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-from ._episode_groups import HistoryGroups
+from ._episode_groups import HistoryGroups, note_identity_conflicts
 
 from ._pairs_utils import pair_endpoint_config, pair_feature_libraries
 from ._scope import provider_call
@@ -1320,12 +1320,14 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
             prev_dst = collapse_history_latest(prev_dst)
 
     groups = HistoryGroups(ctx, feature, [(src, src_inst), (dst, dst_inst)], [src_idx, dst_full],
-                           fcfg=fcfg, blocks=manual_blocks,
+                           fcfg=fcfg, blocks=[manual_blocks, set()],
                            blocked="Grouped rewatches are not supported. Disable History rewatches for this pair." if history_event_mode else
                            "A provider is unavailable or its snapshot is incomplete." if src_down or dst_down or src_suspect or dst_suspect else "")
     src_idx, dst_full = groups.strip(0, src_idx), groups.strip(1, dst_full)
     src_cur, dst_cur = groups.strip(0, src_cur), groups.strip(1, dst_cur)
     prev_src, prev_dst = groups.strip(0, prev_src), groups.strip(1, prev_dst)
+    note_identity_conflicts(ctx, feature, [src_idx, dst_full], [manual_adds, {}], [manual_blocks, set()],
+                            announce=not (ctx.dry_run or sync_cfg.get("dry_run", False)))
 
     coord_aliases = _build_history_coordinate_aliases(cfg, feature, (src_idx, dst_full))
     if coord_aliases.enabled:
@@ -1736,7 +1738,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
     manual_blocked = 0
     if manual_blocks:
         b_adds, b_upd, b_rem = len(adds), len(updates), len(removes)
-        adds = _filter_manual_block(adds, manual_blocks)
+        adds = groups.unblocked(adds, manual_blocks)
         updates = _filter_manual_block(updates, manual_blocks)
         removes = _filter_manual_block(removes, manual_blocks)
         manual_blocked = (b_adds - len(adds)) + (b_upd - len(updates)) + (b_rem - len(removes))

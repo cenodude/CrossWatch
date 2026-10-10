@@ -37,6 +37,7 @@ from services import playlists as playlist_svc
 from services.editor_mapping import MappingRequest as EditorMappingRequest, BlockRequest
 from services.mapping_transfer import RuleIdentity
 from services.episode_groups import GroupRequest
+from services.episode_alignment import AlignmentRequest, ApplyRequest
 
 from services.editor import (
     Kind,
@@ -56,6 +57,18 @@ def api_episode_groups(request: Request):
 def api_update_episode_group(payload: GroupRequest, request: Request):
     from services.episode_groups import update_group
     return update_group(payload, request)
+
+
+@router.post("/episode-alignment")
+def api_episode_alignment(payload: AlignmentRequest, request: Request):
+    from services.episode_alignment import propose
+    return propose(payload, request)
+
+
+@router.post("/episode-alignment/apply")
+def api_apply_episode_alignment(payload: ApplyRequest, request: Request):
+    from services.episode_alignment import apply
+    return apply(payload, request)
 
 
 @router.post("/mapping")

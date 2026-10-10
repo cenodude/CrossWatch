@@ -17,7 +17,7 @@ from cw_platform.local_db import manual_policy
 from cw_platform.mapping_policy import feature_node
 from cw_platform.provider_instances import normalize_instance_id
 from services.editor_mapping import require_mapping_pair
-from services.saved_mappings import correction_block_keys, saved_blocks, saved_corrections
+from services.saved_mappings import correction_block_keys, deliberate_record, saved_blocks, saved_corrections
 
 MAX_BYTES = 20 * 1024 * 1024
 MAX_RECORDS = 50000
@@ -180,7 +180,9 @@ def delete_rule(request, rule: RuleIdentity):
         blocks = node.get("blocks") or []
         if rule.entry_type == "block":
             if rule.key.lower() in correction_block_keys(node):
-                raise HTTPException(409, "This block belongs to a correction. Delete that mapping instead.")
+                if not (deliberate_record(node, rule.key) or {}).pop("blocked", False):
+                    raise HTTPException(409, "This block belongs to a correction. Delete that mapping instead.")
+                return
             if not any(key.lower() == rule.key.lower() for key in blocks):
                 raise HTTPException(404, "Block no longer exists")
             node["blocks"] = [key for key in blocks if key.lower() != rule.key.lower()]
@@ -291,6 +293,14 @@ def import_rules(request, bundle: RuleBundle):
             mappings = node.setdefault("mappings", {})
             blocks = node.setdefault("blocks", [])
             if rule.entry_type == "block":
+                record = deliberate_record(node, rule.key)
+                if record is not None and rule.key.lower() in correction_block_keys(node):
+                    if record.get("blocked"):
+                        skipped += 1
+                    else:
+                        record["blocked"] = True
+                        imported += 1
+                    continue
                 if rule.key.lower() in {key.lower() for key in blocks}:
                     skipped += 1
                     continue

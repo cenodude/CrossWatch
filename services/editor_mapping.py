@@ -64,7 +64,7 @@ def update_block(payload, request):
     from api.editorAPI import load_config, _require_instance_scope, _STATE_BASE
     from cw_platform.local_db import manual_policy
     from cw_platform.mapping_policy import feature_node
-    from services.saved_mappings import correction_block_keys
+    from services.saved_mappings import correction_block_keys, deliberate_record
 
     cfg, user = load_config(), request_user(request)
     if user and not user.get("is_admin") and not (user.get("permissions") or {}).get("write"):
@@ -79,7 +79,15 @@ def update_block(payload, request):
     def apply(policy):
         scoped = policy.setdefault("pairs", {}).setdefault(payload.pair_id, {"version": 1, "providers": {}}) if payload.pair_id else policy
         node = feature_node(scoped, provider, instance, payload.feature)
-        if not payload.blocked and key.lower() in correction_block_keys(node):
+        automatic = key.lower() in correction_block_keys(node)
+        record = deliberate_record(node, key)
+        if automatic and record is not None:
+            if payload.blocked:
+                record["blocked"] = True
+            elif not record.pop("blocked", False):
+                raise HTTPException(409, "This block belongs to a saved correction. Edit or remove that mapping instead.")
+            return
+        if not payload.blocked and automatic:
             raise HTTPException(409, "This block belongs to a saved correction. Edit or remove that mapping instead.")
         blocks = [value for value in node.get("blocks") or [] if value.lower() != key.lower()]
         node["blocks"] = [*blocks, key] if payload.blocked else blocks

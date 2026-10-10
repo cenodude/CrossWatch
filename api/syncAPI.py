@@ -1181,6 +1181,11 @@ def _parse_sync_line(line: str) -> None:
                 _summary_set("_phase", phase)
                 return
 
+            if ev == "history:episode_identity":
+                with SUMMARY_LOCK:
+                    SUMMARY.setdefault("notices", []).append(str(o.get("reason") or ""))
+                return
+
             if ev == "apply:unresolved":
                 raw_items = o.get("items")
                 if isinstance(raw_items, list) and raw_items:

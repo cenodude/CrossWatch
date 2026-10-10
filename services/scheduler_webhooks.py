@@ -107,6 +107,7 @@ def build_payload(
         "duration_sec": snap.get("duration_sec"),
         "exit_code": exit_code,
         "summary": _summary_counts(snap),
+        "notices": [str(note) for note in snap.get("notices") or [] if note][:10] or None,
     }
     payload = {k: v for k, v in payload.items() if v not in ("", None, {})}
     if _payload_format(payload_format) == "notifiarr":

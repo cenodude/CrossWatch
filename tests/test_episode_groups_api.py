@@ -166,3 +166,23 @@ def test_merged_editor_badges_require_presence_on_a_group_endpoint(client, monke
     key, badges = next(iter(data["episode_groups"].items()))
     assert data["items"][key]["episode"] == 2
     assert badges[0]["pair_id"] == "p1"
+
+
+def test_saved_group_warns_about_unknown_show_or_season_in_history(client, config_base, monkeypatch):
+    client, api, cfg = client
+    from cw_platform.local_db import state
+
+    rows = {canonical_key(watched(n)): watched(n) for n in (2, 3)}
+    monkeypatch.setattr(state, "load_pair_state", lambda *a, **k: {"providers": {
+        "SRC": {"history": {"baseline": {"items": rows}}}, "DST": {"history": {"baseline": {"items": {}}}}}})
+    save = lambda value: client.post("/api/editor/episode-groups", json=dict(pair_id="p1", group=value)).json()
+    assert save(group())["warnings"] == []
+    typo = group()
+    typo["source"]["episodes"][1]["season"] = 65
+    assert save(typo)["warnings"] == ["SRC: no watched episodes in season 65 of this show. Check the season number."]
+    wrong = group()
+    for member in wrong["source"]["episodes"]:
+        member["show_ids"] = {"tmdb": "999"}
+    assert save(wrong)["warnings"] == ["SRC: no watched episodes use show ID TMDB 999. Check the ID type and number."]
+    assert api._load_policy()["pairs"]["p1"]["episode_groups"][0]["source"]["episodes"][0]["show_ids"] == {"tmdb": "999"}
+    assert client.post("/api/editor/episode-groups", json=dict(pair_id="p1", action="delete", group_id="finale")).json()["warnings"] == []

@@ -223,3 +223,15 @@ def test_group_retry_cannot_open_an_ordinary_mapping(setup_groups, monkeypatch):
         mapping_row(MappingRequest(pair_id="p1", provider="DST", feature="history", key=canonical_key(item)), None)
     assert error.value.status_code == 409
     assert "Episode groups" in error.value.detail
+
+
+def test_same_number_with_different_episode_ids_is_reported_once_per_pair(setup_groups):
+    store, cfg, _ = setup_groups
+    row = lambda number, episode_id: {**watched(number), "series_title": "Example", "ids": {"tvdb": str(episode_id)}}
+    rows = [[row(5, 501), row(6, 502)], [row(5, 501), row(6, 999)]]
+    save_pair(store, cfg, "p1", {(cfg["pairs"][0][side], "default", "history"):
+        {"baseline": {"items": {canonical_key(item): item for item in items}}} for side, items in zip(("source", "target"), rows)})
+    found = [row for row in A._cached_analysis("p1")["problems"] if row["type"] == "history_episode_identity_conflict"]
+    assert len(found) == 1 and found[0]["count"] == 1 and found[0]["severity"] == "warn"
+    assert found[0]["affected_items"] == [{"key": canonical_key(watched(6)), "label": "Example S01E06"}]
+    assert found[0]["shows"] == [{"title": "Example", "show_ids": {"tmdb": "100"}}] and found[0]["pair_id"] == "p1"

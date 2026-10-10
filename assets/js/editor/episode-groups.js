@@ -20,7 +20,7 @@ export async function openEpisodeGroups(trigger, {pairId = "", groupId = "", ori
   dialog.className = "eg-dialog cw-page-panel";
   dialog.setAttribute("aria-labelledby", "episode-groups-title");
   dialog.innerHTML = `<div class="eg-head"><div><div class="eg-eyebrow">MAPPING</div><h2 id="episode-groups-title">Episode groups</h2><p>Match combined episodes with their separate parts.</p></div><button type="button" class="eg-close" data-close aria-label="Close episode groups"><span class="material-symbols-rounded" aria-hidden="true">close</span></button></div>
-    <div class="eg-body">${returnToMapping ? '<button type="button" class="eg-back" data-back><span class="material-symbols-rounded" aria-hidden="true">arrow_back</span>Back to mapping</button>' : ""}<div class="eg-toolbar"><label class="eg-field">History sync pair<select data-pair aria-label="History sync pair"></select></label><button type="button" data-new><span class="material-symbols-rounded" aria-hidden="true">add</span>New group</button></div>
+    <div class="eg-body">${returnToMapping ? '<button type="button" class="eg-back" data-back><span class="material-symbols-rounded" aria-hidden="true">arrow_back</span>Back to mapping</button>' : ""}<div class="eg-toolbar"><label class="eg-field">History sync pair<select data-pair aria-label="History sync pair"></select></label><button type="button" data-align title="Compare this show's numbering on both providers"><span class="material-symbols-rounded" aria-hidden="true">compare</span>Check numbering</button><button type="button" data-new><span class="material-symbols-rounded" aria-hidden="true">add</span>New group</button></div>
     <form id="episode-group-form" data-form><label class="eg-field">Group name<input data-name required maxlength="200" placeholder="e.g. Friends · Season 4 finale"></label>
     <div class="eg-sides">${["source","target"].map(side => `<section class="eg-provider" data-side="${side}" aria-label="${side} episodes"><div class="eg-provider-head"><span class="eg-provider-logo" data-logo aria-hidden="true"></span><div><strong data-endpoint></strong><span class="eg-muted" data-instance></span></div></div><div class="eg-identity"><label class="eg-field">ID type<select data-namespace aria-label="${side} show ID type">${namespaces.map(ns=>`<option value="${ns}">${ns.toUpperCase()}</option>`).join("")}</select></label><label class="eg-field">Show ID<input data-show-id required maxlength="128" placeholder="e.g. 1668" aria-label="${side} show ID"></label></div><label class="eg-field">Episodes<input data-episodes required placeholder="${side === "source" ? "S04E23, S04E24" : "S04E23"}" aria-label="${side} episodes"></label></section>`).join('<span class="material-symbols-rounded eg-link" aria-hidden="true">compare_arrows</span>')}</div>
     <p class="eg-hint">Use show IDs. Enter one episode on one side and two or more on the other.</p>
@@ -71,7 +71,7 @@ export async function openEpisodeGroups(trigger, {pairId = "", groupId = "", ori
   const render = () => {
     const pair = selectedPair(), groups = pair?.groups || [];
     $("[data-form]").hidden = !pair;
-    $("[data-new]").disabled = !pair;
+    $("[data-new]").disabled = $("[data-align]").disabled = !pair;
     $("[data-pair]").disabled = !pairs.length;
     $("[data-count]").textContent = pair ? `${groups.length} episode group${groups.length === 1 ? "" : "s"}` : "";
     $("[data-save]").disabled = $("[data-cancel-edit]").disabled = !pair;
@@ -91,9 +91,10 @@ export async function openEpisodeGroups(trigger, {pairId = "", groupId = "", ori
     const controls = [...dialog.querySelectorAll("button,input,select")];
     controls.forEach(control => { control.disabled = true; });
     try {
-      await request(body); changed = true;
+      const warnings = (await request(body)).warnings || []; changed = true;
       await load();
-      $(".eg-status").textContent = body.action === "delete" ? "Group deleted." : "Group saved. Refresh open History reviews. Enabled scrobble rules apply to new playback events.";
+      $(".eg-status").textContent = body.action === "delete" ? "Group deleted." : warnings.length ? "Group saved, but please check it." : "Group saved. Refresh open History reviews. Enabled scrobble rules apply to new playback events.";
+      $(".eg-error").textContent = warnings.join(" ");
     } catch (error) { if (!controller.signal.aborted) $(".eg-error").textContent = error.message; }
     finally { busy = false; controls.forEach(control => { control.disabled = false; }); render(); }
   };
@@ -114,6 +115,19 @@ export async function openEpisodeGroups(trigger, {pairId = "", groupId = "", ori
         throw new Error("Enter one combined episode on one side and two or more separate episodes on the other.");
       }
       mutate({pair_id:pair.id, group});
+    } catch (error) { $(".eg-error").textContent = error.message; }
+  };
+  $("[data-align]").onclick = async () => {
+    if (busy) return;
+    const pair = selectedPair();
+    const section = ["source","target"].map(side=>$(`[data-side="${side}"]`)).find(part=>part.querySelector("[data-show-id]").value.trim());
+    if (!pair || !section) { $(".eg-error").textContent = "Enter a show ID first, then check its numbering."; return; }
+    $(".eg-error").textContent = "";
+    try {
+      const {openEpisodeAlignment} = await import(`/assets/js/editor/episode-alignment.js?v=${encodeURIComponent(window.APP_VERSION || "1")}`);
+      await openEpisodeAlignment($("[data-align]"), {pairId:pair.id,
+        showIds:{[section.querySelector("[data-namespace]").value]:section.querySelector("[data-show-id]").value.trim()},
+        onSaved:async () => { changed = true; await load(); $(".eg-status").textContent = "Numbering fixes saved."; }});
     } catch (error) { $(".eg-error").textContent = error.message; }
   };
   $("[data-pair]").onchange = () => { render(); reset(); };
@@ -154,7 +168,11 @@ export async function openEpisodeGroups(trigger, {pairId = "", groupId = "", ori
         $("[data-name]").value = original.series_title || original.title || "";
         const section = $(`[data-side="${side}"]`), ids = original.show_ids || original.ids || {};
         const ns = namespaces.find(key=>ids[key]);
-        if (ns) { section.querySelector("[data-namespace]").value = ns; section.querySelector("[data-show-id]").value = ids[ns]; }
+        if (ns) {
+          for (const part of ["source","target"].map(key=>$(`[data-side="${key}"]`))) {
+            part.querySelector("[data-namespace]").value = ns; part.querySelector("[data-show-id]").value = ids[ns];
+          }
+        }
         section.querySelector("[data-episodes]").value = coordinates([original]);
       }
     }
