@@ -1700,7 +1700,7 @@
         state.mappingEditing = true;
         try {
           const {openEditorMapping} = await import(`/assets/js/editor/mapping.js?v=${encodeURIComponent(window.APP_VERSION || "1")}`);
-          await openEditorMapping(row, {state, fetchJSON, commitReplacement, saveChanges: saveMappingFix});
+          await openEditorMapping(row, {state, fetchJSON, commitReplacement, saveChanges: saveMappingFix, loadState});
         } catch (error) { state.mappingEditing = false; setStatusSticky(error.message, 6000); }
       },
       isPolicySource,

@@ -158,12 +158,18 @@ test("episode group changes refresh the Editor after leaving the preserved mappi
   let workspace, group, reloads = 0;
   const row = {type:"episode",title:"Example",key:"tmdb:1",raw:{type:"episode",season:1,episode:1,ids:{tmdb:"1"}}};
   const state = {snapshot:"PLEX",instance:"default",kind:"history",rows:[row],mappingEditing:true};
-  const sandbox = vm.createContext({window:{},structuredClone,document:{querySelector:()=>true},
+  const contextSource = editorSource.slice(editorSource.indexOf("  function metadataReplacerContext()"), editorSource.indexOf("  async function saveMappingFix()"))
+    .replace(/const \{openEditorMapping\} = await import\([^;]+;/, "");
+  const sandbox = vm.createContext({window:{},structuredClone,document:{querySelector:()=>true}, state,
+    fetchJSON:async()=>({row}), saveMappingFix:async()=>{}, loadState:()=>reloads++,
+    ...Object.fromEntries(["commitReplacement", "isPolicySource", "openPopup", "appendPopupTitle", "appendPopupActions",
+      "updateTypeDisplay", "formatEpisodeVisualTitle", "setStatusSticky", "markChanged", "renderRows"].map(name=>[name,()=>{}])),
     workspaceModule:{openMappingWorkspace:options => { workspace = options; }},
     groupModule:{openEpisodeGroups:async (trigger,options) => { group = {trigger,...options}; }},
   });
-  vm.runInContext(source, sandbox);
-  await sandbox.openEditorMapping(row,{state,saveChanges:async()=>{},fetchJSON:async()=>({row}),loadState:()=>reloads++});
+  vm.runInContext(source + "\n" + contextSource, sandbox);
+  state.mappingEditing = false;
+  await sandbox.metadataReplacerContext().openMapping(row);
   const trigger = {};
   await workspace.onEpisodeGroup(trigger);
   assert.equal(group.trigger,trigger);
