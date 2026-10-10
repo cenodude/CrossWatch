@@ -170,6 +170,10 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
                     attempted.pop(key)
                     results.append({"status": "skipped", "reason": reason, "canonical_key": key})
             except WeTrakrSyncError as exc:
+                if exc.status_code == 404:
+                    attempted.pop(key)
+                    unresolved.append({"key": key, "reason": "not_found"})
+                    continue
                 error = exc
                 write_failed.add(key)
         if replaying():

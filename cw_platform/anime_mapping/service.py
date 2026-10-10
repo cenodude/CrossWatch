@@ -6,6 +6,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from cw_platform.history_events import split_history_event_key
 from cw_platform.id_map import canonical_key, ids_from, merge_ids, minimal
 
 from .coordinates import translate
@@ -597,6 +598,9 @@ def enrich_index_for_pair(
             enriched = svc.enrich_item(value)
             mini = minimal(enriched)
             new_key = canonical_key(mini) or str(key)
+            event = split_history_event_key(key)
+            if event and new_key != str(key):
+                new_key = f"{new_key}@{event[1]}"
             if counts is not None:
                 seeded, dead_end = _seed_status(value, enriched)
                 if seeded:
