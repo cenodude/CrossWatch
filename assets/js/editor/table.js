@@ -296,9 +296,9 @@
 
     const searchBtn = document.createElement("button");
     searchBtn.type = "button";
-    searchBtn.className = "cw-title-search-btn";
-    searchBtn.innerHTML = '<span class="material-symbol">search</span>';
     const searchUsesCorrection = !!call(ctx, "canReplaceRow", row);
+    searchBtn.className = searchUsesCorrection ? "cw-btn cw-btn-del cw-btn-map" : "cw-title-search-btn";
+    searchBtn.innerHTML = `<span class="material-symbol" aria-hidden="true">${searchUsesCorrection ? "compare_arrows" : "search"}</span>`;
     searchBtn.title = searchUsesCorrection ? "Edit mapping" : "Search and fill IDs";
     searchBtn.setAttribute("aria-label", searchBtn.title);
     searchBtn.disabled = locked && !searchUsesCorrection;
@@ -324,7 +324,8 @@
         typeBtn,
       });
     };
-    if (!ctx.merged || searchUsesCorrection) titleRow.appendChild(searchBtn);
+    if (searchUsesCorrection) actionWrap.appendChild(searchBtn);
+    else if (!ctx.merged) titleRow.appendChild(searchBtn);
     if (ctx.merged) titleCell.appendChild(presenceChips(row, ctx));
     if (row._episodeGroups?.length) titleCell.appendChild(episodeGroupBadges(row, ctx));
 

@@ -310,7 +310,19 @@
 
   const empty = (text) => `<div class="cw-mm-empty">${esc(text)}</div>`;
 
-  const watchedMap = () => new Map((state.presence?.synced?.episodes || []).map((row) => [`${row.season}:${row.episode}`, row.epoch]));
+  function watchedEpisodes() {
+    const episodes = new Map();
+    for (const entry of [state.presence?.synced, state.presence?.scrobble]) {
+      for (const row of entry?.episodes || []) {
+        const key = `${row.season}:${row.episode}`;
+        const previous = episodes.get(key);
+        if (!previous || Number(row.epoch) > Number(previous.epoch)) episodes.set(key, row);
+      }
+    }
+    return [...episodes.values()];
+  }
+
+  const watchedMap = () => new Map(watchedEpisodes().map((row) => [`${row.season}:${row.episode}`, row.epoch]));
 
   function stepEpisode(pos) {
     const seasons = seasonList();
@@ -325,7 +337,7 @@
     const seasons = seasonList();
     if (!seasons.length) return { first: null, label: "", second: null };
     const known = new Set(seasons.map((row) => Number(row.season)));
-    const watched = (state.presence?.synced?.episodes || [])
+    const watched = watchedEpisodes()
       .map((row) => ({ season: Number(row.season), episode: Number(row.episode) }))
       .filter((row) => known.has(row.season))
       .sort((x, y) => x.season - y.season || x.episode - y.episode);
@@ -408,10 +420,11 @@
 
   function movieProgressBox() {
     const history = state.presence?.synced;
+    const scrobble = state.presence?.scrobble;
     const rows = state.progress;
     const records = Array.isArray(rows) ? [...rows].sort((a, b) => b.pct - a.pct) : [];
     const best = records[0] || null;
-    const watched = Number(history?.count) || 0;
+    const watched = Math.max(Number(history?.count) || 0, Number(scrobble?.count) || 0);
     const pct = best ? Math.round(best.pct) : watched ? 100 : 0;
     const summary = best ? `<b>${pct}%</b>` : watched ? "<b>Watched</b>" : rows === null ? "Checking..." : "Not started";
     const list = records.map((row) => {
@@ -428,13 +441,14 @@
         <b>${value}%</b>
       </div>`;
     }).join("");
-    const lastSeen = history?.last_epoch ? [`Last watched ${relTime(history.last_epoch)}`, dateFmt.format(new Date(history.last_epoch * 1000))] : [];
+    const lastEpoch = Math.max(Number(history?.last_epoch) || 0, Number(scrobble?.last_epoch) || 0);
+    const lastSeen = lastEpoch ? [`Last watched ${relTime(lastEpoch)}`, dateFmt.format(new Date(lastEpoch * 1000))] : [];
     const watchline = watched
       ? `<div class="cw-mm-watchline is-watched">${icon("check_circle")}
-          <span class="cw-mm-watchline-copy"><strong>${esc(watched === 1 ? "Watched once" : `Watched ${plural(watched, "time")}`)}</strong><small>${esc(lastSeen.join(" · ") || "In your synced history")}</small></span>
+          <span class="cw-mm-watchline-copy"><strong>${esc(watched === 1 ? "Watched once" : `Watched ${plural(watched, "time")}`)}</strong><small>${esc(lastSeen.join(" · ") || (history?.count ? "In your synced history" : "Scrobbled"))}</small></span>
           <span class="cw-mm-watchline-count"><b>${esc(numberFmt.format(watched))}</b><small>${watched === 1 ? "play" : "plays"}</small></span>
         </div>`
-      : `<div class="cw-mm-watchline">${icon("visibility")}<span class="cw-mm-watchline-copy"><strong>Not watched yet</strong><small>Not in your synced history</small></span></div>`;
+      : `<div class="cw-mm-watchline">${icon("visibility")}<span class="cw-mm-watchline-copy"><strong>Not watched yet</strong><small>No synced history or scrobbles</small></span></div>`;
     return `<div class="cw-mm-box"><h4>Watch progress <small>${summary}</small></h4>
       <div class="cw-mm-progress${!best && watched ? " is-done" : ""}"><i style="width:${pct}%"></i></div>
       ${list ? `<div class="cw-mm-progress-rows">${list}</div>` : ""}
@@ -442,14 +456,14 @@
   }
 
   function overviewTab() {
-    const { meta, presence } = state;
+    const { meta } = state;
     const detail = meta?.detail || {};
     let main;
     if (isMovie()) {
       main = movieProgressBox();
     } else {
       const total = Number(detail.number_of_episodes) || 0;
-      const watched = Array.isArray(presence?.synced?.episodes) ? presence.synced.episodes.length : 0;
+      const watched = watchedEpisodes().length;
       const pct = total ? Math.min(100, Math.round((watched / total) * 100)) : 0;
       const next = upNext();
       const first = next.first ? episodeSlot(next.label, next.first) : "";
@@ -475,7 +489,7 @@
     const seasons = seasonList({ specials: true });
     if (!seasons.length) return "";
     const counts = new Map();
-    for (const row of state.presence?.synced?.episodes || []) {
+    for (const row of watchedEpisodes()) {
       counts.set(Number(row.season), (counts.get(Number(row.season)) || 0) + 1);
     }
     const shown = seasons.slice(0, 8);

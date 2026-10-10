@@ -813,7 +813,7 @@
   }
 
   function actionColumnWidth() {
-    return isPolicySource() ? 84 : 46;
+    return isPolicySource() ? (isMergedView() ? 84 : 120) : 46;
   }
 
   function syncIdColumnHeaders() {
@@ -859,6 +859,7 @@
   function applyColumnWidths() {
     const table = host.querySelector(".cw-table");
     if (!table) return;
+    table.style.setProperty("--cw-action-width", `${actionColumnWidth()}px`);
     const scrollEl = table.parentElement;
     const selectHead = table.querySelector("thead th:first-child");
     const actionHead = table.querySelector(".cw-action-head");
@@ -1746,7 +1747,7 @@
       syncTypeFilterUI();
       persistUIState();
       renderRows();
-      setStatusSticky("Choose the search icon beside the item to create or edit its mapping.", 6000);
+      setStatusSticky("Choose the mapping icon beside the item to create or edit its mapping.", 6000);
     } catch (error) {
       Object.assign(state, previous);
       syncSourceUI(); rebuildSnapshots();
@@ -1766,7 +1767,7 @@
         appendPopupTitle(pop, "Choose a mapping provider");
         const note = document.createElement("p");
         note.textContent = targets.length
-          ? "Open this provider’s items, then use the row’s search icon to create or edit a mapping."
+          ? "Open this provider’s items, then use the row’s mapping icon to create or edit a mapping."
           : "No confirmed provider has this item. Select a provider in the Editor to create a mapping.";
         pop.appendChild(note);
         const select = document.createElement("select");
