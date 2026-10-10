@@ -72,6 +72,7 @@ except Exception:  # pragma: no cover
 from ..provider_instances import normalize_instance_id
 from ._planner import diff_ratings, diff_progress, _pick_rating, _pick_rating_quantized, _quantize_rating
 from ._interactive import choose_conflict
+from ._episode_groups import HistoryGroups
 from ._progress_completion import fcfg_for_progress_target
 from ._specials import filter_specials_index, specials_excluded
 from ._scope import provider_call
@@ -704,6 +705,14 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             prevB = collapse_history_latest(prevB)
             A_eff = collapse_history_latest(A_eff)
             B_eff = collapse_history_latest(B_eff)
+
+    groups = HistoryGroups(ctx, feature, [(a, src_inst), (b, dst_inst)], [A_eff, B_eff], reverse=True,
+                           fcfg=fcfg, blocks=manual_blocks_A | manual_blocks_B,
+                           blocked="Grouped rewatches are not supported. Disable History rewatches for this pair." if history_event_mode else
+                           "A provider is unavailable or its snapshot is incomplete." if a_down or b_down or A_suspect or B_suspect else "")
+    A_eff, B_eff = groups.strip(0, A_eff), groups.strip(1, B_eff)
+    A_cur, B_cur = groups.strip(0, A_cur), groups.strip(1, B_cur)
+    prevA, prevB = groups.strip(0, prevA), groups.strip(1, prevB)
 
     review = getattr(ctx, "interactive", None)
     now = review.planned_at if review is not None else int(_t.time())
@@ -1742,6 +1751,10 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                     add_to_A.append(_minimal(v))
             if coord_pruned_to_A or coord_pruned_to_B:
                 dbg("anime_mapping.coord_pruned", feature=feature, a=a, b=b, to_a=coord_pruned_to_A, to_b=coord_pruned_to_B)
+    add_to_A = groups.ordinary(0, add_to_A) + groups.adds[0]
+    add_to_B = groups.ordinary(1, add_to_B) + groups.adds[1]
+    upd_to_A, upd_to_B = groups.ordinary(0, upd_to_A), groups.ordinary(1, upd_to_B)
+    rem_from_A, rem_from_B = groups.ordinary(0, rem_from_A), groups.ordinary(1, rem_from_B)
     if not allow_adds:
         add_to_A.clear()
         add_to_B.clear()
@@ -1995,6 +2008,8 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         rem_from_B = review.filter(feature, b, dst_inst, "remove", rem_from_B, **args_B)
         if review.preview:
             return {"cancelled": cancelled, "library_skipped": len(library_skipped_A) + len(library_skipped_B)}
+
+    A_eff, B_eff = groups.restore(0, A_eff), groups.restore(1, B_eff)
 
     resA_rem: dict[str, Any] = {"ok": True, "count": 0}
     resB_rem: dict[str, Any] = {"ok": True, "count": 0}
@@ -2685,6 +2700,8 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             (str(b).upper(), str(dst_inst or "default"), str(feature).lower()): _ensure_pf(provs_block, b, dst_inst, feature),
         }
         ctx.state_store.save_feature_blocks(blocks, last_sync_epoch=last_sync_epoch)
+        if not dry_run_flag:
+            groups.commit([A_eff, B_eff])
     except Exception:
         if getattr(ctx.state_store, "pair_scope", None):
             raise

@@ -3,6 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from ._episode_groups import HistoryGroups
+
 from ._pairs_utils import pair_endpoint_config, pair_feature_libraries
 from ._scope import provider_call
 from collections.abc import Mapping
@@ -1317,6 +1319,14 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
             prev_src = collapse_history_latest(prev_src)
             prev_dst = collapse_history_latest(prev_dst)
 
+    groups = HistoryGroups(ctx, feature, [(src, src_inst), (dst, dst_inst)], [src_idx, dst_full],
+                           fcfg=fcfg, blocks=manual_blocks,
+                           blocked="Grouped rewatches are not supported. Disable History rewatches for this pair." if history_event_mode else
+                           "A provider is unavailable or its snapshot is incomplete." if src_down or dst_down or src_suspect or dst_suspect else "")
+    src_idx, dst_full = groups.strip(0, src_idx), groups.strip(1, dst_full)
+    src_cur, dst_cur = groups.strip(0, src_cur), groups.strip(1, dst_cur)
+    prev_src, prev_dst = groups.strip(0, prev_src), groups.strip(1, prev_dst)
+
     coord_aliases = _build_history_coordinate_aliases(cfg, feature, (src_idx, dst_full))
     if coord_aliases.enabled:
         dbg("anime_mapping.history_coords", feature=feature, src=src, dst=dst, **coord_aliases.stats())
@@ -1682,6 +1692,8 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                 removes = list(removes) + retry_removes
                 emit("debug", msg="unresolved.remove_retry", feature=feature, dst=dst, count=len(retry_removes))
 
+    adds = groups.ordinary(1, adds) + groups.adds[1]
+    updates, removes = groups.ordinary(1, updates), groups.ordinary(1, removes)
     if not allow_adds:
         adds = []
         updates = []
@@ -1787,6 +1799,9 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
         if review.preview:
             return {"blocked": blocked_total, "manual_excluded": int(manual_blocked),
                     "library_skipped": len(library_skipped), "cancelled": cancelled}
+
+    src_idx, dst_full = groups.restore(0, src_idx), groups.restore(1, dst_full)
+    dst_canonical = groups.restore(1, dst_canonical)
 
     attempted_keys: list[str] = []
     key2item: dict[str, Any] = {}
@@ -2339,6 +2354,8 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                 (str(dst).upper(), str(dst_inst or "default"), str(feature).lower()): _ensure_pf(provs_block, dst, dst_inst, feature),
             }
             ctx.state_store.save_feature_blocks(blocks, last_sync_epoch=last_sync_epoch)
+            if not dry_run_flag:
+                groups.commit([src_idx, dst_commit])
         except Exception:
             if getattr(ctx.state_store, "pair_scope", None):
                 raise
