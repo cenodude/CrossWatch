@@ -270,6 +270,29 @@ def manual_policy(state: _Mapping[str, Any] | None, provider: str, feature: str,
     return adds, blocks
 
 
+def manual_corrections(state: _Mapping[str, Any] | None, provider: str, feature: str, instance: str = "default") -> set[str]:
+    provs = (state or {}).get("providers") or {}
+    node = provs.get(str(provider).upper()) or provs.get(str(provider).lower()) or {}
+    if instance != "default":
+        node = (node.get("instances") or {}).get(instance) or {}
+    feat_key = str(feature).lower()
+    manual = node.get("manual")
+    block = manual.get(feat_key) if isinstance(manual, _Mapping) else None
+    if not isinstance(block, _Mapping) or not block:
+        block = node.get(feat_key)
+    if not isinstance(block, _Mapping):
+        return set()
+    records = block.get("mappings")
+    items = (block.get("adds") or {}).get("items") or {}
+    out: set[str] = set()
+    for key, record in (records.items() if isinstance(records, _Mapping) else ()):
+        original = record.get("original_key") if isinstance(record, _Mapping) else None
+        if original and str(original) != str(key):
+            item = items.get(key)
+            out.add(migrate_media_key(str(key), item) if isinstance(item, _Mapping) else str(key))
+    return out
+
+
 def merge_manual_adds(idx: dict[str, Any], adds: _Mapping[str, Any] | None) -> dict[str, Any]:
     if not adds:
         return dict(idx or {})

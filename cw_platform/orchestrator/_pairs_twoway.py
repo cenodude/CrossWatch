@@ -137,6 +137,7 @@ from ._pairs_utils import (
     apply_verify_after_write_supported as _apply_verify_after_write_supported,
     manual_policy as _manual_policy,
     merge_manual_adds as _merge_manual_adds,
+    manual_corrections as _manual_corrections,
     filter_manual_block as _filter_manual_block,
 )
 
@@ -1621,11 +1622,12 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                 dst_eff: dict[str, Any],
                 dst_alias: dict[str, str],
                 target: list[dict[str, Any]],
+                corrected_keys: set[str],
             ) -> None:
                 seen: set[str] = {(_ck(it) or "") for it in target if isinstance(it, Mapping)}
                 source = manual_adds if isinstance(manual_adds, Mapping) else {}
                 for mk, mv in source.items():
-                    if not isinstance(mv, Mapping):
+                    if not isinstance(mv, Mapping) or mk in corrected_keys:
                         continue
                     dv = _find_in_idx(dst_eff, dst_alias, mv)
                     if not isinstance(dv, Mapping):
@@ -1641,9 +1643,11 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                     target.append(upd)
 
             if _history_upsert_supported(bops, feature):
-                _append_manual_history_updates(manual_adds_A, B_eff, B_alias, upd_to_B)
+                _append_manual_history_updates(manual_adds_A, B_eff, B_alias, upd_to_B,
+                                               _manual_corrections(prev_state, a, feature, src_inst))
             if _history_upsert_supported(aops, feature):
-                _append_manual_history_updates(manual_adds_B, A_eff, A_alias, upd_to_A)
+                _append_manual_history_updates(manual_adds_B, A_eff, A_alias, upd_to_A,
+                                               _manual_corrections(prev_state, b, feature, dst_inst))
 
         bucket_sec = 0 if (feature == "history" and history_event_mode) else _hist_bucket_sec(a, b, feature)
         if bucket_sec and int(bucket_sec) > 1:

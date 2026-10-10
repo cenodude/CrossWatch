@@ -260,6 +260,7 @@ from ._pairs_utils import (
     _apply_verify_after_write_supported,
     manual_policy as _manual_policy,
     merge_manual_adds as _merge_manual_adds,
+    manual_corrections as _manual_corrections,
     filter_manual_block as _filter_manual_block,
 )
 from ._pairs_massdelete import maybe_block_mass_delete as _maybe_block_mass_delete
@@ -1470,8 +1471,9 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                 dst_alias_tmp = _alias_index(history_update_idx)
                 seen_history_updates: set[str] = set()
                 manual_history_adds = manual_adds if isinstance(manual_adds, Mapping) else {}
+                corrected_keys = _manual_corrections(prev_state, src, feature, src_inst)
                 for _sk, sv in manual_history_adds.items():
-                    if not isinstance(sv, Mapping):
+                    if not isinstance(sv, Mapping) or _sk in corrected_keys:
                         continue
                     dv = _find_in_idx(history_update_idx, dst_alias_tmp, sv)
                     if not isinstance(dv, Mapping):
