@@ -221,3 +221,44 @@ def test_analyzer_uses_endpoint_library_filters(pair_state, default_libraries):
     filters = A._pair_lib_filters(cfg)
     assert filters.get(("PLEX", "history", "PLEX@P01"), set()) == set(default_libraries)
     assert filters[("PLEX@P01", "history", "PLEX")] == {"Movies B"}
+
+
+@pytest.mark.parametrize("kind", ["show", "season"])
+@pytest.mark.parametrize("episode_present", [False, True])
+def test_history_aggregates_do_not_create_analyzer_gaps(pair_state, kind, episode_present):
+    store, cfg = pair_state
+    aggregate = {"type": kind, "title": "Example", "ids": {"tmdb": "100"}}
+    episode = dict(type="episode", title="Example", show_ids={"tmdb": "100"}, season=1, episode=1)
+    aggregates = {f"tmdb:{n}": {**aggregate, "ids": {"tmdb": str(n)}} for n in range(100, 120)}
+    source = {**aggregates, "tmdb:100#s01e01": episode}
+    target = {"tmdb:100#s01e01": episode} if episode_present else {}
+    save_pair(store, cfg, "plex-mdblist", {
+        ("PLEX", "default", "history"): {"baseline": {"items": source}},
+        ("MDBLIST", "default", "history"): {"baseline": {"items": target}},
+    })
+    result = A._cached_analysis("plex-mdblist")
+    missing = [row for row in result["problems"] if row["type"] == "missing_peer"]
+    assert len(missing) == int(not episode_present)
+    assert all(row["item_type"] == "episode" for row in missing)
+    assert not [row for row in result["problems"] if row["type"] == "history_show_normalization"]
+    stats = next(row for row in result["pair_stats"] if row["source"] == "PLEX" and row["feature"] == "history")
+    assert stats["total"] == 1
+    assert stats["synced"] == int(episode_present)
+    assert stats["unsynced"] == int(not episode_present)
+    assert stats["not_comparable"] == 20
+    assert A._detail_for_item("plex-mdblist", "PLEX", "history", "tmdb:100")["targets"] == []
+
+
+@pytest.mark.parametrize("feature", ["watchlist", "ratings", "collection"])
+def test_show_records_in_other_features_remain_comparable(pair_state, feature):
+    store, cfg = pair_state
+    item = dict(type="show", title="Example", ids={"tmdb": "100"}, rating=8)
+    save_pair(store, cfg, "plex-mdblist", {
+        ("PLEX", "default", feature): {"baseline": {"items": {"tmdb:100": item}}},
+        ("MDBLIST", "default", feature): {"baseline": {"items": {}}},
+    })
+    result = A._cached_analysis("plex-mdblist")
+    assert any(row["type"] == "missing_peer" and row["key"] == "tmdb:100" for row in result["problems"])
+    stats = next(row for row in result["pair_stats"] if row["source"] == "PLEX" and row["feature"] == feature)
+    assert stats["total"] == stats["unsynced"] == 1
+    assert not stats.get("not_comparable")

@@ -2837,9 +2837,15 @@ def _target_has_peer(
     return bool(match) and match not in {"episode_group_pending", "episode_group_waiting", "episode_group_held"}
 
 
+def _coverage_comparable(feature: str, item: Mapping[str, Any]) -> bool:
+    return feature != "history" or _norm_type(item.get("type")) not in {"show", "season"}
+
+
 def _eligible_targets(ctx: _AnalysisContext, prov: str, feat: str, item: dict[str, Any]) -> list[str]:
     prov_key = _norm_prov_token(prov)
     feat_key = str(feat or "").lower()
+    if not _coverage_comparable(feat_key, item):
+        return []
     return [
         dst
         for dst in ctx.pairs.get((prov_key, feat_key), [])
@@ -2918,6 +2924,7 @@ def _pair_stats(
             total = 0
             synced = 0
             anime_synced = 0
+            not_comparable = 0
             group_waiting = group_held = group_synced = 0
 
             for k, v in src_items.items():
@@ -2926,6 +2933,10 @@ def _pair_stats(
                 if not _passes_pair_lib_filter(analysis.pair_libs, prov, feat, dst, v) or not _passes_pair_type_filter(analysis.pair_types, prov, feat, dst, v):
                     continue
                 if not analysis.passes_anime_filter(prov, feat, dst, v):
+                    continue
+
+                if not _coverage_comparable(feat, v):
+                    not_comparable += 1
                     continue
 
                 total += 1
@@ -2949,6 +2960,8 @@ def _pair_stats(
                 "synced": synced,
                 "unsynced": max(total - synced - group_waiting - group_held, 0),
             }
+            if not_comparable:
+                rec["not_comparable"] = not_comparable
             if anime_synced:
                 rec["anime_synced"] = anime_synced
             if group_synced or group_waiting or group_held:
@@ -3252,6 +3265,7 @@ def _history_normalization_issues(
                 items = {
                     k: row for k, row in (_bucket(s, provider, "history") or {}).items()
                     if isinstance(row, dict)
+                    and _coverage_comparable("history", row)
                     and not analysis.groups().contains(provider, peer, row)
                     and analysis.passes_anime_filter(provider, "history", peer, row)
                     and _passes_pair_type_filter(analysis.pair_types, a, "history", b, row)

@@ -227,6 +227,7 @@ def build_history_index(
         else:
             row["_endpoints"] = _row_endpoints(raw)
             row["_mismatch"] = False
+        row["_coverage_comparable"] = not (wanted == "synced" and row["_type"] in {"show", "season"})
         endpoints.update(row["_endpoints"])
         if wanted == "scrobble":
             minutes += dw._duration_minutes(raw)
@@ -248,7 +249,7 @@ def build_history_index(
         for provider in {endpoint[0] for endpoint in row["_endpoints"]}:
             key = provider.lower()
             provider_counts[key] = provider_counts.get(key, 0) + 1
-        if ordered and len(row["_endpoints"]) >= len(ordered):
+        if row["_coverage_comparable"] and ordered and len(row["_endpoints"]) >= len(ordered):
             full += 1
         if row["_mismatch"]:
             mismatch += 1
@@ -265,6 +266,7 @@ def build_history_index(
         "counts": counts,
         "provider_counts": provider_counts,
         "full": full,
+        "not_comparable": sum(not row["_coverage_comparable"] for row in rows),
         "mismatch": mismatch,
         "rating_total": rating_total,
         "minutes": minutes,
@@ -321,7 +323,11 @@ def _public_row(row: Mapping[str, Any], source: str, endpoints: list[tuple[str, 
             {**_ref(endpoint), "rating": ratings[endpoint]} if endpoint in ratings else _ref(endpoint)
             for endpoint in present
         ]
-        out["missing"] = [_ref(endpoint) for endpoint in endpoints if endpoint not in present]
+        if row.get("_coverage_comparable") is False:
+            out["coverage_comparable"] = False
+            out["missing"] = []
+        else:
+            out["missing"] = [_ref(endpoint) for endpoint in endpoints if endpoint not in present]
     if source == "ratings":
         out["agree"] = not row["_mismatch"]
     return out
@@ -357,7 +363,7 @@ def build_history_payload(
     wanted_coverage = str(coverage or "all").strip().lower()
     if source in _COVERAGE_SOURCES and endpoint_total and wanted_coverage in {"partial", "full"}:
         want_full = wanted_coverage == "full"
-        rows = [row for row in rows if (len(row["_endpoints"]) >= endpoint_total) is want_full]
+        rows = [row for row in rows if row.get("_coverage_comparable", True) and (len(row["_endpoints"]) >= endpoint_total) is want_full]
     elif source == "ratings" and wanted_coverage == "mismatch":
         rows = [row for row in rows if row["_mismatch"]]
     wanted_rating = dw._as_int(rating) if str(rating or "").strip() else None
@@ -406,7 +412,10 @@ def build_history_payload(
         stats["watches"] = int(index.get("watches") or plays)
     if source in _COVERAGE_SOURCES:
         stats["full"] = int(index.get("full") or 0)
-        stats["partial"] = max(0, plays - stats["full"])
+        not_comparable = int(index.get("not_comparable") or 0)
+        stats["partial"] = max(0, plays - stats["full"] - not_comparable)
+        if not_comparable:
+            stats["not_comparable"] = not_comparable
     if source == "ratings":
         stats["mismatch"] = int(index.get("mismatch") or 0)
         stats["average"] = round(int(index.get("rating_total") or 0) / plays, 1) if plays else 0
