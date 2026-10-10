@@ -1,5 +1,5 @@
 # services/analyzer_mapping.py
-# CrossWatch - Mapping corrections from Analyzer pending retries
+# CrossWatch - Mapping corrections from Analyzer mismatches and pending retries
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 
 from __future__ import annotations
@@ -40,12 +40,13 @@ def mapping_row(payload, request):
     if not pair or not user_can_access_pair(cfg, user, pair):
         raise HTTPException(404, "Sync pair not found")
     analysis = an._cached_analysis(payload.pair_id)
+    wanted = an._norm_prov_token(payload.provider)
     entries = [entry for entry in analysis.get("attention", {}).get("rows", [])
-               if entry.get("unresolved") and entry.get("feature") == payload.feature
-               and str(entry.get("provider", "")).casefold() == payload.provider.casefold()
+               if (entry.get("unresolved") or entry.get("current_mismatch")) and entry.get("feature") == payload.feature
+               and an._norm_prov_token(entry.get("provider")) == wanted
                and payload.key in [entry.get("key"), *(entry.get("keys") or [])]]
     if len(entries) != 1:
-        raise HTTPException(409, "This pending item changed. Analyze again before editing its mapping.")
+        raise HTTPException(409, "This item changed. Analyze again before editing its mapping.")
     entry = entries[0]
     aliases = {str(key) for key in [entry.get("key"), *(entry.get("keys") or [])] if key}
     destination = entry.get("target") or payload.provider

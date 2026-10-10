@@ -237,6 +237,27 @@ def clear_keys(dst: str, feature: str, keys: Iterable[str], instance: str | None
     return {"ok": True, "blackbox_removed": removed[".blackbox.json"], "flap_removed": removed[".flap.json"]}
 
 
+def clear_path_keys(path: Path, keys: Iterable[str]) -> dict[str, Any]:
+    _, unique_keys = _normalize_keys(keys)
+    key_set = set(unique_keys)
+    removed = {".blackbox.json": 0, ".flap.json": 0}
+    name = Path(path).name
+    if not key_set or not name.endswith(".blackbox.json"):
+        return {"ok": True, "blackbox_removed": 0, "flap_removed": 0}
+    stem = name[: -len(".blackbox.json")]
+    for suffix in removed:
+        target = Path(path).with_name(f"{stem}{suffix}")
+        data = _read_json(target)
+        hits = [k for k in data if k in key_set]
+        if not hits:
+            continue
+        for k in hits:
+            data.pop(k, None)
+        removed[suffix] += len(hits)
+        _write_json(target, data)
+    return {"ok": True, "blackbox_removed": removed[".blackbox.json"], "flap_removed": removed[".flap.json"]}
+
+
 def record_success(
     dst: str,
     feature: str,
