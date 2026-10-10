@@ -508,7 +508,6 @@ export default {
             <div class="ev-eyebrow">ACTIVITY HISTORY</div>
             <h1>Events</h1>
           </div>
-          <span class="material-symbols-rounded ev-header-icon" aria-hidden="true">history</span>
         </header>
 
         <div class="ev-toolbar">

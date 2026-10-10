@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 import services.analyzer as A
 from cw_platform.orchestrator._state_store import StateStore
 
@@ -265,7 +267,10 @@ def test_movie_with_fallback_id_does_not_report_missing_tmdb():
     assert [p for p in problems if p.get("type") == "missing_ids"] == []
 
 
-def test_small_history_show_drift_is_not_reported_as_normalization_issue():
+@pytest.mark.parametrize("mode", ["one-way", "two-way"])
+@pytest.mark.parametrize("extra_count", [7, 11, 50])
+@pytest.mark.parametrize("extra_side", ["source", "target"])
+def test_history_show_drift_only_reports_actionable_missing_items(mode, extra_count, extra_side):
     def episode(title, tmdb):
         return {
             "type": "episode",
@@ -279,7 +284,8 @@ def test_small_history_show_drift_is_not_reported_as_normalization_issue():
 
     src_items = {f"tmdb:{idx}#s01e01": episode(f"Show {idx}", idx) for idx in range(81)}
     dst_items = dict(src_items)
-    dst_items.update({f"tmdb:{1000 + idx}#s01e01": episode(f"Extra {idx}", 1000 + idx) for idx in range(7)})
+    extra_items = {f"tmdb:{1000 + idx}#s01e01": episode(f"Extra {idx}", 1000 + idx) for idx in range(extra_count)}
+    (src_items if extra_side == "source" else dst_items).update(extra_items)
     state = {
         "providers": {
             "STREMIO": {"history": {"baseline": {"items": src_items}}},
@@ -291,6 +297,7 @@ def test_small_history_show_drift_is_not_reported_as_normalization_issue():
             {
                 "id": "p1",
                 "enabled": True,
+                "mode": mode,
                 "source": "STREMIO",
                 "target": "SIMKL",
                 "target_instance": "SIMKL-P01",
@@ -299,6 +306,10 @@ def test_small_history_show_drift_is_not_reported_as_normalization_issue():
         ]
     }
 
-    issues = A._history_normalization_issues(state, cfg)
+    problems = A._problems(state, cfg=cfg, include_system=False, include_hints=False)
 
-    assert issues == []
+    assert not [row for row in problems if row["type"] == "history_show_normalization"]
+    missing = [row for row in problems if row["type"] == "missing_peer"]
+    expected = set(extra_items) if extra_side == "source" or mode == "two-way" else set()
+    assert {row["key"] for row in missing} == expected
+    assert len(missing) == len(expected)

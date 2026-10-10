@@ -139,21 +139,22 @@ def test_history_health_excludes_non_anime(anime_mapping, target, direction):
 
 
 @pytest.mark.parametrize("target", ["KITSU", "ANILIST", "MYANIMELIST"])
-def test_history_health_keeps_real_anime_gaps_and_regular_pair_gaps(anime_mapping, target):
+def test_history_missing_items_keep_real_anime_gaps_and_regular_pair_gaps(anime_mapping, target):
     state, items = setup_pair(anime_mapping, target, "history")
     items.update({f"live-{i}": {**items["excluded"], "show_ids": {"tvdb": str(1000 + i)}} for i in range(20)})
     anime_mapping["pairs"].append({**anime_mapping["pairs"][0], "id": "regular", "target": "TRAKT"})
     state["providers"]["TRAKT"] = {"history": {"baseline": {"items": {}}}}
-    issues = A._history_normalization_issues(state, anime_mapping)
-    by_target = {row["target"]: row for row in issues}
-    assert by_target["TRAKT"]["show_delta"]["source"] == 22
-    assert target not in by_target
+    problems = A._problems(state, cfg=anime_mapping, include_system=False, include_hints=False)
+    missing = [row for row in problems if row["type"] == "missing_peer"]
+    assert len([row for row in missing if "TRAKT" in row["targets"]]) == 22
+    assert {row["key"] for row in missing if target in row["targets"]} == {"valid"}
     upsert_override({"media_type": "show", "match_provider": "tvdb", "match_id": "999", "match_season": 1,
                      "episode_from": 1, "episode_to": 10, "episode_start_at": 1,
                      "target_namespace": ("mal" if target == "MYANIMELIST" else target.lower()), "target_id": "100" if target == "ANILIST" else "1"})
-    issues = A._history_normalization_issues(state, anime_mapping)
-    gap = next(row for row in issues if row["target"] == target)
-    assert gap["show_delta"] == {"source": 2, "target": 0}
+    problems = A._problems(state, cfg=anime_mapping, include_system=False, include_hints=False)
+    missing = [row for row in problems if row["type"] == "missing_peer"]
+    assert {row["key"] for row in missing if target in row["targets"]} == {"valid", "excluded"}
+    assert not [row for row in problems if row["type"] == "history_show_normalization"]
 
 
 @pytest.mark.parametrize("target", ["KITSU", "ANILIST", "MYANIMELIST"])
