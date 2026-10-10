@@ -78,6 +78,45 @@
     return wrap;
   }
 
+  function episodeGroupBadges(row, ctx) {
+    const wrap = document.createElement("div");
+    wrap.className = "cw-presence cw-episode-groups";
+    if (ctx.state?.kind !== "history") return wrap;
+    for (const group of row._episodeGroups || []) {
+      const badge = document.createElement(group.can_edit ? "button" : "span");
+      badge.className = "cw-presence-chip cw-episode-group-badge";
+      badge.textContent = "Episode group";
+      const sides = ["source", "target"].map(side => {
+        const value = group[side];
+        const codes = value.episodes.map(item => `S${String(item.season).padStart(2, "0")}E${String(item.episode).padStart(2, "0")}`).join(", ");
+        return `${value.provider} (${value.instance}): ${codes}`;
+      });
+      badge.title = [group.name, group.pair_name, ...sides, `Completed scrobbles: ${group.scrobble ? "On" : "Off"}`].join("\n");
+      badge.setAttribute("aria-label", `Episode group: ${badge.title}`);
+      if (group.can_edit) {
+        badge.type = "button";
+        badge.setAttribute("aria-haspopup", "dialog");
+        badge.onclick = async () => {
+          const state = ctx.state || {};
+          if (state.hasChanges || state.saving || state.loading || state.mappingEditing) {
+            call(ctx, "setStatus", "Save or discard Editor changes before editing episode groups.");
+            return;
+          }
+          try {
+            const {openEpisodeGroups} = await import(`/assets/js/editor/episode-groups.js?v=${encodeURIComponent(window.APP_VERSION || "1")}`);
+            await openEpisodeGroups(badge, {pairId:group.pair_id, groupId:group.id, onSaved:() => call(ctx, "loadState")});
+          } catch (error) {
+            call(ctx, "setStatus", error.message || "Could not open episode group.");
+          }
+        };
+      } else {
+        badge.setAttribute("role", "img");
+      }
+      wrap.appendChild(badge);
+    }
+    return wrap;
+  }
+
   function createRowElement(row, ctx = {}) {
     const state = ctx.state || {};
     const anilistMode = !!ctx.anilistMode;
@@ -287,6 +326,7 @@
     };
     if (!ctx.merged) titleRow.appendChild(searchBtn);
     if (ctx.merged) titleCell.appendChild(presenceChips(row, ctx));
+    if (row._episodeGroups?.length) titleCell.appendChild(episodeGroupBadges(row, ctx));
 
     const subType = (((row.raw && row.raw.type) || row.type || "") + "").toLowerCase();
     if (subType === "season" && row.raw && row.raw.series_title) {
@@ -404,6 +444,7 @@
     const title = document.createElement("strong");
     title.textContent = call(ctx, "formatEpisodeVisualTitle", latest) || latest.title || latest.key || "";
     summary.appendChild(title);
+    if (latest._episodeGroups?.length) summary.appendChild(episodeGroupBadges(latest, ctx));
     if (latest.year) {
       const year = document.createElement("span");
       year.className = "cw-viewing-year";

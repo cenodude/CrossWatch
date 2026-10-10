@@ -38,6 +38,11 @@ export async function openEditorMapping(row, ctx) {
   checkCurrentRow();
   return openMappingWorkspace({
     rows:[context.row],
+    onEpisodeGroup:state.kind === "history" && original.type === "episode" && direct ? async () => {
+      const {openEpisodeGroups} = await import(`/assets/js/editor/episode-groups.js?v=${version}`);
+      await openEpisodeGroups(null, {pairId:reference.pair_id, original, provider:reference.provider,
+        instance:reference.instance, onSaved:() => ctx.loadState?.()});
+    } : undefined,
     total:1, standalone:true, staged:true, direct, scope,
     scopes:[{id:scope, label:scope === "pair" ? "Only this sync pair" : "Every sync with this account"}],
     onClose:() => { state.mappingEditing = false; }, onSaved:() => { state.mappingEditing = false; },

@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 
 globalThis.window = {};
 globalThis.document = { addEventListener() {} };
-const { createResultFilter, watchDifferenceLabel, retryLabel, nextStepText, watchDifferenceDetails } = await import("../assets/js/analyzer/index.js");
+const { createResultFilter, watchDifferenceLabel, retryLabel, nextStepText, watchDifferenceDetails, episodeGroupLabel } = await import("../assets/js/analyzer/index.js");
 const features = ["history", "watchlist", "ratings", "progress", "collection"];
 const rows = Object.freeze(Array.from({ length: 5000 }, (_, n) => Object.freeze({
   title: `Movie ${String(n).padStart(5, "0")}`, provider: "SIMKL", feature: features[n % 5],
@@ -76,6 +76,16 @@ test("blocked retries explain why another sync does not retry", () => {
   assert.equal(retryLabel({ retry_blocked: true }), "Automatic retries blocked");
   assert.equal(retryLabel({}), "Pending retry");
   assert.match(nextStepText({ retry_blocked: true }), /Resolve the cause before clearing/);
+});
+
+test("episode group findings distinguish incomplete, held and matched watches", () => {
+  const row = status => ({episode_groups:[{status, target:"TRAKT"}], targets:["TRAKT"]});
+  assert.equal(episodeGroupLabel(row("waiting")), "Waiting for remaining parts");
+  assert.equal(episodeGroupLabel(row("held")), "Episode group held");
+  assert.equal(watchDifferenceLabel(row("pending")), "Grouped watches missing");
+  assert.equal(episodeGroupLabel(row("synced")), "Episode group matched");
+  assert.match(nextStepText(row("pending")), /Episode groups/);
+  assert.equal(watchDifferenceLabel({...row("pending"), targets:["TRAKT", "SIMKL"]}), "Grouped watches missing; Missing at SIMKL");
 });
 
 test("watch comparison displays both times and safely escapes provider data", () => {

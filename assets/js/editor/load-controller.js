@@ -206,7 +206,10 @@
         }
       }
 
-      for (const row of state.rows || []) row._mappingScope = data.mapping_origins?.[row.key] || "";
+      for (const row of state.rows || []) {
+        row._mappingScope = data.mapping_origins?.[row.key] || "";
+        row._episodeGroups = data.episode_groups?.[row.key] || [];
+      }
       state.hasChanges = false;
       state.page = 0;
       state.loading = false;

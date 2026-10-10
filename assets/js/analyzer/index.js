@@ -26,11 +26,20 @@ const label = row => {
 };
 const reasonText = hint => hint?.message || [hint?.provider, array(hint?.reasons).join(", ") || hint?.reason || hint?.kind].filter(Boolean).join(": ");
 const unique = rows => [...new Map(rows.map(row => [JSON.stringify(row), row])).values()];
+export function episodeGroupLabel(row) {
+  const groups = array(row.episode_groups);
+  if (!groups.length) return "";
+  if (groups.some(group => group.status === "held")) return "Episode group held";
+  if (groups.some(group => group.status === "waiting")) return "Waiting for remaining parts";
+  if (groups.some(group => group.status === "pending")) return "Grouped watches missing";
+  return "Episode group matched";
+}
 export function watchDifferenceLabel(row, providerName = String) {
   const differences = array(row.watch_time_differences);
   const timeTargets = new Set(differences.map(entry => entry.target));
-  const missing = array(row.targets).filter(target => !timeTargets.has(target));
-  return [differences.length && `Watch time differs at ${[...timeTargets].map(providerName).join(", ")}`,
+  const groupTargets = new Set(array(row.episode_groups).map(group => group.target));
+  const missing = array(row.targets).filter(target => !timeTargets.has(target) && !groupTargets.has(target));
+  return [episodeGroupLabel(row), differences.length && `Watch time differs at ${[...timeTargets].map(providerName).join(", ")}`,
     missing.length && `Missing at ${missing.map(providerName).join(", ")}`].filter(Boolean).join("; ") || "Missing at destination";
 }
 export function retryLabel(row) {
@@ -38,6 +47,7 @@ export function retryLabel(row) {
 }
 export function nextStepText(row) {
   const blocked = row.retry_blocked ? "Automatic retries are blocked after repeated failures. Resolve the cause before clearing the retry block. " : "";
+  if (array(row.episode_groups).length) return blocked + "Review the group's watched-part counts and any hold reason. Manage this rule in Editor → Mappings & blocks → Episode groups. Incomplete separate parts must all be watched before the combined episode can be added.";
   if (array(row.watch_time_differences).length) return blocked + "Compare the recorded watch times and playback history. Matching IDs do not establish whether these are the same playback or separate watches. A mapping edit does not correct the watch time.";
   return blocked + "Review the provider's reported reason and the pair's sync rules. Correct the mapping only if the item was identified incorrectly.";
 }
@@ -323,8 +333,8 @@ const Analyzer = {
       const editable = view === "pending" && window.CW?.AuthState?.read?.().permissions?.write !== false;
       $("#an-list").innerHTML = `<div class="an-table-scroll"><table class="an-table"><thead><tr><th scope="col">Item</th><th scope="col">Provider</th><th scope="col">Feature</th><th scope="col">Finding</th>${editable ? '<th scope="col" class="an-mapping-column" aria-label="Edit mapping"></th>' : ''}</tr></thead><tbody>${currentRows.map((row, index) => {
         const mismatch = missingIndex.get(identity(row));
-        const finding = view === "pending" ? retryLabel(row) : row.type === "missing_peer" || mismatch ? watchDifferenceLabel(mismatch || row, providerName) : blockedIndex.has(identity(row)) ? "Blocked" : "No presence issue";
-        return `<tr data-row="${index}" class="${selected === row ? "is-selected" : ""}"><td><button type="button" class="an-item-button" data-row="${index}" aria-pressed="${selected === row}"><strong>${esc(label(row))}</strong><span>${esc([human(row.item_type || row.item?.type || (row.type === "missing_peer" ? "" : row.type)), row.year || row.item?.year].filter(Boolean).join(" · "))}</span></button></td><td>${esc(providerName(row.provider))}${rowPairName(row) ? `<span class="an-pair-label">${esc(rowPairName(row))}</span>` : ""}</td><td><span class="an-feature-badge">${esc(human(row.feature))}</span></td><td><span class="an-result-badge ${mismatch || row.type === "missing_peer" ? "an-warn-text" : ""}">${esc(finding)}</span></td>${editable ? `<td class="an-mapping-column">${row.key && FEATURES.includes(row.feature) && !array(row.watch_time_differences).length ? `<button type="button" class="an-icon-button" data-edit-mapping="${index}" title="Edit mapping" aria-label="Edit mapping for ${esc(label(row))}">${icon("edit")}</button>` : ''}</td>` : ''}</tr>`;
+        const finding = view === "pending" ? retryLabel(row) : row.type === "missing_peer" || mismatch ? watchDifferenceLabel(mismatch || row, providerName) : episodeGroupLabel(row) || (blockedIndex.has(identity(row)) ? "Blocked" : "No presence issue");
+        return `<tr data-row="${index}" class="${selected === row ? "is-selected" : ""}"><td><button type="button" class="an-item-button" data-row="${index}" aria-pressed="${selected === row}"><strong>${esc(label(row))}</strong><span>${esc([human(row.item_type || row.item?.type || (row.type === "missing_peer" ? "" : row.type)), row.year || row.item?.year].filter(Boolean).join(" · "))}</span></button></td><td>${esc(providerName(row.provider))}${rowPairName(row) ? `<span class="an-pair-label">${esc(rowPairName(row))}</span>` : ""}</td><td><span class="an-feature-badge">${esc(human(row.feature))}</span></td><td><span class="an-result-badge ${mismatch || row.type === "missing_peer" ? "an-warn-text" : ""}">${esc(finding)}</span></td>${editable ? `<td class="an-mapping-column">${row.key && FEATURES.includes(row.feature) && !array(row.watch_time_differences).length && !array(row.episode_groups).length ? `<button type="button" class="an-icon-button" data-edit-mapping="${index}" title="Edit mapping" aria-label="Edit mapping for ${esc(label(row))}">${icon("edit")}</button>` : ''}</td>` : ''}</tr>`;
       }).join("")}</tbody></table></div>`;
     }
     function renderFinding(row, index) {
@@ -416,12 +426,12 @@ const Analyzer = {
       const mismatch = missingIndex.get(identity(row));
       const render = (detail = {}, error = "") => {
         if (controller.signal.aborted || lifetime.signal.aborted || selected !== row) return;
-        const reasons = [...new Set([row.message, row.reason_message || row.reason, ...array(detail.hints).map(reasonText), ...array(detail.target_show_info).map(reasonText)].filter(Boolean))];
+        const reasons = [...new Set([row.message, row.reason_message || row.reason, ...array(detail.episode_groups || mismatch?.episode_groups || row.episode_groups).map(reasonText), ...array(detail.hints).map(reasonText), ...array(detail.target_show_info).map(reasonText)].filter(Boolean))];
         const targets = array(detail.targets || mismatch?.targets || row.targets);
         const ids = Object.entries(row.ids || row.item?.ids || {});
         const provider = providerName(row.provider);
         const diagnosis = { ...row, ...mismatch, ...detail, retry_blocked: row.retry_blocked || mismatch?.retry_blocked || array(detail.hints).some(hint => hint.kind === "blackbox") };
-        const presence = view === "pending" ? retryLabel(row) : blockedIndex.has(identity(row)) ? "Blocked by a saved rule" : mismatch ? watchDifferenceLabel(diagnosis, providerName) : "Present in the saved snapshot";
+        const presence = view === "pending" ? retryLabel(row) : blockedIndex.has(identity(row)) ? "Blocked by a saved rule" : mismatch ? watchDifferenceLabel(diagnosis, providerName) : episodeGroupLabel(diagnosis) || "Present in the saved snapshot";
         const limitNotes = targets.map(target => {
           const provider = status.providers?.[String(target).split("@")[0]];
           const key = row.feature === "collection" ? "collection" : "watchlist";
