@@ -205,6 +205,23 @@ def test_enrich_stats_count_seeds_and_dead_ends(index: Path) -> None:
     assert "tmdb:12971#show" in out
 
 
+def test_enrich_keeps_separate_history_events(index: Path) -> None:
+    def play(watched_at: str, event_id: str) -> dict[str, Any]:
+        return {"type": "episode", "season": 1, "episode": 1, "ids": {"tmdb": "1705013"},
+                "show_ids": {"tmdb": "76479"}, "watched": True, "watched_at": watched_at, "_wetrakr_history_id": event_id}
+
+    idx = {
+        "tmdb:76479#s01e01@1564041720": play("2019-07-25T08:02:00Z", "a"),
+        "tmdb:76479#s01e01@1564124400": play("2019-07-26T07:00:00Z", "b"),
+    }
+    stats: dict[str, int] = {}
+    out = enrich_index_for_pair(idx, _PAIR_CFG, "SIMKL", "WETRAKR", stats=stats)
+
+    assert set(out) == set(idx)
+    assert stats["merged"] == 0
+    assert {row["_wetrakr_history_id"] for row in out.values()} == {"a", "b"}
+
+
 def test_enrich_stats_are_absent_when_mapping_does_not_run(index: Path) -> None:
     stats: dict[str, int] = {}
     enrich_index_for_pair({"a": {"type": "show", "ids": {"simkl": "41487"}}}, _PAIR_CFG, "PLEX", "TRAKT", stats=stats)

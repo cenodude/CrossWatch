@@ -544,7 +544,8 @@ def add_index_item(out: dict[str, dict[str, Any]], feature: str, key: str, item:
     if previous is None:
         out[key] = item
         return True
-    ids = item.get("ids") if isinstance(item.get("ids"), Mapping) else {}
+    ids = item.get("ids")
+    ids = ids if isinstance(ids, Mapping) else {}
     log("WETRAKR", feature, "warn", "duplicate_media_identity", key=key, media_id=ids.get("wetrakr"))
     return False
 
@@ -693,13 +694,18 @@ def _rejected_batch_keys(items, feature, missing):
         for row in rows:
             if not isinstance(row, Mapping):
                 return set(items)
-            ids = set(media_ids(row).items())
+            show = row.get("show") if feature != "ratings" and group == "episodes" else None
+            flat = isinstance(show, Mapping)
+            ids = set(media_ids(show if isinstance(show, Mapping) else row).items())
             matches = set()
             for key, item in items.items():
                 expected_group, payload = payload_item(item, feature, include_date=False)
-                if group != expected_group or not ids.intersection(media_ids(payload).items()):
+                if ("shows" if flat else group) != expected_group or not ids.intersection(media_ids(payload).items()):
                     continue
-                if row.get("seasons"):
+                if flat:
+                    if item.get("type") != "episode" or (int_value(item.get("season")), int_value(item.get("episode"))) != (int_value(row.get("season")), int_value(row.get("number"))):
+                        continue
+                elif row.get("seasons"):
                     seasons = row["seasons"]
                     if not isinstance(seasons, list) or any(not isinstance(season, Mapping) or not isinstance(season.get("episodes", []), list) for season in seasons):
                         return set(items)

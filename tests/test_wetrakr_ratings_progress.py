@@ -629,3 +629,30 @@ def test_interactive_partial_rejection_preserves_known_success_and_later_batches
         assert len(features.server.calls) == before
     finally:
         reads.close()
+
+
+def test_interactive_history_rejection_matches_flat_episode_rows():
+    def episode(show, season, number):
+        return {"type": "episode", "season": season, "episode": number, "show_ids": {"tmdb": show},
+                "watched_at": "2024-09-19T08:00:00Z"}
+
+    batch = {"boys": episode("76479", 4, 4), "monster": episode("113988", 4, 4), "monster_other": episode("113988", 4, 5),
+             "movie": {"type": "movie", "ids": {"tmdb": "840464"}, "watched_at": "2026-01-27T11:00:00Z"}}
+    missing = {"episodes": [{"show": {"ids": {"tmdb": 113988}}, "season": 4, "number": 4, "status": "watched"}]}
+    assert common._rejected_batch_keys(batch, "history", missing) == {"monster"}
+
+
+def test_progress_not_found_item_does_not_fail_later_items(features, monkeypatch):
+    from providers.sync.wetrakr import _progress
+
+    original = _progress.request
+
+    def request(adapter, method, path, **kwargs):
+        if method == "POST" and "movie" in kwargs["json"]:
+            raise common.WeTrakrSyncError("request_rejected", status=404)
+        return original(adapter, method, path, **kwargs)
+
+    monkeypatch.setattr(_progress, "request", request)
+    result = features.adapter.add("progress", [progress_item(MOVIE), progress_item(EPISODE)])
+    assert [row["reason"] for row in result["unresolved"]] == ["not_found"]
+    assert len(result["confirmed_keys"]) == 1
