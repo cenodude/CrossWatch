@@ -956,6 +956,36 @@ def api_profile_title(
     return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 
 
+
+def build_movie_watch_status(cfg: dict[str, Any], profile_id: str, ids: list[int]) -> dict[str, bool | None]:
+    indices = []
+    for source in ("synced", "scrobble"):
+        try:
+            index, _version = _profile_history_index(cfg, profile_id, source)
+            indices.append(index)
+        except Exception:
+            indices.append(None)
+    out = {}
+    for tmdb in ids:
+        watched = any(index is not None and bool(profile_history.title_presence(index, "movie", tmdb)) for index in indices)
+        out[str(tmdb)] = True if watched else (None if any(index is None for index in indices) else False)
+    return out
+
+
+@router.get("/movie-watch-status")
+def api_movie_watch_status(request: Request, tmdb: str = Query(..., max_length=1200), user_profile: str = Query("")) -> JSONResponse:
+    ctx = _profile_context(request)
+    if isinstance(ctx, JSONResponse):
+        return ctx
+    cfg, _a, _uid, _raw, _user, token = ctx
+    raw_ids = tmdb.split(",")
+    if len(raw_ids) > 100 or any(not value.isascii() or not value.isdigit() or int(value) <= 0 for value in raw_ids):
+        return JSONResponse({"ok": False, "error": "invalid_ids"}, status_code=400)
+    ids = list(dict.fromkeys(int(value) for value in raw_ids))
+    profile_id = str(effective_user_profile_id(cfg, token, user_profile) or "").strip()
+    return JSONResponse({"ok": True, "watched": build_movie_watch_status(cfg, profile_id, ids)}, headers={"Cache-Control": "no-store"})
+
+
 def build_profile_history_payload(
     cfg: dict[str, Any],
     *,
