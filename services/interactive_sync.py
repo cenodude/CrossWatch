@@ -106,7 +106,7 @@ def build(session: Session, cfg: dict[str, Any], choices: dict[str, str], *, sto
         if name in {"feature:error", "feature:unsupported", "pair:skip", "run:pair:skip", "playlist:mapping:error", "writes:skipped"} or "mass_delete" in name or "massdelete" in name:
             if len(plan.notices) < 100:
                 plan.notices.append(dict(event=name, feature=feature, reason=str(event.get("reason") or name),
-                                         provider=str(event.get("dst") or "")))
+                                         provider=str(event.get("dst") or ""), detail=str(event.get("detail") or "")[:300]))
 
     mgr = Orchestrator(preview_cfg, on_progress=progress, interactive=plan)
     summary = mgr.run(dry_run=True, pair_scope_ids=[session.pair_id], write_state_json=False)

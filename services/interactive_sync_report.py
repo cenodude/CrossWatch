@@ -122,7 +122,8 @@ class SyncReport:
         if key in self.notices:
             self.notices[key]["occurrences"] += 1
         elif len(self.notices) < 100:
-            self.notices[key] = dict(event=name, feature=feature, provider=provider, reason=reason, occurrences=1)
+            self.notices[key] = dict(event=name, feature=feature, provider=provider, reason=reason, occurrences=1,
+                                     detail=str(value.get("detail") or "")[:300])
         else:
             self.notice_overflow += 1
 

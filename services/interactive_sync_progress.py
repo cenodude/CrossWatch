@@ -112,7 +112,8 @@ class SyncProgress:
                 self.activity = time.monotonic()
             elif name in ("feature:error", "feature:unsupported", "writes:skipped", "mass_delete:blocked", "snapshot:suspect", "playlist:mapping:error"):
                 messages = {"feature:error": "Provider reported an error", "feature:unsupported": "Feature unavailable", "writes:skipped": "Provider writes skipped", "mass_delete:blocked": "Mass delete protection activated", "snapshot:suspect": "Provider data needs verification", "playlist:mapping:error": "Playlist mapping reported an error"}
-                self.recent.append(dict(at=time.time(), text=f"{subject}: {messages[name]}"))
+                detail = str(event.get("detail") or "")[:300]
+                self.recent.append(dict(at=time.time(), text=f"{subject}: {messages[name]}" + (f" ({detail})" if detail else "")))
                 self.activity = time.monotonic()
             elif name == "run:done":
                 self.set_stage("finalizing", "Saving sync results")
