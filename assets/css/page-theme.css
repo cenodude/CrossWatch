@@ -339,39 +339,42 @@ body.cw-profile-page :is(.cw-tl-action,.cw-tl-remove-submit)[data-action-result=
   outline-offset: 2px;
 }
 
-.eg-dialog{font-size:14px;line-height:1.45}
-.eg-body{scrollbar-color:var(--cw-theme-muted) var(--cw-theme-surface);scrollbar-width:thin}
-.eg-dialog::backdrop{background:rgba(0,0,0,.65)}
-.eg-head{border-bottom:1px solid var(--cw-theme-border)}
-.eg-head h2{font-size:22px;font-weight:700;letter-spacing:-.3px;color:var(--cw-theme-text)}
-.eg-head p,.eg-muted,.eg-hint,.eg-help,.eg-scrobble small,.eg-saved-mapping,.eg-empty{color:var(--cw-theme-muted);font-size:13px;font-weight:400}
-.eg-dialog :where(button,input:not([type="checkbox"]),select){font:inherit;font-size:14px;line-height:1.4;min-height:max(38px,var(--cw-page-control-height));padding:8px 11px;border:1px solid var(--cw-theme-border-strong);border-radius:var(--cw-page-control-radius);background:var(--cw-page-control-bg);color:var(--cw-theme-text);box-shadow:none;text-shadow:none}
-.eg-dialog button{cursor:pointer;font-weight:500}
-.eg-dialog button:hover:not(:disabled){background:var(--cw-page-hover-bg);border-color:var(--cw-theme-accent)}
+dialog:is(.is-mapping-dialog,.eg-dialog){--is-surface: var(--panel, #161822); --is-card: color-mix(in srgb, var(--panel, #161822) 96%, var(--fg, #edf0f8)); --is-field: color-mix(in srgb, var(--panel, #161822) 98%, var(--fg, #edf0f8)); --is-control: color-mix(in srgb, var(--panel, #161822) 91%, var(--fg, #edf0f8)); --is-line: color-mix(in srgb, var(--fg, #edf0f8) 13%, transparent);--is-accent:var(--accent,#8268ff);--is-muted:var(--muted,#a4abc3)}
+html[data-cw-theme=flat-light] dialog:is(.is-mapping-dialog,.eg-dialog){--is-surface:var(--panel2,#f5f7fb);--is-card:var(--panel,#fff);--is-field:var(--panel,#fff);--is-control:var(--panel2,#f5f7fb)}
+dialog.eg-dialog{font-size:14px;line-height:1.45;background:var(--is-surface);color:var(--fg);border:1px solid var(--is-line);border-radius:16px;box-shadow:0 24px 80px #0008}
+.eg-eyebrow{font-size:11px;font-weight:800;letter-spacing:.18em;color:var(--is-accent)}
+.eg-body{scrollbar-color:var(--is-muted) var(--is-surface);scrollbar-width:thin}
+.eg-dialog::backdrop{background:color-mix(in srgb,#05070c 62%,transparent);backdrop-filter:blur(6px)}
+.eg-head{border-bottom:1px solid var(--is-line)}
+.eg-head h2{font-size:24px;font-weight:700;letter-spacing:-.3px;color:var(--cw-theme-text)}
+.eg-head p,.eg-muted,.eg-hint,.eg-help,.eg-scrobble small,.eg-saved-mapping,.eg-empty{color:var(--is-muted);font-size:13px;font-weight:400}
+.eg-dialog :where(button,input:not([type="checkbox"]),select){font:inherit;font-size:14px;line-height:1.4;min-height:max(38px,var(--cw-page-control-height));padding:8px 11px;border:1px solid var(--is-line);border-radius:var(--cw-page-control-radius);background:var(--is-field);color:var(--cw-theme-text);box-shadow:none;text-shadow:none}
+.eg-dialog button{cursor:pointer;font-weight:500;background:var(--is-control);border-radius:10px}
+.eg-dialog button:hover:not(:disabled){background:var(--cw-page-hover-bg);border-color:var(--is-accent)}
 .eg-dialog :is(button,input,select):disabled{opacity:.5;cursor:not-allowed}
-.eg-dialog :is(button,input,select,summary):focus-visible{outline:2px solid var(--cw-theme-accent);outline-offset:3px}
-.eg-dialog input::placeholder{color:var(--cw-theme-muted);opacity:.7;font-weight:400}
-.eg-dialog .eg-primary{background:var(--cw-page-primary-bg);border-color:var(--cw-theme-accent);color:var(--cw-page-primary-text)}
-.eg-dialog .eg-primary:hover:not(:disabled){background:var(--cw-page-primary-hover)}
-.eg-dialog .eg-close{background:transparent;border-color:transparent;color:var(--cw-theme-muted)}
-.eg-field{font-size:12px;font-weight:600;color:var(--cw-theme-muted)}
-.eg-provider,.eg-scrobble,.eg-saved-group{border:1px solid var(--cw-theme-border);border-radius:var(--cw-page-control-radius);background:var(--cw-theme-surface-raised)}
+.eg-dialog :is(button,input,select,summary):focus-visible{outline:2px solid var(--is-accent);outline-offset:3px}
+.eg-dialog input::placeholder{color:var(--is-muted);opacity:.7;font-weight:400}
+.eg-dialog .eg-primary{background:var(--is-accent);border-color:var(--is-accent);color:var(--cw-page-primary-text)}
+.eg-dialog .eg-primary:hover:not(:disabled){background:color-mix(in srgb,var(--is-accent) 82%,#fff)}
+.eg-dialog .eg-close{background:var(--is-control);color:var(--fg)}
+.eg-field{font-size:12px;font-weight:600;color:var(--is-muted)}
+.eg-provider,.eg-scrobble,.eg-saved-group{border:1px solid var(--is-line);border-radius:10px;background:var(--is-card)}
 .eg-provider-head strong{font-size:14px;font-weight:650;color:var(--cw-theme-text)}
 .eg-provider-head .eg-muted{font-size:12px}
-.eg-provider-logo{color:var(--cw-theme-muted)}
-.eg-link{color:var(--cw-theme-muted)}
+.eg-provider-logo{color:var(--is-muted)}
+.eg-link{color:var(--is-muted)}
 .eg-scrobble strong{font-size:14px;font-weight:600;color:var(--cw-theme-text)}
-.eg-dialog .eg-scrobble input{accent-color:var(--cw-theme-accent)}
+.eg-dialog .eg-scrobble input{accent-color:var(--is-accent)}
 .eg-scrobble:has(input:checked){border-color:var(--cw-page-selected-border);background:var(--cw-page-selected-bg)}
 .eg-scrobble:has(input:checked) strong{color:var(--cw-page-selected-text)}
-.eg-help summary{font-size:13px;font-weight:500;color:var(--cw-theme-muted)}
+.eg-help summary{font-size:13px;font-weight:500;color:var(--is-muted)}
 .eg-help summary:hover{color:var(--cw-theme-text)}
 .eg-error{color:var(--cw-theme-danger);font-size:13px}
 .eg-status{color:var(--cw-theme-good);font-size:13px}
 .eg-saved h3{font-size:13px;font-weight:650;color:var(--cw-theme-text)}
-.eg-empty{border:1px dashed var(--cw-theme-border-strong);border-radius:var(--cw-page-control-radius)}
+.eg-empty{border:1px dashed var(--is-line);border-radius:var(--cw-page-control-radius)}
 .eg-saved-heading>strong{font-size:14px;font-weight:600}
-.eg-scrobble-state{font-size:11px;color:var(--cw-theme-muted)}
+.eg-scrobble-state{font-size:11px;color:var(--is-muted)}
 .eg-saved-mapping b{font-weight:500;color:var(--cw-theme-text)}
 .eg-dialog .eg-delete{color:var(--cw-theme-danger)}
-.eg-footer{border-top:1px solid var(--cw-theme-border);background:var(--cw-theme-surface)}
+.eg-footer{border-top:1px solid var(--is-line);background:var(--is-surface)}

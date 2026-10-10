@@ -7,7 +7,7 @@
   const COLUMN_LAYOUT_VERSION = 4;
   const DEFAULT_COLUMN_ORDER = COLUMN_KEYS.slice();
   const DEFAULT_COLUMN_VISIBILITY = { key: true, type: true, title: true, year: false, id: true, imdb: false, tvdb: false, trakt: false, simkl: false, anilist: false, extra: true };
-  const DEFAULT_COLUMN_WIDTHS = { key: 132, type: 126, title: 360, year: 92, id: 132, imdb: 150, tvdb: 120, trakt: 120, simkl: 120, anilist: 120, extra: 220 };
+  const DEFAULT_COLUMN_WIDTHS = { key: 132, type: 126, title: 360, year: 92, id: 132, imdb: 150, tvdb: 120, trakt: 120, simkl: 120, anilist: 120, extra: 190 };
   const MIN_COLUMN_WIDTHS = { key: 96, type: 116, title: 220, year: 84, id: 120, imdb: 130, tvdb: 110, trakt: 110, simkl: 110, anilist: 110, extra: 180 };
   const MAX_COLUMN_WIDTHS = { key: 340, type: 240, title: 760, year: 180, id: 280, imdb: 280, tvdb: 240, trakt: 240, simkl: 240, anilist: 240, extra: 560 };
   const COLUMN_META = {
@@ -170,7 +170,7 @@
       if (restoreColumnLayout && Array.isArray(saved.columnOrder)) state.columnOrder = normalizeColumnOrder(saved.columnOrder);
       if (restoreColumnLayout && saved.columnWidths && typeof saved.columnWidths === "object") {
         COLUMN_KEYS.forEach(k => {
-          if (saved.columnWidths[k] != null) state.columnWidths[k] = clampColumnWidth(k, saved.columnWidths[k]);
+          if (saved.columnWidths[k] != null) state.columnWidths[k] = clampColumnWidth(k, k === "extra" && Number(saved.columnWidths[k]) === 220 ? DEFAULT_COLUMN_WIDTHS.extra : saved.columnWidths[k]);
         });
       }
 

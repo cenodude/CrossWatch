@@ -148,3 +148,30 @@ test("merged rows keep a working mapping action beside Send", () => {
   assert.equal(opened[0].value, row);
   assert.equal(opened[0].anchor, button);
 });
+
+
+test("episode group changes refresh the Editor after leaving the preserved mapping workspace", async () => {
+  const source = readFileSync(new URL("../assets/js/editor/mapping.js", import.meta.url), "utf8")
+    .replace("export async function", "async function")
+    .replace(/const \{openMappingWorkspace\} = await import\([^;]+;/, "const {openMappingWorkspace} = workspaceModule;")
+    .replace(/const \{openEpisodeGroups\} = await import\([^;]+;/, "const {openEpisodeGroups} = groupModule;");
+  let workspace, group, reloads = 0;
+  const row = {type:"episode",title:"Example",key:"tmdb:1",raw:{type:"episode",season:1,episode:1,ids:{tmdb:"1"}}};
+  const state = {snapshot:"PLEX",instance:"default",kind:"history",rows:[row],mappingEditing:true};
+  const sandbox = vm.createContext({window:{},structuredClone,document:{querySelector:()=>true},
+    workspaceModule:{openMappingWorkspace:options => { workspace = options; }},
+    groupModule:{openEpisodeGroups:async (trigger,options) => { group = {trigger,...options}; }},
+  });
+  vm.runInContext(source, sandbox);
+  await sandbox.openEditorMapping(row,{state,saveChanges:async()=>{},fetchJSON:async()=>({row}),loadState:()=>reloads++});
+  const trigger = {};
+  await workspace.onEpisodeGroup(trigger);
+  assert.equal(group.trigger,trigger);
+  assert.equal(group.returnToMapping,true);
+  group.onSaved();
+  assert.equal(reloads,0);
+  assert.equal(state.mappingEditing,true);
+  workspace.onClose();
+  assert.equal(reloads,1);
+  assert.equal(state.mappingEditing,false);
+});

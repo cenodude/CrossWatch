@@ -190,3 +190,28 @@ test("manual metadata searches keep language caches separate and hide language f
   await context.search(row,"De verborgen tuin");
   assert.deepEqual(calls.at(-1),["trakt","en-US"]);
 });
+
+
+test("episode groups open without closing or discarding the mapping workspace", async () => {
+  const button = {}, error = {}, calls = [];
+  const context = vm.createContext({
+    document:{createElement:() => button}, saving:false, searching:false, closed:false,
+    onEpisodeGroup:async trigger => calls.push(trigger),
+    $:selector => selector === ".is-map-intro" ? {append() {}} : error,
+  });
+  button.dataset = {};
+  vm.runInContext(workspaceSource.slice(workspaceSource.indexOf("  if (onEpisodeGroup) {"), workspaceSource.indexOf('  $("[data-save]").onclick')), context);
+  assert.equal(button.textContent, "Map split episodes");
+  await button.onclick();
+  assert.equal(calls[0], button);
+  assert.equal(context.closed, false);
+  assert.equal(button.disabled, false);
+  context.searching = true;
+  await button.onclick();
+  assert.equal(calls.length, 1);
+  context.searching = false;
+  context.onEpisodeGroup = async () => { throw new Error("Could not open groups"); };
+  await button.onclick();
+  assert.equal(error.textContent, "Could not open groups");
+  assert.equal(button.disabled, false);
+});

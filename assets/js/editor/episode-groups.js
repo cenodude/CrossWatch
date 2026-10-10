@@ -15,12 +15,12 @@ export function parseEpisodes(value, showIds, title) {
   });
 }
 
-export async function openEpisodeGroups(trigger, {pairId = "", groupId = "", original, provider, instance = "default", onSaved} = {}) {
+export async function openEpisodeGroups(trigger, {pairId = "", groupId = "", original, provider, instance = "default", onSaved, returnToMapping = false} = {}) {
   const dialog = document.createElement("dialog");
   dialog.className = "eg-dialog cw-page-panel";
   dialog.setAttribute("aria-labelledby", "episode-groups-title");
-  dialog.innerHTML = `<div class="eg-head"><div><h2 id="episode-groups-title">Episode groups</h2><p>Match combined episodes with their separate parts.</p></div><button type="button" class="eg-close" data-close aria-label="Close episode groups"><span class="material-symbols-rounded" aria-hidden="true">close</span></button></div>
-    <div class="eg-body"><div class="eg-toolbar"><label class="eg-field">History sync pair<select data-pair aria-label="History sync pair"></select></label><button type="button" data-new><span class="material-symbols-rounded" aria-hidden="true">add</span>New group</button></div>
+  dialog.innerHTML = `<div class="eg-head"><div><div class="eg-eyebrow">MAPPING</div><h2 id="episode-groups-title">Episode groups</h2><p>Match combined episodes with their separate parts.</p></div><button type="button" class="eg-close" data-close aria-label="Close episode groups"><span class="material-symbols-rounded" aria-hidden="true">close</span></button></div>
+    <div class="eg-body">${returnToMapping ? '<button type="button" class="eg-back" data-back><span class="material-symbols-rounded" aria-hidden="true">arrow_back</span>Back to mapping</button>' : ""}<div class="eg-toolbar"><label class="eg-field">History sync pair<select data-pair aria-label="History sync pair"></select></label><button type="button" data-new><span class="material-symbols-rounded" aria-hidden="true">add</span>New group</button></div>
     <form id="episode-group-form" data-form><label class="eg-field">Group name<input data-name required maxlength="200" placeholder="e.g. Friends · Season 4 finale"></label>
     <div class="eg-sides">${["source","target"].map(side => `<section class="eg-provider" data-side="${side}" aria-label="${side} episodes"><div class="eg-provider-head"><span class="eg-provider-logo" data-logo aria-hidden="true"></span><div><strong data-endpoint></strong><span class="eg-muted" data-instance></span></div></div><div class="eg-identity"><label class="eg-field">ID type<select data-namespace aria-label="${side} show ID type">${namespaces.map(ns=>`<option value="${ns}">${ns.toUpperCase()}</option>`).join("")}</select></label><label class="eg-field">Show ID<input data-show-id required maxlength="128" placeholder="e.g. 1668" aria-label="${side} show ID"></label></div><label class="eg-field">Episodes<input data-episodes required placeholder="${side === "source" ? "S04E23, S04E24" : "S04E23"}" aria-label="${side} episodes"></label></section>`).join('<span class="material-symbols-rounded eg-link" aria-hidden="true">compare_arrows</span>')}</div>
     <p class="eg-hint">Use show IDs. Enter one episode on one side and two or more on the other.</p>
@@ -28,7 +28,7 @@ export async function openEpisodeGroups(trigger, {pairId = "", groupId = "", ori
     <details class="eg-help"><summary>How groups work</summary><ul><li>All separate parts must be watched before the combined episode is marked watched. A watched combined episode expands into its parts, following the pair’s sync direction.</li><li>Completed scrobbles apply to matching provider instances and profile. All parts must complete after enabling this option; earlier watches are handled by History sync. Each destination episode is sent once.</li><li>Grouped start/pause updates stay local. Grouped rewatches are unsupported. Ordinary corrections apply only to sync.</li><li>Unwatched changes hold the group until its watched states are resolved on the providers. Later numbering shifts still use ordinary episode corrections.</li></ul></details></form>
     <p class="eg-error" role="alert"></p><p class="eg-status" role="status"></p>
     <section class="eg-saved"><div class="eg-saved-head"><h3>Saved groups</h3><span class="eg-muted" data-count>Loading…</span></div><div data-groups></div></section></div>
-    <footer class="eg-footer"><span class="eg-muted">Saving does not start a sync.</span><div><button type="button" data-cancel-edit>Reset</button><button type="submit" form="episode-group-form" class="eg-primary" data-save>Save group</button></div></footer>`;
+    <footer class="eg-footer"><div><button type="button" data-cancel-edit>Reset</button><button type="submit" form="episode-group-form" class="eg-primary" data-save>Save group</button></div></footer>`;
   document.body.append(dialog);
   const $ = selector => dialog.querySelector(selector);
   let pairs = [], editingId = "", busy = false, changed = false;
@@ -132,6 +132,7 @@ export async function openEpisodeGroups(trigger, {pairId = "", groupId = "", ori
   };
   const close = () => { if (!busy) dialog.close(); };
   $("[data-close]").onclick = close;
+  if (returnToMapping) $("[data-back]").onclick = close;
   dialog.addEventListener("cancel", event => { if (busy) event.preventDefault(); });
   const navigation = () => { controller.abort(); dialog.close(); };
   for (const name of ["cw:overview-profile-changed", "auth-changed", "cw:auth-state-changed"]) window.addEventListener(name, navigation);
