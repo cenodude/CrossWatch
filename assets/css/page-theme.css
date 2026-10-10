@@ -338,3 +338,40 @@ body.cw-profile-page :is(.cw-tl-action,.cw-tl-remove-submit)[data-action-result=
   outline: 2px solid var(--cw-theme-accent);
   outline-offset: 2px;
 }
+
+.eg-dialog{font-size:14px;line-height:1.45}
+.eg-body{scrollbar-color:var(--cw-theme-muted) var(--cw-theme-surface);scrollbar-width:thin}
+.eg-dialog::backdrop{background:rgba(0,0,0,.65)}
+.eg-head{border-bottom:1px solid var(--cw-theme-border)}
+.eg-head h2{font-size:22px;font-weight:700;letter-spacing:-.3px;color:var(--cw-theme-text)}
+.eg-head p,.eg-muted,.eg-hint,.eg-help,.eg-scrobble small,.eg-saved-mapping,.eg-empty{color:var(--cw-theme-muted);font-size:13px;font-weight:400}
+.eg-dialog :where(button,input:not([type="checkbox"]),select){font:inherit;font-size:14px;line-height:1.4;min-height:max(38px,var(--cw-page-control-height));padding:8px 11px;border:1px solid var(--cw-theme-border-strong);border-radius:var(--cw-page-control-radius);background:var(--cw-page-control-bg);color:var(--cw-theme-text);box-shadow:none;text-shadow:none}
+.eg-dialog button{cursor:pointer;font-weight:500}
+.eg-dialog button:hover:not(:disabled){background:var(--cw-page-hover-bg);border-color:var(--cw-theme-accent)}
+.eg-dialog :is(button,input,select):disabled{opacity:.5;cursor:not-allowed}
+.eg-dialog :is(button,input,select,summary):focus-visible{outline:2px solid var(--cw-theme-accent);outline-offset:3px}
+.eg-dialog input::placeholder{color:var(--cw-theme-muted);opacity:.7;font-weight:400}
+.eg-dialog .eg-primary{background:var(--cw-page-primary-bg);border-color:var(--cw-theme-accent);color:var(--cw-page-primary-text)}
+.eg-dialog .eg-primary:hover:not(:disabled){background:var(--cw-page-primary-hover)}
+.eg-dialog .eg-close{background:transparent;border-color:transparent;color:var(--cw-theme-muted)}
+.eg-field{font-size:12px;font-weight:600;color:var(--cw-theme-muted)}
+.eg-provider,.eg-scrobble,.eg-saved-group{border:1px solid var(--cw-theme-border);border-radius:var(--cw-page-control-radius);background:var(--cw-theme-surface-raised)}
+.eg-provider-head strong{font-size:14px;font-weight:650;color:var(--cw-theme-text)}
+.eg-provider-head .eg-muted{font-size:12px}
+.eg-provider-logo{color:var(--cw-theme-muted)}
+.eg-link{color:var(--cw-theme-muted)}
+.eg-scrobble strong{font-size:14px;font-weight:600;color:var(--cw-theme-text)}
+.eg-dialog .eg-scrobble input{accent-color:var(--cw-theme-accent)}
+.eg-scrobble:has(input:checked){border-color:var(--cw-page-selected-border);background:var(--cw-page-selected-bg)}
+.eg-scrobble:has(input:checked) strong{color:var(--cw-page-selected-text)}
+.eg-help summary{font-size:13px;font-weight:500;color:var(--cw-theme-muted)}
+.eg-help summary:hover{color:var(--cw-theme-text)}
+.eg-error{color:var(--cw-theme-danger);font-size:13px}
+.eg-status{color:var(--cw-theme-good);font-size:13px}
+.eg-saved h3{font-size:13px;font-weight:650;color:var(--cw-theme-text)}
+.eg-empty{border:1px dashed var(--cw-theme-border-strong);border-radius:var(--cw-page-control-radius)}
+.eg-saved-heading>strong{font-size:14px;font-weight:600}
+.eg-scrobble-state{font-size:11px;color:var(--cw-theme-muted)}
+.eg-saved-mapping b{font-weight:500;color:var(--cw-theme-text)}
+.eg-dialog .eg-delete{color:var(--cw-theme-danger)}
+.eg-footer{border-top:1px solid var(--cw-theme-border);background:var(--cw-theme-surface)}
