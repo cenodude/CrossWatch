@@ -765,7 +765,7 @@ class TraktSink(ScrobbleSink):
                 except Exception:
                     pass
 
-    def _deliver(self, job: dict[str, Any]) -> None:
+    def _deliver(self, job: dict[str, Any]) -> dict[str, Any] | None:
         ev = job["event"]
         cfg = job["cfg"]
         path = str(job["path"])
@@ -809,7 +809,7 @@ class TraktSink(ScrobbleSink):
                 if res.get("duplicate"):
                     _log(f"send path={path} status=409 duplicate", "DEBUG")
                     self._a_sess[(sk, mk)] = action
-                    return
+                    return {"ok": True, "skipped": True, "reason": "duplicate"}
                 try:
                     act = (res.get("resp") or {}).get("action") or path.rsplit("/", 1)[-1]
                 except Exception:
@@ -865,7 +865,7 @@ class TraktSink(ScrobbleSink):
                     if res.get("duplicate"):
                         _log(f"send path={path} status=409 duplicate", "DEBUG")
                         self._a_sess[(sk, mk)] = action
-                        return
+                        return {"ok": True, "skipped": True, "reason": "duplicate"}
                     try:
                         act = (res.get("resp") or {}).get("action") or path.rsplit("/", 1)[-1]
                     except Exception:
@@ -906,6 +906,7 @@ class TraktSink(ScrobbleSink):
             _log(f"{path} {last_err.get('status')} err={_safe_log_repr(last_err.get('resp'))}", "ERROR")
             if action in ("start", "stop"):
                 self._note_watch(ev, action, cfg, p_send, status="fail", reason=str(last_err.get("status") or ""))
+        return last_err
 
     def send(self, ev: ScrobbleEvent, cfg: dict[str, Any] | None = None) -> dict[str, Any] | None:
         cfg = cfg or (self._cfg_provider() if self._cfg_provider else None) or _cfg()
@@ -967,14 +968,15 @@ class TraktSink(ScrobbleSink):
         elif not decision.bypass_debounce and self._debounced(ev.session_key, ev.action, _watch_pause_debounce(cfg)):
             return {"ok": True, "log_status": "skipped", "reason": "debounced"}
 
-        self._enqueue(
-            {
-                "event": ev,
-                "cfg": dict(cfg),
-                "path": decision.path,
-                "progress": decision.progress,
-                "record_watched": decision.record_watched,
-                "action": ev.action,
-                "coalesce_key": f"{self._instance_id}:{sk}:{mk}",
-            }
-        )
+        job = {
+            "event": ev,
+            "cfg": dict(cfg),
+            "path": decision.path,
+            "progress": decision.progress,
+            "record_watched": decision.record_watched,
+            "action": ev.action,
+            "coalesce_key": f"{self._instance_id}:{sk}:{mk}",
+        }
+        if (ev.raw or {}).get("_cw_episode_group"):
+            return self._deliver(job)
+        self._enqueue(job)

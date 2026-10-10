@@ -313,8 +313,14 @@ def dispatch_scrobble(
 
         target = {"target": sink, "target_instance": inst, "ok": True}
         try:
-            ev_for_sink = maybe_enrich_event_for_sink(ev, sink, route_cfg)
-            result = _make_sink(sink, inst, _provider).send(ev_for_sink, cfg=route_cfg)
+            from providers.scrobble.episode_groups import send_grouped
+
+            def send_event(event):
+                mapped = bool((event.raw or {}).get("_cw_episode_group"))
+                outgoing = event if mapped else maybe_enrich_event_for_sink(event, sink, route_cfg)
+                return _make_sink(sink, inst, _provider).send(outgoing, cfg=route_cfg)
+
+            result = send_grouped(ev, route_cfg, send_event)
             if isinstance(result, Mapping):
                 target.update({k: result[k] for k in ("ok", "skipped", "reason", "error", "retryable") if k in result})
         except Exception as e:
