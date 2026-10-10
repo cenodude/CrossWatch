@@ -13,7 +13,7 @@ async function loadStyles() {
   });
 }
 
-export async function openAnalyzerMapping({reference, signal, onSaved, onClose}) {
+export async function openAnalyzerMapping({reference, signal, onSaved, onClose, onGroupsChanged}) {
   let version = '';
   const request = async (action, extra = {}, options = {}) => {
     const response = await fetch('/api/analyzer/mapping', {
@@ -26,15 +26,20 @@ export async function openAnalyzerMapping({reference, signal, onSaved, onClose})
     if (!response.ok || data.ok === false) throw new Error(data.detail || data.error || 'Could not load mapping.');
     return data;
   };
-  const [data, module] = await Promise.all([
+  const [data, module, groups] = await Promise.all([
     request('context'),
     import(`/assets/js/interactive-sync-mapping.js?v=${encodeURIComponent(window.APP_VERSION || '1')}`),
+    import(`/assets/js/editor/episode-groups.js?v=${encodeURIComponent(window.APP_VERSION || '1')}`),
     loadStyles(),
   ]);
   if (signal.aborted) return null;
   version = data.version;
+  let groupsChanged = false;
   return module.openMappingWorkspace({
-    rows:[data.row], total:1, standalone:true, onSaved, onClose,
+    rows:[data.row], total:1, standalone:true,
+    onSaved: saved => { onSaved?.(saved); if (groupsChanged) onGroupsChanged?.(); },
+    onEpisodeGroup: groups.episodeGroupAction(data.row, reference.pair_id, () => { groupsChanged = true; }),
+    onClose: () => { onClose?.(); if (groupsChanged) onGroupsChanged?.(); },
     mappingApi:{
       catalogs: () => request('catalogs'),
       search: (_row, q, catalog, options) => request('search', {q, catalog}, options),

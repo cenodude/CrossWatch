@@ -325,8 +325,15 @@
       if (!row && (data.selection_version !== selectionVersion || session.selection_version !== selectionVersion)) throw new Error("Your selection changed. Open mapping again.");
       const editable = data.items.filter(item => ["add", "update"].includes(item.operation) && item.feature !== "playlists");
       if (!editable.length) throw new Error("Check items to edit first. Removed items and playlists cannot be mapped.");
+      const {episodeGroupAction} = await import(`/assets/js/editor/episode-groups.js?v=${encodeURIComponent(window.APP_VERSION || "1")}`);
+      let groupsChanged = false;
       mappingWorkspace = openMappingWorkspace({rows:editable, total:data.total, session:{...session}, json, post,
-        onClose: () => { mappingWorkspace = null; },
+        onEpisodeGroup: editable.length === 1 ? episodeGroupAction(editable[0], session.pair_id, () => { groupsChanged = true; }) : undefined,
+        onClose: () => {
+          mappingWorkspace = null;
+          if (!groupsChanged || session?.id !== sid) return;
+          if (active() && !pending()) action("refresh", { reread: false }); else mappingDirty = true;
+        },
         onSaved: data => { mappingWorkspace = null; if (session?.id === sid) accept(data, true); },
       });
     } catch (error) { mappingWorkspace = null; showError(error); }

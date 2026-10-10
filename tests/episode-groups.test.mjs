@@ -5,7 +5,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import vm from "node:vm";
-import {parseEpisodes} from "../assets/js/editor/episode-groups.js";
+import {episodeGroupAction, parseEpisodes} from "../assets/js/editor/episode-groups.js";
+
+test("the split episode action is offered only for History episodes in a known pair", () => {
+  const row = {feature:"history", item:{type:"episode"}, source:"jellyfin", source_instance:"default"};
+  assert.equal(typeof episodeGroupAction(row, "p1"), "function");
+  assert.equal(episodeGroupAction(row, ""), undefined);
+  assert.equal(episodeGroupAction({...row, feature:"ratings"}, "p1"), undefined);
+  assert.equal(episodeGroupAction({...row, item:{type:"movie"}}, "p1"), undefined);
+});
 
 test("episode entry preserves gaps, specials and explicit season boundaries", () => {
   const rows = parseEpisodes("S00E01, s04e23; S04E25\nS05E01", {tvdb:"79168"}, "Example");

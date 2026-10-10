@@ -15,6 +15,12 @@ export function parseEpisodes(value, showIds, title) {
   });
 }
 
+export function episodeGroupAction(row, pairId, onSaved) {
+  if (row?.feature !== "history" || row?.item?.type !== "episode" || !pairId) return undefined;
+  return trigger => openEpisodeGroups(trigger, {pairId, original:row.item, provider:String(row.source || "").toUpperCase(),
+    instance:row.source_instance || "default", returnToMapping:true, onSaved});
+}
+
 export async function openEpisodeGroups(trigger, {pairId = "", groupId = "", original, provider, instance = "default", onSaved, returnToMapping = false} = {}) {
   const dialog = document.createElement("dialog");
   dialog.className = "eg-dialog cw-page-panel";
