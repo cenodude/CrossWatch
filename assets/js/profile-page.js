@@ -2109,13 +2109,16 @@
     const present = timelineEndpoints(item?.present);
     const missing = timelineEndpoints(item?.missing);
     const total = present.length + missing.length;
-    const full = total > 0 && !missing.length;
+    const comparable = item?.coverage_comparable !== false;
+    const full = comparable && total > 0 && !missing.length;
     const base = Number(item?.rating);
     const conflict = withRatings && item?.agree === false;
     const chips = providerChipStrip(present
       .map((ref) => timelineChipEntry(ref, "present", withRatings ? { rating: ref.rating, differs: ref.rating != null && ref.rating !== base } : {}))
       .concat(missing.map((ref) => timelineChipEntry(ref, "missing"))), "cw-hist-provider");
-    const label = conflict
+    const label = !comparable
+      ? "Show-level status · Not comparable"
+      : conflict
       ? "Scores differ"
       : full
         ? (total === 1 ? "On 1 provider" : "On every provider")

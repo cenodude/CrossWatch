@@ -305,3 +305,77 @@ def test_profile_timeline_ui_is_registered() -> None:
     assert "/profile#history/synced" in widgets
     assert "/profile#history/scrobble" in widgets
     assert "/profile#ratings" in widgets
+
+
+@pytest.mark.parametrize("provider", ["NUVIO", "MDBLIST", "TRAKT", "PLEX", "SIMKL", "WETRAKR"])
+@pytest.mark.parametrize("kind", ["show", "season"])
+def test_aggregate_status_does_not_count_as_missing_episode_history(provider: str, kind: str) -> None:
+    show = {"type": kind, "title": "Death Note", "ids": {"tmdb": 13916}, "watched_at": "2020-01-01T12:00:00Z"}
+    episode = {"type": "episode", "title": "Death Note", "show_ids": {"tmdb": 13916}, "season": 1, "episode": 37, "watched_at": "2020-01-01T12:00:00Z"}
+    state = {"providers": {
+        provider: _history({"tmdb:13916": show, "tmdb:13916#s01e37": episode}),
+        "OTHER_A": _history({"tmdb:13916#s01e37": episode}),
+        "OTHER_B": _history({"tmdb:13916#s01e37": episode}),
+    }}
+    index = profile_history.build_history_index("synced", state=state, tracker_items={})
+    payload = profile_history.build_history_payload(index, resolve_art=False)
+    assert payload["total"] == 2
+    marker = next(row for row in payload["items"] if row["type"] == kind)
+    assert marker["coverage_comparable"] is False
+    assert marker["present"] == [{"provider": provider, "instance": "default"}]
+    assert marker["missing"] == []
+    assert payload["stats"]["full"] == 1
+    assert payload["stats"]["partial"] == 0
+    assert payload["stats"]["not_comparable"] == 1
+    assert profile_history.build_history_payload(index, coverage="partial", resolve_art=False)["total"] == 0
+    full = profile_history.build_history_payload(index, coverage="full", resolve_art=False)
+    assert full["total"] == 1 and full["items"][0]["type"] == "episode"
+    state["providers"]["OTHER_B"] = _history({"tmdb:20": KUSAMA})
+    missing_index = profile_history.build_history_index("synced", state=state, tracker_items={})
+    missing = profile_history.build_history_payload(missing_index, coverage="partial", resolve_art=False)
+    assert missing["total"] == 2
+    assert {row["type"] for row in missing["items"]} == {"movie", "episode"}
+
+
+@pytest.mark.parametrize("provider", ["NUVIO", "MDBLIST"])
+def test_show_marker_does_not_require_or_invent_watched_episodes(provider: str) -> None:
+    show = {"type": "show", "title": "Death Note", "ids": {"tmdb": 13916}, "watched_at": "2020-01-01T12:00:00Z"}
+    state = {"providers": {provider: _history({"tmdb:13916": show})}}
+    index = profile_history.build_history_index("synced", state=state, tracker_items={})
+    payload = profile_history.build_history_payload(index, resolve_art=False)
+    assert payload["total"] == 1
+    assert payload["stats"]["episodes"] == 0
+    assert payload["stats"]["full"] == payload["stats"]["partial"] == 0
+    assert payload["items"][0]["coverage_comparable"] is False
+
+
+@pytest.mark.parametrize("kind", ["show", "season"])
+def test_aggregate_ratings_remain_comparable(kind: str) -> None:
+    item = {"type": kind, "title": "Death Note", "ids": {"tmdb": 13916}, "rating": 8}
+    state = {"providers": {
+        "NUVIO": _ratings({"tmdb:13916": item}),
+        "MDBLIST": _ratings({"tmdb:949": HEAT}),
+    }}
+    payload = profile_history.build_history_payload(
+        profile_history.build_history_index("ratings", state=state, tracker_items={}),
+        coverage="partial", resolve_art=False,
+    )
+    row = next(row for row in payload["items"] if row["title"] == "Death Note")
+    assert row.get("coverage_comparable", True)
+    assert row["missing"] == [{"provider": "MDBLIST", "instance": "default"}]
+    assert payload["stats"]["partial"] == 2
+
+
+def test_show_watchlist_remains_comparable() -> None:
+    items = [
+        {"type": "show", "title": "Death Note", "ids": {"tmdb": 13916}, "sources": ["NUVIO"]},
+        {"type": "movie", "title": "Heat", "ids": {"tmdb": 949}, "sources": ["MDBLIST"]},
+    ]
+    payload = profile_history.build_history_payload(
+        profile_history.build_history_index("watchlist", state=items),
+        coverage="partial", resolve_art=False,
+    )
+    row = next(row for row in payload["items"] if row["type"] == "show")
+    assert row.get("coverage_comparable", True)
+    assert row["missing"] == [{"provider": "MDBLIST", "instance": "default"}]
+    assert payload["stats"]["partial"] == 2
