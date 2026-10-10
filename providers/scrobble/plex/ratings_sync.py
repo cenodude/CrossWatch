@@ -97,10 +97,11 @@ def item_from_plex_rating(
     return {k: v for k, v in item.items() if v not in (None, "", {}, [])}
 
 
-def _ops(provider: str) -> Any | None:
+def _ops(provider: str, sinks: Iterable[str] | None = None) -> Any | None:
     from cw_platform.modules_registry import load_sync_ops
 
-    return load_sync_ops(provider) if provider in OPS_RATING_SINKS else None
+    allowed = OPS_RATING_SINKS if sinks is None else tuple(sinks)
+    return load_sync_ops(provider) if provider in allowed else None
 
 
 OPS_RATING_SINKS: tuple[str, ...] = ("crosswatch", "floppy", "punchplay", "flicklist", "wetrakr", "scrob", "kitsu", "myanimelist")
@@ -144,9 +145,17 @@ def dispatch_ops_ratings(
     return out
 
 
-def send_rating(provider: str, cfg: Mapping[str, Any], instance: Any, item: Mapping[str, Any], rating: float | None) -> dict[str, Any]:
+def send_rating(
+    provider: str,
+    cfg: Mapping[str, Any],
+    instance: Any,
+    item: Mapping[str, Any],
+    rating: float | None,
+    *,
+    sinks: Iterable[str] | None = None,
+) -> dict[str, Any]:
     sink = str(provider or "").strip().lower()
-    ops = _ops(sink)
+    ops = _ops(sink) if sinks is None else _ops(sink, sinks)
     if ops is None:
         return {"ok": False, "error": "unsupported_rating_sink"}
 
