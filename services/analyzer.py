@@ -20,6 +20,7 @@ import requests
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from services.analyzer_mapping import MappingRequest, handle_mapping
+from services.analyzer_release import ReleaseRequest, block_ref, handle_release
 
 from cw_platform.access_policy import filter_pairs_for_user, pair_ids_for_user, request_user
 from cw_platform.app_version import user_agent as http_user_agent
@@ -3946,10 +3947,12 @@ def _problems(
             if missing_targets:
                 blocks = _manual_blocks_for(manual_blocks, prov, feat)
                 blocked = False
+                blocked_key = ""
                 if blocks:
                     for kk in [k, *alias_keys]:
                         if kk in blocks:
                             blocked = True
+                            blocked_key = kk
                             break
                 tracker_to_media = _is_tracker_to_media_server(prov, missing_targets)
                 ptype = "blocked_manual" if blocked else "missing_peer"
@@ -3970,6 +3973,10 @@ def _problems(
                     "targets": missing_targets,
                     **({"manual_ref": _MANUAL_POLICY_REF} if blocked else {}),
                 }
+                if blocked:
+                    ref = block_ref(manual, prov, feat, blocked_key)
+                    if ref:
+                        prob["block"] = ref
                 time_differences = _history_time_differences(analysis, prov, feat, v, missing_targets)
                 group_details = [group for dst in missing_targets
                                  if feat == "history" and (group := analysis.groups().match(prov, dst, v))]
@@ -4726,6 +4733,11 @@ def _build_state_page(
 @router.post("/analyzer/mapping", response_class=JSONResponse)
 def api_mapping(payload: MappingRequest, request: Request):
     return handle_mapping(payload, request)
+
+
+@router.post("/analyzer/release", response_class=JSONResponse)
+def api_release(payload: ReleaseRequest, request: Request):
+    return handle_release(payload, request)
 
 
 @router.get("/analyzer/problems")

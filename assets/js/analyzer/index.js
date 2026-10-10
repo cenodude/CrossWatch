@@ -176,7 +176,7 @@ const Analyzer = {
     let analysisError = "", systemError = "", checked = "", pageError = "";
     let analysisStarted = Date.now(), systemStarted = Date.now();
     let allTotal = null, selected = null;
-    let mappingWorkspace = null, mappingController = null;
+    let mappingWorkspace = null, mappingController = null, savedRow = null, releasing = false;
     let total = 0, offset = 0, pageSize = 50;
     let currentRows = [], filteredRows = [];
     let pageLoading = false;
@@ -330,11 +330,11 @@ const Analyzer = {
         $("#an-list").innerHTML = `<div class="an-findings">${currentRows.map((row, index) => renderFinding(row, index)).join("")}</div>`;
         return;
       }
-      const editable = view === "pending" && window.CW?.AuthState?.read?.().permissions?.write !== false;
+      const editable = ["pending", "missing"].includes(view) && window.CW?.AuthState?.read?.().permissions?.write !== false;
       $("#an-list").innerHTML = `<div class="an-table-scroll"><table class="an-table"><thead><tr><th scope="col">Item</th><th scope="col">Provider</th><th scope="col">Feature</th><th scope="col">Finding</th>${editable ? '<th scope="col" class="an-mapping-column" aria-label="Edit mapping"></th>' : ''}</tr></thead><tbody>${currentRows.map((row, index) => {
         const mismatch = missingIndex.get(identity(row));
         const finding = view === "pending" ? retryLabel(row) : row.type === "missing_peer" || mismatch ? watchDifferenceLabel(mismatch || row, providerName) : episodeGroupLabel(row) || (blockedIndex.has(identity(row)) ? "Blocked" : "No presence issue");
-        return `<tr data-row="${index}" class="${selected === row ? "is-selected" : ""}"><td><button type="button" class="an-item-button" data-row="${index}" aria-pressed="${selected === row}"><strong>${esc(label(row))}</strong><span>${esc([human(row.item_type || row.item?.type || (row.type === "missing_peer" ? "" : row.type)), row.year || row.item?.year].filter(Boolean).join(" · "))}</span></button></td><td>${esc(providerName(row.provider))}${rowPairName(row) ? `<span class="an-pair-label">${esc(rowPairName(row))}</span>` : ""}</td><td><span class="an-feature-badge">${esc(human(row.feature))}</span></td><td><span class="an-result-badge ${mismatch || row.type === "missing_peer" ? "an-warn-text" : ""}">${esc(finding)}</span></td>${editable ? `<td class="an-mapping-column">${row.key && FEATURES.includes(row.feature) && !array(row.watch_time_differences).length && !array(row.episode_groups).length ? `<button type="button" class="an-icon-button" data-edit-mapping="${index}" title="Edit mapping" aria-label="Edit mapping for ${esc(label(row))}">${icon("edit")}</button>` : ''}</td>` : ''}</tr>`;
+        return `<tr data-row="${index}" class="${selected === row ? "is-selected" : ""}"><td><button type="button" class="an-item-button" data-row="${index}" aria-pressed="${selected === row}"><strong>${esc(label(row))}</strong><span>${esc([human(row.item_type || row.item?.type || (row.type === "missing_peer" ? "" : row.type)), row.year || row.item?.year].filter(Boolean).join(" · "))}</span></button></td><td>${esc(providerName(row.provider))}${rowPairName(row) ? `<span class="an-pair-label">${esc(rowPairName(row))}</span>` : ""}</td><td><span class="an-feature-badge">${esc(human(row.feature))}</span></td><td><span class="an-result-badge ${mismatch || row.type === "missing_peer" ? "an-warn-text" : ""}">${esc(finding)}</span></td>${editable ? `<td class="an-mapping-column">${row.key && FEATURES.includes(row.feature) && !array(row.watch_time_differences).length && !array(row.episode_groups).length && (row.type !== "missing_peer" || array(row.targets).length === 1) ? `<button type="button" class="an-icon-button" data-edit-mapping="${index}" title="Edit mapping" aria-label="Edit mapping for ${esc(label(row))}">${icon("edit")}</button>` : ''}${row.retry_blocked && row.key ? `<button type="button" class="an-icon-button" data-release="${index}" title="Release retry block" aria-label="Release retry block for ${esc(label(row))}">${icon("lock_open")}</button>` : ''}</td>` : ''}</tr>`;
       }).join("")}</tbody></table></div>`;
     }
     function renderFinding(row, index) {
@@ -343,7 +343,7 @@ const Analyzer = {
       const context = [providerName(row.provider || row.source), row.feature && human(row.feature), row.category && human(row.category)].filter(Boolean).join(" · ");
       const detail = [rowPairName(row) && `Sync pair: ${rowPairName(row)}`, row.message && row.message !== title ? row.message : "", row.item_title, row.key && `Key: ${row.key}`, row.module && `Module: ${row.module}`, row.path && `Path: ${row.path}`, row.error, row.reason, row.count != null && `Items affected: ${row.count}`, row.source && row.target && `${row.source} → ${row.target}`, row.show_delta && `Shows: ${row.show_delta.source} at source / ${row.show_delta.target} at destination`, row.show_gap && `Source-only shows: ${row.show_gap.source_only}; destination-only shows: ${row.show_gap.target_only}`, row.missing?.length && `Missing IDs: ${row.missing.join(", ")}`, row.id_name && `ID field: ${row.id_name} (${row.id_value ?? ""})`, row.watermark_key && `Watermark: ${row.watermark_key}`, row.value != null && `Value: ${row.value}`].filter(Boolean);
       const items = affectedLabels(row);
-      return `<article class="an-finding an-severity-${sev}"><div class="an-finding-icon">${icon(sev === "error" ? "error" : sev === "warn" ? "warning" : "info")}</div><div class="an-finding-content"><div class="an-finding-top"><span class="an-severity-badge">${sev === "error" ? "Error" : sev === "warn" ? "Warning" : "Information"}</span><span>${esc(context)}</span></div><h3>${esc(title)}</h3>${detail.map(value => `<p>${esc(value)}</p>`).join("")}${items.length ? `<details class="an-affected"><summary>Affected items (${Number(row.count) > items.length ? `showing ${items.length.toLocaleString()} of ${Number(row.count).toLocaleString()}` : items.length.toLocaleString()})</summary><ul>${items.slice(0, 25).map(value => `<li>${esc(value)}</li>`).join("")}</ul>${items.length > 25 ? `<button type="button" class="an-button" data-more="${index}" data-shown="25">Show more</button>` : ""}</details>` : ""}${row.type === "history_episode_identity_conflict" && window.CW?.AuthState?.read?.().permissions?.write !== false ? array(row.shows).map((show, at) => `<button type="button" class="an-button" data-fix-numbering="${index}" data-show="${at}">Fix numbering${show.title ? ` · ${esc(show.title)}` : ""}</button>`).join("") : ""}<span class="an-finding-code">${esc(row.type)}</span></div></article>`;
+      return `<article class="an-finding an-severity-${sev}"><div class="an-finding-icon">${icon(sev === "error" ? "error" : sev === "warn" ? "warning" : "info")}</div><div class="an-finding-content"><div class="an-finding-top"><span class="an-severity-badge">${sev === "error" ? "Error" : sev === "warn" ? "Warning" : "Information"}</span><span>${esc(context)}</span></div><h3>${esc(title)}</h3>${detail.map(value => `<p>${esc(value)}</p>`).join("")}${items.length ? `<details class="an-affected"><summary>Affected items (${Number(row.count) > items.length ? `showing ${items.length.toLocaleString()} of ${Number(row.count).toLocaleString()}` : items.length.toLocaleString()})</summary><ul>${items.slice(0, 25).map(value => `<li>${esc(value)}</li>`).join("")}</ul>${items.length > 25 ? `<button type="button" class="an-button" data-more="${index}" data-shown="25">Show more</button>` : ""}</details>` : ""}${row.type === "history_episode_identity_conflict" && window.CW?.AuthState?.read?.().permissions?.write !== false ? array(row.shows).map((show, at) => `<button type="button" class="an-button" data-fix-numbering="${index}" data-show="${at}">Fix numbering${show.title ? ` · ${esc(show.title)}` : ""}</button>`).join("") : ""}${row.type === "blocked_manual" && row.block && window.CW?.AuthState?.read?.().permissions?.write !== false ? `<button type="button" class="an-button" data-release="${index}">${icon(row.block.mapping_key ? "link_off" : "lock_open")}<span>${row.block.mapping_key ? "Remove mapping" : "Release block"}</span></button>` : ""}<span class="an-finding-code">${esc(row.type)}</span></div></article>`;
     }
     function filterRows() {
       return filterResults(sourceRows(), {
@@ -560,7 +560,7 @@ const Analyzer = {
         const {openAnalyzerMapping} = await import(`./mapping.js?v=${encodeURIComponent(window.APP_VERSION || '1')}`);
         if (controller.signal.aborted) return;
         mappingWorkspace = await openAnalyzerMapping({
-          reference:{pair_id:pairId, provider:row.provider, feature:row.feature, key:row.key},
+          reference:{pair_id:pairId, provider:row.type === "missing_peer" ? row.targets[0] : row.provider, feature:row.feature, key:row.key},
           signal:controller.signal,
           onClose: () => { notice.hidden = true; finish(); },
           onGroupsChanged: () => { if (!lifetime.signal.aborted) analyzeItems(); },
@@ -568,7 +568,11 @@ const Analyzer = {
             finish();
             if (!lifetime.signal.aborted) {
               notice.hidden = false;
-              notice.textContent = "Mapping saved. Run the pair again to retry this item, then analyze to update the results.";
+              notice.textContent = "Mapping saved. Run the pair again to sync this item, then analyze to update the results.";
+              if (row.retry_blocked) {
+                savedRow = { ...row, pair_id: pairId };
+                notice.innerHTML = `Mapping saved. Automatic retries are still blocked for this item. <button type="button" class="an-button" data-release-saved>${icon("lock_open")}<span>Release retry block</span></button>`;
+              }
             }
           },
         });
@@ -576,6 +580,38 @@ const Analyzer = {
       } catch (error) {
         if (!controller.signal.aborted) notice.textContent = error.message || "Could not open mapping. Try again.";
         finish();
+      }
+    }
+    async function releaseRow(row, button) {
+      if (!row || releasing) return;
+      const rule = row.type === "blocked_manual";
+      const pairId = row.pair_id || $("#an-pair").value;
+      const notice = $("#an-mapping-notice");
+      notice.hidden = false;
+      if (!pairId) { notice.textContent = "Select a sync pair before releasing this item."; return; }
+      if (rule && row.block?.mapping_key && !confirm("Remove the saved mapping for this item?\n\nThis undoes the correction and lifts the block on the original item.")) { notice.hidden = true; return; }
+      releasing = true;
+      button.disabled = true;
+      notice.textContent = "Releasing…";
+      try {
+        const response = await fetch("/api/analyzer/release", {
+          method: "POST", credentials: "same-origin", cache: "no-store",
+          headers: { "Content-Type": "application/json" },
+          signal: lifetime.signal,
+          body: JSON.stringify({ pair_id: pairId, provider: row.provider, feature: row.feature, key: row.key, kind: rule ? "rule" : "retry" }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data.ok === false) throw new Error(data.detail || data.error || "Could not release this item.");
+        savedRow = null;
+        notice.textContent = data.released === "mapping" ? "Mapping removed. Run the pair again to sync the original item."
+          : data.released === "rule" ? "Block released. Run the pair again to sync this item."
+          : "Retry block released. Run the pair again to retry this item. It is blocked again if the same failure repeats.";
+        await analyzeItems();
+      } catch (error) {
+        if (!lifetime.signal.aborted) notice.textContent = error.message || "Could not release this item. Try again.";
+        if (button.isConnected) button.disabled = false;
+      } finally {
+        releasing = false;
       }
     }
     async function loadScope() {
@@ -615,6 +651,8 @@ const Analyzer = {
       const button = event.target.closest("button, tr[data-row]");
       if (!button) return;
       if (button.hasAttribute("data-edit-mapping")) editMapping(currentRows[Number(button.dataset.editMapping)], button);
+      else if (button.hasAttribute("data-release-saved")) releaseRow(savedRow, button);
+      else if (button.hasAttribute("data-release")) releaseRow(currentRows[Number(button.dataset.release)], button);
       else if (button.hasAttribute("data-fix-numbering")) fixNumbering(currentRows[Number(button.dataset.fixNumbering)], Number(button.dataset.show), button);
       else if (button.dataset.view) changeView(button.dataset.view);
       else if (button.hasAttribute("data-open-system")) changeView("system");

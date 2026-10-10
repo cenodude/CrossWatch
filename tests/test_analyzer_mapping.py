@@ -74,6 +74,18 @@ def test_same_provider_instances_keep_direction(mapping_case):
     assert context["row"]["instance"] == "destination"
 
 
+def test_current_mismatch_opens_mapping_for_its_target(mapping_case):
+    payload, pair, state, entry, item = mapping_case
+    entry.update(provider="MDBLIST@destination", unresolved=False, current_mismatch=True)
+    context = mapping.handle_mapping(payload.model_copy(update={"provider": "MDBLIST@destination"}), None)
+    assert context["row"]["source"] == "SIMKL"
+    assert context["row"]["source_instance"] == "alice"
+    assert (context["row"]["provider"], context["row"]["instance"]) == ("MDBLIST", "destination")
+    with pytest.raises(HTTPException) as error:
+        mapping.handle_mapping(payload.model_copy(update={"provider": "MDBLIST@other"}), None)
+    assert error.value.status_code == 409
+
+
 @pytest.mark.parametrize("change", ["pair", "item", "pending", "profile"])
 def test_changed_or_unavailable_entry_is_not_saved(mapping_case, change):
     payload, pair, state, entry, item = mapping_case
