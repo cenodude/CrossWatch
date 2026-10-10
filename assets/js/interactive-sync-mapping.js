@@ -115,7 +115,7 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
   };
   dialog.innerHTML = `<header class="is-mapping-head"><div><div class="is-eyebrow">MAPPING</div><h2>${recovery ? "Match recovered history" : "Fix a wrong match"}</h2><p>${recovery ? "Choose the correct title and review your changes." : "Find the right title, check the result, then save."}</p></div><button class="is-btn is-map-close" data-close aria-label="Close" title="Close">${icon("close")}</button></header>
     <div class="is-mapping-body">
-    <div class="is-map-intro"><span>${rows.length} ${recovery ? `title${rows.length === 1 ? "" : "s"}` : `item${rows.length === 1 ? "" : "s"}`}${total > rows.length ? ` from ${total} results` : ""}</span><details class="is-map-help" ${recovery ? "hidden" : ""}><summary aria-label="About saved mappings" title="About saved mappings">${icon("info")}</summary><p>Pair mappings override shared corrections for that pair. Shared corrections apply to every pair using the source provider instance. Watched dates and ratings are kept. ${standalone ? "Run the pair again to retry with your correction. Saving does not start a sync." : "Saving updates your sync review; it does not start a sync."}</p></details></div>
+    <div class="is-map-intro"><span>${rows.length} ${recovery ? `title${rows.length === 1 ? "" : "s"}` : `item${rows.length === 1 ? "" : "s"}`}${total > rows.length ? ` from ${total} results` : ""}</span><details class="is-map-help" ${recovery ? "hidden" : ""}><summary aria-label="About saved mappings" title="About saved mappings">${icon("info")}<span>About mappings</span></summary><p>Pair mappings override shared corrections for that pair. Shared corrections apply to every pair using the source provider instance. Watched dates and ratings are kept. ${standalone ? "Run the pair again to retry with your correction. Saving does not start a sync." : "Saving updates your sync review; it does not start a sync."}</p></details></div>
     ${recovery ? "<p>Confirm a movie or series once for its unresolved items. Recovery keeps one record per movie or episode, using its most recent watch date. Episode numbers are kept. Review suggestions, then save the checked matches. Saving does not import history.</p><p><strong>API traffic warning:</strong> Auto match can generate heavy API traffic and consume your provider's request quota. Each distinct movie or show may require a separate search, plus extra requests for details or retries. Cached results are reused. Matching runs in the background; return through the notification bell.</p>" : ""}
     <section class="is-map-bulk" aria-label="Choose a title"><div class="is-map-search-heading"><h3>${recovery ? "Choose a title" : `<span class="is-map-step">1</span>Find the right title`}</h3><div class="is-map-actions"><button class="is-btn" data-suggest hidden>${icon("auto_fix_high")}Auto match</button><button class="is-btn" data-stop-search hidden>Stop search</button></div></div>
       <div data-chosen hidden class="is-map-chosen"><span>${icon("check_circle")}<strong data-match></strong></span><button class="is-btn is-small" data-change-match>Change match</button></div>
@@ -600,8 +600,15 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
     const button = document.createElement("button");
     button.type = "button";
     button.className = "is-btn";
-    button.textContent = "Map split / combined episodes for History";
-    button.onclick = () => { close(); if (closed) onEpisodeGroup(); };
+    button.textContent = "Map split episodes";
+    button.dataset.episodeGroups = "";
+    button.onclick = async () => {
+      if (saving || searching || closed) return;
+      button.disabled = true;
+      try { await onEpisodeGroup(button); }
+      catch (error) { $("[data-error]").textContent = error.message; }
+      finally { button.disabled = false; }
+    };
     $(".is-map-intro").append(button);
   }
   $("[data-save]").onclick = async () => {

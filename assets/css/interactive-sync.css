@@ -117,8 +117,8 @@
 .is-footer small { display: block; color: var(--is-muted); font-size: 11px; margin-top: 4px; }
 .is-notices { padding: 14px 18px; border: 1px solid var(--is-line); border-radius: 10px; margin-bottom: 20px; font-size: 12px; color: var(--is-muted); }
 .is-notices summary { cursor: pointer; color: var(--cw-theme-warning); }
-dialog.is-mapping-dialog { --is-surface: var(--panel, #161822); --is-card: color-mix(in srgb, var(--panel, #161822) 96%, var(--fg, #edf0f8)); --is-field: color-mix(in srgb, var(--panel, #161822) 98%, var(--fg, #edf0f8)); --is-control: color-mix(in srgb, var(--panel, #161822) 91%, var(--fg, #edf0f8)); --is-line: color-mix(in srgb, var(--fg, #edf0f8) 13%, transparent); box-sizing: border-box; width: min(980px, calc(100vw - 40px)); max-width: 980px; max-height: calc(100dvh - 40px); margin: auto; padding: 0; border: 1px solid var(--is-line); border-radius: 16px; background: var(--is-surface); color: var(--fg, #edf0f8); overflow: hidden; box-shadow: 0 24px 80px #0008; }
-html[data-cw-theme=flat-light] dialog.is-mapping-dialog { --is-surface: var(--panel2, #f5f7fb); --is-card: var(--panel, #fff); --is-field: var(--panel, #fff); --is-control: var(--panel2, #f5f7fb); box-shadow: 0 24px 80px #0003; }
+dialog.is-mapping-dialog { box-sizing: border-box; width: min(980px, calc(100vw - 40px)); max-width: 980px; max-height: calc(100dvh - 40px); margin: auto; padding: 0; border: 1px solid var(--is-line); border-radius: 16px; background: var(--is-surface); color: var(--fg, #edf0f8); overflow: hidden; box-shadow: 0 24px 80px #0008; }
+html[data-cw-theme=flat-light] dialog.is-mapping-dialog { box-shadow: 0 24px 80px #0003; }
 .is-mapping-dialog .is-btn:not(.is-primary) { background: var(--is-control); }
 .is-map-step { display: inline-grid; place-items: center; width: 22px; height: 22px; margin-right: 10px; border-radius: 50%; background: var(--is-accent); color: #fff; font-size: 12px; font-weight: 700; vertical-align: 1px; }
 dialog.is-mapping-dialog[open] { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
@@ -132,11 +132,11 @@ html:has(dialog.is-mapping-dialog[open]) { overflow: hidden; }
 .is-mapping-dialog p, .is-mapping-dialog small { color: var(--is-muted); font-size: 13px; line-height: 1.5; }
 .is-mapping-body { min-height: 0; min-width: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 0 24px 24px; }
 .is-map-intro, .is-map-search-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.is-map-intro { margin: 14px 0; color: var(--is-muted); font-size: 12px; }
-.is-map-help { max-width: 600px; }
-.is-map-help summary { list-style: none; text-align: right; cursor: pointer; }
+.is-map-intro { flex-wrap: wrap; justify-content: flex-start; margin: 14px 0; color: var(--is-muted); font-size: 12px; }
+.is-map-help { position: relative; margin-right: auto; }
+.is-map-help summary { list-style: none; display: flex; align-items: center; gap: 6px; cursor: pointer; }
 .is-map-help summary::-webkit-details-marker { display: none; }
-.is-map-help p { margin: 8px 0; }
+.is-map-help p { position: absolute; z-index: 10; top: 100%; left: 0; width: min(360px, calc(100vw - 100px)); box-sizing: border-box; margin: 8px 0; padding: 12px; border: 1px solid var(--is-line); border-radius: 10px; background: var(--is-card); box-shadow: 0 8px 24px #0003; }
 .is-map-search-heading { margin-bottom: 14px; }
 .is-mapping-dialog .is-map-search-heading h3 { margin: 0; font-size: 15px; }
 .is-map-close { align-self: flex-start; padding: 8px; }

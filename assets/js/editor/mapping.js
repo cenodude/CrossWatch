@@ -36,16 +36,22 @@ export async function openEditorMapping(row, ctx) {
   const {openMappingWorkspace} = await import(`/assets/js/interactive-sync-mapping.js?v=${version}`);
   const context = await request("catalogs");
   checkCurrentRow();
+  let groupsChanged = false;
+  const finish = () => {
+    state.mappingEditing = false;
+    if (groupsChanged) ctx.loadState?.();
+  };
   return openMappingWorkspace({
     rows:[context.row],
-    onEpisodeGroup:state.kind === "history" && original.type === "episode" && direct ? async () => {
+    onEpisodeGroup:state.kind === "history" && original.type === "episode" && direct ? async trigger => {
       const {openEpisodeGroups} = await import(`/assets/js/editor/episode-groups.js?v=${version}`);
-      await openEpisodeGroups(null, {pairId:reference.pair_id, original, provider:reference.provider,
-        instance:reference.instance, onSaved:() => ctx.loadState?.()});
+      await openEpisodeGroups(trigger, {pairId:reference.pair_id, original, provider:reference.provider,
+        returnToMapping:true,
+        instance:reference.instance, onSaved:() => { groupsChanged = true; }});
     } : undefined,
     total:1, standalone:true, staged:true, direct, scope,
     scopes:[{id:scope, label:scope === "pair" ? "Only this sync pair" : "Every sync with this account"}],
-    onClose:() => { state.mappingEditing = false; }, onSaved:() => { state.mappingEditing = false; },
+    onClose:finish, onSaved:finish,
     mappingApi:{
       catalogs:async () => context,
       search:(_row, q, catalog, options) => request("search", {q, catalog}, options),
