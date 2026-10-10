@@ -90,3 +90,6 @@ def update_mappings(raw, edits, *, mappings=None, pair_id="", merge=True):
                     if record.get("original_key") and record["original_key"] != target
                     and record["original_key"] not in typed_keys_for_item(items[target])]
         node["blocks"] = _normalize_blocks([*node["blocks"], *retained])
+    from .episode_groups import check_corrections
+    for scope, policy in (raw.get("pairs") or {}).items():
+        check_corrections(raw, scope, policy.get("episode_groups") or [])

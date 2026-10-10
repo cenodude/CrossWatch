@@ -827,6 +827,8 @@ def clear_pair_state(base_path: str | Path, pair_scope: str) -> tuple[int, int]:
         removed = pair_state_counts(base_path, pair_scope)
         with conn:
             conn.execute("DELETE FROM pair_feature_state WHERE pair_scope=?", (pair_scope,))
+            conn.execute("DELETE FROM episode_group_state WHERE pair_scope=?", (pair_scope,))
+            conn.execute("DELETE FROM episode_group_scrobbles WHERE pair_scope=?", (pair_scope,))
         _invalidate()
         return removed
 
@@ -847,6 +849,8 @@ def clear_state(base_path: str | Path) -> None:
         if conn is None:
             return
         with conn:
+            conn.execute("DELETE FROM episode_group_state")
+            conn.execute("DELETE FROM episode_group_scrobbles")
             conn.execute("DELETE FROM pair_baseline_items")
             conn.execute("DELETE FROM pair_feature_state")
             conn.execute("DELETE FROM baseline_items")

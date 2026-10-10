@@ -642,6 +642,14 @@ def apply_schema(conn: sqlite3.Connection) -> int:
         conn.execute("""CREATE TABLE IF NOT EXISTS manual_policy_pairs (
             pair_id TEXT PRIMARY KEY, policy_json TEXT NOT NULL, updated_at INTEGER NOT NULL
         )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS episode_group_state (
+            pair_scope TEXT NOT NULL, group_id TEXT NOT NULL, state_json TEXT NOT NULL,
+            PRIMARY KEY(pair_scope,group_id)
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS episode_group_scrobbles (
+            pair_scope TEXT NOT NULL, delivery_scope TEXT NOT NULL, state_json TEXT NOT NULL,
+            PRIMARY KEY(pair_scope,delivery_scope)
+        )""")
         conn.execute(_CREATE_MANUAL_POLICY_BLOCKS)
         conn.execute(_CREATE_MANUAL_POLICY_ADD_ITEMS)
         _ensure_column(conn, "manual_policy_add_items", "collected_at", "TEXT")
