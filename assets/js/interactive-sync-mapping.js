@@ -72,7 +72,7 @@ export function correctedEpisode(original, match) {
   return {...correctedItem(original, {...match, ids: sameShow ? {...ids, ...match.ids} : match.ids}), episode:match.episode};
 }
 
-export function openMappingWorkspace({rows, session = {}, json, post, onSaved, onClose, total, mappingApi, standalone = false, scope = "pair", scopes = [{id:"pair", label:"This sync pair"}, {id:"shared", label:"All pairs using this provider instance"}], staged = false, direct = false, recovery = false}) {
+export function openMappingWorkspace({rows, session = {}, json, post, onSaved, onClose, total, mappingApi, standalone = false, scope = "pair", scopes = [{id:"pair", label:"This sync pair"}, {id:"shared", label:"All pairs using this provider instance"}], staged = false, direct = false, recovery = false, onEpisodeGroup}) {
   const api = mappingApi || {
     catalogs: row => json(`/api/interactive-sync/${session.id}/mapping-catalogs?${new URLSearchParams({revision:session.revision, row_id:row.id})}`),
     search: (row, q, catalog, options) => json(`/api/interactive-sync/${session.id}/mapping-search?${new URLSearchParams({revision:session.revision, row_id:row.id, q, catalog})}`, options),
@@ -596,6 +596,14 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
   });
   dialog.addEventListener("cancel", event => { event.preventDefault(); close(); });
   $("[data-close]").onclick = close;
+  if (onEpisodeGroup) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "is-btn";
+    button.textContent = "Map split / combined episodes for History";
+    button.onclick = () => { close(); if (closed) onEpisodeGroup(); };
+    $(".is-map-intro").append(button);
+  }
   $("[data-save]").onclick = async () => {
     for (const draft of drafts.filter(saveable)) {
       const row = $(`[data-draft="${drafts.indexOf(draft)}"]`);

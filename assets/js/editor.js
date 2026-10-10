@@ -1865,6 +1865,7 @@
       rowType,
       markChanged,
       renderRows,
+      loadState,
       syncBulkBar,
       syncSelectPageCheckbox,
       updateTypeDisplay,

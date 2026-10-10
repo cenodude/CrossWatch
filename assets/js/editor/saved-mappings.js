@@ -14,8 +14,10 @@ export async function readMappingFile(file) {
   if (file.size > 20 * 1024 * 1024) throw new Error("Mapping file must be 20 MB or smaller.");
   let data;
   try { data = JSON.parse(await file.text()); } catch { throw new Error("Choose a valid Mappings & blocks JSON export."); }
-  if (data?.format !== "crosswatch-mappings-blocks" || ![1, 2].includes(data.version) || !Array.isArray(data.records)) {
-    throw new Error("Choose a Mappings & blocks JSON export (version 1 or 2).");
+  if (data?.format !== "crosswatch-mappings-blocks" || ![1, 2, 3].includes(data.version) || !Array.isArray(data.records)
+      || (data.episode_groups !== undefined && !Array.isArray(data.episode_groups))
+      || (data.version !== 3 && data.episode_groups?.length)) {
+    throw new Error("Choose a Mappings & blocks JSON export (version 1, 2 or 3).");
   }
   return data;
 }
@@ -89,7 +91,7 @@ export function open(trigger, editor) {
   root.className = "sm-dialog";
   root.setAttribute("aria-labelledby", "sm-title");
   root.innerHTML = `<div class="sm-head"><div><h2 id="sm-title">Mappings & blocks</h2><p>Manage saved corrections and blocked items.</p></div><button type="button" data-close aria-label="Close mappings and blocks">${icon("close")}</button></div>
-    <div class="sm-toolbar"><div class="sm-tabs" role="group" aria-label="Saved rules"><button type="button" data-view="mapping" aria-pressed="true">${icon("link")}Mappings</button><button type="button" data-view="block" aria-pressed="false">${icon("block")}Blocked items</button></div><div class="sm-transfer"><button type="button" data-import>${icon("upload")}Import</button><button type="button" data-export title="Export mappings and blocks for the selected scope, source and feature">${icon("download")}Export</button><input type="file" data-import-file accept=".json,application/json" hidden></div></div>
+    <div class="sm-toolbar"><div class="sm-tabs" role="group" aria-label="Saved rules"><button type="button" data-view="mapping" aria-pressed="true">${icon("link")}Mappings</button><button type="button" data-view="block" aria-pressed="false">${icon("block")}Blocked items</button></div><div class="sm-transfer"><button type="button" data-import>${icon("upload")}Import</button><button type="button" data-export title="Export mappings, blocks and episode groups for the selected scope, source and feature">${icon("download")}Export</button><input type="file" data-import-file accept=".json,application/json" hidden></div></div>
     <div class="sm-filters"><label>Search<input type="search" placeholder="Title, ID, provider or episode…" data-search></label><label>Source and profile<select data-source aria-label="Source and profile" data-cw-sort="alphabetical"><option value="">All sources</option></select></label><label>Feature<select data-feature aria-label="Feature"><option value="">All features</option>${["watchlist","history","ratings","progress","collection"].map(f=>`<option value="${f}">${f[0].toUpperCase()+f.slice(1)}</option>`).join("")}</select></label><button type="button" data-refresh>${icon("refresh")}Refresh</button></div>
     <p class="sm-note">Pair corrections override shared mappings for that pair. All pairs means every sync using that source instance. Use the pencil to edit a mapping in the Editor, then save your changes.</p>
     <form class="sm-add-block" hidden><label>Item key<input data-block-key required maxlength="1024" placeholder="For example: tmdb:123 or tmdb:123#s01e02"></label><button type="submit">${icon("block")}Block item</button><small>Select a source, profile and feature above. This rule applies to the displayed scope.</small></form>
@@ -234,8 +236,22 @@ export function open(trigger, editor) {
     link.href = url; link.download = "crosswatch-mappings-blocks.json";
     root.append(link); link.click(); link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    return "Exported mappings and blocks for the selected scope, source and feature. Search does not limit the export.";
+      return "Exported mappings, blocks and matching episode groups for the selected scope, source and feature. Search does not limit the export.";
   }, {mutates:false});
+  const groupsButton = document.createElement("button");
+  groupsButton.type = "button";
+  groupsButton.textContent = "Episode groups";
+  $(".sm-transfer").prepend(groupsButton);
+  groupsButton.onclick = async () => {
+    if (editing) return;
+    if (editor?.state?.hasChanges || editor?.state?.saving || editor?.state?.loading || editor?.state?.mappingEditing) {
+      $(".sm-edit-error").textContent = "Save or discard Editor changes before editing episode groups.";
+      return;
+    }
+    const {openEpisodeGroups} = await import(`/assets/js/editor/episode-groups.js?v=${encodeURIComponent(window.APP_VERSION || "1")}`);
+    await openEpisodeGroups(groupsButton, {pairId:pairId === "shared" ? "" : pairId,
+      onSaved:() => { if (editor && !editor.state.hasChanges) editor.loadState(); }});
+  };
   $("[data-import]").onclick = () => $("[data-import-file]").click();
   $("[data-import-file]").onchange = async event => {
     const file = event.target.files?.[0];
@@ -244,12 +260,12 @@ export function open(trigger, editor) {
     await runAction(async () => {
       const data = await readMappingFile(file);
       if (!root.open) return "";
-      if (!window.confirm(`Import ${data.records.length} records into their saved provider, profile, feature and pair scopes? Existing or conflicting mappings will be skipped. Current filters do not limit import.`)) return "Import cancelled.";
+      if (!window.confirm(`Import ${data.records.length} mapping/block records and ${data.episode_groups?.length || 0} episode groups into their saved scopes? Episode groups include their completed-scrobble setting and require matching pairs and provider instances. Existing ordinary mappings are kept; conflicting episode groups reject the entire import. Current filters do not limit import.`)) return "Import cancelled.";
       const body = new FormData(); body.append("file", file);
       const response = await fetch("/api/editor/mappings/import", {method:"POST", credentials:"same-origin", body});
       const result = await response.json();
-      if (!response.ok) throw new Error(typeof result.detail === "string" ? result.detail : "Could not import mappings and blocks.");
-      return `Imported ${result.imported} records. Skipped ${result.skipped} existing or conflicting records.`;
+      if (!response.ok) throw new Error(typeof result.detail === "string" ? result.detail : "Could not import mappings, blocks and episode groups.");
+      return `Imported ${result.imported} mapping/block records and ${result.groups_imported || 0} episode groups. Skipped ${result.skipped} existing or conflicting records and ${result.groups_skipped || 0} identical groups.`;
     });
   };
   $(".sm-add-block").onsubmit = event => {

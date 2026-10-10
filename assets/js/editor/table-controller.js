@@ -165,6 +165,8 @@
       columnLabel: ctx.columnLabel,
       markChanged: ctx.markChanged,
       renderRows: ctx.renderRows,
+      loadState: ctx.loadState,
+      setStatus: ctx.setStatus,
       syncBulkBar: ctx.syncBulkBar,
       syncSelectPageCheckbox: ctx.syncSelectPageCheckbox,
       updateTypeDisplay: ctx.updateTypeDisplay,
