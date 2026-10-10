@@ -141,7 +141,7 @@ def test_title_presence_collects_episode_plays_for_a_show() -> None:
     assert result is not None
     assert result["count"] == 2 and result["last_epoch"] == 200
     assert result["present"] == [TRAKT, PLEX] and result["missing"] == []
-    assert result["episodes"] == [{"season": 1, "episode": 1, "epoch": 100}, {"season": 1, "episode": 2, "epoch": 200}]
+    assert result["episodes"] == [{"season": 1, "episode": 1, "epoch": 100, "present": [PLEX]}, {"season": 1, "episode": 2, "epoch": 200, "present": [TRAKT]}]
     assert profile_history.title_presence(index, "show", 55) is None
 
 
@@ -183,3 +183,90 @@ def test_profile_title_payload_hides_watchlist_without_permission(monkeypatch) -
     assert "watchlist" not in hidden
     assert shown["watchlist"]["count"] == 1
     assert shown["collection"] is None
+
+
+def test_season_preserves_full_episode_synopsis(monkeypatch) -> None:
+    import json
+    from types import SimpleNamespace
+
+    overview = "A full episode synopsis. " * 30
+    provider = SimpleNamespace(_get=lambda *args, **kwargs: {"episodes": [{"episode_number": 1, "overview": overview}]})
+    monkeypatch.setattr(metaAPI, "_tmdb_provider", lambda: provider)
+    result = metaAPI.api_tmdb_season(tmdb=1399, season=1, locale="en-US")
+    assert json.loads(result.body)["episodes"][0]["overview"] == overview
+
+
+def test_season_includes_episode_guests_and_relevant_crew_without_extra_requests(monkeypatch) -> None:
+    import json
+    from types import SimpleNamespace
+
+    calls = []
+    def get(url, *args, **kwargs):
+        calls.append(url)
+        return {"episodes": [
+            {"episode_number": 1, "guest_stars": [None, {}, {"id": 12, "name": "Guest", "character": "Visitor", "profile_path": "/guest.jpg"}],
+             "crew": [{"name": "Director", "job": "Director"}, {"name": "Writer", "job": "Teleplay", "department": "Writing"},
+                      {"name": "Camera", "job": "Camera Operator", "department": "Camera"}, None]},
+            {"episode_number": 2},
+        ]}
+
+    monkeypatch.setattr(metaAPI, "_tmdb_provider", lambda: SimpleNamespace(_get=get))
+    episodes = json.loads(metaAPI.api_tmdb_season(tmdb=1399, season=1, locale="en-US").body)["episodes"]
+    assert len(calls) == 1
+    assert episodes[0]["guest_stars"] == [{"id": 12, "name": "Guest", "character": "Visitor", "profile_path": "/guest.jpg"}]
+    assert [person["job"] for person in episodes[0]["crew"]] == ["Director", "Teleplay"]
+    assert episodes[1]["guest_stars"] == [] and episodes[1]["crew"] == []
+
+
+def test_collection_metadata_orders_films_and_keeps_poster_paths(monkeypatch) -> None:
+    import json
+    from types import SimpleNamespace
+
+    data = {"id": 7, "name": "Films", "parts": [{"id": 2, "title": "Second", "release_date": "2020-01-01"}, {"id": 1, "title": "First", "release_date": "2010-01-01", "poster_path": "/first.jpg"}, {"id": 3, "title": "Undated"}]}
+    monkeypatch.setattr(metaAPI, "_tmdb_provider", lambda: SimpleNamespace(_get=lambda *args, **kwargs: data))
+    result = json.loads(metaAPI.api_tmdb_collection(collection=7, locale="en-US").body)
+    assert [row["id"] for row in result["parts"]] == [1, 2, 3]
+    assert result["parts"][0]["poster_path"] == "/first.jpg"
+    assert not metaAPI._need_satisfied({"type": "movie", "detail": {}}, {"collection": 1})
+    assert metaAPI._need_satisfied({"type": "movie", "detail": {"belongs_to_collection": None}}, {"collection": 1})
+
+
+def test_person_metadata_deduplicates_credits_and_omits_adult_titles(monkeypatch) -> None:
+    import json
+    from types import SimpleNamespace
+
+    calls = []
+    def get(url, params, **kwargs):
+        calls.append((url, params))
+        return {"id": 12, "name": "Actor", "combined_credits": {"cast": [
+            {"id": 1, "media_type": "movie", "title": "Film", "popularity": 10},
+            {"id": 1, "media_type": "movie", "title": "Film", "popularity": 2},
+            {"id": 1, "media_type": "tv", "name": "Series"},
+            {"id": 2, "media_type": "movie", "adult": True}, None,
+        ]}}
+    monkeypatch.setattr(metaAPI, "_tmdb_provider", lambda: SimpleNamespace(_get=get))
+    result = json.loads(metaAPI.api_tmdb_person(person=12, locale="en-US").body)
+    assert [(row["type"], row["id"]) for row in result["credits"]] == [("movie", 1), ("show", 1)]
+    assert len(calls) == 1 and calls[0][1]["append_to_response"] == "combined_credits"
+
+
+def test_movie_watch_status_batches_sources_and_preserves_unknown(monkeypatch) -> None:
+    calls = []
+    def index(cfg, profile, source):
+        calls.append((profile, source))
+        if source == "synced":
+            raise RuntimeError("unavailable")
+        return {"source": source}, "v1"
+    monkeypatch.setattr(profileAPI, "_profile_history_index", index)
+    monkeypatch.setattr(profile_history, "title_presence", lambda index, media, tmdb: {"count": 1} if tmdb == 1 else None)
+    assert profileAPI.build_movie_watch_status({}, "profile-2", [1, 2]) == {"1": True, "2": None}
+    assert calls == [("profile-2", "synced"), ("profile-2", "scrobble")]
+
+
+def test_extra_metadata_failures_are_reported(monkeypatch) -> None:
+    import json
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(metaAPI, "_tmdb_provider", lambda: SimpleNamespace(_get=lambda *args, **kwargs: {}))
+    assert json.loads(metaAPI.api_tmdb_collection(collection=1, locale="en-US").body)["ok"] is False
+    assert json.loads(metaAPI.api_tmdb_person(person=1, locale="en-US").body)["ok"] is False

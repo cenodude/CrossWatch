@@ -506,6 +506,7 @@ def title_presence(index: dict[str, Any], media: str, tmdb: Any) -> dict[str, An
         ]
         out["missing"] = [_ref(endpoint) for endpoint in endpoints if endpoint not in latest_endpoints]
     episodes: dict[tuple[int, int], int] = {}
+    episode_endpoints: dict[tuple[int, int], list[tuple[str, str]]] = {}
     for row in rows:
         season = dw._as_int(row.get("season"))
         episode = dw._as_int(row.get("episode"))
@@ -513,9 +514,16 @@ def title_presence(index: dict[str, Any], media: str, tmdb: Any) -> dict[str, An
             continue
         epoch = int(row.get("sort_epoch") or 0)
         episodes[(season, episode)] = max(episodes.get((season, episode), 0), epoch)
+        refs = episode_endpoints.setdefault((season, episode), [])
+        for endpoint in row.get("_endpoints") or []:
+            if endpoint not in refs:
+                refs.append(endpoint)
     if episodes:
         out["episodes"] = [
-            {"season": season, "episode": episode, "epoch": epoch}
+            {
+                "season": season, "episode": episode, "epoch": epoch,
+                "present": [_ref(endpoint) for endpoint in episode_endpoints[(season, episode)]],
+            }
             for (season, episode), epoch in sorted(episodes.items())
         ]
     return out

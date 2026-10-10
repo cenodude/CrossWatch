@@ -868,7 +868,7 @@ class TmdbProvider:
             )
             vote_avg = det.get("vote_average")
             score = round(float(vote_avg) * 10) if isinstance(vote_avg, (int, float)) else None
-            detail: dict[str, Any] = {"release_date": det.get("release_date"), "vote_average": det.get("vote_average")}
+            detail: dict[str, Any] = {"release_date": det.get("release_date"), "vote_average": det.get("vote_average"), "belongs_to_collection": det.get("belongs_to_collection")}
         else:
             title_out = det.get("name") or det.get("original_name")
             year = self._safe_int_year(det.get("first_air_date"))

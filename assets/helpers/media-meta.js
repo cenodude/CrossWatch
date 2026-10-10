@@ -13,7 +13,7 @@
     media: Object.freeze({
       overview: 1, tagline: 1, runtime_minutes: 1, ids: 1, videos: 1, genres: 1,
       certification: 1, score: 1, vote_count: 1, release: 1, backdrop: 1,
-      credits: 1, recommendations: 1,
+      credits: 1, recommendations: 1, collection: 1,
     }),
   });
   const profileOf = (profile) => (profile === "detail" || profile === "media" ? profile : "row");

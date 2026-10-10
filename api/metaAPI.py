@@ -507,6 +507,8 @@ def _need_satisfied(meta: dict[str, Any], need: dict[str, Any] | None) -> bool:
             return "videos" in meta
         if k in {"credits", "recommendations"}:
             return k in meta
+        if k == "collection":
+            return "belongs_to_collection" in det or str(meta.get("type") or "").lower() in {"tv", "show"}
         if k == "seasons":
             return "seasons" in det or str(meta.get("type") or "").lower() == "movie"
         if k == "vote_count":
@@ -1279,9 +1281,22 @@ def api_tmdb_season(
             "name": row.get("name") or "",
             "air_date": row.get("air_date") or "",
             "runtime": row.get("runtime"),
-            "overview": _shorten(row.get("overview") or "", 260),
+            "overview": row.get("overview") or "",
             "vote_average": row.get("vote_average"),
             "has_still": bool(row.get("still_path")),
+            "guest_stars": [
+                {"id": person.get("id"), "name": person.get("name"),
+                 "character": person.get("character") or "", "profile_path": person.get("profile_path") or ""}
+                for person in row.get("guest_stars") or []
+                if isinstance(person, dict) and person.get("name")
+            ],
+            "crew": [
+                {"id": person.get("id"), "name": person.get("name"), "job": person.get("job") or ""}
+                for person in row.get("crew") or []
+                if isinstance(person, dict) and person.get("name")
+                and (person.get("job") == "Director" or person.get("department") == "Writing"
+                     or person.get("job") in {"Writer", "Screenplay", "Story", "Teleplay"})
+            ],
         }
         for row in data.get("episodes") or []
         if isinstance(row, dict) and row.get("episode_number") is not None
@@ -1298,6 +1313,49 @@ def api_tmdb_season(
         },
         headers={"Cache-Control": "private, max-age=3600"},
     )
+
+
+
+@router.get("/api/metadata/tmdb/collection", tags=["metadata"])
+def api_tmdb_collection(collection: int = Query(..., ge=1), locale: str | None = Query(None)) -> JSONResponse:
+    provider = _tmdb_provider()
+    if provider is None:
+        return JSONResponse({"ok": False, "error": "metadata_unavailable"})
+    try:
+        data = provider._get(f"https://api.themoviedb.org/3/collection/{collection}", {"language": locale or _cfg_ui_locale() or "en-US"}, quiet_404=True) or {}
+        if not data.get("id"):
+            return JSONResponse({"ok": False, "error": "collection_unavailable"})
+        parts = [
+            {"id": row["id"], "title": row.get("title") or "", "release_date": row.get("release_date") or "", "poster_path": row.get("poster_path") or ""}
+            for row in data.get("parts") or [] if isinstance(row, dict) and row.get("id")
+        ]
+        parts.sort(key=lambda row: (row["release_date"] or "9999", row["id"]))
+        return JSONResponse({"ok": True, "id": data["id"], "name": data.get("name") or "", "parts": parts[:100]}, headers={"Cache-Control": "private, max-age=3600"})
+    except Exception:
+        return JSONResponse({"ok": False, "error": "collection_unavailable"})
+
+
+@router.get("/api/metadata/tmdb/person", tags=["metadata"])
+def api_tmdb_person(person: int = Query(..., ge=1), locale: str | None = Query(None)) -> JSONResponse:
+    provider = _tmdb_provider()
+    if provider is None:
+        return JSONResponse({"ok": False, "error": "metadata_unavailable"})
+    try:
+        data = provider._get(f"https://api.themoviedb.org/3/person/{person}", {"language": locale or _cfg_ui_locale() or "en-US", "append_to_response": "combined_credits"}, quiet_404=True) or {}
+        if not data.get("id"):
+            return JSONResponse({"ok": False, "error": "person_unavailable"})
+        credits = []
+        seen = set()
+        for row in sorted((row for row in (data.get("combined_credits") or {}).get("cast") or [] if isinstance(row, dict)), key=lambda row: float(row.get("popularity") or 0), reverse=True):
+            kind = row.get("media_type")
+            key = (kind, row.get("id"))
+            if kind not in {"movie", "tv"} or not row.get("id") or key in seen or row.get("adult"):
+                continue
+            seen.add(key)
+            credits.append({"id": row["id"], "type": "movie" if kind == "movie" else "show", "title": row.get("title") or row.get("name") or "", "date": row.get("release_date") or row.get("first_air_date") or "", "character": row.get("character") or "", "poster_path": row.get("poster_path") or ""})
+        return JSONResponse({"ok": True, "id": data["id"], "name": data.get("name") or "", "biography": data.get("biography") or "", "profile_path": data.get("profile_path") or "", "credits": credits[:24]}, headers={"Cache-Control": "private, max-age=3600"})
+    except Exception:
+        return JSONResponse({"ok": False, "error": "person_unavailable"})
 
 
 class MetadataResolveIn(BaseModel):
