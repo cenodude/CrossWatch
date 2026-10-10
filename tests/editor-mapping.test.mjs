@@ -118,7 +118,7 @@ test("merged mapping navigation leaves unsaved changes untouched", async () => {
   assert.deepEqual(calls, []);
 });
 
-test("merged rows keep a working mapping action beside their title", () => {
+test("merged rows keep a working mapping action beside Send", () => {
   const elements = [];
   const element = () => {
     const node = {children:[], style:{}, dataset:{}, classList:{add() {}},
@@ -133,10 +133,16 @@ test("merged rows keep a working mapping action beside their title", () => {
   const opened = [];
   const tr = context.window.CW.Editor.Table.createRowElement(row, {state:{kind:"history"}, merged:true,
     isPolicySource:() => true, isRowLocked:() => true, canReplaceRow:() => true,
-    openItemReplacer:(value, anchor) => opened.push({value, anchor})});
+    sendRow() {}, openItemReplacer:(value, anchor) => opened.push({value, anchor})});
   const button = elements.find(el => el.title === "Edit mapping");
   const attached = node => node === button || node.children.some(attached);
   assert.equal(attached(tr), true);
+  const actions = elements.find(el => el.className === "cw-action-buttons");
+  assert.equal(actions.children[0].title, "Send to or remove from providers");
+  assert.equal(actions.children[1], button);
+  assert.match(button.innerHTML, /compare_arrows/);
+  const title = elements.find(el => el.className === "cw-title-row");
+  assert.equal(title.children.includes(button), false);
   assert.equal(button.disabled, false);
   button.onclick();
   assert.equal(opened[0].value, row);
