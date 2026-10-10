@@ -11,6 +11,7 @@ from typing import Any, Literal
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from cw_platform.episode_groups import EpisodeGroup, check_corrections, endpoint, validate_groups
 from cw_platform.id_map import migrate_media_key, typed_keys_for_item
 from cw_platform.local_db import manual_policy
 from cw_platform.mapping_policy import feature_node
@@ -102,11 +103,57 @@ class TransferRule(RuleIdentity):
         return self
 
 
+class TransferGroup(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    pair_id: str = Field(min_length=1, max_length=256)
+    group: EpisodeGroup
+
+    @field_validator("pair_id")
+    @classmethod
+    def check_pair_id(cls, value):
+        if not value.strip() or value != value.strip() or any(ord(c) < 32 for c in value):
+            raise ValueError("Invalid pair identity")
+        return value
+
+
 class RuleBundle(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     format: Literal["crosswatch-mappings-blocks"]
-    version: Literal[1, 2]
+    version: Literal[1, 2, 3]
     records: list[TransferRule] = Field(max_length=MAX_RECORDS)
+    episode_groups: list[TransferGroup] = Field(default_factory=list, max_length=MAX_RECORDS)
+
+    @model_validator(mode="after")
+    def check_groups(self):
+        if self.version != 3 and self.episode_groups:
+            raise ValueError("Episode groups require version 3")
+        if len(self.records) + len(self.episode_groups) > MAX_RECORDS:
+            raise ValueError("Too many rules")
+        pairs: dict[str, list[dict[str, Any]]] = {}
+        for record in self.episode_groups:
+            pairs.setdefault(record.pair_id, []).append(record.group.model_dump())
+        for groups in pairs.values():
+            if len(groups) > 500:
+                raise ValueError("A pair supports at most 500 episode groups")
+            validate_groups(groups)
+        return self
+
+
+def authorize_groups(request, groups):
+    from api import editorAPI as api
+
+    cfg = api.load_config()
+    for record in groups:
+        group = record.group.model_dump()
+        pair = require_mapping_pair(cfg, request, record.pair_id, *endpoint(group["source"]), "history")
+        if pair is None:
+            raise HTTPException(404, "Sync pair not found for this provider instance and feature")
+        expected = [(str(pair.get(side) or "").upper(), normalize_instance_id(pair.get(f"{side}_instance")))
+                    for side in ("source", "target")]
+        if [endpoint(group[side]) for side in ("source", "target")] != expected:
+            raise HTTPException(400, "Episode group providers and instances must match the saved sync pair")
+        for provider, instance in expected:
+            api._require_instance_scope(cfg, request, provider, instance)
 
 
 def authorize_rules(request, rules):
@@ -153,7 +200,7 @@ def delete_rule(request, rule: RuleIdentity):
 
 def export_rules(request, *, provider="", instance="", feature="", pair_id="", user_profile=""):
     from api import editorAPI as api
-    from cw_platform.access_policy import profile_instances_map, profile_allows_instance, user_can_access_pair
+    from cw_platform.access_policy import pair_profile_id, profile_instances_map, profile_allows_instance, user_can_access_pair
     from cw_platform.provider_instances import normalize_user_profile_id
 
     authorize_rules(request, [])
@@ -162,7 +209,7 @@ def export_rules(request, *, provider="", instance="", feature="", pair_id="", u
     if user_profile.strip() and not profile:
         raise HTTPException(400, "Invalid profile")
     scope = profile_instances_map(cfg, profile) if profile else {}
-    pairs = {str(p.get("id")) for p in cfg.get("pairs", []) if user_can_access_pair(cfg, user, p)}
+    pairs = {str(p.get("id")): p for p in cfg.get("pairs", []) if user_can_access_pair(cfg, user, p)}
     policy = api._load_policy()
     records: list[dict[str, Any]] = []
     for row in [*saved_corrections(policy), *saved_blocks(policy)]:
@@ -184,9 +231,31 @@ def export_rules(request, *, provider="", instance="", feature="", pair_id="", u
             record.update(item=deepcopy(node["adds"]["items"][identity.key]))
             record.update({key: row[key] for key in ("original", "original_key", "saved_at", "origin")})
         records.append(record)
-    if len(records) > MAX_RECORDS:
+    groups: list[dict[str, Any]] = []
+    if feature in ("", "history") and pair_id != "shared":
+        for saved_pair_id, scoped in (policy.get("pairs") or {}).items():
+            pair = pairs.get(saved_pair_id)
+            if (not pair or "history" not in (pair.get("features") or {})
+                    or (pair_id and saved_pair_id != pair_id)
+                    or (profile and pair_profile_id(pair) and pair_profile_id(pair) != profile)):
+                continue
+            expected = [(str(pair.get(side) or "").upper(), normalize_instance_id(pair.get(f"{side}_instance")))
+                        for side in ("source", "target")]
+            for group in validate_groups(scoped.get("episode_groups") or []):
+                ends = [endpoint(group[side]) for side in ("source", "target")]
+                if ends != expected or any(
+                    not api.user_can_access_instance(cfg, user, prov, inst)
+                    or (profile and not profile_allows_instance(scope, prov, inst)) for prov, inst in ends
+                ):
+                    continue
+                if not any((not provider or prov.casefold() == provider.casefold())
+                           and (not instance or inst == instance) for prov, inst in ends):
+                    continue
+                groups.append(dict(pair_id=saved_pair_id, group=group))
+    if len(records) + len(groups) > MAX_RECORDS:
         raise HTTPException(400, "Export is too large. Select a source or feature and try again.")
-    data = RuleBundle.model_validate(dict(format="crosswatch-mappings-blocks", version=2, records=records)).model_dump(exclude_none=True)
+    data = RuleBundle.model_validate(dict(format="crosswatch-mappings-blocks", version=3,
+                                         records=records, episode_groups=groups)).model_dump(exclude_none=True)
     content = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
     if len(content) > MAX_BYTES:
         raise HTTPException(400, "Export is too large. Select a source or feature and try again.")
@@ -211,6 +280,7 @@ def _typed_rules(bundle: RuleBundle) -> list[TransferRule]:
 def import_rules(request, bundle: RuleBundle):
     from api import editorAPI as api
     authorize_rules(request, bundle.records)
+    authorize_groups(request, bundle.episode_groups)
 
     def apply(policy):
         imported = skipped = 0
@@ -239,7 +309,29 @@ def import_rules(request, bundle: RuleBundle):
                         and rule.original_key.lower() not in {key.lower() for key in blocks}):
                     blocks.append(rule.original_key)
             imported += 1
-        return dict(ok=True, imported=imported, skipped=skipped)
+        groups_imported = groups_skipped = 0
+        for record in bundle.episode_groups:
+            scoped = policy.setdefault("pairs", {}).setdefault(record.pair_id, {"version": 1, "providers": {}})
+            groups = scoped.setdefault("episode_groups", [])
+            incoming = record.group.model_dump()
+            existing = next((group for group in groups if group.get("id") == incoming["id"]), None)
+            if existing is not None:
+                if EpisodeGroup.model_validate(existing).model_dump() != incoming:
+                    raise ValueError("An episode group with this ID already has different settings")
+                groups_skipped += 1
+                continue
+            groups.append(incoming)
+            groups_imported += 1
+        for pair_id, scoped in (policy.get("pairs") or {}).items():
+            groups = scoped.get("episode_groups") or []
+            if len(groups) > 500:
+                raise ValueError("A pair supports at most 500 episode groups")
+            check_corrections(policy, pair_id, validate_groups(groups))
+        return dict(ok=True, imported=imported, skipped=skipped,
+                    groups_imported=groups_imported, groups_skipped=groups_skipped)
 
-    _, result = manual_policy.update_policy(api._STATE_BASE, apply)
+    try:
+        _, result = manual_policy.update_policy(api._STATE_BASE, apply)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
     return result

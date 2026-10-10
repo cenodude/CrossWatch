@@ -2641,6 +2641,14 @@ class _AnalysisContext:
     history_identity_items: dict[str, dict[str, list[tuple[str, Mapping[str, Any]]]]] = field(default_factory=dict)
     anime_coords: _AnimeHistoryCoords | None = None
     anime_eligibility: dict[tuple[str, str, str], dict[int, bool]] = field(default_factory=dict)
+    episode_groups: Any = None
+
+    def groups(self):
+        if self.episode_groups is None:
+            from services.analyzer_episode_groups import AnalyzerEpisodeGroups
+
+            self.episode_groups = AnalyzerEpisodeGroups(self)
+        return self.episode_groups
 
     def passes_anime_filter(self, src: str, feat: str, dst: str, item: dict[str, Any]) -> bool:
         target = _provider_base(dst).lower()
@@ -2706,6 +2714,8 @@ def _history_peer_matches(ctx: _AnalysisContext, src: str, dst: str) -> dict[str
     def prepared(provider: str, *, source: bool) -> dict[str, Any]:
         out = {}
         for key, item in ctx.history_keys.get(provider, {}).items():
+            if ctx.groups().contains(provider, dst if source else src, item):
+                continue
             if source and (
                 not _passes_pair_lib_filter(ctx.pair_libs, src, "history", dst, item)
                 or not _passes_pair_type_filter(ctx.pair_types, src, "history", dst, item)
@@ -2755,6 +2765,11 @@ def _target_peer_match(
     # For history episodes/seasons, exact show+season+episode identity wins over
     # generic alias overlap: provider episode IDs differ across Emby/Jellyfin.
     if feat_key == "history":
+        group = ctx.groups().match(prov_key, dst_key, item)
+        if group:
+            return "episode_group_" + group["status"]
+        if ctx.groups().contains(dst_key, prov_key, item):
+            return ""
         if (prov_key, dst_key) in ctx.history_rewatch_pairs:
             return "history_event" if item_key in _history_peer_matches(ctx, prov_key, dst_key) else ""
         alias_dest = _alias_peer_key(ctx, prov_key, dst_key, item_key, item)
@@ -2784,6 +2799,8 @@ def _history_time_differences(
     tokens = _history_event_tokens(item)
     differences = []
     for dst in targets:
+        if ctx.groups().match(_norm_prov_token(prov), _norm_prov_token(dst), item):
+            continue
         if (_norm_prov_token(prov), _norm_prov_token(dst)) not in ctx.history_rewatch_pairs:
             continue
         if dst not in ctx.history_identity_items:
@@ -2816,7 +2833,8 @@ def _target_has_peer(
     item: dict[str, Any],
     dst: str,
 ) -> bool:
-    return bool(_target_peer_match(ctx, prov, feat, item_key, item, dst))
+    match = _target_peer_match(ctx, prov, feat, item_key, item, dst)
+    return bool(match) and match not in {"episode_group_pending", "episode_group_waiting", "episode_group_held"}
 
 
 def _eligible_targets(ctx: _AnalysisContext, prov: str, feat: str, item: dict[str, Any]) -> list[str]:
@@ -2842,7 +2860,7 @@ def _missing_targets(
     return [
         dst
         for dst in _eligible_targets(ctx, prov, feat, item)
-        if not _target_has_peer(ctx, prov, feat, item_key, item, dst)
+        if _target_peer_match(ctx, prov, feat, item_key, item, dst) in {"", "episode_group_pending"}
     ]
 
 def _has_peer_by_pairs(
@@ -2900,6 +2918,7 @@ def _pair_stats(
             total = 0
             synced = 0
             anime_synced = 0
+            group_waiting = group_held = group_synced = 0
 
             for k, v in src_items.items():
                 if not isinstance(v, dict):
@@ -2911,8 +2930,14 @@ def _pair_stats(
 
                 total += 1
                 match = _target_peer_match(analysis, prov, feat, k, v, dst)
-                if match:
+                if match == "episode_group_waiting":
+                    group_waiting += 1
+                elif match == "episode_group_held":
+                    group_held += 1
+                elif match and match != "episode_group_pending":
                     synced += 1
+                if match == "episode_group_synced":
+                    group_synced += 1
                 if match == "anime_coords":
                     anime_synced += 1
 
@@ -2922,10 +2947,12 @@ def _pair_stats(
                 "feature": feat,
                 "total": total,
                 "synced": synced,
-                "unsynced": max(total - synced, 0),
+                "unsynced": max(total - synced - group_waiting - group_held, 0),
             }
             if anime_synced:
                 rec["anime_synced"] = anime_synced
+            if group_synced or group_waiting or group_held:
+                rec.update(episode_group_synced=group_synced, episode_group_waiting=group_waiting, episode_group_held=group_held)
             stats.append(rec)
     return stats
 
@@ -3225,6 +3252,7 @@ def _history_normalization_issues(
                 items = {
                     k: row for k, row in (_bucket(s, provider, "history") or {}).items()
                     if isinstance(row, dict)
+                    and not analysis.groups().contains(provider, peer, row)
                     and analysis.passes_anime_filter(provider, "history", peer, row)
                     and _passes_pair_type_filter(analysis.pair_types, a, "history", b, row)
                     and (provider != a or _passes_pair_lib_filter(analysis.pair_libs, a, "history", b, row))
@@ -3790,6 +3818,7 @@ def _attention_model(
             "episode": row.get("episode"),
             "ids": row.get("ids") or {},
             "watch_time_differences": row.get("watch_time_differences") or [],
+            "episode_groups": row.get("episode_groups") or [],
         }
         targets = row.get("targets") or []
         if not targets:
@@ -3819,6 +3848,7 @@ def _attention_model(
                 "reason_message": rec.get("reason_message"),
                 "item": rec.get("item") or {},
                 "retry_blocked": bool(rec.get("retry_blocked")),
+                "episode_groups": rec.get("episode_groups") or [],
             },
         )
 
@@ -3904,6 +3934,7 @@ def _attention_mismatch_rows(problems: Iterable[Mapping[str, Any]]) -> list[dict
                 "episode": p.get("episode"),
                 "ids": p.get("ids") or {},
                 "watch_time_differences": p.get("watch_time_differences") or [],
+                "episode_groups": p.get("episode_groups") or [],
             }
         )
     return rows
@@ -3961,6 +3992,20 @@ def _anime_resolved_unresolved(ctx: _AnalysisContext | None, rec: Mapping[str, A
     return False
 
 
+def _retry_episode_group(ctx, rec):
+    if ctx is None or rec.get("feature") != "history" or is_remove_retry(rec):
+        return None
+    item = rec.get("item")
+    if not isinstance(item, Mapping) or not item:
+        return None
+    routes = [(src, dst) for (src, feat), targets in ctx.pairs.items() if feat == "history" for dst in targets
+              if _provider_base(dst) == _provider_base(rec.get("provider"))
+              and (rec.get("instance") is None or _split_prov_token(dst)[1] == rec["instance"])]
+    if len(routes) != 1:
+        return None
+    return ctx.groups().match(*routes[0], item)
+
+
 def _attention_from_analysis(
     problems: Iterable[Mapping[str, Any]],
     allowed_scopes: set[str] | None,
@@ -3984,8 +4029,16 @@ def _attention_from_analysis(
 
     anime_resolved = 0
     history_resolved = 0
+    group_resolved = 0
     kept: list[dict[str, Any]] = []
     for rec in records:
+        group = _retry_episode_group(ctx, rec)
+        if group:
+            if group["status"] == "synced":
+                group_resolved += 1
+            else:
+                kept.append({**rec, "episode_groups": [group]})
+            continue
         if _history_resolved_unresolved(ctx, rec):
             history_resolved += 1
             continue
@@ -3999,6 +4052,8 @@ def _attention_from_analysis(
         out["counts"]["anime_resolved"] = anime_resolved
     if history_resolved:
         out["counts"]["history_resolved"] = history_resolved
+    if group_resolved:
+        out["counts"]["episode_group_resolved"] = group_resolved
     return out
 
 
@@ -4185,6 +4240,11 @@ def _problems(
                     **({"manual_ref": _MANUAL_POLICY_REF} if blocked else {}),
                 }
                 time_differences = _history_time_differences(analysis, prov, feat, v, missing_targets)
+                group_details = [group for dst in missing_targets
+                                 if feat == "history" and (group := analysis.groups().match(prov, dst, v))]
+                if group_details:
+                    prob["episode_groups"] = group_details
+                    prob["message"] = " ".join(group["message"] for group in group_details)
                 if time_differences:
                     prob["watch_time_differences"] = time_differences
                 if tracker_to_media and not blocked:
@@ -4207,13 +4267,16 @@ def _problems(
                     _th = time.perf_counter()
                     details = _missing_peer_show_hints(feat, v, missing_targets, analysis.history_show_index)
                     time_targets = {entry["target"] for entry in time_differences}
-                    details = [entry for entry in details if entry["target"] not in time_targets]
+                    group_targets = {group["target"] for group in group_details}
+                    details = [entry for entry in details if entry["target"] not in time_targets | group_targets]
                     hint_seconds += time.perf_counter() - _th
                     if blocked:
                         details = ([{"target": "ALL", "feature": feat, "message": f"Blocked by {_MANUAL_POLICY_REF}."}] + (details or []))
                     if details:
                         prob["target_show_info"] = details
                 probs.append(prob)
+
+    probs.extend(analysis.groups().problems)
 
     for p, f, k, it in _iter_items(s):
         if (analysis_scope or analysis.cfg.get("_analyzer_pairs_selected")) and (_norm_prov_token(p), f) not in analysis_scope:
@@ -4641,8 +4704,16 @@ def _cached_scoped_rows(pairs_raw: str | None) -> tuple[list[dict[str, Any]], di
     if len(ids) > 1:
         rows = [row for pid in ids for row in _cached_scoped_rows(pid)[0]]
     else:
-        state, _context, _allowed, selected_cfg, _timings = _load_analysis_state(pairs_raw)
+        state, context, _allowed, selected_cfg, _timings = _load_analysis_state(pairs_raw)
         rows = _scoped_item_rows(state, selected_cfg)
+        for row in rows:
+            if row["feature"] != "history":
+                continue
+            item = (_bucket(state, row["provider"], "history") or {}).get(row["key"], {})
+            groups = [group for dst in context.pairs.get((row["provider"], "history"), [])
+                      if (group := context.groups().match(row["provider"], dst, item))]
+            if groups:
+                row["episode_groups"] = groups
         if ids:
             rows = [{**row, "pair_id": ids[0]} for row in rows]
     result = (rows, _counts_from_rows(rows))
@@ -4674,6 +4745,9 @@ def _cached_analysis(pairs_raw: str | None, *, include_system: bool = False, inc
             attention_rows = [row for result in results for row in result["attention"]["rows"]]
             counts = {key: sum(result["attention"]["counts"].get(key, 0) for result in results)
                       for key in ("current_mismatch", "pending_retry", "blocked", "total")}
+            group_resolved = sum(result["attention"]["counts"].get("episode_group_resolved", 0) for result in results)
+            if group_resolved:
+                counts["episode_group_resolved"] = group_resolved
             result = {"problems": problems, "summary": _diagnostic_summary(problems),
                       "attention": {"rows": attention_rows, "counts": counts},
                       "timings_ms": {"cache_hit": False}}
@@ -4773,6 +4847,7 @@ def _detail_for_item(pairs_raw: str | None, provider: str, feature: str, key: st
             "hints": [{**hint, "pair_id": pid} for pid, part in parts for hint in part["hints"]],
             "target_show_info": [{**hint, "pair_id": pid} for pid, part in parts for hint in part["target_show_info"]],
             "watch_time_differences": [{**hint, "pair_id": pid} for pid, part in parts for hint in part.get("watch_time_differences", [])],
+            "episode_groups": [{**group, "pair_id": pid} for pid, part in parts for group in part.get("episode_groups", [])],
         }
     state, context, allowed, _cfg_sel, _tim = _load_analysis_state(pairs_raw)
     prov_key = _norm_prov_token(provider)
@@ -4792,6 +4867,9 @@ def _detail_for_item(pairs_raw: str | None, provider: str, feature: str, key: st
     blocked = bool(blocks and any(kk in blocks for kk in [key, *alias_keys]))
 
     hints = _missing_peer_hints(_unresolved_index(allowed), feat_key, alias_keys, missing_targets, blocked, key)
+    group_details = [group for dst in context.pairs.get((prov_key, feat_key), [])
+                     if feat_key == "history" and (group := context.groups().match(prov_key, dst, it))]
+    hints.extend(dict(kind="episode_group", **group) for group in group_details)
     if missing_targets:
         anime_hint = _anime_history_hint(context, feat_key, it)
         if anime_hint:
@@ -4799,10 +4877,12 @@ def _detail_for_item(pairs_raw: str | None, provider: str, feature: str, key: st
     details = _missing_peer_show_hints(feat_key, it, missing_targets, context.history_show_index)
     time_differences = _history_time_differences(context, prov_key, feat_key, it, missing_targets)
     time_targets = {entry["target"] for entry in time_differences}
-    details = [entry for entry in details if entry["target"] not in time_targets]
+    group_targets = {group["target"] for group in group_details}
+    details = [entry for entry in details if entry["target"] not in time_targets | group_targets]
     if blocked:
         details = ([{"target": "ALL", "feature": feat_key, "message": f"Blocked by {_MANUAL_POLICY_REF}."}] + details)
-    return {"targets": missing_targets, "hints": hints, "target_show_info": details, "watch_time_differences": time_differences}
+    return {"targets": missing_targets, "hints": hints, "target_show_info": details,
+            "watch_time_differences": time_differences, "episode_groups": group_details}
 
 _STREAM_GRACE_SECONDS = 5.0
 _STREAM_HEARTBEAT_SECONDS = 10.0

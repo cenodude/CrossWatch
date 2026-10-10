@@ -157,6 +157,7 @@ def merge_sources(feature: str, sources: Sequence[Mapping[str, Any]]) -> tuple[d
 
 def merged_view(kind: str, request: Any = None) -> dict[str, Any]:
     from api import editorAPI as api
+    from services.episode_groups import editor_badges, editor_group_index
 
     feature = api._normalize_kind(kind)
     cfg = api.load_config() or {}
@@ -203,6 +204,9 @@ def merged_view(kind: str, request: Any = None) -> dict[str, Any]:
     sources = [api._load_state_items(feature, target["provider"], target["instance"], raw_state=raw_state)
                for target in targets]
     items, presence = merge_sources(feature, sources)
+    group_badges = editor_badges(items, editor_group_index(cfg, request, raw_policy, feature),
+        {key: [(targets[entry[0]]["provider"], targets[entry[0]]["instance"]) for entry in rows]
+         for key, rows in presence.items()})
     used = {entry[0] for rows in presence.values() for entry in rows}
     keep = [index for index, target in enumerate(targets) if target["can_send"] or index in used]
     remap = {old: new for new, old in enumerate(keep)}
@@ -218,6 +222,7 @@ def merged_view(kind: str, request: Any = None) -> dict[str, Any]:
         "count": len(items),
         "items": items,
         "presence": presence,
+        "episode_groups": group_badges,
         "targets": [targets[index] for index in keep],
         "profile": profile_id,
         "profile_label": profile_label_for_id(cfg, profile_id) if profile_id else "",

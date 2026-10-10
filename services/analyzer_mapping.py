@@ -73,6 +73,12 @@ def mapping_row(payload, request):
     if len(candidates) != 1:
         raise HTTPException(409, "The original source item could not be identified uniquely. Refresh the pair’s snapshots and analyze again.")
     row = candidates[0]
+    if row["feature"] == "history":
+        _state, context, _allowed, _cfg, _timings = an._load_analysis_state(payload.pair_id)
+        source = an._prov_token(row["source"], row["source_instance"])
+        target = an._prov_token(row["provider"], row["instance"])
+        if context.groups().contains(source, target, row["item"]):
+            raise HTTPException(409, "This episode belongs to an episode group. Edit it in Editor → Mappings & blocks → Episode groups.")
     if row["item"].get("type") not in {"movie", "show", "anime", "season", "episode"}:
         raise HTTPException(400, "This item cannot be mapped")
     version = hashlib.sha256(json.dumps(row, sort_keys=True, default=str).encode()).hexdigest()
