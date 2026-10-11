@@ -3,6 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude
 from __future__ import annotations
 
+from ._path_matching import enrich_snapshot, path_presence
+
 import hashlib
 import json
 import os
@@ -41,7 +43,7 @@ def _error(event: str, **fields: Any) -> None:
 def _log(msg: str) -> None:
     _dbg(msg)
 
-__VERSION__ = "2.6"
+__VERSION__ = "2.7"
 os.environ.setdefault("CW_PLEX_UA", http_user_agent("Plex", override_env="CW_PLEX_UA"))
 __all__ = ["get_manifest", "PLEXModule", "PLEXClient", "PLEXError", "PLEXAuthError", "PLEXNotFound", "OPS"]
 
@@ -286,6 +288,7 @@ def _adapter_identity(cfg: Mapping[str, Any]) -> str:
 
     behavior = {
         "pair_scope": cfg.get("_cw_pair_scope"),
+        "path_matching": cfg.get("_cw_path_matching"),
         "provider_instance": cfg.get("_cw_provider_instance"),
         "readonly": cfg.get("_cw_readonly"),
         "planned_at": cfg.get("_cw_interactive_planned_at"),
@@ -1219,6 +1222,7 @@ def _features_flags() -> dict[str, bool]:
 class PLEXModule:
     def __init__(self, cfg: Mapping[str, Any]):
         self.config = cfg
+        self.path_matching = coerce_bool(cfg.get("_cw_path_matching", False))
         plex_cfg = dict(cfg.get("plex") or {})
         pms = plex_cfg.get("pms") or {}
         baseurl = plex_cfg.get("baseurl") or plex_cfg.get("server_url") or pms.get("url") or pms.get("baseurl") or pms.get("server_url")
@@ -1451,7 +1455,7 @@ class PLEXModule:
             _info("index_skipped", feature=feature, reason="disabled_or_missing")
             return {}
         mod = _FEATURES.get(feature)
-        return mod.build_index(self, **kwargs) if mod else {}
+        return enrich_snapshot(self, mod.build_index(self, **kwargs) if mod else {}, "PLEX", feature)
 
     def add(
         self,
@@ -1535,7 +1539,10 @@ class PLEXModule:
     def library_presence(self, feature: str, items: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
         from .plex import _presence
 
-        return _presence.presence(self, items, feature=(feature or "history").lower())
+        rows = list(items)
+        feature = (feature or "history").lower()
+        results = _presence.presence(self, rows, feature=feature)
+        return path_presence(self, rows, results, "PLEX", feature)
 
 
 class _PlexOPS:

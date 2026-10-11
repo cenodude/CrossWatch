@@ -3,6 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from cw_platform.path_matching import media_paths
+
 import json
 import hashlib
 import os
@@ -1126,6 +1128,7 @@ def normalize(obj: Any) -> dict[str, Any]:
         "year": getattr(obj, "year", None),
         "ids": ids,
         "guid": getattr(obj, "guid", None),
+        "media_paths": media_paths(obj),
     }
     lid = _safe_int(
         getattr(obj, "librarySectionID", None)
@@ -1209,6 +1212,7 @@ def normalize_discover_row(
         "title": row.get("title"),
         "year": row.get("year"),
         "guid": row.get("guid"),
+        "media_paths": media_paths(row),
         "ids": ids,
     }
     lid = (

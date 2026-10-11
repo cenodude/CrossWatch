@@ -2,6 +2,8 @@
 # Plex Module for history synchronization
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
+
+from .._path_matching import path_fallback, resolve_path
 from cw_platform.interactive_reads import retained_read, replace_retained, replaying
 
 from concurrent.futures import ThreadPoolExecutor
@@ -322,6 +324,7 @@ class HistoryCatalog:
             "year": entry.get("year"),
             "library_id": entry.get("library_id"),
             "ids": dict(entry.get("ids") or {}),
+            "media_paths": list(entry.get("media_paths") or []),
             "guids": [str(g).lower() for g in (entry.get("guids") or []) if g],
             "show_rk": (str(entry.get("show_rk")).strip() if entry.get("show_rk") else None),
             "show_ids": dict(entry.get("show_ids") or {}),
@@ -471,6 +474,7 @@ def _catalog_entry_to_minimal(e: Mapping[str, Any]) -> dict[str, Any]:
     if e.get("rk"):
         ids.setdefault("plex", str(e.get("rk")))
     row["ids"] = {k: v for k, v in ids.items() if v}
+    row["media_paths"] = list(e.get("media_paths") or [])
     if e.get("title") is not None:
         row["title"] = e.get("title")
     if e.get("year") is not None:
@@ -963,6 +967,7 @@ def _live_watched_entry(meta: Mapping[str, Any], ts: int | None) -> dict[str, An
         "library_id": meta.get("library_id"),
         "ids": ids,
         "show_ids": show_ids,
+        "media_paths": list(meta.get("media_paths") or []),
         "show_rk": show_ids.get("plex"),
         "season": meta.get("season"),
         "episode": meta.get("episode"),
@@ -1779,6 +1784,17 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 continue
 
             rk, klass = cat.resolve(item, strict=write_strict)
+            if getattr(adapter, "path_matching", False) and not rk and klass == CLASS_SHOW_MATCHED_EPISODE_MISSING:
+                _ensure_episode_catalog()
+                rk, klass = cat.resolve(item, strict=write_strict)
+
+            if not rk and klass != CLASS_RESOLVE_AMBIGUOUS:
+                rk, path_reason = resolve_path(adapter, item, "PLEX", "history")
+                if rk:
+                    entry = cat.by_rk.get(rk) or {}
+                    klass = CLASS_IN_CATALOG_WATCHED if entry.get("watched") else CLASS_IN_CATALOG_UNWATCHED
+                elif path_reason in {"path_ambiguous", "path_id_conflict"}:
+                    klass = CLASS_RESOLVE_AMBIGUOUS
             _maybe_trace(cat, item, strict=write_strict, shadow_ignored=True)
 
             if klass == CLASS_IN_CATALOG_WATCHED and rk:
@@ -1925,6 +1941,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
 def _has_matchable_ids(ids: Mapping[str, Any]) -> bool:
     return has_external_ids(ids)
 
+@path_fallback("PLEX", "history")
 def _resolve_rating_key(adapter: Any, item: Mapping[str, Any], *, strict: bool | None = None) -> str | None:
     ids = ids_from(item)
     show_ids = extract_show_ids(item)

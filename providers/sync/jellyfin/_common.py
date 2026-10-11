@@ -2,6 +2,9 @@
 # JELLYFIN Module for common functions
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
+
+from cw_platform.path_matching import media_paths
+from .._path_matching import path_fallback
 from typing import Any, Mapping, Iterable, Sequence
 
 import json
@@ -538,7 +541,7 @@ def normalize(obj: Mapping[str, Any]) -> dict[str, Any]:
     ids = {k: v for k, v in _ids_from_provider_ids(pids).items() if v}
     jf_id = obj.get("Id") or (pids.get("jellyfin") if isinstance(pids, Mapping) else None)
     ids.pop("jellyfin", None)
-    row: dict[str, Any] = {"type": t, "title": title, "year": year, "ids": ids}
+    row: dict[str, Any] = {"type": t, "title": title, "year": year, "ids": ids, "media_paths": media_paths(obj)}
     
     if jf_id:
         row["jellyfin_item_id"] = str(jf_id)
@@ -1746,6 +1749,7 @@ def _path_match_item_id(
     return iid
 
 
+@path_fallback("JELLYFIN")
 def resolve_item_id(adapter: Any, it: Mapping[str, Any], *, feature: str = "history") -> str | None:
     http = adapter.client
     uid = adapter.cfg.user_id
@@ -2068,6 +2072,8 @@ def resolve_item_ids(adapter: Any, it: Mapping[str, Any], *, feature: str = "his
         return []
 
     one = resolve_item_id(adapter, it, feature=feature)
+    if getattr(adapter, "path_matching", False) and getattr(adapter, "_jellyfin_last_resolve_hint", None) in {"path_match", "path_ambiguous", "path_id_conflict"}:
+        return [str(one)] if one else []
     # Only movies expand to multiple copies below. Episode/show resolution is
     # already complete, including any necessary index fallback.
     if _lookup_type(it) != "movie":
