@@ -499,6 +499,11 @@ class _CrossWatchOPS:
     ) -> Mapping[str, dict[str, Any]]:
         return self._adapter(cfg).build_index(feature)
 
+    def watchlist_absent(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> list[bool]:
+        if not feat_watchlist:
+            raise RuntimeError("CrossWatch watchlist is unavailable")
+        return feat_watchlist.absent_flags(self._adapter(cfg), items)
+
     def add(
         self,
         cfg: Mapping[str, Any],

@@ -393,6 +393,18 @@ def _remove_viewings(cfg, feature, target, *, dry_run):
                 unresolved_keys=unresolved_keys, dry_run=dry_run)
 
 
+def _confirmed_absent(ops, view, provider, feature, records, absent_keys):
+    check = getattr(ops, "watchlist_absent", None)
+    if provider != "CROSSWATCH" or feature != "watchlist" or not absent_keys or not callable(check):
+        return []
+    try:
+        flags = check(view, [{**records[key], "key": key} for key in absent_keys])
+    except Exception:
+        LOG.warning("Editor removal could not confirm absent rows for %s", provider, exc_info=True)
+        return []
+    return [key for key, gone in zip(absent_keys, flags) if gone]
+
+
 def _remove_titles(cfg, feature, target, *, dry_run):
     from api import editorAPI as api
 
@@ -455,7 +467,8 @@ def _remove_titles(cfg, feature, target, *, dry_run):
                         still_watched[key] = survivors[0][1]
             if not result.get("ok", True) and not removed_keys:
                 LOG.warning("Editor removal was not confirmed for %s/%s", provider, instance)
-    if not dry_run and removed_keys:
+    stale_keys = [*removed_keys, *_confirmed_absent(ops, view, provider, feature, records, absent_keys)]
+    if not dry_run and stale_keys:
         state = sqlite_state.load_state_features(api._STATE_BASE, {feature})
         current = _items(state, provider, instance, feature)
         if single_watch:
@@ -482,8 +495,9 @@ def _remove_titles(cfg, feature, target, *, dry_run):
                                               checkpoint=(node.get(feature) or {}).get("checkpoint"))
         else:
             keys = [k for k, v in current.items() if any(
-                _matches(key, records[key], k, v, same_account=True, include_viewings=feature == "history") for key in removed_keys)]
-            sqlite_state.remove_baseline_items(api._STATE_BASE, provider, instance, feature, keys)
+                _matches(key, records[key], k, v, same_account=True, include_viewings=feature == "history") for key in stale_keys)]
+            if keys:
+                sqlite_state.remove_baseline_items(api._STATE_BASE, provider, instance, feature, keys)
     return dict(ok=not unresolved_keys, attempted=len(records), confirmed=len(removed_keys),
                 removed=len(removed_keys), skipped=len(absent_keys), unresolved=len(unresolved_keys), errors=0,
                 still_watched=len(still_watched),
