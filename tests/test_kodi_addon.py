@@ -838,3 +838,344 @@ def test_route_ratings_send_uses_the_sync_writer_and_anilist_for_movies(monkeypa
         ("plex", "P1", 7.0, route_ratings.OPS_SINKS),
         ("anilist", "default", "movie", {"title": "Arrival"}, {"imdb": "tt2543164"}, 7.0),
     ]
+
+
+def profile_cfg(routes: list[dict[str, Any]]) -> dict[str, Any]:
+    cfg = make_cfg(routes)
+    cfg["user_profiles"] = {"p-anna": {"label": "Anna B."}, "p-tom": {"label": "Tom"}}
+    return cfg
+
+
+def profile_route(route_id: str, profile_id: str, whitelist: list[str] | None = None) -> dict[str, Any]:
+    out = route(route_id, "default", whitelist)
+    out["profile_id"] = profile_id
+    return out
+
+
+def test_profile_route_takes_the_viewer_named_like_its_profile() -> None:
+    from providers.scrobble.routes import build_route_cfg_by_id
+
+    cfg = profile_cfg([profile_route("R1", "p-anna"), profile_route("R2", "p-tom"), profile_route("R3", "p-tom", ["grandpa"])])
+    r1 = build_route_cfg_by_id(cfg, "R1")
+    r3 = build_route_cfg_by_id(cfg, "R3")
+
+    assert addon.route_viewers(r1, ["anna b", "tom"]) == ["anna b"]
+    assert addon.route_viewers(r1, ["ANNAB"]) == ["ANNAB"]
+    assert addon.route_viewers(r1, ["anna"]) == []
+    assert addon.route_viewers(r3, ["tom", "grandpa"]) == ["grandpa"]
+    assert addon.route_account(r1, []) == (True, None)
+
+
+def test_profile_route_without_a_known_profile_takes_nobody() -> None:
+    from providers.scrobble.routes import build_route_cfg_by_id, route_needs_account_filter
+
+    cfg = profile_cfg([profile_route("R1", "p-anna")])
+    cfg["scrobble"]["watch"]["routes"][0]["provider"] = "plex"
+    plex_route = build_route_cfg_by_id(cfg, "R1")
+    assert addon.route_viewers(plex_route, ["anna b"]) == []
+    assert route_needs_account_filter(cfg, cfg["scrobble"]["watch"]["routes"][0]) is True
+
+    kodi = profile_cfg([profile_route("R1", "p-anna")])
+    assert route_needs_account_filter(kodi, kodi["scrobble"]["watch"]["routes"][0]) is False
+
+
+def test_dispatcher_lets_a_kodi_profile_route_match_by_profile_name() -> None:
+    from providers.scrobble.routes import build_route_cfg_by_id
+    from providers.scrobble.scrobble import Dispatcher
+
+    cfg = profile_cfg([profile_route("R1", "p-anna")])
+    route_cfg = build_route_cfg_by_id(cfg, "R1")
+    disp = Dispatcher([], cfg_provider=lambda: route_cfg)
+    item, _ = addon.build_event(playback("progress"), "default")
+    assert item is not None
+
+    def as_viewer(name: str | None) -> Any:
+        from dataclasses import replace
+
+        return replace(item.event, account=name)
+
+    assert disp._identity_allowed(as_viewer("Anna B"), route_cfg) is True
+    assert disp._identity_allowed(as_viewer("tom"), route_cfg) is False
+    assert disp._identity_allowed(as_viewer(None), route_cfg) is False
+
+    plex = profile_cfg([profile_route("R1", "p-anna")])
+    plex["scrobble"]["watch"]["routes"][0]["provider"] = "plex"
+    plex_cfg = build_route_cfg_by_id(plex, "R1")
+    assert Dispatcher([], cfg_provider=lambda: plex_cfg)._identity_allowed(as_viewer("Anna B"), plex_cfg) is False
+
+
+def test_ping_lists_the_people_with_a_route_on_this_kodi() -> None:
+    cfg = profile_cfg([profile_route("R1", "p-tom"), profile_route("R2", "p-anna"), profile_route("R3", "p-anna", ["nan"]), route("R4", "all")])
+    disps = {rid: FakeDispatcher() for rid in ("R1", "R2", "R3", "R4")}
+    out = addon.handle(make_app(cfg, disps), cfg, "default", {"event": "ping", "viewers": ["Anna B.", "tom", "nan"]})
+
+    assert out["people"] == [{"id": "p-anna", "name": "Anna B."}, {"id": "p-tom", "name": "Tom"}]
+    assert [(r["id"], r["viewers"]) for r in out["routes"]] == [("R1", ["tom"]), ("R2", ["Anna B."]), ("R3", ["nan"]), ("R4", ["Anna B.", "tom", "nan"])]
+
+    none = addon.handle(SimpleNamespace(state=SimpleNamespace(watch_groups={})), cfg, "default", {"event": "ping", "viewers": []})
+    assert none["people"] == [] and none["routes"] == []
+
+
+def test_playback_reaches_a_profile_route_without_a_whitelist() -> None:
+    cfg = profile_cfg([profile_route("R1", "p-anna"), profile_route("R2", "p-tom")])
+    disps = {"R1": FakeDispatcher(), "R2": FakeDispatcher()}
+    body = playback("progress")
+    body["viewers"] = ["anna b."]
+    out = addon.handle(make_app(cfg, disps), cfg, "default", body)
+
+    assert out["ignored"] is False
+    assert [e.account for e in disps["R1"].events] == ["anna b."]
+    assert disps["R2"].events == [] and disps["R2"].checked == []
+
+
+def _profile_route_cfg(labels: dict[str, str], profile_id: str) -> dict[str, Any]:
+    from providers.scrobble.routes import build_route_cfg_by_id
+
+    cfg = make_cfg([profile_route("R1", profile_id)])
+    cfg["user_profiles"] = {pid: {"label": label} for pid, label in labels.items()}
+    built = build_route_cfg_by_id(cfg, "R1")
+    assert built is not None
+    return built
+
+
+def _dispatcher_allows(route_cfg: dict[str, Any], name: str | None) -> bool:
+    from dataclasses import replace
+
+    from providers.scrobble.scrobble import Dispatcher
+
+    item, _ = addon.build_event(playback("progress"), "default")
+    assert item is not None
+    return Dispatcher([], cfg_provider=lambda: route_cfg)._identity_allowed(replace(item.event, account=name), route_cfg)
+
+
+@pytest.mark.parametrize("label", ["\u738b\u660e", "!!!", "\u00c9lo\u00efse"])
+def test_profile_label_outside_ascii_never_lets_an_empty_viewer_in(label: str) -> None:
+    route_cfg = _profile_route_cfg({"p-x": label}, "p-x")
+
+    assert addon.route_viewers(route_cfg, [label]) == [label]
+    assert addon.route_viewers(route_cfg, ["someone else"]) == []
+    assert _dispatcher_allows(route_cfg, label) is True
+    assert _dispatcher_allows(route_cfg, None) is False
+    assert _dispatcher_allows(route_cfg, "") is False
+    assert _dispatcher_allows(route_cfg, "   ") is False
+
+
+def test_empty_viewers_do_not_reach_a_profile_route_through_handle() -> None:
+    from providers.scrobble.scrobble import Dispatcher
+
+    cfg = make_cfg([profile_route("R1", "p-x")])
+    cfg["user_profiles"] = {"p-x": {"label": "\u738b\u660e"}}
+    from providers.scrobble.routes import build_route_cfg_by_id
+
+    real = Dispatcher([], cfg_provider=lambda: build_route_cfg_by_id(cfg, "R1"))
+    body = playback("progress")
+    body["viewers"] = []
+    out = addon.handle(make_app(cfg, {"R1": real}), cfg, "default", body)
+    assert out["ignored"] is True and out["error"] == "no_matching_route"
+
+
+def test_profiles_that_look_alike_only_match_their_own_exact_name() -> None:
+    labels = {"p-a": "Anna B.", "p-b": "Annab"}
+    first = _profile_route_cfg(labels, "p-a")
+    second = _profile_route_cfg(labels, "p-b")
+
+    assert addon.route_viewers(first, ["Anna B.", "anna b.", "Annab", "anna b"]) == ["Anna B.", "anna b."]
+    assert addon.route_viewers(second, ["Anna B.", "annab", "ANNAB"]) == ["annab", "ANNAB"]
+    assert _dispatcher_allows(first, "Annab") is False
+    assert _dispatcher_allows(second, "Anna B.") is False
+
+    alone = _profile_route_cfg({"p-a": "Anna B."}, "p-a")
+    assert addon.route_viewers(alone, ["anna b", "ANNAB"]) == ["anna b", "ANNAB"]
+
+
+@pytest.mark.parametrize("label", ["id:anna", "uuid:anna"])
+def test_profile_label_is_a_name_and_never_a_selector(label: str) -> None:
+    route_cfg = _profile_route_cfg({"p-x": label}, "p-x")
+    assert addon.route_viewers(route_cfg, [label, "anna"]) == [label]
+    assert _dispatcher_allows(route_cfg, label) is True
+    assert _dispatcher_allows(route_cfg, "anna") is False
+
+
+WIDE_ANNA = chr(0xFF21) + chr(0xFF4E) + chr(0xFF4E) + chr(0xFF41)
+JOSE = "Jos" + chr(0xE9)
+JOSE_DECOMPOSED = "Jose" + chr(0x301)
+WANG = chr(0x738B) + chr(0x660E)
+
+
+def _real_route(cfg: dict[str, Any], route_id: str) -> Any:
+    from providers.scrobble.routes import build_route_cfg_by_id
+    from providers.scrobble.scrobble import Dispatcher
+
+    return Dispatcher([], cfg_provider=lambda: build_route_cfg_by_id(cfg, route_id))
+
+
+@pytest.mark.parametrize("label", ["!!!", WANG, "Anna"])
+def test_an_accepted_viewer_does_not_open_the_session_for_an_empty_one(label: str) -> None:
+    cfg = make_cfg([profile_route("R1", "p-x")])
+    cfg["user_profiles"] = {"p-x": {"label": label}}
+    app = make_app(cfg, {"R1": _real_route(cfg, "R1")})
+
+    named = playback("progress")
+    named["viewers"] = [label]
+    assert addon.handle(app, cfg, "default", named)["ignored"] is False
+
+    anonymous = playback("progress", percent=55.0)
+    anonymous["viewers"] = []
+    out = addon.handle(app, cfg, "default", anonymous)
+    assert out["ignored"] is True and out["error"] == "no_matching_route"
+
+
+def test_an_accepted_viewer_does_not_open_the_session_for_a_look_alike() -> None:
+    from dataclasses import replace
+
+    cfg = make_cfg([profile_route("R1", "p-a")])
+    cfg["user_profiles"] = {"p-a": {"label": "Anna B."}, "p-b": {"label": "Annab"}}
+    disp = _real_route(cfg, "R1")
+    item, _ = addon.build_event(playback("progress"), "default")
+    assert item is not None
+
+    assert disp.accepts(replace(item.event, account="Anna B.")) is True
+    assert disp.accepts(replace(item.event, account="Annab")) is False
+    assert disp.accepts(replace(item.event, account="")) is False
+    assert disp.accepts(replace(item.event, account=None)) is False
+
+
+def test_full_width_and_plain_profile_names_stay_apart() -> None:
+    labels = {"p-a": "Anna", "p-b": WIDE_ANNA}
+    plain = _profile_route_cfg(labels, "p-a")
+    wide = _profile_route_cfg(labels, "p-b")
+
+    assert addon.route_viewers(plain, ["Anna", WIDE_ANNA]) == ["Anna"]
+    assert addon.route_viewers(wide, ["Anna", WIDE_ANNA]) == [WIDE_ANNA]
+
+
+def test_two_profiles_with_the_same_name_in_two_accent_forms_take_nobody() -> None:
+    assert JOSE != JOSE_DECOMPOSED
+    labels = {"p-a": JOSE, "p-b": JOSE_DECOMPOSED}
+    first = _profile_route_cfg(labels, "p-a")
+    second = _profile_route_cfg(labels, "p-b")
+
+    assert addon.route_viewers(first, [JOSE, JOSE_DECOMPOSED]) == []
+    assert addon.route_viewers(second, [JOSE, JOSE_DECOMPOSED]) == []
+    assert _dispatcher_allows(first, JOSE) is False
+
+    alone = _profile_route_cfg({"p-a": JOSE}, "p-a")
+    assert addon.route_viewers(alone, [JOSE, JOSE_DECOMPOSED]) == [JOSE, JOSE_DECOMPOSED]
+
+
+def test_session_ids_and_names_with_a_bar_cannot_share_an_acceptance() -> None:
+    cfg = make_cfg([profile_route("R1", "p-x")])
+    cfg["user_profiles"] = {"p-x": {"label": "|"}}
+    app = make_app(cfg, {"R1": _real_route(cfg, "R1")})
+
+    named = playback("progress")
+    named["session_id"] = "s"
+    named["viewers"] = ["|"]
+    assert addon.handle(app, cfg, "default", named)["ignored"] is False
+
+    anonymous = playback("progress", percent=55.0)
+    anonymous["session_id"] = "s|"
+    anonymous["viewers"] = []
+    assert addon.handle(app, cfg, "default", anonymous)["error"] == "no_matching_route"
+
+
+def test_renaming_a_profile_drops_the_sessions_it_had_accepted() -> None:
+    from dataclasses import replace
+
+    cfg = make_cfg([profile_route("R1", "p-x")])
+    cfg["user_profiles"] = {"p-x": {"label": "Anna"}}
+    disp = _real_route(cfg, "R1")
+    item, _ = addon.build_event(playback("progress"), "default")
+    assert item is not None
+    as_anna = replace(item.event, account="Anna")
+
+    assert disp.accepts(as_anna) is True
+    cfg["user_profiles"]["p-x"]["label"] = "Tom"
+    assert disp.accepts(as_anna) is False
+    assert disp.accepts(replace(item.event, account="Tom")) is True
+
+
+def test_changing_a_whitelist_drops_the_sessions_it_had_accepted() -> None:
+    from dataclasses import replace
+
+    cfg = make_cfg([route("R1", "anna", ["anna"])])
+    disp = _real_route(cfg, "R1")
+    item, _ = addon.build_event(playback("progress"), "default")
+    assert item is not None
+    as_anna = replace(item.event, account="anna")
+
+    assert disp.accepts(as_anna) is True
+    cfg["scrobble"]["watch"]["routes"][0]["filters"]["username_whitelist"] = ["tom"]
+    assert disp.accepts(as_anna) is False
+
+
+def test_an_identity_carried_in_the_event_does_not_open_the_session_for_one_without() -> None:
+    from dataclasses import replace
+
+    cfg = make_cfg([route("R1", "anna", ["anna"])])
+    disp = _real_route(cfg, "R1")
+    item, _ = addon.build_event(playback("progress"), "default")
+    assert item is not None
+    with_identity = replace(item.event, account=None, raw={**item.event.raw, "_cw_session_identity": {"name": "Anna"}})
+    without = replace(item.event, account=None)
+
+    assert disp.accepts(with_identity) is True
+    assert disp.accepts(without) is False
+    assert disp.accepts(with_identity) is True
+
+
+def _plex_like_route(whitelist: list[str]) -> tuple[Any, Any]:
+    cfg = make_cfg([route("R1", "anna", whitelist)])
+    cfg["scrobble"]["watch"]["routes"][0]["provider"] = "plex"
+    item, _ = addon.build_event(playback("progress"), "default")
+    assert item is not None
+    return _real_route(cfg, "R1"), item.event
+
+
+def test_an_accepted_account_id_does_not_open_the_session_for_an_event_without_one() -> None:
+    from dataclasses import replace
+
+    disp, event = _plex_like_route(["id:42"])
+    with_id = replace(event, account=None, raw={"PlaySessionStateNotification": [{"accountID": 42}]})
+    without = replace(event, account=None, raw={})
+
+    assert disp.accepts(with_id) is True
+    assert disp.accepts(without) is False
+    assert disp.accepts(with_id) is True
+
+
+def test_an_accepted_user_id_does_not_open_the_session_for_another_user_id() -> None:
+    from dataclasses import replace
+
+    disp, event = _plex_like_route(["id:42"])
+    first = replace(event, account=None, raw={"UserId": "42"})
+    second = replace(event, account=None, raw={"UserId": "99"})
+
+    assert disp.accepts(first) is True
+    assert disp.accepts(second) is False
+
+
+def test_an_accepted_alias_does_not_open_the_session_for_other_aliases() -> None:
+    from dataclasses import replace
+
+    disp, event = _plex_like_route(["Anna"])
+    first = replace(event, account=None, raw={"_cw_session_identity": {"user_aliases": ["Anna"]}})
+    second = replace(event, account=None, raw={"_cw_session_identity": {"user_aliases": ["Tom"]}})
+
+    assert disp.accepts(first) is True
+    assert disp.accepts(second) is False
+    assert disp.accepts(first) is True
+
+
+def test_an_accepted_server_does_not_open_the_session_for_another_spelling_of_it() -> None:
+    from dataclasses import replace
+
+    cfg = make_cfg([route("R1", "anna", ["anna"])])
+    cfg["scrobble"]["watch"]["routes"][0]["filters"]["server_uuid_whitelist"] = ["ServerA"]
+    disp = _real_route(cfg, "R1")
+    item, _ = addon.build_event(playback("progress"), "default")
+    assert item is not None
+    event = replace(item.event, account="anna")
+
+    assert disp.accepts(replace(event, server_uuid="ServerA")) is True
+    assert disp.accepts(replace(event, server_uuid="servera")) is False

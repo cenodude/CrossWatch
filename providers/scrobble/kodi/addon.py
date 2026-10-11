@@ -27,7 +27,7 @@ from cw_platform.config_base import CONFIG
 from cw_platform.provider_instances import get_provider_block, normalize_instance_id
 from providers.scrobble.currently_watching import update_from_event as _cw_update
 from providers.scrobble.currently_watching import update_from_payload as _cw_update_payload
-from providers.scrobble.routes import build_route_cfg_by_id
+from providers.scrobble.routes import build_route_cfg_by_id, route_profile_accepts
 from providers.scrobble.scrobble import ScrobbleEvent, mask_account
 from providers.scrobble.sources import source_enabled
 from providers.sync.kodi._common import EXTERNAL_ID_KEYS, is_placeholder_id, path_scope_status, strip_path_userinfo
@@ -595,8 +595,11 @@ def route_viewers(route_cfg: Mapping[str, Any] | None, viewers: list[str]) -> li
     if not watch.get("route_enabled", True):
         return []
     whitelist = _dict(watch.get("filters")).get("username_whitelist")
+    if not whitelist and _text(watch.get("route_profile_id")):
+        scoped = dict(route_cfg or {})
+        return [name for name in viewers if route_profile_accepts(scoped, name)]
     if not whitelist:
-        return [] if _text(watch.get("route_profile_id")) else list(viewers)
+        return list(viewers)
     return [name for name in viewers if media_account_allowed(whitelist, name, default_allow=False)]
 
 
@@ -647,6 +650,22 @@ def _route_rows(cfg: dict[str, Any], group: Any, viewers: list[str]) -> list[dic
             }
         )
     return rows
+
+
+def _route_people(cfg: dict[str, Any], group: Any) -> list[dict[str, str]]:
+    from cw_platform.access_policy import profile_label_for_id
+
+    people: dict[str, str] = {}
+    for runner in list(getattr(group, "routes", None) or []):
+        route_cfg = build_route_cfg_by_id(cfg, str(getattr(runner, "route_id", "") or ""))
+        watch = _watch_block(route_cfg)
+        if not isinstance(route_cfg, dict) or not watch.get("route_enabled", True):
+            continue
+        profile_id = _text(watch.get("route_profile_id"), 64)
+        name = _text(profile_label_for_id(route_cfg, profile_id), 80) if profile_id else ""
+        if profile_id and name:
+            people[profile_id] = name
+    return [{"id": pid, "name": name} for pid, name in sorted(people.items(), key=lambda row: (row[1].lower(), row[0]))]
 
 
 def _clear_card(event: ScrobbleEvent, instance_id: str) -> None:
@@ -852,6 +871,7 @@ def handle(app: Any, cfg: dict[str, Any], instance_id: Any, payload: Mapping[str
         out["instance"] = _instance_name(cfg, inst)
         group = _group(app, inst) if source_enabled(cfg, "watcher") else None
         out["routes"] = _route_rows(cfg, group, clean_viewers(body.get("viewers"))) if group is not None else []
+        out["people"] = _route_people(cfg, group) if group is not None else []
         if not source_enabled(cfg, "watcher"):
             return ignored("watcher_disabled")
         return out

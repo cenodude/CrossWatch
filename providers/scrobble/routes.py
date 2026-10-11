@@ -10,6 +10,7 @@ from cw_platform.provider_instances import get_provider_block, normalize_instanc
 DEFAULT_INSTANCE_ID = "default"
 ROUTE_PROVIDERS = {"plex", "emby", "jellyfin", "kodi", "scrob", "stremio"}
 ROUTE_SINGLE_ACCOUNT_PROVIDERS = {"stremio"}
+ROUTE_PROFILE_NAME_PROVIDERS = {"kodi"}
 ROUTE_SINKS = {"myanimelist", "kitsu", "plex", "jellyfin", "emby", "kodi", "trakt", "simkl", "mdblist", "crosswatch", "floppy", "punchplay", "bingebase", "flicklist", "wetrakr", "anilist", "scrob"}
 ROUTE_MEDIA_SINKS = {"plex", "jellyfin", "emby", "kodi"}
 ROUTE_RATING_SINKS = {"kitsu", "myanimelist", "trakt", "simkl", "mdblist", "crosswatch", "floppy", "punchplay", "flicklist", "wetrakr", "anilist", "scrob"}
@@ -262,10 +263,72 @@ def route_assigned_profile_id(cfg: dict[str, Any], route: dict[str, Any]) -> str
         return normalize_user_profile_id(raw)
 
 
+def _loose_profile_name(value: Any) -> str:
+    from cw_platform.account_match import normalize_media_account_name
+
+    return normalize_media_account_name(value)
+
+
+def _exact_profile_name(value: Any) -> str:
+    from cw_platform.account_match import exact_media_account_name
+
+    return exact_media_account_name(value)
+
+
+def route_profile_accepts(cfg: dict[str, Any], name: Any) -> bool | None:
+    watch = ((cfg or {}).get("scrobble") or {}).get("watch") if isinstance(cfg, dict) else None
+    if not isinstance(watch, dict):
+        return None
+    if str(watch.get("route_provider") or "").strip().lower() not in ROUTE_PROFILE_NAME_PROVIDERS:
+        return None
+    profile_id = normalize_user_profile_id(watch.get("route_profile_id"))
+    if not profile_id:
+        return None
+    try:
+        from cw_platform.provider_instances import list_user_profiles
+
+        labels = {normalize_user_profile_id(row.get("id")): str(row.get("label") or "").strip() for row in list_user_profiles(cfg)}
+    except Exception:
+        return None
+    label = labels.get(profile_id) or ""
+    if not label:
+        return None
+    wanted = _exact_profile_name(name)
+    if not wanted:
+        return False
+    exact = _exact_profile_name(label)
+    others = [other for other in labels.values() if other]
+    if sum(1 for other in others if _exact_profile_name(other) == exact) > 1:
+        return False
+    loose = _loose_profile_name(label)
+    if not loose or sum(1 for other in others if _loose_profile_name(other) == loose) > 1:
+        return wanted == exact
+    return _loose_profile_name(name) == loose
+
+
+def route_profile_signature(cfg: dict[str, Any]) -> list[str]:
+    watch = ((cfg or {}).get("scrobble") or {}).get("watch") if isinstance(cfg, dict) else None
+    if not isinstance(watch, dict):
+        return []
+    if str(watch.get("route_provider") or "").strip().lower() not in ROUTE_PROFILE_NAME_PROVIDERS:
+        return []
+    profile_id = normalize_user_profile_id(watch.get("route_profile_id"))
+    if not profile_id:
+        return []
+    try:
+        from cw_platform.provider_instances import list_user_profiles
+
+        rows = list_user_profiles(cfg)
+    except Exception:
+        return [profile_id]
+    return [profile_id, *sorted(f"{normalize_user_profile_id(row.get('id'))}={str(row.get('label') or '').strip()}" for row in rows)]
+
+
 def route_needs_account_filter(cfg: dict[str, Any], route: dict[str, Any]) -> bool:
     if not route_assigned_profile_id(cfg, route):
         return False
-    if str((route or {}).get("provider") or "").strip().lower() in ROUTE_SINGLE_ACCOUNT_PROVIDERS:
+    provider = str((route or {}).get("provider") or "").strip().lower()
+    if provider in ROUTE_SINGLE_ACCOUNT_PROVIDERS or provider in ROUTE_PROFILE_NAME_PROVIDERS:
         return False
     filters = (route or {}).get("filters")
     raw = filters.get("username_whitelist") if isinstance(filters, dict) else None

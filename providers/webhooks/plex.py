@@ -956,8 +956,7 @@ def _account_matches(
     if not allow_users:
         return True
 
-    def norm(s: str) -> str:
-        return re.sub(r"[^a-z0-9]+", "", (s or "").lower())
+    from cw_platform.account_match import media_account_names_match
 
     title = ((payload.get("Account") or {}).get("title") or "")
     acc_id = str((payload.get("Account") or {}).get("id") or "")
@@ -969,7 +968,7 @@ def _account_matches(
             return True
         if s.startswith("uuid:") and acc_uuid and s.split(":", 1)[1] == acc_uuid:
             return True
-        if not s.startswith(("id:", "uuid:")) and norm(e) == norm(title):
+        if not s.startswith(("id:", "uuid:")) and media_account_names_match(e, title):
             return True
     return False
 
