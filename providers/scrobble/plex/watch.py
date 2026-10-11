@@ -22,7 +22,7 @@ except Exception:
 
 from cw_platform.app_version import app_version, user_agent as http_user_agent
 from cw_platform.config_base import load_config, save_config
-from cw_platform.account_match import media_account_allowed, normalize_media_account_name
+from cw_platform.account_match import exact_media_account_name, media_account_allowed
 from cw_platform.provider_instances import ensure_instance_block, normalize_instance_id
 from providers.scrobble.scrobble import (
     Dispatcher,
@@ -396,7 +396,7 @@ class WatchService:
         self._stop = threading.Event()
         self._bg: threading.Thread | None = None
         self._psn_sessions: set[str] = set()
-        self._allowed_sessions: set[str] = set()
+        self._allowed_sessions: set[tuple[str, str, str]] = set()
         self._last_seen: dict[str, float] = {}
         self._last_emit: dict[str, tuple[str, float]] = {}
         self._attempt = 0
@@ -714,7 +714,7 @@ class WatchService:
         if not keep_stop:
             self._identity_logged.pop(sk, None)
         self._stop_sent.discard(sk)
-        self._allowed_sessions ={key for key in self._allowed_sessions if not key.startswith(f"{sk}|")}
+        self._allowed_sessions = {key for key in self._allowed_sessions if key[0] != sk}
         self._pkc_pending = {
             client: pending for client, pending in self._pkc_pending.items()
             if pending.get("session_key") != sk
@@ -1042,9 +1042,9 @@ class WatchService:
 
     def _passes_filters(self, ev: ScrobbleEvent) -> bool:
         sk = str(ev.session_key) if ev.session_key is not None else None
-        cache_key: str | None = None
+        cache_key: tuple[str, str, str] | None = None
         if sk:
-            cache_key = f"{sk}|{_norm_user(ev.account or '')}|{str(ev.server_uuid or '').strip().lower()}"
+            cache_key = (sk, _norm_user(ev.account or ""), str(ev.server_uuid or "").strip())
 
         cfg = self._active_cfg()
 
@@ -1834,8 +1834,7 @@ class WatchService:
             if ignore_reason:
                 log_media_filter_drop(ev, ignore_reason)
                 if sk:
-                    cache_key = f"{sk}|{_norm_user(ev.account or '')}|{str(ev.server_uuid or '').strip().lower()}"
-                    self._allowed_sessions.discard(cache_key)
+                    self._allowed_sessions.discard((sk, _norm_user(ev.account or ""), str(ev.server_uuid or "").strip()))
                 self._throttled_filtered_log(ev)
                 self._clear_currently_watching(ev)
                 return
@@ -2119,7 +2118,7 @@ def _emit(logger: Callable[..., None] | None, msg: str, level: str = "INFO") -> 
 
 
 def _norm_user(s: str) -> str:
-    return normalize_media_account_name(s)
+    return exact_media_account_name(s)
 
 
 def _account_key(payload: dict[str, Any]) -> str:

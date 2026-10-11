@@ -14,11 +14,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Literal, Protocol
 
-from cw_platform.account_match import media_account_allowed, normalize_media_account_name
+from cw_platform.account_match import exact_media_account_name, media_account_allowed
 from providers.scrobble._log_dedupe import LogDeduplicator
 from providers.scrobble.anime_mapping import maybe_enrich_event_for_sink, sink_name_for_mapping
 from providers.scrobble.media_filters import event_ignore_reason, log_media_filter_drop
 from providers.scrobble.routes import ROUTE_SINGLE_ACCOUNT_PROVIDERS as SINGLE_ACCOUNT_PROVIDERS
+from providers.scrobble.routes import route_profile_accepts, route_profile_signature
 
 try:
     from _logging import log as BASE_LOG
@@ -78,7 +79,7 @@ def _ids_from_meta(meta: dict[str, Any]) -> dict[str, str]:
 
 
 def _norm_user(s: str) -> str:
-    return normalize_media_account_name(s)
+    return exact_media_account_name(s)
 
 
 def _as_filter_set(value: Any) -> set[str]:
@@ -94,6 +95,66 @@ def _as_filter_set(value: Any) -> set[str]:
             if clean:
                 out.add(clean)
     return out
+
+
+def _find_user_id(o: Any) -> str:
+    if isinstance(o, dict):
+        for k, v in o.items():
+            if isinstance(k, str) and k.lower() in ("userid", "user_id"):
+                return str(v or "").strip().lower()
+        for v in o.values():
+            uid = _find_user_id(v)
+            if uid:
+                return uid
+    elif isinstance(o, list):
+        for v in o:
+            uid = _find_user_id(v)
+            if uid:
+                return uid
+    return ""
+
+
+def _find_psn(o: Any) -> list[dict[str, Any]] | None:
+    if isinstance(o, dict):
+        for k, v in o.items():
+            if isinstance(k, str) and k.lower() == "playsessionstatenotification":
+                return v if isinstance(v, list) else [v]
+        for v in o.values():
+            r = _find_psn(v)
+            if r:
+                return r
+    elif isinstance(o, list):
+        for v in o:
+            r = _find_psn(v)
+            if r:
+                return r
+    return None
+
+
+def _event_identity(ev: ScrobbleEvent) -> tuple[str, str, str, str, tuple[str, ...]]:
+    raw = ev.raw or {}
+    ident = raw.get("_cw_session_identity") if isinstance(raw, dict) else None
+    if not isinstance(ident, dict):
+        ident = {}
+
+    n = (_find_psn(raw) or [None])[0] or {}
+    if not isinstance(n, dict):
+        n = {}
+    acc_id = str(ident.get("account_id") or n.get("accountID") or "")
+    acc_uuid = str(ident.get("account_uuid") or n.get("accountUUID") or "").lower()
+    user_id = str(ident.get("user_id") or "").strip().lower() or _find_user_id(raw)
+    account = (
+        str(
+            ev.account
+            or ident.get("name")
+            or ident.get("user_name")
+            or ident.get("account_name")
+            or ""
+        ).strip()
+    )
+    found = ident.get("user_aliases")
+    aliases = tuple(alias for alias in found if isinstance(alias, str) and alias.strip()) if isinstance(found, list) else ()
+    return account, user_id, acc_id, acc_uuid, aliases
 
 
 def _server_uuid_allowed(filt: dict[str, Any], server_uuid: str | None) -> bool:
@@ -371,7 +432,8 @@ class Dispatcher:
     def __init__(self, sinks: Iterable[ScrobbleSink], cfg_provider=None) -> None:
         self._sinks = list(sinks or [])
         self._cfg_provider = cfg_provider or _load_config
-        self._session_ok: set[str] = set()
+        self._session_ok: set[tuple[str, ...]] = set()
+        self._filter_identity = ""
         self._debounce: dict[str, float] = {}
         self._last_action: dict[str, str] = {}
         self._last_progress: dict[str, float] = {}
@@ -530,9 +592,27 @@ class Dispatcher:
     def _passes_filters(self, ev: ScrobbleEvent, cfg: dict[str, Any]) -> bool:
         if not ((cfg.get("scrobble") or {}).get("watch") or {}).get("route_enabled", True):
             return False
-        cache_key: str | None = None
+        watch_cfg = (cfg.get("scrobble") or {}).get("watch") or {}
+        filter_identity = json.dumps(
+            [watch_cfg.get("filters"), watch_cfg.get("route_profile_id"), watch_cfg.get("route_provider"), route_profile_signature(cfg)],
+            sort_keys=True,
+            default=str,
+        )
+        if filter_identity != self._filter_identity:
+            self._session_ok.clear()
+            self._filter_identity = filter_identity
+        cache_key: tuple[str, ...] | None = None
         if ev.session_key:
-            cache_key = f"{ev.session_key}|{_norm_user(ev.account or '')}|{str(ev.server_uuid or '').strip().lower()}"
+            account, user_id, acc_id, acc_uuid, aliases = _event_identity(ev)
+            cache_key = (
+                str(ev.session_key),
+                str(ev.server_uuid or "").strip(),
+                _norm_user(account),
+                user_id,
+                acc_id,
+                acc_uuid,
+                *aliases,
+            )
 
         ignore_reason = event_ignore_reason(ev, cfg)
         if ignore_reason:
@@ -573,56 +653,7 @@ class Dispatcher:
         if not _server_uuid_allowed(filt, ev.server_uuid):
             return False
 
-        def find_user_id(o: Any) -> str:
-            if isinstance(o, dict):
-                for k, v in o.items():
-                    if isinstance(k, str) and k.lower() in ("userid", "user_id"):
-                        return str(v or "").strip().lower()
-                for v in o.values():
-                    uid = find_user_id(v)
-                    if uid:
-                        return uid
-            elif isinstance(o, list):
-                for v in o:
-                    uid = find_user_id(v)
-                    if uid:
-                        return uid
-            return ""
-
-        def find_psn(o: Any) -> list[dict[str, Any]] | None:
-            if isinstance(o, dict):
-                for k, v in o.items():
-                    if isinstance(k, str) and k.lower() == "playsessionstatenotification":
-                        return v if isinstance(v, list) else [v]
-                for v in o.values():
-                    r = find_psn(v)
-                    if r:
-                        return r
-            elif isinstance(o, list):
-                for v in o:
-                    r = find_psn(v)
-                    if r:
-                        return r
-            return None
-
-        raw = ev.raw or {}
-        ident = raw.get("_cw_session_identity") if isinstance(raw, dict) else None
-        if not isinstance(ident, dict):
-            ident = {}
-
-        n = (find_psn(raw) or [None])[0] or {}
-        acc_id = str(ident.get("account_id") or n.get("accountID") or "")
-        acc_uuid = str(ident.get("account_uuid") or n.get("accountUUID") or "").lower()
-        user_id = str(ident.get("user_id") or "").strip().lower() or find_user_id(raw)
-        account = (
-            str(
-                ev.account
-                or ident.get("name")
-                or ident.get("user_name")
-                or ident.get("account_name")
-                or ""
-            ).strip()
-        )
+        account, user_id, acc_id, acc_uuid, aliases = _event_identity(ev)
 
         resolved = bool(str(account or "").strip() or str(user_id or "").strip())
         identity = (account, user_id, acc_id, acc_uuid)
@@ -637,13 +668,21 @@ class Dispatcher:
         if provider in SINGLE_ACCOUNT_PROVIDERS:
             scoped = False
         if not wl and scoped:
-            self._log_filter_drop(ev, cfg, "profile_scoped_without_whitelist", identity, "WARNING")
-            return False
+            verdict = route_profile_accepts(cfg, account)
+            if verdict is None:
+                self._log_filter_drop(ev, cfg, "profile_scoped_without_whitelist", identity, "WARNING")
+                return False
+            if not verdict:
+                if resolved:
+                    self._log_filter_drop(ev, cfg, "profile_name", identity)
+                return False
+            if ev.session_key:
+                self._filter_log_state.discard((ev.server_uuid, ev.session_key))
+            return True
 
         accounts = [account]
-        aliases = ident.get("user_aliases")
-        if provider == "plex" and isinstance(aliases, list):
-            accounts.extend(alias for alias in aliases if isinstance(alias, str) and alias.strip())
+        if provider == "plex":
+            accounts.extend(aliases)
         if not any(
             media_account_allowed(wl, name, account_id=acc_id, account_uuid=acc_uuid, user_id=user_id, default_allow=not scoped)
             for name in accounts

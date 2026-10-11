@@ -9,7 +9,7 @@ import math
 import threading
 from dataclasses import replace
 
-from cw_platform.account_match import normalize_media_account_name
+from cw_platform.account_match import legacy_media_account_key
 from cw_platform.config_base import CONFIG_BASE
 from cw_platform.episode_groups import check_corrections, endpoint, matches, tokens, validate_groups
 from cw_platform.local_db import episode_groups as storage
@@ -124,7 +124,7 @@ def send_grouped(ev, cfg, send):
     if observed.get("mapping") == signature and observed.get("held"):
         return _skip("episode_group_unwatched_hold")
     delivery_scope = _hash({"id": group["id"], "mapping": signature, "direction": order,
-                           "account": normalize_media_account_name(ev.account), "server": ev.server_uuid,
+                           "account": legacy_media_account_key(ev.account), "server": ev.server_uuid,
                            "profile": str(watch.get("route_effective_profile_id") or "")})
     with _LOCKS[int(delivery_scope[:8], 16) % len(_LOCKS)]:
         state = storage.load_scrobble(base, scope, delivery_scope)
