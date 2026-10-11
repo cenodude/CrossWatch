@@ -13,7 +13,7 @@ export const HELP_TEXT = {
   "gl-bb-pair": "Blackbox: Pair scoped\nKeep blackbox decisions per pair instead of global.",
   "gl-bb-section": "Blackbox\nUnresolved is only a reporting state: items that fail to write are recorded, shown in diagnostics, and retried on every sync.\nBlackbox is the quarantine state and the only thing that stops an item from being planned again.",
   "gl-bb-promote": "Promote after (failed writes)\nNumber of consecutive failed write attempts before an item is moved to the blackbox.\nUntil then the item keeps being retried; unresolved alone never blocks it.",
-  "gl-section-main": "Globals\nThese are the overall safety and behavior settings for this connection. The defaults are good enough for most users, so only change them when you have a specific reason.",
+  "gl-section-main": "General\nMatching and Pair safety apply to this connection. The remaining safety and runtime controls are shared application settings. The defaults are good enough for most users, so only change them when you have a specific reason.",
   "gl-section-advanced": "Advanced\nThese are extra retention and blackbox safety controls. The defaults are good enough for most users, so you usually do not need to change anything here.",
 
   "cx-wl-enable": "Watchlist: Enable\nCompare watchlists and write missing items to the target.",
@@ -58,11 +58,11 @@ export const HELP_TEXT = {
   "cx-jf-wl-mode": "Jellyfin: Watchlist mode\nJellyfin has no native Watchlist. CrossWatch maps it to:\n• Favorites: sets the Favorite flag\n• Playlist: writes to a named playlist (episodes only; no shows)\n• Collections: writes to a named collection\nChanging mode does not move existing items.\nTip: Favorites or Collections are the most compatible.",
   "cx-em-wl-mode": "Emby: Watchlist mode\nEmby has no native Watchlist. CrossWatch maps it to:\n• Favorites: sets the Favorite flag\n• Playlist: writes to a named playlist (episodes only; no shows)\n• Collections: writes to a named collection\nChanging mode does not move existing items.\nTip: Favorites or Collections are the most compatible.",
 
-  "plx-marked-watched": "Plex: Marked watched\nInclude items you manually marked as watched in Plex when syncing history.\nDisable if you only want actual play history.",
-  "plx-strict-ids": "Plex: Strict ID matching\nWhen enabled, CrossWatch only matches by IDs (Plex IDs + external IDs). Title/year searches are disabled.",
-  "jf-strict-ids": "Jellyfin: Strict ID matching\nRequire Jellyfin or external IDs to confirm matches. Title searches and path matching are disabled.\nEpisodes can match by series ID plus season and episode numbers.",
+  "plx-marked-watched": "Plex: Marked watched\nApplies only to this pair. Include items you manually marked as watched in Plex when syncing history.\nDisable if you only want actual play history.",
+  "plx-strict-ids": "Plex: Strict ID matching\nWhen enabled, CrossWatch only matches by IDs (Plex IDs + external IDs). Title/year searches are disabled. The pair Match by file path option can separately enable a file-path fallback.",
+  "jf-strict-ids": "Jellyfin: Strict ID matching\nRequire Jellyfin or external IDs to confirm matches. Title searches and legacy full-path matching are disabled. The pair Match by file path option can separately enable a file-path fallback.\nEpisodes can match by series ID plus season and episode numbers.",
   "jf-targeted-lookup": "Jellyfin: Targeted library lookup\nMatch through a cached movie and series ID catalogue, then fetch episodes only for matched series.\nThe catalogue checks for metadata changes on each sync that needs matching and refreshes fully every 24 hours.\nDisable to allow a full episode index. Title and path fallback require Strict ID matching to be off.",
-  "em-strict-ids": "Emby: Strict ID matching\nWhen enabled, CrossWatch only matches by IDs (Emby IDs + external IDs). Title/year searches are disabled.",
+  "em-strict-ids": "Emby: Strict ID matching\nWhen enabled, CrossWatch only matches by IDs (Emby IDs + external IDs). Title/year searches are disabled. The pair Match by file path option can separately enable a file-path fallback.",
 };
 
 function normalizeHelpText(text) {

@@ -6,7 +6,7 @@ from __future__ import annotations
 import sqlite3
 import time
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 6
 
 ID_KEYS = (
     "tmdb",
@@ -612,6 +612,10 @@ def apply_schema(conn: sqlite3.Connection) -> int:
         conn.execute(_CREATE_SCHEMA_MIGRATIONS)
         conn.execute(_CREATE_STATE_META)
         conn.execute(_CREATE_LOCAL_META)
+        conn.execute("""CREATE TABLE IF NOT EXISTS media_path_catalogues (
+            cache_key TEXT PRIMARY KEY, revision TEXT, refreshed_at REAL NOT NULL,
+            items_json TEXT NOT NULL
+        )""")
         conn.execute(_CREATE_PROVIDER_FEATURE_STATE)
         conn.execute(_CREATE_BASELINE_ITEMS)
         conn.execute(_CREATE_PROVIDER_FEATURE_STATE.replace("provider_feature_state", "pair_feature_state").replace(
@@ -622,6 +626,8 @@ def apply_schema(conn: sqlite3.Connection) -> int:
         ))
         conn.execute("CREATE INDEX IF NOT EXISTS idx_pair_items_state_key ON pair_baseline_items(provider_state_id, item_key)")
         _ensure_column(conn, "baseline_items", "collected_at", "TEXT")
+        for table in ("baseline_items", "pair_baseline_items"):
+            _ensure_column(conn, table, "path_metadata_json", "TEXT")
         conn.execute(_CREATE_LAST_SYNC_SUMMARY)
         conn.execute(_CREATE_LAST_SYNC_FIELDS)
         conn.execute(_CREATE_LAST_SYNC_RESULT_METRICS)

@@ -22,6 +22,7 @@ from fastapi.responses import StreamingResponse
 
 from cw_platform.local_db import crosswatch_db_path
 from cw_platform.memory_release import clear_caches, release_memory
+from cw_platform.local_db import path_catalog
 from cw_platform.local_db.currently_watching import clear_streams as clear_currently_watching_streams
 from cw_platform.local_db.currently_watching import stream_count as currently_watching_stream_count
 from cw_platform.local_db.diagnostics import diagnostics as local_db_diagnostics
@@ -769,9 +770,11 @@ def maintenance_action_status(action: str) -> dict[str, Any]:
         retry_files = sum(1 for item in files if any(token in str(item.get("name") or "").lower() for token in retry_names))
         response.update(
             title="Retry provider items",
-            note="Clears provider runtime caches such as retry guards, phantom records and provider health. Sync aliases, mappings, history indexes, watermarks, tombstones and your custom anime mapping rules stay untouched.",
+            note="Clears provider runtime caches such as retry guards, phantom records, provider health and saved file-path catalogues. File-path catalogues rebuild when next needed. Sync aliases, mappings, history indexes, watermarks, tombstones and your custom anime mapping rules stay untouched.",
             metrics=[
                 _metric("Runtime files", len(files)),
+                _metric("Path catalogues", info["path_catalogues"]["count"]),
+                _metric("Path catalogue storage", info["path_catalogues"]["bytes"], "bytes"),
                 _metric("Retry / guard files", retry_files),
                 _metric("Storage", sum(int(item.get("size") or 0) for item in files), "bytes"),
                 _metric("Preserved files", len(CW_STATE_KEEP_FILES)),
@@ -967,13 +970,14 @@ def maintenance_action_status(action: str) -> dict[str, Any]:
     return response
 
 def _scan_provider_cache() -> dict[str, Any]:
-    _, _, CW_STATE_DIR, *_ = _cw()
+    _, CONFIG_DIR, CW_STATE_DIR, *_ = _cw()
     exists = CW_STATE_DIR.exists()
     out: dict[str, Any] = {
         "exists": exists,
         "root": str(CW_STATE_DIR),
         "files": [],
         "count": 0,
+        "path_catalogues": path_catalog.usage(CONFIG_DIR),
     }
     if not exists:
         return out
@@ -1462,21 +1466,22 @@ def crosswatch_tracker_clear(
 
 @router.post("/clear-cache")
 def clear_cache() -> dict[str, Any]:
-    _, _, CW_STATE_DIR, *_ = _cw()
+    _, CONFIG_DIR, CW_STATE_DIR, *_ = _cw()
 
     before = _scan_provider_cache()
     before_usage = {
         "files": len(before.get("files") or []),
-        "bytes": sum(int(item.get("size") or 0) for item in before.get("files") or []),
+        "bytes": sum(int(item.get("size") or 0) for item in before.get("files") or []) + before["path_catalogues"]["bytes"],
         "modified": None,
     }
+    removed_catalogues = path_catalog.clear(CONFIG_DIR)
     removed = _clear_cw_state_files()
     clear_caches()
     release_memory()
     after = _scan_provider_cache()
     after_usage = {
         "files": len(after.get("files") or []),
-        "bytes": sum(int(item.get("size") or 0) for item in after.get("files") or []),
+        "bytes": sum(int(item.get("size") or 0) for item in after.get("files") or []) + after["path_catalogues"]["bytes"],
         "modified": None,
     }
 
@@ -1486,7 +1491,7 @@ def clear_cache() -> dict[str, Any]:
         "removed": removed,
         "before": before,
         "after": after,
-        "summary": _cleanup_summary(before_usage, after_usage),
+        "summary": _cleanup_summary(before_usage, after_usage, removed_items=removed_catalogues),
     }
 
 

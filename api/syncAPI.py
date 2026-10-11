@@ -235,6 +235,9 @@ def _playlist_managed_pair(pair: Mapping[str, Any] | None) -> bool:
     return str(pl.get("managed_by") if isinstance(pl, Mapping) else "").strip().lower() == "playlists"
 
 def _enforce_pair_feature_constraints(pair: dict[str, Any]) -> None:
+    from cw_platform.path_matching import pair_enabled
+
+    pair["path_matching"] = pair_enabled(pair)
     src = str(pair.get("source") or "").strip().upper()
     dst = str(pair.get("target") or "").strip().upper()
     feats = pair.get("features")
@@ -2257,6 +2260,7 @@ class PairIn(BaseModel):
     target_instance: str | None = None
     mode: str | None = None
     enabled: bool | None = None
+    path_matching: bool | None = None
     providers: dict[str, Any] | None = None
     features: dict[str, Any] | None = None
     profile_id: str | None = None
@@ -2268,6 +2272,7 @@ class PairPatch(BaseModel):
     target_instance: str | None = None
     mode: str | None = None
     enabled: bool | None = None
+    path_matching: bool | None = None
     providers: dict[str, Any] | None = None
     features: dict[str, Any] | None = None
     profile_id: str | None = None

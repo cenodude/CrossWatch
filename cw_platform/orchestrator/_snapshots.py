@@ -107,7 +107,7 @@ def refresh_destination_after_apply(
         scope = pair_scope() or "unscoped"
         if canon:
             mode = "events" if bool((config or {}).get("_cw_history_rewatches")) and str(feature).lower() == "history" else "state"
-            memo_key = (scope, provider, feature, mode)
+            memo_key = (scope, provider, feature, mode, "paths" if config.get("_cw_path_matching") else "ids")
             if "_cw_provider_instance" in config:
                 memo_key += (str(config["_cw_provider_instance"]),)
             snap_cache[memo_key] = (time.time(), canon)
@@ -741,7 +741,7 @@ def build_snapshots_for_feature(
         emit_info(json.dumps(dict(event="snapshot:start", provider=name, feature=feature)))
         scope = pair_scope() or "unscoped"
         mode = "events" if bool((config or {}).get("_cw_history_rewatches")) and str(feature).lower() == "history" else "state"
-        memo_key = (scope, name, feature, mode)
+        memo_key = (scope, name, feature, mode, "paths" if config.get("_cw_path_matching") else "ids")
         if "_cw_provider_instance" in config:
             memo_key += (str(config["_cw_provider_instance"]),)
         if snap_ttl_sec > 0:

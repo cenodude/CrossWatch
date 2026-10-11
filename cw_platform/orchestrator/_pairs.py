@@ -2,6 +2,8 @@
 # CrossWatch - Main orchestration logic for data pair synchronization.
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
+
+from ..path_matching import pair_enabled
 from collections.abc import Mapping
 from typing import Any
 from contextlib import contextmanager
@@ -478,6 +480,7 @@ def run_pairs(ctx) -> dict[str, Any]:
             emit("pair:skip", pair_id=str(pair.get("id") or ""), src=src, dst=dst, reason="same_provider_instance")
             continue
         pair_cfg_view = build_pair_config_view(cfg, src, src_inst, dst, dst_inst)
+        pair_cfg_view["_cw_path_matching"] = pair_enabled(pair)
         pair_prov = pair.get("providers") or {}
         if isinstance(pair_prov, dict) and pair_prov:
             for pk, pv in pair_prov.items():
@@ -555,7 +558,8 @@ def run_pairs(ctx) -> dict[str, Any]:
                 prev_cfg = ctx.config
                 prev_store = ctx.state_store
                 ctx.state_store = prev_store.for_pair(scope, pair_id=str(pair.get("id") or ""))
-                ctx.config = {**_config_with_pair_feature_options(pair_cfg_view, fcfg, (src, dst), feature), "_cw_pair_scope": scope}
+                ctx.config = {**_config_with_pair_feature_options(pair_cfg_view, fcfg, (src, dst), feature), "_cw_pair_scope": scope,
+                              "_cw_path_matching": pair_enabled(pair) and feature in {"history", "ratings", "progress"}}
                 if src == dst:
                     endpoint_blocks = {}
                     for instance in (src_inst, dst_inst):

@@ -21,7 +21,7 @@ export const sharedFeatureOrder = () =>
 
 export const sharedFeatureLabel = (key) => {
   const k = String(key || "").trim().toLowerCase();
-  if (k === "globals") return "Globals";
+  if (k === "globals") return "General";
   if (k === "providers") return "Providers";
   return featureMeta()?.label?.(k) || k || "?";
 };
