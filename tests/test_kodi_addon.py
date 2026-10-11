@@ -1179,3 +1179,12 @@ def test_an_accepted_server_does_not_open_the_session_for_another_spelling_of_it
 
     assert disp.accepts(replace(event, server_uuid="ServerA")) is True
     assert disp.accepts(replace(event, server_uuid="servera")) is False
+
+
+def test_people_leaves_out_a_profile_whose_routes_all_have_a_whitelist() -> None:
+    cfg = profile_cfg([profile_route("R1", "p-tom", ["grandpa"]), profile_route("R2", "p-anna"), profile_route("R3", "p-anna", ["nan"])])
+    disps = {rid: FakeDispatcher() for rid in ("R1", "R2", "R3")}
+    out = addon.handle(make_app(cfg, disps), cfg, "default", {"event": "ping", "viewers": ["Tom", "grandpa"]})
+
+    assert out["people"] == [{"id": "p-anna", "name": "Anna B."}]
+    assert [(r["id"], r["viewers"]) for r in out["routes"]] == [("R1", ["grandpa"]), ("R2", []), ("R3", [])]

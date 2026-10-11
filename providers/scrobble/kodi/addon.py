@@ -661,6 +661,8 @@ def _route_people(cfg: dict[str, Any], group: Any) -> list[dict[str, str]]:
         watch = _watch_block(route_cfg)
         if not isinstance(route_cfg, dict) or not watch.get("route_enabled", True):
             continue
+        if _dict(watch.get("filters")).get("username_whitelist"):
+            continue
         profile_id = _text(watch.get("route_profile_id"), 64)
         name = _text(profile_label_for_id(route_cfg, profile_id), 80) if profile_id else ""
         if profile_id and name:
