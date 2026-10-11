@@ -10,7 +10,7 @@ from typing import Any, Iterable, Mapping
 
 from cw_platform.anime_mapping.service import mapped_or_default_media_type
 from cw_platform.config_base import load_config, save_config
-from cw_platform.id_map import migrate_media_key, canonical_key, merge_ids
+from cw_platform.id_map import ID_KEYS, ids_from, migrate_media_key, canonical_key, merge_ids, unified_keys_from_ids
 from cw_platform.metadata import MetadataManager
 
 from ._common import (
@@ -181,6 +181,50 @@ def _load_state(adapter: Any) -> dict[str, Any]:
             _atomic_write(path, {"ts": int(time.time()), "items": items3})
         return state
     return {"ts": 0, "items": {}}
+
+
+def read_items_strict(adapter: Any) -> dict[str, dict[str, Any]]:
+    path = state_file_for_read(_root(adapter), "watchlist", _watchlist_path(adapter))
+    raw = json.loads(path.read_text("utf-8"))
+    if isinstance(raw, Mapping):
+        rows = raw["items"] if "items" in raw else raw
+        if not isinstance(rows, Mapping):
+            raise ValueError("CrossWatch watchlist state is malformed")
+        pairs = [(str(key), value) for key, value in rows.items()]
+    elif isinstance(raw, list):
+        pairs = [(str(pos), value) for pos, value in enumerate(raw)]
+    else:
+        raise ValueError("CrossWatch watchlist state is malformed")
+    out: dict[str, dict[str, Any]] = {}
+    for key, value in pairs:
+        if not isinstance(value, Mapping):
+            raise ValueError("CrossWatch watchlist state has a malformed entry")
+        out[key] = tracker_minimal(value)
+    return out
+
+
+def _identity_tokens(key: Any, row: Mapping[str, Any]) -> set[str]:
+    tokens = unified_keys_from_ids(ids_from(row))
+    namespace, _, value = str(key or "").split("@", 1)[0].split("#", 1)[0].partition(":")
+    if namespace.strip().lower() in ID_KEYS and value.strip():
+        tokens |= unified_keys_from_ids({namespace.strip().lower(): value.strip()})
+    return tokens
+
+
+def absent_flags(adapter: Any, items: Iterable[Mapping[str, Any]]) -> list[bool]:
+    listed: set[str] = set()
+    for key, row in read_items_strict(adapter).items():
+        tokens = _identity_tokens(key, row)
+        if not tokens:
+            raise ValueError("CrossWatch watchlist state has a row without a usable identity")
+        listed |= tokens
+    flags: list[bool] = []
+    for item in items:
+        tokens = _identity_tokens(item.get("key"), item)
+        if not tokens:
+            raise ValueError("Requested watchlist item has no usable identity")
+        flags.append(not tokens & listed)
+    return flags
 
 
 def _save_state(adapter: Any, items: Mapping[str, Mapping[str, Any]]) -> None:

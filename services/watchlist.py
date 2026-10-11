@@ -630,7 +630,7 @@ def _delete_on_crosswatch_batch(items: list[dict[str, Any]], cfg: dict[str, Any]
     r = ops.remove(cfg, payload, feature="watchlist", dry_run=False) or {}
     if not isinstance(r, dict) or not r.get("ok"):
         raise RuntimeError(f"CROSSWATCH delete failed: {r.get('error')}")
-    if int(r.get("count", 0) or 0) < 1:
+    if int(r.get("count", 0) or 0) < 1 and not all(ops.watchlist_absent(cfg, payload)):
         raise RuntimeError("CROSSWATCH delete matched 0 items")
 
 

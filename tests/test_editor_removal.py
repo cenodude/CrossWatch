@@ -539,6 +539,70 @@ def test_empty_live_index_does_not_prune_without_confirmed_removal(setup):
     assert "tmdb:1" in removal._items(database.load_state_features(setup.root, {"watchlist"}), "TRAKT", "default", "watchlist")
 
 
+def _gone_from_provider(s, provider):
+    s.cfg["pairs"][0]["target"] = provider
+    s.ops.setdefault(provider, Ops(provider))
+    rows = {"tmdb:1": movie(), "tmdb:2": movie(2)}
+    s.seed("p1", provider, "default", "watchlist", rows)
+    database.save_feature_baseline(s.root, provider=provider, feature="watchlist", checkpoint=123, items=deepcopy(rows))
+    s.ops[provider].live[("default", "watchlist")] = {"tmdb:2": movie(2)}
+    return s.ops[provider]
+
+
+def _cached_watchlist(s, provider):
+    state = database.load_state_features(s.root, {"watchlist"})
+    return state, list(removal._items(state, provider, "default", "watchlist"))
+
+
+def _real_crosswatch(s, monkeypatch, tracker):
+    from providers.sync._mod_CROSSWATCH import OPS
+    root = s.root / "tracker"
+    root.mkdir()
+    if tracker is not None:
+        (root / "watchlist.json").write_text(json.dumps(tracker), encoding="utf-8")
+    ops = _gone_from_provider(s, "CROSSWATCH")
+    view = {"crosswatch": {"root_dir": str(root), "connected": True}}
+    ops.watchlist_absent = lambda cfg, items: OPS.watchlist_absent(view, items)
+    return ops
+
+
+def test_row_gone_from_the_crosswatch_tracker_is_cleared_from_the_cached_inventory(setup, monkeypatch):
+    s = setup
+    ops = _real_crosswatch(s, monkeypatch, {"ts": 1, "items": {"tmdb:2": movie(2)}})
+    result = s.execute(dict(kind="watchlist", items=[movie()]))
+    assert result["skipped"] == 1
+    assert result["confirmed"] == 0
+    assert not ops.calls
+    state, cached = _cached_watchlist(s, "CROSSWATCH")
+    assert cached == ["tmdb:2"]
+    assert state["providers"]["CROSSWATCH"]["watchlist"]["checkpoint"] == 123
+    pair_state = database.load_pair_state(s.root, s.scopes[("p1", "watchlist")], {"watchlist"})
+    assert len(removal._items(pair_state, "CROSSWATCH", "default", "watchlist")) == 2
+
+
+@pytest.mark.parametrize("tracker", [
+    None,
+    {"ts": 1, "items": {"tmdb:1": movie(), "tmdb:2": movie(2)}},
+    {"ts": 1, "items": {"tmdb:1": {"type": "movie", "title": "Movie 1"}}},
+    [{"type": "movie", "title": "Movie 1"}],
+    {"ts": 1, "items": {"title:example": {"type": "movie", "title": "Example"}}},
+], ids=["unreadable", "still_listed", "id_only_in_record_key", "legacy_row_without_identity", "row_without_identity"])
+def test_absent_row_is_kept_when_the_crosswatch_tracker_cannot_confirm_it(setup, monkeypatch, tracker):
+    s = setup
+    _real_crosswatch(s, monkeypatch, tracker)
+    result = s.execute(dict(kind="watchlist", items=[movie()]))
+    assert result["skipped"] == 1
+    assert _cached_watchlist(s, "CROSSWATCH")[1] == ["tmdb:1", "tmdb:2"]
+
+
+def test_absent_row_on_a_remote_provider_is_never_pruned_from_a_partial_read(setup):
+    s = setup
+    _gone_from_provider(s, "TRAKT")
+    result = s.execute(dict(kind="watchlist", items=[movie()]))
+    assert result["skipped"] == 1
+    assert _cached_watchlist(s, "TRAKT")[1] == ["tmdb:1", "tmdb:2"]
+
+
 def test_server_local_ids_cannot_match_across_instances(setup):
     s = setup
     item = dict(type="movie", title="Local identity", ids={"plex": "123"})

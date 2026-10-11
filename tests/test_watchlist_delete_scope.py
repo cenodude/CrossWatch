@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from starlette.requests import Request
 
 PROFILE_ID = "11111111111141118111111111111111"
@@ -294,3 +296,97 @@ def test_jellyfin_and_emby_delete_headers_carry_the_token_in_authorization():
     assert headers["X-Emby-Token"] == "jf-token"
     assert "Token=" not in headers["X-Emby-Authorization"]
     assert "Authorization" not in watchlist._jf_headers({})
+
+
+def _tracker(tmp_path, content=None):
+    from types import SimpleNamespace
+
+    if content is not None:
+        text = content if isinstance(content, str) else json.dumps(content)
+        (tmp_path / "watchlist.json").write_text(text, encoding="utf-8")
+    return SimpleNamespace(cfg=SimpleNamespace(base_path=tmp_path), config={})
+
+
+def _crosswatch_delete(tmp_path, monkeypatch, tracker) -> tuple[dict, dict]:
+    import services.watchlist as wl
+
+    _tracker(tmp_path, tracker)
+    state = {
+        "providers": {
+            "CROSSWATCH": {"watchlist": {"baseline": {"items": {
+                "tmdb:1": {"type": "movie", "ids": {"tmdb": "1", "imdb": "tt0000001", "plex": "123"}, "title": "Stale"},
+            }}}},
+        }
+    }
+    cfg = {"crosswatch": {"root_dir": str(tmp_path), "connected": True}}
+    monkeypatch.setattr(wl, "build_config_view", lambda cfg, sel: cfg)
+    monkeypatch.setattr(wl, "_save_sync_state", lambda *a, **k: None)
+    out = wl.delete_watchlist_batch(["tmdb:1"], "CROSSWATCH", state, cfg)
+    return out, state["providers"]["CROSSWATCH"]["watchlist"]["baseline"]["items"]
+
+
+def _other(**extra):
+    return {"type": "movie", "title": "Other", **extra}
+
+
+def test_crosswatch_delete_clears_cached_row_already_gone_from_tracker(tmp_path, monkeypatch) -> None:
+    tracker = {"ts": 1, "items": {"tmdb:2": _other(ids={"tmdb": "2"})}}
+    out, cached = _crosswatch_delete(tmp_path, monkeypatch, tracker)
+
+    assert out["ok"] is True
+    assert out["deleted"] == 1
+    assert not cached
+    assert json.loads((tmp_path / "watchlist.json").read_text(encoding="utf-8")) == tracker
+
+
+def test_crosswatch_delete_clears_cached_row_for_an_empty_tracker(tmp_path, monkeypatch) -> None:
+    out, cached = _crosswatch_delete(tmp_path, monkeypatch, {"ts": 1, "items": {}})
+
+    assert out["ok"] is True
+    assert not cached
+
+
+@pytest.mark.parametrize(
+    "tracker",
+    [
+        None,
+        "{broken",
+        "7",
+        {"ts": 1},
+        {"ts": 1, "items": [_other(ids={"tmdb": "2"})]},
+        {"ts": 1, "items": {"tmdb:2": "x"}},
+        [_other(ids={"tmdb": "2"}), "x"],
+        {"ts": 1, "items": {"tmdb:2": _other(ids={"tmdb": "2", "imdb": "tt0000001"})}},
+        {"ts": 1, "items": {"tmdb:2": _other(ids={"tmdb": "2", "plex": "123"})}},
+        {"ts": 1, "items": {"imdb:tt0000001": _other()}},
+        {"ts": 1, "items": {"tmdb:1#show": {"type": "show", "title": "Same number"}}},
+        [_other(tmdb="2", imdb="tt0000001")],
+        [_other()],
+        {"ts": 1, "items": {"title:other": _other()}},
+    ],
+    ids=[
+        "missing_file", "invalid_json", "scalar", "no_items", "items_as_list", "non_object_entry",
+        "non_object_in_list", "shared_secondary_id", "shared_server_id", "id_only_in_record_key",
+        "same_id_other_type", "legacy_top_level_ids", "legacy_row_without_identity", "row_without_identity",
+    ],
+)
+def test_crosswatch_delete_keeps_cached_row_when_absence_is_not_proven(tmp_path, monkeypatch, tracker) -> None:
+    out, cached = _crosswatch_delete(tmp_path, monkeypatch, tracker)
+
+    assert out["ok"] is False
+    assert out["deleted"] == 0
+    assert "tmdb:1" in cached
+
+
+def test_crosswatch_delete_keeps_cached_row_when_tracker_read_is_denied(tmp_path, monkeypatch) -> None:
+    from pathlib import Path
+
+    def denied(self, *args, **kwargs):
+        raise PermissionError("denied")
+
+    _tracker(tmp_path, {"ts": 1, "items": {}})
+    monkeypatch.setattr(Path, "read_text", denied)
+    out, cached = _crosswatch_delete(tmp_path, monkeypatch, None)
+
+    assert out["ok"] is False
+    assert "tmdb:1" in cached
