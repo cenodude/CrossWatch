@@ -23,7 +23,7 @@ function harness() {
   const window = {};
   const document = { readyState: "loading", addEventListener() {}, createElement: element };
   const context = vm.createContext({ window, document, Event });
-  vm.runInContext(read("helpers/icon-select.js").replace("window.CW.IconSelect = {", "window.buildMenu = buildMenu; window.CW.IconSelect = {"), context);
+  vm.runInContext(read("helpers/icon-select.js").replace("window.CW.IconSelect = {", "window.buildMenu = buildMenu; window.positionMenu = positionMenu; window.syncSelect = sync; window.CW.IconSelect = {"), context);
   vm.runInContext(read("helpers/profile-select.js"), context);
   const menu = element();
   const events = [];
@@ -129,4 +129,56 @@ test("media card preference refresh only enhances dropdowns, never the page root
   assert.equal(enhanced.length, 6);
   assert.ok(enhanced.every((node) => node.tagName === "SELECT"));
   assert.equal(root.value, undefined);
+});
+
+
+test("dropdowns fit their content and remain within the viewport", () => {
+  const h = harness();
+  Object.assign(h.window, { innerWidth: 800, innerHeight: 600 });
+  const rect = { left: 690, top: 80, bottom: 120, width: 90 };
+  const btn = { getBoundingClientRect: () => rect };
+  const cfg = {};
+  const wrap = { __cwNativeSelect: { __cwIconSelectCfg: cfg } };
+  const menu = {
+    classList: { contains: () => false }, style: {}, scrollHeight: 180, offsetHeight: 180,
+    getBoundingClientRect: () => ({ width: 360 }),
+  };
+  h.window.positionMenu(wrap, btn, menu);
+  assert.equal(menu.style.width, "360px");
+  assert.equal(menu.style.left, "428px");
+  assert.equal(menu.style.top, "128px");
+  cfg.menuMinWidth = 500;
+  h.window.positionMenu(wrap, btn, menu);
+  assert.equal(menu.style.width, "500px");
+  h.window.innerWidth = 320;
+  h.window.positionMenu(wrap, btn, menu);
+  assert.equal(menu.style.width, "296px");
+  assert.equal(menu.style.left, "12px");
+  assert.equal(menu.style.maxWidth, "296px");
+  cfg.menuMinWidth = 0;
+  h.window.innerWidth = 800;
+  rect.width = 420;
+  rect.top = 530;
+  rect.bottom = 570;
+  h.window.positionMenu(wrap, btn, menu);
+  assert.equal(menu.style.width, "420px");
+  assert.equal(menu.style.top, "342px");
+});
+
+test("full selection tooltips survive compact labels, updates and empty options", () => {
+  const h = harness();
+  const btn = { insertBefore() {}, querySelector() {} };
+  const label = { replaceWith() {} };
+  const wrap = { classList: { toggle() {} }, querySelector: name => name.endsWith("-btn") ? btn : label };
+  h.select.selectedIndex = 0;
+  const cfg = { getOptionData: () => ({ label: "Only Pair 2 - JELLYFIN to TRAKT", selectedLabel: "Pair 2", note: "Living room" }) };
+  h.window.syncSelect(h.select, wrap, cfg);
+  assert.equal(btn.title, "Only Pair 2 - JELLYFIN to TRAKT \u00b7 Living room");
+  h.render(cfg);
+  assert.equal(h.menu.children[0].title, btn.title);
+  h.select.disabled = true;
+  h.select.selectedIndex = -1;
+  h.window.syncSelect(h.select, wrap, {});
+  assert.equal(btn.disabled, true);
+  assert.equal(btn.title, "-");
 });

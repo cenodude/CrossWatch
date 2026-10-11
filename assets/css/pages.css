@@ -635,7 +635,10 @@ html[data-cw-theme="flat-light"] .cw-editor-send-card{--send-bg:#e9edf5;--send-p
 
 
 #cw-mapping-scope-label[hidden]{display:none}
-#cw-mapping-scope{width:100%;min-width:0}
+#cw-mapping-scope-label,#cw-mapping-scope,#cw-mapping-scope+.cw-icon-select{grid-column:1/-1}
+#cw-mapping-scope,#cw-mapping-scope+.cw-icon-select{width:100%;min-width:0}
+#cw-mapping-scope+.cw-icon-select .cw-icon-select-btn{height:auto;padding-block:10px}
+#cw-mapping-scope+.cw-icon-select .cw-icon-select-label{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}
 .cw-title-row .cw-mapping-indicator{flex:0 0 18px;width:18px;font-size:18px;line-height:1;color:var(--muted,#969eab);cursor:help}
 /* Editor skeleton follows the same hero, toolbar and sidebar layout as the page. */
 .cw-editor-skeleton .cw-skeleton-bar{display:block;min-width:0;border-radius:8px;background:currentColor;opacity:.09;animation:cw-editor-pulse 1.4s ease-in-out infinite alternate}
