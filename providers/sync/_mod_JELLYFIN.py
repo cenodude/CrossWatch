@@ -3,6 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from ._path_matching import enrich_snapshot, path_presence
+
 import json
 import os
 import time
@@ -129,7 +131,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "2.8"
+__VERSION__ = "2.9"
 _MIN_PROGRESS_WRITE_VERSION = (10, 9)
 _JF_VERSION_CACHE: dict[str, tuple[float, str | None]] = {}
 
@@ -443,6 +445,7 @@ class JFClient:
 
 class JELLYFINModule:
     def __init__(self, cfg: Mapping[str, Any]):
+        self.path_matching = coerce_bool(cfg.get("_cw_path_matching", False))
         inst = _pick_instance_id("JELLYFIN", cfg)
         self.instance_id = inst
         jf = _merge_instance_block((cfg or {}).get("jellyfin") or {}, inst)
@@ -701,7 +704,7 @@ class JELLYFINModule:
         mod = _FEATURES.get(f)
         if not mod:
             return {}
-        return mod.build_index(self, **kwargs)
+        return enrich_snapshot(self, mod.build_index(self, **kwargs), "JELLYFIN", feature)
 
     def _dry_result(self, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
         lst = list(items)
@@ -781,7 +784,10 @@ class JELLYFINModule:
     def library_presence(self, feature: str, items: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
         from .jellyfin import _presence
 
-        return _presence.presence(self, items, feature=(feature or "history").lower())
+        rows = list(items)
+        feature = (feature or "history").lower()
+        results = _presence.presence(self, rows, feature=feature)
+        return path_presence(self, rows, results, "JELLYFIN", feature)
 class _JellyfinOPS:
     def name(self) -> str:
         return "JELLYFIN"

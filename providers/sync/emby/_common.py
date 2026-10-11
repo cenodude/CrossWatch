@@ -2,6 +2,9 @@
 # EMBY Module for common utilities
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
+
+from cw_platform.path_matching import media_paths
+from .._path_matching import path_fallback
 from cw_platform.interactive_reads import retained_read
 from typing import Any, Iterable, Mapping, Sequence
 from datetime import datetime
@@ -515,7 +518,7 @@ def normalize(obj: Mapping[str, Any]) -> dict[str, Any]:
     ids = {k: v for k, v in _ids_from_provider_ids(pids).items() if v}
     em_id = obj.get("Id") or (pids.get("emby") if isinstance(pids, Mapping) else None)
     ids.pop("emby", None)
-    row: dict[str, Any] = {"type": t, "title": title, "year": year, "ids": ids}
+    row: dict[str, Any] = {"type": t, "title": title, "year": year, "ids": ids, "media_paths": media_paths(obj)}
     if em_id:
         row["emby_item_id"] = str(em_id)
     lib_id = obj.get("LibraryId")
@@ -1691,6 +1694,7 @@ def _episode_number_matches(row: Mapping[str, Any], season: Any, episode: Any) -
         return False
 
 
+@path_fallback("EMBY")
 def resolve_item_id(adapter: Any, it: Mapping[str, Any], *, feature: str = "history") -> str | None:
     http, uid = adapter.client, adapter.cfg.user_id
     selected_libs = emby_selected_library_ids(adapter.cfg, feature)
@@ -2053,6 +2057,8 @@ def resolve_item_ids(adapter: Any, it: Mapping[str, Any], *, feature: str = "his
         return []
 
     one = resolve_item_id(adapter, it, feature=feature)
+    if getattr(adapter, "path_matching", False) and getattr(adapter, "_emby_last_resolve_hint", None) in {"path_match", "path_ambiguous", "path_id_conflict"}:
+        return [str(one)] if one else []
     # A resolved episode/show needs no movie/series index expansion.
     if one and _lookup_type(it) != "movie":
         return [str(one)]

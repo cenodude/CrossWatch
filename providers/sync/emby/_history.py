@@ -954,7 +954,7 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
                             m0 = emby_normalize(row)
                             mm = id_minimal(m0)
                             mm["watched"] = True
-                            if retaining():
+                            if retaining() or getattr(adapter, "path_matching", False):
                                 mm["emby_item_id"] = str(row["Id"])
 
                             if str((row.get("Type") or "")).strip() == "Episode":
@@ -1125,7 +1125,7 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
                             lib_id = show_roots[0]
                 if lib_id:
                     event["library_id"] = str(lib_id)
-                if retaining():
+                if retaining() or getattr(adapter, "path_matching", False):
                     event["emby_item_id"] = str(row["Id"])
                 ev_key = f"{_event_base_key(event, m)}@{ts}"
                 events.append((ts, {"key": ev_key}, event))

@@ -173,3 +173,71 @@ def test_history_metadata_selection_preserves_fallback_and_watched_dates(
     assert item["watched_at"] == history._iso(played_at)
     assert item["title"] == ("Current title" if catalog_kind == "current" else "Historical title")
     assert len(fallback_calls) == (0 if catalog_kind == "current" else 1)
+
+
+@pytest.mark.parametrize("mode", ["one-way", "two-way"])
+def test_marked_watched_and_strict_ids_are_isolated_between_pairs(config_base, monkeypatch, mode):
+    from copy import deepcopy
+
+    from api import syncAPI as api
+    from cw_platform.orchestrator import Orchestrator
+    from test_orchestrator_dry_run_no_side_effects import FakeOps, _cfg, _install
+
+    src, dst = FakeOps("PLEX", {}), FakeOps("JELLYFIN", {})
+    _install(monkeypatch, src, dst, config_base / ".cw_state")
+    monkeypatch.setattr("cw_platform.orchestrator.facade.load_sync_providers", lambda: {"PLEX": src, "JELLYFIN": dst})
+    seen = []
+
+    def snapshot(cfg, *, feature):
+        seen.append(deepcopy(cfg["plex"]))
+        return {}
+
+    src.build_index = snapshot
+    for ops in (src, dst):
+        ops.features = lambda: {"history": True}
+        ops.capabilities = lambda: {"features": {"history": True}, "index_semantics": "present"}
+        ops.health = lambda *_a, **_kw: {"ok": True, "status": "ok", "features": {"history": True}}
+    cfg = _cfg(False)
+    cfg["plex"] = {"strict_id_matching": True, "history": {"include_marked_watched": True, "libraries": ["1"]}}
+    original = deepcopy(cfg["plex"])
+    cfg["pairs"] = []
+    monkeypatch.setattr(api, "_env", lambda: (lambda: cfg, lambda value: None))
+    for enabled in (False, True):
+        result = api.api_pairs_add(api.PairIn(
+            source="PLEX", target="JELLYFIN", mode=mode, enabled=True,
+            features={"history": {"enable": True, "add": True, "remove": False}},
+            providers={"plex": {"strict_id_matching": enabled, "history": {"include_marked_watched": enabled}}},
+        ))
+        assert result["ok"]
+    assert not Orchestrator(cfg).run()["errors"]
+    assert [row["history"]["include_marked_watched"] for row in seen] == [False, True]
+    assert [row["strict_id_matching"] for row in seen] == [False, True]
+    assert all(row["history"]["libraries"] == ["1"] for row in seen)
+    assert cfg["plex"] == original
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_history_add_prefers_ids_then_paths_over_matching_title(isolated_state, monkeypatch, strict):
+    adapter = SimpleNamespace(path_matching=True, config={"plex": {"strict_id_matching": strict}},
+                              cfg=SimpleNamespace(strict_id_matching=strict),
+                              client=SimpleNamespace(server=SimpleNamespace()))
+    catalog = history.HistoryCatalog()
+    catalog.add({"rk": "title", "type": "movie", "title": "Alien", "year": 1979,
+                 "ids": {"plex": "title"}, "watched": True})
+    catalog.add({"rk": "path", "type": "movie", "title": "Different metadata", "year": 1979,
+                 "ids": {"plex": "path", "tmdb": "999"}, "watched": True})
+    calls = []
+    monkeypatch.setattr(history, "home_scope_enter", lambda _: (False, False, None, None))
+    monkeypatch.setattr(history, "home_scope_exit", lambda *_: None)
+    monkeypatch.setattr(history, "plex_feature_library_ids", lambda *_: set())
+    monkeypatch.setattr(history, "_history_force_full", lambda _: False)
+    monkeypatch.setattr(history, "_get_history_catalog", lambda *a, **k: catalog)
+    monkeypatch.setattr(history, "_shadow_add_batch", lambda *_: None)
+    monkeypatch.setattr(history, "resolve_path", lambda *a: calls.append("path") or ("path", "path_match"))
+    item = {"type": "movie", "title": "Alien", "year": 1979, "ids": {},
+            "media_paths": ["/movies/Alien/Alien.mkv"], "watched_at": "2025-01-01T00:00:00Z"}
+    assert history.add(adapter, [item]) == (1, [])
+    assert calls == ["path"]
+    calls.clear()
+    assert history.add(adapter, [{**item, "ids": {"tmdb": "999"}}]) == (1, [])
+    assert not calls

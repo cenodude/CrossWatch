@@ -97,3 +97,26 @@ def test_failed_history_does_not_reach_snapshot_callback_or_cache(history_adapte
             on_snapshot=lambda *args: callbacks.append(args))
     assert callbacks == []
     assert cache == {}
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("timed", [False, True])
+def test_path_matching_retains_native_history_id_for_enrichment(history_adapter, monkeypatch, enabled, timed):
+    from cw_platform.path_matching import PathIndex
+    from providers.sync import _path_matching as paths
+
+    _, history, ad = history_adapter
+    ad.path_matching = enabled
+    monkeypatch.setattr(history, "retaining", lambda: False)
+    monkeypatch.setattr(history, "_played_ts_backfill", lambda *a: None)
+    row = watched_rows()[0]
+    if not timed:
+        row["UserData"].pop("LastPlayedDate")
+    ad.client = SimpleNamespace(get=lambda path, *, params: response(200, {"Items": [row] if params.get("IncludeItemTypes") == "Movie,Video" else []}))
+    catalog = PathIndex([("1", {"type": "movie", "ids": {"tmdb": "1"}, "media_paths": ["/movies/Movie 1/Movie 1.mkv"]})])
+    monkeypatch.setattr(paths, "_catalog", lambda *a: catalog)
+    snapshot = paths.enrich_snapshot(ad, history.build_index(ad), "EMBY", "history")
+    assert len(snapshot) == 1
+    item = next(iter(snapshot.values()))
+    assert bool(item.get("media_paths")) is enabled
+    assert (item.get("emby_item_id") == "1") is enabled

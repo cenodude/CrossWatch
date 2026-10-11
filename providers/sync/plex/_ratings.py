@@ -3,6 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from .._path_matching import path_fallback
+
 from concurrent.futures import ThreadPoolExecutor
 import json
 from threading import Lock
@@ -120,6 +122,7 @@ def _norm_rating(v: Any) -> int | None:
         i = 10
     return i
 
+@path_fallback("PLEX", "ratings")
 def _resolve_rating_key(adapter: Any, it: Mapping[str, Any]) -> str | None:
     if not isinstance(it, Mapping):
         return None

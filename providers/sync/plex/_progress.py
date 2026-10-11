@@ -2,6 +2,8 @@
 # Plex Module for progress (resume) synchronization
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
+
+from .._path_matching import path_fallback
 from cw_platform.interactive_reads import replaying
 
 import os
@@ -491,6 +493,7 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
         home_scope_exit(adapter, did_switch)
 
 
+@path_fallback("PLEX", "progress")
 def _resolve_rating_key(adapter: Any, it: Mapping[str, Any]) -> str | None:
     allowed = plex_feature_library_ids(adapter, "progress")
     key, _ = _index_cache_context(adapter, allowed, "progress")
