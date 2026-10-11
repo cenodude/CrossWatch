@@ -574,6 +574,10 @@ function pairSupportsLibraryOnly(state, src = state?.src, dst = state?.dst, twoW
   if(!src || !dst) return false;
   return providerSupportsLibraryOnly(state, dst, feature) || (twoWay && providerSupportsLibraryOnly(state, src, feature));
 }
+function libraryOnlyOn(state, opts, feature = "history", src = state?.src, dst = state?.dst, twoWay = isTwoWayMode(state)){
+  if(!pairSupportsLibraryOnly(state, src, dst, twoWay, feature)) return false;
+  return typeof opts?.library_only === "boolean" ? opts.library_only : true;
+}
 function progressCompletionPercentFromCaps(caps){
   const progress = (caps && typeof caps === "object") ? caps : {};
   const policy = (progress.completion_policy && typeof progress.completion_policy === "object") ? progress.completion_policy : {};
@@ -1418,7 +1422,7 @@ function renderFeaturePanel(state){
     `;
 
     const wlOptions = `
-      ${pairSupportsLibraryOnly(state, state?.src, state?.dst, isTwoWayMode(state), "watchlist") ? `<div class="grid2 compact"><div class="opt-row" style="grid-column:1/-1"><label for="cx-wl-library-only" data-tip-id="cx-wl-library-only">Only items in destination library</label><label class="switch"><input id="cx-wl-library-only" type="checkbox" ${wl.library_only?"checked":""}><span class="slider"></span></label></div></div>` : ""}
+      ${pairSupportsLibraryOnly(state, state?.src, state?.dst, isTwoWayMode(state), "watchlist") ? `<div class="grid2 compact"><div class="opt-row" style="grid-column:1/-1"><label for="cx-wl-library-only" data-tip-id="cx-wl-library-only">Only items in destination library</label><label class="switch"><input id="cx-wl-library-only" type="checkbox" ${libraryOnlyOn(state, wl, "watchlist")?"checked":""}><span class="slider"></span></label></div></div>` : ""}
 
       ${showAnime?`
         <div class="panel-title small" style="margin-top:6px">Anime options</div>
@@ -1665,7 +1669,7 @@ function renderFeaturePanel(state){
         <div class="opt-row"><label for="cx-rt-type-shows">Shows</label><label class="switch"><input id="cx-rt-type-shows" type="checkbox" ${hasType("shows")?"checked":""}><span class="slider"></span></label></div><div class="opt-row"><label for="cx-rt-type-seasons">Seasons</label><label class="switch"><input id="cx-rt-type-seasons" type="checkbox" ${hasType("seasons")?"checked":""}><span class="slider"></span></label></div>
         <div class="opt-row"><label for="cx-rt-type-episodes">Episodes</label><label class="switch"><input id="cx-rt-type-episodes" type="checkbox" ${hasType("episodes")?"checked":""}><span class="slider"></span></label></div>
         <div class="opt-row"><label for="cx-rt-specials" data-tip-id="cx-rt-specials">Specials (Season 0)</label><label class="switch"><input id="cx-rt-specials" type="checkbox" ${rt.include_specials!==false?"checked":""}><span class="slider"></span></label></div>
-        ${pairSupportsLibraryOnly(state, state?.src, state?.dst, isTwoWayMode(state), "ratings") ? `<div class="opt-row" style="grid-column:1/-1"><label for="cx-rt-library-only" data-tip-id="cx-rt-library-only">Only items in destination library</label><label class="switch"><input id="cx-rt-library-only" type="checkbox" ${rt.library_only?"checked":""}><span class="slider"></span></label></div>` : ""}
+        ${pairSupportsLibraryOnly(state, state?.src, state?.dst, isTwoWayMode(state), "ratings") ? `<div class="opt-row" style="grid-column:1/-1"><label for="cx-rt-library-only" data-tip-id="cx-rt-library-only">Only items in destination library</label><label class="switch"><input id="cx-rt-library-only" type="checkbox" ${libraryOnlyOn(state, rt, "ratings")?"checked":""}><span class="slider"></span></label></div>` : ""}
       </div>`;
 
     const parts = [`<div class="panel-title">Ratings | Options</div>
@@ -1935,7 +1939,7 @@ left.innerHTML = `
         ${libSupported ? `<div class="opt-row" style="grid-column:1/-1">
           <label for="cx-hs-library-only" data-tip-id="cx-hs-library-only">Only items in destination library</label>
           <label class="switch">
-            <input id="cx-hs-library-only" type="checkbox" ${hs.library_only ? "checked" : ""}>
+            <input id="cx-hs-library-only" type="checkbox" ${libraryOnlyOn(state, hs) ? "checked" : ""}>
             <span class="slider"></span>
           </label>
         </div>` : ""}
@@ -2161,7 +2165,7 @@ left.innerHTML = `
         <div class="opt-row"><label for="cx-pr-specials" data-tip-id="cx-pr-specials">Specials (Season 0)</label>
           <label class="switch"><input id="cx-pr-specials" type="checkbox" ${pr.include_specials !== false ? "checked" : ""}><span class="slider"></span></label></div>
         ${pairSupportsLibraryOnly(state, state?.src, state?.dst, isTwoWayMode(state), "progress") ? `<div class="opt-row" style="grid-column:1/-1"><label for="cx-pr-library-only" data-tip-id="cx-pr-library-only">Only items in destination library</label>
-          <label class="switch"><input id="cx-pr-library-only" type="checkbox" ${pr.library_only ? "checked" : ""}><span class="slider"></span></label></div>` : ""}
+          <label class="switch"><input id="cx-pr-library-only" type="checkbox" ${libraryOnlyOn(state, pr, "progress") ? "checked" : ""}><span class="slider"></span></label></div>` : ""}
       </div>
       ${prAnime}
       ${progressRecommendation ?`<div class="muted" style="margin-top:10px">${escHTML(progressRecommendation)}</div>` : ""}
@@ -2402,7 +2406,7 @@ function bindChangeHandlers(state,root){
         remove:!!ID("cx-wl-remove")?.checked,
         use_anime_mapping:useMap,
         anime_only_sync:useMap && onlyEl ? !!onlyEl.checked : false,
-        library_only:ID("cx-wl-library-only")?!!ID("cx-wl-library-only").checked:!!prev.library_only
+        library_only:ID("cx-wl-library-only")?!!ID("cx-wl-library-only").checked:prev.library_only
       });
       normalizeAnimeFeatureOptions(state, "watchlist");
       state.visited.add("watchlist");
@@ -2443,7 +2447,7 @@ function bindChangeHandlers(state,root){
         mode:ID("cx-rt-mode")?.value||"all",
         from_date:(ID("cx-rt-from-date")?.value||"").trim(),
         include_specials:ID("cx-rt-specials")?!!ID("cx-rt-specials").checked:rt.include_specials!==false,
-        library_only:ID("cx-rt-library-only")?!!ID("cx-rt-library-only").checked:!!rt.library_only
+        library_only:ID("cx-rt-library-only")?!!ID("cx-rt-library-only").checked:rt.library_only
       });
       state.visited.add("ratings");
       try{updateRtSummary()}catch{}
@@ -2459,7 +2463,7 @@ function bindChangeHandlers(state,root){
         remove: !!ID("cx-hs-remove")?.checked,
         rewatches: !!ID("cx-hs-rewatches")?.checked,
         include_specials: ID("cx-hs-specials") ? !!ID("cx-hs-specials").checked : prev.include_specials !== false,
-        library_only: ID("cx-hs-library-only") ? !!ID("cx-hs-library-only").checked : !!prev.library_only,
+        library_only: ID("cx-hs-library-only") ? !!ID("cx-hs-library-only").checked : prev.library_only,
         use_anime_mapping: !!(animeEl && animeEl.checked && tmdbMetadataReady(state)),
         anime_only_sync: false,
         use_source_status: !!ID("cx-hs-source-status")?.checked && sourceWatchStatusAllowed(state),
@@ -2495,7 +2499,7 @@ function bindChangeHandlers(state,root){
         replay_enabled:!!ID("cx-pr-replay")?.checked,
         timestamp_tolerance_seconds:Number.isFinite(tolerance)?Math.max(0,Math.min(300,tolerance)):30,
         include_specials:ID("cx-pr-specials")?!!ID("cx-pr-specials").checked:prev.include_specials!==false,
-        library_only:ID("cx-pr-library-only")?!!ID("cx-pr-library-only").checked:!!prev.library_only
+        library_only:ID("cx-pr-library-only")?!!ID("cx-pr-library-only").checked:prev.library_only
       });
       state.visited.add("progress");
     }
@@ -2903,10 +2907,10 @@ function buildPayload(state,wrap){
   const history=get("history");
   history.use_anime_mapping=!!history.use_anime_mapping&&animePair&&globalAnimeMappingEnabled(state)&&tmdbMetadataReady(state);
   if(history && !pairSupportsHistoryRewatches(state, src, dst, modeTwo)) history.rewatches=false;
-  if(history) history.library_only=!!history.library_only&&pairSupportsLibraryOnly(state, src, dst, modeTwo);
-  if(ratings) ratings.library_only=!!ratings.library_only&&pairSupportsLibraryOnly(state, src, dst, modeTwo, "ratings");
-  progress.library_only=!!progress.library_only&&pairSupportsLibraryOnly(state, src, dst, modeTwo, "progress");
-  if(watchlist) watchlist.library_only=!!watchlist.library_only&&pairSupportsLibraryOnly(state, src, dst, modeTwo, "watchlist");
+  if(history) history.library_only=libraryOnlyOn(state, history, "history", src, dst, modeTwo);
+  if(ratings) ratings.library_only=libraryOnlyOn(state, ratings, "ratings", src, dst, modeTwo);
+  progress.library_only=libraryOnlyOn(state, progress, "progress", src, dst, modeTwo);
+  if(watchlist) watchlist.library_only=libraryOnlyOn(state, watchlist, "watchlist", src, dst, modeTwo);
   const collection=get("collection");
   if(collection){
     const allowedCollectionTypes=collectionTypesForPair({src,dst,twoWay:modeTwo});
@@ -3045,6 +3049,7 @@ export default{
       state.options.collection=safe(f.collection,state.options.collection);
       const r0=state.options.ratings, rI=f.ratings||{};
       state.options.ratings=Object.assign({},r0,rI,{types:Array.isArray(rI.types)&&rI.types.length?rI.types:r0.types,mode:rI.mode||r0.mode,from_date:rI.from_date||r0.from_date||""});
+      ["watchlist","ratings","history","progress"].forEach(k=>{state.options[k].library_only=!!state.options[k].library_only});
       state.pairProviders = normalizePairProviders(pair.providers);
       state.selected_user_profile_id=String(pair.profile_id||"").trim();
       wrap.dataset.editingId=pair?.id?String(pair.id):"";
