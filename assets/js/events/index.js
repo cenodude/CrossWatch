@@ -345,6 +345,7 @@ function createDropdown({ label, items, value, onChange, align = "auto" }) {
 
   const labelFor = (v) => opts.find((i) => i.value === v)?.label ?? label;
   const render = () => {
+    btn.title = labelFor(cur);
     btn.innerHTML = `<span class="ev-dd-text">${esc(labelFor(cur))}</span><span class="material-symbols-rounded ev-dd-caret" aria-hidden="true">expand_more</span>`;
   };
   render();
@@ -354,7 +355,10 @@ function createDropdown({ label, items, value, onChange, align = "auto" }) {
     if (!menu) return;
     const r = btn.getBoundingClientRect();
     menu.style.position = "fixed";
-    menu.style.minWidth = `${Math.max(r.width, 160)}px`;
+    const availableWidth = Math.max(0, window.innerWidth - 16);
+    menu.style.minWidth = `${Math.min(availableWidth, Math.max(r.width, 160))}px`;
+    menu.style.width = "max-content";
+    menu.style.maxWidth = `${availableWidth}px`;
     menu.style.maxHeight = "260px";
     menu.style.visibility = "hidden";
     menu.style.left = "0px";

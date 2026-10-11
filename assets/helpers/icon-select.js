@@ -185,6 +185,7 @@
     wrap.classList.toggle("is-disabled", !!select.disabled);
     const option = select.options && select.selectedIndex >= 0 ? select.options[select.selectedIndex] : null;
     const data = dataForOption(select, option, cfg);
+    btn.title = [data.label, data.note].filter(Boolean).join(" \u00b7 ");
     const selectedData = Object.prototype.hasOwnProperty.call(data, "selectedLabel")
       ? { ...data, label: String(data.selectedLabel || "") }
       : data;
@@ -217,6 +218,7 @@
       item.className = "cw-icon-select-item";
       item.dataset.value = data.value;
       item.disabled = !!data.disabled;
+      item.title = [data.label, data.note].filter(Boolean).join(" \u00b7 ");
       item.setAttribute("aria-selected", "false");
       item.appendChild(rowMain(data));
       item.addEventListener("click", (ev) => {
@@ -244,7 +246,11 @@
     const gap = 8;
     const cfg = wrap.__cwNativeSelect?.__cwIconSelectCfg || {};
     const minWidth = Number(cfg.menuMinWidth || 0);
-    const width = Math.max(0, Math.round(rect.width), Number.isFinite(minWidth) ? minWidth : 0);
+    const availableWidth = Math.max(0, viewportWidth - margin * 2);
+    menu.style.width = "max-content";
+    menu.style.maxWidth = `${availableWidth}px`;
+    const contentWidth = menu.getBoundingClientRect().width;
+    const width = Math.min(availableWidth, Math.max(Math.round(rect.width), contentWidth, Number.isFinite(minWidth) ? minWidth : 0));
     const left = Math.max(margin, Math.min(Math.round(rect.left), Math.max(margin, viewportWidth - width - margin)));
     const spaceBelow = Math.max(0, viewportHeight - rect.bottom - gap - margin);
     const spaceAbove = Math.max(0, rect.top - gap - margin);
