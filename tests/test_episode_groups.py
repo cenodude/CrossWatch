@@ -349,6 +349,32 @@ def test_numbering_corrections_do_not_rewrite_existing_watch_dates(config_base, 
 
 
 @pytest.mark.parametrize("mode", ["one-way", "two-way"])
+@pytest.mark.parametrize("present", [False, True])
+def test_corrections_can_move_a_season_to_another_show(config_base, monkeypatch, mode, present):
+    from api import editorAPI
+
+    part = lambda show, season, number, when="2026-10-0%dT12:00:00Z": dict(type="episode", title="Chapter", series_title="Monster",
+        show_ids={"tmdb": show}, season=season, episode=number, watched_at=when % number)
+    originals = [part("500", 1, number) for number in (1, 2, 3)]
+    moved = [part("600", 4, number) for number in (1, 2, 3)]
+    there = [part("600", 4, number, "2019-01-0%dT08:00:00Z") for number in (1, 2, 3)] if present else []
+    src, dst, cfg = setup(config_base, monkeypatch, originals, there, mode)
+    manual_policy.save_policy(config_base, dict(version=1, providers={}, pairs={}))
+    monkeypatch.setattr(editorAPI, "_STATE_BASE", config_base)
+    editorAPI._save_policy_manual_batch(
+        [("history", "SRC", index(moved), [canonical_key(item) for item in originals], "default")], pair_id="p1",
+        mappings={("history", "SRC", "default"): {canonical_key(new): dict(original_key=canonical_key(old), original=old)
+                                                 for old, new in zip(originals, moved)}})
+    assert run(cfg)["ok"]
+    assert set(dst.index) == set(index(moved))
+    assert len(dst.add_calls) == (0 if present else 1)
+    calls = len(dst.add_calls)
+    assert run(cfg)["ok"]
+    assert len(dst.add_calls) == calls and not src.add_calls
+    assert set(src.index) == set(index(originals))
+
+
+@pytest.mark.parametrize("mode", ["one-way", "two-way"])
 def test_shifted_season_already_in_sync_plans_nothing(config_base, monkeypatch, mode):
     src, dst, cfg = shift_season(config_base, monkeypatch, mode, [stamped(n) for n in range(15, 24)], True)
     review = InteractivePlan()
@@ -395,7 +421,7 @@ def test_unattended_sync_warns_once_per_distinct_mismatch(config_base, monkeypat
         return [line for line in lines if line.startswith("[!] History:")], [line for line in lines if '"history:episode_identity"' in line]
     assert sync(dry=True) == ([], [])
     warned, events = sync()
-    assert len(warned) == len(events) == 1 and "Example S01E02" in warned[0] and "Fix numbering" in warned[0]
+    assert len(warned) == len(events) == 1 and "Example S01E02" in warned[0] and "Fix matching" in warned[0]
     assert sync() == ([], [])
     src.index.update({canonical_key(identified(4, 0)): identified(4, 504)})
     dst.index.update({canonical_key(identified(3, 0)): identified(3, 504)})

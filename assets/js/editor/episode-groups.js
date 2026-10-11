@@ -26,7 +26,7 @@ export async function openEpisodeGroups(trigger, {pairId = "", groupId = "", ori
   dialog.className = "eg-dialog cw-page-panel";
   dialog.setAttribute("aria-labelledby", "episode-groups-title");
   dialog.innerHTML = `<div class="eg-head"><div><div class="eg-eyebrow">MAPPING</div><h2 id="episode-groups-title">Episode groups</h2><p>Match combined episodes with their separate parts.</p></div><button type="button" class="eg-close" data-close aria-label="Close episode groups"><span class="material-symbols-rounded" aria-hidden="true">close</span></button></div>
-    <div class="eg-body">${returnToMapping ? '<button type="button" class="eg-back" data-back><span class="material-symbols-rounded" aria-hidden="true">arrow_back</span>Back to mapping</button>' : ""}<div class="eg-toolbar"><label class="eg-field">History sync pair<select data-pair aria-label="History sync pair"></select></label><button type="button" data-align title="Compare this show's numbering on both providers"><span class="material-symbols-rounded" aria-hidden="true">compare</span>Check numbering</button><button type="button" data-new><span class="material-symbols-rounded" aria-hidden="true">add</span>New group</button></div>
+    <div class="eg-body">${returnToMapping ? '<button type="button" class="eg-back" data-back><span class="material-symbols-rounded" aria-hidden="true">arrow_back</span>Back to mapping</button>' : ""}<div class="eg-toolbar"><label class="eg-field">History sync pair<select data-pair aria-label="History sync pair"></select></label><button type="button" data-align title="Compare how both providers have this show"><span class="material-symbols-rounded" aria-hidden="true">compare</span>Check matching</button><button type="button" data-new><span class="material-symbols-rounded" aria-hidden="true">add</span>New group</button></div>
     <form id="episode-group-form" data-form><label class="eg-field">Group name<input data-name required maxlength="200" placeholder="e.g. Friends · Season 4 finale"></label>
     <div class="eg-sides">${["source","target"].map(side => `<section class="eg-provider" data-side="${side}" aria-label="${side} episodes"><div class="eg-provider-head"><span class="eg-provider-logo" data-logo aria-hidden="true"></span><div><strong data-endpoint></strong><span class="eg-muted" data-instance></span></div></div><div class="eg-identity"><label class="eg-field">ID type<select data-namespace aria-label="${side} show ID type">${namespaces.map(ns=>`<option value="${ns}">${ns.toUpperCase()}</option>`).join("")}</select></label><label class="eg-field">Show ID<input data-show-id required maxlength="128" placeholder="e.g. 1668" aria-label="${side} show ID"></label></div><label class="eg-field">Episodes<input data-episodes required placeholder="${side === "source" ? "S04E23, S04E24" : "S04E23"}" aria-label="${side} episodes"></label></section>`).join('<span class="material-symbols-rounded eg-link" aria-hidden="true">compare_arrows</span>')}</div>
     <p class="eg-hint">Use show IDs. Enter one episode on one side and two or more on the other.</p>
@@ -127,13 +127,13 @@ export async function openEpisodeGroups(trigger, {pairId = "", groupId = "", ori
     if (busy) return;
     const pair = selectedPair();
     const section = ["source","target"].map(side=>$(`[data-side="${side}"]`)).find(part=>part.querySelector("[data-show-id]").value.trim());
-    if (!pair || !section) { $(".eg-error").textContent = "Enter a show ID first, then check its numbering."; return; }
+    if (!pair || !section) { $(".eg-error").textContent = "Enter a show ID first, then check its matching."; return; }
     $(".eg-error").textContent = "";
     try {
       const {openEpisodeAlignment} = await import(`/assets/js/editor/episode-alignment.js?v=${encodeURIComponent(window.APP_VERSION || "1")}`);
       await openEpisodeAlignment($("[data-align]"), {pairId:pair.id,
         showIds:{[section.querySelector("[data-namespace]").value]:section.querySelector("[data-show-id]").value.trim()},
-        onSaved:async () => { changed = true; await load(); $(".eg-status").textContent = "Numbering fixes saved."; }});
+        onSaved:async () => { changed = true; await load(); $(".eg-status").textContent = "Matching fixes saved."; }});
     } catch (error) { $(".eg-error").textContent = error.message; }
   };
   $("[data-pair]").onchange = () => { render(); reset(); };

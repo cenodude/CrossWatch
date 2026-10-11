@@ -66,4 +66,4 @@ def summary(rows):
     count = len(rows)
     return (f"{count} episode{'' if count == 1 else 's'} share a season and episode number on both providers but carry "
             f"different episode IDs, so they may be different episodes ({examples}). "
-            "Check the numbering, then add episode corrections or an episode group.")
+            "Use Fix matching in the Analyzer to see what differs.")
