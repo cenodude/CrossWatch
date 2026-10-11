@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import time
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any
@@ -35,18 +36,23 @@ PATH_LIST_ITEM = "lists/{list_id}/items/{item_id}"
 PATH_WEBHOOK_KODI = "webhooks/kodi"
 PATH_WEBHOOK_KODI_RATING = "webhooks/kodi/rating"
 PATH_WEBHOOK_JELLYFIN = "webhooks/jellyfin"
+PATH_SHOW = "shows/{tmdb_id}"
 
 HISTORY_PAGE_MAX = 100
 DEFAULT_TIMEOUT = 12.0
 DEFAULT_MAX_RETRIES = 3
 DEFAULT_GET_PER_SEC = 10.0
 DEFAULT_POST_PER_SEC = 5.0
+SHOW_LOOKUP_TIMEOUT = 6.0
+SHOW_TVDB_MISS_TTL = 3600.0
+SHOW_TVDB_CACHE_MAX = 5000
 
 MEDIA_TYPE_MOVIE = "movie"
 MEDIA_TYPE_EPISODE = "episode"
 MEDIA_TYPE_SERIES = "series"
 
 _LIMITERS: dict[str, SimpleRateLimiter] = {}
+_SHOW_TVDB: dict[tuple[str, int], tuple[int | None, float]] = {}
 
 
 class ScrobError(RuntimeError):
@@ -299,6 +305,32 @@ def media_show_ids(media: Mapping[str, Any]) -> dict[str, str]:
     return out
 
 
+def show_tvdb_for(adapter: Any, tmdb_id: Any) -> int | None:
+    tmdb = positive_int(tmdb_id)
+    if not tmdb:
+        return None
+    try:
+        key = (base_url(cfg_section(adapter)), tmdb)
+    except Exception:
+        return None
+    now = time.time()
+    cached = _SHOW_TVDB.get(key)
+    if cached is not None and (cached[0] or cached[1] > now):
+        return cached[0]
+    tvdb: int | None = None
+    try:
+        resp = scrob_request(adapter, "GET", PATH_SHOW.format(tmdb_id=tmdb), timeout=SHOW_LOOKUP_TIMEOUT)
+        if ok_status(resp):
+            tvdb = positive_int(mapping(safe_json(resp)).get("tvdb_id"))
+    except Exception:
+        tvdb = None
+    if len(_SHOW_TVDB) >= SHOW_TVDB_CACHE_MAX:
+        _SHOW_TVDB.clear()
+    _SHOW_TVDB[key] = (tvdb, now + SHOW_TVDB_MISS_TTL)
+    _dbg("lookup", "show_tvdb_lookup", tmdb=tmdb, tvdb=tvdb)
+    return tvdb
+
+
 def year_of(media: Mapping[str, Any]) -> int | None:
     raw = str(media.get("release_date") or "").strip()
     if len(raw) >= 4 and raw[:4].isdigit():
@@ -404,6 +436,7 @@ __all__ = [
     "PATH_WEBHOOK_KODI",
     "PATH_WEBHOOK_KODI_RATING",
     "PATH_WEBHOOK_JELLYFIN",
+    "PATH_SHOW",
     "HISTORY_PAGE_MAX",
     "as_imdb",
     "as_int",
@@ -430,6 +463,7 @@ __all__ = [
     "safe_json",
     "scrob_request",
     "show_ids_for_scrob",
+    "show_tvdb_for",
     "url_for",
     "webhook_post",
     "year_of",

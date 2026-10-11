@@ -113,7 +113,7 @@ def episode_row(**over: Any) -> dict[str, Any]:
 def test_manifest_declares_supported_features_only():
     manifest = mod.get_manifest()
     assert manifest["name"] == "SCROB"
-    assert manifest["version"] == "0.1"
+    assert manifest["version"] == "0.3"
     assert manifest["bidirectional"] is True
     assert manifest["features"] == {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": False, "collection": True}
 
@@ -381,6 +381,7 @@ def test_progress_index_converts_fraction_to_percent():
     assert item["duration_ms"] == 8340000
     assert item["_scrob_media_id"] == "5"
     assert item["progress_at_source"] == "scrob"
+    assert adapter.calls[0]["params"] == {"limit": _progress.CONTINUE_WATCHING_LIMIT}
 
 
 def test_progress_add_uses_a_stop_below_the_watched_threshold():
@@ -393,6 +394,24 @@ def test_progress_add_uses_a_stop_below_the_watched_threshold():
     assert body["total_seconds"] == 8340
     assert body["position_seconds"] == 3336
     assert body["session_id"].startswith("crosswatch-progress-")
+
+
+def test_progress_add_looks_up_the_show_tvdb_id_when_missing():
+    from providers.sync.scrob import _common
+
+    _common._SHOW_TVDB.clear()
+    adapter = FakeAdapter({
+        ("POST", "webhooks/kodi"): ResponseStub(200, {"status": "ok"}),
+        ("GET", "shows/2996"): ResponseStub(200, {"tmdb_id": 2996, "tvdb_id": 78107}),
+    })
+    item = {"type": "episode", "ids": {}, "show_ids": {"tmdb": "2996"}, "season": 1, "episode": 2, "series_title": "The Office", "progress_percent": 40, "duration_ms": 1800000}
+
+    assert _progress.add(adapter, [item, dict(item, episode=3)])["count"] == 2
+
+    posted = [call["json"]["item"]["uniqueid"] for call in adapter.calls if call["method"] == "POST"]
+    assert posted == [{"tmdb": "2996", "tvdb": "78107"}, {"tmdb": "2996", "tvdb": "78107"}]
+    assert sum(1 for call in adapter.calls if call["path"] == "shows/2996") == 1
+    _common._SHOW_TVDB.clear()
 
 
 def test_progress_add_refuses_values_scrob_will_not_keep():
@@ -449,6 +468,37 @@ def test_collection_index_reads_export_collection_rows():
     assert index["tmdb:550"]["_scrob_collection_id"] == "71"
     assert index["tmdb:550"]["collected_at"] == "2026-08-01T10:00:00.000Z"
     assert index["tmdb:1399#s01e01"]["show_ids"] == {"tmdb": "1399"}
+
+
+def test_collection_index_reads_nested_episode_export_rows():
+    payload = [
+        {
+            "type": "episode",
+            "collected_at": "2026-10-11T10:48:09.000Z",
+            "episode": {"season": 1, "number": 2, "title": "Cat's in the Bag...", "ids": {"tmdb": 62086}},
+            "show": {"title": "Breaking Bad", "year": 2008, "ids": {"tmdb": 1396, "tvdb": 81189}},
+        },
+        {
+            "type": "episode",
+            "episode": {"season": 0, "number": 1, "title": "Good Cop / Bad Cop", "ids": {"tmdb": 62131}},
+            "show": {"title": "Breaking Bad", "year": 2008, "ids": {"tmdb": 1396, "tvdb": 81189}},
+        },
+    ]
+    adapter = FakeAdapter({("GET", "export/data"): ResponseStub(200, payload)})
+
+    index = _collection.build_index(adapter)
+
+    assert sorted(index) == ["tmdb:1396#s00e01", "tmdb:1396#s01e02"]
+    item = index["tmdb:1396#s01e02"]
+    assert item["type"] == "episode"
+    assert item["ids"] == {"tmdb": "62086"}
+    assert item["show_ids"] == {"tmdb": "1396", "tvdb": "81189"}
+    assert item["title"] == "Cat's in the Bag..."
+    assert item["collected_at"] == "2026-10-11T10:48:09.000Z"
+    assert _collection._payload_for(item) == (
+        "media/collect",
+        {"tmdb_id": 62086, "media_type": "episode", "series_tmdb_id": 1396, "season_number": 1, "episode_number": 2},
+    )
 
 
 def test_collection_add_maps_each_scope():

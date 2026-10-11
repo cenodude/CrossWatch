@@ -74,6 +74,14 @@ def _nested(row: Mapping[str, Any], *names: str) -> Mapping[str, Any]:
     return {}
 
 
+def _first_int(*values: Any) -> int | None:
+    for value in values:
+        number = as_int(value)
+        if number is not None:
+            return number
+    return None
+
+
 def _item_with_meta(item: dict[str, Any], *rows: Mapping[str, Any]) -> dict[str, Any]:
     for row in rows:
         collected = iso_z(row.get("collected_at") or row.get("listed_at") or row.get("added_at"))
@@ -130,12 +138,17 @@ def _items_from_row(row: Mapping[str, Any]) -> list[dict[str, Any]]:
     title = (show_item or {}).get("title")
     year = (show_item or {}).get("year")
 
-    season_number = as_int(row.get("season") if row.get("season") is not None else row.get("season_number"))
-    episode_number = as_int(row.get("episode") if row.get("episode") is not None else row.get("episode_number"))
+    nested_ep = row.get("episode") if isinstance(row.get("episode"), Mapping) else None
+    ep_src: Mapping[str, Any] = nested_ep or row
+    season_number = _first_int(row.get("season"), ep_src.get("season"), ep_src.get("season_number"), row.get("season_number"))
+    if nested_ep is not None:
+        episode_number = _first_int(nested_ep.get("number"), nested_ep.get("episode"), nested_ep.get("episode_number"))
+    else:
+        episode_number = _first_int(row.get("episode"), row.get("episode_number"))
     if raw_type == MEDIA_TYPE_EPISODE or episode_number is not None:
         if not show_ids or season_number is None or episode_number is None:
             return []
-        ep_ids = _ids_clean(row.get("ids") if isinstance(row.get("ids"), Mapping) else {}, row)
+        ep_ids = _ids_clean(ep_src.get("ids") if isinstance(ep_src.get("ids"), Mapping) else {}, ep_src)
         item = {
             "type": "episode",
             "ids": ep_ids,
@@ -145,7 +158,7 @@ def _items_from_row(row: Mapping[str, Any]) -> list[dict[str, Any]]:
             "series_title": title,
             "year": year,
         }
-        ep_title = str(row.get("title") or "").strip()
+        ep_title = str(ep_src.get("title") or "").strip()
         if ep_title:
             item["title"] = ep_title
         return [_item_with_meta(item, row)]

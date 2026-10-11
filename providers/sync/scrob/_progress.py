@@ -23,6 +23,7 @@ from ._common import (
     safe_json,
     scrob_request,
     show_ids_for_scrob,
+    show_tvdb_for,
     webhook_post,
     _dbg,
     _info,
@@ -35,6 +36,7 @@ MEDIA_ID_FIELD = "_scrob_media_id"
 
 PROGRESS_MIN_PERCENT = 5.0
 PROGRESS_MAX_PERCENT = 90.0
+CONTINUE_WATCHING_LIMIT = 10000
 
 
 def _key_of(obj: Mapping[str, Any]) -> str:
@@ -106,7 +108,7 @@ def _row_to_minimal(row: Mapping[str, Any]) -> dict[str, Any] | None:
 
 
 def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
-    resp = scrob_request(adapter, "GET", PATH_CONTINUE_WATCHING)
+    resp = scrob_request(adapter, "GET", PATH_CONTINUE_WATCHING, params={"limit": CONTINUE_WATCHING_LIMIT})
     if not ok_status(resp):
         _warn(FEATURE, "fetch_failed", status=int(resp.status_code), error=error_of(resp))
         return {}
@@ -131,7 +133,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     return out
 
 
-def _kodi_item(item: Mapping[str, Any]) -> dict[str, Any] | None:
+def _kodi_item(item: Mapping[str, Any], adapter: Any = None) -> dict[str, Any] | None:
     kind = media_type_of(item)
     if kind == MEDIA_TYPE_EPISODE:
         season = as_int(item.get("season"))
@@ -142,8 +144,11 @@ def _kodi_item(item: Mapping[str, Any]) -> dict[str, Any] | None:
         unique: dict[str, Any] = {}
         if show_ids.get("tmdb_id"):
             unique["tmdb"] = str(show_ids["tmdb_id"])
-        if show_ids.get("tvdb_id"):
-            unique["tvdb"] = str(show_ids["tvdb_id"])
+        tvdb = show_ids.get("tvdb_id")
+        if not tvdb and adapter is not None and show_ids.get("tmdb_id"):
+            tvdb = show_tvdb_for(adapter, show_ids["tmdb_id"])
+        if tvdb:
+            unique["tvdb"] = str(tvdb)
         if show_ids.get("imdb_id"):
             unique["imdb"] = str(show_ids["imdb_id"])
         out: dict[str, Any] = {
@@ -189,7 +194,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
 
         percent = _percent_of(item)
         duration_ms = _first_number(item, ("duration_ms",))
-        kodi_item = _kodi_item(item)
+        kodi_item = _kodi_item(item, adapter)
 
         if kodi_item is None:
             unresolved_keys.append(key)

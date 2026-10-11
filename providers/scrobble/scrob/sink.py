@@ -48,6 +48,7 @@ from providers.sync.scrob._common import (
     as_int,
     ok_status,
     safe_json,
+    show_tvdb_for,
     webhook_post,
 )
 
@@ -223,7 +224,7 @@ class ScrobSink(ScrobbleSink):
         except Exception:
             return DEFAULT_WATCHED_AT
 
-    def _kodi_item(self, event: Any, media_type: str) -> dict[str, Any] | None:
+    def _kodi_item(self, event: Any, media_type: str, cfg: Mapping[str, Any] | None = None) -> dict[str, Any] | None:
         ids = {str(k): str(v) for k, v in (getattr(event, "ids", None) or {}).items() if v}
 
         def pick(*names: str) -> dict[str, str]:
@@ -240,6 +241,10 @@ class ScrobSink(ScrobbleSink):
             if season is None or number is None:
                 return None
             unique = pick("tmdb_show", "tvdb_show", "imdb_show")
+            if unique.get("tmdb") and not unique.get("tvdb") and cfg is not None:
+                tvdb = show_tvdb_for(_Adapter(dict(cfg), self.instance_id, self.session), unique["tmdb"])
+                if tvdb:
+                    unique["tvdb"] = str(tvdb)
             if not unique:
                 unique = pick("tmdb", "tvdb", "imdb")
             if not unique:
@@ -314,7 +319,7 @@ class ScrobSink(ScrobbleSink):
             return {"ok": True, "log_status": "skipped", "reason": "invalid_action"}
 
         media_type = "episode" if str(getattr(event, "media_type", "") or "").lower() == "episode" else "movie"
-        item = self._kodi_item(event, media_type)
+        item = self._kodi_item(event, media_type, cfg)
         if item is None:
             _log("SCROB: skip scrobble, no supported ids", "DEBUG")
             return {"ok": True, "log_status": "skipped", "reason": "missing_external_ids"}

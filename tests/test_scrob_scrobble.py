@@ -63,7 +63,8 @@ def event(action: str, *, progress: float = 10.0, media_type: str = "movie", ses
 
 
 @pytest.fixture(autouse=True)
-def _clean_sink_state():
+def _clean_sink_state(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(scrob_sink, "show_tvdb_for", lambda adapter, tmdb_id: None)
     scrob_sink._SESSIONS.clear()
     yield
     scrob_sink._SESSIONS.clear()
@@ -128,6 +129,22 @@ def test_sink_sends_episode_show_ids_and_numbers(posts: list[dict[str, Any]]):
     assert item["uniqueid"] == {"tmdb": "1399", "tvdb": "121361"}
     assert item["season"] == 1 and item["episode"] == 1
     assert item["showtitle"] == "Game of Thrones"
+
+
+def test_sink_looks_up_the_show_tvdb_id_when_missing(posts: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch):
+    asked: list[Any] = []
+
+    def lookup(adapter: Any, tmdb_id: Any) -> int | None:
+        asked.append(tmdb_id)
+        return 78107
+
+    monkeypatch.setattr(scrob_sink, "show_tvdb_for", lookup)
+    s = scrob_sink.ScrobSink(cfg_provider=scrob_cfg)
+    s.send(event("start", media_type="episode", ids={"tmdb_show": "2996"}, season=1, number=2, title="The Office"))
+    s.send(event("start", media_type="episode", session="s2", ids={"tmdb_show": "1399", "tvdb_show": "121361"}, season=1, number=1, title="Game of Thrones"))
+    assert posts[0]["payload"]["item"]["uniqueid"] == {"tmdb": "2996", "tvdb": "78107"}
+    assert posts[1]["payload"]["item"]["uniqueid"] == {"tmdb": "1399", "tvdb": "121361"}
+    assert asked == ["2996"]
 
 
 def test_sink_computes_position_from_duration_when_absent(posts: list[dict[str, Any]]):
