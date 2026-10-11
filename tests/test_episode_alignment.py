@@ -161,6 +161,124 @@ def test_same_number_match_with_a_different_title_stays_a_group_anchor():
     assert len(result["groups"]) == 2
 
 
+def anthology():
+    part = lambda show, season, number, tvdb: dict(type="episode", title=f"Chapter {number}", series_title="Monster",
+        show_ids={"tmdb": show, "imdb": "tt13207736"}, season=season, episode=number, ids={"tvdb": str(tvdb)},
+        watched_at="2026-10-01T12:00:00Z")
+    source = index([part("299939", 1, number, 5000 + number) for number in range(1, 9)])
+    earlier = [part("111", season, number, season * 100 + number) for season in (1, 2, 3) for number in range(1, 7)]
+    latest = [part("111", 4, number, 5001 if number == 1 else 9000 + number) for number in range(1, 9)]
+    return source, index(earlier + latest)
+
+
+def test_seasons_kept_as_separate_shows_are_reported_as_a_layout_difference():
+    source, target = anthology()
+    calls = []
+    result = align(source, target, {"tmdb": "299939", "imdb": "tt13207736"}, tmdb_key="key",
+                   fetch=lambda key, show, season: calls.append(season) or {})
+    assert result["diagnosis"] == "layout"
+    assert result["layout"] == [dict(source_season=1, target_season=4, episodes=1)]
+    assert [(item["episode"], item["doubt"]) for item in result["corrections"]] == [(1, True)] and not result["groups"]
+    assert result["metadata"] == "used" and calls
+    assert [item["status"] for item in result["rows"] if item["source"] and item["source"]["episode"] == 1] == ["moved"]
+
+
+STORY = ["Bloodbath", "Strong Kitty", "Whack Job!", "Forty Whacks", "The Maid", "Inquest", "Verdict", "Carnival"]
+
+
+def story():
+    watched = lambda show, season, number, ids, title: dict(type="episode", title=title, series_title="Monster",
+        show_ids={"tmdb": "299939", **show}, season=season, episode=number, ids=ids, watched_at="2026-10-01T12:00:00Z")
+    source = index([watched({}, 1, number, {"tmdb": str(7000 + number), "tvdb": str(5000 + number)}, "") for number in range(1, 9)])
+    target = index([watched({"simkl": "1446614"}, 4, 1, {"tvdb": "5001"}, "S04E01"),
+                    watched({"simkl": "1446614"}, 4, 2, {"tvdb": "9999"}, "S04E02"),
+                    *[watched({"simkl": "1446614"}, 1, number, {"tvdb": str(100 + number)}, f"S01E{number:02d}") for number in range(1, 4)]])
+    listing = lambda titles, ids: [dict(episode=number, title=title, ids=ids(number), runtime=None) for number, title in enumerate(titles, 1)]
+    layouts = dict(
+        source=dict(title="Monster: The Lizzie Borden Story", counts={1: 8},
+                    seasons={1: listing([""] * 8, lambda number: {"tmdb": str(7000 + number)})}),
+        target=dict(title="Monster", counts={1: 3, 4: 8},
+                    seasons={1: listing(["Episode One", "Please Don't Go", "Doin' a Dahmer"], lambda number: {}),
+                             4: listing(STORY, lambda number: {})}),
+        extra=[dict(title="Monster: The Lizzie Borden Story", counts={1: 8},
+                    seasons={1: listing(STORY, lambda number: {"tmdb": str(7000 + number)})})])
+    return source, target, layouts
+
+
+def test_provider_layouts_line_up_a_season_kept_under_another_season():
+    source, target, layouts = story()
+    result = align(source, target, {"tmdb": "299939"}, layouts=layouts)
+    assert result["diagnosis"] == "layout"
+    assert result["layout"] == [dict(source_season=1, target_season=4, episodes=8)]
+    assert [(item["season"], item["episode"], item["doubt"]) for item in result["corrections"]] == [(4, number, False) for number in range(1, 9)]
+    assert not any("show_ids" in item for item in result["corrections"]) and not result["groups"]
+    listed = [item for item in result["rows"] if item["source"] is None]
+    assert [(item["target"]["season"], item["target"]["episode"]) for item in listed] == [(1, 1), (1, 2), (1, 3)]
+    by_number = {item["source"]["episode"]: item for item in result["rows"] if item["source"]}
+    assert by_number[1]["via"] == "id" and by_number[2]["via"] == "title" and by_number[8]["target"]["title"] == "Carnival"
+
+
+def test_an_episode_with_a_differently_worded_title_is_placed_by_position():
+    source, target, layouts = story()
+    layouts["target"]["seasons"][4][4]["title"] = "The Maid Speaks"
+    result = align(source, target, {"tmdb": "299939"}, layouts=layouts)
+    by_number = {item["source"]["episode"]: item for item in result["rows"] if item["source"]}
+    assert by_number[5]["via"] == "position" and by_number[5]["target"]["episode"] == 5
+    assert len(result["corrections"]) == 8
+
+
+def test_without_provider_layouts_only_the_id_match_is_found_and_left_unselected():
+    source, target, _ = story()
+    result = align(source, target, {"tmdb": "299939"})
+    assert [(item["episode"], item["doubt"]) for item in result["corrections"]] == [(1, True)]
+    assert result["corrections"][0]["reason"] == "Only one episode links these two seasons."
+
+
+def test_a_correction_carries_the_other_show_when_the_show_ids_differ():
+    source, target, layouts = story()
+    for item in target.values():
+        item["show_ids"] = {"simkl": "1446614", "imdb": "tt13207736"}
+    for item in source.values():
+        item["show_ids"] = {"tmdb": "299939", "imdb": "tt13207736"}
+    target = index(list(target.values()))
+    result = align(source, target, {"tmdb": "299939", "imdb": "tt13207736"}, layouts=layouts)
+    assert len(result["corrections"]) == 8
+    assert all(item["show_ids"] == {"simkl": "1446614", "imdb": "tt13207736"} for item in result["corrections"])
+
+
+def test_generic_episode_titles_never_create_a_match():
+    from services.episode_alignment import _title_key
+
+    for title in ("Episode 5", "Chapter Seven", "S01E02", "Part 2", "", "12"):
+        assert _title_key({"title": title}) == ""
+    assert _title_key({"title": "Strong Kitty"}) == "strongkitty"
+
+
+def test_a_missing_season_on_tmdb_is_not_reported_as_unreachable(monkeypatch):
+    from types import SimpleNamespace
+    from services import episode_alignment
+
+    reply = lambda status: lambda *a, **k: SimpleNamespace(status_code=status, json=lambda: {})
+    monkeypatch.setattr(episode_alignment.requests, "get", reply(404))
+    assert episode_alignment.tmdb_season("key", "1", 4) == {}
+    monkeypatch.setattr(episode_alignment.requests, "get", reply(500))
+    assert episode_alignment.tmdb_season("key", "1", 4) is None
+
+
+def test_a_long_run_of_unmatched_episodes_is_never_offered_as_one_combined_episode():
+    source = index([row(number, 400 + number, NAMES.get(number, f"Extra {number}")) for number in range(13, 24)])
+    shifted = {13: 413, 14: 419, 15: 420, 16: 421, 17: 422, 18: 423}
+    target = index([row(number, tvdb, f"Other {number}") for number, tvdb in shifted.items()])
+    result = align(source, target, SHOW)
+    assert all(len(group["orphans"]) <= 3 for group in result["groups"])
+    assert not any(len(option["source"]) > 4 for group in result["groups"] for option in group["options"].values())
+
+
+def test_numbering_cases_report_their_diagnosis():
+    assert align(library(), tracker(), SHOW)["diagnosis"] == "numbering"
+    assert align(tracker(), tracker(), SHOW)["diagnosis"] == "aligned"
+
+
 def test_combined_save_stores_groups_and_corrections_then_nothing_is_left(client, monkeypatch):
     client, api, cfg = client
     from cw_platform.local_db import state
@@ -190,6 +308,73 @@ def test_combined_save_stores_groups_and_corrections_then_nothing_is_left(client
     assert all(item["status"] == "same" for item in after["rows"])
 
 
+def test_layout_fixes_are_saved_as_corrections_and_then_nothing_is_left(client, monkeypatch):
+    client, api, cfg = client
+    from cw_platform.local_db import state
+    from services import episode_alignment
+
+    source, target, layouts = story()
+    monkeypatch.setattr(state, "load_pair_state", lambda *a, **k: {"providers": {
+        "SRC": {"history": {"baseline": {"items": source}}}, "DST": {"history": {"baseline": {"items": target}}}}})
+    monkeypatch.setattr(episode_alignment, "_lookups", lambda *a: (layouts, [dict(label="SIMKL", ok=True, title="Monster", seasons=[[1, 3], [4, 8]])]))
+    request = dict(pair_id="p1", show_ids={"tmdb": "299939"})
+    proposal = client.post("/api/editor/episode-alignment", json=request).json()
+    assert proposal["diagnosis"] == "layout" and proposal["sources"][0]["label"] == "SIMKL"
+    chosen = [{name: item[name] for name in ("key", "season", "episode")} for item in proposal["corrections"]]
+    assert client.post("/api/editor/episode-alignment/apply", json={**request, "corrections": chosen}).json() == dict(ok=True, groups=0, corrections=8)
+    node = effective_policy(api._load_policy(), "p1")["providers"]["SRC"]["history"]
+    assert sorted(item["season"] for item in node["adds"]["items"].values()) == [4] * 8
+    after = client.post("/api/editor/episode-alignment", json=request).json()
+    assert not after["corrections"] and after["diagnosis"] == "aligned"
+    bad = dict(key=chosen[0]["key"], season=4, episode=1, show_ids={"nonsense": "1"})
+    assert client.post("/api/editor/episode-alignment/apply", json={**request, "corrections": [bad]}).status_code in (400, 409)
+
+
 def test_alignment_needs_an_accessible_history_pair(client):
     client, _, _ = client
     assert client.post("/api/editor/episode-alignment", json=dict(pair_id="missing", show_ids=SHOW)).status_code == 404
+
+
+def test_a_catalogue_only_episode_is_never_a_group_anchor():
+    target = tracker()
+    unwatched = target.pop(key_of(15))
+    layouts = dict(source=None, extra=[], target=dict(title="Friends", counts={6: 1}, seasons={6: [
+        dict(episode=15, title=unwatched["title"], ids={"tvdb": unwatched["ids"]["tvdb"]}, runtime=None)]}))
+    result = align(library(), target, SHOW, tmdb_key="key", fetch=catalog, layouts=layouts)
+    members = {key for group in result["groups"] for option in group["options"].values() for key in (*option["source"], *option["target"])}
+    assert key_of(15) not in members
+    assert all(key in target or key in library() for key in members)
+
+
+def test_a_title_used_more_than_once_is_never_matched_by_title():
+    made = lambda number, tvdb: row(number, tvdb, "Finale")
+    source = index([made(1, 1), made(5, 55), row(2, 2, "Opening")])
+    target = index([made(1, 1), made(7, 77), row(2, 2, "Opening")])
+    result = align(source, target, SHOW)
+    assert not result["corrections"]
+    assert {item["source"]["episode"]: item["status"] for item in result["rows"] if item["source"]}[5] == "unmatched"
+
+
+def test_doubtful_matches_do_not_place_other_episodes_by_position():
+    part = lambda season, number, tvdb, title: {**row(number, tvdb, title), "season": season}
+    agreeing = [(number, f"Agreed {chr(64 + number)}") for number in range(1, 5)]
+    source = index([part(2, number, 200 + number, title) for number, title in agreeing]
+                   + [part(1, 1, 901, "Alpha"), part(1, 2, 902, "Beta"), part(1, 3, 903, "")])
+    target = index([part(2, number, 200 + number, title) for number, title in agreeing]
+                   + [part(4, 1, 901, "Gamma"), part(4, 2, 902, "Delta"), part(4, 3, 999, "")])
+    result = align(source, target, SHOW)
+    assert [(item["episode"], item["doubt"]) for item in result["corrections"]] == [(1, True), (2, True)]
+    assert not any(item["via"] == "position" for item in result["rows"])
+
+
+def test_a_watched_split_stays_suggested_when_the_catalogue_lists_a_later_unwatched_episode():
+    made = lambda number, tvdb, title: {**row(number, tvdb, title), "season": 1}
+    source = index([made(1, 11, "Opening"), made(2, 12, "Double (1)"), made(3, 13, "Double (2)")])
+    target = index([made(1, 11, "Opening"), made(2, 13, "Double")])
+    layouts = dict(source=None, extra=[], target=dict(title="Show", counts={1: 3}, seasons={1: [
+        dict(episode=3, title="Next Adventure", ids={}, runtime=None)]}))
+    result = align(source, target, SHOW, layouts=layouts)
+    keys = sorted(source)
+    assert len(result["groups"]) == 1 and result["groups"][0]["suggested"] == "next"
+    assert result["groups"][0]["options"]["next"] == dict(source=[keys[1], keys[2]], target=[keys[1]])
+    assert not any(item["source"] is None for item in result["rows"])

@@ -22,7 +22,7 @@ class MappingRequest(BaseModel):
     provider: str = Field(min_length=1, max_length=128)
     feature: Literal["history", "watchlist", "ratings", "progress", "collection"]
     key: str = Field(min_length=1, max_length=1024)
-    action: Literal["context", "catalogs", "search", "episodes", "parts", "save"] = "context"
+    action: Literal["context", "catalogs", "search", "episodes", "parts", "save", "diagnose"] = "context"
     version: str = Field(default="", max_length=64)
     q: str = Field(default="", max_length=200)
     simkl_id: str = Field(default="", max_length=32)
@@ -101,6 +101,15 @@ def handle_mapping(payload: MappingRequest, request):
         if len(payload.q.strip()) < 2:
             raise HTTPException(400, "Enter at least two characters")
         return search_candidates(cfg, row, payload.q, catalog=payload.catalog)
+    if payload.action == "diagnose":
+        from services import analyzer as an
+        from services.movie_matching import diagnose
+
+        target = an._prov_token(row["provider"], row["instance"])
+        there = [item for handle in an._load_state_handles(payload.pair_id, {payload.feature})
+                 for source, feature, _key, item in an._iter_items(handle["state"])
+                 if feature == payload.feature and an._norm_prov_token(source) == an._norm_prov_token(target)]
+        return diagnose(cfg, row, there)
     if payload.action == "episodes":
         from services.interactive_sync_episodes import suggest_episodes
         return suggest_episodes(cfg, [(row, payload.item)])

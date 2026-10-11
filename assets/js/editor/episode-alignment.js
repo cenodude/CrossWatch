@@ -1,5 +1,5 @@
 /* assets/js/editor/episode-alignment.js */
-/* CrossWatch - Episode numbering review for one show in a History sync pair */
+/* CrossWatch - Episode matching review for one show in a History sync pair */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const code = item => `S${String(item.season).padStart(2,"0")}E${String(item.episode).padStart(2,"0")}`;
@@ -9,7 +9,7 @@ export function selection(proposal, picks = {}, unchecked = new Set(), confirmed
     .filter(entry => entry.option).map(({group, option}) => ({name:group.name, source:option.source, target:option.target}));
   const covered = new Set(groups.flatMap(group => group.source));
   const corrections = proposal.corrections.filter(item => !covered.has(item.key) && !unchecked.has(item.key)
-    && (!item.doubt || confirmed.has(item.key))).map(({key, season, episode}) => ({key, season, episode}));
+    && (!item.doubt || confirmed.has(item.key))).map(({key, season, episode, show_ids}) => show_ids ? {key, season, episode, show_ids} : {key, season, episode});
   return {groups, corrections, covered};
 }
 
@@ -17,9 +17,9 @@ export async function openEpisodeAlignment(trigger, {pairId, showIds, onSaved} =
   const dialog = document.createElement("dialog");
   dialog.className = "eg-dialog cw-page-panel";
   dialog.setAttribute("aria-labelledby", "episode-alignment-title");
-  dialog.innerHTML = `<div class="eg-head"><div><h2 id="episode-alignment-title">Fix episode numbering</h2><p>Compare how both providers number this show and confirm the proposed fixes.</p></div><button type="button" class="eg-close" data-close aria-label="Close numbering review"><span class="material-symbols-rounded" aria-hidden="true">close</span></button></div>
+  dialog.innerHTML = `<div class="eg-head"><div><h2 id="episode-alignment-title">Fix matching</h2><p>See how both providers have this show and confirm the proposed fixes.</p></div><button type="button" class="eg-close" data-close aria-label="Close matching review"><span class="material-symbols-rounded" aria-hidden="true">close</span></button></div>
     <div class="eg-body"><p class="eg-status" role="status">Comparing watched episodes…</p><p class="eg-error" role="alert"></p><div data-review></div></div>
-    <footer class="eg-footer"><span class="eg-muted">Saving does not start a sync.</span><div><button type="button" data-close>Cancel</button><button type="button" class="eg-primary" data-save disabled>Save fixes</button></div></footer>`;
+    <footer class="eg-footer"><div><button type="button" data-close>Cancel</button><button type="button" class="eg-primary" data-save disabled>Save fixes</button></div></footer>`;
   document.body.append(dialog);
   const $ = selector => dialog.querySelector(selector);
   const controller = new AbortController();
@@ -29,7 +29,7 @@ export async function openEpisodeAlignment(trigger, {pairId, showIds, onSaved} =
     const response = await fetch(`/api/editor/episode-alignment${path}`, {method:"POST", credentials:"same-origin", cache:"no-store",
       signal:controller.signal, headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
     const data = await response.json();
-    if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : "The numbering review could not be completed.");
+    if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : "The matching review could not be completed.");
     return data;
   };
   const name = side => window.CW?.ProviderMeta?.label?.(proposal[side].provider) || proposal[side].provider;
@@ -42,6 +42,13 @@ export async function openEpisodeAlignment(trigger, {pairId, showIds, onSaved} =
     const note = {missing_key:"Add a TMDb metadata key in Settings to get suggestions for split episodes, including season finales.",
       no_tmdb_id:"This show has no TMDb ID, so split episodes cannot be suggested.",
       unavailable:"TMDb could not be reached, so split episode suggestions are limited."}[proposal.metadata] || "";
+    const season = number => `season ${number}`;
+    const finding = proposal.diagnosis === "layout"
+      ? `These providers organise this show differently: ${proposal.layout.map(part => `${name("source")} ${season(part.source_season)} matches ${name("target")} ${season(part.target_season)} (${part.episodes} episode${part.episodes === 1 ? "" : "s"})`).join("; ")}. The fixes below move those episodes to the matching season.`
+      : proposal.diagnosis === "numbering" ? "The episode numbers are out of step between the providers." : "";
+    const checked = (proposal.sources || []).map(source => source.ok
+      ? `${source.label}: ${source.title || "found"}${source.seasons.length ? `, ${source.seasons.length} season${source.seasons.length === 1 ? "" : "s"} (${source.seasons.map(part => part[1]).join(", ")} episodes)` : ""}`
+      : `${source.label}: not found`).join(" · ");
     const groups = proposal.groups.map((group, index) => {
       const pick = picks[index] ?? group.suggested ?? "none";
       const other = group.split === "source" ? "target" : "source";
@@ -56,14 +63,14 @@ export async function openEpisodeAlignment(trigger, {pairId, showIds, onSaved} =
     const corrections = proposal.corrections.length ? `<section class="eg-saved"><div class="eg-saved-head"><h3>Shifted episodes</h3><span class="eg-muted">${chosen.corrections.length} selected</span></div>${proposal.corrections.map(item => {
       const from = sides.source.get(item.key), covered = chosen.covered.has(item.key);
       const ticked = item.doubt ? confirmed.has(item.key) : !unchecked.has(item.key);
-      const detail = covered ? "Handled by the episode group above." : item.doubt
+      const detail = covered ? "Handled by the episode group above." : item.reason ? `${item.reason} Select only if these are the same episode.` : item.doubt
         ? `Titles differ: “${from.title}” on ${name("source")}, “${matches.get(item.key)?.title || ""}” on ${name("target")}. One provider may have a wrong episode ID. Select only if these are the same episode.`
         : from.title;
       return `<label class="eg-scrobble"><input type="checkbox" data-correction="${esc(item.key)}" ${item.doubt ? "data-doubt" : ""} ${covered ? "disabled" : ticked ? "checked" : ""}><span><strong>${esc(name("source"))} ${esc(code(from))} → ${esc(name("target"))} ${esc(code(item))}${item.doubt ? " · check this one" : ""}</strong><small>${esc(detail)}</small></span></label>`;
     }).join("")}</section>` : "";
     const all = `<details class="eg-help"><summary>All watched episodes (${proposal.rows.length})</summary><ul>${proposal.rows.map(row =>
       `<li>${esc(row.source ? `${code(row.source)} ${row.source.title}` : "—")} ↔ ${esc(row.target ? `${code(row.target)} ${row.target.title}` : "—")}${row.status === "same" ? "" : ` (${esc(row.status)})`}</li>`).join("")}</ul></details>`;
-    $("[data-review]").innerHTML = `${note ? `<p class="eg-hint">${esc(note)}</p>` : ""}${groups}${corrections}${groups || corrections ? "" : '<p class="eg-empty">The watched episodes of this show already line up between both providers.</p>'}${all}`;
+    $("[data-review]").innerHTML = `${checked ? `<p class="eg-hint">Checked ${esc(checked)}</p>` : ""}${finding ? `<p class="eg-empty">${esc(finding)}</p>` : ""}${note && proposal.diagnosis !== "layout" ? `<p class="eg-hint">${esc(note)}</p>` : ""}${groups}${corrections}${groups || corrections || finding ? "" : '<p class="eg-empty">The watched episodes of this show already line up between both providers.</p>'}${all}`;
     $("[data-save]").disabled = busy || !(chosen.groups.length || chosen.corrections.length);
     $("[data-save]").textContent = chosen.groups.length || chosen.corrections.length ? `Save ${chosen.groups.length + chosen.corrections.length} fixes` : "Save fixes";
   };

@@ -26,7 +26,7 @@ def note_identity_conflicts(ctx, feature, indexes, adds, blocks, *, announce=Fal
         if not rows:
             clear_namespace(base, namespace)
         elif once_per_ttl(base, namespace, fingerprint(sorted(key for key, _, _ in rows)), ttl_seconds=315360000):
-            ctx.emit_info(f"[!] History: {summary(rows)} Open the Analyzer and choose Fix numbering.")
+            ctx.emit_info(f"[!] History: {summary(rows)}")
             ctx.emit("history:episode_identity", feature=feature, count=len(rows), reason=summary(rows))
     if not rows:
         return

@@ -145,3 +145,31 @@ def test_api_save_persists_in_editor_saved_mappings(mapping_case, config_base, m
     assert (records[0]["provider"], records[0]["instance"]) == ("SIMKL", "alice")
     assert records[0]["original"]["ids"] == {"tmdb": "123"}
     assert records[0]["corrected"]["ids"] == {"tmdb": "456"}
+
+
+def test_movie_diagnosis_finds_the_twin_on_the_destination_and_saves_its_ids(monkeypatch):
+    from api import editorAPI
+    from services import catalog_lookup
+
+    source = dict(type="movie", title="Insidious: Out of the Further", year=2026, ids={"imdb": "tt32393988"},
+                  watched_at="2026-10-01T12:00:00Z")
+    twin = dict(type="movie", title="Insidious: Out of the Further", year=2026, ids={"tmdb": "1291595"})
+    pair = dict(id="p1", source="SIMKL", target="MDBLIST", mode="one-way", features={"history": True})
+    state = {"providers": {"SIMKL": {"history": {"baseline": {"items": {"imdb:tt32393988": source}}}},
+                           "MDBLIST": {"history": {"baseline": {"items": {"tmdb:1291595": twin}}}}}}
+    entry = dict(provider="MDBLIST", feature="history", key="imdb:tt32393988", keys=["imdb:tt32393988"], unresolved=True, target="MDBLIST")
+    monkeypatch.setattr(an, "_cfg", lambda: {"pairs": [pair]})
+    monkeypatch.setattr(an, "_cached_analysis", lambda pid: {"attention": {"rows": [entry]}})
+    monkeypatch.setattr(an, "_load_state_handles", lambda pid, features: [{"state": state}])
+    monkeypatch.setattr(mapping, "request_user", lambda request: None)
+    monkeypatch.setattr(catalog_lookup, "movie_by_id", lambda *a: pytest.fail("A synced twin needs no provider lookup"))
+    payload = mapping.MappingRequest(pair_id="p1", provider="MDBLIST", feature="history", key="imdb:tt32393988")
+    version = mapping.handle_mapping(payload, None)["version"]
+    result = mapping.handle_mapping(payload.model_copy(update=dict(action="diagnose", version=version)), None)
+    assert result["status"] == "twin" and result["candidate"]["ids"] == {"tmdb": "1291595"} and result["destination"] == "MDBList"
+    saved = []
+    monkeypatch.setattr(editorAPI, "_require_instance_scope", lambda *args: None)
+    monkeypatch.setattr(editorAPI, "_save_policy_manual_batch", lambda edits, **kwargs: saved.append(edits))
+    item = dict(type="movie", title=result["candidate"]["title"], year=result["candidate"]["year"], ids=result["candidate"]["ids"])
+    assert mapping.handle_mapping(payload.model_copy(update=dict(action="save", version=version, item=item)), None)["key"] == "tmdb:1291595"
+    assert saved[0][0][2]["tmdb:1291595"]["watched_at"] == source["watched_at"]
