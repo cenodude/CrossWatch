@@ -39,6 +39,9 @@ _SIMKL_HISTORY_MESSAGES = {
 }
 
 _DIRECT_LABELS = {
+    "path_match": "Matched by file path",
+    "path_ambiguous": "Multiple file path matches",
+    "path_id_conflict": "File path matches but IDs disagree",
     "not_in_plex_catalog": "Not in library",
     "not_in_library": "Not in library",
     "not_in_catalog": "Not in library",

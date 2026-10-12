@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import re
 import sqlite3
 import threading
@@ -56,6 +57,7 @@ _BASELINE_ITEM_COLUMNS = [
     "cw_instance",
     "provider_item_id",
     "provider_event_id",
+    "path_metadata_json",
     "updated_at",
 ]
 _BASELINE_ITEM_COMPARE_COLUMNS = _BASELINE_ITEM_COLUMNS[1:-1]
@@ -227,6 +229,7 @@ def _item_to_row(provider_state_id: int, key: str, item: Mapping[str, Any], ts: 
         _s(item.get("_cw_instance")),
         _s(item.get("provider_item_id")),
         _s(item.get("provider_event_id") or item.get("_simkl_rewatch_id") or item.get("rewatch_id") or item.get("_publicmetadb_history_id") or item.get("_wetrakr_history_id")),
+        json.dumps({k: item[k] for k in ("media_paths", "part") if k in item}, separators=(",", ":")) if item.get("media_paths") else None,
         ts,
     )
 
@@ -262,6 +265,15 @@ def _row_to_item(row: sqlite3.Row) -> dict[str, Any]:
         value = row[col]
         if value not in (None, ""):
             out[key] = value
+    if row["path_metadata_json"]:
+        try:
+            metadata = json.loads(row["path_metadata_json"])
+            if isinstance(metadata, dict):
+                for key in ("media_paths", "part"):
+                    if key in metadata:
+                        out[key] = metadata[key]
+        except (TypeError, ValueError):
+            pass
     if row["watched"] is not None:
         out["watched"] = bool(row["watched"])
     if row["rating"] is not None:

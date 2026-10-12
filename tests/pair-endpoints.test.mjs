@@ -88,16 +88,21 @@ for (const scenario of [
       applyProgressMaxRecommendation: () => ({maxPercent: 90}), ratingsDisabledFor: () => new Set(),
       pairSupportsHistoryRewatches: () => false, collectionTypesForPair: () => ["movies"],
       sanitizeFeaturesForPair: (_, features) => features, getPairProviderStrictValue: () => false,
+      libraryOnlyOn: () => false, tmdbMetadataReady: () => true,
     });
-    for (const name of ["isTwoWayMode", "globalAnimeMappingEnabled", "hasAniList", "hasAnimeProvider", "simklCanReceiveProgress", "normalizeAnimeProgressOptions", "buildPayload"])
+    for (const name of ["isTwoWayMode", "globalAnimeMappingEnabled", "hasAniList", "hasAnimeProvider", "simklCanReceiveProgress", "normalizeAnimeProgressOptions", "supportsPathMatching", "getPairMarkedWatchedValue", "buildPayload"])
       vm.runInContext(sourceFor(name), context);
     const state = {
-      src: scenario.src || "PLEX", dst: scenario.dst || "PLEX",
-      cfgRaw: {anime_mapping: {enabled: scenario.global !== false}},
+      src: scenario.src || "PLEX", dst: scenario.dst || "PLEX", path_matching: true,
+      cfgRaw: {anime_mapping: {enabled: scenario.global !== false}, plex: {history: {include_marked_watched: true}}},
+      pairProviders: {plex: {history: {include_marked_watched: false}}},
       options: {history: {use_anime_mapping: true}, progress: {use_anime_mapping: scenario.enabled}},
     };
     const saved = context.buildPayload(state, {dataset: {}});
     assert.equal(saved.features.progress.use_anime_mapping, scenario.expected);
+    assert.equal(saved.path_matching, context.supportsPathMatching(state));
+    assert.equal(saved.providers.plex.history.include_marked_watched, false);
+    assert.equal(state.cfgRaw.plex.history.include_marked_watched, true);
     assert.equal(saved.features.progress.anime_only_sync, false);
     assert.equal(context.normalizeAnimeProgressOptions(state).use_anime_mapping, scenario.expected);
     assert.equal(state.options.history.use_anime_mapping, true);
@@ -122,8 +127,9 @@ for (const scenario of [
       applyProgressMaxRecommendation: () => ({maxPercent: 90}), ratingsDisabledFor: () => new Set(),
       pairSupportsHistoryRewatches: () => false, collectionTypesForPair: () => ["movies"],
       sanitizeFeaturesForPair: (_, features) => features, getPairProviderStrictValue: () => false,
+      libraryOnlyOn: () => false, tmdbMetadataReady: () => true,
     });
-    for (const name of ["isTwoWayMode", "globalAnimeMappingEnabled", "hasAniList", "hasAnimeProvider", "simklCanReceiveProgress", "buildPayload"])
+    for (const name of ["isTwoWayMode", "globalAnimeMappingEnabled", "hasAniList", "hasAnimeProvider", "simklCanReceiveProgress", "supportsPathMatching", "getPairMarkedWatchedValue", "buildPayload"])
       vm.runInContext(sourceFor(name), context);
     const state = {
       src: scenario.src, dst: scenario.dst,
@@ -133,6 +139,15 @@ for (const scenario of [
     const saved = context.buildPayload(state, {dataset: {}});
     assert.equal(saved.features.watchlist.use_anime_mapping, scenario.expected);
     assert.equal(saved.features.ratings.use_anime_mapping, scenario.expected);
+    if (!saved.providers?.plex) return;
+    assert.equal(Object.hasOwn(saved.providers.plex, "history"), false);
+    state.cfgRaw.plex = {history: {include_marked_watched: false}};
+    state.pairProviders = saved.providers;
+    assert.equal(context.getPairMarkedWatchedValue(state), false);
+    state.cfgRaw.plex.history.include_marked_watched = true;
+    assert.equal(context.getPairMarkedWatchedValue(state), true);
+    const resaved = context.buildPayload(state, {dataset: {}});
+    assert.equal(Object.hasOwn(resaved.providers.plex, "history"), false);
   });
 }
 
@@ -196,8 +211,9 @@ for (const instance of ["default", "P01"]) {
       applyProgressMaxRecommendation: () => ({maxPercent: 90}), ratingsDisabledFor: () => new Set(),
       pairSupportsHistoryRewatches: () => false, collectionTypesForPair: () => ["movies"],
       sanitizeFeaturesForPair: (_, features) => features, getPairProviderStrictValue: () => false,
+      libraryOnlyOn: () => false, tmdbMetadataReady: () => true,
     });
-    vm.runInContext([sourceFor("renderInstanceSelects"), sourceFor("hasAniList"), sourceFor("hasAnimeProvider"), sourceFor("buildPayload")].join(";"), context);
+    vm.runInContext([sourceFor("renderInstanceSelects"), sourceFor("hasAniList"), sourceFor("hasAnimeProvider"), sourceFor("supportsPathMatching"), sourceFor("getPairMarkedWatchedValue"), sourceFor("buildPayload")].join(";"), context);
     const state = {src: "PLEX", dst: "PLEX", src_instance: instance, instanceMap: {PLEX: [{id: instance, configured: true}]}};
     context.renderInstanceSelects(state);
     assert.equal(state.src_instance, instance);
@@ -253,4 +269,64 @@ test("library lists load and save independently for both instances", async () =>
   controller.initPairLibraryUI(state);
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(ID("plx-hist-libs").children.length, 2);
+});
+
+
+for (const [src, dst, expected] of [["PLEX", "JELLYFIN", true], ["EMBY", "PLEX", true], ["JELLYFIN", "JELLYFIN", true], ["PLEX", "TRAKT", false], ["KODI", "PLEX", false]]) {
+  test(`path matching availability: ${src} to ${dst}`, () => {
+    const context = vm.createContext({});
+    vm.runInContext(sourceFor("supportsPathMatching"), context);
+    assert.equal(context.supportsPathMatching({src, dst}), expected);
+  });
+}
+
+for (const inherited of [false, true]) {
+  test(`Marked Watched pair override survives changes without changing inherited default: ${inherited}`, () => {
+    const listeners = [];
+    const context = vm.createContext({ID: () => null});
+    vm.runInContext([sourceFor("getPairMarkedWatchedValue"), sourceFor("bindChangeHandlers")].join(";"), context);
+    const cfgRaw = {plex: {history: {include_marked_watched: inherited}}};
+    const state = {cfgRaw};
+    assert.equal(context.getPairMarkedWatchedValue(state), inherited);
+    context.bindChangeHandlers(state, {addEventListener: (event, handler) => { if (event === "change") listeners.push(handler); }});
+    for (const handler of listeners) handler({target: {id: "plx-marked-watched", checked: !inherited}});
+    assert.equal(context.getPairMarkedWatchedValue(state), !inherited);
+    assert.equal(context.getPairMarkedWatchedValue({cfgRaw}), inherited);
+    assert.equal(cfgRaw.plex.history.include_marked_watched, inherited);
+  });
+}
+
+test("General groups supported matching controls without requiring a media-server pair", () => {
+  const left = element(), right = element();
+  const context = vm.createContext({
+    ID: id => id === "cx-feat-panel" ? left : id === "cx-adv-panel" ? right : null, Q: () => null,
+    isTwoWayMode: () => false, normalizeRemoveMode: () => "source_deletes",
+    hasPlex: state => [state.src, state.dst].includes("PLEX"),
+    hasJelly: state => [state.src, state.dst].includes("JELLYFIN"),
+    hasEmby: state => [state.src, state.dst].includes("EMBY"),
+    getPairProviderStrictValue: () => true,
+  });
+  vm.runInContext([sourceFor("supportsPathMatching"), sourceFor("renderFeaturePanel")].join(";"), context);
+  context.renderFeaturePanel({feature: "globals", src: "PLEX", dst: "TRAKT"});
+  assert.match(left.innerHTML, /General/);
+  assert.match(right.innerHTML, /Plex: Strict ID matching/);
+  assert.doesNotMatch(right.innerHTML, /id="pair-path-matching"|id="jf-strict-ids"|plx-marked-watched/);
+  context.renderFeaturePanel({feature: "globals", src: "PLEX", dst: "JELLYFIN"});
+  assert.match(right.innerHTML, /id="pair-path-matching"/);
+  assert.match(right.innerHTML, /Jellyfin: Strict ID matching/);
+});
+
+test("saving History leaves the shared Plex Marked Watched default unchanged", async () => {
+  let saved;
+  const context = vm.createContext({
+    ID: id => id === "plx-marked-watched" ? {checked: false} : null,
+    structuredClone, console,
+    fetch: async (_, options) => {
+      if (options?.method === "POST") saved = JSON.parse(options.body);
+      return {ok: true, json: async () => ({plex: {history: {include_marked_watched: true}}})};
+    },
+  });
+  vm.runInContext(sourceFor("saveConfigBits"), context);
+  await context.saveConfigBits({src: "PLEX", dst: "JELLYFIN"});
+  assert.equal(saved.plex.history.include_marked_watched, true);
 });

@@ -3,6 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from ..path_matching import PathAliases, rekey_by_path
+
 from ._pairs_utils import pair_endpoint_config, pair_feature_libraries
 from collections.abc import Mapping
 from typing import Any
@@ -774,6 +776,12 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
     if manual_adds_B:
         B_eff = _merge_manual_adds(B_eff, manual_adds_B)
 
+    path_aliases = PathAliases((dict(prevA) | A_eff, dict(prevB) | B_eff), bool(cfg.get("_cw_path_matching")) and not history_event_mode)
+    path_native_keys_B: dict[str, str] = {}
+    if cfg.get("_cw_path_matching") and not history_event_mode:
+        native_keys = {id(item): key for key, item in B_eff.items()}
+        B_eff = rekey_by_path(B_eff, A_eff)
+        path_native_keys_B = {key: native_keys[id(item)] for key, item in B_eff.items() if key != native_keys[id(item)]}
     coord_aliases = _build_history_coordinate_aliases(cfg, feature, (A_eff, B_eff))
     if coord_aliases.enabled:
         dbg("anime_mapping.history_coords", feature=feature, a=a, b=b, **coord_aliases.stats())
@@ -785,7 +793,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         show_ids = dict(show_ids_raw or {})
         ids = dict(ids_raw or {})
         coord_ids: Mapping[str, Any] = (show_ids or ids) if typ in ("episode", "season") else ids
-        toks: set[str] = set(coord_aliases.tokens(it))
+        toks: set[str] = set(coord_aliases.tokens(it)) | path_aliases.tokens(it)
 
         if typ == "episode":
             if show_ids:
@@ -2015,6 +2023,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         if review.preview:
             return {"cancelled": cancelled, "library_skipped": len(library_skipped_A) + len(library_skipped_B)}
 
+    B_eff = {path_native_keys_B.get(key, key): item for key, item in B_eff.items()}
     A_eff, B_eff = groups.restore(0, A_eff), groups.restore(1, B_eff)
 
     resA_rem: dict[str, Any] = {"ok": True, "count": 0}

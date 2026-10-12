@@ -3,6 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from ..path_matching import PathAliases, rekey_by_path
+
 from ._episode_groups import HistoryGroups, note_identity_conflicts
 
 from ._pairs_utils import pair_endpoint_config, pair_feature_libraries
@@ -883,6 +885,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
             pass
 
     coord_aliases: _HistoryCoordinateAliases = _HistoryCoordinateAliases.disabled()
+    path_aliases = PathAliases((), False)
 
     def _typed_tokens(it: Mapping[str, Any]) -> set[str]:
         typ = _norm_type(it.get("type"))
@@ -891,7 +894,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
         show_ids = dict(show_ids_raw or {})
         ids = dict(ids_raw or {})
 
-        toks: set[str] = set(coord_aliases.tokens(it))
+        toks: set[str] = set(coord_aliases.tokens(it)) | path_aliases.tokens(it)
 
         if typ == "episode":
             if show_ids:
@@ -1330,6 +1333,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
     note_identity_conflicts(ctx, feature, [src_idx, dst_full], [manual_adds, {}], [manual_blocks, set()],
                             announce=not (ctx.dry_run or sync_cfg.get("dry_run", False)))
 
+    path_aliases = PathAliases((dict(prev_src) | src_idx, dict(prev_dst) | dst_full), bool(cfg.get("_cw_path_matching")) and not history_event_mode)
     coord_aliases = _build_history_coordinate_aliases(cfg, feature, (src_idx, dst_full))
     if coord_aliases.enabled:
         dbg("anime_mapping.history_coords", feature=feature, src=src, dst=dst, **coord_aliases.stats())
@@ -1352,6 +1356,9 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
             pass
         dst_full = _hydrate_missing_fields(dst_full, src_idx, feature)
         dst_full = _rekey_to_src_keyspace(dst_full, src_idx)
+
+    if cfg.get("_cw_path_matching") and not history_event_mode:
+        dst_full = rekey_by_path(dst_full, src_idx)
 
     remove_mode = str(fcfg.get("remove_mode") or (sync_cfg.get("one_way_remove_mode") or "source_deletes")).strip().lower()
     if remove_mode not in ("source_deletes", "mirror"):

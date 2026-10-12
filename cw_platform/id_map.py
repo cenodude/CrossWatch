@@ -422,6 +422,7 @@ def minimal(item: Mapping[str, Any]) -> dict[str, Any]:
         "progress_at",
         "progress_at_source",
         "collected_at",
+        "media_paths",
     ):
         if opt in item:
             out[opt] = item.get(opt)

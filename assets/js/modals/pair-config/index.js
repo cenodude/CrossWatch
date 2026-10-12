@@ -26,6 +26,8 @@ const playlistMappingIds=(pair)=>{const ids=playlistBlockOf(pair).mappings;retur
 const isManagedPlaylistPair=(pair)=>String(playlistBlockOf(pair).managed_by||"").trim().toLowerCase()==="playlists";
 
 const isEmby = v => same(v, "emby");
+function getPairMarkedWatchedValue(state){ return !!(state?.pairProviders?.plex?.history?.include_marked_watched ?? state?.cfgRaw?.plex?.history?.include_marked_watched ?? true) }
+function supportsPathMatching(state){ return [state?.src,state?.dst].every(p=>["PLEX","JELLYFIN","EMBY"].includes(String(p||"").toUpperCase())) }
 function hasEmby(state){ return isEmby(state?.src) || isEmby(state?.dst) }
 
 // Provider helpers
@@ -378,7 +380,7 @@ function defaultState(){
       progress:{enable:false,add:false,remove:false,min_seconds:60,delta_seconds:30,max_percent:PROGRESS_LEGACY_MAX_PERCENT,replay_enabled:false,timestamp_tolerance_seconds:30,propagate_timestamp_updates:false,include_specials:true},
       collection:{enable:false,add:false,remove:false,types:["movies"]}
     },
-    pairProviders:{},
+    pairProviders:{},path_matching:false,
     pair_remove_mode:"source_deletes",
     pair_remove_mode_touched:false,
     jellyfin:{watchlist:{mode:"favorites",playlist_name:"Watchlist"}},
@@ -1072,34 +1074,26 @@ function getProviderOverrideCount(state, providerKey){
 
   if (providerKey === "plex") {
     const plex = cfg.plex || {};
-    const hist = plex.history || {};
-    const strictDefault = defaultStrictIdForProvider("plex");
     let count = 0;
     if (num("plx-rating-workers", plex.rating_workers ?? 12, 1) !== 12) count++;
     if (num("plx-history-workers", plex.history_workers ?? 12, 1) !== 12) count++;
     if (num("plx-timeout", Number.isFinite(plex.timeout) ? plex.timeout : 10, 1) !== 10) count++;
     if (num("plx-retries", Number.isFinite(plex.max_retries) ? plex.max_retries : 3, 0) !== 3) count++;
-    if (checked("plx-strict-ids", getPairProviderStrictValue(state, "plex")) !== strictDefault) count++;
-    if (checked("plx-marked-watched", hist.include_marked_watched ?? true) !== true) count++;
     return count + countProviderLibraries(state, "PLEX");
   }
   if (providerKey === "jellyfin") {
     const jf = cfg.jellyfin || {};
-    const strictDefault = defaultStrictIdForProvider("jellyfin");
     let count = 0;
     if (num("jf-timeout", Number.isFinite(jf.timeout) ? jf.timeout : 15, 1) !== 15) count++;
     if (num("jf-retries", Number.isFinite(jf.max_retries) ? jf.max_retries : 3, 0) !== 3) count++;
-    if (checked("jf-strict-ids", getPairProviderStrictValue(state, "jellyfin")) !== strictDefault) count++;
     if (checked("jf-targeted-lookup", getPairProviderTargetedLookupValue(state)) !== true) count++;
     return count + countProviderLibraries(state, "JELLYFIN");
   }
   if (providerKey === "emby") {
     const em = cfg.emby || {};
-    const strictDefault = defaultStrictIdForProvider("emby");
     let count = 0;
     if (num("em-timeout", Number.isFinite(em.timeout) ? em.timeout : 15, 1) !== 15) count++;
     if (num("em-retries", Number.isFinite(em.max_retries) ? em.max_retries : 3, 0) !== 3) count++;
-    if (checked("em-strict-ids", getPairProviderStrictValue(state, "emby")) !== strictDefault) count++;
     return count + countProviderLibraries(state, "EMBY");
   }
   if (providerKey === "kodi") {
@@ -1134,17 +1128,16 @@ function renderFeaturePanel(state){
   if(state.feature==="providers"){
     const cfg=state.cfgRaw||{};
     const plex=cfg.plex||{};
-    const hist=plex.history||{};
     const jf=cfg.jellyfin||{};
     const em=cfg.emby||{};
     if (leftWrap) leftWrap.style.gridColumn = "1 / -1";
     if (rightWrap) rightWrap.style.display = "none";
 
     const providerHintText = (providerKey) => {
-      if (providerKey === "plex") return "Tune Plex matching, retries, workers, and pair library scope";
-      if (providerKey === "jellyfin") return "Tune Jellyfin matching, longer timeouts and pair library scope.";
+      if (providerKey === "plex") return "Tune Plex retries, workers, and pair library scope";
+      if (providerKey === "jellyfin") return "Tune Jellyfin lookup, timeouts and pair library scope.";
       if (providerKey === "kodi") return "Tune Kodi pair library scope.";
-      return "Tune Emby matching, longer timeouts and pair-level library scope.";
+      return "Tune Emby timeouts and pair library scope.";
     };
 
     const providerCards = [];
@@ -1169,7 +1162,6 @@ function renderFeaturePanel(state){
             <div class="opt-row"><label for="plx-history-workers">History workers</label><input id="plx-history-workers" class="input small" type="number" min="1" max="64" step="1" value="${plex.history_workers??12}"></div>
             <div class="opt-row"><label for="plx-timeout">Timeout (s)</label><input id="plx-timeout" class="input small" type="number" min="1" max="120" step="1" value="${Number.isFinite(plex.timeout)?plex.timeout:10}"></div>
             <div class="opt-row"><label for="plx-retries">Max retries</label><input id="plx-retries" class="input small" type="number" min="0" max="10" step="1" value="${Number.isFinite(plex.max_retries)?plex.max_retries:3}"></div>
-            <div class="opt-row"><label for="plx-strict-ids">Strict ID matching</label><label class="switch"><input id="plx-strict-ids" type="checkbox" ${getPairProviderStrictValue(state, "plex")?"checked":""}><span class="slider"></span></label></div><div class="opt-row"><label for="plx-marked-watched">Marked Watched</label><label class="switch"><input id="plx-marked-watched" type="checkbox" ${(hist.include_marked_watched??false)?"checked":""}><span class="slider"></span></label></div>
           </div>
           <div class="prov-box" id="plx-pair-libs">
             <div class="panel-title small">Pair library whitelist</div>
@@ -1214,7 +1206,6 @@ function renderFeaturePanel(state){
           <div class="grid2 compact" style="padding:8px 0 2px">
             <div class="opt-row"><label for="jf-timeout">Timeout (s)</label><input id="jf-timeout" class="input small" type="number" min="1" max="120" step="1" value="${Number.isFinite(jf.timeout)?jf.timeout:15}"></div>
             <div class="opt-row"><label for="jf-retries">Max retries</label><input id="jf-retries" class="input small" type="number" min="0" max="10" step="1" value="${Number.isFinite(jf.max_retries)?jf.max_retries:3}"></div>
-            <div class="opt-row"><label for="jf-strict-ids">Strict ID matching</label><label class="switch"><input id="jf-strict-ids" type="checkbox" ${getPairProviderStrictValue(state, "jellyfin")?"checked":""}><span class="slider"></span></label></div>
             <div class="opt-row"><label for="jf-targeted-lookup">Targeted library lookup</label><label class="switch"><input id="jf-targeted-lookup" type="checkbox" ${getPairProviderTargetedLookupValue(state)?"checked":""}><span class="slider"></span></label></div>
           </div>
           <div class="prov-box" id="jf-pair-libs">
@@ -1260,7 +1251,6 @@ function renderFeaturePanel(state){
           <div class="grid2 compact" style="padding:8px 0 2px">
             <div class="opt-row"><label for="em-timeout">Timeout (s)</label><input id="em-timeout" class="input small" type="number" min="1" max="120" step="1" value="${Number.isFinite(em.timeout)?em.timeout:15}"></div>
             <div class="opt-row"><label for="em-retries">Max retries</label><input id="em-retries" class="input small" type="number" min="0" max="10" step="1" value="${Number.isFinite(em.max_retries)?em.max_retries:3}"></div>
-            <div class="opt-row"><label for="em-strict-ids">Strict ID matching</label><label class="switch"><input id="em-strict-ids" type="checkbox" ${getPairProviderStrictValue(state, "emby")?"checked":""}><span class="slider"></span></label></div>
           </div>
           <div class="prov-box" id="em-pair-libs">
             <div class="panel-title small">Pair library whitelist</div>
@@ -1326,7 +1316,7 @@ function renderFeaturePanel(state){
       <div class="providers-intro">
         <div class="providers-intro-copy">
           <div class="providers-intro-title">Advanced provider tuning</div>
-          <div class="providers-intro-sub">Open a provider only if you want stricter matching, different retry behavior, or pair-specific library scope.</div>
+          <div class="providers-intro-sub">Open a provider only if you want different retry behavior or pair-specific library scope.</div>
         </div>
         <div class="providers-intro-badge">${providerCards.length} ${providerCards.length === 1 ? "provider" : "providers"} in this pair</div>
       </div>
@@ -1352,7 +1342,8 @@ function renderFeaturePanel(state){
     const pct = Math.round((Number.isFinite(rt.suspect_shrink_ratio)?rt.suspect_shrink_ratio:0.1)*100);
     const minPrevVal = Number.isFinite(rt.suspect_min_prev)?rt.suspect_min_prev:20;
 
-    left.innerHTML=`<div class="panel-title"><span class="material-symbols-rounded" style="vertical-align:-3px;margin-right:6px;">tune</span>Globals <button type="button" class="cx-help material-symbols-rounded" data-tip-id="gl-section-main">help</button></div>
+    left.innerHTML=`<div class="panel-title"><span class="material-symbols-rounded" style="vertical-align:-3px;margin-right:6px;">tune</span>General <button type="button" class="cx-help material-symbols-rounded" data-tip-id="gl-section-main">help</button></div>
+      <div class="muted">Shared application safety settings. Pair-specific controls are labelled separately.</div>
       <div class="opt-row"><label for="gl-dry">Dry run</label><label class="switch"><input id="gl-dry" type="checkbox" ${g.dry_run?"checked":""}><span class="slider"></span></label></div>
       <div class="opt-row"><label for="gl-verify">Verify after write</label><label class="switch"><input id="gl-verify" type="checkbox" ${g.verify_after_write?"checked":""}><span class="slider"></span></label></div>
       <div class="opt-row"><label for="gl-drop">Drop guard</label><label class="switch"><input id="gl-drop" type="checkbox" ${g.drop_guard?"checked":""}><span class="slider"></span></label></div>
@@ -1380,10 +1371,15 @@ function renderFeaturePanel(state){
       </div>`;
     right.innerHTML=`<div class="panel-title small">Pair safety</div>
       ${removeModeRow}
-      <div class="panel-title" style="margin-top:10px">Advanced <button type="button" class="cx-help material-symbols-rounded" data-tip-id="gl-section-advanced">help</button></div>
+      ${hasPlex(state)||hasJelly(state)||hasEmby(state)?`<div class="panel-title small">Matching</div><div class="muted">These matching settings apply only to this pair.</div>`:""}
+      ${hasPlex(state)?`<div class="opt-row"><label for="plx-strict-ids">Plex: Strict ID matching</label><label class="switch"><input id="plx-strict-ids" type="checkbox" ${getPairProviderStrictValue(state, "plex")?"checked":""}><span class="slider"></span></label></div>`:""}
+      ${hasJelly(state)?`<div class="opt-row"><label for="jf-strict-ids">Jellyfin: Strict ID matching</label><label class="switch"><input id="jf-strict-ids" type="checkbox" ${getPairProviderStrictValue(state, "jellyfin")?"checked":""}><span class="slider"></span></label></div>`:""}
+      ${hasEmby(state)?`<div class="opt-row"><label for="em-strict-ids">Emby: Strict ID matching</label><label class="switch"><input id="em-strict-ids" type="checkbox" ${getPairProviderStrictValue(state, "emby")?"checked":""}><span class="slider"></span></label></div>`:""}
+      ${supportsPathMatching(state)?`<div class="opt-row"><label for="pair-path-matching">Match by file path</label><label class="switch"><input id="pair-path-matching" type="checkbox" ${state.path_matching?"checked":""}><span class="slider"></span></label></div><div class="muted">When IDs cannot resolve an item, try matching its file path across the media servers in this pair. Supports movie and episode history, ratings and progress in both directions, including with Strict ID matching enabled.</div>`:""}
+      <div class="panel-title" style="margin-top:10px">Advanced (shared) <button type="button" class="cx-help material-symbols-rounded" data-tip-id="gl-section-advanced">help</button></div>
       <div class="opt-row"><label for="gl-ttl">Tombstone TTL (days)</label><input id="gl-ttl" class="input" type="number" min="0" step="1" value="${g.tombstone_ttl_days??30}"></div><div class="muted">Keep delete markers to avoid re-adding.</div>
       <div class="opt-row"><label for="gl-observed">Include observed deletes</label><label class="switch"><input id="gl-observed" type="checkbox" ${g.include_observed_deletes?"checked":""}><span class="slider"></span></label></div>
-      <div class="panel-title small" style="margin-top:10px">Blackbox <button type="button" class="cx-help material-symbols-rounded" data-tip-id="gl-bb-section">help</button></div>
+      <div class="panel-title small" style="margin-top:10px">Blackbox (shared) <button type="button" class="cx-help material-symbols-rounded" data-tip-id="gl-bb-section">help</button></div>
       <div class="grid2 compact">
         <div class="opt-row"><label for="gl-bb-enable">Enabled</label><label class="switch"><input id="gl-bb-enable" type="checkbox" ${bb.enabled?"checked":""}><span class="slider"></span></label></div>
         <div class="opt-row"><label for="gl-bb-pair">Pair scoped</label><label class="switch"><input id="gl-bb-pair" type="checkbox" ${bb.pair_scoped?"checked":""}><span class="slider"></span></label></div>
@@ -1946,6 +1942,8 @@ left.innerHTML = `
       </div>
       ${animeRow}`];
 
+    if (hasPlex(state)) parts.push(`<div class="panel-title small">Plex</div><div class="opt-row"><label for="plx-marked-watched">Marked Watched</label><label class="switch"><input id="plx-marked-watched" type="checkbox" ${getPairMarkedWatchedValue(state)?"checked":""}><span class="slider"></span></label></div><div class="muted">Include manually marked watched items from Plex. Applies only to this pair.</div>`);
+
     if (hasTrakt(state)) {
       parts.push(`
         <div class="panel-title small" style="margin-top:6px">Trakt</div>
@@ -2238,6 +2236,13 @@ function bindChangeHandlers(state,root){
   root.addEventListener("change",(e)=>{
     const id=e.target.id, el=e.target;
 
+    if(id==="plx-marked-watched"){
+      state.pairProviders=state.pairProviders||{};
+      const plex=state.pairProviders.plex||{};
+      state.pairProviders.plex={...plex,history:{...plex.history,include_marked_watched:!!el.checked}};
+      return;
+    }
+    if(id==="pair-path-matching") state.path_matching=!!el.checked;
     if(id==="plx-strict-ids"||id==="jf-strict-ids"||id==="em-strict-ids"||id==="jf-targeted-lookup"){
       state.pairProviders=state.pairProviders||{};
       if(id==="plx-strict-ids") state.pairProviders.plex=Object.assign({},state.pairProviders.plex||{}, {strict_id_matching:!!el.checked});
@@ -2677,7 +2682,6 @@ async function saveConfigBits(state){
         const rv = n("plx-retries");
         plex.max_retries = Number.isFinite(rv) ? Math.max(0, rv) : (plex.max_retries ?? 3);
       }
-      if (ID("plx-marked-watched")) plex.history = Object.assign({}, plex.history || {}, { include_marked_watched: !!ID("plx-marked-watched").checked });
       if (ID("plx-wl-pms"))          plex.watchlist_allow_pms_fallback = !!ID("plx-wl-pms").checked;
       if (ID("plx-wl-limit"))        plex.watchlist_query_limit        = num("plx-wl-limit", 1, plex.watchlist_query_limit ?? 25);
       if (ID("plx-wl-delay")) {
@@ -2921,6 +2925,7 @@ function buildPayload(state,wrap){
   const features=sanitizeFeaturesForPair({src,dst,twoWay:modeTwo},{watchlist,ratings,history,progress,playlists:get("playlists"),collection});
   if(state.pair_remove_mode_touched) applyPairRemoveMode(features,state.pair_remove_mode);
   const payload={source:src,target:dst,source_instance:String(srcInst||"default"),target_instance:String(dstInst??"default"),enabled,mode:modeTwo?"two-way":"one-way",features};
+  payload.path_matching=supportsPathMatching({src,dst})&&!!state.path_matching;
   const eid=wrap.dataset&&wrap.dataset.editingId?String(wrap.dataset.editingId||""):"";
   const selectedProfileId=String(state.selected_user_profile_id||"").trim();
   if(selectedProfileId||eid) payload.profile_id=selectedProfileId;
@@ -2933,7 +2938,10 @@ function buildPayload(state,wrap){
   const usePmdb=(String(src).toUpperCase()==="PUBLICMETADB"||String(dst).toUpperCase()==="PUBLICMETADB");
   const useFloppy=(String(src).toUpperCase()==="FLOPPY"||String(dst).toUpperCase()==="FLOPPY");
   const useScrob=(String(src).toUpperCase()==="SCROB"||String(dst).toUpperCase()==="SCROB");
-  if(usePlex) prov.plex={strict_id_matching:getPairProviderStrictValue(state, "plex")};
+  if(usePlex){
+    prov.plex={...pp.plex,strict_id_matching:getPairProviderStrictValue(state, "plex")};
+    if(pp.plex?.history) prov.plex.history={...pp.plex.history};
+  }
   if(useJf) prov.jellyfin={strict_id_matching:getPairProviderStrictValue(state, "jellyfin"),targeted_lookup:getPairProviderTargetedLookupValue(state)};
   if(useEm) prov.emby={strict_id_matching:getPairProviderStrictValue(state, "emby")};
   if(usePmdb){
@@ -3051,6 +3059,7 @@ export default{
       state.options.ratings=Object.assign({},r0,rI,{types:Array.isArray(rI.types)&&rI.types.length?rI.types:r0.types,mode:rI.mode||r0.mode,from_date:rI.from_date||r0.from_date||""});
       ["watchlist","ratings","history","progress"].forEach(k=>{state.options[k].library_only=!!state.options[k].library_only});
       state.pairProviders = normalizePairProviders(pair.providers);
+      state.path_matching = !!pair.path_matching;
       state.selected_user_profile_id=String(pair.profile_id||"").trim();
       wrap.dataset.editingId=pair?.id?String(pair.id):"";
     }
