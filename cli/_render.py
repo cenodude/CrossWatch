@@ -173,7 +173,9 @@ def _cell(value: Any) -> Any:
     return text if text else Text("-", style="cw.muted")
 
 
-def state_text(value: Any, *, on: str = "on", off: str = "off") -> Text:
+def state_text(value: Any, *, on: str = "on", off: str = "off", unknown: str = "") -> Text:
+    if value is None and unknown:
+        return Text(unknown, style="cw.muted")
     flag = bool(value)
     return Text(on if flag else off, style="cw.on" if flag else "cw.off")
 

@@ -224,7 +224,7 @@ class LocalTransport(Transport):
         return {
             "ok": True,
             "mode": "local",
-            "running": False,
+            "running": None,
             "degraded": True,
             "config": scfg,
             "next_run_at": self._next_run_at(scfg) if scfg.get("enabled") else 0,

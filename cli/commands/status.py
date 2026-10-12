@@ -10,7 +10,7 @@ import typer
 from .._context import Ctx
 from .._errors import CLIError
 from .._render import state_text
-from .._util import as_dict, coerce_bool, fmt_rel, fmt_ts, pair_features, pair_label
+from .._util import as_dict, coerce_bool, fmt_rel, fmt_ts, opt_bool, pair_features, pair_label
 
 
 def _safe(ctx: Ctx, path: str, default: Any = None, *, params: dict[str, Any] | None = None) -> Any:
@@ -59,16 +59,16 @@ def _collect(ctx: Ctx, *, fresh: bool = False) -> dict[str, Any]:
         "mode": ctx.mode,
         "url": ctx.url,
         "version": str(version.get("current") or version.get("version") or "unknown"),
-        "can_run": coerce_bool(status.get("can_run"), False),
-        "sync_running": coerce_bool(run.get("running"), False),
-        "cancel_requested": coerce_bool(run.get("cancel_requested"), False),
+        "can_run": opt_bool(status.get("can_run")),
+        "sync_running": opt_bool(run.get("running")),
+        "cancel_requested": opt_bool(run.get("cancel_requested")),
         "run_id": str(run.get("run_id") or ""),
         "pairs_total": len(pairs),
         "pairs_enabled": len(enabled),
         "scheduler_enabled": coerce_bool((sched.get("config") or {}).get("enabled"), False),
-        "scheduler_running": coerce_bool(sched.get("running"), False),
+        "scheduler_running": opt_bool(sched.get("running")),
         "next_run_at": int(sched.get("next_run_at") or 0),
-        "watcher_alive": coerce_bool(watch.get("alive"), False),
+        "watcher_alive": opt_bool(watch.get("alive")),
         "watcher_groups": len(watch.get("groups") or []),
         "watcher_sinks": list(watch.get("sinks") or []),
         "providers": as_dict(status.get("providers")),
@@ -92,14 +92,18 @@ def register(app: typer.Typer) -> None:
             out.data(data)
             return
 
+        unknown = state.unknown_label
+        watcher = state_text(data["watcher_alive"], on="running", off="stopped", unknown=unknown)
+        if data["watcher_alive"] is not None:
+            watcher.append(f"  {data['watcher_groups']} group(s) -> {', '.join(data['watcher_sinks']) or 'no sinks'}")
         out.kv(
             [
                 ("CrossWatch", data["version"]),
                 ("Endpoint", f"{data['url']}  ({data['mode']})"),
-                ("Sync", state_text(data["sync_running"], on="running", off="idle")),
+                ("Sync", state_text(data["sync_running"], on="running", off="idle", unknown=unknown)),
                 ("Run id", data["run_id"] or "-"),
                 ("Pairs", f"{data['pairs_enabled']} enabled / {data['pairs_total']} total"),
-                ("Ready to sync", state_text(data["can_run"], on="yes", off="no")),
+                ("Ready to sync", state_text(data["can_run"], on="yes", off="no", unknown=unknown)),
                 (
                     "Scheduler",
                     state_text(data["scheduler_enabled"], on="enabled", off="disabled").append(
@@ -108,12 +112,7 @@ def register(app: typer.Typer) -> None:
                         else ""
                     ),
                 ),
-                (
-                    "Watcher",
-                    state_text(data["watcher_alive"], on="running", off="stopped").append(
-                        f"  {data['watcher_groups']} group(s) -> {', '.join(data['watcher_sinks']) or 'no sinks'}"
-                    ),
-                ),
+                ("Watcher", watcher),
             ],
             title="CrossWatch status",
         )

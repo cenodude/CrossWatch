@@ -328,6 +328,66 @@ def test_context_does_not_fall_back_on_auth_errors() -> None:
     assert err.value.status == 401
 
 
+def test_status_reports_unknown_for_state_local_mode_cannot_see() -> None:
+    from cli.commands.status import _collect
+
+    local = FakeTransport(
+        {
+            ("GET", "/api/status"): {"ok": True, "mode": "local", "degraded": True},
+            ("GET", "/api/pairs"): [{"id": "p1", "enabled": True}],
+            ("GET", "/api/scheduling/status"): {"ok": True, "running": None, "config": {"enabled": True}, "next_run_at": 0},
+            ("GET", "/api/watch/status"): LocalUnsupported("'GET /api/watch/status'"),
+            ("GET", "/api/run/cancel"): LocalUnsupported("'GET /api/run/cancel'"),
+        }
+    )
+    data = _collect(_ctx(FakeTransport(), local, force_local=True))
+
+    assert data["watcher_alive"] is None
+    assert data["scheduler_running"] is None
+    assert data["sync_running"] is None
+    assert data["cancel_requested"] is None
+    assert data["can_run"] is None
+    assert data["scheduler_enabled"] is True
+    assert data["pairs_enabled"] == 1
+
+
+def test_status_keeps_real_booleans_from_the_service() -> None:
+    from cli.commands.status import _collect
+
+    http = FakeTransport(
+        {
+            ("GET", "/api/status"): {"can_run": True},
+            ("GET", "/api/scheduling/status"): {"running": True, "config": {"enabled": True}},
+            ("GET", "/api/watch/status"): {"alive": False, "groups": [], "sinks": []},
+            ("GET", "/api/run/cancel"): {"running": False, "cancel_requested": False},
+        }
+    )
+    data = _collect(_ctx(http, FakeTransport()))
+
+    assert data["watcher_alive"] is False
+    assert data["scheduler_running"] is True
+    assert data["sync_running"] is False
+    assert data["cancel_requested"] is False
+    assert data["can_run"] is True
+
+
+def test_local_scheduling_status_does_not_claim_the_worker_is_stopped(monkeypatch: pytest.MonkeyPatch) -> None:
+    from cli._local import LocalTransport
+
+    transport = LocalTransport()
+    monkeypatch.setattr(transport, "_scheduling_get", lambda **_: {"enabled": False})
+
+    assert transport._scheduling_status()["running"] is None
+
+
+def test_state_text_renders_unknown_only_when_asked() -> None:
+    from cli._render import state_text
+
+    assert state_text(None, on="running", off="stopped", unknown="unknown").plain == "unknown"
+    assert state_text(None, on="running", off="stopped").plain == "stopped"
+    assert state_text(False, on="running", off="stopped", unknown="unknown").plain == "stopped"
+
+
 def test_force_local_never_touches_http() -> None:
     http = FakeTransport({("GET", "/api/status"): {"from": "http"}})
     local = FakeTransport({("GET", "/api/status"): {"from": "local"}})

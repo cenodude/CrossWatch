@@ -165,6 +165,12 @@ def coerce_bool(value: Any, default: bool = False) -> bool:
     return str(value).strip().lower() in TRUE_WORDS
 
 
+def opt_bool(value: Any) -> bool | None:
+    if value is None:
+        return None
+    return coerce_bool(value, False)
+
+
 def fmt_ts(value: Any, *, empty: str = "-") -> str:
     try:
         epoch = int(float(value or 0))

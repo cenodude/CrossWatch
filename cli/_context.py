@@ -80,6 +80,10 @@ class Ctx:
             return "local"
         return "local (fallback)" if self._fell_back else "service"
 
+    @property
+    def unknown_label(self) -> str:
+        return "unknown" if self.mode == "service" else "unknown (needs the service)"
+
     def _note_fallback(self, reason: str) -> None:
         if self._fell_back:
             return
