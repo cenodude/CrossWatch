@@ -1557,6 +1557,7 @@ def test_sync_once_filters_selected_pairs_and_returns_exit_code(monkeypatch: pyt
             fail_on_unresolved=False,
             fail_on_skipped=False,
             json_output=True,
+            plan_out="",
         )
 
     assert err.value.exit_code == 0
@@ -1604,6 +1605,7 @@ def test_sync_once_feature_filter_and_strict_unresolved(monkeypatch: pytest.Monk
             fail_on_unresolved=True,
             fail_on_skipped=False,
             json_output=True,
+            plan_out="",
         )
 
     assert err.value.exit_code == 1
@@ -1629,9 +1631,347 @@ def test_sync_once_no_enabled_pairs_exits_zero(monkeypatch: pytest.MonkeyPatch) 
             fail_on_unresolved=False,
             fail_on_skipped=False,
             json_output=True,
+            plan_out="",
         )
 
     assert err.value.exit_code == 0
+
+
+def test_sync_once_plan_out_requires_dry_run(tmp_path: Path) -> None:
+    from cli.commands.sync import sync_once
+
+    with pytest.raises(CLIError) as err:
+        sync_once(
+            SimpleNamespace(obj=_ctx(http=FakeTransport())),
+            target="",
+            pair=[],
+            feature=[],
+            dry_run=False,
+            no_state_json=False,
+            fail_on_unresolved=False,
+            fail_on_skipped=False,
+            json_output=True,
+            plan_out=str(tmp_path / "plan.json"),
+        )
+
+    assert err.value.exit_code == 2
+    assert not (tmp_path / "plan.json").exists()
+
+
+def test_sync_once_plan_out_writes_review_rows_per_pair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import typer
+    import cw_platform.config_base as config_base
+    from cli.commands.sync import sync_once
+    from services import interactive_sync as review
+    from services.interactive_sync_store import ReviewStore
+
+    planned: list[str] = []
+
+    def row(rid: str, operation: str, result: str) -> dict[str, Any]:
+        return {
+            "id": rid, "key": f"imdb:{rid}", "feature": "history", "provider": "TRAKT", "instance": "default",
+            "source": "PLEX", "source_instance": "default", "operation": operation, "result": result,
+            "reason": "", "selectable": result != "blocked",
+            "item": {"type": "movie", "title": rid, "ids": {"imdb": rid}},
+        }
+
+    def fake_refresh(session: Any, cfg: dict[str, Any], choices: dict[str, str], **kwargs: Any) -> None:
+        planned.append(session.pair_id)
+        assert kwargs == {"complete_empty": False}
+        store = ReviewStore()
+        store.rows["add"] = row("add", "add", "add")
+        store.rows["gone"] = row("gone", "remove", "remove")
+        store.rows["lost"] = row("lost", "add", "unresolved")
+        store.finish()
+        session.store = store
+        session.summary = {"ok": True, "errors": 0, "blocked": 2, "cancelled": False, "pairs": 1}
+        session.revision = 1
+
+    monkeypatch.setattr(config_base, "load_config", lambda: {
+        "pairs": [
+            {"id": "a", "source": "PLEX", "target": "TRAKT", "enabled": True},
+            {"id": "b", "source": "PLEX", "target": "SIMKL", "enabled": True},
+            {"id": "c", "source": "PLEX", "target": "MDBLIST", "enabled": False},
+        ],
+    })
+    monkeypatch.setattr(review, "refresh", fake_refresh)
+    target = tmp_path / "plan.json"
+
+    with pytest.raises(typer.Exit) as err:
+        sync_once(
+            SimpleNamespace(obj=_ctx(http=FakeTransport())),
+            target="",
+            pair=[],
+            feature=[],
+            dry_run=True,
+            no_state_json=False,
+            fail_on_unresolved=True,
+            fail_on_skipped=False,
+            json_output=True,
+            plan_out=str(target),
+        )
+
+    assert err.value.exit_code == 1
+    assert planned == ["a", "b"]
+    plan = json.loads(target.read_text(encoding="utf-8"))
+    assert plan["dry_run"] is True
+    assert [p["pair_id"] for p in plan["pairs"]] == ["a", "b"]
+    assert [r["result"] for r in plan["pairs"][0]["rows"]] == ["add", "remove", "unresolved"]
+    assert plan["pairs"][0]["pair"]["target"] == "TRAKT"
+    assert plan["pairs"][1]["exported_rows"] == 3
+    assert not list(tmp_path.glob("*.part"))
+    summary = json.loads(capsys.readouterr().out)
+    assert (summary["added"], summary["removed"], summary["unresolved"], summary["blocked"]) == (2, 2, 2, 4)
+    assert summary["plan"] == {"path": str(target), "rows": 6, "written": True}
+
+
+def _plan_once_args(target: Path, **overrides: Any) -> dict[str, Any]:
+    return {
+        "target": "", "pair": [], "feature": [], "dry_run": True, "no_state_json": False,
+        "fail_on_unresolved": False, "fail_on_skipped": False, "json_output": True, "plan_out": str(target),
+        **overrides,
+    }
+
+
+def test_sync_once_plan_out_keeps_the_old_plan_when_planning_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import typer
+    import cw_platform.config_base as config_base
+    from cli.commands.sync import sync_once
+    from services import interactive_sync as review
+    from services.interactive_sync_store import ReviewStore
+
+    def failing_refresh(session: Any, cfg: dict[str, Any], choices: dict[str, str], **kwargs: Any) -> None:
+        session.store = ReviewStore()
+        session.store.finish()
+        session.summary = {"ok": False, "errors": 1, "blocked": 0, "cancelled": False, "pairs": 1}
+
+    monkeypatch.setattr(config_base, "load_config", lambda: {"pairs": [{"id": "a", "source": "PLEX", "target": "TRAKT", "enabled": True}]})
+    monkeypatch.setattr(review, "refresh", failing_refresh)
+    target = tmp_path / "plan.json"
+    target.write_text("previous", encoding="utf-8")
+
+    with pytest.raises(typer.Exit) as err:
+        sync_once(SimpleNamespace(obj=_ctx(http=FakeTransport())), **_plan_once_args(target))
+
+    assert err.value.exit_code == 1
+    assert target.read_text(encoding="utf-8") == "previous"
+    assert not list(tmp_path.glob("*.part"))
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["ok"] is False and summary["plan"]["written"] is False
+
+
+def test_sync_once_plan_out_writes_an_empty_plan_when_no_pair_matches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import typer
+    import cw_platform.config_base as config_base
+    from cli.commands.sync import sync_once
+
+    monkeypatch.setattr(config_base, "load_config", lambda: {"pairs": [{"id": "a", "enabled": False}]})
+    target = tmp_path / "plan.json"
+    target.write_text("previous", encoding="utf-8")
+
+    with pytest.raises(typer.Exit) as err:
+        sync_once(SimpleNamespace(obj=_ctx(http=FakeTransport())), **_plan_once_args(target))
+
+    assert err.value.exit_code == 0
+    assert json.loads(target.read_text(encoding="utf-8"))["pairs"] == []
+    assert json.loads(capsys.readouterr().out)["plan"] == {"path": str(target), "rows": 0, "written": True}
+
+
+def test_sync_once_plan_out_rejects_fail_on_skipped_and_unwritable_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import cw_platform.config_base as config_base
+    from cli.commands.sync import sync_once
+
+    monkeypatch.setattr(config_base, "load_config", lambda: {"pairs": [{"id": "a", "source": "PLEX", "target": "TRAKT", "enabled": True}]})
+    state = SimpleNamespace(obj=_ctx(http=FakeTransport()))
+    target = tmp_path / "plan.json"
+
+    with pytest.raises(CLIError) as err:
+        sync_once(state, **_plan_once_args(target, fail_on_skipped=True))
+    assert err.value.exit_code == 2
+
+    (tmp_path / "plan.json.part").mkdir()
+    with pytest.raises(CLIError) as err:
+        sync_once(state, **_plan_once_args(target))
+    assert err.value.exit_code == 2
+    assert not target.exists()
+
+
+def test_sync_once_plan_out_uses_the_review_planner_without_writing(
+    config_base: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import typer
+    import cw_platform.config_base as cfg_module
+    from cli.commands.sync import sync_once
+    from test_interactive_sync import item, setup_ops
+    from test_orchestrator_dry_run_no_side_effects import _cfg
+
+    src, dst = setup_ops(config_base, monkeypatch, [item(1), item(2)])
+    monkeypatch.setattr(cfg_module, "load_config", lambda: _cfg(False))
+    target = tmp_path / "plan.json"
+
+    with pytest.raises(typer.Exit) as err:
+        sync_once(
+            SimpleNamespace(obj=_ctx(http=FakeTransport())),
+            target="p1",
+            pair=[],
+            feature=[],
+            dry_run=True,
+            no_state_json=False,
+            fail_on_unresolved=False,
+            fail_on_skipped=False,
+            json_output=True,
+            plan_out=str(target),
+        )
+
+    assert err.value.exit_code == 0
+    rows = json.loads(target.read_text(encoding="utf-8"))["pairs"][0]["rows"]
+    assert sorted(r["item"]["title"] for r in rows) == ["Movie 1", "Movie 2"]
+    assert {(r["operation"], r["result"], r["provider"]) for r in rows} == {("add", "add", "DST")}
+    assert json.loads(capsys.readouterr().out)["added"] == 2
+    assert not src.add_calls and not dst.add_calls
+
+
+def test_pair_create_add_only_sends_explicit_add_and_remove() -> None:
+    from cli.commands.pair import pair_create
+
+    http = FakeTransport({("POST", "/api/pairs"): {"ok": True, "id": "pair_1"}})
+
+    def create(features: list[str]) -> dict[str, Any]:
+        pair_create(
+            SimpleNamespace(obj=_ctx(http=http)), "plex", "trakt", mode="one-way", feature=features,
+            source_instance="", target_instance="", profile="", disabled=True, add_only=True,
+        )
+        return http.calls[-1][2]["features"]
+
+    safe = {"enable": True, "add": True, "remove": False}
+    assert create(["History", "ratings"]) == {"history": safe, "ratings": safe}
+    assert create([]) == {"watchlist": safe}
+
+
+def _pair_routes(pair: dict[str, Any], sync: dict[str, Any] | None = None) -> FakeTransport:
+    return FakeTransport({
+        ("GET", "/api/pairs"): [pair],
+        ("PUT", f"/api/pairs/{pair['id']}"): {"ok": True},
+        ("GET", "/api/config"): {"sync": sync or {}},
+    })
+
+
+def test_pair_set_updates_one_key_and_keeps_the_rest(capsys: pytest.CaptureFixture[str]) -> None:
+    from cli.commands.pair import pair_set
+
+    pair = {
+        "id": "p1", "source": "PLEX", "target": "TRAKT", "mode": "one-way",
+        "features": {"history": {"enable": True, "add": True, "remove": False, "remove_mode": "mirror"}, "watchlist": True},
+    }
+    http = _pair_routes(pair)
+    state = SimpleNamespace(obj=_ctx(http=http))
+
+    pair_set(state, "p1", "history.remove", "on")
+    sent = http.calls[-2][2]["features"]
+    assert sent["history"] == {"enable": True, "add": True, "remove": True, "remove_mode": "mirror"}
+    assert sent["watchlist"] is True
+    out = json.loads(capsys.readouterr().out)
+    assert out["value"] is True
+    assert len(out["warnings"]) == 1 and "Remove runs in mirror mode" in out["warnings"][0]
+
+    pair_set(state, "p1", "history.remove_mode", "source")
+    assert http.calls[-2][2]["features"]["history"]["remove_mode"] == "source_deletes"
+    assert json.loads(capsys.readouterr().out)["warnings"] == []
+
+    pair_set(state, "p1", "watchlist.add", "off")
+    assert http.calls[-2][2]["features"]["watchlist"] == {"enable": True, "add": False}
+
+
+def test_pair_set_libraries_merges_shorthand_and_replaces_with_json() -> None:
+    from cli.commands.pair import pair_set
+
+    pair = {
+        "id": "p1", "source": "PLEX", "target": "TRAKT", "mode": "one-way",
+        "features": {"history": {"enable": True, "libraries": {"PLEX#second": ["9"]}}, "watchlist": {"enable": True}},
+    }
+    http = _pair_routes(pair)
+    state = SimpleNamespace(obj=_ctx(http=http))
+
+    pair_set(state, "p1", "history.libraries", "plex=1, 2,1")
+    assert http.calls[-2][2]["features"]["history"]["libraries"] == {"PLEX#second": ["9"], "PLEX": ["1", "2"]}
+
+    pair_set(state, "p1", "history.libraries", '{"PLEX": [3]}')
+    assert http.calls[-2][2]["features"]["history"]["libraries"] == {"PLEX": ["3"]}
+
+    pair_set(state, "p1", "history.libraries", "PLEX#second=")
+    assert "libraries" not in http.calls[-2][2]["features"]["history"]
+
+    pair["features"]["history"]["libraries"] = {"PLEX": ["1"], "TRAKT": ["7"]}
+    pair_set(state, "p1", "history.libraries", "plex=")
+    assert http.calls[-2][2]["features"]["history"]["libraries"] == {"TRAKT": ["7"]}
+
+    for setting, value in (("history.libraries", "TRAKT=1"), ("watchlist.libraries", "PLEX=1"), ("history.libraries", "1,2")):
+        with pytest.raises(CLIError) as err:
+            pair_set(state, "p1", setting, value)
+        assert err.value.exit_code == 2
+
+
+@pytest.mark.parametrize("setting,value", [
+    ("history.remove", "maybe"),
+    ("history.remove_mode", "wipe"),
+    ("history.enable", "on"),
+    ("ratings.add", "on"),
+    ("watchlist.rewatches", "on"),
+    ("history", "on"),
+])
+def test_pair_set_rejects_invalid_input_without_writing(setting: str, value: str) -> None:
+    from cli.commands.pair import pair_set
+
+    pair = {"id": "p1", "source": "PLEX", "target": "TRAKT", "features": {"history": {"enable": True}, "watchlist": {"enable": True}}}
+    http = _pair_routes(pair)
+
+    with pytest.raises(CLIError) as err:
+        pair_set(SimpleNamespace(obj=_ctx(http=http)), "p1", setting, value)
+
+    assert err.value.exit_code == 2
+    assert not [call for call in http.calls if call[0] == "PUT"]
+
+
+def test_pair_show_warns_about_mirror_mode(capsys: pytest.CaptureFixture[str]) -> None:
+    from cli.commands.pair import _mirror_warnings, pair_show
+
+    pair = {
+        "id": "p1", "source": "PLEX", "target": "TRAKT", "mode": "one-way",
+        "features": {
+            "history": {"enable": True, "remove": False, "remove_mode": "mirror"},
+            "ratings": {"enable": True, "remove": True},
+            "watchlist": {"enable": True, "remove": True, "remove_mode": "source_deletes"},
+        },
+    }
+
+    pair_show(SimpleNamespace(obj=_ctx(http=_pair_routes(pair))), "p1")
+    stored = json.loads(capsys.readouterr().out)["warnings"]
+    assert len(stored) == 1 and stored[0].startswith("history: mirror mode is stored on this pair while Remove is off")
+    assert "cw pair set p1 history.remove_mode source_deletes" in stored[0]
+
+    pair_show(SimpleNamespace(obj=_ctx(http=_pair_routes(pair, {"one_way_remove_mode": "mirror"}))), "p1")
+    inherited = json.loads(capsys.readouterr().out)["warnings"]
+    assert [w.split(":")[0] for w in inherited] == ["history", "ratings"]
+    assert "inherited from sync.one_way_remove_mode" in inherited[1]
+
+    two_way = _mirror_warnings({**pair, "mode": "two-way"}, {"one_way_remove_mode": "mirror"})
+    assert len(two_way) == 1 and "not used while the pair is two-way" in two_way[0]
+
+    plain = {"id": "p2", "source": "PLEX", "target": "TRAKT", "features": {"history": True, "ratings": {"enable": True}, "playlists": True}}
+    off = _mirror_warnings(plain, {"one_way_remove_mode": "mirror"})
+    assert [w.split(":")[0] for w in off] == ["history", "ratings"]
+    assert all("while Remove is off" in w for w in off)
+    on = _mirror_warnings(plain, {"one_way_remove_mode": "mirror", "enable_remove": True})
+    assert all("Remove runs in mirror mode" in w for w in on) and len(on) == 2
+    assert _mirror_warnings(plain, {"enable_remove": True}) == []
 
 
 def test_playlist_resource_commands_use_provider_resource_api() -> None:
