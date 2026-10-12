@@ -88,6 +88,7 @@ def record(
     severity: str = "info",
     source_kind: str = "runtime",
     created_at: int | None = None,
+    status: str | None = None,
 ) -> None:
     ids = ids if isinstance(ids, Mapping) else {}
     ts = int(created_at or time.time())
@@ -104,6 +105,8 @@ def record(
         detail["rating"] = _int(rating)
     if session_key not in (None, ""):
         detail["session_key"] = str(session_key)
+    if status:
+        detail["status"] = str(status)
 
     row = make_event(
         hash_extra=hx,
@@ -294,9 +297,15 @@ def record_watch(
         if not event_type:
             return
         severity = "info"
+        outcome = None
+    elif str(status or "").strip().lower() == "skipped":
+        event_type = "scrobble_skipped"
+        severity = "info"
+        outcome = "skipped"
     else:
         event_type = "scrobble_failed"
         severity = "error"
+        outcome = "failed"
     try:
         from .playback_recorder import archive_event
 
@@ -324,6 +333,7 @@ def record_watch(
             session_key=getattr(ev, "session_key", None),
             reason_code=reason,
             reason=reason,
+            status=outcome,
         )
     except Exception:
         pass

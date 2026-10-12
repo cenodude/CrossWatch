@@ -62,6 +62,10 @@ _DIRECT_LABELS = {
     "media_not_found": "Not found on target",
     "anime_media_type_mismatch": "Anime type mismatch",
     "episode_out_of_range": "Episode out of range",
+    "duplicate_stop": "Already recorded on target",
+    "duplicate": "Already recorded on target",
+    "pro_required": "Rewatch needs a paid plan on target",
+    "rewatch_unconfirmed": "Rewatch not confirmed by target",
 }
 
 TRACKER_TO_MEDIA_SERVER_MESSAGE = (

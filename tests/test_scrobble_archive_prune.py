@@ -3,6 +3,9 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import json
+from types import SimpleNamespace
+
 import pytest
 
 from cw_platform.event_archive import recorder, scrobble_recorder
@@ -72,3 +75,33 @@ def test_backfill_prunes_existing_records_once(conn, monkeypatch):
     monkeypatch.setattr(scrobble_recorder, "_prune_superseded", lambda row, c=None: 1)
     assert scrobble_recorder.prune_superseded_backfill() == 0
     assert _threads(conn) == [("WETRAKR", "completed", 2), ("WETRAKR", "running", 1)]
+
+
+def _watch(status, reason):
+    ev = SimpleNamespace(
+        ids={"imdb": "tt1"}, media_type="movie", title="Unabomber", year=2026, season=None, number=None,
+        account="a", progress=99, session_key="7", raw={},
+    )
+    scrobble_recorder.record_watch(
+        ev, action="stop", source_provider="plex", destination_provider="simkl", status=status, reason=reason,
+    )
+
+
+def test_skipped_watch_is_not_archived_as_failure(conn):
+    _watch("skipped", "duplicate_stop")
+    correlate(conn=conn)
+    row = conn.execute("SELECT event_type, severity, reason_code, detail FROM events").fetchone()
+    assert (row["event_type"], row["severity"], row["reason_code"]) == ("scrobble_skipped", "info", "duplicate_stop")
+    assert json.loads(row["detail"])["status"] == "skipped"
+    group = conn.execute("SELECT status, severity, summary FROM event_groups").fetchone()
+    assert (group["status"], group["severity"]) == ("skipped", "info")
+    assert group["summary"].endswith("Already recorded on target")
+
+
+def test_failed_watch_keeps_error_and_stores_status(conn):
+    _watch("fail", "simkl_http_500")
+    correlate(conn=conn)
+    row = conn.execute("SELECT event_type, severity, detail FROM events").fetchone()
+    assert (row["event_type"], row["severity"]) == ("scrobble_failed", "error")
+    assert json.loads(row["detail"])["status"] == "failed"
+    assert conn.execute("SELECT status FROM event_groups").fetchone()["status"] == "failed"
