@@ -55,6 +55,13 @@ _DIRECT_LABELS = {
     "simkl_write_response_ambiguous:add_count": "SIMKL write response ambiguous",
     "simkl_write_response_ambiguous:anime_retry_count": "SIMKL anime retry response ambiguous",
     "simkl_write_response_malformed:json": "SIMKL malformed response",
+    "not_mapped": "No anime mapping for this target",
+    "not_anime_or_no_mapping": "Not anime or no anime mapping",
+    "anime_mapping_unavailable": "Anime mapping not installed",
+    "missing_media_identity": "Missing show IDs",
+    "media_not_found": "Not found on target",
+    "anime_media_type_mismatch": "Anime type mismatch",
+    "episode_out_of_range": "Episode out of range",
 }
 
 TRACKER_TO_MEDIA_SERVER_MESSAGE = (

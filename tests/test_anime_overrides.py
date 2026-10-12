@@ -369,3 +369,95 @@ def test_anidb_keyed_override_applies_to_an_anidb_scraped_library(index: Path) -
 
     assert got is not None
     assert (got.absolute, got.namespace, got.target_id, got.basis) == (14, "simkl", "1728821", "user_override")
+
+
+OVERGEARED: dict[str, Any] = {"anidb:20077:R": {"mal:64340": {"1-12": "1-12"}}}
+
+
+def _overgeared_rule(namespace: str, target_id: str) -> dict[str, Any]:
+    return _rule(match_provider="tmdb", match_id="324502", match_season=1, target_namespace=namespace,
+                 target_id=target_id, episode_from=1, episode_to=12, episode_start_at=1)
+
+
+@pytest.fixture()
+def overgeared(config_base: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    from providers.sync.anilist import _progress as progress_mod
+
+    paths = storage.paths("v3")
+    paths["root"].mkdir(parents=True, exist_ok=True)
+    paths["mappings"].write_text(json.dumps(OVERGEARED), encoding="utf-8")
+    storage.rebuild_sqlite_from_mappings(release_tag="v3")
+
+    class _Svc:
+        def __init__(self, cfg: Any = None) -> None:
+            pass
+
+        def ready(self) -> bool:
+            return True
+
+        def enrich_ids(self, ids: Any, *, media_type: Any = None) -> dict[str, Any]:
+            return {"ids": dict(ids)}
+
+    monkeypatch.setattr(progress_mod, "AnimeMappingService", _Svc)
+    return {"anime_mapping": {"enabled": True}}
+
+
+def test_find_episode_overrides_returns_every_rule_preferred_first(config_base: Path) -> None:
+    ov.upsert_override(_overgeared_rule("anidb", "20077"))
+    ov.upsert_override(_overgeared_rule("anilist", "212888"))
+    ov.upsert_override(_overgeared_rule("mal", "64340"))
+    ids = {"tmdb": "324502"}
+
+    assert [hit.namespace for hit in ov.find_episode_overrides(ids, 1, 3)] == ["anidb", "anilist", "mal"]
+    assert [hit.namespace for hit in ov.find_episode_overrides(ids, 1, 3, prefer="anilist")] == ["anilist", "anidb", "mal"]
+    first = ov.find_episode_override(ids, 1, 3)
+    assert first is not None and first.namespace == "anidb"
+    assert ov.find_episode_overrides(ids, 1, 13) == []
+
+
+@pytest.mark.parametrize("order", [("anidb", "anilist", "mal", "kitsu"), ("kitsu", "mal", "anilist", "anidb")])
+def test_each_anime_target_uses_its_own_rule(overgeared: dict[str, Any], order: tuple[str, ...]) -> None:
+    from providers.sync.anilist._progress import resolve_target as anilist_target
+    from providers.sync.kitsu._common import resolve_target as kitsu_target
+    from providers.sync.myanimelist._common import resolve_target as mal_target
+
+    targets = {"anidb": "20077", "anilist": "212888", "mal": "64340", "kitsu": "49999"}
+    for namespace in order:
+        ov.upsert_override(_overgeared_rule(namespace, targets[namespace]))
+    item = _episode({"tmdb": "324502"}, 1, 3)
+
+    assert anilist_target(overgeared, item) == (212888, 3)
+    assert mal_target(overgeared, item) == ("64340", 3)
+    assert kitsu_target(overgeared, item) == ("49999", 3)
+
+
+def test_anime_target_falls_back_to_a_rule_that_reaches_it(overgeared: dict[str, Any]) -> None:
+    from providers.sync.anilist._progress import resolve_target as anilist_target
+    from providers.sync.myanimelist._common import resolve_target as mal_target
+
+    ov.upsert_override(_overgeared_rule("anilist", "212888"))
+    ov.upsert_override(_overgeared_rule("anidb", "20077"))
+    item = _episode({"tmdb": "324502"}, 1, 3)
+
+    assert anilist_target(overgeared, item) == (212888, 3)
+    assert mal_target(overgeared, item) == ("64340", 3)
+
+
+def test_explicit_target_rule_wins_over_a_higher_rule_for_another_show(overgeared: dict[str, Any]) -> None:
+    from providers.sync.myanimelist._common import resolve_target as mal_target
+
+    ov.upsert_override(_overgeared_rule("anidb", "20077"))
+    item = _episode({"tmdb": "324502"}, 1, 3)
+    assert mal_target(overgeared, item) == ("64340", 3)
+
+    ov.upsert_override(_overgeared_rule("mal", "777"))
+    assert mal_target(overgeared, item) == ("777", 3)
+
+
+def test_top_rule_wins_among_rules_for_the_same_target(overgeared: dict[str, Any]) -> None:
+    from providers.sync.anilist._progress import resolve_target as anilist_target
+
+    ov.upsert_override(_overgeared_rule("anilist", "212888"))
+    ov.upsert_override(_overgeared_rule("anilist", "999"))
+
+    assert anilist_target(overgeared, _episode({"tmdb": "324502"}, 1, 3)) == (212888, 3)

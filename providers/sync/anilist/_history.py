@@ -11,13 +11,13 @@ from typing import Any
 from cw_platform.anime_mapping import AnimeMappingService
 from cw_platform.anime_mapping.coordinates import translate
 from cw_platform.anime_mapping.episodes import resolve_axis_coordinate_map
-from cw_platform.anime_mapping.overrides import find_episode_override, find_source_overrides
+from cw_platform.anime_mapping.overrides import find_episode_overrides, find_source_overrides
 from cw_platform.anime_mapping.service import PAIR_FEATURE_OPTIONS_KEY, runtime_pair_feature_options
 from cw_platform.anime_mapping.storage import normalize_release_tag, query_edges
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 from .._log import log as cw_log
-from ._progress import GQL_SAVE_PROGRESS, native_to_anilist, plan_progress, resolve_target
+from ._progress import GQL_SAVE_PROGRESS, plan_progress, resolve_target, ruled_to_anilist
 
 GQL_HISTORY_LIST = """
 query ($userId: Int!, $type: MediaType!) {
@@ -235,12 +235,12 @@ def _movie_item(svc: AnimeMappingService, entry: Mapping[str, Any], watched_at: 
 
 def _ruled_elsewhere(tag: str, media_id: int | None, watched: int, provider: str, ident: str, season: int, episode: int) -> bool:
     try:
-        ruled = find_episode_override({str(provider): str(ident)}, season, episode)
+        ruled = find_episode_overrides({str(provider): str(ident)}, season, episode, prefer="anilist")
     except Exception:
         return False
-    if ruled is None:
+    if not ruled:
         return False
-    hit = native_to_anilist(tag, ruled.namespace, ruled.target_id, ruled.absolute)
+    hit = ruled_to_anilist(tag, ruled)
     if hit is None:
         return False
     return hit[0] != media_id or hit[1] > watched

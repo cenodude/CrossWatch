@@ -369,10 +369,24 @@ def find_episode_override(
     *,
     rows: list[dict[str, Any]] | None = None,
 ) -> EpisodeOverride | None:
+    found = find_episode_overrides(ids, season, episode, rows=rows)
+    return found[0] if found else None
+
+
+def find_episode_overrides(
+    ids: Mapping[str, str],
+    season: Any,
+    episode: Any,
+    *,
+    prefer: str | None = None,
+    rows: list[dict[str, Any]] | None = None,
+) -> list[EpisodeOverride]:
     s_num = _as_int(season)
     e_num = _as_int(episode)
     if s_num is None or e_num is None or e_num <= 0:
-        return None
+        return []
+    out: list[EpisodeOverride] = []
+    seen: set[tuple[str, str, int]] = set()
     for row in rows if rows is not None else load_overrides():
         if not row.get("enabled", True) or row.get("media_type") != "show":
             continue
@@ -387,13 +401,21 @@ def find_episode_override(
         ep_to = row.get("episode_to")
         if e_num < int(ep_from) or (ep_to is not None and e_num > int(ep_to)):
             continue
-        return EpisodeOverride(
+        hit = EpisodeOverride(
             absolute=int(ep_start) + (e_num - int(ep_from)),
             namespace=str(row.get("target_namespace") or ""),
             target_id=str(row.get("target_id") or ""),
             rule_id=str(row.get("id") or ""),
         )
-    return None
+        key = (hit.namespace, hit.target_id, hit.absolute)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(hit)
+    wanted = str(prefer or "").strip().lower()
+    if wanted:
+        out.sort(key=lambda hit: hit.namespace != wanted)
+    return out
 
 
 def find_source_override(
@@ -542,6 +564,15 @@ def override_for_item(item: Mapping[str, Any]) -> EpisodeOverride | None:
     season = item.get("season") if item.get("season") is not None else item.get("season_number")
     episode = item.get("episode") if item.get("episode") is not None else item.get("episode_number")
     return find_episode_override(ids, season, episode)
+
+
+def overrides_for_item(item: Mapping[str, Any], *, prefer: str | None = None) -> list[EpisodeOverride]:
+    ids = _ids_of(item)
+    if not ids:
+        return []
+    season = item.get("season") if item.get("season") is not None else item.get("season_number")
+    episode = item.get("episode") if item.get("episode") is not None else item.get("episode_number")
+    return find_episode_overrides(ids, season, episode, prefer=prefer)
 
 
 def stats() -> dict[str, Any]:
