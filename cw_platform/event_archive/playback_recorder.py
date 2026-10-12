@@ -17,6 +17,10 @@ from .scrobble_recorder import _id_token, session_token
 _LOG = logging.getLogger("crosswatch.event_archive")
 TIMELINE_LIMIT = 50
 _STATES = {"start": "running", "pause": "paused", "stop": "stopped"}
+UNWRITTEN_SKIPS = frozenset({
+    "not_mapped", "not_anime_or_no_mapping", "anime_mapping_unavailable", "missing_media_identity",
+    "media_not_found", "unsupported_media_type", "anime_media_type_mismatch", "episode_out_of_range",
+})
 
 
 def prepare_playback(ev: Any) -> Any:
@@ -78,6 +82,8 @@ def _record(ev: Any, cfg: dict[str, Any], *, delivery: str | None, reason: str |
             if reason:
                 outcome["reason"] = str(reason)[:200]
             previous = detail.get("delivery") or {}
+            if delivery == "skipped" and previous.get("status") in {"succeeded", "failed"}:
+                return
             if all(previous.get(k) == v for k, v in outcome.items()) and set(previous) - {"at"} == set(outcome):
                 return
             outcome["at"] = now

@@ -11,7 +11,7 @@ from cw_platform.id_map import canonical_key, ids_from, merge_ids, minimal
 
 from .coordinates import translate
 from .descriptors import descriptor_candidates_for_id, parse_descriptor
-from .overrides import EpisodeOverride, find_episode_override, find_identity_overrides
+from .overrides import EpisodeOverride, find_episode_overrides, find_identity_overrides
 from .storage import index_ready, query_edges, query_identity_natives, query_native_identity
 
 ANIME_NATIVE_PROVIDERS = {"kitsu", "myanimelist", "anilist", "simkl", "crosswatch"}
@@ -224,11 +224,11 @@ def _anime_only_keep(svc: "AnimeMappingService", row: Mapping[str, Any], history
         pass
     show_ids = _clean_id_map(row.get("show_ids")) or _clean_id_map(row.get("ids"))
     try:
-        ruled = find_episode_override(show_ids, row.get("season"), row.get("episode"))
+        ruled = find_episode_overrides(show_ids, row.get("season"), row.get("episode"))
     except Exception:
-        ruled = None
-    if ruled is not None:
-        return _override_reaches_anime_target(svc.release_tag, ruled, target)
+        ruled = []
+    if ruled:
+        return any(_override_reaches_anime_target(svc.release_tag, rule, target) for rule in ruled)
     return _show_has_anime_entry(svc.release_tag, show_ids, cache, target)
 
 

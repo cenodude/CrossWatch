@@ -10,7 +10,7 @@ from typing import Any
 from cw_platform.anime_mapping import AnimeMappingService
 from cw_platform.anime_mapping.coordinates import translate
 from cw_platform.anime_mapping.episodes import resolve_absolute, resolve_axis_coordinate_map
-from cw_platform.anime_mapping.overrides import find_episode_override, find_source_identity_overrides, find_source_overrides
+from cw_platform.anime_mapping.overrides import find_episode_overrides, find_source_identity_overrides, find_source_overrides, overrides_for_item
 from cw_platform.anime_mapping.storage import normalize_release_tag, query_edges, query_identity_natives, query_native_identity
 from cw_platform.id_map import canonical_key, minimal
 from providers.sync._mod_common import build_op_result
@@ -55,6 +55,14 @@ def native_target(tag: str, namespace: str, ident: str, episode: int) -> tuple[s
     return hits.pop() if len(hits) == 1 else None
 
 
+def ruled_target(tag: str, rules: Any) -> tuple[str, int] | None:
+    for rule in rules:
+        hit = native_target(tag, rule.namespace, rule.target_id, rule.absolute)
+        if hit:
+            return hit
+    return None
+
+
 def resolve_target(cfg: Mapping[str, Any], item: Mapping[str, Any]) -> tuple[str, int] | None:
     kind = item.get("type")
     if kind in ("movie", "show"):
@@ -72,7 +80,7 @@ def resolve_target(cfg: Mapping[str, Any], item: Mapping[str, Any]) -> tuple[str
     ids = dict(item.get("show_ids") or {})
     resolved = resolve_absolute(item, release_tag=tag)
     if resolved and resolved.basis == "user_override":
-        return native_target(tag, resolved.namespace, resolved.target_id, resolved.absolute)
+        return ruled_target(tag, overrides_for_item(item, prefer="kitsu") or [resolved])
     season, episode = number(item.get("season")), number(item.get("episode"))
     if season <= 0 or episode <= 0:
         return None
@@ -126,9 +134,9 @@ def episode_items(cfg: Mapping[str, Any], ident: str, count: int, title: str) ->
             coords = [(p, i, s, e) for (p, i), (s, e) in resolve_axis_coordinate_map(
                 {"kitsu": ident, **native_ids}, episode, release_tag=tag).items()]
         for provider, show_id, season, ep in set(coords):
-            ruled = find_episode_override({provider: show_id}, season, ep)
+            ruled = find_episode_overrides({provider: show_id}, season, ep, prefer="kitsu")
             if ruled:
-                hit = native_target(tag, ruled.namespace, ruled.target_id, ruled.absolute)
+                hit = ruled_target(tag, ruled)
                 if hit != (ident, episode):
                     continue
             out.append({"type": "episode", "ids": {}, "show_ids": {provider: show_id},

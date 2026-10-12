@@ -916,8 +916,14 @@ class Dispatcher:
                         self._retry_after.pop(sk, None)
                         self._pending.pop(sk, None)
                     sent = True
+                    skipped = isinstance(result, dict) and (bool(result.get("skipped")) or result.get("log_status") == "skipped")
+                    if skipped and str((ev.raw or {}).get("_cw_playback_action") or ev.action) == "stop":
+                        from cw_platform.event_archive.playback_recorder import UNWRITTEN_SKIPS, record_playback
+
+                        skip_reason = str(result.get("reason") or "").strip().lower()
+                        if skip_reason in UNWRITTEN_SKIPS:
+                            record_playback(ev, cfg, delivery="skipped", reason=skip_reason)
                     if log_delivery:
-                        skipped = isinstance(result, dict) and (bool(result.get("skipped")) or result.get("log_status") == "skipped")
                         status = "skipped" if skipped else "accepted"
                         reason = str(result.get("reason") or "unknown") if skipped else ""
                         details = ""

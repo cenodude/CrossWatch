@@ -191,7 +191,7 @@ export default {
             <div class="ao-card-head compact has-tools">
               <div>
                 <h3>Your rules <span class="ao-count" id="ao-count"></span></h3>
-                <p>Rules are checked in order, top first. Disabled rules are ignored.</p>
+                <p>Rules are checked in order, top first. A rule that targets a service directly wins for that service. Disabled rules are ignored.</p>
               </div>
               <div class="ao-tools">
                 <select id="ao-import-mode" title="How an imported file is applied">

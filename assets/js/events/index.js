@@ -291,7 +291,7 @@ const SCROBBLE_TYPES = ["", "scrobble_playback", "scrobble_started", "scrobble_c
 const AUDIT_TYPES = ["", "audit_login", "audit_login_failed", "audit_login_blocked", "audit_2fa_required", "audit_2fa_failed", "audit_logout", "audit_logout_all", "audit_logout_others", "audit_user_created", "audit_user_updated", "audit_user_deleted", "audit_credentials_updated", "audit_totp_setup", "audit_totp_enabled", "audit_totp_disabled", "audit_plex_sso_linked", "audit_plex_sso_unlinked", "audit_api_action"];
 const OUTCOME_ITEMS = {
   sync: [{ value: "", label: "Any outcome" }, { value: "successful", label: "Successful" }, { value: "problems", label: "Problems" }, { value: "informational", label: "Informational" }],
-  scrobble: [{ value: "", label: "Any outcome" }, { value: "completed", label: "Watched" }, { value: "failed", label: "Failed" }, { value: "rated", label: "Rated" }, { value: "running", label: "In progress" }, { value: "paused", label: "Paused" }, { value: "stopped", label: "Stopped (Incomplete)" }],
+  scrobble: [{ value: "", label: "Any outcome" }, { value: "completed", label: "Watched" }, { value: "failed", label: "Failed" }, { value: "rated", label: "Rated" }, { value: "running", label: "In progress" }, { value: "paused", label: "Paused" }, { value: "stopped", label: "Stopped (Incomplete)" }, { value: "skipped", label: "Skipped" }],
   audit: [{ value: "", label: "Any outcome" }, { value: "completed", label: "Successful" }, { value: "failed", label: "Failed" }, { value: "informational", label: "Informational" }],
 };
 const typeItems = (dom) => (dom === "audit" ? AUDIT_TYPES : (dom === "scrobble" ? SCROBBLE_TYPES : EVENT_TYPES)).map((t) => ({ value: t, label: t ? BADGE[t] || t.replace(/_/g, " ") : "All types" }));
@@ -304,7 +304,7 @@ const groupSev = (g) => {
 };
 const STATUS_ICON = {
   completed: "task_alt", resolved: "check_circle", blackboxed: "inventory_2", unresolved: "shield",
-  paused: "pause", stopped: "stop", failed: "cancel", running: "sync", pending: "hourglass_top", informational: "bolt", rated: "star",
+  paused: "pause", stopped: "stop", skipped: "block", failed: "cancel", running: "sync", pending: "hourglass_top", informational: "bolt", rated: "star",
   warning: "warning",
 };
 const groupIcon = (g) => STATUS_ICON[String(g.status || "").toLowerCase()] || "bolt";

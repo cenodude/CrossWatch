@@ -137,7 +137,7 @@ class AniListSink(ScrobbleSink):
             return {"ok": True, "skipped": True, "reason": "missing_media_identity"}
         target = resolve_target(cfgd, item)
         if target is None:
-            _log(f"no AniList entry for '{_media_name(ev)}'; not anime or unmapped", "DEBUG")
+            _log(f"skipped '{_media_name(ev)}': no AniList entry; not anime or unmapped", "INFO")
             return {"ok": True, "skipped": True, "reason": "not_mapped"}
         anilist_id, episode = target
         key = (self._instance_id, anilist_id, episode)

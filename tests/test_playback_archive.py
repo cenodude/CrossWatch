@@ -145,3 +145,70 @@ def test_enriched_destination_ids_keep_the_source_thread(archive):
     assert c.execute("SELECT COUNT(*) FROM event_groups").fetchone()[0] == 1
     assert list_groups(domain="scrobble", conn=c)["items"][0]["status"] == "completed"
     assert detail(c)["delivery"]["status"] == "succeeded"
+
+
+def _skipping_sink(reason):
+    class Sink:
+        def send(self, ev, cfg=None):
+            return {"ok": True, "skipped": True, "reason": reason}
+    return Sink()
+
+
+def test_watched_stop_skipped_by_sink_is_reported_as_skipped_with_reason(archive):
+    c, cfg, clock = archive
+    dispatcher = Dispatcher([_skipping_sink("not_mapped")], cfg_provider=lambda: cfg)
+    dispatcher.dispatch(event())
+    clock[0] += 10
+    dispatcher.dispatch(event("stop", progress=94))
+    correlate(conn=c)
+    group = list_groups(domain="scrobble", conn=c)["items"][0]
+    assert group["status"] == "skipped"
+    assert group["summary"] == "Skipped 8 Mile → TRAKT, 94%: No anime mapping for this target"
+    assert group["reason_code"] == "not_mapped"
+    assert detail(c)["delivery"]["status"] == "skipped"
+    assert list_groups(domain="scrobble", status="skipped", conn=c)["total"] == 1
+
+
+def test_stop_below_watched_threshold_stays_stopped_incomplete(archive):
+    c, cfg, clock = archive
+    dispatcher = Dispatcher([_skipping_sink("not_watched")], cfg_provider=lambda: cfg)
+    dispatcher.dispatch(event())
+    clock[0] += 10
+    dispatcher.dispatch(event("stop", progress=40))
+    correlate(conn=c)
+    group = list_groups(domain="scrobble", conn=c)["items"][0]
+    assert group["status"] == "stopped"
+    assert group["summary"].startswith("Stopped before completion")
+
+
+@pytest.mark.parametrize("reason", ["completion_held", "episode_group_completion_only", "debounced", "progress_step", "duplicate"])
+def test_other_stop_skips_stay_stopped_incomplete(archive, reason):
+    c, cfg, clock = archive
+    dispatcher = Dispatcher([_skipping_sink(reason)], cfg_provider=lambda: cfg)
+    dispatcher.dispatch(event())
+    clock[0] += 10
+    dispatcher.dispatch(event("pause", progress=85, raw={"_cw_playback_action": "stop"}))
+    correlate(conn=c)
+    assert list_groups(domain="scrobble", conn=c)["items"][0]["status"] == "stopped"
+    assert "delivery" not in detail(c)
+
+
+@pytest.mark.parametrize("outcome", ["succeeded", "failed"])
+def test_skipped_stop_does_not_replace_an_earlier_delivery_outcome(archive, outcome):
+    c, cfg, clock = archive
+    playback_recorder.record_playback(event("stop", progress=94), cfg)
+    playback_recorder.record_playback(event("stop", progress=94), cfg, delivery=outcome, reason="503")
+    clock[0] += 1
+    playback_recorder.record_playback(event("stop", progress=94), cfg, delivery="skipped", reason="not_mapped")
+    assert detail(c)["delivery"]["status"] == outcome
+
+
+def test_confirmed_completion_outranks_a_skipped_delivery(archive):
+    c, cfg, clock = archive
+    dispatcher = Dispatcher([_skipping_sink("not_mapped")], cfg_provider=lambda: cfg)
+    dispatcher.dispatch(event())
+    scrobble_recorder.record_watch(event("stop", progress=95), action="stop", source_provider="jellyfin", destination_provider="trakt")
+    clock[0] += 10
+    dispatcher.dispatch(event("stop", progress=95))
+    correlate(conn=c)
+    assert list_groups(domain="scrobble", conn=c)["items"][0]["status"] == "completed"

@@ -10,6 +10,7 @@ from typing import Any
 from cw_platform.anime_mapping import AnimeMappingService
 from cw_platform.anime_mapping.coordinates import translate
 from cw_platform.anime_mapping.episodes import resolve_absolute
+from cw_platform.anime_mapping.overrides import overrides_for_item
 from cw_platform.anime_mapping.storage import normalize_release_tag, query_edges
 
 from .._log import log as cw_log
@@ -91,6 +92,14 @@ def native_to_anilist(release_tag: str, namespace: str, ident: str, episode: int
         if mapped and aid:
             hits.add((aid, int(mapped)))
     return hits.pop() if len(hits) == 1 else None
+
+
+def ruled_to_anilist(release_tag: str, rules: Any) -> tuple[int, int] | None:
+    for rule in rules:
+        hit = native_to_anilist(release_tag, rule.namespace, rule.target_id, rule.absolute)
+        if hit:
+            return hit
+    return None
 
 
 def aired_to_anilist(release_tag: str, show_ids: Mapping[str, Any], season: int | None, episode: int | None) -> tuple[int, int] | None:
@@ -187,7 +196,13 @@ def resolve_target(cfg: Mapping[str, Any] | None, item: Mapping[str, Any]) -> tu
         if hit and own and hit[0] != own:
             hit = None
     if hit is None and res is not None:
-        hit = native_to_anilist(tag, res.namespace, res.target_id, res.absolute)
+        rules: list[Any] = []
+        if res.basis == "user_override":
+            try:
+                rules = list(overrides_for_item(probe, prefer="anilist"))
+            except Exception:
+                rules = []
+        hit = ruled_to_anilist(tag, rules or [res])
     _dbg(
         "resolved",
         season=_to_int(item.get("season")),
@@ -256,4 +271,4 @@ def apply_progress(client: Any, anilist_id: int, episode: int, *, today: date | 
     return {"ok": True, "status": row.get("status"), "progress": row.get("progress"), **base}
 
 
-__all__ = ["resolve_target", "native_to_anilist", "aired_to_anilist", "aired_entries", "plan_progress", "apply_progress"]
+__all__ = ["resolve_target", "native_to_anilist", "ruled_to_anilist", "aired_to_anilist", "aired_entries", "plan_progress", "apply_progress"]

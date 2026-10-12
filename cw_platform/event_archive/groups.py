@@ -221,6 +221,8 @@ def _derive_status(events: list[dict[str, Any]], extra_problems: int = 0) -> str
             detail = _detail(playback)
             if "scrobble_completed" in types:
                 return "completed"
+            if _skipped_delivery(detail):
+                return "skipped"
             if detail.get("state") in {"running", "paused", "stopped"}:
                 return str(detail["state"])
         best, best_ts = None, -1
@@ -487,6 +489,18 @@ def _title_of(e: dict[str, Any]) -> str:
     return t
 
 
+def _skipped_delivery(detail: dict[str, Any]) -> str:
+    delivery = detail.get("delivery")
+    if not isinstance(delivery, dict) or detail.get("state") != "stopped":
+        return ""
+    if delivery.get("status") != "skipped" or delivery.get("action") != "stop":
+        return ""
+    from .playback_recorder import UNWRITTEN_SKIPS
+
+    reason = str(delivery.get("reason") or "").strip().lower()
+    return reason if reason in UNWRITTEN_SKIPS else ""
+
+
 def _summarize_scrobble(status: str, events: list[dict[str, Any]], dst: str) -> str:
     last = events[-1] if events else {}
     name = _title_of(last) or "item"
@@ -508,6 +522,9 @@ def _summarize_scrobble(status: str, events: list[dict[str, Any]], dst: str) -> 
         return f"Watched {name}{to}{tail}"
     if status == "paused":
         return f"Paused {name}{to}{tail}"
+    if status == "skipped":
+        why = _skipped_delivery(_detail(playback or last))
+        return f"Skipped {name}{to}{tail}: {friendly_reason(why)}" if why else f"Skipped {name}{to}{tail}"
     if status == "stopped":
         return f"Stopped before completion: {name}{to}{tail}"
     return f"Watching {name}{to}{tail}"
@@ -568,6 +585,8 @@ def _recompute(conn: sqlite3.Connection, group_id: int, now: int) -> None:
             fail_evt = e
     reason_code = str((fail_evt or {}).get("reason_code") or _pick(events, "reason_code") or "")
     reason = str((fail_evt or {}).get("reason") or _pick(events, "reason") or "")
+    if status == "skipped" and playback and not reason_code:
+        reason_code = reason = _skipped_delivery(_detail(playback))
     summary = _summarize(status, events, feature, dst, norm_op, reason_code, feat_issues)
     if delivery.get("status") == "failed":
         summary += "; delivery failed"
