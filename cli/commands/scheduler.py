@@ -12,7 +12,7 @@ import typer
 from .._context import Ctx
 from .._errors import EXIT_NOT_FOUND, EXIT_USAGE, CLIError
 from .._render import state_text
-from .._util import as_dict, coerce_bool, error_text, find_pair, fmt_rel, fmt_ts, pair_label
+from .._util import as_dict, coerce_bool, error_text, find_pair, fmt_rel, fmt_ts, opt_bool, pair_label
 
 scheduler_app = typer.Typer(help="Inspect and drive the sync scheduler.", no_args_is_help=True)
 
@@ -324,7 +324,7 @@ def _render(state: Ctx, status: dict[str, Any]) -> None:
             ("Enabled", state_text(standard_enabled or advanced_enabled, on="yes", off="no")),
             ("Standard", state_text(standard_enabled, on="on", off="off")),
             ("Advanced", state_text(advanced_enabled, on="on", off="off")),
-            ("Worker", state_text(coerce_bool(status.get("running"), False), on="running", off="stopped")),
+            ("Worker", state_text(opt_bool(status.get("running")), on="running", off="stopped", unknown=state.unknown_label)),
             ("Mode", _mode(scfg)),
             ("Next run", f"{fmt_ts(nxt)}  ({fmt_rel(nxt)})" if nxt else "not scheduled"),
             ("Last run", fmt_ts(status.get("last_run_at")) if status.get("last_run_at") else "-"),

@@ -97,6 +97,8 @@ cw version                   version, plus every provider module version
 cw health                    is anything answering
 ```
 
+With `--local`, or when the service cannot be reached, the CLI cannot see live state. Sync, watcher, scheduler worker and ready to sync then show as unknown, and `watcher_alive`, `scheduler_running`, `sync_running`, `cancel_requested` and `can_run` are `null` in JSON.
+
 ## Pairs
 
 ```
