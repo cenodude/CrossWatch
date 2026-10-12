@@ -54,6 +54,7 @@ function hasTrakt(state){return isTrakt(state?.src)||isTrakt(state?.dst)}
 function hasMDBList(state){return isMDBList(state?.src)||isMDBList(state?.dst)}
 function hasPublicMetaDB(state){return isPublicMetaDB(state?.src)||isPublicMetaDB(state?.dst)}
 function hasFloppy(state){return isFloppy(state?.src)||isFloppy(state?.dst)}
+function floppyAnimeLibraryOn(state){const pair=state?.pairProviders?.floppy;return pair&&"anime_library" in pair?!!pair.anime_library:!!state?.cfgRaw?.floppy?.anime_library}
 function hasScrob(state){return isScrob(state?.src)||isScrob(state?.dst)}
 function hasStremio(state){return isStremio(state?.src)||isStremio(state?.dst)}
 function pairInstanceForKind(state, kind){
@@ -424,6 +425,9 @@ function normalizePairProviders(p){
       }
       if(key==="simkl"){
         if("history_ignore_dropped_shows" in blk) blk.history_ignore_dropped_shows=!!blk.history_ignore_dropped_shows;
+      }
+      if(key==="floppy"){
+        if("anime_library" in blk) blk.anime_library=!!blk.anime_library;
       }
       out[key]=blk;
     }
@@ -1099,6 +1103,9 @@ function getProviderOverrideCount(state, providerKey){
   if (providerKey === "kodi") {
     return countProviderLibraries(state, "KODI");
   }
+  if (providerKey === "floppy") {
+    return checked("floppy-anime-library", floppyAnimeLibraryOn(state)) ? 1 : 0;
+  }
   return 0;
 }
 
@@ -1110,7 +1117,7 @@ function getProviderSummaryText(state, providerKey){
 }
 
 function refreshProviderCardSummaries(state){
-  [["plex","prov-plex-summary"],["jellyfin","prov-jelly-summary"],["emby","prov-emby-summary"],["kodi","prov-kodi-summary"]].forEach(([key, id]) => {
+  [["plex","prov-plex-summary"],["jellyfin","prov-jelly-summary"],["emby","prov-emby-summary"],["kodi","prov-kodi-summary"],["floppy","prov-floppy-summary"]].forEach(([key, id]) => {
     const el = ID(id);
     if (el) el.textContent = getProviderSummaryText(state, key);
   });
@@ -1137,6 +1144,7 @@ function renderFeaturePanel(state){
       if (providerKey === "plex") return "Tune Plex retries, workers, and pair library scope";
       if (providerKey === "jellyfin") return "Tune Jellyfin lookup, timeouts and pair library scope.";
       if (providerKey === "kodi") return "Tune Kodi pair library scope.";
+      if (providerKey === "floppy") return "Choose where new anime shows land in Floppy.";
       return "Tune Emby timeouts and pair library scope.";
     };
 
@@ -1309,6 +1317,29 @@ function renderFeaturePanel(state){
             </div>
             <button type="button" class="cx-btn small" id="kodi-libs-load">Load libraries</button>
           </div>
+        </div>
+      </details>`);
+
+    if (hasFloppy(state)) providerCards.push(`
+      <details class="mods fold provider-card provider-floppy" id="prov-floppy">
+        <summary class="fold-head provider-card-head">
+          <span class="provider-card-main">
+            <span class="provider-card-badge">Floppy</span>
+            <span class="provider-card-copy">
+              <span class="provider-card-title">Floppy</span>
+              <span class="provider-card-sub" id="prov-floppy-summary">${getProviderSummaryText(state, "floppy")}</span>
+            </span>
+          </span>
+          <span class="provider-card-meta">
+            <span class="provider-card-hint">${providerHintText("floppy")}</span>
+            <span class="chev">expand_more</span>
+          </span>
+        </summary>
+        <div class="fold-body provider-card-body">
+          <div class="grid2 compact" style="padding:8px 0 2px">
+            <div class="opt-row"><label for="floppy-anime-library" data-tip-id="floppy-anime-library">Send new anime to the Anime library</label><label class="switch"><input id="floppy-anime-library" type="checkbox" ${floppyAnimeLibraryOn(state)?"checked":""}><span class="slider"></span></label></div>
+          </div>
+          <div class="muted">Applies to shows Floppy does not have yet. Shows already in Floppy stay in the library they are in.</div>
         </div>
       </details>`);
 
@@ -2249,6 +2280,12 @@ function bindChangeHandlers(state,root){
       if(id==="jf-strict-ids") state.pairProviders.jellyfin=Object.assign({},state.pairProviders.jellyfin||{}, {strict_id_matching:!!el.checked});
       if(id==="jf-targeted-lookup") state.pairProviders.jellyfin=Object.assign({},state.pairProviders.jellyfin||{}, {targeted_lookup:!!el.checked});
       if(id==="em-strict-ids") state.pairProviders.emby=Object.assign({},state.pairProviders.emby||{}, {strict_id_matching:!!el.checked});
+      return;
+    }
+    if(id==="floppy-anime-library"){
+      state.pairProviders=state.pairProviders||{};
+      state.pairProviders.floppy=Object.assign({},state.pairProviders.floppy||{}, {anime_library:!!el.checked});
+      refreshProviderCardSummaries(state);
       return;
     }
     if(id==="cx-tr-hs-col"||id==="cx-tr-hs-col-movies"||id==="cx-tr-hs-col-shows"||id==="cx-tr-hs-ignore-dropped"){

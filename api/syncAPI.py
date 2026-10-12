@@ -282,8 +282,12 @@ def _normalize_pair_providers(p: Any) -> dict[str, Any]:
         if key == "simkl":
             if "history_ignore_dropped_shows" in v:
                 blk["history_ignore_dropped_shows"] = coerce_bool(v.get("history_ignore_dropped_shows"))
+        if key == "floppy" and "anime_library" in v:
+            blk["anime_library"] = coerce_bool(v.get("anime_library"))
         for kk, vv in v.items():
             if kk in {"strict_id_matching", "history_ignore_dropped_shows"}:
+                continue
+            if key == "floppy" and kk == "anime_library":
                 continue
             if key == "jellyfin" and kk == "targeted_lookup":
                 continue

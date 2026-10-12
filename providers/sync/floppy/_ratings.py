@@ -13,7 +13,7 @@ from cw_platform.id_map import minimal as id_minimal
 from providers.auth._auth_FLOPPY import FloppyAuthError
 from providers.sync._mod_common import build_op_result, unresolved_keys
 
-from ._common import PLANNING, api_patch, api_post, canonical_item_key, confirmed_destination, failure_reason, floppy_type_for_item, int_or_none, item_from_row, media_parts_from_item_id, paged, rating_number, tmdb_enriched_item, track_media, tmdb_id_for_item, unresolved
+from ._common import ANIME_BUCKET, PLANNING, api_patch, api_post, bucket_body, bucket_params, canonical_item_key, confirmed_destination, failure_reason, floppy_type_for_item, int_or_none, item_from_row, media_parts_from_item_id, paged, rating_number, show_path, tmdb_enriched_item, track_media, tmdb_id_for_item, unresolved, write_bucket
 from ._history import _write_target
 
 _SHADOW_TTL = 180.0
@@ -89,27 +89,31 @@ def _rated_item(row: Mapping[str, Any], media_type: str) -> dict[str, Any] | Non
     if media_type == "episode":
         _typ, _source, _media_id, season, episode = media_parts_from_item_id(row.get("item_id"))
         return item_from_row(row, force_type="episode") if season is not None and episode is not None else None
+    if media_type == ANIME_BUCKET:
+        item = item_from_row(row, force_type="tv")
+        return item if item and item.get("type") == "show" else None
     return item_from_row(row, force_type=media_type)
 
 
-def _write_season_score(adapter: Any, tmdb_id: str, season: int, rating: float | None) -> None:
+def _write_season_score(adapter: Any, tmdb_id: str, season: int, rating: float | None, bucket: str = "") -> None:
     try:
-        api_patch(adapter, f"media/tv/tmdb/{tmdb_id}/{season}", json={"score": rating})
+        api_patch(adapter, f"media/tv/tmdb/{tmdb_id}/{season}", json={"score": rating}, params=bucket_params(bucket))
     except FloppyAuthError as exc:
         if getattr(exc, "status_code", None) != 404:
             raise
         if rating is None:
             return
-        api_post(adapter, "media/season", json={"source": "tmdb", "media_id": str(tmdb_id), "season_number": int(season), "status": PLANNING, "score": rating})
+        api_post(adapter, "media/season", json={"source": "tmdb", "media_id": str(tmdb_id), "season_number": int(season), "status": PLANNING, "score": rating, **bucket_body(bucket)})
 
 
 def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
-    for media_type, params in (("movie", None), ("tv", None), ("season", {"rating": "rated"}), ("episode", {"rating": "rated"})):
+    for media_type, params in (("movie", None), ("tv", None), (ANIME_BUCKET, None), ("season", {"rating": "rated"}), ("episode", {"rating": "rated"})):
         try:
             rows = paged(adapter, f"media/{media_type}", params=params)
         except FloppyAuthError as exc:
-            if media_type in {"movie", "tv"} or getattr(exc, "status_code", None) not in {400, 404}:
+            status = getattr(exc, "status_code", None)
+            if media_type in {"movie", "tv"} or status not in ({400, 403, 404} if media_type == ANIME_BUCKET else {400, 404}):
                 raise
             rows = []
         for row in rows:
@@ -183,9 +187,16 @@ def _write(adapter: Any, items: Iterable[Mapping[str, Any]], *, clear: bool, dry
         try:
             if typ == "episode" and season is not None and episode is not None:
                 target_id, target_season, target_episode = _write_target(adapter, str(tmdb_id), item, season, episode)
-                api_patch(adapter, f"media/tv/tmdb/{target_id}/{target_season}/episodes/{target_episode}/score", json={"score": rating})
+                bucket = write_bucket(adapter, target_id, item)
+                api_patch(adapter, f"media/tv/tmdb/{target_id}/{target_season}/episodes/{target_episode}/score", json={"score": rating, **bucket_body(bucket)}, params=bucket_params(bucket))
             elif typ == "season" and season is not None:
-                _write_season_score(adapter, str(tmdb_id), season, rating)
+                _write_season_score(adapter, str(tmdb_id), season, rating, write_bucket(adapter, tmdb_id, item))
+            elif typ == "tv":
+                bucket = write_bucket(adapter, tmdb_id, item)
+                if clear:
+                    api_patch(adapter, show_path(tmdb_id, bucket), json={"score": None})
+                else:
+                    track_media(adapter, typ, tmdb_id, payload={"status": PLANNING, "score": rating}, patch_payload={"score": rating}, bucket=bucket)
             elif clear:
                 api_patch(adapter, f"media/{typ}/tmdb/{tmdb_id}", json={"score": None})
             else:

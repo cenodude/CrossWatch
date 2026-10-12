@@ -56,6 +56,8 @@ export const HELP_TEXT = {
   "cx-rt-specials": "Ratings: Specials (Season 0)\nInclude Season 0 / specials seasons and episodes. Disable to skip them on both sides of this pair.",
   "cx-rt-library-only": "Ratings: Only items in destination library\nSkip new ratings for movies and episodes that are not in the media server library.\nRating changes for titles you already rated are always synced.\nMatches on IDs only, so titles stored under a different ID are skipped too.",
 
+  "floppy-anime-library": "Floppy: Send new anime to the Anime library\nNew anime shows are added to Floppy's Anime library instead of TV Shows.\nOnly applies to shows Floppy does not have yet. Shows already in Floppy stay in the library they are in.\nThis setting is per pair.",
+
   "cx-jf-wl-mode": "Jellyfin: Watchlist mode\nJellyfin has no native Watchlist. CrossWatch maps it to:\n• Favorites: sets the Favorite flag\n• Playlist: writes to a named playlist (episodes only; no shows)\n• Collections: writes to a named collection\nChanging mode does not move existing items.\nTip: Favorites or Collections are the most compatible.",
   "cx-em-wl-mode": "Emby: Watchlist mode\nEmby has no native Watchlist. CrossWatch maps it to:\n• Favorites: sets the Favorite flag\n• Playlist: writes to a named playlist (episodes only; no shows)\n• Collections: writes to a named collection\nChanging mode does not move existing items.\nTip: Favorites or Collections are the most compatible.",
 
