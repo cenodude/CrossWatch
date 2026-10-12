@@ -26,6 +26,14 @@ const label = row => {
 };
 const reasonText = hint => hint?.message || [hint?.provider, array(hint?.reasons).join(", ") || hint?.reason || hint?.kind].filter(Boolean).join(": ");
 const unique = rows => [...new Map(rows.map(row => [JSON.stringify(row), row])).values()];
+export function savedMappingText(row) {
+  return array(row.saved_mappings).map(rule => {
+    const item = rule.corrected || {};
+    const ids = Object.entries(item.show_ids || item.ids || {}).map(([key, value]) => key.toUpperCase() + " " + value).join(" · ");
+    return "Mapping saved → " + [item.series_title || item.title || rule.key, ids].filter(Boolean).join(" · ") + (rule.scope === "pair" ? " (this pair)" : " (shared)");
+  }).join("; ");
+}
+
 export function episodeGroupLabel(row) {
   const groups = array(row.episode_groups);
   if (!groups.length) return "";
@@ -334,7 +342,7 @@ const Analyzer = {
       $("#an-list").innerHTML = `<div class="an-table-scroll"><table class="an-table"><thead><tr><th scope="col">Item</th><th scope="col">Provider</th><th scope="col">Feature</th><th scope="col">Finding</th>${editable ? '<th scope="col" class="an-mapping-column" aria-label="Edit mapping"></th>' : ''}</tr></thead><tbody>${currentRows.map((row, index) => {
         const mismatch = missingIndex.get(identity(row));
         const finding = view === "pending" ? retryLabel(row) : row.type === "missing_peer" || mismatch ? watchDifferenceLabel(mismatch || row, providerName) : episodeGroupLabel(row) || (blockedIndex.has(identity(row)) ? "Blocked" : "No presence issue");
-        return `<tr data-row="${index}" class="${selected === row ? "is-selected" : ""}"><td><button type="button" class="an-item-button" data-row="${index}" aria-pressed="${selected === row}"><strong>${esc(label(row))}</strong><span>${esc([human(row.item_type || row.item?.type || (row.type === "missing_peer" ? "" : row.type)), row.year || row.item?.year].filter(Boolean).join(" · "))}</span></button></td><td>${esc(providerName(row.provider))}${rowPairName(row) ? `<span class="an-pair-label">${esc(rowPairName(row))}</span>` : ""}</td><td><span class="an-feature-badge">${esc(human(row.feature))}</span></td><td><span class="an-result-badge ${mismatch || row.type === "missing_peer" ? "an-warn-text" : ""}">${esc(finding)}</span></td>${editable ? `<td class="an-mapping-column">${row.key && FEATURES.includes(row.feature) && !array(row.watch_time_differences).length && !array(row.episode_groups).length && (row.type !== "missing_peer" || array(row.targets).length === 1) ? `<button type="button" class="an-icon-button" data-edit-mapping="${index}" title="Edit mapping" aria-label="Edit mapping for ${esc(label(row))}">${icon("edit")}</button>` : ''}${row.key && FEATURES.includes(row.feature) && (row.item_type || row.item?.type) === "movie" && (row.type !== "missing_peer" || array(row.targets).length === 1) ? `<button type="button" class="an-icon-button" data-fix-matching="${index}" title="Fix matching" aria-label="Fix matching for ${esc(label(row))}">${icon("travel_explore")}</button>` : ''}${row.retry_blocked && row.key ? `<button type="button" class="an-icon-button" data-release="${index}" title="Release retry block" aria-label="Release retry block for ${esc(label(row))}">${icon("lock_open")}</button>` : ''}</td>` : ''}</tr>`;
+        return `<tr data-row="${index}" class="${selected === row ? "is-selected" : ""}"><td><button type="button" class="an-item-button" data-row="${index}" aria-pressed="${selected === row}"><strong>${esc(label(row))}</strong><span>${esc([human(row.item_type || row.item?.type || (row.type === "missing_peer" ? "" : row.type)), row.year || row.item?.year].filter(Boolean).join(" · "))}</span></button></td><td>${esc(providerName(row.provider))}${rowPairName(row) ? `<span class="an-pair-label">${esc(rowPairName(row))}</span>` : ""}</td><td><span class="an-feature-badge">${esc(human(row.feature))}</span></td><td><span class="an-result-badge ${mismatch || row.type === "missing_peer" ? "an-warn-text" : ""}">${esc(finding)}</span>${savedMappingText(row) ? `<span class="an-pair-label">${esc(savedMappingText(row))}</span>` : ""}</td>${editable ? `<td class="an-mapping-column">${row.key && FEATURES.includes(row.feature) && !array(row.watch_time_differences).length && !array(row.episode_groups).length && (row.type !== "missing_peer" || array(row.targets).length === 1) ? `<button type="button" class="an-icon-button" data-edit-mapping="${index}" title="Edit mapping" aria-label="Edit mapping for ${esc(label(row))}">${icon("edit")}</button>` : ''}${row.key && FEATURES.includes(row.feature) && (row.item_type || row.item?.type) === "movie" && (row.type !== "missing_peer" || array(row.targets).length === 1) ? `<button type="button" class="an-icon-button" data-fix-matching="${index}" title="Fix matching" aria-label="Fix matching for ${esc(label(row))}">${icon("travel_explore")}</button>` : ''}${row.retry_blocked && row.key ? `<button type="button" class="an-icon-button" data-release="${index}" title="Release retry block" aria-label="Release retry block for ${esc(label(row))}">${icon("lock_open")}</button>` : ''}</td>` : ''}</tr>`;
       }).join("")}</tbody></table></div>`;
     }
     function renderFinding(row, index) {
@@ -438,7 +446,7 @@ const Analyzer = {
           const limit = ["watchlist", "collection"].includes(row.feature) ? provider?.limits?.[key] : null;
           return limit && limit.item_count > 0 && limit.used >= limit.item_count ? `${providerName(target)} ${human(key)} limit reached (${limit.used}/${limit.item_count}). Free up space or review the provider account limit.` : "";
         }).filter(Boolean);
-        $("#an-detail").innerHTML = `<div class="an-detail-heading"><span class="an-eyebrow">ITEM DETAILS</span><button type="button" class="an-icon-button" id="an-close-detail" aria-label="Close item details">${icon("close")}</button></div><h3>${esc(label(row))}</h3><p class="an-detail-meta">${esc([provider, human(row.feature), row.year || row.item?.year].filter(Boolean).join(" · "))}</p>${rowPairName(row) ? `<p class="an-detail-meta">Sync pair: ${esc(rowPairName(row))}</p>` : ""}<div class="an-detail-status">${icon(mismatch || view === "pending" ? "info" : "check_circle")}<strong>${esc(presence)}</strong></div>${reasons.length || limitNotes.length ? `<div class="an-detail-reasons"><h4>What happened</h4>${[...limitNotes, ...reasons].map(reason => `<p>${esc(reason)}</p>`).join("")}</div>` : mismatch ? '<p class="an-muted">CrossWatch found this item in the source snapshot but could not confirm it at the destination.</p>' : ""}${watchDifferenceDetails(diagnosis.watch_time_differences, providerName)}${error ? `<p class="an-detail-error" role="alert">${esc(error)}</p><button type="button" class="an-button" id="an-retry-detail">Retry details</button>` : ""}${mismatch || view === "pending" ? `<div class="an-next-step"><h4>Next step</h4><p>${esc(nextStepText(diagnosis))}</p></div>` : ""}${ids.length ? `<details class="an-identifiers"><summary>Item IDs (${ids.length})</summary><dl>${ids.map(([key, value]) => `<div><dt>${esc(key)}</dt><dd>${esc(value)}</dd></div>`).join("")}</dl></details>` : ""}${row.key ? `<p class="an-item-key">${esc(row.key)}</p>` : ""}`;
+        $("#an-detail").innerHTML = `<div class="an-detail-heading"><span class="an-eyebrow">ITEM DETAILS</span><button type="button" class="an-icon-button" id="an-close-detail" aria-label="Close item details">${icon("close")}</button></div><h3>${esc(label(row))}</h3><p class="an-detail-meta">${esc([provider, human(row.feature), row.year || row.item?.year].filter(Boolean).join(" · "))}</p>${rowPairName(row) ? `<p class="an-detail-meta">Sync pair: ${esc(rowPairName(row))}</p>` : ""}<div class="an-detail-status">${icon(mismatch || view === "pending" ? "info" : "check_circle")}<strong>${esc(presence)}</strong></div>${reasons.length || limitNotes.length ? `<div class="an-detail-reasons"><h4>What happened</h4>${[...limitNotes, ...reasons].map(reason => `<p>${esc(reason)}</p>`).join("")}</div>` : mismatch ? '<p class="an-muted">CrossWatch found this item in the source snapshot but could not confirm it at the destination.</p>' : ""}${savedMappingText(row) ? `<div class="an-detail-reasons"><h4>Saved mapping</h4><p>${esc(savedMappingText(row))}</p><p>This correction is saved. Run the pair again to apply it; the snapshot finding reflects the last sync.</p></div>` : ""}${watchDifferenceDetails(diagnosis.watch_time_differences, providerName)}${error ? `<p class="an-detail-error" role="alert">${esc(error)}</p><button type="button" class="an-button" id="an-retry-detail">Retry details</button>` : ""}${mismatch || view === "pending" ? `<div class="an-next-step"><h4>Next step</h4><p>${esc(nextStepText(diagnosis))}</p></div>` : ""}${ids.length ? `<details class="an-identifiers"><summary>Item IDs (${ids.length})</summary><dl>${ids.map(([key, value]) => `<div><dt>${esc(key)}</dt><dd>${esc(value)}</dd></div>`).join("")}</dl></details>` : ""}${row.key ? `<p class="an-item-key">${esc(row.key)}</p>` : ""}`;
       };
       render(detailCache.get(identity(row)));
       if (!mismatch || detailCache.has(identity(row))) return;
@@ -541,17 +549,6 @@ const Analyzer = {
       const {openEpisodeAlignment} = await import(`/assets/js/editor/episode-alignment.js?v=${encodeURIComponent(window.APP_VERSION || "1")}`);
       await openEpisodeAlignment(button, {pairId:row.pair_id, showIds:show.show_ids, onSaved:() => analyzeItems()});
     }
-    async function fixMovie(row, button) {
-      const pairId = row?.pair_id || $("#an-pair").value;
-      const notice = $("#an-mapping-notice");
-      if (!row || mappingWorkspace || mappingController) return;
-      if (!pairId) { notice.hidden = false; notice.textContent = "Select a sync pair before fixing this match."; return; }
-      const {openMovieMatching} = await import(`./movie-matching.js?v=${encodeURIComponent(window.APP_VERSION || "1")}`);
-      await openMovieMatching(button, {title:label(row),
-        reference:{pair_id:pairId, provider:row.type === "missing_peer" ? row.targets[0] : row.provider, feature:row.feature, key:row.key},
-        onManual:() => editMapping(row, button),
-        onSaved:() => { if (!lifetime.signal.aborted) { notice.hidden = false; notice.textContent = "Match saved. Run the pair again to sync this item, then analyze to update the results."; } }});
-    }
     async function editMapping(row, button) {
       if (!row || mappingWorkspace || mappingController) return;
       const pairId = row.pair_id || $("#an-pair").value;
@@ -577,6 +574,7 @@ const Analyzer = {
           onGroupsChanged: () => { if (!lifetime.signal.aborted) analyzeItems(); },
           onSaved: () => {
             finish();
+            if (!lifetime.signal.aborted) analyzeItems();
             if (!lifetime.signal.aborted) {
               notice.hidden = false;
               notice.textContent = "Mapping saved. Run the pair again to sync this item, then analyze to update the results.";
@@ -664,7 +662,7 @@ const Analyzer = {
       if (button.hasAttribute("data-edit-mapping")) editMapping(currentRows[Number(button.dataset.editMapping)], button);
       else if (button.hasAttribute("data-release-saved")) releaseRow(savedRow, button);
       else if (button.hasAttribute("data-release")) releaseRow(currentRows[Number(button.dataset.release)], button);
-      else if (button.hasAttribute("data-fix-matching")) fixMovie(currentRows[Number(button.dataset.fixMatching)], button);
+      else if (button.hasAttribute("data-fix-matching")) editMapping(currentRows[Number(button.dataset.fixMatching)], button);
       else if (button.hasAttribute("data-fix-numbering")) fixNumbering(currentRows[Number(button.dataset.fixNumbering)], Number(button.dataset.show), button);
       else if (button.dataset.view) changeView(button.dataset.view);
       else if (button.hasAttribute("data-open-system")) changeView("system");

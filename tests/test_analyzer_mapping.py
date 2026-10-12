@@ -173,3 +173,20 @@ def test_movie_diagnosis_finds_the_twin_on_the_destination_and_saves_its_ids(mon
     item = dict(type="movie", title=result["candidate"]["title"], year=result["candidate"]["year"], ids=result["candidate"]["ids"])
     assert mapping.handle_mapping(payload.model_copy(update=dict(action="save", version=version, item=item)), None)["key"] == "tmdb:1291595"
     assert saved[0][0][2]["tmdb:1291595"]["watched_at"] == source["watched_at"]
+
+
+def test_saved_mapping_annotations_respect_pair_and_instance(monkeypatch):
+    from services import analyzer as an, saved_mappings
+
+    pair = {"id": "p1", "source": "JELLYFIN", "target": "EMBY", "source_instance": "default", "target_instance": "default", "mode": "one-way"}
+    rule = {"pair_id": "p1", "scope": "pair", "provider": "JELLYFIN", "instance": "default", "feature": "history", "key": "tmdb:2", "original_key": "tmdb:1", "excluded": False, "corrected": {"title": "Destination", "ids": {"tmdb": "2"}}}
+    monkeypatch.setattr(an, "_cfg", lambda: {"pairs": [pair]})
+    monkeypatch.setattr(an, "_load_manual_state", lambda: {})
+    monkeypatch.setattr(saved_mappings, "saved_corrections", lambda _: iter([rule]))
+    row = {"pair_id": "p1", "provider": "JELLYFIN", "feature": "history", "key": "tmdb:1", "type": "missing_peer"}
+    assert an._with_saved_mappings([row], "p1")[0]["saved_mappings"] == [rule]
+    assert "saved_mappings" not in row
+    retry = {**row, "provider": "EMBY", "unresolved": True}
+    assert an._with_saved_mappings([retry], "p1")[0]["saved_mappings"] == [rule]
+    assert an._with_saved_mappings([{**row, "provider": "JELLYFIN@other"}], "p1")[0].get("saved_mappings", []) == []
+    assert an._with_saved_mappings([row], "p2")[0].get("saved_mappings", []) == []
