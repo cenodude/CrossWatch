@@ -255,3 +255,96 @@ def test_redaction_masks_token_secrets(tokens_env) -> None:
 
     for entry in redacted["app_auth"]["api_tokens"]:
         assert entry["secret"] == "•" * 8
+
+
+def test_admin_token_passes_provider_instance_admin_check(tokens_env) -> None:
+    mod = tokens_env
+    from api import providerInstancesAPI as provider_api
+    from cw_platform.config_base import load_config
+
+    raw, _entry = mod.issue_api_token(load_config(), name="cli")
+    cfg = load_config()
+    path = "/api/provider-instances/CROSSWATCH/next"
+
+    assert provider_api._admin_required_response(_request(path, method="POST", headers={mod.TOKEN_HEADER: raw}), cfg) is None
+    assert provider_api._admin_required_response(_request(path, method="POST", headers={"Authorization": f"Bearer {raw}"}), cfg) is None
+
+    for headers in ({}, {mod.TOKEN_HEADER: mod.TOKEN_PREFIX + "abcdefabcdefabcd.bad"}):
+        blocked = provider_api._admin_required_response(_request(path, method="POST", headers=headers), cfg)
+        assert blocked is not None
+        assert blocked.status_code == 401
+
+
+def test_managed_user_token_fails_provider_instance_admin_check(tokens_env) -> None:
+    mod = tokens_env
+    from api import providerInstancesAPI as provider_api
+    from api import appAuthAPI as auth
+    from cw_platform.config_base import load_config, update_config
+
+    def _add_user(cfg: dict) -> None:
+        cfg["app_auth"]["users"] = {
+            "b" * 32: {
+                "username": "bob",
+                "enabled": True,
+                "role": "user",
+                "profile_id": "a" * 32,
+                "permissions": {"write": True},
+                "password": auth._password_hash("secrett2"),
+            }
+        }
+
+    update_config(_add_user)
+    raw, _entry = mod.issue_api_token(load_config(), name="bob", user_id="b" * 32)
+    cfg = load_config()
+
+    assert mod.resolve_api_token(cfg, raw)["is_admin"] is False
+    blocked = provider_api._admin_required_response(_request("/api/user-profiles", method="POST", headers={mod.TOKEN_HEADER: raw}), cfg)
+    assert blocked is not None
+    assert blocked.status_code == 401
+
+
+def test_profile_reads_resolve_api_token_identity(tokens_env) -> None:
+    mod = tokens_env
+    from api import appAuthAPI as auth
+    from api import providerInstancesAPI as provider_api
+    from cw_platform.config_base import load_config, update_config
+
+    alice = "aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa"
+    bob = "bbbbbbbbbbbb4bbb8bbbbbbbbbbbbbbb"
+
+    def _seed(cfg: dict) -> None:
+        cfg["user_profiles"] = {alice: {"label": "Alice", "instances": {}}, bob: {"label": "Bob", "instances": {}}}
+        cfg["app_auth"]["users"] = {
+            "b" * 32: {
+                "username": "bob",
+                "enabled": True,
+                "role": "user",
+                "profile_id": bob,
+                "permissions": {"dashboard": True},
+                "password": auth._password_hash("secrett2"),
+            }
+        }
+
+    update_config(_seed)
+    admin_raw, _a = mod.issue_api_token(load_config(), name="cli")
+    bob_raw, _b = mod.issue_api_token(load_config(), name="bob", user_id="b" * 32)
+
+    def _get(path: str, raw: str):
+        return _request(path, headers={mod.TOKEN_HEADER: raw})
+
+    admin_list = json.loads(provider_api.api_user_profiles_all(_get("/api/user-profiles", admin_raw)).body)
+    bob_list = json.loads(provider_api.api_user_profiles_all(_get("/api/user-profiles", bob_raw)).body)
+    assert sorted(row["id"] for row in admin_list["items"]) == [alice, bob]
+    assert "resources" in admin_list
+    assert [row["id"] for row in bob_list["items"]] == [bob]
+    assert "resources" not in bob_list
+
+    admin_detail = provider_api.api_user_profiles_get(alice, _get(f"/api/user-profiles/{alice}", admin_raw))
+    bob_detail = provider_api.api_user_profiles_get(bob, _get(f"/api/user-profiles/{bob}", bob_raw))
+    assert admin_detail.status_code == 200
+    assert "resources" in json.loads(admin_detail.body)
+    assert bob_detail.status_code == 200
+    assert json.loads(bob_detail.body)["profile"]["id"] == bob
+    assert "resources" not in json.loads(bob_detail.body)
+    assert provider_api.api_user_profiles_get(alice, _get(f"/api/user-profiles/{alice}", bob_raw)).status_code == 404
+    assert provider_api.api_user_profiles_get(alice, _request(f"/api/user-profiles/{alice}")).status_code == 401
