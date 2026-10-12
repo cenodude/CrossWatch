@@ -191,7 +191,7 @@ function applyRatingsTypeRules(state){
     if(dis.has(t)){
       cb.checked=false;cb.disabled=true;if(row)row.classList.add("muted");
     }else{
-      cb.disabled=false;if(row)row.classList.remove("muted");
+      cb.disabled=!ID("cx-rt-enable")?.checked;if(row)row.classList.toggle("muted",cb.disabled);
     }
   });
   const checked=all.filter(t=>{const cb=ID("cx-rt-type-"+t);return cb&&cb.checked&&!dis.has(t)});
@@ -218,7 +218,7 @@ function applyCollectionTypeRules(state){
     if(dis.has(t)){
       cb.checked=false;cb.disabled=true;if(row)row.classList.add("muted");
     }else{
-      cb.disabled=false;if(row)row.classList.remove("muted");
+      cb.disabled=!ID("cx-co-enable")?.checked;if(row)row.classList.toggle("muted",cb.disabled);
     }
   });
   const allowed=collectionAllowedTypes(state);
@@ -1014,7 +1014,7 @@ function applySubDisable(feature){
       "#tr-rt-perpage","#tr-rt-maxpages","#tr-rt-chunk",
       "#sm-rt-chunk","#st-rt-liked-min","#st-rt-loved-min","#md-rt-perpage","#md-rt-maxpages","#md-rt-chunk"
     ],
-    history: ["#cx-hs-add", "#cx-hs-remove", "#cx-hs-rewatches", "#cx-hs-specials", "#cx-hs-library-only", "#cx-hs-anime-map", "#cx-hs-source-status", "#cx-tr-hs-numfb", "#cx-tr-hs-col", "#cx-tr-hs-col-movies", "#cx-tr-hs-col-shows", "#cx-tr-hs-ignore-dropped", "#cx-md-hs-ignore-dropped", "#cx-sm-hs-ignore-dropped", "#cx-tr-hs-unres", "#tr-hs-perpage", "#tr-hs-maxpages", "#tr-hs-chunk", "#sm-hs-chunk", "#md-hs-perpage", "#md-hs-maxpages", "#md-hs-chunk", "#cx-em-hs-limit", "#cx-em-hs-delay", "#cx-em-hs-guid"],
+    history: ["#plx-marked-watched", "#cx-hs-add", "#cx-hs-remove", "#cx-hs-rewatches", "#cx-hs-specials", "#cx-hs-library-only", "#cx-hs-anime-map", "#cx-hs-source-status", "#cx-tr-hs-numfb", "#cx-tr-hs-col", "#cx-tr-hs-col-movies", "#cx-tr-hs-col-shows", "#cx-tr-hs-ignore-dropped", "#cx-md-hs-ignore-dropped", "#cx-sm-hs-ignore-dropped", "#cx-tr-hs-unres", "#tr-hs-perpage", "#tr-hs-maxpages", "#tr-hs-chunk", "#sm-hs-chunk", "#md-hs-perpage", "#md-hs-maxpages", "#md-hs-chunk", "#cx-em-hs-limit", "#cx-em-hs-delay", "#cx-em-hs-guid"],
     playlists:["#cx-pl-add","#cx-pl-remove"],
     progress:["#cx-pr-add","#cx-pr-remove","#cx-pr-min","#cx-pr-delta","#cx-pr-maxp","#cx-pr-replay","#cx-pr-tolerance","#cx-pr-specials","#cx-pr-library-only","#cx-pr-anime-map"],
     collection:["#cx-co-add","#cx-co-remove","#cx-co-type-all","#cx-co-type-movies","#cx-co-type-shows","#cx-co-type-seasons","#cx-co-type-episodes"]
@@ -1371,7 +1371,7 @@ function renderFeaturePanel(state){
       </div>`;
     right.innerHTML=`<div class="panel-title small">Pair safety</div>
       ${removeModeRow}
-      ${hasPlex(state)||hasJelly(state)||hasEmby(state)?`<div class="panel-title small">Matching</div><div class="muted">These matching settings apply only to this pair.</div>`:""}
+      ${hasPlex(state)||hasJelly(state)||hasEmby(state)?`<div class="panel-title small">Matching</div>`:""}
       ${hasPlex(state)?`<div class="opt-row"><label for="plx-strict-ids">Plex: Strict ID matching</label><label class="switch"><input id="plx-strict-ids" type="checkbox" ${getPairProviderStrictValue(state, "plex")?"checked":""}><span class="slider"></span></label></div>`:""}
       ${hasJelly(state)?`<div class="opt-row"><label for="jf-strict-ids">Jellyfin: Strict ID matching</label><label class="switch"><input id="jf-strict-ids" type="checkbox" ${getPairProviderStrictValue(state, "jellyfin")?"checked":""}><span class="slider"></span></label></div>`:""}
       ${hasEmby(state)?`<div class="opt-row"><label for="em-strict-ids">Emby: Strict ID matching</label><label class="switch"><input id="em-strict-ids" type="checkbox" ${getPairProviderStrictValue(state, "emby")?"checked":""}><span class="slider"></span></label></div>`:""}

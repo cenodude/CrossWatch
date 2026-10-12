@@ -330,3 +330,45 @@ test("saving History leaves the shared Plex Marked Watched default unchanged", a
   await context.saveConfigBits({src: "PLEX", dst: "JELLYFIN"});
   assert.equal(saved.plex.history.include_marked_watched, true);
 });
+
+for (const [feature, prefix, rule] of [["ratings", "rt", "applyRatingsTypeRules"], ["collection", "co", "applyCollectionTypeRules"]]) {
+  test(feature + " scope stays disabled until the feature is enabled", () => {
+    const nodes = new Map();
+    const types = ["movies", "shows", "seasons", "episodes"];
+    for (const name of ["enable", "type-all", ...types.map(t => "type-" + t)]) {
+      const classes = new Set();
+      const row = {classList: {add: x => classes.add(x), toggle: (x, on) => on ? classes.add(x) : classes.delete(x)}};
+      nodes.set("cx-" + prefix + "-" + name, {checked: name !== "enable", disabled: false, closest: () => row, classes});
+    }
+    const context = vm.createContext({ID: id => nodes.get(id), ratingsDisabledFor: () => new Set(["seasons"]), collectionDisabledFor: () => new Set(["seasons"]), collectionAllowedTypes: () => ["movies", "shows", "episodes"], updateRtSummary: () => {}, state: {options: {[feature]: {}}}});
+    vm.runInContext(sourceFor(rule), context);
+    for (const enabled of [false, true, false]) {
+      nodes.get("cx-" + prefix + "-enable").checked = enabled;
+      vm.runInContext(rule + "(state)", context);
+      for (const type of types) {
+        const node = nodes.get("cx-" + prefix + "-type-" + type);
+        assert.equal(node.disabled, !enabled || type === "seasons");
+        assert.equal(node.classes.has("muted"), node.disabled);
+        assert.equal(node.checked, type !== "seasons");
+      }
+    }
+  });
+}
+
+test("Marked Watched follows History enable without changing its value", () => {
+  for (const checked of [false, true]) {
+    const classes = new Set();
+    const control = {checked, dataset: {}, closest: () => ({classList: {toggle: (name, on) => on ? classes.add(name) : classes.delete(name)}})};
+    const enable = {checked: false};
+    const nodes = new Map([["cx-hs-enable", enable], ["plx-marked-watched", control]]);
+    const context = vm.createContext({ID: id => nodes.get(id), Q: selector => nodes.get(selector.slice(1))});
+    vm.runInContext(sourceFor("applySubDisable"), context);
+    for (const enabled of [false, true, false]) {
+      enable.checked = enabled;
+      vm.runInContext('applySubDisable("history")', context);
+      assert.equal(control.disabled, !enabled);
+      assert.equal(classes.has("muted"), !enabled);
+      assert.equal(control.checked, checked);
+    }
+  }
+});

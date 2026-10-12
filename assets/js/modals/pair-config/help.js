@@ -3,6 +3,7 @@
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 export const HELP_TEXT = {
+  "pair-path-matching": "Match by file path\nApplies only to this pair. When ID lookup fails, compare file-path endings between Plex, Jellyfin and Emby.\nSupports movies and episodes for history, ratings and progress, including with Strict ID matching enabled. Ambiguous paths and conflicting IDs are skipped.\nOff by default. The first lookup may take longer while the library catalogue is built.",
   "gl-dry": "Dry run\nPlan and log only; no writes. Reset states after testing (in maintenance).",
   "gl-verify": "Verify after write\nRe-check the destination after writes (when supported).",
   "gl-drop": "Drop guard\nProtects against sudden inventory drops by pausing delete plans.",
