@@ -313,7 +313,19 @@ def _admin_required_response(request: Request | None, cfg: dict[str, Any]) -> JS
         return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401, headers={"Cache-Control": "no-store"})
     if request is None:
         return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401, headers={"Cache-Control": "no-store"})
+    if _admin_api_token_request(request, cfg):
+        return None
     return _admin_required(request, cfg)
+
+
+def _admin_api_token_request(request: Request, cfg: dict[str, Any]) -> bool:
+    try:
+        from api.apiTokensAPI import extract_api_token, resolve_api_token
+
+        user = resolve_api_token(cfg, extract_api_token(request))
+    except Exception:
+        return False
+    return isinstance(user, Mapping) and bool(user.get("is_admin"))
 
 
 def _profile_value_error(exc: ValueError) -> str:
@@ -494,17 +506,11 @@ def api_user_profiles_all(request: Request = cast(Request, None)) -> JSONRespons
     cfg = dict(load_config() or {})
     rows = list_user_profiles(cfg)
     include_resources = True
-    try:
-        from api.appAuthAPI import COOKIE_NAME, current_user
-
-        token = request.cookies.get(COOKIE_NAME) if request is not None else None
-        user = current_user(cfg, token)
-        if user and not user.get("is_admin"):
-            pid = normalize_user_profile_id(user.get("profile_id"))
-            rows = [row for row in rows if row.get("id") == pid]
-            include_resources = False
-    except Exception:
-        pass
+    user = _authenticated_request_user(cfg, request)
+    if user and not user.get("is_admin"):
+        pid = normalize_user_profile_id(user.get("profile_id"))
+        rows = [row for row in rows if row.get("id") == pid]
+        include_resources = False
     payload: dict[str, Any] = {"ok": True, "items": _decorate_user_profile_rows(cfg, rows)}
     if include_resources:
         payload["resources"] = profile_resource_summary(cfg)
@@ -515,22 +521,27 @@ def api_user_profiles_all(request: Request = cast(Request, None)) -> JSONRespons
 def api_user_profiles_get(profile_id: str, request: Request = cast(Request, None)) -> JSONResponse:
     cfg = dict(load_config() or {})
     pid = normalize_user_profile_id(profile_id)
+    include_resources = True
     try:
-        from api.appAuthAPI import COOKIE_NAME, auth_required, current_user
+        from api.appAuthAPI import auth_required
 
         if request is not None and auth_required(cfg):
-            token = request.cookies.get(COOKIE_NAME)
-            user = current_user(cfg, token)
+            user = _authenticated_request_user(cfg, request)
             if user is None:
                 return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
-            if not user.get("is_admin") and normalize_user_profile_id(user.get("profile_id")) != pid:
-                return JSONResponse({"ok": False, "error": "not_found"}, status_code=404)
+            if not user.get("is_admin"):
+                if normalize_user_profile_id(user.get("profile_id")) != pid:
+                    return JSONResponse({"ok": False, "error": "not_found"}, status_code=404)
+                include_resources = False
     except Exception:
         if request is not None:
             return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
     for row in list_user_profiles(cfg):
         if row.get("id") == pid:
-            return JSONResponse({"ok": True, "profile": _decorate_user_profile_rows(cfg, [row])[0], "resources": profile_resource_summary(cfg)})
+            payload: dict[str, Any] = {"ok": True, "profile": _decorate_user_profile_rows(cfg, [row])[0]}
+            if include_resources:
+                payload["resources"] = profile_resource_summary(cfg)
+            return JSONResponse(payload)
     return JSONResponse({"ok": False, "error": "not_found"}, status_code=404)
 
 
