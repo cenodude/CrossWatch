@@ -415,7 +415,7 @@ def mapping_episodes(sid: str, payload: MappingBatch, request: Request):
 @router.get("/{sid}/mapping-search")
 def mapping_search(sid: str, request: Request, revision: int = Query(ge=0),
                    row_id: str = Query(min_length=1, max_length=128), q: str = Query(min_length=2, max_length=200),
-                   catalog: str = Query(default="destination", pattern="^(destination|tmdb)$")):
+                   catalog: str = Query(default="destination", pattern="^(destination|tmdb|plex_library)$")):
     from services.interactive_sync_mapping import search_candidates
 
     cfg = load_config()
@@ -423,7 +423,7 @@ def mapping_search(sid: str, request: Request, revision: int = Query(ge=0),
         session = get_session(sid, request, cfg)
         check_revision(session, revision)
         row = deepcopy(mapping_row(session, row_id))
-    return search_candidates(cfg, row, q, catalog=catalog)
+    return search_candidates(cfg, {**row, "pair_id": session.pair_id}, q, catalog=catalog)
 
 
 @router.get("/{sid}/mapping-parts")

@@ -78,7 +78,13 @@ export function correctedEpisode(original, match) {
   return {...correctedItem(original, {...match, ids: sameShow ? {...ids, ...match.ids} : match.ids}), episode:match.episode};
 }
 
-export function openMappingWorkspace({rows, session = {}, json, post, onSaved, onClose, total, mappingApi, standalone = false, scope = "pair", scopes = [{id:"pair", label:"This sync pair"}, {id:"shared", label:"All pairs using this provider instance"}], staged = false, direct = false, recovery = false, onEpisodeGroup}) {
+export function mappingAppliesToRow(rule, row, pairId) {
+  return rule.provider === row.source && (rule.instance || "default") === (row.source_instance || "default")
+    && rule.feature === row.feature && (!rule.pair_id || rule.pair_id === pairId)
+    && [rule.key, rule.original_key].includes(row.key);
+}
+
+export function openMappingWorkspace({rows, session = {}, json, post, onSaved, onClose, total, mappingApi, standalone = false, scope = "pair", scopes = [{id:"pair", label:"This sync pair"}, {id:"shared", label:"All pairs using this provider instance"}], staged = false, direct = false, recovery = false, onEpisodeGroup, pairId = session.pair_id, onRemoved}) {
   const api = mappingApi || {
     catalogs: row => json(`/api/interactive-sync/${session.id}/mapping-catalogs?${new URLSearchParams({revision:session.revision, row_id:row.id})}`),
     search: (row, q, catalog, options) => json(`/api/interactive-sync/${session.id}/mapping-search?${new URLSearchParams({revision:session.revision, row_id:row.id, q, catalog})}`, options),
@@ -608,6 +614,55 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
   });
   dialog.addEventListener("cancel", event => { event.preventDefault(); close(); });
   $("[data-close]").onclick = close;
+  if (single && pairId && onRemoved && first.source && first.key) {
+    const section = document.createElement("div");
+    section.className = "is-map-intro";
+    section.textContent = "Checking saved mappings…";
+    $(".is-mapping-body").prepend(section);
+    const requestMapping = async (url, options = {}) => {
+      const response = await fetch(url, {credentials:"same-origin", cache:"no-store", ...options});
+      const data = await response.json();
+      if (!response.ok || data.ok === false) throw new Error(typeof data.detail === "string" ? data.detail : "Could not update saved mappings.");
+      return data;
+    };
+    (async () => {
+      try {
+        const rules = [];
+        for (const scopeId of [pairId, "shared"]) {
+          let offset = 0;
+          while (!closed) {
+            const params = new URLSearchParams({provider:first.source, instance:first.source_instance || "default", feature:first.feature, pair_id:scopeId, offset, limit:100});
+            const data = await requestMapping("/api/editor/mappings?" + params);
+            rules.push(...data.items.filter(rule => mappingAppliesToRow(rule, first, pairId)));
+            offset += data.items.length;
+            if (!data.items.length || offset >= data.total) break;
+          }
+        }
+        if (closed) return;
+        section.replaceChildren();
+        if (!rules.length) { section.remove(); return; }
+        for (const rule of rules) {
+          const label = rule.corrected?.title || rule.corrected?.series_title || rule.key;
+          const scopeLabel = rule.pair_id ? "this pair" : "all pairs using this source instance";
+          const button = document.createElement("button");
+          button.type = "button"; button.className = "is-btn";
+          button.textContent = "Remove saved mapping: " + label + " (" + scopeLabel + ")";
+          button.onclick = async () => {
+            if (saving || searching || closed) return;
+            if (!window.confirm("Remove the saved mapping for " + label + " from " + scopeLabel + "? Its automatic original-item block will also be removed. Other mappings may apply again. This does not undo synced media changes. Unsaved edits in this dialog will be discarded.")) return;
+            saving = true; lock(true); button.disabled = true;
+            try {
+              const identity = Object.fromEntries(["provider", "instance", "feature", "key", "pair_id"].map(key => [key, rule[key]]));
+              await requestMapping("/api/editor/mappings/delete", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(identity)});
+              closed = true; dialog.close(); dialog.remove(); onRemoved();
+            } catch (error) { $("[data-error]").textContent = error.message; }
+            finally { saving = false; if (!closed) { lock(false); button.disabled = false; } }
+          };
+          section.append(button);
+        }
+      } catch (error) { if (!closed) section.textContent = "Could not check saved mappings: " + error.message; }
+    })();
+  }
   if (onEpisodeGroup) {
     const button = document.createElement("button");
     button.type = "button";

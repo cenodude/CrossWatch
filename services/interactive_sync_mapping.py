@@ -169,13 +169,17 @@ def search_candidates(cfg, row, query, *, catalog="destination"):
     catalogs = search_catalogs(cfg, row)["catalogs"]
     if not isinstance(catalogs, list) or catalog not in {option["id"] for option in catalogs}:
         raise HTTPException(409, "Search is not available for this configured destination and catalog.")
-    source = provider if catalog == "destination" else "TMDB"
+    source = provider if catalog in {"destination", "plex_library"} else "TMDB"
     block = provider_block(cfg, provider, instance)
     extra = []
     body = {}
     try:
         with requests.Session() as client:
-            if source == "MDBLIST":
+            if catalog == "plex_library":
+                from services.interactive_sync_catalogs import plex_library_rows
+                body = plex_library_rows(cfg, row, block, query, entity)
+                response = None
+            elif source == "MDBLIST":
                 from providers.sync.mdblist._auth import request_with_auth
 
                 response = request_with_auth(client, "GET", f"https://api.mdblist.com/search/{entity}",
@@ -266,4 +270,4 @@ def search_candidates(cfg, row, query, *, catalog="destination"):
     results.sort(key=lambda item: not item["exact_title"])
     return dict(ok=True, catalog=source, destination=provider, results=results[:20],
                 note="Review the match and episode numbering before saving."
-                if catalog == "destination" else "TMDb metadata suggestions; destination availability has not been checked.")
+                if catalog in {"destination", "plex_library"} else "TMDb metadata suggestions; destination availability has not been checked.")

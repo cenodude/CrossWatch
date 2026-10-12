@@ -334,6 +334,11 @@
           if (!groupsChanged || session?.id !== sid) return;
           if (active() && !pending()) action("refresh", { reread: false }); else mappingDirty = true;
         },
+        onRemoved: () => {
+          mappingWorkspace = null;
+          if (session?.id !== sid) return;
+          if (active() && !pending()) action("refresh", { reread: false }); else mappingDirty = true;
+        },
         onSaved: data => { mappingWorkspace = null; if (session?.id === sid) accept(data, true); },
       });
     } catch (error) { mappingWorkspace = null; showError(error); }

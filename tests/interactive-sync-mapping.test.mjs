@@ -5,7 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import vm from "node:vm";
-import {candidateConflict, correctedItem, correctedEpisode, mappingGroups, sameSeason, seriesTitle} from "../assets/js/interactive-sync-mapping.js";
+import {mappingAppliesToRow, candidateConflict, correctedItem, correctedEpisode, mappingGroups, sameSeason, seriesTitle} from "../assets/js/interactive-sync-mapping.js";
 
 test("a season can move to a separate show while preserving episode order and watched dates", () => {
   const originals = Array.from({length:10}, (_,i) => ({type:"episode", series_title:"Monster", title:`S02E${i+1}`,
@@ -226,4 +226,15 @@ test("conflicting destination IDs can be deliberately mapped without changing hi
   assert.equal(original.ids.tmdb, "1457705");
   assert.equal(candidateConflict(original, {ids:{tmdb:"1457705"}}), "");
   assert.equal(candidateConflict(original, {ids:{tvdb:"371950"}}), "");
+});
+
+test("mapping removal only offers rules for this item, source instance and pair", () => {
+  const row = {source:"JELLYFIN", source_instance:"default", feature:"history", key:"tmdb:1"};
+  const rule = {provider:"JELLYFIN", instance:"default", feature:"history", original_key:"tmdb:1", key:"tmdb:2", pair_id:"p1"};
+  assert.equal(mappingAppliesToRow(rule, row, "p1"), true);
+  assert.equal(mappingAppliesToRow({...rule, pair_id:""}, row, "p1"), true);
+  assert.equal(mappingAppliesToRow(rule, {...row, key:"tmdb:2"}, "p1"), true);
+  for (const change of [{pair_id:"p2"}, {instance:"other"}, {provider:"EMBY"}, {feature:"ratings"}, {original_key:"tmdb:3"}]) {
+    assert.equal(mappingAppliesToRow({...rule, ...change}, row, "p1"), false);
+  }
 });

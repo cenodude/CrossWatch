@@ -26,7 +26,7 @@ class MappingRequest(BaseModel):
     version: str = Field(default="", max_length=64)
     q: str = Field(default="", max_length=200)
     simkl_id: str = Field(default="", max_length=32)
-    catalog: Literal["destination", "tmdb"] = "destination"
+    catalog: Literal["destination", "tmdb", "plex_library"] = "destination"
     item: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -100,7 +100,7 @@ def handle_mapping(payload: MappingRequest, request):
         from services.interactive_sync_mapping import search_candidates
         if len(payload.q.strip()) < 2:
             raise HTTPException(400, "Enter at least two characters")
-        return search_candidates(cfg, row, payload.q, catalog=payload.catalog)
+        return search_candidates(cfg, {**row, "pair_id": payload.pair_id}, payload.q, catalog=payload.catalog)
     if payload.action == "diagnose":
         from services import analyzer as an
         from services.movie_matching import diagnose

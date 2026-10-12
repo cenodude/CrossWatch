@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 
 globalThis.window = {};
 globalThis.document = { addEventListener() {} };
-const { savedMappingText, createResultFilter, watchDifferenceLabel, retryLabel, nextStepText, watchDifferenceDetails, episodeGroupLabel } = await import("../assets/js/analyzer/index.js");
+const { mappingRowActions, savedMappingText, createResultFilter, watchDifferenceLabel, retryLabel, nextStepText, watchDifferenceDetails, episodeGroupLabel } = await import("../assets/js/analyzer/index.js");
 const features = ["history", "watchlist", "ratings", "progress", "collection"];
 const rows = Object.freeze(Array.from({ length: 5000 }, (_, n) => Object.freeze({
   title: `Movie ${String(n).padStart(5, "0")}`, provider: "SIMKL", feature: features[n % 5],
@@ -105,4 +105,18 @@ test("saved mappings show destination identity and scope", () => {
   assert.equal(savedMappingText(row), "Mapping saved → Destination film · TMDB 1595884 (this pair)");
   row.saved_mappings[0].scope = "shared";
   assert.match(savedMappingText(row), /shared/);
+});
+
+test("rows offer add or edit and scoped removal without duplicate matching actions", () => {
+  const row = {key:"tmdb:1", title:"Our Girls", feature:"history", type:"missing_peer", targets:["EMBY"]};
+  const add = mappingRowActions(row, 2);
+  assert.match(add, /Add mapping/);
+  assert.doesNotMatch(add, /data-remove-mapping|data-fix-matching/);
+  row.saved_mappings = [{pair_id:"p1", key:"tmdb:2", corrected:{title:"Destination <film>"}}];
+  const edit = mappingRowActions(row, 2);
+  assert.match(edit, /Edit mapping/);
+  assert.match(edit, /data-remove-mapping="2"/);
+  assert.match(edit, /this pair/);
+  assert.match(edit, /Destination &lt;film&gt;/);
+  assert.doesNotMatch(edit, /Add mapping|data-fix-matching/);
 });

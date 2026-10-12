@@ -184,3 +184,34 @@ def test_media_server_library_search_sends_the_right_auth_headers(provider, mode
     assert seen["headers"]["X-Emby-Token"] == token
     assert (f'Token="{token}"' in seen["headers"].get("Authorization", "")) is modern
     assert seen["headers"].get("Authorization", "").startswith("MediaBrowser ") is modern
+
+
+def test_plex_local_library_is_first_and_keeps_discover():
+    cfg = {"plex": {"server_url": "http://plex.test", "account_token": "token"}, "tmdb": {"api_key": "metadata"}}
+    assert [x["id"] for x in search_catalogs(cfg, {"provider": "PLEX"})["catalogs"]] == ["plex_library", "destination", "tmdb"]
+
+def test_plex_library_search_applies_user_and_pair_scope(monkeypatch):
+    from types import SimpleNamespace
+    from services.interactive_sync_catalogs import plex_library_rows
+    from providers.sync import _mod_PLEX
+    from providers.sync.plex import _common
+
+    calls = []
+    def section(key):
+        return SimpleNamespace(key=key, type="movie", search=lambda **kw: calls.append((key, kw)) or [{"title": "Local film", "ids": {"tmdb": "2"}}])
+    adapter = SimpleNamespace(client=SimpleNamespace(server=SimpleNamespace(library=SimpleNamespace(sections=lambda: [section("1"), section("2")]))))
+    monkeypatch.setattr(_mod_PLEX, "PLEXModule", lambda cfg: adapter)
+    monkeypatch.setattr(_common, "home_scope_enter", lambda ad: (True, True, None, None))
+    monkeypatch.setattr(_common, "home_scope_exit", lambda ad, switched: calls.append(("exit", switched)))
+    monkeypatch.setattr(_common, "normalize", lambda obj: obj)
+    monkeypatch.setattr(_common, "plex_feature_library_ids", lambda *args: {"1"})
+    cfg = {"pairs": [{"id": "p1", "features": {"history": {"libraries": {"PLEX#default": ["2"]}}}}]}
+    row = {"provider": "PLEX", "feature": "history", "pair_id": "p1"}
+    assert plex_library_rows(cfg, row, {}, "Local", "movie")[0]["ids"] == {"tmdb": "2"}
+    assert calls[0][0] == "2"
+    assert calls[-1] == ("exit", True)
+    calls.clear()
+    monkeypatch.setattr(_common, "home_scope_enter", lambda ad: (True, False, None, None))
+    with pytest.raises(HTTPException):
+        plex_library_rows(cfg, row, {}, "Local", "movie")
+    assert calls == [("exit", False)]
