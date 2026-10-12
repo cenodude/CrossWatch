@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 
 globalThis.window = {};
 globalThis.document = { addEventListener() {} };
-const { createResultFilter, watchDifferenceLabel, retryLabel, nextStepText, watchDifferenceDetails, episodeGroupLabel } = await import("../assets/js/analyzer/index.js");
+const { savedMappingText, createResultFilter, watchDifferenceLabel, retryLabel, nextStepText, watchDifferenceDetails, episodeGroupLabel } = await import("../assets/js/analyzer/index.js");
 const features = ["history", "watchlist", "ratings", "progress", "collection"];
 const rows = Object.freeze(Array.from({ length: 5000 }, (_, n) => Object.freeze({
   title: `Movie ${String(n).padStart(5, "0")}`, provider: "SIMKL", feature: features[n % 5],
@@ -97,4 +97,12 @@ test("watch comparison displays both times and safely escapes provider data", ()
   assert.match(html, /closest recorded watch/);
   assert(!html.includes("<script>"));
   assert(html.includes("&lt;CROSSWATCH&gt;"));
+});
+
+test("saved mappings show destination identity and scope", () => {
+  assert.equal(savedMappingText({}), "");
+  const row = {saved_mappings:[{scope:"pair", corrected:{title:"Destination film", ids:{tmdb:"1595884"}}}]};
+  assert.equal(savedMappingText(row), "Mapping saved → Destination film · TMDB 1595884 (this pair)");
+  row.saved_mappings[0].scope = "shared";
+  assert.match(savedMappingText(row), /shared/);
 });

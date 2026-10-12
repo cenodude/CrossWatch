@@ -5,7 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import vm from "node:vm";
-import {correctedItem, correctedEpisode, mappingGroups, sameSeason, seriesTitle} from "../assets/js/interactive-sync-mapping.js";
+import {candidateConflict, correctedItem, correctedEpisode, mappingGroups, sameSeason, seriesTitle} from "../assets/js/interactive-sync-mapping.js";
 
 test("a season can move to a separate show while preserving episode order and watched dates", () => {
   const originals = Array.from({length:10}, (_,i) => ({type:"episode", series_title:"Monster", title:`S02E${i+1}`,
@@ -214,4 +214,16 @@ test("episode groups open without closing or discarding the mapping workspace", 
   await button.onclick();
   assert.equal(error.textContent, "Could not open groups");
   assert.equal(button.disabled, false);
+});
+
+test("conflicting destination IDs can be deliberately mapped without changing history", () => {
+  const original = {type:"movie", title:"Our Girls", ids:{tmdb:"1457705", imdb:"tt36474012"}, watched_at:"2026-09-10T14:33:50Z"};
+  const candidate = {title:"Our Girls: The Southport Families", ids:{tmdb:"1595884", tvdb:"371950"}};
+  assert.match(candidateConflict(original, candidate), /TMDB IDs differ/);
+  const corrected = correctedItem(original, candidate);
+  assert.deepEqual(corrected.ids, candidate.ids);
+  assert.equal(corrected.watched_at, original.watched_at);
+  assert.equal(original.ids.tmdb, "1457705");
+  assert.equal(candidateConflict(original, {ids:{tmdb:"1457705"}}), "");
+  assert.equal(candidateConflict(original, {ids:{tvdb:"371950"}}), "");
 });

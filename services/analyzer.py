@@ -4682,6 +4682,52 @@ async def api_state(
     )
 
 
+def _with_saved_mappings(rows: list[dict[str, Any]], pairs: str | None) -> list[dict[str, Any]]:
+    from services.saved_mappings import saved_corrections
+
+    rules = list(saved_corrections(_load_manual_state()))
+    if not rules or not rows:
+        return rows
+    selected = {part.strip() for part in str(pairs or "").split(",") if part.strip()}
+    configured = [pair for pair in _cfg().get("pairs", []) if not selected or _pair_id(pair) in selected]
+    out = []
+    for row in rows:
+        keys = {str(key).lower() for key in [row.get("key"), *(row.get("keys") or [])] if key}
+        matches = []
+        for pair in configured:
+            pair_id = _pair_id(pair)
+            if row.get("pair_id") and row["pair_id"] != pair_id:
+                continue
+            provider = _norm_prov_token(row.get("provider"))
+            source = _prov_token(pair.get("source"), pair.get("source_instance") or "default")
+            target = _prov_token(pair.get("target"), pair.get("target_instance") or "default")
+            owners = {provider}
+            if row.get("unresolved"):
+                owners = {source} if provider == _norm_prov_token(target) else ({target} if pair.get("mode") == "two-way" and provider == _norm_prov_token(source) else set())
+            for rule in rules:
+                if rule["feature"] != row.get("feature") or rule["excluded"]:
+                    continue
+                if rule["pair_id"] and rule["pair_id"] != pair_id:
+                    continue
+                if _norm_prov_token(_prov_token(rule["provider"], rule["instance"])) not in {_norm_prov_token(owner) for owner in owners}:
+                    continue
+                if not keys.intersection(str(key).lower() for key in [rule["original_key"], rule["key"]] if key):
+                    continue
+                if rule not in matches:
+                    matches.append(rule)
+        scoped = [rule for rule in matches if rule["pair_id"]]
+        out.append({**row, "saved_mappings": scoped or matches} if matches else row)
+    return out
+
+
+def _analysis_with_saved_mappings(pairs: str | None, **kwargs: Any) -> dict[str, Any]:
+    result = _cached_analysis(pairs, **kwargs)
+    attention = result.get("attention") or {}
+    return {**result, "problems": _with_saved_mappings(result.get("problems") or [], pairs),
+            "snapshot_gaps": _with_saved_mappings(result.get("snapshot_gaps") or [], pairs),
+            "attention": {**attention, "rows": _with_saved_mappings(attention.get("rows") or [], pairs)}}
+
+
 def _build_state_page(
     pairs: str | None,
     *,
@@ -4722,7 +4768,7 @@ def _build_state_page(
     page = items[start : start + page_size] if page_size else []
     return {
         "counts": counts,
-        "items": page,
+        "items": _with_saved_mappings(page, pairs),
         "total": len(items),
         "offset": start,
         "limit": page_size,
@@ -4747,7 +4793,7 @@ async def api_problems(pairs: str | None = None, include_system: bool = False, i
     if user and not bool(user.get("is_admin")):
         include_system = False
     return await _keepalive_json(
-        lambda: _cached_analysis(pairs, include_system=include_system, include_hints=include_hints)
+        lambda: _analysis_with_saved_mappings(pairs, include_system=include_system, include_hints=include_hints)
     )
 
 

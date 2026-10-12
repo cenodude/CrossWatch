@@ -45,6 +45,12 @@ export function matchedIds(current, next) {
   return {...current, ...next};
 }
 
+export function candidateConflict(original, candidate) {
+  const current = original.show_ids || original.ids || {};
+  const conflicts = ID_FIELDS.filter(key => current[key] && candidate.ids?.[key] && String(current[key]) !== String(candidate.ids[key]));
+  return conflicts.length ? `${conflicts.map(key => key.toUpperCase()).join(", ")} IDs differ. Confirm this is the same title before saving.` : "";
+}
+
 export function changeSummary(original, item) {
   const before = original.show_ids || original.ids || {}, after = item.show_ids || item.ids || {};
   const parts = [];
@@ -315,8 +321,14 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
           button.setAttribute("data-match-unavailable", "");
           button.disabled = true;
         }
-        button.title = [match.title, match.year, match.mapping_unavailable].filter(Boolean).join(" · ");
+        const conflict = candidateConflict(row.item, match);
+        button.title = [match.title, match.year, match.mapping_unavailable, conflict].filter(Boolean).join(" · ");
         button.innerHTML = `${match.ids?.tmdb ? `<img class="is-map-candidate-art" src="/art/tmdb/${row.item.type === "movie" ? "movie" : "tv"}/${encodeURIComponent(match.ids.tmdb)}?size=w92" alt="" loading="lazy">` : ""}<strong>${esc(match.title)}</strong>${match.year ? `<span class="is-map-candidate-year">${esc(match.year)}</span>` : ""}`;
+        if (conflict) {
+          const warning = document.createElement("span");
+          warning.textContent = conflict;
+          button.append(warning);
+        }
         button.querySelector("img")?.addEventListener("error", event => event.target.remove());
         button.onclick = async () => {
           if (match.mapping_unavailable) { status(match.mapping_unavailable); return; }
