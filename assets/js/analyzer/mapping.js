@@ -13,7 +13,7 @@ async function loadStyles() {
   });
 }
 
-export async function openAnalyzerMapping({reference, signal, onSaved, onClose, onGroupsChanged}) {
+export async function openAnalyzerMapping({reference, signal, onSaved, onClose, onGroupsChanged, onRemoved}) {
   let version = '';
   const request = async (action, extra = {}, options = {}) => {
     const response = await fetch('/api/analyzer/mapping', {
@@ -36,7 +36,7 @@ export async function openAnalyzerMapping({reference, signal, onSaved, onClose, 
   version = data.version;
   let groupsChanged = false;
   return module.openMappingWorkspace({
-    rows:[data.row], total:1, standalone:true,
+    rows:[data.row], total:1, standalone:true, pairId:reference.pair_id, onRemoved,
     onSaved: saved => { onSaved?.(saved); if (groupsChanged) onGroupsChanged?.(); },
     onEpisodeGroup: groups.episodeGroupAction(data.row, reference.pair_id, () => { groupsChanged = true; }),
     onClose: () => { onClose?.(); if (groupsChanged) onGroupsChanged?.(); },

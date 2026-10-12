@@ -61,6 +61,8 @@ def search_catalogs(cfg, row):
         native = provider in NATIVE
         if provider == "PLEX":
             native = bool(block.get("account_token") or block.get("token"))
+        if provider == "PLEX" and (block.get("server_url") or block.get("baseurl") or block.get("server_name") or block.get("machine_id") or block.get("pms")):
+            options.append(dict(id="plex_library", label="PLEX library"))
         if native:
             suffix = "library" if provider in LIBRARY else "catalog"
             options.append(dict(id="destination", label=f"{provider} {suffix}"))
@@ -151,3 +153,32 @@ def checked_json(response, provider):
     if response.status_code >= 400:
         raise HTTPException(502, f"{provider} search returned HTTP {response.status_code}. Try again or use manual IDs.")
     return response.json()
+
+
+def plex_library_rows(cfg, row, block, query, entity):
+    from providers.sync._mod_PLEX import PLEXModule
+    from providers.sync.plex._common import home_scope_enter, home_scope_exit, normalize, plex_feature_library_ids
+    from cw_platform.orchestrator._pairs_utils import pair_feature_libraries
+
+    adapter = PLEXModule({**cfg, "plex": block})
+    needed, switched, _, _ = home_scope_enter(adapter)
+    try:
+        if needed and not switched:
+            raise HTTPException(409, "The selected Plex user could not be applied.")
+        allowed = plex_feature_library_ids(adapter, row["feature"])
+        pair = next((p for p in cfg.get("pairs", []) if str(p.get("id")) == str(row.get("pair_id"))), {})
+        overrides = pair_feature_libraries((pair.get("features") or {}).get(row["feature"]) or {}, "PLEX", row.get("instance") or "default")
+        if overrides:
+            allowed = set(overrides)
+        found = []
+        for section in adapter.client.server.library.sections():
+            if section.type != entity or (allowed and str(section.key) not in allowed):
+                continue
+            for obj in section.search(title=query, libtype=entity, maxresults=20):
+                item = normalize(obj)
+                found.append(dict(title=item.get("title"), year=item.get("year"), ids=item.get("ids") or {}))
+                if len(found) >= 20:
+                    return found
+        return found
+    finally:
+        home_scope_exit(adapter, switched)

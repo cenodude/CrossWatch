@@ -11,7 +11,7 @@ const VIEWS = {
   all: { title: "All items", icon: "dataset", description: "Browse saved items for the selected pairs. Rating and progress values may differ even when an item exists on both sides." }
 };
 const esc = value => String(value ?? "").replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
-const icon = name => `<span class="material-symbols-rounded" aria-hidden="true">${name}</span>`;
+const icon = name => `<span class="material-symbols-rounded${name === "progress_activity" ? " an-spinner" : ""}" aria-hidden="true">${name}</span>`;
 const array = value => Array.isArray(value) ? value : [];
 const human = value => String(value || "").replace(/[_-]+/g, " ").replace(/^./, c => c.toUpperCase());
 const severity = row => row.severity === "error" ? "error" : ["warn", "warning"].includes(row.severity) ? "warn" : "info";
@@ -26,6 +26,18 @@ const label = row => {
 };
 const reasonText = hint => hint?.message || [hint?.provider, array(hint?.reasons).join(", ") || hint?.reason || hint?.kind].filter(Boolean).join(": ");
 const unique = rows => [...new Map(rows.map(row => [JSON.stringify(row), row])).values()];
+export function mappingRowActions(row, index) {
+  const rules = array(row.saved_mappings);
+  const canEdit = row.key && FEATURES.includes(row.feature) && !array(row.watch_time_differences).length && !array(row.episode_groups).length && (row.type !== "missing_peer" || array(row.targets).length === 1);
+  const action = rules.length ? "Edit mapping" : "Add mapping";
+  const edit = canEdit ? `<button type="button" class="an-icon-button" data-edit-mapping="${index}" title="${action}" aria-label="${action} for ${esc(label(row))}">${icon(rules.length ? "edit" : "add_link")}</button>` : "";
+  return edit + rules.map((rule, ruleIndex) => {
+    const scope = rule.pair_id ? "this pair" : "all pairs using this source instance";
+    const name = rule.corrected?.title || rule.key;
+    return `<button type="button" class="an-icon-button" data-remove-mapping="${index}" data-mapping-index="${ruleIndex}" title="Remove mapping: ${esc(name)} (${scope})" aria-label="Remove mapping: ${esc(name)} (${scope})">${icon("link_off")}</button>`;
+  }).join("");
+}
+
 export function savedMappingText(row) {
   return array(row.saved_mappings).map(rule => {
     const item = rule.corrected || {};
@@ -342,7 +354,7 @@ const Analyzer = {
       $("#an-list").innerHTML = `<div class="an-table-scroll"><table class="an-table"><thead><tr><th scope="col">Item</th><th scope="col">Provider</th><th scope="col">Feature</th><th scope="col">Finding</th>${editable ? '<th scope="col" class="an-mapping-column" aria-label="Edit mapping"></th>' : ''}</tr></thead><tbody>${currentRows.map((row, index) => {
         const mismatch = missingIndex.get(identity(row));
         const finding = view === "pending" ? retryLabel(row) : row.type === "missing_peer" || mismatch ? watchDifferenceLabel(mismatch || row, providerName) : episodeGroupLabel(row) || (blockedIndex.has(identity(row)) ? "Blocked" : "No presence issue");
-        return `<tr data-row="${index}" class="${selected === row ? "is-selected" : ""}"><td><button type="button" class="an-item-button" data-row="${index}" aria-pressed="${selected === row}"><strong>${esc(label(row))}</strong><span>${esc([human(row.item_type || row.item?.type || (row.type === "missing_peer" ? "" : row.type)), row.year || row.item?.year].filter(Boolean).join(" · "))}</span></button></td><td>${esc(providerName(row.provider))}${rowPairName(row) ? `<span class="an-pair-label">${esc(rowPairName(row))}</span>` : ""}</td><td><span class="an-feature-badge">${esc(human(row.feature))}</span></td><td><span class="an-result-badge ${mismatch || row.type === "missing_peer" ? "an-warn-text" : ""}">${esc(finding)}</span>${savedMappingText(row) ? `<span class="an-pair-label">${esc(savedMappingText(row))}</span>` : ""}</td>${editable ? `<td class="an-mapping-column">${row.key && FEATURES.includes(row.feature) && !array(row.watch_time_differences).length && !array(row.episode_groups).length && (row.type !== "missing_peer" || array(row.targets).length === 1) ? `<button type="button" class="an-icon-button" data-edit-mapping="${index}" title="Edit mapping" aria-label="Edit mapping for ${esc(label(row))}">${icon("edit")}</button>` : ''}${row.key && FEATURES.includes(row.feature) && (row.item_type || row.item?.type) === "movie" && (row.type !== "missing_peer" || array(row.targets).length === 1) ? `<button type="button" class="an-icon-button" data-fix-matching="${index}" title="Fix matching" aria-label="Fix matching for ${esc(label(row))}">${icon("travel_explore")}</button>` : ''}${row.retry_blocked && row.key ? `<button type="button" class="an-icon-button" data-release="${index}" title="Release retry block" aria-label="Release retry block for ${esc(label(row))}">${icon("lock_open")}</button>` : ''}</td>` : ''}</tr>`;
+        return `<tr data-row="${index}" class="${selected === row ? "is-selected" : ""}"><td><button type="button" class="an-item-button" data-row="${index}" aria-pressed="${selected === row}"><strong>${esc(label(row))}</strong><span>${esc([human(row.item_type || row.item?.type || (row.type === "missing_peer" ? "" : row.type)), row.year || row.item?.year].filter(Boolean).join(" · "))}</span></button></td><td>${esc(providerName(row.provider))}${rowPairName(row) ? `<span class="an-pair-label">${esc(rowPairName(row))}</span>` : ""}</td><td><span class="an-feature-badge">${esc(human(row.feature))}</span></td><td><span class="an-result-badge ${mismatch || row.type === "missing_peer" ? "an-warn-text" : ""}">${esc(finding)}</span>${savedMappingText(row) ? `<span class="an-pair-label">${esc(savedMappingText(row))}</span>` : ""}</td>${editable ? `<td class="an-mapping-column">${mappingRowActions(row, index)}${row.retry_blocked && row.key ? `<button type="button" class="an-icon-button" data-release="${index}" title="Release retry block" aria-label="Release retry block for ${esc(label(row))}">${icon("lock_open")}</button>` : ''}</td>` : ''}</tr>`;
       }).join("")}</tbody></table></div>`;
     }
     function renderFinding(row, index) {
@@ -572,6 +584,14 @@ const Analyzer = {
           signal:controller.signal,
           onClose: () => { notice.hidden = true; finish(); },
           onGroupsChanged: () => { if (!lifetime.signal.aborted) analyzeItems(); },
+          onRemoved: () => {
+            finish();
+            if (!lifetime.signal.aborted) {
+              analyzeItems();
+              notice.hidden = false;
+              notice.textContent = "Mapping removed. Future syncs will use the remaining rules.";
+            }
+          },
           onSaved: () => {
             finish();
             if (!lifetime.signal.aborted) analyzeItems();
@@ -590,6 +610,29 @@ const Analyzer = {
         if (!controller.signal.aborted) notice.textContent = error.message || "Could not open mapping. Try again.";
         finish();
       }
+    }
+    async function removeMapping(row, button) {
+      if (!row || releasing || mappingWorkspace || mappingController) return;
+      const rule = array(row.saved_mappings)[Number(button.dataset.mappingIndex)];
+      if (!rule) return;
+      const scope = rule.pair_id ? "this pair" : "all pairs using this source instance";
+      const name = rule.corrected?.title || rule.key;
+      if (!window.confirm(`Remove the saved mapping for ${name} from ${scope}? Its automatic original-item block will also be removed. Other mappings may apply again. This does not undo synced media changes.`)) return;
+      const notice = $("#an-mapping-notice");
+      releasing = true; button.disabled = true;
+      try {
+        const identity = Object.fromEntries(["provider", "instance", "feature", "key", "pair_id"].map(key => [key, rule[key]]));
+        const response = await fetch("/api/editor/mappings/delete", {method:"POST", credentials:"same-origin", headers:{"Content-Type":"application/json"}, body:JSON.stringify(identity)});
+        const data = await response.json();
+        if (!response.ok || data.ok === false) throw new Error(typeof data.detail === "string" ? data.detail : "Could not remove mapping.");
+        if (!lifetime.signal.aborted) {
+          await analyzeItems();
+          notice.hidden = false;
+          notice.textContent = "Mapping removed. Future syncs will use the remaining rules.";
+        }
+      } catch (error) {
+        if (!lifetime.signal.aborted) { notice.hidden = false; notice.textContent = error.message; }
+      } finally { releasing = false; if (button.isConnected) button.disabled = false; }
     }
     async function releaseRow(row, button) {
       if (!row || releasing) return;
@@ -662,7 +705,7 @@ const Analyzer = {
       if (button.hasAttribute("data-edit-mapping")) editMapping(currentRows[Number(button.dataset.editMapping)], button);
       else if (button.hasAttribute("data-release-saved")) releaseRow(savedRow, button);
       else if (button.hasAttribute("data-release")) releaseRow(currentRows[Number(button.dataset.release)], button);
-      else if (button.hasAttribute("data-fix-matching")) editMapping(currentRows[Number(button.dataset.fixMatching)], button);
+      else if (button.hasAttribute("data-remove-mapping")) removeMapping(currentRows[Number(button.dataset.removeMapping)], button);
       else if (button.hasAttribute("data-fix-numbering")) fixNumbering(currentRows[Number(button.dataset.fixNumbering)], Number(button.dataset.show), button);
       else if (button.dataset.view) changeView(button.dataset.view);
       else if (button.hasAttribute("data-open-system")) changeView("system");
