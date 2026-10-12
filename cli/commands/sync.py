@@ -6,8 +6,10 @@ from __future__ import annotations
 import copy
 import queue
 import re
+import shutil
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
 import typer
@@ -23,6 +25,16 @@ EXIT_LINE = re.compile(r"\[SYNC\]\s*exit code:\s*(-?\d+)")
 LOG_TAG = "SYNC"
 COUNT_FEATURES = ("watchlist", "ratings", "history", "progress", "playlists", "collection")
 COUNT_HEADERS = ("WATCHLIST", "RATINGS", "HISTORY", "PROGRESS", "PLAYLISTS", "COLLECTION")
+PLAN_PAIR_KEYS = ("source", "target", "source_instance", "target_instance", "mode", "name")
+PLAN_COUNTS = {
+    "add": "added",
+    "remove": "removed",
+    "update": "updated",
+    "unresolved": "unresolved",
+    "blocked": "blocked",
+    "conflict": "conflicts",
+    "not_in_library": "not_in_library",
+}
 
 
 def _summary(state: Ctx) -> dict[str, Any]:
@@ -93,6 +105,64 @@ def _copy_with_selected_pairs(cfg: dict[str, Any], selectors: list[str], feature
 
     out["pairs"] = selected
     return out
+
+
+def _plan_once(state: Ctx, cfg: dict[str, Any], pairs: list[dict[str, Any]], path: Path, *, quiet: bool) -> dict[str, Any]:
+    from services import interactive_sync as review
+    from services.interactive_sync_export import build_export, capture_export
+
+    result: dict[str, Any] = {"ok": True, "dry_run": True, "pairs": 0, "errors": 0, "cancelled": False}
+    result.update({name: 0 for name in PLAN_COUNTS.values()})
+    rows = 0
+    partial = path.with_name(path.name + ".part")
+    try:
+        out = partial.open("wb")
+    except OSError as exc:
+        raise CLIError(f"Cannot write a plan to '{path}': {exc}", exit_code=EXIT_USAGE) from exc
+    try:
+        with out:
+            out.write(b'{"schema_version":1,"dry_run":true,"exported_at":%d,"pairs":[' % int(time.time()))
+            for index, pair in enumerate(pairs):
+                pair_id = str(pair.get("id") or "").strip()
+                if not pair_id:
+                    raise CLIError(f"{pair_label(pair)} has no id; a plan needs one", exit_code=EXIT_USAGE)
+                if not quiet:
+                    state.out.info(f"Planning {pair_label(pair)} ({pair_id})")
+                session = review.Session(pair_id=pair_id, owner="cli")
+                session.pair = {key: pair.get(key) for key in PLAN_PAIR_KEYS}
+                try:
+                    review.refresh(session, cfg, {}, complete_empty=False)
+                    snapshot = capture_export(session)
+                    try:
+                        document = build_export(snapshot, format="json")
+                    finally:
+                        snapshot.store.close()
+                    with document:
+                        if index:
+                            out.write(b",")
+                        shutil.copyfileobj(document, out)
+                    counts = session.store.result_counts() if session.store is not None else {}
+                    summary = dict(session.summary or {})
+                finally:
+                    session.close()
+                for source, name in PLAN_COUNTS.items():
+                    result[name] += int(counts.get(source) or 0)
+                rows += sum(int(count or 0) for count in counts.values())
+                result["blocked"] += int(summary.get("blocked") or 0)
+                result["errors"] += int(summary.get("errors") or 0)
+                result["pairs"] += int(summary.get("pairs") or 0)
+                result["cancelled"] = result["cancelled"] or bool(summary.get("cancelled"))
+                result["ok"] = result["ok"] and bool(summary.get("ok"))
+            out.write(b"]}")
+        if result["ok"]:
+            try:
+                partial.replace(path)
+            except OSError as exc:
+                raise CLIError(f"Cannot write a plan to '{path}': {exc}", exit_code=EXIT_USAGE) from exc
+    finally:
+        partial.unlink(missing_ok=True)
+    result["plan"] = {"path": str(path), "rows": rows, "written": result["ok"]}
+    return result
 
 
 class _Follower:
@@ -341,12 +411,21 @@ def sync_once(
     fail_on_unresolved: bool = typer.Option(False, "--fail-on-unresolved", help="Exit 1 when unresolved items are found."),
     fail_on_skipped: bool = typer.Option(False, "--fail-on-skipped", help="Exit 1 when skipped items are reported."),
     json_output: bool = typer.Option(False, "--json", help="Print the final summary as JSON."),
+    plan_out: str = typer.Option("", "--plan-out", help="With --dry-run: write the planned changes per item to this JSON file."),
 ) -> None:
     """Run sync locally, wait for completion, and exit with the sync result code."""
     state: Ctx = ctx.obj
     selectors = [s for s in [target.strip(), *[str(p or "").strip() for p in pair]] if s]
     if target.strip() and pair:
         raise CLIError("Use either the positional pair selector or --pair, not both.", exit_code=EXIT_USAGE)
+    plan_path = Path(plan_out.strip()).expanduser() if plan_out.strip() else None
+    if plan_path is not None:
+        if not dry_run:
+            raise CLIError("--plan-out only works together with --dry-run.", exit_code=EXIT_USAGE)
+        if fail_on_skipped:
+            raise CLIError("--fail-on-skipped cannot be used with --plan-out; a plan has no skipped count.", exit_code=EXIT_USAGE)
+        if plan_path.is_dir() or not plan_path.parent.is_dir():
+            raise CLIError(f"Cannot write a plan to '{plan_out}'", hint="Give a file path in an existing folder.", exit_code=EXIT_USAGE)
 
     from cw_platform.config_base import load_config
     from cw_platform.orchestrator import Orchestrator
@@ -355,6 +434,8 @@ def sync_once(
     selected_pairs = [p for p in (cfg.get("pairs") or []) if isinstance(p, dict)]
     if not selected_pairs:
         result = {"ok": True, "pairs": 0, "updated": 0, "added": 0, "removed": 0, "skipped": 0, "unresolved": 0, "errors": 0, "cancelled": False}
+        if plan_path is not None:
+            result = {**result, **_plan_once(state, cfg, [], plan_path, quiet=True)}
         if json_output or state.out.json_mode:
             state.out.data({**result, "exit_code": 0})
         else:
@@ -375,11 +456,16 @@ def sync_once(
         state.out.info(f"Running {label} locally; the process will exit when sync finishes.")
 
     try:
-        result = Orchestrator(cfg).run(
-            dry_run=dry_run,
-            write_state_json=write_state_json,
-            progress=(None if (json_output or state.out.json_mode) else True),
-        )
+        if plan_path is not None:
+            result = _plan_once(state, cfg, selected_pairs, plan_path, quiet=json_output or state.out.json_mode)
+        else:
+            result = Orchestrator(cfg).run(
+                dry_run=dry_run,
+                write_state_json=write_state_json,
+                progress=(None if (json_output or state.out.json_mode) else True),
+            )
+    except CLIError:
+        raise
     except Exception as exc:
         if json_output or state.out.json_mode:
             state.out.data({"ok": False, "error": str(exc), "exit_code": 1})
@@ -391,6 +477,12 @@ def sync_once(
     result = {**result, "exit_code": code}
     if json_output or state.out.json_mode:
         state.out.data(result)
+    elif plan_path is not None:
+        counts = ", ".join(f"{result.get(name) or 0} {name.replace('_', ' ')}" for name in PLAN_COUNTS.values())
+        if not result["plan"]["written"]:
+            state.out.warn(f"Planning did not finish, so {plan_path} was not written. Nothing was applied.")
+        else:
+            (state.out.success if code == 0 else state.out.warn)(f"Plan written to {plan_path}: {counts}. Nothing was applied.")
     elif code == 0:
         state.out.success("Sync completed.")
     else:

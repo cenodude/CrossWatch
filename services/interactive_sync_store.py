@@ -197,6 +197,10 @@ class ReviewStore:
                         row.update(result="conflict", item=row["left"], selectable=False)
                     yield row
 
+    def result_counts(self):
+        with self.lock:
+            return dict(self.db.execute("SELECT result,COUNT(*) FROM review GROUP BY result").fetchall())
+
     def select(self, selected, *, ids=None, feature="", result="", q=""):
         where, args = self.where(feature, result, q)
         with self.lock:

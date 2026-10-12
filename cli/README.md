@@ -104,16 +104,32 @@ With `--local`, or when the service cannot be reached, the CLI cannot see live s
 ```
 cw pair create plex trakt --feature watchlist --feature ratings
 cw pair create simkl trakt --mode two-way
+cw pair create plex trakt --feature history --add-only
 cw pair list [--enabled]
 cw pair show <id>
 cw pair enable <id>
 cw pair disable <id>
 cw pair feature <id> <feature> on|off
+cw pair set <id> <feature>.<key> <value>
 cw pair reorder <id> <id> ...
 cw pair delete <id> [--yes]
 ```
 
 Any unique id prefix works, so `cw pair show pair_07c3` is enough. The route name works too, `cw pair show "PLEX -> TRAKT"`.
+
+`--add-only` creates every enabled feature with add on and remove off. `cw pair set` changes one option of a feature that already exists on the pair:
+
+```
+cw pair set <id> history.add on|off
+cw pair set <id> history.remove on|off
+cw pair set <id> history.remove_mode source_deletes|mirror
+cw pair set <id> history.rewatches on|off
+cw pair set <id> history.libraries PLEX=1,2        set the libraries of one provider
+cw pair set <id> history.libraries PLEX=           clear them again
+cw pair set <id> history.libraries '{"PLEX":["1"]}' replace the whole scope
+```
+
+`cw pair show` and `cw pair set` warn when a feature runs in mirror mode, also when it is only stored while Remove is off. The check follows the `sync.one_way_remove_mode` and `sync.enable_remove` defaults for features that do not set their own. In mirror mode Remove makes the target match the source, so everything missing from the source is removed from the target. With `-o json` the warnings are in the `warnings` list.
 
 ## Sync
 
@@ -128,6 +144,7 @@ cw sync once                       local run, wait, return exit code
 cw sync once --pair pair_07c3      local one-shot pair run
 cw sync once --pair a --pair b     local one-shot selected pair run
 cw sync once --feature watchlist   local one-shot feature-only run
+cw sync once --dry-run --plan-out plan.json   write the planned changes per item
 cw sync status                     current or last run, with counts
 cw sync follow                     attach to a run already going
 cw sync cancel                     stop after the current batch
@@ -136,6 +153,8 @@ cw sync providers [--counts]
 ```
 
 `cw sync run` starts work through the running service. `cw sync once` runs in the current process, waits for completion, and exits with the sync result code, which is useful for `docker run --rm`, cron, Kubernetes CronJobs and other external schedulers. By default unresolved items do not fail the command; add `--fail-on-unresolved` for a stricter run.
+
+`--plan-out PATH` works with `--dry-run` and writes every planned change to a JSON file without writing provider changes; providers are still read. If planning fails or is cancelled the file is not written and an existing one is kept. `--fail-on-skipped` cannot be combined with it, because a plan has no skipped count. The file has one entry per pair under `pairs`, and each entry is the same document as the JSON download in Interactive Sync, so `rows` holds the items with their `feature`, `operation`, `result` and `reason`. The counts in the command summary are taken from those rows.
 
 ## Config
 
