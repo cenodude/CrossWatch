@@ -3,8 +3,12 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import os
+import stat
+import tempfile
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import typer
@@ -97,6 +101,7 @@ ENDPOINTS: dict[str, Endpoints] = {
 
 AUTHORIZED = {"authorized", "ok", "connected", "success", "complete", "done"}
 PENDING = {"pending", "waiting", "authorization_pending", "slow_down", "", "polling"}
+TOKEN_FILE_FORMATS = ("raw", "env")
 
 
 @dataclass
@@ -613,18 +618,49 @@ def token_create(
     name: str = typer.Option("CLI", "--name", "-n", help="Label shown in the token list."),
     expires_days: int = typer.Option(0, "--expires-days", help="Expire after N days. 0 means never."),
     save: bool = typer.Option(True, "--save/--no-save", help="Store the token in the CLI settings file."),
+    write_to: str | None = typer.Option(None, "--write-to", help="Write the token to this file instead of printing it. Mode 0600 on Linux and macOS."),
+    file_format: str = typer.Option("", "--format", help="File layout for --write-to: raw or env (CW_TOKEN=<token>)."),
+    force: bool = typer.Option(False, "--force", help="Overwrite the --write-to file when it already exists."),
 ) -> None:
     """Create an API token. Use --local from the CrossWatch host or container for CLI-only setup."""
     state: Ctx = ctx.obj
+    target = _token_file_target(write_to, file_format, force)
+    layout = str(file_format or "raw").strip().lower()
     payload = as_dict(state.post("/api/app-auth/tokens", json_body={"name": name, "expires_days": int(expires_days)}))
     if not payload.get("token"):
         raise CLIError(f"Token creation failed: {payload.get('error') or 'unknown error'}")
     raw = str(payload.get("token"))
     entry = as_dict(payload.get("entry"))
+    if target is not None:
+        try:
+            _write_token_file(target, raw, layout, force)
+        except OSError as exc:
+            revoked = _revoke_quietly(state, str(entry.get("id") or ""))
+            raise CLIError(
+                f"Could not write the token to {target}: {exc}",
+                hint="The new token was revoked." if revoked else "The new token was created; revoke it with 'cw auth token revoke'.",
+            ) from exc
     stored = ""
     if save:
         update_settings(token=raw, url=state.url)
         stored = str(settings_path())
+    expires = fmt_ts(entry.get("expires_at")) if entry.get("expires_at") else "never"
+    if target is not None:
+        if state.out.json_mode:
+            meta = {key: entry.get(key) for key in ("id", "name", "expires_at")}
+            state.out.data({"entry": meta, "saved_to": stored, "written_to": str(target), "format": layout})
+            return
+        state.out.kv(
+            [
+                ("Id", str(entry.get("id") or "-")),
+                ("Name", str(entry.get("name") or name)),
+                ("Expires", expires),
+                ("Written to", str(target)),
+                ("Saved to", stored or "not saved"),
+            ],
+            title="New API token",
+        )
+        return
     if state.out.json_mode:
         state.out.data({"token": raw, "entry": entry, "saved_to": stored})
         return
@@ -633,12 +669,74 @@ def token_create(
             ("Token", raw),
             ("Id", str(entry.get("id") or "-")),
             ("Name", str(entry.get("name") or name)),
-            ("Expires", fmt_ts(entry.get("expires_at")) if entry.get("expires_at") else "never"),
+            ("Expires", expires),
             ("Saved to", stored or "not saved"),
         ],
         title="New API token",
     )
     state.out.warn("This is the only time the token is shown. Store it somewhere safe.")
+
+
+def _token_file_target(write_to: str | None, file_format: str, force: bool) -> Path | None:
+    layout = str(file_format or "").strip().lower()
+    if write_to is None:
+        if layout or force:
+            raise CLIError("--format and --force only apply together with --write-to", exit_code=EXIT_USAGE)
+        return None
+    raw_path = str(write_to).strip()
+    if not raw_path:
+        raise CLIError("--write-to needs a file path", exit_code=EXIT_USAGE)
+    if layout and layout not in TOKEN_FILE_FORMATS:
+        raise CLIError(
+            f"Unknown token file format '{file_format}'",
+            hint=f"Use one of: {', '.join(TOKEN_FILE_FORMATS)}",
+            exit_code=EXIT_USAGE,
+        )
+    target = Path(raw_path).expanduser()
+    if target.is_dir():
+        raise CLIError(f"{target} is a directory", exit_code=EXIT_USAGE)
+    if not target.parent.is_dir():
+        raise CLIError(f"Directory {target.parent} does not exist", exit_code=EXIT_USAGE)
+    if not force and (target.exists() or target.is_symlink()):
+        raise CLIError(f"{target} already exists", hint="Pass --force to overwrite it.", exit_code=EXIT_USAGE)
+    return target
+
+
+def _write_token_file(target: Path, token: str, layout: str, force: bool) -> None:
+    body = f"CW_TOKEN={token}\n" if layout == "env" else token
+    if force:
+        fd, name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
+        scratch = Path(name)
+    else:
+        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, stat.S_IRUSR | stat.S_IWUSR)
+        scratch = target
+    try:
+        try:
+            pending = body.encode("utf-8")
+            while pending:
+                written = os.write(fd, pending)
+                if written <= 0:
+                    raise OSError("short write")
+                pending = pending[written:]
+        finally:
+            os.close(fd)
+        if force:
+            os.replace(scratch, target)
+    except BaseException:
+        try:
+            scratch.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
+def _revoke_quietly(state: Ctx, token_id: str) -> bool:
+    if not token_id:
+        return False
+    try:
+        return as_dict(state.delete(f"/api/app-auth/tokens/{token_id}")).get("ok") is True
+    except Exception:
+        return False
 
 
 @token_app.command("revoke")

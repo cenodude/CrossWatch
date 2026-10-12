@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -2212,3 +2214,197 @@ def test_auth_field_nesting_round_trip() -> None:
     assert _nest({"a.b.c": 1}, drop_prefix=True) == {"b": {"c": 1}}
     assert _nest({"a.b.c": 1}, drop_prefix=False) == {"a": {"b": {"c": 1}}}
     assert _nest({"solo": 1}, drop_prefix=True) == {}
+
+
+TOKEN_ROUTE = ("POST", "/api/app-auth/tokens")
+TOKEN_REPLY = {"token": "cwt_secret_value", "entry": {"id": "tok1", "name": "monitor", "prefix": "cwt_secr"}}
+
+
+@pytest.mark.parametrize(
+    ("output", "extra", "expected"),
+    [
+        ("plain", [], "cwt_secret_value"),
+        ("json", [], "cwt_secret_value"),
+        ("plain", ["--format", "env"], "CW_TOKEN=cwt_secret_value\n"),
+    ],
+)
+def test_token_create_write_to_keeps_the_token_out_of_the_output(
+    clean_cli_env,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    output: str,
+    extra: list[str],
+    expected: str,
+) -> None:
+    from cli._app import run_isolated
+    from cli._settings import load_settings
+
+    target = tmp_path / "cw_token"
+    state = Ctx.build(url="http://cw.test", output=output)
+    state._http = FakeTransport({TOKEN_ROUTE: TOKEN_REPLY})
+
+    args = ["auth", "token", "create", "--name", "monitor", "--no-save", "--write-to", str(target), *extra]
+    assert run_isolated(state, args) == 0
+
+    captured = capsys.readouterr()
+    assert "cwt_secret_value" not in captured.out + captured.err
+    assert "tok1" in captured.out
+    assert target.read_text(encoding="utf-8") == expected
+    assert "token" not in load_settings()
+    if os.name != "nt":
+        assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+
+def test_token_create_write_to_refuses_existing_file_before_creating_a_token(clean_cli_env, tmp_path: Path) -> None:
+    from cli._app import run_isolated
+
+    target = tmp_path / "cw_token"
+    target.write_text("keep", encoding="utf-8")
+    state = Ctx.build(url="http://cw.test", output="json")
+    state._http = FakeTransport({TOKEN_ROUTE: TOKEN_REPLY})
+
+    assert run_isolated(state, ["auth", "token", "create", "--no-save", "--write-to", str(target)]) != 0
+    assert state._http.calls == []
+    assert target.read_text(encoding="utf-8") == "keep"
+
+    assert run_isolated(state, ["auth", "token", "create", "--no-save", "--write-to", str(target), "--force"]) == 0
+    assert target.read_text(encoding="utf-8") == "cwt_secret_value"
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["--format", "env"],
+        ["--force"],
+        ["--write-to", ""],
+        ["--write-to", "  "],
+        ["--write-to", "x", "--format", "yaml"],
+    ],
+)
+def test_token_create_rejects_bad_file_options_before_creating_a_token(
+    clean_cli_env,
+    capsys: pytest.CaptureFixture[str],
+    extra: list[str],
+) -> None:
+    from cli._app import run_isolated
+
+    state = Ctx.build(url="http://cw.test", output="json")
+    state._http = FakeTransport({TOKEN_ROUTE: TOKEN_REPLY})
+
+    assert run_isolated(state, ["auth", "token", "create", "--no-save", *extra]) != 0
+    assert state._http.calls == []
+    captured = capsys.readouterr()
+    assert "cwt_secret_value" not in captured.out + captured.err
+
+
+def test_token_create_write_to_json_only_exposes_id_name_and_expiry(
+    clean_cli_env,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from cli._app import run_isolated
+    from cli._settings import load_settings
+
+    state = Ctx.build(url="http://cw.test", output="json")
+    state._http = FakeTransport({TOKEN_ROUTE: TOKEN_REPLY})
+
+    assert run_isolated(state, ["auth", "token", "create", "--write-to", str(tmp_path / "cw_token")]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["entry"] == {"id": "tok1", "name": "monitor", "expires_at": None}
+    assert load_settings()["token"] == "cwt_secret_value"
+
+
+@pytest.mark.parametrize(("revocable", "hint"), [(True, "was revoked"), (False, "cw auth token revoke")])
+def test_token_create_failed_forced_write_keeps_the_old_file_and_revokes(
+    clean_cli_env,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    revocable: bool,
+    hint: str,
+) -> None:
+    from cli._app import run_isolated
+    from cli.commands import auth
+
+    def boom(*_args: Any, **_kwargs: Any) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(auth.os, "replace", boom)
+    target = tmp_path / "cw_token"
+    target.write_text("keep", encoding="utf-8")
+    routes: dict[tuple[str, str], Any] = {TOKEN_ROUTE: TOKEN_REPLY}
+    if revocable:
+        routes[("DELETE", "/api/app-auth/tokens/tok1")] = {"ok": True}
+    state = Ctx.build(url="http://cw.test", output="json")
+    state._http = FakeTransport(routes)
+
+    assert run_isolated(state, ["auth", "token", "create", "--write-to", str(target), "--force"]) != 0
+    assert [call[:2] for call in state._http.calls] == [TOKEN_ROUTE, ("DELETE", "/api/app-auth/tokens/tok1")]
+    assert target.read_text(encoding="utf-8") == "keep"
+    assert [item.name for item in tmp_path.iterdir() if item.name != "cli-home"] == ["cw_token"]
+    captured = capsys.readouterr()
+    assert hint in captured.err
+    assert "cwt_secret_value" not in captured.out + captured.err
+
+
+@pytest.mark.parametrize("force", [False, True])
+def test_token_create_failed_write_leaves_no_partial_file(
+    clean_cli_env,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    force: bool,
+) -> None:
+    from cli._app import run_isolated
+    from cli.commands import auth
+
+    def boom(*_args: Any, **_kwargs: Any) -> int:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(auth.os, "write", boom)
+    target = tmp_path / "cw_token"
+    state = Ctx.build(url="http://cw.test", output="json")
+    state._http = FakeTransport({TOKEN_ROUTE: TOKEN_REPLY, ("DELETE", "/api/app-auth/tokens/tok1"): {"ok": True}})
+
+    args = ["auth", "token", "create", "--no-save", "--write-to", str(target), *(["--force"] if force else [])]
+    assert run_isolated(state, args) != 0
+    assert [call[:2] for call in state._http.calls] == [TOKEN_ROUTE, ("DELETE", "/api/app-auth/tokens/tok1")]
+    assert [item.name for item in tmp_path.iterdir() if item.name != "cli-home"] == []
+
+
+@pytest.mark.parametrize("stalls", [False, True])
+def test_token_create_write_to_handles_short_writes(
+    clean_cli_env,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stalls: bool,
+) -> None:
+    from cli._app import run_isolated
+    from cli.commands import auth
+
+    real_write = os.write
+    chunks: list[int] = []
+
+    def short(fd: int, data: bytes) -> int:
+        if stalls and chunks:
+            return 0
+        chunks.append(real_write(fd, bytes(data)[:4]))
+        return chunks[-1]
+
+    monkeypatch.setattr(auth.os, "write", short)
+    target = tmp_path / "cw_token"
+    target.write_text("keep", encoding="utf-8")
+    state = Ctx.build(url="http://cw.test", output="json")
+    state._http = FakeTransport({TOKEN_ROUTE: TOKEN_REPLY, ("DELETE", "/api/app-auth/tokens/tok1"): {"ok": True}})
+
+    code = run_isolated(state, ["auth", "token", "create", "--no-save", "--write-to", str(target), "--force"])
+    monkeypatch.undo()
+
+    assert [item.name for item in tmp_path.iterdir() if item.name != "cli-home"] == ["cw_token"]
+    if stalls:
+        assert code != 0
+        assert target.read_text(encoding="utf-8") == "keep"
+        assert state._http.calls[-1][:2] == ("DELETE", "/api/app-auth/tokens/tok1")
+    else:
+        assert code == 0
+        assert target.read_text(encoding="utf-8") == "cwt_secret_value"
+        assert len(chunks) == 4

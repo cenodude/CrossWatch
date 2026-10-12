@@ -50,6 +50,17 @@ cw --local auth token create --name cli
 
 Shown once. Saved to `/config/.cw_cli/cli.json` in the container, `~/.crosswatch/cli.json` outside it. Every command after that is authenticated.
 
+For scripts and CI, keep the token out of the output by writing it to a file:
+
+```
+cw --local auth token create --name monitor --no-save --write-to /run/secrets/cw_token
+cw --local auth token create --name monitor --no-save --write-to cw.env --format env
+```
+
+Only the id, name and expiry are printed. An existing file is left alone unless you pass `--force`, which replaces it in one step. The default layout is the bare token with no trailing newline, `--format env` writes `CW_TOKEN=<token>`.
+
+On Linux and macOS the file is created with mode 0600. Windows has no such mode, the file gets the permissions of the folder it lands in, so pick a folder only you can read.
+
 Per command or from the env if you prefer:
 
 ```
