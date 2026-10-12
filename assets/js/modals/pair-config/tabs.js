@@ -7,6 +7,7 @@ export function createTabsController({
   sharedFeatureOrder,
   sharedFeatureLabel,
   commonFeatures,
+  hasProviderControls,
   renderFeaturePanel,
   applyFlowTheme,
   renderWarnings,
@@ -19,12 +20,14 @@ export function createTabsController({
     const panel = ID("cx-feat-panel");
     const ORDER = ["globals", "providers", ...sharedFeatureOrder()];
     const COMMON = new Set(commonFeatures(state));
-    const isValid = (k) => k === "globals" || k === "providers" || (ORDER.includes(k) && COMMON.has(k));
+    const showProviders = hasProviderControls(state);
+    const isValid = (k) => k === "globals" || (k === "providers" && showProviders) || (ORDER.includes(k) && COMMON.has(k));
     if (!isValid(state.feature)) state.feature = "globals";
 
     tabs.innerHTML = "";
     ORDER.forEach((k) => {
       if (!["globals", "providers"].includes(k) && !COMMON.has(k)) return;
+      if (k === "providers" && !showProviders) return;
       const b = document.createElement("button");
       b.className = "ftab";
       b.dataset.key = k;

@@ -54,6 +54,7 @@ function hasTrakt(state){return isTrakt(state?.src)||isTrakt(state?.dst)}
 function hasMDBList(state){return isMDBList(state?.src)||isMDBList(state?.dst)}
 function hasPublicMetaDB(state){return isPublicMetaDB(state?.src)||isPublicMetaDB(state?.dst)}
 function hasFloppy(state){return isFloppy(state?.src)||isFloppy(state?.dst)}
+function hasProviderControls(state){return hasPlex(state)||hasJelly(state)||hasEmby(state)||hasKodi(state)}
 function floppyAnimeLibraryOn(state){const pair=state?.pairProviders?.floppy;return pair&&"anime_library" in pair?!!pair.anime_library:!!state?.cfgRaw?.floppy?.anime_library}
 function hasScrob(state){return isScrob(state?.src)||isScrob(state?.dst)}
 function hasStremio(state){return isStremio(state?.src)||isStremio(state?.dst)}
@@ -786,6 +787,7 @@ const { refreshTabs } = createTabsController({
   sharedFeatureOrder,
   sharedFeatureLabel,
   commonFeatures,
+  hasProviderControls,
   renderFeaturePanel,
   applyFlowTheme,
   renderWarnings,
@@ -1103,9 +1105,6 @@ function getProviderOverrideCount(state, providerKey){
   if (providerKey === "kodi") {
     return countProviderLibraries(state, "KODI");
   }
-  if (providerKey === "floppy") {
-    return checked("floppy-anime-library", floppyAnimeLibraryOn(state)) ? 1 : 0;
-  }
   return 0;
 }
 
@@ -1117,7 +1116,7 @@ function getProviderSummaryText(state, providerKey){
 }
 
 function refreshProviderCardSummaries(state){
-  [["plex","prov-plex-summary"],["jellyfin","prov-jelly-summary"],["emby","prov-emby-summary"],["kodi","prov-kodi-summary"],["floppy","prov-floppy-summary"]].forEach(([key, id]) => {
+  [["plex","prov-plex-summary"],["jellyfin","prov-jelly-summary"],["emby","prov-emby-summary"],["kodi","prov-kodi-summary"]].forEach(([key, id]) => {
     const el = ID(id);
     if (el) el.textContent = getProviderSummaryText(state, key);
   });
@@ -1144,7 +1143,6 @@ function renderFeaturePanel(state){
       if (providerKey === "plex") return "Tune Plex retries, workers, and pair library scope";
       if (providerKey === "jellyfin") return "Tune Jellyfin lookup, timeouts and pair library scope.";
       if (providerKey === "kodi") return "Tune Kodi pair library scope.";
-      if (providerKey === "floppy") return "Choose where new anime shows land in Floppy.";
       return "Tune Emby timeouts and pair library scope.";
     };
 
@@ -1320,29 +1318,6 @@ function renderFeaturePanel(state){
         </div>
       </details>`);
 
-    if (hasFloppy(state)) providerCards.push(`
-      <details class="mods fold provider-card provider-floppy" id="prov-floppy">
-        <summary class="fold-head provider-card-head">
-          <span class="provider-card-main">
-            <span class="provider-card-badge">Floppy</span>
-            <span class="provider-card-copy">
-              <span class="provider-card-title">Floppy</span>
-              <span class="provider-card-sub" id="prov-floppy-summary">${getProviderSummaryText(state, "floppy")}</span>
-            </span>
-          </span>
-          <span class="provider-card-meta">
-            <span class="provider-card-hint">${providerHintText("floppy")}</span>
-            <span class="chev">expand_more</span>
-          </span>
-        </summary>
-        <div class="fold-body provider-card-body">
-          <div class="grid2 compact" style="padding:8px 0 2px">
-            <div class="opt-row"><label for="floppy-anime-library" data-tip-id="floppy-anime-library">Send new anime to the Anime library</label><label class="switch"><input id="floppy-anime-library" type="checkbox" ${floppyAnimeLibraryOn(state)?"checked":""}><span class="slider"></span></label></div>
-          </div>
-          <div class="muted">Applies to shows Floppy does not have yet. Shows already in Floppy stay in the library they are in.</div>
-        </div>
-      </details>`);
-
     left.innerHTML=`<div class="panel-title"><span class="material-symbols-rounded" style="vertical-align:-3px;margin-right:6px;">dns</span>Providers</div>
       <div class="providers-intro">
         <div class="providers-intro-copy">
@@ -1402,10 +1377,11 @@ function renderFeaturePanel(state){
       </div>`;
     right.innerHTML=`<div class="panel-title small">Pair safety</div>
       ${removeModeRow}
-      ${hasPlex(state)||hasJelly(state)||hasEmby(state)?`<div class="panel-title small">Matching</div>`:""}
+      ${hasPlex(state)||hasJelly(state)||hasEmby(state)||hasFloppy(state)?`<div class="panel-title small">Matching</div>`:""}
       ${hasPlex(state)?`<div class="opt-row"><label for="plx-strict-ids">Plex: Strict ID matching</label><label class="switch"><input id="plx-strict-ids" type="checkbox" ${getPairProviderStrictValue(state, "plex")?"checked":""}><span class="slider"></span></label></div>`:""}
       ${hasJelly(state)?`<div class="opt-row"><label for="jf-strict-ids">Jellyfin: Strict ID matching</label><label class="switch"><input id="jf-strict-ids" type="checkbox" ${getPairProviderStrictValue(state, "jellyfin")?"checked":""}><span class="slider"></span></label></div>`:""}
       ${hasEmby(state)?`<div class="opt-row"><label for="em-strict-ids">Emby: Strict ID matching</label><label class="switch"><input id="em-strict-ids" type="checkbox" ${getPairProviderStrictValue(state, "emby")?"checked":""}><span class="slider"></span></label></div>`:""}
+      ${hasFloppy(state)?`<div class="opt-row"><label for="floppy-anime-library" data-tip-id="floppy-anime-library">Floppy: Send new anime to the Anime library</label><label class="switch"><input id="floppy-anime-library" type="checkbox" ${floppyAnimeLibraryOn(state)?"checked":""}><span class="slider"></span></label></div>`:""}
       ${supportsPathMatching(state)?`<div class="opt-row"><label for="pair-path-matching">Match by file path</label><label class="switch"><input id="pair-path-matching" type="checkbox" ${state.path_matching?"checked":""}><span class="slider"></span></label></div><div class="muted">When IDs cannot resolve an item, try matching its file path across the media servers in this pair. Supports movie and episode history, ratings and progress in both directions, including with Strict ID matching enabled.</div>`:""}
       <div class="panel-title" style="margin-top:10px">Advanced (shared) <button type="button" class="cx-help material-symbols-rounded" data-tip-id="gl-section-advanced">help</button></div>
       <div class="opt-row"><label for="gl-ttl">Tombstone TTL (days)</label><input id="gl-ttl" class="input" type="number" min="0" step="1" value="${g.tombstone_ttl_days??30}"></div><div class="muted">Keep delete markers to avoid re-adding.</div>
@@ -2285,7 +2261,6 @@ function bindChangeHandlers(state,root){
     if(id==="floppy-anime-library"){
       state.pairProviders=state.pairProviders||{};
       state.pairProviders.floppy=Object.assign({},state.pairProviders.floppy||{}, {anime_library:!!el.checked});
-      refreshProviderCardSummaries(state);
       return;
     }
     if(id==="cx-tr-hs-col"||id==="cx-tr-hs-col-movies"||id==="cx-tr-hs-col-shows"||id==="cx-tr-hs-ignore-dropped"){
