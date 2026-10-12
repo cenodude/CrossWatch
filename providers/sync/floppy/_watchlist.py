@@ -12,7 +12,7 @@ from cw_platform.id_map import minimal as id_minimal
 from providers.auth._auth_FLOPPY import FloppyAuthError
 from providers.sync._mod_common import build_op_result, unresolved_keys
 
-from ._common import api_delete, api_get, api_post, api_put, canonical_item_key, confirmed_destination, ensure_media, floppy_type_for_item, item_from_row, paged, tmdb_enriched_item, tmdb_id_for_item, unresolved, watchlist_name
+from ._common import api_delete, api_get, api_post, api_put, bucket_body, bucket_params, canonical_item_key, confirmed_destination, ensure_media, floppy_type_for_item, item_from_row, paged, tmdb_enriched_item, tmdb_id_for_item, unresolved, watchlist_name, write_bucket
 
 
 def _list_id(adapter: Any, *, create: bool = False) -> str | None:
@@ -77,13 +77,17 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
             unresolved_rows.append(entry)
             results.append(entry)
             continue
+        bucket = ""
+        list_body: dict[str, str] | None = None
         try:
-            api_put(adapter, f"media/{typ}/tmdb/{tmdb_id}/lists/{lid}")
+            bucket = write_bucket(adapter, tmdb_id, item) if typ == "tv" else ""
+            list_body = bucket_body(bucket) or None
+            api_put(adapter, f"media/{typ}/tmdb/{tmdb_id}/lists/{lid}", json=list_body)
         except FloppyAuthError as exc:
             if getattr(exc, "status_code", None) == 404:
                 try:
-                    ensure_media(adapter, typ, tmdb_id)
-                    api_put(adapter, f"media/{typ}/tmdb/{tmdb_id}/lists/{lid}")
+                    ensure_media(adapter, typ, tmdb_id, bucket=bucket)
+                    api_put(adapter, f"media/{typ}/tmdb/{tmdb_id}/lists/{lid}", json=list_body)
                 except FloppyAuthError as inner:
                     if getattr(inner, "status_code", None) != 409:
                         entry = unresolved(item, str(getattr(inner, "reason", "") or "floppy_watchlist_write_failed"))
@@ -133,7 +137,8 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
             if list_item_id:
                 api_delete(adapter, f"lists/{lid}/items/{list_item_id}")
             else:
-                api_delete(adapter, f"media/{typ}/tmdb/{tmdb_id}/lists/{lid}")
+                bucket = write_bucket(adapter, tmdb_id, item) if typ == "tv" else ""
+                api_delete(adapter, f"media/{typ}/tmdb/{tmdb_id}/lists/{lid}", params=bucket_params(bucket))
         except Exception:
             entry = unresolved(item, "floppy_watchlist_remove_failed")
             unresolved_rows.append(entry)

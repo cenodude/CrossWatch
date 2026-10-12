@@ -10,7 +10,7 @@ from cw_platform.id_map import minimal as id_minimal
 from providers.auth._auth_FLOPPY import FloppyAuthError
 from providers.sync._mod_common import build_op_result, unresolved_keys
 
-from ._common import PLANNING, api_delete, api_get, api_post, canonical_item_key, confirmed_destination, failure_reason, int_or_none, paged, tmdb_enriched_item, tmdb_id_for_item, unresolved
+from ._common import PLANNING, api_delete, api_get, api_post, bucket_body, bucket_params, canonical_item_key, confirmed_destination, failure_reason, int_or_none, paged, show_path, tmdb_enriched_item, tmdb_id_for_item, unresolved, write_bucket
 
 
 def _media_numbers(item: Mapping[str, Any]) -> tuple[int | None, int | None]:
@@ -104,11 +104,13 @@ def _floppy_media_type(item: Mapping[str, Any]) -> str | None:
     return None
 
 
-def _detail_path(media_type: str, tmdb_id: str, season: int | None = None, episode: int | None = None) -> str:
+def _detail_path(media_type: str, tmdb_id: str, season: int | None = None, episode: int | None = None, bucket: str = "") -> str:
     if media_type == "episode" and season is not None and episode is not None:
         return f"media/episode/tmdb/{tmdb_id}/{season}/{episode}"
     if media_type == "season" and season is not None:
-        return f"media/season/tmdb/{tmdb_id}/{season}"
+        return f"media/tv/tmdb/{tmdb_id}/{season}"
+    if media_type == "tv":
+        return show_path(tmdb_id, bucket)
     return f"media/{media_type}/tmdb/{tmdb_id}"
 
 
@@ -136,7 +138,11 @@ def _ensure_item_id(adapter: Any, item: Mapping[str, Any]) -> tuple[str | None, 
     if media_type == "episode" and episode is None:
         return None, "floppy_episode_id_missing"
 
-    body: dict[str, Any] = {"source": "tmdb", "media_id": str(tmdb_id), "status": PLANNING}
+    try:
+        bucket = write_bucket(adapter, tmdb_id, item) if media_type != "movie" else ""
+    except Exception as exc:
+        return None, failure_reason(exc)
+    body: dict[str, Any] = {"source": "tmdb", "media_id": str(tmdb_id), "status": PLANNING, **bucket_body(bucket)}
     if season is not None:
         body["season_number"] = season
     if episode is not None:
@@ -157,7 +163,8 @@ def _ensure_item_id(adapter: Any, item: Mapping[str, Any]) -> tuple[str | None, 
             return None, failure_reason(exc)
 
     try:
-        item_id = _item_id_from_response(api_get(adapter, _detail_path(media_type, str(tmdb_id), season, episode)))
+        params = bucket_params(bucket) if media_type in {"season", "episode"} else None
+        item_id = _item_id_from_response(api_get(adapter, _detail_path(media_type, str(tmdb_id), season, episode, bucket), params=params))
         if item_id:
             return item_id, ""
     except Exception as exc:

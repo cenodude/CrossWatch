@@ -18,7 +18,7 @@ from cw_platform.id_map import minimal as id_minimal
 from providers.auth._auth_FLOPPY import FloppyAuthError
 from providers.sync._mod_common import build_op_result, unresolved_keys
 
-from ._common import COMPLETED, absolute_to_coord, api_delete, api_patch, api_post, api_request, canonical_item_key, confirmed_destination, failure_reason, has_coord, int_or_none, item_from_row, media_parts_from_item_id, paged, reset_layout_cache, show_layout, tmdb_enriched_item, tmdb_id_for_item, track_media, unresolved
+from ._common import ANIME_BUCKET, COMPLETED, absolute_to_coord, api_delete, api_patch, api_post, api_request, bucket_body, bucket_params, canonical_item_key, confirmed_destination, failure_reason, has_coord, int_or_none, item_from_row, media_parts_from_item_id, paged, reset_layout_cache, show_bucket, show_layout, tmdb_enriched_item, tmdb_id_for_item, track_media, unresolved, write_bucket
 
 _SRC_SNAPSHOT: dict[str, Any] = {"scope": None, "shows": {}}
 _SEASON_EPISODE_CACHE: dict[tuple[str, int], set[int] | None] = {}
@@ -536,11 +536,37 @@ def _movie_history(adapter: Any, tmdb_id: str) -> list[Mapping[str, Any]]:
         return []
 
 
-def _episode_history(adapter: Any, tmdb_id: str, season: int, episode: int) -> list[Mapping[str, Any]]:
+def _episode_history(adapter: Any, tmdb_id: str, season: int, episode: int, bucket: str | None = None) -> list[Mapping[str, Any]]:
     try:
-        return paged(adapter, f"media/tv/tmdb/{tmdb_id}/{season}/{episode}/history")
+        return paged(adapter, f"media/tv/tmdb/{tmdb_id}/{season}/{episode}/history", params=bucket_params(bucket))
     except Exception:
         return []
+
+
+def _existing_bucket(adapter: Any, tmdb_id: str) -> str:
+    try:
+        return ANIME_BUCKET if show_bucket(adapter, tmdb_id) == ANIME_BUCKET else ""
+    except Exception:
+        return ""
+
+
+def _row_epoch(row: Mapping[str, Any]) -> int | None:
+    return history_epoch_from_value(row.get("end_date") or row.get("progressed_at") or row.get("created_at") or row.get("watched_at"))
+
+
+def _remove_anime_episode_watch(adapter: Any, tmdb_id: str, season: int, episode: int, history_id: str | None, *, exact: bool) -> None:
+    rows = paged(adapter, f"media/tv/tmdb/{tmdb_id}/{season}/{episode}/history", params=bucket_params(ANIME_BUCKET))
+    if not rows:
+        return
+    if history_id and exact:
+        target = next((row for row in rows if str(row.get("consumption_id") or "").strip() == history_id), None)
+        if target is None:
+            return
+        latest = max(rows, key=lambda row: _row_epoch(row) or 0)
+        if latest is not target:
+            api_request(adapter, "DELETE", f"media/tv/tmdb/{tmdb_id}/{season}/{episode}/history/{history_id}", ok=(200, 202, 204), params=bucket_params(ANIME_BUCKET))
+            return
+    api_request(adapter, "DELETE", f"media/tv/tmdb/{tmdb_id}/{season}/episodes/{episode}/watch", ok=(200, 202, 204), params=bucket_params(ANIME_BUCKET))
 
 
 def _history_rows_include_write(adapter: Any, item: Mapping[str, Any], rows: Iterable[Mapping[str, Any]], *, exact_time: bool = False) -> bool:
@@ -648,7 +674,7 @@ def _augment_absolute_episode_history(adapter: Any, out: dict[str, dict[str, Any
                 continue
             if not target_id or (target_id == show and (real_season, real_episode) == (season, episode)):
                 continue
-            rows = _episode_history(adapter, target_id, real_season, real_episode)
+            rows = _episode_history(adapter, target_id, real_season, real_episode, _existing_bucket(adapter, target_id))
             row = _history_row_for_item(adapter, source_item, rows, exact_time=event_mode)
             if row is None:
                 continue
@@ -769,14 +795,15 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
                 continue
             try:
                 tmdb_id, season, episode, verify_after_write = _write_target_result(adapter, tmdb_id, item, season, episode)
-                existing_history = _episode_history(adapter, tmdb_id, season, episode)
+                bucket = write_bucket(adapter, tmdb_id, item)
+                existing_history = _episode_history(adapter, tmdb_id, season, episode, bucket)
                 if _rewatches_enabled(adapter) or not existing_history:
-                    payload = {"end_date": _watched_at(item)}
+                    payload = {"end_date": _watched_at(item), **bucket_body(bucket)}
                     external_id = _external_id(adapter, item, key)
                     if external_id:
                         payload["external_id"] = external_id
                     api_post(adapter, f"media/tv/tmdb/{tmdb_id}/{season}/episodes/{episode}/watch", json=payload)
-                if verify_after_write and not _history_rows_include_write(adapter, item, _episode_history(adapter, tmdb_id, season, episode), exact_time=True):
+                if verify_after_write and not _history_rows_include_write(adapter, item, _episode_history(adapter, tmdb_id, season, episode, bucket), exact_time=True):
                     entry = unresolved(item, "floppy_history_write_not_readable")
                     unresolved_rows.append(entry)
                     results.append(entry)
@@ -858,13 +885,16 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
                 history_id = _history_id(item)
                 if not history_id and _rewatches_enabled(adapter):
                     raise ValueError("missing history id")
-                if not history_id:
+                if show_bucket(adapter, tmdb_id) == ANIME_BUCKET:
+                    _remove_anime_episode_watch(adapter, tmdb_id, season, episode, history_id, exact=_rewatches_enabled(adapter))
+                    history_id = None
+                elif not history_id:
                     rows = _episode_history(adapter, tmdb_id, season, episode)
                     history_id = str((rows[0] if rows else {}).get("consumption_id") or "").strip()
+                    if not history_id:
+                        api_delete(adapter, f"media/tv/tmdb/{tmdb_id}/{season}/episodes/{episode}/watch")
                 if history_id:
                     api_delete(adapter, f"media/tv/tmdb/{tmdb_id}/{season}/{episode}/history/{history_id}")
-                else:
-                    api_delete(adapter, f"media/tv/tmdb/{tmdb_id}/{season}/episodes/{episode}/watch")
             else:
                 raise ValueError("unsupported")
         except Exception:

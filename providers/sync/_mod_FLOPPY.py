@@ -18,7 +18,7 @@ from providers.sync.floppy import _ratings as feat_ratings
 from providers.sync.floppy import _watchlist as feat_watchlist
 from providers.sync.floppy._common import api_delete, api_get, configured_block, is_configured, media_parts_from_item_id, paged
 
-__VERSION__ = "0.5"
+__VERSION__ = "0.6"
 __all__ = ["get_manifest", "FLOPPYModule", "OPS"]
 
 if "ctx" not in globals():
@@ -181,8 +181,14 @@ class FLOPPYModule:
         removed = 0
         errors: list[str] = []
         seen: set[tuple[str, str]] = set()
-        for media_type in ("movie", "tv"):
-            for row in paged(self, f"media/{media_type}"):
+        for media_type in ("movie", "tv", "anime"):
+            try:
+                rows = paged(self, f"media/{media_type}")
+            except FloppyAuthError:
+                if media_type != "anime":
+                    raise
+                rows = []
+            for row in rows:
                 typ, source, media_id, _, _ = media_parts_from_item_id(row.get("item_id"))
                 source = str(row.get("source") or source or "").strip()
                 media_id = str(row.get("media_id") or media_id or "").strip()

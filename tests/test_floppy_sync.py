@@ -31,12 +31,16 @@ class SessionStub:
     def __init__(self, routes: dict[tuple[str, str], Any]) -> None:
         self.routes = routes
         self.calls: list[dict[str, Any]] = []
+        self.bucket_lookups: list[dict[str, Any]] = []
 
     def request(self, method: str, url: str, **kwargs: Any) -> ResponseStub:
         path = url.split("/api/v1/", 1)[1].strip("/")
         call = {"method": method.upper(), "path": path, **kwargs}
-        self.calls.append(call)
         route = self.routes.get((method.upper(), path))
+        if route is None and method.upper() == "GET" and path in {"media/tv", "media/anime"}:
+            self.bucket_lookups.append(call)
+            return ResponseStub(404, {"detail": "not found"})
+        self.calls.append(call)
         if callable(route):
             route = route(call)
         if isinstance(route, ResponseStub):
@@ -2096,3 +2100,272 @@ def test_floppy_paged_still_walks_real_pages() -> None:
 
     assert len(rows) == 450
     assert len(adapter.client.session.calls) == 3
+
+
+def _grouped_anime_row(tmdb_id: str) -> dict[str, Any]:
+    return {"item_id": f"tv/tmdb/{tmdb_id}", "item": {"media_id": tmdb_id, "source": "tmdb", "media_type": "tv", "library_media_type": "anime"}}
+
+
+def _plain_tv_row(tmdb_id: str) -> dict[str, Any]:
+    return {"item_id": f"tv/tmdb/{tmdb_id}", "item": {"media_id": tmdb_id, "source": "tmdb", "media_type": "tv", "library_media_type": "tv"}}
+
+
+def _bucket_episode() -> dict[str, Any]:
+    return {"type": "episode", "show_ids": {"tmdb": "209867", "mal": "52991"}, "season": 1, "episode": 1, "watched_at": "2026-01-01T10:00:00Z"}
+
+
+def _bucket_history_calls(adapter: AdapterStub) -> list[tuple[str, str, Any, Any]]:
+    return [(c["method"], c["path"], c.get("params"), c.get("json")) for c in adapter.client.session.calls]
+
+
+def test_floppy_history_add_follows_show_already_in_anime_library() -> None:
+    from providers.sync.floppy import _history
+
+    _history.prepare_source_snapshot([])
+    adapter = AdapterStub(
+        {
+            ("GET", "media/tv"): {"results": [], "count": 0},
+            ("GET", "media/anime"): {"results": [_grouped_anime_row("209867"), {"item_id": "anime/mal/21", "item": {"media_id": "21", "source": "mal", "media_type": "anime"}}], "count": 2},
+            ("POST", "media/tv/tmdb/209867/1/episodes/1/watch"): {"consumption_id": 5},
+        }
+    )
+
+    res = _history.add(adapter, [{"type": "episode", "show_ids": {"tmdb": "209867"}, "season": 1, "episode": 1, "watched_at": "2026-01-01T10:00:00Z"}])
+
+    assert res["count"] == 1
+    calls = _bucket_history_calls(adapter)
+    assert ("GET", "media/tv/tmdb/209867/1/1/history", {"library_media_type": "anime", "limit": 200, "offset": 0}, None) in calls
+    assert ("POST", "media/tv/tmdb/209867/1/episodes/1/watch", None, {"end_date": "2026-01-01T10:00:00Z", "library_media_type": "anime"}) in calls
+
+
+@pytest.mark.parametrize(("enabled", "expected"), [(True, {"end_date": "2026-01-01T10:00:00Z", "library_media_type": "anime"}), (False, {"end_date": "2026-01-01T10:00:00Z"})])
+def test_floppy_history_add_sends_new_anime_to_anime_library_only_when_enabled(enabled: bool, expected: dict[str, Any]) -> None:
+    from providers.sync.floppy import _history
+
+    _history.prepare_source_snapshot([])
+    adapter = AdapterStub(
+        {("POST", "media/tv/tmdb/209867/1/episodes/1/watch"): {"consumption_id": 5}},
+        {"floppy": {"watchlist_name": "Watchlist", "anime_library": enabled}},
+    )
+
+    res = _history.add(adapter, [_bucket_episode()])
+
+    assert res["count"] == 1
+    assert [c["json"] for c in adapter.client.session.calls if c["method"] == "POST"] == [expected]
+    assert [c["path"] for c in adapter.client.session.bucket_lookups] == ["media/tv", "media/anime"]
+
+
+def test_floppy_history_add_keeps_anime_in_tv_when_show_already_lives_there() -> None:
+    from providers.sync.floppy import _history
+
+    _history.prepare_source_snapshot([])
+    adapter = AdapterStub(
+        {
+            ("GET", "media/tv"): {"results": [_plain_tv_row("209867")], "count": 1},
+            ("POST", "media/tv/tmdb/209867/1/episodes/1/watch"): {"consumption_id": 5},
+        },
+        {"floppy": {"watchlist_name": "Watchlist", "anime_library": True}},
+    )
+
+    res = _history.add(adapter, [_bucket_episode()])
+
+    assert res["count"] == 1
+    assert [c["json"] for c in adapter.client.session.calls if c["method"] == "POST"] == [{"end_date": "2026-01-01T10:00:00Z"}]
+
+
+def test_floppy_history_add_prefers_anime_library_when_show_is_in_both() -> None:
+    from providers.sync.floppy._common import show_bucket
+
+    adapter = AdapterStub(
+        {
+            ("GET", "media/tv"): {"results": [_plain_tv_row("209867")], "count": 1},
+            ("GET", "media/anime"): {"results": [_grouped_anime_row("209867")], "count": 1},
+        }
+    )
+
+    assert show_bucket(adapter, "209867") == "anime"
+    assert show_bucket(adapter, "1") is None
+
+
+def test_floppy_history_remove_in_anime_library_removes_latest_watch() -> None:
+    from providers.sync.floppy import _history
+
+    _history.prepare_source_snapshot([])
+    adapter = AdapterStub(
+        {
+            ("GET", "media/anime"): {"results": [_grouped_anime_row("209867")], "count": 1},
+            ("GET", "media/tv/tmdb/209867/1/1/history"): {"results": [{"consumption_id": 9, "end_date": "2026-01-01T10:00:00Z"}], "count": 1},
+            ("DELETE", "media/tv/tmdb/209867/1/episodes/1/watch"): ResponseStub(204, {}),
+        }
+    )
+
+    res = _history.remove(adapter, [{"type": "episode", "show_ids": {"tmdb": "209867"}, "season": 1, "episode": 1, "_floppy_consumption_id": 9}])
+
+    assert res["count"] == 1
+    assert [(c["method"], c["path"], c.get("params")) for c in adapter.client.session.calls if c["method"] == "DELETE"] == [("DELETE", "media/tv/tmdb/209867/1/episodes/1/watch", {"library_media_type": "anime"})]
+
+
+def test_floppy_ratings_use_anime_route_for_shows_in_anime_library() -> None:
+    from providers.sync.floppy import _ratings
+
+    adapter = AdapterStub(
+        {
+            ("GET", "media/anime"): {"results": [_grouped_anime_row("209867")], "count": 1},
+            ("POST", "media/tv"): ResponseStub(409, {"detail": "exists"}),
+            ("PATCH", "media/anime/tmdb/209867"): {"score": 9},
+            ("PATCH", "media/tv/tmdb/209867/1/episodes/2/score"): {"score": "8"},
+        }
+    )
+
+    res = _ratings.add(
+        adapter,
+        [
+            {"type": "show", "ids": {"tmdb": "209867"}, "rating": 9},
+            {"type": "episode", "show_ids": {"tmdb": "209867"}, "season": 1, "episode": 2, "rating": 8},
+        ],
+    )
+
+    assert res["count"] == 2
+    writes = [(c["method"], c["path"], c.get("json")) for c in adapter.client.session.calls if c["method"] != "GET"]
+    assert ("POST", "media/tv", {"source": "tmdb", "media_id": "209867", "status": 0, "score": 9.0, "library_media_type": "anime"}) in writes
+    assert ("PATCH", "media/anime/tmdb/209867", {"score": 9.0}) in writes
+    assert ("PATCH", "media/tv/tmdb/209867/1/episodes/2/score", {"score": 8.0, "library_media_type": "anime"}) in writes
+
+
+def test_floppy_ratings_index_reads_shows_from_anime_library() -> None:
+    from providers.sync.floppy import _ratings
+
+    row = {**_grouped_anime_row("209867"), "score": 9.0}
+    adapter = AdapterStub(
+        {
+            ("GET", "media/movie"): {"results": [], "count": 0},
+            ("GET", "media/tv"): {"results": [], "count": 0},
+            ("GET", "media/anime"): {"results": [row, {"item_id": "anime/mal/21", "score": 8.0}], "count": 2},
+        }
+    )
+
+    out = _ratings.build_index(adapter)
+
+    assert list(out) == ["tmdb:209867#show"]
+    assert out["tmdb:209867#show"]["type"] == "show"
+    assert out["tmdb:209867#show"]["rating"] == 9.0
+
+
+def test_floppy_watchlist_add_places_new_anime_show_in_anime_library() -> None:
+    from providers.sync.floppy import _watchlist
+
+    adapter = AdapterStub(
+        {
+            ("GET", "lists"): {"results": [{"id": 1, "name": "Watchlist"}], "count": 1},
+            ("PUT", "media/tv/tmdb/209867/lists/1"): {},
+        },
+        {"floppy": {"watchlist_name": "Watchlist", "anime_library": True}},
+    )
+
+    res = _watchlist.add(adapter, [{"type": "show", "ids": {"tmdb": "209867", "anilist": "154587"}}])
+
+    assert res["count"] == 1
+    assert [(c["path"], c.get("json")) for c in adapter.client.session.calls if c["method"] == "PUT"] == [("media/tv/tmdb/209867/lists/1", {"library_media_type": "anime"})]
+
+
+def test_floppy_ratings_create_untracked_season_score_in_anime_library() -> None:
+    from providers.sync.floppy import _ratings
+
+    adapter = AdapterStub(
+        {
+            ("GET", "media/anime"): {"results": [_grouped_anime_row("209867")], "count": 1},
+            ("PATCH", "media/tv/tmdb/209867/1"): ResponseStub(404, {"detail": "Season not found or not tracked."}),
+            ("POST", "media/season"): ResponseStub(201, {"id": 1}),
+        }
+    )
+
+    res = _ratings.add(adapter, [{"type": "season", "show_ids": {"tmdb": "209867"}, "season": 1, "rating": 7}])
+
+    assert res["count"] == 1
+    writes = [(c["method"], c["path"], c.get("params"), c.get("json")) for c in adapter.client.session.calls if c["method"] != "GET"]
+    assert writes == [
+        ("PATCH", "media/tv/tmdb/209867/1", {"library_media_type": "anime"}, {"score": 7.0}),
+        ("POST", "media/season", None, {"source": "tmdb", "media_id": "209867", "season_number": 1, "status": 0, "score": 7.0, "library_media_type": "anime"}),
+    ]
+
+
+def test_floppy_history_remove_in_anime_library_reports_failed_history_read() -> None:
+    from providers.sync.floppy import _history
+
+    _history.prepare_source_snapshot([])
+    adapter = AdapterStub(
+        {
+            ("GET", "media/anime"): {"results": [_grouped_anime_row("209867")], "count": 1},
+            ("GET", "media/tv/tmdb/209867/1/1/history"): ResponseStub(500, {"detail": "Internal Server Error."}),
+        }
+    )
+
+    res = _history.remove(adapter, [{"type": "episode", "show_ids": {"tmdb": "209867"}, "season": 1, "episode": 1, "_floppy_consumption_id": 9}])
+
+    assert res["count"] == 0
+    assert res["unresolved"][0]["reason"] == "floppy_history_remove_failed"
+    assert [c["method"] for c in adapter.client.session.calls if c["method"] == "DELETE"] == []
+
+
+def test_floppy_collection_add_follows_show_already_in_anime_library() -> None:
+    from providers.sync.floppy import _collection
+
+    adapter = AdapterStub(
+        {
+            ("GET", "media/anime"): {"results": [_grouped_anime_row("209867")], "count": 1},
+            ("POST", "media/tv"): ResponseStub(409, {"detail": "Conflict. Media is already tracked."}),
+            ("GET", "media/anime/tmdb/209867"): {"id": 7564, "item_id": "anime/tmdb/209867"},
+            ("POST", "collection"): {"id": 1},
+        }
+    )
+
+    res = _collection.add(adapter, [{"type": "show", "ids": {"tmdb": "209867"}}])
+
+    assert res["count"] == 1
+    calls = [(c["method"], c["path"], c.get("json")) for c in adapter.client.session.calls if c["path"] != "media/anime"]
+    assert calls == [
+        ("POST", "media/tv", {"source": "tmdb", "media_id": "209867", "status": 0, "library_media_type": "anime"}),
+        ("GET", "media/anime/tmdb/209867", None),
+        ("POST", "collection", {"item_id": "7564", "media_type": "digital"}),
+    ]
+
+
+def test_floppy_collection_add_resolves_tracked_anime_season() -> None:
+    from providers.sync.floppy import _collection
+
+    adapter = AdapterStub(
+        {
+            ("GET", "media/anime"): {"results": [_grouped_anime_row("209867")], "count": 1},
+            ("POST", "media/season"): ResponseStub(409, {"detail": "Conflict. Media is already tracked."}),
+            ("GET", "media/tv/tmdb/209867/1"): {"id": 7565, "item_id": "tv/tmdb/209867/1"},
+            ("POST", "collection"): {"id": 2},
+        }
+    )
+
+    res = _collection.add(adapter, [{"type": "season", "show_ids": {"tmdb": "209867"}, "season": 1}])
+
+    assert res["count"] == 1
+    calls = [(c["method"], c["path"], c.get("params"), c.get("json")) for c in adapter.client.session.calls if c["path"] != "media/anime"]
+    assert calls == [
+        ("POST", "media/season", None, {"source": "tmdb", "media_id": "209867", "status": 0, "library_media_type": "anime", "season_number": 1}),
+        ("GET", "media/tv/tmdb/209867/1", {"library_media_type": "anime"}, None),
+        ("POST", "collection", None, {"item_id": "7565", "media_type": "digital"}),
+    ]
+
+
+def test_floppy_collection_add_keeps_plain_tv_show_unflagged() -> None:
+    from providers.sync.floppy import _collection
+
+    adapter = AdapterStub(
+        {
+            ("GET", "media/tv"): {"results": [_plain_tv_row("1396")], "count": 1},
+            ("POST", "media/tv"): {"id": 1716, "item_id": "tv/tmdb/1396"},
+            ("POST", "collection"): {"id": 3},
+        }
+    )
+
+    res = _collection.add(adapter, [{"type": "show", "ids": {"tmdb": "1396"}}])
+
+    assert res["count"] == 1
+    posts = [(c["path"], c.get("json")) for c in adapter.client.session.calls if c["method"] == "POST"]
+    assert posts == [("media/tv", {"source": "tmdb", "media_id": "1396", "status": 0}), ("collection", {"item_id": "1716", "media_type": "digital"})]
