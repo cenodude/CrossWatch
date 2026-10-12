@@ -50,6 +50,7 @@ _RUN_TYPES = ("sync_run_started", "sync_run_finished")
 _SCROBBLE_STATUS = {
     "scrobble_completed": "completed",
     "scrobble_failed": "failed",
+    "scrobble_skipped": "skipped",
     "scrobble_started": "running",
     "scrobble_playback": "running",
     "rating_applied": "rated",
@@ -85,7 +86,7 @@ _PROBLEM_TYPES_SQL = "('write_failed','unresolved_recorded','blackbox_promoted',
 _UNRESOLVED_TYPES_SQL = "('write_failed','unresolved_recorded')"
 
 # DO NOT FORGET to update the version when the correlation key/status/summary logic
-CORRELATION_VERSION = 15
+CORRELATION_VERSION = 16
 
 
 def _with_reason_labels(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -222,6 +223,8 @@ def _derive_status(events: list[dict[str, Any]], extra_problems: int = 0) -> str
             if "scrobble_completed" in types:
                 return "completed"
             if _skipped_delivery(detail):
+                return "skipped"
+            if "scrobble_skipped" in types and "scrobble_failed" not in types and detail.get("state") == "stopped":
                 return "skipped"
             if detail.get("state") in {"running", "paused", "stopped"}:
                 return str(detail["state"])
@@ -524,6 +527,9 @@ def _summarize_scrobble(status: str, events: list[dict[str, Any]], dst: str) -> 
         return f"Paused {name}{to}{tail}"
     if status == "skipped":
         why = _skipped_delivery(_detail(playback or last))
+        if not why:
+            skip = next((e for e in reversed(events) if e.get("event_type") == "scrobble_skipped"), None)
+            why = str((skip or {}).get("reason_code") or (skip or {}).get("reason") or "")
         return f"Skipped {name}{to}{tail}: {friendly_reason(why)}" if why else f"Skipped {name}{to}{tail}"
     if status == "stopped":
         return f"Stopped before completion: {name}{to}{tail}"

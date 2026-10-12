@@ -566,7 +566,7 @@ def _scoped_statistics(cfg: dict[str, Any], request: Request | None, since: int,
         if row.get("run_id"):
             entry["runs"] += 1 if row.get("event_type") == "sync_run_finished" else 0
             entry["bad"] += 1 if row.get("event_type") in _PROBLEM_EVENTS else 0
-        elif row.get("event_type") in ("scrobble_completed", "rating_applied", "scrobble_failed", "rating_failed"):
+        elif row.get("event_type") in ("scrobble_completed", "rating_applied", "scrobble_skipped", "scrobble_failed", "rating_failed"):
             entry["scrobbles"] += 1
             entry["ok"] += 1 if row.get("event_type") in ("scrobble_completed", "rating_applied") else 0
             entry["bad"] += 1 if row.get("event_type") in ("scrobble_failed", "rating_failed") else 0

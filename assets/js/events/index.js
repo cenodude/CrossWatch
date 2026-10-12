@@ -151,6 +151,7 @@ const BADGE = {
   scrobble_stopped: "Stopped",
   scrobble_completed: "Watched",
   scrobble_failed: "Scrobble failed",
+  scrobble_skipped: "Scrobble skipped",
   rating_applied: "Rated",
   rating_failed: "Rating failed",
   audit_login: "Login",
@@ -198,6 +199,7 @@ const ICON = {
   scrobble_started: "play_arrow",
   scrobble_completed: "check_circle",
   scrobble_failed: "error",
+  scrobble_skipped: "block",
   rating_applied: "star",
   rating_failed: "error",
   audit_login: "login",
@@ -270,6 +272,7 @@ const titleLine = (e) => {
     case "scrobble_stopped": return "Playback stopped";
     case "scrobble_completed": return "Watched";
     case "scrobble_failed": return `Scrobble failed${e.reason_code ? ` · ${e.reason_code}` : ""}`;
+    case "scrobble_skipped": return `Scrobble skipped${e.reason_code ? ` · ${e.reason_code}` : ""}`;
     case "rating_applied": return "Rating forwarded";
     case "rating_failed": return `Rating failed${e.reason_code ? ` · ${e.reason_code}` : ""}`;
     default: {
@@ -287,7 +290,7 @@ const EVENT_TYPES = [
   "blackbox_promoted", "blackbox_blocked", "tombstone_created", "plan_created",
   "provider_health", "sync_run_started", "sync_run_finished",
 ];
-const SCROBBLE_TYPES = ["", "scrobble_playback", "scrobble_started", "scrobble_completed", "scrobble_failed", "rating_applied", "rating_failed"];
+const SCROBBLE_TYPES = ["", "scrobble_playback", "scrobble_started", "scrobble_completed", "scrobble_skipped", "scrobble_failed", "rating_applied", "rating_failed"];
 const AUDIT_TYPES = ["", "audit_login", "audit_login_failed", "audit_login_blocked", "audit_2fa_required", "audit_2fa_failed", "audit_logout", "audit_logout_all", "audit_logout_others", "audit_user_created", "audit_user_updated", "audit_user_deleted", "audit_credentials_updated", "audit_totp_setup", "audit_totp_enabled", "audit_totp_disabled", "audit_plex_sso_linked", "audit_plex_sso_unlinked", "audit_api_action"];
 const OUTCOME_ITEMS = {
   sync: [{ value: "", label: "Any outcome" }, { value: "successful", label: "Successful" }, { value: "problems", label: "Problems" }, { value: "informational", label: "Informational" }],
@@ -1359,6 +1362,7 @@ export default {
       scrobble_started: "Playback started.",
       scrobble_completed: "Playback finished and scrobbled.",
       scrobble_failed: "The provider rejected the scrobble.",
+      scrobble_skipped: "The provider did not record the scrobble, nothing went wrong.",
       rating_applied: "Rating forwarded to the target.",
       rating_failed: "The provider rejected the rating.",
     };
