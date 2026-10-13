@@ -59,6 +59,8 @@ DEFAULT_SCHEDULER_WEBHOOKS: dict[str, Any] = {
     "pushover_user": "",
     "timeout_seconds": 10,
     "alert_on_unresolved": False,
+    "alert_on_watcher": False,
+    "alert_on_provider_auth": False,
 }
 
 _ENC_PREFIX = "enc:v1:"
@@ -1368,6 +1370,12 @@ def _normalize_scheduler_webhooks(value: Any) -> dict[str, Any]:
     out["enabled"] = _scheduler_webhook_flag(src.get("enabled"))
     out["alert_on_unresolved"] = _scheduler_webhook_flag(
         src.get("alert_on_unresolved") if src.get("alert_on_unresolved") is not None else src.get("alertOnUnresolved")
+    )
+    out["alert_on_watcher"] = _scheduler_webhook_flag(
+        src.get("alert_on_watcher") if src.get("alert_on_watcher") is not None else src.get("alertOnWatcher")
+    )
+    out["alert_on_provider_auth"] = _scheduler_webhook_flag(
+        src.get("alert_on_provider_auth") if src.get("alert_on_provider_auth") is not None else src.get("alertOnProviderAuth")
     )
     out["url"] = _http_url_or_blank(src.get("url") or src.get("default_url"))
     out["base_url"] = _http_url_or_blank(src.get("base_url") or src.get("healthchecks_base_url"))

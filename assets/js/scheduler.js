@@ -298,7 +298,9 @@ html[data-cw-theme="flat-light"] #sec-scheduling .sch-card-icon{background:#eef2
     pushover_token: "",
     pushover_user: "",
     timeout_seconds: 10,
-    alert_on_unresolved: false
+    alert_on_unresolved: false,
+    alert_on_watcher: false,
+    alert_on_provider_auth: false
   };
   let _webhooksHydrated = false;
   let _captureProviders = [];
@@ -342,6 +344,9 @@ html[data-cw-theme="flat-light"] #sec-scheduling .sch-card-icon{background:#eef2
     webhook_start: "Start callback URL:\nOptional explicit http:// or https:// POST destination when a scheduled sync starts.\nThis overrides the compatible base URL for start events.",
     webhook_success: "Success callback URL:\nOptional explicit http:// or https:// POST destination when a scheduled sync finishes successfully.\nThis overrides the compatible base URL for success events.",
     webhook_failure: "Failure callback URL:\nOptional explicit http:// or https:// POST destination when a scheduled sync fails.\nThis overrides the compatible base URL for failure events.",
+    webhook_alert_watcher: "Alert when the watcher stops:\nSends watcher_stopped when an enabled watcher route is not running, and watcher_recovered when it runs again.\nEach change is sent once. This includes a watcher that was stopped by hand or never started. Turning the watcher source or the route off does not send an alert.\nCrossWatch JSON sends these to the All events URL.",
+    webhook_alert_provider_auth: "Alert when a provider sign-in is lost:\nSends provider_auth_lost when a provider profile used by an enabled sync pair, watcher route or scrobble webhook needs a new sign-in, and provider_auth_recovered when it works again.\nEach change is sent once. A provider that is only unreachable does not send an alert.\nCrossWatch JSON sends these to the All events URL.",
+    webhook_test: "Send test notification:\nSends one test message with the saved webhook settings.\nSave your changes first.",
     webhook_alert_unresolved: "Alert on unresolved items:\nOff means only a crashed or aborted run sends the failure callback.\nOn also sends failure when a run finishes with unresolved items or provider errors, such as a destination rejecting a write. The run itself still counts as successful in CrossWatch."
   };
   const defaultJob = () => ({ id: genId(), pair_id: null, at: null, days: [], after: null, active: true });
@@ -407,7 +412,9 @@ html[data-cw-theme="flat-light"] #sec-scheduling .sch-card-icon{background:#eef2
     pushover_token: String(raw.pushover_token || raw.pushoverToken || "").trim(),
     pushover_user: String(raw.pushover_user || raw.pushoverUser || "").trim(),
     timeout_seconds: Math.max(1, Math.min(60, parseInt(raw.timeout_seconds || raw.timeoutSeconds || 10, 10) || 10)),
-    alert_on_unresolved: (raw.alert_on_unresolved ?? raw.alertOnUnresolved) === true
+    alert_on_unresolved: (raw.alert_on_unresolved ?? raw.alertOnUnresolved) === true,
+    alert_on_watcher: (raw.alert_on_watcher ?? raw.alertOnWatcher) === true,
+    alert_on_provider_auth: (raw.alert_on_provider_auth ?? raw.alertOnProviderAuth) === true
   });
   const isHttpUrl = (value) => {
     const text = String(value || "").trim();
@@ -1037,10 +1044,14 @@ const ensureStdEnabledToggle = () => {
       pushover_token: $("#schWebhookPushoverToken")?.value || "",
       pushover_user: $("#schWebhookPushoverUser")?.value || "",
       timeout_seconds: $("#schWebhookTimeout")?.value || 10,
-      alert_on_unresolved: !!$("#schWebhookAlertUnresolved")?.checked
+      alert_on_unresolved: !!$("#schWebhookAlertUnresolved")?.checked,
+      alert_on_watcher: !!$("#schWebhookAlertWatcher")?.checked,
+      alert_on_provider_auth: !!$("#schWebhookAlertProviderAuth")?.checked
     });
     setWebhookToggleState(enabledInput, _webhooks.enabled);
     setWebhookToggleState($("#schWebhookAlertUnresolved"), _webhooks.alert_on_unresolved);
+    setWebhookToggleState($("#schWebhookAlertWatcher"), _webhooks.alert_on_watcher);
+    setWebhookToggleState($("#schWebhookAlertProviderAuth"), _webhooks.alert_on_provider_auth);
     applyWebhookVisibility();
   };
   const webhookFormat = () => normalizeWebhookFormat(_webhooks.payload_format);
@@ -1098,10 +1109,15 @@ const ensureStdEnabledToggle = () => {
     pushoverToken.value = _webhooks.pushover_token || "";
     pushoverUser.value = _webhooks.pushover_user || "";
     timeout.value = String(_webhooks.timeout_seconds || 10);
-    if (alertUnresolved) {
-      alertUnresolved.checked = !!_webhooks.alert_on_unresolved;
-      setWebhookToggleState(alertUnresolved, alertUnresolved.checked);
-    }
+    [
+      [alertUnresolved, _webhooks.alert_on_unresolved],
+      [$("#schWebhookAlertWatcher"), _webhooks.alert_on_watcher],
+      [$("#schWebhookAlertProviderAuth"), _webhooks.alert_on_provider_auth]
+    ].forEach(([input, on]) => {
+      if (!input) return;
+      input.checked = !!on;
+      setWebhookToggleState(input, input.checked);
+    });
     applyWebhookVisibility();
   };
   const webhooksValidation = () => {
@@ -1120,6 +1136,7 @@ const ensureStdEnabledToggle = () => {
       }
       return keyIssues;
     }
+    const healthAlerts = _webhooks.alert_on_watcher || _webhooks.alert_on_provider_auth;
     const entries = format === "notifiarr" || format === "ntfy" ? [
       [WEBHOOK_URL_FIELD[format].label, _webhooks.url]
     ] : [
@@ -1141,7 +1158,25 @@ const ensureStdEnabledToggle = () => {
         ? "Scheduler Webhooks: add at least one callback URL or turn webhooks off."
         : `Scheduler Webhooks: add the ${WEBHOOK_URL_FIELD[format].label} or turn webhooks off.`);
     }
+    if (_webhooks.enabled && healthAlerts && format === "crosswatch" && !_webhooks.url) {
+      issues.push("Scheduler Webhooks: watcher and provider sign-in alerts need the All events URL.");
+    }
     return issues;
+  };
+  const sendWebhookTest = async () => {
+    const button = $("#btnWebhookTest");
+    const status = $("#schWebhookTestStatus");
+    if (button) button.disabled = true;
+    statusText(status, "Sending test notification...");
+    try {
+      const res = await fetch("/api/scheduling/webhooks/test", { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      statusText(status, res.ok && data.ok ? "Test notification delivered." : `Test failed: ${data.error || `HTTP ${res.status}`}`);
+    } catch {
+      statusText(status, "Test failed: could not reach CrossWatch.");
+    } finally {
+      if (button) button.disabled = false;
+    }
   };
   const alignedField = (control) => stackWrap("field-mini control-align", Object.assign(el("div", "subnote"), { textContent: "Label" }), control);
   const guardInput = ({ id, value, placeholder, title, onChange }) => {
@@ -2117,6 +2152,18 @@ const ensureStdEnabledToggle = () => {
       <span class="cx-toggle-text"><span class="th-help">Alert on unresolved items<button type="button" class="sch-help" aria-label="Alert on unresolved items help" data-help-key="webhook_alert_unresolved"></button></span></span>
       <span class="cx-toggle-state" aria-hidden="true"></span>
     </label>
+    <label class="cx-toggle">
+      <input type="checkbox" id="schWebhookAlertWatcher">
+      <span class="cx-toggle-ui" aria-hidden="true"></span>
+      <span class="cx-toggle-text"><span class="th-help">Alert when the watcher stops<button type="button" class="sch-help" aria-label="Alert when the watcher stops help" data-help-key="webhook_alert_watcher"></button></span></span>
+      <span class="cx-toggle-state" aria-hidden="true"></span>
+    </label>
+    <label class="cx-toggle">
+      <input type="checkbox" id="schWebhookAlertProviderAuth">
+      <span class="cx-toggle-ui" aria-hidden="true"></span>
+      <span class="cx-toggle-text"><span class="th-help">Alert when a provider sign-in is lost<button type="button" class="sch-help" aria-label="Alert when a provider sign-in is lost help" data-help-key="webhook_alert_provider_auth"></button></span></span>
+      <span class="cx-toggle-state" aria-hidden="true"></span>
+    </label>
   </div>
   <div class="stack two" data-webhook-format-for="pushover">
     <label class="field-mini"><div class="subnote"><span class="th-help">Pushover application token<button type="button" class="sch-help" aria-label="Pushover application token help" data-help-key="webhook_pushover_token"></button></span></div><input id="schWebhookPushoverToken" name="schWebhookPushoverToken" type="text" maxlength="30" pattern="[A-Za-z0-9]{30}" autocomplete="off" spellcheck="false" placeholder="30 character application token"></label>
@@ -2129,6 +2176,10 @@ const ensureStdEnabledToggle = () => {
     <label class="field-mini"><div class="subnote"><span class="th-help">Start callback URL<button type="button" class="sch-help" aria-label="Start callback URL help" data-help-key="webhook_start"></button></span></div><input id="schWebhookStart" name="schWebhookStart" type="url" inputmode="url" pattern="https?://.+" autocomplete="off" placeholder="https://hooks.example.com/crosswatch/start"></label>
     <label class="field-mini"><div class="subnote"><span class="th-help">Success callback URL<button type="button" class="sch-help" aria-label="Success callback URL help" data-help-key="webhook_success"></button></span></div><input id="schWebhookSuccess" name="schWebhookSuccess" type="url" inputmode="url" pattern="https?://.+" autocomplete="off" placeholder="https://hooks.example.com/crosswatch/success"></label>
     <label class="field-mini"><div class="subnote"><span class="th-help">Failure callback URL<button type="button" class="sch-help" aria-label="Failure callback URL help" data-help-key="webhook_failure"></button></span></div><input id="schWebhookFailure" name="schWebhookFailure" type="url" inputmode="url" pattern="https?://.+" autocomplete="off" placeholder="https://hooks.example.com/crosswatch/failure"></label>
+  </div>
+  <div class="sch-adv-actions">
+    <button type="button" class="btn" id="btnWebhookTest" title="Sends one test message with the saved webhook settings. Save your changes first.">Send test notification</button>
+    <div class="status inline" id="schWebhookTestStatus"></div>
   </div>
 </section>
 `;
@@ -2172,6 +2223,7 @@ const ensureStdEnabledToggle = () => {
     };
     $("#btnAddCaptureJob").onclick = () => { _captureJobs.push(defaultCaptureJob()); renderCaptureJobs(); };
     $("#btnAddEventRule").onclick = () => { _eventRules.push(defaultEventRule()); renderEventRules(); };
+    $("#btnWebhookTest").onclick = sendWebhookTest;
     $("#schAdvEnabled").onchange = () => {
       _advEnabled = !!$("#schAdvEnabled").checked;
 

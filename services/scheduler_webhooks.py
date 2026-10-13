@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+from datetime import datetime, timezone
 from typing import Any, Callable
 from urllib.parse import urlsplit, urlunsplit
 
@@ -13,6 +14,11 @@ import requests
 SCHEDULED_SYNC_MODES = {"standard", "advanced", "advanced_workflow"}
 EVENTS = {"start", "success", "failure"}
 BLOCKED_HOSTNAMES = {"localhost", "localhost.localdomain"}
+EMBEDDED_IPV4_NETWORKS = (
+    ipaddress.ip_network("64:ff9b::/96"),
+    ipaddress.ip_network("::ffff:0:0:0/96"),
+    ipaddress.ip_network("::/96"),
+)
 PAYLOAD_FORMAT_LABELS = {
     "crosswatch": "CrossWatch JSON",
     "notifiarr": "Notifiarr Passthrough",
@@ -27,6 +33,35 @@ PUSHOVER_MESSAGE_MAX = 1024
 PUSHOVER_PRIORITY = {"start": -1, "success": 0, "failure": 1}
 NTFY_MESSAGE_MAX_BYTES = 4096
 NTFY_PRIORITY = {"start": 2, "success": 3, "failure": 4}
+NOTIFIARR_COLORS = {"start": "4F8CFF", "success": "2ECC71", "failure": "FF5A5F"}
+HEALTH_EVENTS: dict[str, tuple[str, str, str, str]] = {
+    "watcher_stopped": (
+        "alert_on_watcher",
+        "failure",
+        "CrossWatch watcher stopped",
+        "These enabled watcher routes are not running:",
+    ),
+    "watcher_recovered": (
+        "alert_on_watcher",
+        "success",
+        "CrossWatch watcher recovered",
+        "These watcher routes are running again:",
+    ),
+    "provider_auth_lost": (
+        "alert_on_provider_auth",
+        "failure",
+        "CrossWatch provider sign-in lost",
+        "Sign in again in CrossWatch for:",
+    ),
+    "provider_auth_recovered": (
+        "alert_on_provider_auth",
+        "success",
+        "CrossWatch provider sign-in recovered",
+        "Sign-in works again for:",
+    ),
+}
+TEST_TITLE = "CrossWatch test notification"
+TEST_MESSAGE = "Scheduler webhooks are set up correctly."
 
 DEFAULT_WEBHOOKS: dict[str, Any] = {
     "enabled": False,
@@ -41,6 +76,8 @@ DEFAULT_WEBHOOKS: dict[str, Any] = {
     "pushover_user": "",
     "timeout_seconds": 10,
     "alert_on_unresolved": False,
+    "alert_on_watcher": False,
+    "alert_on_provider_auth": False,
 }
 
 
@@ -48,7 +85,9 @@ def normalize_scheduler_webhooks(value: Any) -> dict[str, Any]:
     src = value if isinstance(value, dict) else {}
     out = dict(DEFAULT_WEBHOOKS)
     out["enabled"] = _as_bool(src.get("enabled"), False)
-    out["alert_on_unresolved"] = _as_bool(src.get("alert_on_unresolved") or src.get("alertOnUnresolved"), False)
+    out["alert_on_unresolved"] = _as_bool(_first_set(src, "alert_on_unresolved", "alertOnUnresolved"), False)
+    out["alert_on_watcher"] = _as_bool(_first_set(src, "alert_on_watcher", "alertOnWatcher"), False)
+    out["alert_on_provider_auth"] = _as_bool(_first_set(src, "alert_on_provider_auth", "alertOnProviderAuth"), False)
     out["url"] = _http_url_or_blank(src.get("url") or src.get("default_url"))
     out["base_url"] = _http_url_or_blank(src.get("base_url") or src.get("healthchecks_base_url"))
     for key in ("start_url", "success_url", "failure_url"):
@@ -101,6 +140,13 @@ def callback_url(webhooks: dict[str, Any], event: str) -> str:
     return base
 
 
+def health_callback_url(webhooks: dict[str, Any]) -> str:
+    fmt = _payload_format(webhooks.get("payload_format") or webhooks.get("format"))
+    if fmt == "pushover":
+        return callback_url(webhooks, "failure")
+    return str(webhooks.get("url") or webhooks.get("default_url") or "").strip()
+
+
 def payload_format_label(value: Any) -> str:
     return PAYLOAD_FORMAT_LABELS[_payload_format(value)]
 
@@ -145,11 +191,39 @@ def build_payload(
     fmt = _payload_format(payload_format)
     if fmt == "notifiarr":
         return _notifiarr_payload(payload, ctx, snap)
-    if fmt == "pushover":
-        return _pushover_payload(payload)
-    if fmt == "ntfy":
-        return _ntfy_payload(payload)
+    if fmt in {"pushover", "ntfy"}:
+        title, description, fields = _notification_text(payload)
+        return _push_message(fmt, ev, title, _plain_message(description, fields))
     return payload
+
+
+def build_health_payload(event: str, items: list[dict[str, Any]], payload_format: str = "crosswatch") -> dict[str, Any]:
+    ev = str(event or "").strip().lower()
+    _, level, title, lead = HEALTH_EVENTS[ev]
+    rows = [(str(item.get("label") or ""), str(item.get("detail") or "")) for item in items]
+    fmt = _payload_format(payload_format)
+    if fmt in {"pushover", "ntfy"}:
+        lines = [f"- {label}: {detail}" if detail else f"- {label}" for label, detail in rows]
+        return _push_message(fmt, level, title, "\n".join([lead, *lines]))
+    if fmt == "notifiarr":
+        fields = [{"title": label, "text": detail or title, "inline": False} for label, detail in rows]
+        return _notifiarr_envelope(f"crosswatch-{ev}", level, title, lead, fields, "CrossWatch Health")
+    return {
+        "event": ev,
+        "status": "ok" if level == "success" else "failed",
+        "title": title,
+        "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "items": [dict(item) for item in items],
+    }
+
+
+def build_test_payload(payload_format: str = "crosswatch") -> dict[str, Any]:
+    fmt = _payload_format(payload_format)
+    if fmt in {"pushover", "ntfy"}:
+        return _push_message(fmt, "success", TEST_TITLE, TEST_MESSAGE)
+    if fmt == "notifiarr":
+        return _notifiarr_envelope("crosswatch-test", "success", TEST_TITLE, TEST_MESSAGE, [], "CrossWatch Scheduler")
+    return {"event": "test", "status": "ok", "title": TEST_TITLE, "message": TEST_MESSAGE}
 
 
 def resolve_completion_event(cfg: dict[str, Any] | None, summary: dict[str, Any] | None) -> str:
@@ -192,12 +266,57 @@ def notify_scheduler_webhook(
     url = callback_url(webhooks, event)
     if not url:
         return False
+    fmt = str(webhooks.get("payload_format") or "crosswatch")
+    return _deliver(url, event, build_payload(event, context, summary, fmt), webhooks, log_fn)
+
+
+def notify_health_webhook(
+    cfg: dict[str, Any] | None,
+    event: str,
+    items: list[dict[str, Any]],
+    *,
+    log_fn: Callable[[str], None] | None = None,
+) -> bool:
+    ev = str(event or "").strip().lower()
+    if ev not in HEALTH_EVENTS or not items:
+        return False
+
+    sch = (cfg or {}).get("scheduling") if isinstance(cfg, dict) else {}
+    webhooks = normalize_scheduler_webhooks((sch if isinstance(sch, dict) else {}).get("webhooks"))
+    if not webhooks.get("enabled") or not webhooks.get(HEALTH_EVENTS[ev][0]):
+        return False
+
+    url = health_callback_url(webhooks)
+    if not url:
+        return False
+    fmt = str(webhooks.get("payload_format") or "crosswatch")
+    return _deliver(url, ev, build_health_payload(ev, items, fmt), webhooks, log_fn)
+
+
+def send_test_webhook(webhooks: dict[str, Any] | None) -> tuple[bool, str]:
+    hooks = normalize_scheduler_webhooks(webhooks)
+    url = health_callback_url(hooks) or callback_url(hooks, "success")
+    if not url:
+        return False, "No destination configured for this payload format."
+    logs: list[str] = []
+    fmt = str(hooks.get("payload_format") or "crosswatch")
+    ok = _deliver(url, "test", build_test_payload(fmt), hooks, logs.append)
+    detail = logs[-1].split(": ", 1)[-1] if logs else ""
+    return ok, "" if ok else detail or "Delivery failed."
+
+
+def _deliver(
+    url: str,
+    event: str,
+    payload: dict[str, Any],
+    webhooks: dict[str, Any],
+    log_fn: Callable[[str], None] | None,
+) -> bool:
     if not scheduler_webhook_url_allowed(url):
         _log(log_fn, f"[!] Scheduler webhook {event}: blocked unsafe URL")
         return False
 
     fmt = str(webhooks.get("payload_format") or "crosswatch")
-    payload = build_payload(event, context, summary, fmt)
     timeout = int(webhooks.get("timeout_seconds") or 10)
     try:
         resp = requests.post(
@@ -315,24 +434,18 @@ def _plain_message(description: str, fields: list[tuple[str, str]]) -> str:
     return "\n".join([description, *(f"{title}: {text}" for title, text in fields)])
 
 
-def _pushover_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    event = str(payload.get("event") or "").strip().lower()
-    title, description, fields = _notification_text(payload)
-    return {
-        "title": title[:PUSHOVER_TITLE_MAX],
-        "message": _plain_message(description, fields)[:PUSHOVER_MESSAGE_MAX],
-        "priority": PUSHOVER_PRIORITY.get(event, 0),
-    }
-
-
-def _ntfy_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    event = str(payload.get("event") or "").strip().lower()
-    title, description, fields = _notification_text(payload)
-    message = _plain_message(description, fields).encode("utf-8")[:NTFY_MESSAGE_MAX_BYTES]
+def _push_message(fmt: str, level: str, title: str, message: str) -> dict[str, Any]:
+    if fmt == "pushover":
+        return {
+            "title": title[:PUSHOVER_TITLE_MAX],
+            "message": message[:PUSHOVER_MESSAGE_MAX],
+            "priority": PUSHOVER_PRIORITY.get(level, 0),
+        }
+    body = message.encode("utf-8")[:NTFY_MESSAGE_MAX_BYTES]
     return {
         "title": title,
-        "message": message.decode("utf-8", "ignore"),
-        "priority": NTFY_PRIORITY.get(event, NTFY_PRIORITY["success"]),
+        "message": body.decode("utf-8", "ignore"),
+        "priority": NTFY_PRIORITY.get(level, NTFY_PRIORITY["success"]),
     }
 
 
@@ -340,14 +453,20 @@ def _notifiarr_payload(payload: dict[str, Any], context: dict[str, Any], summary
     event = str(payload.get("event") or "").strip().lower()
     title, description, text_fields = _notification_text(payload)
     fields = [{"title": name, "text": text, "inline": True} for name, text in text_fields]
-    color = {
-        "start": "4F8CFF",
-        "success": "2ECC71",
-        "failure": "FF5A5F",
-    }.get(event, "7D86C9")
-
     run_id = str(payload.get("run_id") or context.get("run_id") or summary.get("run_id") or "")
     notification_event = run_id or f"crosswatch-{event or 'scheduler'}"
+    return _notifiarr_envelope(notification_event, event, title, description, fields, "CrossWatch Scheduler")
+
+
+def _notifiarr_envelope(
+    notification_event: str,
+    level: str,
+    title: str,
+    description: str,
+    fields: list[dict[str, Any]],
+    footer: str,
+) -> dict[str, Any]:
+    color = NOTIFIARR_COLORS.get(level, "7D86C9")
     return {
         "notification": {
             "update": False,
@@ -370,7 +489,7 @@ def _notifiarr_payload(payload: dict[str, Any], context: dict[str, Any], summary
                 "content": "",
                 "description": description,
                 "fields": fields[:25],
-                "footer": "CrossWatch Scheduler",
+                "footer": footer,
             },
         },
     }
@@ -450,6 +569,8 @@ def _public_ip_allowed(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> boo
     mapped = getattr(ip, "ipv4_mapped", None)
     if mapped is not None:
         return _public_ip_allowed(mapped)
+    if isinstance(ip, ipaddress.IPv6Address) and any(ip in network for network in EMBEDDED_IPV4_NETWORKS):
+        return _public_ip_allowed(ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF))
     return bool(ip.is_global)
 
 
@@ -470,6 +591,10 @@ def _pushover_key_or_blank(value: Any) -> str:
 def _digits_or_blank(value: Any) -> str:
     text = str(value or "").strip()
     return text if text.isdigit() else ""
+
+
+def _first_set(src: dict[str, Any], *keys: str) -> Any:
+    return next((src[key] for key in keys if src.get(key) is not None), None)
 
 
 def _as_bool(value: Any, default: bool = False) -> bool:

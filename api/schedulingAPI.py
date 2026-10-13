@@ -8,7 +8,7 @@ from typing import Any, Callable
 
 from fastapi import APIRouter, Body
 
-from services.scheduler_webhooks import payload_format_label, scheduler_webhooks_configured
+from services.scheduler_webhooks import payload_format_label, scheduler_webhooks_configured, send_test_webhook
 
 router = APIRouter(prefix="/api/scheduling", tags=["scheduling"])
 
@@ -349,6 +349,14 @@ def sched_stop() -> dict[str, Any]:
         st = {}
 
     return {"ok": True, "stopped": True, **st}
+
+
+@router.post("/webhooks/test")
+def sched_webhooks_test() -> dict[str, Any]:
+    load_config, *_ = _env()
+    scheduling = _as_dict((load_config() or {}).get("scheduling"))
+    ok, error = send_test_webhook(_as_dict(scheduling.get("webhooks")))
+    return {"ok": ok, "error": error}
 
 
 @router.get("")
