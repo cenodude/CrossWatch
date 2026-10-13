@@ -698,6 +698,7 @@ class SyncScheduler:
 
         self._status: dict[str, Any] = {
             "running": False,
+            "busy": False,
             "last_tick": 0,
             "last_run_ok": None,
             "last_run_at": 0,
@@ -1637,10 +1638,14 @@ class SyncScheduler:
                         self._std_cfg_key = ""
 
                     self._adv_seed_past_due_today(sch, tz)
-                    ran = self._adv_run_due(sch, tz)
-                    now_local = _as_now_in_tz(tz)
-                    nxt = self._adv_next(sch, now_local, tz)
-                    self._update_next(nxt, effective_mode="advanced")
+                    self._set_busy(True)
+                    try:
+                        ran = self._adv_run_due(sch, tz)
+                        now_local = _as_now_in_tz(tz)
+                        nxt = self._adv_next(sch, now_local, tz)
+                        self._update_next(nxt, effective_mode="advanced")
+                    finally:
+                        self._set_busy(False)
 
                     if ran:
                         # after running, re-evaluate
@@ -1688,13 +1693,17 @@ class SyncScheduler:
                         self._sleep_or_poke(2.0)
                         continue
 
-                    self._std_run_due()
+                    self._set_busy(True)
+                    try:
+                        self._std_run_due()
 
-                    now_local = _as_now_in_tz(tz)
-                    nxt2 = compute_next_run(now_local, sch)
-                    with self._lock:
-                        self._std_next_ts = int(nxt2.timestamp())
-                    self._update_next(nxt2, effective_mode=eff["mode"])
+                        now_local = _as_now_in_tz(tz)
+                        nxt2 = compute_next_run(now_local, sch)
+                        with self._lock:
+                            self._std_next_ts = int(nxt2.timestamp())
+                        self._update_next(nxt2, effective_mode=eff["mode"])
+                    finally:
+                        self._set_busy(False)
 
                     self._sleep_or_poke(0.5)
                     continue
@@ -1704,6 +1713,10 @@ class SyncScheduler:
         finally:
             with self._lock:
                 self._status["running"] = False
+
+    def _set_busy(self, busy: bool) -> None:
+        with self._lock:
+            self._status["busy"] = busy
 
     def _sleep_or_poke(self, seconds: float) -> None:
         if seconds <= 0:
