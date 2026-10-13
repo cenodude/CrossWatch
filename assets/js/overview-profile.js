@@ -32,7 +32,10 @@
   }
 
   function storedId() {
-    try { return String(localStorage.getItem(STORE_KEY) || "").trim(); } catch { return ""; }
+    try {
+      const id = String(localStorage.getItem(STORE_KEY) || "").trim().toLowerCase();
+      return /^[a-z0-9][a-z0-9-]{0,63}$/.test(id) ? id : "";
+    } catch { return ""; }
   }
 
   function storeId(id) {

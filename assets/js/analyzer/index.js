@@ -148,15 +148,32 @@ function injectAnalyzerCSS() {
 }
 let activeCleanup;
 let mountGeneration = 0;
+let mountedHost = null;
+let mountedContext = "";
+const contextKey = () => {
+  const auth = window.CW?.AuthState?.read?.();
+  return JSON.stringify([auth?.user?.id, auth?.user?.username, auth?.isManaged, auth?.permissions, window.CW?.OverviewProfile?.id || ""]);
+};
+const authReady = async () => {
+  try { await window.__cwAuthBootstrapPromise; } catch {}
+};
+const profileReady = () => {
+  const ready = window.CW?.OverviewProfile?.ready;
+  if (typeof ready?.then !== "function") return Promise.resolve();
+  return Promise.race([ready.catch(() => {}), new Promise(resolve => setTimeout(resolve, 3000))]);
+};
 const Analyzer = {
   async mount(host) {
     activeCleanup?.();
+    mountedHost = null;
     const generation = ++mountGeneration;
     const root = document.createElement("div");
     root.className = "an-page";
     host.replaceChildren(root);
-    await injectAnalyzerCSS();
+    await Promise.all([injectAnalyzerCSS(), authReady(), profileReady()]);
     if (generation !== mountGeneration || host.classList.contains("hidden")) return;
+    mountedHost = host;
+    mountedContext = contextKey();
     root.innerHTML = `
       <a class="an-back" href="#main">${icon("arrow_back")}Main</a>
       <header class="an-header">
@@ -197,6 +214,7 @@ const Analyzer = {
     let analysisStarted = Date.now(), systemStarted = Date.now();
     let allTotal = null, selected = null;
     let mappingWorkspace = null, mappingController = null, savedRow = null, releasing = false;
+    let scopeSequence = 0;
     let total = 0, offset = 0, pageSize = 50;
     let currentRows = [], filteredRows = [];
     let pageLoading = false;
@@ -621,7 +639,7 @@ const Analyzer = {
       const notice = $("#an-mapping-notice");
       releasing = true; button.disabled = true;
       try {
-        const identity = Object.fromEntries(["provider", "instance", "feature", "key", "pair_id"].map(key => [key, rule[key]]));
+        const identity = {...Object.fromEntries(["provider", "instance", "feature", "key", "pair_id"].map(key => [key, rule[key]])), entry_type:"mapping"};
         const response = await fetch("/api/editor/mappings/delete", {method:"POST", credentials:"same-origin", headers:{"Content-Type":"application/json"}, body:JSON.stringify(identity)});
         const data = await response.json();
         if (!response.ok || data.ok === false) throw new Error(typeof data.detail === "string" ? data.detail : "Could not remove mapping.");
@@ -667,13 +685,14 @@ const Analyzer = {
       }
     }
     async function loadScope() {
+      const sequence = ++scopeSequence;
       try {
         const [rawPairs, instances, runs] = await Promise.all([
           requestJSON("/api/pairs", lifetime.signal),
           requestJSON("/api/provider-instances", lifetime.signal).catch(() => ({})),
           requestJSON("/api/analyzer/pair-activity", lifetime.signal).catch(() => ({}))
         ]);
-        if (lifetime.signal.aborted) return;
+        if (lifetime.signal.aborted || sequence !== scopeSequence) return;
         pairs = array(rawPairs).filter(pair => pair.enabled !== false && pair.source && pair.target);
         for (const [provider, entries] of Object.entries(instances || {})) {
           PROFILE_LABELS[provider.toUpperCase()] = {};
@@ -693,7 +712,7 @@ const Analyzer = {
         updateSnapshot();
         await analyzeItems();
       } catch (error) {
-        if (lifetime.signal.aborted) return;
+        if (lifetime.signal.aborted || sequence !== scopeSequence) return;
         analysisState = "error";
         analysisError = `Could not load sync pairs. ${error.message}`;
         renderList();
@@ -719,7 +738,7 @@ const Analyzer = {
       } else if (button.dataset.retry === "system") analyzeSystem(true);
       else if (button.dataset.retry === "analysis") pairs.length ? analyzeItems() : loadScope();
       else if (button.dataset.retry === "page") loadPage(offset);
-      else if (button.id === "an-run") { analyzeItems(); analyzeSystem(true); }
+      else if (button.id === "an-run") { pairs.length ? analyzeItems() : loadScope(); analyzeSystem(true); }
       else if (button.id === "an-retry-detail" && selected) showDetail(selected);
       else if (button.id === "an-close-detail") { detailController?.abort(); selected = null; renderList(); }
       else if (button.id === "an-clear") {
@@ -758,10 +777,22 @@ const Analyzer = {
   },
   unmount() {
     mountGeneration += 1;
+    mountedHost = null;
     activeCleanup?.();
   }
 };
 window.Analyzer = Analyzer;
+for (const name of ["cw:overview-profile-changed", "cw:auth-state-changed"]) {
+  window.addEventListener?.(name, () => {
+    const host = mountedHost;
+    if (!host || mountedContext === contextKey()) return;
+    Analyzer.unmount();
+    if (document.documentElement.dataset.tab !== "analyzer") return;
+    Analyzer.mount(host).catch(() => {
+      host.innerHTML = '<div class="cw-page-load-error">Analyzer failed to load. Refresh the page and try again.</div>';
+    });
+  });
+}
 document.addEventListener("tab-changed", event => {
   if (event.detail?.tab !== "analyzer") Analyzer.unmount();
 });
