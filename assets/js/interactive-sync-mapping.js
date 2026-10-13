@@ -652,7 +652,7 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
             if (!window.confirm("Remove the saved mapping for " + label + " from " + scopeLabel + "? Its automatic original-item block will also be removed. Other mappings may apply again. This does not undo synced media changes. Unsaved edits in this dialog will be discarded.")) return;
             saving = true; lock(true); button.disabled = true;
             try {
-              const identity = Object.fromEntries(["provider", "instance", "feature", "key", "pair_id"].map(key => [key, rule[key]]));
+              const identity = {...Object.fromEntries(["provider", "instance", "feature", "key", "pair_id"].map(key => [key, rule[key]])), entry_type:"mapping"};
               await requestMapping("/api/editor/mappings/delete", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(identity)});
               closed = true; dialog.close(); dialog.remove(); onRemoved();
             } catch (error) { $("[data-error]").textContent = error.message; }
