@@ -13,6 +13,7 @@ READ_PERMISSION_KEYS = ("dashboard", "watchlist", "playback")
 MONITOR_GET_PATHS = frozenset(
     {
         "/api/status",
+        "/api/health/details",
         "/api/version",
         "/api/watch/status",
         "/api/scheduling/status",
