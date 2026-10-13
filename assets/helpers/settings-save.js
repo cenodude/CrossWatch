@@ -576,11 +576,11 @@ async function saveSettings() {
       return false;
     }
   };
-  const schedulingSaveError = (message) => {
+  const schedulingSaveError = (message, tab = "advanced") => {
     const msg = _cwNorm(message) || "Fix the scheduling errors before saving.";
     try {
       window.cwSettingsSelect?.("scheduling");
-      window.cwSchedSettingsSelect?.("advanced");
+      window.cwSchedSettingsSelect?.(tab);
       const sec = document.getElementById("sec-scheduling");
       if (sec && !sec.classList.contains("open")) window.toggleSection?.("sec-scheduling");
       sec?.scrollIntoView?.({ behavior: "smooth", block: "start" });
@@ -1094,7 +1094,8 @@ async function saveSettings() {
           const validation = _cwFn("getSchedulingValidation", window)?.() || {};
           const issues = Array.isArray(validation.issues) ? validation.issues.filter(Boolean) : [];
           if (issues.length) {
-            if (schedulingPaneActive()) schedulingSaveError(issues[0]);
+            const webhookIssues = Array.isArray(validation.webhookIssues) ? validation.webhookIssues : [];
+            if (schedulingPaneActive()) schedulingSaveError(issues[0], webhookIssues.includes(issues[0]) ? "webhooks" : "advanced");
             console.warn("saveSettings: scheduling has validation issues; preserving existing scheduling config", issues[0]);
             sched = serverCfg?.scheduling || sched;
           } else {

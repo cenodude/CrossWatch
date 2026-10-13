@@ -5,11 +5,14 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+import time
 from datetime import datetime, timezone
 from typing import Any, Callable
 from urllib.parse import urlsplit, urlunsplit
 
 import requests
+
+from _logging import log as BASE_LOG
 
 SCHEDULED_SYNC_MODES = {"standard", "advanced", "advanced_workflow"}
 EVENTS = {"start", "success", "failure"}
@@ -60,6 +63,7 @@ HEALTH_EVENTS: dict[str, tuple[str, str, str, str]] = {
         "Sign-in works again for:",
     ),
 }
+LOG_MODULE = "SCHED"
 TEST_TITLE = "CrossWatch test notification"
 TEST_MESSAGE = "Scheduler webhooks are set up correctly."
 
@@ -261,10 +265,12 @@ def notify_scheduler_webhook(
     sch = sch if isinstance(sch, dict) else {}
     webhooks = normalize_scheduler_webhooks(sch.get("webhooks"))
     if not webhooks.get("enabled"):
+        debug(f"Scheduler webhook {event}: not sent, webhooks are off")
         return False
 
     url = callback_url(webhooks, event)
     if not url:
+        debug(f"Scheduler webhook {event}: not sent, no destination set for this event")
         return False
     fmt = str(webhooks.get("payload_format") or "crosswatch")
     return _deliver(url, event, build_payload(event, context, summary, fmt), webhooks, log_fn)
@@ -286,10 +292,13 @@ def notify_health_webhook(
     if not webhooks.get("enabled") or not webhooks.get(HEALTH_EVENTS[ev][0]):
         return False
 
+    names = ", ".join(str(item.get("label") or "") for item in items)
     url = health_callback_url(webhooks)
     if not url:
+        debug(f"Scheduler webhook {ev}: not sent for {names}, no destination set")
         return False
     fmt = str(webhooks.get("payload_format") or "crosswatch")
+    debug(f"Scheduler webhook {ev}: reporting {names}")
     return _deliver(url, ev, build_health_payload(ev, items, fmt), webhooks, log_fn)
 
 
@@ -297,6 +306,7 @@ def send_test_webhook(webhooks: dict[str, Any] | None) -> tuple[bool, str]:
     hooks = normalize_scheduler_webhooks(webhooks)
     url = health_callback_url(hooks) or callback_url(hooks, "success")
     if not url:
+        debug("Scheduler webhook test: not sent, no destination set")
         return False, "No destination configured for this payload format."
     logs: list[str] = []
     fmt = str(hooks.get("payload_format") or "crosswatch")
@@ -312,12 +322,16 @@ def _deliver(
     webhooks: dict[str, Any],
     log_fn: Callable[[str], None] | None,
 ) -> bool:
+    fmt = str(webhooks.get("payload_format") or "crosswatch")
+    target = f"{payload_format_label(fmt)} ({_url_host(url)})"
     if not scheduler_webhook_url_allowed(url):
         _log(log_fn, f"[!] Scheduler webhook {event}: blocked unsafe URL")
+        debug(f"Scheduler webhook {event}: {target} is not a public address, nothing sent")
         return False
 
-    fmt = str(webhooks.get("payload_format") or "crosswatch")
     timeout = int(webhooks.get("timeout_seconds") or 10)
+    debug(f"Scheduler webhook {event}: sending to {target}, timeout {timeout}s")
+    started = time.monotonic()
     try:
         resp = requests.post(
             url,
@@ -325,6 +339,8 @@ def _deliver(
             allow_redirects=False,
             **_delivery_kwargs(fmt, payload, webhooks),
         )
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        debug(f"Scheduler webhook {event}: {target} answered HTTP {getattr(resp, 'status_code', '?')} in {elapsed_ms} ms")
         resp.raise_for_status()
         if fmt == "pushover" and not _pushover_accepted(resp):
             _log(log_fn, f"[!] Scheduler webhook {event}: rejected by Pushover")
@@ -333,7 +349,22 @@ def _deliver(
         return True
     except Exception as exc:
         _log(log_fn, f"[!] Scheduler webhook {event}: {type(exc).__name__}")
+        debug(f"Scheduler webhook {event}: {target} failed with {type(exc).__name__}")
         return False
+
+
+def debug(message: str) -> None:
+    try:
+        BASE_LOG(message, level="DEBUG", module=LOG_MODULE)
+    except Exception:
+        pass
+
+
+def _url_host(url: str) -> str:
+    try:
+        return str(urlsplit(url).hostname or "")
+    except Exception:
+        return ""
 
 
 def _delivery_kwargs(fmt: str, payload: dict[str, Any], webhooks: dict[str, Any]) -> dict[str, Any]:

@@ -231,7 +231,11 @@ def test_scheduler_tabs_keep_webhooks_out_of_standard_view() -> None:
 
     assert "#sec-scheduling .cw-subpanel[data-sub]{display:none;" in scheduler_js
     assert "#sec-scheduling .cw-subpanel[data-sub].active{display:grid}" in scheduler_js
-    assert 'const hooksHost = host;' in scheduler_js
+    assert 'const hooksHost = $("#sched_webhooks_mount") || host;' in scheduler_js
     assert 'syncSchedulerTabVisibility();' in scheduler_js
     assert 'try { window.cwSchedProviderEnsure?.(); } catch {}' in scheduler_js
-    assert 'webhooks.classList.toggle("hidden", want !== "advanced");' in settings_js
+    assert 'webhooks.classList.toggle("hidden", want !== "webhooks");' in settings_js
+    assert 'pHooks.dataset.sub = "webhooks";' in settings_js
+    page = Path("ui_frontend.py").read_text(encoding="utf-8")
+    assert 'data-sub="webhooks">Webhooks</button>' in page
+    assert '<div id="sched_webhooks_mount"></div>' in page

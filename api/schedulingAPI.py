@@ -353,9 +353,14 @@ def sched_stop() -> dict[str, Any]:
 
 @router.post("/webhooks/test")
 def sched_webhooks_test() -> dict[str, Any]:
-    load_config, *_ = _env()
+    load_config, _, _, _, _, log = _env()
     scheduling = _as_dict((load_config() or {}).get("scheduling"))
     ok, error = send_test_webhook(_as_dict(scheduling.get("webhooks")))
+    try:
+        message = "Scheduler webhook test: delivered" if ok else f"Scheduler webhook test: failed, {error}"
+        log("SYNC", "SCHED")(message, level="INFO" if ok else "WARN")
+    except Exception:
+        pass
     return {"ok": ok, "error": error}
 
 

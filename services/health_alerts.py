@@ -3,14 +3,12 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-import logging
 import re
 import threading
 from typing import Any, Callable
 
-from services.scheduler_webhooks import normalize_scheduler_webhooks, notify_health_webhook
-
-_LOG = logging.getLogger("crosswatch.health_alerts")
+from _logging import log as BASE_LOG
+from services.scheduler_webhooks import LOG_MODULE, debug, normalize_scheduler_webhooks, notify_health_webhook
 
 INTERVAL_S = 60
 PROVIDER_EVERY_TICKS = 5
@@ -71,6 +69,13 @@ class StateTracker:
                 self._alerted[key] = item
                 lost.append(item)
         return lost, recovered
+
+
+def _error(message: str) -> None:
+    try:
+        BASE_LOG(message, level="ERROR", module=LOG_MODULE)
+    except Exception:
+        pass
 
 
 def auth_lost_reason(reason: Any) -> bool:
@@ -184,7 +189,7 @@ def provider_states(
         try:
             result = probe(cfg, provider, instance)
         except Exception as exc:
-            _LOG.error("%s sign-in check failed: %s", provider, type(exc).__name__)
+            _error(f"Health check {provider} sign-in check failed: {type(exc).__name__}")
             result = (False, "")
         if result is None:
             continue
@@ -265,12 +270,19 @@ class HealthMonitor:
         try:
             if self._stopped():
                 return
-            lost, recovered = tracker.observe(collect())
+            seen = collect()
+            lost, recovered = tracker.observe(seen)
+            bad = sum(1 for state, _ in seen.values() if state)
+            unknown = sum(1 for state, _ in seen.values() if state is None)
+            debug(
+                f"Health check {lost_event}: {len(seen)} checked, {bad} failing, {unknown} unknown, "
+                f"{len(lost)} new, {len(recovered)} recovered"
+            )
             for event, items in ((lost_event, lost), (recovered_event, recovered)):
                 if items and not self._stopped():
                     self._notify(cfg, event, items, log_fn=self._log_fn)
         except Exception as exc:
-            _LOG.error("%s check failed: %s", lost_event, type(exc).__name__)
+            _error(f"Health check {lost_event} failed: {type(exc).__name__}")
 
 
 def _loop(monitor: HealthMonitor, stop: threading.Event) -> None:
@@ -278,7 +290,7 @@ def _loop(monitor: HealthMonitor, stop: threading.Event) -> None:
         try:
             monitor.tick()
         except Exception as exc:
-            _LOG.error("health alerts worker error: %s", type(exc).__name__)
+            _error(f"Health alerts worker error: {type(exc).__name__}")
 
 
 def start_worker(
