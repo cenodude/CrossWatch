@@ -346,7 +346,7 @@ html[data-cw-theme="flat-light"] #sec-scheduling .sch-card-icon{background:#eef2
     webhook_failure: "Failure callback URL:\nOptional explicit http:// or https:// POST destination when a scheduled sync fails.\nThis overrides the compatible base URL for failure events.",
     webhook_alert_watcher: "Alert when the watcher stops:\nSends watcher_stopped when an enabled watcher route is not running, and watcher_recovered when it runs again.\nEach change is sent once. This includes a watcher that was stopped by hand or never started. Turning the watcher source or the route off does not send an alert.\nCrossWatch JSON sends these to the All events URL.",
     webhook_alert_provider_auth: "Alert when a provider sign-in is lost:\nSends provider_auth_lost when a provider profile used by an enabled sync pair, watcher route or scrobble webhook needs a new sign-in, and provider_auth_recovered when it works again.\nEach change is sent once. A provider that is only unreachable does not send an alert.\nCrossWatch JSON sends these to the All events URL.",
-    webhook_test: "Send test notification:\nSends one test message with the settings shown here, before you save them.",
+    webhook_test: "Send test notification:\nSends one test message with the saved webhook settings.\nSave your changes first.",
     webhook_alert_unresolved: "Alert on unresolved items:\nOff means only a crashed or aborted run sends the failure callback.\nOn also sends failure when a run finishes with unresolved items or provider errors, such as a destination rejecting a write. The run itself still counts as successful in CrossWatch."
   };
   const defaultJob = () => ({ id: genId(), pair_id: null, at: null, days: [], after: null, active: true });
@@ -1166,19 +1166,10 @@ const ensureStdEnabledToggle = () => {
   const sendWebhookTest = async () => {
     const button = $("#btnWebhookTest");
     const status = $("#schWebhookTestStatus");
-    const issues = webhooksValidation();
-    if (issues.length) {
-      statusText(status, issues[0]);
-      return;
-    }
     if (button) button.disabled = true;
     statusText(status, "Sending test notification...");
     try {
-      const res = await fetch("/api/scheduling/webhooks/test", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(normalizeWebhooks(_webhooks))
-      });
+      const res = await fetch("/api/scheduling/webhooks/test", { method: "POST" });
       const data = await res.json().catch(() => ({}));
       statusText(status, res.ok && data.ok ? "Test notification delivered." : `Test failed: ${data.error || `HTTP ${res.status}`}`);
     } catch {
@@ -2187,7 +2178,7 @@ const ensureStdEnabledToggle = () => {
     <label class="field-mini"><div class="subnote"><span class="th-help">Failure callback URL<button type="button" class="sch-help" aria-label="Failure callback URL help" data-help-key="webhook_failure"></button></span></div><input id="schWebhookFailure" name="schWebhookFailure" type="url" inputmode="url" pattern="https?://.+" autocomplete="off" placeholder="https://hooks.example.com/crosswatch/failure"></label>
   </div>
   <div class="sch-adv-actions">
-    <button type="button" class="btn" id="btnWebhookTest" title="Sends one test message with the settings shown here, before you save them.">Send test notification</button>
+    <button type="button" class="btn" id="btnWebhookTest" title="Sends one test message with the saved webhook settings. Save your changes first.">Send test notification</button>
     <div class="status inline" id="schWebhookTestStatus"></div>
   </div>
 </section>

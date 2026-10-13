@@ -428,7 +428,28 @@ def test_health_payload_notifiarr_shape() -> None:
     assert payload["discord"]["text"]["footer"] == "CrossWatch Health"
 
 
-def test_send_test_webhook_uses_unsaved_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_test_endpoint_uses_saved_settings_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    import inspect
+
+    from api import schedulingAPI
+
+    posted = _capture_posts(monkeypatch)
+    saved = {"scheduling": {"webhooks": {"payload_format": "ntfy", "url": "https://ntfy.sh/saved"}}}
+    monkeypatch.setattr(schedulingAPI, "_env", lambda: (lambda: saved, None, None, {}, None, None))
+
+    assert list(inspect.signature(schedulingAPI.sched_webhooks_test).parameters) == []
+    assert schedulingAPI.sched_webhooks_test() == {"ok": True, "error": ""}
+    assert [row["url"] for row in posted] == ["https://ntfy.sh/saved"]
+
+    saved["scheduling"] = {}
+    assert schedulingAPI.sched_webhooks_test() == {
+        "ok": False,
+        "error": "No destination configured for this payload format.",
+    }
+    assert len(posted) == 1
+
+
+def test_send_test_webhook_builds_each_format(monkeypatch: pytest.MonkeyPatch) -> None:
     posted = _capture_posts(monkeypatch)
 
     assert webhooks.send_test_webhook({"payload_format": "ntfy", "url": "https://ntfy.sh/crosswatch"}) == (True, "")

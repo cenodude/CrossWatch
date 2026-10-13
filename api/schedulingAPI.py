@@ -352,8 +352,10 @@ def sched_stop() -> dict[str, Any]:
 
 
 @router.post("/webhooks/test")
-def sched_webhooks_test(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
-    ok, error = send_test_webhook(_as_dict(payload))
+def sched_webhooks_test() -> dict[str, Any]:
+    load_config, *_ = _env()
+    scheduling = _as_dict((load_config() or {}).get("scheduling"))
+    ok, error = send_test_webhook(_as_dict(scheduling.get("webhooks")))
     return {"ok": ok, "error": error}
 
 
