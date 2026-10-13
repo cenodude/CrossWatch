@@ -52,7 +52,7 @@ from api.apiTokensAPI import (
     touch_api_token as app_touch_api_token,
     register_api_tokens,
 )
-from cw_platform.access_policy import clean_managed_permissions
+from cw_platform.access_policy import clean_managed_permissions, is_monitor_user, monitor_api_allowed, monitor_identity
 from cw_platform.event_archive.audit import record_audit
 
 from _logging import log as LOG, BLUE, GREEN, DIM, RED, YELLOW, RESET  # type: ignore
@@ -481,6 +481,15 @@ def _non_admin_permission_allowed(user: dict, path: str, method: str = "GET") ->
             return write
     return True
 
+def _apply_monitor_view(request: Request, user: dict, path: str) -> bool:
+    if not monitor_api_allowed(user, path, request.method):
+        return False
+    try:
+        request.state.cw_user = monitor_identity(user)
+    except Exception:
+        return False
+    return True
+
 def _unsafe_api_origin_blocked(cfg: dict, request: Request, token: str | None) -> bool:
     method = str(getattr(request, "method", "") or "").upper()
     path = request.url.path or "/"
@@ -666,7 +675,9 @@ async def app_auth_gate(request: Request, call_next):
         except Exception:
             pass
         if not api_user.get("is_admin"):
-            if not app_non_admin_api_allowed(path, request.method) or not _non_admin_permission_allowed(api_user, path, request.method):
+            if _apply_monitor_view(request, api_user, path):
+                pass
+            elif is_monitor_user(api_user) or not app_non_admin_api_allowed(path, request.method) or not _non_admin_permission_allowed(api_user, path, request.method):
                 return JSONResponse({"ok": False, "error": "Administrator access required"}, status_code=403, headers={"Cache-Control": "no-store"})
         app_touch_api_token(str(api_user.get("api_token_id") or ""))
         response = await call_next(request)

@@ -46,7 +46,7 @@ from cw_platform.event_archive import (
     purge as _purge_events,
 )
 from cw_platform.event_archive.groups import run_problem_items as _run_problem_items
-from cw_platform.access_policy import filter_pairs_for_user, pair_refs, request_user, user_can_access_instance
+from cw_platform.access_policy import filter_pairs_for_user, pair_refs, request_is_monitor, request_user, user_can_access_instance
 from cw_platform.config_base import load_config
 from cw_platform.provider_instances import instances_for_user_profile, normalize_instance_id, provider_display_key
 from cw_platform.reason_labels import friendly_reason
@@ -130,11 +130,15 @@ def _group_has_allowed_event(cfg: dict[str, Any], request: Request | None, group
     return any(isinstance(row, dict) and _event_row_allowed(cfg, request, row, False) for row in rows)
 
 
+def _audit_row(row: Any) -> bool:
+    return isinstance(row, dict) and str(row.get("domain") or "").strip().lower() == "audit"
+
+
 def _event_row_allowed(cfg: dict[str, Any], request: Request | None, row: dict[str, Any] | None, allow_group_children: bool = True) -> bool:
     user = request_user(request)
     if not user or bool(user.get("is_admin")):
-        return True
-    if not isinstance(row, dict):
+        return not (request_is_monitor(request) and _audit_row(row))
+    if not isinstance(row, dict) or _audit_row(row):
         return False
     refs = _event_refs(row)
     if refs and all(user_can_access_instance(cfg, user, provider, instance) for provider, instance in refs):
@@ -143,7 +147,7 @@ def _event_row_allowed(cfg: dict[str, Any], request: Request | None, row: dict[s
         return False
     if _row_pair_allowed(cfg, user, row):
         return True
-    if allow_group_children and row.get("id") is not None:
+    if allow_group_children and "group_hash" in row and row.get("id") is not None:
         return _group_has_allowed_event(cfg, request, row.get("id"))
     return False
 
@@ -151,7 +155,18 @@ def _event_row_allowed(cfg: dict[str, Any], request: Request | None, row: dict[s
 def _filter_event_payload(cfg: dict[str, Any], request: Request | None, payload: dict[str, Any]) -> dict[str, Any]:
     user = request_user(request)
     if not user or bool(user.get("is_admin")):
-        return payload
+        if not request_is_monitor(request):
+            return payload
+        visible = dict(payload or {})
+        for key in ("items", "events", "groups", "children"):
+            rows = visible.get(key)
+            if not isinstance(rows, list):
+                continue
+            keep = [row for row in rows if not _audit_row(row)]
+            if key == "items" and isinstance(visible.get("total"), int):
+                visible["total"] = max(0, visible["total"] - (len(rows) - len(keep)))
+            visible[key] = keep
+        return visible
     out = dict(payload or {})
     for key in ("items", "events", "groups", "children"):
         rows = out.get(key)
@@ -164,11 +179,10 @@ def _filter_event_payload(cfg: dict[str, Any], request: Request | None, payload:
 
 def _effective_profile_from_request(request: Request | None, requested: str) -> str:
     try:
-        from api.appAuthAPI import COOKIE_NAME, effective_user_profile_id
+        from api.appAuthAPI import effective_request_profile_id
 
         cfg = load_config() or {}
-        token = request.cookies.get(COOKIE_NAME) if request is not None else None
-        return effective_user_profile_id(cfg, token, requested)
+        return effective_request_profile_id(cfg, request, requested)
     except Exception:
         return "__none__"
 
@@ -364,9 +378,16 @@ def _audit_domain_requested(domain: Any) -> bool:
     return str(domain or "").strip().lower() == "audit"
 
 
+def _audit_hidden(request: Request | None) -> bool:
+    return _managed_request(request) or request_is_monitor(request)
+
+
 @router.get("/status")
-def events_status() -> JSONResponse:
-    return _ok(_status())
+def events_status(request: Request = cast(Request, None)) -> JSONResponse:
+    payload = _status()
+    if request_is_monitor(request) and isinstance(payload.get("by_type"), dict):
+        payload = {**payload, "by_type": {key: value for key, value in payload["by_type"].items() if not str(key).startswith("audit_")}}
+    return _ok(payload)
 
 
 _RANGE_SECONDS = {"24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400, "90d": 90 * 86400}
@@ -688,7 +709,7 @@ def events_recent(
     request: Request = cast(Request, None),
 ) -> JSONResponse:
     cfg = load_config() or {}
-    if _managed_request(request) and _audit_domain_requested(domain):
+    if _audit_hidden(request) and _audit_domain_requested(domain):
         return _scope_denied()
     if str(view).lower() == "events":
         return _ok(_filter_event_payload(cfg, request, _recent(limit=limit, offset=offset, visibility=visibility, order=order, domain=domain)))
@@ -762,7 +783,7 @@ def events_search(
     request: Request = cast(Request, None),
 ) -> JSONResponse:
     cfg = load_config() or {}
-    if _managed_request(request) and _audit_domain_requested(domain):
+    if _audit_hidden(request) and _audit_domain_requested(domain):
         return _scope_denied()
     if str(view).lower() == "events":
         return _ok(_filter_event_payload(cfg, request, _search(
@@ -804,7 +825,7 @@ def events_groups(
     request: Request = cast(Request, None),
 ) -> JSONResponse:
     cfg = load_config() or {}
-    if _managed_request(request) and _audit_domain_requested(domain):
+    if _audit_hidden(request) and _audit_domain_requested(domain):
         return _scope_denied()
     return _ok(_filter_event_payload(cfg, request, _list_groups(
         q=q, status=status, category=category, event_type=event_type, provider=provider, origin_provider=origin_provider,
@@ -840,7 +861,7 @@ def events_tree(
     request: Request = cast(Request, None),
 ) -> JSONResponse:
     cfg = load_config() or {}
-    if _managed_request(request) and _audit_domain_requested(domain):
+    if _audit_hidden(request) and _audit_domain_requested(domain):
         return _scope_denied()
     return _ok(_filter_event_payload(cfg, request, _list_tree(
         order=order, limit=limit, offset=offset, include_children=children, domain=domain,

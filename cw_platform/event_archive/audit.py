@@ -46,12 +46,17 @@ def _actor(user: Mapping[str, Any] | None) -> dict[str, Any]:
     if not isinstance(user, Mapping):
         return {"id": "", "username": "", "role": "unknown", "profile_id": ""}
     is_admin = bool(user.get("is_admin")) or str(user.get("role") or "").lower() == "admin"
-    return {
+    out = {
         "id": _text(user.get("id"), 80),
         "username": _text(user.get("username"), 160),
         "role": "admin" if is_admin else "user",
         "profile_id": _text(user.get("profile_id"), 80),
     }
+    token_id = _text(user.get("api_token_id"), 80)
+    if token_id:
+        out["api_token_id"] = token_id
+        out["api_token_name"] = _text(user.get("api_token_name"), 64)
+    return out
 
 
 def _request_meta(request: Any) -> dict[str, Any]:

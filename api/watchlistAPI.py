@@ -238,10 +238,9 @@ def _item_for_user_filter(item: dict[str, Any], user_filter: dict[str, list[str]
 
 def _effective_user_filter(cfg: dict[str, Any], request: Request | None, requested_profile: str) -> tuple[str, dict[str, list[str]]]:
     try:
-        from api.appAuthAPI import COOKIE_NAME, effective_user_profile_id
+        from api.appAuthAPI import effective_request_profile_id
 
-        token = request.cookies.get(COOKIE_NAME) if request is not None else None
-        profile = effective_user_profile_id(cfg, token, requested_profile)
+        profile = effective_request_profile_id(cfg, request, requested_profile)
     except Exception:
         profile = "__none__"
     scoped = bool(str(profile or "").strip())

@@ -203,14 +203,13 @@ def register_wall(app: FastAPI) -> None:
         user_profile: str = Query("", description="Optional user profile id to scope provider instances"),
         known_version: str = Query("", description="Client cache version to avoid rebuilding unchanged wall data"),
     ) -> dict[str, Any]:
-        from api.appAuthAPI import COOKIE_NAME, effective_user_profile_id
+        from api.appAuthAPI import effective_request_profile_id
 
         from services.media_scope import MediaScope
 
         cfg = load_config() or {}
         media_scope = MediaScope(cfg)
-        token = request.cookies.get(COOKIE_NAME) if request is not None else None
-        profile = effective_user_profile_id(cfg, token, user_profile)
+        profile = effective_request_profile_id(cfg, request, user_profile)
         key = _cache_key(both_only=both_only, active_only=active_only, limit=limit, user_profile=profile) + (media_scope.fingerprint(),)
         version = _cache_version(key)
         if known_version and str(known_version).strip() == version:

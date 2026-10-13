@@ -2431,7 +2431,7 @@ def api_pairs_list(request: Request = cast(Request, None)) -> JSONResponse:
                 it.pop("profile_id", None)
                 dirty = True
         user = _request_user(request)
-        if dirty and not (user and not user.get("is_admin")):
+        if dirty and not (user and (not user.get("is_admin") or user.get("monitor_view"))):
             save_config(cfg)
         return JSONResponse(filter_pairs_for_user(cfg, user, arr))
     except Exception as e:

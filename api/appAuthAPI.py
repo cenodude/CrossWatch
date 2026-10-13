@@ -37,6 +37,7 @@ __all__ = [
     "clean_user_preferences",
     "current_user",
     "effective_user_profile_id",
+    "effective_request_profile_id",
     "is_authenticated",
     "is_admin_authenticated",
     "non_admin_api_allowed",
@@ -530,6 +531,20 @@ def _username_in_use(a: dict[str, Any], username: Any, *, exclude_id: Any = None
     return False
 
 
+def _token_only_user(public: dict[str, Any]) -> bool:
+    return clean_managed_permissions(public.get("permissions"))["monitor"]
+
+
+def _session_usable(a: dict[str, Any], session: dict[str, Any]) -> bool:
+    user_id = _session_user_id(session)
+    if user_id == ADMIN_USER_ID:
+        return True
+    raw = _cfg_users(a).get(user_id) if user_id else None
+    if not isinstance(raw, dict):
+        return False
+    return bool(raw.get("enabled", True)) and not _token_only_user(raw)
+
+
 def _find_user_for_login(a: dict[str, Any], username: Any, password: Any) -> dict[str, Any] | None:
     clean = _clean_username(username)
     ptxt = str(password or "")
@@ -540,7 +555,7 @@ def _find_user_for_login(a: dict[str, Any], username: Any, password: Any) -> dic
         if not uid or not isinstance(raw, dict):
             continue
         public = _public_user(uid, raw)
-        if not public["enabled"] or public["username"] != clean:
+        if not public["enabled"] or _token_only_user(public) or public["username"] != clean:
             continue
         pwd = raw.get("password")
         if isinstance(pwd, dict) and _password_matches(pwd, ptxt):
@@ -630,7 +645,7 @@ def _session_identity(a: dict[str, Any], session: dict[str, Any] | None) -> dict
     if not isinstance(raw, dict):
         return None
     public = _public_user(user_id, raw)
-    return public if public["enabled"] else None
+    return public if public["enabled"] and not _token_only_user(public) else None
 
 
 def current_user(cfg: dict[str, Any], token: str | None) -> dict[str, Any] | None:
@@ -655,6 +670,19 @@ def effective_user_profile_id(cfg: dict[str, Any], token: str | None, requested_
     if user.get("is_admin"):
         return req
     return normalize_user_profile_id(user.get("profile_id")) or "__none__"
+
+
+def effective_request_profile_id(cfg: dict[str, Any], request: Any, requested_profile: Any = "") -> str:
+    try:
+        user = getattr(getattr(request, "state", None), "cw_user", None)
+    except Exception:
+        user = None
+    if isinstance(user, dict):
+        if user.get("is_admin"):
+            return normalize_user_profile_id(requested_profile)
+        return normalize_user_profile_id(user.get("profile_id")) or "__none__"
+    token = request.cookies.get(COOKIE_NAME) if request is not None else None
+    return effective_user_profile_id(cfg, token, requested_profile)
 
 
 def non_admin_api_allowed(path: Any, method: Any) -> bool:
@@ -750,6 +778,16 @@ def _admin_required(request: Request, cfg: dict[str, Any]) -> JSONResponse | Non
     if auth_required(cfg) and token and not _origin_allowed(request):
         return _origin_blocked_response()
     return None
+
+
+def _admin_api_token_user(request: Request, cfg: dict[str, Any]) -> dict[str, Any] | None:
+    try:
+        from api.apiTokensAPI import extract_api_token, resolve_api_token
+
+        user = resolve_api_token(cfg, extract_api_token(request))
+    except Exception:
+        return None
+    return user if isinstance(user, dict) and bool(user.get("is_admin")) else None
 
 
 def _session_ttl_sec(a: dict[str, Any]) -> int:
@@ -907,7 +945,7 @@ def _find_session(a: dict[str, Any], token: str | None) -> dict[str, Any] | None
         if not _is_sha256_hex(want):
             continue
         if _digest_eq(th, want):
-            return s
+            return s if _session_usable(a, s) else None
     return None
 
 
@@ -1834,7 +1872,8 @@ def api_users_all(request: Request) -> JSONResponse:
     cfg = load_config()
     if not auth_required(cfg):
         return JSONResponse({"ok": False, "error": "Authentication is not configured"}, status_code=403, headers={"Cache-Control": "no-store"})
-    blocked = _admin_required(request, cfg)
+    token_actor = _admin_api_token_user(request, cfg)
+    blocked = None if token_actor is not None else _admin_required(request, cfg)
     if blocked is not None:
         return blocked
     a = _cfg_auth(cfg)
@@ -1848,7 +1887,8 @@ def api_users_create(request: Request, payload: dict[str, Any] = Body(default_fa
     cfg = load_config()
     if not auth_required(cfg):
         return JSONResponse({"ok": False, "error": "Authentication is not configured"}, status_code=403, headers={"Cache-Control": "no-store"})
-    blocked = _admin_required(request, cfg)
+    token_actor = _admin_api_token_user(request, cfg)
+    blocked = None if token_actor is not None else _admin_required(request, cfg)
     if blocked is not None:
         return blocked
     a = _cfg_auth(cfg)
@@ -1893,11 +1933,11 @@ def api_users_create(request: Request, payload: dict[str, Any] = Body(default_fa
     _audit(
         request,
         "user_created",
-        actor=current_user(cfg, request.cookies.get(COOKIE_NAME)),
+        actor=token_actor or current_user(cfg, request.cookies.get(COOKIE_NAME)),
         target_type="managed_user",
         target_id=user_id,
         message=f"Managed user {username} was created",
-        fields={"username": username, "profile_id": profile_id, "enabled": raw["enabled"], "write": bool(raw["permissions"].get("write"))},
+        fields={"username": username, "profile_id": profile_id, "enabled": raw["enabled"], "write": bool(raw["permissions"].get("write")), "monitor": bool(raw["permissions"].get("monitor"))},
     )
     return JSONResponse({"ok": True, "user": _managed_user_response(user_id, raw)}, headers={"Cache-Control": "no-store"})
 
@@ -1907,7 +1947,8 @@ def api_users_update(request: Request, user_id: str, payload: dict[str, Any] = B
     cfg = load_config()
     if not auth_required(cfg):
         return JSONResponse({"ok": False, "error": "Authentication is not configured"}, status_code=403, headers={"Cache-Control": "no-store"})
-    blocked = _admin_required(request, cfg)
+    token_actor = _admin_api_token_user(request, cfg)
+    blocked = None if token_actor is not None else _admin_required(request, cfg)
     if blocked is not None:
         return blocked
     a = _cfg_auth(cfg)
@@ -1945,6 +1986,8 @@ def api_users_update(request: Request, user_id: str, payload: dict[str, Any] = B
             raw["profile_id"] = profile_id
         if "permissions" in payload:
             raw["permissions"] = _clean_permissions(payload.get("permissions"))
+            if raw["permissions"].get("monitor"):
+                _clear_user_sessions(latest, uid)
         if password:
             raw["password"] = _password_hash(password)
             _clear_user_sessions(latest, uid)
@@ -1962,7 +2005,7 @@ def api_users_update(request: Request, user_id: str, payload: dict[str, Any] = B
     _audit(
         request,
         "user_updated",
-        actor=current_user(cfg, request.cookies.get(COOKIE_NAME)),
+        actor=token_actor or current_user(cfg, request.cookies.get(COOKIE_NAME)),
         target_type="managed_user",
         target_id=uid,
         message=f"Managed user {raw.get('username') or uid} was updated",
@@ -1976,7 +2019,8 @@ def api_users_delete(request: Request, user_id: str) -> JSONResponse:
     cfg = load_config()
     if not auth_required(cfg):
         return JSONResponse({"ok": False, "error": "Authentication is not configured"}, status_code=403, headers={"Cache-Control": "no-store"})
-    blocked = _admin_required(request, cfg)
+    token_actor = _admin_api_token_user(request, cfg)
+    blocked = None if token_actor is not None else _admin_required(request, cfg)
     if blocked is not None:
         return blocked
     uid = _normalize_app_user_id(user_id)
@@ -1996,7 +2040,7 @@ def api_users_delete(request: Request, user_id: str) -> JSONResponse:
 
     cfg, result = _update_config(_mutate)
     deleted, username = result
-    _audit(request, "user_deleted", actor=current_user(cfg, request.cookies.get(COOKIE_NAME)), target_type="managed_user", target_id=uid, message=f"Managed user {username} was deleted", fields={"username": username})
+    _audit(request, "user_deleted", actor=token_actor or current_user(cfg, request.cookies.get(COOKIE_NAME)), target_type="managed_user", target_id=uid, message=f"Managed user {username} was deleted", fields={"username": username})
     return JSONResponse({"ok": True, "deleted": deleted}, headers={"Cache-Control": "no-store"})
 
 

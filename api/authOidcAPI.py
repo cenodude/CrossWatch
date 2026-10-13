@@ -148,7 +148,7 @@ def _resolve_oidc_user(cfg: dict[str, Any], identity: dict[str, Any]) -> dict[st
         if not uid or not isinstance(raw, dict):
             continue
         public = app_auth._public_user(uid, raw)
-        if public.get("enabled") and authOidc.identity_matches_link(raw.get("oidc") if isinstance(raw.get("oidc"), dict) else {}, identity):
+        if public.get("enabled") and not app_auth._token_only_user(public) and authOidc.identity_matches_link(raw.get("oidc") if isinstance(raw.get("oidc"), dict) else {}, identity):
             return public
     return None
 
@@ -184,7 +184,7 @@ def _target_user_for_link(a: dict[str, Any], actor: dict[str, Any] | None, reque
     if not isinstance(raw, dict):
         return "", {}, {}
     public = app_auth._public_user(target_id, raw)
-    if not public.get("enabled"):
+    if not public.get("enabled") or app_auth._token_only_user(public):
         return "", {}, {}
     return target_id, public, raw
 

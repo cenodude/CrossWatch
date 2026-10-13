@@ -2486,10 +2486,9 @@ USERINFO_FNS: dict[str, Callable[..., dict[str, Any]]] = {
 def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) -> None:
     def _status_scope_profile(cfg: Mapping[str, Any], request: Request, requested: Any) -> str:
         try:
-            from api.appAuthAPI import COOKIE_NAME, effective_user_profile_id
+            from api.appAuthAPI import effective_request_profile_id
 
-            token = request.cookies.get(COOKIE_NAME) if request is not None else None
-            return str(effective_user_profile_id(dict(cfg or {}), token, requested) or "").strip()
+            return str(effective_request_profile_id(dict(cfg or {}), request, requested) or "").strip()
         except Exception:
             return ""
 
