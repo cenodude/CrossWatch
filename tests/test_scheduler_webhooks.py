@@ -120,6 +120,27 @@ def test_scheduler_webhook_url_allows_public_destinations(monkeypatch) -> None:
 
 
 @pytest.mark.parametrize(
+    ("address", "allowed"),
+    [
+        ("64:ff9b::808:808", True),
+        ("64:ff9b::5db8:d822", True),
+        ("2606:4700:4700::1111", True),
+        ("::ffff:0:808:808", True),
+        ("64:ff9b::a9fe:a9fe", False),
+        ("64:ff9b::a00:5", False),
+        ("::ffff:0:a9fe:a9fe", False),
+        ("64:ff9b:1::808:808", False),
+    ],
+)
+def test_scheduler_webhook_url_judges_nat64_by_embedded_ipv4(monkeypatch, address: str, allowed: bool) -> None:
+    import services.scheduler_webhooks as webhooks
+
+    _mock_scheduler_webhook_dns(monkeypatch, webhooks, address)
+
+    assert webhooks.scheduler_webhook_url_allowed("https://hooks.example.com/crosswatch") is allowed
+
+
+@pytest.mark.parametrize(
     "url",
     [
         "http://localhost:8080/hook",
@@ -129,6 +150,13 @@ def test_scheduler_webhook_url_allows_public_destinations(monkeypatch) -> None:
         "http://169.254.169.254/latest/meta-data/",
         "http://10.0.0.5/hook",
         "http://192.168.1.20/hook",
+        "http://[64:ff9b::a9fe:a9fe]/latest/meta-data/",
+        "http://[64:ff9b::7f00:1]:8080/hook",
+        "http://[64:ff9b::c0a8:114]/hook",
+        "http://[::a9fe:a9fe]/latest/meta-data/",
+        "http://[::7f00:1]:8080/hook",
+        "http://[::ffff:0:a9fe:a9fe]/latest/meta-data/",
+        "http://[::ffff:0:7f00:1]:8080/hook",
     ],
 )
 def test_scheduler_webhook_url_blocks_local_and_private_literals(url: str) -> None:

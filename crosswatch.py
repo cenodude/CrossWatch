@@ -1092,8 +1092,23 @@ async def _lifespan(app: Any) -> AsyncIterator[None]:
         except Exception:
             pass
     try:
+        from services.health_alerts import start_worker as _start_health_alerts
+
+        _start_health_alerts(app, load_config, log_fn=lambda msg: _UIHostLogger("SYNC", "SCHED")(msg, level="INFO"))
+    except Exception as e:
+        try:
+            _UIHostLogger("SYNC")(f"health alerts worker startup error: {e}", level="ERROR")
+        except Exception:
+            pass
+    try:
         yield
     finally:
+        try:
+            from services.health_alerts import stop_worker as _stop_health_alerts
+
+            _stop_health_alerts()
+        except Exception:
+            pass
         try:
             from cw_platform.anime_mapping.auto_update import stop as _anime_mapping_stop_auto_update
 
