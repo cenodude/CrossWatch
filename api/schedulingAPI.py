@@ -8,6 +8,8 @@ from typing import Any, Callable
 
 from fastapi import APIRouter, Body
 
+from services.scheduler_webhooks import payload_format_label, scheduler_webhooks_configured
+
 router = APIRouter(prefix="/api/scheduling", tags=["scheduling"])
 
 
@@ -221,19 +223,10 @@ def _scheduling_warning_summary(cfg: dict[str, Any]) -> dict[str, Any]:
 def _scheduler_webhook_status(scfg: dict[str, Any]) -> dict[str, Any]:
     hooks = _as_dict(_as_dict(scfg).get("webhooks"))
     enabled = hooks.get("enabled") is True
-    fmt_raw = _clean_text(hooks.get("payload_format") or hooks.get("payloadFormat") or hooks.get("format")).lower().replace("-", "_")
-    notifiarr = fmt_raw in {"notifiarr", "notifiarr_passthrough"}
-    label = "Notifiarr Passthrough" if notifiarr else "CrossWatch JSON"
+    fmt_raw = _clean_text(hooks.get("payload_format") or hooks.get("payloadFormat") or hooks.get("format"))
     common_url = _clean_text(hooks.get("url") or hooks.get("default_url") or hooks.get("defaultUrl"))
-    urls = [
-        common_url,
-        _clean_text(hooks.get("base_url") or hooks.get("healthchecks_base_url")),
-        _clean_text(hooks.get("start_url")),
-        _clean_text(hooks.get("success_url")),
-        _clean_text(hooks.get("failure_url")),
-    ]
-    configured = bool(common_url) if notifiarr else any(urls)
-    return {"enabled": enabled, "configured": configured, "label": label}
+    configured = scheduler_webhooks_configured({**hooks, "payload_format": fmt_raw, "url": common_url})
+    return {"enabled": enabled, "configured": configured, "label": payload_format_label(fmt_raw)}
 
 
 def _log_scheduler_webhook_status(prev_scfg: dict[str, Any], next_scfg: dict[str, Any], log: Callable[..., Any]) -> None:

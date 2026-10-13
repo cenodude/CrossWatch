@@ -47,7 +47,7 @@
 .sch-adv{padding:16px}
 .sch-webhooks{margin-top:14px}
 .sch-webhooks [data-webhook-format-for]{display:none!important}
-.sch-webhooks[data-payload-format="crosswatch"] [data-webhook-format-for~="crosswatch"],.sch-webhooks[data-payload-format="notifiarr"] [data-webhook-format-for~="notifiarr"]{display:grid!important}
+.sch-webhooks[data-payload-format="crosswatch"] [data-webhook-format-for~="crosswatch"],.sch-webhooks[data-payload-format="notifiarr"] [data-webhook-format-for~="notifiarr"],.sch-webhooks[data-payload-format="pushover"] [data-webhook-format-for~="pushover"],.sch-webhooks[data-payload-format="ntfy"] [data-webhook-format-for~="ntfy"]{display:grid!important}
 .sch-webhooks .cx-toggle[data-checked="true"] .cx-toggle-ui{background:linear-gradient(180deg,rgba(42,202,126,0.34),rgba(28,136,87,0.28));border-color:rgba(34,197,94,0.42)}
 .sch-webhooks .cx-toggle[data-checked="true"] .cx-toggle-ui:after{transform:translateX(20px)}
 .sch-webhooks .cx-toggle[data-checked="true"] .cx-toggle-state{color:#d9fff0;border-color:rgba(34,197,94,0.26);background:rgba(34,197,94,0.12)}
@@ -295,6 +295,8 @@ html[data-cw-theme="flat-light"] #sec-scheduling .sch-card-icon{background:#eef2
     failure_url: "",
     payload_format: "crosswatch",
     notifiarr_channel_id: "",
+    pushover_token: "",
+    pushover_user: "",
     timeout_seconds: 10,
     alert_on_unresolved: false
   };
@@ -330,7 +332,10 @@ html[data-cw-theme="flat-light"] #sec-scheduling .sch-card-icon{background:#eef2
     guardrails: "Mute (min):\nIgnore new triggers for this rule after it runs.\nDedupe (sec):\nSuppress identical repeated events for a short window.\nMax / hour:\nHard safety cap for this rule in one hour.",
     webhook_url: "All events URL:\nUse this when one endpoint receives every scheduler event.\nCrossWatch sends start, success, and failure to this same http:// or https:// URL with the event in the JSON payload.",
     webhook_notifiarr_url: "Notifiarr passthrough URL:\nPaste the Notifiarr Passthrough endpoint.\nCrossWatch sends start, success, and failure notifications to this same URL.",
-    webhook_format: "Payload format:\nCrossWatch JSON sends the raw scheduler payload.\nNotifiarr Passthrough sends the notification/discord JSON shape expected by Notifiarr.",
+    webhook_ntfy_url: "ntfy topic URL:\nPaste the full topic URL, for example https://ntfy.sh/your-topic.\nCrossWatch posts start, success, and failure as plain text with Title and Priority headers.\nStart is sent with low priority, success with default priority, and failure with high priority.",
+    webhook_format: "Payload format:\nCrossWatch JSON sends the raw scheduler payload.\nNotifiarr Passthrough sends the notification/discord JSON shape expected by Notifiarr.\nPushover sends a push notification through the Pushover message API.\nntfy publishes a plain-text notification to an ntfy topic.",
+    webhook_pushover_token: "Pushover application token:\nThe 30 character API token of the application you created in Pushover.\nStart is sent with low priority, success with normal priority, and failure with high priority.",
+    webhook_pushover_user: "Pushover user key:\nThe 30 character user key or group key that should receive the notifications.",
     webhook_base: "Compatible base URL:\nUse this for Healthchecks.io-style ping.\nPaste the base ping URL. CrossWatch sends start to /start, success to the base URL, and failure to /fail.",
     webhook_notifiarr_channel: "Notifiarr channel ID:\nOptional Discord channel id for Notifiarr Passthrough payloads.\nIf your Notifiarr setup requires a channel, enter the numeric Discord channel id here.",
     webhook_timeout: "Timeout seconds:\nHow long CrossWatch waits for a callback request before logging it as failed.\nCallback failures do not fail the sync.",
@@ -385,6 +390,11 @@ html[data-cw-theme="flat-light"] #sec-scheduling .sch-card-icon{background:#eef2
     },
     active: true
   });
+  const normalizeWebhookFormat = (value) => {
+    const text = String(value || "").trim().toLowerCase().replace("-", "_");
+    if (text === "notifiarr" || text === "notifiarr_passthrough") return "notifiarr";
+    return text === "pushover" || text === "ntfy" ? text : "crosswatch";
+  };
   const normalizeWebhooks = (raw = {}) => ({
     enabled: raw.enabled === true,
     url: String(raw.url || raw.default_url || raw.defaultUrl || "").trim(),
@@ -392,8 +402,10 @@ html[data-cw-theme="flat-light"] #sec-scheduling .sch-card-icon{background:#eef2
     start_url: String(raw.start_url || raw.startUrl || "").trim(),
     success_url: String(raw.success_url || raw.successUrl || "").trim(),
     failure_url: String(raw.failure_url || raw.failureUrl || "").trim(),
-    payload_format: ["notifiarr", "notifiarr_passthrough"].includes(String(raw.payload_format || raw.payloadFormat || raw.format || "").trim().toLowerCase().replace("-", "_")) ? "notifiarr" : "crosswatch",
+    payload_format: normalizeWebhookFormat(raw.payload_format || raw.payloadFormat || raw.format),
     notifiarr_channel_id: String(raw.notifiarr_channel_id || raw.notifiarrChannelId || "").trim(),
+    pushover_token: String(raw.pushover_token || raw.pushoverToken || "").trim(),
+    pushover_user: String(raw.pushover_user || raw.pushoverUser || "").trim(),
     timeout_seconds: Math.max(1, Math.min(60, parseInt(raw.timeout_seconds || raw.timeoutSeconds || 10, 10) || 10)),
     alert_on_unresolved: (raw.alert_on_unresolved ?? raw.alertOnUnresolved) === true
   });
@@ -1022,6 +1034,8 @@ const ensureStdEnabledToggle = () => {
       failure_url: $("#schWebhookFailure")?.value || "",
       payload_format: $("#schWebhookFormat")?.value || "crosswatch",
       notifiarr_channel_id: $("#schWebhookNotifiarrChannel")?.value || "",
+      pushover_token: $("#schWebhookPushoverToken")?.value || "",
+      pushover_user: $("#schWebhookPushoverUser")?.value || "",
       timeout_seconds: $("#schWebhookTimeout")?.value || 10,
       alert_on_unresolved: !!$("#schWebhookAlertUnresolved")?.checked
     });
@@ -1029,7 +1043,13 @@ const ensureStdEnabledToggle = () => {
     setWebhookToggleState($("#schWebhookAlertUnresolved"), _webhooks.alert_on_unresolved);
     applyWebhookVisibility();
   };
-  const webhookFormat = () => _webhooks.payload_format === "notifiarr" ? "notifiarr" : "crosswatch";
+  const webhookFormat = () => normalizeWebhookFormat(_webhooks.payload_format);
+  const WEBHOOK_URL_FIELD = {
+    crosswatch: { label: "All events URL", help: "webhook_url", placeholder: "https://hooks.example.com/crosswatch" },
+    notifiarr: { label: "Notifiarr passthrough URL", help: "webhook_notifiarr_url", placeholder: "https://notifiarr.com/api/v1/notification/passthrough/YOUR_API_KEY" },
+    ntfy: { label: "ntfy topic URL", help: "webhook_ntfy_url", placeholder: "https://ntfy.sh/your-topic" }
+  };
+  const isPushoverKey = (value) => /^[A-Za-z0-9]{30}$/.test(String(value || "").trim());
   const applyWebhookVisibility = () => {
     const root = $("#schWebhooks");
     if (!root) return;
@@ -1038,17 +1058,14 @@ const ensureStdEnabledToggle = () => {
     const urlLabel = $("#schWebhookUrlLabel", root);
     const urlHelp = $("#schWebhookUrlHelp", root);
     const urlInput = $("#schWebhookUrl", root);
-    if (urlLabel) urlLabel.textContent = format === "notifiarr" ? "Notifiarr passthrough URL" : "All events URL";
+    const urlField = WEBHOOK_URL_FIELD[format] || WEBHOOK_URL_FIELD.crosswatch;
+    if (urlLabel) urlLabel.textContent = urlField.label;
     if (urlHelp) {
-      urlHelp.setAttribute("aria-label", `${urlLabel?.textContent || "All events URL"} help`);
-      urlHelp.dataset.helpKey = format === "notifiarr" ? "webhook_notifiarr_url" : "webhook_url";
+      urlHelp.setAttribute("aria-label", `${urlField.label} help`);
+      urlHelp.dataset.helpKey = urlField.help;
       urlHelp.title = HELP_TIPS[urlHelp.dataset.helpKey] || "";
     }
-    if (urlInput) {
-      urlInput.placeholder = format === "notifiarr"
-        ? "https://notifiarr.com/api/v1/notification/passthrough/YOUR_API_KEY"
-        : "https://hooks.example.com/crosswatch";
-    }
+    if (urlInput) urlInput.placeholder = urlField.placeholder;
     root.querySelectorAll("[data-webhook-format-for] input,[data-webhook-format-for] select").forEach((node) => {
       const holder = node.closest("[data-webhook-format-for]");
       const formats = String(holder?.dataset?.webhookFormatFor || "").split(/\s+/).filter(Boolean);
@@ -1064,9 +1081,11 @@ const ensureStdEnabledToggle = () => {
     const failure = $("#schWebhookFailure");
     const format = $("#schWebhookFormat");
     const notifiarrChannel = $("#schWebhookNotifiarrChannel");
+    const pushoverToken = $("#schWebhookPushoverToken");
+    const pushoverUser = $("#schWebhookPushoverUser");
     const timeout = $("#schWebhookTimeout");
     const alertUnresolved = $("#schWebhookAlertUnresolved");
-    if (!enabled || !url || !base || !start || !success || !failure || !format || !notifiarrChannel || !timeout) return;
+    if (!enabled || !url || !base || !start || !success || !failure || !format || !notifiarrChannel || !pushoverToken || !pushoverUser || !timeout) return;
     enabled.checked = !!_webhooks.enabled;
     setWebhookToggleState(enabled, enabled.checked);
     url.value = _webhooks.url || "";
@@ -1076,6 +1095,8 @@ const ensureStdEnabledToggle = () => {
     failure.value = _webhooks.failure_url || "";
     format.value = _webhooks.payload_format || "crosswatch";
     notifiarrChannel.value = _webhooks.notifiarr_channel_id || "";
+    pushoverToken.value = _webhooks.pushover_token || "";
+    pushoverUser.value = _webhooks.pushover_user || "";
     timeout.value = String(_webhooks.timeout_seconds || 10);
     if (alertUnresolved) {
       alertUnresolved.checked = !!_webhooks.alert_on_unresolved;
@@ -1085,8 +1106,22 @@ const ensureStdEnabledToggle = () => {
   };
   const webhooksValidation = () => {
     syncWebhooksFromFields();
-    const entries = webhookFormat() === "notifiarr" ? [
-      ["Notifiarr passthrough URL", _webhooks.url]
+    const format = webhookFormat();
+    if (format === "pushover") {
+      const keys = [
+        ["Pushover application token", _webhooks.pushover_token],
+        ["Pushover user key", _webhooks.pushover_user]
+      ];
+      const keyIssues = keys
+        .filter(([, value]) => value && !isPushoverKey(value))
+        .map(([label]) => `${label}: use the 30 character key from Pushover.`);
+      if (_webhooks.enabled && keys.some(([, value]) => !value)) {
+        keyIssues.push("Scheduler Webhooks: add the Pushover application token and user key or turn webhooks off.");
+      }
+      return keyIssues;
+    }
+    const entries = format === "notifiarr" || format === "ntfy" ? [
+      [WEBHOOK_URL_FIELD[format].label, _webhooks.url]
     ] : [
       ["All events URL", _webhooks.url],
       ["Compatible base URL", _webhooks.base_url],
@@ -1098,13 +1133,13 @@ const ensureStdEnabledToggle = () => {
     entries.forEach(([label, value]) => {
       if (value && !isHttpUrl(value)) issues.push(`${label}: use an http:// or https:// URL.`);
     });
-    if (webhookFormat() === "notifiarr" && _webhooks.notifiarr_channel_id && !/^\d+$/.test(_webhooks.notifiarr_channel_id)) {
+    if (format === "notifiarr" && _webhooks.notifiarr_channel_id && !/^\d+$/.test(_webhooks.notifiarr_channel_id)) {
       issues.push("Notifiarr channel ID: use the numeric Discord channel id.");
     }
     if (_webhooks.enabled && !entries.some(([, value]) => String(value || "").trim())) {
-      issues.push(webhookFormat() === "notifiarr"
-        ? "Scheduler Webhooks: add the Notifiarr passthrough URL or turn webhooks off."
-        : "Scheduler Webhooks: add at least one callback URL or turn webhooks off.");
+      issues.push(format === "crosswatch"
+        ? "Scheduler Webhooks: add at least one callback URL or turn webhooks off."
+        : `Scheduler Webhooks: add the ${WEBHOOK_URL_FIELD[format].label} or turn webhooks off.`);
     }
     return issues;
   };
@@ -2068,8 +2103,8 @@ const ensureStdEnabledToggle = () => {
 </div>
 <section class="sch-adv-section">
   <div class="stack two">
-    <label class="field-mini"><div class="subnote"><span class="th-help"><span id="schWebhookUrlLabel">All events URL</span><button id="schWebhookUrlHelp" type="button" class="sch-help" aria-label="All events URL help" data-help-key="webhook_url"></button></span></div><input id="schWebhookUrl" name="schWebhookUrl" type="url" inputmode="url" pattern="https?://.+" autocomplete="off" placeholder="https://hooks.example.com/crosswatch"></label>
-    <label class="field-mini"><div class="subnote"><span class="th-help">Payload format<button type="button" class="sch-help" aria-label="Payload format help" data-help-key="webhook_format"></button></span></div><select id="schWebhookFormat" name="schWebhookFormat"><option value="crosswatch">CrossWatch JSON</option><option value="notifiarr">Notifiarr Passthrough</option></select></label>
+    <label class="field-mini" data-webhook-format-for="crosswatch notifiarr ntfy"><div class="subnote"><span class="th-help"><span id="schWebhookUrlLabel">All events URL</span><button id="schWebhookUrlHelp" type="button" class="sch-help" aria-label="All events URL help" data-help-key="webhook_url"></button></span></div><input id="schWebhookUrl" name="schWebhookUrl" type="url" inputmode="url" pattern="https?://.+" autocomplete="off" placeholder="https://hooks.example.com/crosswatch"></label>
+    <label class="field-mini"><div class="subnote"><span class="th-help">Payload format<button type="button" class="sch-help" aria-label="Payload format help" data-help-key="webhook_format"></button></span></div><select id="schWebhookFormat" name="schWebhookFormat"><option value="crosswatch">CrossWatch JSON</option><option value="notifiarr">Notifiarr Passthrough</option><option value="pushover">Pushover</option><option value="ntfy">ntfy</option></select></label>
   </div>
   <div class="stack two">
     <label class="field-mini" data-webhook-format-for="crosswatch"><div class="subnote"><span class="th-help">Compatible base URL<button type="button" class="sch-help" aria-label="Compatible base URL help" data-help-key="webhook_base"></button></span></div><input id="schWebhookBase" name="schWebhookBase" type="url" inputmode="url" pattern="https?://.+" autocomplete="off" placeholder="https://monitor.example/ping/crosswatch"></label>
@@ -2082,6 +2117,10 @@ const ensureStdEnabledToggle = () => {
       <span class="cx-toggle-text"><span class="th-help">Alert on unresolved items<button type="button" class="sch-help" aria-label="Alert on unresolved items help" data-help-key="webhook_alert_unresolved"></button></span></span>
       <span class="cx-toggle-state" aria-hidden="true"></span>
     </label>
+  </div>
+  <div class="stack two" data-webhook-format-for="pushover">
+    <label class="field-mini"><div class="subnote"><span class="th-help">Pushover application token<button type="button" class="sch-help" aria-label="Pushover application token help" data-help-key="webhook_pushover_token"></button></span></div><input id="schWebhookPushoverToken" name="schWebhookPushoverToken" type="text" maxlength="30" pattern="[A-Za-z0-9]{30}" autocomplete="off" spellcheck="false" placeholder="30 character application token"></label>
+    <label class="field-mini"><div class="subnote"><span class="th-help">Pushover user key<button type="button" class="sch-help" aria-label="Pushover user key help" data-help-key="webhook_pushover_user"></button></span></div><input id="schWebhookPushoverUser" name="schWebhookPushoverUser" type="text" maxlength="30" pattern="[A-Za-z0-9]{30}" autocomplete="off" spellcheck="false" placeholder="30 character user or group key"></label>
   </div>
   <div class="stack" data-webhook-format-for="notifiarr">
     <label class="field-mini"><div class="subnote"><span class="th-help">Notifiarr channel ID<button type="button" class="sch-help" aria-label="Notifiarr channel ID help" data-help-key="webhook_notifiarr_channel"></button></span></div><input id="schWebhookNotifiarrChannel" name="schWebhookNotifiarrChannel" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="123456789012345678"></label>
