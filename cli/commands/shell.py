@@ -36,6 +36,7 @@ GROUPS = (
     "anime",
     "instance",
     "user-profile",
+    "user",
     "scrobbler",
     "activity",
     "maintenance",

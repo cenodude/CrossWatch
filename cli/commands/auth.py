@@ -617,7 +617,8 @@ def token_create(
     ctx: typer.Context,
     name: str = typer.Option("CLI", "--name", "-n", help="Label shown in the token list."),
     expires_days: int = typer.Option(0, "--expires-days", help="Expire after N days. 0 means never."),
-    save: bool = typer.Option(True, "--save/--no-save", help="Store the token in the CLI settings file."),
+    user: str = typer.Option("", "--user", "-u", help="Managed user (id or username) the token belongs to. Defaults to the administrator."),
+    save: bool | None = typer.Option(None, "--save/--no-save", help="Store the token in the CLI settings file. On by default, off with --user."),
     write_to: str | None = typer.Option(None, "--write-to", help="Write the token to this file instead of printing it. Mode 0600 on Linux and macOS."),
     file_format: str = typer.Option("", "--format", help="File layout for --write-to: raw or env (CW_TOKEN=<token>)."),
     force: bool = typer.Option(False, "--force", help="Overwrite the --write-to file when it already exists."),
@@ -626,11 +627,18 @@ def token_create(
     state: Ctx = ctx.obj
     target = _token_file_target(write_to, file_format, force)
     layout = str(file_format or "raw").strip().lower()
-    payload = as_dict(state.post("/api/app-auth/tokens", json_body={"name": name, "expires_days": int(expires_days)}))
+    owner = str(user or "").strip()
+    if save is None:
+        save = not owner
+    body: dict[str, Any] = {"name": name, "expires_days": int(expires_days)}
+    if owner:
+        body["user_id"] = owner
+    payload = as_dict(state.post("/api/app-auth/tokens", json_body=body))
     if not payload.get("token"):
         raise CLIError(f"Token creation failed: {payload.get('error') or 'unknown error'}")
     raw = str(payload.get("token"))
     entry = as_dict(payload.get("entry"))
+    owner_label = str(entry.get("username") or entry.get("user_id") or "-")
     if target is not None:
         try:
             _write_token_file(target, raw, layout, force)
@@ -654,6 +662,7 @@ def token_create(
             [
                 ("Id", str(entry.get("id") or "-")),
                 ("Name", str(entry.get("name") or name)),
+                ("User", owner_label),
                 ("Expires", expires),
                 ("Written to", str(target)),
                 ("Saved to", stored or "not saved"),
@@ -669,6 +678,7 @@ def token_create(
             ("Token", raw),
             ("Id", str(entry.get("id") or "-")),
             ("Name", str(entry.get("name") or name)),
+            ("User", owner_label),
             ("Expires", expires),
             ("Saved to", stored or "not saved"),
         ],
