@@ -74,7 +74,16 @@ cw auth token list
 cw auth token revoke <id>
 ```
 
-Tokens are hashed at rest, inherit the permissions of the user they belong to, and land in the audit log like any UI action. Add `--expires-days` if you want them to lapse.
+Tokens are hashed at rest, inherit the permissions of the user they belong to, and land in the audit log like any UI action, with the token id and name on each entry. Add `--expires-days` if you want them to lapse.
+
+For a script that only needs to look, create a managed user with the monitor access level and create the token for that user:
+
+```
+cw user create monitor --profile Ops --access monitor
+cw auth token create --user monitor --name uptime --expires-days 365
+```
+
+`--user` takes a user id or username. A monitor token can read status, watcher and scheduler state, pairs, the run summary, events and the capture list across all profiles. It has no write access, the audit log stays hidden from it, and a monitor account cannot sign in to the web UI. With `--user` the token is not saved as your CLI token unless you pass `--save`.
 
 ## Global options
 
@@ -395,7 +404,16 @@ cw instance set plex PLEX-P01 --field label=Living room
 cw instance delete plex PLEX-P01
 
 cw user-profile list|show|create|set|delete
+
+cw user list
+cw user create monitor --profile Ops --access monitor
+cw user set monitor --access readonly
+cw user set monitor --ask-password
+cw user set monitor --disable
+cw user delete monitor
 ```
+
+Access is `readonly`, `full` or `monitor`. `--profile` takes a profile id or name, and every user needs one. Without `--password` or `--ask-password`, `cw user create` sets a random password nobody knows, so the account can only be used through an API token. Monitor accounts are token only either way, and the monitor level can only be given from the CLI.
 
 ## Scrobbler
 

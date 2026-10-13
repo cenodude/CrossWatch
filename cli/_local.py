@@ -290,13 +290,16 @@ class LocalTransport(Transport):
             expires_days = int(payload.get("expires_days") or 0)
         except Exception:
             expires_days = 0
-        raw, entry = mod.issue_api_token(
-            self._load(),
-            name=str(payload.get("name") or ""),
-            user_id=str(payload.get("user_id") or ""),
-            expires_days=expires_days,
-            created_via="local_cli",
-        )
+        try:
+            raw, entry = mod.issue_api_token(
+                self._load(),
+                name=str(payload.get("name") or ""),
+                user_id=str(payload.get("user_id") or ""),
+                expires_days=expires_days,
+                created_via="local_cli",
+            )
+        except KeyError:
+            return {"ok": False, "error": "User not found"}
         return {"ok": True, "token": raw, "entry": entry}
 
     def _tokens_delete(self, *, token_id: str, **_: Any) -> dict[str, Any]:

@@ -2179,7 +2179,7 @@ def test_every_command_group_is_registered() -> None:
         "pair", "sync", "config", "auth", "watcher", "scheduler", "logs",
         "analyzer", "events", "capture", "backup", "watchlist", "progress",
         "editor", "playlist", "export", "import", "metadata", "manual",
-        "anime", "instance", "user-profile", "scrobbler", "activity", "maintenance",
+        "anime", "instance", "user-profile", "user", "scrobbler", "activity", "maintenance",
     }
     assert expected <= names, f"missing groups: {sorted(expected - names)}"
 
@@ -2253,6 +2253,109 @@ def test_token_create_write_to_keeps_the_token_out_of_the_output(
     assert "token" not in load_settings()
     if os.name != "nt":
         assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+
+def test_token_create_for_a_managed_user_sends_the_owner_and_keeps_the_cli_token(clean_cli_env) -> None:
+    from cli._app import run_isolated
+    from cli._settings import load_settings, update_settings
+
+    update_settings(token="cwt_admin_value", url="http://cw.test")
+    state = Ctx.build(url="http://cw.test", output="json")
+    transport = FakeTransport({TOKEN_ROUTE: TOKEN_REPLY})
+    state._http = transport
+
+    assert run_isolated(state, ["auth", "token", "create", "--name", "mon", "--user", "monitor", "--expires-days", "365"]) == 0
+
+    assert transport.calls == [("POST", "/api/app-auth/tokens", {"name": "mon", "expires_days": 365, "user_id": "monitor"})]
+    assert load_settings().get("token") == "cwt_admin_value"
+
+
+def test_token_create_without_a_user_still_saves_the_token(clean_cli_env) -> None:
+    from cli._app import run_isolated
+    from cli._settings import load_settings
+
+    state = Ctx.build(url="http://cw.test", output="json")
+    transport = FakeTransport({TOKEN_ROUTE: TOKEN_REPLY})
+    state._http = transport
+
+    assert run_isolated(state, ["auth", "token", "create", "--name", "cli"]) == 0
+
+    assert transport.calls == [("POST", "/api/app-auth/tokens", {"name": "cli", "expires_days": 0})]
+    assert load_settings().get("token") == "cwt_secret_value"
+
+
+USERS_ROUTE = ("GET", "/api/app-auth/users")
+PROFILES_ROUTE = ("GET", "/api/user-profiles")
+USERS_REPLY = {
+    "ok": True,
+    "items": [
+        {"id": "administrator", "username": "admin", "protected": True, "is_admin": True},
+        {"id": "c" * 32, "username": "Monitor Bot", "profile_id": "p" * 32, "enabled": True, "permissions": {"write": False, "monitor": True}},
+    ],
+}
+PROFILES_REPLY = {"ok": True, "items": [{"id": "p" * 32, "label": "Ops"}]}
+MONITOR_PERMISSIONS = {"dashboard": False, "watchlist": False, "playback": False, "write": False, "monitor": True}
+READONLY_PERMISSIONS = {"dashboard": True, "watchlist": True, "playback": True, "write": False, "monitor": False}
+
+
+def _user_state(routes: dict[tuple[str, str], Any]) -> tuple[Ctx, FakeTransport]:
+    state = Ctx.build(url="http://cw.test", output="json")
+    transport = FakeTransport({USERS_ROUTE: USERS_REPLY, PROFILES_ROUTE: PROFILES_REPLY, **routes})
+    state._http = transport
+    return state, transport
+
+
+def test_user_create_resolves_the_profile_and_sets_a_random_password(clean_cli_env, capsys: pytest.CaptureFixture[str]) -> None:
+    from cli._app import run_isolated
+
+    reply = {"ok": True, "user": {"id": "d" * 32, "username": "ops", "permissions": MONITOR_PERMISSIONS}}
+    state, transport = _user_state({("POST", "/api/app-auth/users"): reply})
+
+    assert run_isolated(state, ["user", "create", "ops", "--profile", "ops", "--access", "monitor"]) == 0
+
+    method, path, body = transport.calls[-1]
+    assert (method, path) == ("POST", "/api/app-auth/users")
+    assert body["username"] == "ops"
+    assert body["profile_id"] == "p" * 32
+    assert body["permissions"] == MONITOR_PERMISSIONS
+    assert len(body["password"]) >= 24
+    out = capsys.readouterr().out
+    assert body["password"] not in out
+    assert json.loads(out)["password_generated"] is True
+
+
+def test_user_create_rejects_unknown_access_and_profile_before_posting(clean_cli_env) -> None:
+    from cli._app import run_isolated
+
+    state, transport = _user_state({("POST", "/api/app-auth/users"): {"ok": True}})
+
+    assert run_isolated(state, ["user", "create", "ops", "--profile", "Ops", "--access", "root"]) != 0
+    assert run_isolated(state, ["user", "create", "ops", "--profile", "Nope"]) != 0
+    assert all(call[0] != "POST" for call in transport.calls)
+
+
+def test_user_set_and_delete_resolve_the_username(clean_cli_env) -> None:
+    from cli._app import run_isolated
+
+    target = "/api/app-auth/users/" + "c" * 32
+    state, transport = _user_state(
+        {
+            ("PUT", target): {"ok": True, "user": {"id": "c" * 32, "username": "Monitor Bot", "permissions": READONLY_PERMISSIONS}},
+            ("DELETE", target): {"ok": True, "deleted": True},
+        }
+    )
+
+    assert run_isolated(state, ["user", "set", "monitor bot", "--access", "readonly", "--disable"]) == 0
+    assert transport.calls[-1] == ("PUT", target, {"permissions": READONLY_PERMISSIONS, "enabled": False})
+
+    assert run_isolated(state, ["user", "delete", "Monitor Bot", "--yes"]) == 0
+    assert transport.calls[-1] == ("DELETE", target, None)
+
+    assert run_isolated(state, ["user", "set", "admin", "--access", "full"]) != 0
+    assert run_isolated(state, ["user", "set", "Monitor Bot"]) != 0
+    assert run_isolated(state, ["user", "delete", "nobody", "--yes"]) != 0
+    assert [call[0] for call in transport.calls].count("PUT") == 1
+    assert [call[0] for call in transport.calls].count("DELETE") == 1
 
 
 def test_token_create_write_to_refuses_existing_file_before_creating_a_token(clean_cli_env, tmp_path: Path) -> None:
