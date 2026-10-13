@@ -281,7 +281,6 @@ html[data-cw-theme="flat-light"] #sec-scheduling .sch-card-icon{background:#eef2
 @media (max-width:1180px){.sch-adv .stack.two{grid-template-columns:1fr}}
 @media (max-width:980px){#sec-scheduling .sch-std-head{grid-template-columns:1fr;padding-bottom:4px}#sec-scheduling .sch-std-head .cx-toggle{justify-self:start}#sec-scheduling .sch-std-inline{grid-template-columns:1fr}.sch-adv .cw-panel-head{grid-template-columns:1fr}.sch-adv .cw-panel-head .cx-toggle{justify-self:start}}
 @media (max-width:760px){#sec-scheduling .sch-std-title{font-size:22px}#sec-scheduling .sch-std-wizard{padding:0 16px 16px}.sch-adv .cw-panel-head{padding:16px}.sch-adv-head-title{font-size:22px}.sch-adv .cw-panel-head .cx-toggle{margin-top:10px}.sch-workflow-top{grid-template-columns:1fr}.sch-workflow-actions{justify-content:flex-start}.sch-workflow-controls{justify-content:flex-start}.sch-workflow-controls select,.sch-workflow-controls input{width:100%!important}.sch-workflow-step{grid-template-columns:24px 30px minmax(0,1fr) auto auto;width:auto}}
-.sch-hook-format-select{display:none!important}
 .sch-webhooks .sch-adv-head-copy p{max-width:none}
 .sch-hook-services{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
 .sch-hook-service{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:12px;min-height:76px;padding:12px 14px;border:1px solid var(--sch-border);border-radius:14px;background:var(--sch-card-bg);color:var(--sch-fg);font:inherit;text-align:left;cursor:pointer;transition:border-color .14s ease,box-shadow .14s ease}
@@ -2264,7 +2263,7 @@ const ensureStdEnabledToggle = () => {
       <span class="material-symbols-rounded sch-hook-service-check" aria-hidden="true">check_circle</span>
     </button>
   </div>
-  <select id="schWebhookFormat" name="schWebhookFormat" class="sch-hook-format-select" aria-hidden="true" tabindex="-1"><option value="crosswatch">CrossWatch JSON</option><option value="notifiarr">Notifiarr Passthrough</option><option value="pushover">Pushover</option><option value="ntfy">ntfy</option></select>
+  <input type="hidden" id="schWebhookFormat" name="schWebhookFormat" value="crosswatch">
 </section>
 <section class="sch-adv-section">
   <div class="sch-std-step-head">
