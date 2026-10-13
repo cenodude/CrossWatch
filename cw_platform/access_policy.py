@@ -10,15 +10,72 @@ from .provider_instances import instances_for_user_profile, list_user_profiles, 
 
 READ_PERMISSION_KEYS = ("dashboard", "watchlist", "playback")
 
+MONITOR_GET_PATHS = frozenset(
+    {
+        "/api/status",
+        "/api/version",
+        "/api/watch/status",
+        "/api/scheduling/status",
+        "/api/run/summary",
+        "/api/run/unresolved",
+        "/api/pairs",
+        "/api/snapshots/list",
+        "/api/events/status",
+        "/api/events/statistics",
+        "/api/events/calendar",
+        "/api/events/calendar/day",
+        "/api/events/recent",
+        "/api/events/feed",
+        "/api/events/search",
+        "/api/events/groups",
+        "/api/events/tree",
+        "/api/events/context",
+    }
+)
+MONITOR_GET_PREFIXES = ("/api/events/groups/", "/api/events/item/", "/api/events/run/")
+
 
 def clean_managed_permissions(raw: Any) -> dict[str, bool]:
     src = raw if isinstance(raw, Mapping) else {}
+    monitor = src.get("monitor") is True
     return {
-        "dashboard": src.get("dashboard") is not False,
-        "watchlist": src.get("watchlist") is not False,
-        "playback": src.get("playback") is not False,
-        "write": bool(src.get("write")),
+        "dashboard": not monitor and src.get("dashboard") is not False,
+        "watchlist": not monitor and src.get("watchlist") is not False,
+        "playback": not monitor and src.get("playback") is not False,
+        "write": not monitor and bool(src.get("write")),
+        "monitor": monitor,
     }
+
+
+def is_monitor_user(user: Mapping[str, Any] | None) -> bool:
+    if not isinstance(user, Mapping) or bool(user.get("is_admin")):
+        return False
+    return clean_managed_permissions(user.get("permissions"))["monitor"]
+
+
+def monitor_api_allowed(user: Mapping[str, Any] | None, path: Any, method: Any = "GET") -> bool:
+    if str(method or "GET").upper() != "GET":
+        return False
+    if not is_monitor_user(user):
+        return False
+    p = str(path or "").split("?", 1)[0]
+    return p in MONITOR_GET_PATHS or p.startswith(MONITOR_GET_PREFIXES)
+
+
+def monitor_identity(user: Mapping[str, Any]) -> dict[str, Any]:
+    out = dict(user)
+    out["is_admin"] = True
+    out["profile_id"] = ""
+    out["monitor_view"] = True
+    return out
+
+
+def request_is_monitor(request: Any) -> bool:
+    try:
+        user = getattr(getattr(request, "state", None), "cw_user", None)
+    except Exception:
+        return False
+    return isinstance(user, Mapping) and bool(user.get("monitor_view"))
 
 
 def managed_user_can_write(user: Mapping[str, Any] | None) -> bool:
@@ -123,7 +180,7 @@ def request_user(request: Any) -> Mapping[str, Any] | None:
         return None
     if not isinstance(user, Mapping):
         return None
-    if not bool(user.get("is_admin")):
+    if not bool(user.get("is_admin")) or bool(user.get("monitor_view")):
         return user
     pid = requested_view_as_profile(request)
     if not pid:

@@ -239,14 +239,13 @@ def dashboard_widgets(
     try:
         from cw_platform.config_base import CONFIG, load_config
         from cw_platform.orchestrator._state_store import StateStore
-        from api.appAuthAPI import COOKIE_NAME, effective_user_profile_id
+        from api.appAuthAPI import effective_request_profile_id
         from cw_platform.provider_instances import instances_for_user_profile
 
         requested = {part.strip() for part in include.split(",") if part.strip()}
         state_features = requested & {"history", "ratings", "progress"}
         cfg = load_config() or {}
-        token = request.cookies.get(COOKIE_NAME) if request is not None else None
-        profile = effective_user_profile_id(cfg, token, user_profile)
+        profile = effective_request_profile_id(cfg, request, user_profile)
         limits = {
             "history": history_limit,
             "ratings": ratings_limit,

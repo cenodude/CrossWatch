@@ -1208,10 +1208,9 @@ def register_insights(app: FastAPI) -> None:
         user_filter: dict[str, list[str]] = {}
 
         try:
-            from api.appAuthAPI import COOKIE_NAME, effective_user_profile_id
+            from api.appAuthAPI import effective_request_profile_id
 
-            token = request.cookies.get(COOKIE_NAME)
-            scoped_profile = effective_user_profile_id(cfg, token, user_profile)
+            scoped_profile = effective_request_profile_id(cfg, request, user_profile)
         except Exception:
             scoped_profile = "__none__"
 

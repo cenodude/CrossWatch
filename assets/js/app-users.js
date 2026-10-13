@@ -126,9 +126,21 @@
     }
   }
 
+  const ACCESS_LABELS = { readonly: "Read-only", full: "Full access", monitor: "Monitor" };
+
   function accessMode(user) {
     const raw = user?.permissions && typeof user.permissions === "object" ? user.permissions : {};
+    if (raw.monitor === true) return "monitor";
     return raw.write === true ? "full" : "readonly";
+  }
+
+  function accessLabel(mode) {
+    return ACCESS_LABELS[mode] || ACCESS_LABELS.readonly;
+  }
+
+  function accessPermissions(mode) {
+    if (mode === "monitor") return { dashboard: false, watchlist: false, playback: false, write: false, monitor: true };
+    return { dashboard: true, watchlist: true, playback: true, write: mode === "full", monitor: false };
   }
 
   function accessModeSelect(user) {
@@ -139,6 +151,7 @@
         <select data-user-access>
           <option value="readonly"${mode === "readonly" ? " selected" : ""}>Read-only</option>
           <option value="full"${mode === "full" ? " selected" : ""}>Full access</option>
+          ${mode === "monitor" ? `<option value="monitor" selected>Monitor</option>` : ""}
         </select>
       </label>`;
   }
@@ -148,7 +161,7 @@
     const id = txt(user.id);
     const expanded = expandedUsers.has(id);
     const enabled = user.enabled !== false;
-    const mode = accessMode(user) === "full" ? "Full access" : "Read-only";
+    const mode = accessLabel(accessMode(user));
     return `
       <div class="cw-app-user-row${protectedUser ? " is-protected" : ""}${expanded ? " is-expanded" : ""}" data-user-id="${esc(id)}">
         <div class="cw-app-user-summary"${protectedUser ? "" : ` data-user-action="toggle" role="button" tabindex="0"`}>
@@ -227,13 +240,13 @@
   }
 
   function rowPayload(row) {
-    const full = String(row.querySelector("[data-user-access]")?.value || "readonly") === "full";
+    const mode = String(row.querySelector("[data-user-access]")?.value || "readonly");
     const enabledEl = row.querySelector("[data-user-enabled]");
     const payload = {
       username: txt(row.querySelector("[data-user-name]")?.value),
       profile_id: txt(row.querySelector("[data-user-profile]")?.value),
       enabled: String(enabledEl?.dataset?.userEnabled || enabledEl?.value || "true") === "true",
-      permissions: { dashboard: true, watchlist: true, playback: true, write: full },
+      permissions: accessPermissions(mode),
     };
     const password = String(row.querySelector("[data-user-password]")?.value || "");
     if (password) payload.password = password;
@@ -253,7 +266,7 @@
       enabledBtn.setAttribute("aria-label", enabled ? "Disable user" : "Enable user");
       enabledBtn.setAttribute("aria-pressed", enabled ? "true" : "false");
     }
-    const mode = String(row.querySelector("[data-user-access]")?.value || "readonly") === "full" ? "Full access" : "Read-only";
+    const mode = accessLabel(String(row.querySelector("[data-user-access]")?.value || "readonly"));
     const pill = row.querySelector(".cw-app-user-summary-actions .cw-app-user-pill");
     if (pill) pill.textContent = mode;
   }

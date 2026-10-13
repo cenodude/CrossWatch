@@ -12,6 +12,7 @@ from typing import Any
 from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse
 
+from cw_platform.access_policy import is_monitor_user
 from cw_platform.config_base import load_config
 
 from .appAuthAPI import (
@@ -21,6 +22,7 @@ from .appAuthAPI import (
     _audit,
     _cfg_auth,
     _cfg_users,
+    _clean_username,
     _normalize_app_user_id,
     _now,
     _origin_allowed,
@@ -117,6 +119,25 @@ def _entry_user_id(entry: dict[str, Any]) -> str:
     if raw is None or str(raw).strip() == "":
         return ADMIN_USER_ID
     return _normalize_app_user_id(raw) or ADMIN_USER_ID
+
+
+def _resolve_token_user_id(a: dict[str, Any], user_id: Any) -> str:
+    wanted = str(user_id or "").strip()
+    if not wanted:
+        return ADMIN_USER_ID
+    uid = _normalize_app_user_id(wanted)
+    users = _cfg_users(a)
+    if uid and uid != ADMIN_USER_ID and isinstance(users.get(uid), dict):
+        return uid
+    name = _clean_username(wanted).casefold()
+    named = [
+        _normalize_app_user_id(raw_id)
+        for raw_id, raw in users.items()
+        if name and isinstance(raw, dict) and _clean_username(raw.get("username")).casefold() == name
+    ]
+    if uid == ADMIN_USER_ID or (name and _clean_username(a.get("username")).casefold() == name):
+        return "" if named else ADMIN_USER_ID
+    return named[0] if len(named) == 1 else ""
 
 
 def _entry_identity(a: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any] | None:
@@ -246,7 +267,6 @@ def issue_api_token(
     raw = f"{TOKEN_PREFIX}{entry_id}.{secret}"
     created = _now()
     expires = created + days * 86400 if days else 0
-    target = _normalize_app_user_id(user_id) or ADMIN_USER_ID
     origin = str(created_via or "api").strip()
     if origin not in {*_TRUSTED_LOCAL_TOKEN_ORIGINS, "api"}:
         origin = "api"
@@ -256,10 +276,11 @@ def issue_api_token(
         if not isinstance(a, dict):
             a = {}
             latest["app_auth"] = a
+        target = _resolve_token_user_id(a, user_id)
         identity = None
         if target == ADMIN_USER_ID:
             identity = _admin_identity(a)
-        else:
+        elif target:
             found = _cfg_users(a).get(target)
             if isinstance(found, dict):
                 identity = _public_user(target, found)
@@ -353,6 +374,8 @@ def _actor(request: Request) -> tuple[dict[str, Any] | None, JSONResponse | None
     if user is None:
         api_user = resolve_api_token(cfg, extract_api_token(request))
         if api_user is not None:
+            if is_monitor_user(api_user) and str(request.method or "GET").upper() != "GET":
+                return None, _nostore({"ok": False, "error": "Administrator access required"}, 403)
             return api_user, None
         return None, _nostore({"ok": False, "error": "Unauthorized"}, 401)
     if not user.get("is_admin"):
@@ -428,7 +451,7 @@ def api_tokens_create(request: Request, payload: dict[str, Any] | None = Body(de
         target_type="api_token",
         target_id=entry.get("id"),
         message=f"API token {entry.get('name') or entry.get('id')} was created",
-        fields={"expires_at": entry.get("expires_at")},
+        fields={"expires_at": entry.get("expires_at"), "user_id": entry.get("user_id")},
     )
     return _nostore({"ok": True, "token": raw, "entry": entry})
 

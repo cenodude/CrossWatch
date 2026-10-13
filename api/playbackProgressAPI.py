@@ -18,10 +18,9 @@ router = APIRouter(prefix="/api/playback_progress", tags=["playback_progress"])
 
 def _playback_user_filter(request: Request | None, requested_profile: str = "") -> dict[str, list[str]]:
     try:
-        from api.appAuthAPI import COOKIE_NAME, effective_user_profile_id
+        from api.appAuthAPI import effective_request_profile_id
         cfg = load_config() or {}
-        token = request.cookies.get(COOKIE_NAME) if request is not None else None
-        profile = effective_user_profile_id(cfg, token, requested_profile)
+        profile = effective_request_profile_id(cfg, request, requested_profile)
         if not str(profile or "").strip():
             return {}
         return instances_for_user_profile(cfg, profile) or {"__NONE__": ["__NONE__"]}

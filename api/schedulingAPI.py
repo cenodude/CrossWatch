@@ -4,10 +4,11 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, Request
 
+from cw_platform.access_policy import request_is_monitor
 from services.scheduler_webhooks import payload_format_label, scheduler_webhooks_configured, send_test_webhook
 
 router = APIRouter(prefix="/api/scheduling", tags=["scheduling"])
@@ -406,7 +407,7 @@ def sched_post(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         return {"ok": True, "next_run_at": int(nxt) if nxt else 0}
 
 @router.get("/status")
-def sched_status() -> dict[str, Any]:
+def sched_status(request: Request = cast(Request, None)) -> dict[str, Any]:
     load_config, _, scheduler, hint, *_ = _env()
     try:
         st = scheduler.status()  # type: ignore[union-attr]
@@ -416,6 +417,8 @@ def sched_status() -> dict[str, Any]:
     try:
         cfg = load_config() or {}
         st["config"] = (cfg.get("scheduling") or {}) or {}
+        if request_is_monitor(request):
+            st["config"] = {key: value for key, value in _as_dict(st["config"]).items() if key != "webhooks"}
         live = int(st.get("next_run_at") or 0)
         hint_val = int((hint.get("next_run_at") or 0)) if isinstance(hint, dict) else 0
         if not live and hint_val:
