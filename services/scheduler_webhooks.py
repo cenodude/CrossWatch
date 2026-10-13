@@ -13,6 +13,20 @@ import requests
 SCHEDULED_SYNC_MODES = {"standard", "advanced", "advanced_workflow"}
 EVENTS = {"start", "success", "failure"}
 BLOCKED_HOSTNAMES = {"localhost", "localhost.localdomain"}
+PAYLOAD_FORMAT_LABELS = {
+    "crosswatch": "CrossWatch JSON",
+    "notifiarr": "Notifiarr Passthrough",
+    "pushover": "Pushover",
+    "ntfy": "ntfy",
+}
+SINGLE_URL_FORMATS = {"notifiarr", "ntfy"}
+PUSHOVER_URL = "https://api.pushover.net/1/messages.json"
+PUSHOVER_KEY_LENGTH = 30
+PUSHOVER_TITLE_MAX = 250
+PUSHOVER_MESSAGE_MAX = 1024
+PUSHOVER_PRIORITY = {"start": -1, "success": 0, "failure": 1}
+NTFY_MESSAGE_MAX_BYTES = 4096
+NTFY_PRIORITY = {"start": 2, "success": 3, "failure": 4}
 
 DEFAULT_WEBHOOKS: dict[str, Any] = {
     "enabled": False,
@@ -23,6 +37,8 @@ DEFAULT_WEBHOOKS: dict[str, Any] = {
     "failure_url": "",
     "payload_format": "crosswatch",
     "notifiarr_channel_id": "",
+    "pushover_token": "",
+    "pushover_user": "",
     "timeout_seconds": 10,
     "alert_on_unresolved": False,
 }
@@ -39,6 +55,8 @@ def normalize_scheduler_webhooks(value: Any) -> dict[str, Any]:
         out[key] = _http_url_or_blank(src.get(key))
     out["payload_format"] = _payload_format(src.get("payload_format") or src.get("format"))
     out["notifiarr_channel_id"] = _digits_or_blank(src.get("notifiarr_channel_id") or src.get("notifiarrChannelId"))
+    out["pushover_token"] = _pushover_key_or_blank(src.get("pushover_token") or src.get("pushoverToken"))
+    out["pushover_user"] = _pushover_key_or_blank(src.get("pushover_user") or src.get("pushoverUser"))
     out["timeout_seconds"] = _as_int(src.get("timeout_seconds"), 10, minimum=1, maximum=60)
     return out
 
@@ -56,7 +74,12 @@ def callback_url(webhooks: dict[str, Any], event: str) -> str:
     if ev not in EVENTS:
         return ""
 
-    if _payload_format(webhooks.get("payload_format") or webhooks.get("format")) == "notifiarr":
+    fmt = _payload_format(webhooks.get("payload_format") or webhooks.get("format"))
+    if fmt == "pushover":
+        token = _pushover_key_or_blank(webhooks.get("pushover_token"))
+        user = _pushover_key_or_blank(webhooks.get("pushover_user"))
+        return PUSHOVER_URL if token and user else ""
+    if fmt in SINGLE_URL_FORMATS:
         return str(webhooks.get("url") or webhooks.get("default_url") or "").strip()
 
     explicit_key = {"start": "start_url", "success": "success_url", "failure": "failure_url"}[ev]
@@ -76,6 +99,15 @@ def callback_url(webhooks: dict[str, Any], event: str) -> str:
     if ev == "failure":
         return _with_path_suffix(base, "fail")
     return base
+
+
+def payload_format_label(value: Any) -> str:
+    return PAYLOAD_FORMAT_LABELS[_payload_format(value)]
+
+
+def scheduler_webhooks_configured(webhooks: dict[str, Any] | None) -> bool:
+    hooks = webhooks if isinstance(webhooks, dict) else {}
+    return any(callback_url(hooks, event) for event in sorted(EVENTS))
 
 
 def build_payload(
@@ -110,8 +142,13 @@ def build_payload(
         "notices": [str(note) for note in snap.get("notices") or [] if note][:10] or None,
     }
     payload = {k: v for k, v in payload.items() if v not in ("", None, {})}
-    if _payload_format(payload_format) == "notifiarr":
+    fmt = _payload_format(payload_format)
+    if fmt == "notifiarr":
         return _notifiarr_payload(payload, ctx, snap)
+    if fmt == "pushover":
+        return _pushover_payload(payload)
+    if fmt == "ntfy":
+        return _ntfy_payload(payload)
     return payload
 
 
@@ -159,25 +196,51 @@ def notify_scheduler_webhook(
         _log(log_fn, f"[!] Scheduler webhook {event}: blocked unsafe URL")
         return False
 
-    payload = build_payload(event, context, summary, str(webhooks.get("payload_format") or "crosswatch"))
-    if webhooks.get("payload_format") == "notifiarr":
-        channel_id = str(webhooks.get("notifiarr_channel_id") or "").strip()
-        if channel_id:
-            payload.setdefault("discord", {}).setdefault("ids", {})["channel"] = int(channel_id)
+    fmt = str(webhooks.get("payload_format") or "crosswatch")
+    payload = build_payload(event, context, summary, fmt)
     timeout = int(webhooks.get("timeout_seconds") or 10)
     try:
         resp = requests.post(
             url,
-            json=payload,
             timeout=timeout,
-            headers={"User-Agent": "CrossWatch scheduler webhook"},
             allow_redirects=False,
+            **_delivery_kwargs(fmt, payload, webhooks),
         )
         resp.raise_for_status()
+        if fmt == "pushover" and not _pushover_accepted(resp):
+            _log(log_fn, f"[!] Scheduler webhook {event}: rejected by Pushover")
+            return False
         _log(log_fn, f"[i] Scheduler webhook {event}: delivered")
         return True
     except Exception as exc:
         _log(log_fn, f"[!] Scheduler webhook {event}: {type(exc).__name__}")
+        return False
+
+
+def _delivery_kwargs(fmt: str, payload: dict[str, Any], webhooks: dict[str, Any]) -> dict[str, Any]:
+    headers = {"User-Agent": "CrossWatch scheduler webhook"}
+    if fmt == "pushover":
+        data = dict(payload)
+        data["token"] = str(webhooks.get("pushover_token") or "")
+        data["user"] = str(webhooks.get("pushover_user") or "")
+        return {"data": data, "headers": headers}
+    if fmt == "ntfy":
+        headers["Title"] = str(payload.get("title") or "")
+        headers["Priority"] = str(payload.get("priority") or NTFY_PRIORITY["success"])
+        headers["Content-Type"] = "text/plain; charset=utf-8"
+        return {"data": str(payload.get("message") or "").encode("utf-8"), "headers": headers}
+    if fmt == "notifiarr":
+        channel_id = str(webhooks.get("notifiarr_channel_id") or "").strip()
+        if channel_id:
+            payload.setdefault("discord", {}).setdefault("ids", {})["channel"] = int(channel_id)
+    return {"json": payload, "headers": headers}
+
+
+def _pushover_accepted(resp: Any) -> bool:
+    try:
+        status = resp.json().get("status")
+        return resp.status_code == 200 and type(status) is int and status == 1
+    except Exception:
         return False
 
 
@@ -209,7 +272,7 @@ def _summary_counts(summary: dict[str, Any]) -> dict[str, int]:
     return {k: v for k, v in out.items() if v}
 
 
-def _notifiarr_payload(payload: dict[str, Any], context: dict[str, Any], summary: dict[str, Any]) -> dict[str, Any]:
+def _notification_text(payload: dict[str, Any]) -> tuple[str, str, list[tuple[str, str]]]:
     event = str(payload.get("event") or "").strip().lower()
     status = str(payload.get("status") or event or "").strip()
     title_event = {
@@ -217,13 +280,8 @@ def _notifiarr_payload(payload: dict[str, Any], context: dict[str, Any], summary
         "success": "succeeded",
         "failure": "failed",
     }.get(event, status or "updated")
-    color = {
-        "start": "4F8CFF",
-        "success": "2ECC71",
-        "failure": "FF5A5F",
-    }.get(event, "7D86C9")
 
-    fields: list[dict[str, Any]] = []
+    fields: list[tuple[str, str]] = []
     for title, key in (
         ("Run", "run_id"),
         ("Mode", "scheduler_mode"),
@@ -237,19 +295,56 @@ def _notifiarr_payload(payload: dict[str, Any], context: dict[str, Any], summary
         value = payload.get(key)
         if value in ("", None, {}):
             continue
-        fields.append({"title": title, "text": str(value), "inline": True})
+        fields.append((title, str(value)))
 
     counts = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
     for key in ("added", "removed", "updated", "errors", "blocked", "skipped", "unresolved"):
         value = counts.get(key) if isinstance(counts, dict) else None
         if value:
-            fields.append({"title": key.replace("_", " ").title(), "text": str(value), "inline": True})
+            fields.append((key.replace("_", " ").title(), str(value)))
 
     description = f"Scheduled sync {title_event}."
     if event == "failure":
         description = "Scheduled sync failed. Check the CrossWatch sync logs for details."
     elif event == "success":
         description = "Scheduled sync completed successfully."
+    return f"CrossWatch scheduled sync {title_event}", description, fields
+
+
+def _plain_message(description: str, fields: list[tuple[str, str]]) -> str:
+    return "\n".join([description, *(f"{title}: {text}" for title, text in fields)])
+
+
+def _pushover_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    event = str(payload.get("event") or "").strip().lower()
+    title, description, fields = _notification_text(payload)
+    return {
+        "title": title[:PUSHOVER_TITLE_MAX],
+        "message": _plain_message(description, fields)[:PUSHOVER_MESSAGE_MAX],
+        "priority": PUSHOVER_PRIORITY.get(event, 0),
+    }
+
+
+def _ntfy_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    event = str(payload.get("event") or "").strip().lower()
+    title, description, fields = _notification_text(payload)
+    message = _plain_message(description, fields).encode("utf-8")[:NTFY_MESSAGE_MAX_BYTES]
+    return {
+        "title": title,
+        "message": message.decode("utf-8", "ignore"),
+        "priority": NTFY_PRIORITY.get(event, NTFY_PRIORITY["success"]),
+    }
+
+
+def _notifiarr_payload(payload: dict[str, Any], context: dict[str, Any], summary: dict[str, Any]) -> dict[str, Any]:
+    event = str(payload.get("event") or "").strip().lower()
+    title, description, text_fields = _notification_text(payload)
+    fields = [{"title": name, "text": text, "inline": True} for name, text in text_fields]
+    color = {
+        "start": "4F8CFF",
+        "success": "2ECC71",
+        "failure": "FF5A5F",
+    }.get(event, "7D86C9")
 
     run_id = str(payload.get("run_id") or context.get("run_id") or summary.get("run_id") or "")
     notification_event = run_id or f"crosswatch-{event or 'scheduler'}"
@@ -270,7 +365,7 @@ def _notifiarr_payload(payload: dict[str, Any], context: dict[str, Any], summary
                 "image": "",
             },
             "text": {
-                "title": f"CrossWatch scheduled sync {title_event}",
+                "title": title,
                 "icon": "",
                 "content": "",
                 "description": description,
@@ -362,7 +457,14 @@ def _payload_format(value: Any) -> str:
     text = str(value or "").strip().lower().replace("-", "_")
     if text in {"notifiarr", "notifiarr_passthrough"}:
         return "notifiarr"
+    if text in {"pushover", "ntfy"}:
+        return text
     return "crosswatch"
+
+
+def _pushover_key_or_blank(value: Any) -> str:
+    text = str(value or "").strip()
+    return text if len(text) == PUSHOVER_KEY_LENGTH and text.isascii() and text.isalnum() else ""
 
 
 def _digits_or_blank(value: Any) -> str:

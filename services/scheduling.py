@@ -10,9 +10,14 @@ import os
 import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
-from urllib.parse import urlsplit
 from cw_platform.run_control import consume_queue_stop
-from services.scheduler_webhooks import notify_scheduler_webhook
+from services.scheduler_webhooks import (
+    DEFAULT_WEBHOOKS,
+    normalize_scheduler_webhooks,
+    notify_scheduler_webhook,
+    payload_format_label,
+    scheduler_webhooks_configured,
+)
 
 try:
     from zoneinfo import ZoneInfo  # py39+
@@ -24,18 +29,6 @@ def _env_timezone_name() -> str:
     return tz
 
 # safety config defaults due to autostart and potential for misconfiguration
-DEFAULT_WEBHOOKS: dict[str, Any] = {
-    "enabled": False,
-    "url": "",
-    "base_url": "",
-    "start_url": "",
-    "success_url": "",
-    "failure_url": "",
-    "payload_format": "crosswatch",
-    "notifiarr_channel_id": "",
-    "timeout_seconds": 10,
-}
-
 DEFAULT_SCHEDULING: dict[str, Any] = {
     "enabled": False,
     "mode": "disabled",
@@ -137,45 +130,6 @@ def _as_bool(value: Any, default: bool = False) -> bool:
     return bool(default)
 
 
-def _normalize_scheduler_webhooks(value: Any) -> dict[str, Any]:
-    src = value if isinstance(value, dict) else {}
-    out = dict(DEFAULT_WEBHOOKS)
-    out["enabled"] = _as_bool(src.get("enabled"), False)
-    out["url"] = _http_url_or_blank(src.get("url") or src.get("default_url"))
-    out["base_url"] = _http_url_or_blank(src.get("base_url") or src.get("healthchecks_base_url"))
-    for key in ("start_url", "success_url", "failure_url"):
-        out[key] = _http_url_or_blank(src.get(key))
-    out["payload_format"] = _payload_format(src.get("payload_format") or src.get("format"))
-    out["notifiarr_channel_id"] = _digits_or_blank(src.get("notifiarr_channel_id") or src.get("notifiarrChannelId"))
-    out["timeout_seconds"] = _as_int(src.get("timeout_seconds"), 10, minimum=1, maximum=60)
-    return out
-
-
-def _http_url_or_blank(value: Any) -> str:
-    url = str(value or "").strip()
-    if not url:
-        return ""
-    try:
-        parts = urlsplit(url)
-    except Exception:
-        return ""
-    if parts.scheme.lower() not in {"http", "https"} or not parts.netloc:
-        return ""
-    return url
-
-
-def _payload_format(value: Any) -> str:
-    text = str(value or "").strip().lower().replace("-", "_")
-    if text in {"notifiarr", "notifiarr_passthrough"}:
-        return "notifiarr"
-    return "crosswatch"
-
-
-def _digits_or_blank(value: Any) -> str:
-    text = str(value or "").strip()
-    return text if text.isdigit() else ""
-
-
 def _normalize_event_name(value: Any) -> str:
     raw = str(value or "").strip().lower()
     if raw.startswith("/scrobble/"):
@@ -225,7 +179,7 @@ def merge_defaults(s: dict[str, Any]) -> dict[str, Any]:
             out["advanced"] = out_adv
     if not isinstance(out.get("advanced"), dict):
         out["advanced"] = dict(DEFAULT_SCHEDULING["advanced"])
-    out["webhooks"] = _normalize_scheduler_webhooks(out.get("webhooks"))
+    out["webhooks"] = normalize_scheduler_webhooks(out.get("webhooks"))
     return out
 
 def _align_next_hour_in_tz(now_tz: datetime) -> datetime:
@@ -798,18 +752,9 @@ class SyncScheduler:
             self._last_logged_webhook_state = "off"
             return
 
-        fmt = _payload_format(hooks.get("payload_format") or hooks.get("format"))
-        label = "Notifiarr Passthrough" if fmt == "notifiarr" else "CrossWatch JSON"
-        common_url = str(hooks.get("url") or hooks.get("default_url") or "").strip()
-        urls = [
-            common_url,
-            str(hooks.get("base_url") or hooks.get("healthchecks_base_url") or "").strip(),
-            str(hooks.get("start_url") or "").strip(),
-            str(hooks.get("success_url") or "").strip(),
-            str(hooks.get("failure_url") or "").strip(),
-        ]
-        configured = bool(common_url) if fmt == "notifiarr" else any(urls)
-        state = f"on:{fmt}:{int(configured)}"
+        label = payload_format_label(hooks.get("payload_format") or hooks.get("format"))
+        configured = scheduler_webhooks_configured(hooks)
+        state = f"on:{label}:{int(configured)}"
         if state == self._last_logged_webhook_state:
             return
         self._last_logged_webhook_state = state

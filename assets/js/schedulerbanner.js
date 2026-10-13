@@ -23,10 +23,11 @@
       const wh=(c?.scheduling||c||{})?.webhooks||{};
       if (!wh||typeof wh!=="object"||wh.enabled!==true) return {active:false,label:""};
       const format=String(wh.payload_format||wh.payloadFormat||wh.format||"crosswatch").trim().toLowerCase().replace("-","_"),
-        label=format==="notifiarr"||format==="notifiarr_passthrough"?"Notifiarr Passthrough":"CrossWatch JSON",
+        label=format==="notifiarr"||format==="notifiarr_passthrough"?"Notifiarr Passthrough":format==="pushover"?"Pushover":format==="ntfy"?"ntfy":"CrossWatch JSON",
         url=String(wh.url||wh.default_url||wh.defaultUrl||"").trim(),
         urls=[url,wh.base_url,wh.healthchecks_base_url,wh.start_url,wh.success_url,wh.failure_url].map(v=>String(v||"").trim()).filter(Boolean);
-      return {active:label==="Notifiarr Passthrough"?!!url:urls.length>0,label};
+      if (label==="Pushover") return {active:!!(String(wh.pushover_token||"").trim()&&String(wh.pushover_user||"").trim()),label};
+      return {active:label==="CrossWatch JSON"?urls.length>0:!!url,label};
     },
     chipText={pairs:"Sync pairs",sched:"Scheduler",watch:"Watcher",hook:"Webhook",health:"CrossWatch health"},
     chipIcon={pairs:"sync_alt",sched:"calendar_month",watch:"visibility",hook:"webhook",health:"arrow_upward"},
