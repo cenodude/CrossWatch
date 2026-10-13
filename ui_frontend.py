@@ -1425,12 +1425,12 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
             <div>
               <div class="cw-settings-pane-kicker">Scheduling</div>
               <h3>Run automation</h3>
-              <p>Use standard for simple scheduling tasks or advanced for pair-based scheduling</p>
             </div>
             <div class="cw-settings-pane-head-actions">
               <div class="cw-conn-hero-summary" id="sched-pane-tabs" aria-label="Scheduling sections">
                 <button type="button" class="cw-conn-seg active" data-sub="basic">Standard</button>
                 <button type="button" class="cw-conn-seg" data-sub="advanced">Advanced</button>
+                <button type="button" class="cw-conn-seg" data-sub="webhooks">Webhooks</button>
                 <button type="button" id="cw-sched-refresh" class="cw-conn-refresh" title="Refresh scheduling" aria-label="Refresh scheduling"><span class="material-symbol" aria-hidden="true">refresh</span></button>
               </div>
             </div>
@@ -1449,6 +1449,7 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
                   <div><label for="schCustomUnit">Custom unit</label><select id="schCustomUnit" name="schCustomUnit"><option value="minutes">Minutes</option><option value="hours">Hours</option></select></div>
                 </div>
                 <div id="sched_advanced_mount"></div>
+                <div id="sched_webhooks_mount"></div>
               </div>
             </div>
           </div>

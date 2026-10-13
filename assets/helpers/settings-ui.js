@@ -541,6 +541,7 @@ window.cwAppAuthTotpDisable = async function cwAppAuthTotpDisable() {
 
 /* Settings Hub: Scheduling */
 const SCHED_SETTINGS_TAB_KEY = "cw.ui.scheduling.tab.v1";
+const SCHED_SETTINGS_TABS = ["basic", "advanced", "webhooks"];
 
 let __cwSchedOpen = false;
 
@@ -560,7 +561,7 @@ function cwSchedSettingsSelect(tab, opts = {}) {
   if (!panelHost || !panel) return;
 
   const t = (tab || "basic").toLowerCase();
-  const want = ["basic", "advanced"].includes(t) ? t : "basic";
+  const want = SCHED_SETTINGS_TABS.includes(t) ? t : "basic";
 
   panel.querySelectorAll(".cw-subtile[data-sub]").forEach((btn) => {
     btn.classList.toggle("active", (btn.dataset.sub || "").toLowerCase() === want);
@@ -572,7 +573,7 @@ function cwSchedSettingsSelect(tab, opts = {}) {
     sp.classList.toggle("active", (sp.dataset.sub || "").toLowerCase() === want);
   });
   const webhooks = document.getElementById("schWebhooks");
-  if (webhooks) webhooks.classList.toggle("hidden", want !== "advanced");
+  if (webhooks) webhooks.classList.toggle("hidden", want !== "webhooks");
 
   if (opts.persist !== false) {
     try { localStorage.setItem(SCHED_SETTINGS_TAB_KEY, want); } catch {}
@@ -599,6 +600,10 @@ function cwBuildSchedulerPanel() {
   const pAdv = document.createElement("div");
   pAdv.className = "cw-subpanel";
   pAdv.dataset.sub = "advanced";
+
+  const pHooks = document.createElement("div");
+  pHooks.className = "cw-subpanel";
+  pHooks.dataset.sub = "webhooks";
 
   const detach = (id) => {
     const el = document.getElementById(id);
@@ -659,8 +664,17 @@ function cwBuildSchedulerPanel() {
 
   pAdv.appendChild(advMount);
 
+  const hooksMount = detach("sched_webhooks_mount") || (() => {
+    const d = document.createElement("div");
+    d.id = "sched_webhooks_mount";
+    return d;
+  })();
+
+  pHooks.appendChild(hooksMount);
+
   subPanels.appendChild(pBasic);
   subPanels.appendChild(pAdv);
+  subPanels.appendChild(pHooks);
 
   wrap.appendChild(subPanels);
 
@@ -692,7 +706,7 @@ function cwBuildSchedulerPanel() {
 
   let lastSub = "basic";
   try { lastSub = (localStorage.getItem(SCHED_SETTINGS_TAB_KEY) || "basic").toLowerCase(); } catch {}
-  cwSchedSettingsSelect((lastSub === "advanced") ? "advanced" : "basic", { persist: false });
+  cwSchedSettingsSelect(SCHED_SETTINGS_TABS.includes(lastSub) ? lastSub : "basic", { persist: false });
 }
 
 function cwSchedProviderEnsure() {
@@ -781,7 +795,7 @@ function cwSchedSettingsHubInit() {
     let tab = "basic";
     try {
       const saved = (localStorage.getItem(SCHED_SETTINGS_TAB_KEY) || "").toLowerCase();
-      if (["basic", "advanced"].includes(saved)) tab = saved;
+      if (SCHED_SETTINGS_TABS.includes(saved)) tab = saved;
     } catch {}
     cwSchedSettingsSelect(tab, { persist: false });
   }

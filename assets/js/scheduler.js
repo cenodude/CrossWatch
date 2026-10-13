@@ -45,7 +45,6 @@
 #sec-scheduling .cw-subpanel[data-sub="basic"] select:hover,#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=time]:hover,#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=number]:hover,.sch-adv select:hover,.sch-adv input[type=time]:hover,.sch-adv input[type=number]:hover,.sch-adv input[type=text]:hover,.sch-adv input[type=url]:hover{border-color:#3A3F4A;background:var(--sch-input-bg-hover)}
 #sec-scheduling .cw-subpanel[data-sub="basic"] select:focus,#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=time]:focus,#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=number]:focus,.sch-adv select:focus,.sch-adv input[type=time]:focus,.sch-adv input[type=number]:focus,.sch-adv input[type=text]:focus,.sch-adv input[type=url]:focus{outline:none;border-color:rgba(124,92,255,.58);box-shadow:0 0 0 3px rgba(124,92,255,.18)}
 .sch-adv{padding:16px}
-.sch-webhooks{margin-top:14px}
 .sch-webhooks [data-webhook-format-for]{display:none!important}
 .sch-webhooks[data-payload-format="crosswatch"] [data-webhook-format-for~="crosswatch"],.sch-webhooks[data-payload-format="notifiarr"] [data-webhook-format-for~="notifiarr"],.sch-webhooks[data-payload-format="pushover"] [data-webhook-format-for~="pushover"],.sch-webhooks[data-payload-format="ntfy"] [data-webhook-format-for~="ntfy"]{display:grid!important}
 .sch-webhooks .cx-toggle[data-checked="true"] .cx-toggle-ui{background:linear-gradient(180deg,rgba(42,202,126,0.34),rgba(28,136,87,0.28));border-color:rgba(34,197,94,0.42)}
@@ -282,6 +281,42 @@ html[data-cw-theme="flat-light"] #sec-scheduling .sch-card-icon{background:#eef2
 @media (max-width:1180px){.sch-adv .stack.two{grid-template-columns:1fr}}
 @media (max-width:980px){#sec-scheduling .sch-std-head{grid-template-columns:1fr;padding-bottom:4px}#sec-scheduling .sch-std-head .cx-toggle{justify-self:start}#sec-scheduling .sch-std-inline{grid-template-columns:1fr}.sch-adv .cw-panel-head{grid-template-columns:1fr}.sch-adv .cw-panel-head .cx-toggle{justify-self:start}}
 @media (max-width:760px){#sec-scheduling .sch-std-title{font-size:22px}#sec-scheduling .sch-std-wizard{padding:0 16px 16px}.sch-adv .cw-panel-head{padding:16px}.sch-adv-head-title{font-size:22px}.sch-adv .cw-panel-head .cx-toggle{margin-top:10px}.sch-workflow-top{grid-template-columns:1fr}.sch-workflow-actions{justify-content:flex-start}.sch-workflow-controls{justify-content:flex-start}.sch-workflow-controls select,.sch-workflow-controls input{width:100%!important}.sch-workflow-step{grid-template-columns:24px 30px minmax(0,1fr) auto auto;width:auto}}
+.sch-hook-format-select{display:none!important}
+.sch-webhooks .sch-adv-head-copy p{max-width:none}
+.sch-hook-services{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.sch-hook-service{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:12px;min-height:76px;padding:12px 14px;border:1px solid var(--sch-border);border-radius:14px;background:var(--sch-card-bg);color:var(--sch-fg);font:inherit;text-align:left;cursor:pointer;transition:border-color .14s ease,box-shadow .14s ease}
+.sch-hook-service:hover{border-color:var(--sch-fg-soft)}
+.sch-hook-service:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(124,92,255,.28)}
+.sch-hook-service[aria-pressed="true"]{border-color:rgba(124,92,255,.78);box-shadow:0 0 0 3px rgba(124,92,255,.18)}
+#sec-scheduling .sch-hook-service[aria-pressed="true"] .sch-card-icon{border-color:rgba(154,125,255,.7);background:#7c5cff;color:#fff}
+.sch-hook-service-copy{display:grid;gap:3px;min-width:0}
+.sch-hook-service-name{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:14px;font-weight:800;color:var(--sch-fg)}
+.sch-hook-service-note{font-size:12px;line-height:1.4;color:var(--sch-fg-soft)}
+.sch-hook-saved{display:none;align-items:center;min-height:18px;padding:0 7px;border:1px solid var(--sch-border);border-radius:999px;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--sch-fg-soft)}
+.sch-hook-service[data-saved="true"] .sch-hook-saved{display:inline-flex}
+.sch-hook-service-check{visibility:hidden;font-size:22px!important;color:#7c5cff;font-variation-settings:"FILL" 1,"wght" 500,"GRAD" 0,"opsz" 24}
+.sch-hook-service[aria-pressed="true"] .sch-hook-service-check{visibility:visible}
+.sch-hook-hint{font-size:12px;line-height:1.45;color:var(--sch-fg-soft)}
+.sch-hook-more{border:1px dashed var(--sch-border);border-radius:14px;padding:0 14px}
+.sch-hook-more>summary{display:flex;align-items:center;gap:8px;min-height:44px;cursor:pointer;font-size:13px;font-weight:700;color:var(--sch-fg);list-style:none}
+.sch-hook-more>summary::-webkit-details-marker{display:none}
+.sch-hook-more>summary::before{content:"expand_more";font-family:"Material Symbols Rounded","Material Symbols Outlined","Segoe UI Symbol",sans-serif;font-size:20px;line-height:1;color:var(--sch-fg-soft);transition:transform .14s ease}
+.sch-hook-more[open]>summary::before{transform:rotate(180deg)}
+.sch-hook-more-body{display:grid;gap:12px;padding:2px 0 14px}
+.sch-hook-events{display:grid;gap:8px}
+.sch-hook-event{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--sch-border);border-radius:14px;background:var(--sch-card-bg)}
+.sch-hook-event-copy{display:grid;gap:3px;min-width:0}
+.sch-hook-event-title{font-size:14px;font-weight:800;color:var(--sch-fg)}
+.sch-hook-event-note{font-size:12px;line-height:1.45;color:var(--sch-fg-soft)}
+.sch-hook-always{display:inline-flex;align-items:center;min-height:26px;padding:0 10px;border:1px solid var(--sch-border);border-radius:999px;font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--sch-fg-soft)}
+.sch-hook-state{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--sch-border);border-radius:999px;background:var(--sch-card-bg);font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--sch-fg)}
+.sch-hook-state::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--sch-fg-soft)}
+.sch-hook-state[data-state="active"]::before{background:#22c55e}
+.sch-hook-state[data-state="attention"]::before{background:#f5b020}
+.sch-hook-test{margin-top:0}
+@media (max-width:1180px){.sch-hook-services{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:900px){.sch-hook-more .stack.three{grid-template-columns:1fr}}
+@media (max-width:620px){.sch-hook-services{grid-template-columns:1fr}.sch-hook-event{grid-template-columns:auto minmax(0,1fr)}.sch-hook-event>.cx-toggle,.sch-hook-event>.sch-hook-always{grid-column:2;justify-self:start}}
 ` }));
 
   // state
@@ -303,6 +338,7 @@ html[data-cw-theme="flat-light"] #sec-scheduling .sch-card-icon{background:#eef2
     alert_on_provider_auth: false
   };
   let _webhooksHydrated = false;
+  let _webhooksSaved = null;
   let _captureProviders = [];
   let _eventRoutes = { watcher: [], webhook: [] }, _eventRouteError = "";
   const DAY = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
@@ -649,7 +685,7 @@ html[data-cw-theme="flat-light"] #sec-scheduling .sch-card-icon{background:#eef2
   const syncSchedulerTabVisibility = () => {
     const active = $("#sched-pane-tabs [data-sub].active");
     const sub = String(active?.dataset?.sub || "basic").toLowerCase();
-    $("#schWebhooks")?.classList.toggle("hidden", sub !== "advanced");
+    $("#schWebhooks")?.classList.toggle("hidden", sub !== "webhooks");
   };
 
 const ensureStdEnabledToggle = () => {
@@ -1056,16 +1092,63 @@ const ensureStdEnabledToggle = () => {
   };
   const webhookFormat = () => normalizeWebhookFormat(_webhooks.payload_format);
   const WEBHOOK_URL_FIELD = {
-    crosswatch: { label: "All events URL", help: "webhook_url", placeholder: "https://hooks.example.com/crosswatch" },
-    notifiarr: { label: "Notifiarr passthrough URL", help: "webhook_notifiarr_url", placeholder: "https://notifiarr.com/api/v1/notification/passthrough/YOUR_API_KEY" },
-    ntfy: { label: "ntfy topic URL", help: "webhook_ntfy_url", placeholder: "https://ntfy.sh/your-topic" }
+    crosswatch: { label: "All events URL", help: "webhook_url", placeholder: "https://hooks.example.com/crosswatch", hint: "CrossWatch posts every event as JSON to this URL." },
+    notifiarr: { label: "Notifiarr passthrough URL", help: "webhook_notifiarr_url", placeholder: "https://notifiarr.com/api/v1/notification/passthrough/YOUR_API_KEY", hint: "Paste the Passthrough URL from Notifiarr, including your API key." },
+    ntfy: { label: "ntfy topic URL", help: "webhook_ntfy_url", placeholder: "https://ntfy.sh/your-topic", hint: "The full topic URL, for example https://ntfy.sh/your-topic." }
+  };
+  const WEBHOOK_CONNECT_COPY = {
+    crosswatch: "Send JSON to your own endpoint, or ping a Healthchecks style monitor.",
+    notifiarr: "Messages go to Discord through your Notifiarr Passthrough integration.",
+    pushover: "Messages go to the Pushover app on your phone. You need both keys below.",
+    ntfy: "Messages are published to your ntfy topic as plain text."
   };
   const isPushoverKey = (value) => /^[A-Za-z0-9]{30}$/.test(String(value || "").trim());
+  const WEBHOOK_FORMAT_LABEL = { crosswatch: "CrossWatch JSON", notifiarr: "Notifiarr Passthrough", pushover: "Pushover", ntfy: "ntfy" };
+  const webhookDestinationSet = (hooks) => {
+    const format = normalizeWebhookFormat(hooks.payload_format);
+    if (format === "pushover") return isPushoverKey(hooks.pushover_token) && isPushoverKey(hooks.pushover_user);
+    if (format !== "crosswatch") return !!hooks.url;
+    return [hooks.url, hooks.base_url, hooks.start_url, hooks.success_url, hooks.failure_url].some(Boolean);
+  };
+  const webhooksDirty = () => !!_webhooksSaved && JSON.stringify(normalizeWebhooks(_webhooks)) !== JSON.stringify(_webhooksSaved);
+  const renderWebhookSummary = () => {
+    const text = $("#schWebhookSummaryText");
+    const note = $("#schWebhookSummaryNote");
+    const state = $("#schWebhookSummaryState");
+    if (!text || !note || !state || !_webhooksSaved) return;
+    const label = WEBHOOK_FORMAT_LABEL[normalizeWebhookFormat(_webhooksSaved.payload_format)];
+    const ready = webhookDestinationSet(_webhooksSaved);
+    const dirty = webhooksDirty();
+    text.textContent = ready ? `${label} is set up` : "Nothing is set up yet";
+    if (dirty) {
+      note.textContent = "You have unsaved changes. Save to apply and test them.";
+    } else if (!ready) {
+      note.textContent = "Pick a service, fill in step 2 and save.";
+    } else if (_webhooksSaved.enabled) {
+      note.textContent = "Notifications are being sent.";
+    } else {
+      note.textContent = "Webhooks are switched off, so nothing is sent. Turn on Enable webhooks and save.";
+    }
+    state.textContent = dirty ? "Unsaved" : !ready ? "Needs setup" : _webhooksSaved.enabled ? "Active" : "Off";
+    state.dataset.state = dirty || !ready ? "attention" : _webhooksSaved.enabled ? "active" : "off";
+  };
   const applyWebhookVisibility = () => {
+    renderWebhookSummary();
     const root = $("#schWebhooks");
     if (!root) return;
     const format = webhookFormat();
     root.dataset.payloadFormat = format;
+    const savedFormat = _webhooksSaved && webhookDestinationSet(_webhooksSaved) ? normalizeWebhookFormat(_webhooksSaved.payload_format) : "";
+    root.querySelectorAll("[data-webhook-service]").forEach((button) => {
+      button.setAttribute("aria-pressed", button.dataset.webhookService === format ? "true" : "false");
+      button.dataset.saved = button.dataset.webhookService === savedFormat ? "true" : "false";
+    });
+    const connectTitle = $("#schWebhookConnectTitle", root);
+    const connectCopy = $("#schWebhookConnectCopy", root);
+    const urlHint = $("#schWebhookUrlHint", root);
+    if (connectTitle) connectTitle.textContent = `Connect ${WEBHOOK_FORMAT_LABEL[format]}`;
+    if (connectCopy) connectCopy.textContent = WEBHOOK_CONNECT_COPY[format];
+    if (urlHint) urlHint.textContent = (WEBHOOK_URL_FIELD[format] || WEBHOOK_URL_FIELD.crosswatch).hint;
     const urlLabel = $("#schWebhookUrlLabel", root);
     const urlHelp = $("#schWebhookUrlHelp", root);
     const urlInput = $("#schWebhookUrl", root);
@@ -1109,6 +1192,8 @@ const ensureStdEnabledToggle = () => {
     pushoverToken.value = _webhooks.pushover_token || "";
     pushoverUser.value = _webhooks.pushover_user || "";
     timeout.value = String(_webhooks.timeout_seconds || 10);
+    const more = $("#schWebhookMore");
+    if (more) more.open = [_webhooks.base_url, _webhooks.start_url, _webhooks.success_url, _webhooks.failure_url].some(Boolean);
     [
       [alertUnresolved, _webhooks.alert_on_unresolved],
       [$("#schWebhookAlertWatcher"), _webhooks.alert_on_watcher],
@@ -1166,12 +1251,18 @@ const ensureStdEnabledToggle = () => {
   const sendWebhookTest = async () => {
     const button = $("#btnWebhookTest");
     const status = $("#schWebhookTestStatus");
+    syncWebhooksFromFields();
+    if (webhooksDirty()) {
+      statusText(status, "Save your changes first. The test uses the saved settings.");
+      return;
+    }
+    const label = WEBHOOK_FORMAT_LABEL[normalizeWebhookFormat(_webhooksSaved?.payload_format)];
     if (button) button.disabled = true;
     statusText(status, "Sending test notification...");
     try {
       const res = await fetch("/api/scheduling/webhooks/test", { method: "POST" });
       const data = await res.json().catch(() => ({}));
-      statusText(status, res.ok && data.ok ? "Test notification delivered." : `Test failed: ${data.error || `HTTP ${res.status}`}`);
+      statusText(status, res.ok && data.ok ? `Test notification delivered to ${label}.` : `Test failed: ${data.error || `HTTP ${res.status}`}`);
     } catch {
       statusText(status, "Test failed: could not reach CrossWatch.");
     } finally {
@@ -1993,9 +2084,10 @@ const ensureStdEnabledToggle = () => {
   const ensureUI = () => {
     const host = $("#sched_advanced_mount") || $("#sec-scheduling .body");
     if (!host) return;
+    const hooksHost = $("#sched_webhooks_mount") || host;
     if ($("#schAdv")) {
       const hooks = $("#schWebhooks");
-      if (hooks && host && hooks.parentElement !== host) host.appendChild(hooks);
+      if (hooks && hooks.parentElement !== hooksHost) hooksHost.appendChild(hooks);
       syncSchedulerTabVisibility();
       return;
     }
@@ -2123,10 +2215,10 @@ const ensureStdEnabledToggle = () => {
     hooks.innerHTML = `
 <div class="cw-panel-head">
   <div class="sch-adv-head-copy sch-card-head">
-    <span class="material-symbols-rounded sch-card-icon" aria-hidden="true">monitor_heart</span>
+    <span class="material-symbols-rounded sch-card-icon" aria-hidden="true">notifications_active</span>
     <div class="sch-card-head-copy">
       <div class="sch-adv-head-title">Scheduler Webhooks</div>
-      <p>Send outbound POST callbacks when scheduled syncs start, succeed, or fail.</p>
+      <p>Get a message when a scheduled sync runs, the watcher stops or a provider sign-in is lost.</p>
     </div>
   </div>
   <label class="cx-toggle">
@@ -2136,59 +2228,146 @@ const ensureStdEnabledToggle = () => {
     <span class="cx-toggle-state" aria-hidden="true"></span>
   </label>
 </div>
+<div class="sch-plan-summary sch-adv-summary">
+  <div class="sch-plan-summary-copy">
+    <div class="sch-plan-summary-kicker">Saved setup</div>
+    <div class="sch-plan-summary-text" id="schWebhookSummaryText">Loading</div>
+    <div class="sch-plan-summary-note" id="schWebhookSummaryNote"></div>
+  </div>
+  <div class="sch-hook-state" id="schWebhookSummaryState" data-state="off">Off</div>
+</div>
 <section class="sch-adv-section">
-  <div class="stack two">
-    <label class="field-mini" data-webhook-format-for="crosswatch notifiarr ntfy"><div class="subnote"><span class="th-help"><span id="schWebhookUrlLabel">All events URL</span><button id="schWebhookUrlHelp" type="button" class="sch-help" aria-label="All events URL help" data-help-key="webhook_url"></button></span></div><input id="schWebhookUrl" name="schWebhookUrl" type="url" inputmode="url" pattern="https?://.+" autocomplete="off" placeholder="https://hooks.example.com/crosswatch"></label>
-    <label class="field-mini"><div class="subnote"><span class="th-help">Payload format<button type="button" class="sch-help" aria-label="Payload format help" data-help-key="webhook_format"></button></span></div><select id="schWebhookFormat" name="schWebhookFormat"><option value="crosswatch">CrossWatch JSON</option><option value="notifiarr">Notifiarr Passthrough</option><option value="pushover">Pushover</option><option value="ntfy">ntfy</option></select></label>
+  <div class="sch-std-step-head">
+    <div class="sch-std-step-kicker">Step 1</div>
+    <div class="sch-std-step-title">Choose where to send</div>
+    <div class="sch-std-step-copy">Pick one service. Only that service is used, and only its settings are shown below.</div>
   </div>
-  <div class="stack two">
-    <label class="field-mini" data-webhook-format-for="crosswatch"><div class="subnote"><span class="th-help">Compatible base URL<button type="button" class="sch-help" aria-label="Compatible base URL help" data-help-key="webhook_base"></button></span></div><input id="schWebhookBase" name="schWebhookBase" type="url" inputmode="url" pattern="https?://.+" autocomplete="off" placeholder="https://monitor.example/ping/crosswatch"></label>
-    <label class="field-mini"><div class="subnote"><span class="th-help">Timeout seconds<button type="button" class="sch-help" aria-label="Timeout seconds help" data-help-key="webhook_timeout"></button></span></div><input id="schWebhookTimeout" name="schWebhookTimeout" type="number" min="1" max="60"></label>
+  <div class="sch-hook-services" role="group" aria-label="Notification service">
+    <button type="button" class="sch-hook-service" data-webhook-service="pushover" aria-pressed="false">
+      <span class="material-symbols-rounded sch-card-icon" aria-hidden="true">smartphone</span>
+      <span class="sch-hook-service-copy"><span class="sch-hook-service-name">Pushover<span class="sch-hook-saved">Saved</span></span><span class="sch-hook-service-note">Push notifications on your phone.</span></span>
+      <span class="material-symbols-rounded sch-hook-service-check" aria-hidden="true">check_circle</span>
+    </button>
+    <button type="button" class="sch-hook-service" data-webhook-service="ntfy" aria-pressed="false">
+      <span class="material-symbols-rounded sch-card-icon" aria-hidden="true">campaign</span>
+      <span class="sch-hook-service-copy"><span class="sch-hook-service-name">ntfy<span class="sch-hook-saved">Saved</span></span><span class="sch-hook-service-note">Push notifications through an ntfy topic.</span></span>
+      <span class="material-symbols-rounded sch-hook-service-check" aria-hidden="true">check_circle</span>
+    </button>
+    <button type="button" class="sch-hook-service" data-webhook-service="notifiarr" aria-pressed="false">
+      <span class="material-symbols-rounded sch-card-icon" aria-hidden="true">forum</span>
+      <span class="sch-hook-service-copy"><span class="sch-hook-service-name">Notifiarr<span class="sch-hook-saved">Saved</span></span><span class="sch-hook-service-note">Discord messages through Notifiarr Passthrough.</span></span>
+      <span class="material-symbols-rounded sch-hook-service-check" aria-hidden="true">check_circle</span>
+    </button>
+    <button type="button" class="sch-hook-service" data-webhook-service="crosswatch" aria-pressed="false">
+      <span class="material-symbols-rounded sch-card-icon" aria-hidden="true">webhook</span>
+      <span class="sch-hook-service-copy"><span class="sch-hook-service-name">CrossWatch JSON<span class="sch-hook-saved">Saved</span></span><span class="sch-hook-service-note">Your own endpoint or a Healthchecks ping URL.</span></span>
+      <span class="material-symbols-rounded sch-hook-service-check" aria-hidden="true">check_circle</span>
+    </button>
   </div>
-  <div class="stack">
-    <label class="cx-toggle">
-      <input type="checkbox" id="schWebhookAlertUnresolved">
-      <span class="cx-toggle-ui" aria-hidden="true"></span>
-      <span class="cx-toggle-text"><span class="th-help">Alert on unresolved items<button type="button" class="sch-help" aria-label="Alert on unresolved items help" data-help-key="webhook_alert_unresolved"></button></span></span>
-      <span class="cx-toggle-state" aria-hidden="true"></span>
-    </label>
-    <label class="cx-toggle">
-      <input type="checkbox" id="schWebhookAlertWatcher">
-      <span class="cx-toggle-ui" aria-hidden="true"></span>
-      <span class="cx-toggle-text"><span class="th-help">Alert when the watcher stops<button type="button" class="sch-help" aria-label="Alert when the watcher stops help" data-help-key="webhook_alert_watcher"></button></span></span>
-      <span class="cx-toggle-state" aria-hidden="true"></span>
-    </label>
-    <label class="cx-toggle">
-      <input type="checkbox" id="schWebhookAlertProviderAuth">
-      <span class="cx-toggle-ui" aria-hidden="true"></span>
-      <span class="cx-toggle-text"><span class="th-help">Alert when a provider sign-in is lost<button type="button" class="sch-help" aria-label="Alert when a provider sign-in is lost help" data-help-key="webhook_alert_provider_auth"></button></span></span>
-      <span class="cx-toggle-state" aria-hidden="true"></span>
-    </label>
+  <select id="schWebhookFormat" name="schWebhookFormat" class="sch-hook-format-select" aria-hidden="true" tabindex="-1"><option value="crosswatch">CrossWatch JSON</option><option value="notifiarr">Notifiarr Passthrough</option><option value="pushover">Pushover</option><option value="ntfy">ntfy</option></select>
+</section>
+<section class="sch-adv-section">
+  <div class="sch-std-step-head">
+    <div class="sch-std-step-kicker">Step 2</div>
+    <div class="sch-std-step-title" id="schWebhookConnectTitle">Connect the service</div>
+    <div class="sch-std-step-copy" id="schWebhookConnectCopy"></div>
   </div>
   <div class="stack two" data-webhook-format-for="pushover">
-    <label class="field-mini"><div class="subnote"><span class="th-help">Pushover application token<button type="button" class="sch-help" aria-label="Pushover application token help" data-help-key="webhook_pushover_token"></button></span></div><input id="schWebhookPushoverToken" name="schWebhookPushoverToken" type="text" maxlength="30" pattern="[A-Za-z0-9]{30}" autocomplete="off" spellcheck="false" placeholder="30 character application token"></label>
-    <label class="field-mini"><div class="subnote"><span class="th-help">Pushover user key<button type="button" class="sch-help" aria-label="Pushover user key help" data-help-key="webhook_pushover_user"></button></span></div><input id="schWebhookPushoverUser" name="schWebhookPushoverUser" type="text" maxlength="30" pattern="[A-Za-z0-9]{30}" autocomplete="off" spellcheck="false" placeholder="30 character user or group key"></label>
+    <label class="field-mini"><div class="subnote"><span class="th-help">Application token<button type="button" class="sch-help" aria-label="Application token help" data-help-key="webhook_pushover_token"></button></span></div><input id="schWebhookPushoverToken" name="schWebhookPushoverToken" type="text" maxlength="30" pattern="[A-Za-z0-9]{30}" autocomplete="off" spellcheck="false" placeholder="30 character application token"><span class="sch-hook-hint">Create an application at pushover.net/apps/build and paste its API token.</span></label>
+    <label class="field-mini"><div class="subnote"><span class="th-help">User key<button type="button" class="sch-help" aria-label="User key help" data-help-key="webhook_pushover_user"></button></span></div><input id="schWebhookPushoverUser" name="schWebhookPushoverUser" type="text" maxlength="30" pattern="[A-Za-z0-9]{30}" autocomplete="off" spellcheck="false" placeholder="30 character user or group key"><span class="sch-hook-hint">Shown at the top of your Pushover dashboard. A group key works too.</span></label>
+  </div>
+  <div class="stack" data-webhook-format-for="crosswatch notifiarr ntfy">
+    <label class="field-mini"><div class="subnote"><span class="th-help"><span id="schWebhookUrlLabel">All events URL</span><button id="schWebhookUrlHelp" type="button" class="sch-help" aria-label="All events URL help" data-help-key="webhook_url"></button></span></div><input id="schWebhookUrl" name="schWebhookUrl" type="url" inputmode="url" pattern="https?://.+" autocomplete="off" placeholder="https://hooks.example.com/crosswatch"><span class="sch-hook-hint" id="schWebhookUrlHint"></span></label>
   </div>
   <div class="stack" data-webhook-format-for="notifiarr">
-    <label class="field-mini"><div class="subnote"><span class="th-help">Notifiarr channel ID<button type="button" class="sch-help" aria-label="Notifiarr channel ID help" data-help-key="webhook_notifiarr_channel"></button></span></div><input id="schWebhookNotifiarrChannel" name="schWebhookNotifiarrChannel" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="123456789012345678"></label>
+    <label class="field-mini"><div class="subnote"><span class="th-help">Notifiarr channel ID<button type="button" class="sch-help" aria-label="Notifiarr channel ID help" data-help-key="webhook_notifiarr_channel"></button></span></div><input id="schWebhookNotifiarrChannel" name="schWebhookNotifiarrChannel" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="123456789012345678"><span class="sch-hook-hint">Optional. Only needed when your Notifiarr setup asks for a Discord channel.</span></label>
   </div>
-  <div class="stack three" data-webhook-format-for="crosswatch">
-    <label class="field-mini"><div class="subnote"><span class="th-help">Start callback URL<button type="button" class="sch-help" aria-label="Start callback URL help" data-help-key="webhook_start"></button></span></div><input id="schWebhookStart" name="schWebhookStart" type="url" inputmode="url" pattern="https?://.+" autocomplete="off" placeholder="https://hooks.example.com/crosswatch/start"></label>
-    <label class="field-mini"><div class="subnote"><span class="th-help">Success callback URL<button type="button" class="sch-help" aria-label="Success callback URL help" data-help-key="webhook_success"></button></span></div><input id="schWebhookSuccess" name="schWebhookSuccess" type="url" inputmode="url" pattern="https?://.+" autocomplete="off" placeholder="https://hooks.example.com/crosswatch/success"></label>
-    <label class="field-mini"><div class="subnote"><span class="th-help">Failure callback URL<button type="button" class="sch-help" aria-label="Failure callback URL help" data-help-key="webhook_failure"></button></span></div><input id="schWebhookFailure" name="schWebhookFailure" type="url" inputmode="url" pattern="https?://.+" autocomplete="off" placeholder="https://hooks.example.com/crosswatch/failure"></label>
+  <div data-webhook-format-for="crosswatch">
+    <details class="sch-hook-more" id="schWebhookMore">
+      <summary>Use a Healthchecks ping URL or a separate URL per event</summary>
+      <div class="sch-hook-more-body">
+        <div class="stack"><label class="field-mini"><div class="subnote"><span class="th-help">Compatible base URL<button type="button" class="sch-help" aria-label="Compatible base URL help" data-help-key="webhook_base"></button></span></div><input id="schWebhookBase" name="schWebhookBase" type="url" inputmode="url" pattern="https?://.+" autocomplete="off" placeholder="https://hc-ping.com/your-check-id"><span class="sch-hook-hint">For Healthchecks style monitors. CrossWatch adds /start and /fail to this URL.</span></label></div>
+        <div class="stack three">
+          <label class="field-mini"><div class="subnote"><span class="th-help">Start callback URL<button type="button" class="sch-help" aria-label="Start callback URL help" data-help-key="webhook_start"></button></span></div><input id="schWebhookStart" name="schWebhookStart" type="url" inputmode="url" pattern="https?://.+" autocomplete="off" placeholder="https://hooks.example.com/crosswatch/start"></label>
+          <label class="field-mini"><div class="subnote"><span class="th-help">Success callback URL<button type="button" class="sch-help" aria-label="Success callback URL help" data-help-key="webhook_success"></button></span></div><input id="schWebhookSuccess" name="schWebhookSuccess" type="url" inputmode="url" pattern="https?://.+" autocomplete="off" placeholder="https://hooks.example.com/crosswatch/success"></label>
+          <label class="field-mini"><div class="subnote"><span class="th-help">Failure callback URL<button type="button" class="sch-help" aria-label="Failure callback URL help" data-help-key="webhook_failure"></button></span></div><input id="schWebhookFailure" name="schWebhookFailure" type="url" inputmode="url" pattern="https?://.+" autocomplete="off" placeholder="https://hooks.example.com/crosswatch/failure"></label>
+        </div>
+      </div>
+    </details>
   </div>
-  <div class="sch-adv-actions">
-    <button type="button" class="btn" id="btnWebhookTest" title="Sends one test message with the saved webhook settings. Save your changes first.">Send test notification</button>
+  <div class="stack two">
+    <label class="field-mini"><div class="subnote"><span class="th-help">Timeout seconds<button type="button" class="sch-help" aria-label="Timeout seconds help" data-help-key="webhook_timeout"></button></span></div><input id="schWebhookTimeout" name="schWebhookTimeout" type="number" min="1" max="60"><span class="sch-hook-hint">How long CrossWatch waits for the service to answer.</span></label>
+  </div>
+</section>
+<section class="sch-adv-section">
+  <div class="sch-std-step-head">
+    <div class="sch-std-step-kicker">Step 3</div>
+    <div class="sch-std-step-title">Choose what to send</div>
+    <div class="sch-std-step-copy">Scheduled sync results are always sent. The alerts below are optional and are sent once per change.</div>
+  </div>
+  <div class="sch-hook-events">
+  <div class="sch-hook-event">
+    <span class="material-symbols-rounded sch-card-icon" aria-hidden="true">sync</span>
+    <div class="sch-hook-event-copy"><div class="sch-hook-event-title">Scheduled sync runs</div><div class="sch-hook-event-note">A message when a scheduled sync starts, succeeds or fails.</div></div>
+    <span class="sch-hook-always">Always</span>
+  </div>
+  <div class="sch-hook-event">
+    <span class="material-symbols-rounded sch-card-icon" aria-hidden="true">rule</span>
+    <div class="sch-hook-event-copy"><div class="sch-hook-event-title"><span class="th-help">Unresolved items<button type="button" class="sch-help" aria-label="Unresolved items help" data-help-key="webhook_alert_unresolved"></button></span></div><div class="sch-hook-event-note">Also report a run as failed when it ends with unresolved items or provider errors.</div></div>
+    <label class="cx-toggle">
+      <input type="checkbox" id="schWebhookAlertUnresolved" aria-label="Unresolved items">
+      <span class="cx-toggle-ui" aria-hidden="true"></span>
+      <span class="cx-toggle-state" aria-hidden="true"></span>
+    </label>
+  </div>
+  <div class="sch-hook-event">
+    <span class="material-symbols-rounded sch-card-icon" aria-hidden="true">visibility_off</span>
+    <div class="sch-hook-event-copy"><div class="sch-hook-event-title"><span class="th-help">Watcher stops<button type="button" class="sch-help" aria-label="Watcher stops help" data-help-key="webhook_alert_watcher"></button></span></div><div class="sch-hook-event-note">When an enabled watcher route is not running, and again when it is back.</div></div>
+    <label class="cx-toggle">
+      <input type="checkbox" id="schWebhookAlertWatcher" aria-label="Watcher stops">
+      <span class="cx-toggle-ui" aria-hidden="true"></span>
+      <span class="cx-toggle-state" aria-hidden="true"></span>
+    </label>
+  </div>
+  <div class="sch-hook-event">
+    <span class="material-symbols-rounded sch-card-icon" aria-hidden="true">key_off</span>
+    <div class="sch-hook-event-copy"><div class="sch-hook-event-title"><span class="th-help">Provider sign-in lost<button type="button" class="sch-help" aria-label="Provider sign-in lost help" data-help-key="webhook_alert_provider_auth"></button></span></div><div class="sch-hook-event-note">When a provider you use needs a new sign-in, and again when it works.</div></div>
+    <label class="cx-toggle">
+      <input type="checkbox" id="schWebhookAlertProviderAuth" aria-label="Provider sign-in lost">
+      <span class="cx-toggle-ui" aria-hidden="true"></span>
+      <span class="cx-toggle-state" aria-hidden="true"></span>
+    </label>
+  </div>
+  </div>
+</section>
+<section class="sch-adv-section">
+  <div class="sch-std-step-head">
+    <div class="sch-std-step-kicker">Step 4</div>
+    <div class="sch-std-step-title">Test it</div>
+    <div class="sch-std-step-copy">Sends one message with the saved setup. Save your changes first.</div>
+  </div>
+  <div class="sch-adv-actions sch-hook-test">
+    <button type="button" class="btn" id="btnWebhookTest">Send test notification</button>
     <div class="status inline" id="schWebhookTestStatus"></div>
   </div>
 </section>
 `;
-    const hooksHost = host;
     hooksHost.appendChild(hooks);
     syncSchedulerTabVisibility();
+    const clearWebhookTestStatus = () => statusText($("#schWebhookTestStatus"), "");
     hooks.querySelectorAll("input,select").forEach((node) => {
       node.addEventListener("input", syncWebhooksFromFields);
       node.addEventListener("change", syncWebhooksFromFields);
+      node.addEventListener("input", clearWebhookTestStatus);
+      node.addEventListener("change", clearWebhookTestStatus);
+    });
+    hooks.querySelectorAll("[data-webhook-service]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const select = $("#schWebhookFormat");
+        if (!select || select.value === button.dataset.webhookService) return;
+        select.value = button.dataset.webhookService;
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      });
     });
     [adv, hooks].forEach((root) => {
       root.querySelectorAll(".sch-help").forEach((btn) => {
@@ -2421,6 +2600,7 @@ const ensureStdEnabledToggle = () => {
       _eventRules = Array.isArray(adv.event_rules || adv.eventRules) ? (adv.event_rules || adv.eventRules).map(normalizeEventRule) : [];
       _webhooks = normalizeWebhooks(saved?.webhooks || {});
       _webhooksHydrated = true;
+      _webhooksSaved = normalizeWebhooks(_webhooks);
       renderWebhooks();
       _eventRules.forEach(syncRuleRoute);
       renderJobs();

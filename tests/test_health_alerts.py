@@ -31,6 +31,17 @@ def _cfg(**hooks: Any) -> dict[str, Any]:
     }
 
 
+def _capture_log(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, str]]:
+    lines: list[tuple[str, str, str]] = []
+
+    def fake_log(message: str, *, level: str = "INFO", module: str | None = None, **_kwargs: Any) -> None:
+        lines.append((level, str(module), message))
+
+    monkeypatch.setattr(webhooks, "BASE_LOG", fake_log)
+    monkeypatch.setattr(health_alerts, "BASE_LOG", fake_log)
+    return lines
+
+
 def _mock_dns(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         webhooks.socket,
@@ -447,6 +458,54 @@ def test_test_endpoint_uses_saved_settings_only(monkeypatch: pytest.MonkeyPatch)
         "error": "No destination configured for this payload format.",
     }
     assert len(posted) == 1
+
+
+def test_debug_logger_reports_sends_without_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
+    logged = _capture_log(monkeypatch)
+    _capture_posts(monkeypatch)
+
+    assert webhooks.send_test_webhook({"payload_format": "ntfy", "url": "https://ntfy.sh/secret-topic?auth=abc"}) == (True, "")
+    keys = {"payload_format": "pushover", "pushover_token": PUSHOVER_KEY, "pushover_user": PUSHOVER_KEY}
+    assert webhooks.send_test_webhook(keys) == (True, "")
+    assert webhooks.send_test_webhook({"payload_format": "pushover"})[0] is False
+    off = _cfg(enabled=False)
+    context = {"source": "scheduler", "scheduler_mode": "standard"}
+    assert webhooks.notify_scheduler_webhook(off, "failure", context, {"exit_code": 1}) is False
+    assert webhooks.notify_scheduler_webhook(off, "failure", {"source": "manual"}, {"exit_code": 1}) is False
+
+    assert {(level, module) for level, module, _ in logged} == {("DEBUG", "SCHED")}
+    lines = [message for _, _, message in logged]
+    assert lines[0] == "Scheduler webhook test: sending to ntfy (ntfy.sh), timeout 10s"
+    assert lines[1].startswith("Scheduler webhook test: ntfy (ntfy.sh) answered HTTP 200 in ")
+    assert lines[2] == "Scheduler webhook test: sending to Pushover (api.pushover.net), timeout 10s"
+    assert lines[4:] == [
+        "Scheduler webhook test: not sent, no destination set",
+        "Scheduler webhook failure: not sent, webhooks are off",
+    ]
+    joined = " ".join(lines)
+    assert "secret-topic" not in joined and "auth=abc" not in joined and PUSHOVER_KEY not in joined
+
+
+def test_health_check_writes_a_debug_summary(monkeypatch: pytest.MonkeyPatch) -> None:
+    logged = _capture_log(monkeypatch)
+    monkeypatch.setattr(
+        health_alerts,
+        "watcher_states",
+        lambda _app, _cfg: {"R1": (True, {"label": "Route R1"}), "R2": (False, {"label": "Route R2"})},
+    )
+
+    monitor = health_alerts.HealthMonitor(None, lambda: _cfg(alert_on_watcher=True), notify=lambda *_a, **_k: True)
+    monitor.tick()
+
+    assert logged == [("DEBUG", "SCHED", "Health check watcher_stopped: 2 checked, 1 failing, 0 unknown, 0 new, 0 recovered")]
+
+    def broken(_app: Any, _cfg: Any) -> dict[str, Any]:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(health_alerts, "watcher_states", broken)
+    monitor.tick()
+
+    assert logged[-1] == ("ERROR", "SCHED", "Health check watcher_stopped failed: RuntimeError")
 
 
 def test_send_test_webhook_builds_each_format(monkeypatch: pytest.MonkeyPatch) -> None:
