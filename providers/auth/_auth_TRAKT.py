@@ -3,11 +3,15 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import os
+import secrets
 import threading
 import time
 from typing import Any, Mapping
+from urllib.parse import urlencode
 
 import requests
 
@@ -69,6 +73,9 @@ API = "https://api.trakt.tv"
 OAUTH_DEVICE_CODE = f"{API}/oauth/device/code"
 OAUTH_DEVICE_TOKEN = f"{API}/oauth/device/token"
 OAUTH_TOKEN = f"{API}/oauth/token"
+OAUTH_AUTHORIZE = "https://auth.trakt.tv/oauth/authorize"
+OAUTH_REDIRECT_URI = "urn:ietf:wg:oauth:2.0:oob"
+OAUTH_TTL = 600
 VERIFY_URL = "https://auth.trakt.tv/activate"
 DEFAULT_CLIENT_ID = "e9286c08d7a3c84d4df03cf47a9dc464b8b0142844f83f4c4226b9a96e6c49d1"
 CLIENT_ID_ENV = "CROSSWATCH_TRAKT_CLIENT_ID"
@@ -86,6 +93,8 @@ _H: dict[str, str] = {
 
 _REFRESH_LOCKS: dict[str, threading.Lock] = {}
 _REFRESH_LOCKS_GUARD = threading.Lock()
+_OAUTH_LOCK = threading.RLock()
+_OAUTH_PENDING: dict[str, dict[str, Any]] = {}
 
 
 def _now() -> int:
@@ -168,6 +177,93 @@ def _headers(token: str | None = None, client_id: str | None = None) -> dict[str
     return h
 
 
+def start_oauth(*, client_id: str = "", instance_id: Any = None) -> dict[str, Any]:
+    inst = normalize_instance_id(instance_id)
+    with _OAUTH_LOCK:
+        cfg = _load_config()
+        cid = str(client_id or _client(cfg, inst)["client_id"]).strip()
+        if not cid:
+            return {"ok": False, "error": "missing_client_id"}
+        now = _now()
+        for key, pending in list(_OAUTH_PENDING.items()):
+            if pending["expires_at"] <= now:
+                _OAUTH_PENDING.pop(key, None)
+        verifier = secrets.token_urlsafe(64)
+        challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).rstrip(b"=").decode("ascii")
+        flow_id = secrets.token_urlsafe(32)
+        _OAUTH_PENDING[inst] = {
+            "flow_id": flow_id, "verifier": verifier, "client_id": cid, "expires_at": now + OAUTH_TTL,
+        }
+        query = urlencode({
+            "response_type": "code", "client_id": cid, "redirect_uri": OAUTH_REDIRECT_URI,
+            "state": flow_id, "code_challenge": challenge, "code_challenge_method": "S256",
+        })
+        return {"ok": True, "flow_id": flow_id, "authorize_url": f"{OAUTH_AUTHORIZE}?{query}", "expires_in": OAUTH_TTL}
+
+
+def cancel_oauth(*, flow_id: str | None = None, instance_id: Any = None) -> dict[str, Any]:
+    inst = normalize_instance_id(instance_id)
+    with _OAUTH_LOCK:
+        pending = _OAUTH_PENDING.get(inst)
+        if pending and (flow_id is None or secrets.compare_digest(pending["flow_id"], str(flow_id))):
+            _OAUTH_PENDING.pop(inst, None)
+    return {"ok": True}
+
+
+def finish_oauth(*, code: str = "", flow_id: str = "", instance_id: Any = None) -> dict[str, Any]:
+    inst = normalize_instance_id(instance_id)
+    with _OAUTH_LOCK:
+        pending = _OAUTH_PENDING.get(inst)
+        if not pending or not secrets.compare_digest(pending["flow_id"], str(flow_id)):
+            return {"ok": False, "error": "invalid_flow"}
+        if pending["expires_at"] <= _now():
+            _OAUTH_PENDING.pop(inst, None)
+            return {"ok": False, "error": "expired_flow"}
+        code = str(code or "").strip()
+        if not code or len(code) > 4096:
+            return {"ok": False, "error": "invalid_code"}
+        cid = pending["client_id"]
+        tok = pending.get("tokens")
+        if tok is None:
+            try:
+                response = requests.post(OAUTH_TOKEN, json={
+                    "code": code, "client_id": cid, "redirect_uri": OAUTH_REDIRECT_URI,
+                    "grant_type": "authorization_code", "code_verifier": pending["verifier"],
+                }, headers=_headers(client_id=cid), timeout=30, allow_redirects=False)
+            except requests.RequestException:
+                return {"ok": False, "error": "network_error"}
+            if response.status_code != 200:
+                return {"ok": False, "error": "token_exchange_failed", "status": int(response.status_code)}
+            try:
+                tok = response.json()
+                if not isinstance(tok, dict) or not str(tok.get("access_token") or "").strip() or not str(tok.get("refresh_token") or "").strip():
+                    return {"ok": False, "error": "invalid_token_response"}
+                expires_in = int(tok.get("expires_in") or 0)
+                if expires_in <= 0:
+                    return {"ok": False, "error": "invalid_token_response"}
+            except (ValueError, TypeError):
+                return {"ok": False, "error": "invalid_token_response"}
+            pending["tokens"] = tok
+            pending["token_expires_at"] = _now() + expires_in
+        with _refresh_lock(inst):
+            cfg = _load_config()
+            _, _, tr = _blocks(cfg, inst)
+            if str(tr.get("client_id") or "").strip() != cid:
+                tr["client_secret"] = ""
+            tr.update({
+                "client_id": cid, "access_token": tok["access_token"], "refresh_token": tok["refresh_token"],
+                "expires_at": pending["token_expires_at"], "scope": tok.get("scope") or "public",
+                "token_type": tok.get("token_type") or "bearer", "auth_method": METHOD_APP,
+                "auth_flow": "pkce", "auth_completed_at": str(time.time_ns()),
+            })
+            tr.pop("_pending_device", None)
+            tr.pop("auth_error", None)
+            if not _save_config(cfg):
+                return {"ok": False, "error": "save_failed"}
+        _OAUTH_PENDING.pop(inst, None)
+        return {"ok": True}
+
+
 class _TraktProvider:
     name = "TRAKT"
     label = "Trakt"
@@ -183,7 +279,7 @@ class _TraktProvider:
             ],
             actions={"start": True, "finish": True, "refresh": True, "disconnect": True},
             verify_url=VERIFY_URL,
-            notes="Open Trakt, enter the code, then return here. The PIN flow uses CrossWatch's built-in public client_id. Your own Trakt app only needs a Client ID; the Client Secret is optional.",
+            notes="The PIN flow uses CrossWatch's built-in client. Own-app connections use PKCE: authorize on Trakt, then paste the authorization code here. No Client Secret is needed.",
         )
 
     def capabilities(self) -> dict[str, Any]:
@@ -307,7 +403,7 @@ class _TraktProvider:
                   PIN Flow <span class="badge">Recommended</span>
                 </button>
                 <button type="button" class="trk-method" data-method="app" role="tab" aria-selected="false">
-                  Own app (Client ID)
+                  Own app (PKCE)
                 </button>
               </div>
               <div class="trk-actions">
@@ -326,8 +422,8 @@ class _TraktProvider:
                   <input id="trakt_client_id" name="trakt_client_id" placeholder="Enter your Trakt Client ID" autocomplete="off" spellcheck="false" autocapitalize="off">
                 </div>
                 <div>
-                  <label for="trakt_client_secret">Client Secret (optional)</label>
-                  <input id="trakt_client_secret" name="trakt_client_secret" type="password" placeholder="Leave blank if not issued" autocomplete="off" spellcheck="false" autocapitalize="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
+                  <label for="trakt_client_secret">Client Secret (legacy, optional)</label>
+                  <input id="trakt_client_secret" name="trakt_client_secret" type="password" placeholder="Not needed for PKCE" autocomplete="off" spellcheck="false" autocapitalize="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
                 </div>
               </div>
 
@@ -337,6 +433,15 @@ class _TraktProvider:
                   <span class="cw-hint-line">Set the Redirect URL to <code id="trakt_redirect_uri_preview">urn:ietf:wg:oauth:2.0:oob</code>
                   <button id="btn-copy-trakt-redirect" class="btn" type="button">Copy Redirect URL</button></span>
                 </span>
+              </div>
+              <p class="sub">Connect opens Trakt. Approve access, then paste the authorization code below. No Client Secret is needed.</p>
+              <div id="trakt_oauth_panel" class="hidden">
+                <p><a id="trakt_oauth_link" target="_blank" rel="noopener noreferrer">Open Trakt authorization</a></p>
+                <label for="trakt_oauth_code">Authorization code from Trakt</label>
+                <input id="trakt_oauth_code" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="Paste the authorization code">
+                <button id="btn-trakt-oauth-finish" class="btn" type="button">Finish connecting</button>
+                <button id="btn-trakt-oauth-cancel" class="btn" type="button">Cancel</button>
+                <p id="trakt_oauth_status" role="status" aria-live="polite"></p>
               </div>
             </div>
 
@@ -370,6 +475,7 @@ class _TraktProvider:
     '''
 
     def start(self, cfg: dict[str, Any] | None = None, *, redirect_uri: str | None = None, instance_id: Any = None, method: str | None = None) -> dict[str, Any]:
+        cancel_oauth(instance_id=instance_id)
         cfg = cfg or _load_config()
         inst, _, tr = _blocks(cfg, instance_id)
         c = _client(cfg, inst)
@@ -499,6 +605,7 @@ class _TraktProvider:
         )
         if mode == METHOD_PIN:
             tr["client_secret"] = ""
+        tr.pop("auth_flow", None)
         tr.pop("auth_error", None)
 
         try:
@@ -527,7 +634,7 @@ class _TraktProvider:
             mode = normalize_auth_method(None, tr)
             rt = str(tr.get("refresh_token") or "").strip()
             cid = str(c.get("client_id") or "").strip() or (app_client_id() if mode == METHOD_PIN else "")
-            secr = str(c.get("client_secret") or "").strip() if mode == METHOD_APP else ""
+            secr = str(c.get("client_secret") or "").strip() if mode == METHOD_APP and tr.get("auth_flow") != "pkce" else ""
 
             if not (cid and rt):
                 log("TRAKT: missing client_id/client_secret/refresh_token for refresh", "ERROR")
@@ -594,6 +701,7 @@ class _TraktProvider:
             return {"ok": True, "status": "ok"}
 
     def disconnect(self, cfg: dict[str, Any] | None = None, *, instance_id: Any = None) -> AuthStatus:
+        cancel_oauth(instance_id=instance_id)
         cfg = cfg or _load_config()
         inst, _, tr = _blocks(cfg, instance_id)
         for key in ("access_token", "refresh_token", "scope", "token_type", "expires_at", "_pending_device", "auth_error"):
