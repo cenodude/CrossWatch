@@ -162,7 +162,19 @@ def _metadata_show_detail(adapter: Any, show_ids: Mapping[str, Any]) -> dict[str
     return out
 
 
-def _row_to_minimal(row: Mapping[str, Any], adapter: Any | None = None) -> dict[str, Any] | None:
+def _source_coords(row: Mapping[str, Any]) -> tuple[int, int] | None:
+    season = _as_int(row.get("sourceSeason"))
+    episode = _as_int(row.get("sourceEpisode"))
+    if season is None or episode is None or season < 0 or episode < 1:
+        return None
+    return season, episode
+
+
+def _row_to_minimal(
+    row: Mapping[str, Any],
+    adapter: Any | None = None,
+    source_coords: Mapping[int, tuple[int, int]] | None = None,
+) -> dict[str, Any] | None:
     typ = str(row.get("type") or "").strip().lower()
 
     if typ == "episode":
@@ -171,6 +183,7 @@ def _row_to_minimal(row: Mapping[str, Any], adapter: Any | None = None) -> dict[
         episode = _as_int(row.get("episode"))
         if not show_tmdb or season is None or episode is None:
             return None
+        season, episode = _source_coords(row) or (source_coords or {}).get(_as_int(row.get("id")) or 0) or (season, episode)
         out: dict[str, Any] = {
             "type": "episode",
             "show_ids": {"tmdb": str(show_tmdb)},
@@ -233,11 +246,17 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     collected: dict[str, dict[str, Any]] = {}
     dropped: list[str] = []
     rows_seen = 0
+    source_coords: dict[int, tuple[int, int]] = {}
+    keys_by_entry_id: dict[int, str] = {}
 
     def collect(row: Mapping[str, Any], *, source: str) -> None:
         nonlocal rows_seen
         rows_seen += 1
-        minimal = _row_to_minimal(row, adapter)
+        entry_id = _as_int(row.get("id"))
+        coords = _source_coords(row)
+        if entry_id and coords:
+            source_coords[entry_id] = coords
+        minimal = _row_to_minimal(row, adapter, source_coords)
         if not minimal:
             reason = _drop_reason(row)
             dropped.append(reason)
@@ -260,6 +279,13 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
             dropped.append("no_canonical_key")
             _warn(FEATURE, "index_row_dropped", source=source, reason="no_canonical_key", entry_id=row.get("id"))
             return
+        if entry_id:
+            previous_key = keys_by_entry_id.get(entry_id)
+            if previous_key and previous_key != key:
+                previous = collected.get(previous_key)
+                if previous and previous.get(PROGRESS_ID_FIELD) == str(entry_id):
+                    collected.pop(previous_key)
+            keys_by_entry_id[entry_id] = key
         collected[key] = minimal
 
     resp = punchplay_request(adapter, "GET", URL_IN_PROGRESS)

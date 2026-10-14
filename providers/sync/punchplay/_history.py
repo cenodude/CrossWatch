@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import re
 from typing import Any, Iterable, Mapping
 
 from cw_platform.history_events import history_sync_key, minimal_history_item
@@ -36,6 +37,8 @@ FEATURE = "history"
 
 HISTORY_ID_FIELD = "_punchplay_history_ids"
 HISTORY_EVENT_ID_FIELD = "_punchplay_history_id"
+
+_WRITTEN_COORDS = re.compile(r"^cw:history:(?P<show>[a-z0-9_]+:[^#@:]+)#s(?P<season>\d+)e(?P<episode>\d+)(?!\d)", re.IGNORECASE)
 
 
 def _key_of(obj: Mapping[str, Any]) -> str:
@@ -84,6 +87,24 @@ def _row_data(row: Mapping[str, Any]) -> Mapping[str, Any]:
     return merged
 
 
+def _written_coords(data: Mapping[str, Any], show_tmdb: int) -> tuple[int, int] | None:
+    match = _WRITTEN_COORDS.match(str(_pick(data, "clientItemId", "client_item_id") or "").strip())
+    if not match:
+        return None
+    show = match.group("show").lower()
+    if show.startswith("tmdb:") and show != f"tmdb:{show_tmdb}":
+        return None
+    return int(match.group("season")), int(match.group("episode"))
+
+
+def _source_coords(data: Mapping[str, Any]) -> tuple[int, int] | None:
+    season = _as_int(data.get("sourceSeason"))
+    episode = _as_int(data.get("sourceEpisode"))
+    if season is None or episode is None or season < 0 or episode < 1:
+        return None
+    return season, episode
+
+
 def _row_to_minimal(row: Mapping[str, Any]) -> dict[str, Any] | None:
     data = _row_data(row)
     typ_raw = str(_pick(data, "kind", "type", "mediaType", "media_type") or "").strip().lower()
@@ -108,6 +129,7 @@ def _row_to_minimal(row: Mapping[str, Any]) -> dict[str, Any] | None:
         episode = _as_int(_pick(data, "episode"))
         if not show_tmdb or season is None or episode is None:
             return None
+        season, episode = _source_coords(data) or _written_coords(data, show_tmdb) or (season, episode)
         out: dict[str, Any] = {
             "type": "episode",
             "show_ids": {"tmdb": str(show_tmdb)},
