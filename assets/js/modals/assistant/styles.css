@@ -47,6 +47,8 @@
 .cw-assistant .as-answer code{padding:1px 6px;border:1px solid var(--as-border);border-radius:6px;background:var(--as-input);font:12.5px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 .cw-assistant .as-answer a{color:var(--as-accent);overflow-wrap:anywhere}
 .cw-assistant .as-looked{display:block;margin-top:8px;font-size:12px;color:var(--as-muted)}
+.cw-assistant .as-sources{display:block;margin-top:4px;font-size:12px;color:var(--as-muted)}
+.cw-assistant .as-sources a{color:var(--as-accent);overflow-wrap:anywhere}
 .cw-assistant .as-error .as-answer{color:var(--as-danger)}
 .cw-assistant .as-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
 .cw-assistant .as-action{display:inline-flex;align-items:center;gap:8px;height:38px;margin:0;padding:0 14px;border:1px solid var(--as-border);border-radius:10px;background:var(--as-raised);color:var(--as-text);font:inherit;font-size:13px;font-weight:600;cursor:pointer}

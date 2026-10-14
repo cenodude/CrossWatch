@@ -181,3 +181,20 @@ test('run sync asks first and never starts a second run', () => {
   ACTIONS.run_sync.run();
   assert.deepEqual(calls, ['toast:A sync is already running', 'asked', 'asked', 'run']);
 });
+
+test('wiki pages read for the answer become links and nothing else does', () => {
+  const html = modal.sourceLinks([
+    {title: 'Scheduler <b>Webhooks</b>', url: 'https://wiki.crosswatch.app/a/scheduler-webhooks'},
+    {title: 'Again', url: 'https://wiki.crosswatch.app/a/scheduler-webhooks'},
+    {title: 'Evil', url: 'https://evil.test/a'},
+    {title: 'Look-alike', url: 'https://wiki.crosswatch.app.evil.test/a'},
+    {title: 'Quote', url: 'https://wiki.crosswatch.app/a"onmouseover="x'},
+    {title: 'Script', url: 'javascript:alert(1)'},
+    {title: '', url: 'https://wiki.crosswatch.app/b'},
+    {title: 'Two', url: 'https://wiki.crosswatch.app/c'},
+    {title: 'Four', url: 'https://wiki.crosswatch.app/d'},
+  ]);
+  assert.equal(html, '<small class="as-sources">Wiki: <a href="https://wiki.crosswatch.app/a/scheduler-webhooks" target="_blank" rel="noopener noreferrer">Scheduler &lt;b&gt;Webhooks&lt;/b&gt;</a>, <a href="https://wiki.crosswatch.app/b" target="_blank" rel="noopener noreferrer">https://wiki.crosswatch.app/b</a>, <a href="https://wiki.crosswatch.app/c" target="_blank" rel="noopener noreferrer">Two</a></small>');
+  assert.equal(modal.sourceLinks(undefined), '');
+  assert.equal(modal.sourceLinks([{url: 'https://evil.test'}]), '');
+});

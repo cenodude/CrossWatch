@@ -39,6 +39,10 @@ MODELS_TIMEOUT_S = 20
 DOCS_TIMEOUT_S = 15
 DOCS_HOST = "wiki.crosswatch.app"
 DOCS_INDEX_URL = f"https://{DOCS_HOST}/llms.txt"
+DOCS_MCP_URL = f"https://{DOCS_HOST}/~gitbook/mcp"
+DOCS_MCP_PROTOCOL = "2025-06-18"
+DOCS_SEARCH_TIMEOUT_S = 8
+MAX_DOC_EXCERPT_CHARS = 1_200
 DOCS_TTL_S = 86400
 DOCS_RESULTS = 8
 HIDDEN = "[hidden]"
@@ -54,6 +58,7 @@ MAX_CODE_PATHS = 10
 MAX_CODE_LINE_CHARS = 220
 MAX_CODE_READ_LINES = 200
 MAX_ACTIONS = 3
+MAX_SOURCES = 3
 ACTIONS = (
     "run_sync",
     "open_logs",
@@ -75,6 +80,8 @@ TOO_LONG = "That took too long. Try a narrower question."
 BUSY = "The assistant is busy with another question. Try again in a moment."
 
 _DOC_LINK = re.compile(r"\[([^\]]+)\]\((https://wiki\.crosswatch\.app/[^)\s]*)\)(?::\s*(.*))?")
+_HIT = re.compile(r"\ATitle:[ \t]*(.*?)[ \t]*\r?\nLink:[ \t]*(\S+)[ \t]*(?:\r?\nContent:[ \t]*(.*))?\Z", re.S)
+_DOC_TITLE = re.compile(r"(?m)^#[ \t]+(.+?)[ \t]*$")
 _DOCS_LOCK = threading.Lock()
 _DOCS_CACHE: tuple[float, list[tuple[str, str, str]]] = (0.0, [])
 
@@ -105,10 +112,11 @@ SYSTEM_PROMPT = (
 
 DOC_TOOLS: dict[str, tuple[str, dict[str, Any]]] = {
     "search_docs": (
-        "Find CrossWatch wiki pages by keyword. Returns title, address and summary of the best matches.",
+        "Search the CrossWatch wiki. Returns title, address and a passage of the best matching pages. "
+        "Read a page with read_doc for the full text.",
         {
             "type": "object",
-            "properties": {"query": {"type": "string", "description": "Keywords, such as trakt history or webhook."}},
+            "properties": {"query": {"type": "string", "description": "A short question or keywords, such as trakt history not syncing."}},
             "required": ["query"],
         },
     ),
@@ -315,12 +323,64 @@ def _docs_index(deadline: float | None = None) -> list[tuple[str, str, str]]:
     return found
 
 
+def _sse_messages(text: str) -> list[Any]:
+    found: list[Any] = []
+    for block in re.split(r"\r?\n\r?\n", text):
+        data = "\n".join(line[5:].lstrip() for line in block.splitlines() if line.startswith("data:"))
+        if data:
+            found.append(json.loads(data))
+    return found
+
+
+def _wiki_search(query: str, deadline: float) -> list[tuple[str, str, str]]:
+    left = deadline - time.monotonic()
+    if left <= 0:
+        raise AssistantError(TOO_LONG)
+    res = requests.post(
+        DOCS_MCP_URL,
+        json={"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "searchDocumentation", "arguments": {"query": query}}},
+        headers={"Accept": "application/json, text/event-stream", "MCP-Protocol-Version": DOCS_MCP_PROTOCOL},
+        timeout=min(DOCS_SEARCH_TIMEOUT_S, left),
+        allow_redirects=False,
+        stream=True,
+    )
+    if res.status_code != 200:
+        res.close()
+        raise AssistantError(f"HTTP {res.status_code}")
+    kind = str(res.headers.get("Content-Type") or "").lower()
+    text = _body(res, MAX_DOC_BYTES, deadline).decode("utf-8", errors="replace")
+    messages = _sse_messages(text) if "text/event-stream" in kind else [json.loads(text)]
+    result = next((m.get("result") for m in messages if isinstance(m, dict) and m.get("id") == 1 and "result" in m), None)
+    if not isinstance(result, dict) or result.get("isError"):
+        raise AssistantError("No search result")
+    hits: list[tuple[str, str, str]] = []
+    for item in result.get("content") or []:
+        if not isinstance(item, dict) or item.get("type") != "text":
+            continue
+        match = _HIT.match(str(item.get("text") or "").strip())
+        if not match or not _wiki_url(match.group(2)):
+            continue
+        excerpt = re.sub(r"\n{3,}", "\n\n", (match.group(3) or "").strip())
+        if len(excerpt) > MAX_DOC_EXCERPT_CHARS:
+            excerpt = excerpt[:MAX_DOC_EXCERPT_CHARS].rstrip() + " ..."
+        hits.append((match.group(1), match.group(2), excerpt))
+    return hits[:DOCS_RESULTS]
+
+
 def search_docs(query: Any, deadline: float | None = None) -> str:
-    words = [word for word in re.split(r"[^a-z0-9]+", str(query or "").lower()) if len(word) > 1]
+    asked = _redact_log_text(" ".join(str(query or "").split()))[:300]
+    words = [word for word in re.split(r"[^a-z0-9]+", asked.lower()) if len(word) > 1]
     if not words:
         return "Give one or more keywords."
+    limit = _docs_deadline(deadline)
     try:
-        rows = _docs_index(deadline)
+        hits = _wiki_search(asked, min(limit, time.monotonic() + DOCS_SEARCH_TIMEOUT_S))
+    except Exception:
+        hits = []
+    if hits:
+        return "\n\n".join(f"{title} | {url}\n{excerpt}".rstrip() for title, url, excerpt in hits)
+    try:
+        rows = _docs_index(limit)
     except Exception as exc:
         return f"The wiki index could not be loaded: {type(exc).__name__}"
     scored: list[tuple[int, tuple[str, str, str]]] = []
@@ -345,10 +405,33 @@ def _wiki_url(url: Any) -> str:
     return target if ok else ""
 
 
+def _markdown_url(url: str) -> str:
+    parsed = urlparse(url)
+    path = parsed.path.rstrip("/")
+    if not path:
+        path = "/llms.txt"
+    elif not path.endswith((".md", ".txt")):
+        path += ".md"
+    return parsed._replace(path=path, params="", query="", fragment="").geturl()
+
+
+def doc_source(url: Any, text: str) -> dict[str, str] | None:
+    target = _wiki_url(url)
+    if not target or text.startswith(("Only pages on", "The page could not be loaded", "read_doc failed")):
+        return None
+    page = _markdown_url(target)
+    if not page.endswith(".md"):
+        return None
+    found = _DOC_TITLE.search(text)
+    title = found.group(1).strip() if found else page.rsplit("/", 1)[-1][:-3].replace("-", " ").capitalize()
+    return {"title": title[:120], "url": page[:-3]}
+
+
 def read_doc(url: Any, deadline: float | None = None) -> str:
     target = _wiki_url(url)
     if not target:
         return f"Only pages on https://{DOCS_HOST}/ can be read."
+    target = _markdown_url(target)
     limit = _docs_deadline(deadline)
     try:
         res = _wiki_get(target, limit)
@@ -610,13 +693,14 @@ def chat(
     definitions = tool_definitions(tools)
     used: list[str] = []
     actions: list[str] = []
+    sources: list[dict[str, str]] = []
 
     def finish(message: dict[str, Any]) -> dict[str, Any]:
         text = _text(message)
         if not text:
             convo.append({"role": "user", "content": NUDGE})
             text = _text(_complete(conf, convo, definitions, "none", deadline)) or NO_TEXT
-        return {"reply": text, "tools": used, "actions": actions}
+        return {"reply": text, "tools": used, "actions": actions, "sources": sources}
 
     for _round in range(MAX_ROUNDS):
         message = _complete(conf, convo, definitions, "auto", deadline)
@@ -636,5 +720,8 @@ def chat(
             else:
                 result = _run(name, args, run_tool, deadline)
                 used.append(name)
+                source = doc_source(args.get("url"), result) if name == "read_doc" else None
+                if source and source not in sources and len(sources) < MAX_SOURCES:
+                    sources.append(source)
             convo.append({"role": "tool", "tool_call_id": str(call.get("id") or ""), "content": result})
     return finish(_complete(conf, convo, definitions, "none", deadline))
