@@ -2,6 +2,44 @@
 /* CrossWatch - AI help settings section */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
+html:not([data-cw-assistant="on"]) [data-ai-analyze] {
+  display: none !important;
+}
+
+#cw-ask-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+  margin: 0 2px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--cw-theme-accent, #7c5cff);
+  cursor: pointer;
+}
+
+#cw-ask-button .material-symbols-rounded {
+  font-size: 22px;
+}
+
+#cw-ask-button:hover:not(:disabled),
+#cw-ask-button:focus-visible {
+  border-color: var(--cw-theme-border-strong, rgba(255, 255, 255, .14));
+  background: color-mix(in srgb, var(--cw-theme-accent, #7c5cff) 12%, transparent);
+  outline: none;
+}
+
+#cw-ask-button:disabled {
+  color: var(--cw-theme-muted, #9299a6);
+  opacity: .45;
+  cursor: not-allowed;
+}
+
 #page-settings .cw-app-security-layout > .cw-ai-card {
   grid-column: 1 / -1;
 }

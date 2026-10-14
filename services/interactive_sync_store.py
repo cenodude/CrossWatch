@@ -61,7 +61,7 @@ class ReviewStore:
         self.db.execute("CREATE TABLE review (seq INTEGER PRIMARY KEY, id TEXT UNIQUE NOT NULL, kind TEXT NOT NULL, feature TEXT NOT NULL, result TEXT NOT NULL, selectable INTEGER NOT NULL, selected INTEGER NOT NULL, search TEXT NOT NULL, payload TEXT NOT NULL)")
         self.rows = ReviewRows(self, "change")
         self.conflicts = ReviewRows(self, "conflict")
-        self.counts = dict(changes=0, conflicts=0, attention=0, selected=0)
+        self.counts = dict(changes=0, conflicts=0, attention=0, selected=0, removals=0)
         self.features = []
         self.selectable_count = 0
         self.db.execute("CREATE TABLE report_issues (id TEXT PRIMARY KEY, provider TEXT NOT NULL, feature TEXT NOT NULL, result TEXT NOT NULL, operation TEXT NOT NULL, provisional INTEGER NOT NULL, search TEXT NOT NULL, payload TEXT NOT NULL)")
@@ -116,7 +116,7 @@ class ReviewStore:
             self.db.execute("CREATE INDEX IF NOT EXISTS review_selection ON review(selected,id)")
             self.db.commit()
             groups = self.db.execute("SELECT kind,result,COUNT(*),SUM(selected),SUM(selectable) FROM review GROUP BY kind,result").fetchall()
-            self.counts = dict(changes=0, conflicts=0, attention=0, selected=0, not_in_library=0)
+            self.counts = dict(changes=0, conflicts=0, attention=0, selected=0, not_in_library=0, removals=0)
             self.selectable_count = 0
             for kind, result, count, selected, selectable in groups:
                 if result == NOT_IN_LIBRARY:
@@ -127,6 +127,8 @@ class ReviewStore:
                 self.selectable_count += selectable
                 if result in ("unresolved", "blocked"):
                     self.counts["attention"] += count
+                if result == "remove":
+                    self.counts["removals"] += count
             self.features = [r[0] for r in self.db.execute("SELECT DISTINCT feature FROM review ORDER BY feature")]
 
     @staticmethod

@@ -138,7 +138,7 @@ _HELPER_SCRIPTS = (
 _APP_SCRIPTS = (
     "syncbar.js", "run-summary-stream.js", "overview-profile.js", "sync-reviews.js", "plex-recovery-notifications.js", "main.js", "connections.overlay.js", "connections.pairs.overlay.js", "scheduler.js",
     "schedulerbanner.js", "playingcard.js", "insights.js", "activity.js", "profile-media-modal.js", "dashboard-widgets.js", "auth-dots.js", "main-status.js",
-    "scrobbler.js", "user-profiles.js", "app-users.js", "mcp-access.js",
+    "scrobbler.js", "user-profiles.js", "app-users.js", "mcp-access.js", "assistant-settings.js",
 )
 _USER_HELPER_SCRIPTS = (
     "help-links.js", "provider-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "account-menu.js", "notifications.js", "update-notifications.js", "api.js", "core.js",
@@ -208,6 +208,11 @@ _ADMIN_ONLY_MARKERS: tuple[tuple[str, str], ...] = (
     ('id="page-settings"', "settings pane"),
     ('id="app_user_manager"', "user manager"),
     ("app_auth_oidc_client_secret", "OIDC credentials form"),
+    ("cwAboutMenuSelect('assistant')", "assistant menu item"),
+)
+_ASSISTANT_MENU_ITEM = (
+    '        <button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwAboutMenuSelect(\'assistant\')">'
+    '<span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">auto_awesome</span><span>Ask CrossWatch</span></button>'
 )
 
 
@@ -605,6 +610,7 @@ def _managed_user_shell(html: str, user: dict | None = None) -> str:
         '  <section id="page-settings" class="card hidden">',
         "\n\n</main>",
     )
+    html = _remove_line(html, _ASSISTANT_MENU_ITEM)
     _assert_admin_shell_stripped(html)
     return html
 
@@ -920,6 +926,7 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
       <div class="cw-menu hidden" id="cw-about-menu" role="menu" aria-labelledby="tab-about">
         <button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwAboutMenuSelect('about')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">info</span><span>About</span></button>
         <button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwAboutMenuSelect('help')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">help</span><span>Help</span></button>
+        <button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwAboutMenuSelect('assistant')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">auto_awesome</span><span>Ask CrossWatch</span></button>
       </div>
     </div>
     <div class="cw-nav-profile-menu" id="cw-nav-profile-menu">
@@ -1013,6 +1020,7 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
                 role="tab" aria-selected="false" aria-controls="det-panel-debug" data-tab="debug" hidden disabled aria-hidden="true" aria-disabled="true">Debug</button>
             </div>
             <div class="det-tools">
+              <button id="det-ai" class="ghost det-ai" type="button" title="Ask the assistant to explain this log" aria-label="Analyze this log with AI" data-ai-analyze><span class="material-symbols-rounded" aria-hidden="true">auto_awesome</span><span>Analyze</span></button>
               <button id="det-open-logs" class="ghost det-tool-icon" type="button" title="Open logs page" aria-label="Open logs page" onclick="openLogs({channel: window._detailsTab || 'sync'})"><span class="material-symbols-rounded" aria-hidden="true">open_in_full</span></button>
               <button id="det-copy" class="ghost det-tool-icon" type="button" title="Copy current output" aria-label="Copy current output"><span class="material-symbols-rounded" aria-hidden="true">content_copy</span></button>
               <button id="det-clear" class="ghost det-tool-icon" type="button" title="Clear current output" aria-label="Clear current output"><span class="material-symbols-rounded" aria-hidden="true">delete</span></button>
@@ -1899,6 +1907,52 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
                         </div>
                       </div>
                       <div class="cw-ai-grid">
+                        <form class="cw-ai-panel" id="assistant_settings" autocomplete="off" onsubmit="return false">
+                          <div class="cw-ai-panel-head">
+                            <div>
+                              <h4>Assistant in CrossWatch</h4>
+                              <p>Ask questions right here, from any browser or phone. You bring the AI model.</p>
+                            </div>
+                            <span class="cw-ai-pill" id="assistant_pill">Off</span>
+                          </div>
+                          <div class="cw-ai-caption" id="assistant_presets_label">AI provider</div>
+                          <div class="cw-ai-choices" id="assistant_presets" role="radiogroup" aria-labelledby="assistant_presets_label">
+                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-assistant-preset="openai"><strong>OpenAI</strong><small>Cloud, paid key</small></button>
+                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-assistant-preset="gemini"><strong>Google Gemini</strong><small>Cloud, free tier</small></button>
+                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-assistant-preset="openrouter"><strong>OpenRouter</strong><small>Cloud, many models</small></button>
+                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-assistant-preset="ollama"><strong>Ollama</strong><small>Local, free</small></button>
+                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-assistant-preset="lmstudio"><strong>LM Studio</strong><small>Local, free</small></button>
+                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-assistant-preset="custom"><strong>Other</strong><small>Any OpenAI style API</small></button>
+                          </div>
+                          <div class="cw-ai-fields">
+                            <div class="cw-ai-field" id="assistant_url_field">
+                              <label for="assistant_base_url">Address</label>
+                              <input id="assistant_base_url" type="url" autocomplete="off" spellcheck="false" placeholder="http://192.168.1.10:11434/v1">
+                              <small>Where the model answers, as seen from CrossWatch. For a model on another computer use its network address, not localhost.</small>
+                            </div>
+                            <div class="cw-ai-field" id="assistant_key_field">
+                              <label for="assistant_api_key">API key</label>
+                              <input id="assistant_api_key" type="password" autocomplete="new-password" spellcheck="false" placeholder="Paste your key">
+                              <small>From the provider's developer page. A ChatGPT or Claude subscription does not include one.</small>
+                            </div>
+                            <div class="cw-ai-field">
+                              <label for="assistant_model">Model</label>
+                              <div class="cw-ai-inline">
+                                <input id="assistant_model" type="text" autocomplete="off" spellcheck="false" list="assistant_models" placeholder="Pick or type a model">
+                                <datalist id="assistant_models"></datalist>
+                                <button type="button" class="btn" id="btn-assistant-models"><span class="material-symbols-rounded" aria-hidden="true">refresh</span><span>Load models</span></button>
+                              </div>
+                            </div>
+                          </div>
+                          <div class="cw-ai-status" id="assistant_state" role="status"></div>
+                          <div class="cw-ai-actions">
+                            <button type="button" class="btn primary" id="btn-assistant-save">Save and turn on</button>
+                            <button type="button" class="btn" id="btn-assistant-open" disabled><span class="material-symbols-rounded" aria-hidden="true">forum</span><span>Ask a question</span></button>
+                            <button type="button" class="btn cw-ai-quiet hidden" id="btn-assistant-off">Turn off</button>
+                          </div>
+                          <p class="cw-ai-note"><span class="material-symbols-rounded" aria-hidden="true">shield</span><span>With a cloud provider, your questions and the log lines and settings needed to answer them go to that provider. Secrets are removed first. A local model keeps everything at home.</span></p>
+                        </form>
+
                         <div class="cw-ai-panel" id="mcp_access">
                           <div class="cw-ai-panel-head">
                             <div>
@@ -2039,7 +2093,7 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
 </div>
 
 
-<script>(()=>{const $=id=>document.getElementById(id),closeMenu=id=>{const m=$(id==="settings"?"cw-settings-menu":"cw-about-menu"),b=$(id==="settings"?"tab-settings":"tab-about");m?.classList.add("hidden");b?.setAttribute("aria-expanded","false")},closeAll=()=>{closeMenu("settings");closeMenu("about")},toggleMenu=(id,e)=>{e?.preventDefault?.();e?.stopPropagation?.();const menuId=id==="settings"?"cw-settings-menu":"cw-about-menu",btnId=id==="settings"?"tab-settings":"tab-about",m=$(menuId),b=$(btnId);if(!m||!b)return;const open=m.classList.contains("hidden");closeAll();m.classList.toggle("hidden",!open);b.setAttribute("aria-expanded",String(open))},setHelp=open=>{const o=$("cw-help-overlay");if(!o)return;if(open){const f=$("cw-help-frame");if(f&&!f.src)f.src="https://wiki.crosswatch.app";o.classList.remove("hidden");o.setAttribute("aria-hidden","false")}else{o.classList.add("hidden");o.setAttribute("aria-hidden","true")}},openSettings=pane=>{window.showTab?.("settings");setTimeout(()=>window.cwSettingsSelect?.(pane),0)};window.CW_CURRENT_VERSION="__CW_CURRENT_VERSION__";window.APP_VERSION="__CW_VERSION__";window["__CW_"+"VERSION__"]=window.APP_VERSION;window.cwOpenHelp=()=>setHelp(true);window.cwCloseHelp=()=>setHelp(false);window.openHelp=()=>window.location?.protocol==="https:"?window.cwOpenHelp?.():window.open("https://wiki.crosswatch.app","_blank","noopener,noreferrer");window.cwCloseAboutMenu=()=>closeMenu("about");window.cwCloseSettingsMenu=()=>closeMenu("settings");window.cwToggleAboutMenu=e=>toggleMenu("about",e);window.cwToggleSettingsMenu=e=>toggleMenu("settings",e);window.cwAboutMenuSelect=w=>(closeMenu("about"),w==="about"?window.openAbout?.():w==="help"?window.openHelp?.():undefined);window.cwSettingsMenuSelect=w=>{closeMenu("settings");if(w==="overview")return openSettings("overview");if(w==="providers")return openSettings("providers");if(w==="scheduling")return openSettings("scheduling");if(w==="pairs"||w==="sync")return openSettings("sync");if(w==="scrobbler")return openSettings("scrobbler");if(w==="app")return openSettings("app");if(w==="maintenance")return openSettings("maintenance")};document.addEventListener("click",e=>{const o=$("cw-help-overlay"),c=$("cw-help-card"),aboutHost=$("tab-about-menu"),settingsHost=$("tab-settings-menu");if(o&&!o.classList.contains("hidden")&&c&&!c.contains(e.target))window.cwCloseHelp?.();if(aboutHost&&!aboutHost.contains(e.target))closeMenu("about");if(settingsHost&&!settingsHost.contains(e.target))closeMenu("settings")},true);document.addEventListener("keydown",e=>{if(e.key!=="Escape")return;window.cwCloseHelp?.();closeAll()},true)})();</script>
+<script>(()=>{const $=id=>document.getElementById(id),closeMenu=id=>{const m=$(id==="settings"?"cw-settings-menu":"cw-about-menu"),b=$(id==="settings"?"tab-settings":"tab-about");m?.classList.add("hidden");b?.setAttribute("aria-expanded","false")},closeAll=()=>{closeMenu("settings");closeMenu("about")},toggleMenu=(id,e)=>{e?.preventDefault?.();e?.stopPropagation?.();const menuId=id==="settings"?"cw-settings-menu":"cw-about-menu",btnId=id==="settings"?"tab-settings":"tab-about",m=$(menuId),b=$(btnId);if(!m||!b)return;const open=m.classList.contains("hidden");closeAll();m.classList.toggle("hidden",!open);b.setAttribute("aria-expanded",String(open))},setHelp=open=>{const o=$("cw-help-overlay");if(!o)return;if(open){const f=$("cw-help-frame");if(f&&!f.src)f.src="https://wiki.crosswatch.app";o.classList.remove("hidden");o.setAttribute("aria-hidden","false")}else{o.classList.add("hidden");o.setAttribute("aria-hidden","true")}},openSettings=pane=>{window.showTab?.("settings");setTimeout(()=>window.cwSettingsSelect?.(pane),0)};window.CW_CURRENT_VERSION="__CW_CURRENT_VERSION__";window.APP_VERSION="__CW_VERSION__";window["__CW_"+"VERSION__"]=window.APP_VERSION;window.cwOpenHelp=()=>setHelp(true);window.cwCloseHelp=()=>setHelp(false);window.openHelp=()=>window.location?.protocol==="https:"?window.cwOpenHelp?.():window.open("https://wiki.crosswatch.app","_blank","noopener,noreferrer");window.cwCloseAboutMenu=()=>closeMenu("about");window.cwCloseSettingsMenu=()=>closeMenu("settings");window.cwToggleAboutMenu=e=>toggleMenu("about",e);window.cwToggleSettingsMenu=e=>toggleMenu("settings",e);window.cwAboutMenuSelect=w=>(closeMenu("about"),w==="about"?window.openAbout?.():w==="help"?window.openHelp?.():w==="assistant"?window.openAssistant?.():undefined);window.cwSettingsMenuSelect=w=>{closeMenu("settings");if(w==="overview")return openSettings("overview");if(w==="providers")return openSettings("providers");if(w==="scheduling")return openSettings("scheduling");if(w==="pairs"||w==="sync")return openSettings("sync");if(w==="scrobbler")return openSettings("scrobbler");if(w==="app")return openSettings("app");if(w==="maintenance")return openSettings("maintenance")};document.addEventListener("click",e=>{const o=$("cw-help-overlay"),c=$("cw-help-card"),aboutHost=$("tab-about-menu"),settingsHost=$("tab-settings-menu");if(o&&!o.classList.contains("hidden")&&c&&!c.contains(e.target))window.cwCloseHelp?.();if(aboutHost&&!aboutHost.contains(e.target))closeMenu("about");if(settingsHost&&!settingsHost.contains(e.target))closeMenu("settings")},true);document.addEventListener("keydown",e=>{if(e.key!=="Escape")return;window.cwCloseHelp?.();closeAll()},true)})();</script>
 
 __CW_ASSET_BLOCK__
 

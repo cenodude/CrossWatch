@@ -35,6 +35,7 @@ ModalRegistry.register('anime-overrides', () => import(_cwVer('./modals/anime-ov
 ModalRegistry.register('support',      () => import(_cwVer('./modals/support/index.js')));
 ModalRegistry.register('statistics',   () => import(_cwVer('./modals/statistics/index.js')));
 ModalRegistry.register('sync-topology', () => import(_cwVer('./modals/sync-topology/index.js')));
+ModalRegistry.register('assistant',    () => import(_cwVer('./modals/assistant/index.js')));
 
 export const openModal = ModalRegistry.open;
 export const closeModal = ModalRegistry.close;
@@ -157,3 +158,4 @@ window.openScrobblerRouteModal = (props = {}) => ModalRegistry.open('scrobbler-r
 window.openEditorRawModal = (props = {}) => ModalRegistry.open('editor-raw', props);
 window.openAnimeOverridesModal = (props = {}) => ModalRegistry.open('anime-overrides', props);
 window.openSupportModal = (props = {}) => ModalRegistry.open('support', props);
+window.openAssistant = (props = {}) => ModalRegistry.open('assistant', props);
