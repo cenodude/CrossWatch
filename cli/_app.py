@@ -117,6 +117,7 @@ def _register_all() -> None:
         instance,
         logs,
         maintenance,
+        mcp,
         metadata,
         pair,
         playlist,
@@ -155,6 +156,7 @@ def _register_all() -> None:
         scrobbler,
         insights,
         maintenance,
+        mcp,
         shell,
     ):
         module.register(app)

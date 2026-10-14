@@ -2284,6 +2284,43 @@ def test_token_create_without_a_user_still_saves_the_token(clean_cli_env) -> Non
     assert load_settings().get("token") == "cwt_secret_value"
 
 
+def test_token_create_read_only_sends_the_access_and_keeps_the_cli_token(clean_cli_env) -> None:
+    from cli._app import run_isolated
+    from cli._settings import load_settings, update_settings
+
+    update_settings(token="cwt_admin_value", url="http://cw.test")
+    state = Ctx.build(url="http://cw.test", output="json")
+    transport = FakeTransport({TOKEN_ROUTE: TOKEN_REPLY})
+    state._http = transport
+
+    assert run_isolated(state, ["auth", "token", "create", "--name", "ai", "--access", "Monitor"]) == 0
+    assert transport.calls == [("POST", "/api/app-auth/tokens", {"name": "ai", "expires_days": 0, "access": "monitor"})]
+    assert load_settings().get("token") == "cwt_admin_value"
+
+    assert run_isolated(state, ["auth", "token", "create", "--access", "root"]) != 0
+    assert run_isolated(state, ["auth", "token", "create", "--access", "monitor", "--user", "ops"]) != 0
+    assert len(transport.calls) == 1
+
+
+def test_local_token_create_can_issue_a_read_only_token(config_base: Path) -> None:
+    from api import apiTokensAPI
+    from cli._local import LocalTransport
+    from cw_platform.config_base import load_config
+
+    (config_base / "config.json").write_text(json.dumps({"app_auth": {"enabled": True, "username": "admin"}}), encoding="utf-8")
+    local = LocalTransport()
+
+    made = local.request("POST", "/api/app-auth/tokens", json_body={"name": "ai", "access": "monitor"})
+    assert made["entry"]["access"] == "monitor"
+    identity = apiTokensAPI.resolve_api_token(load_config(), made["token"])
+    assert identity is not None
+    assert identity["is_admin"] is False
+    assert identity["permissions"]["monitor"] is True
+
+    refused = local.request("POST", "/api/app-auth/tokens", json_body={"name": "x", "access": "root"})
+    assert refused == {"ok": False, "error": "Unknown token access"}
+
+
 USERS_ROUTE = ("GET", "/api/app-auth/users")
 PROFILES_ROUTE = ("GET", "/api/user-profiles")
 USERS_REPLY = {

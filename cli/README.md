@@ -76,7 +76,13 @@ cw auth token revoke <id>
 
 Tokens are hashed at rest, inherit the permissions of the user they belong to, and land in the audit log like any UI action, with the token id and name on each entry. Add `--expires-days` if you want them to lapse.
 
-For a script that only needs to look, create a managed user with the monitor access level and create the token for that user:
+For a script that only needs to look, create a read-only token:
+
+```
+cw auth token create --name uptime --access monitor --expires-days 365
+```
+
+That token belongs to the administrator but only has the monitor level. If you prefer a separate account, create a managed user with the monitor access level and create the token for that user:
 
 ```
 cw user create monitor --profile Ops --access monitor
@@ -500,6 +506,31 @@ cw logs tail -f                    follow it live
 cw logs tail -f --grep "ERROR|WARN"
 cw logs channels
 ```
+
+## AI clients (MCP)
+
+CrossWatch has a read-only MCP endpoint at `/api/mcp`, so an AI client can look at health, the last sync, the logs, events, analyzer problems, what is playing and the redacted config and help you work out what went wrong. It only answers to an admin or monitor API token, so sign-in has to be enabled.
+
+The easy way is the web UI: Settings > Security > AI access creates a read-only token and shows the snippet to paste into your AI client, with the token already filled in. It has ready-made snippets for Claude Code, Claude Desktop, Codex CLI, Cursor, Gemini CLI, LM Studio and VS Code, and the plain address and header for anything else that speaks MCP. Revoke the token there to cut a client off.
+
+From the CLI it is one command:
+
+```
+cw auth token create --name ai --access monitor
+cw --token cwt_... mcp check
+```
+
+`--access monitor` makes a read-only administrator token without a separate user. It is not saved as your CLI token unless you pass `--save`. `cw mcp check` confirms the endpoint answers with that token and lists the tools.
+
+Clients that speak MCP over HTTP, such as Claude Code, Codex CLI, Cursor, Gemini CLI, LM Studio and VS Code, connect straight to that address, wherever CrossWatch runs. Cloud chat apps such as ChatGPT connect from the vendor's servers, so they cannot reach a CrossWatch on your home network. Claude Desktop can only start a local command, so it needs a bridge. With CrossWatch on a NAS or another computer that is `mcp-remote` from the snippet, which needs Node.js on the computer running Claude Desktop.
+
+With the CrossWatch container on the same computer as Claude Desktop, the CLI is the bridge and nothing else has to be installed:
+
+```
+docker exec -i -e CW_TOKEN=cwt_... crosswatch cw mcp serve
+```
+
+`cw mcp serve` reads MCP messages on stdin, sends them to the service and writes the answers to stdout. It needs the running service, `--local` does not work here.
 
 ## Shell
 

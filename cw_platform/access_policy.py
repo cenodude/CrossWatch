@@ -31,9 +31,11 @@ MONITOR_GET_PATHS = frozenset(
         "/api/events/groups",
         "/api/events/tree",
         "/api/events/context",
+        "/api/mcp",
     }
 )
 MONITOR_GET_PREFIXES = ("/api/events/groups/", "/api/events/item/", "/api/events/run/")
+MONITOR_POST_PATHS = frozenset({"/api/mcp"})
 
 
 def clean_managed_permissions(raw: Any) -> dict[str, bool]:
@@ -55,11 +57,14 @@ def is_monitor_user(user: Mapping[str, Any] | None) -> bool:
 
 
 def monitor_api_allowed(user: Mapping[str, Any] | None, path: Any, method: Any = "GET") -> bool:
-    if str(method or "GET").upper() != "GET":
+    verb = str(method or "GET").upper()
+    if verb not in {"GET", "POST"}:
         return False
     if not is_monitor_user(user):
         return False
     p = str(path or "").split("?", 1)[0]
+    if verb == "POST":
+        return p in MONITOR_POST_PATHS
     return p in MONITOR_GET_PATHS or p.startswith(MONITOR_GET_PREFIXES)
 
 

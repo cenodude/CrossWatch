@@ -30,6 +30,32 @@ def test_provider_tags_handle_valid_and_unclosed_brackets(text, tag, expected):
     assert describe_line(text, tag)[2] == expected
 
 
+@pytest.mark.parametrize("text", [
+    "GET https://plex.test/library?X-Plex-Token=LEAKED&x=1",
+    "url=https://api.trakt.tv/sync?access_token=LEAKED",
+    "refresh_token: LEAKED",
+    "client_secret=LEAKED tmdb_api_key=LEAKED pms_token=LEAKED",
+    '{"access_token": "LEAKED"}',
+    "POST /webhook/plex?profile=LEAKED HTTP/1.1",
+    "GET /published/feed/kometa?key=LEAKED",
+    "GET /webhook/stremio/LEAKED/player/x",
+    "Max retries exceeded with url: https://api.telegram.org/botLEAKED/sendMessage",
+    "https://discord.com/api/webhooks/123456/LEAKED failed",
+    "https://hc-ping.com/LEAKED/start",
+])
+def test_archived_lines_drop_secrets_in_prefixed_keys_and_urls(text):
+    assert "LEAKED" not in describe_line(text, "SYNC")[0]
+
+
+@pytest.mark.parametrize("text", [
+    "expired tokens: 3 password_reset requested, keys=4, code 404, profile=default",
+    "[SYNC] history added=3 item key tmdb:603#movie pair_key=PLEX-TRAKT",
+    '{"tokens": 5, "session_key": "55", "title": "Token of Love"}',
+])
+def test_archived_lines_keep_ordinary_text(text):
+    assert describe_line(text, "SYNC")[0] == text
+
+
 @pytest.fixture
 def store(tmp_path):
     result = LogArchive(tmp_path / 'logs.db')

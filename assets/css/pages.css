@@ -1055,3 +1055,4 @@ html.cw-mm-open,html.cw-mm-open body{overflow:hidden}
 .cw-person-films small{display:block;margin-top:4px}
 .cw-page-media-modal button.cw-mm-person{padding:0}
 @media(max-width:600px){.cw-person-films{grid-template-columns:1fr}}
+@media(min-width:1101px){#page-settings .cw-app-security-layout{grid-template-rows:auto 1fr}#page-settings .cw-app-security-layout>#app_auth_fields{grid-row:span 2}}
