@@ -180,7 +180,7 @@ def test_chat_runs_tools_and_returns_the_answer(gated, monkeypatch: pytest.Monke
     res = client.post(chat, json={"messages": history}, headers=admin)
 
     assert res.status_code == 200
-    assert res.json() == {"ok": True, "reply": "You have one pair, Plex to Trakt.", "tools": ["list_pairs", "nope", "read_logs"], "actions": []}
+    assert res.json() == {"ok": True, "reply": "You have one pair, Plex to Trakt.", "tools": ["list_pairs", "nope", "read_logs"], "actions": [], "sources": []}
     first, second = provider.requests
     assert first["url"] == BASE + "/chat/completions"
     assert first["options"] == {"allow_redirects": False, "stream": True}
@@ -295,6 +295,7 @@ def test_wiki_lookup_ranks_pages_and_only_reads_the_wiki(monkeypatch: pytest.Mon
         return FakeResponse(200, text=index if url.endswith("llms.txt") else "# Trakt\nConnect it here.")
 
     monkeypatch.setattr(assistant.requests, "get", get)
+    monkeypatch.setattr(assistant.requests, "post", lambda url, **_k: FakeResponse(503, text="down"))
     monkeypatch.setattr(assistant, "_DOCS_CACHE", (0.0, []))
 
     found = assistant.search_docs("trakt history").splitlines()
@@ -329,6 +330,132 @@ def test_wiki_lookup_ranks_pages_and_only_reads_the_wiki(monkeypatch: pytest.Mon
     assert assistant.read_doc("https://wiki.crosswatch.app/x.md") == "The page could not be loaded: HTTP 302"
     monkeypatch.setattr(assistant.requests, "get", lambda url, **_k: FakeResponse(200, text="x" * (assistant.MAX_DOC_BYTES + 1)))
     assert assistant.read_doc("https://wiki.crosswatch.app/x.md") == "The page could not be loaded: AssistantError"
+
+
+def _search_reply(*items: dict[str, Any], sse: bool = True) -> FakeResponse:
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"content": list(items)}})
+    if sse:
+        return FakeResponse(200, text=f"event: message\ndata: {body}\n\n", headers={"Content-Type": "text/event-stream"})
+    return FakeResponse(200, text=body, headers={"Content-Type": "application/json"})
+
+
+def _hit(title: str, url: str, content: str) -> dict[str, Any]:
+    return {"type": "text", "text": f"Title: {title}\nLink: {url}\nContent: {content}"}
+
+
+def test_wiki_search_asks_the_gitbook_mcp_and_keeps_only_wiki_pages(monkeypatch: pytest.MonkeyPatch) -> None:
+    page = "https://wiki.crosswatch.app/crosswatch/settings/scheduling/scheduler-webhooks"
+    posts: list[dict[str, Any]] = []
+
+    def post(url: str, **kwargs: Any) -> FakeResponse:
+        posts.append({"url": url, **kwargs})
+        return _search_reply(
+            _hit("Scheduler Webhooks", page, "Set payload_format to ntfy.\n\n\n\nThen the topic URL."),
+            _hit("Elsewhere", "https://evil.test/x", "Not ours"),
+            {"type": "text", "text": "no title here"},
+            {"type": "image", "data": "x"},
+            _hit("Long", "https://wiki.crosswatch.app/long", "y" * 5000),
+        )
+
+    monkeypatch.setattr(assistant.requests, "post", post)
+    monkeypatch.setattr(assistant.requests, "get", lambda url, **_k: pytest.fail(f"index fetched: {url}"))
+
+    found = assistant.search_docs("ntfy alerts token=abc123secretvalue")
+    blocks = found.split("\n\n", 2)
+    assert blocks[0] == f"Scheduler Webhooks | {page}\nSet payload_format to ntfy."
+    assert "evil.test" not in found and "no title here" not in found
+    assert found.endswith(" ...")
+    assert len(found) < 2 * assistant.MAX_DOC_EXCERPT_CHARS
+
+    sent = posts[0]
+    assert sent["url"] == assistant.DOCS_MCP_URL
+    assert sent["json"]["params"] == {"name": "searchDocumentation", "arguments": {"query": "ntfy alerts token=****"}}
+    assert sent["allow_redirects"] is False and sent["stream"] is True
+    assert sent["timeout"] <= assistant.DOCS_SEARCH_TIMEOUT_S
+    assert "Authorization" not in sent["headers"]
+
+    monkeypatch.setattr(assistant.requests, "post", lambda url, **_k: _search_reply(_hit("Trakt", "https://wiki.crosswatch.app/trakt", "Connect it."), sse=False))
+    assert assistant.search_docs("trakt") == "Trakt | https://wiki.crosswatch.app/trakt\nConnect it."
+
+
+def test_wiki_search_falls_back_to_the_page_index(monkeypatch: pytest.MonkeyPatch) -> None:
+    index = "- [Trakt](https://wiki.crosswatch.app/trakt.md): Connect Trakt"
+    monkeypatch.setattr(assistant.requests, "get", lambda url, **_k: FakeResponse(200, text=index))
+    monkeypatch.setattr(assistant, "_DOCS_CACHE", (0.0, []))
+    fallback = "Trakt | https://wiki.crosswatch.app/trakt.md | Connect Trakt"
+    error = json.dumps({"jsonrpc": "2.0", "id": 1, "error": {"code": -32603, "message": "boom"}})
+
+    def broken(url: str, **_k: Any) -> FakeResponse:
+        raise assistant.requests.ConnectionError("offline")
+
+    for reply in (
+        broken,
+        lambda url, **_k: FakeResponse(302, text="moved"),
+        lambda url, **_k: FakeResponse(200, text="not json", headers={"Content-Type": "application/json"}),
+        lambda url, **_k: FakeResponse(200, text=error, headers={"Content-Type": "application/json"}),
+        lambda url, **_k: _search_reply(),
+        lambda url, **_k: _search_reply(_hit("Elsewhere", "https://evil.test/trakt", "Not ours")),
+        lambda url, **_k: FakeResponse(200, text="x" * (assistant.MAX_DOC_BYTES + 1), headers={"Content-Type": "text/event-stream"}),
+    ):
+        monkeypatch.setattr(assistant.requests, "post", reply)
+        assert assistant.search_docs("trakt") == fallback
+
+
+def test_wiki_pages_from_search_are_read_as_markdown(monkeypatch: pytest.MonkeyPatch) -> None:
+    fetched: list[str] = []
+
+    def get(url: str, **_kwargs: Any) -> FakeResponse:
+        fetched.append(url)
+        return FakeResponse(200, text="# Page")
+
+    monkeypatch.setattr(assistant.requests, "get", get)
+    for url in (
+        "https://wiki.crosswatch.app/crosswatch/settings/trakt",
+        "https://wiki.crosswatch.app/crosswatch/settings/trakt/",
+        "https://wiki.crosswatch.app/crosswatch/settings/trakt#history",
+        "https://wiki.crosswatch.app/crosswatch/settings/trakt.md",
+        "https://wiki.crosswatch.app/",
+    ):
+        assert assistant.read_doc(url) == "# Page"
+    assert fetched == [
+        "https://wiki.crosswatch.app/crosswatch/settings/trakt.md",
+        "https://wiki.crosswatch.app/crosswatch/settings/trakt.md",
+        "https://wiki.crosswatch.app/crosswatch/settings/trakt.md",
+        "https://wiki.crosswatch.app/crosswatch/settings/trakt.md",
+        assistant.DOCS_INDEX_URL,
+    ]
+
+
+def test_wiki_pages_the_model_read_come_back_as_sources(monkeypatch: pytest.MonkeyPatch) -> None:
+    pages = {
+        "https://wiki.crosswatch.app/a/scheduler-webhooks.md": "> index note\n\n# Scheduler Webhooks\n\nUse ntfy.",
+        "https://wiki.crosswatch.app/a/no-heading.md": "Just text.",
+    }
+
+    def get(url: str, **_kwargs: Any) -> FakeResponse:
+        return FakeResponse(200, text=pages[url]) if url in pages else FakeResponse(404, text="missing")
+
+    provider = Provider(
+        _answer(calls=[
+            _call("r1", "read_doc", url="https://wiki.crosswatch.app/a/scheduler-webhooks"),
+            _call("r2", "read_doc", url="https://wiki.crosswatch.app/a/scheduler-webhooks.md#ntfy"),
+            _call("r3", "read_doc", url="https://wiki.crosswatch.app/a/gone"),
+            _call("r4", "read_doc", url="https://evil.test/a.md"),
+            _call("r5", "read_doc", url="https://wiki.crosswatch.app/"),
+            _call("r6", "read_doc", url="https://wiki.crosswatch.app/a/no-heading"),
+        ]),
+        _answer("Use Scheduler Webhooks."),
+    )
+    monkeypatch.setattr(assistant.requests, "get", get)
+    monkeypatch.setattr(assistant.requests, "post", provider.post)
+    conf = {"enabled": True, "base_url": BASE, "model": "m", "api_key": KEY}
+    res = assistant.chat(conf, [{"role": "user", "content": "phone alerts?"}], {}, lambda _n, _a: "")
+
+    assert res["sources"] == [
+        {"title": "Scheduler Webhooks", "url": "https://wiki.crosswatch.app/a/scheduler-webhooks"},
+        {"title": "No heading", "url": "https://wiki.crosswatch.app/a/no-heading"},
+    ]
+    assert assistant.doc_source("https://wiki.crosswatch.app/x", "read_doc failed: RuntimeError") is None
 
 
 def test_model_list_reuses_the_saved_key_only_for_the_saved_address(gated, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -555,7 +682,7 @@ def test_busy_providers_are_retried_a_few_times_then_reported(gated, monkeypatch
 
     recovers = Provider(FakeResponse(503, busy), FakeResponse(429, busy, headers={"Retry-After": "1"}), _answer("All good."))
     monkeypatch.setattr(assistant.requests, "post", recovers.post)
-    assert client.post("/api/assistant/chat", json=ask, headers=admin).json() == {"ok": True, "reply": "All good.", "tools": [], "actions": []}
+    assert client.post("/api/assistant/chat", json=ask, headers=admin).json() == {"ok": True, "reply": "All good.", "tools": [], "actions": [], "sources": []}
     assert slept == [2.0, 1.0]
 
     slept.clear()
@@ -688,7 +815,7 @@ def test_an_empty_final_answer_gets_one_nudge_before_giving_up(gated, monkeypatc
     )
     monkeypatch.setattr(assistant.requests, "post", provider.post)
     res = client.post("/api/assistant/chat", json=ask, headers=admin).json()
-    assert res == {"ok": True, "reply": "Your one pair looks fine.", "tools": ["list_pairs"], "actions": ["open_pairs"]}
+    assert res == {"ok": True, "reply": "Your one pair looks fine.", "tools": ["list_pairs"], "actions": ["open_pairs"], "sources": []}
     nudge = provider.requests[2]["body"]
     assert nudge["tool_choice"] == "none"
     assert nudge["messages"][-1] == {"role": "user", "content": assistant.NUDGE}

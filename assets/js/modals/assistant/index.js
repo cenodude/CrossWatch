@@ -149,6 +149,21 @@ export function lookedAt(tools) {
   return names.length ? `Looked at: ${names.join(", ")}` : "";
 }
 
+const WIKI_PAGE_RE = /^https:\/\/wiki\.crosswatch\.app\/[\w./-]*$/;
+
+export function sourceLinks(sources) {
+  const seen = new Set();
+  const links = [];
+  for (const item of Array.isArray(sources) ? sources : []) {
+    const url = String(item?.url ?? "");
+    if (!WIKI_PAGE_RE.test(url) || seen.has(url) || links.length >= 3) continue;
+    seen.add(url);
+    const title = String(item?.title ?? "").trim() || url;
+    links.push(`<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(title)}</a>`);
+  }
+  return links.length ? `<small class="as-sources">Wiki: ${links.join(", ")}</small>` : "";
+}
+
 export function actionButtons(actions) {
   const known = [...new Set(Array.isArray(actions) ? actions : [])].filter((name) => Object.hasOwn(ACTIONS, name));
   if (!known.length) return "";
@@ -218,7 +233,7 @@ function messageHtml(item) {
   const meta = `<div class="as-meta"><strong>CrossWatch</strong><span>${esc(when(item.at))}</span></div>`;
   if (item.error) return botCard(`${meta}<div class="as-answer"><p>${esc(item.content)}</p></div>`, " as-error");
   const note = lookedAt(item.tools);
-  return botCard(`${meta}<div class="as-answer">${renderAnswer(item.content)}</div>${note ? `<small class="as-looked">${esc(note)}</small>` : ""}${actionButtons(item.actions)}`);
+  return botCard(`${meta}<div class="as-answer">${renderAnswer(item.content)}</div>${note ? `<small class="as-looked">${esc(note)}</small>` : ""}${sourceLinks(item.sources)}${actionButtons(item.actions)}`);
 }
 
 function emptyHtml() {
@@ -290,7 +305,7 @@ async function ask(question) {
   try {
     const messages = history.filter((item) => !item.error).map(({ role, content }) => ({ role, content }));
     const data = await api("/chat", { messages, scope: view.scope });
-    history.push({ role: "assistant", content: data.reply || "The model gave an empty answer.", tools: data.tools || [], actions: data.actions || [], at: Date.now() });
+    history.push({ role: "assistant", content: data.reply || "The model gave an empty answer.", tools: data.tools || [], actions: data.actions || [], sources: data.sources || [], at: Date.now() });
   } catch (err) {
     history.push({ role: "assistant", content: err?.message || "Something went wrong.", error: true, at: Date.now() });
   }

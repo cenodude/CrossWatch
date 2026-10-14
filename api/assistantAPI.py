@@ -154,4 +154,4 @@ def assistant_chat(request: Request, payload: dict[str, Any] = Body(default_fact
         return _reply({"ok": False, "error": exc.public}, 502)
     finally:
         assistant.CHAT_SLOTS.release()
-    return _reply({"ok": True, "reply": result["reply"], "tools": result["tools"], "actions": result["actions"]})
+    return _reply({"ok": True, "reply": result["reply"], "tools": result["tools"], "actions": result["actions"], "sources": result["sources"]})
