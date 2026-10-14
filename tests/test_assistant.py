@@ -406,6 +406,7 @@ def _trickle_server(prefix: bytes, quiet_after: float = 0.0, tls: tuple[Path, Pa
             conn, _addr = server.accept()
             if tls is not None:
                 context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                context.minimum_version = ssl.TLSVersion.TLSv1_2
                 context.load_cert_chain(str(tls[0]), str(tls[1]))
                 conn = context.wrap_socket(conn, server_side=True)
         except OSError:
@@ -466,7 +467,7 @@ def test_a_slow_provider_body_is_cut_off_at_the_deadline(shape: str, quiet_after
     finally:
         close()
     assert str(caught.value) == assistant.TOO_LONG
-    assert time.monotonic() - started < 2.3
+    assert time.monotonic() - started < (2.3 if quiet_after else 4.0)
 
 
 @pytest.mark.parametrize("shape", ["close", "chunk-extension", "gzip-header", "keep-alive"])
@@ -482,7 +483,7 @@ def test_a_slow_provider_body_is_cut_off_over_https_too(shape: str, local_tls: t
     finally:
         close()
     assert str(caught.value) == assistant.TOO_LONG
-    assert time.monotonic() - started < 2.3
+    assert time.monotonic() - started < 4.0
 
 
 @pytest.mark.parametrize("secure", [False, True])

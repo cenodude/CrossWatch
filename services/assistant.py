@@ -162,7 +162,9 @@ ToolRunner = Callable[[str, dict[str, Any]], str]
 
 
 class AssistantError(Exception):
-    pass
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.public = str(message)
 
 
 class AssistantBusy(AssistantError):

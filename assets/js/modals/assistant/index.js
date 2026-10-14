@@ -74,13 +74,10 @@ function toast(message, ok = false) {
   try { window._cwShowToast?.(String(message || ""), !!ok); } catch {}
 }
 
+const ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+
 function esc(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ESCAPES[char]);
 }
 
 export function linkify(text, format = (part) => part) {

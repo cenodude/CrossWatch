@@ -121,9 +121,9 @@ def assistant_models(request: Request, payload: dict[str, Any] = Body(default_fa
     try:
         models = assistant.run_bounded(lambda: assistant.list_models(lookup), assistant.MODELS_TIMEOUT_S)
     except assistant.AssistantBusy as exc:
-        return _reply({"ok": False, "error": str(exc)}, 429)
+        return _reply({"ok": False, "error": exc.public}, 429)
     except assistant.AssistantError as exc:
-        return _reply({"ok": False, "error": str(exc)}, 502)
+        return _reply({"ok": False, "error": exc.public}, 502)
     return _reply({"ok": True, "models": models})
 
 
@@ -149,9 +149,9 @@ def assistant_chat(request: Request, payload: dict[str, Any] = Body(default_fact
     try:
         result = assistant.run_bounded(lambda: assistant.chat(conf, messages, tools, runner, scope), assistant.CHAT_DEADLINE_S)
     except assistant.AssistantBusy as exc:
-        return _reply({"ok": False, "error": str(exc)}, 429)
+        return _reply({"ok": False, "error": exc.public}, 429)
     except assistant.AssistantError as exc:
-        return _reply({"ok": False, "error": str(exc)}, 502)
+        return _reply({"ok": False, "error": exc.public}, 502)
     finally:
         assistant.CHAT_SLOTS.release()
     return _reply({"ok": True, "reply": result["reply"], "tools": result["tools"], "actions": result["actions"]})
