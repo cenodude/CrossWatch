@@ -459,6 +459,8 @@ def api_tokens_create(request: Request, payload: dict[str, Any] | None = Body(de
         expires_days = 0
     target = str(body.get("user_id") or "").strip()
     access = str(body.get("access") or "").strip().lower()
+    if access not in ("", ACCESS_MONITOR):
+        return _nostore({"ok": False, "error": "Unknown token access"}, 400)
     if not (actor or {}).get("is_admin"):
         if access:
             return _nostore({"ok": False, "error": "Administrator access required"}, 403)
@@ -468,8 +470,8 @@ def api_tokens_create(request: Request, payload: dict[str, Any] | None = Body(de
         raw, entry = issue_api_token(cfg, name=name, user_id=target, expires_days=expires_days, access=access)
     except KeyError:
         return _nostore({"ok": False, "error": "Not found"}, 404)
-    except ValueError as exc:
-        return _nostore({"ok": False, "error": str(exc)}, 400)
+    except ValueError:
+        return _nostore({"ok": False, "error": "Read-only tokens belong to the administrator"}, 400)
     _audit(
         request,
         "api_token_created",

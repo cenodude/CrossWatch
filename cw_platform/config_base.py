@@ -862,6 +862,13 @@ DEFAULT_CFG: dict[str, Any] = {
         "features": ["watchlist", "ratings", "history"],  # Sync features where anime mapping may apply; history is opt-in per pair
     },
 
+    "assistant": {
+        "enabled": False,
+        "base_url": "",
+        "api_key": "",
+        "model": "",
+    },
+
     # --- Scrobble ------------------------------------------------------------
     "scrobble": {
         "enabled": False,                               # Master toggle
@@ -1018,6 +1025,7 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
         "kodi": {"password"},
         "tmdb": {"api_key"},
         "tmdb_sync": {"api_key", "session_id", "_pending_request_token"},
+        "assistant": {"api_key"},
     }
 
     def _mask_leaf(d: dict[str, Any], key: str) -> None:
@@ -1140,6 +1148,7 @@ CONFIG_TOP_LEVEL_ORDER: tuple[str, ...] = (
     "metadata",
     "tmdb",
     "anime_mapping",
+    "assistant",
     "sync",
     "pairs",
     "scrobble",

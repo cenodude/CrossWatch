@@ -51,6 +51,25 @@
     return h ? `${h}h ${String(m).padStart(2, "0")}m ${String(s).padStart(2, "0")}s` : `${m}m ${String(s).padStart(2, "0")}s`;
   };
   const number = value => Number(value || 0).toLocaleString();
+  function aiQuestion() {
+    const pair = session?.pair || {};
+    const route = `${endpoint(pair.source, pair.source_instance)} ${pair.mode === "two-way" ? "↔" : "→"} ${endpoint(pair.target, pair.target_instance)}`;
+    const report = session?.report;
+    if (report) {
+      const t = report.totals || {};
+      if (report.outcome === "success" && ![t.unresolved, t.errors, t.blocked, report.not_reached].some(n => Number(n) > 0)) return "";
+      const notices = (report.notices || []).slice(0, 6).map(n => [n.feature, n.provider, n.reason, n.detail].filter(Boolean).join(" ")).join("; ");
+      return `Explain this interactive sync report for ${route} (run ${report.run_id}). Outcome: ${report.outcome}. Added ${number(t.added)}, updated ${number(t.updated)}, removed ${number(t.removed)}, unresolved ${number(t.unresolved)}, provider errors ${number(t.errors)}, blocked ${number(t.blocked)}, not reached ${number(report.not_reached)}.${notices ? ` Notices: ${notices}.` : ""} What went wrong and what should I do?`;
+    }
+    const c = session?.counts || {};
+    if (session?.status !== "review" || !(c.removals || c.conflicts || c.attention)) return "";
+    const removing = (pageData.items || []).filter(row => row.result === "remove").slice(0, 8).map(row => title(row.item)).join(", ");
+    return `I am reviewing an interactive sync for ${route} before applying it. It proposes ${number(c.changes)} changes: ${number(c.removals)} removals, ${number(c.conflicts)} conflicts and ${number(c.attention)} that need attention.${removing ? ` Removals include: ${removing}.` : ""} Explain why CrossWatch proposes these changes, especially any removals, and whether anything looks risky to apply.`;
+  }
+  function aiButton() {
+    const question = aiQuestion();
+    return question ? `<button class="is-btn" type="button" data-ai-analyze data-ai-question="${esc(question)}" title="Ask the assistant about this ${session?.report ? "report" : "review"}"><span class="material-symbols-rounded" aria-hidden="true">auto_awesome</span>Explain with AI</button>` : "";
+  }
   function requestBreakdown(counts) {
     if (!counts) return "";
     const pair = session?.pair || {};
@@ -264,7 +283,7 @@
     const cursor = focused ? document.activeElement.selectionStart : null;
     host.innerHTML = `<div class="is-page">
       <a class="is-back" href="#${origin()[0]}"><span class="material-symbols-rounded" aria-hidden="true">arrow_back</span>${origin()[1]}</a>
-      <header class="is-header"><div><div class="is-eyebrow">INTERACTIVE SYNC</div><h1>${session?.report ? "Sync report" : "Review your sync"}</h1></div><div class="is-header-actions">${[pair.source,pair.target].includes("PLEX") ? `<button class="is-btn" data-action="recover-plex" title="Open a separate recovery activity for titles no longer in your Plex libraries. Review matches and import selected history into the CrossWatch tracker. This does not run this sync pair." ${pending() ? "disabled" : ""}>Recover Plex history</button>` : ""}${session?.report ? "" : `<button class="is-btn" data-action="refresh" ${pending() || done || !session ? "disabled" : ""}><span class="material-symbols-rounded" aria-hidden="true">refresh</span>Refresh plan</button>`}${session?.report ? "" : `<button class="is-btn" data-action="toggle-download" aria-expanded="${downloadOpen}" aria-controls="is-download-options" ${locked ? "disabled" : ""}><span class="material-symbols-rounded" aria-hidden="true">download</span>Download review</button>`}<button class="is-btn" data-action="discard" ${pending() || !session ? "disabled" : ""}>${session?.report ? "Close report" : "Close review"}</button></div></header>
+      <header class="is-header"><div><div class="is-eyebrow">INTERACTIVE SYNC</div><h1>${session?.report ? "Sync report" : "Review your sync"}</h1></div><div class="is-header-actions">${aiButton()}${[pair.source,pair.target].includes("PLEX") ? `<button class="is-btn" data-action="recover-plex" title="Open a separate recovery activity for titles no longer in your Plex libraries. Review matches and import selected history into the CrossWatch tracker. This does not run this sync pair." ${pending() ? "disabled" : ""}>Recover Plex history</button>` : ""}${session?.report ? "" : `<button class="is-btn" data-action="refresh" ${pending() || done || !session ? "disabled" : ""}><span class="material-symbols-rounded" aria-hidden="true">refresh</span>Refresh plan</button>`}${session?.report ? "" : `<button class="is-btn" data-action="toggle-download" aria-expanded="${downloadOpen}" aria-controls="is-download-options" ${locked ? "disabled" : ""}><span class="material-symbols-rounded" aria-hidden="true">download</span>Download review</button>`}<button class="is-btn" data-action="discard" ${pending() || !session ? "disabled" : ""}>${session?.report ? "Close report" : "Close review"}</button></div></header>
       ${downloadOpen && !done ? `<section id="is-download-options" class="is-notices" aria-label="Download review"><div class="is-toolbar"><label>Scope<select data-download="scope" ${downloading ? "disabled" : ""}><option value="all" ${downloadScope === "all" ? "selected" : ""}>Entire review</option><option value="filtered" ${downloadScope === "filtered" ? "selected" : ""}>Filtered results</option></select></label><label>Format<select data-download="format" ${downloading ? "disabled" : ""}><option value="csv" ${downloadFormat === "csv" ? "selected" : ""}>CSV</option><option value="json" ${downloadFormat === "json" ? "selected" : ""}>JSON</option></select></label><button class="is-btn" data-action="download-review" ${locked || downloading ? "disabled" : ""}>${downloading ? "Downloading..." : "Download"}</button></div><p>Entire review includes hidden items. Filtered results includes all matching pages. Both include selection state.</p></section>` : ""}
       <div class="is-route"><span class="material-symbols-rounded" aria-hidden="true">sync_alt</span><strong>${esc(endpoint(pair.source, pair.source_instance))}</strong><span>${pair.mode === "two-way" ? "↔" : "→"}</span><strong>${esc(endpoint(pair.target, pair.target_instance))}</strong><span class="is-route-mode">${pair.mode === "two-way" ? "Two-way" : "One-way"}</span></div>
       ${session?.report ? "" : `<div class="is-progress-host">${progressHTML()}</div>`}
