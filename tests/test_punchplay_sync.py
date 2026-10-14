@@ -385,6 +385,28 @@ def test_collection_index_reads_paged_rows(monkeypatch: pytest.MonkeyPatch) -> N
     assert http.calls[1]["params"] == {"limit": 200, "cursor": "next"}
 
 
+def test_collection_index_reads_tmdb_id_for_tvdb_sourced_anime(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.punchplay import _collection as co
+
+    def row(entry_id: int, season: int, **extra: Any) -> dict[str, Any]:
+        return {"id": entry_id, "tmdbId": 19849, "type": "anime", "kind": "show", "isAnime": True, "mediaSource": "tvdb",
+                "sourceId": 78960, "season": season, "title": "Blood+", "format": "digital", **extra}
+
+    http = FakeHTTP([_Resp(200, {"items": [
+        row(30607, 0),
+        row(30609, 3),
+        {"id": 30700, "kind": "show", "mediaSource": "tvdb", "sourceId": 78960, "season": 0, "title": "No tmdb"},
+    ], "nextCursor": None})])
+    _patch(monkeypatch, co, http)
+
+    idx = co.build_index(Adapter())
+
+    assert set(idx) == {"tmdb:19849#show", "tmdb:19849#season:3", "tvdb:78960"}
+    assert idx["tmdb:19849#show"]["ids"] == {"tmdb": "19849", "tvdb": "78960"}
+    assert idx["tmdb:19849#season:3"]["show_ids"] == {"tmdb": "19849", "tvdb": "78960"}
+    assert idx["tmdb:19849#show"]["_punchplay_collection_id"] == "30607"
+
+
 def test_collection_add_defaults_to_digital(monkeypatch: pytest.MonkeyPatch) -> None:
     from providers.sync.punchplay import _collection as co
 
@@ -595,6 +617,113 @@ def test_history_index_reads_episode_from_sync_snapshot(monkeypatch: pytest.Monk
     assert idx["tmdb:46260#s01e49"]["episode"] == 49
 
 
+def _renumbered_row(client_item_id: Any, **extra: Any) -> dict[str, Any]:
+    return {"id": 13295519, "type": "episode", "mediaSource": "tvdb", "sourceId": 78960, "showTmdbId": 19849,
+            "title": "Blood+", "season": 2, "episode": 1, "watchedAt": "2020-01-01T10:00:00.000Z",
+            "clientItemId": client_item_id, **extra}
+
+
+@pytest.mark.parametrize(
+    ("client_item_id", "expected"),
+    [
+        ("cw:history:tmdb:19849#s01e14:2020-01-01T10:00:00.000Z", "tmdb:19849#s01e14"),
+        ("cw:history:imdb:tt0482855#s01e14:2020-01-01T10:00:00.000Z", "tmdb:19849#s01e14"),
+        ("cw:history:tmdb:19849#s01e14@1577872800:2020-01-01T10:00:00.000Z", "tmdb:19849#s01e14"),
+        ("cw:history:tmdb:999#s01e14:2020-01-01T10:00:00.000Z", "tmdb:19849#s02e01"),
+        ("cw:history:tmdb:19849:2020-01-01T10:00:00.000Z", "tmdb:19849#s02e01"),
+        ("cw:0f3a9c", "tmdb:19849#s02e01"),
+        ("other-app:tmdb:19849#s01e14", "tmdb:19849#s02e01"),
+        (None, "tmdb:19849#s02e01"),
+    ],
+    ids=["written_key", "written_imdb_key", "written_event_key", "other_show", "no_episode", "hashed", "foreign_client", "missing"],
+)
+def test_history_index_restores_the_numbering_crosswatch_wrote(monkeypatch: pytest.MonkeyPatch, client_item_id: Any, expected: str) -> None:
+    from providers.sync.punchplay import _history as hi
+
+    http = FakeHTTP([_Resp(200, {"items": [_renumbered_row(client_item_id)], "hasMore": False, "nextAfter": None})])
+    _patch(monkeypatch, hi, http)
+
+    idx = hi.build_index(Adapter())
+
+    assert list(idx) == [expected]
+    assert idx[expected]["show_ids"] == {"tmdb": "19849"}
+    assert idx[expected]["_punchplay_history_ids"] == ["13295519"]
+
+
+def test_history_written_play_reads_back_under_the_same_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.punchplay import _history as hi
+
+    item = {"type": "episode", "show_ids": {"tmdb": "19849"}, "ids": {}, "season": 1, "episode": 14,
+            "series_title": "Blood+", "watched_at": "2020-01-01T10:00:00Z"}
+    write = FakeHTTP([_Resp(200, {"results": [{"index": 0, "status": "inserted", "id": 13295519, "resolved_tmdb_id": 19849,
+                                               "stored": {"season": 2, "episode": 1, "media_source": "tvdb", "source_id": 78960}}]})])
+    _patch(monkeypatch, hi, write)
+    res = hi.add(Adapter(), [item])
+    sent = write.calls[0]["json"]["items"][0]
+
+    read = FakeHTTP([_Resp(200, {"items": [_renumbered_row(sent["client_item_id"])], "hasMore": False, "nextAfter": None})])
+    _patch(monkeypatch, hi, read)
+
+    assert list(hi.build_index(Adapter())) == res["confirmed_keys"] == ["tmdb:19849#s01e14"]
+
+
+@pytest.mark.parametrize("endpoint", ["snapshot", "history"])
+@pytest.mark.parametrize(
+    ("source", "client_id", "expected"),
+    [
+        ({"sourceSeason": 1, "sourceEpisode": 14}, None, "s01e14"),
+        ({"sourceSeason": 1, "sourceEpisode": 14}, "other-app:play", "s01e14"),
+        ({"sourceSeason": 1, "sourceEpisode": 14}, "cw:history:tmdb:19849#s02e01:2020-01-01T10:00:00Z", "s01e14"),
+        ({"sourceSeason": 0, "sourceEpisode": 2}, None, "s00e02"),
+        ({"sourceSeason": None, "sourceEpisode": 14}, None, "s02e01"),
+        ({"sourceSeason": 1}, None, "s02e01"),
+        ({"sourceSeason": -1, "sourceEpisode": 14}, None, "s02e01"),
+        ({"sourceSeason": 1, "sourceEpisode": 0}, None, "s02e01"),
+        ({"sourceSeason": True, "sourceEpisode": 14}, None, "s02e01"),
+        ({"sourceSeason": "invalid", "sourceEpisode": 14}, "cw:history:tmdb:19849#s01e14:2020-01-01T10:00:00Z", "s01e14"),
+    ],
+)
+def test_history_reads_source_coordinates(
+    monkeypatch: pytest.MonkeyPatch, endpoint: str, source: dict[str, Any], client_id: str | None, expected: str,
+) -> None:
+    from providers.sync.punchplay import _history as hi
+
+    responses = [_Resp(200, {"items": [_renumbered_row(client_id, **source)], "hasMore": False, "nextCursor": None})]
+    if endpoint == "history":
+        responses.insert(0, _Resp(200, {"items": [], "hasMore": False}))
+    http = FakeHTTP(responses)
+    _patch(monkeypatch, hi, http)
+
+    idx = hi.build_index(Adapter())
+
+    assert list(idx) == [f"tmdb:19849#{expected}"]
+    assert idx[f"tmdb:19849#{expected}"]["_punchplay_history_ids"] == ["13295519"]
+
+
+@pytest.mark.parametrize("event_mode", [False, True])
+def test_history_source_coordinates_preserve_plays_and_delete_ids(monkeypatch: pytest.MonkeyPatch, event_mode: bool) -> None:
+    from providers.sync.punchplay import _history as hi
+
+    rows = [
+        _renumbered_row(None, sourceSeason=1, sourceEpisode=14),
+        {"id": 13295520, "data": _renumbered_row(None, id=13295520, sourceSeason=1, sourceEpisode=14,
+                                                 watchedAt="2020-02-01T10:00:00.000Z")},
+    ]
+    http = FakeHTTP([_Resp(200, {"items": rows, "hasMore": False}), _Resp(204), _Resp(204)])
+    _patch(monkeypatch, hi, http)
+    adapter = Adapter()
+    adapter.config["_cw_history_rewatches"] = event_mode
+
+    idx = hi.build_index(adapter)
+
+    assert len(idx) == (2 if event_mode else 1)
+    assert all(key.startswith("tmdb:19849#s01e14") for key in idx)
+    assert sorted(hid for item in idx.values() for hid in item["_punchplay_history_ids"]) == ["13295519", "13295520"]
+    result = hi.remove(adapter, idx.values())
+    assert result["ok"] is True
+    assert {call["url"].rsplit("/", 1)[-1] for call in http.calls if call["method"] == "DELETE"} == {"13295519", "13295520"}
+
+
 def test_history_client_item_id_is_per_play(monkeypatch: pytest.MonkeyPatch) -> None:
     from providers.sync.punchplay import _history as hi
 
@@ -724,6 +853,87 @@ def test_progress_index_uses_in_progress_endpoint(monkeypatch: pytest.MonkeyPatc
     assert idx["tmdb:550"]["_punchplay_progress_id"] == "4"
     assert http.calls[0]["method"] == "GET"
     assert http.calls[0]["url"].endswith("/playback/in-progress")
+
+
+def _renumbered_progress_row(**extra: Any) -> dict[str, Any]:
+    return {"id": 141085, "type": "episode", "tmdbId": 19849, "showTmdbId": 19849, "showTitle": "Blood+",
+            "season": 2, "episode": 7, "progressSeconds": 430, "durationSeconds": 1440, "progressPercent": 29.86,
+            "updatedAt": "2026-10-12T21:44:46.320Z", "mediaSource": "tvdb", "sourceId": 78960,
+            "progressKey": "tvdb:show:78960:S2:E7", **extra}
+
+
+@pytest.mark.parametrize(
+    ("in_progress", "snapshot", "expected"),
+    [
+        ({"sourceSeason": 1, "sourceEpisode": 20}, None, "tmdb:19849#s01e20"),
+        ({"sourceSeason": 1, "sourceEpisode": 20}, {}, "tmdb:19849#s01e20"),
+        ({}, {"sourceSeason": 1, "sourceEpisode": 20}, "tmdb:19849#s01e20"),
+        ({}, {}, "tmdb:19849#s02e07"),
+        ({"sourceSeason": None, "sourceEpisode": 20}, None, "tmdb:19849#s02e07"),
+        ({"sourceSeason": 1, "sourceEpisode": 0}, None, "tmdb:19849#s02e07"),
+    ],
+    ids=["source_numbering", "snapshot_row_follows_in_progress", "snapshot_corrects_numbering", "no_source_numbering", "partial_source", "invalid_source"],
+)
+def test_progress_index_reads_source_numbering(
+    monkeypatch: pytest.MonkeyPatch,
+    in_progress: dict[str, Any],
+    snapshot: dict[str, Any] | None,
+    expected: str,
+) -> None:
+    from providers.sync.punchplay import _progress as pr
+
+    snapshot_rows = [] if snapshot is None else [_renumbered_progress_row(**snapshot)]
+    http = FakeHTTP([
+        _Resp(200, [_renumbered_progress_row(**in_progress)]),
+        _Resp(200, {"items": snapshot_rows, "hasMore": False, "nextAfter": None}),
+    ])
+    _patch(monkeypatch, pr, http)
+
+    idx = pr.build_index(Adapter())
+
+    assert list(idx) == [expected]
+    assert idx[expected]["_punchplay_progress_id"] == "141085"
+    assert idx[expected]["progress_ms"] == 430000
+
+
+def test_progress_coordinate_correction_keeps_another_entry_at_the_old_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.punchplay import _progress as pr
+
+    http = FakeHTTP([
+        _Resp(200, [_renumbered_progress_row(), _renumbered_progress_row(id=141086)]),
+        _Resp(200, {"items": [_renumbered_progress_row(sourceSeason=1, sourceEpisode=20)], "hasMore": False}),
+    ])
+    _patch(monkeypatch, pr, http)
+
+    idx = pr.build_index(Adapter())
+
+    assert set(idx) == {"tmdb:19849#s02e07", "tmdb:19849#s01e20"}
+    assert idx["tmdb:19849#s02e07"]["_punchplay_progress_id"] == "141086"
+    assert idx["tmdb:19849#s01e20"]["_punchplay_progress_id"] == "141085"
+
+
+def test_progress_snapshot_source_coordinates_cover_items_missing_from_in_progress(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.punchplay import _progress as pr
+
+    rows = [
+        _renumbered_progress_row(id=141100, season=1, episode=5, sourceSeason=1, sourceEpisode=5),
+        _renumbered_progress_row(id=141101, sourceSeason=1, sourceEpisode=20),
+        _renumbered_progress_row(id=141102, season=3, episode=5, sourceSeason=1, sourceEpisode=30),
+        _renumbered_progress_row(id=141103, season=4, episode=1, sourceSeason=1, sourceEpisode=39),
+    ]
+    http = FakeHTTP([
+        _Resp(200, [rows[0]]),
+        _Resp(200, {"items": rows[:2], "hasMore": True, "nextAfter": 141101}),
+        _Resp(200, {"items": rows[2:], "hasMore": False, "nextAfter": None}),
+    ])
+    _patch(monkeypatch, pr, http)
+
+    idx = pr.build_index(Adapter())
+
+    assert set(idx) == {f"tmdb:19849#s01e{episode:02d}" for episode in (5, 20, 30, 39)}
+    assert {item["_punchplay_progress_id"] for item in idx.values()} == {"141100", "141101", "141102", "141103"}
+    assert all(item["progress_ms"] == 430000 for item in idx.values())
+    assert http.calls[2]["params"]["after"] == 141101
 
 
 def test_progress_index_does_not_read_continue_watching(monkeypatch: pytest.MonkeyPatch) -> None:

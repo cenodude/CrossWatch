@@ -67,8 +67,11 @@ def _format_value(adapter: Any, item: Mapping[str, Any]) -> str:
 
 def _row_ids(row: Mapping[str, Any], title: Mapping[str, Any]) -> dict[str, str]:
     ids: dict[str, str] = {}
-    source_id = _pick(row, "sourceId", "source_id", "tmdbId", "tmdb_id", "titleTmdbId", "title_tmdb_id") or _pick(title, "sourceId", "source_id", "tmdbId", "tmdb_id")
-    tmdb = _as_int(source_id)
+    media_source = str(_pick(row, "mediaSource", "media_source") or _pick(title, "mediaSource", "media_source") or "").strip().lower()
+    source_id = _as_int(_pick(row, "sourceId", "source_id") or _pick(title, "sourceId", "source_id"))
+    tmdb = _as_int(_pick(row, "tmdbId", "tmdb_id", "titleTmdbId", "title_tmdb_id") or _pick(title, "tmdbId", "tmdb_id"))
+    if not tmdb and media_source != "tvdb":
+        tmdb = source_id
     if tmdb:
         ids["tmdb"] = str(tmdb)
     imdb = _pick(row, "imdbId", "imdb_id") or _pick(title, "imdbId", "imdb_id")
@@ -77,6 +80,8 @@ def _row_ids(row: Mapping[str, Any], title: Mapping[str, Any]) -> dict[str, str]
         if text:
             ids["imdb"] = text if text.startswith("tt") else f"tt{text.lstrip('t')}"
     tvdb = _as_int(_pick(row, "tvdbId", "tvdb_id") or _pick(title, "tvdbId", "tvdb_id"))
+    if not tvdb and media_source == "tvdb":
+        tvdb = source_id
     if tvdb:
         ids["tvdb"] = str(tvdb)
     mal = _as_int(_pick(row, "malId", "mal_id") or _pick(title, "malId", "mal_id"))
