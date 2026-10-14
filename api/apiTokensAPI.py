@@ -12,7 +12,7 @@ from typing import Any
 from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse
 
-from cw_platform.access_policy import is_monitor_user
+from cw_platform.access_policy import clean_managed_permissions, is_monitor_user
 from cw_platform.config_base import load_config
 
 from .appAuthAPI import (
@@ -40,6 +40,7 @@ MAX_TOKENS_PER_USER = 20
 TOUCH_INTERVAL_SEC = 300
 TOKEN_MAX_LENGTH = 256
 TOKEN_V2_SECRET_BYTES = 32
+ACCESS_MONITOR = "monitor"
 
 _TOKEN_V2_RE = re.compile(r"^cwt_([a-f0-9]{16})\.([A-Za-z0-9_-]{32,})$")
 _TRUSTED_LOCAL_TOKEN_ORIGINS = {"local_cli", "local_bootstrap"}
@@ -151,11 +152,33 @@ def _entry_identity(a: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any] 
     return public if public["enabled"] else None
 
 
+def _entry_access(entry: dict[str, Any]) -> str:
+    return ACCESS_MONITOR if str(entry.get("access") or "") == ACCESS_MONITOR else ""
+
+
+def _token_identity(a: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any] | None:
+    identity = _entry_identity(a, entry)
+    if identity is None:
+        return None
+    out = dict(identity)
+    if _entry_access(entry) == ACCESS_MONITOR:
+        out["is_admin"] = False
+        out["role"] = "user"
+        out["profile_id"] = ""
+        out["permissions"] = clean_managed_permissions({"monitor": True})
+        out["api_token_access"] = ACCESS_MONITOR
+    out["auth_kind"] = "api_token"
+    out["api_token_id"] = str(entry.get("id") or "")
+    out["api_token_name"] = str(entry.get("name") or "")
+    return out
+
+
 def _public_entry(entry: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": str(entry.get("id") or ""),
         "version": 2 if _valid_v2_entry(entry) else 1,
         "name": str(entry.get("name") or ""),
+        "access": _entry_access(entry),
         "prefix": str(entry.get("prefix") or ""),
         "user_id": _entry_user_id(entry),
         "username": str(entry.get("username") or ""),
@@ -197,14 +220,7 @@ def resolve_api_token(cfg: dict[str, Any], raw: str) -> dict[str, Any] | None:
                 continue
             if not hmac.compare_digest(secret, str(entry.get("secret") or "")):
                 return None
-            identity = _entry_identity(a, entry)
-            if identity is None:
-                return None
-            out = dict(identity)
-            out["auth_kind"] = "api_token"
-            out["api_token_id"] = str(entry.get("id") or "")
-            out["api_token_name"] = str(entry.get("name") or "")
-            return out
+            return _token_identity(a, entry)
         return None
 
     if "." in token:
@@ -216,14 +232,7 @@ def resolve_api_token(cfg: dict[str, Any], raw: str) -> dict[str, Any] | None:
         token_hash = entry.get("token_hash")
         if not isinstance(token_hash, dict) or not _password_matches(token_hash, token):
             continue
-        identity = _entry_identity(a, entry)
-        if identity is None:
-            return None
-        out = dict(identity)
-        out["auth_kind"] = "api_token"
-        out["api_token_id"] = str(entry.get("id") or "")
-        out["api_token_name"] = str(entry.get("name") or "")
-        return out
+        return _token_identity(a, entry)
     return None
 
 
@@ -259,7 +268,11 @@ def issue_api_token(
     user_id: str = "",
     expires_days: int = 0,
     created_via: str = "api",
+    access: str = "",
 ) -> tuple[str, dict[str, Any]]:
+    scope = str(access or "").strip().lower()
+    if scope not in {"", ACCESS_MONITOR}:
+        raise ValueError("Unknown token access")
     label = str(name or "").strip()[:64] or "CLI"
     days = max(0, int(expires_days or 0))
     entry_id = secrets.token_hex(8)
@@ -286,6 +299,8 @@ def issue_api_token(
                 identity = _public_user(target, found)
         if identity is None:
             raise KeyError("not_found")
+        if scope and target != ADMIN_USER_ID:
+            raise ValueError("Read-only tokens belong to the administrator")
         entry = {
             "id": entry_id,
             "version": 2,
@@ -299,6 +314,8 @@ def issue_api_token(
             "expires_at": expires,
             "last_used_at": 0,
         }
+        if scope:
+            entry["access"] = scope
         a["api_tokens"] = _prune_api_tokens([*_cfg_api_tokens(a), entry])
         return entry
 
@@ -422,7 +439,11 @@ def api_tokens_list(request: Request) -> JSONResponse:
         return err
     cfg = load_config()
     scope = "" if (actor or {}).get("is_admin") else str((actor or {}).get("id") or "")
-    return _nostore({"ok": True, "tokens": list_api_tokens(cfg, user_id=scope)})
+    tokens = list_api_tokens(cfg, user_id=scope)
+    if (actor or {}).get("api_token_access") == ACCESS_MONITOR:
+        own = str((actor or {}).get("api_token_id") or "")
+        tokens = [token for token in tokens if token["id"] == own]
+    return _nostore({"ok": True, "tokens": tokens})
 
 
 @router.post("")
@@ -437,13 +458,18 @@ def api_tokens_create(request: Request, payload: dict[str, Any] | None = Body(de
     except Exception:
         expires_days = 0
     target = str(body.get("user_id") or "").strip()
+    access = str(body.get("access") or "").strip().lower()
     if not (actor or {}).get("is_admin"):
+        if access:
+            return _nostore({"ok": False, "error": "Administrator access required"}, 403)
         target = str((actor or {}).get("id") or "")
     cfg = load_config()
     try:
-        raw, entry = issue_api_token(cfg, name=name, user_id=target, expires_days=expires_days)
+        raw, entry = issue_api_token(cfg, name=name, user_id=target, expires_days=expires_days, access=access)
     except KeyError:
         return _nostore({"ok": False, "error": "Not found"}, 404)
+    except ValueError as exc:
+        return _nostore({"ok": False, "error": str(exc)}, 400)
     _audit(
         request,
         "api_token_created",

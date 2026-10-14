@@ -37,9 +37,11 @@ _SENSITIVE_KEY_RE = re.compile(
     re.IGNORECASE,
 )
 _SENSITIVE_PAIR_RE = re.compile(
-    r"(?i)([\"']?\b(?:password|passwd|pwd|secret|token|api[_-]?key|apikey|authorization|cookie|session(?:_id)?)\b[\"']?\s*[:=]\s*[\"']?)([^,\s\"';&}]+)"
+    r"(?i)([\"']?(?<![A-Za-z0-9])(?:(?:[A-Za-z0-9]{1,32}[_-]){0,4}(?:password|passwd|pwd|secret|token|api[_-]?key|apikey)|authorization|cookie|session(?:_id)?)\b[\"']?\s*[:=]\s*[\"']?)([^,\s\"';&}]+)"
 )
 _BEARER_RE = re.compile(r"(?i)(\bBearer\s+)([A-Za-z0-9._~+/=-]+)")
+_URL_QUERY_RE = re.compile(r"(?i)([?&](?:key|sig|signature|code|auth|profile)=)([^&\s\"'<>]+)")
+_URL_PATH_RE = re.compile(r"(?i)(/webhook/stremio/|api\.telegram\.org/bot|/api/webhooks/\d+/|hc-ping\.com/)([^/\s\"'?<>]+)")
 
 
 def _debug_enabled() -> bool:
@@ -80,6 +82,8 @@ def _redact_log_text(value: Any) -> str:
     text = str(value)
     text = _BEARER_RE.sub(lambda m: f"{m.group(1)}{_REDACTED}", text)
     text = _SENSITIVE_PAIR_RE.sub(lambda m: f"{m.group(1)}{_REDACTED}", text)
+    text = _URL_QUERY_RE.sub(lambda m: f"{m.group(1)}{_REDACTED}", text)
+    text = _URL_PATH_RE.sub(lambda m: f"{m.group(1)}{_REDACTED}", text)
     return text
 
 

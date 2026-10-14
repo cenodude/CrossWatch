@@ -594,13 +594,14 @@ def token_list(ctx: typer.Context) -> None:
         state.out.data(tokens)
         return
     state.out.table(
-        ["ID", "NAME", "PREFIX", "USER", "CREATED", "EXPIRES", "LAST USED"],
+        ["ID", "NAME", "PREFIX", "USER", "ACCESS", "CREATED", "EXPIRES", "LAST USED"],
         [
             [
                 str(t.get("id") or ""),
                 str(t.get("name") or "-"),
                 str(t.get("prefix") or "-") + "...",
                 str(t.get("username") or t.get("user_id") or "-"),
+                str(t.get("access") or "-"),
                 fmt_ts(t.get("created_at")),
                 fmt_ts(t.get("expires_at")) if t.get("expires_at") else "never",
                 fmt_rel(t.get("last_used_at")) if t.get("last_used_at") else "never",
@@ -618,7 +619,8 @@ def token_create(
     name: str = typer.Option("CLI", "--name", "-n", help="Label shown in the token list."),
     expires_days: int = typer.Option(0, "--expires-days", help="Expire after N days. 0 means never."),
     user: str = typer.Option("", "--user", "-u", help="Managed user (id or username) the token belongs to. Defaults to the administrator."),
-    save: bool | None = typer.Option(None, "--save/--no-save", help="Store the token in the CLI settings file. On by default, off with --user."),
+    access: str = typer.Option("", "--access", "-a", help="Pass 'monitor' for a read-only administrator token, for monitoring tools and AI clients."),
+    save: bool | None = typer.Option(None, "--save/--no-save", help="Store the token in the CLI settings file. On by default, off with --user or --access."),
     write_to: str | None = typer.Option(None, "--write-to", help="Write the token to this file instead of printing it. Mode 0600 on Linux and macOS."),
     file_format: str = typer.Option("", "--format", help="File layout for --write-to: raw or env (CW_TOKEN=<token>)."),
     force: bool = typer.Option(False, "--force", help="Overwrite the --write-to file when it already exists."),
@@ -628,11 +630,18 @@ def token_create(
     target = _token_file_target(write_to, file_format, force)
     layout = str(file_format or "raw").strip().lower()
     owner = str(user or "").strip()
+    scope = str(access or "").strip().lower()
+    if scope not in ("", "monitor"):
+        raise CLIError(f"Unknown token access '{access}'", hint="Use monitor, or leave --access out for a full token.", exit_code=EXIT_USAGE)
+    if scope and owner:
+        raise CLIError("--access cannot be combined with --user", hint="A managed user's token already follows that user's access level.", exit_code=EXIT_USAGE)
     if save is None:
-        save = not owner
+        save = not owner and not scope
     body: dict[str, Any] = {"name": name, "expires_days": int(expires_days)}
     if owner:
         body["user_id"] = owner
+    if scope:
+        body["access"] = scope
     payload = as_dict(state.post("/api/app-auth/tokens", json_body=body))
     if not payload.get("token"):
         raise CLIError(f"Token creation failed: {payload.get('error') or 'unknown error'}")

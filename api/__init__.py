@@ -33,6 +33,7 @@ from .editorAPI import router as editor_router
 from .interactiveSyncAPI import router as interactive_sync_router
 from .eventsAPI import router as events_router
 from .logsAPI import router as logs_router
+from .mcpAPI import router as mcp_router
 from .providerInstancesAPI import router as provider_instances_router
 from .playbackProgressAPI import router as playback_progress_router
 from .profileAPI import router as profile_router
@@ -123,6 +124,7 @@ def register(
     app.include_router(interactive_sync_router)
     app.include_router(events_router)
     app.include_router(logs_router)
+    app.include_router(mcp_router)
     app.include_router(provider_instances_router)
     app.include_router(playback_progress_router)
     app.include_router(profile_router)

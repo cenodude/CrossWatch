@@ -40,6 +40,7 @@ GROUPS = (
     "scrobbler",
     "activity",
     "maintenance",
+    "mcp",
 )
 LEAVE = {"exit", "end", "quit", "up", "..", "back"}
 BANNER = """CrossWatch interactive shell.

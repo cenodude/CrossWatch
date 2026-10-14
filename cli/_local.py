@@ -297,9 +297,12 @@ class LocalTransport(Transport):
                 user_id=str(payload.get("user_id") or ""),
                 expires_days=expires_days,
                 created_via="local_cli",
+                access=str(payload.get("access") or ""),
             )
         except KeyError:
             return {"ok": False, "error": "User not found"}
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
         return {"ok": True, "token": raw, "entry": entry}
 
     def _tokens_delete(self, *, token_id: str, **_: Any) -> dict[str, Any]:

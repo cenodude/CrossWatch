@@ -46,6 +46,9 @@ def _visible_tokens(cfg: dict[str, Any], request: Request) -> list[dict[str, Any
 
     user = getattr(request.state, "cw_user", None)
     tokens = list_api_tokens(cfg)
+    if isinstance(user, dict) and user.get("api_token_access") == "monitor":
+        own = str(user.get("api_token_id") or "")
+        return [token for token in tokens if own and str(token.get("id") or "") == own]
     if isinstance(user, dict) and user.get("monitor_view"):
         own = str(user.get("id") or "")
         return [token for token in tokens if own and str(token.get("user_id") or "") == own]

@@ -138,7 +138,7 @@ _HELPER_SCRIPTS = (
 _APP_SCRIPTS = (
     "syncbar.js", "run-summary-stream.js", "overview-profile.js", "sync-reviews.js", "plex-recovery-notifications.js", "main.js", "connections.overlay.js", "connections.pairs.overlay.js", "scheduler.js",
     "schedulerbanner.js", "playingcard.js", "insights.js", "activity.js", "profile-media-modal.js", "dashboard-widgets.js", "auth-dots.js", "main-status.js",
-    "scrobbler.js", "user-profiles.js", "app-users.js",
+    "scrobbler.js", "user-profiles.js", "app-users.js", "mcp-access.js",
 )
 _USER_HELPER_SCRIPTS = (
     "help-links.js", "provider-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "account-menu.js", "notifications.js", "update-notifications.js", "api.js", "core.js",
@@ -749,6 +749,7 @@ def _get_index_html_static() -> str:
 <link rel="stylesheet" href="/assets/css/account-menu.css?v=__CW_VERSION__">
 <link id="cw-notifications-css" rel="stylesheet" href="/assets/css/notifications.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/css/app-users.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/css/ai-settings.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/css/topology.css?v=__CW_VERSION__">
 <script>
 (() => {
@@ -1884,6 +1885,53 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
                           <div class="sub" style="margin-top:0.35rem">
                             Only needed when behind a reverse proxy and you want accurate IP-based login rate limiting.
                             Enter proxy IPs or CIDR ranges separated by <code>;</code>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="cw-settings-block cw-app-card cw-ai-card" id="ai_section">
+                      <div class="cw-app-card-head">
+                        <span class="material-symbols-rounded cw-app-card-icon" aria-hidden="true">auto_awesome</span>
+                        <div>
+                          <div class="cw-settings-block-title">AI help</div>
+                          <div class="sub">Let AI look at your syncs, scrobbling, logs and settings and explain what went wrong. It can only read, it never changes anything.</div>
+                        </div>
+                      </div>
+                      <div class="cw-ai-grid">
+                        <div class="cw-ai-panel" id="mcp_access">
+                          <div class="cw-ai-panel-head">
+                            <div>
+                              <h4>Use your own AI app</h4>
+                              <p>Connect an AI app on your computer, such as Claude, Codex or Cursor, to this CrossWatch.</p>
+                            </div>
+                          </div>
+                          <div class="cw-ai-label"><span class="cw-ai-step">1</span>Choose your app</div>
+                          <div class="cw-ai-choices cw-ai-choices-compact" id="mcp_clients" role="radiogroup" aria-label="AI app">
+                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-mcp-client="claude-code"><strong>Claude Code</strong></button>
+                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-mcp-client="claude-desktop"><strong>Claude Desktop</strong></button>
+                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-mcp-client="codex"><strong>Codex CLI</strong></button>
+                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-mcp-client="cursor"><strong>Cursor</strong></button>
+                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-mcp-client="gemini-cli"><strong>Gemini CLI</strong></button>
+                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-mcp-client="lm-studio"><strong>LM Studio</strong></button>
+                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-mcp-client="vscode"><strong>VS Code</strong></button>
+                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-mcp-client="other"><strong>Other</strong></button>
+                          </div>
+                          <div class="cw-ai-where hidden" id="mcp_desktop_where" role="radiogroup" aria-label="Where CrossWatch runs">
+                            <span>CrossWatch runs on</span>
+                            <button type="button" class="cw-ai-toggle" role="radio" aria-checked="true" data-mcp-where="remote">a NAS or other computer</button>
+                            <button type="button" class="cw-ai-toggle" role="radio" aria-checked="false" data-mcp-where="local">this computer, in Docker</button>
+                          </div>
+                          <div class="cw-ai-label"><span class="cw-ai-step">2</span>Create a read-only token</div>
+                          <div class="cw-ai-tokens" id="mcp_tokens"></div>
+                          <div class="cw-ai-status" id="mcp_token_state" role="status"></div>
+                          <div class="cw-ai-actions">
+                            <button type="button" class="btn primary" id="btn-mcp-token-create" disabled><span class="material-symbols-rounded" aria-hidden="true">key</span><span>Create token</span></button>
+                          </div>
+                          <div class="cw-ai-label"><span class="cw-ai-step">3</span><span id="mcp_client_note">Paste this into your app</span></div>
+                          <div class="cw-ai-code">
+                            <pre><code id="mcp_snippet"></code></pre>
+                            <button type="button" class="cw-ai-copy" id="btn-mcp-copy"><span class="material-symbols-rounded" aria-hidden="true">content_copy</span><span>Copy</span></button>
                           </div>
                         </div>
                       </div>
