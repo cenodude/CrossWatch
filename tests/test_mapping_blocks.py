@@ -106,6 +106,24 @@ def test_blocked_correction_is_excluded_in_real_sync(config_base, monkeypatch, e
     assert planned("p1") == [item(2)["ids"]]
 
 
+@pytest.mark.parametrize("mode", ["one-way", "two-way"])
+def test_block_survives_a_correction_that_keeps_the_same_key(config_base, monkeypatch, editor_client, mode):
+    client, api, cfg = editor_client
+    setup_ops(config_base, monkeypatch, [item(1)])
+    cfg["pairs"][0]["mode"] = mode
+    key = canonical_key(item(1))
+    api._save_policy_manual_batch([("watchlist", "SRC", {key: item(1, year=2001)}, [], "default")], pair_id="p1",
+        mappings={("watchlist", "SRC", "default"): {key: dict(original_key=key, original=item(1), origin="interactive_sync")}})
+    assert client.post("/api/editor/mapping-block", json=rule(key)).status_code == 200
+    node = effective_policy(api._load_policy(), "p1")["providers"]["SRC"]["watchlist"]
+    assert key in node["blocks"] and key in node["mappings"]
+    plan = InteractivePlan()
+    assert Orchestrator(cfg, interactive=plan).run(dry_run=True, pair_scope_ids=["p1"], write_state_json=False)["ok"]
+    assert not plan.rows
+    assert client.post("/api/editor/mapping-block", json={**rule(key), "blocked": False}).status_code == 200
+    assert key not in effective_policy(api._load_policy(), "p1")["providers"]["SRC"]["watchlist"]["blocks"]
+
+
 def test_orphan_block_is_listed_and_preserved_when_editor_saves(editor_client):
     client, api, cfg = editor_client
     key = canonical_key(item(99))
