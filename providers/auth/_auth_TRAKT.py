@@ -183,7 +183,7 @@ class _TraktProvider:
             ],
             actions={"start": True, "finish": True, "refresh": True, "disconnect": True},
             verify_url=VERIFY_URL,
-            notes="Open Trakt, enter the code, then return here. The PIN flow uses CrossWatch's built-in public client_id. Client ID/Secret are only needed for your own Trakt app.",
+            notes="Open Trakt, enter the code, then return here. The PIN flow uses CrossWatch's built-in public client_id. Your own Trakt app only needs a Client ID; the Client Secret is optional.",
         )
 
     def capabilities(self) -> dict[str, Any]:
@@ -326,8 +326,8 @@ class _TraktProvider:
                   <input id="trakt_client_id" name="trakt_client_id" placeholder="Enter your Trakt Client ID" autocomplete="off" spellcheck="false" autocapitalize="off">
                 </div>
                 <div>
-                  <label for="trakt_client_secret">Client Secret</label>
-                  <input id="trakt_client_secret" name="trakt_client_secret" type="password" placeholder="Enter your Trakt Client Secret" autocomplete="off" spellcheck="false" autocapitalize="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
+                  <label for="trakt_client_secret">Client Secret (optional)</label>
+                  <input id="trakt_client_secret" name="trakt_client_secret" type="password" placeholder="Leave blank if not issued" autocomplete="off" spellcheck="false" autocapitalize="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
                 </div>
               </div>
 

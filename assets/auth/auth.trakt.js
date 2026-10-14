@@ -178,10 +178,9 @@
   function updateTraktHint() {
     try {
       var cidState = _readSecretField(_el("trakt_client_id"));
-      var secState = _readSecretField(_el("trakt_client_secret"));
       var hint = _el("trakt_hint");
       if (!hint) return;
-      var show = currentTraktMethod() === "app" && !(cidState.hasValue && secState.hasValue);
+      var show = currentTraktMethod() === "app" && !cidState.hasValue;
       hint.classList.toggle("hidden", !show);
       hint.style.display = show ? "" : "none";
     } catch (_) {}
@@ -371,7 +370,6 @@
     var payload = { auth_method: method };
     if (method === "app") {
       if (!cidState.hasValue) { _notify('Enter your Trakt Client ID'); return; }
-      if (!secState.hasValue) { _notify('Enter your Trakt Client Secret'); return; }
       if (cidState.value) payload.client_id = cidState.value;
       if (secState.value) payload.client_secret = secState.value;
     }

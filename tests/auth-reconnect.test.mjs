@@ -179,6 +179,46 @@ test("Trakt reconnect waits for its pending device authorization despite an exis
   assert.equal(classify(200, { trakt: { instances: { "TRAKT-P01": { access_token: "********", _pending_device: { user_code: "", device_code: "", expires_at: 0 } } } } }).state, "authorized");
 });
 
+for (const clientId of ["client", "********"]) {
+  for (const secret of ["", "legacy-secret", "********"]) {
+    test(`Trakt own app connects with client ID ${clientId} and secret ${secret || "omitted"}`, async () => {
+      const app = setup();
+      app.instance = "TRAKT-P01";
+      app.node("trakt_auth_method").value = "app";
+      app.node("trakt_client_id").value = clientId;
+      app.node("trakt_client_secret").value = secret;
+      app.node("trakt_pin");
+      const hint = app.node("trakt_hint");
+      hint.style = {};
+      app.response = { ok: true, data: { ok: true, user_code: "123456", expiresIn: 600 } };
+      app.load("trakt");
+      app.window.updateTraktHint();
+      assert.equal(hint.classList.contains("hidden"), true);
+      await app.window.requestTraktPin();
+      assert.deepEqual(app.requests.map(r => r.url), ["/api/trakt/pin/new?instance=TRAKT-P01"]);
+      const expected = { auth_method: "app" };
+      if (clientId === "client") expected.client_id = clientId;
+      if (secret === "legacy-secret") expected.client_secret = secret;
+      assert.deepEqual(JSON.parse(app.requests[0].options.body), expected);
+      assert.equal(app.pollers[0].isRunning(), true);
+    });
+  }
+}
+
+test("Trakt own app still requires a Client ID", async () => {
+  const app = setup();
+  app.node("trakt_auth_method").value = "app";
+  app.node("trakt_client_id");
+  app.node("trakt_client_secret");
+  const hint = app.node("trakt_hint");
+  hint.style = {};
+  app.load("trakt");
+  app.window.updateTraktHint();
+  assert.equal(hint.classList.contains("hidden"), false);
+  await app.window.requestTraktPin();
+  assert.equal(app.requests.length, 0);
+});
+
 test("TMDb reconnect starts authorization even with a stored session", async () => {
   const app = setup();
   app.instance = "TMDB-P01";
