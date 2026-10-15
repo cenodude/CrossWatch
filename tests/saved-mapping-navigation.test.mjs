@@ -100,3 +100,51 @@ test("unavailable profiles and missing mappings restore the previous Editor",asy
     assert.equal(ctx.calls.at(-1),"restore"); assert.ok(!ctx.calls.includes("persist"));
   }
 });
+
+
+test("saved rules open across all scopes regardless of Editor filters", async () => {
+  const source = readFileSync(new URL("../assets/js/editor/saved-mappings.js", import.meta.url), "utf8");
+  for (const mappingPair of ["", "pair-one"]) {
+    const elements = new Map();
+    const element = selector => {
+      if (!elements.has(selector)) elements.set(selector, {value:"", textContent:"", innerHTML:"",
+        addEventListener(){}, prepend(){}, setAttribute(){}});
+      return elements.get(selector);
+    };
+    const tabs = ["mapping", "block"].map(view => ({dataset:{view}, setAttribute(){}}));
+    const root = {open:false, setAttribute(){}, querySelector:element,
+      querySelectorAll:selector => selector === "[data-view]" ? tabs : [],
+      addEventListener(){}, showModal(){this.open=true;}};
+    const requests = [];
+    const editor = {state:{source:"state", mappingPair, snapshot:"CROSSWATCH", instance:"default", kind:"history"}};
+    const before = structuredClone(editor.state);
+    const sandbox = {
+      document:{getElementById:() => ({}), createElement:tag => tag === "dialog" ? root : {},
+        body:{append(){}}, addEventListener(){}},
+      window:{CW:{OverviewProfile:{id:"",ready:Promise.resolve()}}, addEventListener(){}},
+      URLSearchParams, AbortController, setTimeout, clearTimeout,
+      fetch:async url => {requests.push(new URL(url,"http://localhost"));
+        return {ok:true,status:200,json:async()=>({sources:[],total:0,items:[]})};},
+    };
+    vm.runInNewContext(source.replaceAll("export ", ""), sandbox);
+    sandbox.open(null, editor);
+    await new Promise(resolve => setImmediate(resolve));
+    tabs[1].onclick();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(requests.length, 2);
+    assert.deepEqual(requests.map(url => url.searchParams.get("entry_type")), ["mapping", "block"]);
+    for (const url of requests) {
+      assert.equal(url.searchParams.has("pair_id"), false);
+      assert.equal(url.searchParams.has("provider"), false);
+      assert.equal(url.searchParams.get("feature"), "");
+    }
+    assert.deepEqual(editor.state, before);
+    element("[data-source]").value = JSON.stringify(["PUNCHPLAY", "default"]);
+    element("[data-feature]").value = "history";
+    element("[data-feature]").onchange();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(requests.at(-1).searchParams.get("provider"), "PUNCHPLAY");
+    assert.equal(requests.at(-1).searchParams.get("feature"), "history");
+    assert.equal(requests.at(-1).searchParams.has("pair_id"), false);
+  }
+});
