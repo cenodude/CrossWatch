@@ -22,8 +22,8 @@
 .sm-results { overflow:auto; min-height:160px; margin:0 24px; border:1px solid var(--border,#292d35); border-radius:8px; }
 .sm-dialog table { width:100%; border-collapse:collapse; table-layout:fixed; }
 .sm-dialog th { text-align:left; color:var(--muted,#929ba8); font-size:13px; font-weight:500; background:var(--cw-theme-surface,#101217); position:sticky; top:0; }
-.sm-dialog td,.sm-dialog th { padding:10px 14px; border-bottom:1px solid var(--border,#292d35); vertical-align:top; overflow-wrap:anywhere; }
-.sm-dialog th:last-child { width:22%; }
+.sm-dialog td,.sm-dialog th { padding:8px 12px; border-bottom:1px solid var(--border,#292d35); vertical-align:top; overflow-wrap:anywhere; }
+.sm-dialog th:last-child { width:28%; }
 .sm-dialog .sm-mappings-table .sm-original-column { width:22%; }
 .sm-dialog td { font-size:14px; line-height:1.4; }
 .sm-dialog td > :is(strong,span,small) { display:block; margin-bottom:3px; }
@@ -40,11 +40,11 @@
 .sm-toolbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:16px 24px 0}
 .sm-tabs,.sm-transfer{display:flex;gap:8px;flex-wrap:wrap}
 .sm-transfer input[hidden]{display:none}
-.sm-scope{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:3px 8px}
+.sm-scope{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:2px 8px}
 .sm-scope>strong{grid-column:1;grid-row:1}
 .sm-scope-meta,.sm-saved-meta,.sm-scope>.sm-block-label{grid-column:1/-1}
 .sm-scope-meta{font-size:12px;color:var(--muted,#929ba8)}
-.sm-saved-meta{display:flex;flex-wrap:wrap;gap:2px 8px}
+.sm-saved-meta{display:flex;flex-wrap:wrap;gap:2px 8px;align-items:center}
 .sm-row-actions{display:flex;grid-column:2;grid-row:1;gap:6px;align-items:center}
 .sm-dialog .sm-delete{width:32px;height:32px;padding:5px;color:var(--danger,#e06470)}
 .sm-tabs button[aria-pressed="true"]{color:var(--accent,#7957ff);background:color-mix(in srgb,var(--accent,#7957ff) 14%,transparent);border-color:var(--accent,#7957ff)}
@@ -65,3 +65,8 @@
 .sm-dialog footer { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:18px 24px; font-size:13px; color:var(--muted,#929ba8); }
 .sm-dialog footer > div { display:flex; gap:8px; }
 @media(max-width:650px) { .sm-results table { min-width:700px; } .sm-head,.sm-filters { padding:16px; } .sm-note { padding:0 16px; } .sm-results { margin:0 16px; } .sm-filters label { flex:1; min-width:100%; } }
+
+.sm-column-resizer { position:absolute; top:0; right:0; bottom:0; width:10px; cursor:col-resize; touch-action:none; user-select:none; border-right:2px solid var(--border,#292d35); }
+.sm-column-resizer:hover,.sm-column-resizer:focus-visible { border-color:var(--accent,#7957ff); outline:2px solid var(--accent,#7957ff); outline-offset:-2px; }
+.sm-dialog .sm-saved-meta .sm-block-label { font-size:12px; gap:4px; }
+.sm-saved-meta small { margin:0; }

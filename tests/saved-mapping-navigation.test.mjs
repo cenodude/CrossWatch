@@ -6,7 +6,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import vm from "node:vm";
-import {navigateToMapping} from "../assets/js/editor/saved-mappings.js";
+import {navigateToMapping, resizeMappingColumns} from "../assets/js/editor/saved-mappings.js";
 
 const mapping = {provider:"SIMKL",instance:"second",feature:"history",key:"tmdb:286801#s01e05"};
 function context() {
@@ -147,4 +147,32 @@ test("saved rules open across all scopes regardless of Editor filters", async ()
     assert.equal(requests.at(-1).searchParams.get("feature"), "history");
     assert.equal(requests.at(-1).searchParams.has("pair_id"), false);
   }
+});
+
+
+test("column resizing clamps widths, supports keyboard and retains layout", () => {
+  const makeTable = () => {
+    const headers = [600, 400].map((width, index) => ({textContent:["Saved correction", "Applies to"][index],
+      style:{}, getBoundingClientRect:()=>({width}), append(handle){this.handle=handle;}}));
+    return {headers, querySelectorAll:()=>headers, getBoundingClientRect:()=>({width:1000})};
+  };
+  globalThis.document = {createElement:()=>({setAttribute(){},setPointerCapture(){}})};
+  try {
+    const saved = new Map(), table = makeTable();
+    resizeMappingColumns(table, saved);
+    const handle = table.headers[0].handle;
+    handle.onkeydown({key:"ArrowLeft",preventDefault(){}});
+    assert.equal(table.headers[0].style.width,"58%");
+    handle.onpointerdown({button:0,clientX:580,pointerId:1,preventDefault(){}});
+    handle.onpointermove({clientX:2000});
+    assert.equal(table.headers[0].style.width,"86%");
+    assert.equal(table.headers[1].style.width,"14%");
+    handle.onpointerup();
+    assert.equal(handle.onpointermove,null);
+    const refreshed = makeTable();
+    resizeMappingColumns(refreshed,saved);
+    assert.equal(refreshed.headers[0].style.width,"86%");
+    handle.ondblclick();
+    assert.equal(table.headers[0].style.width,"60%");
+  } finally { delete globalThis.document; }
 });
