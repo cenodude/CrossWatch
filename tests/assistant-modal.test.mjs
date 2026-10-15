@@ -31,7 +31,12 @@ test('proposal cards only render known actions and escape titles and status', ()
   assert.ok(html.includes('&lt;img src=x onerror=alert(1)&gt;'));
   assert.ok(html.includes('&lt;script&gt;error&lt;/script&gt;'));
   assert.ok(html.includes('data-state="dismissed"'));
-  assert.doesNotMatch(html, /<img|<script|>bad</);
+  assert.doesNotMatch(html, /<img|<script|>bad</i);
+  for (const tag of ['SCRIPT', 'ScRiPt', 'IMG', 'ImG']) {
+    const output = modal.proposalCards([{action: 'run_pair', title: `<${tag}>`, status: 'failed', message: `<${tag}>`}]);
+    assert.equal(output.split(`&lt;${tag}&gt;`).length - 1, 2);
+    assert.doesNotMatch(output, /<img|<script/i);
+  }
   assert.equal(modal.proposalCards(undefined), '');
 });
 
