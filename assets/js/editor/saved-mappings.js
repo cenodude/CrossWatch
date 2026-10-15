@@ -71,6 +71,56 @@ function blockedRows(rows) {
   return `<table class="sm-blocks-table"><thead><tr><th>Blocked item</th><th>Applies to</th><th>Action</th></tr></thead><tbody>${rows.map((row,index) => `<tr><td>${row.corrected ? itemDetails(row.corrected,row.key,true) : `<div class="sm-item-heading"><span class="sm-block-icon" role="img" aria-label="Blocked" title="Blocked item">${icon("block")}</span><strong>${esc(row.key)}</strong></div><small>No saved item details.</small>`}</td><td><div class="sm-scope"><strong>${esc(row.scope_label || "All pairs")}</strong><span class="sm-scope-meta">${esc(row.provider)} · ${esc(row.instance === "default" ? "Default" : row.instance)} · ${esc(row.feature)}</span></div></td><td><button type="button" data-unblock="${index}">${icon("lock_open")}Unblock</button></td></tr>`).join("")}</tbody></table>`;
 }
 
+export function resizeMappingColumns(table, savedWidths = new Map()) {
+  if (!table) return;
+  const headers = [...table.querySelectorAll("thead th")];
+  if (headers.length < 2) return;
+  const key = headers.map(header => header.textContent).join("|");
+  const initial = headers.map(header => header.getBoundingClientRect().width);
+  const total = initial.reduce((sum, width) => sum + width, 0);
+  if (!total) return;
+  let widths = savedWidths.get(key) || initial.map(width => width / total * 100);
+  const apply = () => {
+    headers.forEach((header, index) => { header.style.width = `${widths[index]}%`; });
+    handles.forEach((handle, index) => {
+      handle.setAttribute("aria-valuenow", String(Math.round(widths[index])));
+    });
+    savedWidths.set(key, [...widths]);
+  };
+  const handles = headers.slice(0, -1).map((header, index) => {
+    const handle = document.createElement("span");
+    handle.className = "sm-column-resizer";
+    handle.tabIndex = 0;
+    handle.setAttribute("role", "separator");
+    handle.setAttribute("aria-orientation", "vertical");
+    handle.setAttribute("aria-label", `Resize ${header.textContent} column`);
+    handle.title = "Drag or use arrow keys to resize. Double-click to reset.";
+    const resize = (left, right, delta) => {
+      const minimum = Math.min(140 / table.getBoundingClientRect().width * 100, (left + right) / 2);
+      widths[index] = Math.max(minimum, Math.min(left + right - minimum, left + delta));
+      widths[index + 1] = left + right - widths[index];
+      apply();
+    };
+    handle.onpointerdown = event => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      const start = event.clientX, left = widths[index], right = widths[index + 1];
+      handle.setPointerCapture(event.pointerId);
+      handle.onpointermove = move => resize(left, right, (move.clientX - start) / table.getBoundingClientRect().width * 100);
+    };
+    handle.onpointerup = handle.onpointercancel = handle.onlostpointercapture = () => { handle.onpointermove = null; };
+    handle.onkeydown = event => {
+      if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+      event.preventDefault();
+      resize(widths[index], widths[index + 1], event.key === "ArrowLeft" ? -2 : 2);
+    };
+    handle.ondblclick = () => { widths = initial.map(width => width / total * 100); apply(); };
+    header.append(handle);
+    return handle;
+  });
+  apply();
+}
+
 export function open(trigger, editor) {
   if (dialog?.open) { dialog.focus(); return; }
   if (!document.getElementById("saved-mappings-style")) {
@@ -96,6 +146,7 @@ export function open(trigger, editor) {
   let entryType = "mapping";
   const mappingNote = $(".sm-note").textContent;
   let currentRows = [];
+  const columnWidths = new Map();
   const scope = () => String(window.CW?.OverviewProfile?.id || "");
 
   async function load() {
@@ -131,7 +182,8 @@ export function open(trigger, editor) {
       total = data.total;
       currentRows = data.items;
       const showOriginal = data.items.some(row => row.original && Object.keys(row.original).length);
-      $(".sm-results").innerHTML = entryType === "block" ? (data.items.length ? blockedRows(data.items) : '<div class="sm-empty">No blocked items match this scope.</div>') : data.items.length ? `<table class="sm-mappings-table"><thead><tr>${showOriginal ? '<th class="sm-original-column">Original</th>' : ""}<th>Saved correction</th><th>Applies to</th></tr></thead><tbody>${data.items.map((row,index)=>`<tr>${showOriginal ? `<td>${itemDetails(row.original,row.original_key)}</td>` : ""}<td>${itemDetails(row.corrected,row.key)}</td><td><div class="sm-scope"><strong>${esc(row.scope_label || "All pairs")}</strong><span class="sm-scope-meta">${esc(row.provider)} · ${esc(row.instance === "default" ? "Default" : row.instance)} · ${esc(row.feature)}</span><div class="sm-saved-meta"><small>${row.origin === "interactive_sync" ? "Saved in Interactive Sync" : row.origin === "editor" ? "Saved in Editor" : row.origin === "analyzer" ? "Saved in Analyzer" : "Saved override"}</small>${row.saved_at ? `<small>${esc(new Date(row.saved_at*1000).toLocaleString())}</small>` : ""}</div>${row.excluded ? `<span class="sm-block-label" title="Also excluded by a block rule">${icon("block")}Blocked</span>` : ""}<div class="sm-row-actions">${editor ? `<button type="button" class="sm-edit" data-edit-mapping="${index}" title="Edit mapping" aria-label="Edit mapping: ${esc(row.corrected.title || row.corrected.series_title || row.key)}">${icon("edit")}</button>` : ""}<button type="button" class="sm-delete" data-delete-mapping="${index}" title="Delete mapping" aria-label="Delete mapping: ${esc(row.corrected.title || row.corrected.series_title || row.key)}">${icon("delete")}</button></div></div></td></tr>`).join("")}</tbody></table>` : '<div class="sm-empty">No saved mappings match this view.<p>Save a correction in Interactive Sync or the Editor to see it here.</p></div>';
+      $(".sm-results").innerHTML = entryType === "block" ? (data.items.length ? blockedRows(data.items) : '<div class="sm-empty">No blocked items match this scope.</div>') : data.items.length ? `<table class="sm-mappings-table"><thead><tr>${showOriginal ? '<th class="sm-original-column">Original</th>' : ""}<th>Saved correction</th><th>Applies to</th></tr></thead><tbody>${data.items.map((row,index)=>`<tr>${showOriginal ? `<td>${itemDetails(row.original,row.original_key)}</td>` : ""}<td>${itemDetails(row.corrected,row.key)}</td><td><div class="sm-scope"><strong>${esc(row.scope_label || "All pairs")}</strong><span class="sm-scope-meta">${esc(row.provider)} · ${esc(row.instance === "default" ? "Default" : row.instance)} · ${esc(row.feature)}</span><div class="sm-saved-meta"><small>${row.origin === "interactive_sync" ? "Saved in Interactive Sync" : row.origin === "editor" ? "Saved in Editor" : row.origin === "analyzer" ? "Saved in Analyzer" : "Saved override"}</small>${row.saved_at ? `<small>${esc(new Date(row.saved_at*1000).toLocaleString())}</small>` : ""}${row.excluded ? `<span class="sm-block-label" title="Also excluded by a block rule">${icon("block")}Blocked</span>` : ""}</div><div class="sm-row-actions">${editor ? `<button type="button" class="sm-edit" data-edit-mapping="${index}" title="Edit mapping" aria-label="Edit mapping: ${esc(row.corrected.title || row.corrected.series_title || row.key)}">${icon("edit")}</button>` : ""}<button type="button" class="sm-delete" data-delete-mapping="${index}" title="Delete mapping" aria-label="Delete mapping: ${esc(row.corrected.title || row.corrected.series_title || row.key)}">${icon("delete")}</button></div></div></td></tr>`).join("")}</tbody></table>` : '<div class="sm-empty">No saved mappings match this view.<p>Save a correction in Interactive Sync or the Editor to see it here.</p></div>';
+      if (data.items.length) resizeMappingColumns($(".sm-results table"), columnWidths);
       const noun = entryType === "block" ? "blocked items" : "saved corrections";
       $("[data-count]").textContent = total ? `${offset+1}–${Math.min(offset+50,total)} of ${total} ${noun}` : `0 ${noun}`;
       $("[data-prev]").disabled = offset === 0;
