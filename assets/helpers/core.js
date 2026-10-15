@@ -1692,8 +1692,11 @@
   }
 
   async function runSync(opts) {
-    if (!!UI.summary?.running || window.syncBar?.isRunning?.()) return cancelSync();
-    if (state.busy) return;
+    if (!!UI.summary?.running || window.syncBar?.isRunning?.()) {
+      if (opts?.startOnly) return { ok: false, error: "A sync is already running" };
+      return cancelSync();
+    }
+    if (state.busy) return { ok: false, error: "CrossWatch is busy. Try again shortly" };
     try { cwCloseSyncMenu(); } catch {}
 
     let pairId = "";
@@ -1724,7 +1727,7 @@
         setSyncHeader("sync-bad", `Failed to start${payload?.error ? ` – ${payload.error}` : ""}`);
         resetSyncButtons(pairId);
         window.UX?.updateTimeline?.({ start: false, pre: false, post: false, done: false });
-        return;
+        return { ...payload, ok: false, error: payload?.error || payload?.message || "Failed to start sync" };
       }
 
       if (payload.skipped) {
@@ -1734,12 +1737,14 @@
         setSyncHeader("sync-warn", message);
         resetSyncButtons(pairId);
         window.UX?.updateTimeline?.({ start: false, pre: false, post: false, done: false });
-        return;
+        return payload;
       }
+      return payload;
     } catch {
       setSyncHeader("sync-bad", "Failed to reach server");
       resetSyncButtons(pairId);
       window.UX?.updateTimeline?.({ start: false, pre: false, post: false, done: false });
+      return { ok: false, error: "Failed to reach server" };
     } finally {
       setBusy(false);
       recomputeRunDisabled();

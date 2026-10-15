@@ -54,6 +54,16 @@
 .cw-assistant .as-action{display:inline-flex;align-items:center;gap:8px;height:38px;margin:0;padding:0 14px;border:1px solid var(--as-border);border-radius:10px;background:var(--as-raised);color:var(--as-text);font:inherit;font-size:13px;font-weight:600;cursor:pointer}
 .cw-assistant .as-action .material-symbols-rounded{font-size:18px}
 .cw-assistant .as-action:hover,.cw-assistant .as-action:focus-visible{border-color:var(--as-accent);outline:none}
+.cw-assistant .as-proposals{display:grid;gap:10px;margin-top:12px}
+.cw-assistant .as-proposals:empty{display:none}
+.cw-assistant .as-proposal{min-width:0;padding:12px;border:1px solid var(--as-border);border-radius:12px;background:var(--as-raised)}
+.cw-assistant .as-proposal-title{display:flex;align-items:flex-start;gap:8px;color:var(--as-text)}
+.cw-assistant .as-proposal-title strong{min-width:0;overflow-wrap:anywhere}
+.cw-assistant .as-proposal-title .material-symbols-rounded{flex:0 0 auto;font-size:20px;color:var(--as-accent)}
+.cw-assistant .as-proposal-status{margin-top:8px;white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;color:var(--as-muted)}
+.cw-assistant .as-proposal[data-state="failed"] .as-proposal-status{color:var(--as-danger)}
+.cw-assistant .as-proposal-buttons{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.cw-assistant .as-proposal .as-action:disabled{color:var(--as-muted);cursor:default}
 .cw-assistant .as-dots{display:flex;gap:5px;padding:6px 0}
 .cw-assistant .as-dots i{width:7px;height:7px;border-radius:50%;background:var(--as-muted);animation:as-bounce 1.2s ease-in-out infinite}
 .cw-assistant .as-dots i:nth-child(2){animation-delay:.15s}

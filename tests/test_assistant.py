@@ -19,6 +19,92 @@ KEY = "sk-test-key-1234567890"
 BASE = "https://ai.test/v1"
 
 
+@pytest.fixture()
+def proposal_config(monkeypatch: pytest.MonkeyPatch):
+    from api import assistantAPI
+    from services import snapshots
+
+    cfg = {"pairs": [
+        {"id": "p1", "source": "PLEX", "target": "TRAKT", "enabled": "true"},
+        {"id": "off", "source": "TRAKT", "target": "PLEX", "enabled": "false"},
+    ]}
+    manifest = [{"id": "TRAKT", "label": "Trakt", "features": {"history": True, "ratings": False},
+                 "instances": [{"id": "default", "configured": True}, {"id": "other", "configured": True}, {"id": "empty", "configured": False}]}]
+    monkeypatch.setattr(assistantAPI, "load_config", lambda: cfg)
+    monkeypatch.setattr(snapshots, "snapshot_manifest", lambda current: manifest if current is cfg else [])
+    return assistantAPI._proposal, cfg
+
+
+@pytest.mark.parametrize("action,args,title,params", [
+    ("run_pair", {"pair_id": "p1"}, "Run sync: PLEX → TRAKT", {"pair_id": "p1"}),
+    ("create_capture", {"provider": "trakt", "feature": "HISTORY"}, "Create capture: Trakt history", {"provider": "TRAKT", "instance": "default", "feature": "history"}),
+    ("create_capture", {"provider": "TRAKT", "feature": "history", "instance": "other"}, "Create capture: Trakt history (other)", {"provider": "TRAKT", "instance": "other", "feature": "history"}),
+    ("refresh_anime_mapping", {}, "Update anime mapping", {}),
+    ("test_connections", {}, "Test all connections", {}),
+])
+def test_proposals_are_validated_and_never_use_model_titles(proposal_config, monkeypatch, action, args, title, params) -> None:
+    propose, cfg = proposal_config
+    provider = Provider(_answer(calls=[_call("p", "propose_action", action=action, **args, title="EVIL", label="EVIL", force=True)]), _answer("Please review the card."))
+    monkeypatch.setattr(assistant.requests, "post", provider.post)
+    reads = []
+    result = assistant.chat({"base_url": BASE, "model": "m"}, [{"role": "user", "content": "help"}], {}, lambda n, a: reads.append(n), propose=propose)
+    assert result["proposals"] == [{"action": action, "title": title, "params": params}]
+    assert result["tools"] == reads == []
+    assert "Shown to the user as a card" in provider.requests[1]["body"]["messages"][-1]["content"]
+    cfg["pairs"][0]["enabled"] = False
+    assert isinstance(propose("run_pair", {"pair_id": "p1"}), str)
+
+
+@pytest.mark.parametrize("action,args,option", [
+    ("delete", {}, "run_pair"),
+    ("run_pair", {}, "p1: PLEX → TRAKT"),
+    ("run_pair", {"pair_id": "missing"}, "p1: PLEX → TRAKT"),
+    ("run_pair", {"pair_id": "off"}, "p1: PLEX → TRAKT"),
+    ("create_capture", {"provider": "UNKNOWN", "feature": "history"}, "TRAKT/default/history"),
+    ("create_capture", {"provider": "TRAKT", "feature": "history", "instance": "empty"}, "TRAKT/default/history"),
+    ("create_capture", {"provider": "TRAKT", "feature": "history", "instance": "missing"}, "TRAKT/default/history"),
+    ("create_capture", {"provider": "TRAKT", "feature": "ratings"}, "TRAKT/default/history"),
+])
+def test_invalid_proposals_return_options_to_the_model(proposal_config, monkeypatch, action, args, option) -> None:
+    propose, _cfg = proposal_config
+    provider = Provider(_answer(calls=[_call("bad", "propose_action", action=action, **args)]), _answer("I need a valid target."))
+    monkeypatch.setattr(assistant.requests, "post", provider.post)
+    result = assistant.chat({"base_url": BASE, "model": "m"}, [{"role": "user", "content": "help"}], {}, lambda n, a: "", propose=propose)
+    assert result["proposals"] == []
+    feedback = provider.requests[1]["body"]["messages"][-1]["content"]
+    assert option in feedback
+
+
+def test_proposals_deduplicate_validated_params_and_limit_cards(proposal_config, monkeypatch) -> None:
+    propose, _cfg = proposal_config
+    calls = [
+        _call("1", "propose_action", action="run_pair", pair_id="p1"),
+        _call("2", "propose_action", action="run_pair", pair_id="p1", ignored="extra"),
+        _call("3", "propose_action", action="create_capture", provider="trakt", feature="history"),
+        _call("4", "propose_action", action="create_capture", provider="TRAKT", instance="default", feature="history"),
+        _call("5", "propose_action", action="refresh_anime_mapping"),
+        _call("6", "propose_action", action="test_connections"),
+    ]
+    provider = Provider(_answer(calls=calls), _answer("Review these."))
+    monkeypatch.setattr(assistant.requests, "post", provider.post)
+    result = assistant.chat({"base_url": BASE, "model": "m"}, [{"role": "user", "content": "help"}], {}, lambda n, a: "", propose=propose)
+    assert [p["action"] for p in result["proposals"]] == ["run_pair", "create_capture", "refresh_anime_mapping"]
+    assert result["tools"] == []
+    assert "At most three" in provider.requests[1]["body"]["messages"][-1]["content"]
+
+
+def test_chat_endpoint_returns_proposals_without_executing_actions(gated, monkeypatch) -> None:
+    client = _client()
+    admin = _headers(gated)
+    client.post("/api/assistant/settings", json={"enabled": True, "base_url": BASE, "model": "m"}, headers=admin)
+    provider = Provider(_answer(calls=[_call("p", "propose_action", action="run_pair", pair_id="p1", title="MODEL TITLE")]), _answer("Click Run if you want to sync."))
+    monkeypatch.setattr(assistant.requests, "post", provider.post)
+    res = client.post("/api/assistant/chat", json={"messages": [{"role": "user", "content": "sync plex to trakt again"}]}, headers=admin)
+    assert res.status_code == 200
+    assert res.json()["proposals"] == [{"action": "run_pair", "title": "Run sync: PLEX → TRAKT", "params": {"pair_id": "p1"}}]
+    assert res.json()["tools"] == []
+
+
 class FakeResponse:
     def __init__(self, status: int = 200, body: Any = None, text: str = "", headers: dict[str, str] | None = None) -> None:
         self.status_code = status
@@ -180,7 +266,7 @@ def test_chat_runs_tools_and_returns_the_answer(gated, monkeypatch: pytest.Monke
     res = client.post(chat, json={"messages": history}, headers=admin)
 
     assert res.status_code == 200
-    assert res.json() == {"ok": True, "reply": "You have one pair, Plex to Trakt.", "tools": ["list_pairs", "nope", "read_logs"], "actions": [], "sources": []}
+    assert res.json() == {"ok": True, "reply": "You have one pair, Plex to Trakt.", "tools": ["list_pairs", "nope", "read_logs"], "actions": [], "sources": [], "proposals": []}
     first, second = provider.requests
     assert first["url"] == BASE + "/chat/completions"
     assert first["options"] == {"allow_redirects": False, "stream": True}
@@ -682,7 +768,7 @@ def test_busy_providers_are_retried_a_few_times_then_reported(gated, monkeypatch
 
     recovers = Provider(FakeResponse(503, busy), FakeResponse(429, busy, headers={"Retry-After": "1"}), _answer("All good."))
     monkeypatch.setattr(assistant.requests, "post", recovers.post)
-    assert client.post("/api/assistant/chat", json=ask, headers=admin).json() == {"ok": True, "reply": "All good.", "tools": [], "actions": [], "sources": []}
+    assert client.post("/api/assistant/chat", json=ask, headers=admin).json() == {"ok": True, "reply": "All good.", "tools": [], "actions": [], "sources": [], "proposals": []}
     assert slept == [2.0, 1.0]
 
     slept.clear()
@@ -815,7 +901,7 @@ def test_an_empty_final_answer_gets_one_nudge_before_giving_up(gated, monkeypatc
     )
     monkeypatch.setattr(assistant.requests, "post", provider.post)
     res = client.post("/api/assistant/chat", json=ask, headers=admin).json()
-    assert res == {"ok": True, "reply": "Your one pair looks fine.", "tools": ["list_pairs"], "actions": ["open_pairs"], "sources": []}
+    assert res == {"ok": True, "reply": "Your one pair looks fine.", "tools": ["list_pairs"], "actions": ["open_pairs"], "sources": [], "proposals": []}
     nudge = provider.requests[2]["body"]
     assert nudge["tool_choice"] == "none"
     assert nudge["messages"][-1] == {"role": "user", "content": assistant.NUDGE}

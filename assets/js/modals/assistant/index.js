@@ -80,6 +80,105 @@ function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, (char) => ESCAPES[char]);
 }
 
+export const PROPOSALS = {
+  run_pair: { icon: "sync" },
+  create_capture: { icon: "photo_camera" },
+  refresh_anime_mapping: { icon: "refresh" },
+  test_connections: { icon: "hub" },
+};
+
+export function proposalCards(proposals, states = []) {
+  return (Array.isArray(proposals) ? proposals : []).map((proposal, index) => {
+    if (!proposal || !Object.hasOwn(PROPOSALS, proposal.action)) return "";
+    const state = states[index] || proposal;
+    const status = ["running", "done", "failed", "dismissed"].includes(state.status) ? state.status : "ready";
+    const message = state.message || ({ ready: "Run this action?", running: "Running…", done: "Done", failed: "Action failed", dismissed: "Dismissed" })[status];
+    return `<div class="as-proposal" data-as-proposal="${index}" data-state="${status}">
+      <div class="as-proposal-title"><span class="material-symbols-rounded" aria-hidden="true">${PROPOSALS[proposal.action].icon}</span><strong>${esc(proposal.title)}</strong></div>
+      <div class="as-proposal-status" role="status">${esc(message)}</div>
+      <div class="as-proposal-buttons"><button class="as-action" type="button" data-as-proposal-run${status !== "ready" ? " disabled" : ""}>Run</button><button class="as-action" type="button" data-as-proposal-dismiss${status !== "ready" ? " disabled" : ""}>Dismiss</button></div>
+    </div>`;
+  }).join("");
+}
+
+function proposalState(proposal, status, message) {
+  proposal.status = status;
+  proposal.message = message;
+  renderLog();
+}
+
+async function actionRequest(path, body, deadline) {
+  const ctrl = new AbortController();
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) throw new Error("The action timed out");
+  const timer = window.setTimeout(() => ctrl.abort(), remaining);
+  const options = { credentials: "same-origin", cache: "no-store", signal: ctrl.signal };
+  if (body !== undefined) {
+    options.method = "POST";
+    options.headers = { "Content-Type": "application/json" };
+    options.body = JSON.stringify(body);
+  }
+  try {
+    const res = await fetch(path, options);
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data || data.ok === false) throw new Error(String(data?.error || data?.message || "The action failed"));
+    return data;
+  } catch (err) {
+    if (ctrl.signal.aborted) throw new Error("The action timed out");
+    if (err instanceof TypeError) throw new Error("Could not reach CrossWatch");
+    throw err;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+export async function runProposal(proposal) {
+  if (!proposal || !Object.hasOwn(PROPOSALS, proposal.action) || (proposal.status && proposal.status !== "ready")) return;
+  proposalState(proposal, "running", "Running…");
+  const params = proposal.params || {};
+  const deadline = Date.now() + 600_000;
+  try {
+    let message;
+    if (proposal.action === "run_pair") {
+      if (window.syncBar?.isRunning?.()) throw new Error("A sync is already running");
+      if (!params.pair_id || typeof window.runSync !== "function") throw new Error("Sync is unavailable");
+      window.showTab?.("main");
+      const payload = await window.runSync({ pair_id: params.pair_id, startOnly: true });
+      if (payload?.ok !== true) throw new Error(payload?.error || payload?.message || "Sync did not start");
+      if (payload.skipped) throw new Error(`Sync skipped: ${payload.skipped}`);
+      message = "Sync started";
+    } else if (proposal.action === "create_capture") {
+      const data = await actionRequest("/api/snapshots/create", { provider: params.provider, instance: params.instance, feature: params.feature, label: "Ask CrossWatch", background: true }, deadline);
+      const id = data.progress_id || data.job?.progress_id;
+      if (!id) throw new Error("Capture progress is unavailable");
+      proposalState(proposal, "running", "Capturing… 0%");
+      while (true) {
+        if (Date.now() >= deadline) throw new Error("The capture timed out");
+        await new Promise(resolve => window.setTimeout(resolve, Math.min(1500, deadline - Date.now())));
+        const data = await actionRequest(`/api/snapshots/capture-progress/${encodeURIComponent(id)}`, undefined, deadline);
+        const progress = data.progress || {};
+        if (progress.done) {
+          if (progress.ok === false || progress.error) throw new Error(String(progress.error || progress.message || "Capture failed"));
+          message = "Capture saved";
+          break;
+        }
+        const percent = Math.max(0, Math.min(100, Number(progress.percent) || 0));
+        proposalState(proposal, "running", `Capturing… ${Math.round(percent)}%`);
+      }
+    } else if (proposal.action === "refresh_anime_mapping") {
+      const data = await actionRequest("/api/anime-mapping/update", { force: false }, deadline);
+      message = data.updated ? (data.identity_updated && !data.mappings_updated ? "Anime identity data updated" : "Anime mapping updated")
+        : data.rebuilt ? "Anime mapping index rebuilt" : "Anime mapping already up to date";
+    } else {
+      const data = await actionRequest("/api/status?fresh=1", undefined, deadline);
+      message = Object.entries(data.providers || {}).map(([name, info]) => `${name}: ${info?.connected ? "connected" : `not connected${info?.reason ? ` (${info.reason})` : ""}`}`).join("\n") || "No connections configured";
+    }
+    proposalState(proposal, "done", message);
+  } catch (err) {
+    proposalState(proposal, "failed", String(err?.message || "The action failed"));
+  }
+}
+
 export function linkify(text, format = (part) => part) {
   const raw = String(text ?? "");
   let out = "";
@@ -228,12 +327,12 @@ function botCard(inner, extra = "") {
   return `<div class="as-msg as-bot${extra}">${AVATAR}<div class="as-bot-body">${inner}</div></div>`;
 }
 
-function messageHtml(item) {
+function messageHtml(item, index) {
   if (item.role === "user") return `<div class="as-msg as-user">${esc(item.content)}</div>`;
   const meta = `<div class="as-meta"><strong>CrossWatch</strong><span>${esc(when(item.at))}</span></div>`;
   if (item.error) return botCard(`${meta}<div class="as-answer"><p>${esc(item.content)}</p></div>`, " as-error");
   const note = lookedAt(item.tools);
-  return botCard(`${meta}<div class="as-answer">${renderAnswer(item.content)}</div>${note ? `<small class="as-looked">${esc(note)}</small>` : ""}${sourceLinks(item.sources)}${actionButtons(item.actions)}`);
+  return botCard(`${meta}<div class="as-answer">${renderAnswer(item.content)}</div>${note ? `<small class="as-looked">${esc(note)}</small>` : ""}${sourceLinks(item.sources)}${actionButtons(item.actions)}<div class="as-proposals" data-as-message="${index}">${proposalCards(item.proposals)}</div>`);
 }
 
 function emptyHtml() {
@@ -305,7 +404,8 @@ async function ask(question) {
   try {
     const messages = history.filter((item) => !item.error).map(({ role, content }) => ({ role, content }));
     const data = await api("/chat", { messages, scope: view.scope });
-    history.push({ role: "assistant", content: data.reply || "The model gave an empty answer.", tools: data.tools || [], actions: data.actions || [], sources: data.sources || [], at: Date.now() });
+    const proposals = (Array.isArray(data.proposals) ? data.proposals : []).filter(p => p && Object.hasOwn(PROPOSALS, p.action)).slice(0, 3).map(p => ({ action: p.action, title: p.title, params: p.params, status: "ready" }));
+    history.push({ role: "assistant", content: data.reply || "The model gave an empty answer.", tools: data.tools || [], actions: data.actions || [], sources: data.sources || [], proposals, at: Date.now() });
   } catch (err) {
     history.push({ role: "assistant", content: err?.message || "Something went wrong.", error: true, at: Date.now() });
   }
@@ -342,7 +442,7 @@ export default {
           <div class="as-log" id="as-log" aria-live="polite"></div>
         </div>
         <div class="as-foot" id="as-foot"></div>
-        <p class="as-note">Answers come from the AI model you chose and can be wrong. It can only read, never change anything.</p>
+        <p class="as-note">Answers come from the AI model you chose and can be wrong. Proposed actions run only when you click Run.</p>
       </div>`;
 
     view.root = root;
@@ -362,6 +462,18 @@ export default {
 
     root.addEventListener("click", (event) => {
       const target = event.target;
+      const run = target.closest("[data-as-proposal-run]");
+      const dismiss = target.closest("[data-as-proposal-dismiss]");
+      if (run || dismiss) {
+        const card = target.closest("[data-as-proposal]");
+        const group = target.closest("[data-as-message]");
+        const proposal = history[Number(group?.getAttribute("data-as-message"))]?.proposals?.[Number(card?.getAttribute("data-as-proposal"))];
+        if (proposal && proposal.status === "ready") {
+          if (run) void runProposal(proposal);
+          else proposalState(proposal, "dismissed", "Dismissed");
+        }
+        return;
+      }
       if (target.closest("#as-close")) closeModal();
       if (target.closest("#as-new") && !busy) {
         history.length = 0;
