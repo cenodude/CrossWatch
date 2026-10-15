@@ -24,6 +24,7 @@
 .sm-dialog th { text-align:left; color:var(--muted,#929ba8); font-size:13px; font-weight:500; background:var(--cw-theme-surface,#101217); position:sticky; top:0; }
 .sm-dialog td,.sm-dialog th { padding:10px 14px; border-bottom:1px solid var(--border,#292d35); vertical-align:top; overflow-wrap:anywhere; }
 .sm-dialog th:last-child { width:22%; }
+.sm-dialog .sm-mappings-table .sm-original-column { width:22%; }
 .sm-dialog td { font-size:14px; line-height:1.4; }
 .sm-dialog td > :is(strong,span,small) { display:block; margin-bottom:3px; }
 .sm-dialog td small { font-size:12px; color:var(--muted,#929ba8); }
