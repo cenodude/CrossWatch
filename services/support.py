@@ -23,6 +23,7 @@ from cw_platform.local_db.diagnostics import diagnostics as local_db_diagnostics
 from cw_platform.local_db.sync_reports import list_reports
 from cw_platform.orchestrator._state_store import StateStore
 from cw_platform.provider_instances import normalize_instance_id, sanitize_instance_label
+from cw_platform.pair_scope import pair_feature_scope
 
 FEATURE_NAMES = ("watchlist", "ratings", "history", "playlists", "progress", "collection")
 BUNDLE_SECTIONS = ("config", "diagnostics", "reports", "logs")
@@ -555,6 +556,27 @@ def build_state(pair_ids: Sequence[str] | None = None) -> dict[str, Any]:
             "wall": state.get("wall") or [],
             "last_sync_epoch": state.get("last_sync_epoch"),
         }
+
+    pair_states: list[dict[str, Any]] = []
+    store = _store()
+    for index, pair in enumerate(_pairs(cfg), 1):
+        if pair not in selected:
+            continue
+        features = pair.get("features")
+        names: set[str] = set(features) if isinstance(features, Mapping) else set(FEATURE_NAMES)
+        selector = str(pair.get("feature") or "").strip().lower()
+        if selector and selector != "multi":
+            names.add(selector)
+        for feature in sorted(names.intersection(FEATURE_NAMES)):
+            scope = pair_feature_scope(cfg, pair, feature, index)
+            pair_id = str(pair.get("id") or "")
+            pair_states.append({
+                "pair_id": pair_id,
+                "feature": feature,
+                "pair_scope": scope,
+                "state": store.for_pair(scope, pair_id=pair_id).load_state_features({feature}),
+            })
+    payload["pair_states"] = pair_states
 
     meta = {
         "generated_at": _iso(),
