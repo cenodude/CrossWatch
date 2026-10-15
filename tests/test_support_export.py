@@ -7,6 +7,7 @@ import zipfile
 from pathlib import Path
 
 from cw_platform.orchestrator._state_store import StateStore
+from cw_platform.pair_scope import pair_feature_scope
 from services import support
 
 REPO = Path(__file__).resolve().parents[1]
@@ -166,6 +167,33 @@ def test_build_state_reports_unknown_pair_ids(tmp_path, monkeypatch) -> None:
 
     assert meta["unknown_pair_ids"] == ["pair-gone"]
     assert meta["pair_ids"] == ["pair-main"]
+
+
+def test_export_preserves_distinct_pair_baselines_and_bundle_state(tmp_path, monkeypatch) -> None:
+    cfg = _setup(tmp_path, monkeypatch)
+    first = cfg["pairs"][0]
+    second = {**first, "id": "pair-other"}
+    cfg["pairs"].append(second)
+    store = StateStore(tmp_path)
+    for pair, episode in ((first, 14), (second, 20)):
+        scope = pair_feature_scope(cfg, pair, "history")
+        item = {"type": "episode", "show_ids": {"tmdb": "19849"}, "season": 1,
+                "episode": episode, "watched_at": "2014-07-23T16:53:00.000Z"}
+        store.for_pair(scope, pair_id=pair["id"]).save_feature_blocks({
+            ("PLEX", "default", "history"): _baseline({f"tmdb:19849#s01e{episode}": item}),
+        })
+
+    exported = support.build_state()["payload"]["pair_states"]
+    rows = {row["pair_id"]: row for row in exported if row["feature"] == "history"}
+    for pair, episode in ((first, 14), (second, 20)):
+        items = rows[pair["id"]]["state"]["providers"]["PLEX"]["history"]["baseline"]["items"]
+        assert list(items) == [f"tmdb:19849#s01e{episode}"]
+
+    selected = support.build_state([first["id"]])["payload"]
+    assert {row["pair_id"] for row in selected["pair_states"]} == {first["id"]}
+    assert support.build_state(["missing"])["payload"]["pair_states"] == []
+    archive = zipfile.ZipFile(io.BytesIO(support.build_bundle([first["id"]], ["none"])))
+    assert json.loads(archive.read("state.json"))["pair_states"] == selected["pair_states"]
 
 
 def test_state_summary_flags_non_iso_timestamps(tmp_path, monkeypatch) -> None:
