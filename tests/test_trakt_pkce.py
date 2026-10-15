@@ -3,9 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-import base64
 from copy import deepcopy
-import hashlib
 from unittest.mock import Mock
 from urllib.parse import parse_qs, urlsplit
 
@@ -47,7 +45,7 @@ def test_pkce_oob_exchange_persists_tokens_and_refreshes_without_secret(oauth, i
     verifier = pending["verifier"]
     params = parse_qs(urlsplit(started["authorize_url"]).query)
     assert 43 <= len(verifier) <= 128
-    assert params["code_challenge"] == [base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()]
+    assert len(params["code_challenge"][0]) == 43
     assert params["code_challenge_method"] == ["S256"]
     assert params["response_type"] == ["code"]
     assert params["redirect_uri"] == ["urn:ietf:wg:oauth:2.0:oob"]
@@ -82,6 +80,16 @@ def test_pkce_oob_exchange_persists_tokens_and_refreshes_without_secret(oauth, i
     post.reset_mock()
     assert auth.finish_oauth(code="code", flow_id=started["flow_id"], instance_id=instance)["error"] == "invalid_flow"
     post.assert_not_called()
+
+
+def test_pkce_s256_matches_rfc7636_appendix_b(oauth, monkeypatch):
+    random_token = Mock(side_effect=["dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk", "test-flow"])
+    monkeypatch.setattr(auth.secrets, "token_urlsafe", random_token)
+    started = auth.start_oauth()
+    params = parse_qs(urlsplit(started["authorize_url"]).query)
+    assert params["code_challenge"] == ["E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"]
+    assert params["code_challenge_method"] == ["S256"]
+    assert [call.args for call in random_token.call_args_list] == [(64,), (32,)]
 
 
 def test_pkce_rejects_wrong_profile_stale_cancelled_and_expired_flows(oauth, monkeypatch):
