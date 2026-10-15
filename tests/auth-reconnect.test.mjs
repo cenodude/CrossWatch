@@ -179,6 +179,106 @@ test("Trakt reconnect waits for its pending device authorization despite an exis
   assert.equal(classify(200, { trakt: { instances: { "TRAKT-P01": { access_token: "********", _pending_device: { user_code: "", device_code: "", expires_at: 0 } } } } }).state, "authorized");
 });
 
+for (const clientId of ["client", "********"]) {
+  for (const secret of ["", "legacy-secret", "********"]) {
+    test(`Trakt own app connects with client ID ${clientId} and secret ${secret || "omitted"}`, async () => {
+      const app = setup();
+      app.instance = "TRAKT-P01";
+      app.node("trakt_auth_method").value = "app";
+      app.node("trakt_client_id").value = clientId;
+      app.node("trakt_client_secret").value = secret;
+      app.node("trakt_pin");
+      const hint = app.node("trakt_hint");
+      hint.style = {};
+      const panel = app.node("trakt_oauth_panel");
+      panel.classList.add("hidden");
+      const link = app.node("trakt_oauth_link");
+      app.response = { ok: true, data: { ok: true, flow_id: "flow", authorize_url: "https://auth.trakt.tv/oauth/authorize?state=flow", expires_in: 600 } };
+      app.load("trakt");
+      app.window.updateTraktHint();
+      assert.equal(hint.classList.contains("hidden"), true);
+      await app.window.requestTraktPin();
+      assert.deepEqual(app.requests.map(r => r.url), ["/api/trakt/oauth/start?instance=TRAKT-P01"]);
+      const expected = {};
+      if (clientId === "client") expected.client_id = clientId;
+      assert.deepEqual(JSON.parse(app.requests[0].options.body), expected);
+      assert.equal(app.pollers.length, 0);
+      assert.equal(panel.classList.contains("hidden"), false);
+      assert.equal(link.getAttribute("href"), "https://auth.trakt.tv/oauth/authorize?state=flow");
+    });
+  }
+}
+
+test("Trakt PKCE finishes only after code exchange and preserves the selected profile", async () => {
+  const app = setup();
+  app.instance = "second";
+  app.node("trakt_auth_method").value = "app";
+  app.node("trakt_client_id").value = "client";
+  const panel = app.node("trakt_oauth_panel");
+  app.node("trakt_oauth_link");
+  const code = app.node("trakt_oauth_code");
+  const status = app.node("trakt_oauth_status");
+  const button = app.node("btn-trakt-oauth-finish");
+  app.response = { ok: true, data: { ok: true, flow_id: "flow", authorize_url: "https://auth.trakt.tv/oauth/authorize?state=flow" } };
+  app.load("trakt");
+  await app.window.requestTraktPin();
+  await app.window.finishTraktOAuth();
+  assert.equal(app.requests.length, 1);
+  assert.match(status.textContent, /Paste the authorization code/);
+  code.value = "code";
+  app.response = { ok: true, data: { ok: false, error: "token_exchange_failed" } };
+  await app.window.finishTraktOAuth();
+  assert.match(status.textContent, /could not exchange/);
+  assert.equal(panel.classList.contains("hidden"), false);
+  assert.equal(button.disabled, false);
+  assert.equal(app.requests[1].url, "/api/trakt/oauth/finish?instance=second");
+  assert.deepEqual(JSON.parse(app.requests[1].options.body), { flow_id: "flow", code: "code" });
+  app.config = { trakt: { instances: { second: { client_id: "client", access_token: "********", auth_method: "app" } } } };
+  app.response = { ok: true, data: { ok: true } };
+  await app.window.finishTraktOAuth();
+  assert.equal(panel.classList.contains("hidden"), true);
+  assert.equal(code.value, "");
+  assert.equal(app.requests.some(r => r.url.includes("/cancel")), false);
+});
+
+test("Trakt PKCE cancel targets the original profile and stops code submission", async () => {
+  const app = setup();
+  app.instance = "second";
+  app.node("trakt_auth_method").value = "app";
+  app.node("trakt_client_id").value = "client";
+  const panel = app.node("trakt_oauth_panel");
+  const code = app.node("trakt_oauth_code");
+  app.response = { ok: true, data: { ok: true, flow_id: "flow", authorize_url: "https://auth.trakt.tv/oauth/authorize?state=flow" } };
+  app.load("trakt");
+  await app.window.requestTraktPin();
+  code.value = "code";
+  app.instance = "default";
+  await app.window.finishTraktOAuth();
+  assert.equal(app.requests.length, 1);
+  app.window.cancelTraktOAuth();
+  assert.equal(app.requests[1].url, "/api/trakt/oauth/cancel?instance=second");
+  assert.deepEqual(JSON.parse(app.requests[1].options.body), { flow_id: "flow" });
+  assert.equal(panel.classList.contains("hidden"), true);
+  assert.equal(code.value, "");
+  app.instance = "second";
+  await app.window.finishTraktOAuth();
+  assert.equal(app.requests.length, 2);
+});
+
+test("Trakt own app still requires a Client ID", async () => {
+  const app = setup();
+  app.node("trakt_auth_method").value = "app";
+  app.node("trakt_client_id");
+  app.node("trakt_client_secret");
+  const hint = app.node("trakt_hint");
+  hint.style = {};
+  app.load("trakt");
+  app.window.updateTraktHint();
+  assert.equal(hint.classList.contains("hidden"), false);
+  await app.window.requestTraktPin();
+  assert.equal(app.requests.length, 0);
+});
+
 test("TMDb reconnect starts authorization even with a stored session", async () => {
   const app = setup();
   app.instance = "TMDB-P01";

@@ -84,6 +84,33 @@ def test_own_app_flow_keeps_client_secret(post):
     assert cfg["trakt"]["client_secret"] == "secret"
 
 
+@pytest.mark.parametrize("instance", ["default", "second"])
+def test_own_app_connects_and_refreshes_without_client_secret(post, instance):
+    block: dict[str, Any] = {"client_id": "own"}
+    cfg = {"trakt": block if instance == "default" else {"instances": {instance: block}}}
+    post.return_value = _response(200, {"user_code": "CODE", "device_code": "device"})
+
+    assert auth.PROVIDER.start(cfg, method="app", instance_id=instance)["ok"]
+    assert post.call_args.kwargs["json"] == {"client_id": "own"}
+
+    post.return_value = _response(200, {"access_token": "access", "refresh_token": "refresh", "expires_in": 604800})
+    assert auth.PROVIDER.finish(cfg, instance_id=instance)["ok"]
+    assert post.call_args.kwargs["json"] == {"code": "device", "client_id": "own"}
+    assert block["auth_method"] == "app"
+    assert block["client_id"] == "own"
+    assert block["access_token"] == "access"
+    assert "_pending_device" not in block
+
+    block["expires_at"] = 1
+    post.return_value = _response(200, {"access_token": "new", "refresh_token": "new-refresh", "expires_in": 604800})
+    assert auth.PROVIDER.refresh(cfg, instance_id=instance)["ok"]
+    assert post.call_args.kwargs["json"] == {
+        "refresh_token": "refresh", "client_id": "own", "grant_type": "refresh_token",
+    }
+    assert block["access_token"] == "new"
+    assert block["refresh_token"] == "new-refresh"
+
+
 def test_instances_keep_their_own_method(post):
     cfg: dict[str, Any] = {"trakt": {
         "client_id": "own", "client_secret": "secret", "access_token": "old", "refresh_token": "own-refresh", "expires_at": 1,

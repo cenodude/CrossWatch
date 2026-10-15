@@ -36,6 +36,7 @@
   var traktAuthError = "";
   var traktMethodTouched = false;
   var traktPoller = null;
+  var traktOAuth = null;
 
   function activeTraktMethod(block) {
     var m = _str(block && block.auth_method).toLowerCase();
@@ -63,6 +64,7 @@
   }
 
   function onTraktMethodChange(method) {
+    cancelTraktOAuth();
     traktMethodTouched = true;
     try { trqcStop(); } catch (_) {}
     setTraktMethodUI(method);
@@ -94,6 +96,7 @@
 
   function ensureTraktInstanceUI() {
     traktProfile?.ensureUI(() => {
+      cancelTraktOAuth();
       traktMethodTouched = false;
       void hydrateAuthFromConfig();
       try { startTraktTokenPoll(); } catch (_) {}
@@ -158,7 +161,7 @@
             var isDefault = (getTraktInstance() === "default");
       _markSecretField(_el("trakt_client_id"),     _str(t.client_id || (isDefault ? (cfg.trakt && cfg.trakt.client_id) : "")));
       _markSecretField(_el("trakt_client_secret"), _str(t.client_secret || (isDefault ? (cfg.trakt && cfg.trakt.client_secret) : "")));
-      traktConnected = !!_str(t.access_token || (getTraktInstance() === 'default' ? a.access_token : '')) && !hasTraktPendingDevice(t);
+      traktConnected = !!_str(t.access_token || (getTraktInstance() === 'default' ? a.access_token : '')) && !hasTraktPendingDevice(t) && !traktOAuth;
       traktAuthError = _str(t.auth_error) === "reconnect_required" ? "reconnect_required" : "";
       if (!traktMethodTouched) setTraktMethodUI(activeTraktMethod(t));
       _setVal("trakt_pin",           _str((t._pending_device && t._pending_device.user_code) || ''));
@@ -178,10 +181,9 @@
   function updateTraktHint() {
     try {
       var cidState = _readSecretField(_el("trakt_client_id"));
-      var secState = _readSecretField(_el("trakt_client_secret"));
       var hint = _el("trakt_hint");
       if (!hint) return;
-      var show = currentTraktMethod() === "app" && !(cidState.hasValue && secState.hasValue);
+      var show = currentTraktMethod() === "app" && !cidState.hasValue;
       hint.classList.toggle("hidden", !show);
       hint.style.display = show ? "" : "none";
     } catch (_) {}
@@ -289,6 +291,10 @@
       if (copyRedirect && !copyRedirect.__wired) { copyRedirect.addEventListener("click", () => window.copyTraktRedirect()); copyRedirect.__wired = true; }
       var connectBtn = _el("btn-connect-trakt");
       if (connectBtn && !connectBtn.__wired) { connectBtn.addEventListener("click", requestTraktPin); connectBtn.__wired = true; }
+      var finishOAuth = _el("btn-trakt-oauth-finish");
+      if (finishOAuth && !finishOAuth.__wired) { finishOAuth.addEventListener("click", finishTraktOAuth); finishOAuth.__wired = true; }
+      var cancelOAuth = _el("btn-trakt-oauth-cancel");
+      if (cancelOAuth && !cancelOAuth.__wired) { cancelOAuth.addEventListener("click", () => { cancelTraktOAuth(); void hydrateAuthFromConfig(); }); cancelOAuth.__wired = true; }
       var deleteBtn = _el("btn-delete-trakt");
       if (deleteBtn && !deleteBtn.__wired) { deleteBtn.addEventListener("click", traktDeleteToken); deleteBtn.__wired = true; }
 
@@ -358,23 +364,121 @@
     ensureTraktPoller().start({ intervalMs: 2000, deadlineMs: Number(deadlineMs) || 0 });
   }
 
+  function oauthStatus(message) {
+    var node = _el("trakt_oauth_status");
+    if (node) node.textContent = message;
+  }
+
+  function cancelTraktOAuth() {
+    var flow = traktOAuth;
+    traktOAuth = null;
+    if (flow?.timer) clearTimeout(flow.timer);
+    _el("trakt_oauth_panel")?.classList.add("hidden");
+    _el("trakt_oauth_link")?.removeAttribute("href");
+    _setVal("trakt_oauth_code", "");
+    if (flow?.id) {
+      void fetch(flow.api + "/cancel?instance=" + encodeURIComponent(flow.instance), {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ flow_id: flow.id }),
+      }).catch(() => {});
+    }
+  }
+
+  function oauthError(data) {
+    var messages = {
+      missing_client_id: "Enter your Trakt Client ID.",
+      invalid_flow: "This login is no longer active. Connect again.",
+      expired_flow: "This login expired. Connect again.",
+      invalid_code: "Paste the authorization code from Trakt.",
+      token_exchange_failed: "Trakt could not exchange this code. Check the code or connect again.",
+      network_error: "Could not reach Trakt. Try again.",
+      save_failed: "Could not save the connection. Try Finish connecting again.",
+    };
+    return messages[data?.error] || "Could not complete Trakt authorization. Try again.";
+  }
+
+  async function startTraktOAuth() {
+    var cid = _readSecretField(_el("trakt_client_id"));
+    if (!cid.hasValue) { _notify("Enter your Trakt Client ID"); return; }
+    cancelTraktOAuth();
+    trqcStop();
+    setTraktSuccess(false);
+    var flow = { instance: getTraktInstance(), api: "/api/trakt/oauth", id: "" };
+    traktOAuth = flow;
+    var button = _el("btn-connect-trakt");
+    if (button) { button.disabled = true; button.classList.add("busy"); }
+    var win = null;
+    try { win = window.open("about:blank", "_blank"); if (win) win.opener = null; } catch (_) {}
+    try {
+      var response = await fetch(flow.api + "/start?instance=" + encodeURIComponent(flow.instance), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(cid.value ? { client_id: cid.value } : {}),
+      });
+      var data = await response.json();
+      flow.id = data.flow_id || "";
+      if (traktOAuth !== flow || getTraktInstance() !== flow.instance) {
+        if (flow.id) void fetch(flow.api + "/cancel?instance=" + encodeURIComponent(flow.instance), {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ flow_id: flow.id }),
+        }).catch(() => {});
+        try { win?.close(); } catch (_) {}
+        return;
+      }
+      if (!response.ok || !data.ok || !flow.id || !data.authorize_url) throw new Error(oauthError(data));
+      var url = new URL(data.authorize_url);
+      if (url.origin !== "https://auth.trakt.tv" || url.pathname !== "/oauth/authorize") throw new Error("Invalid Trakt authorization URL");
+      _el("trakt_oauth_link")?.setAttribute("href", url.href);
+      _el("trakt_oauth_panel")?.classList.remove("hidden");
+      oauthStatus("Approve access on Trakt, then paste the authorization code here.");
+      if (win && !win.closed) win.location.href = url.href;
+      else _notify("Use Open Trakt authorization to continue.");
+      flow.timer = setTimeout(() => {
+        if (traktOAuth !== flow) return;
+        cancelTraktOAuth();
+        _notify("Trakt authorization expired. Connect again.");
+      }, Math.max(1, Number(data.expires_in) || 600) * 1000);
+    } catch (error) {
+      try { win?.close(); } catch (_) {}
+      if (traktOAuth === flow) { cancelTraktOAuth(); _notify(error.message || "Could not start Trakt authorization"); }
+    } finally {
+      if (button) { button.disabled = false; button.classList.remove("busy"); }
+    }
+  }
+
+  async function finishTraktOAuth() {
+    var flow = traktOAuth;
+    if (!flow?.id || flow.finishing || getTraktInstance() !== flow.instance) return;
+    var code = _str(_el("trakt_oauth_code")?.value);
+    if (!code) { oauthStatus("Paste the authorization code from Trakt."); return; }
+    flow.finishing = true;
+    var button = _el("btn-trakt-oauth-finish");
+    if (button) button.disabled = true;
+    oauthStatus("Connecting to Trakt...");
+    try {
+      var response = await fetch(flow.api + "/finish?instance=" + encodeURIComponent(flow.instance), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ flow_id: flow.id, code: code }),
+      });
+      var data = await response.json();
+      if (traktOAuth !== flow || getTraktInstance() !== flow.instance) return;
+      if (!response.ok || !data.ok) { oauthStatus(oauthError(data)); return; }
+      flow.id = "";
+      cancelTraktOAuth();
+      setTraktSuccess(true);
+      await hydrateAuthFromConfig();
+    } catch (_) {
+      if (traktOAuth === flow) oauthStatus("Could not complete Trakt authorization. Try again.");
+    } finally {
+      flow.finishing = false;
+      if (button) button.disabled = false;
+    }
+  }
+
   async function requestTraktPin() {
+    if (currentTraktMethod() === "app") return startTraktOAuth();
+    cancelTraktOAuth();
     try { trqcStop(); } catch (_) {}
     setTraktSuccess(false);
 
-    var cidEl = _el("trakt_client_id");
-    var secEl = _el("trakt_client_secret");
-    var cidState = _readSecretField(cidEl);
-    var secState = _readSecretField(secEl);
-
-    var method = currentTraktMethod();
-    var payload = { auth_method: method };
-    if (method === "app") {
-      if (!cidState.hasValue) { _notify('Enter your Trakt Client ID'); return; }
-      if (!secState.hasValue) { _notify('Enter your Trakt Client Secret'); return; }
-      if (cidState.value) payload.client_id = cidState.value;
-      if (secState.value) payload.client_secret = secState.value;
-    }
+    var payload = { auth_method: "pin" };
 
     var connectBtn = _el("btn-connect-trakt");
     if (connectBtn) { connectBtn.disabled = true; connectBtn.classList.add("busy"); }
@@ -440,6 +544,7 @@
 
   // Disconnect Trakt via backend endpoint
   async function traktDeleteToken() {
+    cancelTraktOAuth();
     var btn = _el('btn-delete-trakt') || document.querySelector('#sec-trakt .btn.danger');
     var msg = document.getElementById('trakt_msg');
     try { trqcStop(); } catch (_) {}
@@ -495,6 +600,8 @@
     window.hydrateAuthFromConfig        = hydrateAuthFromConfig;
     window.hydrateSecretsRaw            = hydrateAllSecretsRaw;
     window.requestTraktPin              = requestTraktPin;
+    window.finishTraktOAuth             = finishTraktOAuth;
+    window.cancelTraktOAuth             = cancelTraktOAuth;
     window.startTraktTokenPoll          = startTraktTokenPoll;
     window.traktDeleteToken             = traktDeleteToken;
   } catch (_) {}
