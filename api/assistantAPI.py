@@ -61,6 +61,51 @@ def _runner(request: Request) -> assistant.ToolRunner:
     return run
 
 
+def _proposal(action: str, args: dict[str, Any]) -> dict[str, Any] | str:
+    from cw_platform.value_coercion import coerce_bool
+    from services.snapshots import snapshot_manifest
+
+    def text(value: Any) -> str:
+        return str(value or "").strip()[:MAX_FIELD_CHARS]
+
+    action = text(action)
+    if action not in assistant.PROPOSAL_ACTIONS:
+        return "Unknown action. Valid actions: " + ", ".join(assistant.PROPOSAL_ACTIONS)
+    cfg = load_config() or {}
+    params: dict[str, str] = {}
+    if action == "run_pair":
+        pairs = [p for p in cfg.get("pairs") or [] if isinstance(p, dict) and coerce_bool(p.get("enabled", True), True)]
+        pair_id = text(args.get("pair_id"))
+        pair = next((p for p in pairs if pair_id and str(p.get("id") or "") == pair_id), None)
+        if pair is None:
+            options = "; ".join(f"{text(p.get('id'))}: {text(p.get('source'))} → {text(p.get('target'))}" for p in pairs)
+            return "Choose an enabled pair. Valid pairs: " + (options or "none")
+        params = {"pair_id": pair_id}
+        title = f"Run sync: {text(pair.get('source'))} → {text(pair.get('target'))}"
+    elif action == "create_capture":
+        provider = text(args.get("provider")).upper()
+        instance = text(args.get("instance")) or "default"
+        feature = text(args.get("feature")).lower()
+        manifest = snapshot_manifest(cfg)
+        valid = [
+            (row, text(inst.get("id")), text(feat))
+            for row in manifest
+            for inst in row.get("instances") or [] if inst.get("configured")
+            for feat, supported in (row.get("features") or {}).items() if supported
+        ]
+        match = next((row for row, inst, feat in valid if str(row.get("id") or "").upper() == provider and inst == instance and feat == feature), None)
+        if match is None:
+            options = "; ".join(f"{text(row.get('id')).upper()}/{inst}/{feat}" for row, inst, feat in valid)
+            return "Choose a configured capture target. Valid provider/instance/feature combinations: " + (options or "none")
+        params = {"provider": provider, "instance": instance, "feature": feature}
+        title = f"Create capture: {text(match.get('label') or provider)} {feature}"
+        if instance != "default":
+            title += f" ({instance})"
+    else:
+        title = "Update anime mapping" if action == "refresh_anime_mapping" else "Test all connections"
+    return {"action": action, "title": title[:MAX_FIELD_CHARS], "params": params}
+
+
 @router.get("/settings")
 def assistant_settings(request: Request) -> JSONResponse:
     blocked = _blocked(request)
@@ -147,11 +192,11 @@ def assistant_chat(request: Request, payload: dict[str, Any] = Body(default_fact
     tools = _tools()
     runner = _runner(request)
     try:
-        result = assistant.run_bounded(lambda: assistant.chat(conf, messages, tools, runner, scope), assistant.CHAT_DEADLINE_S)
+        result = assistant.run_bounded(lambda: assistant.chat(conf, messages, tools, runner, scope, propose=_proposal), assistant.CHAT_DEADLINE_S)
     except assistant.AssistantBusy as exc:
         return _reply({"ok": False, "error": exc.public}, 429)
     except assistant.AssistantError as exc:
         return _reply({"ok": False, "error": exc.public}, 502)
     finally:
         assistant.CHAT_SLOTS.release()
-    return _reply({"ok": True, "reply": result["reply"], "tools": result["tools"], "actions": result["actions"], "sources": result["sources"]})
+    return _reply({"ok": True, "reply": result["reply"], "tools": result["tools"], "actions": result["actions"], "sources": result["sources"], "proposals": result["proposals"]})

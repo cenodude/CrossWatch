@@ -58,6 +58,8 @@ MAX_CODE_PATHS = 10
 MAX_CODE_LINE_CHARS = 220
 MAX_CODE_READ_LINES = 200
 MAX_ACTIONS = 3
+PROPOSAL_ACTIONS = ("run_pair", "create_capture", "refresh_anime_mapping", "test_connections")
+MAX_PROPOSALS = 3
 MAX_SOURCES = 3
 ACTIONS = (
     "run_sync",
@@ -106,6 +108,9 @@ SYSTEM_PROMPT = (
     "When a next step inside CrossWatch would help, call suggest_actions with at most three actions. They appear as buttons "
     "the user can click. Buttons never replace your answer, always write the answer as well. "
     "Only suggest run_sync when a new sync would actually help. "
+    "You can propose run_pair, create_capture, refresh_anime_mapping and test_connections with propose_action. "
+    "Only propose when it directly helps, and still write the answer. Suggest a capture before risky changes. "
+    "The user must click Run on the card; never claim an action was done. "
     "Reply in the language of the latest user message. If that message is too short to tell, such as a greeting, reply in English. "
     "Say so when the tools do not show the cause."
 )
@@ -131,6 +136,21 @@ DOC_TOOLS: dict[str, tuple[str, dict[str, Any]]] = {
 }
 
 ACTION_TOOLS: dict[str, tuple[str, dict[str, Any]]] = {
+    "propose_action": (
+        "Propose an action as a card. The user sees it and decides whether to run it; you never execute it. "
+        "Only propose what directly helps, at most three per answer. Still write your answer.",
+        {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": list(PROPOSAL_ACTIONS)},
+                "pair_id": {"type": "string"},
+                "provider": {"type": "string"},
+                "instance": {"type": "string"},
+                "feature": {"type": "string"},
+            },
+            "required": ["action"],
+        },
+    ),
     "suggest_actions": (
         "Show buttons under your answer that take the user to the right place in CrossWatch. The user decides whether to click. "
         "run_sync starts a sync after the user confirms, the others only open a page.",
@@ -167,6 +187,7 @@ CODE_TOOLS: dict[str, tuple[str, dict[str, Any]]] = {
 }
 
 ToolRunner = Callable[[str, dict[str, Any]], str]
+ProposalValidator = Callable[[str, dict[str, Any]], dict[str, Any] | str]
 
 
 class AssistantError(Exception):
@@ -684,6 +705,7 @@ def chat(
     tools: dict[str, tuple[str, dict[str, Any]]],
     run_tool: ToolRunner,
     scope: str = "all",
+    propose: ProposalValidator | None = None,
 ) -> dict[str, Any]:
     deadline = time.monotonic() + CHAT_DEADLINE_S - GRACE_S
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -694,13 +716,14 @@ def chat(
     used: list[str] = []
     actions: list[str] = []
     sources: list[dict[str, str]] = []
+    proposals: list[dict[str, Any]] = []
 
     def finish(message: dict[str, Any]) -> dict[str, Any]:
         text = _text(message)
         if not text:
             convo.append({"role": "user", "content": NUDGE})
             text = _text(_complete(conf, convo, definitions, "none", deadline)) or NO_TEXT
-        return {"reply": text, "tools": used, "actions": actions, "sources": sources}
+        return {"reply": text, "tools": used, "actions": actions, "sources": sources, "proposals": proposals}
 
     for _round in range(MAX_ROUNDS):
         message = _complete(conf, convo, definitions, "auto", deadline)
@@ -717,6 +740,20 @@ def chat(
                 result = "The buttons are shown under your answer. Now write the answer itself."
             elif time.monotonic() > deadline:
                 result = "Skipped: out of time."
+            elif name == "propose_action":
+                try:
+                    proposal = propose(str(args.get("action") or ""), args) if propose else "Action proposals are unavailable."
+                except Exception:
+                    proposal = "Could not validate the action. Try again."
+                if isinstance(proposal, str):
+                    result = proposal
+                elif any(p["action"] == proposal["action"] and p["params"] == proposal["params"] for p in proposals):
+                    result = "This card is already shown. Now write the answer."
+                elif len(proposals) >= MAX_PROPOSALS:
+                    result = "At most three action cards can be shown. Now write the answer."
+                else:
+                    proposals.append(proposal)
+                    result = "Shown to the user as a card. The user decides. Now write the answer."
             else:
                 result = _run(name, args, run_tool, deadline)
                 used.append(name)
