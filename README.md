@@ -66,6 +66,7 @@ When you need more control, Interactive Sync lets you review changes before appl
 - Webhook scrobbling for supported providers.
 - Custom mappings for wrong matches, anime IDs, and split or combined episodes.
 - A local CW Tracker with snapshots of your server and tracker data.
+- Optional AI help: ask CrossWatch advice with your own AI model. It can suggest. You can also give AI apps like Claude, Codex or Cursor read-only access. Off until you set it up.
 
 ## Supported integrations
 
