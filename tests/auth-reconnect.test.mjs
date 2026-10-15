@@ -68,6 +68,7 @@ function setup() {
   };
   return {
     node, window, shared, profile, requests, pollers,
+    nodeValue: id => nodes.get(id)?.value,
     load: name => vm.runInContext(source(name), context),
     set config(value) { cfg = value; },
     set instance(value) { instance = value; },
@@ -190,80 +191,21 @@ for (const clientId of ["client", "********"]) {
       app.node("trakt_pin");
       const hint = app.node("trakt_hint");
       hint.style = {};
-      const panel = app.node("trakt_oauth_panel");
-      panel.classList.add("hidden");
-      const link = app.node("trakt_oauth_link");
-      app.response = { ok: true, data: { ok: true, flow_id: "flow", authorize_url: "https://auth.trakt.tv/oauth/authorize?state=flow", expires_in: 600 } };
+      app.response = { ok: true, data: { ok: true, user_code: "123456", expiresIn: 600 } };
       app.load("trakt");
       app.window.updateTraktHint();
       assert.equal(hint.classList.contains("hidden"), true);
       await app.window.requestTraktPin();
-      assert.deepEqual(app.requests.map(r => r.url), ["/api/trakt/oauth/start?instance=TRAKT-P01"]);
-      const expected = {};
+      assert.deepEqual(app.requests.map(r => r.url), ["/api/trakt/pin/new?instance=TRAKT-P01"]);
+      const expected = { auth_method: "app" };
       if (clientId === "client") expected.client_id = clientId;
+      if (secret === "legacy-secret") expected.client_secret = secret;
       assert.deepEqual(JSON.parse(app.requests[0].options.body), expected);
-      assert.equal(app.pollers.length, 0);
-      assert.equal(panel.classList.contains("hidden"), false);
-      assert.equal(link.getAttribute("href"), "https://auth.trakt.tv/oauth/authorize?state=flow");
+      assert.equal(app.pollers[0].isRunning(), true);
+      assert.equal(app.nodeValue("trakt_pin"), "123456");
     });
   }
 }
-
-test("Trakt PKCE finishes only after code exchange and preserves the selected profile", async () => {
-  const app = setup();
-  app.instance = "second";
-  app.node("trakt_auth_method").value = "app";
-  app.node("trakt_client_id").value = "client";
-  const panel = app.node("trakt_oauth_panel");
-  app.node("trakt_oauth_link");
-  const code = app.node("trakt_oauth_code");
-  const status = app.node("trakt_oauth_status");
-  const button = app.node("btn-trakt-oauth-finish");
-  app.response = { ok: true, data: { ok: true, flow_id: "flow", authorize_url: "https://auth.trakt.tv/oauth/authorize?state=flow" } };
-  app.load("trakt");
-  await app.window.requestTraktPin();
-  await app.window.finishTraktOAuth();
-  assert.equal(app.requests.length, 1);
-  assert.match(status.textContent, /Paste the authorization code/);
-  code.value = "code";
-  app.response = { ok: true, data: { ok: false, error: "token_exchange_failed" } };
-  await app.window.finishTraktOAuth();
-  assert.match(status.textContent, /could not exchange/);
-  assert.equal(panel.classList.contains("hidden"), false);
-  assert.equal(button.disabled, false);
-  assert.equal(app.requests[1].url, "/api/trakt/oauth/finish?instance=second");
-  assert.deepEqual(JSON.parse(app.requests[1].options.body), { flow_id: "flow", code: "code" });
-  app.config = { trakt: { instances: { second: { client_id: "client", access_token: "********", auth_method: "app" } } } };
-  app.response = { ok: true, data: { ok: true } };
-  await app.window.finishTraktOAuth();
-  assert.equal(panel.classList.contains("hidden"), true);
-  assert.equal(code.value, "");
-  assert.equal(app.requests.some(r => r.url.includes("/cancel")), false);
-});
-
-test("Trakt PKCE cancel targets the original profile and stops code submission", async () => {
-  const app = setup();
-  app.instance = "second";
-  app.node("trakt_auth_method").value = "app";
-  app.node("trakt_client_id").value = "client";
-  const panel = app.node("trakt_oauth_panel");
-  const code = app.node("trakt_oauth_code");
-  app.response = { ok: true, data: { ok: true, flow_id: "flow", authorize_url: "https://auth.trakt.tv/oauth/authorize?state=flow" } };
-  app.load("trakt");
-  await app.window.requestTraktPin();
-  code.value = "code";
-  app.instance = "default";
-  await app.window.finishTraktOAuth();
-  assert.equal(app.requests.length, 1);
-  app.window.cancelTraktOAuth();
-  assert.equal(app.requests[1].url, "/api/trakt/oauth/cancel?instance=second");
-  assert.deepEqual(JSON.parse(app.requests[1].options.body), { flow_id: "flow" });
-  assert.equal(panel.classList.contains("hidden"), true);
-  assert.equal(code.value, "");
-  app.instance = "second";
-  await app.window.finishTraktOAuth();
-  assert.equal(app.requests.length, 2);
-});
 
 test("Trakt own app still requires a Client ID", async () => {
   const app = setup();

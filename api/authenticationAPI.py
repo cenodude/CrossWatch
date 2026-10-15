@@ -3306,34 +3306,6 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return {"ok": False, "error": "disconnect_failed", "instance": inst}
 
 
-    @app.post("/api/trakt/oauth/start", tags=["auth"])
-    def api_trakt_oauth_start(payload: dict[str, Any] = Body(default_factory=dict), instance: str = Query("default")) -> dict[str, Any]:
-        from providers.auth import _auth_TRAKT as trakt_auth
-
-        cid = str(payload.get("client_id") or "").strip()
-        if _looks_masked_secret(cid):
-            cid = ""
-        return trakt_auth.start_oauth(client_id=cid, instance_id=instance)
-
-    @app.post("/api/trakt/oauth/finish", tags=["auth"])
-    def api_trakt_oauth_finish(payload: dict[str, Any] = Body(default_factory=dict), instance: str = Query("default")) -> dict[str, Any]:
-        from providers.auth import _auth_TRAKT as trakt_auth
-
-        try:
-            result = trakt_auth.finish_oauth(code=str(payload.get("code") or ""), flow_id=str(payload.get("flow_id") or ""), instance_id=instance)
-            if result.get("ok"):
-                _probe_bust("trakt")
-            return result
-        except Exception as e:
-            _safe_log(log_fn, "TRAKT", f"[TRAKT] OAuth finish failed: {type(e).__name__}")
-            return {"ok": False, "error": "internal"}
-
-    @app.post("/api/trakt/oauth/cancel", tags=["auth"])
-    def api_trakt_oauth_cancel(payload: dict[str, Any] = Body(default_factory=dict), instance: str = Query("default")) -> dict[str, Any]:
-        from providers.auth import _auth_TRAKT as trakt_auth
-
-        return trakt_auth.cancel_oauth(flow_id=str(payload.get("flow_id") or ""), instance_id=instance)
-
     # TRAKT
     def trakt_request_pin(instance_id: Any, method: Optional[str] = None) -> dict[str, Any]:
         prov = _import_provider("providers.auth._auth_TRAKT")
@@ -3511,15 +3483,12 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         
     @app.post("/api/trakt/token/delete", tags=["auth"])
     def api_trakt_token_delete(instance: str = Query("default")) -> Any:
-        from providers.auth import _auth_TRAKT as trakt_auth
-
         try:
             inst = normalize_instance_id(instance)
             cfg = load_config()
             conflict = usage_conflict_response(cfg, "trakt", inst)
             if conflict is not None:
                 return conflict
-            trakt_auth.cancel_oauth(instance_id=inst)
             tr = ensure_instance_block(cfg, "trakt", inst)
             tr["access_token"] = ""
             tr["refresh_token"] = ""
