@@ -453,7 +453,7 @@ export default {
       const conf = await api("/settings");
       if (view.root !== root) return;
       view.ready = !!conf.ready;
-      if (view.ready) $("#as-sub", root).textContent = `Read-only help, using ${conf.model}`;
+      if (view.ready) $("#as-sub", root).textContent = `Help and suggested actions, using ${conf.model}`;
     } catch {}
     if (view.root !== root) return;
     view.loaded = true;
