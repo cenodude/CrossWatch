@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from typing import Any, Callable
+from functools import partial
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
@@ -34,6 +35,9 @@ INSTRUCTIONS = (
     "To diagnose a problem start with get_health and get_last_sync, then use list_log_sessions and read_logs to find the cause, "
     "and get_config or list_pairs to check how things are set up. "
     "For one missing or wrong item use search_events, get_item_events and get_analyzer_problems. "
+    "Use list_sync_context and search_sync_items for saved account state, explain_sync_item for item evidence, "
+    "list_saved_mappings and list_anime_overrides for user rules, compare_captures for saved changes, "
+    "get_scheduler_details for scheduling and list_sync_reviews for approvals. Saved state is not live provider state. "
     "Documentation: https://wiki.crosswatch.app/ (page index: https://wiki.crosswatch.app/llms.txt, "
     "docs MCP server: https://wiki.crosswatch.app/~gitbook/mcp)."
 )
@@ -428,6 +432,12 @@ TOOLS: dict[str, tuple[str, str, dict[str, Any], Handler]] = {
         _tool_captures,
     ),
 }
+
+
+from services import assistant_tools as _shared_tools
+
+TOOLS.update({name: (name.replace("_", " ").title(), description, schema, partial(_shared_tools.run, name))
+              for name, (description, schema) in _shared_tools.TOOLS.items()})
 
 
 def _tool_list() -> list[dict[str, Any]]:

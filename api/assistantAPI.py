@@ -3,10 +3,11 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import json
 from typing import Any
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Body, Request
+from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from cw_platform.config_base import load_config, update_config
@@ -48,7 +49,7 @@ def _tools() -> dict[str, tuple[str, dict[str, Any]]]:
     return {name: (description, schema) for name, (_title, description, schema, _handler) in TOOLS.items()}
 
 
-def _runner(request: Request) -> assistant.ToolRunner:
+def _runner(request: Request, evidence: list | None = None) -> assistant.ToolRunner:
     from api import mcpAPI
 
     def run(name: str, args: dict[str, Any]) -> str:
@@ -56,6 +57,21 @@ def _runner(request: Request) -> assistant.ToolRunner:
             result = mcpAPI._call_tool(request, {"name": name, "arguments": args})
         except mcpAPI.RpcError as exc:
             return exc.message
+        if evidence is not None and not result.get("isError"):
+            from services.assistant_context import references
+            text = str(result["content"][0]["text"])
+            try:
+                output = json.loads(text)
+            except ValueError:
+                output = None
+            if not isinstance(output, str) and (output is not None or name in ("read_logs", "read_log_context")):
+                try:
+                    refs = references(request, name, args, output)
+                except HTTPException:
+                    refs = []
+                for ref in refs:
+                    if ref not in evidence and len(evidence) < 8:
+                        evidence.append(ref)
         return str(result["content"][0]["text"])
 
     return run
@@ -172,6 +188,35 @@ def assistant_models(request: Request, payload: dict[str, Any] = Body(default_fa
     return _reply({"ok": True, "models": models})
 
 
+@router.post("/test-model")
+def assistant_test_model(request: Request, payload: dict[str, Any] = Body(default_factory=dict)) -> JSONResponse:
+    blocked = _blocked(request)
+    if blocked is not None:
+        return blocked
+    conf = assistant.settings(load_config() or {})
+    base_url = str(payload.get("base_url") or "").strip().rstrip("/")[:MAX_FIELD_CHARS] or conf["base_url"]
+    parsed = urlparse(base_url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return _reply({"ok": False, "error": "The address must start with http:// or https://"}, 400)
+    model = str(payload.get("model") or "").strip()[:MAX_FIELD_CHARS]
+    if not model:
+        return _reply({"ok": False, "error": "Choose a model first"}, 400)
+    key = str(payload.get("api_key") or "").strip()[:MAX_FIELD_CHARS]
+    if not key and base_url == conf["base_url"]:
+        key = conf["api_key"]
+    if not assistant.CHAT_SLOTS.acquire(blocking=False):
+        return _reply({"ok": False, "error": assistant.BUSY}, 429)
+    try:
+        result = assistant.run_bounded(lambda: assistant.test_model({"base_url": base_url, "model": model, "api_key": key}), assistant.MODEL_TEST_TIMEOUT_S)
+    except assistant.AssistantBusy as exc:
+        return _reply({"ok": False, "error": exc.public}, 429)
+    except assistant.AssistantError as exc:
+        return _reply({"ok": False, "error": exc.public}, 502)
+    finally:
+        assistant.CHAT_SLOTS.release()
+    return _reply({"ok": True, **result})
+
+
 @router.post("/chat")
 def assistant_chat(request: Request, payload: dict[str, Any] = Body(default_factory=dict)) -> JSONResponse:
     blocked = _blocked(request)
@@ -190,13 +235,17 @@ def assistant_chat(request: Request, payload: dict[str, Any] = Body(default_fact
     if not assistant.CHAT_SLOTS.acquire(blocking=False):
         return _reply({"ok": False, "error": assistant.BUSY}, 429)
     tools = _tools()
-    runner = _runner(request)
+    evidence: list = []
+    runner = _runner(request, evidence)
     try:
-        result = assistant.run_bounded(lambda: assistant.chat(conf, messages, tools, runner, scope, propose=_proposal), assistant.CHAT_DEADLINE_S)
+        from services.assistant_context import validate
+        result = assistant.run_bounded(lambda: assistant.chat(conf, messages, tools, runner, scope, propose=_proposal, context=validate(request, body.get("context"))), assistant.CHAT_DEADLINE_S)
+    except HTTPException as exc:
+        return _reply({"ok": False, "error": str(exc.detail)}, exc.status_code)
     except assistant.AssistantBusy as exc:
         return _reply({"ok": False, "error": exc.public}, 429)
     except assistant.AssistantError as exc:
         return _reply({"ok": False, "error": exc.public}, 502)
     finally:
         assistant.CHAT_SLOTS.release()
-    return _reply({"ok": True, "reply": result["reply"], "tools": result["tools"], "actions": result["actions"], "sources": result["sources"], "proposals": result["proposals"]})
+    return _reply({"ok": True, "reply": result["reply"], "tools": result["tools"], "actions": result["actions"], "sources": result["sources"], "proposals": result["proposals"], **({"evidence": evidence} if evidence else {})})

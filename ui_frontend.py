@@ -1938,10 +1938,25 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
                             <div class="cw-ai-field">
                               <label for="assistant_model">Model</label>
                               <div class="cw-ai-inline">
-                                <input id="assistant_model" type="text" autocomplete="off" spellcheck="false" list="assistant_models" placeholder="Pick or type a model">
+                                <input id="assistant_model" type="text" list="assistant_models" autocomplete="off" spellcheck="false" placeholder="Search or type a model name">
                                 <datalist id="assistant_models"></datalist>
                                 <button type="button" class="btn" id="btn-assistant-models"><span class="material-symbols-rounded" aria-hidden="true">refresh</span><span>Load models</span></button>
                               </div>
+                              <details>
+                                <summary>Model options</summary>
+                                <div class="cw-ai-field">
+                                  <label for="assistant_models_all">Model list</label>
+                                  <select id="assistant_models_all">
+                                    <option value="chat">Chat models</option>
+                                    <option value="all">All models</option>
+                                  </select>
+                                  <small>The chat filter uses model names; compatibility can vary.</small>
+                                  <div class="cw-ai-inline">
+                                    <button type="button" class="btn" id="btn-assistant-test">Test model</button>
+                                  </div>
+                                  <small id="assistant_model_test" role="status">Optional check. Uses two short requests; provider charges may apply.</small>
+                                </div>
+                              </details>
                             </div>
                           </div>
                           <div class="cw-ai-status" id="assistant_state" role="status"></div>
@@ -1956,7 +1971,7 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
                         <div class="cw-ai-panel" id="mcp_access">
                           <div class="cw-ai-panel-head">
                             <div>
-                              <h4>Use your own AI app</h4>
+                              <h4>Use your own AI app (MCP server)</h4>
                               <p>Connect an AI app on your computer, such as Claude, Codex or Cursor, to this CrossWatch.</p>
                             </div>
                           </div>

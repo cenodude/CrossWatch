@@ -271,7 +271,7 @@ html:not([data-cw-assistant="on"]) [data-ai-analyze] {
   line-height: 1.4;
 }
 
-#page-settings .cw-ai-field input {
+#page-settings .cw-ai-field :is(input:not([type="checkbox"]), select) {
   box-sizing: border-box;
   width: 100%;
   min-width: 0;

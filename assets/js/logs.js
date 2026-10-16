@@ -63,7 +63,7 @@ const LogsPage = {
     let channel = ['sync','watcher','debug'].includes(route.get('channel')) ? route.get('channel') : 'sync';
     let pairId = route.get('pairId') || '', latestRequested = route.get('latest') === '1', pairs = [], latestRunId = '';
     if (channel === 'watcher') pairId = '';
-    let runId = route.get('runId') || '', mode = runId || latestRequested ? 'saved' : 'live', sid = '', sessions = [], current = null;
+    let runId = route.get('runId') || '', mode = runId || latestRequested || route.get('sessionId') ? 'saved' : 'live', sid = route.get('sessionId') || '', sessions = [], current = null;
     let alive = true, busy = false, sequence = 0, timer, searchTimer, offset = 0, total = 0, follow = mode === 'live', rows = [], matchIndex = -1;
     let query = '', level = '', provider = '', listPage = 0, showingRuns = mode === 'saved', controller = null, pendingMatch = null;
     let readable = true;
@@ -92,6 +92,7 @@ const LogsPage = {
       const params = new URLSearchParams({channel});
       if(pairId)params.set('pairId',pairId);
       if(runId)params.set('runId',runId);
+      if(sid && !showingRuns)params.set('sessionId',sid);
       if(latestRequested)params.set('latest','1');
       if(route.has('returnTo'))params.set('returnTo',route.get('returnTo'));
       window.history.replaceState(null,'','#logs?'+params);
@@ -214,7 +215,8 @@ const LogsPage = {
         $('[data-storage-meter]').value = percent;
         $('[data-storage-meter]').setAttribute('aria-valuetext', `${storageText} used`);
         if (showingRuns) {
-          if (runId && sessions.length) { sid=sessions[0].id; showingRuns=false; }
+          if (sid && sessions.some(session=>session.id===sid)) { showingRuns=false; }
+          else if (runId && sessions.length) { sid=sessions[0].id; showingRuns=false; }
           else {renderRuns(); connection('Saved on this server', 'dns'); return;}
         }
         if (mode === 'live') {

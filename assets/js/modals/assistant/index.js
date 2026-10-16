@@ -18,6 +18,14 @@ const SCOPES = [
   ["settings", "Settings"],
 ];
 const TOOL_LABELS = {
+  compare_captures: "capture changes",
+  get_scheduler_details: "scheduler",
+  list_sync_reviews: "pending reviews",
+  list_sync_context: "profiles and pairs",
+  search_sync_items: "stored sync items",
+  explain_sync_item: "item sync evidence",
+  list_anime_overrides: "custom anime mappings",
+  list_saved_mappings: "mappings and blocks",
   get_health: "health",
   get_last_sync: "last sync",
   list_pairs: "sync pairs",
@@ -45,6 +53,17 @@ function goSettings(pane) {
 }
 
 export const ACTIONS = {
+  open_anime_overrides: { label: "Anime ID custom mappings", icon: "animation", run: () => window.openAnimeOverridesModal?.() },
+  open_mappings: {
+    label: "Mappings & blocks",
+    icon: "link",
+    run: async () => {
+      try {
+        const mappings = await import(`/assets/js/editor/saved-mappings.js?v=${encodeURIComponent(window.APP_VERSION || "1")}`);
+        mappings.open(document.activeElement);
+      } catch { toast("Could not open mappings and blocks"); }
+    },
+  },
   run_sync: {
     label: "Run sync",
     icon: "sync",
@@ -65,7 +84,7 @@ export const ACTIONS = {
 };
 
 const history = [];
-const view = { root: null, ready: false, loaded: false, scope: "all" };
+const view = { root: null, ready: false, loaded: false, scope: "all", context: {} };
 let busy = false;
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -176,6 +195,27 @@ export async function runProposal(proposal) {
     proposalState(proposal, "done", message);
   } catch (err) {
     proposalState(proposal, "failed", String(err?.message || "The action failed"));
+  }
+}
+
+export function evidenceButtons(evidence, messageIndex) {
+  const kinds = new Set(["log", "event", "mappings", "anime", "analyzer", "captures", "scheduling", "reviews"]);
+  return `<div class="as-actions">${(Array.isArray(evidence) ? evidence : []).slice(0, 8).map((ref, index) =>
+    ref && kinds.has(ref.kind) ? `<button class="as-action" type="button" data-as-evidence="${messageIndex}:${index}">${esc(ref.label)}</button>` : "").join("")}</div>`;
+}
+
+export function openEvidence(ref) {
+  if (!ref) return;
+  if (ref.kind === "log" && typeof ref.session_id === "string" && ["sync", "watcher", "debug"].includes(ref.channel)) window.openLogs?.({sessionId: ref.session_id, channel: ref.channel, runId: ref.run_id});
+  else if (ref.kind === "event" && Number.isSafeInteger(ref.group_id) && ref.group_id > 0) window.openEvents?.({groupId: ref.group_id, visibility: "all"});
+  else if (ref.kind === "mappings") ACTIONS.open_mappings.run();
+  else if (ref.kind === "anime") ACTIONS.open_anime_overrides.run();
+  else if (ref.kind === "analyzer") window.openAnalyzer?.();
+  else if (ref.kind === "captures") window.showTab?.("snapshots");
+  else if (ref.kind === "scheduling") goSettings("scheduling");
+  else if (ref.kind === "reviews" && typeof ref.session_id === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(ref.session_id)) {
+    window.location.hash = `interactive_sync?session=${encodeURIComponent(ref.session_id)}`;
+    window.showTab?.("interactive_sync");
   }
 }
 
@@ -332,7 +372,7 @@ function messageHtml(item, index) {
   const meta = `<div class="as-meta"><strong>CrossWatch</strong><span>${esc(when(item.at))}</span></div>`;
   if (item.error) return botCard(`${meta}<div class="as-answer"><p>${esc(item.content)}</p></div>`, " as-error");
   const note = lookedAt(item.tools);
-  return botCard(`${meta}<div class="as-answer">${renderAnswer(item.content)}</div>${note ? `<small class="as-looked">${esc(note)}</small>` : ""}${sourceLinks(item.sources)}${actionButtons(item.actions)}<div class="as-proposals" data-as-message="${index}">${proposalCards(item.proposals)}</div>`);
+  return botCard(`${meta}<div class="as-answer">${renderAnswer(item.content)}</div>${note ? `<small class="as-looked">${esc(note)}</small>` : ""}${sourceLinks(item.sources)}${actionButtons(item.actions)}${evidenceButtons(item.evidence, index)}<div class="as-proposals" data-as-message="${index}">${proposalCards(item.proposals)}</div>`);
 }
 
 function emptyHtml() {
@@ -403,9 +443,9 @@ async function ask(question) {
   setBusy(true);
   try {
     const messages = history.filter((item) => !item.error).map(({ role, content }) => ({ role, content }));
-    const data = await api("/chat", { messages, scope: view.scope });
+    const data = await api("/chat", { messages, scope: view.scope, context: view.context });
     const proposals = (Array.isArray(data.proposals) ? data.proposals : []).filter(p => p && Object.hasOwn(PROPOSALS, p.action)).slice(0, 3).map(p => ({ action: p.action, title: p.title, params: p.params, status: "ready" }));
-    history.push({ role: "assistant", content: data.reply || "The model gave an empty answer.", tools: data.tools || [], actions: data.actions || [], sources: data.sources || [], proposals, at: Date.now() });
+    history.push({ role: "assistant", content: data.reply || "The model gave an empty answer.", tools: data.tools || [], actions: data.actions || [], sources: data.sources || [], evidence: data.evidence || [], proposals, at: Date.now() });
   } catch (err) {
     history.push({ role: "assistant", content: err?.message || "Something went wrong.", error: true, at: Date.now() });
   }
@@ -415,6 +455,7 @@ async function ask(question) {
 
 export default {
   async mount(root, props = {}) {
+    view.context = props.context && typeof props.context === "object" ? {...props.context} : {};
     await injectCss();
     root.closest(".cx-modal-shell")?.classList.add("cw-assistant-shell");
     root.innerHTML = `
@@ -438,6 +479,7 @@ export default {
                 <button class="as-send" type="submit" id="as-send" disabled><span class="material-symbols-rounded" aria-hidden="true">send</span><span>Send</span></button>
               </div>
             </form>
+            ${view.context.page ? `<small class="as-looked">Opened from ${esc(view.context.page)}${view.context.item_key ? " · selected item" : ""}${view.context.pair_id ? " · selected pair" : ""}</small>` : ""}
           </div>
           <div class="as-log" id="as-log" aria-live="polite"></div>
         </div>
@@ -462,6 +504,13 @@ export default {
 
     root.addEventListener("click", (event) => {
       const target = event.target;
+      const evidence = target.closest("[data-as-evidence]");
+      if (evidence) {
+        const [message, index] = evidence.getAttribute("data-as-evidence").split(":").map(Number);
+        const ref = history[message]?.evidence?.[index];
+        if (ref) { closeModal(); openEvidence(ref); }
+        return;
+      }
       const run = target.closest("[data-as-proposal-run]");
       const dismiss = target.closest("[data-as-proposal-dismiss]");
       if (run || dismiss) {

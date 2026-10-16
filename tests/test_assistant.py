@@ -105,6 +105,279 @@ def test_chat_endpoint_returns_proposals_without_executing_actions(gated, monkey
     assert res.json()["tools"] == []
 
 
+@pytest.mark.parametrize("entry_type", ["mapping", "block"])
+def test_assistant_reads_editor_mappings_and_offers_overview(gated, monkeypatch, entry_type) -> None:
+    from api import editorAPI
+
+    client = _client()
+    admin = _headers(gated)
+    client.post("/api/assistant/settings", json={"enabled": True, "base_url": BASE, "model": "m"}, headers=admin)
+    calls = []
+
+    def listing(request, **kwargs):
+        calls.append((request, kwargs))
+        return {"ok": True, "items": [{"key": "tmdb:123", "corrected": {"title": "Monster"}, "scope_label": "All pairs"}], "total": 30, "offset": kwargs["offset"], "limit": kwargs["limit"]}
+
+    monkeypatch.setattr(editorAPI, "api_saved_mappings", listing)
+    provider = Provider(
+        _answer(calls=[_call("m1", "list_saved_mappings", entry_type=entry_type, provider="SIMKL", offset=2, limit=999)]),
+        _answer(calls=[_call("a1", "suggest_actions", actions=["open_mappings"])]),
+        _answer("Monster applies to all pairs. This is part of a longer list."),
+    )
+    monkeypatch.setattr(assistant.requests, "post", provider.post)
+    result = client.post("/api/assistant/chat", json={"messages": [{"role": "user", "content": "Show my mappings and blocks"}]}, headers=admin).json()
+    assert result["tools"] == ["list_saved_mappings"]
+    assert result["actions"] == ["open_mappings"]
+    assert calls[0][0].state.cw_user["is_admin"]
+    assert calls[0][1] == {"q": "", "provider": "SIMKL", "instance": "", "feature": "", "pair_id": "", "entry_type": entry_type, "offset": 2, "limit": 25, "user_profile": ""}
+    assert "Monster" in provider.requests[1]["body"]["messages"][-1]["content"]
+    assert "list_saved_mappings" in {t["function"]["name"] for t in provider.requests[0]["body"]["tools"]}
+
+
+def test_mapping_tool_preserves_editor_access_checks_and_rejects_invalid_arguments(monkeypatch) -> None:
+    from api import assistantAPI, editorAPI
+    from starlette.requests import Request
+
+    request = Request({"type": "http"})
+    request.state.cw_user = {"is_admin": False, "permissions": {}}
+    monkeypatch.setattr(editorAPI, "load_config", lambda: {})
+    run = assistantAPI._runner(request)
+    assert run("list_saved_mappings", {"entry_type": "mapping"}) == "Write permission required"
+    assert run("list_saved_mappings", {"entry_type": "delete"}) == "Choose entry_type mapping or block."
+    assert run("list_saved_mappings", {"entry_type": "block", "offset": "bad"}) == "offset and limit must be integers."
+
+
+def test_assistant_lists_custom_anime_mappings(gated, monkeypatch) -> None:
+    from cw_platform.anime_mapping import overrides
+    from api import assistantAPI
+    from starlette.requests import Request
+
+    rows = [{"id": "a", "enabled": True, "title": "Monster", "match_provider": "tvdb", "match_id": "74599", "match_season": 1,
+             "target_namespace": "anilist", "target_id": "19", "episode_from": 1, "episode_to": 74, "episode_start_at": 1},
+            {"id": "b", "enabled": False, "title": "Other"}]
+    monkeypatch.setattr(overrides, "load_overrides", lambda: rows)
+    client = _client()
+    admin = _headers(gated)
+    client.post("/api/assistant/settings", json={"enabled": True, "base_url": BASE, "model": "m"}, headers=admin)
+    provider = Provider(
+        _answer(calls=[_call("m", "list_anime_overrides")]),
+        _answer(calls=[_call("a", "suggest_actions", actions=["open_anime_overrides"])]),
+        _answer("Monster is enabled; Other is disabled."),
+    )
+    monkeypatch.setattr(assistant.requests, "post", provider.post)
+    result = client.post("/api/assistant/chat", json={"messages": [{"role": "user", "content": "List my Anime ID custom mappings"}]}, headers=admin).json()
+    assert result["tools"] == ["list_anime_overrides"]
+    assert result["actions"] == ["open_anime_overrides"]
+    assert json.loads(provider.requests[1]["body"]["messages"][-1]["content"])["items"] == rows
+    assert "list_anime_overrides" in {t["function"]["name"] for t in provider.requests[0]["body"]["tools"]}
+    run = assistantAPI._runner(Request({"type": "http"}))
+    filtered = json.loads(run("list_anime_overrides", {"q": "MONSTER", "limit": 999}))
+    assert filtered["items"] == rows[:1]
+    assert filtered["total"] == 1 and filtered["limit"] == 25
+    page = json.loads(run("list_anime_overrides", {"offset": 1, "limit": 1}))
+    assert page["items"] == rows[1:] and page["total"] == 2
+    assert json.loads(run("list_anime_overrides", {"q": "missing"}))["items"] == []
+    assert run("list_anime_overrides", {"limit": "bad"}) == "offset and limit must be integers."
+
+
+@pytest.mark.parametrize("first,second,expected", [
+    ({"content": "Hello"}, None, {"compatible": False, "tool_call": False, "text_reply": True}),
+    ({"tool_calls": [{"id": "t", "function": {"name": "wrong"}}]}, None, {"compatible": False, "tool_call": False, "text_reply": False}),
+    ({"tool_calls": [{"id": "t", "function": {"name": "compatibility_check", "arguments": "{}"}}]}, {"content": "crosswatch-ready"}, {"compatible": True, "tool_call": True, "text_reply": True}),
+    ({"tool_calls": [{"id": "t", "function": {"name": "compatibility_check", "arguments": "{}"}}]}, {"content": ""}, {"compatible": False, "tool_call": True, "text_reply": False}),
+])
+def test_model_compatibility_probe(first, second, expected, monkeypatch) -> None:
+    calls = []
+    answers = iter([first, second])
+
+    def complete(conf, messages, tools, choice, deadline):
+        calls.append(copy.deepcopy((messages, tools, choice, deadline)))
+        return next(answers)
+
+    monkeypatch.setattr(assistant, "_complete", complete)
+    assert assistant.test_model({"model": "test"}) == expected
+    assert calls[0][2] == "required"
+    assert [t["function"]["name"] for t in calls[0][1]] == ["compatibility_check"]
+    assert len(calls[0][0]) == 1
+    if second is not None:
+        assert calls[1][2] == "none"
+        assert calls[1][3] == calls[0][3]
+        assert calls[1][0][-1] == {"role": "tool", "tool_call_id": "t", "content": "crosswatch-ready"}
+
+
+def test_model_probe_endpoint_keeps_settings_and_keys_scoped(gated, monkeypatch) -> None:
+    from api import assistantAPI
+
+    client = _client()
+    admin = _headers(gated)
+    client.post("/api/assistant/settings", json={"enabled": True, "base_url": BASE, "model": "saved", "api_key": KEY}, headers=admin)
+    before = copy.deepcopy(assistantAPI.load_config())
+    seen = []
+    monkeypatch.setattr(assistant, "test_model", lambda conf: seen.append(conf) or {"compatible": True, "tool_call": True, "text_reply": True})
+    for body in [{"model": "candidate"}, {"model": "candidate", "base_url": "http://local.test/v1"}]:
+        res = client.post("/api/assistant/test-model", json=body, headers=admin)
+        assert res.status_code == 200 and res.json()["compatible"]
+    assert seen[0] == {"base_url": BASE, "model": "candidate", "api_key": KEY}
+    assert seen[1]["api_key"] == ""
+    assert assistantAPI.load_config() == before
+    assert client.post("/api/assistant/test-model", json={}, headers=admin).status_code == 400
+    assert client.post("/api/assistant/test-model", json={"model": "m", "base_url": "file:///tmp"}, headers=admin).status_code == 400
+    assert client.post("/api/assistant/test-model", json={"model": "m"}).status_code in (401, 403)
+
+
+@pytest.fixture()
+def assistant_state_data(monkeypatch):
+    from services import assistant_state as state
+    from starlette.requests import Request
+
+    cfg = {"pairs": [{"id": "one", "source": "PLEX", "target": "TRAKT", "source_instance": "home", "target_instance": "default", "features": {"watchlist": True, "ratings": False}}]}
+    request = Request({"type": "http"})
+    request.state.cw_user = {"is_admin": True}
+    monkeypatch.setattr(state, "load_config", lambda: cfg)
+    monkeypatch.setattr(state, "list_user_profiles", lambda cfg: [{"id": PROFILE_ID, "label": "Family", "secret": KEY}])
+    data = {"last_sync_epoch": 100, "providers": {"PLEX": {"instances": {"home": {"watchlist": {"baseline": {"items": {
+        "tmdb:1": {"title": "Film One", "ids": {"tmdb": "1", "secret": KEY}, "token": KEY, "poster": "https://private.test"},
+        "tmdb:2": {"title": "Film Two"}}}}}, "other": {"watchlist": {"baseline": {"items": {"private": {"title": "Other account"}}}}}}},
+        "TRAKT": {"watchlist": {"baseline": {"items": {}}}}}}
+    monkeypatch.setattr(state.state_db, "load_state_features", lambda *args: data)
+    monkeypatch.setattr(state.state_db, "load_pair_state", lambda *args: {"providers": {}, "last_sync_epoch": None})
+    monkeypatch.setattr(state.state_db, "feature_inventory", lambda *args: [{"provider": "PLEX", "instance": "home", "feature": "watchlist", "updated_at": 123}])
+    return state, cfg, request
+
+
+def test_assistant_state_discovery_and_search_are_scoped(assistant_state_data):
+    state, cfg, request = assistant_state_data
+    context = state.run("list_sync_context", request, {})
+    assert context["profiles"] == [{"id": PROFILE_ID, "label": "Family"}]
+    assert context["pairs"][0]["features"] == ["watchlist"]
+    result = state.run("search_sync_items", request, {"pair_id": "one", "feature": "watchlist", "query": "FILM", "offset": 1, "limit": 1})
+    source = result["sides"][0]["evidence"]
+    assert source[0]["total"] == 2 and source[0]["items"][0]["key"] == "tmdb:2"
+    assert source[0]["stored_at_ns"] == 123
+    assert source[1]["available"] is False and source[1]["last_sync_epoch"] is None
+    assert result["sides"][1]["evidence"][0]["available"] is True
+    full = state.run("search_sync_items", request, {"pair_id": "one", "feature": "watchlist", "limit": 999})
+    assert KEY not in json.dumps(full) and "Other account" not in json.dumps(full) and "private.test" not in json.dumps(full)
+
+
+@pytest.mark.parametrize("args", [{}, {"pair_id": "missing", "feature": "watchlist"}, {"pair_id": "one", "feature": "ratings"}, {"pair_id": "one", "feature": "watchlist", "profile_id": "wrong"}, {"pair_id": "one", "feature": "watchlist", "offset": "bad"}])
+def test_assistant_state_rejects_invalid_context_before_reading(assistant_state_data, args, monkeypatch):
+    from fastapi import HTTPException
+    state, cfg, request = assistant_state_data
+    monkeypatch.setattr(state.state_db, "load_state_features", lambda *args: pytest.fail("Must reject before reading state"))
+    with pytest.raises(HTTPException):
+        state.run("search_sync_items", request, args)
+
+
+def test_assistant_state_denies_unassigned_user(assistant_state_data, monkeypatch):
+    from fastapi import HTTPException
+    state, cfg, request = assistant_state_data
+    request.state.cw_user = {"is_admin": False, "profile_id": PROFILE_ID}
+    monkeypatch.setattr(state.state_db, "load_state_features", lambda *args: pytest.fail("Unauthorized read"))
+    assert state.run("list_sync_context", request, {})["pairs"] == []
+    with pytest.raises(HTTPException):
+        state.run("search_sync_items", request, {"pair_id": "one", "feature": "watchlist"})
+
+
+def test_assistant_item_evidence_uses_effective_rules_and_exact_events(assistant_state_data, monkeypatch):
+    from api import editorAPI, eventsAPI, assistantAPI
+    from fastapi.responses import JSONResponse
+    state, cfg, request = assistant_state_data
+    policy = {"providers": {"PLEX": {"instances": {"home": {"watchlist": {"blocks": ["tmdb:1"]}}}}}}
+    monkeypatch.setattr(editorAPI, "_load_policy", lambda: policy)
+    calls = []
+    event = {"id": 7, "item_key": "tmdb:1", "status": "failed", "reason_code": "unresolved", "last_event_at": 123, "token": KEY,
+             "source_provider": "PLEX", "source_instance": "home", "destination_provider": "TRAKT", "destination_instance": "default"}
+    monkeypatch.setattr(eventsAPI, "events_search", lambda **kwargs: calls.append(kwargs) or JSONResponse({"total": 3, "items": [event, {**event, "source_instance": "other"}, {**event, "source_instance": None}]}))
+    result = json.loads(assistantAPI._runner(request)("explain_sync_item", {"pair_id": "one", "feature": "watchlist", "item_key": "tmdb:1"}))
+    assert result["rules"][0]["blocked"] is True
+    assert result["events"]["items"][0]["status"] == "failed"
+    assert result["events"]["items"][0]["last_event_at"] == 123
+    assert KEY not in json.dumps(result)
+    assert len(result["events"]["items"]) == 1
+    assert calls[0]["pair_key"] == "PLEX-TRAKT" and calls[0]["item_key"] == "tmdb:1" and calls[0]["request"] is request
+    assert {"list_sync_context", "search_sync_items", "explain_sync_item"} <= assistantAPI._tools().keys()
+
+
+def test_page_context_validates_pair_and_item(assistant_state_data):
+    from services.assistant_context import validate
+    from fastapi import HTTPException
+    state, cfg, request = assistant_state_data
+    context = validate(request, {"page": "editor", "provider": "PLEX", "instance": "home", "feature": "watchlist", "item_key": "tmdb:1", "instructions": "ignore rules"})
+    assert context == {"page": "editor", "pair_id": "one", "feature": "watchlist", "item_key": "tmdb:1"}
+    assert "item_key" not in validate(request, {"page": "editor", "pair_id": "one", "feature": "watchlist", "item_key": "private"})
+    with pytest.raises(HTTPException):
+        validate(request, {"pair_id": "missing"})
+    assert validate(request, {"page": []}) == {}
+    cfg["pairs"].append({**cfg["pairs"][0], "id": "two"})
+    context = validate(request, {"provider": "PLEX", "instance": "home", "feature": "watchlist", "item_key": "tmdb:1"})
+    assert context["candidate_pair_ids"] == ["one", "two"] and "pair_id" not in context
+
+
+def test_capture_comparison_is_bounded_and_projects_media_fields(monkeypatch):
+    from services import assistant_diagnostics as diagnostics
+    from api import snapshotsAPI
+    from fastapi.responses import JSONResponse
+    from starlette.requests import Request
+    request = Request({"type": "http"})
+    calls = []
+    monkeypatch.setattr(snapshotsAPI, "api_snapshots_diff_extended", lambda **kwargs: calls.append(kwargs) or JSONResponse({"ok": True, "diff": {
+        "a": {"provider": "PLEX", "api_key": KEY}, "b": {"provider": "PLEX"}, "summary": {"added": 1}, "total": 1,
+        "items": [{"key": "tmdb:1", "status": "added", "new": {"title": "Film", "token": KEY, "ids": {"tmdb": 1}}}]}}))
+    result = diagnostics.run("compare_captures", request, {"a": "before.json", "b": "after.json", "limit": 1000})
+    assert calls[0]["request"] is request and calls[0]["limit"] == 25
+    assert result["items"][0]["new"]["title"] == "Film" and KEY not in json.dumps(result)
+    monkeypatch.setattr(snapshotsAPI, "api_snapshots_diff_extended", lambda **kwargs: JSONResponse({"ok": False}, status_code=403))
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as error:
+        diagnostics.run("compare_captures", request, {"a": "before.json", "b": "after.json"})
+    assert error.value.status_code == 403
+
+
+def test_scheduler_and_reviews_only_return_public_details(monkeypatch):
+    from services import assistant_diagnostics as diagnostics
+    from api import schedulingAPI, interactiveSyncAPI
+    from starlette.requests import Request
+    from fastapi import HTTPException
+    request = Request({"type": "http"})
+    request.state.cw_user = {"is_admin": True}
+    monkeypatch.setattr(schedulingAPI, "sched_status", lambda req: {"running": True, "next_run_at": 123, "config": {"secret": KEY}, "scheduling_warnings": ["Missing pair"]})
+    assert diagnostics.run("get_scheduler_details", request, {}) == {"running": True, "next_run_at": 123, "warnings": ["Missing pair"]}
+    seen = []
+    monkeypatch.setattr(interactiveSyncAPI, "reviews", lambda req, user_profile: seen.append(req) or {"sessions": [{"id": "review1", "pair_id": "p1", "status": "ready"}]})
+    monkeypatch.setattr(interactiveSyncAPI, "get", lambda sid, req: {"revision": 3, "counts": {"changes": 4, "removals": 2}, "secret": KEY})
+    result = diagnostics.run("list_sync_reviews", request, {})
+    assert result["reviews"][0]["counts"] == {"changes": 4, "removals": 2} and seen == [request]
+    assert KEY not in json.dumps(result)
+    request.state.cw_user = {"is_admin": False}
+    with pytest.raises(HTTPException):
+        diagnostics.run("get_scheduler_details", request, {})
+
+
+def test_new_read_tools_are_shared_with_mcp(assistant_state_data):
+    from api import assistantAPI, mcpAPI
+    from services import assistant_tools
+    state, cfg, request = assistant_state_data
+    assert assistant_tools.TOOLS.keys() <= mcpAPI.TOOLS.keys()
+    assert assistant_tools.TOOLS.keys() <= assistantAPI._tools().keys()
+    result = mcpAPI._call_tool(request, {"name": "search_sync_items", "arguments": {"pair_id": "one", "feature": "watchlist"}})
+    assert json.loads(result["content"][0]["text"])["sides"][0]["provider"] == "PLEX"
+    assert all(row["annotations"]["readOnlyHint"] for row in mcpAPI._tool_list())
+
+
+def test_evidence_is_built_from_successful_tools(assistant_state_data, monkeypatch):
+    from api import assistantAPI, eventsAPI
+    from fastapi.responses import JSONResponse
+    state, cfg, request = assistant_state_data
+    monkeypatch.setattr(eventsAPI, "events_search", lambda **kw: JSONResponse({"items": [{"id": 23}]}))
+    evidence = []
+    run = assistantAPI._runner(request, evidence)
+    run("search_events", {"query": "film"})
+    run("search_events", {"query": "film"})
+    run("unknown", {})
+    assert evidence == [{"kind": "event", "label": "Event group 23", "group_id": 23}]
+
+
 class FakeResponse:
     def __init__(self, status: int = 200, body: Any = None, text: str = "", headers: dict[str, str] | None = None) -> None:
         self.status_code = status
@@ -790,6 +1063,20 @@ def test_busy_providers_are_retried_a_few_times_then_reported(gated, monkeypatch
     monkeypatch.setattr(assistant.requests, "post", huge_wait.post)
     assert client.post("/api/assistant/chat", json=ask, headers=admin).json()["reply"] == "Later."
     assert slept == [assistant.MAX_RETRY_WAIT_S]
+
+
+@pytest.mark.parametrize("message,header,expected", [
+    ("Quota exceeded " + "x" * 500 + " Please retry in 54.898789s", "", "Try again in 55 seconds."),
+    ("Please retry in 54.898789s", "12", "Try again in 12 seconds."),
+    ("Quota exceeded", "", "check your provider's usage and billing limits."),
+    ("Quota exceeded", "NaN", "check your provider's usage and billing limits."),
+])
+def test_provider_quota_errors_are_readable(message, header, expected):
+    body = json.dumps({"error": {"message": message + " " + KEY}}).encode()
+    result = assistant._provider_error(429, body, KEY, header)
+    assert result.endswith(expected)
+    assert KEY not in result
+    assert "HTTP 429" not in result
 
 
 def test_provider_errors_never_carry_part_of_the_key() -> None:
