@@ -9,10 +9,13 @@ import {runInNewContext} from 'node:vm';
 
 const pending = [];
 let ready = true;
+let mode;
+const fetched = [];
 globalThis.window = {setTimeout, clearTimeout};
 globalThis.document = {getElementById: () => ({}), querySelector: () => null};
 globalThis.fetch = async url => {
-  if (String(url).endsWith('/settings')) return {ok: true, json: async () => ({ok: true, ready, model: 'test-model'})};
+  fetched.push(String(url));
+  if (String(url).endsWith('/settings')) return {ok: true, json: async () => ({ok: true, ready, model: 'test-model', ...(mode ? {mode} : {})})};
   return new Promise(resolve => pending.push(body => resolve({ok: body.ok !== false, json: async () => body})));
 };
 const modal = await import('../assets/js/modals/assistant/index.js');
@@ -469,4 +472,103 @@ test('proposals wait for a click and keep dismissed and done states across reope
   assert.match(reopened.node('#as-log').innerHTML, /data-state="dismissed"/);
   proposalClick(reopened.root, 0, 'run');
   assert.deepEqual(calls, [{pair_id: 'p1', startOnly: true}]);
+});
+
+test('markdown links only become links for wiki and GitHub addresses', () => {
+  const html = renderAnswer('See [Scheduler **Webhooks**](https://wiki.crosswatch.app/a/b) and [x](https://evil.test/y) and [q](https://wiki.crosswatch.app/a"onmouseover=alert(1)) and [s](javascript:alert(1))');
+  assert.ok(html.includes('<a href="https://wiki.crosswatch.app/a/b" target="_blank" rel="noopener noreferrer">Scheduler <strong>Webhooks</strong></a>'));
+  assert.ok(html.includes('[x](https://evil.test/y)'));
+  assert.ok(!html.includes('href="https://evil.test'));
+  assert.ok(!/<a[^>]*onmouseover/.test(html));
+  assert.ok(!html.includes('href="javascript'));
+});
+
+test('follow-up questions become escaped chips, at most three', () => {
+  const html = modal.followUps(['Why <b>?', 'Why <b>?', ' ', 'Two', 'Three', 'Four']);
+  assert.deepEqual([...html.matchAll(/data-as-ask="([^"]*)"/g)].map(m => m[1]), ['Why &lt;b&gt;?', 'Two', 'Three']);
+  assert.ok(!html.includes('<b>'));
+  assert.equal(modal.followUps(undefined), '');
+  assert.equal(modal.followUps([]), '');
+});
+
+test('wiki mode opens without outside calls, shows the notice and asks the wiki', async () => {
+  ready = false;
+  mode = 'wiki';
+  modal.default.unmount();
+  fetched.length = 0;
+  const view = makeRoot();
+  await modal.default.mount(view.root, {question: 'Analyze the latest sync log'});
+  click(view, '#as-new');
+  assert.equal(pending.length, 0);
+  assert.ok(fetched.every(url => url.startsWith('/api/assistant/')), fetched.join(','));
+  assert.equal(view.node('#as-notice').hidden, false);
+  assert.equal(view.node('.as-scope').hidden, true);
+  assert.equal(view.node('#as-sub').textContent, 'Answers from the CrossWatch wiki');
+  assert.match(view.node('#as-note').textContent, /CrossWatch wiki/);
+  assert.match(view.node('#as-log').innerHTML, /How do I add a Trakt pair\?/);
+  assert.equal(view.node('#as-input').disabled, false);
+
+  await submit(view, 'phone alerts?');
+  assert.equal(pending.length, 1);
+  assert.match(view.node('#as-log').innerHTML, /Searching the CrossWatch wiki/);
+  pending.shift()({ok: true, mode: 'wiki', reply: 'Use [Scheduler Webhooks](https://wiki.crosswatch.app/a).', tools: ['ask_wiki'], actions: [], proposals: [],
+    sources: [{title: 'Scheduler Webhooks', url: 'https://wiki.crosswatch.app/a'}], followups: ['Next <q>?']});
+  await settle();
+  const log = view.node('#as-log').innerHTML;
+  assert.match(log, /Looked at: wiki/);
+  assert.match(log, /<a href="https:\/\/wiki\.crosswatch\.app\/a"[^>]*>Scheduler Webhooks<\/a>/);
+  assert.match(log, /data-as-ask="Next &lt;q&gt;\?"/);
+  assert.ok(fetched.filter(url => !url.startsWith('/api/assistant/')).length === 0);
+  mode = undefined;
+  ready = true;
+});
+
+test('the sparkle button opens wiki mode but analyze buttons stay hidden', async () => {
+  const source = await readFile(new URL('../assets/js/assistant-settings.js', import.meta.url), 'utf8');
+  const nodes = new Map();
+  const element = () => ({value: '', textContent: '', disabled: false, hidden: false, title: '', dataset: {}, attrs: {},
+    setAttribute(name, value) { this.attrs[name] = value; }, focus() {}, classList: {toggle() {}}});
+  const root = {dataset: {}};
+  const doc = {documentElement: root, getElementById(id) { if (!nodes.has(id)) nodes.set(id, element()); return nodes.get(id); },
+    createElement: element, addEventListener() {}, querySelectorAll: () => []};
+  const answers = [{ok: true, mode: 'wiki', ready: false, wiki_help: true, base_url: '', model: ''}, {ok: true, mode: 'off', ready: false, wiki_help: false, base_url: '', model: ''},
+    {ok: true, mode: 'full', ready: true, enabled: true, wiki_help: false, base_url: 'http://x.test/v1', model: 'm'}];
+  const win = {};
+  runInNewContext(source, {window: win, document: doc, fetch: async () => ({ok: true, json: async () => answers.shift()})});
+  const ask = doc.getElementById('cw-ask-button');
+
+  await win.cwAssistantSettings.refresh();
+  assert.equal(root.dataset.cwAssistant, 'off');
+  assert.equal(ask.disabled, false);
+  assert.match(ask.title, /wiki only/);
+  assert.equal(doc.getElementById('assistant_wiki_help').value, 'on');
+  assert.equal(doc.getElementById('assistant_pill').textContent, 'Wiki only');
+
+  await win.cwAssistantSettings.refresh();
+  assert.equal(ask.disabled, true);
+  assert.equal(doc.getElementById('assistant_wiki_help').value, 'off');
+
+  await win.cwAssistantSettings.refresh();
+  assert.equal(root.dataset.cwAssistant, 'on');
+  assert.equal(ask.disabled, false);
+});
+
+test('the context line only shows in full mode for a selected item or pair', async () => {
+  modal.default.unmount();
+  const page = makeRoot();
+  await modal.default.mount(page.root, {context: {page: 'settings'}});
+  assert.equal(page.node('#as-context').hidden, true);
+  modal.default.unmount();
+  const pair = makeRoot();
+  await modal.default.mount(pair.root, {context: {page: 'main', pair_id: 'p1'}});
+  assert.equal(pair.node('#as-context').textContent, 'Asking about the selected pair');
+  assert.equal(pair.node('#as-context').hidden, false);
+  modal.default.unmount();
+  mode = 'wiki';
+  ready = false;
+  const wiki = makeRoot();
+  await modal.default.mount(wiki.root, {context: {page: 'editor', item_key: 'tmdb:1'}});
+  assert.equal(wiki.node('#as-context').hidden, true);
+  mode = undefined;
+  ready = true;
 });

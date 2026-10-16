@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Iterator, cast
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import requests
 
@@ -47,6 +47,13 @@ DOCS_SEARCH_TIMEOUT_S = 8
 MAX_DOC_EXCERPT_CHARS = 1_200
 DOCS_TTL_S = 86400
 DOCS_RESULTS = 8
+WIKI_ASK_URL = f"https://{DOCS_HOST}/llms.txt.md"
+WIKI_ASK_TIMEOUT_S = 60
+MAX_WIKI_QUESTION = 500
+MAX_FOLLOWUPS = 3
+MAX_FOLLOWUP_CHARS = 200
+WIKI_UNREACHABLE = "Could not reach the CrossWatch wiki. Your network may block outside access."
+WIKI_NO_ANSWER = "The wiki had no answer to that. Try asking it differently."
 HIDDEN = "[hidden]"
 NUDGE = "Write your answer to my question now, in plain words, based on what you found. Do not call any tools."
 NO_TEXT = "The model returned no text. Ask again, or pick a larger model in the assistant settings."
@@ -88,6 +95,8 @@ BUSY = "The assistant is busy with another question. Try again in a moment."
 _DOC_LINK = re.compile(r"\[([^\]]+)\]\((https://wiki\.crosswatch\.app/[^)\s]*)\)(?::\s*(.*))?")
 _HIT = re.compile(r"\ATitle:[ \t]*(.*?)[ \t]*\r?\nLink:[ \t]*(\S+)[ \t]*(?:\r?\nContent:[ \t]*(.*))?\Z", re.S)
 _DOC_TITLE = re.compile(r"(?m)^#[ \t]+(.+?)[ \t]*$")
+_ASK_SECTION = re.compile(r"(?mi)^#{1,6}[ \t]+(suggested follow-up questions|sources):?[ \t]*$")
+_MD_LINK = re.compile(r"\[([^\]\n]+)\]\(([^)\s]+)\)")
 _DOCS_LOCK = threading.Lock()
 _DOCS_CACHE: tuple[float, list[tuple[str, str, str]]] = (0.0, [])
 
@@ -234,11 +243,18 @@ def settings(cfg: dict[str, Any]) -> dict[str, Any]:
         "base_url": str(block.get("base_url") or "").strip().rstrip("/"),
         "api_key": str(block.get("api_key") or "").strip(),
         "model": str(block.get("model") or "").strip(),
+        "wiki_help": block.get("wiki_help", True) is not False,
     }
 
 
 def ready(conf: dict[str, Any]) -> bool:
     return bool(conf.get("enabled") and conf.get("base_url") and conf.get("model"))
+
+
+def mode(conf: dict[str, Any]) -> str:
+    if ready(conf):
+        return "full"
+    return "wiki" if conf.get("wiki_help", True) is not False else "off"
 
 
 class _DeadlineSocket:
@@ -488,6 +504,83 @@ def read_doc(url: Any, deadline: float | None = None) -> str:
         return _body(res, MAX_DOC_BYTES, limit).decode("utf-8", errors="replace")
     except (requests.RequestException, AssistantError) as exc:
         return f"The page could not be loaded: {type(exc).__name__}"
+
+
+def _page_link(url: str) -> str:
+    target = _wiki_url(urljoin(f"https://{DOCS_HOST}/", str(url or "").strip()))
+    if not target:
+        return ""
+    parsed = urlparse(target)
+    path = parsed.path[:-3] if parsed.path.endswith(".md") else parsed.path
+    return parsed._replace(path=path or "/", params="", query="").geturl()
+
+
+def wiki_question(messages: list[dict[str, str]]) -> str:
+    asked = [" ".join(str(m.get("content") or "").split()) for m in messages if m.get("role") == "user"]
+    asked = [text for text in asked if text]
+    if not asked:
+        return ""
+    latest = _redact_log_text(asked[-1])[:MAX_WIKI_QUESTION]
+    room = MAX_WIKI_QUESTION - len(latest) - len("Earlier question: . Now: ")
+    if len(asked) < 2 or room < 20:
+        return latest
+    earlier = _redact_log_text(asked[-2])[:room]
+    return f"Earlier question: {earlier}. Now: {latest}"
+
+
+def _wiki_answer(text: str) -> dict[str, Any]:
+    body = text.replace("\r", "")
+    marks = list(_ASK_SECTION.finditer(body))
+    lines = (body[: marks[0].start()] if marks else body).strip().split("\n")
+    if lines and lines[0].startswith("# "):
+        lines = lines[1:]
+    answer = _MD_LINK.sub(lambda m: f"[{m.group(1)}]({page})" if (page := _page_link(m.group(2))) else m.group(1), "\n".join(lines).strip())
+    followups: list[str] = []
+    sources: list[dict[str, str]] = []
+    for index, mark in enumerate(marks):
+        end = marks[index + 1].start() if index + 1 < len(marks) else len(body)
+        links = _MD_LINK.findall(body[mark.end():end])
+        if mark.group(1).lower().startswith("suggested"):
+            for label, _url in links:
+                question = " ".join(label.split())[:MAX_FOLLOWUP_CHARS]
+                if question and question not in followups and len(followups) < MAX_FOLLOWUPS:
+                    followups.append(question)
+            continue
+        for label, url in links:
+            page = _page_link(url)
+            if page and len(sources) < MAX_SOURCES and all(item["url"] != page for item in sources):
+                sources.append({"title": " ".join(label.split())[:120], "url": page})
+    return {"answer": answer, "followups": followups, "sources": sources}
+
+
+def ask_wiki(question: str, deadline: float | None = None) -> dict[str, Any]:
+    asked = str(question or "").strip()[:MAX_WIKI_QUESTION]
+    if not asked:
+        raise AssistantError("Ask a question first")
+    own = time.monotonic() + WIKI_ASK_TIMEOUT_S
+    limit = own if deadline is None else min(own, deadline)
+    left = limit - time.monotonic()
+    if left <= 0:
+        raise AssistantError(TOO_LONG)
+    try:
+        res = requests.get(
+            WIKI_ASK_URL,
+            params={"ask": asked},
+            headers={"Accept": "text/markdown"},
+            timeout=min(WIKI_ASK_TIMEOUT_S, left),
+            allow_redirects=False,
+            stream=True,
+        )
+    except requests.RequestException as exc:
+        raise AssistantError(WIKI_UNREACHABLE) from exc
+    kind = str(res.headers.get("Content-Type") or "").lower()
+    if res.status_code != 200 or not ("markdown" in kind or "text/plain" in kind):
+        res.close()
+        raise AssistantError(WIKI_UNREACHABLE)
+    found = _wiki_answer(_body(res, MAX_DOC_BYTES, limit).decode("utf-8", errors="replace"))
+    if not found["answer"]:
+        found["answer"] = WIKI_NO_ANSWER
+    return found
 
 
 @lru_cache(maxsize=1)

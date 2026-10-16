@@ -114,7 +114,13 @@
   }
 
   const ASK_ON = "Ask CrossWatch";
+  const ASK_WIKI = "Ask CrossWatch (wiki only)";
   const ASK_OFF = "Ask CrossWatch: set up the assistant under Settings, UI and Security, Security first";
+
+  function modeOf(conf) {
+    if (conf?.mode === "full" || conf?.mode === "wiki" || conf?.mode === "off") return conf.mode;
+    return conf?.ready ? "full" : "off";
+  }
 
   function askButton() {
     let btn = $("cw-ask-button");
@@ -132,20 +138,24 @@
     return btn;
   }
 
-  function showAnalyze(on) {
-    d.documentElement.dataset.cwAssistant = on ? "on" : "off";
+  function showAnalyze(mode) {
+    d.documentElement.dataset.cwAssistant = mode === "full" ? "on" : "off";
     const btn = askButton();
     if (!btn) return;
-    btn.disabled = !on;
-    btn.title = on ? ASK_ON : ASK_OFF;
-    btn.setAttribute("aria-label", on ? ASK_ON : ASK_OFF);
+    const label = mode === "full" ? ASK_ON : mode === "wiki" ? ASK_WIKI : ASK_OFF;
+    btn.disabled = mode === "off";
+    btn.title = label;
+    btn.setAttribute("aria-label", label);
   }
 
   function render(conf) {
     invalidateModels(true);
     current = conf;
-    showAnalyze(!!conf.ready);
+    const mode = modeOf(conf);
+    showAnalyze(mode);
     if (!$("assistant_base_url")) return;
+    const wiki = $("assistant_wiki_help");
+    if (wiki) wiki.value = conf.wiki_help === false ? "off" : "on";
     preset = presetFor(conf.base_url);
     $("assistant_base_url").value = conf.base_url || PRESETS[preset] || "";
     $("assistant_model").value = conf.model || "";
@@ -153,13 +163,13 @@
     renderPreset();
     const pill = $("assistant_pill");
     if (pill) {
-      pill.textContent = conf.ready ? `On, ${conf.model}` : conf.base_url && conf.model ? "Turned off" : "Off";
+      pill.textContent = conf.ready ? `On, ${conf.model}` : conf.base_url && conf.model ? "Turned off" : mode === "wiki" ? "Wiki only" : "Off";
       pill.dataset.state = conf.ready ? "on" : "off";
     }
     if (conf.ready) setStatus("");
     else if (conf.base_url && conf.model) setStatus("Set up, but turned off.");
     else setStatus(hint());
-    $("btn-assistant-open").disabled = !conf.ready;
+    $("btn-assistant-open").disabled = mode === "off";
     $("btn-assistant-off").classList.toggle("hidden", !conf.enabled);
     $("btn-assistant-save").textContent = conf.enabled ? "Save" : "Save and turn on";
   }
@@ -199,6 +209,15 @@
     try {
       render(await api("/settings", body));
       toast(enabled ? "Assistant is on" : "Assistant is off", true);
+    } catch (err) {
+      setStatus(err?.message || "Could not save", "error");
+    }
+  }
+
+  async function saveWikiHelp(on) {
+    try {
+      render(await api("/settings", { wiki_help: on }));
+      toast(on ? "Wiki answers are on" : "Wiki answers are off", true);
     } catch (err) {
       setStatus(err?.message || "Could not save", "error");
     }
@@ -251,6 +270,7 @@
 
   d.addEventListener("change", (event) => {
     if (event.target?.id === "assistant_models_all") renderModels();
+    if (event.target?.id === "assistant_wiki_help") saveWikiHelp(event.target.value !== "off");
 
   });
 
