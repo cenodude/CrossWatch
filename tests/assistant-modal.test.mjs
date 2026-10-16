@@ -18,6 +18,50 @@ globalThis.fetch = async url => {
 const modal = await import('../assets/js/modals/assistant/index.js');
 const {linkify, lookedAt, renderAnswer, actionButtons, ACTIONS} = modal;
 
+test('model picker filters specialist names, preserves IDs and invalidates stale tests', async () => {
+  const source = await readFile(new URL('../assets/js/assistant-settings.js', import.meta.url), 'utf8');
+  const nodes = new Map();
+  const listeners = {};
+  const element = () => ({value: '', textContent: '', disabled: false, hidden: false, checked: false, children: [], dataset: {},
+    appendChild(child) { this.children.push(child); }, focus() {}, classList: {toggle() {}}});
+  const doc = {getElementById(id) { if (!nodes.has(id)) nodes.set(id, element()); return nodes.get(id); },
+    createElement: element, addEventListener(name, fn) { listeners[name] = fn; }, querySelectorAll: () => []};
+  let resolveTest;
+  const requests = [];
+  runInNewContext(source, {window: {}, document: doc, fetch: async (url, opts) => {
+    requests.push({url, body: JSON.parse(opts.body)});
+    return {ok: true, json: async () => url.endsWith('/models') ? {models: ['models/chat-preview', 'models/robotics-2-preview', 'text-embedding-3', 'local-model', 'models/pro-latest', 'models/flash-latest', 'models/preview-latest', 'local:latest']} : new Promise(resolve => { resolveTest = resolve; })};
+  }});
+  const click = id => listeners.click({target: {closest: selector => selector === `#${id}` ? {} : null}});
+  doc.getElementById('assistant_base_url').value = 'http://local.test/v1';
+  click('btn-assistant-models');
+  await settle();
+  let options = doc.getElementById('assistant_models').children;
+  assert.deepEqual(options.map(o => o.value), ['models/flash-latest', 'local:latest', 'models/pro-latest', 'local-model', 'models/chat-preview', 'models/preview-latest']);
+  assert.match(options[4].textContent, /^chat-preview · Preview$/);
+  doc.getElementById('assistant_models_all').value = 'all';
+  doc.getElementById('assistant_models').children = [];
+  listeners.change({target: {id: 'assistant_models_all'}});
+  assert.equal(doc.getElementById('assistant_models').children.length, 8);
+  doc.getElementById('assistant_model').value = 'models/chat-preview';
+  listeners.input({target: {id: 'assistant_model'}});
+  assert.equal(doc.getElementById('assistant_model').value, 'models/chat-preview');
+  click('btn-assistant-test');
+  await settle();
+  assert.equal(requests[1].body.model, 'models/chat-preview');
+  doc.getElementById('assistant_model').value = 'different';
+  listeners.input({target: {id: 'assistant_model'}});
+  resolveTest({compatible: true});
+  await settle();
+  assert.match(doc.getElementById('assistant_model_test').textContent, /^Optional check/);
+  assert.equal(doc.getElementById('btn-assistant-test').disabled, false);
+  click('btn-assistant-test');
+  await settle();
+  resolveTest({compatible: true});
+  await settle();
+  assert.match(doc.getElementById('assistant_model_test').textContent, /^Passed:/);
+});
+
 test('proposal cards only render known actions and escape titles and status', () => {
   const html = modal.proposalCards([
     {action: 'run_pair', title: '<img src=x onerror=alert(1)>', params: {pair_id: 'p1'}},
@@ -38,6 +82,20 @@ test('proposal cards only render known actions and escape titles and status', ()
     assert.doesNotMatch(output, /<img|<script/i);
   }
   assert.equal(modal.proposalCards(undefined), '');
+});
+
+test('evidence navigation uses known destinations and escapes labels', () => {
+  const calls = [];
+  window.openEvents = options => calls.push(['event', options]);
+  window.openLogs = options => calls.push(['log', options]);
+  const html = modal.evidenceButtons([{kind: 'event', group_id: 3, label: '<img onerror=x>'}, {kind: 'javascript', label: 'bad'}], 2);
+  assert.match(html, /data-as-evidence="2:0"/);
+  assert.match(html, /&lt;img/);
+  assert.doesNotMatch(html, /<img|javascript|>bad</i);
+  modal.openEvidence({kind: 'event', group_id: 3});
+  modal.openEvidence({kind: 'event', group_id: 'javascript:bad'});
+  modal.openEvidence({kind: 'log', session_id: 'archive-1', channel: 'sync', run_id: 'run-2'});
+  assert.deepEqual(calls, [['event', {groupId: 3, visibility: 'all'}], ['log', {sessionId: 'archive-1', channel: 'sync', runId: 'run-2'}]]);
 });
 
 test('pair proposals never cancel a running sync and can only run once', async () => {
@@ -329,7 +387,15 @@ test('only known actions become buttons', () => {
   assert.deepEqual([...html.matchAll(/data-as-action="([^"]+)"/g)].map(m => m[1]), ['open_logs', 'run_sync']);
   assert.equal(actionButtons(['nope']), '');
   assert.equal(actionButtons(undefined), '');
-  assert.deepEqual(Object.keys(ACTIONS).sort(), ['open_analyzer', 'open_connections', 'open_events', 'open_logs', 'open_pairs', 'open_scheduling', 'open_scrobbler', 'run_sync']);
+  assert.deepEqual(Object.keys(ACTIONS).sort(), ['open_analyzer', 'open_anime_overrides', 'open_connections', 'open_events', 'open_logs', 'open_mappings', 'open_pairs', 'open_scheduling', 'open_scrobbler', 'run_sync']);
+  assert.match(actionButtons(['open_mappings']), /Mappings &amp; blocks/);
+  assert.equal(lookedAt(['list_saved_mappings']), 'Looked at: mappings and blocks');
+  assert.match(actionButtons(['open_anime_overrides']), /Anime ID custom mappings/);
+  assert.equal(lookedAt(['list_anime_overrides']), 'Looked at: custom anime mappings');
+  let opened = 0;
+  window.openAnimeOverridesModal = () => { opened++; };
+  ACTIONS.open_anime_overrides.run();
+  assert.equal(opened, 1);
 });
 
 test('run sync asks first and never starts a second run', () => {

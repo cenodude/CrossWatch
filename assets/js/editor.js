@@ -81,6 +81,12 @@
     sortDir: "asc",
   };
   const editorModules = window.CW && window.CW.Editor;
+  window.cwEditorAssistantContext = () => {
+    const picked = state.rows.filter(row => state.selected.has(row._rid));
+    return { page: "editor", pair_id: state.mappingPair || "", feature: state.kind,
+      provider: state.snapshot, instance: state.instance,
+      item_key: picked.length === 1 ? picked[0].key : "" };
+  };
   if (!editorModules) throw new Error("Editor module registry missing");
   const requireEditorModule = name => {
     const mod = editorModules[name];

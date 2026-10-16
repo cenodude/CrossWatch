@@ -23,6 +23,41 @@
   const clean = (url) => txt(url).replace(/\/+$/, "");
   let current = null;
   let preset = "openai";
+  let models = [];
+  let revision = 0;
+
+  function modelInfo(id) {
+    const name = id.replace(/^models\//, "");
+    const specialist = /(?:^|[-_/])(?:embedding\w*|imagen\w*|image|tts|whisper\w*|transcri\w*|audio|robotics|rerank\w*|moderation\w*|veo\w*|dall-e)(?:$|[-_/])/i.test(name);
+    const preview = /(?:^|[-_/])(?:preview|experimental|exp)(?:$|[-_/])/i.test(name);
+    const latest = /(?:^|[-_/:])latest(?:$|[-_/:])/i.test(name);
+    const rank = preview ? 2 : latest ? 0 : 1;
+    return {id, name, specialist, rank, label: [name, preview ? "Preview" : "", specialist ? "Likely specialist" : ""].filter(Boolean).join(" · ")};
+  }
+
+  function renderModels() {
+    const list = $("assistant_models");
+    if (!list) return;
+    const all = $("assistant_models_all")?.value === "all";
+    const shown = models.map(modelInfo).filter(m => all || !m.specialist)
+      .sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name, undefined, {numeric: true, sensitivity: "base"}));
+    list.textContent = "";
+    for (const model of shown) {
+      const option = d.createElement("option");
+      option.value = model.id;
+      option.textContent = model.label;
+      list.appendChild(option);
+    }
+  }
+
+  function invalidateModels(clear = false) {
+    revision++;
+    if ($("assistant_model_test")) $("assistant_model_test").textContent = "Optional check. Uses two short requests; provider charges may apply.";
+    if (clear) {
+      models = [];
+      renderModels();
+    }
+  }
 
   function toast(message, ok = false) {
     try { w._cwShowToast?.(String(message || ""), !!ok); } catch {}
@@ -107,6 +142,7 @@
   }
 
   function render(conf) {
+    invalidateModels(true);
     current = conf;
     showAnalyze(!!conf.ready);
     if (!$("assistant_base_url")) return;
@@ -139,6 +175,7 @@
 
   function choose(next) {
     if (!next || next === preset) return;
+    invalidateModels(true);
     preset = next;
     const url = $("assistant_base_url");
     if (PRESETS[next] && presetFor(url.value) !== next) url.value = PRESETS[next];
@@ -171,28 +208,50 @@
     const btn = $("btn-assistant-models");
     if (btn) btn.disabled = true;
     setStatus("Asking your provider which models it has...");
+    const started = revision;
     try {
       const { base_url, api_key } = fields();
       const data = await api("/models", { base_url, api_key });
-      const list = $("assistant_models");
-      list.textContent = "";
-      for (const name of data.models || []) {
-        const option = d.createElement("option");
-        option.value = name;
-        list.appendChild(option);
-      }
-      const count = data.models?.length || 0;
-      setStatus(count ? `${count} models found. Click the Model box to pick one.` : "Your provider listed no models. Type the model name instead.", count ? "good" : "");
-      if (count) $("assistant_model")?.focus();
+      if (started !== revision) return;
+      models = (data.models || []).filter(name => typeof name === "string");
+      renderModels();
+      setStatus(models.length ? "Models loaded. Type in the model field to search." : "Your provider listed no models. Type the model ID instead.", models.length ? "good" : "");
+      $("assistant_model")?.focus();
     } catch (err) {
-      setStatus(err?.message || "Could not load the models", "error");
+      if (started === revision) setStatus(err?.message || "Could not load the models", "error");
     } finally {
       if (btn) btn.disabled = false;
     }
   }
 
+  async function testModel() {
+    const body = fields();
+    const status = $("assistant_model_test");
+    if (!body.model || !body.base_url) { status.textContent = "Enter a provider address and choose a model first."; return; }
+    const button = $("btn-assistant-test");
+    if (button.disabled) return;
+    button.disabled = true;
+    const started = revision;
+    status.textContent = "Testing a tool call and text reply…";
+    try {
+      const data = await api("/test-model", body);
+      if (started !== revision) return;
+      status.textContent = data.compatible ? "Passed: this model can use assistant tools."
+        : !data.tool_call ? "The model did not make the required tool call. Try another model."
+        : "The tool call worked, but the model did not return a text answer. Try another model.";
+    } catch (err) {
+      if (started === revision) status.textContent = `Could not verify compatibility: ${err?.message || "Request failed"}`;
+    } finally { button.disabled = false; }
+  }
+
   d.addEventListener("input", (event) => {
     if (event.target?.id === "assistant_base_url") renderPreset();
+    if (["assistant_base_url", "assistant_api_key", "assistant_model"].includes(event.target?.id)) invalidateModels(event.target.id !== "assistant_model");
+  });
+
+  d.addEventListener("change", (event) => {
+    if (event.target?.id === "assistant_models_all") renderModels();
+
   });
 
   d.addEventListener("click", (event) => {
@@ -202,6 +261,7 @@
     if (target?.closest?.("#btn-assistant-save")) save(true);
     if (target?.closest?.("#btn-assistant-off")) save(false);
     if (target?.closest?.("#btn-assistant-models")) loadModels();
+    if (target?.closest?.("#btn-assistant-test")) testModel();
     if (target?.closest?.("#btn-assistant-open")) w.openAssistant?.();
     if (target?.closest?.("#cw-ask-button:not(:disabled)")) w.openAssistant?.();
     const analyze = target?.closest?.("[data-ai-analyze]");

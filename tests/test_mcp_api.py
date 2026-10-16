@@ -373,7 +373,8 @@ def test_cli_bridge_relays_stdio_messages(gated) -> None:
 
     assert [reply.get("id") for reply in replies] == [1, "t", None]
     assert replies[0]["result"]["serverInfo"]["name"] == "crosswatch"
-    assert len(replies[1]["result"]["tools"]) == 13
+    from api.mcpAPI import TOOLS
+    assert {tool["name"] for tool in replies[1]["result"]["tools"]} == set(TOOLS)
     assert replies[2]["error"]["code"] == -32700
 
     denied = cli_mcp.relay(_bridge(client, tokens["plain"]), json.dumps({"jsonrpc": "2.0", "id": 7, "method": "ping"}))

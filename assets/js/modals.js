@@ -58,6 +58,7 @@ window.openAnalyzer = () => window.showTab ? window.showTab('analyzer') : (locat
 window.openLogs = (props = {}) => {
   const query = new URLSearchParams({channel: props.channel || 'sync'});
   if (props.runId) query.set('runId', props.runId);
+  if (props.sessionId) query.set('sessionId', props.sessionId);
   if (props.pairId) query.set('pairId', props.pairId);
   if (props.latest) query.set('latest', '1');
   const returnTo = location.hash.startsWith('#logs')
@@ -158,4 +159,11 @@ window.openScrobblerRouteModal = (props = {}) => ModalRegistry.open('scrobbler-r
 window.openEditorRawModal = (props = {}) => ModalRegistry.open('editor-raw', props);
 window.openAnimeOverridesModal = (props = {}) => ModalRegistry.open('anime-overrides', props);
 window.openSupportModal = (props = {}) => ModalRegistry.open('support', props);
-window.openAssistant = (props = {}) => ModalRegistry.open('assistant', props);
+window.openAssistant = (props = {}) => {
+  const page = document.querySelector('[id^="tab-"].active')?.id?.slice(4) || (location.pathname.startsWith('/profile') ? 'profile' : location.hash.slice(1).split('?')[0]) || 'main';
+  const route = new URLSearchParams(location.hash.split('?')[1] || '');
+  const context = {page, profile_id: window.CW?.ProfileViewAs?.id || document.documentElement.dataset.cwProfileId || '',
+    pair_id: route.get('pairId') || route.get('pair') || ''};
+  if (page === 'editor') Object.assign(context, window.cwEditorAssistantContext?.() || {});
+  return ModalRegistry.open('assistant', {...props, context: {...context, ...(props.context || {})}});
+};
