@@ -10,6 +10,14 @@ const SUGGESTIONS = [
   "Is scrobbling working right now?",
   "Are my sync pairs set up sensibly?",
 ];
+const WIKI_SUGGESTIONS = [
+  "How do I add a Trakt pair?",
+  "How do I get notified when a sync fails?",
+  "What does unresolved mean?",
+  "How do captures work?",
+];
+const WIKI_NOTE = "Answers come from the CrossWatch wiki and can be wrong.";
+const AI_NOTE = "Answers come from the AI model you chose and can be wrong. Proposed actions run only when you click Run.";
 const SCOPES = [
   ["all", "All of CrossWatch"],
   ["sync", "Syncing"],
@@ -41,6 +49,7 @@ const TOOL_LABELS = {
   list_captures: "captures",
   search_docs: "wiki",
   read_doc: "wiki",
+  ask_wiki: "wiki",
   search_code: "source code",
   read_code: "source code",
 };
@@ -84,7 +93,7 @@ export const ACTIONS = {
 };
 
 const history = [];
-const view = { root: null, ready: false, loaded: false, scope: "all", context: {} };
+const view = { root: null, ready: false, loaded: false, mode: "off", scope: "all", context: {} };
 let busy = false;
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -233,12 +242,43 @@ export function linkify(text, format = (part) => part) {
 }
 
 const bold = (part) => part.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+const MD_LINK_RE = /\[([^\]\n]{1,200})\]\((https:\/\/[^\s)]+)\)/g;
+
+function allowedUrl(url) {
+  const found = [...String(url).matchAll(URL_RE)];
+  return found.length === 1 && found[0].index === 0 && found[0][0] === url;
+}
+
+function links(text) {
+  const raw = String(text);
+  let out = "";
+  let last = 0;
+  for (const match of raw.matchAll(MD_LINK_RE)) {
+    if (!allowedUrl(match[2])) continue;
+    out += linkify(raw.slice(last, match.index), bold);
+    out += `<a href="${esc(match[2])}" target="_blank" rel="noopener noreferrer">${bold(esc(match[1]))}</a>`;
+    last = match.index + match[0].length;
+  }
+  return out + linkify(raw.slice(last), bold);
+}
 
 function inline(text) {
   return String(text)
     .split(/(`[^`\n]+`)/)
-    .map((part) => (part.length > 2 && part.startsWith("`") && part.endsWith("`") ? `<code>${esc(part.slice(1, -1))}</code>` : linkify(part, bold)))
+    .map((part) => (part.length > 2 && part.startsWith("`") && part.endsWith("`") ? `<code>${esc(part.slice(1, -1))}</code>` : links(part)))
     .join("");
+}
+
+export function followUps(items) {
+  const list = [];
+  for (const item of Array.isArray(items) ? items : []) {
+    const question = String(item ?? "").trim().slice(0, 200);
+    if (question && !list.includes(question) && list.length < 3) list.push(question);
+  }
+  if (!list.length) return "";
+  return `<div class="as-follow"><span>Ask next</span>${list
+    .map((question) => `<button class="as-chip" type="button" data-as-ask="${esc(question)}"><span>${esc(question)}</span><span class="material-symbols-rounded" aria-hidden="true">north_east</span></button>`)
+    .join("")}</div>`;
 }
 
 export function renderAnswer(text) {
@@ -372,7 +412,7 @@ function messageHtml(item, index) {
   const meta = `<div class="as-meta"><strong>CrossWatch</strong><span>${esc(when(item.at))}</span></div>`;
   if (item.error) return botCard(`${meta}<div class="as-answer"><p>${esc(item.content)}</p></div>`, " as-error");
   const note = lookedAt(item.tools);
-  return botCard(`${meta}<div class="as-answer">${renderAnswer(item.content)}</div>${note ? `<small class="as-looked">${esc(note)}</small>` : ""}${sourceLinks(item.sources)}${actionButtons(item.actions)}${evidenceButtons(item.evidence, index)}<div class="as-proposals" data-as-message="${index}">${proposalCards(item.proposals)}</div>`);
+  return botCard(`${meta}<div class="as-answer">${renderAnswer(item.content)}</div>${note ? `<small class="as-looked">${esc(note)}</small>` : ""}${sourceLinks(item.sources)}${followUps(item.followups)}${actionButtons(item.actions)}${evidenceButtons(item.evidence, index)}<div class="as-proposals" data-as-message="${index}">${proposalCards(item.proposals)}</div>`);
 }
 
 function emptyHtml() {
@@ -387,7 +427,7 @@ function emptyHtml() {
   return `
     <div class="as-try">
       <span>Try asking</span>
-      ${SUGGESTIONS.map((text) => `<button class="as-chip" type="button" data-as-ask="${esc(text)}"><span>${esc(text)}</span><span class="material-symbols-rounded" aria-hidden="true">north_east</span></button>`).join("")}
+      ${(view.mode === "wiki" ? WIKI_SUGGESTIONS : SUGGESTIONS).map((text) => `<button class="as-chip" type="button" data-as-ask="${esc(text)}"><span>${esc(text)}</span><span class="material-symbols-rounded" aria-hidden="true">north_east</span></button>`).join("")}
     </div>`;
 }
 
@@ -410,7 +450,8 @@ function renderLog() {
     log.innerHTML = emptyHtml();
     return;
   }
-  const wait = busy ? botCard(`<div class="as-meta"><strong>CrossWatch</strong><span>Looking at your CrossWatch</span></div><div class="as-dots" aria-hidden="true"><i></i><i></i><i></i></div>`, " as-wait") : "";
+  const waiting = view.mode === "wiki" ? "Searching the CrossWatch wiki, this can take a few seconds" : "Looking at your CrossWatch";
+  const wait = busy ? botCard(`<div class="as-meta"><strong>CrossWatch</strong><span>${waiting}</span></div><div class="as-dots" aria-hidden="true"><i></i><i></i><i></i></div>`, " as-wait") : "";
   log.innerHTML = history.map(messageHtml).join("") + wait;
   const scroller = $("#as-scroll", root);
   if (scroller) scroller.scrollTop = scroller.scrollHeight;
@@ -445,7 +486,7 @@ async function ask(question) {
     const messages = history.filter((item) => !item.error).map(({ role, content }) => ({ role, content }));
     const data = await api("/chat", { messages, scope: view.scope, context: view.context });
     const proposals = (Array.isArray(data.proposals) ? data.proposals : []).filter(p => p && Object.hasOwn(PROPOSALS, p.action)).slice(0, 3).map(p => ({ action: p.action, title: p.title, params: p.params, status: "ready" }));
-    history.push({ role: "assistant", content: data.reply || "The model gave an empty answer.", tools: data.tools || [], actions: data.actions || [], sources: data.sources || [], evidence: data.evidence || [], proposals, at: Date.now() });
+    history.push({ role: "assistant", content: data.reply || "The model gave an empty answer.", tools: data.tools || [], actions: data.actions || [], sources: data.sources || [], followups: data.followups || [], evidence: data.evidence || [], proposals, at: Date.now() });
   } catch (err) {
     history.push({ role: "assistant", content: err?.message || "Something went wrong.", error: true, at: Date.now() });
   }
@@ -470,6 +511,11 @@ export default {
           <button class="as-icon" type="button" id="as-close" title="Close" aria-label="Close"><span class="material-symbols-rounded" aria-hidden="true">close</span></button>
         </div>
         <div class="as-scroll" id="as-scroll">
+          <div class="as-notice" id="as-notice" hidden>
+            <span class="material-symbols-rounded" aria-hidden="true">info</span>
+            <p><strong>Limited help.</strong> No AI provider is set up, so answers come from the CrossWatch wiki only and cannot look at your logs or settings.</p>
+            <button class="as-action" type="button" data-as-setup><span class="material-symbols-rounded" aria-hidden="true">settings</span><span>Set up AI provider</span></button>
+          </div>
           <div class="as-top" id="as-top">
             <form class="as-composer" id="as-form" autocomplete="off">
               <textarea id="as-input" rows="3" maxlength="${MAX_QUESTION}" placeholder="Ask a question about CrossWatch" aria-label="Your question" disabled></textarea>
@@ -479,23 +525,33 @@ export default {
                 <button class="as-send" type="submit" id="as-send" disabled><span class="material-symbols-rounded" aria-hidden="true">send</span><span>Send</span></button>
               </div>
             </form>
-            ${view.context.page ? `<small class="as-looked">Opened from ${esc(view.context.page)}${view.context.item_key ? " · selected item" : ""}${view.context.pair_id ? " · selected pair" : ""}</small>` : ""}
+            <small class="as-looked" id="as-context" hidden></small>
           </div>
           <div class="as-log" id="as-log" aria-live="polite"></div>
         </div>
         <div class="as-foot" id="as-foot"></div>
-        <p class="as-note">Answers come from the AI model you chose and can be wrong. Proposed actions run only when you click Run.</p>
+        <p class="as-note" id="as-note">${AI_NOTE}</p>
       </div>`;
 
     view.root = root;
     view.ready = false;
+    view.mode = "off";
     view.loaded = false;
     setBusy(busy);
     try {
       const conf = await api("/settings");
       if (view.root !== root) return;
-      view.ready = !!conf.ready;
-      if (view.ready) $("#as-sub", root).textContent = `Help and suggested actions, using ${conf.model}`;
+      view.mode = ["full", "wiki", "off"].includes(conf.mode) ? conf.mode : conf.ready ? "full" : "off";
+      view.ready = view.mode !== "off";
+      const wiki = view.mode === "wiki";
+      if (view.mode === "full") $("#as-sub", root).textContent = `Help and suggested actions, using ${conf.model}`;
+      if (wiki) $("#as-sub", root).textContent = "Answers from the CrossWatch wiki";
+      $("#as-notice", root).hidden = !wiki;
+      $(".as-scope", root).hidden = wiki;
+      $("#as-note", root).textContent = wiki ? WIKI_NOTE : AI_NOTE;
+      const about = view.context.item_key ? "the selected item" : view.context.pair_id ? "the selected pair" : "";
+      $("#as-context", root).textContent = about ? `Asking about ${about}` : "";
+      $("#as-context", root).hidden = view.mode !== "full" || !about;
     } catch {}
     if (view.root !== root) return;
     view.loaded = true;
@@ -529,7 +585,7 @@ export default {
         renderLog();
         $("#as-input", root)?.focus?.();
       }
-      if (target.closest("#as-setup")) {
+      if (target.closest("#as-setup, [data-as-setup]")) {
         closeModal();
         goSettings("app");
         window.setTimeout(() => window.cwUiSettingsJump?.("security"), 60);
@@ -557,7 +613,7 @@ export default {
     $("#as-scope", root).addEventListener("change", (event) => {
       view.scope = String(event.target.value || "all");
     });
-    if (view.ready && props?.question) ask(props.question);
+    if (view.mode === "full" && props?.question) ask(props.question);
     else if (view.ready && !busy) $("#as-input", root).focus?.();
   },
   unmount() {

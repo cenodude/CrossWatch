@@ -40,6 +40,8 @@ def _public(conf: dict[str, Any]) -> dict[str, Any]:
         "model": conf["model"],
         "has_key": bool(conf["api_key"]),
         "ready": assistant.ready(conf),
+        "wiki_help": conf["wiki_help"],
+        "mode": assistant.mode(conf),
     }
 
 
@@ -149,6 +151,8 @@ def assistant_settings_save(request: Request, payload: dict[str, Any] = Body(def
         moved = base_url is not None and base_url != assistant.settings(cfg)["base_url"]
         if "enabled" in body:
             block["enabled"] = bool(body.get("enabled"))
+        if "wiki_help" in body:
+            block["wiki_help"] = body.get("wiki_help") is not False
         if base_url is not None:
             block["base_url"] = base_url
         if "model" in body:
@@ -217,13 +221,36 @@ def assistant_test_model(request: Request, payload: dict[str, Any] = Body(defaul
     return _reply({"ok": True, **result})
 
 
+def _wiki_chat(messages: list[dict[str, str]]) -> JSONResponse:
+    try:
+        question = assistant.wiki_question(messages)
+        found = assistant.run_bounded(lambda: assistant.ask_wiki(question), assistant.WIKI_ASK_TIMEOUT_S + assistant.GRACE_S)
+    except assistant.AssistantBusy as exc:
+        return _reply({"ok": False, "error": exc.public}, 429)
+    except assistant.AssistantError as exc:
+        return _reply({"ok": False, "error": exc.public}, 502)
+    finally:
+        assistant.CHAT_SLOTS.release()
+    return _reply({
+        "ok": True,
+        "mode": "wiki",
+        "reply": found["answer"],
+        "tools": ["ask_wiki"],
+        "actions": [],
+        "sources": found["sources"],
+        "proposals": [],
+        "followups": found["followups"],
+    })
+
+
 @router.post("/chat")
 def assistant_chat(request: Request, payload: dict[str, Any] = Body(default_factory=dict)) -> JSONResponse:
     blocked = _blocked(request)
     if blocked is not None:
         return blocked
     conf = assistant.settings(load_config() or {})
-    if not assistant.ready(conf):
+    mode = assistant.mode(conf)
+    if mode == "off":
         return _reply({"ok": False, "error": "The assistant is not set up yet"}, 400)
     body = payload if isinstance(payload, dict) else {}
     messages = assistant.clean_messages(body.get("messages"))
@@ -234,6 +261,8 @@ def assistant_chat(request: Request, payload: dict[str, Any] = Body(default_fact
         return _reply({"ok": False, "error": "Ask a question first"}, 400)
     if not assistant.CHAT_SLOTS.acquire(blocking=False):
         return _reply({"ok": False, "error": assistant.BUSY}, 429)
+    if mode == "wiki":
+        return _wiki_chat(messages)
     tools = _tools()
     evidence: list = []
     runner = _runner(request, evidence)

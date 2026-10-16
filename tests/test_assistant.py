@@ -493,11 +493,11 @@ def test_settings_keep_the_key_secret_and_admin_only(gated, config_base: Path) -
         assert client.post(url, json={"enabled": True}, headers=blocked).status_code == 403
         assert client.post("/api/assistant/chat", json={"messages": []}, headers=blocked).status_code == 403
 
-    assert client.get(url, headers=admin).json() == {"ok": True, "enabled": False, "base_url": "", "model": "", "has_key": False, "ready": False}
+    assert client.get(url, headers=admin).json() == {"ok": True, "enabled": False, "base_url": "", "model": "", "has_key": False, "ready": False, "wiki_help": True, "mode": "wiki"}
     assert client.post(url, json={"base_url": "ftp://ai.test"}, headers=admin).status_code == 400
 
     saved = client.post(url, json={"enabled": True, "base_url": BASE + "/", "model": " gpt-test ", "api_key": KEY}, headers=admin)
-    assert saved.json() == {"ok": True, "enabled": True, "base_url": BASE, "model": "gpt-test", "has_key": True, "ready": True}
+    assert saved.json() == {"ok": True, "enabled": True, "base_url": BASE, "model": "gpt-test", "has_key": True, "ready": True, "wiki_help": True, "mode": "full"}
     assert KEY not in saved.text
     assert KEY not in (config_base / "config.json").read_text(encoding="utf-8")
     assert load_config()["assistant"]["api_key"] == KEY
@@ -521,7 +521,9 @@ def test_chat_runs_tools_and_returns_the_answer(gated, monkeypatch: pytest.Monke
     admin = _headers(gated)
     chat = "/api/assistant/chat"
 
-    assert client.post(chat, json={"messages": [{"role": "user", "content": "hi"}]}, headers=admin).status_code == 400
+    off = client.post("/api/assistant/settings", json={"wiki_help": False}, headers=admin).json()
+    assert (off["wiki_help"], off["mode"]) == (False, "off")
+    assert client.post(chat, json={"messages": [{"role": "user", "content": "hi"}]}, headers=admin).json() == {"ok": False, "error": "The assistant is not set up yet"}
     client.post("/api/assistant/settings", json={"enabled": True, "base_url": BASE, "model": "gpt-test", "api_key": KEY}, headers=admin)
     assert client.post(chat, json={"messages": [{"role": "assistant", "content": "hi"}]}, headers=admin).status_code == 400
 
@@ -1203,3 +1205,134 @@ def test_an_empty_final_answer_gets_one_nudge_before_giving_up(gated, monkeypatc
     monkeypatch.setattr(assistant.requests, "post", talkative.post)
     assert client.post("/api/assistant/chat", json=ask, headers=admin).json()["reply"] == "Straight answer."
     assert len(talkative.requests) == 1
+
+
+WIKI_REPLY = "\n".join([
+    "# How do I get a phone notification when a sync fails?",
+    "",
+    "Use **Scheduler Webhooks** with ntfy. See [Scheduler Webhooks](/crosswatch/settings/scheduling/scheduler-webhooks.md) and [Elsewhere](https://evil.test/x).",
+    "",
+    "# Suggested Follow-up Questions:",
+    "",
+    "- [How do I test Pushover?](https://wiki.crosswatch.app?ask=How%20do%20I%20test%20Pushover%3F)",
+    "- [How do I test Pushover?](https://wiki.crosswatch.app?ask=again)",
+    "- [What if the test fails?](https://wiki.crosswatch.app?ask=x)",
+    "- [Can I add Healthchecks.io?](https://wiki.crosswatch.app?ask=y)",
+    "- [One too many?](https://wiki.crosswatch.app?ask=z)",
+    "",
+    "# Sources:",
+    "",
+    "- [Scheduler Webhooks](https://wiki.crosswatch.app/crosswatch/settings/scheduling/scheduler-webhooks.md)",
+    "- [Scheduler Webhooks again](https://wiki.crosswatch.app/crosswatch/settings/scheduling/scheduler-webhooks.md)",
+    "- [Evil](https://evil.test/a.md)",
+    "- [Relative](/crosswatch/main-dashboard/mobile-devices.md)",
+    "- [Events](https://wiki.crosswatch.app/crosswatch/main-dashboard/tools/events.md)",
+    "- [Fourth](https://wiki.crosswatch.app/fourth.md)",
+])
+
+
+def _wiki_get(text: str = WIKI_REPLY, status: int = 200, kind: str = "text/markdown; charset=utf-8", seen: list | None = None) -> Any:
+    def get(url: str, **kwargs: Any) -> FakeResponse:
+        if seen is not None:
+            seen.append({"url": url, **kwargs})
+        return FakeResponse(status, text=text, headers={"Content-Type": kind})
+
+    return get
+
+
+def test_mode_comes_from_config_only() -> None:
+    assert assistant.mode(assistant.settings({})) == "wiki"
+    assert assistant.mode(assistant.settings({"assistant": {"wiki_help": False}})) == "off"
+    assert assistant.mode(assistant.settings({"assistant": {"wiki_help": "yes"}})) == "wiki"
+    full = {"enabled": True, "base_url": BASE, "model": "m"}
+    assert assistant.mode(assistant.settings({"assistant": {**full, "wiki_help": False}})) == "full"
+    assert assistant.mode(assistant.settings({"assistant": {**full, "enabled": False, "wiki_help": False}})) == "off"
+
+
+def test_wiki_answers_keep_only_wiki_links(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list = []
+    monkeypatch.setattr(assistant.requests, "get", _wiki_get(seen=seen))
+    found = assistant.ask_wiki("phone alerts?")
+
+    assert found["answer"] == (
+        "Use **Scheduler Webhooks** with ntfy. See "
+        "[Scheduler Webhooks](https://wiki.crosswatch.app/crosswatch/settings/scheduling/scheduler-webhooks) and Elsewhere."
+    )
+    assert found["followups"] == ["How do I test Pushover?", "What if the test fails?", "Can I add Healthchecks.io?"]
+    assert found["sources"] == [
+        {"title": "Scheduler Webhooks", "url": "https://wiki.crosswatch.app/crosswatch/settings/scheduling/scheduler-webhooks"},
+        {"title": "Relative", "url": "https://wiki.crosswatch.app/crosswatch/main-dashboard/mobile-devices"},
+        {"title": "Events", "url": "https://wiki.crosswatch.app/crosswatch/main-dashboard/tools/events"},
+    ]
+    assert seen[0]["url"] == assistant.WIKI_ASK_URL
+    assert seen[0]["params"] == {"ask": "phone alerts?"}
+    assert seen[0]["allow_redirects"] is False and seen[0]["stream"] is True
+    assert seen[0]["timeout"] <= assistant.WIKI_ASK_TIMEOUT_S
+
+    monkeypatch.setattr(assistant.requests, "get", _wiki_get("Plain text answer with [a link](//evil.test/x)."))
+    assert assistant.ask_wiki("odd") == {"answer": "Plain text answer with a link.", "followups": [], "sources": []}
+    monkeypatch.setattr(assistant.requests, "get", _wiki_get("# Only the question\n\n# Sources:\n"))
+    assert assistant.ask_wiki("empty")["answer"] == assistant.WIKI_NO_ANSWER
+
+
+def test_wiki_answer_failures_say_the_wiki_is_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    def broken(url: str, **_kwargs: Any) -> FakeResponse:
+        raise assistant.requests.ConnectionError("blocked")
+
+    for get in (broken, _wiki_get(status=302), _wiki_get(status=503), _wiki_get("<html></html>", kind="text/html")):
+        monkeypatch.setattr(assistant.requests, "get", get)
+        with pytest.raises(assistant.AssistantError) as caught:
+            assistant.ask_wiki("anything")
+        assert caught.value.public == assistant.WIKI_UNREACHABLE
+    monkeypatch.setattr(assistant.requests, "get", _wiki_get("x" * (assistant.MAX_DOC_BYTES + 1)))
+    with pytest.raises(assistant.AssistantError):
+        assistant.ask_wiki("anything")
+    with pytest.raises(assistant.AssistantError):
+        assistant.ask_wiki("   ")
+
+
+def test_wiki_question_folds_the_earlier_question_and_scrubs_secrets() -> None:
+    def user(text: str) -> dict[str, str]:
+        return {"role": "user", "content": text}
+
+    assert assistant.wiki_question([]) == ""
+    assert assistant.wiki_question([user("  how   do captures work? ")]) == "how do captures work?"
+    folded = assistant.wiki_question([user("How do I add Trakt?"), {"role": "assistant", "content": "Like this."}, user("and Plex? token=abc123secretvalue")])
+    assert folded == "Earlier question: How do I add Trakt?. Now: and Plex? token=****"
+    long = assistant.wiki_question([user("a" * 900), user("b" * 900)])
+    assert long == "b" * assistant.MAX_WIKI_QUESTION
+    mixed = assistant.wiki_question([user("a" * 900), user("b" * 300)])
+    assert len(mixed) == assistant.MAX_WIKI_QUESTION and mixed.endswith("b" * 300)
+
+
+def test_wiki_mode_chat_only_sends_the_question(gated, monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _client()
+    admin = _headers(gated)
+
+    def no_network(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("no outside call expected")
+
+    monkeypatch.setattr(assistant.requests, "get", no_network)
+    monkeypatch.setattr(assistant.requests, "post", no_network)
+    conf = client.get("/api/assistant/settings", headers=admin).json()
+    assert (conf["mode"], conf["wiki_help"]) == ("wiki", True)
+    assert client.post("/api/assistant/settings", json={"wiki_help": True}, headers=admin).json()["mode"] == "wiki"
+
+    seen: list = []
+    monkeypatch.setattr(assistant.requests, "get", _wiki_get(seen=seen))
+    ask = {"messages": [{"role": "user", "content": "phone alerts?"}], "scope": "sync", "context": {"page": "logs"}}
+    res = client.post("/api/assistant/chat", json=ask, headers=admin).json()
+
+    assert res["ok"] is True and res["mode"] == "wiki"
+    assert res["tools"] == ["ask_wiki"]
+    assert (res["actions"], res["proposals"]) == ([], [])
+    assert res["reply"].startswith("Use **Scheduler Webhooks** with ntfy.")
+    assert len(res["followups"]) == 3 and len(res["sources"]) == 3
+    assert len(seen) == 1 and seen[0]["params"] == {"ask": "phone alerts?"}
+
+    monkeypatch.setattr(assistant.requests, "get", _wiki_get(status=503))
+    failed = client.post("/api/assistant/chat", json=ask, headers=admin)
+    assert (failed.status_code, failed.json()["error"]) == (502, assistant.WIKI_UNREACHABLE)
+    monkeypatch.setattr(assistant.requests, "get", no_network)
+    client.post("/api/assistant/settings", json={"wiki_help": False}, headers=admin)
+    assert client.post("/api/assistant/chat", json=ask, headers=admin).status_code == 400

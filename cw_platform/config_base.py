@@ -867,6 +867,7 @@ DEFAULT_CFG: dict[str, Any] = {
         "base_url": "",
         "api_key": "",
         "model": "",
+        "wiki_help": True,
     },
 
     # --- Scrobble ------------------------------------------------------------

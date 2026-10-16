@@ -29,6 +29,15 @@
 .cw-assistant .as-chip{display:inline-flex;align-items:center;gap:10px;max-width:100%;padding:8px 14px;border:1px solid color-mix(in srgb,var(--as-accent) 30%,var(--as-border));border-radius:999px;background:color-mix(in srgb,var(--as-accent) 7%,transparent);color:var(--as-text);font:inherit;font-size:14px;text-align:left;cursor:pointer}
 .cw-assistant .as-chip .material-symbols-rounded{font-size:18px;color:var(--as-muted)}
 .cw-assistant .as-chip:hover,.cw-assistant .as-chip:focus-visible{border-color:var(--as-accent);outline:none}
+.cw-assistant .as-scope[hidden],.cw-assistant .as-looked[hidden]{display:none}
+.cw-assistant .as-notice{display:flex;flex-wrap:wrap;align-items:flex-start;gap:8px 10px;margin:0 0 14px;padding:12px 14px;border:1px solid color-mix(in srgb,var(--as-accent) 30%,var(--as-border));border-radius:12px;background:color-mix(in srgb,var(--as-accent) 7%,transparent)}
+.cw-assistant .as-notice[hidden]{display:none}
+.cw-assistant .as-notice>.material-symbols-rounded{flex:0 0 auto;font-size:20px;color:var(--as-accent)}
+.cw-assistant .as-notice p{flex:1 1 220px;min-width:0;margin:0;font-size:13px;line-height:1.45;color:var(--as-muted)}
+.cw-assistant .as-notice p strong{color:var(--as-text)}
+.cw-assistant .as-follow{display:flex;flex-direction:column;align-items:flex-start;gap:6px;margin-top:10px}
+.cw-assistant .as-follow>span{font-size:12px;color:var(--as-muted)}
+.cw-assistant .as-follow .as-chip{padding:6px 12px;font-size:13px}
 .cw-assistant .as-log{display:flex;flex-direction:column;gap:18px}
 .cw-assistant.is-chatting .as-log{margin-top:4px}
 .cw-assistant .as-msg{font-size:14px;line-height:1.5;overflow-wrap:anywhere}
