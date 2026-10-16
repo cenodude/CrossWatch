@@ -1964,7 +1964,6 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
                                 <option value="on">Answer from the CrossWatch wiki</option>
                                 <option value="off">Turn Ask CrossWatch off</option>
                               </select>
-                              <small>Wiki answers need internet access and only reach out when you ask a question.</small>
                             </div>
                           </div>
                           <div class="cw-ai-status" id="assistant_state" role="status"></div>
