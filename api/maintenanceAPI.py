@@ -747,20 +747,44 @@ def maintenance_action_status(action: str) -> dict[str, Any]:
         orphans: Mapping[str, Any] = orphans_raw if isinstance(orphans_raw, Mapping) else {}
         stale: Mapping[str, Any] = stale_raw if isinstance(stale_raw, Mapping) else {}
         last_sync: Mapping[str, Any] = last_sync_raw if isinstance(last_sync_raw, Mapping) else {}
+        storage_raw = health.get("storage")
+        storage: Mapping[str, Any] = storage_raw if isinstance(storage_raw, Mapping) else {}
         orphan_total = sum(int(value or 0) for value in orphans.values())
+        note = "Checks the local CrossWatch database integrity, schema, table counts and row consistency. Read-only."
+        if storage.get("network"):
+            note += f" Warning: the database is on a network filesystem ({storage.get('filesystem')}). SQLite locking is unreliable there; move /config to local storage."
         response.update(
             title="Database health",
-            note="Checks the local CrossWatch database integrity, schema, table counts and row consistency. Read-only.",
+            note=note,
             metrics=[
                 _metric("Integrity", health.get("integrity", "unknown"), "text"),
                 _metric("Schema version", health.get("schema_version") or 0),
                 _metric("Database size", int(health.get("size_bytes") or 0), "bytes"),
+                _metric("WAL size", int(health.get("wal_size_bytes") or 0), "bytes"),
+                _metric("Filesystem", storage.get("filesystem") or "unknown", "text"),
                 _metric("Tables", len(tables)),
                 _metric("Feature baselines", int(tables.get("provider_feature_state") or 0)),
                 _metric("Baseline items", int(tables.get("baseline_items") or 0)),
                 _metric("Orphan rows", orphan_total),
                 _metric("Expired TTL rows", int(stale.get("ttl_expired") or 0)),
                 _metric("Last sync", last_sync.get("state_epoch"), "datetime"),
+            ],
+        )
+    elif action == "database-rebuild":
+        from cw_platform.local_db.db import active_writers
+        from cw_platform.local_db.storage import storage_info
+
+        db_path = crosswatch_db_path(CONFIG_DIR)
+        storage = storage_info(db_path)
+        writers = active_writers()
+        response.update(
+            title="Rebuild local database",
+            note="Moves the local database files to .cw_databases/backups and starts a fresh database. Sync baselines, Editor mappings and blocks, Events, statistics, sync reports and hidden watchlist items start empty; config.json and provider logins stay. The next sync works like a first sync: nothing is deleted, but a two-way pair can add back items removed on one side. Use this when the database stays locked or damaged.",
+            metrics=[
+                _metric("Database size", _path_usage(db_path)["bytes"], "bytes"),
+                _metric("WAL size", _path_usage(Path(str(db_path) + "-wal"))["bytes"], "bytes"),
+                _metric("Filesystem", storage.get("filesystem") or "unknown", "text"),
+                _metric("Active writes", len(writers)),
             ],
         )
     elif action == "cache":
@@ -1634,6 +1658,36 @@ def maintenance_database_health() -> dict[str, Any]:
         return local_db_diagnostics(CONFIG_DIR)
     except Exception:
         _LOG.exception("database-health failed")
+        return {"ok": False, "error": "internal_error"}
+
+
+@router.post("/database-rebuild")
+def maintenance_database_rebuild(payload: dict[str, Any] | None = Body(None)) -> dict[str, Any]:
+    if not bool((payload or {}).get("confirm")):
+        return {"ok": False, "error": "confirmation_required", "confirm": False}
+    _, CONFIG_DIR, *_ = _cw()
+    try:
+        from api.syncAPI import _is_sync_running
+
+        if _is_sync_running():
+            return {"ok": False, "error": "sync_running"}
+    except Exception:
+        pass
+    try:
+        from cw_platform.local_db.db import LocalDatabaseError, get_conn, replace_database
+        from cw_platform.local_db.state import _invalidate
+
+        try:
+            result = replace_database(CONFIG_DIR)
+        except LocalDatabaseError as exc:
+            return {"ok": False, "error": str(exc)}
+        _invalidate()
+        clear_caches()
+        fresh = get_conn(CONFIG_DIR) is not None
+        _LOG.warning("local database rebuilt; previous files moved to %s", result.get("backup") or "nowhere (no files)")
+        return {"ok": fresh, **result, **({} if fresh else {"error": "database_unavailable"})}
+    except Exception:
+        _LOG.exception("database-rebuild failed")
         return {"ok": False, "error": "internal_error"}
 
 

@@ -32,7 +32,7 @@ test('Maintenance keeps its caller and category, including the old entry point',
 test('all existing tools have one category and bulk recommendations exclude resets',()=>{
   const ctx={};
   vm.runInNewContext(catalog+';globalThis.ops=OPS;globalThis.groups=GROUPS;globalThis.recommended=recommendedKeys([]);',ctx);
-  assert.equal(ctx.ops.length,17);
+  assert.equal(ctx.ops.length,18);
   for (const op of ctx.ops) assert.equal(ctx.groups.filter(group=>group.keys.includes(op.key)).length,1,op.key);
   assert.deepEqual(Array.from(ctx.recommended),['cache','database-health','playing']);
 });
@@ -111,7 +111,7 @@ function runner({confirmed=true,typed='RESET',response={ok:true},reject=false}={
 }
 
 test('cancelling destructive tasks sends no request',async()=>{
-  for(const kind of ['captures','events-purge','events-rebuild','state-file','state-file-prune','defaults']) {
+  for(const kind of ['captures','events-purge','events-rebuild','state-file','state-file-prune','database-rebuild','defaults']) {
     const fixture=runner({confirmed:false});
     assert.equal(await fixture.run(kind),false);
     assert.equal(fixture.posts.length,0,kind);
@@ -128,6 +128,15 @@ test('event deletion retains explicit confirmation in the API payload',async()=>
   assert.equal(fixture.posts[0].url,'/api/maintenance/events-purge');
   assert.equal(fixture.posts[0].body.confirm,true);
   assert.deepEqual(fixture.feedback,['success']);
+});
+
+test('database rebuild sends explicit confirmation and reports the backup',async()=>{
+  const fixture=runner({response:{ok:true,backup:'/config/.cw_databases/backups/crosswatch-1.sqlite3'}});
+  await fixture.run('database-rebuild');
+  assert.equal(fixture.posts[0].url,'/api/maintenance/database-rebuild');
+  assert.equal(fixture.posts[0].body.confirm,true);
+  assert.deepEqual(fixture.feedback,['success']);
+  assert.match(fixture.messages.at(-1),/backup \/config\/\.cw_databases\/backups\/crosswatch-1\.sqlite3/);
 });
 
 test('unhealthy diagnostics show issues and failed requests release the operation lock',async()=>{

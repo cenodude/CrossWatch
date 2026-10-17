@@ -14,6 +14,8 @@ OVERDUE_GRACE_S = 300
 TOKEN_EXPIRY_WINDOW_S = 14 * 86400
 PROBE_DEADLINE_S = 10
 MAX_PROBE_WORKERS = 8
+SLOW_WRITER_S = 30
+BUSY_NOTICE_S = 10
 LEVELS = ("ok", "degraded", "failing")
 
 Issues = list[dict[str, str]]
@@ -159,6 +161,52 @@ def provider_health(cfg: dict[str, Any], probe: Probe, issues: Issues) -> list[d
     return rows
 
 
+def database_health(
+    issues: Issues,
+    storage: Callable[[Any], dict[str, Any]] | None = None,
+    writers: Callable[[], list[dict[str, Any]]] | None = None,
+) -> dict[str, Any]:
+    from cw_platform.local_db.db import active_writers, crosswatch_db_path
+    from cw_platform.local_db.storage import storage_info
+
+    path = crosswatch_db_path()
+    info = (storage or storage_info)(path)
+    held = (writers or active_writers)()
+    if info.get("network"):
+        _add(issues, "degraded", "database", f"Database is on a network filesystem ({info.get('filesystem')}); SQLite locking is unreliable there")
+    if held and float(held[0].get("seconds") or 0) >= SLOW_WRITER_S:
+        _add(issues, "degraded", "database", f"Database write held by {held[0].get('operation')} for {int(held[0].get('seconds') or 0)}s")
+    wal = path.with_name(path.name + "-wal")
+    return {
+        "path": str(path),
+        "size_bytes": path.stat().st_size if path.exists() else 0,
+        "wal_size_bytes": wal.stat().st_size if wal.exists() else 0,
+        "filesystem": info.get("filesystem"),
+        "network_filesystem": bool(info.get("network")),
+        "active_writers": held,
+    }
+
+
+def database_status(
+    storage: Callable[[Any], dict[str, Any]] | None = None,
+    writers: Callable[[], list[dict[str, Any]]] | None = None,
+) -> dict[str, Any]:
+    from cw_platform.local_db.db import active_writers, crosswatch_db_path
+    from cw_platform.local_db.storage import storage_info
+
+    info = (storage or storage_info)(crosswatch_db_path())
+    held = (writers or active_writers)()
+    top = held[0] if held and float(held[0].get("seconds") or 0) >= BUSY_NOTICE_S else None
+    return {
+        "busy": top is not None,
+        "operation": top.get("operation") if top else None,
+        "seconds": int(top.get("seconds") or 0) if top else 0,
+        "since": top.get("since") if top else None,
+        "filesystem": info.get("filesystem"),
+        "network_filesystem": bool(info.get("network")),
+    }
+
+
 def expiring_tokens(tokens: list[dict[str, Any]], now: int) -> list[dict[str, Any]]:
     rows = [
         {"id": str(token.get("id") or ""), "name": str(token.get("name") or ""), "expires_at": int(token.get("expires_at") or 0)}
@@ -199,6 +247,7 @@ def health_details(
     )
     providers = _checked(issues, "providers", [], lambda: provider_health(cfg, probe or health_alerts.probe_provider, issues))
     expiring = _checked(issues, "api_tokens", [], lambda: expiring_tokens(tokens(), now_ts))
+    database = _checked(issues, "database", {}, lambda: database_health(issues))
     status = max((issue["level"] for issue in issues), key=LEVELS.index, default="ok")
     return {
         "ok": status == "ok",
@@ -210,4 +259,5 @@ def health_details(
         "last_run": run,
         "providers": providers,
         "api_tokens_expiring": expiring,
+        "database": database,
     }

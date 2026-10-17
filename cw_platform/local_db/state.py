@@ -679,9 +679,10 @@ def save_state(base_path: str | Path, state: Mapping[str, Any]) -> None:
         ts = _now()
         blocks = _iter_feature_blocks(state)
         incoming = {_feature_key(provider, instance, feature) for provider, instance, feature, _ in blocks}
-        with conn:
-            for provider, instance, feature, block in blocks:
+        for provider, instance, feature, block in blocks:
+            with conn:
                 _replace_feature(conn, provider, instance, feature, block, ts)
+        with conn:
             existing = conn.execute(
                 "SELECT id,provider,instance,feature FROM provider_feature_state"
             ).fetchall()
@@ -808,11 +809,12 @@ def save_pair_blocks(base_path: str | Path, pair_scope: str, blocks: Mapping[tup
         if conn is None:
             raise RuntimeError("Pair state database is unavailable")
         ts = _now()
-        with conn:
-            for (provider, instance, feature), block in blocks.items():
+        for (provider, instance, feature), block in blocks.items():
+            with conn:
                 _replace_feature(conn, provider, instance, feature, block, ts, pair_scope=pair_scope)
                 _replace_feature(conn, provider, instance, feature, block, ts)
-            if last_sync_epoch is not None:
+        if last_sync_epoch is not None:
+            with conn:
                 _set_meta(conn, "last_sync_epoch", last_sync_epoch, ts)
         _invalidate()
 

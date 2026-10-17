@@ -79,6 +79,7 @@ const SIMPLE_OPS = {
   "events-purge": "/api/maintenance/events-purge",
   "state-file": "/api/maintenance/state-file/compact",
   "state-file-prune": "/api/maintenance/state-file/prune",
+  "database-rebuild": "/api/maintenance/database-rebuild",
 };
 const OPS = [
   {
@@ -123,6 +124,13 @@ const OPS = [
     icon: "cleaning_services",
     title: "Prune stale state",
     desc: "Creates an app-state backup, then removes state baselines and leftover unresolved, blackbox and flap files for pairs or routes that no longer exist.",
+  },
+  {
+    key: "database-rebuild",
+    kind: "database-rebuild",
+    icon: "settings_backup_restore",
+    title: "Rebuild local database",
+    desc: "Backs up the local database files and starts a fresh database. Use this when the database stays locked or damaged.",
   },
   {
     key: "meta",
@@ -260,7 +268,7 @@ const GROUPS = [
     icon: "data_object",
     title: "Sync State",
     desc: "Inspect, compact and prune the sync state database.",
-    keys: ["database-health", "state-file", "state-file-prune"],
+    keys: ["database-health", "state-file", "state-file-prune", "database-rebuild"],
   },
   {
     id: "archive",
@@ -288,7 +296,7 @@ const GROUPS = [
 const OPS_BY_KEY = Object.fromEntries(OPS.map((op) => [op.key, op]));
 const DEFAULT_RECOMMENDED = ["cache", "database-health", "playing"];
 const SAFE_ACTIONS = new Set([...DEFAULT_RECOMMENDED, "events-health", "events-optimize", "meta"]);
-const DESTRUCTIVE_ACTIONS = new Set(["state", "scrobbles", "stats", "events-purge", "events-rebuild", "captures", "defaults"]);
+const DESTRUCTIVE_ACTIONS = new Set(["state", "scrobbles", "stats", "events-purge", "events-rebuild", "database-rebuild", "captures", "defaults"]);
 const riskFor = op => SAFE_ACTIONS.has(op.key) ? "safe" : DESTRUCTIVE_ACTIONS.has(op.key) ? "destructive" : "review";
 const historyKey = auth => `cw.maintenance.history.v1:${encodeURIComponent(String(auth?.user?.id || auth?.user?.username || auth?.profileId || "admin"))}`;
 function cleanHistory(value) {
@@ -969,6 +977,11 @@ const MaintenancePage = {
         return false;
       }
 
+      if (kind === "database-rebuild" && !confirm("Rebuild the local database?\n\nThe current database files are moved to .cw_databases/backups and a fresh database is created.\n\nSync baselines, Editor mappings and blocks, Events, statistics, sync reports and hidden watchlist items start empty. config.json and provider logins stay.\n\nThe next sync works like a first sync: nothing is deleted, but a two-way pair can add back items removed on one side.")) {
+        setStatus("Cancelled.", "");
+        return false;
+      }
+
       if (manageLock) setOperationBusy(true);
       startActionFeedback(btn);
       const label = btn?.dataset?.label || OPS.find((item) => item.kind === kind)?.title || kind;
@@ -984,7 +997,7 @@ const MaintenancePage = {
             purge_state: false,
             purge_reports: true,
             purge_insights: true,
-          } : (kind === "events-rebuild" || kind === "events-purge") ? { confirm: true } : undefined;
+          } : (kind === "events-rebuild" || kind === "events-purge" || kind === "database-rebuild") ? { confirm: true } : undefined;
           res = await post(SIMPLE_OPS[kind], body);
         } else if (kind === "tracker") {
           const chkState = $("#cxm-cw-state", root);
@@ -1060,7 +1073,7 @@ const MaintenancePage = {
         if (kind === "scrobbles") {
           try { window.dispatchEvent(new CustomEvent("activity-log-cleared")); } catch {}
         }
-        if (kind === "state") {
+        if (kind === "state" || kind === "database-rebuild") {
           try { window.CW?.Maintenance?.applySyncStateReset?.(res || { ok: true }); } catch {}
           await refreshSummary();
         }
@@ -1089,7 +1102,8 @@ const MaintenancePage = {
         const dbReceipt = databaseReceipt(kind, res);
         const stateReceipt = kind === "state-file" ? stateFileReceipt(res) : null;
         const statePrune = kind === "state-file-prune" ? statePruneReceipt(res) : null;
-        setStatus(evReceipt || dbReceipt || stateReceipt || statePrune || completionReceipt(label, res), res?.healthy === false ? "err" : "ok");
+        const rebuildReceipt = kind === "database-rebuild" ? `Rebuild local database completed · ${res?.backup ? `backup ${res.backup}` : "no previous files"}.` : null;
+        setStatus(evReceipt || dbReceipt || stateReceipt || statePrune || rebuildReceipt || completionReceipt(label, res), res?.healthy === false ? "err" : "ok");
         finishActionFeedback(btn, res?.healthy === false ? "issues" : "success");
         return res || { ok: true };
       } catch (e) {

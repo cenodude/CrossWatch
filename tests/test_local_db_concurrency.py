@@ -89,3 +89,35 @@ def test_switching_database_replaces_only_current_workers_connection(database, t
     with pytest.raises(sqlite3.ProgrammingError, match="closed"):
         database.execute("SELECT 1")
     assert replacement.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+
+
+def test_new_worker_connects_while_another_connection_holds_the_write_lock(database, tmp_path):
+    holder = sqlite3.connect(str(tmp_path / "crosswatch.sqlite3"), isolation_level=None)
+    holder.execute("BEGIN IMMEDIATE")
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            conn = pool.submit(db.get_conn).result(timeout=4)
+        assert conn is not None
+        assert conn.execute("SELECT COUNT(*) FROM concurrency_test").fetchone()[0] == 0
+    finally:
+        holder.rollback()
+        holder.close()
+
+
+def test_repeated_unavailable_warnings_are_rate_limited(database, monkeypatch, caplog):
+    def fail(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(db, "connect", fail)
+    monkeypatch.setattr(db, "_LAST_WARNING", {})
+    monkeypatch.setattr(db, "_SUPPRESSED", {})
+    db.close_conn()
+    with caplog.at_level("WARNING", logger="crosswatch.local_db"):
+        for _ in range(5):
+            assert db.get_conn() is None
+    assert [r.getMessage() for r in caplog.records].count("local database unavailable: database is locked") == 1
+    monkeypatch.setattr(db, "_LAST_WARNING", {key: 0.0 for key in db._LAST_WARNING})
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="crosswatch.local_db"):
+        assert db.get_conn() is None
+    assert any("4 similar warnings suppressed" in r.getMessage() for r in caplog.records)

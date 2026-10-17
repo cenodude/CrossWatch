@@ -77,6 +77,13 @@ def api_health_details(request: Request, strict: int = Query(0)) -> JSONResponse
     return JSONResponse(payload, status_code=status_code, headers={"Cache-Control": "no-store"})
 
 
+@router.get("/api/health/database")
+def api_health_database() -> JSONResponse:
+    from services.health_details import database_status
+
+    return JSONResponse(database_status(), headers={"Cache-Control": "no-store"})
+
+
 @router.get("/healthz", include_in_schema=False)
 def healthz() -> JSONResponse:
     return JSONResponse(_health_payload(), headers={"Cache-Control": "no-store"})

@@ -131,7 +131,7 @@ def register_ui_root(app: FastAPI) -> None:
 
 
 _HELPER_SCRIPTS = (
-    "help-links.js", "provider-meta.js", "feature-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "account-menu.js", "notifications.js", "update-notifications.js", "api.js", "core.js", "details-log.js",
+    "help-links.js", "provider-meta.js", "feature-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "account-menu.js", "notifications.js", "update-notifications.js", "database-notifications.js", "api.js", "core.js", "details-log.js",
     "media-meta.js", "trailer.js", "playing-card.js", "watchlist-preview.js", "profile-datetime.js", "providers-ui.js", "settings-ui.js", "settings-save.js", "maintenance.js", "backups.js",
     "restart_apply.js",
 )
@@ -141,7 +141,7 @@ _APP_SCRIPTS = (
     "scrobbler.js", "user-profiles.js", "app-users.js", "mcp-access.js", "assistant-settings.js",
 )
 _USER_HELPER_SCRIPTS = (
-    "help-links.js", "provider-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "account-menu.js", "notifications.js", "update-notifications.js", "api.js", "core.js",
+    "help-links.js", "provider-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "account-menu.js", "notifications.js", "update-notifications.js", "database-notifications.js", "api.js", "core.js",
     "media-meta.js", "trailer.js", "playing-card.js", "watchlist-preview.js", "profile-datetime.js",
 )
 _USER_APP_SCRIPTS = (
@@ -2955,6 +2955,7 @@ def get_profile_html(user: dict | None = None) -> str:
 <script src="/assets/helpers/account-menu.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/notifications.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/update-notifications.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/helpers/database-notifications.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/js/overview-profile.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/js/sync-reviews.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/js/plex-recovery-notifications.js?v=__CW_VERSION__" defer></script>
