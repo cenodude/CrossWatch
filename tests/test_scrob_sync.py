@@ -509,7 +509,7 @@ def test_collection_add_maps_each_scope():
     })
     items = [
         {"type": "movie", "ids": {"tmdb": "550"}},
-        {"type": "show", "ids": {"tmdb": "1399"}},
+        {"type": "show", "ids": {"tmdb": "1400"}},
         {"type": "season", "show_ids": {"tmdb": "1399"}, "season": 2},
         {"type": "episode", "ids": {"tmdb": "63056"}, "show_ids": {"tmdb": "1399"}, "season": 1, "episode": 1},
     ]
@@ -517,11 +517,63 @@ def test_collection_add_maps_each_scope():
     result = _collection.add(adapter, items)
 
     assert result["ok"] and len(result["confirmed_keys"]) == 4
-    bodies = [call["json"] for call in adapter.calls]
+    bodies = [call["json"] for call in adapter.calls if call["method"] == "POST"]
     assert bodies[0] == {"tmdb_id": 550, "media_type": "movie"}
-    assert bodies[1] == {"tmdb_id": 1399, "media_type": "series"}
+    assert bodies[1] == {"tmdb_id": 1400, "media_type": "series"}
     assert bodies[2] == {"series_tmdb_id": 1399, "season_number": 2}
     assert bodies[3] == {"tmdb_id": 63056, "media_type": "episode", "series_tmdb_id": 1399, "season_number": 1, "episode_number": 1}
+
+
+def _episode_export(show_tmdb: int, season: int, episode: int, ep_tmdb: int) -> list[dict[str, Any]]:
+    return [{
+        "type": "episode",
+        "episode": {"season": season, "number": episode, "ids": {"tmdb": ep_tmdb}},
+        "show": {"title": "Marshals", "ids": {"tmdb": show_tmdb}},
+    }]
+
+
+def test_collection_add_skips_show_and_season_covered_by_batch_episodes():
+    adapter = FakeAdapter({("POST", "media/collect"): ResponseStub(200, {"status": "ok"})})
+    items = [
+        {"type": "episode", "ids": {"tmdb": "9001"}, "show_ids": {"tmdb": "500"}, "season": 1, "episode": 1},
+        {"type": "season", "show_ids": {"tmdb": "500"}, "season": 1},
+        {"type": "show", "ids": {"tmdb": "500"}},
+    ]
+
+    result = _collection.add(adapter, items)
+
+    assert result["ok"]
+    assert result["confirmed_keys"] == ["tmdb:500#s01e01"]
+    assert sorted(result["skipped_keys"]) == ["tmdb:500#season:1", "tmdb:500#show"]
+    assert [call["path"] for call in adapter.calls] == ["media/collect"]
+
+
+def test_collection_add_skips_containers_already_covered_in_scrob():
+    adapter = FakeAdapter({
+        ("GET", "export/data"): ResponseStub(200, _episode_export(500, 1, 1, 9001)),
+        ("POST", "media/collect-season"): ResponseStub(200, {"status": "ok"}),
+    })
+    items = [
+        {"type": "season", "show_ids": {"tmdb": "500"}, "season": 1},
+        {"type": "show", "ids": {"tmdb": "500"}},
+        {"type": "season", "show_ids": {"tmdb": "500"}, "season": 2},
+    ]
+
+    result = _collection.add(adapter, items)
+
+    assert result["confirmed_keys"] == ["tmdb:500#season:2"]
+    assert sorted(result["skipped_keys"]) == ["tmdb:500#season:1", "tmdb:500#show"]
+    assert [(call["method"], call["path"]) for call in adapter.calls] == [("GET", "export/data"), ("POST", "media/collect-season")]
+
+
+def test_collection_add_leaves_container_unresolved_when_coverage_unknown():
+    adapter = FakeAdapter({("GET", "export/data"): ResponseStub(503, {"detail": "down"})})
+
+    result = _collection.add(adapter, [{"type": "show", "ids": {"tmdb": "500"}}])
+
+    assert not result["confirmed_keys"] and not result["skipped_keys"]
+    assert result["unresolved_keys"] == ["tmdb:500#show"]
+    assert all(call["method"] == "GET" for call in adapter.calls)
 
 
 def test_collection_remove_maps_each_scope():

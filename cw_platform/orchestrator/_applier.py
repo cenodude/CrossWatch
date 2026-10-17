@@ -582,6 +582,17 @@ def _add_batch_finalizer(
     return config, finalize
 
 
+_COLLECTION_WRITE_RANK = {"season": 1, "show": 2, "series": 2, "tv": 2}
+
+
+def _collection_write_order(items: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    def rank(item: Mapping[str, Any]) -> int:
+        typ = str(item.get("type") or "").strip().lower() if isinstance(item, Mapping) else ""
+        return _COLLECTION_WRITE_RANK.get(typ, 0)
+
+    return sorted(items, key=rank)
+
+
 def apply_add(
     *,
     dst_ops,
@@ -595,6 +606,8 @@ def apply_add(
     chunk_size: int,
     chunk_pause_ms: int,
 ) -> dict[str, Any]:
+    if feature == "collection":
+        items = _collection_write_order(items)
     emit("apply:add:start", dst=dst_name, feature=feature, count=len(items))
     apply_cfg, finalize = _add_batch_finalizer(dst_ops, cfg, feature=feature, dry_run=dry_run)
     res = _apply_chunked(
@@ -718,7 +731,7 @@ def apply_remove(
     emit("apply:remove:start", dst=dst_name, feature=feature, count=len(items))
     order_items = getattr(dst_ops, "order_remove_items", None)
     if callable(order_items) and not dry_run:
-        items = provider_call(order_items, cfg, items, feature=feature)
+        items = cast(Sequence[Mapping[str, Any]], provider_call(order_items, cfg, items, feature=feature))
     res = _apply_chunked(
         "apply:remove",
         dst=dst_name,
