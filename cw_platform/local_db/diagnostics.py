@@ -7,8 +7,9 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .db import crosswatch_db_path, get_conn
+from .db import active_writers, crosswatch_db_path, get_conn
 from .schema import SCHEMA_VERSION
+from .storage import storage_info
 
 _ORPHAN_QUERIES = {
     "pair_baseline_items_missing_feature": (
@@ -125,6 +126,8 @@ def diagnostics(base_path: str | Path | None = None) -> dict[str, Any]:
             "path": str(path),
             "exists": existed,
             "healthy": False,
+            "storage": storage_info(path),
+            "active_writers": active_writers(),
         }
 
     integrity_row = conn.execute("PRAGMA integrity_check").fetchone()
@@ -165,4 +168,6 @@ def diagnostics(base_path: str | Path | None = None) -> dict[str, Any]:
         "orphan_counts": orphan_counts,
         "stale_counts": stale_counts,
         "last_sync": _last_sync(conn),
+        "storage": storage_info(path),
+        "active_writers": active_writers(),
     }

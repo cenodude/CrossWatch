@@ -123,3 +123,36 @@ test("release announcements use the read-only version endpoint and official rele
   app.events["cw-update-status"]({detail:{current:"0.12.0",latest:"0.12.0",available:false}});
   assert.doesNotMatch(app.html(),/CrossWatch v0.12.0 is available/);
 });
+
+async function databaseApp(status, options) {
+  const app=setup(new Map(), options), calls=[];
+  Object.assign(app.context,{AbortController,setTimeout(){},clearTimeout(){},fetch:async url=>{
+    calls.push(url);
+    return {ok:true,status:200,json:async()=>status};
+  }});
+  vm.runInNewContext(readFileSync(new URL("../assets/helpers/database-notifications.js",import.meta.url),"utf8"),app.context);
+  await new Promise(resolve=>setImmediate(resolve));
+  return {...app,calls};
+}
+
+test("database busy and network storage warnings show for admins", async () => {
+  const app=await databaseApp({busy:true,operation:"state.save_pair_blocks",seconds:42,since:1760000000,filesystem:"cifs",network_filesystem:true});
+  assert.deepEqual(app.calls,["/api/health/database"]);
+  assert.match(app.html(), /Database busy/);
+  assert.match(app.html(), /state\.save_pair_blocks\) has been running for 42 seconds/);
+  assert.match(app.html(), /Database on a network share/);
+  assert.match(app.html(), /The local database is on cifs/);
+  assert.match(app.html(), /href="\/#settings\/maintenance"/);
+});
+
+test("managed users see the busy notice without maintenance or storage details", async () => {
+  const app=await databaseApp({busy:true,operation:"state.save_state",seconds:300,since:1760000000,filesystem:"nfs4",network_filesystem:true},{role:"user"});
+  assert.match(app.html(), /running for 5 minutes/);
+  assert.match(app.html(), /Got it/);
+  assert.doesNotMatch(app.html(), /network share|settings\/maintenance/);
+});
+
+test("an idle database on local storage adds no notifications", async () => {
+  const app=await databaseApp({busy:false,operation:null,seconds:0,since:null,filesystem:"ext4",network_filesystem:false});
+  assert.match(app.html(), /all caught up/);
+});

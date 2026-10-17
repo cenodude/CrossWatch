@@ -283,6 +283,67 @@ def test_database_health_endpoint_is_read_only(tmp_path, monkeypatch) -> None:
     assert _load_state(tmp_path)["providers"]["TRAKT"]["watchlist"]["baseline"]["items"]["a"]["title"] == "A"
 
 
+def _rebuild_setup(tmp_path, monkeypatch, running: bool = False):
+    import sqlite3
+
+    from cw_platform.local_db.db import close_conn, crosswatch_db_path
+
+    state_dir = tmp_path / ".cw_state"
+    state_dir.mkdir()
+    _save_state(
+        tmp_path,
+        {"providers": {"TRAKT": {"watchlist": {"baseline": {"items": {"a": {"title": "A"}}}}}}},
+    )
+    monkeypatch.setattr(maintenanceAPI, "_cw", lambda: (tmp_path / "cache", tmp_path, state_dir, None, None, None))
+    monkeypatch.setattr("api.syncAPI._is_sync_running", lambda: running)
+    return sqlite3, close_conn, crosswatch_db_path(tmp_path)
+
+
+def test_database_rebuild_needs_confirmation(tmp_path, monkeypatch) -> None:
+    _, _, db_path = _rebuild_setup(tmp_path, monkeypatch)
+
+    assert maintenanceAPI.maintenance_database_rebuild({}) == {"ok": False, "error": "confirmation_required", "confirm": False}
+    assert _load_state(tmp_path)["providers"]["TRAKT"]["watchlist"]["baseline"]["items"]["a"]["title"] == "A"
+    assert not (db_path.parent / "backups").exists()
+
+
+def test_database_rebuild_is_refused_while_a_sync_runs(tmp_path, monkeypatch) -> None:
+    _, _, db_path = _rebuild_setup(tmp_path, monkeypatch, running=True)
+
+    assert maintenanceAPI.maintenance_database_rebuild({"confirm": True}) == {"ok": False, "error": "sync_running"}
+    assert not (db_path.parent / "backups").exists()
+
+
+def test_database_rebuild_backs_up_files_and_starts_fresh(tmp_path, monkeypatch) -> None:
+    sqlite3, close_conn, db_path = _rebuild_setup(tmp_path, monkeypatch)
+
+    result = maintenanceAPI.maintenance_database_rebuild({"confirm": True})
+
+    assert result["ok"] is True
+    backup = result["backup"]
+    assert backup and backup.startswith(str(db_path.parent / "backups" / "crosswatch-"))
+    assert backup in result["moved"]
+    assert _load_state(tmp_path).get("providers") in (None, {})
+    old = sqlite3.connect(backup)
+    try:
+        assert old.execute("SELECT COUNT(*) FROM baseline_items").fetchone()[0] == 1
+    finally:
+        old.close()
+    close_conn()
+
+
+def test_database_rebuild_action_status_describes_the_backup(tmp_path, monkeypatch) -> None:
+    _rebuild_setup(tmp_path, monkeypatch)
+
+    result = maintenanceAPI.maintenance_action_status("database-rebuild")
+    metrics = {item["label"]: item["value"] for item in result["metrics"]}
+
+    assert result["title"] == "Rebuild local database"
+    assert ".cw_databases/backups" in result["note"]
+    assert metrics["Database size"] > 0
+    assert metrics["Active writes"] == 0
+
+
 def test_compact_state_file_creates_backup_and_rewrites_database(tmp_path, monkeypatch) -> None:
     state_dir = tmp_path / ".cw_state"
     state_dir.mkdir()

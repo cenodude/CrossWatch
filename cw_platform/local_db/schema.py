@@ -676,8 +676,9 @@ def apply_schema(conn: sqlite3.Connection) -> int:
                 _ensure_column(conn, table, f"{prefix}_wetrakr", "TEXT")
         for stmt in _INDEXES:
             conn.execute(stmt)
-        conn.execute(
-            "INSERT OR IGNORE INTO schema_migrations(version, applied_at, name) VALUES(?,?,?)",
-            (SCHEMA_VERSION, int(time.time()), "local_state"),
-        )
+        if conn.execute("SELECT 1 FROM schema_migrations WHERE version=?", (SCHEMA_VERSION,)).fetchone() is None:
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, applied_at, name) VALUES(?,?,?)",
+                (SCHEMA_VERSION, int(time.time()), "local_state"),
+            )
     return SCHEMA_VERSION

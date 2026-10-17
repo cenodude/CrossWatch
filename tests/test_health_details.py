@@ -549,7 +549,7 @@ def test_details_endpoint_needs_an_admin_or_monitor_token(gated_app, monkeypatch
     assert seen.headers["cache-control"] == "no-store"
     body = seen.json()
     assert body["status"] == "ok"
-    assert set(body) == {"ok", "status", "checked_at", "issues", "watcher", "scheduler", "last_run", "providers", "api_tokens_expiring"}
+    assert set(body) == {"ok", "status", "checked_at", "issues", "watcher", "scheduler", "last_run", "providers", "api_tokens_expiring", "database"}
     assert [row["id"] for row in body["api_tokens_expiring"]] == [monitor_entry["id"]]
     assert set(body["api_tokens_expiring"][0]) == {"id", "name", "expires_at"}
 
