@@ -256,7 +256,7 @@ def _export_payload(resp: Any) -> list[Mapping[str, Any]]:
     return _json_rows(loaded)
 
 
-def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
+def _fetch_rows(adapter: Any) -> list[Mapping[str, Any]] | None:
     resp = scrob_request(
         adapter,
         "GET",
@@ -275,9 +275,14 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     )
     if not ok_status(resp):
         _warn(FEATURE, "fetch_failed", status=int(resp.status_code), error=error_of(resp))
-        return {}
+        return None
+    return _export_payload(resp)
 
-    rows = _export_payload(resp)
+
+def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
+    rows = _fetch_rows(adapter)
+    if rows is None:
+        return {}
     out: dict[str, dict[str, Any]] = {}
     skipped = 0
     for row in rows:
@@ -349,15 +354,75 @@ def _remove_params(item: Mapping[str, Any]) -> tuple[str, dict[str, Any]] | None
     return None
 
 
+def _container_target(item: Mapping[str, Any]) -> tuple[int, int | None] | None:
+    scope = _scope(item)
+    if scope == "show":
+        tmdb = positive_int(ids_for_scrob(item).get("tmdb_id")) or positive_int(show_ids_for_scrob(item).get("tmdb_id"))
+        return (tmdb, None) if tmdb else None
+    if scope == "season":
+        tmdb = positive_int(show_ids_for_scrob(item).get("tmdb_id")) or positive_int(ids_for_scrob(item).get("tmdb_id"))
+        season = as_int(item.get("season"))
+        return (tmdb, season) if tmdb and season is not None else None
+    return None
+
+
+def _episode_coverage(items: Iterable[Mapping[str, Any]]) -> dict[int, set[int]]:
+    out: dict[int, set[int]] = {}
+    for item in items:
+        if _scope(item) != "episode":
+            continue
+        show_tmdb = positive_int(show_ids_for_scrob(item).get("tmdb_id"))
+        season = as_int(item.get("season"))
+        if show_tmdb and season is not None:
+            out.setdefault(show_tmdb, set()).add(season)
+    return out
+
+
+def _live_coverage(adapter: Any) -> dict[int, set[int]] | None:
+    rows = _fetch_rows(adapter)
+    if rows is None:
+        return None
+    return _episode_coverage(item for row in rows for item in _items_from_row(row))
+
+
+def _covered(coverage: Mapping[int, set[int]], target: tuple[int, int | None]) -> bool:
+    show_tmdb, season = target
+    seasons = coverage.get(show_tmdb)
+    if not seasons:
+        return False
+    return season is None or season in seasons
+
+
 def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = False) -> dict[str, Any]:
     confirmed: list[str] = []
+    skipped: list[str] = []
     unresolved_keys: list[str] = []
     unresolved: list[dict[str, Any]] = []
     ok = True
-    for item in items or []:
+    batch = [item for item in items or [] if isinstance(item, Mapping)]
+    batch_coverage = _episode_coverage(batch)
+    live_coverage: dict[int, set[int]] | None = None
+    live_loaded = False
+    for item in batch:
         key = _key_of(item)
         if not key:
             continue
+        target = _container_target(item)
+        if target is not None:
+            covered = _covered(batch_coverage, target)
+            if not covered:
+                if not live_loaded:
+                    live_coverage = _live_coverage(adapter)
+                    live_loaded = True
+                if live_coverage is None:
+                    unresolved_keys.append(key)
+                    unresolved.append({"key": key, "status": "coverage_unavailable"})
+                    continue
+                covered = _covered(live_coverage, target)
+            if covered:
+                skipped.append(key)
+                _dbg(FEATURE, "container_covered_by_episodes", key=key, show_tmdb=target[0], season=target[1])
+                continue
         payload = _payload_for(item)
         if payload is None:
             unresolved_keys.append(key)
@@ -376,8 +441,8 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
         unresolved_keys.append(key)
         unresolved.append({"key": key, "status": f"http:{int(resp.status_code)}", "error": error_of(resp)})
         _warn(FEATURE, "collection_add_failed", key=key, status=int(resp.status_code), error=error_of(resp))
-    _info(FEATURE, "write_done", action="add", confirmed=len(confirmed), unresolved=len(unresolved_keys), dry_run=bool(dry_run))
-    return {"ok": ok, "count": len(confirmed), "confirmed_keys": confirmed, "unresolved_keys": unresolved_keys, "deferred_keys": [], "unresolved": unresolved}
+    _info(FEATURE, "write_done", action="add", confirmed=len(confirmed), skipped=len(skipped), unresolved=len(unresolved_keys), dry_run=bool(dry_run))
+    return {"ok": ok, "count": len(confirmed), "confirmed_keys": confirmed, "skipped_keys": skipped, "unresolved_keys": unresolved_keys, "deferred_keys": [], "unresolved": unresolved}
 
 
 def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = False) -> dict[str, Any]:

@@ -109,3 +109,29 @@ def test_real_remove_still_confirms():
     done = _done(events, "apply:remove:done")
     assert done["removed"] == 5
     assert done["dry_run"] is False
+
+
+def test_collection_add_writes_episodes_before_seasons_and_shows():
+    ops = _Ops()
+    items = [
+        {"key": "tmdb:500#show", "type": "show", "ids": {"tmdb": "500"}},
+        {"key": "tmdb:500#s01", "type": "season", "show_ids": {"tmdb": "500"}, "season": 1},
+        {"key": "tmdb:550", "type": "movie", "ids": {"tmdb": "550"}},
+        {"key": "tmdb:500#s01e01", "type": "episode", "show_ids": {"tmdb": "500"}, "season": 1, "episode": 1},
+    ]
+
+    apply_add(
+        dst_ops=ops,
+        cfg={},
+        dst_name="SCROB",
+        feature="collection",
+        items=items,
+        dry_run=False,
+        emit=lambda name, **kw: None,
+        dbg=lambda *a, **k: None,
+        chunk_size=2,
+        chunk_pause_ms=0,
+    )
+
+    order = [item["key"] for call in ops.add_calls for item in call["items"]]
+    assert order == ["tmdb:550", "tmdb:500#s01e01", "tmdb:500#s01", "tmdb:500#show"]
