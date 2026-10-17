@@ -1674,18 +1674,17 @@ def maintenance_database_rebuild(payload: dict[str, Any] | None = Body(None)) ->
     except Exception:
         pass
     try:
-        from cw_platform.local_db.db import LocalDatabaseError, get_conn, replace_database
+        from cw_platform.local_db.db import get_conn, replace_database
         from cw_platform.local_db.state import _invalidate
 
-        try:
-            result = replace_database(CONFIG_DIR)
-        except LocalDatabaseError as exc:
-            return {"ok": False, "error": str(exc)}
+        result = replace_database(CONFIG_DIR)
+        if not result.get("ok"):
+            return {"ok": False, "error": "database_busy", "operation": str(result.get("operation") or "")}
         _invalidate()
         clear_caches()
         fresh = get_conn(CONFIG_DIR) is not None
         _LOG.warning("local database rebuilt; previous files moved to %s", result.get("backup") or "nowhere (no files)")
-        return {"ok": fresh, **result, **({} if fresh else {"error": "database_unavailable"})}
+        return {"ok": fresh, "path": result["path"], "backup": result["backup"], "moved": result["moved"], **({} if fresh else {"error": "database_unavailable"})}
     except Exception:
         _LOG.exception("database-rebuild failed")
         return {"ok": False, "error": "internal_error"}

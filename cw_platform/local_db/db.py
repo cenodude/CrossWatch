@@ -280,7 +280,7 @@ def replace_database(base_path: str | os.PathLike[str] | None = None, *, stamp: 
     with _LOCK:
         busy = active_writers()
         if busy:
-            raise LocalDatabaseError(f"database_busy: {busy[0]['operation']}")
+            return {"ok": False, "error": "database_busy", "operation": busy[0]["operation"]}
         close_conn()
         backup_dir.mkdir(parents=True, exist_ok=True)
         for suffix in ("", "-wal", "-shm"):
@@ -289,4 +289,4 @@ def replace_database(base_path: str | os.PathLike[str] | None = None, *, stamp: 
                 dst = Path(str(target) + suffix)
                 src.replace(dst)
                 moved.append(str(dst))
-    return {"path": str(path), "backup": str(target) if moved else None, "moved": moved}
+    return {"ok": True, "path": str(path), "backup": str(target) if moved else None, "moved": moved}

@@ -133,8 +133,7 @@ def test_replace_database_is_refused_while_a_write_is_open(database, tmp_path):
         future = pool.submit(hold_write_lock, started, release)
         try:
             assert started.wait(10)
-            with pytest.raises(db.LocalDatabaseError, match="database_busy: test_local_db_storage.hold_write_lock"):
-                db.replace_database()
+            assert db.replace_database() == {"ok": False, "error": "database_busy", "operation": "test_local_db_storage.hold_write_lock"}
         finally:
             release.set()
         future.result(timeout=10)
