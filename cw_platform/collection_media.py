@@ -197,7 +197,7 @@ def plex_media_info(row: Mapping[str, Any], hdr: str = "") -> dict[str, Any]:
 
 _LOSSLESS_AUDIO = {"lpcm", "flac", "dolby_truehd", "dolby_atmos", "dts_ma", "dts_x"}
 _OBJECT_AUDIO = {"dolby_atmos", "dolby_digital_plus_atmos", "dts_x", "auro_3d"}
-_COMMENTARY_WORDS = ("commentary", "commentaire", "kommentar")
+_SKIPPED_AUDIO_WORDS = ("commentary", "commentaire", "kommentar", "description", "descriptive", "isolated", "music & effects", "music and effects", "m&e")
 
 
 def _item_streams(item: Mapping[str, Any]) -> list[Mapping[str, Any]]:
@@ -222,7 +222,7 @@ def stream_hdr(video: Mapping[str, Any]) -> str:
 
 def stream_audio(stream: Mapping[str, Any]) -> str:
     base = normalize_audio(" ".join(_text(stream.get(k)) for k in ("Codec", "Profile") if _text(stream.get(k))))
-    title = f"{_text(stream.get('Title'))} {_text(stream.get('DisplayTitle'))}".lower()
+    title = "" if "AudioSpatialFormat" in stream else _audio_title(stream)
     spatial = _compact(stream.get("AudioSpatialFormat"))
     if (spatial == "dtsx" or re.search(r"dts[\s:-]*x(?![a-z0-9])", title)) and base.startswith("dts"):
         return "dts_x"
@@ -231,17 +231,37 @@ def stream_audio(stream: Mapping[str, Any]) -> str:
     return base
 
 
+def _audio_title(stream: Mapping[str, Any]) -> str:
+    return f"{_text(stream.get('Title'))} {_text(stream.get('DisplayTitle'))}".lower()
+
+
+def _audio_language(stream: Mapping[str, Any]) -> str:
+    lang = _text(stream.get("Language")).lower()
+    return "" if lang in {"und", "unk"} else lang
+
+
+def _audio_rank(stream: Mapping[str, Any], value: str) -> tuple[int, int, int]:
+    return ((2 if value in _LOSSLESS_AUDIO else 0) + (1 if value in _OBJECT_AUDIO else 0), _int(stream.get("Channels")), _int(stream.get("BitRate")))
+
+
 def _best_audio(streams: list[Mapping[str, Any]]) -> tuple[str, str]:
     audio = [s for s in streams if _text(s.get("Type")).lower() == "audio"]
-    main = [s for s in audio if not any(w in f"{_text(s.get('Title'))} {_text(s.get('DisplayTitle'))}".lower() for w in _COMMENTARY_WORDS)] or audio
-    best: tuple[tuple[int, int, int], str, str] | None = None
+    main = [s for s in audio if _audio_language(s) != "zxx" and not any(w in _audio_title(s) for w in _SKIPPED_AUDIO_WORDS)] or audio
+    if not main:
+        return "", ""
+    default = next((s for s in main if s.get("IsDefault") is True), main[0])
+    best, best_value = default, stream_audio(default)
+    lang, channels = _audio_language(default), _int(default.get("Channels"))
     for stream in main:
         value = stream_audio(stream)
-        rank = ((2 if value in _LOSSLESS_AUDIO else 0) + (1 if value in _OBJECT_AUDIO else 0), _int(stream.get("Channels")), _int(stream.get("BitRate")))
-        channels = normalize_channels(stream.get("ChannelLayout")) or normalize_channels(stream.get("Channels"))
-        if best is None or rank > best[0]:
-            best = (rank, value, channels)
-    return (best[1], best[2]) if best else ("", "")
+        if stream is default or not (value in _LOSSLESS_AUDIO or value in _OBJECT_AUDIO):
+            continue
+        if lang and _audio_language(stream) and _audio_language(stream) != lang:
+            continue
+        if _int(stream.get("Channels")) < channels or _audio_rank(stream, value) <= _audio_rank(best, best_value):
+            continue
+        best, best_value = stream, value
+    return best_value, normalize_channels(best.get("ChannelLayout")) or normalize_channels(best.get("Channels"))
 
 
 def stream_media_info(item: Mapping[str, Any]) -> dict[str, Any]:
@@ -250,6 +270,42 @@ def stream_media_info(item: Mapping[str, Any]) -> dict[str, Any]:
     resolution = resolution_from_dimensions(item.get("Width") or video.get("Width"), item.get("Height") or video.get("Height"), interlaced=bool(video.get("IsInterlaced")))
     audio, channels = _best_audio(streams)
     return media_block({"resolution": resolution, "hdr": stream_hdr(video), "audio": audio, "audio_channels": channels, "is_3d": True if _text(item.get("Video3DFormat")) else None})
+
+
+_PHYSICAL_FORMATS = frozenset(FORMATS) - {"digital"}
+
+
+def _known_media(media: Mapping[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {key: value for key, normalize in _NORMALIZERS.items() if (value := normalize(media.get(key)))}
+    if media.get("is_3d") is True:
+        out["is_3d"] = True
+    return out
+
+
+def _folded_format(fmt: str, media: Mapping[str, Any]) -> str:
+    return "4k_bluray" if fmt == "bluray" and media.get("resolution") == "uhd_4k" else fmt
+
+
+def media_update(src: Mapping[str, Any], dst: Mapping[str, Any]) -> dict[str, Any] | None:
+    src_media, dst_media = item_media(src), item_media(dst)
+    src_known, dst_known = _known_media(src_media), _known_media(dst_media)
+    src_fmt, dst_fmt = normalize_format(src.get("format")), normalize_format(dst.get("format"))
+    if src_fmt == "4k_bluray":
+        src_known.setdefault("resolution", "uhd_4k")
+    dst_folded = _folded_format(dst_fmt, dst_known)
+    if dst_folded in _PHYSICAL_FORMATS and _folded_format(src_fmt, src_known) not in _PHYSICAL_FORMATS:
+        return None
+    changed = {key: value for key, value in src_known.items() if dst_known.get(key) != value}
+    merged_fmt = src_fmt or dst_fmt
+    format_changed = _folded_format(merged_fmt, {**dst_known, **changed}) != dst_folded
+    if not changed and not format_changed:
+        return None
+    out = dict(dst)
+    out["_cw_media_update"] = True
+    out["media_info"] = {**dst_media, **changed}
+    if format_changed:
+        out["format"] = merged_fmt
+    return out
 
 
 def item_media(item: Mapping[str, Any]) -> dict[str, Any]:

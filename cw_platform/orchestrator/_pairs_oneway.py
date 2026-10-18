@@ -219,6 +219,7 @@ def select_baseline_keys(success_keys, result) -> list:
 
 from ..provider_instances import normalize_instance_id
 
+from ..collection_media import media_update as _collection_media_update
 from ..id_map import migrate_media_index, minimal as _minimal, canonical_key as _ck, merge_ids as _merge_ids, _norm_type, part_fragment as _part_fragment
 from ..history_events import has_history_watch, history_sync_key, minimal_history_item
 from ..anime_mapping.service import (
@@ -253,6 +254,7 @@ from ._tombstones import clear_items_for_feature, media_tombstone_tokens
 from ._pairs_utils import (
     ratings_step_for,
     ratings_zero_for,
+    collection_media_updates_for,
     config_with_pair_libraries as _config_with_pair_libraries,
     _supports_feature,
     _resolve_flags,
@@ -1564,6 +1566,17 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
             if coord_pruned:
                 dbg("anime_mapping.coord_pruned", feature=feature, src=src, dst=dst, adds=coord_pruned)
             adds = pruned
+
+    if feature == "collection" and bool((fcfg or {}).get("media_updates")) and collection_media_updates_for(dst_ops):
+        for sv in (src_idx or {}).values():
+            if not isinstance(sv, Mapping) or not (sv.get("media_info") or sv.get("format")):
+                continue
+            dv = _find_in_idx(dst_full, dst_alias, sv)
+            upd = _collection_media_update(sv, dv) if dv else None
+            if upd:
+                updates.append(upd)
+        if updates:
+            dbg("collection.media_updates", src=src, dst=dst, count=len(updates))
 
     removes: list[dict[str, Any]] = []
 

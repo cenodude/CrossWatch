@@ -91,6 +91,13 @@ def ratings_zero_for(ops) -> bool:
         return False
 
 
+def collection_media_updates_for(ops) -> bool:
+    try:
+        return (ops.capabilities().get("collection") or {}).get("media_updates") is True
+    except Exception:
+        return False
+
+
 def supports_feature(ops, feature: str) -> bool:
     try:
         feats = (ops.capabilities() or {}).get("features", {})
