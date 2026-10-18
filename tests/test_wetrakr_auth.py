@@ -123,6 +123,17 @@ def test_authenticated_requests_capture_daily_allowance(store, status, remaining
     assert wt.latest_quota(store["cfg"]["wetrakr"]["instances"]["P02"]) == {}
 
 
+@pytest.mark.parametrize("user_left, app_user_left, remaining, limit", [("49000", "4200", 4200, 5000), ("800", "4200", 800, 1000)])
+def test_quota_reports_the_tighter_per_user_daily_limit(store, user_left, app_user_left, remaining, limit):
+    connected(store, expires=5000)
+    wt.record_quota(block(store), {"X-Quota-Limit": str(limit if limit == 1000 else 50000), "X-Quota-Remaining": user_left,
+                                   "X-Quota-Reset": "3600", "X-App-User-Quota-Limit": "5000", "X-App-User-Quota-Remaining": app_user_left,
+                                   "X-App-Quota-Limit": "42900", "X-App-Quota-Remaining": "10"}, started_at=1000)
+    quota = wt.latest_quota(block(store))
+    assert quota["daily_remaining"] == remaining and quota["daily_limit"] == limit
+    assert quota["daily_resets_at"] == 4600
+
+
 def test_quota_rotation_order_missing_headers_and_reset(store, monkeypatch):
     connected(store, expires=5000)
     block(store)["user_id"] = "42"

@@ -40,6 +40,7 @@ _REFRESH_RETRY_AT: dict[str, float] = {}
 _PENDING: dict[str, dict[str, Any]] = {}
 _QUOTA_LOCK = threading.Lock()
 _QUOTA_SEEN: dict[str, dict[str, Any]] = {}
+_USER_QUOTA_HEADERS = ("x-quota", "x-app-user-quota")
 _TOKEN_FIELDS = ("access_token", "refresh_token", "token_type", "expires_at", "username", "user_id", "plan", "reauth_required")
 
 
@@ -69,18 +70,22 @@ def _quota_key(block: Mapping[str, Any]) -> str:
     return hashlib.sha256(identity.encode()).hexdigest() if token else ""
 
 
+def _header_int(values: Mapping[str, str], header: str) -> int | None:
+    value = values.get(header, "")
+    return int(value) if value.isascii() and value.isdecimal() and len(value) <= 15 else None
+
+
 def record_quota(block: Mapping[str, Any], headers: Mapping[str, Any], *, started_at: float) -> None:
     key = _quota_key(block)
     values = {str(k).lower(): str(v).strip() for k, v in headers.items()}
-    parsed = {}
-    for field, header in (("daily_remaining", "x-quota-remaining"), ("daily_limit", "x-quota-limit"), ("reset", "x-quota-reset")):
-        value = values.get(header, "")
-        if value.isascii() and value.isdecimal() and len(value) <= 15:
-            parsed[field] = int(value)
-    if not key or "daily_remaining" not in parsed:
+    windows = [(remaining, _header_int(values, f"{prefix}-limit")) for prefix in _USER_QUOTA_HEADERS
+               if (remaining := _header_int(values, f"{prefix}-remaining")) is not None]
+    if not key or not windows:
         return
+    remaining, limit = min(windows, key=lambda window: window[0])
+    parsed = {"daily_remaining": remaining, **({"daily_limit": limit} if limit is not None else {})}
     now = time.time()
-    reset = parsed.pop("reset", None)
+    reset = _header_int(values, "x-quota-reset")
     if reset is not None and 0 <= reset <= 86400:
         parsed["daily_resets_at"] = int(now + reset)
     observation = {**parsed, "daily_seen_at": now, "started_at": started_at}

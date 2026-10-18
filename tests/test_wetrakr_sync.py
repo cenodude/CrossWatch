@@ -87,6 +87,12 @@ class Server:
             self.history = [row for row in self.history if row["id"] != event_id]
             return Response({"success": True, "removed": 1})
         assert method == "POST"
+        if path == "/sync/tracklogs/remove":
+            ids = kwargs["json"]["ids"]
+            assert 1 <= len(ids) <= 100
+            known = {row["id"] for row in self.history}
+            self.history = [row for row in self.history if row["id"] not in ids]
+            return Response({"deleted": len(known & set(ids)), "not_found": [value for value in dict.fromkeys(ids) if value not in known]})
         for group, rows in kwargs["json"].items():
             for row in rows:
                 if self.partial:
@@ -304,7 +310,21 @@ def test_free_account_rewatch_add_repeat_and_delete_only_target_event(env):
     source["_wetrakr_history_id"] = "foreign-account-id"
     assert env.adapter.remove("history", [source])["ok"]
     assert [row["id"] for row in env.server.history] == ["play-1"]
-    assert any(path == "/sync/tracklogs/play-2" for _, path, _ in env.server.calls)
+    assert [kwargs["json"] for _, path, kwargs in env.server.calls if path == "/sync/tracklogs/remove"] == [{"ids": ["play-2"]}]
+    assert not any(method == "DELETE" for method, _, _ in env.server.calls)
+
+
+def test_rewatch_removals_are_batched_by_one_hundred_play_ids(env, monkeypatch):
+    env.adapter.config["_cw_history_rewatches"] = True
+    media = [{"id": i, "type": "movie", "title": f"Movie {i}", "ids": {"tmdb": i}} for i in range(1, 251)]
+    for row in media:
+        env.server.play(row)
+    index = env.adapter.build_index("history")
+    result = env.adapter.remove("history", list(index.values()))
+    assert result["ok"] and len(result["confirmed_keys"]) == 250
+    batches = [kwargs["json"]["ids"] for _, path, kwargs in env.server.calls if path == "/sync/tracklogs/remove"]
+    assert [len(ids) for ids in batches] == [100, 100, 50]
+    assert not env.server.history
 
 
 @pytest.mark.parametrize("persisted", [False, True])
@@ -407,6 +427,31 @@ def test_quota_headers_and_cooldown_do_not_retry_or_share_other_accounts(env, da
     assert len(env.server.calls) == 1
     other = WETRAKRModule({"wetrakr": {"access_token": "different", "user_id": "43"}}, instance_id="default")
     assert common._state(other)["blocked"] == {}
+
+
+@pytest.mark.parametrize("code,reason", [("APP_USER_QUOTA_EXCEEDED", "app_user_quota_exceeded"), ("APP_QUOTA_EXCEEDED", "app_quota_exceeded")])
+def test_app_quota_codes_block_until_midnight_utc(env, monkeypatch, code, reason):
+    monkeypatch.setattr(common, "_seconds_to_utc_midnight", lambda: 5000)
+    env.server.hook = lambda *a: Response({"error": code, "message": "limit"}, 429,
+                                        {"X-Quota-Remaining": "49000", "X-Quota-Limit": "50000", "X-App-User-Quota-Limit": "5000"})
+    with pytest.raises(common.WeTrakrSyncError, match=reason) as caught:
+        common.request(env.adapter, "GET", "/sync/last_activities")
+    assert caught.value.retry_after == 5000
+    with pytest.raises(common.WeTrakrSyncError):
+        common.request(env.adapter, "POST", "/sync/tracking", json={})
+    assert len(env.server.calls) == 1
+    quota = auth.latest_quota(env.cfg["wetrakr"]["instances"]["P01"])
+    if code == "APP_USER_QUOTA_EXCEEDED":
+        assert quota["daily_remaining"] == 0 and quota["daily_limit"] == 5000
+    else:
+        assert quota["daily_remaining"] == 49000
+
+
+def test_daily_block_follows_reset_without_retry_after(env):
+    env.server.hook = lambda *a: Response({"error": "QUOTA_EXCEEDED"}, 429, {"X-Quota-Remaining": "0", "X-Quota-Reset": "10"})
+    with pytest.raises(common.WeTrakrSyncError) as caught:
+        common.request(env.adapter, "GET", "/sync/last_activities")
+    assert caught.value.retry_after == 10
 
 
 def test_dry_run_does_not_read_or_write_remote_data(env):
@@ -987,7 +1032,7 @@ def test_interactive_removal_only_deletes_selected_remote_item(env, config_base,
     assert not run(cfg, InteractivePlan(preview=False, selected={chosen}))["errors"]
     if feature == "history":
         assert len(env.server.history) == 1 and env.server.history[0]["watched_at"] == WHEN
-        assert [path for method, path, _ in env.server.calls if method == "DELETE"] == ["/sync/tracklogs/play-2"]
+        assert [kwargs["json"] for _, path, kwargs in env.server.calls if path == "/sync/tracklogs/remove"] == [{"ids": ["play-2"]}]
     else:
         assert [row["type"] for row in env.server.planning] == ["movie"]
 
