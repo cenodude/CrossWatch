@@ -81,7 +81,7 @@ def _to_minimal(row: Mapping[str, Any]) -> dict[str, Any] | None:
 
 def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
-    for row in paged(adapter, "collection"):
+    for row in paged(adapter, "collection", require_total=True):
         item = _to_minimal(row)
         if not item:
             continue
@@ -259,13 +259,22 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
             confirmed_destinations[key] = confirmed_destination(raw)
             results.append({"status": "dry_run" if dry_run else "updated", "item": id_minimal(raw), "canonical_key": key})
             continue
-        item = tmdb_enriched_item(adapter, raw, episode_show=str(id_minimal(raw).get("type") or "").strip().lower() in {"season", "episode"})
+        try:
+            item = tmdb_enriched_item(adapter, raw, episode_show=str(id_minimal(raw).get("type") or "").strip().lower() in {"season", "episode"})
+        except Exception as exc:
+            entry = unresolved(raw, failure_reason(exc))
+            unresolved_rows.append(entry)
+            results.append(entry)
+            continue
         if dry_run:
             confirmed.append(key)
             confirmed_destinations[key] = confirmed_destination(item)
             results.append({"status": "dry_run", "item": id_minimal(item), "canonical_key": key})
             continue
-        body, reason = _collection_body(adapter, item)
+        try:
+            body, reason = _collection_body(adapter, item)
+        except Exception as exc:
+            body, reason = None, failure_reason(exc)
         if body is None:
             entry = unresolved(item, reason or "floppy_collection_unresolved")
             unresolved_rows.append(entry)

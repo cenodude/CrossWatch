@@ -249,15 +249,27 @@ def _page_signature(rows: list[Any]) -> str:
     return "\n".join(parts)
 
 
-def paged(adapter: Any, path: str, *, params: Mapping[str, Any] | None = None, max_pages: int = MAX_PAGES) -> list[Mapping[str, Any]]:
+def _total_of(data: Mapping[str, Any]) -> int | None:
+    pagination = data.get("pagination")
+    raw = data.get("count") if data.get("count") is not None else (pagination.get("total") if isinstance(pagination, Mapping) else None)
+    try:
+        return int(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def paged(adapter: Any, path: str, *, params: Mapping[str, Any] | None = None, max_pages: int = MAX_PAGES, require_total: bool = False) -> list[Mapping[str, Any]]:
     out: list[Mapping[str, Any]] = []
     base = dict(params or {})
     limit = max(1, min(PAGE_SIZE, int(base.pop("limit", PAGE_SIZE) or PAGE_SIZE)))
     offset = max(0, int(base.pop("offset", 0) or 0))
     previous: str | None = None
+    total: int | None = None
     for _ in range(max(1, int(max_pages or 1))):
         data = api_get(adapter, path, params={**base, "limit": limit, "offset": offset})
         enveloped = isinstance(data, Mapping)
+        if enveloped and total is None:
+            total = _total_of(data)
         rows = data.get("results") if enveloped else data
         if not isinstance(rows, list) or not rows:
             break
@@ -270,18 +282,15 @@ def paged(adapter: Any, path: str, *, params: Mapping[str, Any] | None = None, m
             del out[before:]
             break
         previous = signature
-        count = data.get("count")
         offset += len(rows)
         if len(rows) < limit:
             break
-        if count is not None:
-            try:
-                if offset >= int(count):
-                    break
-            except Exception:
-                pass
+        if total is not None and offset >= total:
+            break
         if len(out) >= MAX_ROWS:
             break
+    if require_total and total is not None and len(out) < total:
+        raise RuntimeError(f"floppy_incomplete_read:{path}:{len(out)}/{total}")
     return out
 
 
