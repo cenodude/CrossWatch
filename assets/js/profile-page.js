@@ -1322,6 +1322,47 @@
     return providerChipStrip(entries, "cw-profile-provider-badge cw-profile-provider-badge--icon");
   }
 
+  const QUALITY_RESOLUTION = { uhd_4k: "Ultra HD 4K", hd_1080p: "1080p", hd_1080i: "1080i", hd_720p: "720p", sd_576p: "576p", sd_576i: "576i", sd_480p: "480p", sd_480i: "480i" };
+  const QUALITY_HDR = { dolby_vision: ["DV", "Dolby Vision"], hdr10_plus: ["HDR10+", "HDR10+"], hdr10: ["HDR10", "HDR10"], hlg: ["HLG", "HLG"] };
+  const QUALITY_AUDIO = {
+    dolby_atmos: "Dolby TrueHD Atmos", dolby_digital_plus_atmos: "Dolby Digital Plus Atmos", dolby_truehd: "Dolby TrueHD", dolby_digital_plus: "Dolby Digital Plus",
+    dolby_digital: "Dolby Digital", dolby_prologic: "Dolby Pro Logic", dts_x: "DTS:X", dts_ma: "DTS-HD MA", dts_hr: "DTS-HD HRA", dts: "DTS", auro_3d: "Auro-3D",
+    lpcm: "LPCM", flac: "FLAC", aac: "AAC", mp3: "MP3", mp2: "MP2", ogg: "Ogg", ogg_opus: "Opus", wma: "WMA",
+  };
+  const QUALITY_FORMAT = { "4k_bluray": "4K Blu-ray", bluray: "Blu-ray", hd_dvd: "HD DVD", dvd: "DVD", digital: "Digital", vhs: "VHS", laserdisc: "LaserDisc", vcd: "VCD", betamax: "Betamax" };
+  const QUALITY_LOGOS = {
+    uhd: ["4k-uhd.svg", 14.9], uhd_bluray: ["uhd-bluray.svg", 12], bluray: ["bluray.svg", 16.4], dvd: ["dvd.svg", 12.6],
+    dolby_vision: ["dolby-vision.svg", 8.2], hdr10_plus: ["hdr10-plus.svg", 12.8], hdr10: ["hdr10.svg", 11.9],
+    atmos: ["dolby-atmos.svg", 10.1], dts_x: ["dts-x.png", 11.5],
+  };
+
+  function collectionQuality(item) {
+    const media = item?.media_info && typeof item.media_info === "object" ? item.media_info : {};
+    const fmt = String(item?.format || "").toLowerCase();
+    const res = String(media.resolution || "");
+    const hdr = QUALITY_HDR[String(media.hdr || "")];
+    const audio = String(media.audio || "");
+    const physical = !!QUALITY_FORMAT[fmt] && fmt !== "digital";
+    const fourK = res === "uhd_4k" || fmt === "4k_bluray";
+    const segments = [];
+    const disc = physical ? (fourK && (fmt === "bluray" || fmt === "4k_bluray") ? "uhd_bluray" : fmt) : "";
+    if (physical) segments.push({ label: (fmt === "bluray" && fourK ? "4K Blu-ray" : QUALITY_FORMAT[fmt]).toUpperCase(), logo: QUALITY_LOGOS[disc], disc: true });
+    else if (fourK) segments.push({ label: "4K", logo: QUALITY_LOGOS.uhd });
+    if (hdr) segments.push({ label: hdr[0], logo: QUALITY_LOGOS[media.hdr] });
+    if (audio === "dolby_atmos" || audio === "dolby_digital_plus_atmos") segments.push({ label: "ATMOS", logo: QUALITY_LOGOS.atmos });
+    else if (audio === "dts_x") segments.push({ label: "DTS:X", logo: QUALITY_LOGOS.dts_x });
+    if (!segments.length) return null;
+    const video = [fourK ? QUALITY_RESOLUTION.uhd_4k : QUALITY_RESOLUTION[res], hdr?.[1]].filter(Boolean).join(" · ");
+    const sound = [[QUALITY_AUDIO[audio], media.audio_channels].filter(Boolean).join(" "), QUALITY_FORMAT[fmt] && (fmt === "bluray" && fourK ? "4K Blu-ray" : QUALITY_FORMAT[fmt])].filter(Boolean).join(" · ");
+    const segmentHtml = (seg) => seg.logo
+      ? `<span class="cw-collection-quality-seg is-logo"><img class="cw-collection-quality-logo" src="/assets/img/quality/${esc(seg.logo[0])}" style="--q-h:${Number(seg.logo[1]) || 10}" alt="${esc(seg.label)}" loading="lazy" decoding="async"></span>`
+      : `<span class="cw-collection-quality-seg">${esc(seg.label)}</span>`;
+    const discIcon = physical && !QUALITY_LOGOS[disc] ? `<span class="material-symbols-rounded" aria-hidden="true">album</span>` : "";
+    const pill = `<span class="cw-collection-quality">${discIcon}${segments.slice(0, 3).map(segmentHtml).join("")}</span>`;
+    const tip = `<span class="cw-collection-quality-tip" aria-hidden="true">${video ? `<strong>${esc(video)}</strong>` : ""}${sound ? `<span>${esc(sound)}</span>` : ""}</span>`;
+    return { html: pill + (video || sound ? tip : ""), label: [video, sound].filter(Boolean).join(", ") };
+  }
+
   function collectionCard(item) {
     const key = storePosterItem(item);
     const [icon, kind] = collectionKind(item);
@@ -1333,9 +1374,12 @@
     const art = poster(item, "w342");
     const providerStrip = collectionProviderStrip(item);
     const meta = [kind, episode || year, when, collectionLibrarySummary(item)].filter(Boolean).join(" · ");
-    const inner = `<span class="cw-collection-poster">
+    const quality = collectionQuality(item);
+    const ariaTitle = quality?.label ? `${title}, ${quality.label}` : title;
+    const inner = `<span class="cw-collection-poster${quality ? " has-quality" : ""}">
         <img src="${esc(art)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'">
         <span class="cw-collection-badge"><span class="material-symbols-rounded" aria-hidden="true">${esc(icon)}</span>${esc(kind)}</span>
+        ${quality ? quality.html : ""}
       </span>
       <span class="cw-collection-info">
         <strong class="cw-collection-name">${esc(title)}</strong>
@@ -1345,11 +1389,11 @@
     const selectKey = collectionSelectable() ? String(item?.key || "") : "";
     if (selectKey) {
       return `<article class="cw-collection-card cw-tl-card${collectionState.selected.has(selectKey) ? " is-selected" : ""}" data-collection-key="${esc(selectKey)}">
-      <button class="cw-collection-open" type="button" data-profile-poster-key="${esc(key)}" aria-label="Show details for ${esc(title)}">${inner}</button>
+      <button class="cw-collection-open" type="button" data-profile-poster-key="${esc(key)}" aria-label="Show details for ${esc(ariaTitle)}">${inner}</button>
       ${collectionSelectBox(selectKey)}
     </article>`;
     }
-    return `<button class="cw-collection-card" type="button" data-profile-poster-key="${esc(key)}" aria-label="Show details for ${esc(title)}">${inner}</button>`;
+    return `<button class="cw-collection-card" type="button" data-profile-poster-key="${esc(key)}" aria-label="Show details for ${esc(ariaTitle)}">${inner}</button>`;
   }
 
   const collectionSelectable = () => canWriteRecords();

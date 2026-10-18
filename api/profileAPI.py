@@ -52,6 +52,7 @@ from api.appAuthAPI import (
     current_user,
     effective_user_profile_id,
 )
+from cw_platform.collection_media import combine_media
 from cw_platform.config_base import CONFIG as CONFIG_DIR, load_config, update_config
 from cw_platform.id_map import canonical_key
 from cw_platform.orchestrator._state_store import StateStore
@@ -504,11 +505,16 @@ def _collection_merge_group(group: dict[str, Any], item: dict[str, Any], *, raw_
     dates = group.setdefault("_collection_dates", [])
     if isinstance(dates, list):
         _collection_add_unique(dates, collected_at)
+    if item.get("format") or item.get("media_info"):
+        media_entries = group.setdefault("_media_entries", [])
+        if isinstance(media_entries, list):
+            media_entries.append((item.get("format"), item.get("media_info")))
 
 
 def _collection_finalize_group(key: str, group: dict[str, Any]) -> dict[str, Any]:
     dates = [d for d in group.pop("_collection_dates", []) if d]
     dates_sorted = sorted(dates, key=_collection_date_sort)
+    media_format, media_info = combine_media(group.pop("_media_entries", None) or [])
     raw_sources = group.get("collection_sources")
     sources: list[Any] = raw_sources if isinstance(raw_sources, list) else []
     providers = sorted({str(src.get("provider") or "").lower() for src in sources if isinstance(src, dict) and src.get("provider")})
@@ -541,6 +547,12 @@ def _collection_finalize_group(key: str, group: dict[str, Any]) -> dict[str, Any
     out["last_collected_at"] = dates_sorted[-1] if dates_sorted else ""
     out["collected_at"] = out["last_collected_at"]
     out["sources"] = providers
+    out.pop("format", None)
+    out.pop("media_info", None)
+    if media_format:
+        out["format"] = media_format
+    if media_info:
+        out["media_info"] = media_info
     return out
 
 
