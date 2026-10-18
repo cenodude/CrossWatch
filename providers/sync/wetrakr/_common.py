@@ -36,6 +36,12 @@ MAX_CACHE_AGE = 3600
 WRITE_BATCH_SIZE = 500
 READ_PAGE_SIZE = 500
 DELTA_PAGE_SIZE = 100
+TRACKLOG_BATCH_SIZE = 100
+DAILY_QUOTA_CODES = {
+    "QUOTA_EXCEEDED": ("daily_quota_exceeded", "x-quota"),
+    "APP_USER_QUOTA_EXCEEDED": ("app_user_quota_exceeded", "x-app-user-quota"),
+    "APP_QUOTA_EXCEEDED": ("app_quota_exceeded", ""),
+}
 
 _STATES: dict[str, dict[str, Any]] = {}
 _STATES_LOCK = threading.Lock()
@@ -88,6 +94,12 @@ def retry_seconds(value: Any) -> float:
             return 60
 
 
+def _seconds_to_utc_midnight() -> float:
+    now = datetime.now(timezone.utc)
+    midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return (midnight - now).total_seconds()
+
+
 def request(adapter: Any, method: str, path: str, **kwargs: Any) -> Any:
     if not path.startswith("/") or path.startswith("//"):
         raise WeTrakrSyncError("invalid_api_path")
@@ -114,14 +126,20 @@ def request(adapter: Any, method: str, path: str, **kwargs: Any) -> Any:
                 body = {}
             error = body.get("error") if isinstance(body, Mapping) else ""
             code = error.get("code") if isinstance(error, Mapping) else error
-            daily = code == "QUOTA_EXCEEDED"
-            delay = retry_seconds(headers.get("retry-after"))
+            code = code if isinstance(code, str) else ""
+            reason, exhausted = DAILY_QUOTA_CODES.get(code, ("rate_limited", ""))
+            daily = code in DAILY_QUOTA_CODES
+            delay = retry_seconds(headers["retry-after"]) if "retry-after" in headers or not daily else 0
             if daily:
-                delay = max(delay, retry_seconds(headers.get("x-quota-reset")))
+                reset = headers.get("x-quota-reset")
+                delay = max(delay, retry_seconds(reset) if reset is not None else _seconds_to_utc_midnight())
             delay = max(1, delay)
             state["blocked"]["DAILY" if daily else bucket] = time.time() + delay
-            log("WETRAKR", "http", "warn", "rate_limited", daily=daily, retry_after=delay)
-            raise WeTrakrSyncError("daily_quota_exceeded" if daily else "rate_limited", status=429, retry_after=delay)
+            if exhausted:
+                auth.record_quota(auth.provider_block(adapter.config, adapter.instance_id),
+                                  {**headers, f"{exhausted}-remaining": "0", "x-quota-reset": str(int(delay))}, started_at=time.time())
+            log("WETRAKR", "http", "warn", "rate_limited", daily=daily, code=code, retry_after=delay)
+            raise WeTrakrSyncError(reason, status=429, retry_after=delay)
         if not 200 <= response.status_code < 300:
             raise WeTrakrSyncError("request_rejected", status=response.status_code)
         if int_value(headers.get("ratelimit-remaining")) == 0 and "ratelimit-reset" in headers:
@@ -776,11 +794,21 @@ def write_items(adapter: Any, feature: str, items: Iterable[Mapping[str, Any]], 
             rejected: set[str] = set()
             try:
                 if event_mode and remove:
+                    event_ids: dict[str, str] = {}
                     for key in batch:
-                        event_id = str(before[matches[key]].get("_wetrakr_history_id") or "")
-                        if not event_id:
+                        event_ids[key] = str(before[matches[key]].get("_wetrakr_history_id") or "")
+                        if not event_ids[key]:
                             raise WeTrakrSyncError("missing_history_id")
-                        body_of(request(adapter, "DELETE", f"/sync/tracklogs/{quote(event_id, safe='')}"))
+                    values = list(dict.fromkeys(event_ids.values()))
+                    not_found: set[str] = set()
+                    for offset in range(0, len(values), TRACKLOG_BATCH_SIZE):
+                        response = body_of(request(adapter, "POST", "/sync/tracklogs/remove",
+                                                   json={"ids": values[offset:offset + TRACKLOG_BATCH_SIZE]}))
+                        missing = response.get("not_found") if isinstance(response, Mapping) else None
+                        if not isinstance(missing, list):
+                            raise WeTrakrSyncError("invalid_response")
+                        not_found.update(str(value) for value in missing)
+                    rejected = {key for key, event_id in event_ids.items() if event_id in not_found}
                 else:
                     payload: dict[str, list[dict[str, Any]]] = {}
                     for key in batch:
