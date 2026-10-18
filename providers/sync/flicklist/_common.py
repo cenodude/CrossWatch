@@ -6,11 +6,12 @@ from __future__ import annotations
 import math
 import time
 from datetime import datetime, timezone
-from typing import Any, Iterator, Mapping, Sequence
+from typing import Any, Iterable, Iterator, Mapping, Sequence
 
 import requests
 
 from cw_platform.id_map import canonical_key, ids_from, minimal as id_minimal
+from cw_platform.run_control import cancel_requested
 from providers.auth._auth_FLICKLIST import API_V3_BASE, is_configured as auth_configured, request_with_auth
 from providers.sync._log import log as cw_log
 
@@ -26,8 +27,12 @@ URL_LISTS = f"{API_V3_BASE}/sync/lists"
 URL_LIST = f"{API_V3_BASE}/sync/lists/{{id}}"
 URL_LIST_ITEMS = f"{API_V3_BASE}/sync/lists/{{id}}/items"
 URL_SCROBBLE = f"{API_V3_BASE}/scrobble/{{action}}"
+URL_UP_NEXT = f"{API_V3_BASE}/sync/up_next"
+URL_UP_NEXT_DROP = f"{API_V3_BASE}/sync/up_next/drop"
 
 BULK_MAX = 1000
+UP_NEXT_PAGE_SIZE = 100
+UP_NEXT_MAX_PAGES = 200
 HISTORY_PAGE_MAX = 500
 HISTORY_PAGE_DEFAULT = 500
 DEFAULT_TIMEOUT = 20.0
@@ -527,7 +532,74 @@ def classify_write(
     return confirmed, unresolved_keys, unresolved, counters
 
 
+def dropped_show_tokens(adapter: Any) -> set[str]:
+    tokens: set[str] = set()
+    page = 1
+    while page <= UP_NEXT_MAX_PAGES:
+        resp = flicklist_request(adapter, "GET", URL_UP_NEXT, params={"page": page, "limit": UP_NEXT_PAGE_SIZE})
+        if not ok_status(resp):
+            _warn("history", "dropped_fetch_failed", page=page, status=int(resp.status_code), error=error_of(resp))
+            raise FlickListError("flicklist_dropped_fetch_failed")
+        data = safe_json(resp)
+        rows = data if isinstance(data, list) else []
+        for row in rows:
+            if not isinstance(row, Mapping) or row.get("dropped") is not True:
+                continue
+            item = read_minimal(row, default_type="show")
+            if not item:
+                continue
+            key = key_of(item)
+            if key:
+                tokens.add(key)
+            ids = ids_from_flicklist(row.get("ids") if isinstance(row.get("ids"), Mapping) else {})
+            tokens.update(f"{source}:{str(value).lower()}" for source, value in ids.items())
+        page_count = header_int(resp, "X-FlickList-Page-Count")
+        if page_count is not None:
+            if page >= page_count:
+                break
+        elif len(rows) < UP_NEXT_PAGE_SIZE:
+            break
+        page += 1
+    _info("history", "dropped_index_done", count=len(tokens), pages=page)
+    return tokens
+
+
+def tag_dropped_shows(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    attempted = 0
+    confirmed = 0
+    skipped = 0
+    not_found = 0
+    errors = 0
+    for item in items:
+        if cancel_requested():
+            break
+        ids = _write_ids_from({"ids": dict(item.get("ids") or {})})
+        if not ids:
+            skipped += 1
+            continue
+        attempted += 1
+        try:
+            resp = flicklist_request(adapter, "POST", URL_UP_NEXT_DROP, json={"ids": ids, "media_type": "show"})
+        except Exception as exc:
+            _warn("history", "dropped_tag_failed", error=str(exc))
+            errors += 1
+            continue
+        if ok_status(resp):
+            confirmed += 1
+        elif int(resp.status_code) == 404:
+            not_found += 1
+        else:
+            _warn("history", "dropped_tag_http", status=int(resp.status_code), error=error_of(resp))
+            errors += 1
+            if int(resp.status_code) in (401, 403, 429):
+                break
+    _info("history", "dropped_tagged", attempted=attempted, confirmed=confirmed, skipped=skipped, not_found=not_found, errors=errors)
+    return {"attempted": attempted, "confirmed": confirmed, "skipped": skipped, "not_found": not_found, "errors": errors}
+
+
 __all__ = [
+    "dropped_show_tokens",
+    "tag_dropped_shows",
     "HISTORY_PAGE_DEFAULT",
     "BULK_MAX",
     "DEFAULT_GET_PER_SEC",

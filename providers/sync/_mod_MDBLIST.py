@@ -10,6 +10,7 @@ from typing import Any, Callable, Iterable, Mapping
 
 from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.id_map import canonical_key, minimal as id_minimal
+from cw_platform.run_control import cancel_requested
 
 from ._log import log as cw_log
 from .mdblist._common import CursorPager, MDBListFetchError, read_json as mdblist_read_json, state_file as mdblist_state_file, write_json as mdblist_write_json
@@ -741,6 +742,13 @@ class MDBLISTModule:
             raw_pag = data.get("pagination") if isinstance(data, Mapping) else None
             pag = raw_pag if isinstance(raw_pag, Mapping) else {}
             has_more = bool(pag.get("has_more")) if isinstance(pag, Mapping) else False
+            raw_total = pag.get("total")
+            try:
+                total = int(raw_total) if raw_total is not None else -1
+            except (TypeError, ValueError):
+                total = -1
+            if total >= 0 and offset + len(rows) < total:
+                has_more = True
             if not rows or not has_more:
                 break
             try:
@@ -758,6 +766,60 @@ class MDBLISTModule:
             },
         )
         return tokens
+
+    def tag_dropped_shows(self, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+        shows: list[dict[str, Any]] = []
+        skipped = 0
+        for item in items:
+            raw = dict(item.get("ids") or {})
+            ids: dict[str, Any] = {}
+            imdb = str(raw.get("imdb") or "").strip()
+            if imdb.startswith("tt"):
+                ids["imdb"] = imdb
+            mdblist_id = str(raw.get("mdblist") or "").strip()
+            if mdblist_id:
+                ids["mdblist"] = mdblist_id
+            for key in ("tmdb", "tvdb", "trakt"):
+                value = str(raw.get(key) or "").strip()
+                if value.isdigit():
+                    ids[key] = int(value)
+            if ids:
+                shows.append({"ids": ids})
+            else:
+                skipped += 1
+        confirmed = 0
+        not_found = 0
+        errors = 0
+        for start in range(0, len(shows), 200):
+            if cancel_requested():
+                break
+            part = shows[start:start + 200]
+            try:
+                r = self.client.post(f"{self.client.BASE}/sync/dropped", params={"apikey": self.cfg.api_key}, json={"shows": part})
+            except Exception as e:
+                _warn("dropped_tag_failed", count=len(part), error=str(e))
+                errors += len(part)
+                continue
+            if not (200 <= r.status_code < 300):
+                _warn("dropped_tag_http", count=len(part), status=r.status_code)
+                errors += len(part)
+                continue
+            try:
+                data = r.json() if (r.text or "").strip() else {}
+            except Exception:
+                data = {}
+            updated = data.get("updated") if isinstance(data, Mapping) else None
+            missing = data.get("not_found") if isinstance(data, Mapping) else None
+            shows_updated = updated.get("shows") if isinstance(updated, Mapping) else None
+            shows_missing = missing.get("shows") if isinstance(missing, Mapping) else None
+            item_errors = data.get("errors") if isinstance(data, Mapping) else None
+            confirmed += len(shows_updated) if isinstance(shows_updated, list) else int(shows_updated or 0)
+            not_found += len(shows_missing) if isinstance(shows_missing, list) else int(shows_missing or 0)
+            if isinstance(item_errors, list) and item_errors:
+                errors += len(item_errors)
+                _warn("dropped_tag_item_errors", count=len(item_errors), first=str(item_errors[0])[:200])
+        _info("dropped_tagged", attempted=len(shows), confirmed=confirmed, skipped=skipped, not_found=not_found, errors=errors)
+        return {"attempted": len(shows), "confirmed": confirmed, "skipped": skipped, "not_found": not_found, "errors": errors}
 
     def build_index(self, feature: str, **kwargs: Any) -> dict[str, dict[str, Any]]:
         if not self._is_enabled(feature) or feature not in _FEATURES:
@@ -1043,6 +1105,9 @@ class _MDBLISTOPS:
 
     def dropped_show_tokens(self, cfg: Mapping[str, Any]) -> set[str]:
         return self._adapter(cfg).dropped_show_tokens()
+
+    def tag_dropped_shows(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+        return self._adapter(cfg).tag_dropped_shows(items)
 
     def fetch_journal(
         self,

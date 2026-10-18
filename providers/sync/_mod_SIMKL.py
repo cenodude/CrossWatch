@@ -989,6 +989,11 @@ class _SIMKLOPS:
     def dropped_show_tokens(self, cfg: Mapping[str, Any]) -> set[str]:
         return self._adapter(cfg).dropped_show_tokens()
 
+    def tag_dropped_shows(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+        if feat_history is None:
+            return {"attempted": 0, "confirmed": 0, "errors": 0}
+        return feat_history.tag_dropped_shows(self._adapter(cfg), items)
+
     def list_playlist_resources(self, cfg: Mapping[str, Any], *, instance: str | None = None):
         if feat_playlists is None:
             return []

@@ -37,9 +37,7 @@ export const HELP_TEXT = {
   "cx-hs-remove": "History: Remove\nRemoving history is discouraged (destructive and only for very specific needs).",
   "cx-hs-rewatches": "History: Rewatches\nSync separate play events when both providers support it. SIMKL requires Pro/VIP.",
   "cx-tr-hs-col": "Trakt: Add to library\nAlso add items to your Trakt library when writing history (if enabled).",
-  "cx-tr-hs-ignore-dropped": "Trakt: Ignore dropped shows\nWhen enabled, shows marked as dropped on Trakt are skipped during history sync.\nThis suppresses sync for those shows; it does not remove them elsewhere.",
-  "cx-md-hs-ignore-dropped": "MDBList: Ignore dropped shows\nWhen enabled, shows marked as dropped on MDBList are skipped during history sync.\nThis suppresses sync for those shows; it does not remove them elsewhere.",
-  "cx-sm-hs-ignore-dropped": "Simkl: Ignore dropped shows\nWhen enabled, shows marked as dropped on Simkl are skipped during history sync.\nThis suppresses sync for those shows; it does not remove them elsewhere.",
+  "cx-hs-dropped": "Dropped shows\nSync normally: dropped shows sync like any other show.\nIgnore: shows dropped on this provider are skipped during history sync. Nothing is removed elsewhere.\nSync + tag dropped: plays of shows dropped on this provider still sync, and the show is marked dropped on the other provider. SIMKL and WeTrakr keep completed shows as completed. Dropping a show on FlickList also clears its resume points. Un-dropping is not synced.",
 
   "cx-pr-enable": "Progress: Enable\nSync resume position (where you left off) between providers.",
   "cx-pr-add": "Progress: Add / Update\nWrite resume position to the target.",

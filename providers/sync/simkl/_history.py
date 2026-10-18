@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from cw_platform.history_events import has_history_watch
 from cw_platform.interactive_reads import replaying, retaining
+from cw_platform.run_control import cancel_requested
 
 import json
 import re
@@ -46,6 +47,7 @@ from ._common import (
 
 BASE = "https://api.simkl.com"
 URL_ALL_ITEMS = f"{BASE}/sync/all-items"
+URL_ADD_TO_LIST = f"{BASE}/sync/add-to-list"
 URL_ADD = f"{BASE}/sync/history"
 URL_REMOVE = f"{BASE}/sync/history/remove"
 URL_REDIRECT = f"{BASE}/redirect"
@@ -1612,6 +1614,94 @@ def _watch_status_by_record(adapter: Any) -> dict[str, str]:
             if record and status:
                 out[record] = status
     return out
+
+
+def _id_tokens(ids: Mapping[str, Any]) -> set[str]:
+    return {f"{key}:{str(value).strip().lower()}" for key, value in ids.items() if key in ID_KEYS and str(value or "").strip()}
+
+
+def _show_status_by_id(adapter: Any) -> dict[str, set[str]]:
+    headers = _headers(adapter, force_refresh=True)
+    try:
+        acts, _ = fetch_activities(adapter.client.session, headers, timeout=adapter.cfg.timeout, force=True)
+    except Exception:
+        acts = None
+    marker = str((acts or {}).get("all") or "").strip()
+    cache_path = state_file("simkl_show_status.index.json")
+    cached = load_json_state(cache_path) if marker else {}
+    cached_statuses = cached.get("statuses") if isinstance(cached, Mapping) else None
+    if marker and cached.get("marker") == marker and isinstance(cached_statuses, Mapping) and cached_statuses:
+        return {str(token): set(values) for token, values in cached_statuses.items() if isinstance(values, list)}
+    try:
+        resp = adapter.client.session.get(URL_ALL_ITEMS, headers=headers, params=_params(headers), timeout=adapter.cfg.timeout)
+        body = resp.json() if resp.ok else None
+    except Exception as exc:
+        _warn("watch_status_fetch_failed", error=str(exc))
+        return {}
+    out: dict[str, set[str]] = {}
+    for kind in ("shows", "anime"):
+        rows = body.get(kind) if isinstance(body, Mapping) else None
+        for row in rows if isinstance(rows, list) else []:
+            if not isinstance(row, Mapping):
+                continue
+            media = row.get("show")
+            ids = media.get("ids") if isinstance(media, Mapping) else None
+            status = _WATCH_STATUS.get(str(row.get("status") or "").strip().lower())
+            if isinstance(ids, Mapping) and status:
+                for token in _id_tokens(ids):
+                    out.setdefault(token, set()).add(status)
+    if marker and out:
+        save_json_state(cache_path, {"marker": marker, "statuses": {token: sorted(values) for token, values in out.items()}})
+    return out
+
+
+def tag_dropped_shows(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    items = list(items)
+    statuses = _show_status_by_id(adapter)
+    if not statuses:
+        _warn("dropped_tag_skipped", reason="status_lookup_empty", count=len(items))
+        return {"attempted": 0, "confirmed": 0, "skipped": len(items), "errors": 0}
+    shows: list[dict[str, Any]] = []
+    skipped = 0
+    for item in items:
+        ids = {key: value for key, value in dict(item.get("ids") or {}).items() if key in ID_KEYS and value not in (None, "")}
+        current = set().union(*(statuses[token] for token in _id_tokens(ids) if token in statuses))
+        if not ids or current & {"dropped", "completed"}:
+            skipped += 1
+            continue
+        shows.append({"ids": ids, "to": "dropped"})
+    confirmed = 0
+    not_found = 0
+    errors = 0
+    headers = _headers(adapter)
+    for start in range(0, len(shows), 100):
+        if cancel_requested():
+            break
+        part = shows[start:start + 100]
+        try:
+            resp = adapter.client.session.post(URL_ADD_TO_LIST, headers=headers, params=_params(headers), json={"shows": part}, timeout=adapter.cfg.timeout)
+        except Exception as exc:
+            _warn("dropped_tag_failed", count=len(part), error=str(exc))
+            errors += len(part)
+            continue
+        if not (200 <= resp.status_code < 300):
+            _warn("dropped_tag_http", count=len(part), status=resp.status_code, body=(resp.text or "")[:200])
+            errors += len(part)
+            continue
+        try:
+            body = resp.json() if (resp.text or "").strip() else {}
+        except Exception:
+            body = {}
+        added = body.get("added") if isinstance(body, Mapping) else None
+        value = added.get("shows") if isinstance(added, Mapping) else (body.get("shows") if isinstance(body, Mapping) else None)
+        confirmed += len(value) if isinstance(value, list) else int(value or 0)
+        missing = body.get("not_found") if isinstance(body, Mapping) else None
+        missing_shows = missing.get("shows") if isinstance(missing, Mapping) else None
+        if isinstance(missing_shows, list) and missing_shows:
+            not_found += len(missing_shows)
+            _warn("dropped_tag_not_found", count=len(missing_shows), first=str(missing_shows[0])[:200])
+    _info("dropped_tagged", attempted=len(shows), confirmed=confirmed, skipped=skipped, not_found=not_found, errors=errors)
+    return {"attempted": len(shows), "confirmed": confirmed, "skipped": skipped, "not_found": not_found, "errors": errors}
 
 
 def _with_watch_status(adapter: Any, index: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:

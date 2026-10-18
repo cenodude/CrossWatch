@@ -76,7 +76,8 @@ _AUDIT_STATUS = {
     "audit_2fa_failed": "failed",
     "audit_2fa_required": "informational",
 }
-_PAST = {"add": "added", "remove": "removed", "update": "updated"}
+_PAST = {"add": "added", "remove": "removed", "update": "updated", "tag_dropped": "marked dropped"}
+_VERB = {"tag_dropped": "mark dropped"}
 _SEVERITY = {
     "completed": "success", "resolved": "success", "rated": "success",
     "warning": "warning", "blackboxed": "warning", "unresolved": "warning",
@@ -327,7 +328,7 @@ def _run_routes(plan_events: list[dict[str, Any]]) -> str:
 
 
 def _summarize(status: str, events: list[dict[str, Any]], feature: str, dst: str, norm_op: str, reason_code: str, feat_issues: dict[str, int] | None = None) -> str:
-    verb = norm_op or "update"
+    verb = _VERB.get(norm_op, norm_op or "update")
     past = _PAST.get(norm_op, "updated")
 
     types = {e.get("event_type") for e in events}
