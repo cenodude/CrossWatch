@@ -203,6 +203,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "read": True,
                 "upsert": True,
                 "remove": True,
+                "media_updates": True,
             },
             "playlists": {
                 "read": True,

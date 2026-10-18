@@ -87,7 +87,7 @@ def get_manifest() -> Mapping[str, Any]:
             "history": {"read": True, "write": True, "types": {"movies": True, "shows": False, "seasons": False, "episodes": True}, "upsert": True, "remove": True, "observed_deletes": True, "requires_ids": ["tmdb"], "event_history": True, "rewatches": {"read": True, "write": True, "account_gate": False}},
             "progress": {"read": True, "write": True, "types": {"movies": True, "shows": False, "seasons": False, "episodes": True}, "upsert": True, "remove": True, "observed_deletes": False, "requires_ids": ["tmdb"], "units": "seconds", "completion_policy": {"progress_write": {"mode": "none"}}},
             "playlists": {"read": False, "write": False},
-            "collection": {"read": True, "write": True, "types": {"movies": True, "shows": True, "seasons": True, "episodes": True}, "upsert": True, "remove": True, "observed_deletes": True, "requires_ids": ["tmdb"], "provides_ids": ["tmdb", "imdb", "tvdb"], "default_format": "digital"},
+            "collection": {"read": True, "write": True, "types": {"movies": True, "shows": True, "seasons": True, "episodes": True}, "upsert": True, "remove": True, "observed_deletes": True, "requires_ids": ["tmdb"], "provides_ids": ["tmdb", "imdb", "tvdb"], "default_format": "digital", "media_updates": True},
         },
     }
 
