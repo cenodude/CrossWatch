@@ -336,6 +336,7 @@ class EMBYConfig:
     progress_libraries: list[str] | None = None
     ratings_libraries: list[str] | None = None
     collection_libraries: list[str] | None = None
+    collection_media_info: bool = False
     progress_replay_enabled: bool = False
     progress_timestamp_tolerance_seconds: int = 30
 
@@ -496,6 +497,7 @@ class EMBYModule:
             progress_libraries=_list_str(pr.get("libraries")),
             ratings_libraries=_list_str(ra.get("libraries")),
             collection_libraries=_list_str(co.get("libraries")),
+            collection_media_info=coerce_bool(co.get("media_info", False)),
             progress_replay_enabled=coerce_bool(pr.get("replay_enabled", em.get("progress_replay_enabled", False))),
             progress_timestamp_tolerance_seconds=_i(pr.get("timestamp_tolerance_seconds", em.get("progress_clock_drift_seconds", 30)), 30),
             history_force_overwrite=force_overwrite,

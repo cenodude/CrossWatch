@@ -51,6 +51,7 @@ export const HELP_TEXT = {
   "cx-pr-library-only": "Progress: Only items in destination library\nSkip resume positions for movies and episodes that are not in the media server library.\nTitles the server already has a position for are always synced.\nMatches on IDs only, so titles stored under a different ID are skipped too.",
   "cx-hs-specials": "History: Specials (Season 0)\nInclude Season 0 / specials episodes. Disable to skip them on both sides of this pair.",
   "cx-hs-library-only": "History: Only items in destination library\nSkip movies and episodes that are not in the media server library.\nMatches on IDs only, so titles stored under a different ID are skipped too.",
+  "cx-co-media": "Collections: Include media info\nReads resolution, HDR and audio from the media server and sends them with new collection items.\nAdds some extra load on the media server while reading the library.",
   "cx-rt-specials": "Ratings: Specials (Season 0)\nInclude Season 0 / specials seasons and episodes. Disable to skip them on both sides of this pair.",
   "cx-rt-library-only": "Ratings: Only items in destination library\nSkip new ratings for movies and episodes that are not in the media server library.\nRating changes for titles you already rated are always synced.\nMatches on IDs only, so titles stored under a different ID are skipped too.",
 

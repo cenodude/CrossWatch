@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Mapping
 
+from cw_platform.collection_media import stream_media_info
 from cw_platform.id_map import canonical_key
 
 from ._common import (
@@ -24,6 +25,7 @@ _ITEM_FIELDS = (
     "ProviderIds,ProductionYear,Type,IndexNumber,ParentIndexNumber,SeriesId,"
     "SeriesName,ParentId,CollectionFolderId,AncestorIds,LibraryId,Name,DateCreated"
 )
+_MEDIA_INFO_FIELDS = ",Width,Height,Video3DFormat,MediaSources"
 
 
 def _progress(adapter: Any) -> Any:
@@ -42,6 +44,10 @@ def _progress(adapter: Any) -> Any:
             pass
 
     return _Noop()
+
+
+def _media_info_enabled(adapter: Any) -> bool:
+    return bool(getattr(getattr(adapter, "cfg", None), "collection_media_info", False))
 
 
 def _collected_at_from_raw(raw: Mapping[str, Any]) -> str | None:
@@ -103,7 +109,7 @@ def _fetch_rows(adapter: Any) -> tuple[list[tuple[Mapping[str, Any], str | None]
     base_params: dict[str, Any] = {
         "Recursive": True,
         "IncludeItemTypes": "Movie,Series,Season,Episode",
-        "Fields": _ITEM_FIELDS,
+        "Fields": _ITEM_FIELDS + (_MEDIA_INFO_FIELDS if _media_info_enabled(adapter) else ""),
         "EnableUserData": False,
     }
     for parent_id in parents:
@@ -156,6 +162,7 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
 
     prog = _progress(adapter)
     rows, allowed = _fetch_rows(adapter)
+    include_media = _media_info_enabled(adapter)
     roots = emby_get_library_roots(adapter)
     scope_libs = sorted(allowed)
     series_ids_by_item_id = _series_ids_by_item_id(http, str(uid), rows)
@@ -186,6 +193,11 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
             collected_at = _collected_at_from_raw(raw)
             if collected_at:
                 item["collected_at"] = collected_at
+            if include_media and raw_type in {"Movie", "Episode"}:
+                item["format"] = "digital"
+                media_info = stream_media_info(raw)
+                if media_info:
+                    item["media_info"] = media_info
             lib_id = emby_resolve_library_id(
                 raw,
                 roots,
@@ -222,7 +234,7 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
         prog.done(total=len(out))
     except Exception:
         pass
-    _info("collection_index_built", rows=len(rows), indexed=len(out), duplicate_keys=dup_keys, library_ids=sorted(allowed), resolved_roots=len(roots))
+    _info("collection_index_built", rows=len(rows), indexed=len(out), duplicate_keys=dup_keys, library_ids=sorted(allowed), resolved_roots=len(roots), media_info=include_media)
     return out
 
 

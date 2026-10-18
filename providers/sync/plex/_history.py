@@ -26,6 +26,7 @@ from ._common import (
     _as_base_url,
     _pair_scope,
     _fb_cache_flush,
+    _fetch_section_guid_rows,
     _xml_to_container,
     active_pms_token,
     as_epoch as _as_epoch,
@@ -131,72 +132,6 @@ def _row_guids(row: Mapping[str, Any]) -> list[str]:
         if gid:
             vals.append(str(gid))
     return vals
-
-
-def _fetch_section_guid_rows(srv: Any, section_id: str, plex_type: int, *, check_cancel=None, strict: bool = False) -> tuple[list[Mapping[str, Any]], int]:
-    base = _as_base_url(srv)
-    ses = getattr(srv, "_session", None)
-    token = getattr(srv, "token", None) or getattr(srv, "_token", None) or ""
-    if not (base and ses and token and section_id):
-        raise RuntimeError("plex_guid_index_server_unavailable")
-
-    headers = dict(getattr(ses, "headers", {}) or {})
-    headers.update(plex_headers(token))
-    headers["Accept"] = "application/json"
-
-    page_size = 1000
-    out: list[Mapping[str, Any]] = []
-    seen_pages: set[tuple[str, ...]] = set()
-    start = 0
-    made = 0
-
-    while True:
-        if check_cancel:
-            check_cancel()
-        params = {
-            "type": plex_type,
-            "includeGuids": 1,
-            "X-Plex-Container-Start": start,
-            "X-Plex-Container-Size": page_size,
-        }
-        try:
-            r = ses.get(f"{base}/library/sections/{section_id}/all", params=params, headers=headers, timeout=20)
-        except Exception as exc:
-            raise RuntimeError("plex_guid_index_request_failed") from exc
-        made += 1
-        if not getattr(r, "ok", False):
-            raise RuntimeError(f"plex_guid_index_http_{getattr(r, 'status_code', 0)}")
-        try:
-            ctype = (r.headers.get("content-type") or "").lower()
-            data = (r.json() or {}) if "application/json" in ctype else _xml_to_container(r.text or "")
-            mc = data.get("MediaContainer") or {}
-            metadata = mc.get("Metadata")
-            if strict:
-                if metadata is None and (mc.get("size") == 0 or mc.get("totalSize") == 0):
-                    metadata = []
-                if not isinstance(metadata, list) or any(not isinstance(x, Mapping) or not x.get("ratingKey") for x in metadata):
-                    raise ValueError("Incomplete Plex library metadata")
-            rows = [x for x in (metadata or []) if isinstance(x, Mapping)]
-            total = mc.get("totalSize")
-            total_i = int(total) if total is not None else None
-        except Exception as exc:
-            raise RuntimeError("plex_guid_index_parse_failed") from exc
-        if not rows:
-            if total_i is not None and start < total_i:
-                raise RuntimeError("plex_guid_index_incomplete_page")
-            break
-        signature = tuple(str(row.get("ratingKey") or row.get("key") or "") for row in rows)
-        if signature in seen_pages:
-            raise RuntimeError("plex_guid_index_repeated_page")
-        seen_pages.add(signature)
-        out.extend(rows)
-        start += len(rows)
-        if total_i is not None and start >= total_i:
-            break
-        if total_i is None and len(rows) < page_size:
-            break
-
-    return out, made
 
 
 def _build_guid_index(adapter: Any, allow: set[str], *, force: bool = False, feature: str = "history") -> dict[str, Any]:

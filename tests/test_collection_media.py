@@ -268,3 +268,311 @@ def test_crosswatch_tracker_collection_stores_media_info(tmp_path, monkeypatch: 
     assert stored["format"] == "bluray"
     assert stored["media_info"] == {"resolution": "uhd_4k", "audio": "dolby_atmos", "is_3d": True}
     assert minimal(stored)["media_info"] == stored["media_info"]
+
+
+@pytest.mark.parametrize(
+    ("width", "height", "interlaced", "expected"),
+    [
+        (3840, 1600, False, "uhd_4k"), (2880, 2160, False, "uhd_4k"), (1920, 800, False, "hd_1080p"), (1918, 1040, False, "hd_1080p"),
+        (1440, 1080, False, "hd_1080p"), (1788, 1078, False, "hd_1080p"), (1920, 1080, True, "hd_1080i"), (1280, 534, False, "hd_720p"),
+        (960, 720, False, "hd_720p"), (720, 576, True, "sd_576i"), (720, 480, False, "sd_480p"), (0, 0, False, ""),
+    ],
+)
+def test_resolution_from_dimensions(width: int, height: int, interlaced: bool, expected: str) -> None:
+    assert cm.resolution_from_dimensions(width, height, interlaced=interlaced) == expected
+
+
+@pytest.mark.parametrize(
+    ("media", "hdr", "expected"),
+    [
+        ({"width": 3840, "height": 2076, "videoResolution": "4k", "audioCodec": "truehd", "audioProfile": "dolby truehd + dolby atmos", "audioChannels": 8}, "hdr10", {"resolution": "uhd_4k", "hdr": "hdr10", "audio": "dolby_atmos", "audio_channels": "7.1"}),
+        ({"width": 1920, "height": 800, "audioCodec": "eac3", "audioProfile": "dolby digital plus + dolby atmos", "audioChannels": 6}, "", {"resolution": "hd_1080p", "audio": "dolby_digital_plus_atmos", "audio_channels": "5.1"}),
+        ({"width": 1920, "height": 1080, "audioCodec": "dca", "audioProfile": "ma + dts:x", "audioChannels": 8}, "", {"resolution": "hd_1080p", "audio": "dts_x", "audio_channels": "7.1"}),
+        ({"width": 1920, "height": 1080, "audioCodec": "dca-ma", "audioProfile": "ma", "audioChannels": 6}, "", {"resolution": "hd_1080p", "audio": "dts_ma", "audio_channels": "5.1"}),
+        ({"videoResolution": "720", "audioCodec": "aac", "audioProfile": "lc", "audioChannels": 2}, "", {"resolution": "hd_720p", "audio": "aac", "audio_channels": "2.0"}),
+    ],
+)
+def test_plex_media_info_from_list_rows(media: dict, hdr: str, expected: dict) -> None:
+    assert cm.plex_media_info({"Media": [media]}, hdr) == expected
+
+
+def test_plex_media_info_picks_widest_copy() -> None:
+    row = {"Media": [{"width": 1920, "height": 1080, "audioCodec": "ac3", "audioChannels": 6}, {"width": 3840, "height": 2160, "audioCodec": "eac3", "audioChannels": 6}]}
+    assert cm.plex_media_info(row)["resolution"] == "uhd_4k"
+    assert cm.plex_media_info({"Media": []}) == {}
+
+
+def _plex_collection_adapter(media_info: bool):
+    from types import SimpleNamespace
+
+    sections = [SimpleNamespace(key="1", type="movie")]
+    collection_cfg = {"media_info": True} if media_info else {}
+    return SimpleNamespace(client=SimpleNamespace(server=object()), config={"plex": {"collection": collection_cfg}}, libraries=lambda types=(): sections)
+
+
+def _plex_movie_row(rating_key: str, tmdb: str, width: int, codec: str, profile: str) -> dict:
+    return {
+        "ratingKey": rating_key,
+        "type": "movie",
+        "title": f"Movie {rating_key}",
+        "year": 2020,
+        "Guid": [{"id": f"tmdb://{tmdb}"}],
+        "Media": [{"width": width, "height": 1080, "audioCodec": codec, "audioProfile": profile, "audioChannels": 6}],
+    }
+
+
+@pytest.mark.parametrize("media_info", [False, True])
+def test_plex_collection_reads_media_info_only_when_enabled(monkeypatch: pytest.MonkeyPatch, media_info: bool) -> None:
+    from providers.sync.plex import _collection as plex_collection
+
+    rows = [_plex_movie_row("10", "603", 3840, "truehd", "dolby truehd + dolby atmos"), _plex_movie_row("11", "550", 3840, "eac3", ""), _plex_movie_row("12", "680", 1920, "ac3", "")]
+    calls: list[dict] = []
+
+    def fake_fetch(_srv, _sid, _plex_type, *, extra_params=None, **_kwargs):
+        calls.append(dict(extra_params or {}))
+        flt = dict(extra_params or {})
+        if not flt:
+            return rows, 1
+        if flt == {"dovi": 1}:
+            return [rows[0]], 1
+        if flt == {"hdr": 1}:
+            return [rows[0], rows[1]], 1
+        return [], 1
+
+    monkeypatch.setattr(plex_collection, "_fetch_section_guid_rows", fake_fetch)
+    monkeypatch.setattr(plex_collection, "active_pms_token", lambda _a: None)
+    idx = plex_collection.build_index(_plex_collection_adapter(media_info))
+
+    if not media_info:
+        assert calls == [{}]
+        assert all("media_info" not in v and "format" not in v for v in idx.values())
+        return
+    assert sorted(map(str, calls)) == sorted(map(str, [{}, {"dovi": 1}, {"hdr10plus": 1}, {"hdr": 1}]))
+    assert idx["tmdb:603"]["format"] == "digital"
+    assert idx["tmdb:603"]["media_info"] == {"resolution": "uhd_4k", "hdr": "dolby_vision", "audio": "dolby_atmos", "audio_channels": "5.1"}
+    assert idx["tmdb:550"]["media_info"]["hdr"] == "hdr10"
+    assert "hdr" not in idx["tmdb:680"]["media_info"]
+
+
+def test_plex_collection_ignores_hdr_filter_that_returns_whole_library(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.plex import _collection as plex_collection
+
+    rows = [_plex_movie_row("10", "603", 3840, "eac3", ""), _plex_movie_row("11", "550", 1920, "eac3", "")]
+    monkeypatch.setattr(plex_collection, "_fetch_section_guid_rows", lambda *_a, extra_params=None, **_k: (rows, 1))
+    monkeypatch.setattr(plex_collection, "active_pms_token", lambda _a: None)
+    idx = plex_collection.build_index(_plex_collection_adapter(True))
+
+    assert all("hdr" not in v["media_info"] for v in idx.values())
+
+
+def test_pair_option_injects_media_info_for_collection_only() -> None:
+    from cw_platform.orchestrator._pairs import _config_with_pair_feature_options
+
+    cfg = {"plex": {"server_url": "x"}}
+    on = _config_with_pair_feature_options(cfg, {"enable": True, "media_info": True}, ("PLEX", "TRAKT"), "collection")
+    off = _config_with_pair_feature_options(cfg, {"enable": True}, ("PLEX", "TRAKT"), "collection")
+    history = _config_with_pair_feature_options(cfg, {"enable": True, "media_info": True}, ("PLEX", "TRAKT"), "history")
+
+    assert on["plex"]["collection"]["media_info"] is True
+    assert "collection" not in off["plex"]
+    assert "collection" not in history["plex"]
+    assert cfg == {"plex": {"server_url": "x"}}
+
+
+@pytest.mark.parametrize(
+    ("video", "expected"),
+    [
+        ({"VideoRangeType": "DOVIWithHDR10"}, "dolby_vision"),
+        ({"VideoRangeType": "DOVIInvalid", "ColorTransfer": "smpte2084"}, "hdr10"),
+        ({"VideoRangeType": "HDR10Plus"}, "hdr10_plus"),
+        ({"VideoRangeType": "HLG"}, "hlg"),
+        ({"VideoRangeType": "SDR", "VideoRange": "SDR"}, ""),
+        ({"ExtendedVideoType": "DolbyVision", "VideoRange": "DolbyVision"}, "dolby_vision"),
+        ({"ExtendedVideoType": "Hdr10", "VideoRange": "HDR 10"}, "hdr10"),
+        ({"ExtendedVideoType": "None", "VideoRange": "SDR", "ColorTransfer": "bt709"}, ""),
+    ],
+)
+def test_stream_hdr(video: dict, expected: str) -> None:
+    assert cm.stream_hdr(video) == expected
+
+
+@pytest.mark.parametrize(
+    ("stream", "expected"),
+    [
+        ({"Codec": "eac3", "Profile": "Dolby Digital Plus + Dolby Atmos"}, "dolby_digital_plus_atmos"),
+        ({"Codec": "eac3", "AudioSpatialFormat": "DolbyAtmos"}, "dolby_digital_plus_atmos"),
+        ({"Codec": "truehd", "AudioSpatialFormat": "DolbyAtmos"}, "dolby_atmos"),
+        ({"Codec": "eac3", "Title": "English DDP Atmos 5.1"}, "dolby_digital_plus_atmos"),
+        ({"Codec": "eac3", "Title": "English DDP 5.1"}, "dolby_digital_plus"),
+        ({"Codec": "dts", "Profile": "DTS-HD MA", "AudioSpatialFormat": "DTSX"}, "dts_x"),
+        ({"Codec": "dts", "Profile": "DTS-HD MA", "Title": "DTS-HD MA 7.1"}, "dts_ma"),
+        ({"Codec": "pcm_s24le"}, "lpcm"),
+    ],
+)
+def test_stream_audio(stream: dict, expected: str) -> None:
+    assert cm.stream_audio(stream) == expected
+
+
+def test_stream_media_info_picks_best_audio_and_skips_commentary() -> None:
+    item = {
+        "Width": 1920,
+        "Height": 800,
+        "MediaSources": [
+            {
+                "MediaStreams": [
+                    {"Type": "Video", "Width": 1920, "Height": 800, "VideoRangeType": "SDR"},
+                    {"Type": "Audio", "Codec": "ac3", "Channels": 6, "ChannelLayout": "5.1", "IsDefault": True},
+                    {"Type": "Audio", "Codec": "truehd", "AudioSpatialFormat": "DolbyAtmos", "Channels": 8, "ChannelLayout": "7.1"},
+                    {"Type": "Audio", "Codec": "flac", "Channels": 8, "ChannelLayout": "7.1", "Title": "Director's Commentary"},
+                    {"Type": "Subtitle", "Codec": "subrip"},
+                ]
+            }
+        ],
+    }
+    assert cm.stream_media_info(item) == {"resolution": "hd_1080p", "audio": "dolby_atmos", "audio_channels": "7.1"}
+
+
+def test_stream_media_info_uses_channel_count_when_layout_is_odd() -> None:
+    item = {"MediaStreams": [{"Type": "Video", "Width": 3840, "Height": 2160, "ExtendedVideoType": "Hdr10"}, {"Type": "Audio", "Codec": "eac3", "Channels": 6, "ChannelLayout": "5.1(side)"}], "Video3DFormat": "HalfSideBySide"}
+    assert cm.stream_media_info(item) == {"resolution": "uhd_4k", "hdr": "hdr10", "audio": "dolby_digital_plus", "audio_channels": "5.1", "is_3d": True}
+
+
+@pytest.mark.parametrize("media_info", [False, True])
+def test_emby_collection_reads_media_info_only_when_enabled(monkeypatch: pytest.MonkeyPatch, media_info: bool) -> None:
+    from types import SimpleNamespace
+
+    from providers.sync.emby import _collection as emby_collection
+
+    requested: list[dict] = []
+
+    class _Resp:
+        status_code = 200
+
+        def __init__(self, body):
+            self._body = body
+
+        def json(self):
+            return self._body
+
+    movie = {
+        "Id": "1",
+        "Type": "Movie",
+        "Name": "Ant-Man",
+        "ProductionYear": 2015,
+        "ProviderIds": {"Tmdb": "102899"},
+        "Width": 3840,
+        "Height": 2160,
+        "MediaSources": [{"MediaStreams": [{"Type": "Video", "ExtendedVideoType": "Hdr10", "VideoRange": "HDR 10"}, {"Type": "Audio", "Codec": "eac3", "Title": "English DDP Atmos 5.1", "Channels": 6, "ChannelLayout": "5.1"}]}],
+    }
+
+    def fake_get(path, params=None):
+        requested.append(dict(params or {}))
+        return _Resp({"Items": [movie], "TotalRecordCount": 1})
+
+    adapter = SimpleNamespace(client=SimpleNamespace(get=fake_get), cfg=SimpleNamespace(user_id="u1", collection_media_info=media_info, collection_libraries=None))
+    monkeypatch.setattr(emby_collection, "emby_selected_library_ids", lambda *_a, **_k: set())
+    monkeypatch.setattr(emby_collection, "emby_get_library_roots", lambda _a: {})
+    monkeypatch.setattr(emby_collection, "_series_ids_by_item_id", lambda *_a: {})
+    monkeypatch.setattr(emby_collection, "emby_resolve_library_id", lambda *_a, **_k: None)
+    idx = emby_collection.build_index(adapter)
+    item = next(iter(idx.values()))
+
+    assert ("MediaSources" in requested[0]["Fields"]) is media_info
+    if not media_info:
+        assert "media_info" not in item and "format" not in item
+        return
+    assert item["format"] == "digital"
+    assert item["media_info"] == {"resolution": "uhd_4k", "hdr": "hdr10", "audio": "dolby_digital_plus_atmos", "audio_channels": "5.1"}
+
+
+@pytest.mark.parametrize("media_info", [False, True])
+def test_jellyfin_collection_reads_media_info_only_when_enabled(monkeypatch: pytest.MonkeyPatch, media_info: bool) -> None:
+    from types import SimpleNamespace
+
+    from providers.sync.jellyfin import _collection as jf_collection
+
+    requested: list[dict] = []
+
+    class _Resp:
+        status_code = 200
+
+        def __init__(self, body):
+            self._body = body
+
+        def json(self):
+            return self._body
+
+    movie = {
+        "Id": "1",
+        "Type": "Movie",
+        "Name": "A Perfect World",
+        "ProductionYear": 1993,
+        "ProviderIds": {"Tmdb": "9559"},
+        "Width": 3840,
+        "Height": 2076,
+        "MediaStreams": [
+            {"Type": "Video", "VideoRangeType": "DOVIWithHDR10"},
+            {"Type": "Audio", "Codec": "eac3", "Profile": "Dolby Digital Plus + Dolby Atmos", "AudioSpatialFormat": "DolbyAtmos", "Channels": 6, "ChannelLayout": "5.1"},
+        ],
+    }
+
+    def fake_get(path, params=None):
+        requested.append(dict(params or {}))
+        return _Resp({"Items": [movie], "TotalRecordCount": 1})
+
+    adapter = SimpleNamespace(client=SimpleNamespace(get=fake_get), cfg=SimpleNamespace(user_id="u1", collection_media_info=media_info, collection_libraries=None))
+    monkeypatch.setattr(jf_collection, "jf_selected_library_ids", lambda *_a, **_k: set())
+    monkeypatch.setattr(jf_collection, "jf_get_library_roots", lambda _a: {})
+    monkeypatch.setattr(jf_collection, "_series_ids_by_item_id", lambda *_a: {})
+    monkeypatch.setattr(jf_collection, "jf_resolve_library_id", lambda *_a, **_k: None)
+    idx = jf_collection.build_index(adapter)
+    item = next(iter(idx.values()))
+    fields = next(p["Fields"] for p in requested if "Fields" in p)
+
+    assert ("MediaStreams" in fields) is media_info
+    assert "MediaSources" not in fields
+    if not media_info:
+        assert "media_info" not in item and "format" not in item
+        return
+    assert item["format"] == "digital"
+    assert item["media_info"] == {"resolution": "uhd_4k", "hdr": "dolby_vision", "audio": "dolby_digital_plus_atmos", "audio_channels": "5.1"}
+
+
+def _plex_hdr_index(monkeypatch: pytest.MonkeyPatch, rows: list[dict], filters: dict) -> dict:
+    from providers.sync.plex import _collection as plex_collection
+
+    def fake_fetch(_srv, _sid, _plex_type, *, extra_params=None, **_kwargs):
+        flt = next(iter(dict(extra_params or {})), None)
+        if flt is None:
+            return rows, 1
+        result = filters.get(flt, [])
+        if isinstance(result, Exception):
+            raise result
+        return result, 1
+
+    monkeypatch.setattr(plex_collection, "_fetch_section_guid_rows", fake_fetch)
+    monkeypatch.setattr(plex_collection, "active_pms_token", lambda _a: None)
+    return plex_collection.build_index(_plex_collection_adapter(True))
+
+
+def test_plex_hdr_ignored_filters_on_single_item_library(monkeypatch: pytest.MonkeyPatch) -> None:
+    rows = [_plex_movie_row("10", "603", 1920, "ac3", "")]
+    idx = _plex_hdr_index(monkeypatch, rows, {"dovi": rows, "hdr10plus": rows, "hdr": rows})
+    assert "hdr" not in idx["tmdb:603"]["media_info"]
+
+
+def test_plex_hdr_kept_for_library_where_every_item_is_hdr10(monkeypatch: pytest.MonkeyPatch) -> None:
+    rows = [_plex_movie_row("10", "603", 3840, "eac3", ""), _plex_movie_row("11", "550", 3840, "eac3", "")]
+    idx = _plex_hdr_index(monkeypatch, rows, {"dovi": [], "hdr10plus": [], "hdr": rows})
+    assert {v["media_info"]["hdr"] for v in idx.values()} == {"hdr10"}
+
+
+def test_plex_hdr_skipped_when_a_filter_query_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    rows = [_plex_movie_row("10", "603", 3840, "eac3", "")]
+    idx = _plex_hdr_index(monkeypatch, rows, {"dovi": RuntimeError("boom"), "hdr": rows})
+    assert "hdr" not in idx["tmdb:603"]["media_info"]
+
+
+def test_plex_media_info_keeps_interlaced_scan() -> None:
+    row = {"Media": [{"width": 1920, "height": 1080, "videoResolution": "1080i", "audioCodec": "ac3", "audioChannels": 6}]}
+    assert cm.plex_media_info(row)["resolution"] == "hd_1080i"
