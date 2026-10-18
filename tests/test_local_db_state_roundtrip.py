@@ -312,3 +312,42 @@ def test_state_feature_read_helpers_load_only_requested_features(tmp_path) -> No
     assert counts["TRAKT"] == 1
     assert counts["SIMKL"] == 1
     assert watchlist["last_sync_epoch"] == 300
+
+
+def test_state_database_preserves_collection_media_info(tmp_path) -> None:
+    item = {
+        "type": "movie",
+        "title": "Dune: Part Two",
+        "year": 2024,
+        "ids": {"tmdb": "693134"},
+        "collected_at": "2026-01-02T03:04:05Z",
+        "format": "digital",
+        "media_info": {"resolution": "uhd_4k", "hdr": "dolby_vision", "audio": "dolby_atmos", "audio_channels": "7.1", "is_3d": True},
+    }
+    plain = {"type": "movie", "title": "Arrival", "year": 2016, "ids": {"tmdb": "329865"}}
+    state = {"providers": {"PLEX": {"collection": {"baseline": {"items": {"tmdb:693134": item, "tmdb:329865": plain}}}}}}
+
+    store = StateStore(tmp_path)
+    store.save_state(state)
+    items = store.load_state()["providers"]["PLEX"]["collection"]["baseline"]["items"]
+
+    assert items["tmdb:693134"] == item
+    assert items["tmdb:329865"] == plain
+
+
+def test_schema_upgrade_adds_media_json_to_existing_baseline_tables(tmp_path) -> None:
+    db_path = tmp_path / "old-crosswatch.sqlite3"
+    raw = sqlite3.connect(db_path)
+    try:
+        raw.execute(sqlite_schema._CREATE_BASELINE_ITEMS)
+        raw.commit()
+    finally:
+        raw.close()
+
+    conn = connect(db_path, base_path=tmp_path)
+    try:
+        tables = {table: {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()} for table in ("baseline_items", "pair_baseline_items")}
+    finally:
+        conn.close()
+
+    assert all("media_json" in columns for columns in tables.values())

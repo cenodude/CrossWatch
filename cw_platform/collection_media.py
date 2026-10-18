@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 FORMATS = ("4k_bluray", "bluray", "hd_dvd", "dvd", "digital", "vcd", "vhs", "betamax", "laserdisc")
@@ -284,6 +284,49 @@ def _known_media(media: Mapping[str, Any]) -> dict[str, Any]:
 
 def _folded_format(fmt: str, media: Mapping[str, Any]) -> str:
     return "4k_bluray" if fmt == "bluray" and media.get("resolution") == "uhd_4k" else fmt
+
+
+_RESOLUTION_RANK = {value: rank for rank, value in enumerate(reversed(RESOLUTIONS))}
+_HDR_RANK = {"hlg": 1, "hdr10": 2, "hdr10_plus": 3, "dolby_vision": 4}
+_FORMAT_RANK = {"digital": 1, "vcd": 2, "vhs": 2, "betamax": 2, "laserdisc": 2, "dvd": 3, "hd_dvd": 4, "bluray": 5, "4k_bluray": 6}
+
+
+def _channel_count(value: Any) -> int:
+    try:
+        return sum(int(part) for part in str(value or "").split("."))
+    except ValueError:
+        return 0
+
+
+def combine_media(entries: Iterable[tuple[Any, Any]]) -> tuple[str, dict[str, Any]]:
+    fmt = ""
+    best: dict[str, Any] = {}
+    audio_rank: tuple[int, int] | None = None
+    for raw_fmt, raw_media in entries:
+        known = _known_media(raw_media if isinstance(raw_media, Mapping) else {})
+        candidate = normalize_format(raw_fmt)
+        if _FORMAT_RANK.get(candidate, 0) > _FORMAT_RANK.get(fmt, 0):
+            fmt = candidate
+        resolution = known.get("resolution")
+        if resolution and _RESOLUTION_RANK[resolution] > _RESOLUTION_RANK.get(best.get("resolution") or "", -1):
+            best["resolution"] = resolution
+        hdr = known.get("hdr")
+        if hdr and _HDR_RANK[hdr] > _HDR_RANK.get(best.get("hdr") or "", 0):
+            best["hdr"] = hdr
+        audio, channels = known.get("audio"), known.get("audio_channels")
+        if audio:
+            rank = ((2 if audio in _LOSSLESS_AUDIO else 0) + (1 if audio in _OBJECT_AUDIO else 0), _channel_count(channels))
+            if audio_rank is None or rank > audio_rank:
+                audio_rank = rank
+                best["audio"] = audio
+                best.pop("audio_channels", None)
+                if channels:
+                    best["audio_channels"] = channels
+        elif channels and audio_rank is None and "audio_channels" not in best:
+            best["audio_channels"] = channels
+        if known.get("is_3d"):
+            best["is_3d"] = True
+    return fmt, best
 
 
 def media_update(src: Mapping[str, Any], dst: Mapping[str, Any]) -> dict[str, Any] | None:

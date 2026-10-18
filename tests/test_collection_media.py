@@ -807,3 +807,19 @@ def _audio_item(*tracks: dict) -> dict:
 def test_stream_audio_track_choice(tracks: list[dict], audio: str, channels: str) -> None:
     info = cm.stream_media_info(_audio_item(*tracks))
     assert (info.get("audio"), info.get("audio_channels")) == (audio, channels)
+
+
+def test_combine_media_picks_best_value_per_field() -> None:
+    fmt, media = cm.combine_media([
+        ("digital", {"resolution": "hd_1080p", "audio": "dolby_digital_plus_atmos", "audio_channels": "5.1"}),
+        ("4K Blu-ray", {"resolution": "uhd_4k", "hdr": "hdr10"}),
+        ("digital", {"hdr": "dolby_vision", "audio": "dts_x", "audio_channels": "7.1"}),
+        (None, {"resolution": "1440p", "audio": "mystery"}),
+    ])
+    assert fmt == "4k_bluray"
+    assert media == {"resolution": "uhd_4k", "audio": "dts_x", "audio_channels": "7.1", "hdr": "dolby_vision"}
+
+
+def test_combine_media_handles_empty_and_channels_without_audio() -> None:
+    assert cm.combine_media([]) == ("", {})
+    assert cm.combine_media([(None, {"audio_channels": "5.1"})]) == ("", {"audio_channels": "5.1"})

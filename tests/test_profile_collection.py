@@ -179,3 +179,48 @@ def test_profile_page_uses_show_ids_for_episode_art() -> None:
 
     assert "const showTmdbId = (item)" in js
     assert "const id = episode ? showTmdbId(item) : tmdbId(item);" in js
+
+
+def test_profile_collection_merges_best_media_info_across_providers() -> None:
+    state = {
+        "providers": {
+            "PLEX": _baseline({
+                "tmdb:10": {"type": "movie", "title": "Dune", "ids": {"tmdb": "10"}, "format": "digital", "media_info": {"resolution": "hd_1080p", "audio": "dolby_digital_plus_atmos", "audio_channels": "5.1"}}
+            }),
+            "FLOPPY": _baseline({
+                "tmdb:10": {"type": "movie", "title": "Dune", "ids": {"tmdb": "10"}, "format": "Blu-ray", "media_info": {"resolution": "uhd_4k", "hdr": "dolby_vision", "audio": "dolby_atmos", "audio_channels": "7.1", "is_3d": True}}
+            }),
+            "TRAKT": _baseline({
+                "tmdb:20": {"type": "movie", "title": "Plain", "ids": {"tmdb": "20"}}
+            }),
+        }
+    }
+
+    items = {item["title"]: item for item in profileAPI.build_profile_collection_payload(state, {}, profile_id="")["items"]}
+
+    assert items["Dune"]["format"] == "bluray"
+    assert items["Dune"]["media_info"] == {"resolution": "uhd_4k", "hdr": "dolby_vision", "audio": "dolby_atmos", "audio_channels": "7.1", "is_3d": True}
+    assert "media_info" not in items["Plain"] and "format" not in items["Plain"]
+    assert "_media_entries" not in items["Dune"]
+
+
+def test_profile_collection_quality_pill_assets() -> None:
+    root = Path(__file__).resolve().parents[1]
+    js = (root / "assets" / "js" / "profile-page.js").read_text(encoding="utf-8")
+    css = (root / "assets" / "css" / "profile-page.css").read_text(encoding="utf-8")
+
+    assert "function collectionQuality(item)" in js
+    assert "cw-collection-quality" in js and ".cw-collection-quality{" in css
+    assert ".cw-collection-quality-tip{" in css
+
+
+def test_profile_collection_quality_logos_exist() -> None:
+    root = Path(__file__).resolve().parents[1]
+    js = (root / "assets" / "js" / "profile-page.js").read_text(encoding="utf-8")
+    for name in ("4k-uhd.svg", "uhd-bluray.svg", "bluray.svg", "dvd.svg", "dolby-vision.svg", "hdr10-plus.svg", "hdr10.svg", "dolby-atmos.svg", "dts-x.png"):
+        assert f'"{name}"' in js
+        logo = root / "assets" / "img" / "quality" / name
+        assert logo.is_file()
+        if name.endswith(".svg"):
+            text = logo.read_text(encoding="utf-8").lower()
+            assert "<script" not in text and "foreignobject" not in text and "href=\"http" not in text
