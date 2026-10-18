@@ -303,6 +303,61 @@ def test_floppy_collection_add_keeps_source_format_through_planner_minimal() -> 
     assert adapter.client.session.calls[1]["json"] == {"item_id": "41", "media_type": "4k_bluray"}
 
 
+def test_floppy_collection_reads_media_info() -> None:
+    from providers.sync.floppy import _collection
+
+    adapter = AdapterStub(
+        {
+            ("GET", "collection"): {
+                "results": [
+                    {
+                        "id": 8,
+                        "media_type": "bluray",
+                        "resolution": "4k",
+                        "hdr": "Dolby Vision",
+                        "audio_codec": "TrueHD Atmos",
+                        "audio_channels": "7.1",
+                        "is_3d": False,
+                        "item": {"media_type": "movie", "source": "tmdb", "media_id": "238", "title": "The Godfather"},
+                    },
+                    {"id": 9, "media_type": "", "resolution": "", "hdr": "", "audio_codec": "", "audio_channels": "", "is_3d": False, "item": {"media_type": "movie", "source": "tmdb", "media_id": "424"}},
+                ],
+                "count": 2,
+            }
+        }
+    )
+
+    out = _collection.build_index(adapter)
+
+    assert out["tmdb:238"]["media_info"] == {"resolution": "uhd_4k", "hdr": "dolby_vision", "audio": "dolby_atmos", "audio_channels": "7.1"}
+    assert "media_info" not in out["tmdb:424"]
+
+
+def test_floppy_collection_add_sends_media_info_from_trakt_values() -> None:
+    from cw_platform.id_map import minimal
+    from providers.sync.floppy import _collection
+
+    adapter = AdapterStub(
+        {
+            ("POST", "media/movie"): {"id": 41, "item_id": "movie/tmdb/11"},
+            ("POST", "collection"): {"id": 91},
+        }
+    )
+
+    planned = minimal({"type": "movie", "ids": {"tmdb": "11"}, "format": "bluray", "media_info": {"resolution": "uhd_4k", "hdr": "hdr10_plus", "audio": "dts_x", "audio_channels": "7.1.4", "is_3d": True}})
+    _collection.add(adapter, [planned])
+
+    assert adapter.client.session.calls[1]["json"] == {
+        "item_id": "41",
+        "media_type": "bluray",
+        "resolution": "4K",
+        "hdr": "HDR10+",
+        "audio_codec": "DTS:X",
+        "audio_channels": "7.1.4",
+        "is_3d": True,
+    }
+
+
 def test_floppy_collection_adds_episode_scope() -> None:
     from providers.sync.floppy import _collection
 

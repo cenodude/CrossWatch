@@ -458,6 +458,13 @@ def test_collection_add_sends_normalized_source_format(monkeypatch: pytest.Monke
     assert http.calls[0]["json"]["format"] == "bluray"
 
 
+def test_collection_format_folds_bluray_with_4k_resolution() -> None:
+    from providers.sync.punchplay import _collection as co
+
+    assert co._format_value(Adapter(), {"format": "bluray", "media_info": {"resolution": "uhd_4k"}}) == "4k_bluray"
+    assert co._format_value(Adapter(), {"format": "bluray", "media_info": {"resolution": "hd_1080p"}}) == "bluray"
+
+
 def test_collection_add_supports_season_and_rejects_episode(monkeypatch: pytest.MonkeyPatch) -> None:
     from providers.sync.punchplay import _collection as co
 

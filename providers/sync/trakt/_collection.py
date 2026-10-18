@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from cw_platform.collection_media import from_trakt_metadata, to_trakt_metadata
 from cw_platform.id_map import canonical_key, migrate_media_index, minimal as id_minimal
 
 from ._common import (
@@ -38,7 +39,7 @@ URL_REMOVE = f"{BASE}/sync/collection/remove"
 
 _PROVIDER = "TRAKT"
 _FEATURE = "collection"
-_SHADOW_SCHEMA = 4
+_SHADOW_SCHEMA = 5
 
 
 def _dbg(event: str, **fields: Any) -> None:
@@ -161,6 +162,15 @@ def _hdr_int(headers: Mapping[str, Any], name: str) -> int | None:
     return None
 
 
+def _with_metadata(item: dict[str, Any], metadata: Any) -> dict[str, Any]:
+    fmt, media_info = from_trakt_metadata(metadata)
+    if fmt:
+        item["format"] = fmt
+    if media_info:
+        item["media_info"] = media_info
+    return item
+
+
 def _movie_from_row(row: Mapping[str, Any]) -> dict[str, Any] | None:
     movie = row.get("movie") if isinstance(row.get("movie"), Mapping) else row
     if not isinstance(movie, Mapping):
@@ -169,7 +179,7 @@ def _movie_from_row(row: Mapping[str, Any]) -> dict[str, Any] | None:
     collected_at = row.get("collected_at") or row.get("listed_at")
     if collected_at:
         item["collected_at"] = str(collected_at)
-    return item
+    return _with_metadata(item, row.get("metadata"))
 
 
 def _show_base(row: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -207,7 +217,7 @@ def _items_from_collection_row(row: Mapping[str, Any]) -> list[dict[str, Any]]:
         collected_at = row.get("collected_at") or ep.get("collected_at")
         if collected_at:
             item["collected_at"] = str(collected_at)
-        return [item]
+        return [_with_metadata(item, row.get("metadata") or ep.get("metadata"))]
     seasons = row.get("seasons")
     if not isinstance(seasons, list):
         show_raw = row.get("show")
@@ -254,7 +264,7 @@ def _items_from_collection_row(row: Mapping[str, Any]) -> list[dict[str, Any]]:
                 )
                 if collected_at or ep.get("collected_at"):
                     item["collected_at"] = str(ep.get("collected_at") or collected_at)
-                out.append(item)
+                out.append(_with_metadata(item, ep.get("metadata")))
         elif season_no is not None:
             item = id_minimal({"type": "season", "title": title, "series_title": title, "year": year, "show_ids": show_ids, "season": season_no, "ids": _ids_clean(season.get("ids"))})
             if collected_at:
@@ -308,7 +318,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
             "GET",
             url,
             headers=req_headers,
-            params={"page": page, "limit": per_page},
+            params={"page": page, "limit": per_page, "extended": "metadata"},
             timeout=adapter.cfg.timeout,
             max_retries=adapter.cfg.max_retries,
         )
@@ -325,7 +335,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
                     "GET",
                     url,
                     headers=headers,
-                    params={"page": page, "limit": per_page},
+                    params={"page": page, "limit": per_page, "extended": "metadata"},
                     timeout=adapter.cfg.timeout,
                     max_retries=adapter.cfg.max_retries,
                 )
@@ -437,7 +447,7 @@ def _write(adapter: Any, op: str, items: Iterable[Mapping[str, Any]]) -> dict[st
     else:
         chunks = _chunk(accepted, batch)
     for sl in chunks:
-        payload = build_watchlist_body(sl, date_field="collected_at" if op == "add" else None)
+        payload = build_watchlist_body(sl, date_field="collected_at" if op == "add" else None, item_fields=to_trakt_metadata if op == "add" else None)
         if not payload:
             continue
         r = request_with_retries(adapter.client.session, "POST", url, headers=headers_for_adapter(adapter), json=payload, timeout=adapter.cfg.timeout, max_retries=adapter.cfg.max_retries)
