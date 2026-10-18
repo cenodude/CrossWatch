@@ -421,6 +421,43 @@ def test_collection_add_defaults_to_digital(monkeypatch: pytest.MonkeyPatch) -> 
     assert http.calls[0]["json"] == {"kind": "movie", "sourceId": 550, "format": "digital", "title": "Fight Club", "year": 1999}
 
 
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("bluray", "bluray"),
+        ("Blu-ray", "bluray"),
+        ("BD", "bluray"),
+        ("4k_bluray", "4k_bluray"),
+        ("4K Ultra HD Blu-ray", "4k_bluray"),
+        ("UHD", "4k_bluray"),
+        ("hd_dvd", "hd_dvd"),
+        ("hddvd", "hd_dvd"),
+        ("HD-DVD", "hd_dvd"),
+        ("DVD", "dvd"),
+        ("Digital", "digital"),
+        ("vhs", "digital"),
+        ("", "digital"),
+    ],
+)
+def test_collection_format_normalizes_source_values(raw: str, expected: str) -> None:
+    from providers.sync.punchplay import _collection as co
+
+    assert co._format_value(Adapter(), {"format": raw}) == expected
+
+
+def test_collection_add_sends_normalized_source_format(monkeypatch: pytest.MonkeyPatch) -> None:
+    from cw_platform.id_map import minimal
+    from providers.sync.punchplay import _collection as co
+
+    http = FakeHTTP([_Resp(200, {"id": 99})])
+    _patch(monkeypatch, co, http)
+
+    planned = minimal({"type": "movie", "title": "Fight Club", "year": 1999, "ids": {"tmdb": "550"}, "format": "Blu-ray", "_floppy_collection_id": "3"})
+    co.add(Adapter(), [planned])
+
+    assert http.calls[0]["json"]["format"] == "bluray"
+
+
 def test_collection_add_supports_season_and_rejects_episode(monkeypatch: pytest.MonkeyPatch) -> None:
     from providers.sync.punchplay import _collection as co
 
