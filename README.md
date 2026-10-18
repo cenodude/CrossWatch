@@ -13,7 +13,7 @@ Set up multiple Watcher routes for your servers and users, and sync pairs betwee
     <img src="https://img.shields.io/github/v/release/cenodude/CrossWatch?display_name=release&amp;sort=semver&amp;logo=github&amp;label=Latest%20Release&amp;style=for-the-badge" alt="Latest Release">
   </a>
   <a href="https://github.com/cenodude/CrossWatch/pkgs/container/crosswatch">
-    <img src="https://img.shields.io/badge/dynamic/json?url=https://ghcr-badge.elias.eu.org/api/cenodude/CrossWatch/crosswatch&amp;query=%24.downloadCount&amp;style=for-the-badge&amp;logo=github&amp;label=GHCR%20Pulls" alt="GHCR Pulls">
+    <img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cenodude/CrossWatch/badges/ghcr-pulls.json&amp;style=for-the-badge" alt="GHCR Pulls">
   </a>
   <a href="https://wiki.crosswatch.app/getting-started/first-time-setup">
     <img src="https://img.shields.io/badge/Quick%20Start-Must%20read!-d93c4a?style=for-the-badge&amp;logo=gitbook" alt="Must-read: Quick Start">
