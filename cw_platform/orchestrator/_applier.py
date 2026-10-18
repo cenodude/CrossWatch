@@ -24,7 +24,7 @@ _PASSTHROUGH_KEY_LISTS = (
 
 _PASSTHROUGH_KEY_MAPS = ("confirmed_destinations",)
 
-def _retry(fn: Callable[[], Any], *, attempts: int = 3, base_sleep: float = 0.5) -> Any:
+def _retry(fn: Callable[[], Any], *, attempts: int = 3, base_sleep: float = 0.5, on_retry: Callable[[int, Exception], None] | None = None) -> Any:
     last = None
     for i in range(attempts):
         try: return fn()
@@ -32,6 +32,11 @@ def _retry(fn: Callable[[], Any], *, attempts: int = 3, base_sleep: float = 0.5)
             raise
         except Exception as e:
             last = e
+            if on_retry is not None:
+                try:
+                    on_retry(i + 1, e)
+                except Exception:
+                    pass
             __import__("time").sleep(base_sleep * (2 ** i))
     raise last  # type: ignore
 
@@ -455,9 +460,13 @@ def _apply_chunked(
         emit(f"{tag}:cancelled", dst=dst, feature=feature, done=0, total=total)
         return {"ok": True, "attempted": 0, "confirmed": 0, "skipped": 0, "unresolved": 0, "errors": 0, "count": 0, "cancelled": True}
     csize = int(chunk_size or 0)
+
+    def _on_retry(attempt: int, exc: Exception) -> None:
+        emit(f"{tag}:retry", dst=dst, feature=feature, attempt=attempt, error=f"{type(exc).__name__}: {str(exc)[:160]}")
+
     if csize <= 0 or total <= csize:
         try:
-            raw = _retry(lambda: call(items))
+            raw = _retry(lambda: call(items), on_retry=_on_retry)
         except SyncCancelled:
             emit(f"{tag}:cancelled", dst=dst, feature=feature, done=0, total=total)
             return {"ok": True, "attempted": 0, "confirmed": 0, "skipped": 0, "unresolved": 0, "errors": 0, "count": 0, "cancelled": True}
@@ -525,7 +534,7 @@ def _apply_chunked(
             break
         chunk = items[i : i + csize]
         try:
-            raw = _retry(lambda: call(chunk))
+            raw = _retry(lambda: call(chunk), on_retry=_on_retry)
         except SyncCancelled:
             agg["cancelled"] = True
             emit(f"{tag}:cancelled", dst=dst, feature=feature, done=done, total=total)

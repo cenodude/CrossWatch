@@ -2442,3 +2442,109 @@ def test_floppy_collection_add_keeps_plain_tv_show_unflagged() -> None:
     assert res["count"] == 1
     posts = [(c["path"], c.get("json")) for c in adapter.client.session.calls if c["method"] == "POST"]
     assert posts == [("media/tv", {"source": "tmdb", "media_id": "1396", "status": 0}), ("collection", {"item_id": "1716", "media_type": "digital"})]
+
+
+def _collection_row(entry_id: int, tmdb: int) -> dict[str, Any]:
+    return {"id": entry_id, "media_type": "digital", "item": {"media_type": "movie", "source": "tmdb", "media_id": str(tmdb), "title": f"Movie {tmdb}"}}
+
+
+def test_floppy_collection_read_fails_when_pages_are_missing() -> None:
+    from providers.sync.floppy import _collection
+
+    def page(call):
+        offset = int(call["params"]["offset"])
+        rows = [_collection_row(i, 1000 + i) for i in range(200)] if offset == 0 else []
+        return {"results": rows, "pagination": {"total": 450, "limit": 200, "offset": offset}}
+
+    with pytest.raises(RuntimeError, match="floppy_incomplete_read:collection:200/450"):
+        _collection.build_index(AdapterStub({("GET", "collection"): page}))
+
+
+def test_floppy_collection_read_follows_pagination_total() -> None:
+    from providers.sync.floppy import _collection
+
+    def page(call):
+        offset = int(call["params"]["offset"])
+        rows = [_collection_row(i, 1000 + i) for i in range(offset, min(offset + 200, 450))]
+        return {"results": rows, "pagination": {"total": 450, "limit": 200, "offset": offset}}
+
+    adapter = AdapterStub({("GET", "collection"): page})
+    assert len(_collection.build_index(adapter)) == 450
+    assert [c["params"]["offset"] for c in adapter.client.session.calls] == [0, 200, 400]
+
+
+def test_floppy_paged_without_require_total_keeps_old_behaviour() -> None:
+    from providers.sync.floppy._common import paged
+
+    def page(call):
+        offset = int(call["params"]["offset"])
+        return {"results": [{"id": 1}] * 200 if offset == 0 else [], "pagination": {"total": 450}}
+
+    assert len(paged(AdapterStub({("GET", "lists"): page}), "lists")) == 200
+
+
+def test_floppy_collection_add_timeout_marks_only_that_item_unresolved() -> None:
+    import requests
+
+    from providers.sync.floppy import _collection
+
+    def media(call):
+        if call["json"]["media_id"] == "11":
+            raise requests.exceptions.ReadTimeout("read timed out")
+        return {"id": 42}
+
+    adapter = AdapterStub({("POST", "media/movie"): media, ("POST", "collection"): {"id": 91}})
+    res = _collection.add(adapter, [{"type": "movie", "ids": {"tmdb": "11"}}, {"type": "movie", "ids": {"tmdb": "22"}}])
+
+    assert res["count"] == 1
+    assert res["confirmed_keys"] == ["tmdb:22"]
+    assert res["unresolved_keys"] == ["tmdb:11"]
+    assert "floppy_error" in res["unresolved"][0]["reason"] or "timed out" in res["unresolved"][0]["reason"]
+    assert [c["json"].get("item_id") for c in adapter.client.session.calls if c["path"] == "collection"] == ["42"]
+
+
+def test_applier_logs_chunk_retries() -> None:
+    from cw_platform.orchestrator import _applier
+
+    events: list[tuple[str, dict]] = []
+    attempts = {"n": 0}
+
+    def flaky(_items):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise TimeoutError("slow")
+        return {"ok": True, "count": len(_items), "confirmed_keys": []}
+
+    _applier._apply_chunked("apply:add", dst="FLOPPY", feature="collection", items=[{"type": "movie", "ids": {"tmdb": "1"}}], call=flaky, emit=lambda ev, **kw: events.append((ev, kw)), dbg=lambda *a, **k: None, chunk_size=0, chunk_pause_ms=0)
+
+    retries = [kw for ev, kw in events if ev == "apply:add:retry"]
+    assert retries == [{"dst": "FLOPPY", "feature": "collection", "attempt": 1, "error": "TimeoutError: slow"}]
+
+
+def test_applier_retry_survives_a_failing_retry_logger() -> None:
+    from cw_platform.orchestrator import _applier
+
+    attempts = {"n": 0}
+
+    def flaky():
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise TimeoutError("slow")
+        return "ok"
+
+    def broken_logger(_attempt, _exc):
+        raise ValueError("logger broke")
+
+    assert _applier._retry(flaky, base_sleep=0, on_retry=broken_logger) == "ok"
+    assert attempts["n"] == 2
+
+
+def test_applier_retry_logger_does_not_swallow_cancel() -> None:
+    from cw_platform.orchestrator import _applier
+    from cw_platform.run_control import SyncCancelled
+
+    def cancelling_logger(_attempt, _exc):
+        raise SyncCancelled()
+
+    with pytest.raises(SyncCancelled):
+        _applier._retry(lambda: (_ for _ in ()).throw(TimeoutError("slow")), base_sleep=0, on_retry=cancelling_logger)
