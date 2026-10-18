@@ -103,7 +103,8 @@ def _config_with_pair_feature_options(
 
     has_replay = feature_key == "progress" and "replay_enabled" in fcfg
     has_tolerance = feature_key == "progress" and "timestamp_tolerance_seconds" in fcfg
-    if not provider_keys or (not overrides and not has_replay and not has_tolerance):
+    has_media_info = feature_key == "collection" and "media_info" in fcfg
+    if not provider_keys or (not overrides and not has_replay and not has_tolerance and not has_media_info):
         return cfg
 
     out = copy.deepcopy(cfg)
@@ -126,6 +127,8 @@ def _config_with_pair_feature_options(
             except (TypeError, ValueError):
                 tolerance = 30
             feature_cfg["timestamp_tolerance_seconds"] = max(0, min(300, tolerance))
+        if has_media_info:
+            feature_cfg["media_info"] = coerce_bool(fcfg.get("media_info", False))
     return out
 
 

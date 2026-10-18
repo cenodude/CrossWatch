@@ -5,17 +5,19 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Mapping
 
+from cw_platform.collection_media import plex_media_info
 from cw_platform.id_map import canonical_key
 
 from ._common import (
+    _fetch_section_guid_rows,
     active_pms_token,
     as_epoch,
     iso_from_epoch,
     make_logger,
     minimal_from_history_row,
+    plex_feature_cfg,
     plex_feature_library_ids,
 )
-from ._history import _fetch_section_guid_rows
 
 _dbg, _info, _warn, _error, _log = make_logger("collection")
 
@@ -67,6 +69,28 @@ def _normalize_row(row: Mapping[str, Any], *, library_id: str, fallback_type: st
     return item
 
 
+_HDR_FILTERS = (("dovi", "dolby_vision"), ("hdr10plus", "hdr10_plus"), ("hdr", "hdr10"))
+
+
+def _hdr_levels(srv: Any, section_id: str, plex_type: int, section_keys: set[str]) -> dict[str, str]:
+    matches: list[tuple[str, set[str]]] = []
+    for flt, level in _HDR_FILTERS:
+        try:
+            rows, _ = _fetch_section_guid_rows(srv, section_id, plex_type, extra_params={flt: 1})
+        except Exception as exc:
+            _dbg("hdr_filter_failed", library_id=section_id, filter=flt, error=str(exc))
+            return {}
+        matches.append((level, {str(row.get("ratingKey") or "") for row in rows} - {""}))
+    if section_keys and all(keys >= section_keys for _, keys in matches):
+        _dbg("hdr_filters_ignored", library_id=section_id, rows=len(section_keys))
+        return {}
+    out: dict[str, str] = {}
+    for level, keys in matches:
+        for key in keys:
+            out.setdefault(key, level)
+    return out
+
+
 def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
     srv = getattr(getattr(adapter, "client", None), "server", None)
     if not srv:
@@ -74,6 +98,7 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
         return {}
 
     allowed = plex_feature_library_ids(adapter, "collection")
+    include_media = bool(plex_feature_cfg(adapter, "collection").get("media_info"))
     token = active_pms_token(adapter)
     prog_mk = getattr(adapter, "progress_factory", None)
     prog: Any = prog_mk("collection") if callable(prog_mk) else None
@@ -107,12 +132,19 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
         rows, requests_made = _fetch_section_guid_rows(srv, sid, plex_type)
         scanned += len(rows)
         fallback_type = lib_type
+        with_media = include_media and plex_type in (1, 4)
+        hdr = _hdr_levels(srv, sid, plex_type, {str(r.get("ratingKey") or "") for r in rows} - {""}) if with_media and rows else {}
         for row in rows:
             if not isinstance(row, Mapping):
                 continue
             item = _normalize_row(row, library_id=sid, fallback_type=fallback_type, token=token)
             if not item:
                 continue
+            if with_media:
+                item["format"] = "digital"
+                media_info = plex_media_info(row, hdr.get(str(row.get("ratingKey") or ""), ""))
+                if media_info:
+                    item["media_info"] = media_info
             key = canonical_key(item)
             if key:
                 out[key] = item
@@ -123,7 +155,7 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
                 pass
         _dbg("section_scanned", library_id=sid, library_type=lib_type, rows=len(rows), requests=requests_made)
 
-    _info("index_done", count=len(out), scanned=scanned, libraries=len(sections))
+    _info("index_done", count=len(out), scanned=scanned, libraries=len(sections), media_info=include_media)
     return out
 
 

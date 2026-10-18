@@ -163,6 +163,95 @@ def media_block(values: Mapping[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _int(value: Any) -> int:
+    try:
+        return int(float(value))
+    except Exception:
+        return 0
+
+
+def resolution_from_dimensions(width: Any, height: Any, *, interlaced: bool = False) -> str:
+    w, h = _int(width), _int(height)
+    if not w and not h:
+        return ""
+    scan = "i" if interlaced else "p"
+    if w >= 3200 or h >= 2000:
+        return "uhd_4k"
+    if w >= 1800 or h >= 1000:
+        return f"hd_1080{scan}"
+    if w >= 1200 or h >= 700:
+        return "hd_720p"
+    return f"sd_576{scan}" if h > 480 else f"sd_480{scan}"
+
+
+def plex_media_info(row: Mapping[str, Any], hdr: str = "") -> dict[str, Any]:
+    medias = [m for m in row.get("Media") or [] if isinstance(m, Mapping)]
+    if not medias:
+        return {}
+    media = max(medias, key=lambda m: (_int(m.get("width")), _int(m.get("bitrate"))))
+    interlaced = _text(media.get("videoResolution")).lower().endswith("i")
+    resolution = resolution_from_dimensions(media.get("width"), media.get("height"), interlaced=interlaced) or normalize_resolution(media.get("videoResolution"))
+    audio = " ".join(str(media[k]) for k in ("audioCodec", "audioProfile") if media.get(k))
+    return media_block({"resolution": resolution, "hdr": hdr, "audio": audio, "audio_channels": media.get("audioChannels")})
+
+
+_LOSSLESS_AUDIO = {"lpcm", "flac", "dolby_truehd", "dolby_atmos", "dts_ma", "dts_x"}
+_OBJECT_AUDIO = {"dolby_atmos", "dolby_digital_plus_atmos", "dts_x", "auro_3d"}
+_COMMENTARY_WORDS = ("commentary", "commentaire", "kommentar")
+
+
+def _item_streams(item: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    sources = [s for s in item.get("MediaSources") or [] if isinstance(s, Mapping)]
+    streams = sources[0].get("MediaStreams") if sources else None
+    return [s for s in (streams or item.get("MediaStreams") or []) if isinstance(s, Mapping)]
+
+
+def stream_hdr(video: Mapping[str, Any]) -> str:
+    range_type, extended, video_range = _compact(video.get("VideoRangeType")), _compact(video.get("ExtendedVideoType")), _compact(video.get("VideoRange"))
+    transfer = _text(video.get("ColorTransfer")).lower()
+    if (range_type.startswith("dovi") and range_type != "doviinvalid") or "dolbyvision" in extended or "dolbyvision" in video_range:
+        return "dolby_vision"
+    if "hdr10plus" in range_type or "hdr10plus" in extended:
+        return "hdr10_plus"
+    if range_type == "hlg" or "hyperloggamma" in extended or "hlg" in video_range or transfer == "arib-std-b67":
+        return "hlg"
+    if "hdr10" in range_type or "hdr10" in extended or "hdr" in video_range or transfer == "smpte2084":
+        return "hdr10"
+    return ""
+
+
+def stream_audio(stream: Mapping[str, Any]) -> str:
+    base = normalize_audio(" ".join(_text(stream.get(k)) for k in ("Codec", "Profile") if _text(stream.get(k))))
+    title = f"{_text(stream.get('Title'))} {_text(stream.get('DisplayTitle'))}".lower()
+    spatial = _compact(stream.get("AudioSpatialFormat"))
+    if (spatial == "dtsx" or re.search(r"dts[\s:-]*x(?![a-z0-9])", title)) and base.startswith("dts"):
+        return "dts_x"
+    if spatial == "dolbyatmos" or "atmos" in title:
+        return {"dolby_truehd": "dolby_atmos", "dolby_digital_plus": "dolby_digital_plus_atmos"}.get(base, base)
+    return base
+
+
+def _best_audio(streams: list[Mapping[str, Any]]) -> tuple[str, str]:
+    audio = [s for s in streams if _text(s.get("Type")).lower() == "audio"]
+    main = [s for s in audio if not any(w in f"{_text(s.get('Title'))} {_text(s.get('DisplayTitle'))}".lower() for w in _COMMENTARY_WORDS)] or audio
+    best: tuple[tuple[int, int, int], str, str] | None = None
+    for stream in main:
+        value = stream_audio(stream)
+        rank = ((2 if value in _LOSSLESS_AUDIO else 0) + (1 if value in _OBJECT_AUDIO else 0), _int(stream.get("Channels")), _int(stream.get("BitRate")))
+        channels = normalize_channels(stream.get("ChannelLayout")) or normalize_channels(stream.get("Channels"))
+        if best is None or rank > best[0]:
+            best = (rank, value, channels)
+    return (best[1], best[2]) if best else ("", "")
+
+
+def stream_media_info(item: Mapping[str, Any]) -> dict[str, Any]:
+    streams = _item_streams(item)
+    video = next((s for s in streams if _text(s.get("Type")).lower() == "video"), {})
+    resolution = resolution_from_dimensions(item.get("Width") or video.get("Width"), item.get("Height") or video.get("Height"), interlaced=bool(video.get("IsInterlaced")))
+    audio, channels = _best_audio(streams)
+    return media_block({"resolution": resolution, "hdr": stream_hdr(video), "audio": audio, "audio_channels": channels, "is_3d": True if _text(item.get("Video3DFormat")) else None})
+
+
 def item_media(item: Mapping[str, Any]) -> dict[str, Any]:
     raw = item.get("media_info")
     return {k: raw[k] for k in MEDIA_KEYS if isinstance(raw, Mapping) and raw.get(k) not in (None, "")}

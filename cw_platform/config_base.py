@@ -1534,6 +1534,8 @@ def _normalize_collection_feature(val: dict[str, Any]) -> dict[str, Any]:
     v["enable"] = bool(v.get("enable", False))
     v["add"] = bool(v.get("add", False))
     v["remove"] = bool(v.get("remove", False))
+    if "media_info" in v:
+        v["media_info"] = bool(v.get("media_info"))
 
     raw_types = _as_list(v.get("types"))
     types = [str(t).strip().lower() for t in raw_types]

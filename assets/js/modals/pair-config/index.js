@@ -1046,7 +1046,7 @@ function applySubDisable(feature){
     history: ["#plx-marked-watched", "#cx-hs-add", "#cx-hs-remove", "#cx-hs-rewatches", "#cx-hs-specials", "#cx-hs-library-only", "#cx-hs-anime-map", "#cx-hs-source-status", "#cx-tr-hs-numfb", "#cx-tr-hs-col", "#cx-tr-hs-col-movies", "#cx-tr-hs-col-shows", "#cx-hs-dropped","#cx-tr-hs-unres", "#tr-hs-perpage", "#tr-hs-maxpages", "#tr-hs-chunk", "#sm-hs-chunk", "#md-hs-perpage", "#md-hs-maxpages", "#md-hs-chunk", "#cx-em-hs-limit", "#cx-em-hs-delay", "#cx-em-hs-guid"],
     playlists:["#cx-pl-add","#cx-pl-remove"],
     progress:["#cx-pr-add","#cx-pr-remove","#cx-pr-min","#cx-pr-delta","#cx-pr-maxp","#cx-pr-replay","#cx-pr-tolerance","#cx-pr-specials","#cx-pr-library-only","#cx-pr-anime-map"],
-    collection:["#cx-co-add","#cx-co-remove","#cx-co-type-all","#cx-co-type-movies","#cx-co-type-shows","#cx-co-type-seasons","#cx-co-type-episodes"]
+    collection:["#cx-co-add","#cx-co-remove","#cx-co-type-all","#cx-co-type-movies","#cx-co-type-shows","#cx-co-type-seasons","#cx-co-type-episodes","#cx-co-media"]
   };
   const on=ID(feature==="ratings"?"cx-rt-enable":feature==="watchlist"?"cx-wl-enable":feature==="history"?"cx-hs-enable":feature==="progress"?"cx-pr-enable":feature==="collection"?"cx-co-enable":"cx-pl-enable")?.checked;
   (map[feature]||[]).forEach(sel=>{const n=Q(sel);if(n){const off=!on||n.dataset.locked==="1"||n.dataset.animeOnly==="1";n.disabled=off;if(n.dataset.locked==="1")n.checked=false;n.closest?.(".opt-row")?.classList.toggle("muted",off)}});
@@ -2124,7 +2124,12 @@ left.innerHTML = `
         <div class="opt-row"><label for="cx-co-type-shows">Shows</label><label class="switch"><input id="cx-co-type-shows" type="checkbox" ${hasType("shows")?"checked":""}><span class="slider"></span></label></div>
         <div class="opt-row"><label for="cx-co-type-seasons">Seasons</label><label class="switch"><input id="cx-co-type-seasons" type="checkbox" ${hasType("seasons")?"checked":""}><span class="slider"></span></label></div>
         <div class="opt-row"><label for="cx-co-type-episodes">Episodes</label><label class="switch"><input id="cx-co-type-episodes" type="checkbox" ${hasType("episodes")?"checked":""}><span class="slider"></span></label></div>
-      </div>`;
+      </div>
+      ${["plex","emby","jellyfin"].some(p=>same(state.src,p)) ? `<div class="panel-title small">Media info</div>
+      <div class="opt-row">
+        <label for="cx-co-media" data-tip-id="cx-co-media">Include media info</label>
+        <label class="switch"><input id="cx-co-media" type="checkbox" ${co.media_info ? "checked" : ""}><span class="slider"></span></label>
+      </div>` : ""}`;
     applySubDisable("collection");
     applyCollectionTypeRules(state);
     return;
@@ -2540,6 +2545,7 @@ function bindChangeHandlers(state,root){
         enable:!!ID("cx-co-enable")?.checked,
         add:!!ID("cx-co-add")?.checked,
         remove:!!ID("cx-co-remove")?.checked,
+        media_info:ID("cx-co-media")?!!ID("cx-co-media").checked:!!prev.media_info,
         types
       });
       syncCollectionModeLock(state);
