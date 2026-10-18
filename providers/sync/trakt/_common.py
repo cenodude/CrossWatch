@@ -8,7 +8,7 @@ import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.id_map import minimal as id_minimal, canonical_key
@@ -640,7 +640,7 @@ def pick_trakt_kind(item: Mapping[str, Any]) -> str:
     return "movies"
 
 
-def build_watchlist_body(items: Iterable[Mapping[str, Any]], *, date_field: str | None = None) -> dict[str, Any]:
+def build_watchlist_body(items: Iterable[Mapping[str, Any]], *, date_field: str | None = None, item_fields: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None) -> dict[str, Any]:
     body: dict[str, Any] = {}
     nested_shows: dict[str, dict[str, Any]] = {}
 
@@ -667,6 +667,11 @@ def build_watchlist_body(items: Iterable[Mapping[str, Any]], *, date_field: str 
                 obj[date_field] = str(value)
         return obj
 
+    def with_fields(obj: dict[str, Any], it: Mapping[str, Any]) -> dict[str, Any]:
+        if item_fields:
+            obj.update(item_fields(it))
+        return with_date(obj, it)
+
     def nested_show_obj(entry: Mapping[str, Any]) -> dict[str, Any]:
         obj: dict[str, Any] = {"ids": entry["ids"]}
         if entry.get("seasons"):
@@ -680,7 +685,7 @@ def build_watchlist_body(items: Iterable[Mapping[str, Any]], *, date_field: str 
         ids = ids_for_trakt(it)
         if kind == "movies":
             if ids:
-                push("movies", with_date({"ids": ids}, it))
+                push("movies", with_fields({"ids": ids}, it))
             continue
 
         if kind == "shows":
@@ -724,7 +729,7 @@ def build_watchlist_body(items: Iterable[Mapping[str, Any]], *, date_field: str 
 
             # Prefer show-scoped season/episode when weak episode IDs.
             if use_ids:
-                push("episodes", with_date({"ids": ids}, it))
+                push("episodes", with_fields({"ids": ids}, it))
                 continue
 
             if show_scope_ok:
@@ -736,7 +741,7 @@ def build_watchlist_body(items: Iterable[Mapping[str, Any]], *, date_field: str 
                 except Exception:
                     continue
                 season_entry = entry["seasons"].setdefault(season_i, {"number": season_i, "episodes": []})
-                season_entry.setdefault("episodes", []).append(with_date({"number": episode_i}, it))
+                season_entry.setdefault("episodes", []).append(with_fields({"number": episode_i}, it))
     if nested_shows:
         body.setdefault("shows", []).extend(
             nested_show_obj(v)

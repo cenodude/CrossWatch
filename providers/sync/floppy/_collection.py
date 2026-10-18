@@ -6,6 +6,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from cw_platform.collection_media import media_block, to_floppy_fields
 from cw_platform.id_map import minimal as id_minimal
 from providers.auth._auth_FLOPPY import FloppyAuthError
 from providers.sync._mod_common import build_op_result, unresolved_keys
@@ -69,10 +70,13 @@ def _to_minimal(row: Mapping[str, Any]) -> dict[str, Any] | None:
     fmt = str(row.get("media_type") or "").strip()
     if fmt:
         out["format"] = fmt
+    media_info = media_block({"resolution": row.get("resolution"), "hdr": row.get("hdr"), "audio": row.get("audio_codec"), "audio_channels": row.get("audio_channels"), "is_3d": True if row.get("is_3d") else None})
+    if media_info:
+        out["media_info"] = media_info
     collected_at = str(row.get("collected_at") or "").strip()
     if collected_at:
         out["collected_at"] = collected_at
-    return id_minimal(out) | {k: v for k, v in out.items() if k.startswith("_floppy_") or k in {"format", "collected_at", "poster"}}
+    return id_minimal(out) | {k: v for k, v in out.items() if k.startswith("_floppy_") or k in {"format", "media_info", "collected_at", "poster"}}
 
 
 def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
@@ -180,6 +184,7 @@ def _collection_body(adapter: Any, item: Mapping[str, Any]) -> tuple[dict[str, A
     fmt = str(item.get("format") or item.get("edition_format") or "digital").strip().lower()
     if fmt:
         body["media_type"] = fmt[:20]
+    body.update(to_floppy_fields(item))
     collected_at = str(item.get("collected_at") or "").strip()
     if collected_at:
         body["collected_at"] = collected_at
