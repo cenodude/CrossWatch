@@ -103,6 +103,10 @@ function droppedMode(state,key){
   if(mode==="ignore"||mode==="sync") return mode;
   return blk.history_ignore_dropped_shows?"ignore":"sync";
 }
+function droppedPairMode(state){
+  const modes=droppedProviders(state).map(key=>droppedMode(state,key));
+  return modes.includes("tag")?"tag":modes.includes("ignore")?"ignore":"sync";
+}
 function anilistCanReceive(state){return isAniList(state?.dst)||(hasAniList(state)&&isTwoWayMode(state))}
 function globalAnimeMappingEnabled(state){return !!state?.cfgRaw?.anime_mapping?.enabled}
 function hasAnimeProvider(state){return same(state?.src,"myanimelist")||same(state?.dst,"myanimelist")||hasAniList(state)||same(state?.src,"kitsu")||same(state?.dst,"kitsu")||isSimkl(state?.src)||isSimkl(state?.dst)||isCrossWatch(state?.src)||isCrossWatch(state?.dst)}
@@ -1039,7 +1043,7 @@ function applySubDisable(feature){
       "#tr-rt-perpage","#tr-rt-maxpages","#tr-rt-chunk",
       "#sm-rt-chunk","#st-rt-liked-min","#st-rt-loved-min","#md-rt-perpage","#md-rt-maxpages","#md-rt-chunk"
     ],
-    history: ["#plx-marked-watched", "#cx-hs-add", "#cx-hs-remove", "#cx-hs-rewatches", "#cx-hs-specials", "#cx-hs-library-only", "#cx-hs-anime-map", "#cx-hs-source-status", "#cx-tr-hs-numfb", "#cx-tr-hs-col", "#cx-tr-hs-col-movies", "#cx-tr-hs-col-shows", ...DROPPED_PROVIDERS.map(key => `#cx-hs-dropped-${key}`),"#cx-tr-hs-unres", "#tr-hs-perpage", "#tr-hs-maxpages", "#tr-hs-chunk", "#sm-hs-chunk", "#md-hs-perpage", "#md-hs-maxpages", "#md-hs-chunk", "#cx-em-hs-limit", "#cx-em-hs-delay", "#cx-em-hs-guid"],
+    history: ["#plx-marked-watched", "#cx-hs-add", "#cx-hs-remove", "#cx-hs-rewatches", "#cx-hs-specials", "#cx-hs-library-only", "#cx-hs-anime-map", "#cx-hs-source-status", "#cx-tr-hs-numfb", "#cx-tr-hs-col", "#cx-tr-hs-col-movies", "#cx-tr-hs-col-shows", "#cx-hs-dropped","#cx-tr-hs-unres", "#tr-hs-perpage", "#tr-hs-maxpages", "#tr-hs-chunk", "#sm-hs-chunk", "#md-hs-perpage", "#md-hs-maxpages", "#md-hs-chunk", "#cx-em-hs-limit", "#cx-em-hs-delay", "#cx-em-hs-guid"],
     playlists:["#cx-pl-add","#cx-pl-remove"],
     progress:["#cx-pr-add","#cx-pr-remove","#cx-pr-min","#cx-pr-delta","#cx-pr-maxp","#cx-pr-replay","#cx-pr-tolerance","#cx-pr-specials","#cx-pr-library-only","#cx-pr-anime-map"],
     collection:["#cx-co-add","#cx-co-remove","#cx-co-type-all","#cx-co-type-movies","#cx-co-type-shows","#cx-co-type-seasons","#cx-co-type-episodes"]
@@ -1851,18 +1855,16 @@ function renderFeaturePanel(state){
           </div>
         </div>`
       : "";
-    const droppedRows = droppedProviders(state).map(key => {
-      const mode = droppedMode(state, key);
-      const opt = (value, label) => `<option value="${value}" ${mode === value ? "selected" : ""}>${label}</option>`;
-      return `<div class="opt-row" style="grid-column:1/-1">
-          <label for="cx-hs-dropped-${key}" data-tip-id="cx-hs-dropped"><span class="cx-provider-pill provider-${key}">${key.toUpperCase()}</span> Dropped shows</label>
-          <select id="cx-hs-dropped-${key}" class="input small">
-            ${opt("sync", "Sync normally")}${opt("ignore", "Ignore")}${droppedTagAllowed(state, key) ? opt("tag", "Sync + tag dropped") : ""}
+    const droppedKeys = droppedProviders(state);
+    const droppedPair = droppedPairMode(state);
+    const droppedOpt = (value, label) => `<option value="${value}" ${droppedPair === value ? "selected" : ""}>${label}</option>`;
+    const droppedBlock = droppedKeys.length
+      ? `<div class="grid2 compact"><div class="opt-row" style="grid-column:1/-1">
+          <label for="cx-hs-dropped" data-tip-id="cx-hs-dropped">Dropped shows</label>
+          <select id="cx-hs-dropped" class="input small">
+            ${droppedOpt("sync", "Sync normally")}${droppedOpt("ignore", "Ignore dropped")}${droppedKeys.some(key => droppedTagAllowed(state, key)) ? droppedOpt("tag", "Sync + tag dropped") : ""}
           </select>
-        </div>`;
-    }).join("");
-    const droppedBlock = droppedRows
-      ? `<div class="panel-title small" style="margin-top:6px">Dropped shows</div><div class="grid2 compact">${droppedRows}</div>`
+        </div></div>`
       : "";
     const hsCumulative = hasCumulativeAnimeHistory(state);
     const hsSourceStatus = sourceWatchStatusAllowed(state);
@@ -2264,16 +2266,17 @@ function bindChangeHandlers(state,root){
       state.pairProviders.floppy=Object.assign({},state.pairProviders.floppy||{}, {anime_library:!!el.checked});
       return;
     }
-    if(id.startsWith("cx-hs-dropped-")){
-      const key=id.slice("cx-hs-dropped-".length);
-      if(!DROPPED_PROVIDERS.includes(key)) return;
-      state.pairProviders=state.pairProviders||{};
-      const blk=Object.assign({},state.pairProviders[key]||{});
+    if(id==="cx-hs-dropped"){
       const mode=String(el.value||"sync");
-      blk.history_ignore_dropped_shows=mode==="ignore";
-      if(mode==="tag") blk.history_dropped_mode="tag";
-      else delete blk.history_dropped_mode;
-      state.pairProviders[key]=blk;
+      state.pairProviders=state.pairProviders||{};
+      droppedProviders(state).forEach(key=>{
+        const blk=Object.assign({},state.pairProviders[key]||{});
+        const tag=mode==="tag"&&droppedTagAllowed(state,key);
+        blk.history_ignore_dropped_shows=mode==="ignore";
+        if(tag) blk.history_dropped_mode="tag";
+        else delete blk.history_dropped_mode;
+        state.pairProviders[key]=blk;
+      });
       return;
     }
     if(id==="cx-tr-hs-col"||id==="cx-tr-hs-col-movies"||id==="cx-tr-hs-col-shows"){
@@ -2981,8 +2984,9 @@ function buildPayload(state,wrap){
     }
   }
   const droppedState={...state,src,dst};
+  const droppedPair=droppedPairMode(droppedState);
   droppedProviders(droppedState).forEach(key=>{
-    const mode=droppedMode(droppedState,key);
+    const mode=droppedPair==="tag"?(droppedTagAllowed(droppedState,key)?"tag":"sync"):droppedMode(droppedState,key);
     if(mode==="ignore") prov[key]=Object.assign({},prov[key]||{},{history_ignore_dropped_shows:true});
     if(mode==="tag") prov[key]=Object.assign({},prov[key]||{},{history_dropped_mode:"tag"});
   });
