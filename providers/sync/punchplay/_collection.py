@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import re
 from typing import Any, Iterable, Mapping
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal
@@ -56,10 +57,17 @@ def _kind_of(item: Mapping[str, Any]) -> str:
     return "show"
 
 
+def _normalize_format(value: Any) -> str:
+    compact = re.sub(r"[^a-z0-9]", "", str(value or "").lower())
+    if "bluray" in compact or compact in {"bd", "uhd"}:
+        return "4k_bluray" if any(tag in compact for tag in ("4k", "uhd", "ultrahd")) else "bluray"
+    return {"hddvd": "hd_dvd", "dvd": "dvd", "digital": "digital"}.get(compact, "")
+
+
 def _format_value(adapter: Any, item: Mapping[str, Any]) -> str:
-    raw = str(item.get("format") or item.get("edition_format") or "").strip().lower()
-    if raw in VALID_FORMATS:
-        return raw
+    fmt = _normalize_format(item.get("format") or item.get("edition_format"))
+    if fmt:
+        return fmt
     cfg = cfg_section(adapter)
     raw_cfg = str(cfg.get("collection_default_format") or "digital").strip().lower()
     return raw_cfg if raw_cfg in VALID_FORMATS else "digital"

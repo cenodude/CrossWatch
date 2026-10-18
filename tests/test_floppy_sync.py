@@ -285,6 +285,24 @@ def test_floppy_collection_adds_movie_via_item_id() -> None:
     assert adapter.client.session.calls[1]["json"] == {"item_id": "41", "media_type": "digital", "collected_at": "2026-08-01T12:00:00Z"}
 
 
+def test_floppy_collection_add_keeps_source_format_through_planner_minimal() -> None:
+    from cw_platform.id_map import minimal
+    from providers.sync.floppy import _collection
+
+    adapter = AdapterStub(
+        {
+            ("POST", "media/movie"): {"id": 41, "item_id": "movie/tmdb/11"},
+            ("POST", "collection"): {"id": 91},
+        }
+    )
+
+    planned = minimal({"type": "movie", "ids": {"tmdb": "11"}, "format": "4k_bluray", "_punchplay_collection_id": "7"})
+    res = _collection.add(adapter, [planned])
+
+    assert res["count"] == 1
+    assert adapter.client.session.calls[1]["json"] == {"item_id": "41", "media_type": "4k_bluray"}
+
+
 def test_floppy_collection_adds_episode_scope() -> None:
     from providers.sync.floppy import _collection
 
