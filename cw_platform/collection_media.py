@@ -87,15 +87,19 @@ def normalize_audio(value: Any) -> str:
     compact = _compact(low)
     if not compact:
         return ""
-    atmos = "atmos" in compact
-    if "dtsx" in compact:
-        return "dts_x"
-    if "dts" in compact:
-        tokens = set(re.findall(r"[a-z0-9]+", low))
+    tokens = set(re.findall(r"[a-z0-9]+", low))
+    atmos = "atmos" in compact or "joc" in tokens or ("mlp" in tokens and "16ch" in compact)
+    if "dts" in compact or "dca" in tokens:
+        if "xll" in tokens:
+            return "dts_x" if "x" in tokens else "dts_ma"
+        if "xbr" in tokens:
+            return "dts_hr"
+        if re.search(r"dts[\s:-]*x(?![a-z0-9])", low):
+            return "dts_x"
         if tokens & {"ma", "master"} or "dtshdma" in compact:
             return "dts_ma"
         return "dts_hr" if tokens & {"hra", "hr"} or "dtshdhra" in compact else "dts"
-    if "truehd" in compact:
+    if "truehd" in compact or "mlp" in tokens:
         return "dolby_atmos" if atmos else "dolby_truehd"
     if "dd+" in low or any(tag in compact for tag in ("ddp", "eac3", "dolbydigitalplus")):
         return "dolby_digital_plus_atmos" if atmos else "dolby_digital_plus"
@@ -113,6 +117,8 @@ def normalize_audio(value: Any) -> str:
         return "ogg_opus"
     if compact == "vorbis":
         return "ogg"
+    if "aac" in tokens:
+        return "aac"
     return compact if compact in AUDIOS else ""
 
 
