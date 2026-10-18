@@ -662,12 +662,13 @@ def fetch_activities(
     headers: Mapping[str, str | bytes],
     *,
     timeout: float = 8.0,
+    force: bool = False,
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     global _ACT_MEMO
     now = time.time()
     key = account_cache_key(headers.get("Authorization"))
     ts, cached, rate_cached = _ACT_MEMO.get(key, (0.0, None, {}))
-    if cached is not None and (now - ts) < 10.0:
+    if not force and cached is not None and (now - ts) < 10.0:
         return cached, rate_cached
 
     url = "https://api.simkl.com/sync/activities"

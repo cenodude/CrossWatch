@@ -26,7 +26,7 @@ from cw_platform.config_base import CONFIG_BASE
 from cw_platform.history_events import history_epoch_from_item, history_sync_key
 from cw_platform.id_map import canonical_key
 from cw_platform.orchestrator._history_rewatches import history_event_matches, history_timestamp_tolerance_seconds
-from cw_platform.run_control import raise_if_cancelled
+from cw_platform.run_control import cancel_requested, raise_if_cancelled
 from providers.auth import _auth_WETRAKR as auth
 from providers.sync._log import log
 from providers.sync._mod_common import SimpleRateLimiter, build_op_result
@@ -835,3 +835,81 @@ def write_items(adapter: Any, feature: str, items: Iterable[Mapping[str, Any]], 
     result = build_op_result(ok=not unresolved, count=len(confirmed), confirmed_keys=confirmed,
                              unresolved=unresolved, unresolved_keys=[r["key"] for r in unresolved])
     return accepted_result(result, accepted) if replaying() and not remove else result
+
+
+def _show_tokens(rows: Iterable[Mapping[str, Any]]) -> set[str]:
+    tokens: set[str] = set()
+    for row in rows:
+        try:
+            item = media_item(row, "show")
+        except WeTrakrSyncError:
+            continue
+        tokens.add(canonical_key(item))
+        tokens.update(f"{source}:{str(value).lower()}" for source, value in item["ids"].items())
+    return tokens
+
+
+def dropped_show_tokens(adapter: Any) -> set[str]:
+    activity = activity_for(_activities(adapter), "history", "shows")
+    marker = json.dumps(activity, sort_keys=True) if _stamp(activity.get("all")) is not None else ""
+    path = cache_path(adapter, "dropped")
+    cached = _read(path).get("sections", {})
+    tokens = cached.get("tokens")
+    if marker and cached.get("marker") == marker and isinstance(tokens, list):
+        return {str(token) for token in tokens if str(token).strip()}
+    found = _show_tokens(pages(adapter, "/sync/tracking/dropped/shows"))
+    _save(path, {"marker": marker, "tokens": sorted(found)})
+    return found
+
+
+def _count_rows(value: Any) -> int:
+    if isinstance(value, Mapping):
+        value = value.get("shows")
+    if isinstance(value, list):
+        return len(value)
+    return int_value(value, 0) if value is not None else 0
+
+
+def tag_dropped_shows(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    skipped = 0
+    with write_lock(adapter):
+        completed = _show_tokens(pages(adapter, "/sync/tracking/watched/shows"))
+        for item in items:
+            raw_ids = item.get("ids")
+            ids: Mapping[str, Any] = raw_ids if isinstance(raw_ids, Mapping) else {}
+            tokens = {f"{source}:{str(value).lower()}" for source, value in ids.items() if value not in (None, "")}
+            try:
+                row = identifier(ids)
+            except WeTrakrSyncError:
+                skipped += 1
+                continue
+            if tokens & completed:
+                skipped += 1
+                continue
+            rows.append({**row, "status": "dropped"})
+        confirmed = 0
+        not_found = 0
+        errors = 0
+        for start in range(0, len(rows), WRITE_BATCH_SIZE):
+            if cancel_requested():
+                break
+            part = rows[start:start + WRITE_BATCH_SIZE]
+            try:
+                response = body_of(request(adapter, "POST", "/sync/tracking", json={"shows": part}))
+            except WeTrakrSyncError as exc:
+                log("WETRAKR", "history", "warn", "dropped_tag_failed", count=len(part), reason=exc.reason)
+                errors += len(part)
+                if exc.status_code == 429 or exc.retry_after:
+                    errors += len(rows) - start - len(part)
+                    break
+                continue
+            body = response if isinstance(response, Mapping) else {}
+            missing = _count_rows(body.get("notFound") or body.get("not_found"))
+            failed = _count_rows(body.get("errored"))
+            not_found += missing
+            errors += failed
+            confirmed += max(0, len(part) - missing - failed)
+    log("WETRAKR", "history", "info", "dropped_tagged", attempted=len(rows), confirmed=confirmed,
+        skipped=skipped, not_found=not_found, errors=errors)
+    return {"attempted": len(rows), "confirmed": confirmed, "skipped": skipped, "not_found": not_found, "errors": errors}

@@ -255,6 +255,9 @@ def _enforce_pair_feature_constraints(pair: dict[str, Any]) -> None:
         if src not in collection_sources or dst not in collection_targets or str(pair.get("mode") or "").strip().lower().startswith("two"):
             feats.pop("collection", None)
 
+_DROPPED_SHOW_PROVIDERS = frozenset({"trakt", "mdblist", "simkl", "wetrakr", "flicklist"})
+
+
 def _normalize_pair_providers(p: Any) -> dict[str, Any]:
     if not isinstance(p, dict):
         return {}
@@ -273,19 +276,16 @@ def _normalize_pair_providers(p: Any) -> dict[str, Any]:
             blk["strict_id_matching"] = coerce_bool(v.get("strict_id_matching"))
         if key == "jellyfin" and "targeted_lookup" in v:
             blk["targeted_lookup"] = coerce_bool(v.get("targeted_lookup"), True)
-        if key == "trakt":
+        if key in _DROPPED_SHOW_PROVIDERS:
             if "history_ignore_dropped_shows" in v:
                 blk["history_ignore_dropped_shows"] = coerce_bool(v.get("history_ignore_dropped_shows"))
-        if key == "mdblist":
-            if "history_ignore_dropped_shows" in v:
-                blk["history_ignore_dropped_shows"] = coerce_bool(v.get("history_ignore_dropped_shows"))
-        if key == "simkl":
-            if "history_ignore_dropped_shows" in v:
-                blk["history_ignore_dropped_shows"] = coerce_bool(v.get("history_ignore_dropped_shows"))
+            mode = str(v.get("history_dropped_mode") or "").strip().lower()
+            if mode in {"sync", "ignore", "tag"}:
+                blk["history_dropped_mode"] = mode
         if key == "floppy" and "anime_library" in v:
             blk["anime_library"] = coerce_bool(v.get("anime_library"))
         for kk, vv in v.items():
-            if kk in {"strict_id_matching", "history_ignore_dropped_shows"}:
+            if kk in {"strict_id_matching", "history_ignore_dropped_shows", "history_dropped_mode"}:
                 continue
             if key == "floppy" and kk == "anime_library":
                 continue

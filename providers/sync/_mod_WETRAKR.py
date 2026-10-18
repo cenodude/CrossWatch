@@ -14,7 +14,7 @@ from providers.auth import _auth_WETRAKR as auth
 from providers.sync._mod_common import build_op_result, build_session, make_snapshot_progress
 from providers.sync._log import log
 from providers.sync.wetrakr import _history, _progress, _ratings, _watchlist
-from providers.sync.wetrakr._common import WRITE_BATCH_SIZE, WeTrakrSyncError, body_of, commit_snapshot, item_key, request, write_lock
+from providers.sync.wetrakr._common import WRITE_BATCH_SIZE, WeTrakrSyncError, body_of, commit_snapshot, dropped_show_tokens, item_key, request, tag_dropped_shows, write_lock
 
 __VERSION__ = "0.1"
 __all__ = ["get_manifest", "WETRAKRModule", "OPS"]
@@ -132,6 +132,16 @@ class WETRAKRModule:
     def remove(self, feature: str, items: Iterable[Mapping[str, Any]], *, dry_run: bool = False) -> dict[str, Any]:
         return self._write(feature, items, remove=True, dry_run=dry_run)
 
+    def dropped_show_tokens(self) -> set[str]:
+        try:
+            return dropped_show_tokens(self)
+        except WeTrakrSyncError as exc:
+            log("WETRAKR", "history", "warn", "dropped_load_failed", reason=exc.reason)
+            return set()
+
+    def tag_dropped_shows(self, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+        return tag_dropped_shows(self, items)
+
     def _write(self, feature: str, items: Iterable[Mapping[str, Any]], *, remove: bool, dry_run: bool) -> dict[str, Any]:
         module = _FEATURE_MODULES.get(feature)
         if module is None:
@@ -182,6 +192,12 @@ class _WETRAKROPS:
 
     def remove(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool = False) -> dict[str, Any]:
         return WETRAKRModule(cfg).remove(feature, items, dry_run=dry_run)
+
+    def dropped_show_tokens(self, cfg: Mapping[str, Any]) -> set[str]:
+        return WETRAKRModule(cfg).dropped_show_tokens()
+
+    def tag_dropped_shows(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+        return WETRAKRModule(cfg).tag_dropped_shows(items)
 
 
 OPS = _WETRAKROPS()

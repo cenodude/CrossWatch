@@ -250,7 +250,7 @@ const titleLine = (e) => {
   switch (e.event_type) {
     case "write_succeeded":
       return isRating(e) ? "Rating update" : "Write succeeded";
-    case "write_attempted": return "Add attempted";
+    case "write_attempted": return e.operation === "tag_dropped" ? `Mark dropped · ${(e.destination_provider || "Destination").toUpperCase()}` : "Add attempted";
     case "write_failed": return `${(e.destination_provider || "Destination").toUpperCase()} rejected item · ${reasonLabel(e.reason_code || "failed", e.reason_label)}`;
     case "unresolved_recorded": {
       const r = e.reason_code || e.operation || "";

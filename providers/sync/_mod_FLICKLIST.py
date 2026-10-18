@@ -19,8 +19,10 @@ from providers.sync.flicklist._common import (
     DEFAULT_GET_PER_SEC,
     DEFAULT_POST_PER_SEC,
     cfg_float,
+    dropped_show_tokens as flicklist_dropped_show_tokens,
     error_of,
     flicklist_request,
+    tag_dropped_shows as flicklist_tag_dropped_shows,
 )
 
 __VERSION__ = "0.2"
@@ -275,6 +277,12 @@ class FLICKLISTModule:
             return build_op_result(ok=True, count=len(lst), dry_run=True)
         return _result_from(mod.remove(self, lst))
 
+    def dropped_show_tokens(self) -> set[str]:
+        return flicklist_dropped_show_tokens(self)
+
+    def tag_dropped_shows(self, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+        return flicklist_tag_dropped_shows(self, items)
+
     def list_playlist_resources(self) -> Sequence[Any]:
         return feat_playlists.list_resources(self)
 
@@ -335,6 +343,12 @@ class _FLICKLISTOPS:
 
     def remove(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool = False) -> dict[str, Any]:
         return self._adapter(cfg).remove(feature, items, dry_run=dry_run)
+
+    def dropped_show_tokens(self, cfg: Mapping[str, Any]) -> set[str]:
+        return self._adapter(cfg).dropped_show_tokens()
+
+    def tag_dropped_shows(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+        return self._adapter(cfg).tag_dropped_shows(items)
 
     def list_playlist_resources(self, cfg: Mapping[str, Any], *, instance: str | None = None) -> Sequence[Any]:
         old = os.environ.get("CW_PROBE_INSTANCE")

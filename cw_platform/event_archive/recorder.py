@@ -18,6 +18,7 @@ from .db import get_conn
 from .run_scope import pair_id_from_scope, record_run_pairs, scope_key as _scope_key
 
 _LOG = logging.getLogger("crosswatch.event_archive")
+DETAIL_TITLE_BUDGET = 3800
 
 FIELDS = (
     "event_hash", "domain", "created_at", "run_id", "event_type", "severity",
@@ -431,6 +432,28 @@ class RunRecorder:
             self._flush()
             return
 
+        if event == "dropped:tagged":
+            src, si, dst, di = self._destination_route(f.get("dst"), f.get("destination_instance"))
+            failed = int(f.get("errors") or 0)
+            not_found = int(f.get("not_found") or 0)
+            route = dict(
+                operation="tag_dropped", source_provider=src or None, destination_provider=dst or None,
+                source_instance=si or None, destination_instance=di or None,
+            )
+            titles = [str(row.get("title") or "") for row in _as_list(f.get("shows")) if isinstance(row, Mapping)]
+            self._add(
+                event_type="write_attempted", severity="warn" if failed or not_found else "info",
+                reason_code="errors" if failed else None, **route,
+                detail=_fit_titles({"attempted": int(f.get("attempted") or 0), "tagged": int(f.get("confirmed") or 0),
+                                    "skipped": int(f.get("skipped") or 0), "not_found": not_found, "failed": failed},
+                                   [title for title in titles if title]),
+            )
+            if failed:
+                self._add(event_type="write_failed", severity="error", reason_code="tag_dropped_failed",
+                          reason=str(f.get("error") or "tag_dropped_failed"), **route)
+            self._flush()
+            return
+
         if event == "archive:item_failures":
             src, si, dst, di = self._destination_route(f.get("provider"), f.get("destination_instance"))
             op = str(f.get("op") or "add")
@@ -535,6 +558,19 @@ class RunRecorder:
             correlate(conn=self._conn)
         except Exception as exc:
             _LOG.warning("event correlation after run failed: %s", exc)
+
+
+def _fit_titles(base: Mapping[str, Any], titles: list[str], limit: int = DETAIL_TITLE_BUDGET) -> dict[str, Any]:
+    kept: list[str] = []
+    for title in titles:
+        trial = {**base, "shows": [*kept, title[:200]], "shows_omitted": len(titles) - len(kept) - 1}
+        if len(json.dumps(trial, ensure_ascii=False, sort_keys=True)) > limit:
+            break
+        kept.append(title[:200])
+    out = {**base, "shows": kept}
+    if len(kept) < len(titles):
+        out["shows_omitted"] = len(titles) - len(kept)
+    return out
 
 
 def _item_fields(it: Mapping[str, Any]) -> dict[str, Any]:

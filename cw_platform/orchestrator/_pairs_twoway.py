@@ -14,6 +14,7 @@ import re
 import datetime as _dt
 
 from ._pairs_oneway import _emit_item_failures, _emit_item_resolutions, compute_effective_add, compute_effective_remove, current_attempt_unresolved_keys, is_remove_retry_reason, load_feature_state, resolve_baseline_writes, select_baseline_keys
+from ._dropped import apply_dropped_tags, preview_dropped_tags, provider_dropped_mode, reads_dropped, tags_dropped
 from ..run_control import cancel_requested
 
 try:
@@ -656,7 +657,11 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
 
     dropped_A: set[str] = set()
     dropped_B: set[str] = set()
-    if a in ("TRAKT", "MDBLIST", "SIMKL") and _provider_ignore_dropped_enabled(a_cfg, a, feature):
+    a_tags_dropped = reads_dropped(aops) and tags_dropped(bops) and provider_dropped_mode(a_cfg, a, feature) == "tag"
+    b_tags_dropped = reads_dropped(bops) and tags_dropped(aops) and provider_dropped_mode(b_cfg, b, feature) == "tag"
+    tag_tokens_A: set[str] = _load_provider_dropped_tokens(aops, a_cfg) if a_tags_dropped else set()
+    tag_tokens_B: set[str] = _load_provider_dropped_tokens(bops, b_cfg) if b_tags_dropped else set()
+    if not a_tags_dropped and reads_dropped(aops) and _provider_ignore_dropped_enabled(a_cfg, a, feature):
         dropped_A = _load_provider_dropped_tokens(aops, a_cfg)
         if dropped_A:
             prevA, prev_filtered_A = _filter_index_for_dropped_shows(prevA, dropped_A)
@@ -664,7 +669,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             A_eff, eff_filtered_A = _filter_index_for_dropped_shows(A_eff, dropped_A)
             if prev_filtered_A or cur_filtered_A or eff_filtered_A:
                 emit("debug", msg="provider.dropped.filtered", provider=a, feature=feature, scope="side_a", prev=prev_filtered_A, current=cur_filtered_A, effective=eff_filtered_A)
-    if b in ("TRAKT", "MDBLIST", "SIMKL") and _provider_ignore_dropped_enabled(b_cfg, b, feature):
+    if not b_tags_dropped and reads_dropped(bops) and _provider_ignore_dropped_enabled(b_cfg, b, feature):
         dropped_B = _load_provider_dropped_tokens(bops, b_cfg)
         if dropped_B:
             prevB, prev_filtered_B = _filter_index_for_dropped_shows(prevB, dropped_B)
@@ -2010,6 +2015,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
 
     review = getattr(ctx, "interactive", None)
     if review is not None:
+        planned_A, planned_B = list(add_to_A), list(add_to_B)
         args_A = dict(source=b, source_instance=dst_inst, before=A_eff, down=a_down)
         args_B = dict(source=a, source_instance=src_inst, before=B_eff, down=b_down)
         review.excluded(feature, a, src_inst, "add", library_skipped_A, **args_A)
@@ -2021,10 +2027,34 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         rem_from_A = review.filter(feature, a, src_inst, "remove", rem_from_A, **args_A)
         rem_from_B = review.filter(feature, b, dst_inst, "remove", rem_from_B, **args_B)
         if review.preview:
+            if (a_tags_dropped or b_tags_dropped) and not (a_down or b_down):
+                view_A = groups.restore(0, A_eff)
+                view_B = groups.restore(1, {path_native_keys_B.get(key, key): item for key, item in B_eff.items()})
+
+                def _with_planned(view: Mapping[str, Any], planned: list[dict[str, Any]]) -> dict[str, Any]:
+                    out = dict(view)
+                    for n, it in enumerate(planned):
+                        out.setdefault(_sync_key(_sync_minimal(it)) or f"planned:{n}", it)
+                    return out
+
+                if a_tags_dropped:
+                    preview_dropped_tags(
+                        review=review, src=a, src_inst=src_inst, dst=b, dst_inst=dst_inst, src_cfg=a_cfg, dst_ops=bops,
+                        feature=feature, source=view_A, source_tokens=tag_tokens_A, target=_with_planned(view_B, planned_B),
+                        target_tokens=lambda: tag_tokens_B or dropped_B or _load_provider_dropped_tokens(bops, b_cfg), down=b_down,
+                    )
+                if b_tags_dropped:
+                    preview_dropped_tags(
+                        review=review, src=b, src_inst=dst_inst, dst=a, dst_inst=src_inst, src_cfg=b_cfg, dst_ops=aops,
+                        feature=feature, source=view_B, source_tokens=tag_tokens_B, target=_with_planned(view_A, planned_A),
+                        target_tokens=lambda: tag_tokens_A or dropped_A or _load_provider_dropped_tokens(aops, a_cfg), down=a_down,
+                    )
             return {"cancelled": cancelled, "library_skipped": len(library_skipped_A) + len(library_skipped_B)}
 
     B_eff = {path_native_keys_B.get(key, key): item for key, item in B_eff.items()}
     A_eff, B_eff = groups.restore(0, A_eff), groups.restore(1, B_eff)
+    tag_source_A = dict(A_eff) if a_tags_dropped else {}
+    tag_source_B = dict(B_eff) if b_tags_dropped else {}
 
     resA_rem: dict[str, Any] = {"ok": True, "count": 0}
     resB_rem: dict[str, Any] = {"ok": True, "count": 0}
@@ -2570,6 +2600,21 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
     if not cancelled:
         _post_apply_refresh(a, src_inst, post_apply_A_res, aops, A_eff, a_down)
         _post_apply_refresh(b, dst_inst, post_apply_B_res, bops, B_eff, b_down)
+
+    if a_tags_dropped and not (cancelled or a_down or b_down):
+        apply_dropped_tags(
+            src=a, dst=b, src_cfg=a_cfg, dst_ops=bops, dst_cfg=b_cfg, feature=feature,
+            source=tag_source_A, source_tokens=tag_tokens_A, target=B_eff,
+            target_tokens=lambda: tag_tokens_B or dropped_B or _load_provider_dropped_tokens(bops, b_cfg),
+            dry_run=dry_run_flag, emit=emit, review=review, src_inst=src_inst, dst_inst=dst_inst,
+        )
+    if b_tags_dropped and not (cancelled or a_down or b_down):
+        apply_dropped_tags(
+            src=b, dst=a, src_cfg=b_cfg, dst_ops=aops, dst_cfg=a_cfg, feature=feature,
+            source=tag_source_B, source_tokens=tag_tokens_B, target=A_eff,
+            target_tokens=lambda: tag_tokens_A or dropped_A or _load_provider_dropped_tokens(aops, a_cfg),
+            dry_run=dry_run_flag, emit=emit, review=review, src_inst=dst_inst, dst_inst=src_inst,
+        )
 
     try:
         if cancelled:

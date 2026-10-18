@@ -13,6 +13,7 @@ from typing import Any, Iterable, Mapping
 from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.id_map import minimal as id_minimal, canonical_key
 from cw_platform.anime_mapping.service import mapped_or_default_media_type
+from cw_platform.run_control import cancel_requested
 
 from .._mod_common import request_with_retries
 from .._log import log as cw_log
@@ -414,6 +415,45 @@ def load_dropped_show_tokens(adapter: Any) -> set[str]:
     }
     _write_json(dropped_path, doc)
     return tokens
+
+
+def tag_dropped_shows(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    shows: list[dict[str, Any]] = []
+    skipped = 0
+    for item in items:
+        ids = ids_for_trakt({"type": "show", "ids": dict(item.get("ids") or {})})
+        if ids:
+            shows.append({"ids": ids})
+        else:
+            skipped += 1
+    confirmed = 0
+    not_found = 0
+    errors = 0
+    for start in range(0, len(shows), 100):
+        if cancel_requested():
+            break
+        part = shows[start:start + 100]
+        try:
+            r = adapter.client.post("https://api.trakt.tv/users/hidden/dropped", json={"shows": part})
+        except Exception as e:
+            cw_log("TRAKT", "history", "warn", "dropped_tag_failed", count=len(part), error=str(e))
+            errors += len(part)
+            continue
+        if not (200 <= r.status_code < 300):
+            cw_log("TRAKT", "history", "warn", "dropped_tag_http", count=len(part), status=r.status_code)
+            errors += len(part)
+            continue
+        try:
+            body = r.json() if (r.text or "").strip() else {}
+        except Exception:
+            body = {}
+        added = body.get("added") if isinstance(body, Mapping) else None
+        missing = body.get("not_found") if isinstance(body, Mapping) else None
+        confirmed += int((added or {}).get("shows") or 0) if isinstance(added, Mapping) else 0
+        not_found += len((missing or {}).get("shows") or []) if isinstance(missing, Mapping) else 0
+    cw_log("TRAKT", "history", "info", "dropped_tagged", attempted=len(shows), confirmed=confirmed,
+           skipped=skipped, not_found=not_found, errors=errors)
+    return {"attempted": len(shows), "confirmed": confirmed, "skipped": skipped, "not_found": not_found, "errors": errors}
 
 
 def build_headers(arg1: Any, access_token: str | None = None) -> dict[str, str]:
