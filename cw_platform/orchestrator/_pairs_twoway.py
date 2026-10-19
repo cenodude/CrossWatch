@@ -14,7 +14,7 @@ import re
 import datetime as _dt
 
 from ._pairs_oneway import _emit_item_failures, _emit_item_resolutions, compute_effective_add, compute_effective_remove, current_attempt_unresolved_keys, is_remove_retry_reason, load_feature_state, resolve_baseline_writes, select_baseline_keys
-from ._dropped import apply_dropped_tags, preview_dropped_tags, provider_dropped_mode, reads_dropped, tags_dropped
+from ._dropped import apply_dropped_tags, preview_dropped_tags, provider_dropped_mode, reads_dropped, tags_dropped, with_written
 from ..run_control import cancel_requested
 
 try:
@@ -2604,14 +2604,16 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
     if a_tags_dropped and not (cancelled or a_down or b_down):
         apply_dropped_tags(
             src=a, dst=b, src_cfg=a_cfg, dst_ops=bops, dst_cfg=b_cfg, feature=feature,
-            source=tag_source_A, source_tokens=tag_tokens_A, target=B_eff,
+            source=tag_source_A, source_tokens=tag_tokens_A,
+            target=with_written(B_eff, add_to_B, post_apply_B_res, lambda it: _sync_key(_sync_minimal(it))),
             target_tokens=lambda: tag_tokens_B or dropped_B or _load_provider_dropped_tokens(bops, b_cfg),
             dry_run=dry_run_flag, emit=emit, review=review, src_inst=src_inst, dst_inst=dst_inst,
         )
     if b_tags_dropped and not (cancelled or a_down or b_down):
         apply_dropped_tags(
             src=b, dst=a, src_cfg=b_cfg, dst_ops=aops, dst_cfg=a_cfg, feature=feature,
-            source=tag_source_B, source_tokens=tag_tokens_B, target=A_eff,
+            source=tag_source_B, source_tokens=tag_tokens_B,
+            target=with_written(A_eff, add_to_A, post_apply_A_res, lambda it: _sync_key(_sync_minimal(it))),
             target_tokens=lambda: tag_tokens_A or dropped_A or _load_provider_dropped_tokens(aops, a_cfg),
             dry_run=dry_run_flag, emit=emit, review=review, src_inst=dst_inst, dst_inst=src_inst,
         )
