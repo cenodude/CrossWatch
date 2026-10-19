@@ -1330,25 +1330,7 @@ def _cw_state_watermark_problems(path: Path, data: Any, meta: Mapping[str, Any],
     return probs
 
 
-def _shadow_entry_count(data: Any, meta: Mapping[str, Any]) -> tuple[int, int | None]:
-    provider = str(meta.get("provider") or "").upper()
-    feature = str(meta.get("feature") or "").lower()
-    if not isinstance(data, dict):
-        return 0, None
-    if provider in {"TRAKT", "SIMKL", "MDBLIST", "PUBLICMETADB"} and feature in {"watchlist", "activities", "history", "ratings"}:
-        items = data.get("items")
-        if isinstance(items, dict):
-            ts = _parse_epochish(data.get("ts"))
-            return len(items), ts
-        if provider == "SIMKL" and feature == "activities":
-            payload = data.get("data")
-            ts = _parse_epochish(data.get("ts"))
-            return (1 if isinstance(payload, dict) and payload else 0), ts
-    ts = _parse_epochish(data.get("ts") if isinstance(data, dict) else None)
-    return len(data), ts
-
-
-def _cw_state_shadow_problems(path: Path, data: Any, meta: Mapping[str, Any], *, now_epoch: int | None) -> list[dict[str, Any]]:
+def _cw_state_shadow_problems(path: Path, data: Any, meta: Mapping[str, Any]) -> list[dict[str, Any]]:
     probs: list[dict[str, Any]] = []
     provider = str(meta.get("provider") or "").upper()
     feature = str(meta.get("feature") or "").lower()
@@ -1393,10 +1375,6 @@ def _cw_state_shadow_problems(path: Path, data: Any, meta: Mapping[str, Any], *,
             probs.append(_artifact_meta_problem("warn", "cw_state_shadow_invalid", path, "Shadow counters should be ints or objects with count fields.", meta, bad_rows=bad_rows))
         if total_count > 0:
             probs.append(_artifact_meta_problem("info", "cw_state_shadow_backlog", path, "Shadow file still tracks outstanding mirrored state.", meta, entries=len(data), total_count=total_count))
-
-    entries, ts = _shadow_entry_count(data, meta)
-    if entries > 0 and now_epoch is not None and ts is not None and ts < (now_epoch - 7 * 86400):
-        probs.append(_artifact_meta_problem("warn", "cw_state_shadow_stale", path, "Shadow file still has entries and looks stale.", meta, entries=entries))
     return probs
 
 
@@ -1697,7 +1675,7 @@ def _cw_state_semantic_diagnostics() -> list[dict[str, Any]]:
             if kind == "watermarks":
                 probs.extend(_cw_state_watermark_problems(path, data, meta, now_epoch=now_epoch))
             elif kind == "shadow":
-                probs.extend(_cw_state_shadow_problems(path, data, meta, now_epoch=now_epoch))
+                probs.extend(_cw_state_shadow_problems(path, data, meta))
             elif kind == "unresolved" and _orphaned_unresolved_scope(meta, active_scopes):
                 continue
             elif kind == "unresolved":
