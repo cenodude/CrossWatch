@@ -52,6 +52,7 @@ except ImportError:
 SIMKL_API = "https://api.simkl.com"
 _MAX_REPRESENTATIONS = 2
 _UNKNOWN_TTL = 6 * 3600.0
+_MIN_PROGRESS_FLOOR = 50.0
 APP_AGENT = http_user_agent("Watcher", override_env="CW_SIMKL_UA")
 _AR_TTL = 60
 
@@ -147,8 +148,11 @@ def _hdr(cfg: dict[str, Any]) -> dict[str, str]:
 
 def _post(path: str, body: dict[str, Any], cfg: dict[str, Any], *, allow_rewatch: bool = False) -> requests.Response:
     params = {"client_id": _hdr(cfg)["simkl-api-key"], "app-name": "crosswatch", "app-version": _app_meta(cfg)["app_version"]}
-    if allow_rewatch and path == "/scrobble/stop" and float(body.get("progress") or 0) >= 80:
-        params["allow_rewatch"] = "yes"
+    if path in ("/scrobble/start", "/scrobble/stop"):
+        min_progress = int(_simkl_watched_at(cfg))
+        params["min_progress"] = str(min_progress)
+        if allow_rewatch and path == "/scrobble/stop" and float(body.get("progress") or 0) >= min_progress:
+            params["allow_rewatch"] = "yes"
     return paced_request(requests.post, "POST", f"{SIMKL_API}{path}", headers=_hdr(cfg), params=params, json=body, timeout=10)
 
 
@@ -194,6 +198,10 @@ def _watched_at(cfg: dict[str, Any]) -> float:
         return float(src)
     except Exception:
         return 90.0
+
+
+def _simkl_watched_at(cfg: dict[str, Any]) -> float:
+    return max(_MIN_PROGRESS_FLOOR, min(100.0, _watched_at(cfg)))
 
 
 def _regress_tolerance_percent(cfg: dict[str, Any]) -> int:
@@ -710,11 +718,9 @@ class SimklSink(ScrobbleSink):
 
         thr = _stop_pause_threshold(cfg)
         last_sess = p_sess
-        watched_at = _watched_at(cfg)
-        if rewatch_mode:
-            watched_at = max(80.0, watched_at)
-            if action_in == "stop":
-                p_send = p_now
+        watched_at = _simkl_watched_at(cfg)
+        if rewatch_mode and action_in == "stop":
+            p_send = p_now
         suppress_at = _watch_suppress_start_at(cfg)
 
         if action == "start" and p_send >= suppress_at:
