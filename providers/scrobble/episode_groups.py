@@ -84,9 +84,7 @@ def _completed(ev, cfg):
     if sink == "wetrakr":
         minimum = 80
     elif sink == "simkl":
-        from providers.scrobble.simkl import rewatches
-        if rewatches.enabled(cfg):
-            minimum = 80
+        minimum = 50
     return ev.action == "stop" and math.isfinite(progress) and math.isfinite(threshold) and progress >= max(minimum, min(100, threshold))
 
 

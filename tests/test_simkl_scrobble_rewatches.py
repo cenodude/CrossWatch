@@ -134,13 +134,38 @@ def test_start_pause_stop_lifecycle_and_no_seek_posts(api):
     assert [kw["params"].get("allow_rewatch") for _, kw in calls] == [None, None, None, "yes"]
 
 
-@pytest.mark.parametrize("threshold,progress,flag", [(90, 89, False), (90, 90, True), (70, 79, False), (70, 80, True), (95, 94, False), (95, 95, True)])
-def test_user_threshold_and_simkl_floor(api, threshold, progress, flag):
+@pytest.mark.parametrize("threshold,progress,flag,sent", [(90, 89, False, "90"), (90, 90, True, "90"), (70, 69, False, "70"), (70, 70, True, "70"),
+                                                          (40, 49, False, "50"), (40, 50, True, "50"), (95, 94, False, "95"), (95, 95, True, "95")])
+def test_user_threshold_and_simkl_floor(api, threshold, progress, flag, sent):
     cfg = config()
     cfg["scrobble"]["trakt"]["watched_at"] = threshold
     sink.SimklSink().send(event(progress=progress), cfg)
     assert (scrobbles(api)[0][1]["params"].get("allow_rewatch") == "yes") is flag
+    assert scrobbles(api)[0][1]["params"].get("min_progress") == (sent if flag else None)
     assert len(api["records"]) == int(flag)
+
+
+@pytest.mark.parametrize("threshold,sent", [(75, "75"), (85.5, "85"), (30, "50"), (120, "100")])
+def test_min_progress_follows_user_threshold_on_start_and_stop_only(api, threshold, sent):
+    cfg = config(False)
+    cfg["scrobble"]["simkl"] = {"watched_at": threshold}
+    target = sink.SimklSink()
+    target.send(event("start", 10), cfg)
+    target.send(event("pause", 40), cfg)
+    target.send(event("start", 80), cfg)
+    target.send(event("stop", 100), cfg)
+    calls = scrobbles(api)
+    assert [url.rsplit("/", 1)[-1] for url, _ in calls] == ["start", "pause", "start", "stop"]
+    assert [kw["params"].get("min_progress") for _, kw in calls] == [sent, None, sent, sent]
+
+
+@pytest.mark.parametrize("progress,action,recorded", [(45, "pause", 0), (50, "stop", 1)])
+def test_threshold_below_simkl_minimum_holds_stop_as_pause(api, progress, action, recorded):
+    cfg = config(False)
+    cfg["scrobble"]["trakt"]["watched_at"] = 30
+    sink.SimklSink().send(event(progress=progress), cfg)
+    assert scrobbles(api)[0][0].endswith(f"/{action}")
+    assert len(api["records"]) == recorded
 
 
 @pytest.mark.parametrize("status,saved", [("active", True), ("completed", True), ("closed", True), ("first_watch", True), ("too_soon", False), ("not_eligible", False), ("pro_required", False), (None, False), ("future_status", False)])

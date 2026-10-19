@@ -337,3 +337,11 @@ def test_destination_watched_threshold_controls_each_part(setup):
     assert not calls
     send_grouped(event(progress=98), cfg, send)
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("threshold,progress,done", [(30, 49, False), (30, 50, True), (70, 69, False), (70, 70, True)])
+def test_simkl_group_completion_uses_simkl_minimum(threshold, progress, done):
+    from providers.scrobble.episode_groups import _completed
+
+    cfg = {"scrobble": {"simkl": {"watched_at": threshold}, "watch": {"route_sink": "simkl"}}}
+    assert _completed(event(progress=progress), cfg) is done
