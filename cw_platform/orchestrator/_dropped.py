@@ -187,6 +187,25 @@ def preview_dropped_tags(
         _review_tags(review, pairs, src=src, src_inst=src_inst, dst=dst, dst_inst=dst_inst, feature=feature, down=down)
 
 
+def with_written(
+    target: Mapping[str, Any],
+    items: list[Mapping[str, Any]] | None,
+    result: Mapping[str, Any] | None,
+    key_fn: Callable[[Mapping[str, Any]], str],
+) -> dict[str, Any]:
+    keys = {str(k) for name in ("confirmed_keys", "accepted_keys") for k in ((result or {}).get(name) or []) if k}
+    out = dict(target or {})
+    if not keys:
+        return out
+    for item in items or []:
+        if not isinstance(item, Mapping):
+            continue
+        key = key_fn(item)
+        if key and key in keys:
+            out.setdefault(key, item)
+    return out
+
+
 def apply_dropped_tags(
     *,
     src: str,

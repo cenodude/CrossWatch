@@ -270,7 +270,7 @@ from ._pairs_utils import (
 from ._pairs_massdelete import maybe_block_mass_delete as _maybe_block_mass_delete
 from ._pairs_blocklist import apply_blocklist
 from ._specials import filter_specials_index, specials_excluded
-from ._dropped import apply_dropped_tags, matches_dropped_show as _matches_dropped_show, preview_dropped_tags, provider_dropped_mode, reads_dropped, tags_dropped
+from ._dropped import apply_dropped_tags, matches_dropped_show as _matches_dropped_show, preview_dropped_tags, provider_dropped_mode, reads_dropped, tags_dropped, with_written
 from .. import library_presence as _library_presence
 from ._history_rewatches import (
     collapse_history_latest,
@@ -2255,7 +2255,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
     if src_tags_dropped and not (cancelled or src_down or dst_down):
         apply_dropped_tags(
             src=src, dst=dst, src_cfg=src_cfg, dst_ops=dst_ops, dst_cfg=dst_cfg, feature=feature,
-            source=src_idx, source_tokens=src_dropped_tokens, target=dst_full,
+            source=src_idx, source_tokens=src_dropped_tokens, target=with_written(dst_full, adds, post_apply_add_res, _sync_key),
             target_tokens=lambda: dst_dropped_tokens or _load_provider_dropped_tokens(dst_ops, dst_cfg),
             dry_run=dry_run_flag, emit=emit, review=review, src_inst=src_inst, dst_inst=dst_inst,
         )

@@ -574,3 +574,61 @@ def test_cancel_during_target_lookup_prevents_the_tag_write():
         run_control.clear_cancel()
         run_control.clear_queue_stop()
     assert dst.tag_calls == []
+
+
+def test_show_dropped_after_an_earlier_sync_is_tagged_without_new_plays(monkeypatch):
+    src = DroppedOps(provider="SRC", index=_index(_episode("1", 1, 1)), dropped={"tmdb:1"})
+    dst = DroppedOps(provider="DST", index=_index(_episode("1", 1, 1)))
+
+    _run(monkeypatch, src, dst, providers={"src": {"history_dropped_mode": "tag"}})
+
+    assert dst.add_calls == []
+    assert _tagged(dst) == ["1"]
+
+
+def test_interactive_lists_a_tag_for_a_show_dropped_after_an_earlier_sync(monkeypatch):
+    src = DroppedOps(provider="SRC", index=_index(_episode("1", 1, 1)), dropped={"tmdb:1"})
+    dst = DroppedOps(provider="DST", index=_index(_episode("1", 1, 1)))
+    providers = {"src": {"history_dropped_mode": "tag"}}
+    preview = InteractivePlan()
+    _run(monkeypatch, src, dst, providers=providers, plan=preview)
+
+    assert [row["operation"] for row in preview.rows.values()] == ["tag_dropped"]
+
+    execution = InteractivePlan(preview=False, selected=set(preview.rows))
+    _run(monkeypatch, src, dst, providers=providers, plan=execution)
+    assert _tagged(dst) == ["1"]
+
+
+@dataclass
+class AcceptedOnlyOps(DroppedOps):
+    def add(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool = False) -> dict[str, Any]:
+        batch = [dict(x) for x in items]
+        self.add_calls.append(batch)
+        keys = [history_sync_key(it) for it in batch]
+        return {"ok": True, "count": len(batch), "confirmed_keys": keys, "accepted_keys": keys,
+                "presence_confirmed_keys": [], "accepted_not_seen_live_keys": keys, "unresolved": []}
+
+
+def test_interactive_first_sync_tags_shows_the_target_only_accepted(monkeypatch):
+    src = DroppedOps(provider="SRC", index=_index(_episode("1", 1, 1)), dropped={"tmdb:1"})
+    dst = AcceptedOnlyOps(provider="DST", index={})
+    providers = {"src": {"history_dropped_mode": "tag"}}
+    preview = InteractivePlan()
+    _run(monkeypatch, src, dst, providers=providers, plan=preview)
+
+    execution = InteractivePlan(preview=False, selected=set(preview.rows))
+    _run(monkeypatch, src, dst, providers=providers, plan=execution)
+
+    assert _sent(dst) == {("1", 1, 1)}
+    assert _tagged(dst) == ["1"]
+    assert {row["id"] for row in _tag_rows(preview)} <= execution.seen
+
+
+def test_first_sync_tags_shows_the_target_only_accepted(monkeypatch):
+    src = DroppedOps(provider="SRC", index=_index(_episode("1", 1, 1)), dropped={"tmdb:1"})
+    dst = AcceptedOnlyOps(provider="DST", index={})
+
+    _run(monkeypatch, src, dst, providers={"src": {"history_dropped_mode": "tag"}})
+
+    assert _tagged(dst) == ["1"]
