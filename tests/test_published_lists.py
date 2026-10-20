@@ -57,3 +57,48 @@ def test_public_address_needs_the_key_and_records_the_read(tmp_path, monkeypatch
     stored = svc.feeds()[feed["id"]]
     assert stored["fetch_count"] == 1
     assert stored["last_fetch_format"] == "sonarr.json"
+
+
+class _Lists:
+    def __init__(self) -> None:
+        self.deleted: list[str] = []
+
+    def list_playlist_resources(self, cfg, instance="default"):
+        from cw_platform.playlists import PlaylistResource
+
+        return [PlaylistResource(provider="CROSSWATCH", id=lid, name=lid, instance=instance)
+                for lid in ("cwpl_1", "cwpl_2") if lid not in self.deleted]
+
+    def delete_playlist(self, cfg, playlist_id, instance="default"):
+        self.deleted.append(playlist_id)
+        return {"ok": True}
+
+
+def test_local_lists_report_delete_rights_and_endpoint_use(monkeypatch) -> None:
+    monkeypatch.setattr(svc, "_ops", lambda: _Lists())
+    monkeypatch.setattr(svc, "list_instance_ids", lambda cfg, provider: ["default"])
+    monkeypatch.setattr(svc, "build_provider_config_view", lambda cfg, provider, instance: {})
+    cfg = {"playlists": {"endpoints": [
+        {"id": "ep1", "provider": "CROSSWATCH", "instance": "default", "playlist_id": "cwpl_1"},
+        {"id": "ep2", "provider": "TRAKT", "instance": "default", "playlist_id": "cwpl_2"},
+    ]}}
+    rows = {row["list_id"]: row for row in svc.local_lists(cfg)}
+    assert rows["cwpl_1"]["can_delete"] and rows["cwpl_1"]["endpoint_count"] == 1
+    assert rows["cwpl_2"]["can_delete"] and rows["cwpl_2"]["endpoint_count"] == 0
+
+
+def test_deleting_a_crosswatch_list_drops_its_published_feed(tmp_path, monkeypatch) -> None:
+    from services import playlists
+
+    ops = _Lists()
+    monkeypatch.setattr(svc, "_path", lambda: tmp_path / "published_lists.json")
+    monkeypatch.setattr(playlists, "_providers", lambda: {"CROSSWATCH": ops})
+    monkeypatch.setattr(playlists, "supports_playlists", lambda ops: True)
+    monkeypatch.setattr(playlists, "build_provider_config_view", lambda cfg, provider, instance: {})
+    gone = svc.publish("default", "cwpl_2")
+    kept = svc.publish("default", "cwpl_1")
+    assert playlists.delete_provider_playlist({}, "CROSSWATCH", "default", "cwpl_2")["ok"]
+    assert ops.deleted == ["cwpl_2"]
+    assert set(svc.feeds()) == {kept["id"]}
+    assert not svc.authorized(gone["id"], gone["key"])
+    assert not svc.unpublish_list("default", "cwpl_2")
