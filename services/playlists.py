@@ -266,6 +266,10 @@ def delete_provider_playlist(
         return _internal_playlist_error("delete", e, provider=name, instance=inst)
     if isinstance(res, Mapping) and res.get("ok") is False:
         return {"ok": False, "error": str(res.get("error") or "delete failed")}
+    if name == "CROSSWATCH":
+        from services import published_lists
+
+        published_lists.unpublish_list(inst, pid)
     return {"ok": True, "provider": name, "instance": inst, "playlist_id": pid}
 
 

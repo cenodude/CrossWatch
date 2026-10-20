@@ -676,6 +676,8 @@
       const feed = row.feed;
       const tool = { "kometa-movies.json": "Kometa (movies)", "kometa-shows.json": "Kometa (shows)", "radarr.json": "Radarr", "sonarr.json": "Sonarr" }[feed && feed.last_fetch_format] || "";
       const read = feed && feed.last_fetch_at ? `${timeText(feed.last_fetch_at)}<br>${esc(tool ? `by ${tool}` : "")}` : feed ? "Not read yet" : "-";
+      const used = Number(row.endpoint_count || 0);
+      const deleteLabel = !row.can_delete ? "This list cannot be deleted" : used ? `Delete list. Remove the ${used} endpoint(s) that use this list first` : "Delete list";
       return `
         <tr>
           <td><div class="pl-provider">${icon("CROSSWATCH")}<div><div class="pl-main-text">${esc(row.name || row.list_id)}</div><div class="pl-muted">${[row.item_count != null ? `${row.item_count} items` : "", row.instance && row.instance !== "default" ? row.instance : ""].filter(Boolean).map(esc).join(" · ")}</div></div></div></td>
@@ -686,6 +688,7 @@
               ${feed
                 ? `<button class="pl-btn small" data-action="publish-show" data-id="${esc(key)}"><span class="material-symbols-rounded" aria-hidden="true">link</span>Addresses</button>${actionButton("publish-key", key, "New access key", "key", "refresh")}${actionButton("publish-off", key, "Stop publishing", "link_off", "delete")}`
                 : `<button class="pl-btn small" data-action="publish-on" data-id="${esc(key)}"><span class="material-symbols-rounded" aria-hidden="true">publish</span>Publish</button>`}
+              ${actionButton("publish-delete", key, deleteLabel, "delete", "delete", "", !row.can_delete || used > 0)}
             </div>
           </td>
         </tr>
@@ -759,13 +762,15 @@
     if (action === "publish-show") return openPublishedModal(row, btn);
     if (action === "publish-key" && !confirm("Create a new access key? Kometa, Radarr and Sonarr stop reading this list until you paste the new addresses.")) return;
     if (action === "publish-off" && !confirm("Stop publishing this list? The addresses stop working.")) return;
+    if (action === "publish-delete" && !confirm(`Delete ${row.name || "this list"}? The list and its items are removed from CrossWatch${row.feed ? " and the addresses stop working" : ""}.`)) return;
     btn.disabled = true;
     try {
       if (action === "publish-on") await API.publish(row.instance, row.list_id);
       if (action === "publish-key") await API.publishKey(row.feed.id);
       if (action === "publish-off") await API.unpublish(row.feed.id);
+      if (action === "publish-delete") await API.resourceDelete("CROSSWATCH", row.instance, row.list_id);
       await reloadPublished();
-      if (action !== "publish-off") openPublishedModal(publishedRow(key), null);
+      if (action === "publish-on" || action === "publish-key") openPublishedModal(publishedRow(key), null);
     } catch (err) {
       window.cxToast?.(err && err.message ? err.message : "Could not update the published list.");
       btn.disabled = false;

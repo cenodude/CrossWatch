@@ -63,10 +63,25 @@ def _ops() -> Any:
     return ops if ops and supports_playlists(ops) else None
 
 
+def _endpoint_counts(cfg: Mapping[str, Any]) -> dict[tuple[str, str], int]:
+    from cw_platform import playlists_runner
+
+    counts: dict[tuple[str, str], int] = {}
+    for ep in playlists_runner.list_endpoints(cfg):
+        if str(ep.get("provider") or "").strip().upper() != PROVIDER:
+            continue
+        key = (normalize_instance_id(ep.get("instance")), str(ep.get("playlist_id") or "").strip())
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
 def local_lists(cfg: Mapping[str, Any]) -> list[dict[str, Any]]:
+    from services.playlists import _resource_with_manage_flags
+
     ops = _ops()
     if not ops:
         return []
+    used = _endpoint_counts(cfg)
     out: list[dict[str, Any]] = []
     for raw_instance in list_instance_ids(cfg, PROVIDER) or ["default"]:
         instance = normalize_instance_id(raw_instance)
@@ -77,7 +92,9 @@ def local_lists(cfg: Mapping[str, Any]) -> list[dict[str, Any]]:
         for resource in resources:
             extra = resource.extra if isinstance(resource.extra, Mapping) else {}
             out.append({"instance": instance, "list_id": resource.id, "name": resource.name,
-                        "item_count": extra.get("item_count")})
+                        "item_count": extra.get("item_count"),
+                        "can_delete": bool(_resource_with_manage_flags(resource, ops).get("can_delete")),
+                        "endpoint_count": used.get((instance, str(resource.id)), 0)})
     return out
 
 
@@ -120,6 +137,18 @@ def unpublish(feed_id: str) -> bool:
         if current.pop(str(feed_id), None) is None:
             return False
         _write(current)
+        return True
+
+
+def unpublish_list(instance: Any, list_id: Any) -> bool:
+    inst = normalize_instance_id(instance)
+    lid = str(list_id or "").strip()
+    with _LOCK:
+        current = _read()
+        kept = {k: v for k, v in current.items() if not (v.get("instance") == inst and v.get("list_id") == lid)}
+        if len(kept) == len(current):
+            return False
+        _write(kept)
         return True
 
 
