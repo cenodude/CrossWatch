@@ -29,6 +29,9 @@ URL_LIST_ITEMS = f"{API_V3_BASE}/sync/lists/{{id}}/items"
 URL_SCROBBLE = f"{API_V3_BASE}/scrobble/{{action}}"
 URL_UP_NEXT = f"{API_V3_BASE}/sync/up_next"
 URL_UP_NEXT_DROP = f"{API_V3_BASE}/sync/up_next/drop"
+URL_COLLECTION = f"{API_V3_BASE}/sync/collection"
+URL_COLLECTION_MOVIES = f"{API_V3_BASE}/sync/collection/movies"
+URL_COLLECTION_SHOWS = f"{API_V3_BASE}/sync/collection/shows"
 
 BULK_MAX = 1000
 UP_NEXT_PAGE_SIZE = 100
@@ -436,7 +439,7 @@ def percent_of(item: Mapping[str, Any]) -> float | None:
 
 
 _WRITE_ID_ORDER = ("fldb", "tmdb", "imdb", "tvdb")
-_ADD_COUNTERS = ("added", "existing", "restored")
+_ADD_COUNTERS = ("added", "existing", "restored", "updated")
 _REMOVE_COUNTERS = ("removed",)
 
 
@@ -457,7 +460,7 @@ def _ident_tokens(row: Mapping[str, Any]) -> set[str]:
     ids = _norm_write_ids(row.get("ids"))
     season = as_int(row.get("season"))
     episode = as_int(row.get("episode"))
-    frag = f"#s{season}e{episode}" if season is not None and episode is not None else ""
+    frag = f"#s{season}e{episode}" if season is not None and episode is not None else (f"#s{season}" if season is not None else "")
     return {f"{key}:{value}{frag}" for key, value in ids.items()}
 
 
@@ -606,6 +609,9 @@ __all__ = [
     "DEFAULT_POST_PER_SEC",
     "DEFAULT_TIMEOUT",
     "FlickListError",
+    "URL_COLLECTION",
+    "URL_COLLECTION_MOVIES",
+    "URL_COLLECTION_SHOWS",
     "URL_HISTORY",
     "URL_LIST",
     "URL_LISTS",

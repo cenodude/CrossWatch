@@ -51,7 +51,7 @@ def test_sync_manifest_declares_full_provider_features() -> None:
 
     assert manifest["name"] == "FLICKLIST"
     assert manifest["version"] == __VERSION__
-    assert features == {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": True}
+    assert features == {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": True, "collection": True}
     assert OPS.features() == features
     assert caps["watchlist"]["write"] is True
     assert caps["ratings"]["remove"] is True
@@ -61,6 +61,8 @@ def test_sync_manifest_declares_full_provider_features() -> None:
     assert caps["progress"]["read"] is True
     assert caps["playlists"]["create"] is True
     assert caps["playlists"]["reorder"] is False
+    assert caps["collection"]["media_updates"] is True
+    assert caps["collection"]["types"] == {"movies": True, "shows": True, "seasons": True, "episodes": True}
     assert caps["scrobble"]["write"] is True
 
 

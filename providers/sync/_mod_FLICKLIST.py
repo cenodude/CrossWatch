@@ -10,6 +10,7 @@ from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.provider_instances import normalize_instance_id, resolve_provider_block
 from providers.auth._auth_FLICKLIST import ME_URL, is_configured as auth_is_configured
 from providers.sync._mod_common import SimpleRateLimiter, build_op_result, build_session, dedup_keys
+from providers.sync.flicklist import _collection as feat_collection
 from providers.sync.flicklist import _history as feat_history
 from providers.sync.flicklist import _playlists as feat_playlists
 from providers.sync.flicklist import _progress as feat_progress
@@ -26,7 +27,7 @@ from providers.sync.flicklist._common import (
 )
 
 __VERSION__ = "0.2"
-__all__ = ["get_manifest", "FLICKLISTModule", "OPS", "feat_history", "feat_playlists", "feat_progress", "feat_ratings", "feat_watchlist"]
+__all__ = ["get_manifest", "FLICKLISTModule", "OPS", "feat_collection", "feat_history", "feat_playlists", "feat_progress", "feat_ratings", "feat_watchlist"]
 
 if "ctx" not in globals():
     class _NullCtx:
@@ -36,12 +37,13 @@ if "ctx" not in globals():
     ctx = _NullCtx()  # type: ignore[assignment]
 
 
-_FEATURES = {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": True}
+_FEATURES = {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": True, "collection": True}
 _FEATURE_MODULES = {
     "watchlist": feat_watchlist,
     "ratings": feat_ratings,
     "history": feat_history,
     "progress": feat_progress,
+    "collection": feat_collection,
 }
 _ACCEPTED_IDS = ["fldb", "tmdb", "imdb", "tvdb"]
 
@@ -137,6 +139,19 @@ def get_manifest() -> Mapping[str, Any]:
                 "smart_lists_read_only": True,
                 "types": {"movies": True, "shows": True, "seasons": False, "episodes": True},
                 "accepted_ids": list(_ACCEPTED_IDS),
+                "batch_size": 1000,
+            },
+            "collection": {
+                "read": True,
+                "write": True,
+                "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
+                "upsert": True,
+                "remove": True,
+                "observed_deletes": True,
+                "accepted_ids": list(_ACCEPTED_IDS),
+                "provides_ids": ["fldb", "tmdb", "imdb", "tvdb", "anilist"],
+                "default_format": "digital",
+                "media_updates": True,
                 "batch_size": 1000,
             },
             "scrobble": {"read": False, "write": True, "actions": ["start", "pause", "stop"], "accepted_ids": list(_ACCEPTED_IDS)},

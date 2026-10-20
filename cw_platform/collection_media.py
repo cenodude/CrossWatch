@@ -401,6 +401,18 @@ def to_floppy_fields(item: Mapping[str, Any]) -> dict[str, Any]:
     return out
 
 
+def to_flicklist_fields(item: Mapping[str, Any]) -> dict[str, Any]:
+    media = _known_media(item_media(item))
+    out: dict[str, Any] = {}
+    fmt = _folded_format(normalize_format(item.get("format") or item.get("edition_format")), media)
+    if fmt:
+        out["format"] = fmt
+    out.update({key: media[key] for key in ("resolution", "hdr", "audio", "audio_channels") if media.get(key)})
+    if media.get("is_3d") is True:
+        out["3d"] = True
+    return out
+
+
 def punchplay_format(item: Mapping[str, Any]) -> str:
     fmt = normalize_format(item.get("format") or item.get("edition_format"))
     if fmt == "bluray" and item_media(item).get("resolution") == "uhd_4k":

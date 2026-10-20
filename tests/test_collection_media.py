@@ -106,6 +106,13 @@ def test_from_trakt_metadata() -> None:
     assert cm.from_trakt_metadata({"3d": None, "hdr": None, "audio": None, "media_type": None, "resolution": None, "audio_channels": None}) == ("", {})
 
 
+def test_to_flicklist_fields_sends_only_valid_values() -> None:
+    item = {"format": "Blu-ray", "media_info": {"resolution": "uhd_4k", "hdr": "HDR10", "audio": "mystery codec", "audio_channels": "22.2", "is_3d": True}}
+    assert cm.to_flicklist_fields(item) == {"format": "4k_bluray", "resolution": "uhd_4k", "hdr": "hdr10", "3d": True}
+    assert cm.to_flicklist_fields({"format": "steelbook", "media_info": {"is_3d": False}}) == {}
+    assert cm.to_flicklist_fields({"format": "hddvd"}) == {"format": "hd_dvd"}
+
+
 def test_punchplay_format_folds_4k_bluray() -> None:
     assert cm.punchplay_format({"format": "bluray", "media_info": {"resolution": "uhd_4k"}}) == "4k_bluray"
     assert cm.punchplay_format({"format": "digital", "media_info": {"resolution": "uhd_4k"}}) == "digital"
