@@ -176,6 +176,7 @@
 
   async function refresh() {
     if (!$("assistant_settings")) return;
+    try { await w.__cwAuthBootstrapPromise; } catch {}
     try {
       render(await api("/settings"));
     } catch (err) {
