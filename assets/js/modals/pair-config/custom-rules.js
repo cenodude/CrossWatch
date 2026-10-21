@@ -12,6 +12,8 @@ const RATINGS_TYPE_RULES = {
   MYANIMELIST: { disable: ["seasons", "episodes"] },
   KITSU: { disable: ["seasons", "episodes"] },
   STREMIO: { disable: ["seasons", "episodes"] },
+  KODI: { disable: ["shows", "seasons"] },
+  PUBLICMETADB: { disable: ["seasons"] },
 };
 
 const COLLECTION_TYPES = {

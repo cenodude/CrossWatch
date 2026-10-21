@@ -15,7 +15,6 @@ from ._common import (
     URL_COLLECTION_MOVIES,
     URL_COLLECTION_SHOWS,
     FlickListError,
-    _write_ids_from,
     as_int,
     cfg_section,
     chunk,
@@ -151,14 +150,8 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
 
 def _ident(item: Mapping[str, Any]) -> dict[str, Any] | None:
     typ = str(item.get("type") or "").strip().lower()
-    if typ == "season":
-        season = as_int(item.get("season") if item.get("season") is not None else item.get("season_number"))
-        ids = _write_ids_from(item, prefer_show=True) or _write_ids_from(item)
-        if season is None or not ids:
-            return None
-        return {"ids": ids, "media_type": "show", "season": season}
-    if typ in {"movie", "show", "series", "tv", "episode"}:
-        return write_ident(item)
+    if typ in {"movie", "show", "series", "tv", "season", "episode"}:
+        return write_ident(item, seasons=True)
     return None
 
 

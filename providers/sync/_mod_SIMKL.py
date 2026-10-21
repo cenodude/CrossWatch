@@ -874,6 +874,7 @@ class _SIMKLOPS:
             "ratings": {
                 "index_semantics": "present",
                 "observed_deletes": True,
+                "types": {"movies": True, "shows": True, "seasons": False, "episodes": False},
             },
             "progress": {
                 "index_semantics": "present",

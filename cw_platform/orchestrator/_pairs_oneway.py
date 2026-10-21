@@ -255,6 +255,7 @@ from ._pairs_utils import (
     ratings_step_for,
     ratings_zero_for,
     collection_media_updates_for,
+    declared_types_for,
     config_with_pair_libraries as _config_with_pair_libraries,
     _supports_feature,
     _resolve_flags,
@@ -676,7 +677,7 @@ def _bucket_ts(ts: int, bucket_sec: int) -> int:
     return (int(ts) // b) * b
 
 # Feature-specific filters
-def _ratings_filter_index(idx: dict[str, Any], fcfg: Mapping[str, Any]) -> dict[str, Any]:
+def _ratings_filter_index(idx: dict[str, Any], fcfg: Mapping[str, Any], allowed_types: set[str] | None = None) -> dict[str, Any]:
     alias = {"movies":"movie","movie":"movie","shows":"show","show":"show","anime":"show","animes":"show",
              "episodes":"episode","episode":"episode","ep":"episode","eps":"episode"}
     types_raw = [str(t).strip().lower() for t in (fcfg.get("types") or []) if isinstance(t, (str, bytes))]
@@ -687,6 +688,8 @@ def _ratings_filter_index(idx: dict[str, Any], fcfg: Mapping[str, Any]) -> dict[
         vt = alias.get(str(v.get("type","")).strip().lower(),
                        str(v.get("type","")).strip().lower().rstrip("s"))
         if types and vt not in types:
+            return False
+        if allowed_types is not None and vt not in allowed_types:
             return False
         if from_date:
             ra = (v.get("rated_at") or v.get("ratedAt") or "").strip()
@@ -1340,10 +1343,11 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
     matched_history_keys: set[str] = set()
     updates: list[dict[str, Any]] = []
     if feature == "ratings":
-        src_idx  = _ratings_filter_index(src_idx,  fcfg)
-        dst_full = _ratings_filter_index(dst_full, fcfg)
+        dst_types = declared_types_for(dst_ops, "ratings")
+        src_idx  = _ratings_filter_index(src_idx,  fcfg, dst_types)
+        dst_full = _ratings_filter_index(dst_full, fcfg, dst_types)
         if manual_adds:
-            src_idx = _merge_manual_adds(src_idx, manual_adds)
+            src_idx = _ratings_filter_index(_merge_manual_adds(src_idx, manual_adds), {}, dst_types)
         ratings_step = max(ratings_step_for(src_ops), ratings_step_for(dst_ops))
         if ratings_step < 1.0:
             dbg("ratings.step", feature=feature, src=src, dst=dst, step=ratings_step)

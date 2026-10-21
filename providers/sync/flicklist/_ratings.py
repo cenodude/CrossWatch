@@ -48,7 +48,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         if not isinstance(row, Mapping):
             skipped += 1
             continue
-        item = read_minimal(row, default_type=row.get("media_type") or "movie")
+        item = read_minimal(row, default_type=row.get("media_type") or "movie", seasons=True)
         if not item:
             skipped += 1
             continue
@@ -76,7 +76,7 @@ def _accepted(items: Iterable[Mapping[str, Any]], *, include_rating: bool) -> tu
     seen: set[str] = set()
     for raw in items or []:
         key = key_of(raw)
-        payload = write_ident(raw)
+        payload = write_ident(raw, seasons=True)
         if not key or payload is None:
             if key:
                 unresolved_keys.append(key)

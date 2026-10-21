@@ -296,8 +296,14 @@ def _write_ids_from(src: Mapping[str, Any], *, prefer_show: bool = False) -> dic
     return out
 
 
-def write_ident(item: Mapping[str, Any]) -> dict[str, Any] | None:
+def write_ident(item: Mapping[str, Any], *, seasons: bool = False) -> dict[str, Any] | None:
     typ = norm_write_type(item.get("type"))
+    if norm_read_type(item.get("type")) == "season":
+        season = as_int(item.get("season") if item.get("season") is not None else item.get("season_number"))
+        ids = _write_ids_from(item, prefer_show=True) if seasons else {}
+        if not ids or season is None:
+            return None
+        return {"ids": ids, "media_type": "show", "season": season}
     is_episode = norm_read_type(item.get("type")) == "episode" or item.get("season") is not None or item.get("episode") is not None
     ids = _write_ids_from(item, prefer_show=is_episode)
     if not ids:
@@ -314,7 +320,7 @@ def write_ident(item: Mapping[str, Any]) -> dict[str, Any] | None:
     return payload
 
 
-def read_minimal(row: Mapping[str, Any], *, default_type: str = "movie") -> dict[str, Any] | None:
+def read_minimal(row: Mapping[str, Any], *, default_type: str = "movie", seasons: bool = False) -> dict[str, Any] | None:
     ids = ids_from_flicklist(row.get("ids") if isinstance(row.get("ids"), Mapping) else {})
     if not ids:
         return None
@@ -341,6 +347,10 @@ def read_minimal(row: Mapping[str, Any], *, default_type: str = "movie") -> dict
         ep_name = str(row.get("episode_name") or "").strip()
         if ep_name:
             out["title"] = ep_name
+        if title:
+            out["series_title"] = title
+    elif seasons and typ == "show" and season is not None and episode is None:
+        out = {"type": "season", "show_ids": dict(out["ids"]), "season": season, **{k: v for k, v in out.items() if k not in ("type", "ids")}}
         if title:
             out["series_title"] = title
     return id_minimal(out)

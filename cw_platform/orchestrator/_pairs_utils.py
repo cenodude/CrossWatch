@@ -91,6 +91,27 @@ def ratings_zero_for(ops) -> bool:
         return False
 
 
+_DECLARED_TYPE_ALIASES = {
+    "movies": "movie", "movie": "movie", "shows": "show", "show": "show", "series": "show", "tv": "show", "anime": "show",
+    "seasons": "season", "season": "season", "episodes": "episode", "episode": "episode",
+}
+
+
+def declared_types_for(ops, feature: str) -> set[str] | None:
+    try:
+        per = (ops.capabilities() or {}).get(feature)
+    except Exception:
+        return None
+    raw = per.get("types") if isinstance(per, Mapping) else None
+    if isinstance(raw, Mapping):
+        names = [name for name, enabled in raw.items() if enabled]
+    elif isinstance(raw, (list, tuple, set)):
+        names = list(raw)
+    else:
+        return None
+    return {_DECLARED_TYPE_ALIASES.get(str(name).strip().lower(), str(name).strip().lower()) for name in names}
+
+
 def collection_media_updates_for(ops) -> bool:
     try:
         return (ops.capabilities().get("collection") or {}).get("media_updates") is True
