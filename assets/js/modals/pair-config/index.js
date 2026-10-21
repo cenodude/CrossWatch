@@ -2102,7 +2102,7 @@ left.innerHTML = `
     const co = getOpts(state, "collection");
     const hasType=t=>Array.isArray(co.types)&&co.types.includes(t);
     const mediaRead=["plex","emby","jellyfin"].some(p=>same(state.src,p));
-    const mediaUpdates=["trakt","floppy","crosswatch"].some(p=>same(state.dst,p));
+    const mediaUpdates=["trakt","floppy","crosswatch","flicklist"].some(p=>same(state.dst,p));
     left.innerHTML = `<div class="panel-title">Collections | Basics</div>
       <div class="opt-row">
         <label for="cx-co-enable">Enable</label>
