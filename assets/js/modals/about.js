@@ -26,7 +26,7 @@ let activeModal = null;
 const ABOUT_CSS = `
 :host{all:initial}
 *,*::before,*::after{box-sizing:border-box}
-.about-backdrop{--bg:#171a22;--panel:#20242d;--border:rgba(255,255,255,.14);--text:#eef1f6;--muted:#a9b0bd;--accent:#7c5cff;position:fixed;inset:0;z-index:30050;display:grid;place-items:center;padding:24px;background:rgba(6,8,13,.66);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text)}
+.about-backdrop{--bg:var(--cw-about-bg,#171a22);--panel:var(--cw-about-panel,#20242d);--border:var(--cw-about-border,rgba(255,255,255,.14));--text:var(--cw-about-text,#eef1f6);--muted:var(--cw-about-muted,#a9b0bd);--accent:var(--cw-about-accent,#7c5cff);position:fixed;inset:0;z-index:30050;display:grid;place-items:center;padding:24px;background:rgba(6,8,13,.66);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text)}
 .about-panel{position:relative;width:min(1080px,100%);max-height:calc(100vh - 48px);max-height:calc(100dvh - 48px);display:grid;grid-template-rows:auto minmax(0,1fr);overflow:hidden;border:1px solid var(--border);border-radius:20px;background:var(--bg);outline:none}
 .material-symbols-rounded{font-family:"Material Symbols Rounded";font-weight:normal;font-style:normal;font-size:20px;line-height:1;letter-spacing:normal;text-transform:none;display:inline-block;white-space:nowrap;word-wrap:normal;direction:ltr;font-feature-settings:"liga";-webkit-font-feature-settings:"liga";-webkit-font-smoothing:antialiased;font-variation-settings:"FILL" 0,"wght" 560,"GRAD" 0,"opsz" 24}
 .about-x{position:absolute;top:18px;right:20px;z-index:4;display:grid;place-items:center;width:34px;height:34px;padding:0;border:1px solid var(--border);border-radius:10px;background:var(--panel);color:var(--muted);cursor:pointer}
@@ -36,7 +36,7 @@ const ABOUT_CSS = `
 .chip,.about-link{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:34px;padding:7px 12px;border:1px solid var(--border);border-radius:10px;background:var(--panel);color:var(--text);text-decoration:none;white-space:nowrap;font-size:12px;line-height:1.2;font-weight:700}
 .chip{border-radius:999px}
 .chip .material-symbols-rounded,.about-link .material-symbols-rounded{font-size:17px}
-.chip.accent{border-color:rgba(124,92,255,.35);background:#2a2640;color:#d0c4ff}
+.chip.accent{border-color:rgba(124,92,255,.35);background:var(--cw-about-accent-bg,#2a2640);color:var(--cw-about-accent-fg,#d0c4ff)}
 .chip.subtle{color:var(--muted)}
 .about-link:hover{border-color:var(--accent)}
 .ext{font-size:16px}
@@ -44,15 +44,15 @@ const ABOUT_CSS = `
 .about-main{display:grid;gap:12px}
 .about-card,.about-fold{border:1px solid var(--border);border-radius:16px;background:var(--panel)}
 .about-card{padding:16px 20px}
-.update{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:14px;margin-bottom:12px;border-color:rgba(124,92,255,.4);background:#27263b}
-.update>.material-symbols-rounded{display:grid;place-items:center;width:42px;height:42px;border-radius:12px;background:#312c4b;color:#b39aff;font-size:25px}
+.update{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:14px;margin-bottom:12px;border-color:rgba(124,92,255,.4);background:var(--cw-about-update-bg,#27263b)}
+.update>.material-symbols-rounded{display:grid;place-items:center;width:42px;height:42px;border-radius:12px;background:var(--cw-about-icon-bg,#312c4b);color:var(--cw-about-icon-fg,#b39aff);font-size:25px}
 .update .h{font-size:16px;font-weight:800}
 .update .p{margin-top:4px;color:var(--muted);font-size:13px;line-height:1.45}
 .lede-card{display:grid;grid-template-columns:260px minmax(0,1fr);align-items:center;gap:28px;padding:24px}
 .lede-brand{display:grid;grid-template-columns:48px auto;grid-template-areas:"logo wordmark" "motto motto" "coffee coffee";align-items:center;gap:12px;min-width:0}
 .lede-logo{grid-area:logo;width:48px;height:48px;object-fit:contain}
 .lede-wordmark{grid-area:wordmark;font-size:28px;line-height:1;font-weight:800;white-space:nowrap}
-.lede-motto{grid-area:motto;margin:0 0 4px;color:#b4acd3;font:italic 17px/1.5 "Segoe Print","Bradley Hand","Comic Sans MS",cursive}
+.lede-motto{grid-area:motto;margin:0 0 4px;color:var(--cw-about-motto,#b4acd3);font:italic 17px/1.5 "Segoe Print","Bradley Hand","Comic Sans MS",cursive}
 .coffee-link{grid-area:coffee;display:inline-flex;align-items:center;justify-content:center;gap:8px;width:max-content;min-height:38px;padding:8px 14px;border:1px solid #4db888;border-radius:11px;background:#1f6b50;color:#f0fff7;text-decoration:none;font-size:13px;font-weight:800}
 .coffee-link:hover{background:#277e5e;border-color:#68d7a4}
 .coffee-link .material-symbols-rounded{font-size:18px}
@@ -79,8 +79,8 @@ li::marker{color:#997bff}
 .help-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .helpLink{display:grid;grid-template-columns:44px minmax(0,1fr) auto;align-items:center;gap:14px;padding:16px;border:1px solid var(--border);border-radius:16px;background:var(--panel);color:var(--text);text-decoration:none}
 .helpLink:hover{border-color:var(--accent)}
-.helpIcon{display:grid;place-items:center;width:44px;height:44px;border:1px solid rgba(124,92,255,.35);border-radius:12px;background:#2e2943;color:#b59eff}
-.support-card .helpIcon{background:#203b32;border-color:rgba(77,184,136,.35);color:#66d1a0}
+.helpIcon{display:grid;place-items:center;width:44px;height:44px;border:1px solid rgba(124,92,255,.35);border-radius:12px;background:var(--cw-about-icon-bg,#2e2943);color:var(--cw-about-icon-fg,#b59eff)}
+.support-card .helpIcon{background:var(--cw-about-support-bg,#203b32);border-color:rgba(77,184,136,.35);color:var(--cw-about-support-fg,#66d1a0)}
 .helpIcon .material-symbols-rounded{font-size:25px}
 .helpCopy{display:grid;gap:4px;min-width:0}
 .helpEyebrow{color:var(--muted);font-size:10px;font-weight:800;letter-spacing:.07em;text-transform:uppercase}
