@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 
-const core = readFileSync(new URL('../assets/helpers/core.js', import.meta.url), 'utf8');
-const source = core.slice(core.indexOf('  function initMobileNavigation()'), core.indexOf('  const PROVIDER_ORDER'));
+const core = readFileSync(new URL('../assets/helpers/account-menu.js', import.meta.url), 'utf8');
+const source = core.slice(core.indexOf('  function initMobileNavigation()'), core.indexOf('  function normalizeAvatarUrl'));
 
 function fixture(compact = false) {
   const nodes = [];
@@ -17,11 +17,17 @@ function fixture(compact = false) {
     setAttribute(key, value) { this.attrs.set(key, value); }
     getAttribute(key) { return this.attrs.get(key); }
     insertBefore(child) { this.children.push(child); child.parentElement = this; }
+    appendChild(child) { this.insertBefore(child); }
+    querySelectorAll() { return this.children.filter(child => child.destination); }
     contains(node) { return node === this || this.children.some(child => child.contains(node)); }
     focus() { document.activeElement = this; }
   }
   const header = new Element(), nav = new Element(), media = new EventTarget();
   header.insertBefore(nav);
+  const destination = new Element(), account = new Element();
+  destination.destination = true;
+  nav.insertBefore(destination);
+  nav.insertBefore(account);
   document = Object.assign(new EventTarget(), {
     documentElement: {classList: {contains: name => compact && name === 'cw-compact'}},
     querySelector: () => nav,
@@ -29,25 +35,26 @@ function fixture(compact = false) {
     activeElement: null,
   });
   const window = Object.assign(new EventTarget(), {matchMedia: () => media});
-  const context = vm.createContext({document, window, byId: id => nodes.find(node => node.id === id)});
+  const context = vm.createContext({document, window, $: id => nodes.find(node => node.id === id)});
   vm.runInContext(source + '\ninitMobileNavigation();', context);
-  const toggle = nodes[0];
+  const toggle = nodes.find(node => node.id === 'cw-mobile-nav-toggle');
+  const panel = nodes.find(node => node.id === 'cw-mobile-navigation');
   const fire = (target, name, props = {}) => {
     const event = new Event(name);
     Object.entries(props).forEach(([key, value]) => Object.defineProperty(event, key, {value}));
     target.dispatchEvent(event);
   };
-  return {header, nav, media, document, window, toggle, fire, context, nodes};
+  return {header, nav, panel, destination, account, media, document, window, toggle, fire, context, nodes};
 }
 
 test('mobile menu opens, closes and restores focus with Escape', () => {
-  const {toggle, header, nav, document, fire} = fixture();
-  assert.equal(toggle.getAttribute('aria-controls'), nav.id);
+  const {toggle, header, panel, document, fire} = fixture();
+  assert.equal(toggle.getAttribute('aria-controls'), panel.id);
   assert.equal(toggle.getAttribute('aria-expanded'), 'false');
   fire(toggle, 'click');
   assert(header.classList.contains('cw-nav-open'));
   assert.equal(toggle.getAttribute('aria-expanded'), 'true');
-  document.activeElement = nav;
+  document.activeElement = panel;
   fire(document, 'keydown', {key: 'Escape'});
   assert.equal(toggle.getAttribute('aria-expanded'), 'false');
   assert.equal(document.activeElement, toggle);
@@ -77,5 +84,12 @@ test('outside click, route changes and desktop resizing close the mobile menu', 
     assert.equal(toggle.getAttribute('aria-expanded'), 'false');
   }
   vm.runInContext('initMobileNavigation();', context);
-  assert.equal(nodes.length, 1);
+  assert.equal(nodes.length, 2);
+});
+
+test('navigation panel contains destinations while account controls stay outside', () => {
+  const {panel, nav, destination, account} = fixture();
+  assert.equal(destination.parentElement, panel);
+  assert.equal(account.parentElement, nav);
+  assert(!panel.contains(account));
 });

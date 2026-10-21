@@ -30,5 +30,36 @@ html.cw-compact #stats-card{grid-column:1!important;grid-row:auto!important;alig
 header .tabs{align-self:stretch;gap:4px}header .tabs .cw-tabmenu{align-self:stretch}header .tabs .tab{position:relative;align-self:stretch;min-height:38px;padding:0 12px;border:0!important;border-radius:0!important;background:transparent!important;box-shadow:none!important;color:var(--muted)!important;font-family:inherit;font-size:14px;font-weight:600;letter-spacing:0;transform:none!important;overflow:visible}header .tabs .tab::after{content:"";position:absolute;left:10px;right:10px;bottom:-1px;height:2px;border-radius:2px;background:var(--accent);transform:scaleX(0);transform-origin:center;transition:transform 0.16s ease}header .tabs .tab:hover,header .tabs .tab.active{background:transparent!important;color:var(--fg)!important;box-shadow:none!important;transform:none!important}header .tabs .tab.active::after{transform:scaleX(1)}
 header .tabs .tab:focus-visible{outline:2px solid color-mix(in srgb,var(--accent)48%,transparent);outline-offset:-2px}html[data-cw-theme] header .tabs .tab{background:transparent!important;border:0!important;box-shadow:none!important;color:var(--muted)!important;-webkit-text-fill-color:var(--muted)!important;text-shadow:none!important}html[data-cw-theme] header .tabs .tab:hover,html[data-cw-theme] header .tabs .tab.active{background:transparent!important;border:0!important;box-shadow:none!important;color:var(--fg)!important;-webkit-text-fill-color:var(--fg)!important}html[data-cw-theme] header .tabs .tab :is(span,b,strong){color:inherit!important;-webkit-text-fill-color:inherit!important}
 
-/* Phone navigation uses the existing links and account controls. */
-@media(max-width:760px){body>header{padding:8px 12px;gap:8px;min-height:60px;box-sizing:border-box}body>header .brand{min-width:0;flex:1}body>header .brand-text{display:grid;gap:1px;min-width:0}body>header .brand .version{display:block;margin:2px 0 0;top:0}body>header .cw-mobile-nav-toggle{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:44px;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--panel);color:var(--fg);font:inherit;cursor:pointer}body>header:has(.cw-mobile-nav-toggle)>.tabs{display:none}html.cw-compact body>header .cw-mobile-nav-toggle{display:none}body>header>.cw-ui-toggle{display:flex;align-items:center;flex:0 0 auto;margin-left:0;order:1}body>header>.tabs{order:2}body>header .cw-ui-toggle .cw-ui-btn{min-height:44px;height:auto;padding:8px 10px;border-radius:8px}body>header.cw-nav-open>.tabs{display:flex;width:100%;flex-wrap:wrap;gap:4px;margin:0;max-height:calc(100dvh - 140px);overflow-y:auto;overscroll-behavior:contain}body>header .tabs>.tab,body>header .tabs>.cw-tabmenu{flex:1 1 45%;min-width:0}body>header .tabs .tab{min-height:44px;width:100%;justify-content:flex-start;padding:0 12px}body>header .tabs .cw-tabmenu{flex-direction:column}body>header .tabs .cw-tabmenu:has(>button[aria-expanded="true"]){flex-basis:100%}body>header .tabs :is(#cw-settings-menu,#cw-about-menu){position:static!important;inset:auto!important;transform:none!important;width:100%!important;margin:0}body>header .tabs .cw-menu{position:static;width:100%;min-width:0;max-width:100%;box-sizing:border-box;transform:none}body>header .tabs .cw-menu-item{min-height:44px;white-space:normal}body>header .tabs .cw-nav-profile-menu{position:static}body>header .tabs .cw-profile-menu{position:absolute;left:12px;right:12px;width:auto}.grid2{grid-template-columns:minmax(0,1fr)}#page-settings #cw-settings-left{scroll-margin-top:76px}#layout{padding-inline:12px}}@media(max-width:420px){body>header .cw-mobile-nav-toggle{width:44px;flex:0 0 44px;padding:8px}body>header .cw-mobile-nav-toggle>span:not(.material-symbols-rounded){display:none}}#layout>.tab-page{min-width:0;max-width:100%;box-sizing:border-box}
+.cw-mobile-navigation{display:contents}
+@media(max-width:760px){
+body>header{padding:8px 12px;gap:4px;min-height:60px;box-sizing:border-box;flex-wrap:nowrap}
+body>header .brand{min-width:0;flex:1;gap:6px}
+body>header .brand-text{min-width:0}
+body>header .brand .name{font-size:17px;white-space:nowrap}
+body>header .brand .logo{width:28px;height:28px}
+body>header .brand .version{display:none}
+body>header .cw-mobile-nav-toggle{display:inline-flex;align-items:center;justify-content:center;flex:0 0 44px;width:44px;height:44px;padding:0;border:1px solid var(--border);border-radius:8px;background:var(--panel);color:var(--fg);font:inherit;cursor:pointer;order:3}
+body>header .cw-mobile-nav-toggle>span:not(.material-symbols-rounded){display:none}
+body>header .cw-mobile-nav-toggle:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+body>header:has(.cw-mobile-nav-toggle)>.tabs{display:contents}
+body>header .cw-mobile-navigation{display:none;position:absolute;top:100%;left:0;right:0;padding:8px 12px 12px;max-height:calc(100dvh - 76px);overflow-y:auto;overscroll-behavior:contain;background:var(--cw-theme-surface,var(--panel));border-bottom:1px solid var(--border);box-sizing:border-box;box-shadow:0 12px 24px #0003}
+body>header.cw-nav-open .cw-mobile-navigation{display:flex;flex-direction:column;gap:4px}
+body>header .tabs .tab{min-height:44px;width:100%;justify-content:flex-start;padding:0 12px}
+body>header .tabs .cw-tabmenu{flex-direction:column}
+body>header .tabs :is(#cw-settings-menu,#cw-about-menu){position:static!important;inset:auto!important;transform:none!important;width:100%!important;margin:0}
+body>header .tabs .cw-menu{min-width:0;max-width:100%;box-sizing:border-box}
+body>header .tabs :is(#cw-profile-menu,#cw-settings-menu,#cw-about-menu) .cw-menu-item{min-height:44px;white-space:normal}
+body>header #cw-notifications-button{width:44px;height:44px;flex:0 0 44px;margin:0;order:1}
+body>header .cw-nav-profile-menu{position:static;order:2;flex:0 0 44px;margin:0}
+body>header #cw-nav-profile-link{--cw-account-size:44px;--cw-account-padding:0}
+body>header #cw-nav-profile-link .tab-caret{display:none}
+body>header #cw-profile-menu.cw-menu{position:absolute;left:12px;right:12px;top:100%;width:auto}
+body>header #cw-ask-button{display:none}
+body>header>.cw-ui-toggle{display:none}
+html.cw-compact body>header .cw-mobile-nav-toggle{display:none}
+.grid2{grid-template-columns:minmax(0,1fr)}
+#page-settings #cw-settings-left{scroll-margin-top:76px}
+#layout{padding-inline:12px}
+}
+@media(max-width:360px){body>header{padding-inline:8px}body>header .brand .name{font-size:15px}body>header .brand .logo{width:24px;height:24px}}
+#layout>.tab-page{min-width:0;max-width:100%;box-sizing:border-box}
