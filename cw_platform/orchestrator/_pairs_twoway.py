@@ -87,7 +87,7 @@ except Exception:
     def _media_filter(idx: dict[str, Any], fcfg: Mapping[str, Any]) -> dict[str, Any]:
         return idx
 
-    def _rate_filter(idx: dict[str, Any], fcfg: Mapping[str, Any]) -> dict[str, Any]:
+    def _rate_filter(idx: dict[str, Any], fcfg: Mapping[str, Any], allowed_types: set[str] | None = None) -> dict[str, Any]:
         return idx
 
 from ..id_map import migrate_media_index, minimal as _minimal, canonical_key as _ck, merge_ids as _merge_ids, _norm_type, part_fragment as _part_fragment
@@ -129,6 +129,7 @@ from ._history_rewatches import (
     history_rewatches_requested,
 )
 from ._pairs_utils import (
+    declared_types_for,
     ratings_step_for,
     ratings_zero_for,
     config_with_pair_libraries as _config_with_pair_libraries,
@@ -1110,15 +1111,19 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
     rem_from_B: list[dict[str, Any]] = []
     unresolved_A: set[str] = set()
     unresolved_B: set[str] = set()
+    retry_scope: tuple[dict[str, Any], dict[str, str], dict[str, Any], dict[str, str]] | None = None
 
     if feature == "ratings":
         ratings_step = max(ratings_step_for(aops), ratings_step_for(bops))
         ratings_zero = ratings_zero_for(aops) and ratings_zero_for(bops)
-        A_f = _rate_filter(A_eff, fcfg)
-        B_f = _rate_filter(B_eff, fcfg)
+        a_types, b_types = declared_types_for(aops, "ratings"), declared_types_for(bops, "ratings")
+        both_types = a_types & b_types if a_types is not None and b_types is not None else (a_types if a_types is not None else b_types)
+        A_f = _rate_filter(A_eff, fcfg, both_types)
+        B_f = _rate_filter(B_eff, fcfg, both_types)
 
         B_alias_tmp = _alias_index(B_f)
         A_alias_tmp = _alias_index(A_f)
+        retry_scope = (A_f, A_alias_tmp, B_f, B_alias_tmp)
 
         def _rated_epoch(it: Mapping[str, Any]) -> int | None:
             from datetime import datetime
@@ -1952,8 +1957,9 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             emit("debug", msg="unresolved.remove_retry", feature=feature, dst=dst_name, count=len(retry))
         return list(planned_items) + retry
 
-    rem_from_A = _retry_pending_removes(a, A_eff, A_alias, B_eff, B_alias, rem_from_A, a_cfg.get("_cw_provider_instance"))
-    rem_from_B = _retry_pending_removes(b, B_eff, B_alias, A_eff, A_alias, rem_from_B, b_cfg.get("_cw_provider_instance"))
+    A_retry, A_retry_alias, B_retry, B_retry_alias = retry_scope or (A_eff, A_alias, B_eff, B_alias)
+    rem_from_A = _retry_pending_removes(a, A_retry, A_retry_alias, B_retry, B_retry_alias, rem_from_A, a_cfg.get("_cw_provider_instance"))
+    rem_from_B = _retry_pending_removes(b, B_retry, B_retry_alias, A_retry, A_retry_alias, rem_from_B, b_cfg.get("_cw_provider_instance"))
     retry_remove_keys = {k for k in (_sync_key(it) for it in (rem_from_A or []) + (rem_from_B or [])) if k}
     add_to_A = [it for it in add_to_A if _sync_key(it) not in retry_remove_keys]
     add_to_B = [it for it in add_to_B if _sync_key(it) not in retry_remove_keys]

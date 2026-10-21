@@ -110,7 +110,7 @@ def _find_resource(adapter: Any, playlist_id: Any) -> PlaylistResource | None:
 
 
 def _item_from_row(row: Mapping[str, Any]) -> PlaylistItem | None:
-    media = read_minimal(row, default_type=row.get("media_type") or row.get("type") or "movie")
+    media = read_minimal(row, default_type=row.get("media_type") or row.get("type") or "movie", seasons=True)
     if not media:
         return None
     key = canonical_key(media)
@@ -185,7 +185,7 @@ def _accepted(items: Sequence[Mapping[str, Any]]) -> tuple[list[tuple[str, dict[
     for raw in items or []:
         media = id_minimal(raw)
         key = key_of(media)
-        payload = write_ident(media)
+        payload = write_ident(media, seasons=True)
         if not key or payload is None:
             unresolved.append({"item": media, "hint": "missing_supported_id"})
             continue

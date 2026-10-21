@@ -259,6 +259,66 @@ def test_history_add_uses_configured_flicklist_write_batch_size(monkeypatch: pyt
     assert res["count"] == 205
 
 
+def test_season_rows_are_only_read_as_seasons_when_asked() -> None:
+    from providers.sync.flicklist._common import key_of, read_minimal
+
+    row = {"rating": 8.0, "season_number": 2, "episode_number": None, "title": "Breaking Bad", "year": 2008, "media_type": "tv", "ids": {"fldb": "flt_5b", "tmdb": 1396, "tvdb": 81189}}
+
+    season = read_minimal(row, default_type="tv", seasons=True)
+    assert season is not None
+    assert season["type"] == "season"
+    assert season["show_ids"] == {"tmdb": "1396", "tvdb": "81189"}
+    assert key_of(season) == "tmdb:1396#season:2"
+    assert key_of(read_minimal(row, default_type="tv") or {}) == "tmdb:1396#show"
+
+
+def test_season_writes_need_the_season_opt_in() -> None:
+    from providers.sync.flicklist._common import write_ident
+
+    item = {"type": "season", "ids": {"tmdb": "3572"}, "show_ids": {"tmdb": "1396"}, "season": 2}
+
+    assert write_ident(item) is None
+    assert write_ident(item, seasons=True) == {"ids": {"tmdb": 1396}, "media_type": "show", "season": 2}
+    assert write_ident({"type": "season", "ids": {"tmdb": "3572"}, "season": 2}, seasons=True) is None
+    assert write_ident({"type": "season", "show_ids": {"tmdb": "1396"}, "_flicklist_fldb": "flt_5b", "season": 2}, seasons=True) == {"ids": {"fldb": "flt_5b"}, "media_type": "show", "season": 2}
+
+
+def test_ratings_index_keeps_season_and_show_ratings_apart(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.flicklist import _ratings as ratings
+
+    ids = {"fldb": "flt_5b", "tmdb": 1396, "imdb": "tt0903747", "tvdb": 81189}
+    rows = [
+        {"rating": 9.0, "rated_at": "2026-10-01T00:00:00.000Z", "season_number": None, "episode_number": None, "title": "Breaking Bad", "media_type": "tv", "ids": ids},
+        {"rating": 8.0, "rated_at": "2026-10-02T00:00:00.000Z", "season_number": 2, "episode_number": None, "title": "Breaking Bad", "media_type": "tv", "ids": ids},
+        {"rating": 7.0, "rated_at": "2026-10-03T00:00:00.000Z", "season_number": 1, "episode_number": 1, "title": "Breaking Bad", "media_type": "tv", "ids": ids},
+    ]
+    monkeypatch.setattr(ratings, "flicklist_request", lambda *args, **kwargs: _Resp(200, rows))
+
+    idx = ratings.build_index(object())
+
+    assert {k: v["rating"] for k, v in idx.items()} == {"tmdb:1396#show": 9.0, "tmdb:1396#season:2": 8.0, "tmdb:1396#s01e01": 7.0}
+
+
+def test_ratings_and_playlists_send_season_items(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.flicklist import _playlists as playlists
+    from providers.sync.flicklist import _ratings as ratings
+
+    calls: list[dict[str, Any]] = []
+
+    def fake_request(adapter: Any, method: str, url: str, **kwargs: Any) -> _Resp:
+        calls.append({"method": method, "url": url, **kwargs})
+        return _Resp(200, {"added": 1})
+
+    monkeypatch.setattr(ratings, "flicklist_request", fake_request)
+    monkeypatch.setattr(playlists, "flicklist_request", fake_request)
+    item = {"type": "season", "show_ids": {"tmdb": "1396"}, "season": 2, "rating": 8}
+
+    assert ratings.add(object(), [item])["count"] == 1
+    assert playlists.add(object(), "42", [item])["count"] == 1
+    assert calls[0]["json"]["items"] == [{"ids": {"tmdb": 1396}, "media_type": "show", "season": 2, "rating": 8.0}]
+    assert calls[1]["json"]["items"] == [{"ids": {"tmdb": 1396}, "media_type": "show", "season": 2}]
+
+
 def test_ratings_and_progress_episode_payloads_use_show_ids(monkeypatch: pytest.MonkeyPatch) -> None:
     from providers.sync.flicklist import _progress as progress
     from providers.sync.flicklist import _ratings as ratings

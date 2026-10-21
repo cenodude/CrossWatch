@@ -26,7 +26,7 @@ from providers.sync.flicklist._common import (
     tag_dropped_shows as flicklist_tag_dropped_shows,
 )
 
-__VERSION__ = "0.2"
+__VERSION__ = "0.3"
 __all__ = ["get_manifest", "FLICKLISTModule", "OPS", "feat_collection", "feat_history", "feat_playlists", "feat_progress", "feat_ratings", "feat_watchlist"]
 
 if "ctx" not in globals():
@@ -93,7 +93,7 @@ def get_manifest() -> Mapping[str, Any]:
             "ratings": {
                 "read": True,
                 "write": True,
-                "types": {"movies": True, "shows": True, "seasons": False, "episodes": True},
+                "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
                 "upsert": True,
                 "remove": True,
                 "observed_deletes": True,
@@ -137,7 +137,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "remove": True,
                 "reorder": False,
                 "smart_lists_read_only": True,
-                "types": {"movies": True, "shows": True, "seasons": False, "episodes": True},
+                "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
                 "accepted_ids": list(_ACCEPTED_IDS),
                 "batch_size": 1000,
             },
