@@ -3,6 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import time
+from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
@@ -58,6 +60,7 @@ def _clamp(value: Any) -> float:
 
 DEFAULT_WATCHED_AT = 90.0
 _COMPLETE_TTL = 6 * 3600
+_COMPLETE_MAX = 512
 _AR_TTL = 60
 
 
@@ -233,6 +236,7 @@ class FloppySink(ScrobbleSink):
     def __init__(self, cfg_provider: Callable[[], dict[str, Any]] | None = None, instance_id: str | None = None) -> None:
         self._cfg_provider = cfg_provider
         self._instance_id = normalize_instance_id(instance_id)
+        self._completed: OrderedDict[str, tuple[float, str]] = OrderedDict()
 
     def _cfg(self, cfg: dict[str, Any] | None = None) -> dict[str, Any]:
         if isinstance(cfg, dict):
@@ -264,7 +268,22 @@ class FloppySink(ScrobbleSink):
         base = "|".join(f"{k}:{ids[k]}" for k in sorted(ids) if ids.get(k)) or str(ev.title or "")
         if ev.media_type == "episode":
             base = f"{base}|s{_int(ev.season) or 0}e{_int(ev.number) or 0}"
-        return f"{ev.session_key or '?'}:{base}"
+        return f"{ev.server_uuid or '?'}:{ev.session_key or '?'}:{ev.media_type}:{base}"
+
+    def _session_state(self, key: str, action: str, progress: float) -> str | None:
+        now = time.time()
+        for stale in [k for k, (seen, _state) in self._completed.items() if now - seen > _COMPLETE_TTL]:
+            self._completed.pop(stale, None)
+        if action == "start" and progress <= 2:
+            self._completed.pop(key, None)
+        entry = self._completed.get(key)
+        return entry[1] if entry else None
+
+    def _mark_session(self, key: str, state: str) -> None:
+        self._completed[key] = (time.time(), state)
+        self._completed.move_to_end(key)
+        while len(self._completed) > _COMPLETE_MAX:
+            self._completed.popitem(last=False)
 
     def send(self, ev: ScrobbleEvent, cfg: dict[str, Any] | None = None) -> dict[str, Any] | None:
         cfgd = self._cfg(cfg)
@@ -277,27 +296,36 @@ class FloppySink(ScrobbleSink):
             _log("Floppy sink skipped event without enough identity", "DEBUG")
             return {"ok": True, "log_status": "skipped", "reason": "missing_media_identity"}
         complete_key = self._key(ev)
+        progress = _clamp(ev.progress)
         is_complete_stop = body.get("action") == "stop" and body.get("completed") is True
-        if is_complete_stop and not (ev.raw or {}).get("_cw_episode_group") and not once_per_ttl(
-            _dedupe_base_path(), "floppy_scrobble_completed", complete_key, ttl_seconds=_COMPLETE_TTL
-        ):
+        session_state = self._session_state(complete_key, str(body.get("action") or ""), progress)
+        if is_complete_stop and session_state == "uncertain":
+            return {"ok": False, "error": "completion_unconfirmed", "retryable": False}
+        if is_complete_stop and not (ev.raw or {}).get("_cw_episode_group") and session_state == "completed":
             return {"ok": True, "log_status": "skipped", "reason": "session_completed"}
         src, src_inst = _route_source(cfgd)
         try:
             api_post(_Adapter(self._client(view)), "scrobble", json=body)
         except FloppyAuthError as exc:
             reason = str(getattr(exc, "reason", "") or "request_failed")
-            _log(f"scrobble failed status={getattr(exc, 'status_code', None)} reason={reason}", "ERROR")
+            status = getattr(exc, "status_code", None)
+            _log(f"scrobble failed status={status} reason={reason}", "ERROR")
             if body.get("action") in {"start", "stop"}:
-                record_watch(ev, action=str(body.get("action")), source_provider=src, source_instance=src_inst, destination_provider="floppy", destination_instance=self._instance_id, status="fail", progress=_clamp(ev.progress), reason=reason)
-            return
+                record_watch(ev, action=str(body.get("action")), source_provider=src, source_instance=src_inst, destination_provider="floppy", destination_instance=self._instance_id, status="fail", progress=progress, reason=reason)
+            uncertain = is_complete_stop and (not status or status == 404 or status >= 500)
+            if uncertain:
+                self._mark_session(complete_key, "uncertain")
+            retryable = not uncertain and (reason == "request_failed" or (isinstance(status, int) and (status in (408, 429) or status >= 500)))
+            return {"ok": False, "error": reason, "retryable": retryable}
         except Exception as exc:
             _log(f"scrobble failed err={exc}", "ERROR")
-            return
-        progress = _clamp(ev.progress)
+            if is_complete_stop:
+                self._mark_session(complete_key, "uncertain")
+            return {"ok": False, "error": "request_failed", "retryable": not is_complete_stop}
         action = str(body.get("action") or ev.action)
         record_watch(ev, action=action, source_provider=src, source_instance=src_inst, destination_provider="floppy", destination_instance=self._instance_id, progress=progress)
         if action == "stop" and body.get("completed") is True:
+            self._mark_session(complete_key, "completed")
             _auto_remove_across(ev, cfgd, scope=f"floppy:{self._instance_id}")
             try:
                 record_scrobble_event(ev, source=src, source_instance=src_inst, target="floppy", target_instance=self._instance_id, progress=progress)
