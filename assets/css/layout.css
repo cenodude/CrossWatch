@@ -32,8 +32,8 @@ header .tabs .tab:focus-visible{outline:2px solid color-mix(in srgb,var(--accent
 
 .cw-mobile-navigation{display:contents}
 @media(max-width:760px){
-body>header{padding:8px 12px;gap:4px;min-height:60px;box-sizing:border-box;flex-wrap:nowrap}
-body>header .brand{min-width:0;flex:1;gap:6px}
+body>header{padding:8px 12px;gap:4px;min-height:60px;box-sizing:border-box;flex-wrap:wrap}
+body>header .brand{min-width:0;flex:1 0 auto;gap:6px}
 body>header .brand-text{min-width:0}
 body>header .brand .name{font-size:17px;white-space:nowrap}
 body>header .brand .logo{width:28px;height:28px}
@@ -55,7 +55,8 @@ body>header #cw-nav-profile-link{--cw-account-size:44px;--cw-account-padding:0}
 body>header #cw-nav-profile-link .tab-caret{display:none}
 body>header #cw-profile-menu.cw-menu{position:absolute;left:12px;right:12px;top:100%;width:auto}
 body>header #cw-ask-button{display:none}
-body>header>.cw-ui-toggle{display:none}
+body>header>.cw-ui-toggle{display:flex;align-items:center;flex:0 0 auto;margin-left:auto;order:4}
+body>header .cw-ui-toggle .cw-ui-btn{min-height:44px;height:auto}
 html.cw-compact body>header .cw-mobile-nav-toggle{display:none}
 .grid2{grid-template-columns:minmax(0,1fr)}
 #page-settings #cw-settings-left{scroll-margin-top:76px}
