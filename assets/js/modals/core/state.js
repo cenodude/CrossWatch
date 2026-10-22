@@ -18,9 +18,10 @@ export function trapFocus(container){
   function list(){ return Array.from(container.querySelectorAll(Q)).filter(n=>!n.disabled && n.offsetParent!==null); }
   container.addEventListener('keydown', (e)=>{
     if(e.key!=='Tab') return;
-    const items = list(); if(!items.length) return;
+    const items = list(); if(!items.length){ e.preventDefault(); return; }
     const first = items[0], last = items[items.length-1];
-    if(e.shiftKey && document.activeElement===first){ last.focus(); e.preventDefault(); }
+    if(document.activeElement===container){ (e.shiftKey ? last : first).focus(); e.preventDefault(); }
+    else if(e.shiftKey && document.activeElement===first){ last.focus(); e.preventDefault(); }
     else if(!e.shiftKey && document.activeElement===last){ first.focus(); e.preventDefault(); }
   });
 }

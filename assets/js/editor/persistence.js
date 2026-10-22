@@ -120,7 +120,7 @@
     if (missing.length) {
       ctx.setTag?.("error", "Missing key");
       ctx.setStatus?.(
-        `Cannot save: ${missing.length} row${missing.length === 1 ? "" : "s"} have data but no Key. Fill the Key or remove the row.`
+        `Cannot save: ${missing.length} row${missing.length === 1 ? " has" : "s have"} data but no Key. Fill the Key or remove the row.`
       );
       if (window.cxToast) window.cxToast("Fill Key for all rows with data before saving");
       return;

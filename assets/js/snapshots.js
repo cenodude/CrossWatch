@@ -1569,13 +1569,13 @@ repopDiffSelects();
       item.className = `${child ? "child " : ""}${state.selectedPath === path ? "active " : ""}${checked ? "checked" : ""}`;
       item.dataset.path = path;
       item.innerHTML = `
-        <td class="ss-col-check"><span class="ss-pickcell">${abTag ? `<span class="ss-ab ${abTag === "A" ? "a" : "b"}" data-act="diffremove" title="Unselect capture">${abTag}</span>` : ""}<input class="ss-chk" type="checkbox" name="ss-diffpick" title="Select capture" data-act="diffpick" ${checked ? "checked" : ""} /></span></td>
-        <td class="ss-col-provider"><span class="ss-badge ok" data-provider="${escapeHtml(String(s.provider || "").toLowerCase())}">${escapeHtml((s.provider || "-").toUpperCase())}</span></td>
-        <td class="ss-col-feature" title="${escapeHtml(featureLabel)}"><span class="ss-feature-cell"><span class="ss-feature-label">${escapeHtml(featureLabel)}</span>${extra}</span></td>
-        <td class="ss-col-type">${escapeHtml(snapTypeLabel(s))}</td>
-        <td class="ss-col-label ${s.label ? "" : "ss-row-muted"}">${escapeHtml(String(label).slice(0, 60))}</td>
-        <td class="ss-col-created">${escapeHtml(snapCreatedText(s))}</td>
-        <td class="ss-col-profile">${escapeHtml(snapInstance(s))}</td>
+        <td class="ss-col-check"><label class="ss-pickcell">${abTag ? `<span class="ss-ab ${abTag === "A" ? "a" : "b"}" data-act="diffremove" title="Unselect capture">${abTag}</span>` : ""}<input class="ss-chk" type="checkbox" name="ss-diffpick" title="Select capture" aria-label="Select capture" data-act="diffpick" ${checked ? "checked" : ""} /></label></td>
+        <td data-label="Provider" class="ss-col-provider"><span class="ss-badge ok" data-provider="${escapeHtml(String(s.provider || "").toLowerCase())}">${escapeHtml((s.provider || "-").toUpperCase())}</span></td>
+        <td data-label="Feature" class="ss-col-feature" title="${escapeHtml(featureLabel)}"><span class="ss-feature-cell"><span class="ss-feature-label">${escapeHtml(featureLabel)}</span>${extra}</span></td>
+        <td data-label="Type" class="ss-col-type">${escapeHtml(snapTypeLabel(s))}</td>
+        <td data-label="Label" class="ss-col-label ${s.label ? "" : "ss-row-muted"}">${escapeHtml(String(label).slice(0, 60))}</td>
+        <td data-label="Created" class="ss-col-created">${escapeHtml(snapCreatedText(s))}</td>
+        <td data-label="Profile" class="ss-col-profile">${escapeHtml(snapInstance(s))}</td>
         <td class="ss-col-menu"><span class="material-symbols-rounded">chevron_right</span></td>
       `;
 

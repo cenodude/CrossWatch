@@ -182,3 +182,22 @@ test("full selection tooltips survive compact labels, updates and empty options"
   assert.equal(btn.disabled, true);
   assert.equal(btn.title, "-");
 });
+
+test("dropdowns stay inside a keyboard-reduced and panned visual viewport", () => {
+  const h = harness();
+  Object.assign(h.window, {innerWidth:390, innerHeight:844,
+    visualViewport:{width:300,height:180,offsetLeft:30,offsetTop:200}});
+  const btn = {getBoundingClientRect:() => ({left:280,top:350,bottom:394,width:100})};
+  const menu = {classList:{contains:() => false},style:{},scrollHeight:400,offsetHeight:400,
+    getBoundingClientRect:() => ({width:350})};
+  h.window.positionMenu({}, btn, menu);
+  const left = Number.parseFloat(menu.style.left);
+  const top = Number.parseFloat(menu.style.top);
+  const width = Number.parseFloat(menu.style.width);
+  const height = Number.parseFloat(menu.style.maxHeight);
+  assert.ok(left >= 42);
+  assert.ok(left + width <= 318);
+  assert.ok(top >= 212);
+  assert.ok(top + height <= 368);
+  assert.ok(height > 0);
+});
