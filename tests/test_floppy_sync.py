@@ -267,40 +267,39 @@ def test_floppy_collection_reads_owned_movies_and_episodes() -> None:
     assert out["tmdb:22#s01e02"]["_floppy_collection_id"] == "92"
 
 
-def test_floppy_collection_adds_movie_via_item_id() -> None:
+def test_floppy_collection_adds_movie_with_one_idempotent_put() -> None:
     from providers.sync.floppy import _collection
 
-    adapter = AdapterStub(
-        {
-            ("POST", "media/movie"): {"id": 41, "item_id": "movie/tmdb/11"},
-            ("POST", "collection"): {"id": 91},
-        }
-    )
+    adapter = AdapterStub({("PUT", "media/movie/tmdb/11/collection"): ResponseStub(201, {"id": 91})})
 
     res = _collection.add(adapter, [{"type": "movie", "ids": {"tmdb": "11"}, "collected_at": "2026-08-01T12:00:00Z"}])
 
     assert res["count"] == 1
-    assert [c["path"] for c in adapter.client.session.calls] == ["media/movie", "collection"]
-    assert adapter.client.session.calls[0]["json"] == {"source": "tmdb", "media_id": "11", "status": 0}
-    assert adapter.client.session.calls[1]["json"] == {"item_id": "41", "media_type": "digital", "collected_at": "2026-08-01T12:00:00Z"}
+    assert [(c["method"], c["path"]) for c in adapter.client.session.calls] == [("PUT", "media/movie/tmdb/11/collection")]
+    assert adapter.client.session.calls[0]["json"] == {"media_type": "digital", "collected_at": "2026-08-01T12:00:00Z"}
+
+
+def test_floppy_collection_add_sends_date_only_collected_at_as_utc() -> None:
+    from providers.sync.floppy import _collection
+
+    adapter = AdapterStub({("PUT", "media/movie/tmdb/11/collection"): {"id": 91}})
+
+    _collection.add(adapter, [{"type": "movie", "ids": {"tmdb": "11"}, "collected_at": "2018-01-01"}])
+
+    assert adapter.client.session.calls[0]["json"]["collected_at"] == "2018-01-01T00:00:00Z"
 
 
 def test_floppy_collection_add_keeps_source_format_through_planner_minimal() -> None:
     from cw_platform.id_map import minimal
     from providers.sync.floppy import _collection
 
-    adapter = AdapterStub(
-        {
-            ("POST", "media/movie"): {"id": 41, "item_id": "movie/tmdb/11"},
-            ("POST", "collection"): {"id": 91},
-        }
-    )
+    adapter = AdapterStub({("PUT", "media/movie/tmdb/11/collection"): {"id": 91}})
 
     planned = minimal({"type": "movie", "ids": {"tmdb": "11"}, "format": "4k_bluray", "_punchplay_collection_id": "7"})
     res = _collection.add(adapter, [planned])
 
     assert res["count"] == 1
-    assert adapter.client.session.calls[1]["json"] == {"item_id": "41", "media_type": "4k_bluray"}
+    assert adapter.client.session.calls[0]["json"] == {"media_type": "4k_bluray"}
 
 
 def test_floppy_collection_reads_media_info() -> None:
@@ -337,18 +336,12 @@ def test_floppy_collection_add_sends_media_info_from_trakt_values() -> None:
     from cw_platform.id_map import minimal
     from providers.sync.floppy import _collection
 
-    adapter = AdapterStub(
-        {
-            ("POST", "media/movie"): {"id": 41, "item_id": "movie/tmdb/11"},
-            ("POST", "collection"): {"id": 91},
-        }
-    )
+    adapter = AdapterStub({("PUT", "media/movie/tmdb/11/collection"): {"id": 91}})
 
     planned = minimal({"type": "movie", "ids": {"tmdb": "11"}, "format": "bluray", "media_info": {"resolution": "uhd_4k", "hdr": "hdr10_plus", "audio": "dts_x", "audio_channels": "7.1.4", "is_3d": True}})
     _collection.add(adapter, [planned])
 
-    assert adapter.client.session.calls[1]["json"] == {
-        "item_id": "41",
+    assert adapter.client.session.calls[0]["json"] == {
         "media_type": "bluray",
         "resolution": "4K",
         "hdr": "HDR10+",
@@ -361,18 +354,52 @@ def test_floppy_collection_add_sends_media_info_from_trakt_values() -> None:
 def test_floppy_collection_adds_episode_scope() -> None:
     from providers.sync.floppy import _collection
 
-    adapter = AdapterStub(
-        {
-            ("POST", "media/episode"): {"id": 42, "item_id": "tv/tmdb/22/1/2"},
-            ("POST", "collection"): {"id": 92},
-        }
-    )
+    adapter = AdapterStub({("PUT", "media/tv/tmdb/22/1/episodes/2/collection"): ResponseStub(201, {"id": 92})})
 
     res = _collection.add(adapter, [{"type": "episode", "show_ids": {"tmdb": "22"}, "season": 1, "episode": 2}])
 
     assert res["count"] == 1
-    assert adapter.client.session.calls[0]["json"] == {"source": "tmdb", "media_id": "22", "status": 0, "season_number": 1, "episode_number": 2}
-    assert adapter.client.session.calls[1]["json"] == {"item_id": "42", "media_type": "digital"}
+    assert [(c["method"], c["path"], c.get("params")) for c in adapter.client.session.calls] == [("PUT", "media/tv/tmdb/22/1/episodes/2/collection", None)]
+    assert adapter.client.session.calls[0]["json"] == {"media_type": "digital"}
+
+
+@pytest.mark.parametrize("item", [{"type": "show", "ids": {"tmdb": "1396"}}, {"type": "season", "show_ids": {"tmdb": "1396"}, "season": 1}])
+def test_floppy_collection_skips_show_and_season_items(item: dict[str, Any]) -> None:
+    from providers.sync.floppy import _collection
+
+    for dry_run in (False, True):
+        adapter = AdapterStub({})
+        res = _collection.add(adapter, [item], dry_run=dry_run)
+
+        assert res["count"] == 0
+        assert res["unresolved"][0]["reason"] == "floppy_collection_episodes_only"
+        assert adapter.client.session.calls == []
+
+
+def test_floppy_collection_put_rejection_marks_item_unresolved() -> None:
+    from providers.sync.floppy import _collection
+
+    adapter = AdapterStub(
+        {
+            ("PUT", "media/movie/tmdb/11/collection"): ResponseStub(404, {"detail": "Media not found."}),
+            ("PUT", "media/movie/tmdb/22/collection"): ResponseStub(400, {"detail": "Invalid 'bitrate'."}),
+        }
+    )
+
+    res = _collection.add(adapter, [{"type": "movie", "ids": {"tmdb": "11"}}, {"type": "movie", "ids": {"tmdb": "22"}}])
+
+    assert res["count"] == 0
+    assert [u["reason"] for u in res["unresolved"]] == ["floppy_http_404:Media not found.", "floppy_http_400:Invalid 'bitrate'."]
+
+
+def test_floppy_collection_episode_without_number_is_unresolved() -> None:
+    from providers.sync.floppy import _collection
+
+    adapter = AdapterStub({})
+    res = _collection.add(adapter, [{"type": "episode", "show_ids": {"tmdb": "22"}, "season": 1}])
+
+    assert res["count"] == 0
+    assert [c for c in adapter.client.session.calls if c["method"] == "PUT"] == []
 
 
 def test_floppy_collection_remove_deletes_all_matching_entries() -> None:
@@ -2380,68 +2407,38 @@ def test_floppy_history_remove_in_anime_library_reports_failed_history_read() ->
     assert [c["method"] for c in adapter.client.session.calls if c["method"] == "DELETE"] == []
 
 
-def test_floppy_collection_add_follows_show_already_in_anime_library() -> None:
+def test_floppy_collection_episode_put_follows_show_in_anime_library() -> None:
     from providers.sync.floppy import _collection
 
     adapter = AdapterStub(
         {
             ("GET", "media/anime"): {"results": [_grouped_anime_row("209867")], "count": 1},
-            ("POST", "media/tv"): ResponseStub(409, {"detail": "Conflict. Media is already tracked."}),
-            ("GET", "media/anime/tmdb/209867"): {"id": 7564, "item_id": "anime/tmdb/209867"},
-            ("POST", "collection"): {"id": 1},
+            ("PUT", "media/tv/tmdb/209867/1/episodes/2/collection"): ResponseStub(201, {"id": 1}),
         }
     )
 
-    res = _collection.add(adapter, [{"type": "show", "ids": {"tmdb": "209867"}}])
+    res = _collection.add(adapter, [{"type": "episode", "show_ids": {"tmdb": "209867"}, "season": 1, "episode": 2}])
 
     assert res["count"] == 1
-    calls = [(c["method"], c["path"], c.get("json")) for c in adapter.client.session.calls if c["path"] != "media/anime"]
-    assert calls == [
-        ("POST", "media/tv", {"source": "tmdb", "media_id": "209867", "status": 0, "library_media_type": "anime"}),
-        ("GET", "media/anime/tmdb/209867", None),
-        ("POST", "collection", {"item_id": "7564", "media_type": "digital"}),
-    ]
+    calls = [(c["method"], c["path"], c.get("params")) for c in adapter.client.session.calls if c["path"] != "media/anime"]
+    assert calls == [("PUT", "media/tv/tmdb/209867/1/episodes/2/collection", {"library_media_type": "anime"})]
 
 
-def test_floppy_collection_add_resolves_tracked_anime_season() -> None:
-    from providers.sync.floppy import _collection
-
-    adapter = AdapterStub(
-        {
-            ("GET", "media/anime"): {"results": [_grouped_anime_row("209867")], "count": 1},
-            ("POST", "media/season"): ResponseStub(409, {"detail": "Conflict. Media is already tracked."}),
-            ("GET", "media/tv/tmdb/209867/1"): {"id": 7565, "item_id": "tv/tmdb/209867/1"},
-            ("POST", "collection"): {"id": 2},
-        }
-    )
-
-    res = _collection.add(adapter, [{"type": "season", "show_ids": {"tmdb": "209867"}, "season": 1}])
-
-    assert res["count"] == 1
-    calls = [(c["method"], c["path"], c.get("params"), c.get("json")) for c in adapter.client.session.calls if c["path"] != "media/anime"]
-    assert calls == [
-        ("POST", "media/season", None, {"source": "tmdb", "media_id": "209867", "status": 0, "library_media_type": "anime", "season_number": 1}),
-        ("GET", "media/tv/tmdb/209867/1", {"library_media_type": "anime"}, None),
-        ("POST", "collection", None, {"item_id": "7565", "media_type": "digital"}),
-    ]
-
-
-def test_floppy_collection_add_keeps_plain_tv_show_unflagged() -> None:
+def test_floppy_collection_episode_put_keeps_plain_tv_show_unflagged() -> None:
     from providers.sync.floppy import _collection
 
     adapter = AdapterStub(
         {
             ("GET", "media/tv"): {"results": [_plain_tv_row("1396")], "count": 1},
-            ("POST", "media/tv"): {"id": 1716, "item_id": "tv/tmdb/1396"},
-            ("POST", "collection"): {"id": 3},
+            ("PUT", "media/tv/tmdb/1396/1/episodes/1/collection"): {"id": 3},
         }
     )
 
-    res = _collection.add(adapter, [{"type": "show", "ids": {"tmdb": "1396"}}])
+    res = _collection.add(adapter, [{"type": "episode", "show_ids": {"tmdb": "1396"}, "season": 1, "episode": 1}])
 
     assert res["count"] == 1
-    posts = [(c["path"], c.get("json")) for c in adapter.client.session.calls if c["method"] == "POST"]
-    assert posts == [("media/tv", {"source": "tmdb", "media_id": "1396", "status": 0}), ("collection", {"item_id": "1716", "media_type": "digital"})]
+    puts = [(c["path"], c.get("params")) for c in adapter.client.session.calls if c["method"] == "PUT"]
+    assert puts == [("media/tv/tmdb/1396/1/episodes/1/collection", None)]
 
 
 def _collection_row(entry_id: int, tmdb: int) -> dict[str, Any]:
@@ -2488,19 +2485,17 @@ def test_floppy_collection_add_timeout_marks_only_that_item_unresolved() -> None
 
     from providers.sync.floppy import _collection
 
-    def media(call):
-        if call["json"]["media_id"] == "11":
-            raise requests.exceptions.ReadTimeout("read timed out")
-        return {"id": 42}
+    def timeout(_call):
+        raise requests.exceptions.ReadTimeout("read timed out")
 
-    adapter = AdapterStub({("POST", "media/movie"): media, ("POST", "collection"): {"id": 91}})
+    adapter = AdapterStub({("PUT", "media/movie/tmdb/11/collection"): timeout, ("PUT", "media/movie/tmdb/22/collection"): {"id": 91}})
     res = _collection.add(adapter, [{"type": "movie", "ids": {"tmdb": "11"}}, {"type": "movie", "ids": {"tmdb": "22"}}])
 
     assert res["count"] == 1
     assert res["confirmed_keys"] == ["tmdb:22"]
     assert res["unresolved_keys"] == ["tmdb:11"]
     assert "floppy_error" in res["unresolved"][0]["reason"] or "timed out" in res["unresolved"][0]["reason"]
-    assert [c["json"].get("item_id") for c in adapter.client.session.calls if c["path"] == "collection"] == ["42"]
+    assert [c["path"] for c in adapter.client.session.calls] == ["media/movie/tmdb/11/collection", "media/movie/tmdb/22/collection"]
 
 
 def test_applier_logs_chunk_retries() -> None:

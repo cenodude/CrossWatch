@@ -670,13 +670,13 @@ def test_floppy_update_without_entry_id_is_unresolved_not_posted() -> None:
     assert stub.calls == []
 
 
-def test_floppy_plain_add_with_foreign_entry_id_still_posts() -> None:
+def test_floppy_plain_add_with_foreign_entry_id_still_puts() -> None:
     from providers.sync.floppy import _collection as floppy_collection
 
     stub = _FloppyStub()
     floppy_collection.add(_floppy_adapter(stub), [{"type": "movie", "ids": {"tmdb": "102899"}, "_floppy_collection_id": "5"}])
 
-    assert stub.calls[0][:2] == ("POST", "media/movie")
+    assert stub.calls[0][:2] == ("PUT", "media/movie/tmdb/102899/collection")
     assert "PATCH" not in [c[0] for c in stub.calls]
 
 
