@@ -254,7 +254,7 @@ def resource_counts_for_profile(cfg: Mapping[str, Any], profile_id: Any) -> dict
 
 
 def _instances_from_resources(resources: Mapping[str, list[dict[str, Any]]], selected: Mapping[str, set[str]]) -> dict[str, list[str]]:
-    out: dict[str, str] = {}
+    out: dict[str, list[str]] = {}
     for key, ids in selected.items():
         rows = resources.get(key) or []
         for row in rows:
@@ -265,13 +265,13 @@ def _instances_from_resources(resources: Mapping[str, list[dict[str, Any]]], sel
                     continue
                 prov = provider_display_key(ref.get("provider"))
                 inst = normalize_instance_id(ref.get("instance"))
-                if prov and inst:
-                    out[prov] = inst
-    return {provider: [out[provider]] for provider in sorted(out)}
+                if prov and inst and inst not in out.setdefault(prov, []):
+                    out[prov].append(inst)
+    return {provider: out[provider] for provider in sorted(out)}
 
 
 def _merge_instances(*maps: Mapping[str, Any]) -> dict[str, list[str]]:
-    out: dict[str, str] = {}
+    out: dict[str, list[str]] = {}
     for raw in maps:
         for provider, values in (raw or {}).items():
             prov = provider_display_key(provider)
@@ -280,9 +280,9 @@ def _merge_instances(*maps: Mapping[str, Any]) -> dict[str, list[str]]:
             seq = values if isinstance(values, list) else [values]
             for value in seq:
                 inst = normalize_instance_id(value)
-                if inst:
-                    out[prov] = inst
-    return {provider: [out[provider]] for provider in sorted(out)}
+                if inst and inst not in out.setdefault(prov, []):
+                    out[prov].append(inst)
+    return {provider: out[provider] for provider in sorted(out) if out[provider]}
 
 
 def _id_set(raw: Any) -> set[str]:
