@@ -384,14 +384,14 @@ def test_user_profile_rejects_duplicate_labels(monkeypatch) -> None:
     assert renamed["ok"] is True
 
 
-def test_user_profile_allows_one_instance_per_provider(monkeypatch) -> None:
+def test_user_profile_keeps_several_instances_per_provider(monkeypatch) -> None:
     store: dict[str, Any] = {
         "user_profiles": {
             ALICE_PROFILE_ID: {"label": "Alice", "instances": {"JELLYFIN": ["JELLYFIN-P01"]}},
             FRANK_PROFILE_ID: {"label": "Frank", "instances": {"JELLYFIN": ["JELLYFIN-P02"]}},
         }
     }
-    _configured_refs(store, [("JELLYFIN", "JELLYFIN-P01"), ("JELLYFIN", "JELLYFIN-P02"), ("CROSSWATCH", "CW-P01")])
+    _configured_refs(store, [("JELLYFIN", "JELLYFIN-P01"), ("JELLYFIN", "JELLYFIN-P02"), ("JELLYFIN", "JELLYFIN-P03"), ("CROSSWATCH", "CW-P01")])
 
     def fake_load() -> dict[str, Any]:
         return json.loads(json.dumps(store))
@@ -406,12 +406,12 @@ def test_user_profile_allows_one_instance_per_provider(monkeypatch) -> None:
 
     updated = provider_api.api_user_profiles_update(
         ALICE_PROFILE_ID,
-        {"label": "Alice", "instances": {"JELLYFIN": ["JELLYFIN-P01", "JELLYFIN-P02"], "CROSSWATCH": ["CW-P01"]}},
+        {"label": "Alice", "instances": {"JELLYFIN": ["JELLYFIN-P01", "JELLYFIN-P03"], "CROSSWATCH": ["CW-P01"]}},
      request=_admin_req())
 
     assert updated["profile"]["instances"] == {
         "CROSSWATCH": ["CW-P01"],
-        "JELLYFIN": ["JELLYFIN-P01"],
+        "JELLYFIN": ["JELLYFIN-P01", "JELLYFIN-P03"],
     }
     assert _profile_instances(store, FRANK_PROFILE_ID) == {"JELLYFIN": ["JELLYFIN-P02"]}
 

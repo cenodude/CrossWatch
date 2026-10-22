@@ -66,15 +66,17 @@ def _allowed_provider_map(cfg: Mapping[str, Any], request: Request | None) -> di
     return managed_profile_instances(cfg, user)
 
 
-def _export_instance_for_request(cfg: Mapping[str, Any], request: Request | None, provider: str, provider_instance: str) -> str:
+def _export_instance_for_request(cfg: Mapping[str, Any], request: Request | None, provider: str, provider_instance: str) -> str | tuple[str, ...]:
     inst = str(provider_instance or "all").strip() or "all"
     user = request_user(request)
     if not user or bool(user.get("is_admin")):
         return inst
     allowed = managed_profile_instances(cfg, user).get(str(provider or "").strip().upper()) or []
     if inst.lower() in {"all", "any", "*"}:
-        if allowed:
+        if len(allowed) == 1:
             return allowed[0]
+        if allowed:
+            return tuple(allowed)
         raise HTTPException(403, "profile_scope_denied")
     if not user_can_access_instance(cfg, user, provider, inst):
         raise HTTPException(403, "profile_scope_denied")
@@ -110,6 +112,7 @@ def _configured_instance_label(cfg: dict[str, Any], provider: str, instance_id: 
 
 
 _DEFAULT_INSTANCE = "default"
+_InstanceScope = str | tuple[str, ...] | None
 _MEDIA_TYPES = ("movie", "show", "season", "episode")
 _MEDIA_TYPE_ALIASES = {
     "movies": "movie",
@@ -168,12 +171,15 @@ def _merge_best(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
         out["ids"] = ids
     return out
 
-def _items_bucket(s: dict[str, Any], provider: str, feature: str, instance_id: str | None = None) -> dict[str, Any]:
-    inst = str(instance_id or "").strip()
+def _items_bucket(s: dict[str, Any], provider: str, feature: str, instance_id: _InstanceScope = None) -> dict[str, Any]:
+    scope = {str(value).strip() for value in instance_id} if isinstance(instance_id, tuple) else None
+    inst = "all" if scope is not None else str(instance_id or "").strip()
     inst_lc = inst.lower()
     if not inst or inst_lc in {"all", "any", "*"}:
         merged: dict[str, Any] = {}
-        for _iid, blk in _iter_provider_instance_blocks(s, provider):
+        for iid, blk in _iter_provider_instance_blocks(s, provider):
+            if scope is not None and iid not in scope:
+                continue
             items = _feature_items(blk, feature)
             if not items:
                 continue
@@ -231,7 +237,7 @@ def _collapse_history_bucket(bucket: dict[str, Any]) -> dict[str, Any]:
 def _history_items_bucket(
     s: dict[str, Any],
     provider: str,
-    instance_id: str | None = None,
+    instance_id: _InstanceScope = None,
     *,
     include_rewatches: bool = True,
 ) -> dict[str, Any]:
@@ -244,7 +250,7 @@ def _history_items_bucket(
 def _combined_items_bucket(
     s: dict[str, Any],
     provider: str,
-    instance_id: str | None = None,
+    instance_id: _InstanceScope = None,
     *,
     include_rewatches: bool = True,
 ) -> dict[str, Any]:
@@ -296,7 +302,7 @@ def _feature_bucket(
     s: dict[str, Any],
     provider: str,
     feature: str,
-    instance_id: str | None = None,
+    instance_id: _InstanceScope = None,
     *,
     include_rewatches: bool = True,
 ) -> dict[str, Any]:
@@ -310,7 +316,7 @@ def _iter_items(
     s: dict[str, Any],
     provider: str,
     feature: str,
-    instance_id: str | None = None,
+    instance_id: _InstanceScope = None,
     *,
     include_rewatches: bool = True,
 ) -> Iterable[tuple[str, dict[str, Any]]]:
@@ -410,7 +416,7 @@ def _filter_keys(
     provider: str,
     feature: str,
     q: str,
-    instance_id: str | None = None,
+    instance_id: _InstanceScope = None,
     *,
     include_rewatches: bool = True,
 ) -> list[str]:
@@ -431,7 +437,7 @@ def _filter_keys_with_media(
     feature: str,
     q: str,
     media_types: tuple[str, ...],
-    instance_id: str | None = None,
+    instance_id: _InstanceScope = None,
     *,
     include_rewatches: bool = True,
 ) -> list[str]:
@@ -706,7 +712,7 @@ def _build_letterboxd(
     feature: str,
     s: dict[str, Any],
     keys: list[str],
-    instance_id: str | None = None,
+    instance_id: _InstanceScope = None,
     *,
     include_watched_date: bool = True,
     include_rewatches: bool = True,
@@ -726,7 +732,7 @@ def _build_imdb(
     feature: str,
     s: dict[str, Any],
     keys: list[str],
-    instance_id: str | None = None,
+    instance_id: _InstanceScope = None,
     *,
     include_rewatches: bool = True,
 ) -> Response:
@@ -749,7 +755,7 @@ def _build_justwatch(
     feature: str,
     s: dict[str, Any],
     keys: list[str],
-    instance_id: str | None = None,
+    instance_id: _InstanceScope = None,
     *,
     include_rewatches: bool = True,
 ) -> Response:
@@ -769,7 +775,7 @@ def _build_yamtrack(
     feature: str,
     s: dict[str, Any],
     keys: list[str],
-    instance_id: str | None = None,
+    instance_id: _InstanceScope = None,
     *,
     include_rewatches: bool = True,
 ) -> Response:
@@ -833,7 +839,7 @@ def _tmdb_build_imdb_v3(
     feature: str,
     s: dict[str, Any],
     keys: list[str],
-    instance_id: str | None = None,
+    instance_id: _InstanceScope = None,
     *,
     include_rewatches: bool = True,
 ) -> Response:
@@ -944,7 +950,7 @@ def _tmdb_build_trakt_v2(
     feature: str,
     s: dict[str, Any],
     keys: list[str],
-    instance_id: str | None = None,
+    instance_id: _InstanceScope = None,
     *,
     include_rewatches: bool = True,
 ) -> Response:
@@ -1014,7 +1020,7 @@ def _tmdb_build_simkl_v1(
     feature: str,
     s: dict[str, Any],
     keys: list[str],
-    instance_id: str | None = None,
+    instance_id: _InstanceScope = None,
     *,
     include_rewatches: bool = True,
 ) -> Response:
@@ -1064,7 +1070,7 @@ def _build_tmdb(
     feature: str,
     s: dict[str, Any],
     keys: list[str],
-    instance_id: str | None = None,
+    instance_id: _InstanceScope = None,
     *,
     include_rewatches: bool = True,
 ) -> Response:
@@ -1081,7 +1087,7 @@ def _build_trakt(
     feature: str,
     s: dict[str, Any],
     keys: list[str],
-    instance_id: str | None = None,
+    instance_id: _InstanceScope = None,
     *,
     include_rewatches: bool = True,
 ) -> Response:

@@ -511,7 +511,7 @@ def _profile_instance_values(raw_instances: Any) -> list[str]:
         inst = normalize_instance_id(raw)
         if inst and inst not in clean:
             clean.append(inst)
-    return clean[:1]
+    return clean
 
 
 def _uid_ref(cfg: Mapping[str, Any], uid: Any) -> tuple[str, str] | None:
@@ -529,7 +529,7 @@ def _uid_ref(cfg: Mapping[str, Any], uid: Any) -> tuple[str, str] | None:
 
 
 def _profile_uids_for_instances(cfg: dict[str, Any], instances: Mapping[str, Any]) -> list[str]:
-    by_provider: dict[str, str] = {}
+    by_provider: dict[str, list[str]] = {}
     for provider, raw_instances in instances.items():
         prov = provider_display_key(provider)
         if not prov:
@@ -538,9 +538,10 @@ def _profile_uids_for_instances(cfg: dict[str, Any], instances: Mapping[str, Any
             if not _provider_ref_exists(cfg, prov, inst):
                 continue
             uid = provider_instance_uid_for(cfg, prov, inst, create=True)
-            if uid:
-                by_provider[prov] = uid
-    return [by_provider[prov] for prov in sorted(by_provider)]
+            bucket = by_provider.setdefault(prov, [])
+            if uid and uid not in bucket:
+                bucket.append(uid)
+    return [uid for prov in sorted(by_provider) for uid in by_provider[prov]]
 
 
 def _resolved_instances_for_uids(cfg: Mapping[str, Any], uids: list[str]) -> dict[str, list[str]]:
@@ -550,29 +551,26 @@ def _resolved_instances_for_uids(cfg: Mapping[str, Any], uids: list[str]) -> dic
         if ref is None:
             continue
         prov, inst = ref
-        if prov not in by_provider:
-            by_provider[prov] = [inst]
+        bucket = by_provider.setdefault(prov, [])
+        if inst not in bucket:
+            bucket.append(inst)
     return dict(sorted(by_provider.items()))
 
 
 def _profile_uids_from_raw(cfg: Mapping[str, Any], raw: Mapping[str, Any]) -> list[str]:
-    by_provider: dict[str, str] = {}
-    for uid in _profile_uid_values(raw.get(_PROFILE_INSTANCE_UIDS_KEY)):
-        ref = _uid_ref(cfg, uid)
-        if ref is None:
-            continue
-        prov, _inst = ref
-        if prov not in by_provider:
-            by_provider[prov] = uid
+    candidates = _profile_uid_values(raw.get(_PROFILE_INSTANCE_UIDS_KEY))
     insts = raw.get("instances")
     if isinstance(cfg, dict) and isinstance(insts, Mapping):
-        for uid in _profile_uids_for_instances(cfg, insts):
-            ref = _uid_ref(cfg, uid)
-            if ref is None:
-                continue
-            prov, _inst = ref
-            by_provider[prov] = uid
-    return [by_provider[prov] for prov in sorted(by_provider)]
+        candidates.extend(_profile_uids_for_instances(cfg, insts))
+    by_provider: dict[str, list[str]] = {}
+    seen: set[tuple[str, str]] = set()
+    for uid in candidates:
+        ref = _uid_ref(cfg, uid)
+        if ref is None or ref in seen:
+            continue
+        seen.add(ref)
+        by_provider.setdefault(ref[0], []).append(uid)
+    return [uid for prov in sorted(by_provider) for uid in by_provider[prov]]
 
 
 def _migrate_user_profiles_to_instance_uids(cfg: dict[str, Any]) -> None:
@@ -724,13 +722,7 @@ def assign_instance_to_user_profile(
         block = {"label": clean_label, "instances": {}}
         root[profile["id"]] = block
     existing = [value for value in _profile_uids_from_raw(cfg, block) if value != uid]
-    filtered: list[str] = []
-    for value in existing:
-        ref = _uid_ref(cfg, value)
-        if ref is None or ref[0] == prov:
-            continue
-        filtered.append(value)
-    block[_PROFILE_INSTANCE_UIDS_KEY] = sorted([*filtered, uid])
+    block[_PROFILE_INSTANCE_UIDS_KEY] = sorted([*existing, uid])
     block[_PROFILE_MANUAL_INSTANCE_UIDS_KEY] = list(block[_PROFILE_INSTANCE_UIDS_KEY])
     block.pop("instances", None)
     return _clean_user_profile(cfg, profile["id"], block)
@@ -764,13 +756,7 @@ def assign_instance_to_user_profile_id(
         block = {"label": profile["label"], "instances": {}}
         root[profile["id"]] = block
     existing = [value for value in _profile_uids_from_raw(cfg, block) if value != uid]
-    filtered: list[str] = []
-    for value in existing:
-        ref = _uid_ref(cfg, value)
-        if ref is None or ref[0] == prov:
-            continue
-        filtered.append(value)
-    block[_PROFILE_INSTANCE_UIDS_KEY] = sorted([*filtered, uid])
+    block[_PROFILE_INSTANCE_UIDS_KEY] = sorted([*existing, uid])
     block[_PROFILE_MANUAL_INSTANCE_UIDS_KEY] = list(block[_PROFILE_INSTANCE_UIDS_KEY])
     block.pop("instances", None)
     return _clean_user_profile(cfg, profile["id"], block)

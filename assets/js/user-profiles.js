@@ -158,8 +158,9 @@
     });
     const required = resourceRequiredMap();
     Object.entries(required).forEach(([provider, rows]) => {
-      const first = Object.keys(rows || {}).map(txt).filter(Boolean)[0];
-      if (first) out[providerKey(provider)] = [first];
+      const key = providerKey(provider);
+      const ids = Object.keys(rows || {}).map(txt).filter(Boolean);
+      if (ids.length) out[key] = Array.from(new Set([...(out[key] || []), ...ids]));
     });
     return out;
   }
@@ -259,13 +260,12 @@
             ${rows.map((row) => {
               const lockedBy = required[providerKey(provider)]?.[row.id] || [];
               const assignedProfile = instanceAssignedProfile(provider, row.id);
-              const requiredProvider = !!required[providerKey(provider)];
               const locked = lockedBy.length > 0;
-              const blocked = (requiredProvider && !locked) || !!assignedProfile;
+              const blocked = !!assignedProfile;
               const note = assignedProfile ? `Assigned to: ${assignedProfile.label || assignedProfile.id}` : (locked ? `Required by ${Array.from(new Set(lockedBy)).join(", ")}` : "");
               return `
               <label class="cw-upm-instance-option ${selected.has(row.id) || locked ? "is-selected" : ""} ${locked ? "is-required" : ""} ${blocked ? "is-blocked" : ""}">
-                <input type="checkbox" name="cw-upm-provider-${esc(provider)}" value="${esc(row.id)}" ${selected.has(row.id) || locked ? "checked" : ""} ${requiredProvider || assignedProfile ? "disabled" : ""} style="position:absolute;opacity:0;pointer-events:none">
+                <input type="checkbox" name="cw-upm-provider-${esc(provider)}" value="${esc(row.id)}" ${selected.has(row.id) || locked ? "checked" : ""} ${locked || assignedProfile ? "disabled" : ""} style="position:absolute;opacity:0;pointer-events:none">
                 <span class="cw-upm-instance-copy">
                   <strong>${esc(row.label)}</strong>
                   <code>${esc(row.id)}</code>
@@ -520,16 +520,15 @@
     if (!root || !modalDraft) return;
     collectOpenResourceSections(root);
     const previous = modalDraft.instances || {};
+    const lockedBefore = resourceRequiredMap();
     modalDraft.label = txt($("cw-upm-modal-label")?.value);
     modalDraft.resources = collectModalResources(root);
     const manual = collectModalInstances(root);
-    const required = resourceRequiredMap();
-    Object.entries(required).forEach(([provider, rows]) => {
-      const requiredInstance = Object.keys(rows || {}).map(txt).filter(Boolean)[0];
-      const previousInstance = (Array.isArray(previous[provider]) ? previous[provider] : [previous[provider]]).map(txt).filter(Boolean)[0];
-      const currentInstance = (Array.isArray(manual[provider]) ? manual[provider] : [manual[provider]]).map(txt).filter(Boolean)[0];
-      if (requiredInstance && (previousInstance === requiredInstance || currentInstance === requiredInstance)) manual[provider] = [requiredInstance];
-      else delete manual[provider];
+    Object.entries(previous).forEach(([provider, values]) => {
+      const key = providerKey(provider);
+      const locked = lockedBefore[key] || {};
+      const kept = (Array.isArray(values) ? values : [values]).map(txt).filter((value) => value && locked[value]);
+      if (kept.length) manual[key] = Array.from(new Set([...(manual[key] || []), ...kept]));
     });
     modalDraft.instances = manual;
   }
