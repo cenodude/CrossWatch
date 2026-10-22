@@ -693,6 +693,7 @@
   }
 
   function setStatus(message) {
+    if (state.hasChanges && message) changeNote.textContent = message;
     if (!statusEl) return;
     statusEl.textContent = message || "";
   }

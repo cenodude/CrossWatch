@@ -240,8 +240,13 @@
   function positionMenu(wrap, btn, menu) {
     if (!wrap || !btn || !menu || menu.classList.contains("hidden")) return;
     const rect = btn.getBoundingClientRect();
-    const viewportWidth = window.innerWidth || d.documentElement.clientWidth || 0;
-    const viewportHeight = window.innerHeight || d.documentElement.clientHeight || 0;
+    const visual = window.visualViewport;
+    const viewportWidth = visual?.width || window.innerWidth || d.documentElement.clientWidth || 0;
+    const viewportHeight = visual?.height || window.innerHeight || d.documentElement.clientHeight || 0;
+    const viewportLeft = visual?.offsetLeft || 0;
+    const viewportTop = visual?.offsetTop || 0;
+    const viewportRight = viewportLeft + viewportWidth;
+    const viewportBottom = viewportTop + viewportHeight;
     const margin = 12;
     const gap = 8;
     const cfg = wrap.__cwNativeSelect?.__cwIconSelectCfg || {};
@@ -251,9 +256,9 @@
     menu.style.maxWidth = `${availableWidth}px`;
     const contentWidth = menu.getBoundingClientRect().width;
     const width = Math.min(availableWidth, Math.max(Math.round(rect.width), contentWidth, Number.isFinite(minWidth) ? minWidth : 0));
-    const left = Math.max(margin, Math.min(Math.round(rect.left), Math.max(margin, viewportWidth - width - margin)));
-    const spaceBelow = Math.max(0, viewportHeight - rect.bottom - gap - margin);
-    const spaceAbove = Math.max(0, rect.top - gap - margin);
+    const left = Math.max(viewportLeft + margin, Math.min(Math.round(rect.left), Math.max(viewportLeft + margin, viewportRight - width - margin)));
+    const spaceBelow = Math.max(0, viewportBottom - rect.bottom - gap - margin);
+    const spaceAbove = Math.max(0, rect.top - viewportTop - gap - margin);
 
     menu.style.width = `${width}px`;
     menu.style.left = `${left}px`;
@@ -264,11 +269,11 @@
     const preferredHeight = Math.min(320, naturalHeight || 320);
     const openAbove = spaceAbove > spaceBelow && (spaceBelow < 180 || preferredHeight > spaceBelow);
     const availableSpace = openAbove ? spaceAbove : spaceBelow;
-    const maxHeight = Math.max(120, Math.min(320, availableSpace || 320));
+    const maxHeight = Math.max(0, Math.min(320, Math.max(0, viewportHeight - margin * 2), availableSpace || 320));
     const renderedHeight = Math.min(preferredHeight, maxHeight);
     const top = openAbove
-      ? Math.max(margin, Math.round(rect.top - gap - renderedHeight))
-      : Math.min(Math.max(margin, Math.round(rect.bottom + gap)), Math.max(margin, viewportHeight - renderedHeight - margin));
+      ? Math.max(viewportTop + margin, Math.min(Math.round(rect.top - gap - renderedHeight), viewportBottom - renderedHeight - margin))
+      : Math.min(Math.max(viewportTop + margin, Math.round(rect.bottom + gap)), Math.max(viewportTop + margin, viewportBottom - renderedHeight - margin));
 
     menu.style.top = `${top}px`;
     menu.style.maxHeight = `${maxHeight}px`;
@@ -351,9 +356,12 @@
     }
     if (!wrap.dataset.cwPosBound) {
       wrap.dataset.cwPosBound = "1";
-      window.addEventListener("resize", () => {
+      const reposition = () => {
         if (OPEN?.wrap === wrap) positionMenu(wrap, btn, menu);
-      });
+      };
+      window.addEventListener("resize", reposition);
+      window.visualViewport?.addEventListener("resize", reposition);
+      window.visualViewport?.addEventListener("scroll", reposition);
       window.addEventListener("scroll", () => {
         if (OPEN?.wrap === wrap) positionMenu(wrap, btn, menu);
       }, true);

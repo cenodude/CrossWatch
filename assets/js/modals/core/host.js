@@ -18,6 +18,7 @@ export class ModalHost {
     this._foreign = null;
     this._resize = null;
     this._esc = null;
+    this._returnFocus = null;
   }
 
   setOptions(next = {}) {
@@ -26,12 +27,15 @@ export class ModalHost {
 
   _ensure() {
     if (this.backdrop) return;
+    this._returnFocus = document.activeElement;
     const b = document.createElement('div');
     b.className = 'cx-backdrop';
 
     const s = document.createElement('div');
     s.className = 'cx-modal-shell';
     s.tabIndex = -1;
+    s.setAttribute('role', 'dialog');
+    s.setAttribute('aria-modal', 'true');
 
     b.appendChild(s);
     b.addEventListener('cw-modal-close', () => this.unmount());
@@ -112,6 +116,9 @@ export class ModalHost {
       await api.mount(shell, props);
       if (!this.shell || !this.shell.isConnected) return;
 
+      const heading = this.shell.querySelector('h1,h2,h3,[role=heading],.cx-title,.app-name');
+      this.shell.setAttribute('aria-label', heading?.textContent?.trim() || props.title || 'CrossWatch dialog');
+
       // center then clamp
       this.shell.style.left = '50%';
       this.shell.style.top = '50%';
@@ -145,6 +152,8 @@ export class ModalHost {
     this.backdrop = null;
     this.shell = null;
     delete document.body.dataset.cxModalOpen;
+    if (this._returnFocus?.isConnected) this._returnFocus.focus?.({ preventScroll: true });
+    this._returnFocus = null;
   }
 
   _clamp() {
