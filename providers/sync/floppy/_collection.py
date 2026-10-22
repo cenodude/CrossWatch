@@ -8,10 +8,9 @@ from typing import Any
 
 from cw_platform.collection_media import media_block, to_floppy_fields
 from cw_platform.id_map import minimal as id_minimal
-from providers.auth._auth_FLOPPY import FloppyAuthError
 from providers.sync._mod_common import build_op_result, unresolved_keys
 
-from ._common import PLANNING, api_delete, api_get, api_patch, api_post, bucket_body, bucket_params, canonical_item_key, confirmed_destination, failure_reason, int_or_none, paged, show_path, tmdb_enriched_item, tmdb_id_for_item, unresolved, write_bucket
+from ._common import api_delete, api_patch, api_put, bucket_params, canonical_item_key, confirmed_destination, failure_reason, int_or_none, paged, tmdb_enriched_item, tmdb_id_for_item, unresolved, write_bucket
 
 
 def _media_numbers(item: Mapping[str, Any]) -> tuple[int | None, int | None]:
@@ -108,87 +107,42 @@ def _floppy_media_type(item: Mapping[str, Any]) -> str | None:
     return None
 
 
-def _detail_path(media_type: str, tmdb_id: str, season: int | None = None, episode: int | None = None, bucket: str = "") -> str:
-    if media_type == "episode" and season is not None and episode is not None:
-        return f"media/episode/tmdb/{tmdb_id}/{season}/{episode}"
-    if media_type == "season" and season is not None:
-        return f"media/tv/tmdb/{tmdb_id}/{season}"
-    if media_type == "tv":
-        return show_path(tmdb_id, bucket)
-    return f"media/{media_type}/tmdb/{tmdb_id}"
-
-
-def _item_id_from_response(data: Any) -> str | None:
-    if not isinstance(data, Mapping):
-        return None
-    for key in ("id", "item_pk", "item_db_id"):
-        value = str(data.get(key) or "").strip()
-        if value.isdigit():
-            return value
-    return None
-
-
-def _ensure_item_id(adapter: Any, item: Mapping[str, Any]) -> tuple[str | None, str]:
+def _collection_target(adapter: Any, item: Mapping[str, Any]) -> tuple[str | None, dict[str, str] | None, str]:
     media_type = _floppy_media_type(item)
-    if not media_type:
-        return None, "floppy_collection_type_unsupported"
-    episode_show = media_type in {"season", "episode"}
-    tmdb_id = tmdb_id_for_item(item, episode_show=episode_show)
+    if not media_type or media_type in {"tv", "season"}:
+        return None, None, "floppy_collection_type_unsupported"
+    tmdb_id = tmdb_id_for_item(item, episode_show=media_type == "episode")
     if not tmdb_id:
-        return None, "floppy_tmdb_id_missing"
+        return None, None, "floppy_tmdb_id_missing"
+    if media_type == "movie":
+        return f"media/movie/tmdb/{tmdb_id}/collection", None, ""
     season, episode = _media_numbers(item)
-    if media_type in {"season", "episode"} and season is None:
-        return None, "floppy_season_id_missing"
-    if media_type == "episode" and episode is None:
-        return None, "floppy_episode_id_missing"
-
+    if season is None:
+        return None, None, "floppy_season_id_missing"
+    if episode is None:
+        return None, None, "floppy_episode_id_missing"
     try:
-        bucket = write_bucket(adapter, tmdb_id, item) if media_type != "movie" else ""
+        bucket = write_bucket(adapter, tmdb_id, item)
     except Exception as exc:
-        return None, failure_reason(exc)
-    body: dict[str, Any] = {"source": "tmdb", "media_id": str(tmdb_id), "status": PLANNING, **bucket_body(bucket)}
-    if season is not None:
-        body["season_number"] = season
-    if episode is not None:
-        body["episode_number"] = episode
-    title = str(item.get("title") or item.get("series_title") or "").strip()
-    if title:
-        body["title"] = title
-    poster = str(item.get("poster") or item.get("image") or "").strip()
-    if poster:
-        body["image"] = poster
-
-    try:
-        item_id = _item_id_from_response(api_post(adapter, f"media/{media_type}", json=body))
-        if item_id:
-            return item_id, ""
-    except FloppyAuthError as exc:
-        if getattr(exc, "status_code", None) not in {400, 409}:
-            return None, failure_reason(exc)
-
-    try:
-        params = bucket_params(bucket) if media_type in {"season", "episode"} else None
-        item_id = _item_id_from_response(api_get(adapter, _detail_path(media_type, str(tmdb_id), season, episode, bucket), params=params))
-        if item_id:
-            return item_id, ""
-    except Exception as exc:
-        return None, failure_reason(exc)
-    return None, "floppy_item_id_missing"
+        return None, None, failure_reason(exc)
+    return f"media/tv/tmdb/{tmdb_id}/{season}/episodes/{episode}/collection", bucket_params(bucket), ""
 
 
-def _collection_body(adapter: Any, item: Mapping[str, Any]) -> tuple[dict[str, Any] | None, str]:
-    item_id, reason = _ensure_item_id(adapter, item)
-    if not item_id:
-        return None, reason
-    body: dict[str, Any] = {"item_id": item_id}
+def _collected_at(value: Any) -> str:
+    text = str(value or "").strip()
+    return f"{text}T00:00:00Z" if len(text) == 10 and text[4] == "-" and text[7] == "-" else text
+
+
+def _collection_body(item: Mapping[str, Any]) -> dict[str, Any]:
+    body: dict[str, Any] = {}
     fmt = str(item.get("format") or item.get("edition_format") or "digital").strip().lower()
     if fmt:
         body["media_type"] = fmt[:20]
     body.update(to_floppy_fields(item))
-    collected_at = str(item.get("collected_at") or "").strip()
+    collected_at = _collected_at(item.get("collected_at"))
     if collected_at:
         body["collected_at"] = collected_at
-    return body, ""
+    return body
 
 
 def _update_entry_id(item: Mapping[str, Any]) -> str:
@@ -259,6 +213,11 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
             confirmed_destinations[key] = confirmed_destination(raw)
             results.append({"status": "dry_run" if dry_run else "updated", "item": id_minimal(raw), "canonical_key": key})
             continue
+        if _floppy_media_type(raw) in {"tv", "season"}:
+            entry = unresolved(raw, "floppy_collection_episodes_only")
+            unresolved_rows.append(entry)
+            results.append(entry)
+            continue
         try:
             item = tmdb_enriched_item(adapter, raw, episode_show=str(id_minimal(raw).get("type") or "").strip().lower() in {"season", "episode"})
         except Exception as exc:
@@ -272,16 +231,16 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
             results.append({"status": "dry_run", "item": id_minimal(item), "canonical_key": key})
             continue
         try:
-            body, reason = _collection_body(adapter, item)
+            path, params, reason = _collection_target(adapter, item)
         except Exception as exc:
-            body, reason = None, failure_reason(exc)
-        if body is None:
+            path, params, reason = None, None, failure_reason(exc)
+        if path is None:
             entry = unresolved(item, reason or "floppy_collection_unresolved")
             unresolved_rows.append(entry)
             results.append(entry)
             continue
         try:
-            api_post(adapter, "collection", json=body)
+            api_put(adapter, path, json=_collection_body(item), params=params)
         except Exception as exc:
             entry = unresolved(item, failure_reason(exc))
             unresolved_rows.append(entry)
