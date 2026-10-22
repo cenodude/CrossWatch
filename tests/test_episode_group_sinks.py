@@ -76,7 +76,7 @@ def test_webhook_sink_confirms_group_only_after_success(config_base, setup, monk
         calls.append(deepcopy(body))
         if kind == "floppy":
             if failing[0]:
-                raise RuntimeError("transport failed")
+                raise module.FloppyAuthError("rate limited", reason="http_429", status_code=429)
             return {"detail": "ok"}
         return SimpleNamespace(status_code=503 if failing[0] else 200, headers={}, text="{}", json=lambda: {"status": "ok"})
     if kind == "bingebase":

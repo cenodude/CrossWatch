@@ -283,12 +283,12 @@ def test_payload_uses_the_configured_threshold() -> None:
 def test_floppy_sink_has_parity_with_other_sinks() -> None:
     text = (ROOT / "providers" / "scrobble" / "floppy" / "sink.py").read_text("utf-8")
 
-    for symbol in ("record_watch", "record_scrobble_event", "mask_account", "once_per_ttl", "_rm_across"):
+    for symbol in ("record_watch", "record_scrobble_event", "mask_account", "_rm_across", "self._completed"):
         assert symbol in text, f"floppy sink is missing {symbol}"
-    assert "self._completed" not in text, "completion dedupe must be persistent, not in-memory"
+    assert "floppy_scrobble_completed" not in text
 
 
-def test_completed_stop_is_deduped_across_restarts(monkeypatch, _isolate_floppy_dedupe) -> None:
+def test_completed_stop_is_deduped_per_sink_instance(monkeypatch, _isolate_floppy_dedupe) -> None:
     calls: list[dict[str, Any]] = []
     monkeypatch.setattr(floppy_sink, "api_post", lambda adapter, path, **kw: calls.append(kw) or {})
     monkeypatch.setattr(floppy_sink, "record_watch", lambda *a, **k: None)
@@ -296,11 +296,190 @@ def test_completed_stop_is_deduped_across_restarts(monkeypatch, _isolate_floppy_
     monkeypatch.setattr(floppy_sink, "_rm_across", lambda *a, **k: None)
 
     event = _episode(progress=99.5)
-    FloppySink(cfg_provider=_cfg).send(event)
-    # a brand new sink instance stands in for a process restart
-    assert FloppySink(cfg_provider=_cfg).send(event) == {"ok": True, "log_status": "skipped", "reason": "session_completed"}
+    sink = FloppySink(cfg_provider=_cfg)
+    sink.send(event)
 
-    assert len(calls) == 1, "persistent dedupe must survive a new sink instance"
+    assert sink.send(event) == {"ok": True, "log_status": "skipped", "reason": "session_completed"}
+    assert len(calls) == 1
+
+
+def test_replayed_session_after_restart_sends_completed_stop(monkeypatch, _isolate_floppy_dedupe) -> None:
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(floppy_sink, "api_post", lambda adapter, path, **kw: calls.append(kw["json"]) or {})
+    monkeypatch.setattr(floppy_sink, "record_watch", lambda *a, **k: None)
+    monkeypatch.setattr(floppy_sink, "record_scrobble_event", lambda *a, **k: None)
+    monkeypatch.setattr(floppy_sink, "_rm_across", lambda *a, **k: None)
+
+    event = _episode(progress=98.0)
+    FloppySink(cfg_provider=_cfg).send(event)
+
+    assert FloppySink(cfg_provider=_cfg).send(event) is None
+    assert [(c["action"], c["completed"]) for c in calls] == [("stop", True), ("stop", True)]
+
+
+def _completion_sink(monkeypatch) -> tuple[FloppySink, list[dict[str, Any]]]:
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(floppy_sink, "api_post", lambda adapter, path, **kw: calls.append(kw["json"]) or {})
+    monkeypatch.setattr(floppy_sink, "record_watch", lambda *a, **k: None)
+    monkeypatch.setattr(floppy_sink, "record_scrobble_event", lambda *a, **k: None)
+    monkeypatch.setattr(floppy_sink, "_rm_across", lambda *a, **k: None)
+    return FloppySink(cfg_provider=_cfg), calls
+
+
+def test_restart_from_beginning_on_reused_session_completes_again(monkeypatch, _isolate_floppy_dedupe) -> None:
+    sink, calls = _completion_sink(monkeypatch)
+
+    sink.send(_episode(progress=98.0))
+    sink.send(_episode(action="start", progress=0.0))
+
+    assert sink.send(_episode(progress=98.0)) is None
+    assert [c["action"] for c in calls] == ["stop", "start", "stop"]
+
+
+def test_resume_near_end_keeps_session_completed(monkeypatch, _isolate_floppy_dedupe) -> None:
+    sink, calls = _completion_sink(monkeypatch)
+
+    sink.send(_episode(progress=98.0))
+    sink.send(_episode(action="start", progress=97.0))
+
+    assert sink.send(_episode(progress=98.0)) == {"ok": True, "log_status": "skipped", "reason": "session_completed"}
+    assert [c["action"] for c in calls] == ["stop", "start"]
+
+
+def test_session_completion_expires(monkeypatch, _isolate_floppy_dedupe) -> None:
+    sink, calls = _completion_sink(monkeypatch)
+    now = [1_000_000.0]
+    monkeypatch.setattr(floppy_sink.time, "time", lambda: now[0])
+
+    sink.send(_episode(progress=98.0))
+    now[0] += floppy_sink._COMPLETE_TTL + 1
+
+    assert sink.send(_episode(progress=98.0)) is None
+    assert len(calls) == 2
+
+
+def test_session_completion_is_bounded(monkeypatch, _isolate_floppy_dedupe) -> None:
+    sink, _calls = _completion_sink(monkeypatch)
+
+    for number in range(floppy_sink._COMPLETE_MAX + 5):
+        sink.send(ScrobbleEvent(**{**_episode(progress=98.0).__dict__, "number": number + 1}))
+
+    assert len(sink._completed) == floppy_sink._COMPLETE_MAX
+
+
+def test_session_completion_is_scoped_to_server(monkeypatch, _isolate_floppy_dedupe) -> None:
+    sink, calls = _completion_sink(monkeypatch)
+
+    sink.send(_episode(progress=98.0))
+
+    assert sink.send(ScrobbleEvent(**{**_episode(progress=98.0).__dict__, "server_uuid": "server-2"})) is None
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("error,expected", [
+    (floppy_sink.FloppyAuthError("boom", reason="http_502", status_code=502), {"ok": False, "error": "http_502", "retryable": False}),
+    (floppy_sink.FloppyAuthError("lost", reason="request_failed"), {"ok": False, "error": "request_failed", "retryable": False}),
+    (ConnectionError("reset"), {"ok": False, "error": "request_failed", "retryable": False}),
+    (floppy_sink.FloppyAuthError("slow", reason="http_429", status_code=429), {"ok": False, "error": "http_429", "retryable": True}),
+])
+def test_uncertain_completed_stop_is_not_retried(monkeypatch, error, expected) -> None:
+    def post(adapter, path, **kw):
+        raise error
+
+    monkeypatch.setattr(floppy_sink, "api_post", post)
+    monkeypatch.setattr(floppy_sink, "record_watch", lambda *a, **k: None)
+
+    assert FloppySink(cfg_provider=_cfg).send(_episode(progress=99.5)) == expected
+
+
+def _failing_once_sink(monkeypatch, error: Exception) -> tuple[FloppySink, list[dict[str, Any]]]:
+    calls: list[dict[str, Any]] = []
+    failures = [error]
+
+    def post(adapter, path, **kw):
+        calls.append(kw["json"])
+        if failures:
+            raise failures.pop()
+        return {}
+
+    monkeypatch.setattr(floppy_sink, "api_post", post)
+    monkeypatch.setattr(floppy_sink, "record_watch", lambda *a, **k: None)
+    monkeypatch.setattr(floppy_sink, "record_scrobble_event", lambda *a, **k: None)
+    monkeypatch.setattr(floppy_sink, "_rm_across", lambda *a, **k: None)
+    return FloppySink(cfg_provider=_cfg), calls
+
+
+@pytest.mark.parametrize("error", [
+    floppy_sink.FloppyAuthError("boom", reason="http_502", status_code=502),
+    floppy_sink.FloppyAuthError("Could not resolve media.", reason="http_404", status_code=404),
+    ConnectionError("reset"),
+])
+def test_unconfirmed_completion_blocks_later_stops(monkeypatch, error) -> None:
+    sink, calls = _failing_once_sink(monkeypatch, error)
+
+    sink.send(_episode(progress=98.0))
+
+    assert sink.send(_episode(progress=99.0)) == {"ok": False, "error": "completion_unconfirmed", "retryable": False}
+    assert len(calls) == 1
+
+
+def test_unconfirmed_completion_blocks_grouped_resend(monkeypatch) -> None:
+    sink, calls = _failing_once_sink(monkeypatch, floppy_sink.FloppyAuthError("boom", reason="http_502", status_code=502))
+    grouped = ScrobbleEvent(**{**_episode(progress=99.5).__dict__, "raw": {"duration": 3000000, "_cw_episode_group": {"id": "g"}}})
+
+    sink.send(grouped)
+
+    assert sink.send(grouped) == {"ok": False, "error": "completion_unconfirmed", "retryable": False}
+    assert len(calls) == 1
+
+
+def test_restart_from_beginning_clears_unconfirmed_completion(monkeypatch) -> None:
+    sink, calls = _failing_once_sink(monkeypatch, floppy_sink.FloppyAuthError("boom", reason="http_502", status_code=502))
+
+    sink.send(_episode(progress=98.0))
+    sink.send(_episode(action="start", progress=0.0))
+
+    assert sink.send(_episode(progress=98.0)) is None
+    assert [c["action"] for c in calls] == ["stop", "start", "stop"]
+
+
+def test_rejected_completed_stop_can_succeed_later(monkeypatch, _isolate_floppy_dedupe) -> None:
+    calls: list[dict[str, Any]] = []
+    failures = [floppy_sink.FloppyAuthError("slow", reason="http_429", status_code=429)]
+
+    def post(adapter, path, **kw):
+        calls.append(kw["json"])
+        if failures:
+            raise failures.pop()
+        return {}
+
+    monkeypatch.setattr(floppy_sink, "api_post", post)
+    monkeypatch.setattr(floppy_sink, "record_watch", lambda *a, **k: None)
+    monkeypatch.setattr(floppy_sink, "record_scrobble_event", lambda *a, **k: None)
+    monkeypatch.setattr(floppy_sink, "_rm_across", lambda *a, **k: None)
+
+    sink = FloppySink(cfg_provider=_cfg)
+    event = _episode(progress=99.5)
+
+    assert sink.send(event) == {"ok": False, "error": "http_429", "retryable": True}
+    assert sink.send(event) is None
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("error,expected", [
+    (floppy_sink.FloppyAuthError("denied", reason="invalid_api_token", status_code=401), {"ok": False, "error": "invalid_api_token", "retryable": False}),
+    (floppy_sink.FloppyAuthError("bad", reason="http_400", status_code=400), {"ok": False, "error": "http_400", "retryable": False}),
+    (floppy_sink.FloppyAuthError("slow", reason="http_429", status_code=429), {"ok": False, "error": "http_429", "retryable": True}),
+    (ConnectionError("down"), {"ok": False, "error": "request_failed", "retryable": True}),
+])
+def test_floppy_sink_reports_failures_to_dispatcher(monkeypatch, error, expected) -> None:
+    def post(adapter, path, **kw):
+        raise error
+
+    monkeypatch.setattr(floppy_sink, "api_post", post)
+    monkeypatch.setattr(floppy_sink, "record_watch", lambda *a, **k: None)
+
+    assert FloppySink(cfg_provider=_cfg).send(_movie(action="start")) == expected
 
 
 def _cfg_with_auto_remove() -> dict[str, Any]:
