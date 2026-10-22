@@ -1095,3 +1095,10 @@ body #ops-card #cw-sync-split #run-menu{min-width:44px!important}
 #page-snapshots .ss-table .ss-feature-label{white-space:normal}
 #page-snapshots .ss-table .ss-col-feature button{min-height:44px}
 }
+@media(max-width:920px){
+#page-settings #auth-providers #cw-auth-connection-overlay .cw-connection-modal-panel :is(.cw-connection-action-row,.jfy-actions-row,.inline:has(>#btn-connect-plex),.inline:has(>#emby_msg)){display:grid!important;grid-template-columns:minmax(0,1fr)!important;gap:12px;min-width:0}
+#page-settings #auth-providers #cw-auth-connection-overlay .cw-connection-modal-panel :is(.cw-connection-action-row,.jfy-actions-row,.inline:has(>#btn-connect-plex),.inline:has(>#emby_msg))>*{grid-column:1;justify-self:stretch;min-width:0;max-width:100%;width:100%;box-sizing:border-box;margin-left:0!important}
+#page-settings #auth-providers #cw-auth-connection-overlay .cw-connection-modal-panel :is(.cw-connection-action-buttons,.smk-actions,.mdbl-actions,.fl-actions,.trk-actions,.jfy-actions){flex-wrap:wrap;gap:8px}
+#page-settings #auth-providers #cw-auth-connection-overlay .cw-connection-modal-panel :is(.cw-connection-primary-action,#btn-connect-plex,.jfy-actions>.btn,.inline:has(>#emby_msg)>.btn){min-width:0!important;max-width:100%;width:100%!important;min-height:44px;height:auto!important;white-space:normal}
+#page-settings #auth-providers #cw-auth-connection-overlay .cw-connection-modal-panel :is(.cw-connection-status-pill,#plex_msg,#jfy_msg,#emby_msg){grid-column:1;justify-self:stretch;min-width:0!important;max-width:100%!important;width:100%!important;box-sizing:border-box;height:auto!important;white-space:normal;overflow-wrap:anywhere;text-align:center;justify-content:center}
+}
