@@ -540,6 +540,7 @@ export default {
         </div>
 
         <div class="ev-tabsbar">
+          <label class="ev-mobile-view" for="ev-mobile-view"><span>View</span><select id="ev-mobile-view" aria-label="Event view"></select></label>
           <div class="ev-viewtabs" id="ev-viewtabs" role="tablist"></div>
           <div class="ev-statsrange" id="ev-statsrange" hidden></div>
         </div>
@@ -763,6 +764,10 @@ export default {
       const el = Q("#ev-viewtabs", root);
       el.innerHTML = VIEW_TABS.map((t) => `<button type="button" role="tab" class="ev-vtab${t.value === view ? " on" : ""}" data-v="${t.value}" aria-selected="${t.value === view}"><span class="material-symbols-rounded" aria-hidden="true">${t.icon}</span>${t.label}</button>`).join("");
       el.querySelectorAll(".ev-vtab").forEach((b) => b.addEventListener("click", () => setView(b.dataset.v)));
+      const mobileSelect = Q("#ev-mobile-view", root);
+      mobileSelect.innerHTML = VIEW_TABS.map(t => `<option value="${t.value}">${t.label}</option>`).join("");
+      mobileSelect.value = view;
+      mobileSelect.onchange = () => setView(mobileSelect.value);
     };
 
     const renderStatsRange = () => {

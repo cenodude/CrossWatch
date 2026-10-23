@@ -61,7 +61,7 @@
         chip.appendChild(text);
       }
       if (entry) {
-        chip.title = [unverified ? `Sent to ${name}` : `On ${name}`, entry[1] > 1 ? `${entry[1]} entries` : "", entry[2] != null ? String(entry[2]) : ""].filter(Boolean).join(" · ")
+        chip.title = [unverified ? `Sent to ${name}` : `On ${name}`, entry[1] > 1 ? `${entry[1]} entries` : "", entry[2] != null ? String(entry[2]) : ""].filter(Boolean).join(" Â· ")
           + (unverified ? ". Not validated, missing sync pair." : "");
         chip.setAttribute("role", "img");
         chip.setAttribute("aria-label", chip.title);
@@ -132,6 +132,7 @@
     selCb.type = "checkbox";
     selCb.name = fieldName("selected");
     selCb.className = "cw-checkbox";
+    selCb.setAttribute("aria-label", `Select ${row.title || row.key || "row"}`);
     selCb.checked = (state.selected || new Set()).has(row._rid);
     selCb.onchange = () => {
       if (!state.selected) state.selected = new Set();
@@ -140,7 +141,10 @@
       call(ctx, "syncBulkBar");
       call(ctx, "syncSelectPageCheckbox");
     };
-    tr.appendChild(cell(selCb));
+    const selectionLabel = document.createElement("label");
+    selectionLabel.className = "cw-row-select";
+    selectionLabel.appendChild(selCb);
+    tr.appendChild(cell(selectionLabel));
 
     const baselineRow = blockMode && row._origin === "baseline";
     const delBtn = document.createElement("button");
@@ -152,6 +156,7 @@
           ? (row.deleted ? "Restore for future syncs" : "Block from future syncs")
           : (row.deleted ? "Restore row" : "Remove manual correction"))
       : (row.deleted ? "Restore row" : "Delete row");
+    delBtn.setAttribute("aria-label", delBtn.title);
     delBtn.onclick = () => {
       row.deleted = !row.deleted;
       call(ctx, "markChanged");
@@ -381,10 +386,39 @@
       if (!td) return;
       td.dataset.column = column;
       td.dataset.label = ({key: 'Key', type: 'Type', title: 'Title', year: 'Year',
-        id: anilistMode ? 'AniList' : 'TMDB', imdb: 'IMDb', tvdb: 'TVDB', trakt: 'Trakt',
+        id: anilistMode ? 'MAL' : 'TMDB', imdb: 'IMDb', tvdb: 'TVDB', trakt: 'Trakt',
         simkl: 'SIMKL', anilist: 'AniList', extra: call(ctx, 'columnLabel', 'extra') || 'Extra'})[column];
+      td.querySelectorAll('input,button').forEach(control => {
+        if (!control.hasAttribute('aria-label')) control.setAttribute('aria-label', td.dataset.label);
+      });
       tr.appendChild(td);
     });
+
+    const fieldsToggle = document.createElement("button");
+    fieldsToggle.type = "button";
+    fieldsToggle.className = "cw-btn cw-mobile-fields-toggle";
+    const expandedRows = (state.mobileExpandedRows ||= new Set());
+    const syncFields = () => {
+      const expanded = expandedRows.has(row._rid);
+      tr.classList.toggle("cw-mobile-fields-open", expanded);
+      fieldsToggle.setAttribute("aria-expanded", String(expanded));
+      fieldsToggle.textContent = expanded ? "Less" : "Fields";
+      fieldsToggle.setAttribute("aria-label", `${expanded ? "Hide" : "Show"} fields for ${row.title || row.key || "row"}`);
+    };
+    fieldsToggle.onclick = () => {
+      if (expandedRows.has(row._rid)) expandedRows.delete(row._rid);
+      else expandedRows.add(row._rid);
+      syncFields();
+    };
+    syncFields();
+    actionWrap.appendChild(fieldsToggle);
+    if (locked && !ctx.merged) {
+      const mobileTitle = document.createElement("strong");
+      mobileTitle.className = "cw-mobile-row-title";
+      mobileTitle.textContent = titleIn.value || row.key || "Untitled";
+      titleCell.prepend(mobileTitle);
+      titleIn.classList.add("cw-locked-title-input");
+    }
 
     return tr;
   }
@@ -418,7 +452,10 @@
       call(ctx, "syncSelectPageCheckbox");
       call(ctx, "renderRows");
     };
-    tr.appendChild(cell(selCb));
+    const selectionLabel = document.createElement("label");
+    selectionLabel.className = "cw-row-select";
+    selectionLabel.appendChild(selCb);
+    tr.appendChild(cell(selectionLabel));
 
     const toggle = document.createElement("button");
     toggle.type = "button";

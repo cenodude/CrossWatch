@@ -981,9 +981,21 @@
     const fabBtn = root.querySelector(".cw-qa-fab");
     const gripBtn = root.querySelector(".cw-qa-grip");
     let suppressClickUntil = 0;
+    const mobilePositionBounds = () => {
+      const viewport = window.visualViewport;
+      const height = window.innerHeight || 0;
+      const top = Math.max(viewport?.offsetTop || 0, document.querySelector('body > header')?.getBoundingClientRect().bottom || 0);
+      const bottomInset = Math.max(0, height - ((viewport?.offsetTop || 0) + (viewport?.height || height)));
+      const nav = document.getElementById('cw-mobile-bottom-nav');
+      const navRect = nav?.getBoundingClientRect();
+      const minimum = Math.max(16 + bottomInset, navRect?.height ? height - navRect.top + 12 : 16, document.body.classList.contains('cw-has-bottom-nav') ? 80 : 16);
+      const maximum = Math.max(minimum, height - top - (fabBtn?.getBoundingClientRect().height || 52) - 32);
+      return { minimum, maximum };
+    };
     const applyStoredPosition = () => {
       root.style.setProperty("--cw-qa-desktop-top", `${clamp(readStoredNumber(DESKTOP_POS_KEY, 66), 18, 88)}%`);
-      root.style.setProperty("--cw-qa-mobile-bottom", `${clamp(readStoredNumber(MOBILE_POS_KEY, 22), 16, 120)}px`);
+      const { minimum, maximum } = mobilePositionBounds();
+      root.style.setProperty("--cw-qa-mobile-bottom", `${clamp(readStoredNumber(MOBILE_POS_KEY, 22), minimum, maximum)}px`);
     };
     const openModal = () => {
       if (typeof window.openManualWatchedModal === "function") window.openManualWatchedModal();
@@ -1008,7 +1020,9 @@
       if (!event.isPrimary) return;
       const target = kind === "desktop" ? desktop : fabBtn;
       if (!target) return;
-      dragState = { kind, startX: event.clientX, startY: event.clientY, moved: false, pointerId: event.pointerId };
+      const { minimum, maximum } = mobilePositionBounds();
+      const startBottom = clamp(parseFloat(root.style.getPropertyValue("--cw-qa-mobile-bottom")) || 22, minimum, maximum);
+      dragState = { kind, startX: event.clientX, startY: event.clientY, startBottom, moved: false, pointerId: event.pointerId };
       target.setPointerCapture?.(event.pointerId);
       clearTimeout(closeTimer);
     };
@@ -1023,7 +1037,8 @@
         const pct = clamp((event.clientY / Math.max(window.innerHeight || 1, 1)) * 100, 18, 88);
         root.style.setProperty("--cw-qa-desktop-top", `${pct}%`);
       } else {
-        const bottom = clamp((window.innerHeight || 0) - event.clientY - 28, 16, 120);
+        const { minimum, maximum } = mobilePositionBounds();
+        const bottom = clamp(dragState.startBottom - dy, minimum, maximum);
         root.style.setProperty("--cw-qa-mobile-bottom", `${bottom}px`);
       }
     };
@@ -1050,6 +1065,8 @@
     };
 
     applyStoredPosition();
+    window.addEventListener("resize", applyStoredPosition);
+    window.visualViewport?.addEventListener("resize", applyStoredPosition);
     desktop?.addEventListener("mouseenter", openDrawer);
     desktop?.addEventListener("mouseleave", queueClose);
     desktop?.addEventListener("focusin", openDrawer);

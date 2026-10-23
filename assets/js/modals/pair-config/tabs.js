@@ -18,6 +18,8 @@ export function createTabsController({
     const tabs = ID("cx-feat-tabs");
     if (!tabs) return;
     const panel = ID("cx-feat-panel");
+    const mobileSelect = ID("cx-mobile-section");
+    if (mobileSelect) mobileSelect.replaceChildren();
     const ORDER = ["globals", "providers", ...sharedFeatureOrder()];
     const COMMON = new Set(commonFeatures(state));
     const showProviders = hasProviderControls(state);
@@ -41,6 +43,7 @@ export function createTabsController({
         : sharedFeatureLabel(k);
       b.onclick = () => {
         state.feature = k;
+        if (mobileSelect) mobileSelect.value = k;
         if (panel) panel.setAttribute("aria-labelledby", b.id);
         applyFlowTheme(state);
         renderFeaturePanel(state);
@@ -74,7 +77,20 @@ export function createTabsController({
       b.tabIndex = active ? 0 : -1;
       if (active && panel) panel.setAttribute("aria-labelledby", b.id);
       tabs.appendChild(b);
+      if (mobileSelect) {
+        const option = document.createElement("option");
+        option.value = k;
+        option.textContent = sharedFeatureLabel(k);
+        mobileSelect.appendChild(option);
+      }
     });
+    if (mobileSelect) {
+      mobileSelect.value = state.feature;
+      mobileSelect.onchange = () => {
+        const button = [...tabs.children].find(tab => tab.dataset.key === mobileSelect.value);
+        button?.click();
+      };
+    }
 
     renderFeaturePanel(state);
     applyFlowTheme(state);

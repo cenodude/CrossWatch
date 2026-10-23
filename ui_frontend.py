@@ -778,7 +778,9 @@ def _get_index_html_static() -> str:
       } catch {}
       return false;
     })();
-    const wantCompact = ui === "compact" || q.get("compact") === "1" || (!explicit && hasCompactViewport && likelyHandheld);
+    let saved = "";
+    try { saved = String(localStorage.getItem("cw_ui_mode") || "").toLowerCase(); } catch {}
+    const wantCompact = ui === "compact" || q.get("compact") === "1" || (!explicit && (saved === "compact" || (saved !== "full" && hasCompactViewport && likelyHandheld)));
     if (wantCompact) document.documentElement.classList.add("cw-compact");
   } catch {}
 })();
@@ -948,8 +950,7 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
   </nav>
 
   <div class="cw-ui-toggle" aria-label="UI mode">
-    <button class="cw-ui-btn btn-full" type="button" onclick="cwSetUiMode('full')">Full UI</button>
-    <button class="cw-ui-btn btn-compact" type="button" onclick="cwSetUiMode('compact')">Compact</button>
+    <button id="cw-ui-mode-switch" class="cw-ui-mode-switch" type="button" role="switch" aria-checked="false" aria-label="Compact mode" onclick="cwSetUiMode(document.documentElement.classList.contains('cw-compact') ? 'full' : 'compact')"><span>Compact</span><span class="cw-ui-switch-track" aria-hidden="true"><span class="cw-ui-switch-thumb"></span></span></button>
   </div>
 </header>
 
@@ -2561,6 +2562,9 @@ def get_profile_html(user: dict | None = None) -> str:
   <nav class="tabs" aria-label="Primary navigation">
     {profile_nav}
   </nav>
+  <div class="cw-ui-toggle" aria-label="UI mode">
+    <button id="cw-profile-compact-switch" class="cw-ui-mode-switch" type="button" role="switch" aria-checked="false" aria-label="Compact mode"><span>Compact</span><span class="cw-ui-switch-track" aria-hidden="true"><span class="cw-ui-switch-thumb"></span></span></button>
+  </div>
 </header>
 <main class="cw-profile-shell" data-profile-id="{profile_id}" data-username="{username}" data-display-name="{display_name}">
   <section class="cw-profile-hero" id="profile-hero">

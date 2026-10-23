@@ -68,6 +68,38 @@
   document.body.append(panel);
   const body = panel.querySelector(".cw-notifications-body");
   const badge = bell.querySelector(".cw-notifications-count");
+  const observed = new Map();
+  const alert = document.createElement("div");
+  alert.id = "cw-notification-alert";
+  alert.hidden = true;
+  alert.innerHTML = '<button type="button" data-alert-open><span role="status" aria-live="polite" aria-atomic="true"></span><small>View notifications</small></button><button type="button" data-alert-close aria-label="Dismiss notification banner">&#215;</button>';
+  document.body.append(alert);
+  let alertTimer;
+  function hideAlert() {
+    alert.hidden = true;
+    clearTimeout(alertTimer);
+  }
+  alert.querySelector("[data-alert-close]").addEventListener("click", hideAlert);
+  alert.querySelector("[data-alert-open]").addEventListener("click", () => { hideAlert(); setOpen(true); });
+  document.addEventListener("visibilitychange", () => { if (document.hidden) hideAlert(); });
+  window.addEventListener("cw:mobile-notification-alerts-changed", hideAlert);
+
+  function notifyNewItems(name, source) {
+    if (source.loading || source.error) return;
+    const scope = source.scope === "account" ? "account" : "profile";
+    const key = JSON.stringify([scopeKey(scope), name]);
+    const seen = observed.get(key);
+    const current = (source.items || []).map(item => JSON.stringify([name, item.id || item.href, item.revision || ""]));
+    observed.set(key, new Set([...(seen || []), ...current]));
+    const fresh = current.filter(id => seen && !seen.has(id) && !dismissed(scope).has(id));
+    if (!fresh.length || document.hidden || !window.matchMedia?.("(max-width: 760px)").matches) return;
+    try { if (localStorage.getItem("cw.mobile.notificationAlerts") !== "1") return; } catch { return; }
+    hideAlert();
+    alert.hidden = false;
+    alert.querySelector("[role=status]").textContent = fresh.length === 1 ? "New notification" : `${fresh.length} new notifications`;
+    alertTimer = setTimeout(hideAlert, 8000);
+    try { navigator.vibrate?.([30, 60, 30]); } catch {}
+  }
 
   function position() {
     if (panel.hidden) return;
@@ -82,6 +114,7 @@
     panel.hidden = !open;
     bell.setAttribute("aria-expanded", String(open));
     if (open) {
+      hideAlert();
       position();
       panel.querySelector("[data-notifications-close]").focus();
       window.dispatchEvent(new CustomEvent("cw:notifications-refresh"));
@@ -141,10 +174,11 @@
   window.addEventListener("hashchange", () => setOpen(false));
   window.addEventListener("resize", position);
   window.addEventListener("scroll", position, true);
-  function reset() { sources.clear(); setOpen(false); render(); }
+  function reset() { sources.clear(); observed.clear(); hideAlert(); setOpen(false); render(); }
   window.addEventListener("auth-changed", reset);
   window.addEventListener("cw:auth-state-changed", reset);
   window.addEventListener("cw:overview-profile-changed", () => {
+    hideAlert();
     for (const [name, source] of sources) if (source.scope !== "account") sources.delete(name);
     setOpen(false); render();
   });
@@ -154,7 +188,7 @@
     }
   });
   (window.CW ||= {}).Notifications = {
-    setSource(name, value) { sources.set(name, value); render(); },
+    setSource(name, value) { sources.set(name, value); render(); notifyNewItems(name, value); },
     removeSource(name) { sources.delete(name); render(); },
   };
   render();

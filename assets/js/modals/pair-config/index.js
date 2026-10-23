@@ -379,6 +379,7 @@ const tpl=()=>`
         </div>
       </div>
       <div class="cx-tabsrow grid2">
+        <label class="cx-mobile-section" for="cx-mobile-section"><span>Section</span><select id="cx-mobile-section" aria-controls="cx-feat-panel"></select></label>
         <div id="cx-feat-tabs" class="feature-tabs" role="tablist" aria-label="Connection sections"></div>
       </div>
       <div class="cx-main grid2">
@@ -1370,6 +1371,7 @@ function renderFeaturePanel(state){
       : `<div class="opt-row"><label for="gl-oneway-remove">One-Way Remove mode Source | Mirror-mode</label><label class="switch"><input id="gl-oneway-remove" type="checkbox" ${normalizeRemoveMode(state.pair_remove_mode)==="source_deletes"?"checked":""}><span class="slider"></span></label></div>`;
     const pct = Math.round((Number.isFinite(rt.suspect_shrink_ratio)?rt.suspect_shrink_ratio:0.1)*100);
     const minPrevVal = Number.isFinite(rt.suspect_min_prev)?rt.suspect_min_prev:20;
+    const guardInputType = window.matchMedia('(max-width:760px)').matches ? 'number' : 'range';
 
     left.innerHTML=`<div class="panel-title"><span class="material-symbols-rounded" style="vertical-align:-3px;margin-right:6px;">tune</span>General <button type="button" class="cx-help material-symbols-rounded" data-tip-id="gl-section-main">help</button></div>
       <div class="muted">Shared application safety settings. Pair-specific controls are labelled separately.</div>
@@ -1382,14 +1384,14 @@ function renderFeaturePanel(state){
           <div class="opt-row">
             <label for="gl-sus-min">Min</label>
             <div style="position:relative;width:100%">
-              <input id="gl-sus-min" type="range" min="0" max="200" step="1" value="${minPrevVal}" style="width:100%">
+              <input id="gl-sus-min" type="${guardInputType}" inputmode="numeric" min="0" max="200" step="1" value="${minPrevVal}" style="width:100%">
               <span id="gl-sus-min-val" style="position:absolute;right:6px;top:-6px;font-size:12px;opacity:var(--cw-content-opacity,.8);">${minPrevVal}</span>
             </div>
           </div>
           <div class="opt-row">
             <label for="gl-sus-pct-range">Shrink(%)</label>
             <div style="position:relative;width:100%">
-              <input id="gl-sus-pct-range" type="range" min="1" max="50" step="1" value="${pct}" style="width:100%">
+              <input id="gl-sus-pct-range" type="${guardInputType}" inputmode="numeric" min="1" max="50" step="1" value="${pct}" style="width:100%">
               <span id="gl-sus-pct-val" style="position:absolute;right:6px;top:-6px;font-size:12px;opacity:var(--cw-content-opacity,.8);">${pct}</span>
             </div>
           </div>
@@ -2232,7 +2234,7 @@ function bindChangeHandlers(state,root){
       if(id==="gl-sus-pct-range"&&n) n.value=String(pct);
       if(id==="gl-sus-pct"&&r) r.value=String(pct);
 
-      const minPrev=Math.max(0,parseInt(Q("#gl-sus-min")?.value||"20",10)||20);
+      const minPrev=Math.min(200,Math.max(0,parseInt(Q("#gl-sus-min")?.value||"20",10)||0));
       const dropOn=!!Q("#gl-drop")?.checked;
       const bb=state.globals?.blackbox||{};
 
@@ -2578,7 +2580,7 @@ function bindChangeHandlers(state,root){
       if(rangeEl) rangeEl.value=String(pct);
       if(numEl) numEl.value=String(pct);
 
-      const minPrev=Math.max(0,parseInt(Q("#gl-sus-min")?.value||"20",10)||20);
+      const minPrev=Math.min(200,Math.max(0,parseInt(Q("#gl-sus-min")?.value||"20",10)||0));
       syncGlobalsUI();
       const dropOn=!!Q("#gl-drop")?.checked;
       const adv=ID("gl-drop-adv");
@@ -2680,7 +2682,7 @@ async function saveConfigBits(state){
       if(!Number.isFinite(pct)) pct=10;
       pct=Math.min(50,Math.max(1,pct));
       const runtime={
-        suspect_min_prev: Math.max(0, parseInt(ID("gl-sus-min")?.value||"20",10)||20),
+        suspect_min_prev: Math.min(200, Math.max(0, parseInt(ID("gl-sus-min")?.value||"20",10)||0)),
         suspect_shrink_ratio: pct/100
       };
 

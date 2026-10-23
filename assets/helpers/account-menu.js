@@ -35,11 +35,16 @@
     toggle.setAttribute('aria-controls', panel.id);
     toggle.setAttribute('aria-expanded', 'false');
     header.insertBefore(toggle, nav);
+    const focusToggle = () => {
+      const more = $('cw-mobile-more');
+      (more?.getClientRects().length ? more : toggle).focus();
+    };
     const close = () => {
       if (toggle.getAttribute('aria-expanded') !== 'true') return;
-      if (panel.contains(document.activeElement)) toggle.focus();
+      if (panel.contains(document.activeElement)) focusToggle();
       header.classList.remove('cw-nav-open');
       toggle.setAttribute('aria-expanded', 'false');
+      $('cw-mobile-more')?.setAttribute('aria-expanded', 'false');
       window.cwCloseSettingsMenu?.();
       window.cwCloseAboutMenu?.();
     };
@@ -47,19 +52,78 @@
       if (toggle.getAttribute('aria-expanded') === 'true') return close();
       header.classList.add('cw-nav-open');
       toggle.setAttribute('aria-expanded', 'true');
+      $('cw-mobile-more')?.setAttribute('aria-expanded', 'true');
     });
     nav.addEventListener('click', event => {
       if (event.target.closest('.tab:not([aria-haspopup]), [role="menuitem"], a[href], #cw-nav-profile-link, #cw-notifications-button')) close();
     });
-    document.addEventListener('click', event => { if (!header.contains(event.target)) close(); });
+    document.addEventListener('click', event => { if (!header.contains(event.target) && !$('cw-mobile-bottom-nav')?.contains(event.target)) close(); });
     document.addEventListener('keydown', event => {
       if (event.key === 'Escape' && toggle.getAttribute('aria-expanded') === 'true') {
         close();
-        toggle.focus();
+        focusToggle();
       }
     });
     window.addEventListener('hashchange', close);
     window.matchMedia('(max-width: 760px)').addEventListener('change', close);
+  }
+
+  function mobileNavigationFeedback() {
+    try {
+      if (localStorage.getItem('cw.mobile.haptics') !== '0' && typeof navigator.vibrate === 'function') navigator.vibrate(30);
+    } catch {}
+  }
+
+  function initMobileBottomNavigation() {
+    if (!$('cw-mobile-nav-toggle') || $('cw-mobile-bottom-nav')) return;
+    const nav = document.createElement('nav');
+    nav.id = 'cw-mobile-bottom-nav';
+    nav.setAttribute('aria-label', 'Mobile navigation');
+    const items = [['main', 'home', 'Home']];
+    if ($('tab-settings') && document.documentElement.dataset.cwRole !== 'user') {
+      items.push(['settings/providers', 'device_hub', 'Connections'], ['settings/sync', 'sync_alt', 'Sync pairs'], ['settings/scrobbler', 'sensors', 'Scrobbler']);
+    }
+    const routeBase = window.location.pathname === '/' ? '' : '/?ui=full';
+    nav.innerHTML = items.map(([route, icon, label]) => `<a href="${routeBase}#${route}" data-mobile-route="${route}"><span class="material-symbols-rounded" aria-hidden="true">${icon}</span><span>${label}</span></a>`).join('') +
+      '<button id="cw-mobile-more" type="button" aria-controls="cw-mobile-navigation" aria-expanded="false"><span class="material-symbols-rounded" aria-hidden="true">menu</span><span>More</span></button>';
+    document.body.appendChild(nav);
+    document.body.classList.add('cw-has-bottom-nav');
+    const icons = {'tab-main':'home','tab-snapshots':'photo_library','tab-playlists':'queue_music','tab-editor':'edit_note','tab-settings':'settings','tab-about':'info'};
+    document.querySelectorAll('#cw-mobile-navigation .tab').forEach(tab => {
+      const icon = document.createElement('span');
+      icon.className = 'material-symbols-rounded cw-mobile-destination-icon';
+      icon.setAttribute('aria-hidden', 'true');
+      icon.textContent = icons[tab.id] || 'info';
+      tab.prepend(icon);
+    });
+    document.dispatchEvent(new Event('cw-mobile-navigation-ready'));
+
+    $('cw-mobile-more').addEventListener('click', () => {
+      $('cw-mobile-nav-toggle').click();
+      if ($('cw-mobile-more').getAttribute('aria-expanded') === 'true') {
+        $('cw-mobile-navigation').querySelector('button, a[href]')?.focus();
+      }
+    });
+    nav.addEventListener('click', event => {
+      if (event.target.closest('a, button')) mobileNavigationFeedback();
+      if (event.target.closest('a') && $('cw-mobile-more').getAttribute('aria-expanded') === 'true') $('cw-mobile-nav-toggle').click();
+    });
+    const update = () => {
+      const route = window.location.pathname === '/' ? window.location.hash.slice(1).split('?')[0] || 'main' : '';
+      let matched = false;
+      nav.querySelectorAll('[data-mobile-route]').forEach(link => {
+        const active = link.dataset.mobileRoute === route;
+        if (active) link.setAttribute('aria-current', 'page');
+        else link.removeAttribute('aria-current');
+        matched ||= active;
+      });
+      $('cw-mobile-more').classList.toggle('is-current', !matched);
+    };
+    const scheduleUpdate = () => window.requestAnimationFrame(update);
+    window.addEventListener('hashchange', update);
+    document.addEventListener('tab-changed', scheduleUpdate);
+    document.addEventListener('cw-settings-pane-changed', scheduleUpdate);
+    update();
   }
 
   function normalizeAvatarUrl(value) {
@@ -171,8 +235,16 @@
     if (event.key === "Escape") close();
   }, true);
 
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initMobileNavigation, {once: true});
-  else initMobileNavigation();
+  function initNavigation() {
+    $('cw-profile-compact-switch')?.addEventListener('click', () => {
+      try { localStorage.setItem('cw_ui_mode', 'compact'); } catch {}
+      window.location.assign('/?ui=compact#main');
+    });
+    initMobileNavigation();
+    initMobileBottomNavigation();
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initNavigation, {once: true});
+  else initNavigation();
 
   window.CW = window.CW || {};
   window.CW.AccountMenu = {

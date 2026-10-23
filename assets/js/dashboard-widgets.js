@@ -57,6 +57,9 @@
   };
   const ON_PROFILE_PAGE = !!document.getElementById("profile-hero");
   const LAYOUT_KEY = ON_PROFILE_PAGE ? "cw.profileWidgets.layout.v3" : "cw.dashboardWidgets.layout.v3";
+  const mobileViewport = window.matchMedia("(max-width: 760px)");
+  const mobileLayoutKey = `${LAYOUT_KEY}.mobile.v1`;
+  let layoutKey = mobileViewport.matches ? mobileLayoutKey : LAYOUT_KEY;
   const SETTINGS_KEY = "cw.dashboardWidgets.settings.v1";
   const DATA_CACHE_KEY = ON_PROFILE_PAGE ? "cw.profileWidgets.data.v1" : "cw.dashboardWidgets.data.v1";
   const ALL_WIDGETS = [
@@ -116,13 +119,13 @@
   }
 
   function readLayout() {
-    try { return normalizeLayout(JSON.parse(localStorage.getItem(LAYOUT_KEY) || "null")); }
+    try { return normalizeLayout(JSON.parse(localStorage.getItem(layoutKey) || localStorage.getItem(LAYOUT_KEY) || "null")); }
     catch { return normalizeLayout(null); }
   }
 
   function saveLayout(nextLayout) {
     widgetLayout = normalizeLayout(nextLayout);
-    try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(widgetLayout)); } catch {}
+    try { localStorage.setItem(layoutKey, JSON.stringify(widgetLayout)); } catch {}
     window.dispatchEvent(new CustomEvent("cw:dashboard-widgets-layout-changed"));
     applyVisibility(lastSettings || {});
   }
@@ -237,7 +240,7 @@
 
   function resetLayout() {
     widgetLayout = normalizeLayout(null);
-    try { localStorage.removeItem(LAYOUT_KEY); } catch {}
+    try { localStorage.setItem(layoutKey, JSON.stringify(widgetLayout)); } catch {}
     window.dispatchEvent(new CustomEvent("cw:dashboard-widgets-layout-changed"));
     applyVisibility(lastSettings || {});
   }
@@ -683,6 +686,85 @@
 
   function ensureLayoutToolbar() {
     updateLayoutToolbar();
+  }
+
+  function updateMobilePicker(settings = lastSettings || {}) {
+    const card = $("#dashboard-widgets-card");
+    if (!card) return;
+    let picker = $("#cw-mobile-widgets");
+    if (!picker) {
+      picker = document.createElement("details");
+      picker.id = "cw-mobile-widgets";
+      picker.className = "cw-mobile-widgets";
+      picker.innerHTML = `<summary><span class="material-symbols-rounded" aria-hidden="true">tune</span><span>Mobile settings</span><span class="cw-mobile-widget-count"></span></summary>
+        <div class="cw-mobile-widget-options">
+          <h3>Touch feedback</h3>
+          <label><input type="checkbox" data-mobile-notification-alerts><span class="material-symbols-rounded cw-mobile-widget-icon" aria-hidden="true">notifications_active</span><span>Notification alerts</span><small>Banner and vibration when supported, while open</small></label>
+          <label><input type="checkbox" data-mobile-haptics><span class="material-symbols-rounded cw-mobile-widget-icon" aria-hidden="true">vibration</span><span>Haptic feedback</span><small>Short vibration on menu taps</small></label>
+          <h3>Dashboard widgets</h3><p>Choose what appears on this device's mobile dashboard. Desktop settings stay separate.</p>
+          <label><input type="checkbox" data-mobile-sync-results><span class="material-symbols-rounded cw-mobile-widget-icon" aria-hidden="true">sync_alt</span><span>Sync results</span><small>Watchlist, ratings, history and other sync-result cards</small></label>
+          <label><input type="checkbox" data-mobile-provider-stats><span class="material-symbols-rounded cw-mobile-widget-icon" aria-hidden="true">bar_chart</span><span>Provider statistics</span><small>Provider totals and feature selector</small></label>
+          ${WIDGETS.map(({ key, label }) => `<label><input type="checkbox" data-mobile-widget="${key}"><span class="material-symbols-rounded cw-mobile-widget-icon" aria-hidden="true">${({watchlist:"movie",history:"history",ratings:"star",scrobble:"sensors",progress:"play_circle",playlists:"queue_music"})[key]}</span><span>${esc(label)}</span><small></small></label>`).join("")}
+          <button type="button" class="cw-mobile-widget-reset">Reset mobile widgets</button>
+        </div>`;
+      document.body.appendChild(picker);
+      const providerStats = picker.querySelector('[data-mobile-provider-stats]');
+      providerStats.checked = true;
+      try { providerStats.checked = localStorage.getItem('cw.mobile.providerStats') !== '0'; } catch {}
+      document.body.classList.toggle('cw-mobile-hide-provider-stats', !providerStats.checked);
+      providerStats.addEventListener('change', () => {
+        document.body.classList.toggle('cw-mobile-hide-provider-stats', !providerStats.checked);
+        try { localStorage.setItem('cw.mobile.providerStats', providerStats.checked ? '1' : '0'); } catch {}
+        window.dispatchEvent(new Event('resize'));
+      });
+      const syncResults = picker.querySelector('[data-mobile-sync-results]');
+      try { syncResults.checked = localStorage.getItem('cw.mobile.syncResults') === '1'; } catch {}
+      document.body.classList.toggle('cw-mobile-sync-results', syncResults.checked);
+      syncResults.addEventListener('change', () => {
+        document.body.classList.toggle('cw-mobile-sync-results', syncResults.checked);
+        try { localStorage.setItem('cw.mobile.syncResults', syncResults.checked ? '1' : '0'); } catch {}
+      });
+      const notificationAlerts = picker.querySelector('[data-mobile-notification-alerts]');
+      try { notificationAlerts.checked = localStorage.getItem('cw.mobile.notificationAlerts') === '1'; } catch {}
+      notificationAlerts.addEventListener('change', () => {
+        try { localStorage.setItem('cw.mobile.notificationAlerts', notificationAlerts.checked ? '1' : '0'); } catch {}
+        window.dispatchEvent(new CustomEvent('cw:mobile-notification-alerts-changed'));
+      });
+      const haptics = picker.querySelector('[data-mobile-haptics]');
+      const supportsHaptics = typeof navigator.vibrate === 'function';
+      haptics.disabled = !supportsHaptics;
+      try { haptics.checked = supportsHaptics && localStorage.getItem('cw.mobile.haptics') !== '0'; } catch {}
+      if (!supportsHaptics) haptics.parentElement.querySelector('small').textContent = 'Not supported by this browser';
+      haptics.addEventListener('change', () => {
+        try { localStorage.setItem('cw.mobile.haptics', haptics.checked ? '1' : '0'); } catch {}
+        if (haptics.checked && supportsHaptics) {
+          try { navigator.vibrate(30); } catch {}
+        }
+      });
+      picker.addEventListener("change", (event) => {
+        const input = event.target.closest("[data-mobile-widget]");
+        if (!input || !mobileViewport.matches) return;
+        patchLayout(input.dataset.mobileWidget, { hidden: !input.checked });
+        if (input.checked) markWidgetsDirty(0);
+      });
+      picker.querySelector(".cw-mobile-widget-reset").addEventListener("click", () => {
+        if (!mobileViewport.matches) return;
+        resetLayout();
+        markWidgetsDirty(0);
+      });
+    }
+    const menu = $("#cw-mobile-navigation");
+    if (menu && picker.parentElement !== menu) menu.appendChild(picker);
+    let shown = 0;
+    for (const input of picker.querySelectorAll("[data-mobile-widget]")) {
+      const key = input.dataset.mobileWidget;
+      const enabled = settings[key] !== false;
+      input.checked = enabled && !widgetLayout[key]?.hidden;
+      input.disabled = !enabled;
+      input.parentElement.querySelector("small").textContent = enabled ? "" : "Unavailable";
+      if (input.checked) shown += 1;
+    }
+    picker.querySelector(".cw-mobile-widget-count").textContent = `${shown} shown`;
   }
 
   function showAllWidgets() {
@@ -1717,6 +1799,7 @@
   function applyVisibility(settings) {
     const card = $("#dashboard-widgets-card");
     if (!card) return;
+    updateMobilePicker(settings);
     ensureLayoutToolbar();
     ensureWidgetControls();
     let anyVisible = false;
@@ -1944,6 +2027,19 @@
   function initDashboardWidgets() {
     ensureLayoutToolbar();
     ensureWidgetControls();
+    updateMobilePicker();
+    mobileViewport.addEventListener("change", () => {
+      layoutKey = mobileViewport.matches ? mobileLayoutKey : LAYOUT_KEY;
+      widgetLayout = readLayout();
+      customizeOpen = false;
+      for (const kind of REFRESHABLE_WIDGETS) {
+        resetVisibleCount(kind);
+        renderWidget(kind);
+      }
+      applyVisibility(lastSettings || {});
+      window.dispatchEvent(new CustomEvent("cw:dashboard-widgets-layout-changed"));
+      markWidgetsDirty(0);
+    });
     revealFromCache();
     window.dispatchEvent(new CustomEvent("cw:dashboard-widgets-layout-changed"));
     $("#recent-history-refresh")?.addEventListener("click", (e) => refreshFromButton(e.currentTarget));
@@ -2030,8 +2126,10 @@
         }
       }
     });
+    document.addEventListener("cw-mobile-navigation-ready", () => updateMobilePicker());
     document.addEventListener("tab-changed", (event) => {
       const id = event?.detail?.id || event?.detail?.tab;
+
       if (String(id || "").toLowerCase() === "main") {
         revealCachedWidgets();
         setTimeout(() => refreshDashboardWidgets({ preserve: hasLoaded }), 50);

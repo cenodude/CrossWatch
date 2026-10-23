@@ -71,7 +71,7 @@
         const id = libId(l);
         const checks = features.map((f) => {
           const on = isOn(f.key, id);
-          return `<label class="cw-wl-check cw-wl-${f.key}"><input type="checkbox" data-feat="${f.key}" ${on ? "checked" : ""} aria-label="${esc(f.label)} — ${esc(libTitle(l))}"><span class="cw-wl-box"></span></label>`;
+          return `<label class="cw-wl-check cw-wl-${f.key}"><input type="checkbox" data-feat="${f.key}" ${on ? "checked" : ""} aria-label="${esc(f.label)} — ${esc(libTitle(l))}"><span class="cw-wl-box"></span><span class="cw-wl-feature-label" aria-hidden="true">${esc(f.label)}</span></label>`;
         }).join("");
         const tip = l.missing ? `${libTitle(l)} · no longer on the server. Untick it to remove it.` : `${libTitle(l)} · #${id}`;
         return `<div class="cw-wl-row" data-id="${esc(id)}"${l.missing ? ' data-missing="1"' : ""} title="${esc(tip)}">
@@ -94,7 +94,7 @@
         <div class="cw-wl" style="--wl-feature-count:${featureCount}">
           <div class="cw-wl-scroll">
             <div class="cw-wl-colrow">
-              <div class="cw-wl-collib">Library</div>
+              <div class="cw-wl-collib"><span class="cw-wl-desktop-label">Library</span><span class="cw-wl-mobile-label">Toggle all libraries</span></div>
               <div class="cw-wl-cols">${colHeadHTML()}</div>
             </div>
             <div class="cw-wl-rows">${rowsHTML(withMissing(libs))}</div>

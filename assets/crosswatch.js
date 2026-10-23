@@ -89,10 +89,10 @@
       if (ui === "compact" || q.get("compact") === "1") return "compact";
       if (ui === "full" || q.get("full") === "1") return "full";
 
-      if (_cwShouldAutoCompact()) return "compact";
-
-      const saved = String(localStorage.getItem("cw_ui_mode") || "").toLowerCase();
+      let saved = "";
+      try { saved = String(localStorage.getItem("cw_ui_mode") || "").toLowerCase(); } catch {}
       if (saved === "compact" || saved === "full") return saved;
+      if (_cwShouldAutoCompact()) return "compact";
     } catch {}
     return "full";
   };
@@ -100,6 +100,9 @@
   const _cwApplyUiMode = (mode) => {
     const m = mode === "compact" ? "compact" : "full";
     document.documentElement.classList.toggle("cw-compact", m === "compact");
+    const syncSwitch = () => document.getElementById("cw-ui-mode-switch")?.setAttribute("aria-checked", String(m === "compact"));
+    syncSwitch();
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", syncSwitch, { once: true });
     return m;
   };
 
@@ -115,6 +118,7 @@
         q.delete("compact");
         q.delete("full");
         q.set("ui", m);
+        if (m === "compact") url.hash = "main";
         url.search = q.toString() ? "?" + q.toString() : "";
 
         window.location.assign(url.toString());

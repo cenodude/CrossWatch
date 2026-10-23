@@ -339,6 +339,8 @@
               ${profileLabel ? `<span class="pair-pill mode profile" data-tip="Assigned profile">${esc(profileLabel)}</span>` : ""}
             </div>
             <div class="pair-actions">
+              <div class="pair-feature-summary">
+              <span class="pair-pill mode pair-mobile-mode">${modeLabel}</span>
               <div class="feat-beads" role="group" aria-label="Enabled features">
                 ${bead("wl", "Watchlist", f.watchlist)}
                 ${bead("rt", "Ratings", f.ratings)}
@@ -347,33 +349,36 @@
                 ${bead("pl", "Playlists", f.playlists)}
                 ${bead("co", "Collections", f.collection)}
               </div>
+              </div>
 
+              <div class="pair-action-buttons" role="group" aria-label="Sync pair actions">
               <button type="button" class="icon-btn" data-tip="Run and review sync" aria-label="Run and review sync" ${enabled ? "" : "disabled"} data-interactive-pair="${esc(pr.id)}">
-                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M8 5l11 7-11 7V5z"></path></svg>
+                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M8 5l11 7-11 7V5z"></path></svg><span class="pair-action-label">Run</span>
               </button>
 
               <button type="button" class="icon-btn" data-tip="Latest logs" aria-label="Latest logs" data-pair-logs="${esc(pr.id)}">
-                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="m7 9 3 3-3 3M13 15h4"></path></svg>
+                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="m7 9 3 3-3 3M13 15h4"></path></svg><span class="pair-action-label">Logs</span>
               </button>
 
               <label class="icon-btn power ${enabled ? "" : "off"}" data-tip="Enable / disable" role="switch" aria-checked="${enabled}">
                 <input class="sr-only" type="checkbox" name="pair-enabled" ${enabled ? "checked" : ""}
                   onchange="this.closest('.icon-btn.power')?.setAttribute('aria-checked', this.checked); window.cxToggleEnable && window.cxToggleEnable('${pr.id}', this.checked, this)">
-                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 3v6"></path><path d="M5.6 7a8 8 0 1 0 12.8 0"></path></svg>
+                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 3v6"></path><path d="M5.6 7a8 8 0 1 0 12.8 0"></path></svg><span class="pair-action-label pair-power-label"><span class="pair-power-on">Enabled</span><span class="pair-power-off">Disabled</span></span>
               </label>
 
               <button type="button" class="icon-btn" data-tip="Move left" onclick="window.movePair && window.movePair('${pr.id}','prev')" aria-label="Move left">
-                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M15 18l-6-6 6-6"></path></svg>
+                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M15 18l-6-6 6-6"></path></svg><span class="pair-action-label">Earlier</span>
               </button>
               <button type="button" class="icon-btn" data-tip="Move right" onclick="window.movePair && window.movePair('${pr.id}','next')" aria-label="Move right">
-                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg><span class="pair-action-label">Later</span>
               </button>
               <button type="button" class="icon-btn" data-tip="Edit" onclick="window.cxPairsEditClick(this)" aria-label="Edit">
-                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z"></path><path d="M14.06 4.94l3.75 3.75"></path></svg>
+                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z"></path><path d="M14.06 4.94l3.75 3.75"></path></svg><span class="pair-action-label">Edit</span>
               </button>
               <button type="button" class="icon-btn danger" data-tip="Delete" onclick="window.deletePairCard('${pr.id}')" aria-label="Delete">
-                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M6 6l1 14h10l1-14"></path></svg>
+                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M6 6l1 14h10l1-14"></path></svg><span class="pair-action-label">Delete</span>
               </button>
+              </div>
             </div>
           </div>
         </div>`;

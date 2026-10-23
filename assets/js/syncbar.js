@@ -441,8 +441,11 @@
         steps.appendChild(s);
       });
       rail.append(fill, fly);
-      host.append(head, rail, steps);
-      dom = { head, badge, phaseText, note, rail, fill, fly, steps };
+      const mobile = document.createElement("div");
+      mobile.className = "sb-mobile";
+      mobile.innerHTML = '<div class="sb-mobile-hero"><div class="sb-mobile-ring" aria-hidden="true"><div class="sb-mobile-ring-core"><span class="sb-mobile-symbol material-symbols-rounded">sync</span><strong class="sb-mobile-percent"></strong></div></div><div class="sb-mobile-copy"><span class="sb-mobile-eyebrow">YOUR SYNC</span><strong class="sb-mobile-title"></strong><p class="sb-mobile-detail"></p></div></div><div class="sb-mobile-timeline"><span data-step="start">Start</span><span data-step="discovering">Discover</span><span data-step="syncing">Sync</span><span data-step="done">Done</span></div>';
+      host.append(mobile, head, rail, steps);
+      dom = { head, badge, phaseText, note, rail, fill, fly, steps, mobile };
       this._dom = dom;
       return dom;
     }
@@ -497,6 +500,13 @@
       badge.classList.toggle("done", hardDone && !this._hadError);
       badge.classList.toggle("error", this._hadError);
       phaseTextEl.textContent = phaseLabel;
+      const mobile = dom.mobile;
+      mobile.dataset.state = this._hadError ? "error" : hardDone ? "done" : isRunning ? "running" : "idle";
+      mobile.style.setProperty("--sb-mobile-progress", `${this._pctMemo}%`);
+      mobile.querySelector(".sb-mobile-title").textContent = statusText === "Idle" ? "Ready to sync" : statusText === "Synced" ? "All up to date" : statusText;
+      mobile.querySelector(".sb-mobile-detail").textContent = statusText === "Idle" ? "Your next sync starts here." : statusText === "Starting" ? "Preparing your connected services." : phaseLabel;
+      mobile.querySelector(".sb-mobile-percent").textContent = isRunning && !this._hadError && !hardDone ? `${this._pctMemo}%` : "";
+      mobile.querySelector(".sb-mobile-symbol").textContent = this._hadError ? "priority_high" : hardDone ? "check" : "sync";
 
       const unresolved = Number(this._unresolved || 0);
       const showNote = unresolved > 0 && (hardDone || this._hadError);
@@ -515,7 +525,7 @@
       rail.classList.toggle("finishing", !isRunning && !this.timeline.done && (logicalDone || this._pendingDone));
       rail.classList.toggle("error", this._hadError);
 
-      for (const step of steps.children) {
+      for (const step of [...steps.children, ...mobile.querySelectorAll("[data-step]")]) {
         const key = step.dataset.step || "";
         const doneState = key === "start" ? !!this.timeline.start
           : key === "discovering" ? !!this.timeline.pre
