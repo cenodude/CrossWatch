@@ -8,15 +8,21 @@ from dataclasses import dataclass, field, replace
 import hashlib
 import json
 import logging
+from pathlib import Path
 import re
+import shutil
+import sqlite3
+import tempfile
 import threading
 import time
 from typing import Any, Literal
 import uuid
+import zipfile
 from email.utils import parsedate_to_datetime
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.concurrency import run_in_threadpool
 
 from cw_platform.access_policy import request_user, user_can_access_instance
 from cw_platform.config_base import load_config
@@ -28,17 +34,22 @@ from . import importer
 router = APIRouter(prefix="/api/import/plex-recovery", tags=["import"])
 LOCK = threading.RLock()
 JOBS: dict[str, Job] = {}
+UPLOADS: dict[str, dict[str, Any]] = {}
 LOG = logging.getLogger(__name__)
 AUTO_MATCH_INTERVAL = 0.5
 RECOVERY_TTL_SECONDS = 24 * 60 * 60
+UPLOAD_TTL_SECONDS = 60 * 60
+DATABASE_FOLDER = Path(tempfile.gettempdir()) / "crosswatch-plex-recovery"
 
 
 class Start(BaseModel):
     model_config = ConfigDict(extra="forbid")
     source_instance: str = Field(default="default", max_length=128)
     target_instance: str = Field(default="default", max_length=128)
-    source: Literal["plex", "tautulli"] = "plex"
+    source: Literal["plex", "tautulli", "plex_db"] = "plex"
     tautulli_instance: str = Field(default="default", max_length=128)
+    upload_id: str = Field(default="", max_length=64)
+    db_account: int | None = None
 
 
 class Commit(importer.ImportCommitFields):
@@ -114,12 +125,17 @@ class Job:
     auto_stop: threading.Event = field(default_factory=threading.Event)
     auto_thread: threading.Thread | None = None
     tautulli: str = ""
+    database: str = ""
+    db_folder: str = ""
+    db_path: str = ""
+    db_account: int | None = None
 
     def public(self):
         return dict(id=self.id, import_id=self.id, status=self.status, message=self.message, stage=self.stage,
                     done=self.done, total=self.total, revision=self.revision, source_instance=self.source,
                     target_instance=self.target, imported=len(self.receipt),
-                    source="tautulli" if self.tautulli else "plex", tautulli_instance=self.tautulli,
+                    source="tautulli" if self.tautulli else "plex_db" if self.database else "plex",
+                    tautulli_instance=self.tautulli, database=self.database,
                     activity=dict(self.activity), recent=[dict(item) for item in self.recent], auto_match=dict(self.auto))
 
 
@@ -185,6 +201,34 @@ def _prune():
     for key, job in list(JOBS.items()):
         if job.status != "reading" and not _auto_running(job) and time.time() - job.touched > RECOVERY_TTL_SECONDS:
             del JOBS[key]
+    _prune_uploads()
+
+
+def _new_folder() -> Path:
+    DATABASE_FOLDER.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix="db-", dir=DATABASE_FOLDER))
+
+
+def _drop_upload(key):
+    upload = UPLOADS.pop(key, None)
+    if upload:
+        shutil.rmtree(upload["folder"], ignore_errors=True)
+
+
+def _prune_uploads():
+    for key, upload in list(UPLOADS.items()):
+        if time.time() - upload["created"] > UPLOAD_TTL_SECONDS:
+            _drop_upload(key)
+    if not DATABASE_FOLDER.is_dir():
+        return
+    keep = {str(Path(u["folder"])) for u in UPLOADS.values()} | {str(Path(j.db_folder)) for j in JOBS.values() if j.db_folder}
+    for folder in DATABASE_FOLDER.iterdir():
+        try:
+            stale = time.time() - folder.stat().st_mtime > UPLOAD_TTL_SECONDS
+        except OSError:
+            continue
+        if str(folder) not in keep and stale:
+            shutil.rmtree(folder, ignore_errors=True)
 
 
 def _job(sid, request, cfg):
@@ -231,6 +275,13 @@ def _shape(job, cfg):
 
 
 def _scan_error(job, error):
+    if job.database:
+        from providers.sync.plex._recovery_db import RecoveryError
+        if isinstance(error, RecoveryError):
+            return f"Recovery could not finish. {error} Nothing was imported."
+        if isinstance(error, PermissionError) and error.errno is None:
+            return "Recovery could not finish. Plex rejected the account token. Reconnect Plex, then retry. Nothing was imported."
+        return "Recovery could not finish. Check the Plex connection and that there is enough free disk space for the database, then retry. Nothing was imported."
     if not job.tautulli:
         return "Recovery could not finish. Check that the Plex connection has server-owner access to play history, and check the connection and library access, then retry. Nothing was imported."
     if isinstance(error, PermissionError):
@@ -253,6 +304,27 @@ def _scan_tautulli(job, cfg, progress, check_cancel):
                                       check_cancel=check_cancel, max_rows=importer.MAX_ROWS)
     finally:
         module.client.session.close()
+
+
+def _scan_database(job, cfg, adapter, progress, check_cancel):
+    from providers.sync.plex import _common as common, _recovery as plex_recovery, _recovery_db as recovery_db
+
+    token = _plex_token(cfg, job.source)
+    resolve = plex_recovery.guid_resolver(token)
+    if adapter is None:
+        path, account, libraries = Path(job.db_path), job.db_account, set()
+    else:
+        folder = _new_folder()
+        with LOCK:
+            job.db_folder = str(folder)
+        path = recovery_db.download(adapter, folder, progress=progress, check_cancel=check_cancel)
+        account = common.plex_cfg_get(adapter, "account_id", None) or getattr(adapter.client, "user_account_id", None)
+        libraries = common.plex_feature_library_ids(adapter, "history")
+    if account is None:
+        raise RuntimeError("Plex account unavailable")
+    common.configure_plex_context(baseurl=None, token=token, account_token=token)
+    return recovery_db.scan(path, account=int(account), libraries=libraries, resolve=resolve, progress=progress,
+                            check_cancel=check_cancel, max_rows=importer.MAX_ROWS)
 
 
 def _scan(job, cfg):
@@ -279,9 +351,14 @@ def _scan(job, cfg):
             check_cancel()
             if job.tautulli:
                 raw = _scan_tautulli(job, cfg, progress, check_cancel)
+            elif job.database == "upload":
+                raw = _scan_database(job, cfg, None, progress, check_cancel)
             else:
                 adapter = PLEXModule(build_provider_config_view(cfg, "PLEX", job.source))
-                raw = scan(adapter, progress=progress, check_cancel=check_cancel, max_rows=importer.MAX_ROWS)
+                if job.database:
+                    raw = _scan_database(job, cfg, adapter, progress, check_cancel)
+                else:
+                    raw = scan(adapter, progress=progress, check_cancel=check_cancel, max_rows=importer.MAX_ROWS)
             check_cancel()
             progress("review", "Checking recovered events against the CW tracker", 0, 0)
             with LOCK:
@@ -306,6 +383,8 @@ def _scan(job, cfg):
                         session.close()
                     except Exception:
                         LOG.debug("plex_recovery_session_close_failed", exc_info=True)
+        if job.db_folder:
+            shutil.rmtree(job.db_folder, ignore_errors=True)
         with LOCK:
             job.touched = time.time()
         rt = syncAPI._rt()
@@ -342,6 +421,56 @@ def options(request: Request):
     return dict(sources=sources, targets=targets, lookups=lookups, tautulli=tautulli)
 
 
+@router.post("/database")
+async def upload_database(request: Request, file: UploadFile = File(...)):
+    from providers.sync.plex import _recovery_db as recovery_db
+    owner = _owner(request)
+    folder: Path | None = _new_folder()
+    try:
+        source = folder / "upload"
+        total = 0
+        with open(source, "wb") as out:
+            while chunk := await file.read(1024 * 1024):
+                total += len(chunk)
+                if total > recovery_db.MAX_DATABASE_BYTES:
+                    raise HTTPException(413, recovery_db.TOO_LARGE)
+                out.write(chunk)
+        try:
+            path = await run_in_threadpool(recovery_db.prepare, source, folder)
+            accounts = await run_in_threadpool(recovery_db.accounts, path)
+        except recovery_db.RecoveryError as error:
+            raise HTTPException(400, str(error))
+        except (sqlite3.DatabaseError, zipfile.BadZipFile, OSError):
+            raise HTTPException(400, recovery_db.NOT_A_DATABASE)
+        if path != source:
+            source.unlink(missing_ok=True)
+        upload_id, filename = uuid.uuid4().hex, str(file.filename or "Plex database")[:255]
+        upload: dict[str, Any] = dict(id=upload_id, owner=owner, folder=str(folder), path=str(path), created=time.time(),
+                                      filename=filename, size=total, accounts=accounts)
+        with LOCK:
+            _prune_uploads()
+            for key, previous in list(UPLOADS.items()):
+                if previous["owner"] == owner:
+                    _drop_upload(key)
+            UPLOADS[upload_id] = upload
+        folder = None
+        return dict(upload_id=upload_id, filename=filename, size=total, accounts=accounts)
+    finally:
+        await file.close()
+        if folder is not None:
+            shutil.rmtree(folder, ignore_errors=True)
+
+
+@router.delete("/database/{upload_id}")
+def discard_database(upload_id: str, request: Request):
+    owner = _owner(request)
+    with LOCK:
+        upload = UPLOADS.get(upload_id)
+        if upload and upload["owner"] == owner:
+            _drop_upload(upload_id)
+    return dict(ok=True)
+
+
 @router.post("")
 def start(payload: Start, request: Request):
     from api import syncAPI
@@ -349,6 +478,7 @@ def start(payload: Start, request: Request):
     owner = _owner(request)
     source, target = normalize_instance_id(payload.source_instance), normalize_instance_id(payload.target_instance)
     tautulli = normalize_instance_id(payload.tautulli_instance) if payload.source == "tautulli" else ""
+    database = ("upload" if payload.upload_id else "server") if payload.source == "plex_db" else ""
     _access(cfg, request, "PLEX", source)
     _access(cfg, request, "CROSSWATCH", target)
     if tautulli:
@@ -357,6 +487,16 @@ def start(payload: Start, request: Request):
             raise HTTPException(409, "Connect Tautulli before recovering its history.")
         if not _plex_token(cfg, source):
             raise HTTPException(409, "Connect a Plex account before recovering Tautulli history.")
+    if database and not _plex_token(cfg, source):
+        raise HTTPException(409, "Connect a Plex account before recovering history from the Plex database.")
+    if database == "upload":
+        with LOCK:
+            _prune_uploads()
+            upload = UPLOADS.get(payload.upload_id)
+        if not upload or upload["owner"] != owner:
+            raise HTTPException(404, "The uploaded database expired. Upload it again.")
+        if payload.db_account not in {account["id"] for account in upload["accounts"]}:
+            raise HTTPException(400, "Choose the Plex account to recover from the database.")
     if not importer._target_connected(cfg, target):
         raise HTTPException(409, "Connect the CrossWatch tracker before recovering history.")
     rt = syncAPI._rt()
@@ -371,8 +511,14 @@ def start(payload: Start, request: Request):
             raise HTTPException(409, "A Plex recovery is already open. Return to it or close it before starting another.")
         if syncAPI._is_sync_running():
             raise HTTPException(409, "Another sync or recovery is running. Try again when it finishes.")
+        message = "Connecting to Tautulli" if tautulli else "Reading the uploaded Plex database" if database == "upload" else "Connecting to Plex"
         job = Job(owner, source, target, _source_hash(cfg, source, tautulli), target_hash=_target_hash(cfg, target),
-                  tautulli=tautulli, message="Connecting to Tautulli" if tautulli else "Connecting to Plex")
+                  tautulli=tautulli, database=database, message=message)
+        if database == "upload":
+            upload = UPLOADS.pop(payload.upload_id, None)
+            if upload is None:
+                raise HTTPException(404, "The uploaded database expired. Upload it again.")
+            job.db_folder, job.db_path, job.db_account = upload["folder"], upload["path"], payload.db_account
         JOBS[job.id] = job
         thread = threading.Thread(target=_scan, args=(job, deepcopy(cfg)), daemon=True)
         rt[1]["SYNC"] = thread
