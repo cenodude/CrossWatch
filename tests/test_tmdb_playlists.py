@@ -3,6 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import base64
+import json
 from copy import deepcopy
 from types import SimpleNamespace
 from typing import Any
@@ -29,12 +31,19 @@ class _Resp:
         return self._data
 
 
+def _read_token(aud: str) -> str:
+    def part(data: dict[str, Any]) -> str:
+        return base64.urlsafe_b64encode(json.dumps(data).encode()).decode().rstrip("=")
+
+    return f"{part({'alg': 'HS256'})}.{part({'aud': aud, 'scopes': ['api_read']})}.sig"
+
+
 def _cfg(**extra: Any) -> dict[str, Any]:
     return {"tmdb_sync": {"api_key": "a" * 32, "session_id": "sess", "account_id": "7", **extra}}
 
 
 def _v4_cfg() -> dict[str, Any]:
-    return _cfg(access_token="user-access", account_object_id="obj-1")
+    return _cfg(access_token="user-access", account_object_id="obj-1", v4_session_ref=mod.session_ref("sess"))
 
 
 @pytest.fixture(autouse=True)
@@ -177,7 +186,7 @@ def test_playlist_providers_flag_reconnect(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_v4_connect_flow_stores_tokens_and_session(monkeypatch: pytest.MonkeyPatch) -> None:
-    read_token = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJ4In0.sig"
+    read_token = _read_token("a" * 32)
     store: dict[str, Any] = {"tmdb_sync": {"api_key": "a" * 32, "session_id": "old-session"}}
     approved = False
     posts: list[tuple[str, Any, Any]] = []
@@ -226,6 +235,7 @@ def test_v4_connect_flow_stores_tokens_and_session(monkeypatch: pytest.MonkeyPat
     assert done["connected"] is True and done["lists_ready"] is True
     tm = store["tmdb_sync"]
     assert (tm["access_token"], tm["account_object_id"], tm["session_id"]) == ("user-access", "obj-1", "new-session")
+    assert tm["v4_session_ref"] == mod.session_ref("new-session")
     assert "_pending_request_token" not in tm and "_pending_v4" not in tm
     assert posts[-1][2] == {"access_token": "user-access"}
 
@@ -280,6 +290,7 @@ def test_v3_reconnect_drops_previous_v4_credentials(monkeypatch: pytest.MonkeyPa
     tm = store["tmdb_sync"]
     assert done["connected"] is True and done["lists_ready"] is False
     assert tm["session_id"] == "sess-b" and not tm.get("access_token") and "account_object_id" not in tm
+    assert "v4_session_ref" not in tm
 
 
 def test_failed_session_conversion_keeps_redeemed_access_token(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -315,3 +326,72 @@ def test_failed_session_conversion_keeps_redeemed_access_token(monkeypatch: pyte
     assert redeemed == ["req-1"]
     assert (tm["access_token"], tm["account_object_id"], tm["session_id"]) == ("user-access", "obj-1", "new-session")
     assert "_pending_access_token" not in tm and "_pending_account_object_id" not in tm
+
+
+def test_profile_does_not_borrow_default_v4_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    from services import playlists as svc
+
+    cfg = _v4_cfg()
+    cfg["tmdb_sync"]["instances"] = {
+        "TMDB-P01": {"api_key": "b" * 32, "session_id": "sess-p01", "account_id": "99"},
+        "TMDB-P02": {"api_key": "c" * 32, "session_id": "sess-p02"},
+        "TMDB-P03": {"api_key": "d" * 32, "session_id": "sess-p03", "access_token": "p03-access", "account_object_id": "obj-3", "v4_session_ref": mod.session_ref("sess-p03")},
+    }
+    monkeypatch.setattr(svc, "_providers", lambda: {"TMDB": mod.OPS})
+    rows = {r["instance"]: r for r in svc.list_playlist_providers(cfg)}
+    assert rows["default"]["configured"] is True
+    assert rows["TMDB-P01"]["configured"] is False and rows["TMDB-P01"]["reason"] == "reconnect_required"
+    assert rows["TMDB-P02"]["configured"] is False and rows["TMDB-P02"]["reason"] == "reconnect_required"
+    assert rows["TMDB-P03"]["configured"] is True
+
+    from cw_platform.provider_instances import build_provider_config_view
+
+    adapter = mod.TMDBModule(build_provider_config_view(cfg, "TMDB", "TMDB-P01"), instance_id="TMDB-P01")
+    assert adapter.cfg.access_token == ""
+    with pytest.raises(mod.TMDBListsAuthError):
+        adapter.list_playlist_resources()
+
+
+@pytest.mark.parametrize(("token", "message"), [
+    (_read_token("b" * 32), "different TMDb apps"),
+    ("eyJhbGciOiJIUzI1NiJ9.not-base64!.sig", "Invalid TMDb API Read Access Token"),
+    ("Bearer " + _read_token("a" * 32), "without a Bearer prefix"),
+])
+def test_connect_rejects_bad_read_tokens(monkeypatch: pytest.MonkeyPatch, token: str, message: str) -> None:
+    store: dict[str, Any] = {"tmdb_sync": {}}
+    monkeypatch.setattr(auth, "load_config", lambda: deepcopy(store))
+    monkeypatch.setattr(auth, "save_config", lambda cfg: None)
+    monkeypatch.setattr(auth, "requests", SimpleNamespace(post=lambda *a, **k: pytest.fail("no TMDb call expected"), exceptions=auth.requests.exceptions))
+    app = FastAPI()
+    auth.register_auth(app)
+    res = TestClient(app).post("/api/tmdb_sync/connect/start", json={"api_key": "a" * 32, "read_token": token}).json()
+    assert res["ok"] is False
+    assert message in res["error"]
+
+
+def test_v4_connect_is_ready_when_account_lookup_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    store: dict[str, Any] = {"tmdb_sync": {
+        "api_key": "a" * 32, "session_id": "old", "account_id": "7", "read_token": _read_token("a" * 32),
+        "_pending_request_token": "req-1", "_pending_v4": True,
+    }}
+
+    def post(url: str, **kwargs: Any) -> Any:
+        if url.endswith("/4/auth/access_token"):
+            body = {"access_token": "user-access", "account_id": "obj-1"}
+        elif url.endswith("/authentication/session/convert/4"):
+            body = {"session_id": "new-session"}
+        else:
+            raise AssertionError(url)
+        return SimpleNamespace(raise_for_status=lambda: None, json=lambda: body)
+
+    def get(url: str, **kwargs: Any) -> Any:
+        raise RuntimeError("account lookup down")
+
+    monkeypatch.setattr(auth, "load_config", lambda: deepcopy(store))
+    monkeypatch.setattr(auth, "save_config", lambda cfg: (store.clear(), store.update(deepcopy(cfg))))
+    monkeypatch.setattr(auth, "requests", SimpleNamespace(post=post, get=get, exceptions=auth.requests.exceptions))
+    app = FastAPI()
+    auth.register_auth(app)
+    res = TestClient(app).post("/api/tmdb_sync/connect/finish", json={}).json()
+    assert res["ok"] is True and res["lists_ready"] is True
+    assert mod.OPS.playlists_configured(store) is True

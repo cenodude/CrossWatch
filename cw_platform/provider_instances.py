@@ -366,7 +366,7 @@ def resolve_provider_block(cfg: Mapping[str, Any], provider_name: str, instance_
 
 
 def list_instance_ids(cfg: Mapping[str, Any], provider_name: str) -> list[str]:
-    key = provider_key(provider_name)
+    key = _config_key_for(cfg, provider_name)
     base = cfg.get(key) if isinstance(cfg, Mapping) else None
     insts = (base or {}).get(_INSTANCES_KEY) if isinstance(base, Mapping) else None
 

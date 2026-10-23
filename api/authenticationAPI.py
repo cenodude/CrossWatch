@@ -5,9 +5,11 @@ from __future__ import annotations
 
 from typing import Any, Callable, Optional
 
+import base64
 import copy
 
 import importlib
+import json
 import logging
 import re
 import secrets
@@ -1950,18 +1952,32 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         r.raise_for_status()
         return r.json() or {}
 
-    def _tmdb_read_token_error(read_token: str) -> str:
+    def _tmdb_read_token_error(read_token: str, api_key: str = "") -> str:
         token = str(read_token or "").strip()
         if not token:
             return ""
         if token.lower().startswith("bearer "):
             return "Paste the TMDb API Read Access Token only, without a Bearer prefix."
+        invalid = "Invalid TMDb API Read Access Token. Use the long token from TMDb API settings, not the API Key."
         if not token.startswith("eyJ") or token.count(".") != 2:
-            return "Invalid TMDb API Read Access Token. Use the long token from TMDb API settings, not the API Key."
+            return invalid
+        try:
+            part = token.split(".")[1]
+            claims = json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4)).decode("utf-8"))
+        except Exception:
+            return invalid
+        if not isinstance(claims, dict):
+            return invalid
+        aud = str(claims.get("aud") or "").strip().lower()
+        key = str(api_key or "").strip().lower()
+        if aud and key and aud != key:
+            return "The API Read Access Token and the API Key belong to different TMDb apps. Copy both from the same TMDb API settings page."
         return ""
 
     def _tmdb_sync_lists_ready(tm: dict[str, Any]) -> bool:
-        return bool(str(tm.get("access_token") or "").strip() and str(tm.get("account_object_id") or "").strip())
+        from providers.sync._mod_TMDB import lists_ready
+
+        return lists_ready(tm)
 
     def _tmdb_sync_clear_pending(tm: dict[str, Any]) -> None:
         tm.pop("_pending_request_token", None)
@@ -1990,14 +2006,18 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             sess = str((_tmdb_v3_session_from_v4(api_key, access) or {}).get("session_id") or "").strip()
             if not sess:
                 return ""
+            from providers.sync._mod_TMDB import session_ref
+
             tm["access_token"] = access
             tm["account_object_id"] = object_id
+            tm["v4_session_ref"] = session_ref(sess)
         else:
             sess = str((_tmdb_v3_create_session(api_key, request_token) or {}).get("session_id") or "").strip()
             if not sess:
                 return ""
             tm["access_token"] = ""
             tm.pop("account_object_id", None)
+            tm.pop("v4_session_ref", None)
         tm["api_key"] = api_key
         tm["session_id"] = sess
         _tmdb_sync_clear_pending(tm)
@@ -2030,7 +2050,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             read_token = str((payload or {}).get("read_token") or "").strip()
             if _looks_masked_secret(read_token):
                 read_token = str((tm or {}).get("read_token") or "").strip()
-            read_error = _tmdb_read_token_error(read_token)
+            read_error = _tmdb_read_token_error(read_token, key)
             if read_error:
                 return {"ok": False, "error": read_error}
             tm["api_key"] = key
@@ -2113,7 +2133,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             if "read_token" in (payload or {}):
                 read_token = str((payload or {}).get("read_token") or "").strip()
                 if not _looks_masked_secret(read_token):
-                    read_error = _tmdb_read_token_error(read_token)
+                    read_error = _tmdb_read_token_error(read_token, key)
                     if read_error:
                         return {"ok": False, "error": read_error, "instance": inst}
                     tm["read_token"] = read_token
@@ -2183,6 +2203,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             tm["access_token"] = ""
             tm.pop("account_id", None)
             tm.pop("account_object_id", None)
+            tm.pop("v4_session_ref", None)
             tm.pop("username", None)
             _tmdb_sync_clear_pending(tm)
             save_config(cfg)

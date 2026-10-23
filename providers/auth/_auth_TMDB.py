@@ -55,7 +55,7 @@ class TMDbAuth(AuthProvider):
                 },
                 {
                     "key": "tmdb_sync.read_token",
-                    "label": "API Read Access Token (v4)",
+                    "label": "API Read Access Token (v4, optional)",
                     "type": "password",
                     "required": False,
                     "placeholder": "Needed for TMDb lists",
@@ -121,6 +121,7 @@ class TMDbAuth(AuthProvider):
             tm["access_token"] = ""
             tm.pop("account_id", None)
             tm.pop("account_object_id", None)
+            tm.pop("v4_session_ref", None)
             tm.pop("username", None)
             save_config(dict(cfg))
         else:
@@ -132,6 +133,7 @@ class TMDbAuth(AuthProvider):
                 tm["access_token"] = ""
                 tm.pop("account_id", None)
                 tm.pop("account_object_id", None)
+                tm.pop("v4_session_ref", None)
                 tm.pop("username", None)
 
         log(f"TMDb disconnected ({inst}).", module="AUTH")
@@ -213,11 +215,12 @@ def _tmdb_sync_html() -> str:
                   </div>
 
                   <div>
-                    <label for="tmdb_sync_read_token">API Read Access Token (v4)</label>
+                    <label for="tmdb_sync_read_token">API Read Access Token (v4, optional)</label>
                     <input id="tmdb_sync_read_token" name="tmdb_sync_read_token" type="password" autocomplete="off" placeholder="Needed for TMDb lists" spellcheck="false" autocapitalize="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" />
-                    <div id="tmdb_sync_lists_hint" class="msg warn hidden" style="margin-top:8px">
-                      TMDb lists need this token. Add it and click Connect again.
-                    </div>
+                  </div>
+
+                  <div id="tmdb_sync_lists_hint" class="msg warn hidden" style="grid-column:1 / -1">
+                    Copy the API Read Access Token from <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">TMDb API settings</a> and reconnect to use lists.
                   </div>
                 </div>
             

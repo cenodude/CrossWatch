@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from cw_platform.app_version import user_agent as http_user_agent
+import hashlib
 import os
 import time
 from dataclasses import dataclass
@@ -176,9 +177,22 @@ class TMDBListsAuthError(TMDBAuthError):
 LISTS_RECONNECT_MESSAGE = "TMDb lists need the v4 login. Add your API Read Access Token and reconnect TMDb in Connections."
 
 
+def session_ref(session_id: Any) -> str:
+    sess = str(session_id or "").strip()
+    if not sess:
+        return ""
+    return hashlib.sha256(f"tmdb-v4:{sess}".encode("utf-8")).hexdigest()[:32]
+
+
 def lists_ready(block: Mapping[str, Any] | None) -> bool:
     m: Mapping[str, Any] = block if isinstance(block, Mapping) else {}
-    return bool(str(m.get("access_token") or "").strip() and str(m.get("account_object_id") or "").strip())
+    ref = session_ref(m.get("session_id"))
+    return bool(
+        str(m.get("access_token") or "").strip()
+        and str(m.get("account_object_id") or "").strip()
+        and ref
+        and str(m.get("v4_session_ref") or "").strip() == ref
+    )
 
 
 class TMDBClient:
@@ -377,8 +391,8 @@ class TMDBModule:
             account_id=account_id,
             timeout=timeout,
             max_retries=max_retries,
-            access_token=str(m.get("access_token") or "").strip(),
-            account_object_id=str(m.get("account_object_id") or "").strip(),
+            access_token=str(m.get("access_token") or "").strip() if lists_ready(m) else "",
+            account_object_id=str(m.get("account_object_id") or "").strip() if lists_ready(m) else "",
         )
 
         if m.get("debug") in (True, "1", 1):
