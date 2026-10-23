@@ -384,3 +384,43 @@ test("unrelated errors and expired responses from an older scan preserve the cur
     assert.ok(!f.calls.includes("destroy"));
   }
 });
+
+test("Plex database scans send the upload and account, or ask the server for its database",async()=>{
+  for (const [db,expected] of [["upload",{source_instance:"default",target_instance:"default",source:"plex_db",upload_id:"u1",db_account:7}],
+                               ["server",{source_instance:"default",target_instance:"default",source:"plex_db"}]]) {
+    const values={"#pr-kind":"plex_db","#pr-db":db,"#pr-db-account":"7","#pr-source":"default","#pr-target":"default"};
+    const bodies=[];
+    const sandbox=vm.createContext({$:id=>({value:values[id]}),upload:{upload_id:"u1"},busy:false,reading:false,data:null,rows:[],receipt:null,
+      all:false,chosen:new Set(),excluded:new Set(),CustomEvent:function(){},window:{dispatchEvent(){}},controls(){},message(){},render(){},
+      async poll(){},async request(path,body){bodies.push(JSON.stringify(body));return {id:"scan",status:"reading"};}});
+    vm.runInContext(source.slice(source.indexOf("  async function start()"),source.indexOf("  async function resume()")),sandbox);
+    await sandbox.start();
+    assert.deepEqual(JSON.parse(bodies[0]),expected);
+    assert.equal(sandbox.upload === null,db === "upload");
+  }
+});
+
+test("uploading a database lists its accounts, preselects the Plex user and reports unreadable files",async()=>{
+  const nodes=new Map();
+  const $=id=>{if(!nodes.has(id))nodes.set(id,{value:"",innerHTML:"",textContent:""});return nodes.get(id);};
+  $("#pr-source").value="default";
+  const messages=[],sent=[];
+  const sandbox=vm.createContext({$,api:"/api/import/plex-recovery",esc:String,number:String,FormData:class{append(key){sent.push(key);}},
+    options:{lookups:[{id:"default",user:"Owner"}]},upload:null,busy:false,lifetime:{signal:{aborted:false}},
+    controls(){},updateScope(){},message:(text,error)=>messages.push([text,!!error]),
+    fetch:async(url,init)=>{sent.push(url,init.method);return {ok:true,json:async()=>({upload_id:"u1",filename:"lib.db",
+      accounts:[{id:7,name:"friend",plays:9},{id:1,name:"owner",plays:3}]})};}});
+  vm.runInContext(source.slice(source.indexOf("  async function uploadDatabase("),source.indexOf("  async function closeRecovery()")),sandbox);
+  await sandbox.uploadDatabase({name:"lib.db"});
+  assert.equal(sandbox.upload.upload_id,"u1");
+  assert.match($("#pr-db-account").innerHTML,/friend · 9 plays.*owner · 3 plays/);
+  assert.equal($("#pr-db-account").value,"1");
+  assert.deepEqual(sent,["file","/api/import/plex-recovery/database","POST"]);
+  assert.match(messages.at(-1)[0],/lib\.db is ready/);
+  assert.equal(sandbox.busy,false);
+  sandbox.fetch=async()=>({ok:false,json:async()=>({detail:"No Plex library database was found in this file."})});
+  await sandbox.uploadDatabase({name:"notes.txt"});
+  assert.equal(sandbox.upload,null);
+  assert.equal($("#pr-db-account").innerHTML,"");
+  assert.deepEqual(messages.at(-1),["No Plex library database was found in this file.",true]);
+});
