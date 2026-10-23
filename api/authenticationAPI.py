@@ -1799,6 +1799,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
 
     # TMDB
     TMDB_API_BASE = "https://api.themoviedb.org/3"
+    TMDB_API_BASE_V4 = "https://api.themoviedb.org/4"
 
     def _tmdb_v3_api_key_error(api_key: str) -> str:
         key = str(api_key or "").strip()
@@ -1921,6 +1922,93 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         r.raise_for_status()
         return r.json() or {}
 
+    def _tmdb_v4_headers(token: str) -> dict[str, str]:
+        return {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json;charset=utf-8",
+            "User-Agent": http_user_agent("TMDbAuth", override_env="CW_TMDB_UA"),
+        }
+
+    def _tmdb_v4_request_token(read_token: str) -> dict[str, Any]:
+        r = requests.post(f"{TMDB_API_BASE_V4}/auth/request_token", json={}, headers=_tmdb_v4_headers(read_token), timeout=15)
+        r.raise_for_status()
+        return r.json() or {}
+
+    def _tmdb_v4_access_token(read_token: str, request_token: str) -> dict[str, Any]:
+        r = requests.post(f"{TMDB_API_BASE_V4}/auth/access_token", json={"request_token": request_token}, headers=_tmdb_v4_headers(read_token), timeout=15)
+        r.raise_for_status()
+        return r.json() or {}
+
+    def _tmdb_v3_session_from_v4(api_key: str, access_token: str) -> dict[str, Any]:
+        r = requests.post(
+            f"{TMDB_API_BASE}/authentication/session/convert/4",
+            params={"api_key": api_key},
+            json={"access_token": access_token},
+            headers={"User-Agent": http_user_agent("TMDbAuth", override_env="CW_TMDB_UA")},
+            timeout=15,
+        )
+        r.raise_for_status()
+        return r.json() or {}
+
+    def _tmdb_read_token_error(read_token: str) -> str:
+        token = str(read_token or "").strip()
+        if not token:
+            return ""
+        if token.lower().startswith("bearer "):
+            return "Paste the TMDb API Read Access Token only, without a Bearer prefix."
+        if not token.startswith("eyJ") or token.count(".") != 2:
+            return "Invalid TMDb API Read Access Token. Use the long token from TMDb API settings, not the API Key."
+        return ""
+
+    def _tmdb_sync_lists_ready(tm: dict[str, Any]) -> bool:
+        return bool(str(tm.get("access_token") or "").strip() and str(tm.get("account_object_id") or "").strip())
+
+    def _tmdb_sync_clear_pending(tm: dict[str, Any]) -> None:
+        tm.pop("_pending_request_token", None)
+        tm.pop("_pending_request_token_ts", None)
+        tm.pop("_pending_created_at", None)
+        tm.pop("_pending_v4", None)
+        tm.pop("_pending_access_token", None)
+        tm.pop("_pending_account_object_id", None)
+
+    def _tmdb_sync_complete(cfg: dict[str, Any], tm: dict[str, Any], api_key: str, request_token: str) -> str:
+        if tm.get("_pending_v4"):
+            access = str(tm.get("_pending_access_token") or "").strip()
+            object_id = str(tm.get("_pending_account_object_id") or "").strip()
+            if not access or not object_id:
+                read_token = str(tm.get("read_token") or "").strip()
+                if not read_token:
+                    return ""
+                j = _tmdb_v4_access_token(read_token, request_token)
+                access = str((j or {}).get("access_token") or "").strip()
+                object_id = str((j or {}).get("account_id") or "").strip()
+                if not access or not object_id:
+                    return ""
+                tm["_pending_access_token"] = access
+                tm["_pending_account_object_id"] = object_id
+                save_config(cfg)
+            sess = str((_tmdb_v3_session_from_v4(api_key, access) or {}).get("session_id") or "").strip()
+            if not sess:
+                return ""
+            tm["access_token"] = access
+            tm["account_object_id"] = object_id
+        else:
+            sess = str((_tmdb_v3_create_session(api_key, request_token) or {}).get("session_id") or "").strip()
+            if not sess:
+                return ""
+            tm["access_token"] = ""
+            tm.pop("account_object_id", None)
+        tm["api_key"] = api_key
+        tm["session_id"] = sess
+        _tmdb_sync_clear_pending(tm)
+        try:
+            me = _tmdb_v3_account(api_key, sess)
+            tm["account_id"] = str((me or {}).get("id") or "").strip()
+            tm["username"] = str((me or {}).get("username") or "").strip()
+        except Exception:
+            pass
+        return sess
+
     def _tmdb_sync_error(e: Exception) -> str:
         return _tmdb_request_error(e).replace("TMDb check failed", "TMDb connect failed")
 
@@ -1939,25 +2027,41 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             key_error = _tmdb_sync_key_error(key)
             if key_error:
                 return {"ok": False, "error": key_error}
+            read_token = str((payload or {}).get("read_token") or "").strip()
+            if _looks_masked_secret(read_token):
+                read_token = str((tm or {}).get("read_token") or "").strip()
+            read_error = _tmdb_read_token_error(read_token)
+            if read_error:
+                return {"ok": False, "error": read_error}
             tm["api_key"] = key
+            tm["read_token"] = read_token
 
-            j = _tmdb_v3_request_token(key)
+            if read_token:
+                j = _tmdb_v4_request_token(read_token)
+            else:
+                j = _tmdb_v3_request_token(key)
             token = str((j or {}).get("request_token") or "").strip()
             if not token:
                 return {"ok": False, "error": "TMDb did not return a request token"}
+            _tmdb_sync_clear_pending(tm)
             tm["_pending_request_token"] = token
-            tm.pop("_pending_request_token_ts", None)
-            tm.pop("_pending_created_at", None)
+            tm["_pending_v4"] = bool(read_token)
             tm["_pending_created_at"] = int(time.time())
             save_config(cfg)
 
             _probe_bust("tmdb_sync")
-            _safe_log(log_fn, "TMDB_SYNC", f"[TMDB_SYNC] request_token issued instance={inst}")
+            _safe_log(log_fn, "TMDB_SYNC", f"[TMDB_SYNC] request_token issued instance={inst} v4={bool(read_token)}")
+            auth_url = (
+                f"https://www.themoviedb.org/auth/access?request_token={token}"
+                if read_token
+                else f"https://www.themoviedb.org/authenticate/{token}"
+            )
             return {
                 "ok": True,
                 "request_token": token,
-                "auth_url": f"https://www.themoviedb.org/authenticate/{token}",
+                "auth_url": auth_url,
                 "expires_at": (j or {}).get("expires_at"),
+                "lists": bool(read_token),
                 "instance": inst,
             }
         except Exception as e:
@@ -1980,28 +2084,14 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             if not token:
                 return {"ok": False, "error": "Missing request_token. Click Connect first."}
 
-            j = _tmdb_v3_create_session(key, token)
-            sess = str((j or {}).get("session_id") or "").strip()
+            sess = _tmdb_sync_complete(cfg, tm, key, token)
             if not sess:
                 return {"ok": False, "error": "TMDb did not return a session id. Did you approve the request?"}
 
-            tm["api_key"] = key
-            tm["session_id"] = sess
-            tm.pop("_pending_request_token", None)
-            tm.pop("_pending_request_token_ts", None)
-            tm.pop("_pending_created_at", None)
-
-            try:
-                me = _tmdb_v3_account(key, sess)
-                tm["account_id"] = str((me or {}).get("id") or "").strip()
-                tm["username"] = str((me or {}).get("username") or "").strip()
-            except Exception:
-                pass
-
             save_config(cfg)
             _probe_bust("tmdb_sync")
-            _safe_log(log_fn, "TMDB_SYNC", f"[TMDB_SYNC] session created instance={inst}")
-            return {"ok": True, "session_id": sess, "account_id": tm.get("account_id") or "", "instance": inst}
+            _safe_log(log_fn, "TMDB_SYNC", f"[TMDB_SYNC] session created instance={inst} lists={_tmdb_sync_lists_ready(tm)}")
+            return {"ok": True, "session_id": sess, "account_id": tm.get("account_id") or "", "lists_ready": _tmdb_sync_lists_ready(tm), "instance": inst}
         except Exception as e:
             _safe_log(log_fn, "TMDB_SYNC", f"[TMDB_SYNC] ERROR connect/finish: {e}")
             return {"ok": False, "error": "internal"}
@@ -2020,9 +2110,14 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                 sess = str((tm or {}).get("session_id") or "").strip()
             tm["api_key"] = key
             tm["session_id"] = sess
-            tm.pop("_pending_request_token", None)
-            tm.pop("_pending_request_token_ts", None)
-            tm.pop("_pending_created_at", None)
+            if "read_token" in (payload or {}):
+                read_token = str((payload or {}).get("read_token") or "").strip()
+                if not _looks_masked_secret(read_token):
+                    read_error = _tmdb_read_token_error(read_token)
+                    if read_error:
+                        return {"ok": False, "error": read_error, "instance": inst}
+                    tm["read_token"] = read_token
+            _tmdb_sync_clear_pending(tm)
             save_config(cfg)
             _probe_bust("tmdb_sync")
             _safe_log(log_fn, "TMDB_SYNC", f"[TMDB_SYNC] credentials saved instance={inst}")
@@ -2046,19 +2141,8 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
 
             if token:
                 try:
-                    j = _tmdb_v3_create_session(key, token)
-                    new_sess = str((j or {}).get("session_id") or "").strip()
+                    new_sess = _tmdb_sync_complete(cfg, tm, key, token)
                     if new_sess:
-                        tm["session_id"] = new_sess
-                        tm.pop("_pending_request_token", None)
-                        tm.pop("_pending_request_token_ts", None)
-                        tm.pop("_pending_created_at", None)
-                        try:
-                            me = _tmdb_v3_account(key, new_sess)
-                            tm["account_id"] = str((me or {}).get("id") or "").strip()
-                            tm["username"] = str((me or {}).get("username") or "").strip()
-                        except Exception:
-                            pass
                         save_config(cfg)
                         _probe_bust("tmdb_sync")
                         _safe_log(log_fn, "TMDB_SYNC", f"[TMDB_SYNC] auto-finish: session created instance={inst}")
@@ -2080,7 +2164,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                     save_config(cfg)
                 except Exception:
                     pass
-            return {"ok": True, "connected": True, "pending": False, "account": {"id": (me or {}).get("id"), "username": (me or {}).get("username")}, "instance": inst}
+            return {"ok": True, "connected": True, "pending": False, "account": {"id": (me or {}).get("id"), "username": (me or {}).get("username")}, "lists_ready": _tmdb_sync_lists_ready(tm), "instance": inst}
         except Exception:
             return {"ok": False, "connected": False, "pending": False, "error": "verify_failed", "instance": inst}
 
@@ -2095,11 +2179,12 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             tm = ensure_instance_block(cfg, "tmdb_sync", inst)
             tm["api_key"] = ""
             tm["session_id"] = ""
+            tm["read_token"] = ""
+            tm["access_token"] = ""
             tm.pop("account_id", None)
+            tm.pop("account_object_id", None)
             tm.pop("username", None)
-            tm.pop("_pending_request_token", None)
-            tm.pop("_pending_request_token_ts", None)
-            tm.pop("_pending_created_at", None)
+            _tmdb_sync_clear_pending(tm)
             save_config(cfg)
             _probe_bust("tmdb_sync")
             _safe_log(log_fn, "TMDB_SYNC", f"[TMDB_SYNC] disconnected instance={inst}")
