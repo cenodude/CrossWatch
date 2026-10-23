@@ -26,7 +26,7 @@ function setup(storage = new Map(), {pairs = true, role = "admin", write = "on"}
   const events = {};
   const window = {CW:{AuthState:{user:{id:"alice"}},OverviewProfile:{id:"home"}},
     innerHeight:900,innerWidth:1200,addEventListener:(name,fn)=>events[name]=fn};
-  const context = {window,document,location:{href:"http://localhost/",origin:"http://localhost"},URL,
+  const context = {window,document,clearTimeout(){},setTimeout(){},navigator:{},location:{href:"http://localhost/",origin:"http://localhost"},URL,
     localStorage:{getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value)}};
   vm.runInNewContext(script, context);
   const panel = elements[2], body = panel.querySelector(".cw-notifications-body");
@@ -39,8 +39,50 @@ function setup(storage = new Map(), {pairs = true, role = "admin", write = "on"}
   function clearAll() {
     panel.listeners.click({target:{closest:selector=>selector==="[data-notifications-clear-all]" ? {} : null}});
   }
-  return {window,events,publish,clear,clearAll,item,html:()=>body.innerHTML,storage,context};
+  return {window,events,publish,clear,clearAll,item,html:()=>body.innerHTML,storage,context,alert:elements[3]};
 }
+
+test("mobile alerts are opt-in, skip initial items and do not repeat on polling", () => {
+  const app = setup(), pulses = [];
+  app.window.matchMedia = () => ({matches:true});
+  app.context.navigator.vibrate = value => pulses.push([...value]);
+  app.publish([app.item("old")]);
+  app.publish([app.item("old"),app.item("disabled")]);
+  assert.equal(app.alert.hidden,true);
+  app.storage.set("cw.mobile.notificationAlerts","1");
+  app.publish([app.item("old"),app.item("new")]);
+  assert.equal(app.alert.hidden,false);
+  assert.deepEqual(pulses,[[30,60,30]]);
+  app.publish([app.item("old"),app.item("new")]);
+  app.publish([]);
+  app.publish([app.item("new")]);
+  assert.equal(pulses.length,1);
+  app.context.document.hidden = true;
+  app.events.visibilitychange();
+  app.publish([app.item("hidden")]);
+  assert.equal(app.alert.hidden,true);
+  assert.equal(pulses.length,1);
+  app.context.document.hidden = false;
+  app.publish([app.item("hidden")]);
+  assert.equal(app.alert.hidden,true);
+});
+
+test("mobile banner survives unsupported vibration and skips desktop and profile baselines", () => {
+  const app=setup(new Map([["cw.mobile.notificationAlerts","1"]]));
+  app.window.matchMedia = () => ({matches:false});
+  app.publish([]); app.publish([app.item("desktop")]);
+  assert.equal(app.alert.hidden,true);
+  app.window.matchMedia = () => ({matches:true});
+  app.publish([app.item("mobile")]);
+  assert.equal(app.alert.hidden,false);
+  app.window.CW.OverviewProfile.id="other";
+  app.events["cw:overview-profile-changed"]();
+  app.publish([app.item("initial")]);
+  assert.equal(app.alert.hidden,true);
+  app.context.navigator.vibrate = () => { throw new Error("blocked"); };
+  app.publish([app.item("another")]);
+  assert.equal(app.alert.hidden,false);
+});
 
 test("sync reviews link works from the main app and standalone profiles", () => {
   assert.match(setup().html(), /class="cw-notifications-footer" href="#settings\/sync"/);

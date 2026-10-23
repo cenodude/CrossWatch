@@ -93,3 +93,98 @@ test('navigation panel contains destinations while account controls stay outside
   assert.equal(account.parentElement, nav);
   assert(!panel.contains(account));
 });
+
+
+test('entering compact mode returns to Home from every full UI route', () => {
+  const script = readFileSync(new URL('../assets/crosswatch.js', import.meta.url), 'utf8');
+  const start = script.indexOf('  if (typeof window.cwSetUiMode');
+  const end = script.indexOf('  try { _cwApplyUiMode', start);
+  for (const route of ['#playlists', '#editor', '#settings/scheduling', '#main']) {
+    let destination;
+    const saved = new Map();
+    const context = vm.createContext({URL, Date, console,
+      window: {location: {
+        href: `https://example.test/?full=1&other=keep${route}`,
+        assign: value => { destination = new URL(value); },
+      }},
+      localStorage: {setItem: (key, value) => saved.set(key, value)},
+    });
+    vm.runInContext(script.slice(start, end), context);
+    context.window.cwSetUiMode('compact');
+    assert.equal(destination.hash, '#main');
+    assert.equal(destination.searchParams.get('ui'), 'compact');
+    assert.equal(destination.searchParams.has('full'), false);
+    assert.equal(destination.searchParams.get('other'), 'keep');
+    assert.equal(saved.get('cw_ui_mode'), 'compact');
+    context.window.cwSetUiMode('full');
+    assert.equal(destination.hash, route);
+    assert.equal(destination.searchParams.get('ui'), 'full');
+  }
+});
+
+
+test('mobile mode detection respects saved choices during bootstrap and runtime', () => {
+  const script = readFileSync(new URL('../assets/crosswatch.js', import.meta.url), 'utf8');
+  const getter = script.slice(script.indexOf('  const _cwGetUiMode ='), script.indexOf('  const _cwApplyUiMode ='));
+  const frontend = readFileSync(new URL('../ui_frontend.py', import.meta.url), 'utf8');
+  const marker = frontend.indexOf('    const explicit = ui ===');
+  const bootstrap = frontend.slice(frontend.lastIndexOf('(() => {', marker), frontend.indexOf('</script>', marker));
+  for (const [search, saved, mobile, expected] of [
+    ['', 'full', true, 'full'], ['', 'compact', false, 'compact'],
+    ['', null, true, 'compact'], ['', null, false, 'full'],
+    ['?ui=full', 'compact', true, 'full'], ['?ui=compact', 'full', true, 'compact'],
+    ['', 'invalid', true, 'compact'], ['', 'blocked', true, 'compact'],
+  ]) {
+    let compact = false;
+    const context = vm.createContext({URL, URLSearchParams,
+      window: {location: {href: `https://example.test/${search}#settings/sync`, search}, matchMedia: () => ({matches: mobile})},
+      navigator: {userAgent: mobile ? 'Android SamsungBrowser' : 'Desktop', maxTouchPoints: mobile ? 5 : 0},
+      document: {documentElement: {classList: {add: () => { compact = true; }}}},
+      localStorage: {getItem: () => { if (saved === 'blocked') throw new Error('Storage unavailable'); return saved; }},
+      _cwShouldAutoCompact: () => mobile,
+    });
+    vm.runInContext(bootstrap, context);
+    assert.equal(compact, expected === 'compact', `bootstrap: ${search}/${saved}`);
+    assert.equal(vm.runInContext(getter + '\n_cwGetUiMode()', context), expected, `runtime: ${search}/${saved}`);
+  }
+});
+
+
+test('profile Compact switch saves the mode and opens compact Home', () => {
+  let click, destination;
+  const saved = new Map();
+  const context = vm.createContext({
+    $: id => id === 'cw-profile-compact-switch' ? {addEventListener: (_, handler) => { click = handler; }} : null,
+    localStorage: {setItem: (key, value) => saved.set(key, value)},
+    window: {location: {assign: value => { destination = value; }}},
+    initMobileNavigation() {}, initMobileBottomNavigation() {},
+  });
+  const start = core.indexOf('  function initNavigation()');
+  const end = core.indexOf('  if (document.readyState', start);
+  vm.runInContext(core.slice(start, end) + '\ninitNavigation();', context);
+  click();
+  assert.equal(saved.get('cw_ui_mode'), 'compact');
+  assert.equal(destination, '/?ui=compact#main');
+});
+
+
+test('mobile haptics default on, respect opt-out and safely ignore unsupported or blocked APIs', () => {
+  const start = core.indexOf('  function mobileNavigationFeedback()');
+  const end = core.indexOf('  function initMobileBottomNavigation()', start);
+  for (const mode of ['default', 'enabled', 'disabled', 'unsupported', 'blocked', 'storage-blocked']) {
+    const pulses = [];
+    const context = vm.createContext({
+      localStorage: {getItem: () => {
+        if (mode === 'storage-blocked') throw new Error('Storage unavailable');
+        if (mode === 'default') return null;
+        return mode === 'disabled' ? '0' : '1';
+      }},
+      navigator: mode === 'unsupported' ? {} : {vibrate: duration => {
+        if (mode === 'blocked') throw new Error('Vibration unavailable');
+        pulses.push(duration);
+      }},
+    });
+    vm.runInContext(core.slice(start, end) + '\nmobileNavigationFeedback();', context);
+    assert.deepEqual(pulses, ['default', 'enabled'].includes(mode) ? [30] : []);
+  }
+});

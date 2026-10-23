@@ -4660,6 +4660,22 @@
   }
 
   function wireTabs() {
+    const tabs = document.querySelector('.cw-profile-tabs');
+    const mobileView = document.createElement('label');
+    mobileView.className = 'cw-profile-mobile-view';
+    mobileView.innerHTML = '<span>View</span><select aria-label="Profile section"></select>';
+    const mobileSelect = mobileView.querySelector('select');
+    tabs?.before(mobileView);
+    const syncMobileView = () => {
+      const buttons = Array.from(document.querySelectorAll('[data-profile-tab]'));
+      mobileSelect.replaceChildren(...buttons.filter(btn => !btn.hidden && !(btn.dataset.profileTab === 'account' && viewingAs())).map(btn => {
+        const option = document.createElement('option');
+        option.value = btn.dataset.profileTab;
+        option.textContent = btn.id === 'profile-tab-account' ? 'Settings' : btn.textContent.trim();
+        return option;
+      }));
+      mobileSelect.value = buttons.find(btn => btn.classList.contains('active'))?.dataset.profileTab || 'overview';
+    };
     const tabFromHash = () => {
       const raw = profileRouteSegment(String(window.location?.hash || "").replace(/^#\/?/, "").split("?")[0].split("/")[0]);
       const key = raw === "security" || raw === "preferences" ? "account" : raw;
@@ -4671,6 +4687,7 @@
       if (!btn) return false;
       document.querySelectorAll("[data-profile-tab]").forEach((tab) => tab.classList.toggle("active", tab === btn));
       document.querySelectorAll(".cw-profile-panel").forEach((panel) => panel.classList.toggle("active", panel.id === `profile-panel-${key}`));
+      syncMobileView();
       if (key === "collection" && !collectionState.loaded) void loadCollection({ reset: true });
       if (key === "history") historyPanel.open(opts);
       if (key === "ratings") ratingsPanel.open(opts);
@@ -4683,6 +4700,11 @@
         selectTab(btn.dataset.profileTab);
       });
     });
+    mobileSelect.addEventListener('change', () => {
+      if (!selectTab(mobileSelect.value)) syncMobileView();
+    });
+    if (tabs) new MutationObserver(syncMobileView).observe(tabs, {subtree: true, attributes: true, attributeFilter: ['hidden']});
+    syncMobileView();
     window.addEventListener("hashchange", () => {
       const key = tabFromHash();
       if (key) selectTab(key, { fromHash: true });

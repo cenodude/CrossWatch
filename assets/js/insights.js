@@ -333,6 +333,8 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
   }
 
   function markActiveSwitcher() {
+    const mobileSelect = $("#insights-mobile-feature");
+    if (mobileSelect) mobileSelect.value = _feature;
     $$("#insights-switch .seg-btn").forEach(btn => {
       const on = btn.dataset.key === _feature;
       btn.classList.toggle("active", on);
@@ -357,15 +359,16 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
       host = d.createElement("div");
       host.id = "insights-switch";
       host.className = "ins-switch";
-      host.innerHTML = '<div class="seg" role="tablist" aria-label="Insights features"></div>';
+      host.innerHTML = '<div class="ins-mobile-feature"><select id="insights-mobile-feature" aria-label="Provider statistics feature"></select><button type="button" class="ins-mobile-settings" aria-label="Insight settings"><span class="material-symbols-rounded" aria-hidden="true">settings</span></button></div><div class="seg" role="tablist" aria-label="Insights features"></div>';
       wrap.appendChild(host);
     } else if (host.parentNode !== wrap) wrap.appendChild(host);
     if (!host.dataset.bound) {
       host.addEventListener("click", ev => {
         const btn = ev.target.closest(".seg-btn");
         if (btn) return switchFeature(btn.dataset.key);
-        if (ev.target.closest(".ins-gear")) openInsightSettingsModal();
+        if (ev.target.closest(".ins-gear, .ins-mobile-settings")) openInsightSettingsModal();
       });
+      host.querySelector("#insights-mobile-feature").addEventListener("change", event => switchFeature(event.target.value));
       host.dataset.bound = "1";
     }
     const seg = $(".seg", host), sig = _visibleFeats.join(",");
@@ -380,6 +383,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
       seg.innerHTML = _visibleFeats.map(f => `<button class="seg-btn${_feature === f ? " active" : ""}" data-key="${f}" role="tab" aria-selected="${_feature === f}" title="${featureLabel(f)}" aria-label="${featureLabel(f)}"><span class="material-symbols-rounded" aria-hidden="true">${FEAT_ICON[lc(f)] || "insights"}</span><span>${featureLabel(f)}</span></button>`).join("") + settingsButton;
       host.dataset.feats = sig;
       host.dataset.cur = _feature;
+      host.querySelector("#insights-mobile-feature").innerHTML = _visibleFeats.map(f => `<option value="${f}">${featureLabel(f)}</option>`).join("");
     }
     placeSwitchBeforeTiles();
     markActiveSwitcher();
