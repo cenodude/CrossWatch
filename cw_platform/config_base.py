@@ -643,6 +643,7 @@ DEFAULT_CFG: dict[str, Any] = {
     "read_token": "",                                   # v4 API Read Access Token (needed for lists)
     "access_token": "",                                 # v4 user access token (filled after Connect)
     "account_object_id": "",                            # v4 Account ID (auto-filled)
+    "v4_session_ref": "",                               # Ties the v4 token to the session it was created with
     "_pending_request_token": "",                       # Temporary token waiting for approval
     "_pending_v4": False,                               # Pending token came from the v4 flow
     "_pending_created_at": 0,                           # Epoch when request token was created
@@ -1614,6 +1615,7 @@ def _normalize_tmdb_sync(cfg: dict[str, Any]) -> None:
     t["read_token"] = str(t.get("read_token") or "").strip()
     t["access_token"] = str(t.get("access_token") or "").strip()
     t["account_object_id"] = str(t.get("account_object_id") or "").strip()
+    t["v4_session_ref"] = str(t.get("v4_session_ref") or "").strip()
     t["_pending_request_token"] = str(t.get("_pending_request_token") or "").strip()
     t["_pending_v4"] = bool(t.get("_pending_v4"))
     try:
@@ -1636,6 +1638,7 @@ def _normalize_tmdb_sync(cfg: dict[str, Any]) -> None:
         t["account_id"] = ""
         t["access_token"] = ""
         t["account_object_id"] = ""
+        t["v4_session_ref"] = ""
         t["_pending_request_token"] = ""
         t["_pending_v4"] = False
         t["_pending_created_at"] = 0
