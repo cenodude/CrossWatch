@@ -67,9 +67,11 @@ def api_playback_progress_items(
     month: str = Query(""),
     display_tz: str = Query("UTC", max_length=128),
     tmdb: str = Query("", max_length=20),
+    progressive: bool = Query(False),
 ) -> dict[str, Any]:
     service = get_service()
     return service.items(
+        progressive=progressive,
         month=month,
         display_tz=display_tz,
         tmdb=tmdb,

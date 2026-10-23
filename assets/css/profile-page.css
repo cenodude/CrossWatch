@@ -639,6 +639,10 @@ html.cw-theme-light body.cw-profile-page .cw-playback-panel{--hist-play-rgb:109,
 .cw-play-error{display:inline-flex;align-items:center;flex:0 0 auto;gap:calc(7 * var(--cch-u));min-height:calc(28 * var(--cch-u));padding:0 calc(10 * var(--cch-u)) 0 calc(7 * var(--cch-u));border:1px solid rgba(var(--hist-conflict-rgb),.28);border-radius:999px;background:rgba(0,0,0,.18);color:var(--profile-muted);font-size:calc(12 * var(--cch-u));font-weight:700;white-space:nowrap}
 .cw-play-error img{width:16px;height:16px;object-fit:contain}
 .cw-play-error strong{color:var(--profile-text);font-weight:800}
+.cw-play-status[data-issues="loading"]{border-color:rgba(var(--hist-tone-rgb),.3);background:linear-gradient(90deg,rgba(var(--hist-tone-rgb),.08),var(--cch-surface) 60%)}
+.cw-play-status[data-issues="loading"] .cw-play-sync-dot{background:rgb(var(--hist-tone-rgb));animation:cwProfilePulse 1.4s ease-out infinite}
+.cw-play-error.is-loading{border-color:rgba(var(--hist-tone-rgb),.3);padding-right:calc(9 * var(--cch-u))}
+.cw-play-error.is-loading .cw-play-sync-dot{background:rgb(var(--hist-tone-rgb));animation:cwProfilePulse 1.4s ease-out infinite}
 .cw-play-error-more{align-self:center;color:var(--profile-muted);font-size:calc(12 * var(--cch-u));font-weight:800}
 
 .cw-play-card{position:relative}

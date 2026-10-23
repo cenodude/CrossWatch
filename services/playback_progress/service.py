@@ -7,7 +7,7 @@ import math
 import re
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, wait
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping, cast
 
@@ -39,6 +39,7 @@ LOG = BASE_LOG.child("PLAYBACK")
 CACHE_TTL_SECONDS = 60.0
 MAX_WORKERS = 6
 DEFAULT_PROVIDER_TIMEOUT_SECONDS = 20.0
+FIRST_RESPONSE_SECONDS = 2.5
 GROUP_PROGRESS_TOLERANCE = 2.0
 PHASE1_PROVIDERS = ("crosswatch", "trakt", "simkl", "mdblist", "publicmetadb", "wetrakr", "punchplay", "flicklist", "plex", "emby", "jellyfin", "nuvio", "kodi", "stremio", "floppy", "scrob")
 SORT_VALUES = {"last_updated", "progress_high", "progress_low", "remaining_time", "rating_high", "title", "provider"}
@@ -938,6 +939,8 @@ class PlaybackProgressService:
         }
         self._cache: dict[tuple[str, str, str], dict[str, Any]] = {}
         self._lock = threading.RLock()
+        self._inflight: dict[tuple[str, str, str], tuple[Future[PlaybackListResult], float]] = {}
+        self._pool = ThreadPoolExecutor(max_workers=MAX_WORKERS * 2, thread_name_prefix="playback-list")
 
     def _adapter(self, provider: str) -> PlaybackProgressAdapter | None:
         provider_key = str(provider or "").strip().lower()
@@ -1008,7 +1011,26 @@ class PlaybackProgressService:
             prefix = (str(provider).lower(), normalize_instance_id(instance_id))
             for key in [key for key in self._cache if key[:2] == prefix]:
                 self._cache.pop(key, None)
+            for key in [key for key in self._inflight if key[:2] == prefix]:
+                self._inflight.pop(key, None)
         LOG.debug(f"cache invalidated provider={provider} instance={normalize_instance_id(instance_id)}")
+
+    def _submit_list(self, cfg: Mapping[str, Any], spec: Mapping[str, str], force_refresh: bool) -> tuple[Future[PlaybackListResult], float]:
+        key = self._cache_key(spec["provider"], spec["instance_id"], self._adapter(spec["provider"]))
+        with self._lock:
+            running = self._inflight.get(key)
+            if running and not running[0].done():
+                return running
+            entry = (self._pool.submit(self._list_one, cfg, spec, force_refresh), time.monotonic())
+            self._inflight[key] = entry
+
+        def _release(future: Future[PlaybackListResult]) -> None:
+            with self._lock:
+                if self._inflight.get(key, (None, 0.0))[0] is future:
+                    self._inflight.pop(key, None)
+
+        entry[0].add_done_callback(_release)
+        return entry
 
     def _activity_marker(self, adapter: PlaybackProgressAdapter, config_view: Mapping[str, Any], *, instance_id: str) -> str:
         marker_fn = getattr(adapter, "activity_marker", None)
@@ -1109,6 +1131,7 @@ class PlaybackProgressService:
         month: str | None = None,
         display_tz: str = "UTC",
         tmdb: str | None = None,
+        progressive: bool = False,
     ) -> dict[str, Any]:
         cfg = load_config()
         provider_filter = str(provider or "").strip().lower()
@@ -1135,35 +1158,41 @@ class PlaybackProgressService:
             f"provider_filter={provider_filter or 'all'} instance_filter={instance_filter or 'all'}"
         )
         results: list[PlaybackListResult] = []
+        loading: list[dict[str, Any]] = []
         if readable_specs:
-            pool = ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(readable_specs)))
-            future_specs = {pool.submit(self._list_one, cfg, spec, force_refresh): spec for spec in readable_specs}
-            try:
-                done, pending = wait(future_specs, timeout=_provider_timeout_seconds(cfg))
-                for future in done:
+            timeout_s = _provider_timeout_seconds(cfg)
+            jobs = [(spec, *self._submit_list(cfg, spec, force_refresh)) for spec in readable_specs]
+            now = time.monotonic()
+            budget = max(0.0, max(timeout_s - (now - started) for _spec, _future, started in jobs))
+            wait([future for _spec, future, _started in jobs], timeout=min(budget, FIRST_RESPONSE_SECONDS) if progressive else budget)
+            now = time.monotonic()
+            for spec, future, started in jobs:
+                if future.done():
                     try:
                         results.append(future.result())
                     except Exception:
-                        results.append(PlaybackListResult(ok=False, provider="unknown", instance_id="", error_code="provider_error", message="Provider request failed.", retryable=True))
-                for future in pending:
-                    spec = future_specs[future]
-                    future.cancel()
-                    LOG.warn(
-                        f"provider timeout provider={spec['provider']} instance={spec['instance_id']} "
-                        f"timeout_s={_provider_timeout_seconds(cfg):g}"
+                        results.append(PlaybackListResult(ok=False, provider=spec["provider"], instance_id=spec["instance_id"], error_code="provider_error", message="Provider request failed.", retryable=True))
+                    continue
+                if progressive and now - started < timeout_s:
+                    cap = cap_by_key.get((spec["provider"], spec["instance_id"]))
+                    loading.append({
+                        "provider": spec["provider"],
+                        "provider_label": cap.provider_label if cap else spec["provider"],
+                        "instance_id": spec["instance_id"],
+                        "instance_label": spec["instance_label"],
+                    })
+                    continue
+                LOG.warn(f"provider timeout provider={spec['provider']} instance={spec['instance_id']} timeout_s={timeout_s:g}")
+                results.append(
+                    PlaybackListResult(
+                        ok=False,
+                        provider=spec["provider"],
+                        instance_id=spec["instance_id"],
+                        error_code="provider_timeout",
+                        message="Provider did not respond quickly enough. It was skipped for this refresh.",
+                        retryable=True,
                     )
-                    results.append(
-                        PlaybackListResult(
-                            ok=False,
-                            provider=spec["provider"],
-                            instance_id=spec["instance_id"],
-                            error_code="provider_timeout",
-                            message="Provider did not respond quickly enough. It was skipped for this refresh.",
-                            retryable=True,
-                        )
-                    )
-            finally:
-                pool.shutdown(wait=False, cancel_futures=True)
+                )
 
         errors = skipped_errors + [
             _enrich_list_error(r.to_error(), cap_by_key.get((r.provider, r.instance_id)))
@@ -1210,7 +1239,7 @@ class PlaybackProgressService:
         total = len(sorted_items)
         start = (page - 1) * page_size
         end = start + page_size
-        LOG.debug(f"list completed total={total} errors={len(errors)} page={page} page_size={page_size}")
+        LOG.debug(f"list completed total={total} errors={len(errors)} loading={len(loading)} page={page} page_size={page_size}")
         return {
             "items": sorted_items[start:end],
             "page": page,
@@ -1219,8 +1248,9 @@ class PlaybackProgressService:
             "months": months,
             "providers": [cap.to_dict() for cap in capabilities],
             "errors": errors,
+            "loading": loading,
             "summary": summary,
-            "partial": bool(errors and items),
+            "partial": bool((errors or loading) and items),
             "refreshed_at": utc_now_iso(),
         }
 
