@@ -12,6 +12,7 @@ from .._log import log as cw_log
 from ._common import (
     as_int,
     enrich_ids_dict,
+    half_point,
     iso_z_from_tmdb,
     key_of,
     now_epoch,
@@ -67,12 +68,8 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
                 if not isinstance(raw, Mapping):
                     continue
                 tmdb_id = as_int(raw.get("id"))
-                rating = raw.get("rating")
+                rating = half_point(raw.get("rating"))
                 if tmdb_id is None or rating is None:
-                    continue
-                try:
-                    rating_i = int(round(float(rating)))
-                except Exception:
                     continue
                 rated_at = iso_z_from_tmdb(raw.get("created_at"))
 
@@ -105,7 +102,7 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
                     }
                     enrich_ids_dict(adapter, item["show_ids"], media_type="tv", tmdb_id=show_id, feature="ratings")
 
-                item["rating"] = max(1, min(10, int(rating_i)))
+                item["rating"] = int(rating) if rating.is_integer() else rating
                 if rated_at:
                     item["rated_at"] = rated_at
                 mini = id_minimal(item)
@@ -130,16 +127,10 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     for it in items or []:
         if not isinstance(it, Mapping):
             continue
-        rating = it.get("rating")
-        if rating is None:
+        val = half_point(it.get("rating"))
+        if val is None:
             unresolved.append(unresolved_item(it, "missing_rating"))
             continue
-        try:
-            val_f = float(rating)
-        except Exception:
-            unresolved.append(unresolved_item(it, "missing_rating"))
-            continue
-        val = float(max(1, min(10, int(round(val_f)))))
 
         typ = pick_media_type(it)
         if typ == "movie":

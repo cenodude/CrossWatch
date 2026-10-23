@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import time
 from datetime import datetime, timezone
@@ -124,6 +125,18 @@ def as_int(v: Any) -> int | None:
         return int(float(s)) if ("." in s or "e" in s.lower()) else int(s)
     except Exception:
         return None
+
+
+def half_point(v: Any) -> float | None:
+    if v is None or isinstance(v, bool):
+        return None
+    try:
+        num = float(v)
+    except Exception:
+        return None
+    if not math.isfinite(num) or num <= 0:
+        return None
+    return max(0.5, min(10.0, math.floor(num * 2.0 + 0.5) / 2.0))
 
 
 def _norm_kind(t: Any) -> str:

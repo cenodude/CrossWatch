@@ -115,6 +115,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "remove": True,
             },
             "ratings": {
+                "step": 0.5,
                 "types": {"movies": True, "shows": True, "seasons": False, "episodes": True},
                 "add": True,
                 "remove": True,
