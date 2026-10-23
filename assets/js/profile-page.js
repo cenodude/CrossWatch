@@ -1468,11 +1468,13 @@
 
   function removeCollectionSelection() {
     if (!collectionSelectable() || !collectionState.selected.size) return;
+    const keys = new Set(collectionState.selected.keys());
     recordRemoval.open({
       kind: "collection",
       mode: "editor",
       noun: "title",
       entries: [...collectionState.selected.values()],
+      cards: () => [...($("#profile-collection-grid")?.querySelectorAll("article[data-collection-key]") || [])].filter((node) => keys.has(node.dataset.collectionKey)),
       trigger: $("#profile-collection-bulk")?.querySelector("[data-collection-remove]"),
       onDone: async (clean) => {
         if (clean) collectionState.selected.clear();
@@ -2192,6 +2194,36 @@
     return `<span class="cw-hist-route${sinks.length ? "" : " is-unsent"}">${from}${to}<span class="cw-hist-coverage-label">${esc(label)}</span></span>`;
   }
 
+  const RECORD_PHASE_WORKING = { remove: "Removing…", remove_progress: "Removing…", mark_watched: "Marking watched…", update_progress: "Updating…" };
+  const RECORD_PHASE_DONE = { remove: ["delete", "Removed"], remove_progress: ["delete", "Removed"], mark_watched: ["check_circle", "Watched"] };
+
+  function setRecordPhase(node, phase = "", action = "remove") {
+    if (!node) return;
+    const label = phase === "working" ? ["progress_activity", RECORD_PHASE_WORKING[action] || "Working…"]
+      : phase === "leaving" ? RECORD_PHASE_DONE[action]
+      : phase === "failed" ? ["error", "Failed"] : null;
+    const current = label ? phase : "";
+    node.dataset.recordPhase = current;
+    node.dataset.recordPhaseAction = current ? action : "";
+    node.setAttribute("aria-busy", String(current === "working"));
+    const host = node.matches(".cw-hist-card, .cw-collection-card") ? node.querySelector(".cw-hist-art, .cw-collection-poster") : null;
+    let overlay = host?.querySelector(":scope > .cw-record-pending");
+    if (!current) {
+      overlay?.remove();
+      return;
+    }
+    if (!host) return;
+    if (!overlay) {
+      overlay = document.createElement("span");
+      overlay.className = "cw-record-pending";
+      overlay.setAttribute("aria-hidden", "true");
+      overlay.innerHTML = `<span class="material-symbols-rounded"></span><strong></strong>`;
+      host.appendChild(overlay);
+    }
+    overlay.querySelector(".material-symbols-rounded").textContent = label[0];
+    overlay.querySelector("strong").textContent = label[1];
+  }
+
   function timelineArt(item) {
     const cover = poster(item, "w342");
     const art = watchlistPreviewArt(item, "w300") || cover;
@@ -2591,15 +2623,18 @@
       clearTimeout(state.feedbackTimer);
       state.outcome = "";
       state.busy = true;
+      const markCards = (phase) => (ctx.cards?.() || []).forEach((card) => setRecordPhase(card, phase));
       part("error").textContent = "";
       part("result").innerHTML = `<div class="cw-tl-remove-line is-running"><span class="material-symbols-rounded" aria-hidden="true">progress_activity</span><span>Removing from ${count(targets.length)} provider profile${targets.length === 1 ? "" : "s"}...</span></div>`;
       render();
+      markCards("working");
       let rows = null;
       try {
         rows = ctx.mode === "watchlist" ? await removeWatchlist(targets) : await removeEditor(ctx, targets);
         const removed = rows.reduce((sum, row) => sum + row.removed, 0);
         const clean = removed > 0 && rows.length === targets.length && rows.every((row) => !row.error && !row.unresolved && !row.skipped);
         state.outcome = clean ? "success" : "failure";
+        markCards(removed ? "leaving" : "failed");
         part("result").innerHTML = resultHtml(rows);
         syncActions();
         toast(removed ? `Removed ${count(removed)} record${removed === 1 ? "" : "s"}` : "Nothing was removed", !removed);
@@ -2616,6 +2651,7 @@
         }
       } catch (e) {
         state.outcome = "failure";
+        markCards("failed");
         part("error").textContent = e.message || "Removal failed";
         if (!rows) part("result").innerHTML = "";
       } finally {
@@ -2624,6 +2660,7 @@
         state.feedbackTimer = setTimeout(() => {
           state.outcome = "";
           syncActions();
+          markCards("");
         }, 2000);
       }
     }
@@ -3077,11 +3114,13 @@
 
     function removeSelected() {
       if (!selectable() || !state.selected.size) return;
+      const keys = new Set(state.selected.keys());
       recordRemoval.open({
         kind: meta().removeKind,
         mode: cfg.removeMode || "editor",
         noun: meta().noun,
         entries: [...state.selected.values()],
+        cards: () => [...(q("list")?.querySelectorAll("article[data-timeline-key]") || [])].filter((node) => keys.has(node.dataset.timelineKey)),
         trigger: q("bulk")?.querySelector("[data-timeline-remove]"),
         onDone: async (clean) => {
           if (clean) state.selected.clear();
@@ -3935,6 +3974,12 @@
       panel()?.querySelectorAll("[data-playback-bulk-select], [data-playback-select]").forEach((control) => {
         control.disabled = !!pending;
       });
+      q("list")?.querySelectorAll("article[data-playback-key]").forEach((node) => {
+        const key = node.dataset.playbackKey;
+        const result = feedback?.results.get(key) || "";
+        if (result) setRecordPhase(node, result === "success" ? "leaving" : "failed", feedback.action);
+        else setRecordPhase(node, pending?.sent && pending.keys.has(key) ? "working" : "", pending?.action);
+      });
       renderSync();
     }
 
@@ -4352,6 +4397,8 @@
           const note = skipped ? ` ${skipped} unsupported record${skipped === 1 ? "" : "s"} will be skipped.` : "";
           if (!window.confirm(`${actionTitle(action)} for ${payloads.length} provider record${payloads.length === 1 ? "" : "s"}?${note}`)) return;
         }
+        state.pendingAction.sent = true;
+        syncActionUI();
         let succeeded = false;
         if (payloads.length === 1 && items.length === 1 && !items[0].is_combined) {
           const urls = {
