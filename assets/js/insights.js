@@ -380,10 +380,10 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     const needsGear = seg && !seg.querySelector(".ins-gear");
     if (host.dataset.feats !== sig || host.dataset.cur !== _feature || needsGear) {
       const settingsButton = '<button class="ins-gear" type="button" title="Insight settings" aria-label="Insight settings"><span class="material-symbols-rounded" aria-hidden="true">settings</span></button>';
-      seg.innerHTML = _visibleFeats.map(f => `<button class="seg-btn${_feature === f ? " active" : ""}" data-key="${f}" role="tab" aria-selected="${_feature === f}" title="${featureLabel(f)}" aria-label="${featureLabel(f)}"><span class="material-symbols-rounded" aria-hidden="true">${FEAT_ICON[lc(f)] || "insights"}</span><span>${featureLabel(f)}</span></button>`).join("") + settingsButton;
+      seg.innerHTML = _visibleFeats.map(f => `<button class="seg-btn${_feature === f ? " active" : ""}" data-key="${esc(f)}" role="tab" aria-selected="${_feature === f}" title="${esc(featureLabel(f))}" aria-label="${esc(featureLabel(f))}"><span class="material-symbols-rounded" aria-hidden="true">${FEAT_ICON[lc(f)] || "insights"}</span><span>${esc(featureLabel(f))}</span></button>`).join("") + settingsButton;
       host.dataset.feats = sig;
       host.dataset.cur = _feature;
-      host.querySelector("#insights-mobile-feature").innerHTML = _visibleFeats.map(f => `<option value="${f}">${featureLabel(f)}</option>`).join("");
+      host.querySelector("#insights-mobile-feature").innerHTML = _visibleFeats.map(f => `<option value="${esc(f)}">${esc(featureLabel(f))}</option>`).join("");
     }
     placeSwitchBeforeTiles();
     markActiveSwitcher();
@@ -592,7 +592,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     if (!rows.length) return void (list.innerHTML = `<div class="history-item"><div class="history-meta muted">${display.mode === "hours" ? `No runs in the last ${display.hours} hours` : "No runs for this feature"}</div></div>`);
     list.innerHTML = rows.map(row => {
       const t = totalsFor(_feature, row), cls = typeof row?.exit_code === "number" && row.exit_code !== 0 ? "err" : String(row?.result || "").toUpperCase() === "EQUAL" || t.sum === 0 ? "ok" : "warn";
-      return `<div class="history-item ${cls}"><div class="history-main"><div class="history-meta"><span class="history-time">${fmtWhen(row)}</span><span class="badge ${cls}">${row?.result || "—"}${typeof row?.exit_code === "number" ? ` · ${row.exit_code}` : ""}</span></div><div class="history-sub">${featureLabel(_feature)} • ${fmtDur(row?.duration_sec)}</div></div><div class="history-badges"><span class="badge add">+${t.a}</span><span class="badge del">-${t.r}</span>${t.u ? `<span class="badge micro">~${t.u}</span>` : ""}</div></div>`;
+      return `<div class="history-item ${cls}"><div class="history-main"><div class="history-meta"><span class="history-time">${esc(fmtWhen(row))}</span><span class="badge ${cls}">${esc(row?.result || "—")}${typeof row?.exit_code === "number" ? ` · ${row.exit_code}` : ""}</span></div><div class="history-sub">${esc(featureLabel(_feature))} • ${esc(fmtDur(row?.duration_sec))}</div></div><div class="history-badges"><span class="badge add">+${t.a}</span><span class="badge del">-${t.r}</span>${t.u ? `<span class="badge micro">~${t.u}</span>` : ""}</div></div>`;
     }).join("");
   }
 
