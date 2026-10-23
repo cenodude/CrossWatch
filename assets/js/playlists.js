@@ -27,7 +27,7 @@
   const EMPTY_PROVIDER_RETRIES = 2;
   const EMPTY_PROVIDER_RETRY_MS = 300;
   const SAFE_NAME_CHARS = " _.'-&()";
-  const PLAYLIST_COMPATIBLE_PROVIDERS = new Set(["PLEX", "TRAKT", "MDBLIST", "JELLYFIN", "EMBY", "PUBLICMETADB", "SIMKL", "CROSSWATCH"]);
+  const PLAYLIST_COMPATIBLE_PROVIDERS = new Set(["PLEX", "TRAKT", "MDBLIST", "JELLYFIN", "EMBY", "PUBLICMETADB", "SIMKL", "TMDB", "FLICKLIST", "CROSSWATCH"]);
   const SIMKL_PLAYLIST_WARNING = "SIMKL status buckets are not true playlists. Changes may move or remove items from your SIMKL library. Use with caution. SIMKL custom lists are read only and need SIMKL PRO or VIP.";
   const RULESET_PRESETS = {
     direct: {
@@ -240,15 +240,24 @@
     const providerGate = state.loaded && !hasCompatiblePlaylistProvider() ? `
       <div class="pl-banner warn">
         <span class="material-symbols-rounded" aria-hidden="true">warning</span>
-        <span>Playlists need at least one compatible provider (Plex, Trakt, MDBList, Jellyfin, Emby, PublicMetaDB, SIMKL or CrossWatch). Configure one in Connections to enable playlist endpoints and mappings.</span>
+        <span>Playlists need at least one compatible provider (Plex, Trakt, MDBList, Jellyfin, Emby, PublicMetaDB, SIMKL, TMDb, FlickList or CrossWatch). Configure one in Connections to enable playlist endpoints and mappings.</span>
         <button type="button" class="pl-btn small" data-action="open-connections">Open Connections</button>
       </div>
     ` : "";
-    if (!errorGate && !providerGate) return "";
+    const reconnect = state.loaded ? state.providers.filter((p) => p && !p.configured && p.reason === "reconnect_required") : [];
+    const reconnectGate = reconnect.length ? `
+      <div class="pl-banner warn">
+        <span class="material-symbols-rounded" aria-hidden="true">link</span>
+        <span>${esc(reconnect.map((p) => p.label || providerLabel(p.provider)).filter((v, i, a) => a.indexOf(v) === i).join(", "))} lists need a reconnect. Add your API Read Access Token in Connections and click Connect again.</span>
+        <button type="button" class="pl-btn small" data-action="open-connections">Open Connections</button>
+      </div>
+    ` : "";
+    if (!errorGate && !providerGate && !reconnectGate) return "";
     return `
       <div class="pl-banners">
         ${errorGate}
         ${providerGate}
+        ${reconnectGate}
       </div>
     `;
   }

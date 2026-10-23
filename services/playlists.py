@@ -121,23 +121,39 @@ def list_playlist_providers(cfg: Mapping[str, Any]) -> list[dict[str, Any]]:
         caps = playlist_capabilities(ops)
         label = _label_for(ops, name)
         is_conf = getattr(ops, "is_configured", None)
+        pl_conf = getattr(ops, "playlists_configured", None)
         for inst in list_instance_ids(cfg, name):
             configured = True
-            if callable(is_conf):
+            reason = ""
+            try:
+                view = build_provider_config_view(cfg, name, inst)
+            except Exception:
+                view = None
+                configured = False
+            if configured and callable(is_conf):
                 try:
-                    configured = bool(is_conf(build_provider_config_view(cfg, name, inst)))
+                    configured = bool(is_conf(view))
                 except Exception:
                     configured = False
-            out.append(
-                {
-                    "provider": name,
-                    "instance": inst,
-                    "label": label,
-                    "configured": configured,
-                    "capabilities": caps,
-                    "create_endpoint_types": creatable_endpoint_types(ops),
-                }
-            )
+            if configured and callable(pl_conf):
+                try:
+                    ready = bool(pl_conf(view))
+                except Exception:
+                    ready = False
+                if not ready:
+                    configured = False
+                    reason = "reconnect_required"
+            row = {
+                "provider": name,
+                "instance": inst,
+                "label": label,
+                "configured": configured,
+                "capabilities": caps,
+                "create_endpoint_types": creatable_endpoint_types(ops),
+            }
+            if reason:
+                row["reason"] = reason
+            out.append(row)
     return out
 
 

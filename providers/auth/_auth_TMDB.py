@@ -53,13 +53,20 @@ class TMDbAuth(AuthProvider):
                     "readonly": True,
                     "placeholder": "Created after approval",
                 },
+                {
+                    "key": "tmdb_sync.read_token",
+                    "label": "API Read Access Token (v4)",
+                    "type": "password",
+                    "required": False,
+                    "placeholder": "Needed for TMDb lists",
+                },
             ],
             actions={"start": False, "finish": False, "refresh": True, "disconnect": True},
             notes="TMDb sync adapter auth (separate from Metadata TMDb).",
         )
 
     def capabilities(self) -> dict[str, Any]:
-        return {"watchlist": True, "ratings": True}
+        return {"watchlist": True, "ratings": True, "playlists": True}
 
     def get_status(self, cfg: Mapping[str, Any], *, instance_id: str | None = None) -> AuthStatus:
         inst = normalize_instance_id(instance_id)
@@ -110,7 +117,10 @@ class TMDbAuth(AuthProvider):
             tm = ensure_instance_block(cfg, "tmdb_sync", inst)
             tm["api_key"] = ""
             tm["session_id"] = ""
+            tm["read_token"] = ""
+            tm["access_token"] = ""
             tm.pop("account_id", None)
+            tm.pop("account_object_id", None)
             tm.pop("username", None)
             save_config(dict(cfg))
         else:
@@ -118,7 +128,10 @@ class TMDbAuth(AuthProvider):
             if isinstance(tm, dict):
                 tm["api_key"] = ""
                 tm["session_id"] = ""
+                tm["read_token"] = ""
+                tm["access_token"] = ""
                 tm.pop("account_id", None)
+                tm.pop("account_object_id", None)
                 tm.pop("username", None)
 
         log(f"TMDb disconnected ({inst}).", module="AUTH")
@@ -164,7 +177,7 @@ def _tmdb_sync_html() -> str:
         <div class="cw-panel-head">
           <div>
             <div class="cw-panel-title">TMDb (Sync)</div>
-            <div class="muted">Sync watchlist/ratings via TMDb v3 session.</div>
+            <div class="muted">Sync watchlist, ratings and lists with TMDb.</div>
           </div>
         </div>
 
@@ -177,7 +190,7 @@ def _tmdb_sync_html() -> str:
             <div class="cw-auth-journey" style="--cw-auth-c1:0,179,229;--cw-auth-c2:144,206,161;--cw-auth-logo:url('/assets/img/TMDB.svg')">
               <div class="cw-auth-journey-text">
                 <div class="cw-auth-journey-title">Connect to TMDb</div>
-                <div class="cw-auth-journey-copy">Add your TMDb v3 API key and connect to create a session. This syncs your TMDb watchlist and ratings; metadata TMDb is configured separately.</div>
+                <div class="cw-auth-journey-copy">Add your TMDb API Key and connect. Add the API Read Access Token as well to sync TMDb lists as playlists. Metadata TMDb is configured separately.</div>
               </div>
             </div>
 
@@ -197,6 +210,14 @@ def _tmdb_sync_html() -> str:
                     <label for="tmdb_sync_session_id">Session ID (v3)</label>
                     <input id="tmdb_sync_session_id" name="tmdb_sync_session_id" type="password" autocomplete="off" placeholder="Created after approval" readonly aria-readonly="true" tabindex="-1" />
                     
+                  </div>
+
+                  <div>
+                    <label for="tmdb_sync_read_token">API Read Access Token (v4)</label>
+                    <input id="tmdb_sync_read_token" name="tmdb_sync_read_token" type="password" autocomplete="off" placeholder="Needed for TMDb lists" spellcheck="false" autocapitalize="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" />
+                    <div id="tmdb_sync_lists_hint" class="msg warn hidden" style="margin-top:8px">
+                      TMDb lists need this token. Add it and click Connect again.
+                    </div>
                   </div>
                 </div>
             

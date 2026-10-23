@@ -73,6 +73,10 @@
     return Shared.maskSecret(i, has);
   }
 
+  function setListsHint(show) {
+    el("tmdb_sync_lists_hint")?.classList.toggle("hidden", !show);
+  }
+
   async function hydrate(forceFresh, verifyAfter) {
     ensureTMDbSyncInstanceUI();
     await refreshTMDbSyncInstanceOptions(true);
@@ -86,6 +90,7 @@
 
     const keyEl = el("tmdb_sync_api_key");
     const sessEl = el("tmdb_sync_session_id");
+    const readEl = el("tmdb_sync_read_token");
 
     if (sessEl) {
       sessEl.readOnly = true;
@@ -94,6 +99,7 @@
     }
     maskInput(keyEl, hasKey);
     maskInput(sessEl, hasSess);
+    maskInput(readEl, !!txt(tm?.read_token));
 
     el("tmdb_sync_hint")?.classList.toggle("hidden", hasKey);
 
@@ -119,9 +125,11 @@
         await hydrate(true, false);
         const u = j.account?.username ? ` (${j.account.username})` : "";
         setConn(true, `Connected${u}`);
+        setListsHint(!j.lists_ready);
         if (!silent) note("TMDb verified ");
         return;
       }
+      setListsHint(false);
       if (j.pending) {
         setConn(false, "Pending approval...");
         if (!silent) note("TMDb pending approval");
@@ -150,6 +158,7 @@
       await hydrate(true, false);
       const u = j.account?.username ? ` (${j.account.username})` : "";
       setConn(true, `Connected${u}`);
+      setListsHint(!j.lists_ready);
       note("TMDb connected ");
       return;
     }
@@ -188,11 +197,14 @@
       return;
     }
 
+    const readState = readSecretField(el("tmdb_sync_read_token"));
+    const readToken = readState.masked ? "********" : readState.value;
+
     try {
       const r = await fetchJSON(tmdbApi(API.start), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ api_key: keyState.masked ? "********" : apiKey }),
+        body: JSON.stringify({ api_key: keyState.masked ? "********" : apiKey, read_token: readToken || "" }),
       });
       if (!r.ok || (r.data && r.data.ok === false)) throw new Error(r.data?.error || "connect_failed");
       const j = r.data || {};
@@ -219,9 +231,12 @@
       if (!r.ok || (r.data && r.data.ok === false)) throw new Error("disconnect_failed");
       const keyEl = el("tmdb_sync_api_key");
       const sessEl = el("tmdb_sync_session_id");
+      const readEl = el("tmdb_sync_read_token");
       if (keyEl) { keyEl.dataset.touched = "0"; keyEl.value = ""; keyEl.dataset.masked = "0"; }
       if (sessEl) { sessEl.dataset.touched = "0"; sessEl.value = ""; sessEl.dataset.masked = "0"; }
+      if (readEl) { readEl.dataset.touched = "0"; readEl.value = ""; readEl.dataset.masked = "0"; }
       el("tmdb_sync_hint")?.classList.remove("hidden");
+      setListsHint(false);
       setConn(false, "Disconnected");
       note("TMDb disconnected");
     } catch {
@@ -259,6 +274,12 @@
 
     if (sessEl && !sessEl.__wired) {
       sessEl.__wired = true;
+    }
+
+    const readEl = el("tmdb_sync_read_token");
+    if (readEl && !readEl.__wired) {
+      Shared.wireSecretInput(readEl, {});
+      readEl.__wired = true;
     }
 
     const c = el("tmdb_sync_connect");
@@ -309,6 +330,7 @@
 
     const keyState = readSecretField(keyEl);
     const sessState = readSecretField(sessEl);
+    const readState = readSecretField(el("tmdb_sync_read_token"));
 
     const inst = getTMDbSyncInstance();
     cfg.tmdb_sync = cfg.tmdb_sync || {};
@@ -319,6 +341,7 @@
 
     if (keyState.value) dst.api_key = keyState.value;
     if (sessState.value) dst.session_id = sessState.value;
+    if (readState.value) dst.read_token = readState.value;
   });
 
   function boot() {
