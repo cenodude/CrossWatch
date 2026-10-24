@@ -1149,7 +1149,7 @@ async function saveSettings() {
     try {
       const cached = _cwFn("loadStatusCache")?.();
       if (cached?.providers) _cwFn("renderConnectorStatus")?.(cached.providers, { stale: true });
-      _cwLater(() => _cwFn("refreshStatus")?.(true));
+      _cwLater(() => _cwFn("refreshStatus")?.(true, false));
     } catch {}
 
     ["updateTmdbHint", "updateSimklState", "updateJellyfinState", "updateTraktHint", "updatePreviewVisibility"].forEach((name) => {
