@@ -48,7 +48,7 @@ def _strong_keys(item: Mapping[str, Any]) -> set[str]:
                 continue
             t = _tok(k, own)
             if t:
-                out.add(t)
+                out.add(f"{t}#episode")
 
     s = item.get("season") if item.get("season") is not None else item.get("season_number")
     e = item.get("episode") if item.get("episode") is not None else item.get("episode_number")
@@ -59,7 +59,7 @@ def _strong_keys(item: Mapping[str, Any]) -> set[str]:
         for k in _STRONG_ID_KEYS:
             t = _tok(k, ids.get(k))
             if t:
-                out.add(t)
+                out.add(f"{t}#episode" if typ == "episode" else t)
         return out
 
     frag: str | None = None
@@ -72,7 +72,7 @@ def _strong_keys(item: Mapping[str, Any]) -> set[str]:
         for k in _STRONG_ID_KEYS:
             t = _tok(k, ids.get(k))
             if t:
-                out.add(t)
+                out.add(f"{t}#episode" if typ == "episode" else t)
         return out
 
     source_ids: Mapping[str, Any] = show_ids or ids

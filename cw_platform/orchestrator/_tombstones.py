@@ -19,7 +19,8 @@ def media_tombstone_tokens(item: Mapping[str, Any], key: str | None = None) -> s
     tokens = {str(key or canonical_key(item))}
     ids = item.get("ids")
     if isinstance(ids, Mapping):
-        tokens.update(f"{str(k).lower()}:{str(v).strip().lower()}" for k, v in ids.items() if v not in (None, ""))
+        suffix = "#episode" if typ == "episode" else ""
+        tokens.update(f"{str(k).lower()}:{str(v).strip().lower()}{suffix}" for k, v in ids.items() if v not in (None, ""))
     if typ in ("movie", "show"):
         tokens = {f"{token}#{typ}" if token.startswith("tmdb:") and token[5:].isdigit() else token for token in tokens}
     return tokens - {""}
@@ -139,7 +140,7 @@ def clear_items_for_feature(
             pass
 
         ids = item.get("ids") or {}
-        if isinstance(ids, Mapping):
+        if isinstance(ids, Mapping) and _norm_type(item.get("type")) != "episode":
             for idk in ID_KEYS:
                 idv = ids.get(idk)
                 if idv is None or str(idv).strip() == "":
@@ -216,7 +217,7 @@ def filter_with(
             return True
 
         ids = item.get("ids") or {}
-        if isinstance(ids, Mapping):
+        if isinstance(ids, Mapping) and _norm_type(item.get("type")) != "episode":
             for k in ID_KEYS:
                 v = ids.get(k)
                 if v is not None and f"{k}:{str(v).lower()}" in keys:

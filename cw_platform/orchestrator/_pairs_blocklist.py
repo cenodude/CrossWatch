@@ -6,7 +6,7 @@ import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 from ..history_events import history_sync_key
-from ..id_map import canonical_key, ID_KEYS
+from ..id_map import canonical_key, ID_KEYS, _norm_type
 from ._tombstones import keys_for_feature, filter_with, media_tombstone_tokens
 
 try:
@@ -118,7 +118,7 @@ def _history_is_blocked_by_tomb(item: dict[str, Any], tomb_ts: Mapping[str, int]
         pass
 
     ids = item.get("ids") or {}
-    if isinstance(ids, Mapping):
+    if isinstance(ids, Mapping) and _norm_type(item.get("type")) != "episode":
         for k in ID_KEYS:
             v = ids.get(k)
             if v is None or str(v).strip() == "":
@@ -159,7 +159,7 @@ def _ratings_is_blocked_by_tomb(item: dict[str, Any], tomb_ts: Mapping[str, int]
         pass
 
     ids = item.get("ids") or {}
-    if isinstance(ids, Mapping):
+    if isinstance(ids, Mapping) and _norm_type(item.get("type")) != "episode":
         for k in ID_KEYS:
             v = ids.get(k)
             if v is None or str(v).strip() == "":

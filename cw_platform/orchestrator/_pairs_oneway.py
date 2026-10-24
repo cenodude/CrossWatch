@@ -877,7 +877,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                     show_v = show_ids.get(k)
                     if show_v is not None and str(show_v).lower() == str(v).lower():
                         continue
-                    toks.add(f"{str(k).lower()}:{str(v).lower()}")
+                    toks.add(f"{str(k).lower()}:{str(v).lower()}#episode")
             try:
                 season_raw = it.get("season") if it.get("season") is not None else it.get("season_number")
                 episode_raw = it.get("episode") if it.get("episode") is not None else it.get("episode_number")
@@ -899,7 +899,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                 for k, v in ids.items():
                     if v is None or str(v) == "":
                         continue
-                    toks.add(f"{str(k).lower()}:{str(v).lower()}")
+                    toks.add(f"{str(k).lower()}:{str(v).lower()}#episode")
 
         elif typ == "season":
             try:
@@ -1005,12 +1005,17 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
         if ck and ck in idx:
             v = idx.get(ck)
             return v if isinstance(v, Mapping) else None
+        is_episode = _norm_type(it.get("type")) == "episode"
         for tok in _typed_tokens(it):
             dk = alias.get(tok)
             if not dk:
                 continue
             v = idx.get(dk)
-            return v if isinstance(v, Mapping) else None
+            if not isinstance(v, Mapping):
+                return None
+            if (_norm_type(v.get("type")) == "episode") != is_episode:
+                continue
+            return v
         if feature == "history" and str(it.get("type") or "").strip().lower() == "show":
             target = _show_level_tokens(it)
             if target:
