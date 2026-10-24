@@ -3,7 +3,16 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 from typing import Any
-from cw_platform.provider_instances import get_provider_block, normalize_instance_id, normalize_user_profile_id
+from cw_platform.account_match import exact_media_account_name, media_account_allowed
+from cw_platform.provider_instances import (
+    get_instance_block,
+    get_provider_block,
+    is_sync_user_instance,
+    list_sync_user_ids,
+    normalize_instance_id,
+    normalize_user_profile_id,
+    split_sync_user_id,
+)
 
 
 
@@ -41,6 +50,90 @@ def same_scrobble_endpoint(provider: Any, provider_instance: Any, sink: Any, sin
 
 def route_is_self_target(route: dict[str, Any]) -> bool:
     return same_scrobble_endpoint(route.get("provider"), route.get("provider_instance"), route.get("sink"), route.get("sink_instance"))
+
+
+SYNC_USER_ENDPOINTS = {"plex", "emby", "jellyfin"}
+
+
+def sync_user_endpoints_supported(provider: Any, provider_instance: Any, sink: Any, sink_instance: Any) -> bool:
+    prov = str(provider or "").strip().lower()
+    snk = str(sink or "").strip().lower()
+    if prov not in SYNC_USER_ENDPOINTS or snk not in SYNC_USER_ENDPOINTS:
+        return False
+    if is_sync_user_instance(provider_instance) or is_sync_user_instance(sink_instance):
+        return False
+    return not same_scrobble_endpoint(prov, provider_instance, snk, sink_instance)
+
+
+def _sync_user_name(cfg: dict[str, Any], provider: str, instance: str) -> str:
+    entry = get_instance_block(cfg, provider, instance)
+    return str(entry.get("username") or entry.get("user") or "").strip()
+
+
+def _sync_user_account_ids(cfg: dict[str, Any], provider: str, instance: str, key: str) -> list[str]:
+    entry = get_instance_block(cfg, provider, instance)
+    ids = [key]
+    for field in ("user_id", "account_id", "cloud_account_id"):
+        value = str(entry.get(field) or "").strip()
+        if value and value not in ids:
+            ids.append(value)
+    return ids
+
+
+def sync_user_matches(cfg: dict[str, Any], provider: Any, provider_instance: Any, sink: Any, sink_instance: Any) -> list[dict[str, Any]]:
+    if not sync_user_endpoints_supported(provider, provider_instance, sink, sink_instance):
+        return []
+    prov = str(provider).strip().lower()
+    snk = str(sink).strip().lower()
+    dst_by_name: dict[str, str] = {}
+    for inst in list_sync_user_ids(cfg, snk, normalize_instance_id(sink_instance)):
+        name = _sync_user_name(cfg, snk, inst)
+        if name:
+            dst_by_name.setdefault(name.casefold(), inst)
+    out: list[dict[str, Any]] = []
+    for inst in list_sync_user_ids(cfg, prov, normalize_instance_id(provider_instance)):
+        ref = split_sync_user_id(inst)
+        name = _sync_user_name(cfg, prov, inst)
+        dst = dst_by_name.get(name.casefold()) if name else None
+        if ref is not None and dst:
+            out.append({"key": ref[1], "username": name, "sink_instance": dst, "ids": _sync_user_account_ids(cfg, prov, inst, ref[1])})
+    return out
+
+
+def sync_user_whitelist(match: dict[str, Any]) -> list[str]:
+    return [f"id:{value}" for value in match.get("ids") or [match["key"]]]
+
+
+def sync_user_match_for_account(matches: list[dict[str, Any]], accounts: list[Any], *, account_id: Any = "", account_uuid: Any = "", user_id: Any = "") -> dict[str, Any] | None:
+    event_ids = {str(value).strip().casefold() for value in (account_id, user_id) if str(value or "").strip()}
+    if event_ids:
+        hits = [match for match in matches if event_ids & {str(value).casefold() for value in match.get("ids") or [match["key"]]}]
+    else:
+        names = {exact_media_account_name(name) for name in accounts or [] if exact_media_account_name(name)}
+        hits = [match for match in matches if exact_media_account_name(match["username"]) in names]
+    return hits[0] if len(hits) == 1 else None
+
+
+def expand_sync_user_route(cfg: dict[str, Any], route: dict[str, Any]) -> list[dict[str, Any]]:
+    if not route.get("match_users"):
+        return [route]
+    if not sync_user_endpoints_supported(route.get("provider"), route.get("provider_instance"), route.get("sink"), route.get("sink_instance")):
+        return [route]
+    raw_filters = route.get("filters")
+    filters: dict[str, Any] = raw_filters if isinstance(raw_filters, dict) else {}
+    allowed = filters.get("username_whitelist") or []
+    out: list[dict[str, Any]] = []
+    for match in sync_user_matches(cfg, route.get("provider"), route.get("provider_instance"), route.get("sink"), route.get("sink_instance")):
+        if allowed and not media_account_allowed(allowed, match["username"], account_id=match["key"], user_id=match["key"], default_allow=False):
+            continue
+        derived = dict(route)
+        derived["id"] = f"{route.get('id')}~{match['key']}"
+        derived["sink_instance"] = match["sink_instance"]
+        derived["filters"] = {**filters, "username_whitelist": sync_user_whitelist(match)}
+        derived["_cw_parent_route_id"] = route.get("id")
+        derived["_cw_sync_user"] = match["username"]
+        out.append(derived)
+    return out
 
 
 def scrobble_sink_config(cfg: dict[str, Any], provider: str, instance: Any) -> dict[str, Any]:
@@ -228,6 +321,8 @@ def normalize_route(route: dict[str, Any], fallback_id: str) -> dict[str, Any]:
     }
     if profile_id:
         out["profile_id"] = profile_id
+    if r.get("match_users") is True or str(r.get("match_users") or "").strip().lower() in {"1", "true", "yes", "on"}:
+        out["match_users"] = True
     return out
 
 
@@ -370,9 +465,16 @@ def find_route(cfg: dict[str, Any], route_id: str | None) -> dict[str, Any] | No
     rid = str(route_id or "").strip()
     if not rid:
         return None
-    for route in normalize_routes(cfg):
+    routes = normalize_routes(cfg)
+    for route in routes:
         if str(route.get("id") or "").strip() == rid:
             return route
+    parent_id = rid.split("~", 1)[0]
+    if parent_id == rid:
+        return None
+    for route in routes:
+        if str(route.get("id") or "").strip() == parent_id:
+            return next((derived for derived in expand_sync_user_route(cfg, route) if derived.get("id") == rid), None)
     return None
 
 

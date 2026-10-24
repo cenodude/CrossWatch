@@ -14,7 +14,7 @@ from typing import Any, Callable, Iterable, Mapping
 import requests
 
 from cw_platform.app_version import app_version, user_agent as http_user_agent
-from cw_platform.provider_instances import normalize_instance_id
+from cw_platform.provider_instances import is_sync_user_instance, normalize_instance_id, resolve_sync_user_block
 from cw_platform.value_coercion import coerce_bool
 
 from ._log import log as cw_log
@@ -164,6 +164,8 @@ def _pick_instance_id(provider: str, cfg: Mapping[str, Any] | None = None) -> st
 
 def _merge_instance_block(raw: Any, inst: str) -> dict[str, Any]:
     base = dict(raw or {}) if isinstance(raw, Mapping) else {}
+    if is_sync_user_instance(inst):
+        return resolve_sync_user_block(base, inst)
     if inst == "default":
         base.pop("instances", None)
         return base

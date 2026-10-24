@@ -275,6 +275,7 @@ def html() -> str:
           <button type="button" class="cw-subtile active" data-sub="auth">Authentication</button>
           <button type="button" class="cw-subtile" data-sub="settings">Settings</button>
           <button type="button" class="cw-subtile" data-sub="whitelist">Whitelisting</button>
+          <button type="button" class="cw-subtile" data-sub="users">Users</button>
         </div>
 
         <div class="cw-subpanels">
@@ -340,6 +341,10 @@ def html() -> str:
               <select id="emby_lib_collection" class="lm-hidden" multiple></select>
               <select id="emby_lib_scrobble" class="lm-hidden" multiple></select>
             </div>
+          </div>
+
+          <div class="cw-subpanel" data-sub="users">
+            <div id="emby_sync_users"></div>
           </div>
         </div>
       </div>

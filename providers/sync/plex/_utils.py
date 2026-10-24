@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import copy
 import os
 import re
 import time
@@ -15,7 +16,7 @@ import requests
 from requests.exceptions import ConnectionError, SSLError
 
 from cw_platform.config_base import load_config, save_config
-from cw_platform.provider_instances import normalize_instance_id
+from cw_platform.provider_instances import is_sync_user_instance, normalize_instance_id, resolve_sync_user_block
 from cw_platform.value_coercion import coerce_bool
 
 from ._common import make_logger, plex_headers
@@ -63,6 +64,8 @@ def _plex(cfg: Mapping[str, Any], instance_id: Any = None) -> dict[str, Any]:
     inst = normalize_instance_id(instance_id)
     if inst == "default":
         return plex
+    if is_sync_user_instance(inst):
+        return copy.deepcopy(resolve_sync_user_block(plex, inst))
     insts = plex.get("instances")
     if not isinstance(insts, dict):
         if not isinstance(cfg, dict):

@@ -12,8 +12,14 @@ from cw_platform.access_policy import webhook_effective_profile_id
 from cw_platform.user_profile_resources import webhook_assigned_profile_id, webhook_resource_id
 from providers.scrobble.anime_mapping import maybe_enrich_event_for_sink
 from providers.scrobble.media_filters import event_ignore_reason, log_media_filter_drop
-from providers.scrobble.scrobble import ScrobbleAction, ScrobbleEvent
-from providers.scrobble.routes import ROUTE_MEDIA_SINKS, same_scrobble_endpoint
+from providers.scrobble.scrobble import ScrobbleAction, ScrobbleEvent, _event_identity
+from providers.scrobble.routes import (
+    ROUTE_MEDIA_SINKS,
+    same_scrobble_endpoint,
+    sync_user_endpoints_supported,
+    sync_user_match_for_account,
+    sync_user_matches,
+)
 from providers.webhooks.config import sink_configured, webhook_settings, webhook_sink_instance, webhook_sinks
 
 
@@ -288,6 +294,20 @@ def dispatch_scrobble(
     dispatched: list[str] = []
     for sink in sinks:
         inst = webhook_sink_instance(wh, sink)
+        if wh.get("match_users") is True and sync_user_endpoints_supported(provider_lc, provider_inst, sink, inst):
+            account, user_id, acc_id, acc_uuid, aliases = _event_identity(ev)
+            match = sync_user_match_for_account(
+                sync_user_matches(cfg, provider_lc, provider_inst, sink, inst),
+                [account, *aliases],
+                account_id=acc_id,
+                account_uuid=acc_uuid,
+                user_id=user_id,
+            )
+            if match is None:
+                targets.append({"target": sink, "target_instance": inst, "ok": True, "skipped": True, "reason": "no_matched_user"})
+                _emit(logger, f"webhook sink {sink}:{inst} skipped: no matched user for {account or user_id or 'unknown'}", "DEBUG")
+                continue
+            inst = match["sink_instance"]
         if same_scrobble_endpoint(provider_lc, provider_inst, sink, inst):
             targets.append({"target": sink, "target_instance": inst, "ok": False, "skipped": True, "error": "same_source_destination"})
             continue
