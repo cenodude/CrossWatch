@@ -301,7 +301,7 @@
 
   function setMediaAuthStep(root, step) {
     if (!root) return;
-    const order = ["auth", "settings", "whitelist"];
+    const order = ["auth", "settings", "whitelist", "users"];
     const active = Math.max(0, order.indexOf(txt(step).toLowerCase()));
     root.querySelectorAll(".cw-auth-step").forEach((node, index) => {
       node.classList.toggle("active", index <= active);
@@ -314,20 +314,20 @@
     const whitelistEnabled = !!state?.whitelistEnabled;
     root.querySelectorAll(".cw-subtile[data-sub]").forEach((btn) => {
       const sub = txt(btn.dataset.sub).toLowerCase();
-      const disabled = (sub === "settings" && !settingsEnabled) || (sub === "whitelist" && !whitelistEnabled);
+      const disabled = (sub === "settings" && !settingsEnabled) || ((sub === "whitelist" || sub === "users") && !whitelistEnabled);
       btn.disabled = disabled;
       btn.classList.toggle("is-disabled", disabled);
       if (disabled) btn.setAttribute("aria-disabled", "true");
       else btn.removeAttribute("aria-disabled");
       if (disabled) {
-        btn.title = sub === "settings" ? "Connect or configure this profile first." : "Connect this profile before whitelisting libraries.";
+        btn.title = sub === "settings" ? "Connect or configure this profile first." : sub === "users" ? "Connect this profile before choosing users." : "Connect this profile before whitelisting libraries.";
       } else {
         btn.removeAttribute("title");
       }
     });
     root.querySelectorAll(".cw-subpanel[data-sub]").forEach((panel) => {
       const sub = txt(panel.dataset.sub).toLowerCase();
-      const locked = (sub === "settings" && !settingsEnabled) || (sub === "whitelist" && !whitelistEnabled);
+      const locked = (sub === "settings" && !settingsEnabled) || ((sub === "whitelist" || sub === "users") && !whitelistEnabled);
       panel.classList.toggle("is-locked", locked);
     });
   }

@@ -938,15 +938,15 @@ class PLEXClient:
 
         protected = str(picked.get("protected") or "").strip().lower() in {"1", "true"}
         use_pin = (pin or "").strip() or None
-        if protected and not use_pin:
-            _info("home_switch_requires_pin", target=(picked.get("title") or target_username or user_id))
-            return False
 
         client_id = _plex_tv_client_id(self.cfg)
         try:
             user_token = _plex_tv_switch_user(token, client_id, user_id=user_id, pin=use_pin, timeout=float(self.cfg.timeout))
         except Exception as e:
-            _warn("home_switch_failed", target=(picked.get("title") or target_username or user_id), hint=("PIN?" if use_pin else None), error=str(e))
+            if protected and not use_pin:
+                _info("home_switch_requires_pin", target=(picked.get("title") or target_username or user_id))
+            else:
+                _warn("home_switch_failed", target=(picked.get("title") or target_username or user_id), hint=("PIN?" if use_pin else None), error=str(e))
             return False
 
         if not user_token:

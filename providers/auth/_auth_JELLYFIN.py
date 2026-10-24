@@ -396,6 +396,7 @@ def html() -> str:
           <button type="button" class="cw-subtile active" data-sub="auth">Authentication</button>
           <button type="button" class="cw-subtile" data-sub="settings">Settings</button>
           <button type="button" class="cw-subtile" data-sub="whitelist">Whitelisting</button>
+          <button type="button" class="cw-subtile" data-sub="users">Users</button>
         </div>
 
         <div class="cw-subpanels">
@@ -499,6 +500,10 @@ def html() -> str:
               <select id="jfy_lib_collection" name="jfy_lib_collection" class="lm-hidden" multiple></select>
               <select id="jfy_lib_scrobble" name="jfy_lib_scrobble" class="lm-hidden" multiple></select>
             </div>
+          </div>
+
+          <div class="cw-subpanel" data-sub="users">
+            <div id="jfy_sync_users"></div>
           </div>
         </div>
       </div>

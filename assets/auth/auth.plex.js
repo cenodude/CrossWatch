@@ -72,10 +72,10 @@ function ensurePlexInstanceUI() {
     if (!root) return;
 
     const want = String(tab || "auth").toLowerCase();
-    let sub = ["auth", "settings", "whitelist"].includes(want) ? want : "auth";
+    let sub = ["auth", "settings", "whitelist", "users"].includes(want) ? want : "auth";
     const state = getPlexSetupState();
     if (sub === "settings" && !state.settingsEnabled) sub = "auth";
-    if (sub === "whitelist" && !state.whitelistEnabled) sub = state.settingsEnabled ? "settings" : "auth";
+    if ((sub === "whitelist" || sub === "users") && !state.whitelistEnabled) sub = state.settingsEnabled ? "settings" : "auth";
     try { Shared.applyMediaTabState(root, state); } catch {}
 
     root.querySelectorAll(".cw-subtile[data-sub]").forEach((btn) => {
@@ -97,6 +97,10 @@ function ensurePlexInstanceUI() {
 
     if (sub === "settings") {
       setTimeout(() => { try { plexRefreshPmsSuggestions({ force: true }); } catch {} }, 0);
+    }
+
+    if (sub === "users") {
+      try { w.CW?.SyncUsers?.mount(q("#plex_sync_users"), "plex", getPlexInstance()); } catch {}
     }
 
     try { Shared.setMediaAuthStep(root, sub); } catch {}

@@ -68,10 +68,10 @@
     if (!root) return;
 
     const want = String(tab || "auth").toLowerCase();
-    let sub = ["auth", "settings", "whitelist"].includes(want) ? want : "auth";
+    let sub = ["auth", "settings", "whitelist", "users"].includes(want) ? want : "auth";
     const state = getJfySetupState();
     if (sub === "settings" && !state.settingsEnabled) sub = "auth";
-    if (sub === "whitelist" && !state.whitelistEnabled) sub = state.settingsEnabled ? "settings" : "auth";
+    if ((sub === "whitelist" || sub === "users") && !state.whitelistEnabled) sub = state.settingsEnabled ? "settings" : "auth";
     try { Shared.applyMediaTabState(root, state); } catch {}
 
     root.querySelectorAll(".cw-subtile[data-sub]").forEach((btn) => {
@@ -87,6 +87,9 @@
 
     if (sub === "whitelist") {
       try { jfyLoadLibraries(true); } catch {}
+    }
+    if (sub === "users") {
+      try { window.CW?.SyncUsers?.mount(Q("#jfy_sync_users"), "jellyfin", getJfyInstance()); } catch {}
     }
     if (sub !== "auth") { try { jfyQcStop({ cancel: true }); } catch {} }
     try { Shared.setMediaAuthStep(root, sub); } catch {}
