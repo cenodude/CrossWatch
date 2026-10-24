@@ -216,3 +216,60 @@ def test_sync_collision_repeat_and_independent_removal(config_base, monkeypatch,
     orchestrator.run()
     assert set(src.index) == set(dst.index) == {expected}
     assert sum(map(len, dst.add_calls)) == 2
+
+
+EPISODE = {"type": "episode", "title": "Episode", "show_ids": {"tmdb": "1399", "tvdb": "121361"},
+           "ids": {"tmdb": "121", "tvdb": "76107"}, "season": 1, "episode": 2}
+
+
+def test_episode_own_ids_do_not_match_movie_ids():
+    movie = {**MOVIE, "ids": {"tmdb": "121", "tvdb": "76107"}}
+    assert diff({canonical_key(EPISODE): EPISODE}, {"tmdb:121": movie}) == ([minimal(EPISODE)], [minimal(movie)])
+    own_only = {"type": "episode", "ids": {"tmdb": "121"}}
+    assert diff({canonical_key(EPISODE): EPISODE}, {"tmdb:121#x": own_only}) == ([], [])
+
+
+def test_episode_deletion_markers_do_not_block_movie():
+    from cw_platform.orchestrator._tombstones import filter_with, media_tombstone_tokens
+
+    movie = {**MOVIE, "ids": {"tmdb": "121", "tvdb": "76107"}}
+    markers = media_tombstone_tokens(EPISODE)
+    assert not {"tmdb:121", "tvdb:76107"} & markers
+    assert filter_with(None, [EPISODE, movie], extra_block=markers) == [movie]
+    movie_markers = media_tombstone_tokens(movie)
+    assert filter_with(None, [EPISODE, movie], extra_block=movie_markers) == [EPISODE]
+
+
+def test_movie_blocklist_markers_do_not_block_episode():
+    from cw_platform.orchestrator._pairs_blocklist import _history_is_blocked_by_tomb, _ratings_is_blocked_by_tomb
+    from cw_platform.orchestrator._tombstones import media_tombstone_tokens
+
+    movie = {**MOVIE, "ids": {"tmdb": "121", "tvdb": "76107"}}
+    tomb_ts = {token: 2_000_000_000 for token in media_tombstone_tokens(movie) | {"tvdb:76107", "tmdb:121"}}
+    for check in (_history_is_blocked_by_tomb, _ratings_is_blocked_by_tomb):
+        assert check(dict(movie), tomb_ts)
+        assert not check(dict(EPISODE), tomb_ts)
+
+
+@pytest.mark.parametrize("mode", ["one-way", "two-way"])
+def test_sync_episode_with_movie_tmdb_id_is_added_and_removed_independently(config_base, monkeypatch, mode):
+    rows = [MOVIE, EPISODE]
+    src = FakeOps("TRAKT", {canonical_key(row): copy.deepcopy(row) for row in rows})
+    dst = FakeOps("CROSSWATCH", {"tmdb:121": copy.deepcopy(MOVIE)})
+    monkeypatch.setattr("cw_platform.orchestrator.facade.load_sync_providers", lambda: {"TRAKT": src, "CROSSWATCH": dst})
+    monkeypatch.setattr("cw_platform.orchestrator._snapshots.provider_configured", lambda *a: True)
+    cfg = {
+        "runtime": {"snapshot_ttl_sec": 0, "apply_chunk_size": 0, "apply_chunk_pause_ms": 0},
+        "sync": {"dry_run": False, "enable_add": True, "enable_remove": True, "include_observed_deletes": True, "allow_mass_delete": True},
+        "pairs": [{"id": "episode-collision", "enabled": True, "source": "TRAKT", "target": "CROSSWATCH",
+                   "mode": mode, "feature": "watchlist", "features": {"watchlist": {"enable": True, "add": True, "remove": True}}}],
+    }
+    orchestrator = Orchestrator(cfg)
+    orchestrator.run()
+    assert set(dst.index) == {"tmdb:121", canonical_key(EPISODE)}
+    assert [row["type"] for batch in dst.add_calls for row in batch] == ["episode"]
+    orchestrator.run()
+    src.index.pop("tmdb:121")
+    orchestrator.run()
+    assert set(src.index) == set(dst.index) == {canonical_key(EPISODE)}
+    assert [row["type"] for batch in dst.remove_calls for row in batch] == ["movie"]

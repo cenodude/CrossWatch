@@ -209,3 +209,27 @@ def test_scope_key_isolates_by_mapping_and_endpoints():
     b = R.scope_key(_mapping("MAP-01", "L1", "T2"))
     c = R.scope_key(_mapping("MAP-02", "L1", "T1"))
     assert a != b and a != c
+
+
+def test_episode_own_id_does_not_match_movie_with_same_id(config_base):
+    episode = {"type": "episode", "title": "E", "show_ids": {"tmdb": "1399"}, "ids": {"tmdb": "1"}, "season": 1, "episode": 2}
+    src = {"L1": {"name": "src", "items": [episode, _movie(2)]}}
+    dst = {"T1": {"name": "dst", "items": [_movie(1), _movie(2)]}}
+    provs = _providers(src, dst)
+    res = R.run_mapping(_cfg(), _mapping(membership="mirror"), providers=provs)
+    assert res["added"] == 1 and res["removed"] == 1
+    assert {canonical_key(m) for m in dst["T1"]["items"]} == {"tmdb:1399#s01e02", "tmdb:2"}
+
+    dst["T1"]["items"] = [{"type": "episode", "title": "E", "ids": {"tmdb": "1"}}, _movie(2)]
+    provs = _providers(src, dst)
+    res = R.run_mapping(_cfg(), _mapping(membership="mirror"), providers=provs)
+    assert res["added"] == 0 and res["removed"] == 0
+
+
+def test_own_id_only_episode_does_not_match_movie_with_same_id(config_base):
+    episode = {"type": "episode", "title": "E", "ids": {"tmdb": "1"}}
+    src = {"L1": {"name": "src", "items": [episode]}}
+    dst = {"T1": {"name": "dst", "items": [_movie(1)]}}
+    provs = _providers(src, dst)
+    R.run_mapping(_cfg(), _mapping(membership="mirror"), providers=provs)
+    assert {call[0] for call in provs["PLEX"].calls} >= {"add", "remove"}

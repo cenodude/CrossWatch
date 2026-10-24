@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from .config_base import CONFIG_BASE
-from .id_map import any_key_overlap, canonical_key, typed_keys_for_item
+from .id_map import _norm_type, any_key_overlap, canonical_key, typed_keys_for_item
 from .playlists import (
     BUILTIN_RULESETS,
     BUILTIN_TRAKT_FREE_ACCOUNT_RULESET_ID,
@@ -600,10 +600,13 @@ def _unique_snapshot_items(snapshot: PlaylistSnapshot) -> tuple[list[PlaylistIte
 
 def _playlist_item_keys(item: PlaylistItem) -> set[str]:
     keys = {str(item.key or "").strip().lower()} if item.key else set()
+    media = item.item if isinstance(item.item, Mapping) else {}
     try:
-        keys.update(typed_keys_for_item(item.item or {}))
+        keys.update(typed_keys_for_item(media))
     except Exception:
         pass
+    if _norm_type(media.get("type")) == "episode":
+        keys = {k if "#" in k or "|" in k else f"{k}#episode" for k in keys}
     return {k for k in keys if k}
 
 
