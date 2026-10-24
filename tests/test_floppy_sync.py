@@ -402,20 +402,95 @@ def test_floppy_collection_episode_without_number_is_unresolved() -> None:
     assert [c for c in adapter.client.session.calls if c["method"] == "PUT"] == []
 
 
-def test_floppy_collection_remove_deletes_all_matching_entries() -> None:
+def test_floppy_collection_remove_deletes_only_the_api_copy() -> None:
     from providers.sync.floppy import _collection
 
-    adapter = AdapterStub(
-        {
-            ("DELETE", "collection/91"): ResponseStub(204, {}),
-            ("DELETE", "collection/92"): ResponseStub(204, {}),
-        }
-    )
+    adapter = AdapterStub({("DELETE", "media/movie/tmdb/11/collection"): ResponseStub(204, {})})
 
     res = _collection.remove(adapter, [{"type": "movie", "ids": {"tmdb": "11"}, "_floppy_collection_ids": ["91", "92"]}])
 
     assert res["count"] == 1
-    assert [c["path"] for c in adapter.client.session.calls] == ["collection/91", "collection/92"]
+    assert [(c["method"], c["path"]) for c in adapter.client.session.calls] == [("DELETE", "media/movie/tmdb/11/collection")]
+
+
+def test_floppy_collection_remove_keeps_copies_not_made_by_the_api() -> None:
+    from providers.sync.floppy import _collection
+
+    adapter = AdapterStub({("DELETE", "media/movie/tmdb/348/collection"): ResponseStub(404, {"detail": "No copy was created through the API. Use all=true to remove copies added elsewhere."})})
+
+    res = _collection.remove(adapter, [{"type": "movie", "ids": {"tmdb": "348"}}])
+
+    assert res["count"] == 0
+    assert res["unresolved"][0]["reason"] == "floppy_collection_not_api_copy"
+    assert [c["method"] for c in adapter.client.session.calls] == ["DELETE"]
+
+
+def test_floppy_collection_remove_treats_missing_entry_as_removed() -> None:
+    from providers.sync.floppy import _collection
+
+    adapter = AdapterStub(
+        {
+            ("DELETE", "media/tv/tmdb/22/1/episodes/2/collection"): ResponseStub(404, {"detail": "Collection entry not found."}),
+            ("GET", "collection"): {"results": [], "pagination": {"total": 0}},
+        }
+    )
+
+    res = _collection.remove(adapter, [{"type": "episode", "show_ids": {"tmdb": "22"}, "season": 1, "episode": 2}])
+
+    assert res["count"] == 1
+    assert [c["method"] for c in adapter.client.session.calls if c["method"] == "DELETE"] == ["DELETE"]
+
+
+def test_floppy_collection_remove_never_deletes_unlinked_rows_by_id() -> None:
+    from providers.sync.floppy import _collection
+
+    row = {"id": 34, "media_type": "bluray", "item": {"media_type": "episode", "source": "tmdb", "media_id": "209867", "library_media_type": "anime", "season_number": 1, "episode_number": 5, "ids": {}}}
+    adapter = AdapterStub(
+        {
+            ("DELETE", "media/tv/tmdb/209867/1/episodes/5/collection"): ResponseStub(404, {"detail": "Collection entry not found."}),
+            ("DELETE", "media/tv/tmdb/209867/1/episodes/6/collection"): ResponseStub(404, {"detail": "Collection entry not found."}),
+            ("GET", "collection"): {"results": [row], "pagination": {"total": 1}},
+        }
+    )
+
+    items = [{"type": "episode", "show_ids": {"tmdb": "209867"}, "season": 1, "episode": n, "_floppy_collection_id": "34"} for n in (5, 6)]
+    res = _collection.remove(adapter, items)
+
+    assert res["count"] == 1
+    assert [(u["canonical_key"], u["reason"]) for u in res["unresolved"]] == [("tmdb:209867#s01e05", "floppy_collection_entry_unlinked")]
+    calls = [(c["method"], c["path"]) for c in adapter.client.session.calls]
+    assert calls.count(("GET", "collection")) == 1
+    assert ("DELETE", "collection/34") not in calls
+
+
+def test_floppy_collection_remove_treats_unknown_404_as_failure() -> None:
+    from providers.sync.floppy import _collection
+
+    adapter = AdapterStub({("DELETE", "media/movie/tmdb/11/collection"): ResponseStub(404, {"detail": "Not Found"})})
+
+    res = _collection.remove(adapter, [{"type": "movie", "ids": {"tmdb": "11"}}])
+
+    assert res["count"] == 0
+    assert res["unresolved"][0]["reason"].startswith("floppy_http_404")
+    assert [c["method"] for c in adapter.client.session.calls] == ["DELETE"]
+
+
+def test_floppy_collection_remove_fails_items_when_collection_read_fails() -> None:
+    from providers.sync.floppy import _collection
+
+    adapter = AdapterStub(
+        {
+            ("DELETE", "media/movie/tmdb/11/collection"): ResponseStub(404, {"detail": "Collection entry not found."}),
+            ("DELETE", "media/movie/tmdb/12/collection"): ResponseStub(404, {"detail": "Collection entry not found."}),
+            ("GET", "collection"): ResponseStub(500, {"detail": "database is locked"}),
+        }
+    )
+
+    res = _collection.remove(adapter, [{"type": "movie", "ids": {"tmdb": "11"}}, {"type": "movie", "ids": {"tmdb": "12"}}])
+
+    assert res["count"] == 0
+    assert len(res["unresolved"]) == 2
+    assert [c["path"] for c in adapter.client.session.calls].count("collection") == 1
 
 
 @pytest.mark.parametrize("source", ["", "trakt_export", "crosswatch"])

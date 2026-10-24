@@ -8,9 +8,10 @@ from typing import Any
 
 from cw_platform.collection_media import media_block, to_floppy_fields
 from cw_platform.id_map import minimal as id_minimal
+from providers.auth._auth_FLOPPY import FloppyAuthError
 from providers.sync._mod_common import build_op_result, unresolved_keys
 
-from ._common import api_delete, api_patch, api_put, bucket_params, canonical_item_key, confirmed_destination, failure_reason, int_or_none, paged, tmdb_enriched_item, tmdb_id_for_item, unresolved, write_bucket
+from ._common import api_patch, api_put, api_request, bucket_params, canonical_item_key, confirmed_destination, failure_reason, int_or_none, paged, tmdb_enriched_item, tmdb_id_for_item, unresolved, write_bucket
 
 
 def _media_numbers(item: Mapping[str, Any]) -> tuple[int | None, int | None]:
@@ -107,25 +108,32 @@ def _floppy_media_type(item: Mapping[str, Any]) -> str | None:
     return None
 
 
-def _collection_target(adapter: Any, item: Mapping[str, Any]) -> tuple[str | None, dict[str, str] | None, str]:
+def _collection_path(item: Mapping[str, Any]) -> tuple[str | None, str]:
     media_type = _floppy_media_type(item)
     if not media_type or media_type in {"tv", "season"}:
-        return None, None, "floppy_collection_type_unsupported"
+        return None, "floppy_collection_type_unsupported"
     tmdb_id = tmdb_id_for_item(item, episode_show=media_type == "episode")
     if not tmdb_id:
-        return None, None, "floppy_tmdb_id_missing"
+        return None, "floppy_tmdb_id_missing"
     if media_type == "movie":
-        return f"media/movie/tmdb/{tmdb_id}/collection", None, ""
+        return f"media/movie/tmdb/{tmdb_id}/collection", ""
     season, episode = _media_numbers(item)
     if season is None:
-        return None, None, "floppy_season_id_missing"
+        return None, "floppy_season_id_missing"
     if episode is None:
-        return None, None, "floppy_episode_id_missing"
+        return None, "floppy_episode_id_missing"
+    return f"media/tv/tmdb/{tmdb_id}/{season}/episodes/{episode}/collection", ""
+
+
+def _collection_target(adapter: Any, item: Mapping[str, Any]) -> tuple[str | None, dict[str, str] | None, str]:
+    path, reason = _collection_path(item)
+    if path is None or _floppy_media_type(item) != "episode":
+        return path, None, reason
     try:
-        bucket = write_bucket(adapter, tmdb_id, item)
+        bucket = write_bucket(adapter, tmdb_id_for_item(item, episode_show=True), item)
     except Exception as exc:
         return None, None, failure_reason(exc)
-    return f"media/tv/tmdb/{tmdb_id}/{season}/episodes/{episode}/collection", bucket_params(bucket), ""
+    return path, bucket_params(bucket), ""
 
 
 def _collected_at(value: Any) -> str:
@@ -162,29 +170,19 @@ def _update_body(item: Mapping[str, Any]) -> dict[str, Any]:
     return body
 
 
-def _collection_ids_for_remove(adapter: Any, item: Mapping[str, Any]) -> list[str]:
-    direct = item.get("_floppy_collection_ids")
-    ids = [str(x).strip() for x in direct if str(x or "").strip()] if isinstance(direct, list) else []
-    single = str(item.get("_floppy_collection_id") or item.get("collection_id") or "").strip()
-    if single:
-        ids.append(single)
-    if ids:
-        return list(dict.fromkeys(ids))
-    key = canonical_item_key(item)
-    if not key:
-        return []
+def _scoped_delete(adapter: Any, path: str) -> str:
     try:
-        match = build_index(adapter).get(key)
-    except Exception:
-        match = None
-    if not isinstance(match, Mapping):
-        return []
-    found = match.get("_floppy_collection_ids")
-    ids = [str(x).strip() for x in found if str(x or "").strip()] if isinstance(found, list) else []
-    single = str(match.get("_floppy_collection_id") or "").strip()
-    if single:
-        ids.append(single)
-    return list(dict.fromkeys(ids))
+        api_request(adapter, "DELETE", path, ok=(200, 202, 204))
+    except FloppyAuthError as exc:
+        if exc.status_code != 404:
+            raise
+        detail = str(exc).lower()
+        if "through the api" in detail:
+            return "not_api_copy"
+        if "collection entry not found" in detail:
+            return "missing"
+        raise
+    return "removed"
 
 
 def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = False) -> dict[str, Any]:
@@ -257,6 +255,8 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
     confirmed_destinations: dict[str, dict[str, Any]] = {}
     unresolved_rows: list[dict[str, Any]] = []
     results: list[dict[str, Any]] = []
+    index: dict[str, dict[str, Any]] | None = None
+    index_error: Exception | None = None
     for raw in [dict(x or {}) for x in items or [] if isinstance(x, Mapping)]:
         key = canonical_item_key(raw)
         if dry_run:
@@ -264,20 +264,28 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
             confirmed_destinations[key] = confirmed_destination(raw)
             results.append({"status": "dry_run", "item": id_minimal(raw), "canonical_key": key})
             continue
-        entry_ids = _collection_ids_for_remove(adapter, raw)
-        if not entry_ids:
-            entry = unresolved(raw, "floppy_collection_id_missing")
+        path, reason = _collection_path(raw)
+        if path is None:
+            entry = unresolved(raw, reason or "floppy_collection_unresolved")
             unresolved_rows.append(entry)
             results.append(entry)
             continue
-        failed = False
-        for entry_id in entry_ids:
-            try:
-                api_delete(adapter, f"collection/{entry_id}")
-            except Exception:
-                failed = True
-        if failed:
-            entry = unresolved(raw, "floppy_collection_remove_failed")
+        try:
+            outcome = _scoped_delete(adapter, path)
+            if outcome == "missing":
+                if index is None and index_error is None:
+                    try:
+                        index = build_index(adapter)
+                    except Exception as exc:
+                        index_error = exc
+                if index_error is not None:
+                    raise index_error
+                if index is not None and key in index:
+                    outcome = "unlinked"
+        except Exception as exc:
+            outcome, reason = "failed", failure_reason(exc)
+        if outcome != "removed" and outcome != "missing":
+            entry = unresolved(raw, {"not_api_copy": "floppy_collection_not_api_copy", "unlinked": "floppy_collection_entry_unlinked"}.get(outcome) or reason or "floppy_collection_remove_failed")
             unresolved_rows.append(entry)
             results.append(entry)
             continue
