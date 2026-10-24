@@ -73,12 +73,12 @@ def _watchlist_version(
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
 
-def _load_watchlist_state() -> dict[str, Any]:
+def _load_watchlist_state(include_sync_users: bool = False) -> dict[str, Any]:
     try:
         from cw_platform.config_base import CONFIG
         from cw_platform.orchestrator._state_store import StateStore
 
-        state = StateStore(CONFIG).load_state_features({"watchlist"})
+        state = StateStore(CONFIG).load_state_features({"watchlist"}, include_sync_users=include_sync_users)
         return state if isinstance(state, dict) else {}
     except Exception:
         return {}

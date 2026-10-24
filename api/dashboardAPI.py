@@ -240,7 +240,7 @@ def dashboard_widgets(
         from cw_platform.config_base import CONFIG, load_config
         from cw_platform.orchestrator._state_store import StateStore
         from api.appAuthAPI import effective_request_profile_id
-        from cw_platform.provider_instances import instances_for_user_profile
+        from cw_platform.provider_instances import instances_for_user_profile, instances_include_sync_users
 
         requested = {part.strip() for part in include.split(",") if part.strip()}
         state_features = requested & {"history", "ratings", "progress"}
@@ -274,14 +274,18 @@ def dashboard_widgets(
                 if payload is None:
                     media_scope = MediaScope(cfg)
                     scoped_features = {feature for feature in state_features if media_scope.active({feature})}
-                    state = (
-                        StateStore(CONFIG).load_state_features(state_features, recent_limit=None if scoped_features else _STATE_RECENT_LIMIT)
-                        if state_features
-                        else {}
-                    )
                     user_filter = instances_for_user_profile(cfg, profile) if scoped else {}
                     if scoped and not user_filter:
                         user_filter = {"__NONE__": ["__NONE__"]}
+                    state = (
+                        StateStore(CONFIG).load_state_features(
+                            state_features,
+                            recent_limit=None if scoped_features else _STATE_RECENT_LIMIT,
+                            include_sync_users=instances_include_sync_users(user_filter),
+                        )
+                        if state_features
+                        else {}
+                    )
                     state = media_scope.state(state)
                     payload = dashboard_widgets_payload(
                         state,

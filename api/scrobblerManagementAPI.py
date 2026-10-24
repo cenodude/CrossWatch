@@ -23,6 +23,7 @@ from providers.scrobble.routes import (
     normalize_route,
     normalize_route_options,
     normalize_routes,
+    sync_user_endpoints_supported,
     route_needs_account_filter,
     same_scrobble_endpoint,
 )
@@ -84,6 +85,7 @@ WEBHOOK_SETTING_KEYS = {
     "simkl_rewatches",
     "destination_libraries",
     "update_all_copies",
+    "match_users",
 }
 
 
@@ -342,6 +344,8 @@ def _normalize_webhook_settings(cfg: Mapping[str, Any], provider: str, body: Map
     selected_sinks = [str(s or "").strip().lower() for s in (out.get("sinks") or _as_list(body.get("sinks")) or current_sinks)]
     if "simkl_rewatches" in body:
         out["simkl_rewatches"] = body.get("simkl_rewatches") is True and "simkl" in selected_sinks
+    if "match_users" in body:
+        out["match_users"] = body.get("match_users") is True and provider in {"plex", "emby", "jellyfin"}
     for sink in ("crosswatch", "simkl"):
         key = f"anime_mapping_{sink}"
         if key in body:
@@ -744,6 +748,8 @@ def _validate_route(cfg: Mapping[str, Any], route: dict[str, Any]) -> dict[str, 
     _require_sink_profile(cfg, sink, str(normalized.get("sink_instance") or "default"))
     normalized["filters"] = _normalize_filters(normalized.get("filters"), provider, "filters")
     normalized["options"] = normalize_route_options(normalized.get("options"))
+    if not sync_user_endpoints_supported(provider, normalized.get("provider_instance"), sink, normalized.get("sink_instance")):
+        normalized.pop("match_users", None)
     if sink == "simkl" and normalized["options"]["watch"].get("simkl_rewatches") is True:
         _require_simkl_rewatches(cfg, normalized.get("sink_instance"), "options.watch.simkl_rewatches")
     profile_id = _normalize_route_profile_id(cfg, route.get("profile_id") or route.get("profileId") or normalized.get("profile_id"))
@@ -852,6 +858,8 @@ def api_profile_webhook_save(request: Request, payload: dict[str, Any] = Body(..
             if key in settings:
                 node[key] = {**_dict(node.get(key)), **settings.pop(key)}
         node.update(settings)
+        if node.get("match_users") is not True:
+            node.pop("match_users", None)
         effective = webhook_settings(after, provider, instance)
         for sink in webhook_sinks(after, provider, instance):
             if same_scrobble_endpoint(provider, instance, sink, webhook_sink_instance(effective, sink)):

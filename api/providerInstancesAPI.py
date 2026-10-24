@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import copy
 import re
+import time
 from collections.abc import Mapping
 from functools import lru_cache
 from typing import Any, cast
@@ -20,7 +21,12 @@ from cw_platform.provider_instances import (
     apply_instance_defaults,
     delete_user_profile,
     generate_user_profile_id,
+    get_instance_block,
+    is_sync_user_instance,
     list_instance_ids,
+    list_sync_user_ids,
+    split_sync_user_id,
+    sync_user_instance_id,
     list_user_profiles,
     normalize_instance_id,
     normalize_user_profile_id,
@@ -67,6 +73,21 @@ def _max_profiles_per_provider(cfg: Mapping[str, Any] | None = None) -> int:
 
 def _max_generated_profiles(cfg: Mapping[str, Any] | None = None) -> int:
     return _max_profiles_per_provider(cfg) - 1
+
+
+_DEFAULT_MAX_SYNC_USERS = 25
+_SYNC_USER_PROVIDERS = frozenset({"plex", "emby", "jellyfin"})
+
+
+def _max_sync_users_per_connection(cfg: Mapping[str, Any] | None = None) -> int:
+    try:
+        src = cfg if isinstance(cfg, Mapping) else (load_config() or {})
+        rt = src.get("runtime")
+        raw = rt.get("max_sync_users_per_connection") if isinstance(rt, Mapping) else None
+        total = _DEFAULT_MAX_SYNC_USERS if raw is None else int(raw)
+    except Exception:
+        total = _DEFAULT_MAX_SYNC_USERS
+    return max(1, min(100, total))
 
 
 def _cfg_key(provider: str) -> str:
@@ -460,6 +481,138 @@ def api_provider_instances_update(provider: str, instance_id: str, payload: dict
     _invalidate_provider_cache(provider)
     owners = user_profiles_for_instance(cfg, provider, inst)
     return {"ok": True, "id": inst, "uid": uid, "user_profile": owners[0] if owners else None, "user_profiles": owners}
+
+
+def _sync_user_rows(cfg: Mapping[str, Any], provider: str, inst: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for user_inst in list_sync_user_ids(cfg, provider, inst):
+        ref = split_sync_user_id(user_inst)
+        entry = get_instance_block(cfg, provider, user_inst)
+        if ref is None:
+            continue
+        row: dict[str, Any] = {"key": ref[1], "id": user_inst, "username": str(entry.get("username") or ""), "added_at": entry.get("added_at")}
+        if provider == "plex":
+            row["has_pin"] = bool(str(entry.get("home_pin") or "").strip())
+        rows.append(row)
+    rows.sort(key=lambda row: row["username"].casefold())
+    return rows
+
+
+def _build_sync_user_entry(provider: str, key: str, raw: Mapping[str, Any], existing: Mapping[str, Any], now: int) -> dict[str, Any]:
+    name = " ".join(str(raw.get("username") or existing.get("username") or "").split())[:80]
+    if provider == "plex":
+        entry: dict[str, Any] = {"username": name, "account_id": int(key) if key.isdigit() else key, "home_pin": str(existing.get("home_pin") or "")}
+        if "home_pin" in raw:
+            entry["home_pin"] = str(raw.get("home_pin") or "").strip()
+        cloud_id = str(raw.get("cloud_account_id") or existing.get("cloud_account_id") or "").strip()
+        if cloud_id and cloud_id != key:
+            entry["cloud_account_id"] = cloud_id
+    else:
+        entry = {"user_id": key, "username": name, "user": name}
+    entry["added_at"] = existing.get("added_at") or now
+    return entry
+
+
+def _sync_users_target(cfg: Mapping[str, Any], provider: str, inst: str) -> tuple[str, str | None]:
+    prov = _cfg_key(provider)
+    if prov not in _SYNC_USER_PROVIDERS:
+        return prov, "unsupported_provider"
+    if is_sync_user_instance(inst):
+        return prov, "invalid_instance_id"
+    if inst != "default" and inst not in list_instance_ids(cfg, prov):
+        return prov, "not_found"
+    return prov, None
+
+
+@router.get("/sync-user-labels")
+def api_sync_user_labels(request: Request = cast(Request, None)) -> JSONResponse:
+    cfg = dict(load_config() or {})
+    scope = _managed_user_instance_scope(cfg, request)
+    out: dict[str, dict[str, str]] = {}
+    for prov in sorted(_SYNC_USER_PROVIDERS):
+        allowed = scope.get(_profile_scope_provider_key(prov), set()) if scope is not None else None
+        labels = {
+            user_inst: str(get_instance_block(cfg, prov, user_inst).get("username") or "")
+            for user_inst in list_sync_user_ids(cfg, prov)
+            if allowed is None or user_inst in allowed
+        }
+        if labels:
+            out[prov.upper()] = labels
+    return JSONResponse(out, headers={"Cache-Control": "no-store"})
+
+
+@router.get("/provider-instances/{provider}/{instance_id}/sync-users")
+def api_provider_sync_users(provider: str, instance_id: str, request: Request = cast(Request, None)) -> Any:
+    inst = normalize_instance_id(instance_id)
+    cfg = dict(load_config() or {})
+    blocked = _admin_required_response(request, cfg)
+    if blocked is not None:
+        return blocked
+    prov, error = _sync_users_target(cfg, provider, inst)
+    if error:
+        return {"ok": False, "error": error}
+    rows = _sync_user_rows(cfg, prov, inst)
+    return {"ok": True, "users": rows, "count": len(rows), "limit": _max_sync_users_per_connection(cfg)}
+
+
+@router.put("/provider-instances/{provider}/{instance_id}/sync-users")
+def api_provider_sync_users_update(provider: str, instance_id: str, payload: dict[str, Any] = Body(default_factory=dict), request: Request = cast(Request, None)) -> Any:
+    inst = normalize_instance_id(instance_id)
+    cfg = dict(load_config() or {})
+    blocked = _admin_required_response(request, cfg)
+    if blocked is not None:
+        return blocked
+    raw_users = (payload or {}).get("users")
+    if not isinstance(raw_users, list):
+        return {"ok": False, "error": "invalid_users"}
+    wanted: dict[str, Mapping[str, Any]] = {}
+    for raw in raw_users:
+        if not isinstance(raw, Mapping):
+            continue
+        key = str(raw.get("key") or "").strip()
+        if key and "~" not in key and str(raw.get("username") or "").strip():
+            wanted.setdefault(key, raw)
+
+    def _mutate(latest: dict[str, Any]) -> dict[str, Any]:
+        prov, error = _sync_users_target(latest, provider, inst)
+        if error:
+            raise KeyError(error)
+        limit = _max_sync_users_per_connection(latest)
+        if len(wanted) > limit:
+            raise ValueError(f"sync_user_limit_reached:{limit}")
+        parent = latest.get(prov) if inst == "default" else ((latest.get(prov) or {}).get("instances") or {}).get(inst)
+        if not isinstance(parent, dict):
+            raise KeyError("not_found")
+        raw_current = parent.get("sync_users")
+        current: dict[str, Any] = raw_current if isinstance(raw_current, dict) else {}
+        now = int(time.time())
+        updated = {key: _build_sync_user_entry(prov, key, raw, current.get(key) or {}, now) for key, raw in wanted.items()}
+        for key in set(current) - set(updated):
+            user_inst = sync_user_instance_id(inst, key)
+            remove_instance_from_user_profiles(latest, prov, user_inst)
+            remove_provider_instance_uid(latest, prov, user_inst)
+        if updated:
+            parent["sync_users"] = updated
+        else:
+            parent.pop("sync_users", None)
+        profiles_by_label = {str(row.get("label") or "").casefold(): str(row.get("id") or "") for row in list_user_profiles(latest)}
+        for key, entry in updated.items():
+            user_inst = sync_user_instance_id(inst, key)
+            provider_instance_uid_for(latest, prov, user_inst, create=True)
+            pid = profiles_by_label.get(str(entry.get("username") or "").casefold())
+            if pid and not user_profiles_for_instance(latest, prov, user_inst):
+                assign_instance_to_user_profile_id(latest, pid, prov, user_inst)
+        return {"users": _sync_user_rows(latest, prov, inst), "limit": limit}
+
+    try:
+        _, result = update_config(_mutate)
+    except KeyError as exc:
+        return {"ok": False, "error": str(exc.args[0]) if exc.args else "not_found"}
+    except ValueError as exc:
+        code, _, limit = str(exc).partition(":")
+        return {"ok": False, "error": code, **({"limit": int(limit)} if limit.isdigit() else {})}
+    _invalidate_provider_cache(provider)
+    return {"ok": True, **result, "count": len(result["users"])}
 
 
 @router.delete("/provider-instances/{provider}/{instance_id}")
