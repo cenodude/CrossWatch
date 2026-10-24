@@ -822,6 +822,7 @@ DEFAULT_CFG: dict[str, Any] = {
         "state_dir": "",                                # Optional override for state dir (defaults to CONFIG/state)  - this will break container setups!
         "telemetry": {"enabled": True},                 # Usage stats
         "max_profiles_per_provider": 10,                # Total profiles per provider incl. default (1-100)
+        "max_sync_users_per_connection": 25,            # Synced media server users per connection (1-100)
         "history_timestamp_tolerance_seconds": 60,      # Same-viewing history match window; 0 requires exact timestamps
 
         # progress

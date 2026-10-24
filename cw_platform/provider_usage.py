@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from cw_platform.modules_registry import provider_display_label
-from cw_platform.provider_instances import list_instance_ids, normalize_instance_id, provider_key
+from cw_platform.provider_instances import get_instance_block, list_instance_ids, normalize_instance_id, provider_key, split_sync_user_id
 from cw_platform.value_coercion import coerce_bool
 
 __all__ = [
@@ -26,11 +26,26 @@ def _dict(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, Mapping) else {}
 
 
+def _sync_user_label(provider: str, instance: str) -> str:
+    ref = split_sync_user_id(instance)
+    if ref is None:
+        return ""
+    try:
+        from cw_platform.config_base import load_config
+
+        username = str(get_instance_block(load_config() or {}, provider_key(provider), instance).get("username") or "").strip()
+    except Exception:
+        username = ""
+    return f"{_label(provider, ref[0])} · {username or ref[1]}"
+
+
 def _label(provider: str, instance: str) -> str:
     key = provider_key(provider)
     name = provider_display_label(key)
     inst = normalize_instance_id(instance)
-    return name if inst == "default" else f"{name} {inst}"
+    if inst == "default":
+        return name
+    return _sync_user_label(key, inst) or f"{name} {inst}"
 
 
 def provider_label(provider: str, instance: Any = "default") -> str:
