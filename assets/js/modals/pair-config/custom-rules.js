@@ -29,6 +29,9 @@ const COLLECTION_TYPES = {
   SCROB: ["movies", "shows", "seasons", "episodes"],
   FLICKLIST: ["movies", "shows", "seasons", "episodes"],
 };
+const COLLECTION_WRITE_TYPES = {
+  FLOPPY: ["movies", "episodes"],
+};
 const COLLECTION_SOURCES = new Set(["PLEX", "EMBY", "JELLYFIN", "KODI", "TRAKT", "MDBLIST", "CROSSWATCH", "PUNCHPLAY", "FLOPPY", "SCROB", "FLICKLIST"]);
 const COLLECTION_TARGETS = new Set(["TRAKT", "MDBLIST", "CROSSWATCH", "PUNCHPLAY", "FLOPPY", "SCROB", "FLICKLIST"]);
 const COLLECTION_ORDER = ["movies", "shows", "seasons", "episodes"];
@@ -70,10 +73,15 @@ export function featureAllowedForPair(state, feature) {
   return true;
 }
 
+function collectionWriteTypes(name) {
+  const key = providerKey(name);
+  return COLLECTION_WRITE_TYPES[key] || COLLECTION_TYPES[key] || [];
+}
+
 export function collectionTypesForPair(state) {
   if (!featureAllowedForPair(state, "collection")) return [];
-  const src = COLLECTION_TYPES[providerKey(state?.src)] || [];
-  const dst = COLLECTION_TYPES[providerKey(state?.dst)] || [];
+  const src = isTwoWay(state) ? collectionWriteTypes(state?.src) : (COLLECTION_TYPES[providerKey(state?.src)] || []);
+  const dst = collectionWriteTypes(state?.dst);
   const dstSet = new Set(dst);
   return COLLECTION_ORDER.filter(t => src.includes(t) && dstSet.has(t));
 }
