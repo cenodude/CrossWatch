@@ -35,7 +35,24 @@
   const active = () => !host.classList.contains("hidden");
   const pending = () => busy || ["reading", "applying"].includes(session?.status);
   const title = item => item?.series_title && item?.episode != null ? `${item.series_title} · S${String(item.season || 0).padStart(2, "0")}E${String(item.episode).padStart(2, "0")}` : item?.title || item?.name || "Untitled item";
-  const endpoint = (provider, instance) => `${provider || "Provider"}${instance && instance !== "default" ? ` · ${instance}` : ""}`;
+  let syncUserLabels = null;
+  const syncUserName = (provider, instance) => {
+    const inst = String(instance || "");
+    const user = syncUserLabels?.[String(provider || "").toUpperCase()]?.[inst];
+    if (user === undefined || !inst.includes("~")) return inst;
+    const parent = inst.split("~")[0];
+    return `${parent === "default" ? "" : `${parent} · `}${user || inst.split("~").slice(1).join("~")}`;
+  };
+  const endpoint = (provider, instance) => `${provider || "Provider"}${instance && instance !== "default" ? ` · ${syncUserName(provider, instance)}` : ""}`;
+  async function loadSyncUserLabels() {
+    if (syncUserLabels) return;
+    try {
+      const response = await fetch("/api/sync-user-labels", { credentials: "same-origin", cache: "no-store" });
+      syncUserLabels = response.ok ? await response.json() : {};
+    } catch {
+      syncUserLabels = {};
+    }
+  }
   function value(item, kind) {
     if (!item) return "—";
     if (kind === "ratings") return item.rating == null ? "Unrated" : `${item.rating}/10`;
@@ -449,6 +466,7 @@
   });
   async function refresh() {
     if (!host || !active()) return;
+    await loadSyncUserLabels();
     const next = location.hash;
     if (next === route && session) {
       route = `#interactive_sync?session=${encodeURIComponent(session.id)}`;

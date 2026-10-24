@@ -28,6 +28,49 @@ const isManagedPlaylistPair=(pair)=>String(playlistBlockOf(pair).managed_by||"")
 const isEmby = v => same(v, "emby");
 function getPairMarkedWatchedValue(state){ return !!(state?.pairProviders?.plex?.history?.include_marked_watched ?? state?.cfgRaw?.plex?.history?.include_marked_watched ?? true) }
 function supportsPathMatching(state){ return [state?.src,state?.dst].every(p=>["PLEX","JELLYFIN","EMBY"].includes(String(p||"").toUpperCase())) }
+const MU_LABELS={PLEX:"Plex",EMBY:"Emby",JELLYFIN:"Jellyfin"};
+const muEsc=(v)=>String(v??"").replace(/[&<>"']/g,(c)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const muLabel=(p)=>MU_LABELS[String(p||"").toUpperCase()]||String(p||"");
+function renderMatchUsersOption(state){
+  if(!supportsPathMatching(state)) return "";
+  return `<div class="opt-row"><label for="pair-match-users">Sync all matched users</label><label class="switch"><input id="pair-match-users" type="checkbox" ${state.match_users?"checked":""}><span class="slider"></span></label></div><div class="muted">Syncs every ticked user on ${muEsc(muLabel(state.src))} with the user of the same name on ${muEsc(muLabel(state.dst))}, each with their own history. Tick users in each connection's Users tab. Your own account only syncs if it is ticked too.</div><div id="pair-match-users-list" ${state.match_users?"":"hidden"}></div>`;
+}
+async function loadMatchUsersPreview(state){
+  const host=ID("pair-match-users-list");
+  if(!host||!state.match_users||!supportsPathMatching(state)) return;
+  const url=(p,i)=>`/api/provider-instances/${encodeURIComponent(String(p||"").toLowerCase())}/${encodeURIComponent(String(i||"default"))}/sync-users`;
+  const token=(state.__muToken=(state.__muToken||0)+1);
+  host.innerHTML=`<div class="muted">Loading users…</div>`;
+  let src=[],dst=[];
+  try{
+    const [a,b]=await Promise.all([url(state.src,state.src_instance),url(state.dst,state.dst_instance)].map((u)=>fetch(u,{cache:"no-store",credentials:"same-origin"}).then((r)=>r.json())));
+    src=Array.isArray(a?.users)?a.users:[];dst=Array.isArray(b?.users)?b.users:[];
+  }catch{
+    if(token===state.__muToken) host.innerHTML=`<div class="muted">Could not load the users of this pair.</div>`;
+    return;
+  }
+  if(token!==state.__muToken) return;
+  if(!src.length||!dst.length){
+    const missing=!src.length?muLabel(state.src):muLabel(state.dst);
+    host.innerHTML=`<div class="muted">No users ticked on ${muEsc(missing)} yet. Open the ${muEsc(missing)} connection and use the Users tab.</div>`;
+    return;
+  }
+  const overrides=state.user_matches||{};
+  const byName=new Map(dst.map((u)=>[String(u.username||"").toLowerCase(),u]));
+  let matched=0;
+  const rows=src.map((u)=>{
+    const key=String(u.key);
+    const auto=byName.get(String(u.username||"").toLowerCase());
+    const has=Object.prototype.hasOwnProperty.call(overrides,key);
+    const pick=has?overrides[key]:"__auto";
+    const target=pick==="__auto"?auto:dst.find((d)=>String(d.key)===String(pick));
+    if(target) matched+=1;
+    const opts=[`<option value="__auto" ${pick==="__auto"?"selected":""}>${auto?`Same name: ${muEsc(auto.username)}`:"Same name: not found"}</option>`,`<option value="" ${pick===""?"selected":""}>Do not sync</option>`]
+      .concat(dst.map((d)=>`<option value="${muEsc(d.key)}" ${pick!=="__auto"&&String(pick)===String(d.key)?"selected":""}>${muEsc(d.username)}</option>`)).join("");
+    return `<div class="opt-row"><label>${muEsc(u.username)} ${target?"✓":"⚠"}</label><select class="input pair-user-match" data-src-key="${muEsc(key)}">${opts}</select></div>`;
+  }).join("");
+  host.innerHTML=`<div class="muted" style="margin-top:6px">${matched} of ${src.length} users matched.</div>${rows}`;
+}
 function hasEmby(state){ return isEmby(state?.src) || isEmby(state?.dst) }
 
 // Provider helpers
@@ -402,7 +445,7 @@ function defaultState(){
       progress:{enable:false,add:false,remove:false,min_seconds:60,delta_seconds:30,max_percent:PROGRESS_LEGACY_MAX_PERCENT,replay_enabled:false,timestamp_tolerance_seconds:30,propagate_timestamp_updates:false,include_specials:true},
       collection:{enable:false,add:false,remove:false,types:["movies"]}
     },
-    pairProviders:{},path_matching:false,
+    pairProviders:{},path_matching:false,match_users:false,user_matches:{},
     pair_remove_mode:"source_deletes",
     pair_remove_mode_touched:false,
     jellyfin:{watchlist:{mode:"favorites",playlist_name:"Watchlist"}},
@@ -1408,6 +1451,7 @@ function renderFeaturePanel(state){
       ${hasEmby(state)?`<div class="opt-row"><label for="em-strict-ids">Emby: Strict ID matching</label><label class="switch"><input id="em-strict-ids" type="checkbox" ${getPairProviderStrictValue(state, "emby")?"checked":""}><span class="slider"></span></label></div>`:""}
       ${hasFloppy(state)?`<div class="opt-row"><label for="floppy-anime-library" data-tip-id="floppy-anime-library">Floppy: Send new anime to the Anime library</label><label class="switch"><input id="floppy-anime-library" type="checkbox" ${floppyAnimeLibraryOn(state)?"checked":""}><span class="slider"></span></label></div>`:""}
       ${supportsPathMatching(state)?`<div class="opt-row"><label for="pair-path-matching">Match by file path</label><label class="switch"><input id="pair-path-matching" type="checkbox" ${state.path_matching?"checked":""}><span class="slider"></span></label></div><div class="muted">When IDs cannot resolve an item, try matching its file path across the media servers in this pair. Supports movie and episode history, ratings and progress in both directions, including with Strict ID matching enabled.</div>`:""}
+      ${renderMatchUsersOption(state)}
       <div class="panel-title" style="margin-top:10px">Advanced (shared) <button type="button" class="cx-help material-symbols-rounded" data-tip-id="gl-section-advanced">help</button></div>
       <div class="opt-row"><label for="gl-ttl">Tombstone TTL (days)</label><input id="gl-ttl" class="input" type="number" min="0" step="1" value="${g.tombstone_ttl_days??30}"></div><div class="muted">Keep delete markers to avoid re-adding.</div>
       <div class="opt-row"><label for="gl-observed">Include observed deletes</label><label class="switch"><input id="gl-observed" type="checkbox" ${g.include_observed_deletes?"checked":""}><span class="slider"></span></label></div>
@@ -1419,6 +1463,7 @@ function renderFeaturePanel(state){
         <div class="opt-row"><label for="gl-bb-cooldown">Cooldown days</label><input id="gl-bb-cooldown" class="input small" type="number" min="0" max="365" step="1" value="${bb.cooldown_days??30}"></div>
       </div>
       <div class="muted">Unresolved is a reporting state: failed writes are logged and retried every sync. Blackbox is the quarantine state: after this many failed writes an item is blackboxed and only then stops being planned.</div>`;
+    loadMatchUsersPreview(state);
     return;
   }
 
@@ -2266,6 +2311,21 @@ function bindChangeHandlers(state,root){
       return;
     }
     if(id==="pair-path-matching") state.path_matching=!!el.checked;
+    if(id==="pair-match-users"){
+      state.match_users=!!el.checked;
+      const host=ID("pair-match-users-list");
+      if(host) host.hidden=!state.match_users;
+      loadMatchUsersPreview(state);
+      return;
+    }
+    if(el.classList?.contains("pair-user-match")){
+      const key=String(el.dataset.srcKey||"");
+      state.user_matches={...(state.user_matches||{})};
+      if(el.value==="__auto") delete state.user_matches[key];
+      else state.user_matches[key]=el.value;
+      loadMatchUsersPreview(state);
+      return;
+    }
     if(id==="plx-strict-ids"||id==="jf-strict-ids"||id==="em-strict-ids"||id==="jf-targeted-lookup"){
       state.pairProviders=state.pairProviders||{};
       if(id==="plx-strict-ids") state.pairProviders.plex=Object.assign({},state.pairProviders.plex||{}, {strict_id_matching:!!el.checked});
@@ -2954,6 +3014,8 @@ function buildPayload(state,wrap){
   if(state.pair_remove_mode_touched) applyPairRemoveMode(features,state.pair_remove_mode);
   const payload={source:src,target:dst,source_instance:String(srcInst||"default"),target_instance:String(dstInst??"default"),enabled,mode:modeTwo?"two-way":"one-way",features};
   payload.path_matching=supportsPathMatching({src,dst})&&!!state.path_matching;
+  payload.match_users=supportsPathMatching({src,dst})&&!!state.match_users;
+  payload.user_matches=payload.match_users?{...(state.user_matches||{})}:{};
   const eid=wrap.dataset&&wrap.dataset.editingId?String(wrap.dataset.editingId||""):"";
   const selectedProfileId=String(state.selected_user_profile_id||"").trim();
   if(selectedProfileId||eid) payload.profile_id=selectedProfileId;
@@ -3076,6 +3138,8 @@ export default{
       ["watchlist","ratings","history","progress"].forEach(k=>{state.options[k].library_only=!!state.options[k].library_only});
       state.pairProviders = normalizePairProviders(pair.providers);
       state.path_matching = !!pair.path_matching;
+      state.match_users = !!pair.match_users;
+      state.user_matches = pair.user_matches && typeof pair.user_matches === "object" ? { ...pair.user_matches } : {};
       state.selected_user_profile_id=String(pair.profile_id||"").trim();
       wrap.dataset.editingId=pair?.id?String(pair.id):"";
     }

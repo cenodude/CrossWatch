@@ -83,11 +83,17 @@ const instLabel = (prov, inst) => {
   if (!p) return "";
   const i = String(inst || "").trim();
   if (!i || i.toLowerCase() === "default") return `${p} default`;
+  const user = SYNC_USER_LABELS[p] && SYNC_USER_LABELS[p][i];
+  if (user !== undefined && i.includes("~")) {
+    const parent = i.split("~")[0];
+    return `${instLabel(p, parent)} · ${user || i.split("~").slice(1).join("~")}`;
+  }
   const label = (PROFILE_LABELS[p] && PROFILE_LABELS[p][i]) || i;
   return `${p} ${label}`;
 };
 
 let PROFILE_LABELS = {};
+let SYNC_USER_LABELS = {};
 
 async function loadProfileLabels(isCurrent = () => true) {
   try {
@@ -107,6 +113,12 @@ async function loadProfileLabels(isCurrent = () => true) {
     if (isCurrent()) PROFILE_LABELS = out;
   } catch {
     if (isCurrent()) PROFILE_LABELS = {};
+  }
+  try {
+    const users = await fjson("/api/sync-user-labels", { cache: "no-store" });
+    if (isCurrent()) SYNC_USER_LABELS = users && typeof users === "object" ? users : {};
+  } catch {
+    if (isCurrent()) SYNC_USER_LABELS = {};
   }
 }
 
