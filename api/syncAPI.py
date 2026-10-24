@@ -2268,6 +2268,8 @@ class PairIn(BaseModel):
     providers: dict[str, Any] | None = None
     features: dict[str, Any] | None = None
     profile_id: str | None = None
+    match_users: bool | None = None
+    user_matches: dict[str, Any] | None = None
 
 class PairPatch(BaseModel):
     source: str | None = None
@@ -2280,6 +2282,23 @@ class PairPatch(BaseModel):
     providers: dict[str, Any] | None = None
     features: dict[str, Any] | None = None
     profile_id: str | None = None
+    match_users: bool | None = None
+    user_matches: dict[str, Any] | None = None
+
+
+def _apply_pair_user_matching(pair: dict[str, Any], upd: dict[str, Any]) -> None:
+    if "match_users" in upd:
+        if coerce_bool(upd.pop("match_users"), False):
+            pair["match_users"] = True
+        else:
+            pair.pop("match_users", None)
+    if "user_matches" in upd:
+        raw = upd.pop("user_matches")
+        clean = {str(k).strip(): str(v or "").strip() for k, v in raw.items() if str(k).strip()} if isinstance(raw, dict) else {}
+        if clean:
+            pair["user_matches"] = clean
+        else:
+            pair.pop("user_matches", None)
 
 
 class TopologyBaselineIn(BaseModel):
@@ -2468,6 +2487,8 @@ def api_pairs_add(payload: PairIn = Body(...), request: Request = cast(Request, 
         arr = _cfg_pairs(cfg)
 
         item = payload.model_dump()
+        matching = {k: item.pop(k, None) for k in ("match_users", "user_matches")}
+        _apply_pair_user_matching(item, {k: v for k, v in matching.items() if v is not None})
         item.setdefault("mode", "one-way")
         item["source_instance"] = _norm_instance_id(item.get("source_instance"))
         item["target_instance"] = _norm_instance_id(item.get("target_instance"))
@@ -2568,6 +2589,7 @@ def api_pairs_update(pair_id: str, payload: PairPatch = Body(...), request: Requ
                     upd["source_instance"] = _norm_instance_id(upd.get("source_instance"))
                 if "target_instance" in upd:
                     upd["target_instance"] = _norm_instance_id(upd.get("target_instance"))
+                _apply_pair_user_matching(it, upd)
                 for k, v in upd.items():
                     it[k] = v
                 if "profile_id" in upd:

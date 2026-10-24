@@ -263,7 +263,12 @@ def _cfg() -> dict[str, Any]:
         cfg = load_config()
     except Exception:
         return {}
-    return cfg or {}
+    cfg = cfg or {}
+    if any(isinstance(pair, Mapping) and pair.get("match_users") for pair in cfg.get("pairs") or []):
+        from cw_platform.orchestrator._pairs import expand_sync_user_pairs
+
+        cfg = {**cfg, "pairs": [dict(pair) for pair in expand_sync_user_pairs(cfg)]}
+    return cfg
 
 
 def _tmdb_key() -> str:

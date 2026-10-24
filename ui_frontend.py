@@ -625,6 +625,7 @@ def _asset_block(include_admin: bool = True, user: dict | None = None) -> str:
         '<script src="/assets/helpers/media_user_picker.js?v=__CW_VERSION__" defer></script>',
         '<script src="/assets/helpers/whitelist_table.js?v=__CW_VERSION__" defer></script>',
         '<script src="/assets/auth/auth.shared.js?v=__CW_VERSION__" defer></script>',
+        '<script src="/assets/auth/auth.sync-users.js?v=__CW_VERSION__" defer></script>',
         '<script src="/assets/auth/auth_loader.js?v=__CW_VERSION__" defer></script>',
         '<script src="/assets/auth/auth.tmdb.js?v=__CW_VERSION__" defer></script>',
         '<script type="module" src="/assets/js/modals.js?v=__CW_VERSION__"></script>',
