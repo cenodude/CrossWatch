@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ..provider_instances import is_sync_user_instance
 from .db import get_conn
 from .schema import ID_KEYS
 
@@ -569,18 +570,27 @@ def _build_state_from_feature_rows(
     }
 
 
-def load_state(base_path: str | Path) -> dict[str, Any]:
+def _without_sync_users(rows: list[sqlite3.Row], include_sync_users: bool) -> list[sqlite3.Row]:
+    if include_sync_users:
+        return rows
+    return [row for row in rows if not is_sync_user_instance(row["instance"])]
+
+
+def load_state(base_path: str | Path, *, include_sync_users: bool = False) -> dict[str, Any]:
     with _LOCK:
         conn = get_conn(base_path)
         if conn is None:
             return {"providers": {}, "wall": [], "last_sync_epoch": None}
+        if include_sync_users:
+            rows = conn.execute("SELECT * FROM provider_feature_state ORDER BY provider, instance, feature").fetchall()
+            return _build_state_from_feature_rows(conn, rows)
         path_key = str(Path(base_path).resolve())
         fp = _fingerprint(conn)
         if _CACHE.get("path") == path_key and _CACHE.get("fingerprint") == fp and isinstance(_CACHE.get("state"), dict):
             return copy.deepcopy(_CACHE["state"])
-        rows = conn.execute(
+        rows = _without_sync_users(conn.execute(
             "SELECT * FROM provider_feature_state ORDER BY provider, instance, feature"
-        ).fetchall()
+        ).fetchall(), False)
         state = _build_state_from_feature_rows(conn, rows)
         _CACHE["path"] = path_key
         _CACHE["fingerprint"] = fp
@@ -593,6 +603,7 @@ def load_state_features(
     features: set[str] | list[str] | tuple[str, ...],
     *,
     recent_limit: int | None = None,
+    include_sync_users: bool = False,
 ) -> dict[str, Any]:
     wanted = sorted({str(feature or "").strip().lower() for feature in features or [] if str(feature or "").strip()})
     if not wanted:
@@ -602,10 +613,10 @@ def load_state_features(
         if conn is None:
             return {"providers": {}, "wall": [], "last_sync_epoch": None}
         placeholders = ",".join("?" for _ in wanted)
-        rows = conn.execute(
+        rows = _without_sync_users(conn.execute(
             f"SELECT * FROM provider_feature_state WHERE feature IN ({placeholders}) ORDER BY provider, instance, feature",
             wanted,
-        ).fetchall()
+        ).fetchall(), include_sync_users)
         return _build_state_from_feature_rows(conn, rows, recent_limit=recent_limit)
 
 
@@ -620,7 +631,7 @@ def provider_feature_counts(base_path: str | Path, feature: str = "watchlist") -
         "SELECT p.provider AS provider, COUNT(DISTINCT b.item_key) AS count "
         "FROM provider_feature_state p "
         "LEFT JOIN baseline_items b ON b.provider_state_id=p.id "
-        "WHERE p.feature=? "
+        "WHERE p.feature=? AND instr(p.instance, '~')=0 "
         "GROUP BY p.provider",
         (feat,),
     ).fetchall()
@@ -647,7 +658,7 @@ def provider_names(base_path: str | Path, features: set[str] | list[str] | tuple
     return [str(row["provider"] or "").upper() for row in rows if str(row["provider"] or "").strip()]
 
 
-def feature_inventory(base_path: str | Path) -> list[dict[str, Any]]:
+def feature_inventory(base_path: str | Path, *, include_sync_users: bool = False) -> list[dict[str, Any]]:
     conn = get_conn(base_path)
     if conn is None:
         return []
@@ -660,6 +671,7 @@ def feature_inventory(base_path: str | Path) -> list[dict[str, Any]]:
         "LEFT JOIN baseline_items b ON b.provider_state_id=p.id "
         "GROUP BY p.id ORDER BY p.provider,p.instance,p.feature"
     ).fetchall()
+    rows = _without_sync_users(rows, include_sync_users)
     return [
         {
             "provider": str(row["provider"] or "").upper(),

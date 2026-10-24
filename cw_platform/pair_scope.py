@@ -16,7 +16,7 @@ def pair_feature_scope(config: Mapping[str, Any], pair: Mapping[str, Any], featu
         if isinstance(value, Mapping):
             return {str(k): settings(v) for k, v in value.items()
                     if not str(k).startswith("_cw_") and not any(word in str(k).lower() for word in ("token", "password", "secret", "api_key"))
-                    and str(k) not in {"auth", "oauth", "label"}}
+                    and str(k) not in {"auth", "oauth", "label", "sync_users"}}
         if isinstance(value, (list, tuple)):
             return [settings(v) for v in value]
         return value

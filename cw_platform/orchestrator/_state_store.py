@@ -188,9 +188,10 @@ class StateStore:
         features: set[str] | list[str] | tuple[str, ...],
         *,
         recent_limit: int | None = None,
+        include_sync_users: bool = False,
     ) -> dict[str, Any]:
         wanted = {str(feature or "").strip().lower() for feature in features or [] if str(feature or "").strip()}
-        state = sqlite_state.load_pair_state(self.base_path, self.pair_scope, wanted) if self.pair_scope else sqlite_state.load_state_features(self.base_path, features, recent_limit=recent_limit)
+        state = sqlite_state.load_pair_state(self.base_path, self.pair_scope, wanted) if self.pair_scope else sqlite_state.load_state_features(self.base_path, features, recent_limit=recent_limit, include_sync_users=include_sync_users)
         policy = self._filter_policy_features(self._mapping_policy(), wanted)
         return self._merge_policy(state, policy)
 

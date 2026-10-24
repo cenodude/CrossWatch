@@ -16,6 +16,9 @@ _USER_PROFILES_KEY = "user_profiles"
 _PROVIDER_INSTANCE_IDS_KEY = "provider_instance_ids"
 _PROFILE_INSTANCE_UIDS_KEY = "instance_uids"
 _PROFILE_MANUAL_INSTANCE_UIDS_KEY = "manual_instance_uids"
+_SYNC_USERS_KEY = "sync_users"
+_SYNC_USER_SEP = "~"
+_SYNC_USER_MARKER = "_cw_sync_user"
 
 
 def _deep_merge(base: dict[str, Any], overlay: Mapping[str, Any]) -> dict[str, Any]:
@@ -39,6 +42,91 @@ def normalize_instance_id(v: Any) -> str:
     if m:
         s = m.group("id").strip()
     return _DEFAULT_INSTANCE if not s or s.lower() == _DEFAULT_INSTANCE else s
+
+
+def split_sync_user_id(instance_id: Any) -> tuple[str, str] | None:
+    raw = str(instance_id or "").strip()
+    if _SYNC_USER_SEP not in raw:
+        return None
+    parent, _, user_key = raw.partition(_SYNC_USER_SEP)
+    user_key = user_key.strip()
+    if not parent.strip() or not user_key:
+        return None
+    return normalize_instance_id(parent), user_key
+
+
+def is_sync_user_instance(instance_id: Any) -> bool:
+    return split_sync_user_id(instance_id) is not None
+
+
+def instances_include_sync_users(instances: Any) -> bool:
+    if not isinstance(instances, Mapping):
+        return False
+    return any(
+        is_sync_user_instance(inst)
+        for values in instances.values()
+        for inst in (values if isinstance(values, (list, set, tuple)) else [values])
+    )
+
+
+def sync_user_instance_id(parent_instance: Any, user_key: Any) -> str:
+    return f"{normalize_instance_id(parent_instance)}{_SYNC_USER_SEP}{str(user_key or '').strip()}"
+
+
+def _raw_parent_block(base: Mapping[str, Any], parent: str) -> Mapping[str, Any] | None:
+    if parent == _DEFAULT_INSTANCE:
+        return base
+    insts = base.get(_INSTANCES_KEY)
+    blk = insts.get(parent) if isinstance(insts, Mapping) else None
+    return blk if isinstance(blk, Mapping) else None
+
+
+def _sync_user_entry(base: Any, instance_id: Any) -> Mapping[str, Any] | None:
+    ref = split_sync_user_id(instance_id)
+    if ref is None or not isinstance(base, Mapping):
+        return None
+    parent_blk = _raw_parent_block(base, ref[0])
+    users = parent_blk.get(_SYNC_USERS_KEY) if isinstance(parent_blk, Mapping) else None
+    entry = users.get(ref[1]) if isinstance(users, Mapping) else None
+    return entry if isinstance(entry, Mapping) else None
+
+
+def merge_sync_user_block(base: Any, instance_id: Any) -> dict[str, Any]:
+    ref = split_sync_user_id(instance_id)
+    entry = _sync_user_entry(base, instance_id)
+    if ref is None or entry is None:
+        return {}
+    merged = {k: copy.deepcopy(v) for k, v in base.items() if k != _INSTANCES_KEY}
+    if ref[0] != _DEFAULT_INSTANCE:
+        merged = _deep_merge(merged, _raw_parent_block(base, ref[0]) or {})
+    merged = _deep_merge(merged, entry)
+    merged.pop(_SYNC_USERS_KEY, None)
+    merged[_SYNC_USER_MARKER] = ref[1]
+    return merged
+
+
+def resolve_sync_user_block(base: Any, instance_id: Any) -> dict[str, Any]:
+    ref = split_sync_user_id(instance_id)
+    if ref is None or not isinstance(base, Mapping):
+        return {}
+    if str(base.get(_SYNC_USER_MARKER) or "") == ref[1]:
+        return {k: v for k, v in base.items() if k != _INSTANCES_KEY}
+    return merge_sync_user_block(base, instance_id)
+
+
+def list_sync_user_ids(cfg: Mapping[str, Any], provider_name: str, parent_instance: Any = None) -> list[str]:
+    base = cfg.get(_config_key_for(cfg, provider_name)) if isinstance(cfg, Mapping) else None
+    if not isinstance(base, Mapping):
+        return []
+    parents = [normalize_instance_id(parent_instance)] if parent_instance is not None else list_instance_ids(cfg, provider_name)
+    out: list[str] = []
+    for parent in parents:
+        parent_blk = _raw_parent_block(base, parent)
+        users = parent_blk.get(_SYNC_USERS_KEY) if isinstance(parent_blk, Mapping) else None
+        if not isinstance(users, Mapping):
+            continue
+        out.extend(sync_user_instance_id(parent, key) for key, entry in users.items() if str(key).strip() and isinstance(entry, Mapping))
+    return out
 
 
 def sanitize_instance_label(v: Any, *, max_len: int = 12) -> str:
@@ -181,6 +269,8 @@ def _provider_ref_exists(cfg: Mapping[str, Any], provider_name: Any, instance_id
         return False
     if inst == _DEFAULT_INSTANCE:
         return True
+    if is_sync_user_instance(inst):
+        return _sync_user_entry(block, inst) is not None
     insts = block.get(_INSTANCES_KEY)
     return isinstance(insts, Mapping) and inst in insts and isinstance(insts.get(inst), Mapping)
 
@@ -198,6 +288,9 @@ def _collect_provider_instance_refs(cfg: Mapping[str, Any]) -> set[tuple[str, st
             inst = normalize_instance_id(instance_id)
             if inst != _DEFAULT_INSTANCE:
                 refs.add((prov, inst))
+    for provider, raw in (cfg or {}).items():
+        if isinstance(raw, Mapping):
+            refs.update((provider_display_key(provider), inst) for inst in list_sync_user_ids(cfg, str(provider)))
     profiles = user_profiles_root(cfg)
     for raw_profile in profiles.values():
         if not isinstance(raw_profile, Mapping):
@@ -335,6 +428,8 @@ def get_provider_block(cfg: Mapping[str, Any], provider_name: str, instance_id: 
     inst = normalize_instance_id(instance_id)
     if inst == _DEFAULT_INSTANCE:
         return base_block
+    if is_sync_user_instance(inst):
+        return merge_sync_user_block(base_block, inst)
 
     insts = base_block.get(_INSTANCES_KEY)
     if isinstance(insts, Mapping) and inst in insts and isinstance(insts.get(inst), Mapping):
@@ -428,6 +523,9 @@ def get_instance_block(
 
     if inst == _DEFAULT_INSTANCE:
         return base
+    if is_sync_user_instance(inst):
+        entry = _sync_user_entry(base, inst)
+        return entry if isinstance(entry, dict) else {}
 
     insts = base.get(_INSTANCES_KEY)
     if not isinstance(insts, dict):
@@ -474,6 +572,8 @@ def instance_exists(cfg: Mapping[str, Any], provider_name: str, instance_id: Any
     inst = normalize_instance_id(instance_id)
     if inst == _DEFAULT_INSTANCE:
         return True
+    if is_sync_user_instance(inst):
+        return _provider_ref_exists(cfg, provider_name, inst)
     return bool(get_instance_block(cfg, provider_name, inst, create=False))
 
 
