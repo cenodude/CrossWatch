@@ -6,6 +6,10 @@ const ratingSinks = ["kitsu", "myanimelist", "crosswatch", "trakt", "simkl", "md
 const webhookSources = new Set(["plex", "jellyfin", "emby"]);
 const animeMappingSinks = new Set(["crosswatch", "simkl"]);
 const mediaSinks = new Set(["plex", "jellyfin", "emby", "kodi"]);
+const matchUserServers = new Set(["plex", "jellyfin", "emby"]);
+function webhookMatchUsersSupported(sink) {
+  return matchUserServers.has(String(sink || "").toLowerCase()) && matchUserServers.has(String(currentSource()?.provider || "").toLowerCase());
+}
 
 function flashCopied(btn) {
   if (!btn) return;
@@ -564,6 +568,7 @@ function optionsPanel() {
         ${field("Suppress start", `<input class="input" id="scw-suppress" type="number" min="0" max="3600" value="${esc(settings().suppress_start_at ?? "")}" placeholder="Inherited">`)}
       </div>
       ${animeMapping}
+      ${webhookMatchUsersSupported(sink) ? `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">group</span><span><strong>Sync all matched users</strong><small>Send each play to the user with the same name on the destination media server. Tick users in each connection's Users tab. Applies to all media server destinations of this webhook.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scw-match-users" ${settings().match_users === true ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>` : ""}
       ${sink === "simkl" ? `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">replay</span><span><strong>Track rewatches</strong><small>Allow repeat watches for this destination. Requires SIMKL Pro or VIP. SIMKL applies a 48-hour gap per movie or episode. Your watched threshold still applies, with a minimum of 80%.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scw-simkl-rewatches" ${settings().simkl_rewatches === true ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>` : ""}
     </section>
   `;
@@ -760,6 +765,7 @@ function payload() {
   }
   if (animeMappingSinks.has(sink)) body[`anime_mapping_${sink}`] = !!root.querySelector("#scw-anime-mapping")?.checked;
   if (sink === "simkl") body.simkl_rewatches = !!root.querySelector("#scw-simkl-rewatches")?.checked;
+  if (webhookMatchUsersSupported(sink)) body.match_users = !!root.querySelector("#scw-match-users")?.checked;
   if (mediaSinks.has(sink)) {
     const dest = destinationFor(sink);
     const copiesEl = root.querySelector("#scw-update-all-copies");

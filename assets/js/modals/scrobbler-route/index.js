@@ -426,6 +426,11 @@ function filterRow(o) {
     </div>`;
 }
 
+function matchUsersSupported(r) {
+  const media = ["plex", "emby", "jellyfin"];
+  return media.includes(String(r?.provider || "").toLowerCase()) && media.includes(String(r?.sink || "").toLowerCase());
+}
+
 function filtersPanel(r, f) {
   const isPlex = r.provider === "plex";
   const isStremio = r.provider === "stremio";
@@ -441,6 +446,7 @@ function filtersPanel(r, f) {
     isStremio ? "" : `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">movie_filter</span><span><strong>Ignore Agregarr placeholder trailers</strong><small>Skip files marked as Trailer editions or stored beside .comingsoon markers.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-ignore-agregarr" ${f.ignore_agregarr_trailers ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`,
     `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">star</span><span><strong>Ignore specials (Season 0)</strong><small>Skip scrobbles for Season 0 / specials episodes.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-ignore-specials" ${f.ignore_specials ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`,
   ];
+  if (matchUsersSupported(r)) toggles.unshift(`<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">group</span><span><strong>Sync all matched users</strong><small>Send each play to the user with the same name on ${esc(label(r.sink))}. Tick users in each connection's Users tab.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-match-users" ${r.match_users ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`);
   if (isPlex) toggles.push(`<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">live_tv</span><span><strong>Ignore Plex Live TV &amp; DVR</strong><small>Skip scrobbles from live channels and DVR recordings.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-live" ${f.ignore_live_tv_dvr ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`);
   return `
     <section class="scrm-panel ${activeTab === "filters" ? "active" : ""}" data-panel="filters">
@@ -740,6 +746,7 @@ function collect() {
     sink: sinkEl ? sinkEl.value : draft.sink || "",
     sink_instance: sinkInstanceEl ? sinkInstanceEl.value : draft.sink_instance || "",
     profile_id: selectedUserProfileId || draft.profile_id || "",
+    ...(root.querySelector("#scr-match-users")?.checked ? { match_users: true } : {}),
     filters,
     options: {
       auto_remove_watchlist: root.querySelector("#scr-auto")?.value || "inherit",

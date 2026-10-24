@@ -6,6 +6,7 @@
 
   const HOST_ID = "cw-user-profile-manager";
   let providerInstances = {};
+  let syncUserLabels = {};
   let userProfiles = [];
   let appUsers = [];
   let loading = false;
@@ -239,6 +240,12 @@
     return modalProfileId ? profileById(modalProfileId) : null;
   }
 
+  function syncUsersNote(provider, selected) {
+    const labels = syncUserLabels[providerKey(provider)] || {};
+    const names = [...selected].filter((id) => id.includes("~")).map((id) => labels[id] || id.split("~").slice(1).join("~"));
+    return names.length ? `<div class="sub">Synced users: ${esc(names.join(", "))}. Managed in the connection's Users tab.</div>` : "";
+  }
+
   function renderInstanceChecks() {
     const insts = draftInstances();
     const required = resourceRequiredMap();
@@ -256,6 +263,7 @@
             <strong>${esc(providerLabel(provider))}</strong>
             <span>${rows.length}</span>
           </div>
+          ${syncUsersNote(provider, selected)}
           <div class="cw-upm-instance-grid">
             ${rows.map((row) => {
               const lockedBy = required[providerKey(provider)]?.[row.id] || [];
@@ -397,11 +405,13 @@
     loading = true;
     render();
     try {
-      const [instances, profiles] = await Promise.all([
+      const [instances, profiles, syncLabels] = await Promise.all([
         json(`/api/provider-instances?configured_only=true&ts=${Date.now()}`),
         json(`/api/user-profiles?ts=${Date.now()}`),
+        json(`/api/sync-user-labels?ts=${Date.now()}`).catch(() => ({})),
       ]);
       providerInstances = instances && typeof instances === "object" ? instances : {};
+      syncUserLabels = syncLabels && typeof syncLabels === "object" ? syncLabels : {};
       availableResources = profiles?.resources && typeof profiles.resources === "object" ? profiles.resources : { sync_pairs: [], watcher_routes: [], webhook_routes: [] };
       userProfiles = Array.isArray(profiles?.items) ? profiles.items.map((row) => ({
         id: txt(row?.id),
@@ -527,7 +537,7 @@
     Object.entries(previous).forEach(([provider, values]) => {
       const key = providerKey(provider);
       const locked = lockedBefore[key] || {};
-      const kept = (Array.isArray(values) ? values : [values]).map(txt).filter((value) => value && locked[value]);
+      const kept = (Array.isArray(values) ? values : [values]).map(txt).filter((value) => value && (locked[value] || value.includes("~")));
       if (kept.length) manual[key] = Array.from(new Set([...(manual[key] || []), ...kept]));
     });
     modalDraft.instances = manual;
