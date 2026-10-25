@@ -11,7 +11,7 @@ from cw_platform.id_map import minimal as id_minimal
 from providers.auth._auth_FLOPPY import FloppyAuthError
 from providers.sync._mod_common import build_op_result, unresolved_keys
 
-from ._common import api_patch, api_put, api_request, bucket_params, canonical_item_key, confirmed_destination, failure_reason, int_or_none, paged, tmdb_enriched_item, tmdb_id_for_item, unresolved, write_bucket
+from ._common import ANIME_BUCKET, api_patch, api_put, api_request, bucket_params, canonical_item_key, confirmed_destination, failure_reason, int_or_none, paged, tmdb_enriched_item, tmdb_id_for_item, unresolved, write_bucket
 
 
 def _media_numbers(item: Mapping[str, Any]) -> tuple[int | None, int | None]:
@@ -170,9 +170,9 @@ def _update_body(item: Mapping[str, Any]) -> dict[str, Any]:
     return body
 
 
-def _scoped_delete(adapter: Any, path: str) -> str:
+def _scoped_delete(adapter: Any, path: str, params: dict[str, str] | None) -> str:
     try:
-        api_request(adapter, "DELETE", path, ok=(200, 202, 204))
+        api_request(adapter, "DELETE", path, ok=(200, 202, 204), params=params)
     except FloppyAuthError as exc:
         if exc.status_code != 404:
             raise
@@ -264,14 +264,16 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
             confirmed_destinations[key] = confirmed_destination(raw)
             results.append({"status": "dry_run", "item": id_minimal(raw), "canonical_key": key})
             continue
-        path, reason = _collection_path(raw)
+        path, params, reason = _collection_target(adapter, raw)
         if path is None:
             entry = unresolved(raw, reason or "floppy_collection_unresolved")
             unresolved_rows.append(entry)
             results.append(entry)
             continue
         try:
-            outcome = _scoped_delete(adapter, path)
+            outcome = _scoped_delete(adapter, path, params)
+            if outcome == "missing" and params is None and _floppy_media_type(raw) == "episode":
+                outcome = _scoped_delete(adapter, path, bucket_params(ANIME_BUCKET))
             if outcome == "missing":
                 if index is None and index_error is None:
                     try:
