@@ -23,7 +23,6 @@
 .ie-page .ie-header{position:static;display:flex;align-items:center;justify-content:space-between;gap:16px;background:none;border:0;box-shadow:none;padding:14px 0;margin:0;z-index:auto}
 .ie-eyebrow{display:block;color:var(--ie-accent);font-size:10px;font-weight:700;letter-spacing:.16em}
 .ie-header h1{font-size:32px;letter-spacing:-.035em;font-weight:800;line-height:1.2;margin:5px 0 0}
-.ie-header>span{font-size:32px;color:var(--ie-accent);opacity:var(--cw-content-opacity,.55);margin-right:8px}
 .ie-tabs{display:flex;gap:24px;border-bottom:1px solid var(--ie-border);margin-bottom:24px}
 .ie-tabs button{display:flex;align-items:center;gap:8px;padding:12px 2px 16px;border:0;border-bottom:2px solid transparent;border-radius:0;background:none;color:var(--ie-muted);font-weight:500;box-shadow:none}
 .ie-tabs button[aria-pressed=true]{color:var(--ie-text);border-color:var(--ie-accent)}

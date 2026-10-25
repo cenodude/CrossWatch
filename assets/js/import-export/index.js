@@ -28,9 +28,9 @@ async function json(url, options) {
 }
 
 const template = `
-<div class="ie-page">
+<div class="ie-page" hidden>
   <a class="ie-back" href="#main">${icon("arrow_back")}Main</a>
-  <header class="ie-header"><div><span class="ie-eyebrow">YOUR DATA</span><h1>Import and Export</h1></div>${icon("import_export")}</header>
+  <header class="ie-header"><div><span class="ie-eyebrow">YOUR DATA</span><h1>Import and Export</h1></div></header>
   <nav class="ie-tabs" aria-label="Transfer direction"><button type="button" data-mode="import" aria-pressed="true">${icon("upload_file")}Import a file</button><button type="button" data-mode="export" aria-pressed="false">${icon("download")}Export your data</button><button type="button" data-mode="recovery" aria-pressed="false">${icon("history")}Recover Plex history</button></nav>
   <div id="ie-notice" class="ie-notice" role="status" hidden></div>
   <div id="ie-progress" class="ie-progress" role="status" hidden><div class="ie-progress-copy"><strong id="ie-activity"></strong><span id="ie-elapsed"></span></div><div class="ie-progress-track" role="progressbar" aria-label="Transfer in progress"><span></span></div><p id="ie-progress-note"></p></div>
@@ -66,6 +66,21 @@ const template = `
   </fieldset>
 </div>`;
 
+let stylesReady;
+function loadStyles() {
+  if (stylesReady) return stylesReady;
+  stylesReady = new Promise(resolve => {
+    const link = document.createElement("link");
+    link.id = "ie-styles";
+    link.rel = "stylesheet";
+    link.href = new URL(`./styles.css?v=${encodeURIComponent(window.__CW_VERSION__ || "1")}`, import.meta.url).href;
+    link.onload = () => resolve(true);
+    link.onerror = () => { link.remove(); stylesReady = null; resolve(false); };
+    document.head.appendChild(link);
+  });
+  return stylesReady;
+}
+
 function updateBackLink(host) {
   const route = new URLSearchParams(window.location.hash.split("?")[1] || "");
   const back = pageBackLink(route.get("returnTo"), window.location.href, "import_export");
@@ -85,14 +100,8 @@ const ImportExport = {
       return;
     }
     this.unmount();
-    if (!document.getElementById("ie-styles")) {
-      const link = document.createElement("link");
-      link.id = "ie-styles";
-      link.rel = "stylesheet";
-      link.href = new URL(`./styles.css?v=${encodeURIComponent(window.__CW_VERSION__ || "1")}`, import.meta.url).href;
-      document.head.appendChild(link);
-    }
-    host.innerHTML = template;
+    const stylesheet = loadStyles();
+    host.innerHTML = '<div id="ie-loading" role="status">Loading import and export…</div>' + template;
     updateBackLink(host);
     const $ = selector => host.querySelector(selector);
     const $$ = selector => [...host.querySelectorAll(selector)];
@@ -406,6 +415,7 @@ const ImportExport = {
     progress("Loading import and export options", "Checking available profiles and saved provider data.");
     try {
       [importOptions,exportOptions]=await Promise.all([json("/api/import/options",{signal:lifetime.signal}),json("/api/export/options",{signal:lifetime.signal})]);
+      if (lifetime.signal.aborted) return;
       $("#ie-source").innerHTML=importOptions.sources.map(source=>option(source.id,source.label)).join("");
       $("#ie-target").innerHTML=importOptions.targets.map(target=>option(target.id,`${target.label}${target.connected ? "" : " (not connected)"}`)).join("");
       const connected=importOptions.targets.find(target=>target.connected);
@@ -419,6 +429,15 @@ const ImportExport = {
     } finally {
       if (!lifetime.signal.aborted) { finishProgress(); if ($("#ie-controls").dataset.unavailable) $("#ie-controls").disabled=true; }
       if (!lifetime.signal.aborted && (window.CW?.pendingPlexRecovery || new URLSearchParams(window.location.hash.split("?")[1] || "").has("recovery"))) await setMode("recovery");
+      const styled = await stylesheet;
+      if (!lifetime.signal.aborted) {
+        if (styled) {
+          $("#ie-loading").remove();
+          $(".ie-page").hidden = false;
+        } else {
+          $("#ie-loading").textContent = "Import / Export styles failed to load. Refresh the page to try again.";
+        }
+      }
     }
   },
   unmount() { active?.cleanup(); active=null; }

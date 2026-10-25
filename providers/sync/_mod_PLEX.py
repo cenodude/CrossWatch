@@ -253,6 +253,9 @@ def _progress_skipped_keys(results: Any) -> list[str]:
 
 
 _PLEX_HISTORY_META_FIELDS = (
+    "cloud_confirmed_keys",
+    "deferred_keys",
+    "skipped_keys",
     "accepted_keys",
     "presence_confirmed_keys",
     "live_confirmed_keys",
@@ -1499,6 +1502,8 @@ class PLEXModule:
                     for f in _PLEX_HISTORY_META_FIELDS:
                         if f in hm:
                             res[f] = hm[f]
+                    skipped_set = set(res.get("skipped_keys") or [])
+                    res["confirmed_keys"] = [k for k in confirmed_keys if k not in skipped_set]
             return res
         except Exception as e:
             return {"ok": False, "error": str(e), "count": 0, "errors": len(lst), "confirmed_keys": []}
@@ -1671,6 +1676,21 @@ class _PlexOPS:
         feature: str,
     ) -> list[dict[str, Any]]:
         return self._adapter(cfg).library_presence(feature, items)
+
+    def filter_cached_adds(self, cfg, items, *, feature):
+        from .plex import _discover_history as cloud
+
+        if feature != "history":
+            return items
+        adapter = self._adapter(cfg)
+        cached = cloud.completed_items(adapter, items)
+        candidates = [item for item in items if cloud._signature(item) in cached]
+        if not candidates:
+            return items
+        presence = adapter.library_presence(feature, candidates)
+        absent = {cloud._signature(item) for item, result in zip(candidates, presence)
+                  if result.get("status") == "absent"}
+        return [item for item in items if cloud._signature(item) not in absent]
 
     def health(self, cfg: Mapping[str, Any]) -> Mapping[str, Any]:
         return self._adapter(cfg).health()

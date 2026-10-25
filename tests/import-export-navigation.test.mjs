@@ -82,6 +82,43 @@ test('direct recovery links and invalid return destinations use Main', () => {
   }
 });
 
+test('import/export styles wait for loading and reuse the ready stylesheet', async () => {
+  const links = [];
+  const context = vm.createContext({URL, window: {}, document: {
+    createElement: () => ({remove() {}}), head: {appendChild(link) { links.push(link); }},
+  }});
+  const loader = importer.slice(importer.indexOf('let stylesReady;'), importer.indexOf('function updateBackLink('))
+    .replace('import.meta.url', JSON.stringify('http://localhost/assets/js/import-export/index.js'));
+  vm.runInContext(loader, context);
+  let ready = false;
+  const first = context.loadStyles();
+  first.then(() => { ready = true; });
+  assert.equal(context.loadStyles(), first);
+  await Promise.resolve();
+  assert.equal(ready, false);
+  links[0].onload();
+  assert.equal(await first, true);
+  assert.equal(await context.loadStyles(), true);
+  assert.equal(links.length, 1);
+});
+
+test('failed import/export stylesheet loads can retry', async () => {
+  const links = [];
+  const context = vm.createContext({URL, window: {}, document: {
+    createElement: () => ({remove() { this.removed = true; }}), head: {appendChild(link) { links.push(link); }},
+  }});
+  const loader = importer.slice(importer.indexOf('let stylesReady;'), importer.indexOf('function updateBackLink('))
+    .replace('import.meta.url', JSON.stringify('http://localhost/assets/js/import-export/index.js'));
+  vm.runInContext(loader, context);
+  const first = context.loadStyles();
+  links[0].onerror();
+  assert.equal(await first, false);
+  assert.equal(links[0].removed, true);
+  const retry = context.loadStyles();
+  links[1].onload();
+  assert.equal(await retry, true);
+});
+
 test('an already mounted page updates the back link when its caller changes', async () => {
   const f = fixture('http://localhost/#import_export?' + new URLSearchParams({returnTo: '/#editor'}));
   f.context.active = {host: f.host};

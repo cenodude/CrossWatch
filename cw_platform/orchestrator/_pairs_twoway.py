@@ -79,6 +79,7 @@ from ._episode_groups import HistoryGroups, note_identity_conflicts
 from ._progress_completion import fcfg_for_progress_target
 from ._specials import filter_specials_index, specials_excluded
 from ._scope import provider_call
+from ._pairs_oneway import filter_provider_adds
 from .. import library_presence as _library_presence
 try:
     from ._pairs_oneway import _media_type_filter_index as _media_filter
@@ -1899,6 +1900,8 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
     use_phantoms = bool(bb.get("enabled") and bb.get("block_adds", True))
     bb_ttl_days = int(bb.get("cooldown_days") or 0) or None
 
+    add_to_A = filter_provider_adds(aops, a_cfg, feature, add_to_A)
+    add_to_B = filter_provider_adds(bops, b_cfg, feature, add_to_B)
     guardA = PhantomGuard(src=b, dst=a, feature=feature, ttl_days=bb_ttl_days, enabled=use_phantoms)
     guardB = PhantomGuard(src=a, dst=b, feature=feature, ttl_days=bb_ttl_days, enabled=use_phantoms)
 
@@ -2372,6 +2375,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                 have_exact_keys=have_exact_keys_A,
                 verify_after_write=verify_after_write,
                 provider_skipped=bool((resA_add or {}).get("skipped")),
+                deferred_keys=(resA_add or {}).get("deferred_keys", []),
             )
             prov_count_A = _decision_A["prov_confirmed"]
             eff_add_A = _decision_A["effective"]
@@ -2412,7 +2416,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                         pair=pair_key,
                     )
                 if use_phantoms and 'guardA' in locals() and guardA and success_A and not dry_run_flag:
-                    guardA.record_success(set(success_A))
+                    guardA.record_success(set(success_A) - set((resA_add or {}).get("cloud_confirmed_keys") or []))
             except Exception:
                 pass
             
@@ -2510,6 +2514,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                 have_exact_keys=have_exact_keys_B,
                 verify_after_write=verify_after_write,
                 provider_skipped=bool((resB_add or {}).get("skipped")),
+                deferred_keys=(resB_add or {}).get("deferred_keys", []),
             )
             prov_count_B = _decision_B["prov_confirmed"]
             eff_add_B = _decision_B["effective"]
@@ -2550,7 +2555,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                         pair=pair_key,
                     )
                 if use_phantoms and 'guardB' in locals() and guardB and success_B and not dry_run_flag:
-                    guardB.record_success(set(success_B))
+                    guardB.record_success(set(success_B) - set((resB_add or {}).get("cloud_confirmed_keys") or []))
             except Exception:
                 pass
             

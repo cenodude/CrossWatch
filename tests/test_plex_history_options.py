@@ -206,11 +206,13 @@ def test_marked_watched_and_strict_ids_are_isolated_between_pairs(config_base, m
         result = api.api_pairs_add(api.PairIn(
             source="PLEX", target="JELLYFIN", mode=mode, enabled=True,
             features={"history": {"enable": True, "add": True, "remove": False}},
-            providers={"plex": {"strict_id_matching": enabled, "history": {"include_marked_watched": enabled}}},
+            providers={"plex": {"strict_id_matching": enabled, "history": {"include_marked_watched": enabled,
+                                                                          "discover_fallback": enabled}}},
         ))
         assert result["ok"]
     assert not Orchestrator(cfg).run()["errors"]
     assert [row["history"]["include_marked_watched"] for row in seen] == [False, True]
+    assert [row["history"]["discover_fallback"] for row in seen] == [False, True]
     assert [row["strict_id_matching"] for row in seen] == [False, True]
     assert all(row["history"]["libraries"] == ["1"] for row in seen)
     assert cfg["plex"] == original
