@@ -773,3 +773,12 @@ def test_dashboard_totals_follow_the_selected_profile(tmp_path) -> None:
     assert _feature_library_totals(tmp_path, {"history"}, {"EMBY": ["default"]}) == {"history": 1}
     assert _feature_library_totals(tmp_path, {"history"}, {"__NONE__": ["__NONE__"]}) == {"history": 0}
     assert _feature_library_totals(tmp_path, {"history"}, {}) == {"history": 2}
+
+
+def test_match_name_suggestions_come_from_other_servers_and_profiles(monkeypatch) -> None:
+    store = _api_cfg()
+    store["jellyfin"] = {"server": "http://jf", "access_token": "jf", "sync_users": {"j9": {"user_id": "j9", "username": "carmii", "match_as": "Carmen"}}}
+    store["emby"]["sync_users"] = {"u1": {"user_id": "u1", "username": "own"}}
+    pi.upsert_user_profile(store, "family", label="Family", instances={})
+    api = _api_store(monkeypatch, store)
+    assert api.api_provider_sync_users("emby", "default")["suggestions"] == ["Carmen", "Family"]

@@ -31,9 +31,18 @@ function supportsPathMatching(state){ return [state?.src,state?.dst].every(p=>["
 const MU_LABELS={PLEX:"Plex",EMBY:"Emby",JELLYFIN:"Jellyfin"};
 const muEsc=(v)=>String(v??"").replace(/[&<>"']/g,(c)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const muLabel=(p)=>MU_LABELS[String(p||"").toUpperCase()]||String(p||"");
-function renderMatchUsersOption(state){
+function renderMatchUsersCard(state){
   if(!supportsPathMatching(state)) return "";
-  return `<div class="opt-row"><label for="pair-match-users">Sync all matched users</label><label class="switch"><input id="pair-match-users" type="checkbox" ${state.match_users?"checked":""}><span class="slider"></span></label></div><div class="muted">Syncs every ticked user on ${muEsc(muLabel(state.src))} with the user of the same name on ${muEsc(muLabel(state.dst))}, each with their own history. Tick users in each connection's Users tab. Your own account only syncs if it is ticked too. Media servers only: for trackers like Trakt, use a connection profile per person.</div><div id="pair-match-users-list" ${state.match_users?"":"hidden"}></div>`;
+  return `<div class="provider-card mu-card">
+    <div class="provider-card-head">
+      <div class="providers-intro-copy">
+        <div class="providers-intro-title">Sync all matched users</div>
+        <div class="providers-intro-sub">Optional. Syncs every ticked user on ${muEsc(muLabel(state.src))} with the same user on ${muEsc(muLabel(state.dst))}, each with their own history. Tick users in each connection's Users tab. Media servers only.</div>
+      </div>
+      <label class="switch" aria-label="Sync all matched users"><input id="pair-match-users" type="checkbox" ${state.match_users?"checked":""}><span class="slider"></span></label>
+    </div>
+    <div class="provider-card-body" id="pair-match-users-list" ${state.match_users?"":"hidden"}></div>
+  </div>`;
 }
 async function loadMatchUsersPreview(state){
   const host=ID("pair-match-users-list");
@@ -60,7 +69,7 @@ async function loadMatchUsersPreview(state){
   const tally=(list)=>list.reduce((acc,u)=>{acc.set(matchName(u),(acc.get(matchName(u))||0)+1);return acc;},new Map());
   const dstCount=tally(dst), srcCount=tally(src);
   const byName=new Map(dst.filter((u)=>dstCount.get(matchName(u))===1).map((u)=>[matchName(u),u]));
-  let matched=0;
+  let matched=0, skipped=0;
   const rows=src.map((u)=>{
     const key=String(u.key);
     const ambiguous=srcCount.get(matchName(u))>1||dstCount.get(matchName(u))>1;
@@ -69,11 +78,15 @@ async function loadMatchUsersPreview(state){
     const pick=has?overrides[key]:"__auto";
     const target=pick==="__auto"?auto:dst.find((d)=>String(d.key)===String(pick));
     if(target) matched+=1;
-    const opts=[`<option value="__auto" ${pick==="__auto"?"selected":""}>${auto?`Same name: ${muEsc(auto.username)}`:ambiguous?"Same name: more than one user, pick one":"Same name: not found"}</option>`,`<option value="" ${pick===""?"selected":""}>Do not sync</option>`]
-      .concat(dst.map((d)=>`<option value="${muEsc(d.key)}" ${pick!=="__auto"&&String(pick)===String(d.key)?"selected":""}>${muEsc(d.username)}</option>`)).join("");
-    return `<div class="opt-row"><label>${muEsc(u.username)} ${target?"✓":"⚠"}</label><select class="input pair-user-match" data-src-key="${muEsc(key)}">${opts}</select></div>`;
+    if(pick==="") skipped+=1;
+    const explicit=pick!=="__auto"&&pick!=="";
+    const others=dst.filter((d)=>!auto||String(d.key)!==String(auto.key)||(explicit&&String(pick)===String(d.key)));
+    const opts=[`<option value="__auto" ${pick==="__auto"?"selected":""}>${auto?`Automatic: ${muEsc(auto.username)}`:ambiguous?"Automatic: more than one user, pick one":"Automatic: no match"}</option>`,`<option value="" ${pick===""?"selected":""}>Do not sync</option>`]
+      .concat(others.map((d)=>`<option value="${muEsc(d.key)}" ${explicit&&String(pick)===String(d.key)?"selected":""}>Sync with: ${muEsc(d.username)}</option>`)).join("");
+    const status=target?`<span class="mu-status is-ok">Matched</span>`:pick===""?`<span class="mu-status">Skipped</span>`:`<span class="mu-status is-warn">No match</span>`;
+    return `<div class="mu-row"><span class="mu-name">${muEsc(u.username)}</span>${status}<select class="input pair-user-match" data-src-key="${muEsc(key)}" aria-label="Match for ${muEsc(u.username)}">${opts}</select></div>`;
   }).join("");
-  host.innerHTML=`<div class="muted" style="margin-top:6px">${matched} of ${src.length} users matched.</div>${rows}`;
+  host.innerHTML=`<div class="mu-summary"><span class="providers-intro-badge">${matched} of ${src.length} matched${skipped?`, ${skipped} skipped`:""}</span><span class="mu-hint">Your own account only syncs if it is ticked too.</span></div><div class="mu-rows">${rows}</div>`;
 }
 function hasEmby(state){ return isEmby(state?.src) || isEmby(state?.dst) }
 
@@ -1390,6 +1403,7 @@ function renderFeaturePanel(state){
       </details>`);
 
     left.innerHTML=`<div class="panel-title"><span class="material-symbols-rounded" style="vertical-align:-3px;margin-right:6px;">dns</span>Providers</div>
+      ${renderMatchUsersCard(state)}
       <div class="providers-intro">
         <div class="providers-intro-copy">
           <div class="providers-intro-title">Advanced provider tuning</div>
@@ -1406,6 +1420,7 @@ function renderFeaturePanel(state){
     right.innerHTML = "";
     initPairLibraryUIController(state);
     QA(".fold").forEach(f=>{f.classList.remove("open")});
+    loadMatchUsersPreview(state);
     return;
   }
 
@@ -1455,7 +1470,6 @@ function renderFeaturePanel(state){
       ${hasEmby(state)?`<div class="opt-row"><label for="em-strict-ids">Emby: Strict ID matching</label><label class="switch"><input id="em-strict-ids" type="checkbox" ${getPairProviderStrictValue(state, "emby")?"checked":""}><span class="slider"></span></label></div>`:""}
       ${hasFloppy(state)?`<div class="opt-row"><label for="floppy-anime-library" data-tip-id="floppy-anime-library">Floppy: Send new anime to the Anime library</label><label class="switch"><input id="floppy-anime-library" type="checkbox" ${floppyAnimeLibraryOn(state)?"checked":""}><span class="slider"></span></label></div>`:""}
       ${supportsPathMatching(state)?`<div class="opt-row"><label for="pair-path-matching">Match by file path</label><label class="switch"><input id="pair-path-matching" type="checkbox" ${state.path_matching?"checked":""}><span class="slider"></span></label></div><div class="muted">When IDs cannot resolve an item, try matching its file path across the media servers in this pair. Supports movie and episode history, ratings and progress in both directions, including with Strict ID matching enabled.</div>`:""}
-      ${renderMatchUsersOption(state)}
       <div class="panel-title" style="margin-top:10px">Advanced (shared) <button type="button" class="cx-help material-symbols-rounded" data-tip-id="gl-section-advanced">help</button></div>
       <div class="opt-row"><label for="gl-ttl">Tombstone TTL (days)</label><input id="gl-ttl" class="input" type="number" min="0" step="1" value="${g.tombstone_ttl_days??30}"></div><div class="muted">Keep delete markers to avoid re-adding.</div>
       <div class="opt-row"><label for="gl-observed">Include observed deletes</label><label class="switch"><input id="gl-observed" type="checkbox" ${g.include_observed_deletes?"checked":""}><span class="slider"></span></label></div>
@@ -1467,7 +1481,6 @@ function renderFeaturePanel(state){
         <div class="opt-row"><label for="gl-bb-cooldown">Cooldown days</label><input id="gl-bb-cooldown" class="input small" type="number" min="0" max="365" step="1" value="${bb.cooldown_days??30}"></div>
       </div>
       <div class="muted">Unresolved is a reporting state: failed writes are logged and retried every sync. Blackbox is the quarantine state: after this many failed writes an item is blackboxed and only then stops being planned.</div>`;
-    loadMatchUsersPreview(state);
     return;
   }
 
