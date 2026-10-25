@@ -11,7 +11,7 @@ from cw_platform.id_map import canonical_key, minimal as id_minimal
 from cw_platform.playlists import PLAYLIST_KIND_REGULAR, PlaylistItem, PlaylistResource, PlaylistSnapshot
 
 from .._log import log as cw_log
-from ._common import as_int, tmdb_id_for_item
+from ._common import as_int, paged_items, tmdb_id_for_item
 
 _PROVIDER = "PUBLICMETADB"
 _FEATURE = "playlists"
@@ -37,34 +37,6 @@ def _warn(event: str, **fields: Any) -> None:
 def _instance_id(adapter: Any) -> str:
     inst = getattr(adapter, "instance_id", None)
     return str(inst).strip() if inst else "default"
-
-
-def _rows(data: Any) -> list[Any]:
-    if isinstance(data, list):
-        return data
-    if not isinstance(data, Mapping):
-        return []
-    for key in ("items", "results", "data", "lists"):
-        val = data.get(key)
-        if isinstance(val, list):
-            return val
-    return []
-
-
-def _total_pages(data: Any, page: int) -> int:
-    if not isinstance(data, Mapping):
-        return page
-    for key in ("totalPages", "total_pages", "pages", "pageCount"):
-        value = as_int(data.get(key))
-        if value is not None:
-            return max(page, value)
-    pagination = data.get("pagination")
-    if isinstance(pagination, Mapping):
-        for key in ("totalPages", "total_pages", "pages", "pageCount"):
-            value = as_int(pagination.get(key))
-            if value is not None:
-                return max(page, value)
-    return page
 
 
 def _norm_type(value: Any) -> str:
@@ -122,22 +94,10 @@ def _resource_from_row(adapter: Any, row: Mapping[str, Any]) -> PlaylistResource
 @retained_read
 def list_resources(adapter: Any) -> list[PlaylistResource]:
     out: list[PlaylistResource] = []
-    page = 1
-    per_page = 500
-    while page <= 1000:
-        data = adapter.client.get_json("/api/external/lists", params={"page": page, "perPage": per_page})
-        rows = _rows(data)
-        if not rows:
-            break
-        for row in rows:
-            if not isinstance(row, Mapping):
-                continue
-            res = _resource_from_row(adapter, row)
-            if res:
-                out.append(res)
-        if page >= _total_pages(data, page):
-            break
-        page += 1
+    for row in paged_items(adapter, "/api/external/lists", per_page=500, max_pages=1000, what="playlists_resources"):
+        res = _resource_from_row(adapter, row)
+        if res:
+            out.append(res)
     _info("list_resources_done", count=len(out))
     return out
 
@@ -175,38 +135,24 @@ def _playlist_item_id(row: Mapping[str, Any]) -> str:
 def _fetch_items(adapter: Any, list_id: str) -> tuple[list[PlaylistItem], dict[str, str]]:
     out: list[PlaylistItem] = []
     remote_ids: dict[str, str] = {}
-    page = 1
     per_page = int(getattr(adapter.cfg, "watchlist_page_size", 500) or 500)
     per_page = max(1, min(per_page, 500))
-    while page <= 1000:
-        data = adapter.client.get_json(
-            f"/api/external/lists/{list_id}/items",
-            params={"page": page, "perPage": per_page},
-        )
-        rows = _rows(data)
-        if not rows:
-            break
-        for row in rows:
-            if not isinstance(row, Mapping):
-                continue
-            media = _minimal_from_row(row)
-            if not media:
-                continue
-            item_id = _playlist_item_id(row)
-            key = canonical_key(media)
-            if item_id:
-                remote_ids[key] = item_id
-            out.append(
-                PlaylistItem.from_media(
-                    media,
-                    playlist_item_id=item_id or None,
-                    position=None,
-                    provider_media_id=item_id or str(tmdb_id_for_item(media) or ""),
-                )
+    for row in paged_items(adapter, f"/api/external/lists/{list_id}/items", per_page=per_page, max_pages=1000, what="playlists_items"):
+        media = _minimal_from_row(row)
+        if not media:
+            continue
+        item_id = _playlist_item_id(row)
+        key = canonical_key(media)
+        if item_id:
+            remote_ids[key] = item_id
+        out.append(
+            PlaylistItem.from_media(
+                media,
+                playlist_item_id=item_id or None,
+                position=None,
+                provider_media_id=item_id or str(tmdb_id_for_item(media) or ""),
             )
-        if page >= _total_pages(data, page):
-            break
-        page += 1
+        )
     return out, remote_ids
 
 

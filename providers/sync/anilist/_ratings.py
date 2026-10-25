@@ -404,7 +404,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     viewer = adapter.client.viewer()
     user_id = viewer.get("id") if isinstance(viewer, dict) else None
     if not user_id:
-        return {}
+        raise RuntimeError("anilist_ratings_missing_viewer")
 
     t0 = time.time()
     data = adapter.client.gql(
@@ -417,7 +417,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     mlc = (data or {}).get("MediaListCollection")
     lists = mlc.get("lists") if isinstance(mlc, Mapping) else None
     if not isinstance(lists, list):
-        return {}
+        raise RuntimeError("anilist_ratings_invalid_list")
 
     out: dict[str, dict[str, Any]] = {}
     done = 0

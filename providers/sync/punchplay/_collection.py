@@ -9,6 +9,7 @@ from cw_platform.collection_media import punchplay_format
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 from ._common import (
+    PunchPlayError,
     URL_COLLECTION,
     URL_COLLECTION_ITEM,
     URL_COLLECTION_WRITE,
@@ -144,18 +145,20 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         guard += 1
         if guard > 2000:
             _warn(FEATURE, "collection_page_guard_tripped")
-            break
+            raise PunchPlayError("punchplay_collection_page_guard_tripped")
         params: dict[str, Any] = {"limit": 200}
         if cursor:
             params["cursor"] = cursor
         resp = punchplay_request(adapter, "GET", URL_COLLECTION, params=params)
         if resp.status_code != 200:
             _warn(FEATURE, "collection_fetch_failed", status=resp.status_code, error=error_of(resp), request_id=request_id_of(resp))
-            break
-        data = safe_json(resp) or {}
+            raise PunchPlayError(f"punchplay_collection_http_{resp.status_code}")
+        data = safe_json(resp)
         if not isinstance(data, Mapping):
-            break
+            raise PunchPlayError("punchplay_collection_invalid_response")
         rows = data.get("items")
+        if not isinstance(rows, list):
+            raise PunchPlayError("punchplay_collection_invalid_response")
         rows = [row for row in rows if isinstance(row, Mapping)] if isinstance(rows, list) else []
         for row in rows:
             item = _to_minimal(row)
@@ -164,9 +167,12 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
             key = _key_of(item)
             if key:
                 collected[key] = item
-        cursor = str(data.get("nextCursor") or "").strip() or None
-        if not cursor:
+        nxt = str(data.get("nextCursor") or "").strip() or None
+        if not nxt:
             break
+        if nxt == cursor:
+            raise PunchPlayError("punchplay_collection_repeated_cursor")
+        cursor = nxt
     _info(FEATURE, "index_done", count=len(collected))
     return collected
 

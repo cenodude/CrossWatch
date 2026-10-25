@@ -6,6 +6,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from ._common import (
+    FlickListError,
     HISTORY_PAGE_DEFAULT,
     HISTORY_PAGE_MAX,
     URL_HISTORY,
@@ -55,7 +56,7 @@ def _rows(data: Any) -> list[Any]:
             value = data.get(key)
             if isinstance(value, list):
                 return value
-    return []
+    raise FlickListError("flicklist_history_invalid_response")
 
 
 def _page_count(data: Any, current: int) -> int:
@@ -109,7 +110,7 @@ def _supplement_watched_movies(adapter: Any, out: dict[str, dict[str, Any]]) -> 
     resp = flicklist_request(adapter, "GET", URL_WATCHED_MOVIES)
     if not ok_status(resp):
         _warn(FEATURE, "watched_movies_failed", status=int(resp.status_code), error=error_of(resp))
-        return 0, 0
+        raise FlickListError(f"flicklist_history_watched_movies_http_{int(resp.status_code)}")
     data = safe_json(resp)
     rows = _rows(data)
     if not rows:
@@ -144,7 +145,7 @@ def _supplement_watched_shows(adapter: Any, out: dict[str, dict[str, Any]]) -> t
     resp = flicklist_request(adapter, "GET", URL_WATCHED_SHOWS)
     if not ok_status(resp):
         _warn(FEATURE, "watched_shows_failed", status=int(resp.status_code), error=error_of(resp))
-        return 0, 0
+        raise FlickListError(f"flicklist_history_watched_shows_http_{int(resp.status_code)}")
     data = safe_json(resp)
     rows = _rows(data)
     if not rows:
@@ -231,17 +232,26 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     skipped = 0
     page = 1
+    raw_rows = 0
+    item_count: int | None = None
     while page <= max_pages:
         resp = flicklist_request(adapter, "GET", URL_HISTORY, params={"page": page, "limit": per_page})
         if not ok_status(resp):
             _warn(FEATURE, "index_failed", page=page, status=int(resp.status_code), error=error_of(resp))
-            break
+            raise FlickListError(f"flicklist_history_http_{int(resp.status_code)}")
         data = safe_json(resp)
         rows = _rows(data)
+        page_items = header_int(resp, "X-FlickList-Item-Count")
+        if item_count is not None and page_items is not None and page_items != item_count:
+            raise FlickListError(f"flicklist_history_total_changed:{item_count}->{page_items}")
+        item_count = page_items if page_items is not None else item_count
         if not rows:
             if page == 1:
                 _dbg(FEATURE, "index_empty_response", **read_shape(resp, data))
+            if page > 1 or (item_count or 0) > 0:
+                raise FlickListError(f"flicklist_history_incomplete_read:page {page}")
             break
+        raw_rows += len(rows)
         for row in rows:
             if not isinstance(row, Mapping):
                 skipped += 1
@@ -258,9 +268,15 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
                 suffix = str(item.get("_flicklist_history_id") or len(out))
                 key = f"{key}~fl{suffix}"
             out[key] = item
-        if page >= _response_page_count(resp, data, page):
+        page_count = _response_page_count(resp, data, page)
+        if page >= page_count:
             break
         page += 1
+    else:
+        _warn(FEATURE, "index_page_cap_reached", max_pages=max_pages, count=len(out))
+        raise FlickListError(f"flicklist_history_page_cap_reached:{max_pages}")
+    if item_count is not None and raw_rows != item_count:
+        raise FlickListError(f"flicklist_history_incomplete_read:{raw_rows}/{item_count}")
     if not any((item.get("type") == "movie") for item in out.values()):
         added, extra_skipped = _supplement_watched_movies(adapter, out)
         skipped += extra_skipped

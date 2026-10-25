@@ -27,6 +27,7 @@ from .._log import log as cw_log
 from .._mod_common import request_with_retries
 
 from ._common import (
+    require_page,
     CursorPager,
     SHOW_BATCH_LIMIT,
     MDBListFetchError,
@@ -1036,6 +1037,7 @@ def _build_event_index(
             break
 
         data = r.json() if (r.text or "").strip() else {}
+        require_page(data, "history")
         more = pager.advance(data, r)
         buckets = {
             "movies": data.get("movies") or [],

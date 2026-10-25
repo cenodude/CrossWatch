@@ -8,6 +8,7 @@ from typing import Any, Iterable, Mapping
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 from ._common import (
+    PunchPlayError,
     LIST_PAGE_MAX,
     URL_LIST_DETAILS,
     URL_LIST_ITEMS,
@@ -129,18 +130,20 @@ def watchlist_ids(adapter: Any) -> list[dict[str, Any]]:
         guard += 1
         if guard > 200:
             _warn(FEATURE, "list_page_guard_tripped")
-            break
+            raise PunchPlayError("punchplay_watchlist_lists_page_guard_tripped")
         params: dict[str, Any] = {"limit": 100}
         if cursor:
             params["cursor"] = cursor
         resp = punchplay_request(adapter, "GET", URL_LISTS, params=params)
         if resp.status_code != 200:
             _warn(FEATURE, "lists_fetch_failed", status=resp.status_code, error=error_of(resp), request_id=request_id_of(resp))
-            break
-        data = safe_json(resp) or {}
+            raise PunchPlayError(f"punchplay_watchlist_lists_http_{resp.status_code}")
+        data = safe_json(resp)
         if not isinstance(data, Mapping):
-            break
+            raise PunchPlayError("punchplay_watchlist_lists_invalid_response")
         rows = data.get("items")
+        if not isinstance(rows, list):
+            raise PunchPlayError("punchplay_watchlist_lists_invalid_response")
         rows = [r for r in rows if isinstance(r, Mapping)] if isinstance(rows, list) else []
         for row in rows:
             if not row.get("isWatchlist"):
@@ -149,9 +152,12 @@ def watchlist_ids(adapter: Any) -> list[dict[str, Any]]:
                 _info(FEATURE, "skip_external_watchlist", list_id=row.get("id"), external_source=row.get("externalSource"))
                 continue
             out.append({"id": row.get("id"), "name": row.get("name"), "item_count": row.get("itemCount"), "dynamic": bool(row.get("isDynamicList"))})
-        cursor = data.get("nextCursor") or None
-        if not cursor:
+        nxt = data.get("nextCursor") or None
+        if not nxt:
             break
+        if nxt == cursor:
+            raise PunchPlayError("punchplay_watchlist_lists_repeated_cursor")
+        cursor = nxt
     return out
 
 
@@ -173,10 +179,12 @@ def _index_list_detail(adapter: Any, list_id: Any, collected: dict[str, dict[str
     resp = punchplay_request(adapter, "GET", URL_LIST_DETAILS.format(list_id=list_id))
     if resp.status_code != 200:
         _warn(FEATURE, "details_fetch_failed", list_id=list_id, status=resp.status_code, error=error_of(resp), request_id=request_id_of(resp))
-        return False
-    data = safe_json(resp) or {}
+        raise PunchPlayError(f"punchplay_watchlist_details_http_{resp.status_code}")
+    data = safe_json(resp)
     if not isinstance(data, Mapping):
-        return True
+        raise PunchPlayError("punchplay_watchlist_details_invalid_response")
+    if not isinstance(data.get("items"), list):
+        raise PunchPlayError("punchplay_watchlist_details_invalid_response")
     _collect_rows(data.get("items"), collected)
     return True
 
@@ -188,7 +196,7 @@ def _index_dynamic_items(adapter: Any, list_id: Any, collected: dict[str, dict[s
         guard += 1
         if guard > 2000:
             _warn(FEATURE, "items_page_guard_tripped", list_id=list_id)
-            break
+            raise PunchPlayError("punchplay_watchlist_items_page_guard_tripped")
         resp = punchplay_request(
             adapter,
             "GET",
@@ -197,19 +205,23 @@ def _index_dynamic_items(adapter: Any, list_id: Any, collected: dict[str, dict[s
         )
         if resp.status_code != 200:
             _warn(FEATURE, "items_fetch_failed", list_id=list_id, status=resp.status_code, error=error_of(resp), request_id=request_id_of(resp))
-            break
-        data = safe_json(resp) or {}
+            raise PunchPlayError(f"punchplay_watchlist_items_http_{resp.status_code}")
+        data = safe_json(resp)
         if not isinstance(data, Mapping):
-            break
+            raise PunchPlayError("punchplay_watchlist_items_invalid_response")
         rows = data.get("items")
+        if not isinstance(rows, list):
+            raise PunchPlayError("punchplay_watchlist_items_invalid_response")
         row_count, _added = _collect_rows(rows, collected)
         nxt = data.get("nextOffset")
         try:
             nxt_i = int(nxt) if nxt is not None else None
         except Exception:
             nxt_i = None
-        if nxt_i is None or nxt_i <= offset or row_count <= 0:
+        if nxt_i is None or row_count <= 0:
             break
+        if nxt_i <= offset:
+            raise PunchPlayError("punchplay_watchlist_items_invalid_continuation")
         offset = nxt_i
 
 

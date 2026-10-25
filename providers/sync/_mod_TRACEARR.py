@@ -12,14 +12,14 @@ import threading
 import time
 
 from ._log import log as cw_log
-from ._mod_common import SimpleRateLimiter, build_session, request_with_retries, safe_json
+from ._mod_common import SimpleRateLimiter, build_session, request_with_retries
 
 try:  # type: ignore[name-defined]
     ctx  # type: ignore[misc]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "0.1"
+__VERSION__ = "1.0"
 os.environ.setdefault("CW_TRACEARR_UA", http_user_agent("Tracearr", override_env="CW_TRACEARR_UA"))
 __all__ = ["get_manifest", "TRACEARRModule", "OPS"]
 
@@ -157,7 +157,11 @@ class TRACEARRClient:
         if r.status_code >= 400:
             _warn("http_failed", op=path, status=r.status_code)
             raise RuntimeError(f"HTTP {r.status_code}")
-        return safe_json(r)
+        try:
+            return r.json()
+        except Exception as exc:
+            _warn("http_failed", op=path, status=r.status_code, reason="invalid_response")
+            raise RuntimeError("invalid_response") from exc
 
     def show_ids(self, show_media_id: Any) -> dict[str, str]:
         sid = str(show_media_id or "").strip()
@@ -174,8 +178,7 @@ class TRACEARRClient:
             data = self.get(f"/media/{sid}")
         except Exception as e:
             _dbg("show_lookup_failed", show_media_id=sid, error=str(e))
-            self._show_misses.add(sid)
-            return {}
+            raise
         ids: dict[str, str] = {}
         if isinstance(data, Mapping):
             imdb = str(data.get("imdb_id") or "").strip()
@@ -248,7 +251,7 @@ class TRACEARRModule:
 
     def build_index(self, feature: str) -> Mapping[str, dict[str, Any]]:
         if feature != "history":
-            _info("index_skipped", feature=feature, reason="disabled_or_missing")
+            _info("index_skipped", sync_feature=feature, reason="disabled_or_missing")
             return {}
         from .tracearr import _history
 

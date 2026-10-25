@@ -10,6 +10,7 @@ from cw_platform.id_map import canonical_key, minimal as id_minimal
 from cw_platform.playlists import PLAYLIST_KIND_REGULAR, PLAYLIST_KIND_SMART, PlaylistItem, PlaylistResource, PlaylistSnapshot
 
 from ._common import (
+    FlickListError,
     HISTORY_PAGE_MAX,
     URL_LIST,
     URL_LISTS,
@@ -53,7 +54,7 @@ def _rows(data: Any) -> list[Any]:
             value = data.get(key)
             if isinstance(value, list):
                 return value
-    return []
+    raise FlickListError("flicklist_playlists_invalid_response")
 
 
 def _header_page_count(resp: Any, current: int) -> int:
@@ -92,7 +93,7 @@ def list_resources(adapter: Any) -> list[PlaylistResource]:
     resp = flicklist_request(adapter, "GET", URL_LISTS)
     if not ok_status(resp):
         _warn(FEATURE, "list_resources_failed", status=int(resp.status_code), error=error_of(resp))
-        return []
+        raise FlickListError(f"flicklist_playlists_list_resources_http_{int(resp.status_code)}")
     out = [_resource_from_row(adapter, row) for row in _rows(safe_json(resp)) if isinstance(row, Mapping)]
     resources = [res for res in out if res is not None]
     _info(FEATURE, "list_resources_done", count=len(resources))

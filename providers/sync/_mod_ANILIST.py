@@ -55,7 +55,7 @@ def _confirmed_keys(key_of, items: Iterable[Mapping[str, Any]], unresolved: Any)
         seen.add(k)
     return out
 
-__VERSION__ = "0.1"
+__VERSION__ = "1.0"
 os.environ.setdefault("CW_ANILIST_UA", http_user_agent("AniList", override_env="CW_ANILIST_UA"))
 __all__ = ["get_manifest", "ANILISTModule", "OPS"]
 
@@ -470,7 +470,7 @@ class ANILISTModule:
     def build_index(self, feature: str, **kwargs: Any) -> dict[str, dict[str, Any]]:
         mod = _feature_modules().get(str(feature or "").strip().lower())
         if not mod:
-            _info("index_skipped", feature=feature, reason="disabled_or_missing")
+            _info("index_skipped", sync_feature=feature, reason="disabled_or_missing")
             return {}
         return mod.build_index(self)
 
@@ -489,7 +489,7 @@ class ANILISTModule:
         feature_name = str(feature or "").strip().lower()
         mod = _feature_modules().get(feature_name)
         if not mod:
-            _info("write_skipped", op="add", feature=feature, reason="disabled_or_missing")
+            _info("write_skipped", op="add", sync_feature=feature, reason="disabled_or_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         if hasattr(mod, "add_detailed"):
             res = mod.add_detailed(self, lst)  # type: ignore[attr-defined]
@@ -524,7 +524,7 @@ class ANILISTModule:
         feature_name = str(feature or "").strip().lower()
         mod = _feature_modules().get(feature_name)
         if not mod:
-            _info("write_skipped", op="remove", feature=feature, reason="disabled_or_missing")
+            _info("write_skipped", op="remove", sync_feature=feature, reason="disabled_or_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         detailed = getattr(mod, "remove_detailed", None)
         if callable(detailed):

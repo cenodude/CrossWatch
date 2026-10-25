@@ -26,7 +26,7 @@ from providers.sync.flicklist._common import (
     tag_dropped_shows as flicklist_tag_dropped_shows,
 )
 
-__VERSION__ = "0.3"
+__VERSION__ = "1.0"
 __all__ = ["get_manifest", "FLICKLISTModule", "OPS", "feat_collection", "feat_history", "feat_playlists", "feat_progress", "feat_ratings", "feat_watchlist"]
 
 if "ctx" not in globals():

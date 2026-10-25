@@ -313,7 +313,7 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
             meta = client.call("get_metadata", rating_key=rk) or None
         except Exception as e:
             _log("http_failed", rating_key=rk, op="get_metadata", error=str(e))
-            meta = None
+            raise
         meta_cache[rk] = meta if isinstance(meta, Mapping) else None
         return meta_cache[rk]
 
@@ -321,7 +321,7 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
         pages += 1
         if pages > cfg_max_pages:
             _log("index_reconcile", level="warn", reason="max_pages_reached", pages=pages, max_pages=cfg_max_pages)
-            break
+            raise RuntimeError(f"tautulli_history_page_cap_reached:{cfg_max_pages}")
 
         params: dict[str, Any] = {
             "start": start,
@@ -349,6 +349,10 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
                 total = blk.get("recordsFiltered") or blk.get("recordsTotal")
 
         if not rows:
+            total_i = _to_int_total(total)
+            if total_i is not None and start < total_i:
+                _log("index_reconcile", level="warn", reason="incomplete_read", start=start, total=total_i)
+                raise RuntimeError(f"tautulli_history_incomplete_read:{start}/{total_i}")
             break
 
         sig = _page_sig(rows)
@@ -356,7 +360,7 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
             repeats += 1
             if repeats >= 2:
                 _log("index_reconcile", level="warn", reason="page_repeat", pages=pages, start=start, sig=sig)
-                break
+                raise RuntimeError("tautulli_history_repeated_page")
         else:
             repeats = 0
             prev_sig = sig

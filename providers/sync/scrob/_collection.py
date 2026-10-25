@@ -12,6 +12,7 @@ from typing import Any, Iterable, Mapping
 from cw_platform.id_map import canonical_key, ids_from, minimal as id_minimal
 
 from ._common import (
+    ScrobError,
     MEDIA_TYPE_EPISODE,
     MEDIA_TYPE_MOVIE,
     MEDIA_TYPE_SERIES,
@@ -220,6 +221,14 @@ def _json_rows(data: Any) -> list[Mapping[str, Any]]:
     return rows
 
 
+def _known_export_shape(data: Any) -> bool:
+    if isinstance(data, list):
+        return True
+    if not isinstance(data, Mapping):
+        return False
+    return any(isinstance(data.get(key), list) for key in ("collection", "items", "results", "data", "movies", "shows", "seasons", "episodes"))
+
+
 def _loads_json(data: bytes) -> Any:
     try:
         return json.loads(data.decode("utf-8", "replace"))
@@ -247,16 +256,25 @@ def _export_payload(resp: Any) -> list[Mapping[str, Any]]:
                 if not base.endswith((".json", ".txt")):
                     continue
                 loaded = _loads_json(archive.read(info))
+                if not _known_export_shape(loaded):
+                    _warn(FEATURE, "export_member_unreadable", member=info.filename)
+                    raise ScrobError("scrob_collection_export_member_unreadable")
                 rows.extend(_json_rows(loaded))
         return rows
 
+    if not content:
+        _warn(FEATURE, "export_empty")
+        raise ScrobError("scrob_collection_export_empty")
     loaded = safe_json(resp)
-    if loaded is None and content:
+    if loaded is None:
         loaded = _loads_json(content)
+    if not _known_export_shape(loaded):
+        _warn(FEATURE, "export_unreadable", size=len(content))
+        raise ScrobError("scrob_collection_export_unreadable")
     return _json_rows(loaded)
 
 
-def _fetch_rows(adapter: Any) -> list[Mapping[str, Any]] | None:
+def _fetch_rows(adapter: Any) -> list[Mapping[str, Any]]:
     resp = scrob_request(
         adapter,
         "GET",
@@ -275,14 +293,12 @@ def _fetch_rows(adapter: Any) -> list[Mapping[str, Any]] | None:
     )
     if not ok_status(resp):
         _warn(FEATURE, "fetch_failed", status=int(resp.status_code), error=error_of(resp))
-        return None
+        raise ScrobError(f"scrob_collection_http_{int(resp.status_code)}")
     return _export_payload(resp)
 
 
 def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     rows = _fetch_rows(adapter)
-    if rows is None:
-        return {}
     out: dict[str, dict[str, Any]] = {}
     skipped = 0
     for row in rows:
@@ -379,8 +395,9 @@ def _episode_coverage(items: Iterable[Mapping[str, Any]]) -> dict[int, set[int]]
 
 
 def _live_coverage(adapter: Any) -> dict[int, set[int]] | None:
-    rows = _fetch_rows(adapter)
-    if rows is None:
+    try:
+        rows = _fetch_rows(adapter)
+    except ScrobError:
         return None
     return _episode_coverage(item for row in rows for item in _items_from_row(row))
 

@@ -8,7 +8,7 @@ from typing import Any, Iterable, Mapping
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 from .._log import log as cw_log
-from ._common import cfg_section, media_type_for_item, read_json, state_file, tmdb_id_for_item, write_json
+from ._common import cfg_section, media_type_for_item, paged_items, read_json, state_file, tmdb_id_for_item, write_json
 
 
 def _dbg(event: str, **fields: Any) -> None:
@@ -73,10 +73,7 @@ def _find_watchlist(adapter: Any) -> str | None:
     ).strip() or "Watchlist"
     configured_name_l = configured_name.lower()
 
-    data = adapter.client.get_json("/api/external/lists", params={"page": 1, "perPage": 500})
-    rows = data.get("items") if isinstance(data, Mapping) else None
-    if not isinstance(rows, list):
-        return None
+    rows = paged_items(adapter, "/api/external/lists", per_page=500, max_pages=1000, what="watchlist_lists")
 
     typed_watchlist: str | None = None
     fallback: str | None = None
@@ -122,32 +119,17 @@ def _ensure_watchlist(adapter: Any) -> str | None:
 def _fetch_all_items(adapter: Any, list_id: str) -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
     out: dict[str, dict[str, Any]] = {}
     remote_ids: dict[str, str] = {}
-    page = 1
     per_page = int(getattr(adapter.cfg, "watchlist_page_size", 500) or 500)
     per_page = max(1, min(per_page, 500))
-    while True:
-        data = adapter.client.get_json(
-            f"/api/external/lists/{list_id}/items",
-            params={"page": page, "perPage": per_page},
-        )
-        rows = data.get("items") if isinstance(data, Mapping) else None
-        if not isinstance(rows, list) or not rows:
-            break
-        for row in rows:
-            if not isinstance(row, Mapping):
-                continue
-            mini = _to_minimal(row)
-            if not mini:
-                continue
-            key = _item_key(mini)
-            out[key] = mini
-            rid = str(row.get("id") or "").strip()
-            if rid:
-                remote_ids[key] = rid
-        total_pages = int(data.get("totalPages") or data.get("total_pages") or page)
-        if page >= total_pages:
-            break
-        page += 1
+    for row in paged_items(adapter, f"/api/external/lists/{list_id}/items", per_page=per_page, max_pages=1000, what="watchlist"):
+        mini = _to_minimal(row)
+        if not mini:
+            continue
+        key = _item_key(mini)
+        out[key] = mini
+        rid = str(row.get("id") or "").strip()
+        if rid:
+            remote_ids[key] = rid
     return out, remote_ids
 
 

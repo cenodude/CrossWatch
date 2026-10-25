@@ -26,7 +26,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "1.2"
+__VERSION__ = "1.3"
 __all__ = ["get_manifest", "PUBLICMETADBModule", "OPS"]
 
 
@@ -232,6 +232,18 @@ class PUBLICMETADBClient:
             return {"status": r.status_code}
         data = safe_json(r)
         return data if isinstance(data, Mapping) else {}
+
+    def read_json(self, path: str, **kw: Any) -> Any:
+        r = self.get(path, **kw)
+        if not (200 <= r.status_code < 300):
+            raise PUBLICMETADBError(f"publicmetadb_read_http_{r.status_code}:{path}")
+        try:
+            data = r.json()
+        except Exception as exc:
+            raise PUBLICMETADBError(f"publicmetadb_read_invalid_response:{path}") from exc
+        if not isinstance(data, (Mapping, list)):
+            raise PUBLICMETADBError(f"publicmetadb_read_invalid_response:{path}")
+        return data
 
     def post_json(self, path: str, **kw: Any) -> Mapping[str, Any]:
         r = self.post(path, **kw)

@@ -10,6 +10,7 @@ from cw_platform.history_events import history_sync_key, minimal_history_item
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 from ._common import (
+    PunchPlayError,
     HISTORY_PAGE_MAX,
     URL_HISTORY,
     URL_TITLE_HISTORY,
@@ -215,23 +216,28 @@ def _index_from_history_endpoint(adapter: Any, *, per_page: int, max_pages: int)
         pages += 1
         if max_pages and pages > max_pages:
             _warn(FEATURE, "index_page_cap_hit", max_pages=max_pages)
-            break
+            raise PunchPlayError(f"punchplay_history_page_cap_reached:{max_pages}")
         params: dict[str, Any] = {"limit": per_page}
         if cursor:
             params["cursor"] = cursor
         resp = punchplay_request(adapter, "GET", URL_HISTORY, params=params)
         if resp.status_code != 200:
             _warn(FEATURE, "history_fetch_failed", status=resp.status_code, error=error_of(resp), request_id=request_id_of(resp))
-            break
-        data = safe_json(resp) or {}
+            raise PunchPlayError(f"punchplay_history_http_{resp.status_code}")
+        data = safe_json(resp)
         if not isinstance(data, Mapping):
-            break
+            raise PunchPlayError("punchplay_history_invalid_response")
         rows = data.get("items")
+        if not isinstance(rows, list):
+            raise PunchPlayError("punchplay_history_invalid_response")
         row_count = _collect_history_rows(adapter, rows, collected)
 
-        cursor = data.get("nextCursor") or None
-        if not cursor or row_count <= 0:
+        nxt = data.get("nextCursor") or None
+        if not nxt or row_count <= 0:
             break
+        if nxt == cursor:
+            raise PunchPlayError("punchplay_history_repeated_cursor")
+        cursor = nxt
 
     _dbg(FEATURE, "history_endpoint_scanned", indexed=len(collected), pages=pages)
     return collected

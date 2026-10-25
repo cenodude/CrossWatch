@@ -18,7 +18,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "1.1"
+__VERSION__ = "1.2"
 os.environ.setdefault("CW_TAUTULLI_UA", http_user_agent("Tautulli", override_env="CW_TAUTULLI_UA"))
 __all__ = ["get_manifest", "OPS"]
 
@@ -156,7 +156,8 @@ class TAUTULLIClient:
         if r.status_code >= 400:
             _warn("http_failed", op=cmd, status=r.status_code)
             raise RuntimeError(f"HTTP {r.status_code}")
-        return j
+        _warn("http_failed", op=cmd, status=r.status_code, reason="invalid_response")
+        raise RuntimeError("invalid_response")
 
 
 class TAUTULLIModule:
@@ -209,7 +210,7 @@ class TAUTULLIModule:
 
     def build_index(self, feature: str) -> Mapping[str, dict[str, Any]]:
         if feature != "history":
-            _info("index_skipped", feature=feature, reason="disabled_or_missing")
+            _info("index_skipped", sync_feature=feature, reason="disabled_or_missing")
             return {}
         from .tautulli import _history
 

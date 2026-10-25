@@ -8,6 +8,7 @@ from typing import Any, Iterable, Mapping
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 from ._common import (
+    ScrobError,
     MEDIA_TYPE_EPISODE,
     PATH_CONTINUE_WATCHING,
     PATH_WEBHOOK_KODI,
@@ -111,10 +112,14 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     resp = scrob_request(adapter, "GET", PATH_CONTINUE_WATCHING, params={"limit": CONTINUE_WATCHING_LIMIT})
     if not ok_status(resp):
         _warn(FEATURE, "fetch_failed", status=int(resp.status_code), error=error_of(resp))
-        return {}
+        raise ScrobError(f"scrob_progress_http_{int(resp.status_code)}")
     data = safe_json(resp)
-    rows = data.get("continue_watching") if isinstance(data, Mapping) else None
-    rows = [r for r in rows if isinstance(r, Mapping)] if isinstance(rows, list) else []
+    if not isinstance(data, Mapping):
+        raise ScrobError("scrob_progress_invalid_response")
+    rows = data.get("continue_watching")
+    if not isinstance(rows, list):
+        raise ScrobError("scrob_progress_invalid_response")
+    rows = [r for r in rows if isinstance(r, Mapping)]
 
     out: dict[str, dict[str, Any]] = {}
     skipped = 0

@@ -184,13 +184,11 @@ def _entries(adapter: Any, *, strict: bool = False) -> dict[int, dict[str, Any]]
     viewer = adapter.client.viewer()
     user_id = viewer.get("id") if isinstance(viewer, dict) else None
     if not user_id:
-        if strict:
-            raise ValueError("missing_viewer")
-        return {}
+        raise ValueError("missing_viewer")
     data = adapter.client.gql(GQL_HISTORY_LIST, {"userId": int(user_id), "type": "ANIME"}, feature="history:index")
     collection = (data or {}).get("MediaListCollection")
     lists = collection.get("lists") if isinstance(collection, Mapping) else None
-    if strict and not isinstance(lists, list):
+    if not isinstance(lists, list):
         raise ValueError("invalid_history_list")
     out: dict[int, dict[str, Any]] = {}
     for bucket in lists if isinstance(lists, list) else []:
@@ -310,7 +308,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     svc = _mapping_service(adapter)
     if svc is None:
         _warn("anime_mapping_unavailable", op="index")
-        return {}
+        raise RuntimeError("anilist_history_anime_mapping_unavailable")
     tag = _release_tag(getattr(adapter, "raw_cfg", None))
     out: dict[str, dict[str, Any]] = {}
     unmapped = 0

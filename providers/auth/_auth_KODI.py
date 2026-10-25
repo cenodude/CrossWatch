@@ -191,6 +191,9 @@ def jsonrpc_batch_call(
         if not rid or "result" not in row:
             raise KodiAuthError("Kodi JSON-RPC batch item is missing result", reason="invalid_response")
         out[rid] = row.get("result")
+    missing = [rid for rid in id_to_method if rid not in out]
+    if missing:
+        raise KodiAuthError(f"Kodi JSON-RPC batch response is missing {', '.join(missing)}", reason="invalid_response")
     return out
 
 

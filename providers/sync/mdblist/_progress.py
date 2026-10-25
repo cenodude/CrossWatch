@@ -184,16 +184,21 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
     response = _request(adapter, "GET", "/sync/playback", params={"apikey": adapter.cfg.api_key})
     if not (200 <= int(getattr(response, "status_code", 0) or 0) < 300):
         _warn("index_http_failed", status=getattr(response, "status_code", None))
-        return {}
-    data = response.json() if (getattr(response, "text", "") or "").strip() else []
+        raise RuntimeError(f"mdblist_progress_http_{getattr(response, 'status_code', 0)}")
+    if not (getattr(response, "text", "") or "").strip():
+        raise RuntimeError("mdblist_progress_empty_response")
+    data = response.json()
     rows: list[Mapping[str, Any]] = []
     if isinstance(data, list):
         rows = [row for row in data if isinstance(row, Mapping)]
     elif isinstance(data, Mapping):
-        for key in ("playback", "items", "sessions", "movies", "episodes"):
-            bucket = data.get(key)
-            if isinstance(bucket, list):
-                rows.extend(row for row in bucket if isinstance(row, Mapping))
+        buckets = [bucket for key in ("playback", "items", "sessions", "movies", "episodes") if isinstance(bucket := data.get(key), list)]
+        if not buckets:
+            raise RuntimeError("mdblist_progress_invalid_response")
+        for bucket in buckets:
+            rows.extend(row for row in bucket if isinstance(row, Mapping))
+    else:
+        raise RuntimeError("mdblist_progress_invalid_response")
 
     out: dict[str, dict[str, Any]] = {}
     skipped: dict[str, int] = {}

@@ -57,8 +57,9 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
                 _warn("http_failed", op="build_index", source=path, page=page, status=r.status_code)
                 raise RuntimeError(f"TMDb ratings fetch failed ({path}) ({r.status_code})")
             data = r.json() if (r.text or "").strip() else {}
-            if not isinstance(data, Mapping):
-                data = {}
+            if not isinstance(data, Mapping) or not isinstance(data.get("results"), list):
+                _warn("invalid_response", op="build_index", page=page)
+                raise RuntimeError("TMDb ratings fetch returned an invalid page")
             total_pages = as_int(data.get("total_pages")) or total_pages
             raw_results = data.get("results")
             results: list[Any] = raw_results if isinstance(raw_results, list) else []

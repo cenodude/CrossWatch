@@ -51,7 +51,7 @@ def test_publicmetadb_page_limits_and_complete_reads(feature, configured, expect
         calls.append(params)
         return {"items": rows[:expected] if params["page"] == 1 else rows[expected:], "totalPages": 2}
 
-    adapter = SimpleNamespace(cfg=cfg, client=SimpleNamespace(get_json=get_json))
+    adapter = SimpleNamespace(cfg=cfg, client=SimpleNamespace(get_json=get_json, read_json=get_json))
     if feature == "playlists":
         items, ids = module._fetch_items(adapter, "test-list")
     elif feature == "watchlist":

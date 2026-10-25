@@ -1,3 +1,4 @@
+# CrossWatch test scripts
 from __future__ import annotations
 
 import importlib
@@ -27,7 +28,7 @@ class FakeClient:
         self.responses = responses or {}
         self.calls: list[dict[str, Any]] = []
 
-    def get_json(self, path: str, **kw: Any) -> dict[str, Any]:
+    def read_json(self, path: str, **kw: Any) -> dict[str, Any]:
         page = None
         params = kw.get("params")
         if isinstance(params, dict):
@@ -190,7 +191,7 @@ def test_reorder_is_unsupported():
 
 
 def test_publicmetadb_manifest_and_auth_capabilities_cover_supported_features():
-    assert pmdb.__VERSION__ == "1.2"
+    assert pmdb.__VERSION__ == "1.3"
     assert pmdb_auth.__VERSION__ == "1.0"
 
     features = pmdb.get_manifest()["features"]

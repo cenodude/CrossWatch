@@ -433,7 +433,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     viewer = adapter.client.viewer()
     user_id = viewer.get("id") if isinstance(viewer, dict) else None
     if not user_id:
-        return {}
+        raise RuntimeError("anilist_watchlist_missing_viewer")
 
     shadow = _shadow_load()
     rev = _shadow_rev(shadow)
@@ -460,7 +460,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     mlc = (data or {}).get("MediaListCollection")
     lists = mlc.get("lists") if isinstance(mlc, Mapping) else None
     if not isinstance(lists, list):
-        return {}
+        raise RuntimeError("anilist_watchlist_invalid_list")
 
     out: dict[str, dict[str, Any]] = {}
     live_ids: set[int] = set()
