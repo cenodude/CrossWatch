@@ -105,6 +105,11 @@ test("live activity shows candidate counts and escapes recent titles",()=>{
   const html=$("#pr-recent").innerHTML;
   assert(!html.includes("<img"));
   assert(html.indexOf("&lt;img")<html.indexOf("Old movie"));
+  job.stage="title_matching";
+  job.activity.current_action="Last checked";
+  sandbox.renderActivity();
+  assert.match($("#pr-live-counts").textContent,/40 database rows checked.*5 found for review.*35 skipped/);
+  assert.equal($("#pr-current").textContent,"Last checked: Series <Special>");
   job.activity={};job.recent=[];
   sandbox.renderActivity();
   assert.equal($("#pr-activity").hidden,true);
@@ -278,6 +283,31 @@ test("auto progress polling preserves page and fetches rows only when the previe
   f.sandbox.data=null;
   await f.sandbox.poll();
   assert.deepEqual(f.pages,[100,100]);
+});
+
+test("title matching displays its phase, candidate count and accessible progress",async()=>{
+  const f=pollingFixture();
+  const attributes={};
+  const fill={style:{}};
+  const bar=f.sandbox.$("#pr-bar");
+  bar.setAttribute=(name,value)=>{attributes[name]=value;};
+  bar.removeAttribute=name=>{delete attributes[name];};
+  bar.querySelector=()=>fill;
+  Object.assign(f.current,{status:"reading",stage:"title_matching",message:"Searching Plex for title matches",done:1,total:2});
+  await f.sandbox.poll();
+  assert.equal(f.sandbox.$("#pr-stage").textContent,"Database scan complete · Searching Plex for title matches");
+  assert.equal(f.sandbox.$("#pr-count").textContent,"1 / 2 candidates checked");
+  assert.equal(attributes["aria-valuetext"],"1 / 2 candidates checked");
+  assert.equal(attributes["aria-valuenow"],"50");
+  assert.equal(fill.style.width,"50%");
+  Object.assign(f.current,{stage:"matching",message:"Matching removed-item history",done:5,total:9});
+  await f.sandbox.poll();
+  assert.equal(f.sandbox.$("#pr-count").textContent,"5 / 9");
+  assert.equal(f.sandbox.$("#pr-stage").textContent,"Matching removed-item history");
+  Object.assign(f.current,{stage:"review",total:0});
+  await f.sandbox.poll();
+  assert.equal(f.sandbox.$("#pr-count").textContent,"Checking duplicates and existing watch events…");
+  assert.equal(attributes["aria-valuenow"],undefined);
 });
 
 test("late progress response cannot reopen a closed recovery",async()=>{

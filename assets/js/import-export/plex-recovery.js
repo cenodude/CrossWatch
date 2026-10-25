@@ -155,8 +155,9 @@ export function mountPlexRecovery(host) {
       const changed=!data || data.import_id !== job.id || data.status !== job.status || data.revision !== job.revision;
       reading = job.status === "reading";
       $("#pr-progress").hidden = !reading;
-      $("#pr-stage").textContent = job.message;
+      $("#pr-stage").textContent = job.stage === "title_matching" ? `Database scan complete · ${job.message}` : job.message;
       $("#pr-count").textContent = job.total ? `${number(job.done)} / ${number(job.total)}` : job.stage === "review" ? "Checking duplicates and existing watch events…" : job.source === "tautulli" ? "Waiting for Tautulli…" : "Waiting for Plex…";
+      if(job.stage === "title_matching") $("#pr-count").textContent += " candidates checked";
       const bar=$("#pr-bar"), fill=bar.querySelector("span");
       const percent=job.total ? Math.min(100,Math.max(0,job.done/job.total*100)) : null;
       if (percent !== null) bar.setAttribute("aria-valuenow",String(percent)); else bar.removeAttribute("aria-valuenow");
@@ -190,7 +191,8 @@ export function mountPlexRecovery(host) {
     const activity=job?.activity || {}, recent=job?.recent || [];
     $("#pr-activity").hidden=activity.checked == null;
     $("#pr-current").textContent=activity.current_item ? `${activity.current_action || "Last checked"}: ${activity.current_item}` : "";
-    $("#pr-live-counts").textContent=`${number(activity.checked)} checked · ${number(activity.found)} found for review · ${number(activity.skipped)} skipped`;
+    const checkedLabel=job?.stage === "title_matching" ? "database rows checked" : "checked";
+    $("#pr-live-counts").textContent=`${number(activity.checked)} ${checkedLabel} · ${number(activity.found)} found for review · ${number(activity.skipped)} skipped`;
     $("#pr-recent-wrap").hidden=!recent.length;
     $("#pr-recent").innerHTML=[...recent].reverse().map(item=>`<tr><td>${esc(item.title)}</td><td>${esc(item.result)}</td></tr>`).join("");
   }
