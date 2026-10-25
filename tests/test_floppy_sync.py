@@ -438,7 +438,7 @@ def test_floppy_collection_remove_treats_missing_entry_as_removed() -> None:
     res = _collection.remove(adapter, [{"type": "episode", "show_ids": {"tmdb": "22"}, "season": 1, "episode": 2}])
 
     assert res["count"] == 1
-    assert [c["method"] for c in adapter.client.session.calls if c["method"] == "DELETE"] == ["DELETE"]
+    assert [c.get("params") for c in adapter.client.session.calls if c["method"] == "DELETE"] == [None, {"library_media_type": "anime"}]
 
 
 def test_floppy_collection_remove_never_deletes_unlinked_rows_by_id() -> None:
@@ -2500,6 +2500,55 @@ def test_floppy_collection_episode_put_follows_show_in_anime_library() -> None:
     assert res["count"] == 1
     calls = [(c["method"], c["path"], c.get("params")) for c in adapter.client.session.calls if c["path"] != "media/anime"]
     assert calls == [("PUT", "media/tv/tmdb/209867/1/episodes/2/collection", {"library_media_type": "anime"})]
+
+
+def test_floppy_collection_remove_sends_anime_library_on_delete() -> None:
+    from providers.sync.floppy import _collection
+
+    adapter = AdapterStub(
+        {
+            ("GET", "media/anime"): {"results": [_grouped_anime_row("209867")], "count": 1},
+            ("DELETE", "media/tv/tmdb/209867/1/episodes/5/collection"): ResponseStub(204, {}),
+            ("DELETE", "media/tv/tmdb/22/1/episodes/2/collection"): ResponseStub(204, {}),
+        }
+    )
+
+    items = [{"type": "episode", "show_ids": {"tmdb": "209867"}, "season": 1, "episode": 5}, {"type": "episode", "show_ids": {"tmdb": "22"}, "season": 1, "episode": 2}]
+    res = _collection.remove(adapter, items)
+
+    assert res["count"] == 2
+    calls = [(c["method"], c["path"], c.get("params")) for c in adapter.client.session.calls if c["method"] == "DELETE"]
+    assert calls == [
+        ("DELETE", "media/tv/tmdb/209867/1/episodes/5/collection", {"library_media_type": "anime"}),
+        ("DELETE", "media/tv/tmdb/22/1/episodes/2/collection", None),
+    ]
+
+
+def test_floppy_collection_remove_retries_missing_episode_in_anime_library() -> None:
+    from providers.sync.floppy import _collection
+
+    def delete(call: dict[str, Any]) -> ResponseStub:
+        if (call.get("params") or {}).get("library_media_type") == "anime":
+            return ResponseStub(204, {})
+        return ResponseStub(404, {"detail": "Collection entry not found."})
+
+    adapter = AdapterStub(
+        {
+            ("DELETE", "media/tv/tmdb/209867/1/episodes/5/collection"): delete,
+            ("DELETE", "media/movie/tmdb/11/collection"): ResponseStub(404, {"detail": "Collection entry not found."}),
+            ("GET", "collection"): {"results": [], "pagination": {"total": 0}},
+        }
+    )
+
+    res = _collection.remove(adapter, [{"type": "episode", "show_ids": {"tmdb": "209867"}, "season": 1, "episode": 5}, {"type": "movie", "ids": {"tmdb": "11"}}])
+
+    assert res["count"] == 2
+    calls = [(c["path"], c.get("params")) for c in adapter.client.session.calls if c["method"] == "DELETE"]
+    assert calls == [
+        ("media/tv/tmdb/209867/1/episodes/5/collection", None),
+        ("media/tv/tmdb/209867/1/episodes/5/collection", {"library_media_type": "anime"}),
+        ("media/movie/tmdb/11/collection", None),
+    ]
 
 
 def test_floppy_collection_episode_put_keeps_plain_tv_show_unflagged() -> None:
