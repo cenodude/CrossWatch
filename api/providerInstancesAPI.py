@@ -528,6 +528,22 @@ def _profile_identity(cfg: Mapping[str, Any], provider: str, user_inst: str) -> 
     return label, label.casefold()
 
 
+_SYNC_USER_ERRORS: dict[str, str] = {
+    "not_found": "not_found",
+    "unsupported_provider": "unsupported_provider",
+    "invalid_instance_id": "invalid_instance_id",
+    "sync_user_limit_reached": "sync_user_limit_reached",
+    "match_as_too_long": "match_as_too_long",
+    "invalid_user_profile": "invalid_user_profile",
+    "duplicate_user_profile_label": "duplicate_user_profile_label",
+}
+
+
+def _sync_user_error(exc: Exception) -> str:
+    raw = str(exc.args[0] if exc.args else "").split(":", 1)[0].strip()
+    return _SYNC_USER_ERRORS.get(raw, "sync_users_failed")
+
+
 def _sync_users_target(cfg: Mapping[str, Any], provider: str, inst: str) -> tuple[str, str | None]:
     prov = _cfg_key(provider)
     if prov not in _SYNC_USER_PROVIDERS:
@@ -627,11 +643,11 @@ def api_provider_sync_users_update(provider: str, instance_id: str, payload: dic
 
     try:
         _, result = update_config(_mutate)
-    except KeyError as exc:
-        return {"ok": False, "error": str(exc.args[0]) if exc.args else "not_found"}
-    except ValueError as exc:
-        code, _, limit = str(exc).partition(":")
-        return {"ok": False, "error": code, **({"limit": int(limit)} if limit.isdigit() else {})}
+    except (KeyError, ValueError) as exc:
+        code = _sync_user_error(exc)
+        if code == "sync_user_limit_reached":
+            return {"ok": False, "error": code, "limit": _max_sync_users_per_connection(load_config() or {})}
+        return {"ok": False, "error": code}
     _invalidate_provider_cache(provider)
     return {"ok": True, **result, "count": len(result["users"])}
 
@@ -681,10 +697,8 @@ def api_provider_sync_users_create_profiles(provider: str, instance_id: str, req
 
     try:
         _, result = update_config(_mutate)
-    except KeyError as exc:
-        return {"ok": False, "error": str(exc.args[0]) if exc.args else "not_found"}
-    except ValueError as exc:
-        return {"ok": False, "error": _profile_value_error(exc)}
+    except (KeyError, ValueError) as exc:
+        return {"ok": False, "error": _sync_user_error(exc)}
     return {"ok": True, **result}
 
 
