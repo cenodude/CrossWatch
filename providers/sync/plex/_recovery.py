@@ -57,6 +57,30 @@ def guid_resolver(token: str) -> Callable[[str, str], dict[str, str]]:
     return resolve
 
 
+def title_resolver(token: str, check_cancel: Callable[[], None]) -> Callable[[Mapping[str, Any]], dict[str, str]]:
+    cache: dict[tuple, dict[str, str]] = {}
+
+    def resolve(item: Mapping[str, Any]) -> dict[str, str]:
+        kind = str(item.get("type") or "")
+        title = str(item.get("series_title") if kind == "episode" else item.get("title") or "")
+        year = item.get("year") if kind == "movie" else None
+        key = (kind, title, year)
+        if key in cache:
+            return cache[key]
+        row = common._discover_search_title(token, title, kind, year, check_cancel=check_cancel)
+        ids: Mapping[str, Any] = {}
+        if row and row.get("type") in ({"show", "episode"} if kind == "episode" else {"movie"}):
+            normalized = common.normalize_discover_row(row, token=token)
+            if row.get("type") == "episode":
+                ids = normalized.get("show_ids") or {}
+            else:
+                ids = normalized.get("ids") or {}
+        cache[key] = {k: str(v) for k, v in ids.items() if k in {"tmdb", "tvdb", "imdb"} and v}
+        return cache[key]
+
+    return resolve
+
+
 def scan(adapter: Any, *, progress: Callable[..., None], check_cancel: Callable[[], None],
          max_rows: int = 50_000) -> list[dict[str, Any]]:
     need, switched, aid, uname = common.home_scope_enter(adapter)

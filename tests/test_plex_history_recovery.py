@@ -45,6 +45,24 @@ def scan(plex, **kwargs):
     return recovery.scan(plex.adapter, progress=lambda *a: None, check_cancel=lambda: None, **kwargs)
 
 
+@pytest.mark.parametrize("kind", ["movie", "show", "episode", "season"])
+def test_database_title_resolver_keeps_show_and_episode_ids_separate(monkeypatch, kind):
+    calls = []
+    row = dict(type=kind, title="Series", ratingKey="episode-key", parentIndex=2, index=3,
+               grandparentRatingKey="show-key", Guid=[{"id": "tvdb://999"}])
+    monkeypatch.setattr(common, "_discover_search_title", lambda *a, **kw: calls.append(a) or row)
+    monkeypatch.setattr(common, "hydrate_external_ids", lambda token, key: {"tvdb": "100"} if key == "show-key" else {})
+    resolve = recovery.title_resolver("token", lambda: None)
+    item = dict(type="episode", series_title="Series", season=2, episode=3)
+    expected = {"tvdb": "100"} if kind == "episode" else {"tvdb": "999"} if kind == "show" else {}
+    assert resolve(item) == expected
+    assert resolve(item) == expected
+    assert len(calls) == 1
+    if kind == "episode":
+        assert resolve(dict(item, episode=4)) == expected
+        assert len(calls) == 1
+
+
 def test_only_removed_history_and_rewatches_without_persistent_memo(plex, monkeypatch):
     plex.library = [{"type":"movie", "ratingKey":"1", "title":"Current", "Guid":[{"id":"tmdb://1"}]}]
     known = raw("2", guid="tmdb://2")

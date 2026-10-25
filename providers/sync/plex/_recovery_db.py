@@ -15,6 +15,8 @@ from typing import Any, Callable, Iterator, Mapping
 import zipfile
 
 from cw_platform.id_map import ids_from_guid
+from cw_platform.anime_mapping.coordinates import translate
+from cw_platform.anime_mapping.storage import query_edges
 
 from . import _common as common, _history as history, _recovery as recovery
 
@@ -39,6 +41,7 @@ _KNOWN = "Known identity"
 _GUID = "Matched by Plex GUID"
 _MISSING = "Missing identity — enter a match"
 _HAMA_TVDB = re.compile(r"^com\.plexapp\.agents\.hama://tvdb-(\d+)(?:/(\d+)/(\d+))?$", re.IGNORECASE)
+_HAMA_ANIDB = re.compile(r"^com\.plexapp\.agents\.hama://(?:anidb-)?(\d+)/(\d+)/(\d+)$", re.IGNORECASE)
 _AGENT_PATH = re.compile(r"^com\.plexapp\.agents\.[a-z]+://[^/]+/(\d+)/(\d+)$", re.IGNORECASE)
 
 
@@ -81,6 +84,34 @@ def _local_ids(guid: str) -> tuple[dict[str, str], int | None, int | None]:
     return _external(ids_from_guid(guid)), _int(path.group(1)) if path else None, _int(path.group(2)) if path else None
 
 
+def _hama_episode(guid: str, release_tag: str) -> tuple[dict[str, str], int | None, int | None]:
+    match = _HAMA_ANIDB.fullmatch(guid)
+    if not match:
+        return {}, None, None
+    ident, season, episode = match.group(1), int(match.group(2)), int(match.group(3))
+    if episode < 1 or (season == 0 and episode > 99):
+        return {}, None, None
+    scope = "S" if season == 0 else "R"
+    hits: dict[str, set[tuple[str, int, int]]] = {}
+    for row in query_edges(release_tag, "anidb", ident, scope=scope):
+        provider = str(row.get("target_provider") or "")
+        target = str(row.get("target_id") or "")
+        target_scope = re.fullmatch(r"s(\d+)", str(row.get("target_scope") or ""), re.IGNORECASE)
+        if provider not in ("tvdb", "tmdb") or row.get("target_kind") != "show" or not target or not target_scope:
+            continue
+        number = translate(row.get("source_range"), row.get("target_range"), episode)
+        if number is not None:
+            hits.setdefault(provider, set()).add((target, int(target_scope.group(1)), number))
+    for provider in ("tvdb", "tmdb"):
+        matches = hits.get(provider, set())
+        if len(matches) > 1:
+            return {}, None, None
+        if matches:
+            target, season, episode = next(iter(matches))
+            return {provider: target}, season, episode
+    return {}, None, None
+
+
 def _connect(path: Path) -> sqlite3.Connection:
     con = sqlite3.connect(f"{Path(os.path.abspath(path)).as_uri()}?mode=ro&immutable=1", uri=True, check_same_thread=False)
     con.setconfig(sqlite3.SQLITE_DBCONFIG_DEFENSIVE, True)
@@ -99,7 +130,8 @@ class _Clock:
         return self
 
     def __exit__(self, *exc: Any) -> None:
-        self.left -= time.monotonic() - self.since
+        if self.since is not None:
+            self.left -= time.monotonic() - self.since
         self.since = None
 
     def expired(self) -> bool:
@@ -262,7 +294,8 @@ def _label(kind: str, title: str, show: str, season: int | None, episode: int | 
 
 def _scan(con: sqlite3.Connection, clock: _Clock, *, account: int, libraries: set[str],
           resolve: Callable[[str, str], Mapping[str, Any]], progress: Callable[..., None],
-          check_cancel: Callable[[], None], max_rows: int) -> list[dict[str, Any]]:
+          check_cancel: Callable[[], None], max_rows: int, release_tag: str,
+          search: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None) -> list[dict[str, Any]]:
     progress("libraries", "Checking the Plex library in the database", 0, 0)
     with clock:
         tables = _tables(con)
@@ -302,6 +335,8 @@ def _scan(con: sqlite3.Connection, clock: _Clock, *, account: int, libraries: se
     pending: list[tuple[dict[str, Any], str]] = []
     recovered: list[dict[str, Any]] = []
     skipped = 0
+    anime: dict[str, tuple[dict[str, str], int | None, int | None]] = {}
+    title_candidates: list[dict[str, Any]] = []
 
     def report(checked: int, title: str = "", action: str = "", result: str = "") -> None:
         activity: dict[str, Any] = dict(checked=checked, found=len(recovered), skipped=skipped,
@@ -342,18 +377,32 @@ def _scan(con: sqlite3.Connection, clock: _Clock, *, account: int, libraries: se
             identity = bool(ids)
         else:
             year = None
+            hama = guid.lower().startswith("com.plexapp.agents.hama://")
             local, guid_season, guid_episode = _local_ids(guid)
             season = _int(season) if _int(season) is not None else guid_season
             episode = _int(episode) if _int(episode) is not None else guid_episode
             label = _label(kind, title, show_title, season, episode, None)
             group = show_guid
             ids = local or _local_ids(show_guid)[0]
-            if not ids and group in shows:
+            if hama:
+                group = guid.rsplit("/", 2)[0]
+                ids = local
+                if local:
+                    season, episode = guid_season, guid_episode
+                if not local:
+                    if guid not in anime:
+                        anime[guid] = _hama_episode(guid, release_tag)
+                    ids, mapped_season, mapped_episode = anime[guid]
+                    if ids:
+                        season, episode = mapped_season, mapped_episode
+                        method = "Matched by AniDB episode mapping"
+                label = _label(kind, title, show_title, season, episode, None)
+            if not hama and not ids and group in shows:
                 ids, method = shows[group]
-            if not ids:
+            if not hama and not ids:
                 report(index, label, "Looking up identity at Plex")
                 ids, method = lookup("show", show_guid) or lookup("episode", guid), _GUID
-            if ids and group:
+            if not hama and ids and group:
                 shows.setdefault(group, (ids, method))
             original = show_title or title
             code = f"S{season:02d}E{episode:02d}" if season is not None and episode is not None else original
@@ -373,9 +422,11 @@ def _scan(con: sqlite3.Connection, clock: _Clock, *, account: int, libraries: se
                                                original.casefold(), str(year or "")], ensure_ascii=True),
                  "original_year": year, "original_title": original}
         recovered.append(entry)
+        if not ids and (kind == "movie" or not hama):
+            title_candidates.append(entry)
         if len(recovered) > max_rows:
             raise RuntimeError(f"More than {max_rows:,} removed watch events. Narrow the configured history library scope.")
-        if not ids and kind == "episode" and group:
+        if not ids and kind == "episode" and group and not hama:
             pending.append((entry, group))
         result = "Found for review"
         if not identity:
@@ -394,12 +445,32 @@ def _scan(con: sqlite3.Connection, clock: _Clock, *, account: int, libraries: se
             present.add(id(entry))
         elif item.get("season") is not None and item.get("episode") is not None:
             entry.update(recovery_valid=True, recovery_match=method)
+    if search:
+        for entry in title_candidates:
+            check_cancel()
+            item = entry["item"]
+            field = "show_ids" if item["type"] == "episode" else "ids"
+            if item[field] or id(entry) in present:
+                continue
+            report(total, entry["original_title"], "Searching Plex for a title match")
+            ids = _external(search(item))
+            if not ids:
+                continue
+            item[field] = ids
+            if recovery._tokens(item) & current:
+                present.add(id(entry))
+                continue
+            valid = item["type"] == "movie" or (item.get("season") is not None and item.get("episode") is not None)
+            entry.update(recovery_valid=valid, recovery_requires_review=True,
+                         recovery_match="Plex title match — review before importing")
     return [entry for entry in recovered if id(entry) not in present]
 
 
 def scan(path: Path, *, account: int, libraries: set[str], resolve: Callable[[str, str], Mapping[str, Any]],
-         progress: Callable[..., None], check_cancel: Callable[[], None], max_rows: int = 50_000) -> list[dict[str, Any]]:
+         progress: Callable[..., None], check_cancel: Callable[[], None], max_rows: int = 50_000,
+         release_tag: str = "v3",
+         search: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None) -> list[dict[str, Any]]:
     check_cancel()
     with _reading(path, SCAN_SECONDS, check_cancel) as (con, clock):
         return _scan(con, clock, account=account, libraries={str(x) for x in libraries}, resolve=resolve,
-                     progress=progress, check_cancel=check_cancel, max_rows=max_rows)
+                     progress=progress, check_cancel=check_cancel, max_rows=max_rows, release_tag=release_tag, search=search)

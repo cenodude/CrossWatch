@@ -13,6 +13,27 @@ from providers.sync.plex import _common as common
 PMS = "https://plex.test:32400"
 
 
+@pytest.mark.parametrize("kind,plex_type", [("movie", 1), ("episode", 2)])
+def test_title_search_falls_back_to_metadata_matches(monkeypatch, kind, plex_type):
+    calls = []
+    row = {"type": "movie" if kind == "movie" else "show", "title": "Example", "year": 1999,
+           "Guid": [{"id": "tvdb://81797"}]}
+    def get(url, **kwargs):
+        calls.append((url, kwargs))
+        response = requests.Response()
+        response.headers["content-type"] = "application/json"
+        response.status_code = 200 if url == common.METADATA + "/library/metadata/matches" else 404
+        response._content = json.dumps({"MediaContainer": {"Metadata": [row] if response.ok else []}}).encode()
+        return response
+    monkeypatch.setattr(common.requests, "get", get)
+    assert common._discover_search_title("cloud-token", "Example", kind, 1999) == row
+    url, kwargs = calls[-1]
+    assert url == common.METADATA + "/library/metadata/matches"
+    assert kwargs["params"] == {"title": "Example", "type": plex_type, "includeGuids": 1,
+                                **({"year": 1999} if kind == "movie" else {})}
+    assert kwargs["headers"]["X-Plex-Token"] == "cloud-token"
+
+
 class MetadataTransport(requests.adapters.BaseAdapter):
     def __init__(self, *, status=200, fail=False):
         self.status = status

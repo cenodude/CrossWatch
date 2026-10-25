@@ -324,7 +324,9 @@ def _scan_database(job, cfg, adapter, progress, check_cancel):
         raise RuntimeError("Plex account unavailable")
     common.configure_plex_context(baseurl=None, token=token, account_token=token)
     return recovery_db.scan(path, account=int(account), libraries=libraries, resolve=resolve, progress=progress,
-                            check_cancel=check_cancel, max_rows=importer.MAX_ROWS)
+                            check_cancel=check_cancel, max_rows=importer.MAX_ROWS,
+                            release_tag=str((cfg.get("anime_mapping") or {}).get("release_tag") or "v3"),
+                            search=plex_recovery.title_resolver(token, check_cancel))
 
 
 def _scan(job, cfg):
