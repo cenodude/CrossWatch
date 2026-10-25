@@ -1,5 +1,5 @@
 # /api/publishedListsAPI.py
-# CrossWatch - Publish CrossWatch lists for Kometa, Radarr and Sonarr
+# CrossWatch - Publish CrossWatch lists for Kometa, Radarr, Sonarr and MDBList JSON readers
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
@@ -96,7 +96,8 @@ def api_unpublish_list(feed_id: str = FPath(...), request: Request = cast(Reques
 
 
 @public_router.get("/published/{feed_id}/{name}")
-def published_list(feed_id: str = FPath(...), name: str = FPath(...), key: str = Query("")) -> JSONResponse:
+def published_list(feed_id: str = FPath(...), name: str = FPath(...), key: str = Query(""),
+                   sort: str = Query("")) -> JSONResponse:
     headers = {"Cache-Control": "no-store"}
     feed = svc.authorized(feed_id, key)
     if not feed or name not in svc.FORMATS:
@@ -106,4 +107,4 @@ def published_list(feed_id: str = FPath(...), name: str = FPath(...), key: str =
         return JSONResponse({"ok": False, "error": "List unavailable"}, status_code=404, headers=headers)
     rows, skipped = svc.format_items(items, name)
     svc.touch(feed_id, name)
-    return JSONResponse(rows, headers={**headers, "X-CrossWatch-Skipped": str(skipped)})
+    return JSONResponse(svc.sort_rows(rows, sort), headers={**headers, "X-CrossWatch-Skipped": str(skipped)})

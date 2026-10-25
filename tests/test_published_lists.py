@@ -22,6 +22,36 @@ def test_formats_pick_safe_ids_and_split_movies_from_shows() -> None:
     assert svc.format_items(ITEMS, "sonarr.json") == ([{"title": "MobLand", "tvdbId": 443311}], 1)
 
 
+MIXED = [
+    {"type": "movie", "title": "Heat", "year": 1995, "ids": {"imdb": "tt0113277", "tmdb": "949"}},
+    {"type": "show", "title": "MobLand", "ids": {"tvdb": "443311", "tmdb": "247718"}},
+    {"type": "movie", "title": "Local only", "ids": {"imdb": "tt0000001"}},
+    {"type": "anime", "title": "Bebop", "ids": {"tmdb": "30991"}},
+    {"type": "season", "title": "Specials", "series_title": "MobLand", "season": 0, "show_ids": {"tmdb": "247718"}},
+    {"type": "episode", "title": "Pilot", "series_title": "MobLand", "season": 1, "episode": 1,
+     "ids": {"tmdb": "999"}, "show_ids": {"tmdb": "247718"}},
+    {"type": "movie", "title": "Heat again", "ids": {"tmdb": "949"}},
+]
+
+
+def test_mdblist_json_mixes_movies_and_shows_with_tmdb_ids_in_list_order() -> None:
+    rows, skipped = svc.format_items(MIXED, "mdblist.json")
+    assert skipped == 1
+    assert rows == [
+        {"id": 949, "rank": 1, "title": "Heat", "imdb_id": "tt0113277", "mediatype": "movie", "release_year": 1995},
+        {"id": 247718, "rank": 2, "title": "MobLand", "tvdbid": 443311, "mediatype": "show"},
+        {"id": 30991, "rank": 3, "title": "Bebop", "mediatype": "show"},
+        {"id": 247718, "rank": 4, "title": "MobLand", "mediatype": "season", "season": 0},
+        {"id": 247718, "rank": 5, "title": "MobLand", "mediatype": "episode", "season": 1, "episode": 1},
+    ]
+
+
+def test_random_sort_shuffles_and_other_values_keep_list_order(monkeypatch) -> None:
+    monkeypatch.setattr(svc.random, "shuffle", lambda rows: rows.reverse())
+    assert svc.sort_rows([{"id": 1}, {"id": 2}], "random") == [{"id": 2}, {"id": 1}]
+    assert svc.sort_rows([{"id": 1}, {"id": 2}], "") == [{"id": 1}, {"id": 2}]
+    assert svc.sort_rows([{"id": 1}, {"id": 2}], "title") == [{"id": 1}, {"id": 2}]
+
 def test_publish_is_stable_per_list_and_a_new_key_replaces_the_old_one(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(svc, "_path", lambda: tmp_path / "published_lists.json")
     feed = svc.publish("default", "cwpl_1")
@@ -57,6 +87,11 @@ def test_public_address_needs_the_key_and_records_the_read(tmp_path, monkeypatch
     stored = svc.feeds()[feed["id"]]
     assert stored["fetch_count"] == 1
     assert stored["last_fetch_format"] == "sonarr.json"
+    monkeypatch.setattr(svc.random, "shuffle", lambda rows: rows.reverse())
+    mixed = client.get(f"{base}/mdblist.json?key={feed['key']}&sort=random")
+    assert mixed.status_code == 200
+    assert [(row["id"], row["mediatype"]) for row in mixed.json()] == [(247718, "show"), (12, "movie"), (949, "movie")]
+    assert svc.feeds()[feed["id"]]["last_fetch_format"] == "mdblist.json"
 
 
 class _Lists:
