@@ -335,7 +335,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
 
             try:
                 m_norm = jelly_normalize(row)
-                lib_id = jf_resolve_library_id(row, roots, scope_libs, http)
+                lib_id = current_parent or jf_resolve_library_id(row, roots, scope_libs, http)
                 m = dict(m_norm)
                 m["library_id"] = lib_id
                 m["rating"] = round(rf, 1)

@@ -1,3 +1,4 @@
+# CrossWatch test scripts
 from types import SimpleNamespace
 
 import pytest
@@ -192,3 +193,28 @@ def test_episode_catalog_hydration_preserves_pending_write(library):
     assert history._populate_catalog_episode_leaves(library, {"1"}, cat) == 1
     assert cat.by_rk["42"]["write_accepted"] is True
     assert cat.by_rk["42"]["last_viewed_at"] is None
+    assert cat.by_rk["42"]["library_id"] == "1"
+
+
+@pytest.mark.parametrize("selected", [set(), {"2"}, {"2", "3"}])
+@pytest.mark.parametrize("returned_library", [None, "1"])
+def test_watched_scan_preserves_query_library_through_catalog_and_filter(library, monkeypatch, selected, returned_library):
+    from providers.sync.plex._common import normalize_discover_row
+    from cw_platform.orchestrator._pairs_oneway import _filter_index_by_libraries
+
+    monkeypatch.setattr(history, "normalize_discover_row", normalize_discover_row)
+    library.libraries = lambda **kw: [SimpleNamespace(key=str(i), type="movie") for i in (1, 2, 3)]
+    def get(url, **kw):
+        sid = url.split("/sections/")[1].split("/")[0]
+        row = {"ratingKey": sid, "type": "movie", "title": "Movie", "viewCount": 1,
+               "lastViewedAt": PLAYED, "Guid": [{"id": "tmdb://" + sid}]}
+        if returned_library:
+            row["librarySectionID"] = returned_library
+        return response([row], 1)
+    library.client.server._session = SimpleNamespace(headers={}, get=get)
+    cat = BUILD(library, selected)
+    out = {rk: history._catalog_entry_to_minimal(entry) for rk, entry in cat.by_rk.items()}
+    expected = selected or {"1", "2", "3"}
+    assert set(out) == expected
+    assert all(item["library_id"] == rk for rk, item in out.items())
+    assert set(_filter_index_by_libraries(out, sorted(selected))) == expected
