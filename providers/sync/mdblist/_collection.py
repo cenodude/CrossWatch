@@ -14,6 +14,7 @@ from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 from .._log import log as cw_log
 from ._common import (
+    require_page,
     CursorPager,
     MDBListFetchError,
     SHOW_BATCH_LIMIT,
@@ -504,6 +505,7 @@ def build_index(adapter: Any, *, per_page: int = 1000, max_pages: int = 250) -> 
             _warn("http_failed", op="index", status=r.status_code, page=pager.pages + 1)
             raise MDBListFetchError("MDBList collection read failed")
         data = r.json() if (r.text or "").strip() else {}
+        require_page(data, "collection")
         more = pager.advance(data, r)
         if data == []:
             data = {}

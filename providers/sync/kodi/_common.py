@@ -632,18 +632,15 @@ class KodiClient:
 
     def get_movies(self, properties: list[str] | None = None, path_filter: Mapping[str, Any] | None = None) -> list[Mapping[str, Any]]:
         result = self.rpc("VideoLibrary.GetMovies", self._library_params(properties or MOVIE_PROPERTIES, path_filter))
-        rows = (result or {}).get("movies") if isinstance(result, Mapping) else None
-        return [row for row in rows or [] if isinstance(row, Mapping)]
+        return library_result_rows(result, "movies")
 
     def get_tvshows(self, properties: list[str] | None = None, path_filter: Mapping[str, Any] | None = None) -> list[Mapping[str, Any]]:
         result = self.rpc("VideoLibrary.GetTVShows", self._library_params(properties or SHOW_PROPERTIES, path_filter))
-        rows = (result or {}).get("tvshows") if isinstance(result, Mapping) else None
-        return [row for row in rows or [] if isinstance(row, Mapping)]
+        return library_result_rows(result, "tvshows")
 
     def get_episodes(self, properties: list[str] | None = None, path_filter: Mapping[str, Any] | None = None) -> list[Mapping[str, Any]]:
         result = self.rpc("VideoLibrary.GetEpisodes", self._library_params(properties or EPISODE_PROPERTIES, path_filter))
-        rows = (result or {}).get("episodes") if isinstance(result, Mapping) else None
-        return [row for row in rows or [] if isinstance(row, Mapping)]
+        return library_result_rows(result, "episodes")
 
     def library_rows(
         self,
@@ -665,13 +662,10 @@ class KodiClient:
                 verify_ssl=self.cfg.verify_ssl,
                 timeout=self.cfg.timeout,
             )
-            movies = results.get("0:VideoLibrary.GetMovies") or {}
-            episodes = results.get("1:VideoLibrary.GetEpisodes") or {}
-            tvshows = results.get("2:VideoLibrary.GetTVShows") or {}
             return (
-                [row for row in (movies.get("movies") if isinstance(movies, Mapping) else []) or [] if isinstance(row, Mapping)],
-                [row for row in (episodes.get("episodes") if isinstance(episodes, Mapping) else []) or [] if isinstance(row, Mapping)],
-                [row for row in (tvshows.get("tvshows") if isinstance(tvshows, Mapping) else []) or [] if isinstance(row, Mapping)],
+                library_result_rows(results.get("0:VideoLibrary.GetMovies"), "movies"),
+                library_result_rows(results.get("1:VideoLibrary.GetEpisodes"), "episodes"),
+                library_result_rows(results.get("2:VideoLibrary.GetTVShows"), "tvshows"),
             )
         except KodiAuthError as exc:
             log(str(feature or "library"), "warning", "batch_read_failed", reason=exc.reason, error=str(exc))
@@ -688,6 +682,24 @@ class KodiClient:
     def set_episode(self, episodeid: int, payload: Mapping[str, Any]) -> Any:
         params = {"episodeid": int(episodeid), **dict(payload)}
         return self.rpc("VideoLibrary.SetEpisodeDetails", params)
+
+
+def library_result_rows(result: Any, key: str) -> list[Mapping[str, Any]]:
+    if not isinstance(result, Mapping):
+        raise KodiAuthError(f"Kodi returned an invalid {key} result", reason="invalid_response")
+    rows = result.get(key)
+    if rows is None:
+        limits = result.get("limits")
+        if not isinstance(limits, Mapping) or to_int(limits.get("total")) != 0:
+            raise KodiAuthError(f"Kodi {key} result is missing rows", reason="invalid_response")
+        return []
+    if not isinstance(rows, list):
+        raise KodiAuthError(f"Kodi returned invalid {key} rows", reason="invalid_response")
+    limits = result.get("limits")
+    total = to_int(limits.get("total")) if isinstance(limits, Mapping) else None
+    if total is not None and total != len(rows):
+        raise KodiAuthError(f"Kodi {key} result is incomplete ({len(rows)}/{total})", reason="invalid_response")
+    return [row for row in rows if isinstance(row, Mapping)]
 
 
 class LibraryIndex:

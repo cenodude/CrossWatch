@@ -314,7 +314,7 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
 
     rows = _playback_rows(adapter)
     if rows is None:
-        return {}
+        raise RuntimeError("simkl_progress_read_failed")
     out: dict[str, dict[str, Any]] = {}
     skipped: dict[str, int] = {}
     for row in rows:

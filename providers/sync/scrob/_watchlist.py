@@ -10,6 +10,7 @@ from typing import Any, Iterable, Mapping
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 from ._common import (
+    ScrobError,
     MEDIA_TYPE_MOVIE,
     MEDIA_TYPE_SERIES,
     PATH_LIST,
@@ -54,10 +55,14 @@ def _find_list(adapter: Any, name: str) -> Mapping[str, Any] | None:
     resp = scrob_request(adapter, "GET", PATH_LISTS)
     if not ok_status(resp):
         _warn(FEATURE, "lists_fetch_failed", status=int(resp.status_code), error=error_of(resp))
-        return None
+        raise ScrobError(f"scrob_watchlist_lists_http_{int(resp.status_code)}")
     data = safe_json(resp)
-    rows = data.get("lists") if isinstance(data, Mapping) else None
-    rows = [r for r in rows if isinstance(r, Mapping)] if isinstance(rows, list) else []
+    if not isinstance(data, Mapping):
+        raise ScrobError("scrob_watchlist_lists_invalid_response")
+    rows = data.get("lists")
+    if not isinstance(rows, list):
+        raise ScrobError("scrob_watchlist_lists_invalid_response")
+    rows = [r for r in rows if isinstance(r, Mapping)]
     wanted = name.strip().lower()
     for row in rows:
         if str(row.get("name") or "").strip().lower() == wanted:
@@ -129,10 +134,14 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     resp = scrob_request(adapter, "GET", PATH_LIST.format(list_id=list_id))
     if not ok_status(resp):
         _warn(FEATURE, "fetch_failed", status=int(resp.status_code), error=error_of(resp))
-        return {}
+        raise ScrobError(f"scrob_watchlist_http_{int(resp.status_code)}")
     data = safe_json(resp)
-    rows = data.get("items") if isinstance(data, Mapping) else None
-    rows = [r for r in rows if isinstance(r, Mapping)] if isinstance(rows, list) else []
+    if not isinstance(data, Mapping):
+        raise ScrobError("scrob_watchlist_invalid_response")
+    rows = data.get("items")
+    if not isinstance(rows, list):
+        raise ScrobError("scrob_watchlist_invalid_response")
+    rows = [r for r in rows if isinstance(r, Mapping)]
 
     out: dict[str, dict[str, Any]] = {}
     skipped = 0

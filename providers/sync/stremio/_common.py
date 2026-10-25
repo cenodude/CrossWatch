@@ -427,9 +427,9 @@ def _extract_records(data: Any) -> list[Mapping[str, Any]]:
             return [row for row in source["items"] if isinstance(row, Mapping)]
         if isinstance(source.get(COLLECTION), list):
             return [row for row in source[COLLECTION] if isinstance(row, Mapping)]
-        if all(isinstance(v, Mapping) for v in source.values()):
+        if source and all(isinstance(v, Mapping) for v in source.values()):
             return [v for v in source.values() if isinstance(v, Mapping)]
-    return []
+    raise RuntimeError("stremio_datastore_invalid_response")
 
 
 def datastore_get(adapter: Any, *, ids: list[str] | None = None, all_records: bool = False) -> list[Mapping[str, Any]]:

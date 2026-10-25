@@ -21,7 +21,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "0.3"
+__VERSION__ = "1.0"
 os.environ.setdefault("CW_SCROB_UA", http_user_agent("Scrob", override_env="CW_SCROB_UA"))
 __all__ = ["get_manifest", "SCROBModule", "OPS"]
 

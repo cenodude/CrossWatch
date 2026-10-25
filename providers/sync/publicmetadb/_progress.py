@@ -8,7 +8,7 @@ from typing import Any, Iterable, Mapping
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 from .._log import log as cw_log
-from ._common import as_int, read_json, state_file, tmdb_id_for_item, write_json
+from ._common import as_int, paged_items, read_json, state_file, tmdb_id_for_item, write_json
 
 
 def _dbg(event: str, **fields: Any) -> None:
@@ -36,18 +36,6 @@ def _shadow_load() -> dict[str, Any]:
 
 def _shadow_save(items: Mapping[str, Any]) -> None:
     write_json(_shadow_path(), {"items": dict(items)})
-
-
-def _rows(data: Any) -> list[Any]:
-    if isinstance(data, list):
-        return data
-    if not isinstance(data, Mapping):
-        return []
-    for key in ("items", "results", "data"):
-        val = data.get(key)
-        if isinstance(val, list):
-            return val
-    return []
 
 
 def _show_tmdb_for_item(item: Mapping[str, Any]) -> int | None:
@@ -165,38 +153,20 @@ def _to_minimal(row: Mapping[str, Any]) -> dict[str, Any] | None:
 def _fetch_all_items(adapter: Any) -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
     out: dict[str, dict[str, Any]] = {}
     remote_ids: dict[str, str] = {}
-    page = 1
     per_page = int(getattr(adapter.cfg, "progress_per_page", 500) or 500)
     per_page = max(1, min(per_page, 500))
     max_pages = int(getattr(adapter.cfg, "progress_max_pages", 1000) or 1000)
     max_pages = max(1, max_pages)
 
-    while page <= max_pages:
-        data = adapter.client.get_json(
-            "/api/external/resume",
-            params={"page": page, "perPage": per_page},
-        )
-        rows = _rows(data)
-        if not rows:
-            break
-        for row in rows:
-            if not isinstance(row, Mapping):
-                continue
-            mini = _to_minimal(row)
-            if not mini:
-                continue
-            key = _item_key(mini)
-            out[key] = mini
-            rid = _resume_id(mini) or str(row.get("id") or "").strip()
-            if rid:
-                remote_ids[key] = rid
-        total_pages = int(data.get("totalPages") or data.get("total_pages") or page) if isinstance(data, Mapping) else page
-        if page >= total_pages:
-            break
-        page += 1
-
-    if page > max_pages:
-        _warn("index_limited", max_pages=max_pages, per_page=per_page)
+    for row in paged_items(adapter, "/api/external/resume", per_page=per_page, max_pages=max_pages, what="progress"):
+        mini = _to_minimal(row)
+        if not mini:
+            continue
+        key = _item_key(mini)
+        out[key] = mini
+        rid = _resume_id(mini) or str(row.get("id") or "").strip()
+        if rid:
+            remote_ids[key] = rid
     return out, remote_ids
 
 

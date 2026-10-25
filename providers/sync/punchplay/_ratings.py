@@ -8,6 +8,7 @@ from typing import Any, Iterable, Mapping
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 from ._common import (
+    PunchPlayError,
     URL_RATINGS,
     bulk_write,
     cfg_section,
@@ -169,11 +170,13 @@ def _index_from_library(adapter: Any) -> dict[str, dict[str, Any]]:
     resp = punchplay_request(adapter, "GET", URL_RATINGS)
     if resp.status_code != 200:
         _warn(FEATURE, "ratings_fetch_failed", status=resp.status_code, error=error_of(resp), request_id=request_id_of(resp))
-        return {}
-    data = safe_json(resp) or {}
+        raise PunchPlayError(f"punchplay_ratings_http_{resp.status_code}")
+    data = safe_json(resp)
     if not isinstance(data, Mapping):
-        return {}
+        raise PunchPlayError("punchplay_ratings_invalid_response")
     rows = data.get("items")
+    if not isinstance(rows, list):
+        raise PunchPlayError("punchplay_ratings_invalid_response")
     rows = [r for r in rows if isinstance(r, Mapping)] if isinstance(rows, list) else []
     collected: dict[str, dict[str, Any]] = {}
     for row in rows:
@@ -191,6 +194,7 @@ def _index_from_library(adapter: Any) -> dict[str, dict[str, Any]]:
             total=data.get("total"),
             note="GET /me/ratings exposes no documented paging parameters",
         )
+        raise PunchPlayError("punchplay_ratings_library_truncated")
     return collected
 
 

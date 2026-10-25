@@ -113,7 +113,7 @@ def episode_row(**over: Any) -> dict[str, Any]:
 def test_manifest_declares_supported_features_only():
     manifest = mod.get_manifest()
     assert manifest["name"] == "SCROB"
-    assert manifest["version"] == "0.3"
+    assert manifest["version"] == "1.0"
     assert manifest["bidirectional"] is True
     assert manifest["features"] == {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": False, "collection": True}
 
@@ -503,6 +503,7 @@ def test_collection_index_reads_nested_episode_export_rows():
 
 def test_collection_add_maps_each_scope():
     adapter = FakeAdapter({
+        ("GET", "export/data"): ResponseStub(200, []),
         ("POST", "media/collect"): ResponseStub(200, {"status": "ok"}),
         ("POST", "media/collect-show"): ResponseStub(200, {"status": "ok"}),
         ("POST", "media/collect-season"): ResponseStub(200, {"status": "ok"}),

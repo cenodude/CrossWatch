@@ -64,6 +64,16 @@ class CursorPager:
         return True
 
 
+def require_page(data: Any, what: str) -> None:
+    if isinstance(data, list):
+        return
+    names = ("movies", "shows", "seasons", "episodes")
+    if not isinstance(data, Mapping) or not any(name in data for name in names):
+        raise MDBListFetchError(f"Invalid MDBList {what} response")
+    if any(not isinstance(data[name], list) for name in names if name in data):
+        raise MDBListFetchError(f"Invalid MDBList {what} rows")
+
+
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 
 

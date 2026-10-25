@@ -106,7 +106,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "1.8"
+__VERSION__ = "1.9"
 __all__ = ["get_manifest", "TRAKTModule", "OPS"]
 
 os.environ.setdefault("CW_TRAKT_UA", http_user_agent("TRAKT", override_env="CW_TRAKT_UA"))

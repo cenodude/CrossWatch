@@ -54,8 +54,9 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
                 _warn("http_failed", op="build_index", source=kind, page=page, status=r.status_code)
                 raise RuntimeError(f"TMDb watchlist fetch failed ({kind}) ({r.status_code})")
             data = r.json() if (r.text or "").strip() else {}
-            if not isinstance(data, Mapping):
-                data = {}
+            if not isinstance(data, Mapping) or not isinstance(data.get("results"), list):
+                _warn("invalid_response", op="build_index", page=page)
+                raise RuntimeError("TMDb watchlist fetch returned an invalid page")
             total_pages = as_int(data.get("total_pages")) or total_pages
             results_any = data.get("results")
             results = results_any if isinstance(results_any, list) else []

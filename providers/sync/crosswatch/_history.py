@@ -105,10 +105,15 @@ def _load_state(adapter: Any) -> dict[str, Any]:
     path = _history_path(adapter)
     raw: Any | None
 
+    unreadable: list[str] = []
+
     def _read_json(p: Path) -> Any | None:
         try:
             return json.loads(p.read_text("utf-8"))
+        except FileNotFoundError:
+            return None
         except Exception:
+            unreadable.append(p.name)
             return None
 
     read_path = state_file_for_read(root, "history", path)
@@ -118,6 +123,9 @@ def _load_state(adapter: Any) -> dict[str, Any]:
         if alt and alt != path:
             raw = _read_json(alt)
     if raw is None and current_state_only(adapter):
+        if unreadable:
+            _warn("state_unreadable", files=unreadable)
+            raise RuntimeError(f"crosswatch_history_state_unreadable:{unreadable[0]}")
         return {"ts": 0, "items": {}}
     if raw is None:
         snap = fallback_snapshot_file(root, "history")
@@ -126,6 +134,9 @@ def _load_state(adapter: Any) -> dict[str, Any]:
             if raw is not None:
                 _warn("state_restored_from_snapshot", snapshot=snap.name)
     if raw is None:
+        if unreadable:
+            _warn("state_unreadable", files=unreadable)
+            raise RuntimeError(f"crosswatch_history_state_unreadable:{unreadable[0]}")
         return {"ts": 0, "items": {}}
 
     if isinstance(raw, list):

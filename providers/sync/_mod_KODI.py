@@ -13,7 +13,7 @@ from providers.sync.kodi import _progress as feat_progress
 from providers.sync.kodi import _ratings as feat_ratings
 from providers.sync.kodi._common import KodiClient, health_payload, is_configured, item_key, make_config, pick_instance_id
 
-__VERSION__ = "0.3"
+__VERSION__ = "1.0"
 __all__ = ["get_manifest", "KODIModule", "OPS"]
 
 _FEATURES = {"watchlist": False, "ratings": True, "history": True, "progress": True, "playlists": False, "collection": True}

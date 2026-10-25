@@ -28,7 +28,7 @@ class FakeHTTP:
     def __call__(self, adapter: Any, method: str, url: str, **kwargs: Any) -> _Resp:
         self.calls.append({"method": method, "url": url, **kwargs})
         if not self.responses:
-            return _Resp(200, {"results": []})
+            return _Resp(200, {"items": [], "hasMore": False})
         return self.responses.pop(0)
 
 

@@ -18,7 +18,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "1.0"
+__VERSION__ = "1.1"
 os.environ.setdefault("CW_TMDB_UA", http_user_agent("TMDB", override_env="CW_TMDB_UA"))
 __all__ = ["get_manifest", "TMDBModule", "OPS"]
 

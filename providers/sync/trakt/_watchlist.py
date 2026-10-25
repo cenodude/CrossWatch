@@ -223,12 +223,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
 
     if r.status_code != 200:
         _warn("http_failed", op="index", method="GET", url=URL_ALL, status=r.status_code)
-        idx = dict(sh.get("items") or {})
-        total = len(idx)
-        _tick(prog, 0, total=total, force=True)
-        _tick(prog, total, total=total)
-        _info("index_done", count=len(idx), source="shadow_fallback")
-        return idx
+        raise RuntimeError(f"trakt_watchlist_http_{r.status_code}")
 
     idx: dict[str, dict[str, Any]] = {}
     page = 1
@@ -256,12 +251,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
             _log_rate_headers(r)
         if r.status_code != 200:
             _warn("http_failed", op="index", method="GET", url=URL_ALL, page=page, status=r.status_code)
-            idx = dict(sh.get("items") or {})
-            total = len(idx)
-            _tick(prog, 0, total=total, force=True)
-            _tick(prog, total, total=total)
-            _info("index_done", count=len(idx), source="shadow_fallback")
-            return idx
+            raise RuntimeError(f"trakt_watchlist_http_{r.status_code}")
 
     if use_etag:
         _shadow_save(etag, idx)

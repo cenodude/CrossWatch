@@ -144,7 +144,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "1.9"
+__VERSION__ = "2.0"
 __all__ = ["get_manifest", "MDBLISTModule", "OPS"]
 
 def _health(status: str, ok: bool, latency_ms: int) -> None:
@@ -823,7 +823,7 @@ class MDBLISTModule:
 
     def build_index(self, feature: str, **kwargs: Any) -> dict[str, dict[str, Any]]:
         if not self._is_enabled(feature) or feature not in _FEATURES:
-            _log("index_skipped", feature=feature, reason="disabled_or_missing")
+            _log("index_skipped", sync_feature=feature, reason="disabled_or_missing")
             return {}
         mod = _FEATURES.get(feature)
         return mod.build_index(self, **kwargs) if mod else {}
@@ -853,13 +853,13 @@ class MDBLISTModule:
         if not lst:
             return {"ok": True, "count": 0}
         if not self._is_enabled(feature) or feature not in _FEATURES:
-            _log("write_skipped", feature=feature, level="info", op="add", reason="disabled_or_missing")
+            _log("write_skipped", sync_feature=feature, level="info", op="add", reason="disabled_or_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         if dry_run:
             return {"ok": True, "count": len(lst), "dry_run": True}
         mod = _FEATURES.get(feature)
         if not mod:
-            _log("write_skipped", feature=feature, level="warn", op="add", reason="module_missing")
+            _log("write_skipped", sync_feature=feature, level="warn", op="add", reason="module_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         try:
             raw = mod.add(self, lst)
@@ -878,13 +878,13 @@ class MDBLISTModule:
         if not lst:
             return {"ok": True, "count": 0}
         if not self._is_enabled(feature) or feature not in _FEATURES:
-            _log("write_skipped", feature=feature, level="info", op="remove", reason="disabled_or_missing")
+            _log("write_skipped", sync_feature=feature, level="info", op="remove", reason="disabled_or_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         if dry_run:
             return {"ok": True, "count": len(lst), "dry_run": True}
         mod = _FEATURES.get(feature)
         if not mod:
-            _log("write_skipped", feature=feature, level="warn", op="remove", reason="module_missing")
+            _log("write_skipped", sync_feature=feature, level="warn", op="remove", reason="module_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         try:
             raw = mod.remove(self, lst)
@@ -1077,7 +1077,7 @@ class _MDBLISTOPS:
         try:
             return self._adapter(cfg).destination_comparison_view(feature, index)
         except Exception as e:
-            _warn("destination_comparison_failed", feature=feature, error=str(e))
+            _warn("destination_comparison_failed", sync_feature=feature, error=str(e))
             return index
 
     def add(

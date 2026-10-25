@@ -101,8 +101,9 @@ def _season_episode_numbers(adapter: Any, tmdb_id: str, season: int) -> set[int]
         return _SEASON_EPISODE_CACHE[key]
     try:
         rows = paged(adapter, f"media/tv/tmdb/{key[0]}/{key[1]}/episodes")
-    except Exception:
-        _SEASON_EPISODE_CACHE[key] = None
+    except FloppyAuthError as exc:
+        if exc.status_code != 404:
+            raise
         return None
     numbers = {number for number in (_row_episode_number(row) for row in rows) if number}
     _SEASON_EPISODE_CACHE[key] = numbers
@@ -532,22 +533,23 @@ def _history_id(item: Mapping[str, Any]) -> str | None:
 def _movie_history(adapter: Any, tmdb_id: str) -> list[Mapping[str, Any]]:
     try:
         return paged(adapter, f"media/movie/tmdb/{tmdb_id}/history")
-    except Exception:
+    except FloppyAuthError as exc:
+        if exc.status_code != 404:
+            raise
         return []
 
 
 def _episode_history(adapter: Any, tmdb_id: str, season: int, episode: int, bucket: str | None = None) -> list[Mapping[str, Any]]:
     try:
         return paged(adapter, f"media/tv/tmdb/{tmdb_id}/{season}/{episode}/history", params=bucket_params(bucket))
-    except Exception:
+    except FloppyAuthError as exc:
+        if exc.status_code != 404:
+            raise
         return []
 
 
 def _existing_bucket(adapter: Any, tmdb_id: str) -> str:
-    try:
-        return ANIME_BUCKET if show_bucket(adapter, tmdb_id) == ANIME_BUCKET else ""
-    except Exception:
-        return ""
+    return ANIME_BUCKET if show_bucket(adapter, tmdb_id) == ANIME_BUCKET else ""
 
 
 def _row_epoch(row: Mapping[str, Any]) -> int | None:
@@ -670,7 +672,7 @@ def _augment_absolute_episode_history(adapter: Any, out: dict[str, dict[str, Any
                 continue
             try:
                 target_id, real_season, real_episode, _verify = _write_target_result(adapter, show, source_item, season, episode)
-            except Exception:
+            except FloppyCoordinateError:
                 continue
             if not target_id or (target_id == show and (real_season, real_episode) == (season, episode)):
                 continue

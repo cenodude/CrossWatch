@@ -378,28 +378,42 @@ def paged_get(adapter: Any, path: str, *, feature: str, page_size: int, max_page
     rows: list[Mapping[str, Any]] = []
     page = 1
     size = max(1, min(int(page_size or HISTORY_PAGE_MAX), HISTORY_PAGE_MAX))
+    total: int | None = None
+    seen_pages: set[tuple[str, ...]] = set()
     while True:
         if max_pages and page > max_pages:
             _warn(feature, "index_page_cap_hit", max_pages=max_pages)
-            break
+            raise ScrobError(f"scrob_{feature}_page_cap_reached:{max_pages}")
         query = dict(params or {})
         query.update({"page": page, "page_size": size})
         resp = scrob_request(adapter, "GET", path, params=query)
         if not ok_status(resp):
             _warn(feature, "fetch_failed", status=int(resp.status_code), error=error_of(resp), page=page)
-            break
+            raise ScrobError(f"scrob_{feature}_http_{int(resp.status_code)}")
         data = safe_json(resp)
-        if not isinstance(data, Mapping):
+        if not isinstance(data, Mapping) or not isinstance(data.get("results"), list):
+            raise ScrobError(f"scrob_{feature}_invalid_response")
+        page_total = as_int(data.get("total_results"))
+        if total is not None and page_total is not None and page_total != total:
+            raise ScrobError(f"scrob_{feature}_total_changed:{total}->{page_total}")
+        total = page_total if page_total is not None else total
+        chunk = [r for r in data["results"] if isinstance(r, Mapping)]
+        if not chunk:
+            if page > 1 or (total or 0) > 0:
+                raise ScrobError(f"scrob_{feature}_incomplete_read:page {page}")
             break
-        chunk = data.get("results")
-        chunk = [r for r in chunk if isinstance(r, Mapping)] if isinstance(chunk, list) else []
+        signature = tuple(str(r.get("id") or "") for r in chunk)
+        if signature in seen_pages:
+            raise ScrobError(f"scrob_{feature}_repeated_page")
+        seen_pages.add(signature)
         rows.extend(chunk)
         total_pages = as_int(data.get("total_pages")) or 1
-        if not chunk or page >= total_pages:
+        if page >= total_pages:
             break
         page += 1
+    if total is not None and len(rows) != total:
+        raise ScrobError(f"scrob_{feature}_incomplete_read:{len(rows)}/{total}")
     return rows
-
 
 def webhook_post(adapter: Any, path: str, payload: Mapping[str, Any]) -> requests.Response:
     section = cfg_section(adapter)

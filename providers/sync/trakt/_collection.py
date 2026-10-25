@@ -299,7 +299,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     if ttl_h > 0 and shadow.get("ts"):
         fresh = (int(time.time()) - int(shadow.get("ts") or 0)) <= ttl_h * 3600
 
-    def _fetch_bucket(name: str, url: str) -> tuple[dict[str, dict[str, Any]], str | None, bool]:
+    def _fetch_bucket(name: str, url: str) -> tuple[dict[str, dict[str, Any]], str | None, bool] | None:
         req_headers = dict(headers)
         cached = bucket_cache.get(name) if isinstance(bucket_cache, Mapping) else None
         etag = shadow_etags.get(name) if isinstance(shadow_etags, Mapping) else None
@@ -326,7 +326,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
             return dict(cached), str(etag), True
         if r.status_code != 200:
             _warn("http_failed", op="index", bucket=name, status=r.status_code)
-            return (dict(cached) if isinstance(cached, Mapping) else {}), (str(etag) if etag else None), True
+            return None
 
         while True:
             if page > 1:
@@ -363,7 +363,8 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         _dbg("index_fetch_bucket", bucket=name, rows=rows_seen, items=len(idx), per_page=per_page, max_pages=max_pages, pages=(page - 1))
         return idx, etag_out, False
 
-    media_idx, media_etag, media_cached = _fetch_bucket("media", URL_MEDIA)
+    media = _fetch_bucket("media", URL_MEDIA)
+    media_idx, media_etag, media_cached = media if media is not None else ({}, None, True)
     if media_idx or not media_cached:
         if use_etag:
             _shadow_save({"media": media_etag}, media_idx, {"media": media_idx})
@@ -371,8 +372,12 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         _info("index_done", count=len(media_idx), source=source, endpoint="media", per_page=per_page, max_pages=max_pages)
         return media_idx
 
-    movie_idx, movie_etag, movie_cached = _fetch_bucket("movies", URL_MOVIES)
-    show_idx, show_etag, show_cached = _fetch_bucket("shows", URL_SHOWS)
+    movies = _fetch_bucket("movies", URL_MOVIES)
+    shows = _fetch_bucket("shows", URL_SHOWS)
+    if movies is None or shows is None:
+        raise RuntimeError("trakt_collection_read_failed")
+    movie_idx, movie_etag, movie_cached = movies
+    show_idx, show_etag, show_cached = shows
 
     idx: dict[str, dict[str, Any]] = {}
     idx.update(movie_idx)

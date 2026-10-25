@@ -102,8 +102,8 @@ def _pages(adapter: Any, path: str) -> list[Mapping[str, Any]]:
         if not _ok(resp):
             raise TMDBPlaylistError(_error_of(resp))
         data = _json(resp)
-        if not isinstance(data, Mapping):
-            break
+        if not isinstance(data, Mapping) or not isinstance(data.get("results"), list):
+            raise TMDBPlaylistError(f"TMDb list page invalid ({path})")
         out.append(data)
         total = as_int(data.get("total_pages")) or 1
         if total > MAX_PAGES:

@@ -2238,14 +2238,17 @@ def test_floppy_history_movie_index_skips_unwatched_rows() -> None:
     assert sorted(out) == ["tmdb:11", "tmdb:13"]
 
 
-def test_floppy_paged_stops_when_endpoint_ignores_offset() -> None:
+def test_floppy_paged_fails_when_endpoint_ignores_offset() -> None:
     from providers.sync.floppy._common import paged
 
     page = {"results": [{"item_id": f"movie/tmdb/{n}"} for n in range(200)]}
+    with pytest.raises(RuntimeError, match="floppy_missing_total:media/movie"):
+        paged(AdapterStub({("GET", "media/movie"): page}), "media/movie")
+    with pytest.raises(RuntimeError, match="floppy_repeated_page:media/movie"):
+        paged(AdapterStub({("GET", "media/movie"): {**page, "pagination": {"total": 999}}}), "media/movie")
+
     adapter = AdapterStub({("GET", "media/movie"): page})
-
-    rows = paged(adapter, "media/movie")
-
+    rows = paged(adapter, "media/movie", require_total=False)
     assert len(rows) == 200
     assert len(adapter.client.session.calls) == 2
 
@@ -2545,14 +2548,24 @@ def test_floppy_collection_read_follows_pagination_total() -> None:
     assert [c["params"]["offset"] for c in adapter.client.session.calls] == [0, 200, 400]
 
 
-def test_floppy_paged_without_require_total_keeps_old_behaviour() -> None:
+def test_floppy_paged_short_read_fails_unless_total_is_waived() -> None:
     from providers.sync.floppy._common import paged
 
     def page(call):
         offset = int(call["params"]["offset"])
         return {"results": [{"id": 1}] * 200 if offset == 0 else [], "pagination": {"total": 450}}
 
-    assert len(paged(AdapterStub({("GET", "lists"): page}), "lists")) == 200
+    with pytest.raises(RuntimeError, match="floppy_incomplete_read:lists:200/450"):
+        paged(AdapterStub({("GET", "lists"): page}), "lists")
+    assert len(paged(AdapterStub({("GET", "lists"): page}), "lists", require_total=False)) == 200
+
+
+@pytest.mark.parametrize("body", [{}, {"detail": "maintenance"}, {"pagination": {"total": 3}}])
+def test_floppy_paged_rejects_bodies_without_results(body) -> None:
+    from providers.sync.floppy._common import paged
+
+    with pytest.raises(RuntimeError, match="floppy_invalid_response:lists"):
+        paged(AdapterStub({("GET", "lists"): body}), "lists")
 
 
 def test_floppy_collection_add_timeout_marks_only_that_item_unresolved() -> None:

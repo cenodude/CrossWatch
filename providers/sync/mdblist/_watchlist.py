@@ -16,6 +16,7 @@ from cw_platform.id_map import canonical_key, migrate_media_key, minimal as id_m
 from .._log import log as cw_log
 from .._mod_common import request_with_retries
 from ._common import (
+    require_page,
     CursorPager,
     MDBListFetchError,
     _pair_scope,
@@ -492,6 +493,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
             _warn("http_failed", op="index", method="GET", url=URL_LIST, status=r.status_code, page=pager.pages + 1)
             raise MDBListFetchError("MDBList watchlist read failed")
         data = r.json() if (r.text or "").strip() else {}
+        require_page(data, "watchlist")
         more = pager.advance(data, r)
         rows, _ = _parse_rows_and_total(data)
         for row in rows:

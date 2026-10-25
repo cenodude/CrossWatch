@@ -466,7 +466,8 @@ def test_nothing_is_planned_or_written_without_anime_mapping(anilist: type[FakeA
     anilist.entries = {16498: _entry("CURRENT", 2)}
 
     assert _sync(monkeypatch, [_episode(AOT, 1, 5), _episode(DARK, 1, 1)], mapping_enabled=False) == []
-    assert anilist_mod.OPS.build_index(_cfg(False), feature="history") == {}
+    with pytest.raises(RuntimeError, match="anime_mapping_unavailable"):
+        anilist_mod.OPS.build_index(_cfg(False), feature="history")
     result = anilist_mod.OPS.add(_cfg(False), [_episode(AOT, 1, 5)], feature="history")
     assert (result["count"], result["unresolved"][0]["reason"]) == (0, "anime_mapping_unavailable")
     assert anilist.saves == []

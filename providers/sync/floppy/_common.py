@@ -258,7 +258,7 @@ def _total_of(data: Mapping[str, Any]) -> int | None:
         return None
 
 
-def paged(adapter: Any, path: str, *, params: Mapping[str, Any] | None = None, max_pages: int = MAX_PAGES, require_total: bool = False) -> list[Mapping[str, Any]]:
+def paged(adapter: Any, path: str, *, params: Mapping[str, Any] | None = None, max_pages: int = MAX_PAGES, require_total: bool = True) -> list[Mapping[str, Any]]:
     out: list[Mapping[str, Any]] = []
     base = dict(params or {})
     limit = max(1, min(PAGE_SIZE, int(base.pop("limit", PAGE_SIZE) or PAGE_SIZE)))
@@ -268,10 +268,17 @@ def paged(adapter: Any, path: str, *, params: Mapping[str, Any] | None = None, m
     for _ in range(max(1, int(max_pages or 1))):
         data = api_get(adapter, path, params={**base, "limit": limit, "offset": offset})
         enveloped = isinstance(data, Mapping)
-        if enveloped and total is None:
-            total = _total_of(data)
         rows = data.get("results") if enveloped else data
-        if not isinstance(rows, list) or not rows:
+        if not isinstance(rows, list):
+            raise RuntimeError(f"floppy_invalid_response:{path}")
+        if enveloped:
+            page_total = _total_of(data)
+            if require_total and page_total is None:
+                raise RuntimeError(f"floppy_missing_total:{path}")
+            if total is not None and page_total is not None and page_total != total:
+                raise RuntimeError(f"floppy_total_changed:{path}:{total}->{page_total}")
+            total = page_total if page_total is not None else total
+        if not rows:
             break
         before = len(out)
         out.extend(row for row in rows if isinstance(row, Mapping))
@@ -279,6 +286,8 @@ def paged(adapter: Any, path: str, *, params: Mapping[str, Any] | None = None, m
             break
         signature = _page_signature(rows)
         if previous is not None and signature == previous:
+            if require_total:
+                raise RuntimeError(f"floppy_repeated_page:{path}")
             del out[before:]
             break
         previous = signature
@@ -288,11 +297,15 @@ def paged(adapter: Any, path: str, *, params: Mapping[str, Any] | None = None, m
         if total is not None and offset >= total:
             break
         if len(out) >= MAX_ROWS:
+            if require_total:
+                raise RuntimeError(f"floppy_row_cap_reached:{path}:{MAX_ROWS}")
             break
-    if require_total and total is not None and len(out) < total:
+    else:
+        if require_total:
+            raise RuntimeError(f"floppy_page_cap_reached:{path}:{max_pages}")
+    if require_total and total is not None and len(out) != total:
         raise RuntimeError(f"floppy_incomplete_read:{path}:{len(out)}/{total}")
     return out
-
 
 def media_parts_from_item_id(value: Any) -> tuple[str | None, str | None, str | None, int | None, int | None]:
     parts = [p for p in str(value or "").strip("/").split("/") if p]
@@ -325,7 +338,9 @@ def _row_episode_number(row: Mapping[str, Any]) -> int | None:
 def _season_episodes(adapter: Any, tmdb_id: str, season: int) -> list[int]:
     try:
         rows = paged(adapter, f"media/tv/tmdb/{tmdb_id}/{season}/episodes")
-    except Exception:
+    except FloppyAuthError as exc:
+        if exc.status_code != 404:
+            raise
         return []
     numbers = {n for n in (_row_episode_number(row) for row in rows) if n}
     return sorted(numbers)

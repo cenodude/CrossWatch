@@ -19,6 +19,7 @@ from .._log import log as cw_log
 from .._mod_common import request_with_retries
 
 from ._common import (
+    require_page,
     CursorPager,
     SHOW_BATCH_LIMIT,
     STATE_DIR,
@@ -753,6 +754,7 @@ def build_index(
             raise MDBListFetchError("MDBList ratings snapshot incomplete")
 
         data = r.json() if (r.text or "").strip() else {}
+        require_page(data, "ratings")
         more = pager.advance(data, r)
         movies = data.get("movies") or []
         shows = data.get("shows") or []

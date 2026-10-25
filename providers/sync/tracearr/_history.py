@@ -256,7 +256,7 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
         pages += 1
         if pages > cfg_max_pages:
             _log("index_reconcile", level="warn", reason="max_pages_reached", pages=pages, max_pages=cfg_max_pages)
-            break
+            raise RuntimeError(f"tracearr_history_page_cap_reached:{cfg_max_pages}")
 
         params: dict[str, Any] = {"pageSize": cfg_per_page}
         if cursor:
@@ -266,10 +266,16 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
         if server_id:
             params["server_id"] = server_id
 
-        payload = client.get("/history", **params) or {}
+        payload = client.get("/history", **params)
+        if payload is None:
+            raise RuntimeError("tracearr_history_not_found")
         rows = payload.get("data") if isinstance(payload, Mapping) else None
         meta = payload.get("meta") if isinstance(payload, Mapping) else None
-        if not isinstance(rows, list) or not rows:
+        if not isinstance(rows, list):
+            raise RuntimeError("tracearr_history_invalid_response")
+        if not rows:
+            if cursor:
+                raise RuntimeError("tracearr_history_incomplete_read")
             break
 
         _log("index_fetch_counts", page=pages, batch=len(rows))
@@ -312,7 +318,7 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
             break
         if next_cursor in seen_cursors:
             _log("index_reconcile", level="warn", reason="cursor_repeat", pages=pages)
-            break
+            raise RuntimeError("tracearr_history_repeated_cursor")
         seen_cursors.add(next_cursor)
         cursor = next_cursor
 

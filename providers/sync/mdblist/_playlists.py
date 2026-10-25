@@ -18,7 +18,7 @@ from cw_platform.playlists import (
 
 from .._log import log as cw_log
 from . import _watchlist as feat_watchlist
-from ._common import CursorPager, cfg_section, has_auth, mdblist_request
+from ._common import CursorPager, cfg_section, has_auth, mdblist_request, require_page
 from ._watchlist import _as_int, _as_str, _parse_rows_and_total
 
 BASE = "https://api.mdblist.com"
@@ -245,6 +245,7 @@ def get_snapshot(adapter: Any, playlist_id: Any) -> PlaylistSnapshot:
             _warn("http_failed", op="get_snapshot", status=r.status_code, list_id=lid)
             raise MDBListPlaylistError("MDBList playlist read failed")
         data = r.json() if (r.text or "").strip() else {}
+        require_page(data, "playlist")
         more = pager.advance(data, r)
         rows, _total = _parse_rows_and_total(data)
         for row in rows:

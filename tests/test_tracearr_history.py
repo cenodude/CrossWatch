@@ -306,7 +306,6 @@ def test_module_client_sends_bearer_and_caches_show_ids(monkeypatch: pytest.Monk
         return SimpleNamespace(status_code=200, json=lambda: {"imdb_id": "tt1", "tmdb_id": 5, "tvdb_id": None})
 
     monkeypatch.setattr(mod, "request_with_retries", fake_request)
-    monkeypatch.setattr(mod, "safe_json", lambda r: r.json())
     client = mod.TRACEARRModule({"tracearr": {"server_url": "http://t:3000", "api_key": "k"}}).client
 
     assert client.show_ids("s1") == {"imdb": "tt1", "tmdb": "5"}

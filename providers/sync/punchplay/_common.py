@@ -556,7 +556,7 @@ def snapshot_pages(adapter: Any, resource: str, *, feature: str, limit: int = PA
         guard += 1
         if guard > 10000:
             _warn(feature, "snapshot_page_guard_tripped", resource=resource)
-            return
+            raise PunchPlayError(f"punchplay_{feature}_snapshot_page_guard_tripped")
         resp = punchplay_request(
             adapter,
             "GET",
@@ -565,11 +565,14 @@ def snapshot_pages(adapter: Any, resource: str, *, feature: str, limit: int = PA
         )
         if resp.status_code != 200:
             _warn(feature, "snapshot_failed", resource=resource, status=resp.status_code, error=error_of(resp), request_id=request_id_of(resp))
-            return
-        data = safe_json(resp) or {}
+            raise PunchPlayError(f"punchplay_{feature}_snapshot_http_{resp.status_code}")
+        data = safe_json(resp)
         if not isinstance(data, Mapping):
-            return
+            _warn(feature, "snapshot_invalid_response", resource=resource, request_id=request_id_of(resp))
+            raise PunchPlayError(f"punchplay_{feature}_snapshot_invalid_response")
         rows = data.get("items")
+        if not isinstance(rows, list):
+            raise PunchPlayError(f"punchplay_{feature}_snapshot_invalid_response")
         rows = [r for r in rows if isinstance(r, Mapping)] if isinstance(rows, list) else []
         if rows:
             yield rows
@@ -581,7 +584,8 @@ def snapshot_pages(adapter: Any, resource: str, *, feature: str, limit: int = PA
         except Exception:
             nxt_int = None
         if nxt_int is None or nxt_int <= after:
-            return
+            _warn(feature, "snapshot_invalid_continuation", resource=resource, after=after, next_after=nxt)
+            raise PunchPlayError(f"punchplay_{feature}_snapshot_invalid_continuation")
         after = nxt_int
 
 

@@ -7,6 +7,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from ._common import (
+    FlickListError,
     URL_PLAYBACK,
     URL_PLAYBACK_ITEM,
     error_of,
@@ -32,7 +33,7 @@ def _rows(data: Any) -> list[Any]:
             value = data.get(key)
             if isinstance(value, list):
                 return value
-    return []
+    raise FlickListError("flicklist_progress_invalid_response")
 
 
 @retained_read
@@ -40,7 +41,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     resp = flicklist_request(adapter, "GET", URL_PLAYBACK)
     if not ok_status(resp):
         _warn(FEATURE, "index_failed", status=int(resp.status_code), error=error_of(resp))
-        return {}
+        raise FlickListError(f"flicklist_progress_http_{int(resp.status_code)}")
     out: dict[str, dict[str, Any]] = {}
     skipped = 0
     for row in _rows(safe_json(resp)):

@@ -9,6 +9,7 @@ from typing import Any, Iterable, Mapping
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 from ._common import (
+    ScrobError,
     MEDIA_TYPE_EPISODE,
     MEDIA_TYPE_MOVIE,
     MEDIA_TYPE_SERIES,
@@ -70,10 +71,20 @@ def _episode_context(adapter: Any, tmdb_id: int, cache: dict[int, dict[str, Any]
     if tmdb_id in cache:
         return cache[tmdb_id]
     if len(cache) >= EPISODE_LOOKUP_CAP:
-        cache[tmdb_id] = {}
-        return {}
+        _warn(FEATURE, "episode_lookup_cap_reached", cap=EPISODE_LOOKUP_CAP)
+        raise ScrobError(f"scrob_ratings_episode_lookup_cap_reached:{EPISODE_LOOKUP_CAP}")
     resp = scrob_request(adapter, "GET", EPISODE_DETAIL_PATH.format(tmdb_id=tmdb_id))
-    cache[tmdb_id] = mapping(safe_json(resp)) if ok_status(resp) else {}
+    if ok_status(resp):
+        body = safe_json(resp)
+        if not isinstance(body, Mapping):
+            _warn(FEATURE, "episode_lookup_invalid", tmdb=tmdb_id)
+            raise ScrobError("scrob_ratings_episode_lookup_invalid_response")
+        cache[tmdb_id] = dict(body)
+    elif int(resp.status_code) == 404:
+        cache[tmdb_id] = {}
+    else:
+        _warn(FEATURE, "episode_lookup_failed", tmdb=tmdb_id, status=int(resp.status_code), error=error_of(resp))
+        raise ScrobError(f"scrob_ratings_episode_lookup_http_{int(resp.status_code)}")
     return cache[tmdb_id]
 
 
@@ -132,10 +143,17 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     resp = scrob_request(adapter, "GET", PATH_RATINGS)
     if not ok_status(resp):
         _warn(FEATURE, "fetch_failed", status=int(resp.status_code), error=error_of(resp))
-        return {}
+        raise ScrobError(f"scrob_ratings_http_{int(resp.status_code)}")
     data = safe_json(resp)
-    rows = data.get("results") if isinstance(data, Mapping) else None
-    rows = [r for r in rows if isinstance(r, Mapping)] if isinstance(rows, list) else []
+    if not isinstance(data, Mapping):
+        raise ScrobError("scrob_ratings_invalid_response")
+    if data.get("next") or (as_int(data.get("total_pages")) or 1) > 1:
+        _warn(FEATURE, "ratings_truncated", total_pages=data.get("total_pages"), count=data.get("count"))
+        raise ScrobError("scrob_ratings_truncated")
+    rows = data.get("results")
+    if not isinstance(rows, list):
+        raise ScrobError("scrob_ratings_invalid_response")
+    rows = [r for r in rows if isinstance(r, Mapping)]
 
     cache: dict[int, dict[str, Any]] = {}
     out: dict[str, dict[str, Any]] = {}
