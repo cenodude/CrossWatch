@@ -191,6 +191,31 @@ def test_database_title_fallback_requires_review_and_keeps_watch_date(tmp_path):
     assert not result[1]["recovery_requires_review"]
 
 
+def test_title_matching_reports_remaining_work_until_searches_finish(tmp_path):
+    path = library(tmp_path / "lib.db", views=[movie("plex://movie/one", "One"),
+                                               movie("plex://movie/two", "Two"), movie("imdb://tt1234567")])
+    updates = []
+    searches = []
+
+    def search(item):
+        stage, message, done, total, activity = updates[-1]
+        assert stage == "title_matching"
+        assert (done, total) == (len(searches), 2)
+        assert done < total
+        assert activity["checked"] == 3
+        assert activity["current_item"] == item["title"]
+        searches.append(item["title"])
+        return {"tmdb": "123"} if item["title"] == "One" else {}
+
+    rows, _ = scan(path, search=search, progress=lambda *args: updates.append(args))
+    assert searches == ["One", "Two"]
+    assert len(rows) == 3
+    assert [(u[2], u[3]) for u in updates if u[0] == "title_matching"] == [(0, 2), (1, 2), (1, 2), (2, 2)]
+    assert all(u[4]["current_item"] for u in updates if u[0] == "title_matching")
+    assert updates[-1][4]["current_item"] == "Two"
+    assert updates[-1][4]["current_action"] == "Last checked"
+
+
 def test_library_scope_applies_to_existing_sections_and_keeps_deleted_libraries(tmp_path):
     path = library(tmp_path / "lib.db", views=[
         movie("imdb://tt0000001", "In scope", library_section_id=1), movie("imdb://tt0000002", "Out of scope", library_section_id=2),

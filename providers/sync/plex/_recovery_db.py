@@ -446,23 +446,29 @@ def _scan(con: sqlite3.Connection, clock: _Clock, *, account: int, libraries: se
         elif item.get("season") is not None and item.get("episode") is not None:
             entry.update(recovery_valid=True, recovery_match=method)
     if search:
-        for entry in title_candidates:
+        candidates = [entry for entry in title_candidates if id(entry) not in present
+                      and not entry["item"]["show_ids" if entry["item"]["type"] == "episode" else "ids"]]
+
+        def title_progress(done: int, title: str = "", action: str = "") -> None:
+            progress("title_matching", "Searching Plex for title matches", done, len(candidates),
+                     dict(checked=total, found=len(recovered) - len(present), skipped=skipped + len(present),
+                          current_item=title, current_action=action))
+
+        for index, entry in enumerate(candidates):
             check_cancel()
             item = entry["item"]
             field = "show_ids" if item["type"] == "episode" else "ids"
-            if item[field] or id(entry) in present:
-                continue
-            report(total, entry["original_title"], "Searching Plex for a title match")
+            title_progress(index, entry["original_title"], "Searching Plex for a title match")
             ids = _external(search(item))
-            if not ids:
-                continue
-            item[field] = ids
-            if recovery._tokens(item) & current:
-                present.add(id(entry))
-                continue
-            valid = item["type"] == "movie" or (item.get("season") is not None and item.get("episode") is not None)
-            entry.update(recovery_valid=valid, recovery_requires_review=True,
-                         recovery_match="Plex title match — review before importing")
+            if ids:
+                item[field] = ids
+                if recovery._tokens(item) & current:
+                    present.add(id(entry))
+                else:
+                    valid = item["type"] == "movie" or (item.get("season") is not None and item.get("episode") is not None)
+                    entry.update(recovery_valid=valid, recovery_requires_review=True,
+                                 recovery_match="Plex title match — review before importing")
+            title_progress(index + 1, entry["original_title"], "Last checked")
     return [entry for entry in recovered if id(entry) not in present]
 
 
