@@ -127,6 +127,112 @@ def make_logger(feature: str):  # type: ignore[return]
     return _dbg, _info, _warn
 
 
+def _page_rows_and_total(body: Any, require_total: bool) -> tuple[list[Mapping[str, Any]], int | None] | None:
+    if not isinstance(body, Mapping):
+        return None
+    page = body.get("Items")
+    total = body.get("TotalRecordCount")
+    if not isinstance(page, list):
+        return None
+    if total is None:
+        if require_total:
+            return None
+    elif isinstance(total, bool) or not isinstance(total, int) or total < 0:
+        return None
+    if any(not isinstance(raw, Mapping) or not str(raw.get("Id") or "").strip() for raw in page):
+        return None
+    return page, total
+
+
+def fetch_item_pages(
+    http: Any,
+    path: str,
+    params: Mapping[str, Any],
+    *,
+    reason: str,
+    page_size: int = 500,
+    start_key: str = "StartIndex",
+    limit_key: str = "Limit",
+    require_total: bool = True,
+    id_key: str = "Id",
+    warn: Any = None,
+    **context: Any,
+) -> list[Mapping[str, Any]]:
+    log_warn = warn or _warn
+    limit = max(1, int(page_size))
+    out: list[Mapping[str, Any]] = []
+    start = 0
+    expected_total: int | None = None
+    seen_pages: set[tuple[str, ...]] = set()
+    seen_ids: set[str] = set()
+
+    def _fail(event: str, what: str, **fields: Any) -> RuntimeError:
+        log_warn(event, start_index=start, **context, **fields)
+        return RuntimeError(f"{reason}_{what}")
+
+    while True:
+        query = dict(params)
+        query[start_key] = start
+        query[limit_key] = limit
+        try:
+            response = http.get(path, params=query)
+        except Exception as exc:
+            raise _fail("read_query_failed", f"read_failed:{exc}", error=str(exc)) from exc
+        status = getattr(response, "status_code", 0)
+        if status != 200:
+            raise _fail("read_query_failed", f"http_{status}", status=status)
+        try:
+            body = response.json()
+        except Exception as exc:
+            raise _fail("read_query_failed", f"read_failed:{exc}", error=str(exc)) from exc
+        parsed = _page_rows_and_total(body, require_total)
+        if parsed is None:
+            raise _fail("read_invalid_page", "invalid_page")
+        page, total = parsed
+        if total is not None:
+            if expected_total is not None and total != expected_total:
+                raise _fail("read_total_changed", f"total_changed:{expected_total}->{total}", previous_total=expected_total, total=total)
+            expected_total = total
+        if not page:
+            if expected_total is not None and start < expected_total:
+                raise _fail("read_incomplete", f"incomplete_read:{start}/{expected_total}", read=start, total=expected_total)
+            break
+        signature = tuple(str(raw.get(id_key) or raw.get("Id")) for raw in page)
+        if signature in seen_pages:
+            raise _fail("pagination_repeated_page", "repeated_page")
+        seen_pages.add(signature)
+        if len(set(signature)) != len(signature):
+            raise _fail("pagination_duplicate_item", "duplicate_item")
+        overlap = seen_ids.intersection(signature)
+        if overlap:
+            raise _fail("pagination_overlapping_page", "overlapping_page", duplicate_ids=sorted(overlap)[:5])
+        seen_ids.update(signature)
+        out.extend(page)
+        start += len(page)
+        if expected_total is not None:
+            if start > expected_total:
+                raise _fail("read_invalid_page", f"total_exceeded:{start}/{expected_total}", read=start, total=expected_total)
+            if start == expected_total:
+                break
+        elif len(page) < limit:
+            break
+    return out
+
+
+def item_rows(response: Any, reason: str) -> list[Mapping[str, Any]]:
+    status = getattr(response, "status_code", 0)
+    if status != 200:
+        raise RuntimeError(f"{reason}_http_{status}")
+    try:
+        body = response.json()
+    except Exception as exc:
+        raise RuntimeError(f"{reason}_read_failed:{exc}") from exc
+    rows = body.get("Items") if isinstance(body, Mapping) else None
+    if not isinstance(rows, list) or any(not isinstance(row, Mapping) for row in rows):
+        raise RuntimeError(f"{reason}_invalid_page")
+    return rows
+
+
 def _now_iso_z() -> str:
     from datetime import datetime, timezone
     return datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -752,17 +858,12 @@ def build_provider_index(adapter: Any, *, feature: str | None = None) -> dict[st
     uid = adapter.cfg.user_id
     out: dict[str, list[dict[str, Any]]] = {}
     path_index: dict[str, list[dict[str, Any]]] = {}
-    start = 0
-    limit = 500
-    total: int | None = None
     parents: list[str | None] = []
     parents.extend(sorted(jf_selected_library_ids(adapter.cfg, feature or "history")))
     if not parents:
         parents = [None]
-    parent_index = 0
-    seen_pages: set[tuple[str, ...]] = set()
 
-    while True:
+    for parent_id in parents:
         params: dict[str, Any] = {
             "IncludeItemTypes": "Movie,Series,Episode",
             "Recursive": True,
@@ -771,25 +872,11 @@ def build_provider_index(adapter: Any, *, feature: str | None = None) -> dict[st
                 "ProviderIds,ProductionYear,Type,IndexNumber,ParentIndexNumber,SeriesId,"
                 "SeriesName,ParentId,Path,CollectionFolderId,AncestorIds,LibraryId,Name"
             ),
-            "StartIndex": start,
-            "Limit": limit,
             "EnableTotalRecordCount": True,
         }
-        parent_id = parents[parent_index]
         if parent_id:
             params["ParentId"] = parent_id
-        r = http.get("/Items", params={**params, "userId": uid})
-        if getattr(r, "status_code", 0) != 200:
-            raise RuntimeError(f"jellyfin_provider_index_http_{getattr(r, 'status_code', 0)}")
-        body = r.json() or {}
-        items = body.get("Items") or []
-        signature = tuple(str(row.get("Id") or "") for row in items if isinstance(row, Mapping))
-        if items and signature in seen_pages:
-            break
-        seen_pages.add(signature)
-        if total is None:
-            total = int(body.get("TotalRecordCount") or 0)
-            _dbg('index_fetch_counts', source='provider_index', total=total)
+        items = fetch_item_pages(http, "/Items", {**params, "userId": uid}, reason="jellyfin_provider_index")
         for row in items:
             if not isinstance(row, Mapping):
                 continue
@@ -797,14 +884,6 @@ def build_provider_index(adapter: Any, *, feature: str | None = None) -> dict[st
             path_key = _path_index_key(row.get("Path"))
             if path_key:
                 path_index.setdefault(path_key, []).append(dict(row))
-        start += len(items)
-        if not items or len(items) < limit or (total is not None and total > 0 and start >= total):
-            parent_index += 1
-            if parent_index >= len(parents):
-                break
-            start, total = 0, None
-            seen_pages.clear()
-
     for k, rows in out.items():
         rows.sort(key=lambda r: str(r.get("Id") or ""))
     for k, rows in path_index.items():
@@ -870,24 +949,17 @@ def find_playlist_id_by_name(http: Any, user_id: str, name: str) -> str | None:
         "recursive": True,
         "SearchTerm": name,
     }
-    r = http.get("/Items", params=q)
-    if getattr(r, "status_code", 0) != 200:
-        return None
-    items = (r.json() or {}).get("Items") or []
+    items = item_rows(http.get("/Items", params=q), "jellyfin_playlist_lookup")
     name_l = (name or "").strip().lower()
     for it in items:
         if (it.get("Name") or "").strip().lower() == name_l:
             return it.get("Id")
     if not items:
         q = {"userId": user_id, "includeItemTypes": "Playlist", "recursive": True}
-        r = http.get("/Items", params=q)
-        if getattr(r, "status_code", 0) != 200:
-            return None
-        for it in (r.json() or {}).get("Items") or []:
+        for it in item_rows(http.get("/Items", params=q), "jellyfin_playlist_lookup"):
             if (it.get("Name") or "").strip().lower() == name_l:
                 return it.get("Id")
     return None
-
 
 def create_playlist(http: Any, user_id: str, name: str, is_public: bool = False) -> str | None:
     body = {"Name": name, "UserId": user_id, "IsPublic": bool(is_public)}
@@ -898,40 +970,25 @@ def create_playlist(http: Any, user_id: str, name: str, is_public: bool = False)
     return data.get("Id") or data.get("PlaylistId") or data.get("id")
 
 
-def get_playlist_items(http: Any, playlist_id: str, start: int = 0, limit: int = 100) -> dict[str, Any]:
-    q = {
-        "startIndex": max(0, int(start)),
-        "limit": max(1, int(limit)),
-        "Fields": "ProviderIds,ProductionYear,Type",
-        "EnableUserData": False,
-    }
-    r = http.get(f"/Playlists/{playlist_id}/Items", params=q)
-    if getattr(r, "status_code", 0) != 200:
-        return {"Items": [], "TotalRecordCount": 0}
-    data = r.json() or {}
-    data.setdefault("Items", [])
-    data.setdefault("TotalRecordCount", len(data["Items"]))
-    return data
-
 def playlist_fetch_all(
     http: Any,
     playlist_id: str,
     *,
     page_size: int = 500,
 ) -> tuple[list[Mapping[str, Any]], int]:
-    out: list[Mapping[str, Any]] = []
-    start = 0
-    total: int | None = None
-    while True:
-        body = get_playlist_items(http, playlist_id, start=start, limit=page_size)
-        rows: list[Mapping[str, Any]] = body.get("Items") or []
-        if total is None:
-            total = int(body.get("TotalRecordCount") or 0)
-        out.extend(rows)
-        start += len(rows)
-        if not rows or (total is not None and start >= total):
-            break
-    return out, int(total or len(out))
+    rows = fetch_item_pages(
+        http,
+        f"/Playlists/{playlist_id}/Items",
+        {"Fields": "ProviderIds,ProductionYear,Type", "EnableUserData": False},
+        reason="jellyfin_playlist_items",
+        page_size=page_size,
+        start_key="startIndex",
+        limit_key="limit",
+        require_total=False,
+        id_key="PlaylistItemId",
+        playlist_id=playlist_id,
+    )
+    return rows, len(rows)
 
 def playlist_add_items(http: Any, playlist_id: str, user_id: str, item_ids: Iterable[str]) -> bool:
     ids = ",".join(str(x) for x in item_ids if x)
@@ -978,8 +1035,9 @@ def delete_item(http: Any, item_id: str) -> bool:
 
 
 def find_collection_id_by_name(http: Any, user_id: str, name: str) -> str | None:
-    try:
-        r = http.get(
+    name_lc = (name or "").strip().lower()
+    items = item_rows(
+        http.get(
             "/Items",
             params={
                 "userId": user_id,
@@ -988,31 +1046,20 @@ def find_collection_id_by_name(http: Any, user_id: str, name: str) -> str | None
                 "SearchTerm": name,
                 "Limit": 50,
             },
-        )
-        if getattr(r, "status_code", 0) != 200:
-            return None
-        items = (r.json() or {}).get("Items") or []
-        name_lc = (name or "").strip().lower()
-        for row in items:
-            if (row.get("Type") == "BoxSet") and (
-                str(row.get("Name") or "").strip().lower() == name_lc
-            ):
-                return str(row.get("Id"))
-        r2 = http.get(
-            "/Items",
-            params={"userId": user_id, "IncludeItemTypes": "BoxSet", "Recursive": True},
-        )
-        if getattr(r2, "status_code", 0) != 200:
-            return None
-        for row in (r2.json() or {}).get("Items") or []:
-            if (row.get("Type") == "BoxSet") and (
-                str(row.get("Name") or "").strip().lower() == name_lc
-            ):
-                return str(row.get("Id"))
-    except Exception:
-        pass
+        ),
+        "jellyfin_collection_lookup",
+    )
+    for row in items:
+        if (row.get("Type") == "BoxSet") and (str(row.get("Name") or "").strip().lower() == name_lc):
+            return str(row.get("Id"))
+    rows = item_rows(
+        http.get("/Items", params={"userId": user_id, "IncludeItemTypes": "BoxSet", "Recursive": True}),
+        "jellyfin_collection_lookup",
+    )
+    for row in rows:
+        if (row.get("Type") == "BoxSet") and (str(row.get("Name") or "").strip().lower() == name_lc):
+            return str(row.get("Id"))
     return None
-
 
 def create_collection(http: Any, name: str) -> str | None:
     try:
@@ -1026,29 +1073,6 @@ def create_collection(http: Any, name: str) -> str | None:
     return None
 
 
-def get_collection_items(http: Any, user_id: str, collection_id: str) -> dict[str, Any]:
-    try:
-        r = http.get(
-            "/Items",
-            params={
-                "userId": user_id,
-                "ParentId": collection_id,
-                "Recursive": True,
-                "IncludeItemTypes": "Movie,Series",
-                "Fields": "ProviderIds,ProductionYear,Type",
-                "EnableTotalRecordCount": True,
-                "Limit": 10000,
-            },
-        )
-        if getattr(r, "status_code", 0) != 200:
-            return {"Items": [], "TotalRecordCount": 0}
-        data = r.json() or {}
-        data.setdefault("Items", [])
-        data.setdefault("TotalRecordCount", len(data["Items"]))
-        return data
-    except Exception:
-        return {"Items": [], "TotalRecordCount": 0}
-
 def collection_fetch_all(
     http: Any,
     user_id: str,
@@ -1056,34 +1080,22 @@ def collection_fetch_all(
     *,
     page_size: int = 500,
 ) -> tuple[list[Mapping[str, Any]], int]:
-    out: list[Mapping[str, Any]] = []
-    start = 0
-    total: int | None = None
-    while True:
-        r = http.get(
-            "/Items",
-            params={
-                "userId": user_id,
-                "IncludeItemTypes": "Movie,Series",
-                "ParentId": collection_id,
-                "Recursive": False,
-                "Fields": "ProviderIds,ProductionYear,Type",
-                "EnableTotalRecordCount": True,
-                "StartIndex": start,
-                "Limit": max(1, int(page_size)),
-            },
-        )
-        if getattr(r, "status_code", 0) != 200:
-            return out, int(total or len(out))
-        body = r.json() or {}
-        rows: list[Mapping[str, Any]] = body.get("Items") or []
-        if total is None:
-            total = int(body.get("TotalRecordCount") or 0)
-        out.extend(rows)
-        start += len(rows)
-        if not rows or (total is not None and start >= total):
-            break
-    return out, int(total or len(out))
+    rows = fetch_item_pages(
+        http,
+        "/Items",
+        {
+            "userId": user_id,
+            "IncludeItemTypes": "Movie,Series",
+            "ParentId": collection_id,
+            "Recursive": False,
+            "Fields": "ProviderIds,ProductionYear,Type",
+            "EnableTotalRecordCount": True,
+        },
+        reason="jellyfin_collection_items",
+        page_size=page_size,
+        collection_id=collection_id,
+    )
+    return rows, len(rows)
 
 def collection_add_items(http: Any, collection_id: str, item_ids: Iterable[str]) -> bool:
     ids = ",".join(str(x) for x in item_ids if x)

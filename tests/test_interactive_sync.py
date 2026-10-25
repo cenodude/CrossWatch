@@ -331,6 +331,33 @@ def test_explicit_refresh_explains_selection_loss_without_an_apply_read(config_b
         session.close()
 
 
+@pytest.mark.parametrize("mode", ["one-way", "two-way"])
+def test_failed_source_read_proposes_no_removals(config_base, monkeypatch, mode):
+    src, dst = setup_ops(config_base, monkeypatch, [item(1), item(2), item(3)], [item(1), item(2), item(3)])
+    cfg = _cfg(False)
+    cfg["pairs"][0]["mode"] = mode
+    cfg["pairs"][0]["features"]["watchlist"]["remove"] = True
+    cfg["sync"]["enable_remove"] = True
+    assert Orchestrator(cfg).run(dry_run=False, pair_scope_ids=["p1"])["ok"]
+
+    full = dict(src.index)
+    src.index = {k: v for k, v in full.items() if v["title"] == "Movie 1"}
+    partial = InteractivePlan()
+    run(cfg, partial)
+    assert any(row["operation"] == "remove" for row in partial.rows.values())
+
+    src.index = full
+
+    def failing_read(*_args, **_kwargs):
+        raise RuntimeError("source page 2 failed")
+
+    monkeypatch.setattr(src, "build_index", failing_read)
+    failed = InteractivePlan()
+    result = run(cfg, failed)
+    assert not result["ok"]
+    assert not any(row["operation"] == "remove" for row in failed.rows.values())
+
+
 def test_failed_preflight_does_not_report_provider_changes(config_base, monkeypatch):
     from api import syncAPI
     from services import interactive_sync as svc

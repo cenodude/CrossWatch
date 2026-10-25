@@ -43,7 +43,7 @@ def _error(event: str, **fields: Any) -> None:
 def _log(msg: str) -> None:
     _dbg(msg)
 
-__VERSION__ = "2.7"
+__VERSION__ = "2.8"
 os.environ.setdefault("CW_PLEX_UA", http_user_agent("Plex", override_env="CW_PLEX_UA"))
 __all__ = ["get_manifest", "PLEXModule", "PLEXClient", "PLEXError", "PLEXAuthError", "PLEXNotFound", "OPS"]
 

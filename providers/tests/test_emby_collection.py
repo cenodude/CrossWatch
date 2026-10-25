@@ -84,7 +84,7 @@ class FakeEmbyClient:
                             "DateCreated": "2026-01-02T03:04:05Z",
                         }
                     ],
-                    "TotalRecordCount": 1,
+                    "TotalRecordCount": 3,
                 },
             )
         return Resp(404, {})

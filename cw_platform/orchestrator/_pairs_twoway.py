@@ -109,6 +109,7 @@ from ._snapshots import (
     provider_index_semantics,
     prev_checkpoint,
     refresh_destination_after_apply,
+    require_snapshot,
 )
 from ._applier import apply_add, apply_remove, apply_update
 from ._chunking import effective_chunk_size
@@ -497,12 +498,14 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             feature=feature, config=a_cfg, providers={a: aops},
             snap_cache=ctx.snap_cache, snap_ttl_sec=ctx.snap_ttl_sec,
             dbg=dbg, emit_info=info, on_snapshot=_on_snapshot,
-        ).get(a) or {}
+        )
+        A_cur = require_snapshot(A_cur, a, feature)
         B_cur = build_snapshots_for_feature(
             feature=feature, config=b_cfg, providers={b: bops},
             snap_cache=ctx.snap_cache, snap_ttl_sec=ctx.snap_ttl_sec,
             dbg=dbg, emit_info=info,
-        ).get(b) or {}
+        )
+        B_cur = require_snapshot(B_cur, b, feature)
     else:
         snaps = build_snapshots_for_feature(
             feature=feature, config=provider_cfg, providers=pair_providers,
@@ -510,8 +513,8 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             dbg=dbg, emit_info=info,
             build_order=build_order, on_snapshot=_on_snapshot,
         )
-        A_cur = snaps.get(a) or {}
-        B_cur = snaps.get(b) or {}
+        A_cur = require_snapshot(snaps, a, feature)
+        B_cur = require_snapshot(snaps, b, feature)
     cancelled = bool(cancel_requested())
 
 

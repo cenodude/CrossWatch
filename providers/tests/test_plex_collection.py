@@ -215,7 +215,7 @@ def test_collection_index_scans_show_libraries_as_shows_seasons_and_episodes(mon
         def libraries(self, types=()):
             return [Section()]
 
-    def fake_fetch_section_guid_rows(srv: Any, section_id: str, plex_type: int):
+    def fake_fetch_section_guid_rows(srv: Any, section_id: str, plex_type: int, **_kwargs: Any):
         calls.append((section_id, plex_type))
         if plex_type == 2:
             return [{"ratingKey": "2", "type": "show", "title": "The Expanse"}], 1

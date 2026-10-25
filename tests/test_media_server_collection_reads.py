@@ -77,6 +77,102 @@ def collection(request, monkeypatch):
     return SimpleNamespace(module=module, name=name, scope=scope)
 
 
+def _ids(rows):
+    return [raw["Id"] for raw, _parent in rows]
+
+
+def test_full_read_returns_every_row(collection):
+    rows, _allowed = collection.module._fetch_rows(_adapter(Library(643)))
+    assert len(rows) == 643
+
+
+def test_valid_empty_library_is_not_a_failure(collection):
+    rows, _allowed = collection.module._fetch_rows(_adapter(Library(0)))
+    assert rows == []
+
+
+@pytest.mark.parametrize("kwargs,reason", [
+    ({"fail_at": 500}, "http_502"),
+    ({"fail_at": 0}, "http_502"),
+    ({"fail_at": 500, "error": TimeoutError("read timed out")}, "read_failed:read timed out"),
+    ({"fail_at": 500, "error": RuntimeError("client gave up")}, "read_failed:client gave up"),
+    ({"json_error_at": 500}, "read_failed:Expecting value"),
+    ({"total": 700}, "incomplete_read:643/700"),
+    ({"ignore_start": True}, "repeated_page"),
+    ({"total_at": {500: 642}}, r"total_changed:643->642"),
+    ({"total_at": {500: 644}}, r"total_changed:643->644"),
+    ({"total": 600}, "total_exceeded:643/600"),
+])
+def test_failed_or_inconsistent_read_raises_instead_of_returning_partial_rows(collection, kwargs, reason):
+    with pytest.raises(RuntimeError, match=f"{collection.name}_collection_{reason}"):
+        collection.module._fetch_rows(_adapter(Library(643, **kwargs)))
+
+
+@pytest.mark.parametrize("body", [
+    {},
+    {"Items": None, "TotalRecordCount": 643},
+    {"Items": [], "TotalRecordCount": None},
+    {"Items": []},
+    {"Items": [None] * 143, "TotalRecordCount": 643},
+    {"Items": [{"Name": "no id"}], "TotalRecordCount": 643},
+    {"Items": [], "TotalRecordCount": "643"},
+    [],
+    None,
+])
+def test_malformed_later_page_is_a_failure(collection, body):
+    with pytest.raises(RuntimeError, match=f"{collection.name}_collection_invalid_page"):
+        collection.module._fetch_rows(_adapter(Library(643, body_at={500: body})))
+
+
+@pytest.mark.parametrize("hidden", [{"7"}, {"600"}, {"7", "498", "600"}])
+def test_overlapping_pages_fail_instead_of_deduplicating(collection, hidden):
+    with pytest.raises(RuntimeError, match=f"{collection.name}_collection_overlapping_page"):
+        collection.module._fetch_rows(_adapter(Library(643, hidden=hidden)))
+
+
+def test_overlap_with_unchanged_total_is_detected(collection):
+    http = Library(4)
+    pages = {0: _movies(1, 2), 2: _movies(2, 2)}
+    http.get = lambda path, *, params: Response({"Items": pages.get(int(params.get("StartIndex", 0)), []), "TotalRecordCount": 4})
+    with pytest.raises(RuntimeError, match=f"{collection.name}_collection_overlapping_page"):
+        collection.module._fetch_rows(_adapter(http))
+
+
+def test_hidden_item_at_the_end_cannot_be_told_apart_from_a_truncated_read(collection):
+    with pytest.raises(RuntimeError, match=f"{collection.name}_collection_incomplete_read:642/643"):
+        collection.module._fetch_rows(_adapter(Library(643, hidden={"643"})))
+
+
+def test_multiple_libraries_count_per_library_and_dedupe_shared_items(collection):
+    collection.scope.update({"lib-a", "lib-b"})
+    shared = _movies(1, 1)
+    http = Library(libraries={"lib-a": shared + _movies(2, 600), "lib-b": shared + _movies(700, 2)})
+    rows, _allowed = collection.module._fetch_rows(_adapter(http))
+    assert len(rows) == 603
+    assert [parent for _raw, parent in rows].count("lib-b") == 2
+
+
+def test_failure_in_second_library_fails_the_whole_read(collection):
+    collection.scope.update({"lib-a", "lib-b"})
+    http = Library(libraries={"lib-a": _movies(1, 10), "lib-b": _movies(100, 600)}, fail_at=("lib-b", 500))
+    with pytest.raises(RuntimeError, match=f"{collection.name}_collection_http_502"):
+        collection.module._fetch_rows(_adapter(http))
+
+
+def test_failed_read_does_not_reach_snapshot_callback_or_cache(collection, monkeypatch):
+    ad = _adapter(Library(643, fail_at=500))
+    ops = SimpleNamespace(features=lambda: {"collection": True}, build_index=lambda *a, **k: collection.module.build_index(ad))
+    monkeypatch.setattr(_snapshots, "provider_configured", lambda *a: True)
+    monkeypatch.setattr(_snapshots, "allowed_providers_for_feature", lambda *a: set())
+    callbacks, cache = [], {}
+    with pytest.raises(RuntimeError, match=f"{collection.name}_collection_http_502"):
+        _snapshots.build_snapshots_for_feature(feature="collection", config={}, providers={collection.name.upper(): ops},
+            snap_cache=cache, snap_ttl_sec=300, dbg=lambda *a, **k: None, emit_info=lambda *a: None,
+            on_snapshot=lambda *args: callbacks.append(args))
+    assert callbacks == []
+    assert cache == {}
+
+
 @pytest.mark.parametrize("selected", [[], ["movie-selected"], ["movie-selected", "tv-selected"]])
 def test_collection_query_library_survives_planner_filter(collection, monkeypatch, selected):
     from cw_platform.orchestrator._pairs_oneway import _filter_index_by_libraries

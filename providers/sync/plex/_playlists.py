@@ -226,7 +226,7 @@ def _iter_video_playlists(srv: Any) -> list[Any]:
         playlists = list(srv.playlists() or [])
     except Exception as e:
         _warn("list_failed", error=str(e))
-        return []
+        raise
     return [pl for pl in playlists if _playlist_type(pl) in ("", "video")]
 
 
@@ -235,7 +235,7 @@ def _iter_collection_sections(srv: Any) -> list[Any]:
         sections = list(srv.library.sections() or [])
     except Exception as e:
         _warn("collection_sections_failed", error=str(e))
-        return []
+        raise
     return [sec for sec in sections if _section_type(sec) in _COLLECTION_TYPES]
 
 
@@ -246,7 +246,7 @@ def _iter_collections(srv: Any) -> list[tuple[Any, Any]]:
             cols = list(sec.collections() or [])
         except Exception as e:
             _warn("collection_list_failed", section=_section_key(sec), error=str(e))
-            continue
+            raise
         for coll in cols:
             if _collection_subtype(sec, coll) in _COLLECTION_TYPES:
                 out.append((sec, coll))
@@ -374,7 +374,7 @@ def get_snapshot(adapter: Any, playlist_id: Any) -> PlaylistSnapshot:
             raw = list(coll.items() or [])
         except Exception as e:
             _warn("collection_snapshot_failed", list_id=resource.id, error=str(e))
-            raw = []
+            raise
         subtype = _collection_subtype(section, coll)
         items = []
         for obj in raw:
@@ -399,7 +399,7 @@ def get_snapshot(adapter: Any, playlist_id: Any) -> PlaylistSnapshot:
         raw = list(pl.items() or [])
     except Exception as e:
         _warn("snapshot_failed", list_id=resource.id, error=str(e))
-        raw = []
+        raise
 
     for pos, obj in enumerate(raw):
         typ = str(getattr(obj, "type", "") or "").lower()

@@ -419,18 +419,22 @@ def _item_meta(http: Any, item_id: str | None) -> Mapping[str, Any] | None:
         return _item_meta_cache[iid]
     try:
         r = http.get(f"/Items/{iid}", params={"Fields": "ProviderIds,ProductionYear,Type"})
-        if getattr(r, 'status_code', 0) != 200:
-            _item_meta_cache[iid] = None
-            return None
-        body = r.json() or {}
-        if not isinstance(body, Mapping):
-            _item_meta_cache[iid] = None
-            return None
-        _item_meta_cache[iid] = dict(body)
-        return _item_meta_cache[iid]
-    except Exception:
+    except Exception as exc:
+        raise RuntimeError(f"emby_item_lookup_failed:{exc}") from exc
+    status = getattr(r, 'status_code', 0)
+    if status == 404:
         _item_meta_cache[iid] = None
         return None
+    if status != 200:
+        raise RuntimeError(f"emby_item_lookup_http_{status}")
+    try:
+        body = r.json()
+    except Exception as exc:
+        raise RuntimeError("emby_item_lookup_invalid_response") from exc
+    if not isinstance(body, Mapping):
+        raise RuntimeError("emby_item_lookup_invalid_response")
+    _item_meta_cache[iid] = dict(body)
+    return _item_meta_cache[iid]
 
 def _pids_to_ids(pids: Any) -> dict[str, str]:
     p = pids if isinstance(pids, Mapping) else {}
@@ -514,6 +518,8 @@ def _series_ids_via_item_uncached(http: Any, uid: str, item_id: str) -> dict[str
     if not iid:
         return {}
     _ok, rows = _items_by_ids(http, uid, [iid])
+    if not _ok:
+        raise RuntimeError("emby_series_lookup_failed")
     row = rows.get(iid)
     if isinstance(row, Mapping):
         kind = str(row.get('Type') or '').strip()
@@ -523,6 +529,8 @@ def _series_ids_via_item_uncached(http: Any, uid: str, item_id: str) -> dict[str
             parent = str(row.get('SeriesId') or row.get('ParentId') or '').strip()
             if parent:
                 _ok2, prows = _items_by_ids(http, uid, [parent])
+                if not _ok2:
+                    raise RuntimeError("emby_series_lookup_failed")
                 prow = prows.get(parent)
                 if isinstance(prow, Mapping) and str(prow.get('Type') or '').strip() == 'Series':
                     return _pids_to_ids(prow.get('ProviderIds'))
@@ -992,6 +1000,8 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
                                 presence_items[pk] = mm
                             skipped_untimed += 1
                             added_presence += 1
+                        except RuntimeError:
+                            raise
                         except Exception:
                             pass
                     continue
