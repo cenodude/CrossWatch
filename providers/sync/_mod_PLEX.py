@@ -84,42 +84,42 @@ try:
 except Exception as e:
     feat_watchlist = None
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
-        _warn("feature_import_failed", feature="watchlist", error=str(e))
+        _warn("feature_import_failed", sync_feature="watchlist", error=str(e))
 
 try:
     from .plex import _history as feat_history
 except Exception as e:
     feat_history = None
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
-        _warn("feature_import_failed", feature="history", error=str(e))
+        _warn("feature_import_failed", sync_feature="history", error=str(e))
 
 try:
     from .plex import _ratings as feat_ratings
 except Exception as e:
     feat_ratings = None
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
-        _warn("feature_import_failed", feature="ratings", error=str(e))
+        _warn("feature_import_failed", sync_feature="ratings", error=str(e))
 
 try:
     from .plex import _progress as feat_progress
 except Exception as e:
     feat_progress = None
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
-        _warn("feature_import_failed", feature="progress", error=str(e))
+        _warn("feature_import_failed", sync_feature="progress", error=str(e))
 
 try:
     from .plex import _collection as feat_collection
 except Exception as e:
     feat_collection = None
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
-        _warn("feature_import_failed", feature="collection", error=str(e))
+        _warn("feature_import_failed", sync_feature="collection", error=str(e))
 
 try:
     from .plex import _playlists as feat_playlists
 except Exception as e:
     feat_playlists = None
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
-        _warn("feature_import_failed", feature="playlists", error=str(e))
+        _warn("feature_import_failed", sync_feature="playlists", error=str(e))
 
 _PLAYLIST_CAPABILITIES: dict[str, Any] = {
     "read": True,
@@ -1452,7 +1452,7 @@ class PLEXModule:
 
     def build_index(self, feature: str, **kwargs) -> dict[str, dict[str, Any]]:
         if not self._is_enabled(feature) or feature not in _FEATURES:
-            _info("index_skipped", feature=feature, reason="disabled_or_missing")
+            _info("index_skipped", sync_feature=feature, reason="disabled_or_missing")
             return {}
         mod = _FEATURES.get(feature)
         return enrich_snapshot(self, mod.build_index(self, **kwargs) if mod else {}, "PLEX", feature)
@@ -1468,13 +1468,13 @@ class PLEXModule:
         if not lst:
             return {"ok": True, "count": 0}
         if not self._is_enabled(feature) or feature not in _FEATURES:
-            _info("write_skipped", op="add", feature=feature, reason="disabled_or_missing")
+            _info("write_skipped", op="add", sync_feature=feature, reason="disabled_or_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         if dry_run:
             return {"ok": True, "count": len(lst), "dry_run": True}
         mod = _FEATURES.get(feature)
         if not mod:
-            _warn("write_skipped", op="add", feature=feature, reason="missing_feature")
+            _warn("write_skipped", op="add", sync_feature=feature, reason="missing_feature")
             return {"ok": True, "count": 0, "unresolved": []}
         try:
             cnt, unresolved = mod.add(self, lst)
@@ -1514,13 +1514,13 @@ class PLEXModule:
         if not lst:
             return {"ok": True, "count": 0}
         if not self._is_enabled(feature) or feature not in _FEATURES:
-            _info("write_skipped", op="remove", feature=feature, reason="disabled_or_missing")
+            _info("write_skipped", op="remove", sync_feature=feature, reason="disabled_or_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         if dry_run:
             return {"ok": True, "count": len(lst), "dry_run": True}
         mod = _FEATURES.get(feature)
         if not mod:
-            _warn("write_skipped", op="remove", feature=feature, reason="missing_feature")
+            _warn("write_skipped", op="remove", sync_feature=feature, reason="missing_feature")
             return {"ok": True, "count": 0, "unresolved": []}
         try:
             cnt, unresolved = mod.remove(self, lst)
