@@ -22,7 +22,6 @@ from cw_platform.provider_instances import (
     ensure_instance_block,
     get_provider_block,
     instances_for_user_profile,
-    instances_include_sync_users,
     list_instance_ids,
     normalize_instance_id,
     provider_display_key,
@@ -76,7 +75,7 @@ def _env() -> tuple[
         return None, (lambda: {}), (lambda _cfg: None), (lambda *a, **k: None)
 
 
-def _load_state_features(features: set[str] | list[str] | tuple[str, ...], include_sync_users: bool = False) -> dict[str, Any]:
+def _load_state_features(features: set[str] | list[str] | tuple[str, ...], include_sync_users: bool = True) -> dict[str, Any]:
     try:
         from cw_platform.config_base import CONFIG
         from cw_platform.orchestrator._state_store import StateStore
@@ -1308,7 +1307,7 @@ def register_insights(app: FastAPI) -> None:
 
         def _state() -> dict[str, Any]:
             if "v" not in _state_holder:
-                loaded = _load_state_features(state_features, True) if instances_include_sync_users(user_filter) else _load_state_features(state_features)
+                loaded = _load_state_features(state_features)
                 scoped = _scope_state(media_scope.state(loaded if isinstance(loaded, dict) else {}))
                 _state_holder["v"] = scoped if isinstance(scoped, dict) else {}
             value = _state_holder["v"]

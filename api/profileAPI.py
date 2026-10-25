@@ -57,11 +57,11 @@ from cw_platform.config_base import CONFIG as CONFIG_DIR, load_config, update_co
 from cw_platform.id_map import canonical_key
 from cw_platform.orchestrator._state_store import StateStore
 from cw_platform.profile_preferences import display_timezone
-from cw_platform.provider_instances import instances_for_user_profile, instances_include_sync_users, list_user_profiles, normalize_instance_id, provider_display_key
+from cw_platform.provider_instances import instances_for_user_profile, list_user_profiles, normalize_instance_id, provider_display_key
 from api.dashboardAPI import _dashboard_widgets_version
 from api.watchlistAPI import _item_for_user_filter as _watchlist_item_for_user_filter
 from api.watchlistAPI import _load_watchlist_state, _tmdb_api_key, _watchlist_version
-from cw_platform.access_policy import clean_managed_permissions
+from cw_platform.access_policy import clean_managed_permissions, scope_state_to_instances
 from services import profile_history
 from services.media_scope import MediaScope
 from services.dashboard_widgets import _tracker_feature_items
@@ -341,7 +341,7 @@ def _as_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def _collection_state(include_sync_users: bool = False) -> dict[str, Any]:
+def _collection_state(include_sync_users: bool = True) -> dict[str, Any]:
     try:
         state = StateStore(CONFIG_DIR).load_state_features({"collection"}, include_sync_users=include_sync_users) or {}
         return state if isinstance(state, dict) else {}
@@ -781,7 +781,7 @@ def api_profile_collection(
     cfg, _a, _uid, _raw, _user, token = ctx
     profile_id = effective_user_profile_id(cfg, token, user_profile)
     payload = build_profile_collection_payload(
-        _scoped_loader(_collection_state, _profile_has_sync_users(cfg, profile_id)),
+        _collection_state,
         cfg,
         profile_id=profile_id,
         media_type=media_type,
@@ -798,7 +798,7 @@ def api_profile_collection(
     return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 
 
-def _feature_state(feature: str, include_sync_users: bool = False) -> dict[str, Any]:
+def _feature_state(feature: str, include_sync_users: bool = True) -> dict[str, Any]:
     try:
         state = StateStore(CONFIG_DIR).load_state_features({feature}, include_sync_users=include_sync_users) or {}
         return state if isinstance(state, dict) else {}
@@ -806,24 +806,12 @@ def _feature_state(feature: str, include_sync_users: bool = False) -> dict[str, 
         return {}
 
 
-def _history_state(include_sync_users: bool = False) -> dict[str, Any]:
-    return _feature_state("history", include_sync_users)
+def _history_state() -> dict[str, Any]:
+    return _feature_state("history")
 
 
-def _ratings_state(include_sync_users: bool = False) -> dict[str, Any]:
-    return _feature_state("ratings", include_sync_users)
-
-
-def _filter_has_sync_users(user_filter: Any) -> bool:
-    return instances_include_sync_users(user_filter)
-
-
-def _profile_has_sync_users(cfg: dict[str, Any], profile_id: str) -> bool:
-    return bool(profile_id) and _filter_has_sync_users(instances_for_user_profile(cfg, profile_id))
-
-
-def _scoped_loader(loader: Any, include_sync_users: bool) -> Any:
-    return (lambda: loader(True)) if include_sync_users else loader
+def _ratings_state() -> dict[str, Any]:
+    return _feature_state("ratings")
 
 
 def _history_user_filter(cfg: dict[str, Any], profile_id: str) -> dict[str, Any]:
@@ -834,7 +822,7 @@ def _history_user_filter(cfg: dict[str, Any], profile_id: str) -> dict[str, Any]
 
 def _watchlist_items(cfg: dict[str, Any], user_filter: dict[str, Any]) -> list[dict[str, Any]]:
     try:
-        items = build_watchlist(MediaScope(cfg).state(_scoped_loader(_load_watchlist_state, _filter_has_sync_users(user_filter))()), tmdb_ok=bool(_tmdb_api_key(cfg))) or []
+        items = build_watchlist(scope_state_to_instances(MediaScope(cfg).state(_load_watchlist_state()), user_filter), tmdb_ok=bool(_tmdb_api_key(cfg))) or []
     except Exception:
         return []
     if not user_filter:
@@ -877,8 +865,7 @@ def _profile_history_index(cfg: dict[str, Any], profile_id: str, source: str) ->
     if wanted == "watchlist":
         state_source: Any = lambda: _watchlist_items(cfg, user_filter)
     else:
-        loader = _scoped_loader(_ratings_state if ratings else _history_state, _filter_has_sync_users(user_filter))
-        state_source = lambda: media_scope.state(loader())
+        state_source = lambda: media_scope.state(_ratings_state() if ratings else _history_state())
     index = profile_history.cached_history_index(
         (wanted, profile_id, version) if version else None,
         lambda: profile_history.build_history_index(
@@ -917,7 +904,7 @@ def _collection_lookup(cfg: dict[str, Any], profile_id: str, cache_key: tuple) -
     if hit is not None:
         _COLLECTION_LOOKUP_CACHE.move_to_end(key)
         return hit
-    items, _counts, _providers = _collection_index(_scoped_loader(_collection_state, _profile_has_sync_users(cfg, profile_id)), cfg, profile_id, cache_key)
+    items, _counts, _providers = _collection_index(_collection_state, cfg, profile_id, cache_key)
     lookup: dict[str, list[dict[str, Any]]] = {}
     for item in items:
         for token in _collection_tmdb_keys(item):

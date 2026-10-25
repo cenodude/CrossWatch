@@ -27,6 +27,7 @@ from cw_platform.provider_instances import (
     list_sync_user_ids,
     split_sync_user_id,
     sync_user_instance_id,
+    sync_user_match_name,
     list_user_profiles,
     normalize_instance_id,
     normalize_user_profile_id,
@@ -490,7 +491,7 @@ def _sync_user_rows(cfg: Mapping[str, Any], provider: str, inst: str) -> list[di
         entry = get_instance_block(cfg, provider, user_inst)
         if ref is None:
             continue
-        row: dict[str, Any] = {"key": ref[1], "id": user_inst, "username": str(entry.get("username") or ""), "added_at": entry.get("added_at")}
+        row: dict[str, Any] = {"key": ref[1], "id": user_inst, "username": str(entry.get("username") or ""), "match_as": str(entry.get("match_as") or ""), "match_key": sync_user_match_name(cfg, provider, user_inst).casefold(), "added_at": entry.get("added_at")}
         if provider == "plex":
             row["has_pin"] = bool(str(entry.get("home_pin") or "").strip())
         rows.append(row)
@@ -509,8 +510,22 @@ def _build_sync_user_entry(provider: str, key: str, raw: Mapping[str, Any], exis
             entry["cloud_account_id"] = cloud_id
     else:
         entry = {"user_id": key, "username": name, "user": name}
+    source = raw.get("match_as") if "match_as" in raw else existing.get("match_as")
+    match_as = " ".join(str(source or "").split())
+    if len(match_as) > 40:
+        raise ValueError("match_as_too_long")
+    if match_as and match_as.casefold() != name.casefold():
+        entry["match_as"] = match_as
     entry["added_at"] = existing.get("added_at") or now
     return entry
+
+
+def _profile_identity(cfg: Mapping[str, Any], provider: str, user_inst: str) -> tuple[str, str]:
+    full = sync_user_match_name(cfg, provider, user_inst)
+    label = sanitize_user_profile_label(full)
+    if not label or label != full:
+        return "", ""
+    return label, label.casefold()
 
 
 def _sync_users_target(cfg: Mapping[str, Any], provider: str, inst: str) -> tuple[str, str | None]:
@@ -596,10 +611,16 @@ def api_provider_sync_users_update(provider: str, instance_id: str, payload: dic
         else:
             parent.pop("sync_users", None)
         profiles_by_label = {str(row.get("label") or "").casefold(): str(row.get("id") or "") for row in list_user_profiles(latest)}
-        for key, entry in updated.items():
+        identities = {key: _profile_identity(latest, prov, sync_user_instance_id(inst, key))[1] for key in updated}
+        counts: dict[str, int] = {}
+        for folded in identities.values():
+            if folded:
+                counts[folded] = counts.get(folded, 0) + 1
+        for key in updated:
             user_inst = sync_user_instance_id(inst, key)
             provider_instance_uid_for(latest, prov, user_inst, create=True)
-            pid = profiles_by_label.get(str(entry.get("username") or "").casefold())
+            folded = identities[key]
+            pid = profiles_by_label.get(folded) if folded and counts.get(folded) == 1 else None
             if pid and not user_profiles_for_instance(latest, prov, user_inst):
                 assign_instance_to_user_profile_id(latest, pid, prov, user_inst)
         return {"users": _sync_user_rows(latest, prov, inst), "limit": limit}
@@ -613,6 +634,58 @@ def api_provider_sync_users_update(provider: str, instance_id: str, payload: dic
         return {"ok": False, "error": code, **({"limit": int(limit)} if limit.isdigit() else {})}
     _invalidate_provider_cache(provider)
     return {"ok": True, **result, "count": len(result["users"])}
+
+
+@router.post("/provider-instances/{provider}/{instance_id}/sync-users/profiles")
+def api_provider_sync_users_create_profiles(provider: str, instance_id: str, request: Request = cast(Request, None)) -> Any:
+    inst = normalize_instance_id(instance_id)
+    cfg = dict(load_config() or {})
+    blocked = _admin_required_response(request, cfg)
+    if blocked is not None:
+        return blocked
+
+    def _mutate(latest: dict[str, Any]) -> dict[str, Any]:
+        prov, error = _sync_users_target(latest, provider, inst)
+        if error:
+            raise KeyError(error)
+        everyone: list[tuple[str, str, str, str, str]] = []
+        for other in sorted(_SYNC_USER_PROVIDERS):
+            for user_inst in list_sync_user_ids(latest, other):
+                ref = split_sync_user_id(user_inst)
+                label, folded = _profile_identity(latest, other, user_inst)
+                everyone.append((other, ref[0] if ref else "", user_inst, label, folded))
+        per_connection: dict[tuple[str, str, str], int] = {}
+        for other, parent, _user_inst, _label, folded in everyone:
+            if folded:
+                per_connection[(other, parent, folded)] = per_connection.get((other, parent, folded), 0) + 1
+        ambiguous = {folded for (_other, _parent, folded), count in per_connection.items() if count > 1}
+        own = [(label, folded) for other, parent, _user_inst, label, folded in everyone if other == prov and parent == inst]
+        skipped = sum(1 for _label, folded in own if not folded or folded in ambiguous)
+        names = {folded: label for label, folded in own if folded and folded not in ambiguous}
+        profiles_by_label = {str(row.get("label") or "").casefold(): str(row.get("id") or "") for row in list_user_profiles(latest)}
+        created = linked = 0
+        for folded, label in names.items():
+            eligible = [(other, user_inst) for other, _parent, user_inst, _label, name in everyone if name == folded and not user_profiles_for_instance(latest, other, user_inst)]
+            if not eligible:
+                continue
+            pid = profiles_by_label.get(folded)
+            if not pid:
+                pid = generate_user_profile_id(latest)
+                upsert_user_profile(latest, pid, label=label)
+                profiles_by_label[folded] = pid
+                created += 1
+            for other, user_inst in eligible:
+                assign_instance_to_user_profile_id(latest, pid, other, user_inst)
+                linked += 1
+        return {"created": created, "linked": linked, "skipped": skipped}
+
+    try:
+        _, result = update_config(_mutate)
+    except KeyError as exc:
+        return {"ok": False, "error": str(exc.args[0]) if exc.args else "not_found"}
+    except ValueError as exc:
+        return {"ok": False, "error": _profile_value_error(exc)}
+    return {"ok": True, **result}
 
 
 @router.delete("/provider-instances/{provider}/{instance_id}")

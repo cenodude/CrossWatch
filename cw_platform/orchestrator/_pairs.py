@@ -30,6 +30,7 @@ from ..provider_instances import (
     list_sync_user_ids,
     normalize_instance_id,
     split_sync_user_id,
+    sync_user_match_name,
 )
 from ._pairs_oneway import run_one_way_feature
 from ._pairs_twoway import run_two_way_feature
@@ -354,15 +355,23 @@ def _pair_scope_ids(ctx) -> set[str]:
 _SYNC_USER_PROVIDERS = frozenset({"PLEX", "EMBY", "JELLYFIN"})
 
 
-def _sync_users_by_key(cfg: Mapping[str, Any], provider: str, parent: str) -> dict[str, tuple[str, str]]:
-    out: dict[str, tuple[str, str]] = {}
+def _sync_users_by_key(cfg: Mapping[str, Any], provider: str, parent: str) -> dict[str, tuple[str, str, str]]:
+    out: dict[str, tuple[str, str, str]] = {}
     for inst in list_sync_user_ids(cfg, provider, parent):
         ref = split_sync_user_id(inst)
         entry = get_instance_block(cfg, provider, inst)
         name = str(entry.get("username") or entry.get("user") or "").strip()
-        if ref is not None and name:
-            out[ref[1]] = (inst, name)
+        match = sync_user_match_name(cfg, provider, inst)
+        if ref is not None and name and match:
+            out[ref[1]] = (inst, name, match)
     return out
+
+
+def _unique_match_names(users: Mapping[str, tuple[str, str, str]]) -> dict[str, str]:
+    counts: dict[str, int] = {}
+    for _inst, _name, match in users.values():
+        counts[match.casefold()] = counts.get(match.casefold(), 0) + 1
+    return {match.casefold(): key for key, (_inst, _name, match) in users.items() if counts[match.casefold()] == 1}
 
 
 def _expand_sync_user_pair(cfg: Mapping[str, Any], pair: Mapping[str, Any]) -> list[Mapping[str, Any]]:
@@ -378,12 +387,16 @@ def _expand_sync_user_pair(cfg: Mapping[str, Any], pair: Mapping[str, Any]) -> l
         return [pair]
     src_users = _sync_users_by_key(cfg, src, src_parent)
     dst_users = _sync_users_by_key(cfg, dst, dst_parent)
-    dst_by_name = {name.casefold(): key for key, (_inst, name) in dst_users.items()}
+    dst_by_name = _unique_match_names(dst_users)
+    src_unique = _unique_match_names(src_users)
     raw_overrides = pair.get("user_matches")
     overrides = {str(k): str(v or "").strip() for k, v in raw_overrides.items()} if isinstance(raw_overrides, Mapping) else {}
     out: list[Mapping[str, Any]] = []
-    for src_key, (src_inst, name) in sorted(src_users.items(), key=lambda row: row[1][1].casefold()):
-        dst_key = overrides[src_key] if src_key in overrides else dst_by_name.get(name.casefold(), "")
+    for src_key, (src_inst, name, match) in sorted(src_users.items(), key=lambda row: row[1][1].casefold()):
+        if src_key in overrides:
+            dst_key = overrides[src_key]
+        else:
+            dst_key = dst_by_name.get(match.casefold(), "") if src_unique.get(match.casefold()) == src_key else ""
         if not dst_key or dst_key not in dst_users:
             continue
         derived = {k: v for k, v in pair.items() if k not in ("src_instance", "dst_instance")}

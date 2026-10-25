@@ -77,7 +77,7 @@ def _feature_library_totals(base_path: Any, requested: set[str], user_filter: Ma
     totals: dict[str, int] = {}
     for feature in sorted(wanted):
         try:
-            counts = store.provider_feature_counts(feature) or {}
+            counts = (store.provider_feature_counts(feature, instances=user_filter) if user_filter else store.provider_feature_counts(feature, include_sync_users=True)) or {}
         except Exception:
             continue
         values = [
@@ -240,7 +240,7 @@ def dashboard_widgets(
         from cw_platform.config_base import CONFIG, load_config
         from cw_platform.orchestrator._state_store import StateStore
         from api.appAuthAPI import effective_request_profile_id
-        from cw_platform.provider_instances import instances_for_user_profile, instances_include_sync_users
+        from cw_platform.provider_instances import instances_for_user_profile
 
         requested = {part.strip() for part in include.split(",") if part.strip()}
         state_features = requested & {"history", "ratings", "progress"}
@@ -281,7 +281,7 @@ def dashboard_widgets(
                         StateStore(CONFIG).load_state_features(
                             state_features,
                             recent_limit=None if scoped_features else _STATE_RECENT_LIMIT,
-                            include_sync_users=instances_include_sync_users(user_filter),
+                            include_sync_users=True,
                         )
                         if state_features
                         else {}

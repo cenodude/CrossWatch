@@ -651,7 +651,7 @@
   const CONNECTION_MODAL_INFO = Object.freeze({
     PLEX: {
       provider: "plex", logo: "PLEX", size: "wide", help: window.CW.HelpLinks.url("plex"), deleteSelector: "#btn-delete-plex",
-      tabs: { auth: ["lock", "Authentication", "Connect your Plex account using a secure link code"], settings: ["tune", "Settings", "Configure server and sync preferences"], whitelist: ["verified_user", "Whitelisting", "Choose libraries and content to sync"] },
+      tabs: { auth: ["lock", "Authentication", "Connect your Plex account using a secure link code"], settings: ["tune", "Settings", "Configure server and sync preferences"], whitelist: ["verified_user", "Whitelisting", "Choose libraries and content to sync"], users: ["group", "Users", "Optional: sync several users"] },
       copy: { auth: ["Plex Authentication", "Connect your Plex account to CrossWatch using a secure link code."], settings: ["Plex Settings", "Configure your server URL, selected profile and sync preferences."], whitelist: ["Plex Whitelisting", "Choose which libraries CrossWatch can use for history, ratings, progress, collections and scrobbling."] },
       journey: ["Link Plex, then tune the server", "Click Connect Plex to get a link code. CrossWatch shows the code, then opens plex.tv/link so you can enter it and approve access. Next, validate the server URL and optionally whitelist libraries.", "229,160,13", "229,160,13", "PLEX"],
       steps: [["1", "Get link code", "Generate a code in CrossWatch"], ["2", "Approve on Plex", "Open plex.tv/link and approve the connection"], ["3", "Validate server", "Confirm your server URL and complete setup"]],
@@ -659,7 +659,7 @@
     },
     JELLYFIN: {
       provider: "jellyfin", logo: "JELLYFIN", size: "wide", help: window.CW.HelpLinks.url("jellyfin"), deleteSelector: ".cw-jfy-delete",
-      tabs: { auth: ["lock", "Authentication", "Connect with Quick Connect or password"], settings: ["tune", "Settings", "Configure server and user details"], whitelist: ["verified_user", "Whitelisting", "Choose libraries and content to sync"] },
+      tabs: { auth: ["lock", "Authentication", "Connect with Quick Connect or password"], settings: ["tune", "Settings", "Configure server and user details"], whitelist: ["verified_user", "Whitelisting", "Choose libraries and content to sync"], users: ["group", "Users", "Optional: sync several users"] },
       copy: { auth: ["Jellyfin Authentication", "Connect your Jellyfin server to CrossWatch."], settings: ["Jellyfin Settings", "Configure server URL, user details and sync preferences."], whitelist: ["Jellyfin Whitelisting", "Choose which libraries CrossWatch can use for sync."] },
       journey: ["Connect to Jellyfin", "Enter your Jellyfin server URL, then connect with Quick Connect (recommended) or your username and password. CrossWatch will move you to Settings next so you can validate the server, pick the user, and optionally whitelist libraries.", "0,164,220", "0,124,220", "JELLYFIN"],
       steps: [["1", "Enter server", "Add your Jellyfin server URL"], ["2", "Authorize", "Use Quick Connect or password"], ["3", "Validate", "Confirm the account and server"]],
@@ -667,7 +667,7 @@
     },
     EMBY: {
       provider: "emby", logo: "EMBY", size: "wide", help: window.CW.HelpLinks.url("emby"), deleteSelector: "#btn-emby-delete",
-      tabs: { auth: ["lock", "Authentication", "Connect with your Emby credentials"], settings: ["tune", "Settings", "Configure server and user details"], whitelist: ["verified_user", "Whitelisting", "Choose libraries and content to sync"] },
+      tabs: { auth: ["lock", "Authentication", "Connect with your Emby credentials"], settings: ["tune", "Settings", "Configure server and user details"], whitelist: ["verified_user", "Whitelisting", "Choose libraries and content to sync"], users: ["group", "Users", "Optional: sync several users"] },
       copy: { auth: ["Emby Authentication", "Connect your Emby server to CrossWatch."], settings: ["Emby Settings", "Configure server URL, user details and sync preferences."], whitelist: ["Emby Whitelisting", "Choose which libraries CrossWatch can use for sync."] },
       journey: ["Connect to Emby", "Enter your Emby server URL, username and password, then sign in. CrossWatch will move you to Settings next so you can validate the server, pick the user, and optionally whitelist libraries.", "82,181,75", "82,181,75", "EMBY"],
       steps: [["1", "Enter server", "Add your Emby server URL"], ["2", "Sign in", "Authorize with user credentials"], ["3", "Validate", "Confirm the account and server"]],
@@ -1761,6 +1761,7 @@
     }
     try {
       await window.CW?.AuthShared?.saveVisibleProfileLabels?.(panel);
+      await window.CW?.SyncUsers?.saveDirty?.(panel);
       if (info.key === "NUVIO") await window.cwAuth?.nuvio?.saveSelectedProfile?.({ silent: true });
       const ret = window.saveSettings?.();
       if (ret && typeof ret.then === "function") await ret;

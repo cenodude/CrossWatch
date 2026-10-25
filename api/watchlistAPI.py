@@ -11,6 +11,7 @@ from typing import Any, Literal, cast
 from fastapi import APIRouter, Body, Path as FPath, Query, Request
 from fastapi.responses import JSONResponse
 
+from cw_platform.access_policy import scope_state_to_instances
 from cw_platform.provider_instances import instances_for_user_profile, normalize_instance_id, provider_display_key
 from services.media_scope import MediaScope
 from services.watchlist import (
@@ -73,7 +74,7 @@ def _watchlist_version(
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
 
-def _load_watchlist_state(include_sync_users: bool = False) -> dict[str, Any]:
+def _load_watchlist_state(include_sync_users: bool = True) -> dict[str, Any]:
     try:
         from cw_platform.config_base import CONFIG
         from cw_platform.orchestrator._state_store import StateStore
@@ -691,7 +692,7 @@ def api_watchlist(
         )
 
     try:
-        items = build_watchlist(st, tmdb_ok=has_key) or []
+        items = build_watchlist(scope_state_to_instances(st, user_filter), tmdb_ok=has_key) or []
     except Exception:
         return JSONResponse(
             {"ok": False, "error": "watchlist build failed", "missing_tmdb_key": not has_key, "version": version},

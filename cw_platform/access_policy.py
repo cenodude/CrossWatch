@@ -122,6 +122,29 @@ def profile_instances_map(cfg: Mapping[str, Any], profile_id: Any) -> dict[str, 
     return out
 
 
+def scope_state_to_instances(state: Any, instances: Mapping[str, Any] | None) -> Any:
+    if not instances or not isinstance(state, Mapping):
+        return state
+    wanted = {
+        provider_display_key(provider): {normalize_instance_id(inst) for inst in (values if isinstance(values, (list, set, tuple)) else [values])}
+        for provider, values in instances.items()
+    }
+    providers: dict[str, Any] = {}
+    for provider, node in (state.get("providers") or {}).items():
+        allowed = wanted.get(provider_display_key(provider))
+        if not allowed or not isinstance(node, Mapping):
+            continue
+        scoped: dict[str, Any] = {k: v for k, v in node.items() if k != "instances"} if "default" in allowed else {}
+        insts = node.get("instances")
+        if isinstance(insts, Mapping):
+            kept = {str(iid): inode for iid, inode in insts.items() if normalize_instance_id(iid) in allowed and isinstance(inode, Mapping)}
+            if kept:
+                scoped["instances"] = kept
+        if scoped:
+            providers[str(provider)] = scoped
+    return {**state, "providers": providers, "wall": []}
+
+
 def managed_profile_instances(cfg: Mapping[str, Any], user: Mapping[str, Any] | None) -> dict[str, list[str]]:
     return profile_instances_map(cfg, managed_profile_id(user))
 
