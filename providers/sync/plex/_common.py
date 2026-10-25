@@ -1891,10 +1891,13 @@ def _discover_search_title(
 
         def _search_metadata_provider(q: str) -> list[Mapping[str, Any]]:
             try:
+                params = {"title": q, "type": 1 if kind == "movie" else 2, "includeGuids": 1}
+                if kind == "movie" and year is not None:
+                    params["year"] = year
                 r = requests.get(
-                    f"{METADATA}/library/search",
+                    f"{METADATA}/library/metadata/matches",
                     headers=_hdrs(),
-                    params={"query": q, "limit": max(50, int(limit))},
+                    params=params,
                     timeout=7,
                 )
                 if r.ok and "json" in (r.headers.get("content-type", "").lower()):

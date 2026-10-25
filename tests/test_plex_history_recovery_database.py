@@ -87,7 +87,8 @@ def test_removed_movies_use_stored_ids_and_resolve_plex_guids_once(tmp_path):
     assert all(r["source_path"] == "Plex database" and r["item"]["watched"] for r in result)
 
 
-def test_removed_shows_resolve_once_and_legacy_and_hama_guids_need_no_lookup(tmp_path):
+def test_removed_shows_resolve_once_and_legacy_and_hama_guids_need_no_lookup(tmp_path, monkeypatch):
+    monkeypatch.setattr(recovery, "query_edges", lambda *a, **kw: [])
     path = library(tmp_path / "lib.db", views=[
         episode("plex://episode/1", 1), episode("plex://episode/2", 2), episode("plex://episode/3", 3, season=0),
         episode("com.plexapp.agents.thetvdb://500/2/4?lang=en", None, show="com.plexapp.agents.thetvdb://500?lang=en", season=None,
@@ -121,6 +122,73 @@ def test_titles_readded_under_a_new_guid_still_count_as_in_plex(tmp_path):
     assert (final["checked"], final["found"], final["skipped"]) == (4, 1, 3)
     events = [u[4]["event"]["result"] for u in updates if len(u) == 5 and "event" in u[4]]
     assert events.count("Skipped: still in Plex") == 3
+
+
+@pytest.mark.parametrize("prefix,season,scope", [("anidb-", 2, "R"), ("", 1, "R"), ("anidb-", 0, "S")])
+def test_hama_uses_episode_identity_and_explicit_numbering(tmp_path, monkeypatch, prefix, season, scope):
+    calls = []
+    def edges(tag, provider, ident, **kwargs):
+        calls.append((tag, provider, ident, kwargs["scope"]))
+        return [dict(target_provider="tvdb", target_id="900", target_kind="show", target_scope="s3",
+                     source_range="1-12", target_range="13-24")]
+    monkeypatch.setattr(recovery, "query_edges", edges)
+    path = library(tmp_path / "lib.db", views=[
+        episode(f"com.plexapp.agents.hama://{prefix}123/{season}/2?lang=en", 24, season=2,
+                show="com.plexapp.agents.hama://anidb-456?lang=en")])
+    result, asked = scan(path, release_tag="custom")
+    item = result[0]["item"]
+    assert calls == [("custom", "anidb", "123", scope)]
+    assert (item["show_ids"], item["season"], item["episode"]) == ({"tvdb": "900"}, 3, 14)
+    assert item["watched_at"] == "2023-11-14T22:13:44Z"
+    assert result[0]["recovery_valid"] and not asked
+
+
+@pytest.mark.parametrize("case", ["missing", "ambiguous", "extras", "unknown"])
+def test_unmapped_hama_never_inherits_parent_or_title_matches(tmp_path, monkeypatch, case):
+    rows = [] if case == "missing" else [
+        dict(target_provider="tvdb", target_id=ident, target_kind="show", target_scope="s1",
+             source_range="1-200", target_range="1-200") for ident in ("900", "901")]
+    monkeypatch.setattr(recovery, "query_edges", lambda *a, **kw: rows)
+    guid = "com.plexapp.agents.hama://" + ("unknown-123/1/2" if case == "unknown" else
+                                             "anidb-123/0/101" if case == "extras" else "anidb-123/1/2")
+    path = library(tmp_path / "lib.db", views=[episode(guid, 2, show="tvdb://555")])
+    searches = []
+    result, asked = scan(path, search=lambda item: searches.append(item) or {"tvdb": "777"})
+    assert not result[0]["recovery_valid"]
+    assert result[0]["item"]["show_ids"] == {}
+    assert not searches and not asked
+
+
+def test_hama_tvdb_uses_guid_coordinates(tmp_path):
+    path = library(tmp_path / "lib.db", views=[
+        episode("com.plexapp.agents.hama://tvdb-900/3/14", 2, show="tvdb://555")])
+    result, _ = scan(path)
+    item = result[0]["item"]
+    assert (item["show_ids"], item["season"], item["episode"]) == ({"tvdb": "900"}, 3, 14)
+
+
+def test_hama_matches_do_not_spread_to_other_entries_under_the_same_parent(tmp_path, monkeypatch):
+    def edges(tag, provider, ident, **kwargs):
+        return [dict(target_provider="tvdb", target_id="900", target_kind="show", target_scope="s2",
+                     source_range="1-12", target_range="1-12")] if ident == "123" else []
+    monkeypatch.setattr(recovery, "query_edges", edges)
+    path = library(tmp_path / "lib.db", views=[
+        episode("com.plexapp.agents.hama://anidb-123/1/1", 1, show="tvdb://555"),
+        episode("com.plexapp.agents.hama://anidb-456/1/2", 2, show="tvdb://555")])
+    result, _ = scan(path)
+    assert [r["recovery_valid"] for r in result] == [True, False]
+    assert [r["item"]["show_ids"] for r in result] == [{"tvdb": "900"}, {}]
+
+
+def test_database_title_fallback_requires_review_and_keeps_watch_date(tmp_path):
+    path = library(tmp_path / "lib.db", views=[movie("plex://movie/gone"), movie("imdb://tt1234567")])
+    searches = []
+    result, _ = scan(path, search=lambda item: searches.append(dict(item)) or {"tmdb": "123"})
+    assert len(searches) == 1
+    assert result[0]["item"]["ids"] == {"tmdb": "123"}
+    assert result[0]["recovery_valid"] and result[0]["recovery_requires_review"]
+    assert result[0]["item"]["watched_at"] == "2023-11-14T22:13:20Z"
+    assert not result[1]["recovery_requires_review"]
 
 
 def test_library_scope_applies_to_existing_sections_and_keeps_deleted_libraries(tmp_path):
