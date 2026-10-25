@@ -331,6 +331,50 @@ test("saving History leaves the shared Plex Marked Watched default unchanged", a
   assert.equal(saved.plex.history.include_marked_watched, true);
 });
 
+test("Discover opt-in stays in its pair and allows items outside the destination library", () => {
+  const listeners = [];
+  const libraryOnly = {checked: true};
+  const context = vm.createContext({ID: id => id === "cx-hs-library-only" ? libraryOnly : null});
+  vm.runInContext(sourceFor("bindChangeHandlers"), context);
+  const cfgRaw = {plex: {history: {discover_fallback: false}}};
+  const state = {cfgRaw, options: {history: {library_only: true, add: true}},
+    pairProviders: {plex: {history: {include_marked_watched: false}}}};
+  context.bindChangeHandlers(state, {addEventListener: (event, handler) => { if (event === "change") listeners.push(handler); }});
+  for (const handler of listeners) handler({target: {id: "plx-discover-fallback", checked: true}});
+  assert.equal(state.pairProviders.plex.history.discover_fallback, true);
+  assert.equal(state.pairProviders.plex.history.include_marked_watched, false);
+  assert.equal(state.options.history.library_only, false);
+  assert.equal(state.options.history.add, true);
+  assert.equal(libraryOnly.checked, false);
+  assert.equal(cfgRaw.plex.history.discover_fallback, false);
+  for (const handler of listeners) handler({target: {id: "plx-discover-fallback", checked: false}});
+  assert.equal(state.pairProviders.plex.history.discover_fallback, false);
+});
+
+test("Discover control is off by default and only shown when the pair writes to Plex", () => {
+  const render = index.split("\n").find(line => line.includes('parts.push(`') && line.includes('id="plx-discover-fallback"'));
+  for (const [src, dst, twoWay, visible] of [["TRAKT", "PLEX", false, true], ["PLEX", "TRAKT", false, false], ["PLEX", "TRAKT", true, true]]) {
+    const context = vm.createContext({parts: [], state: {src, dst},
+      same: (a, b) => a.toLowerCase() === b.toLowerCase(), isTwoWayMode: () => twoWay});
+    vm.runInContext(render, context);
+    assert.equal(context.parts.length > 0, visible);
+    assert.doesNotMatch(context.parts.join(""), /type="checkbox" checked/);
+  }
+});
+
+test("Discover turns off when destination library filtering is enabled", () => {
+  const listeners = [];
+  const nodes = new Map([["cx-hs-library-only", {checked: true}], ["plx-discover-fallback", {checked: true}]]);
+  const context = vm.createContext({ID: id => nodes.get(id), Q: () => null, updateFlow: () => {}});
+  vm.runInContext(sourceFor("bindChangeHandlers"), context);
+  const state = {options: {history: {}}, visited: new Set(), pairProviders: {plex: {history: {discover_fallback: true}}}};
+  context.bindChangeHandlers(state, {addEventListener: (event, handler) => { if (event === "change") listeners.push(handler); }});
+  for (const handler of listeners) handler({target: {id: "cx-hs-library-only", checked: true}});
+  assert.equal(state.pairProviders.plex.history.discover_fallback, false);
+  assert.equal(nodes.get("plx-discover-fallback").checked, false);
+  assert.equal(state.options.history.library_only, true);
+});
+
 for (const [feature, prefix, rule] of [["ratings", "rt", "applyRatingsTypeRules"], ["collection", "co", "applyCollectionTypeRules"]]) {
   test(feature + " scope stays disabled until the feature is enabled", () => {
     const nodes = new Map();
@@ -355,12 +399,12 @@ for (const [feature, prefix, rule] of [["ratings", "rt", "applyRatingsTypeRules"
   });
 }
 
-test("Marked Watched follows History enable without changing its value", () => {
+for (const controlId of ["plx-marked-watched", "plx-discover-fallback"]) test(`${controlId} follows History enable without changing its value`, () => {
   for (const checked of [false, true]) {
     const classes = new Set();
     const control = {checked, dataset: {}, closest: () => ({classList: {toggle: (name, on) => on ? classes.add(name) : classes.delete(name)}})};
     const enable = {checked: false};
-    const nodes = new Map([["cx-hs-enable", enable], ["plx-marked-watched", control]]);
+    const nodes = new Map([["cx-hs-enable", enable], [controlId, control]]);
     const context = vm.createContext({ID: id => nodes.get(id), Q: selector => nodes.get(selector.slice(1))});
     vm.runInContext(sourceFor("applySubDisable"), context);
     for (const enabled of [false, true, false]) {

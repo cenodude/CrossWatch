@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from .._path_matching import path_fallback, resolve_path
+from . import _discover_history
 from cw_platform.interactive_reads import retained_read, replace_retained, replaying
 
 from concurrent.futures import ThreadPoolExecutor
@@ -1172,6 +1173,9 @@ def _new_write_meta() -> dict[str, Any]:
         "date_mismatch_keys": [],
         "unresolved_keys": [],
         "reason_counts": {},
+        "cloud_confirmed_keys": [],
+        "deferred_keys": [],
+        "skipped_keys": [],
     }
 
 
@@ -1661,6 +1665,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     need_home_scope, did_home_switch, sel_aid, sel_uname = home_scope_enter(adapter)
     meta = _new_write_meta()
     _set_write_meta(adapter, meta)
+    cloud_writer = None
     try:
         srv = getattr(getattr(adapter, "client", None), "server", None)
         if not srv:
@@ -1696,6 +1701,12 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         shadow_batch: list[Mapping[str, Any]] = []
         to_scrobble: list[tuple[Mapping[str, Any], str, str, int]] = []
         episode_catalog_filled = False
+        cloud_catalog = None
+        if _discover_history.enabled(adapter) and not need_home_scope:
+            cloud_writer = _discover_history.Writer(adapter)
+            for outcome in cloud_writer.repair_pending().values():
+                if outcome not in {"present", "dated"}:
+                    _bump_reason(meta, outcome)
 
         def _ensure_episode_catalog() -> None:
             nonlocal episode_catalog_filled
@@ -1762,6 +1773,36 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 reason = klass if klass in (
                     CLASS_SHOW_MATCHED_EPISODE_MISSING, CLASS_NOT_IN_PLEX_CATALOG, CLASS_RESOLVE_AMBIGUOUS
                 ) else CLASS_NOT_IN_PLEX_CATALOG
+                if _discover_history.enabled(adapter) and klass != CLASS_RESOLVE_AMBIGUOUS:
+                    if need_home_scope:
+                        reason = "plex_discover_account_unsupported"
+                    else:
+                        cloud_allowed = True
+                        if allow:
+                            if cloud_catalog is None:
+                                cloud_catalog = _get_history_catalog(adapter, set(), force=force)
+                                _populate_catalog_episode_leaves(adapter, set(), cloud_catalog)
+                            other_rk, other_class = cloud_catalog.resolve(item, strict=True)
+                            if other_rk or other_class == CLASS_RESOLVE_AMBIGUOUS:
+                                cloud_allowed = False
+                                reason = "plex_discover_outside_library_scope"
+                        if cloud_writer is None:
+                            cloud_writer = _discover_history.Writer(adapter)
+                        outcome = cloud_writer.add(item, int(ts)) if cloud_allowed else reason
+                        if outcome in {"present", "dated", "cached"}:
+                            ok += int(outcome != "cached")
+                            meta["accepted_keys"].append(key)
+                            meta["cloud_confirmed_keys"].append(key)
+                            meta["accepted_not_seen_live_keys"].append(key)
+                            if outcome == "cached":
+                                meta["skipped_keys"].append(key)
+                            if outcome == "dated":
+                                shadow_batch.append(item)
+                            continue
+                        reason = outcome
+                        if reason in _discover_history.NON_STRIKE_REASONS:
+                            meta["deferred_keys"].append(key)
+                            meta["skipped_keys"].append(key)
                 unresolved.append({"item": id_minimal(item), "key": key, "hint": reason, "reason": reason})
                 meta["unresolved_keys"].append(key)
                 _bump_reason(meta, reason)
@@ -1827,6 +1868,8 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         return ok, unresolved
 
     finally:
+        if cloud_writer is not None:
+            cloud_writer.close()
         home_scope_exit(adapter, did_home_switch)
 
 def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:

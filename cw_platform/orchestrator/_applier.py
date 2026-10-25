@@ -13,6 +13,8 @@ record_unresolved = cast(Callable[..., dict[str, Any]], getattr(_unresolved_mod,
 _UNRESOLVED_EXAMPLE_CAP = 25
 
 _PASSTHROUGH_KEY_LISTS = (
+    "cloud_confirmed_keys",
+    "deferred_keys",
     "presence_confirmed_keys",
     "accepted_keys",
     "live_confirmed_keys",
