@@ -524,21 +524,26 @@ def test_pair_state_still_holds_the_user_baseline(tmp_path) -> None:
     assert list(pair["providers"]["EMBY"]["instances"]["default~u1"]["history"]["baseline"]["items"]) == ["tmdb:2"]
 
 
-def test_profile_loaders_only_opt_in_for_profiles_with_sync_users() -> None:
-    from api import profileAPI
+def test_user_facing_views_load_sync_users(monkeypatch) -> None:
+    from api import profileAPI, wallAPI
 
-    calls: list[tuple[Any, ...]] = []
+    calls: list[Any] = []
 
-    def loader(*args: Any) -> dict[str, Any]:
-        calls.append(args)
-        return {}
+    class FakeStore:
+        def __init__(self, *_args: Any) -> None:
+            pass
 
-    profileAPI._scoped_loader(loader, False)()
-    profileAPI._scoped_loader(loader, True)()
-    assert calls == [(), (True,)]
-    assert profileAPI._filter_has_sync_users({"EMBY": ["default~u1"]}) is True
-    assert profileAPI._filter_has_sync_users({"EMBY": ["default", "EMBY-P01"]}) is False
-    assert pi.instances_include_sync_users({"PLEX": "default~716"}) is True
+        def load_state_features(self, features: Any, **kwargs: Any) -> dict[str, Any]:
+            calls.append(kwargs.get("include_sync_users"))
+            return {}
+
+    monkeypatch.setattr(profileAPI, "StateStore", FakeStore)
+    monkeypatch.setattr(wallAPI, "StateStore", FakeStore)
+    profileAPI._history_state()
+    profileAPI._ratings_state()
+    profileAPI._collection_state()
+    wallAPI._load_state()
+    assert calls == [True, True, True, True]
 
 
 def test_provider_label_names_sync_users(monkeypatch) -> None:
@@ -629,3 +634,142 @@ def test_plex_users_keep_their_plex_tv_id_for_matching(monkeypatch) -> None:
     assert store["plex"]["sync_users"]["12"]["cloud_account_id"] == "716210920"
     match = sync_user_matches(store, "plex", "default", "emby", "default")[0]
     assert match["ids"] == ["12", "716210920"]
+
+
+def test_create_user_profiles_for_ticked_users(monkeypatch) -> None:
+    store = _api_cfg()
+    store["jellyfin"] = {"server": "http://jf", "access_token": "jf", "sync_users": {"j3": {"user_id": "j3", "username": "carmen"}}}
+    pi.upsert_user_profile(store, "xavier", label="Xavier", instances={})
+    api = _api_store(monkeypatch, store)
+    api.api_provider_sync_users_update("emby", "default", {"users": [{"key": "u3", "username": "Carmen"}, {"key": "u4", "username": "xavier"}]})
+    assert pi.instances_for_user_profile(store, "xavier") == {"EMBY": ["default~u4"]}
+    res = api.api_provider_sync_users_create_profiles("emby", "default")
+    assert res == {"ok": True, "created": 1, "linked": 2, "skipped": 0}
+    carmen = next(row for row in pi.list_user_profiles(store) if row["label"] == "Carmen")
+    assert carmen["instances"] == {"EMBY": ["default~u3"], "JELLYFIN": ["default~j3"]}
+    assert api.api_provider_sync_users_create_profiles("emby", "default") == {"ok": True, "created": 0, "linked": 0, "skipped": 0}
+    assert api.api_provider_sync_users_create_profiles("trakt", "default")["error"] == "unsupported_provider"
+
+
+def test_scoped_state_keeps_only_the_profile_connections() -> None:
+    from cw_platform.access_policy import scope_state_to_instances
+
+    state = {
+        "providers": {
+            "EMBY": {"watchlist": {"admin": 1}, "instances": {"default~u1": {"watchlist": {"carmen": 1}}, "default~u2": {"watchlist": {"xavier": 1}}}},
+            "PLEX": {"watchlist": {"owner": 1}},
+        },
+        "wall": [{"title": "everyone"}],
+    }
+    scoped = scope_state_to_instances(state, {"EMBY": ["default~u1"]})
+    assert scoped["providers"] == {"EMBY": {"instances": {"default~u1": {"watchlist": {"carmen": 1}}}}}
+    assert scoped["wall"] == []
+    assert scope_state_to_instances(state, {}) is state
+    assert scope_state_to_instances(state, {"__NONE__": ["__NONE__"]})["providers"] == {}
+
+
+def test_create_profiles_skips_users_that_already_have_one(monkeypatch) -> None:
+    store = _api_cfg()
+    pi.upsert_user_profile(store, "family", label="Family", instances={})
+    api = _api_store(monkeypatch, store)
+    api.api_provider_sync_users_update("emby", "default", {"users": [{"key": "u5", "username": "Alice"}]})
+    pi.assign_instance_to_user_profile_id(store, "family", "EMBY", "default~u5")
+    assert api.api_provider_sync_users_create_profiles("emby", "default") == {"ok": True, "created": 0, "linked": 0, "skipped": 0}
+    assert [row["label"] for row in pi.list_user_profiles(store)] == ["Family"]
+
+
+def test_match_as_is_stored_only_when_it_differs(monkeypatch) -> None:
+    store = _api_cfg()
+    api = _api_store(monkeypatch, store)
+    api.api_provider_sync_users_update("emby", "default", {"users": [{"key": "u3", "username": "carmii", "match_as": " Carmen "}, {"key": "u4", "username": "Xavier", "match_as": "xavier"}]})
+    users = store["emby"]["sync_users"]
+    assert users["u3"]["match_as"] == "Carmen"
+    assert "match_as" not in users["u4"]
+    rows = {r["key"]: r["match_as"] for r in api.api_provider_sync_users("emby", "default")["users"]}
+    assert rows == {"u3": "Carmen", "u4": ""}
+    api.api_provider_sync_users_update("emby", "default", {"users": [{"key": "u3", "username": "carmii"}]})
+    assert store["emby"]["sync_users"]["u3"]["match_as"] == "Carmen"
+    api.api_provider_sync_users_update("emby", "default", {"users": [{"key": "u3", "username": "carmii", "match_as": ""}]})
+    assert "match_as" not in store["emby"]["sync_users"]["u3"]
+
+
+def test_match_as_links_different_names_everywhere(monkeypatch) -> None:
+    from cw_platform.orchestrator._pairs import _pairs_for_run
+    from providers.scrobble.routes import sync_user_matches
+
+    cfg = _pair_cfg(match_users=True)
+    cfg["jellyfin"]["sync_users"] = {"j9": {"user_id": "j9", "username": "carmii", "match_as": "Carmen"}}
+    pairs = _pairs_for_run(_ctx([]), cfg)
+    assert [(p["source_instance"], p["target_instance"], p["_cw_sync_user"]) for p in pairs] == [("default~u3", "default~j9", "Carmen")]
+    assert [(m["key"], m["sink_instance"], m["username"]) for m in sync_user_matches(cfg, "emby", "default", "jellyfin", "default")] == [("u3", "default~j9", "Carmen")]
+
+    store = _api_cfg()
+    store["jellyfin"] = {"server": "http://jf", "access_token": "jf", "sync_users": {"j9": {"user_id": "j9", "username": "carmii", "match_as": "Carmen"}}}
+    api = _api_store(monkeypatch, store)
+    api.api_provider_sync_users_update("emby", "default", {"users": [{"key": "u3", "username": "Carmen"}]})
+    assert api.api_provider_sync_users_create_profiles("emby", "default") == {"ok": True, "created": 1, "linked": 2, "skipped": 0}
+    carmen = next(row for row in pi.list_user_profiles(store) if row["label"] == "Carmen")
+    assert carmen["instances"] == {"EMBY": ["default~u3"], "JELLYFIN": ["default~j9"]}
+
+
+def test_duplicate_match_names_need_an_explicit_choice() -> None:
+    from cw_platform.orchestrator._pairs import _pairs_for_run
+    from providers.scrobble.routes import sync_user_matches
+
+    cfg = _pair_cfg(match_users=True)
+    cfg["jellyfin"]["sync_users"] = {
+        "j3": {"user_id": "j3", "username": "carmen"},
+        "j8": {"user_id": "j8", "username": "carmii", "match_as": "Carmen"},
+        "j1": {"user_id": "j1", "username": "user1"},
+    }
+    pairs = _pairs_for_run(_ctx([]), cfg)
+    assert [(p["source_instance"], p["target_instance"]) for p in pairs] == [("default~u1", "default~j1")]
+    assert [m["key"] for m in sync_user_matches(cfg, "emby", "default", "jellyfin", "default")] == ["u1"]
+    cfg["pairs"][0]["user_matches"] = {"u3": "j8"}
+    pairs = _pairs_for_run(_ctx([]), cfg)
+    assert ("default~u3", "default~j8") in [(p["source_instance"], p["target_instance"]) for p in pairs]
+    cfg["emby"]["sync_users"]["u9"] = {"user_id": "u9", "username": "other", "match_as": "user1"}
+    assert [m["key"] for m in sync_user_matches(cfg, "emby", "default", "jellyfin", "default")] == []
+
+
+def test_long_or_shared_names_are_skipped_for_profiles(monkeypatch) -> None:
+    store = _api_cfg()
+    api = _api_store(monkeypatch, store)
+    long_name = "A" * 41
+    rejected = api.api_provider_sync_users_update("emby", "default", {"users": [{"key": "u4", "username": "Solo", "match_as": "B" * 41}]})
+    assert rejected == {"ok": False, "error": "match_as_too_long"}
+    assert "sync_users" not in store["emby"]
+    api.api_provider_sync_users_update("emby", "default", {"users": [
+        {"key": "u1", "username": long_name},
+        {"key": "u2", "username": "Twin"},
+        {"key": "u3", "username": "twin2", "match_as": "twin"},
+        {"key": "u4", "username": "Solo", "match_as": "B" * 40},
+    ]})
+    res = api.api_provider_sync_users_create_profiles("emby", "default")
+    assert res == {"ok": True, "created": 1, "linked": 1, "skipped": 3}
+    assert [row["label"] for row in pi.list_user_profiles(store)] == ["B" * 40]
+
+
+def test_rows_carry_the_backend_match_key(monkeypatch) -> None:
+    store = _api_cfg()
+    api = _api_store(monkeypatch, store)
+    api.api_provider_sync_users_update("emby", "default", {"users": [{"key": "u1", "username": "Straße"}, {"key": "u2", "username": "x", "match_as": "STRASSE"}]})
+    keys = {r["key"]: r["match_key"] for r in api.api_provider_sync_users("emby", "default")["users"]}
+    assert keys == {"u1": "strasse", "u2": "strasse"}
+
+
+def test_dashboard_totals_count_sync_users(tmp_path) -> None:
+    from api.dashboardAPI import _feature_library_totals
+
+    _seed_state(tmp_path)
+    assert _feature_library_totals(tmp_path, {"history"}, {}) == {"history": 2}
+
+
+def test_dashboard_totals_follow_the_selected_profile(tmp_path) -> None:
+    from api.dashboardAPI import _feature_library_totals
+
+    _seed_state(tmp_path)
+    assert _feature_library_totals(tmp_path, {"history"}, {"EMBY": ["default~u1"]}) == {"history": 1}
+    assert _feature_library_totals(tmp_path, {"history"}, {"EMBY": ["default"]}) == {"history": 1}
+    assert _feature_library_totals(tmp_path, {"history"}, {"__NONE__": ["__NONE__"]}) == {"history": 0}
+    assert _feature_library_totals(tmp_path, {"history"}, {}) == {"history": 2}

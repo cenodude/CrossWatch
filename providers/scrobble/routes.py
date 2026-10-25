@@ -12,6 +12,7 @@ from cw_platform.provider_instances import (
     normalize_instance_id,
     normalize_user_profile_id,
     split_sync_user_id,
+    sync_user_match_name,
 )
 
 
@@ -80,21 +81,29 @@ def _sync_user_account_ids(cfg: dict[str, Any], provider: str, instance: str, ke
     return ids
 
 
+def _unique_by_match_name(cfg: dict[str, Any], provider: str, instances: list[str]) -> dict[str, str]:
+    names = {inst: sync_user_match_name(cfg, provider, inst).casefold() for inst in instances}
+    counts: dict[str, int] = {}
+    for match in names.values():
+        if match:
+            counts[match] = counts.get(match, 0) + 1
+    return {match: inst for inst, match in names.items() if match and counts[match] == 1}
+
+
 def sync_user_matches(cfg: dict[str, Any], provider: Any, provider_instance: Any, sink: Any, sink_instance: Any) -> list[dict[str, Any]]:
     if not sync_user_endpoints_supported(provider, provider_instance, sink, sink_instance):
         return []
     prov = str(provider).strip().lower()
     snk = str(sink).strip().lower()
-    dst_by_name: dict[str, str] = {}
-    for inst in list_sync_user_ids(cfg, snk, normalize_instance_id(sink_instance)):
-        name = _sync_user_name(cfg, snk, inst)
-        if name:
-            dst_by_name.setdefault(name.casefold(), inst)
+    dst_by_name = _unique_by_match_name(cfg, snk, list_sync_user_ids(cfg, snk, normalize_instance_id(sink_instance)))
+    src_ids = list_sync_user_ids(cfg, prov, normalize_instance_id(provider_instance))
+    src_unique = _unique_by_match_name(cfg, prov, src_ids)
     out: list[dict[str, Any]] = []
-    for inst in list_sync_user_ids(cfg, prov, normalize_instance_id(provider_instance)):
+    for inst in src_ids:
         ref = split_sync_user_id(inst)
         name = _sync_user_name(cfg, prov, inst)
-        dst = dst_by_name.get(name.casefold()) if name else None
+        match = sync_user_match_name(cfg, prov, inst).casefold()
+        dst = dst_by_name.get(match) if match and src_unique.get(match) == inst else None
         if ref is not None and dst:
             out.append({"key": ref[1], "username": name, "sink_instance": dst, "ids": _sync_user_account_ids(cfg, prov, inst, ref[1])})
     return out

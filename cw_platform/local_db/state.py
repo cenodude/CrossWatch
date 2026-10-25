@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ..provider_instances import is_sync_user_instance
+from ..provider_instances import is_sync_user_instance, normalize_instance_id
 from .db import get_conn
 from .schema import ID_KEYS
 
@@ -620,10 +620,30 @@ def load_state_features(
         return _build_state_from_feature_rows(conn, rows, recent_limit=recent_limit)
 
 
-def provider_feature_counts(base_path: str | Path, feature: str = "watchlist") -> dict[str, int]:
+def provider_feature_counts(
+    base_path: str | Path,
+    feature: str = "watchlist",
+    *,
+    include_sync_users: bool = False,
+    instances: Mapping[str, Any] | None = None,
+) -> dict[str, int]:
     feat = str(feature or "").strip().lower()
     if not feat:
         return {}
+    where = "WHERE p.feature=? "
+    params: list[Any] = [feat]
+    if instances is not None:
+        refs = [
+            (str(provider or "").strip().upper(), normalize_instance_id(inst))
+            for provider, values in instances.items()
+            for inst in (values if isinstance(values, (list, set, tuple)) else [values])
+        ]
+        if not refs:
+            return {}
+        where += "AND (" + " OR ".join("(UPPER(p.provider)=? AND p.instance=?)" for _ in refs) + ") "
+        params.extend(value for ref in refs for value in ref)
+    elif not include_sync_users:
+        where += "AND instr(p.instance, '~')=0 "
     conn = get_conn(base_path)
     if conn is None:
         return {}
@@ -631,9 +651,9 @@ def provider_feature_counts(base_path: str | Path, feature: str = "watchlist") -
         "SELECT p.provider AS provider, COUNT(DISTINCT b.item_key) AS count "
         "FROM provider_feature_state p "
         "LEFT JOIN baseline_items b ON b.provider_state_id=p.id "
-        "WHERE p.feature=? AND instr(p.instance, '~')=0 "
+        + where +
         "GROUP BY p.provider",
-        (feat,),
+        params,
     ).fetchall()
     return {
         str(row["provider"] or "").upper(): int(row["count"] or 0)

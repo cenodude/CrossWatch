@@ -195,8 +195,8 @@ class StateStore:
         policy = self._filter_policy_features(self._mapping_policy(), wanted)
         return self._merge_policy(state, policy)
 
-    def provider_feature_counts(self, feature: str = "watchlist") -> dict[str, int]:
-        return sqlite_state.provider_feature_counts(self.base_path, feature)
+    def provider_feature_counts(self, feature: str = "watchlist", *, include_sync_users: bool = False, instances: Mapping[str, Any] | None = None) -> dict[str, int]:
+        return sqlite_state.provider_feature_counts(self.base_path, feature, include_sync_users=include_sync_users, instances=instances)
 
     def provider_names(self, features: set[str] | list[str] | tuple[str, ...] | None = None) -> list[str]:
         return sqlite_state.provider_names(self.base_path, features)

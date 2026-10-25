@@ -33,7 +33,7 @@ const muEsc=(v)=>String(v??"").replace(/[&<>"']/g,(c)=>({"&":"&amp;","<":"&lt;",
 const muLabel=(p)=>MU_LABELS[String(p||"").toUpperCase()]||String(p||"");
 function renderMatchUsersOption(state){
   if(!supportsPathMatching(state)) return "";
-  return `<div class="opt-row"><label for="pair-match-users">Sync all matched users</label><label class="switch"><input id="pair-match-users" type="checkbox" ${state.match_users?"checked":""}><span class="slider"></span></label></div><div class="muted">Syncs every ticked user on ${muEsc(muLabel(state.src))} with the user of the same name on ${muEsc(muLabel(state.dst))}, each with their own history. Tick users in each connection's Users tab. Your own account only syncs if it is ticked too.</div><div id="pair-match-users-list" ${state.match_users?"":"hidden"}></div>`;
+  return `<div class="opt-row"><label for="pair-match-users">Sync all matched users</label><label class="switch"><input id="pair-match-users" type="checkbox" ${state.match_users?"checked":""}><span class="slider"></span></label></div><div class="muted">Syncs every ticked user on ${muEsc(muLabel(state.src))} with the user of the same name on ${muEsc(muLabel(state.dst))}, each with their own history. Tick users in each connection's Users tab. Your own account only syncs if it is ticked too. Media servers only: for trackers like Trakt, use a connection profile per person.</div><div id="pair-match-users-list" ${state.match_users?"":"hidden"}></div>`;
 }
 async function loadMatchUsersPreview(state){
   const host=ID("pair-match-users-list");
@@ -56,16 +56,20 @@ async function loadMatchUsersPreview(state){
     return;
   }
   const overrides=state.user_matches||{};
-  const byName=new Map(dst.map((u)=>[String(u.username||"").toLowerCase(),u]));
+  const matchName=(u)=>String(u.match_key??(u.match_as||u.username||"").toLowerCase());
+  const tally=(list)=>list.reduce((acc,u)=>{acc.set(matchName(u),(acc.get(matchName(u))||0)+1);return acc;},new Map());
+  const dstCount=tally(dst), srcCount=tally(src);
+  const byName=new Map(dst.filter((u)=>dstCount.get(matchName(u))===1).map((u)=>[matchName(u),u]));
   let matched=0;
   const rows=src.map((u)=>{
     const key=String(u.key);
-    const auto=byName.get(String(u.username||"").toLowerCase());
+    const ambiguous=srcCount.get(matchName(u))>1||dstCount.get(matchName(u))>1;
+    const auto=ambiguous?null:byName.get(matchName(u));
     const has=Object.prototype.hasOwnProperty.call(overrides,key);
     const pick=has?overrides[key]:"__auto";
     const target=pick==="__auto"?auto:dst.find((d)=>String(d.key)===String(pick));
     if(target) matched+=1;
-    const opts=[`<option value="__auto" ${pick==="__auto"?"selected":""}>${auto?`Same name: ${muEsc(auto.username)}`:"Same name: not found"}</option>`,`<option value="" ${pick===""?"selected":""}>Do not sync</option>`]
+    const opts=[`<option value="__auto" ${pick==="__auto"?"selected":""}>${auto?`Same name: ${muEsc(auto.username)}`:ambiguous?"Same name: more than one user, pick one":"Same name: not found"}</option>`,`<option value="" ${pick===""?"selected":""}>Do not sync</option>`]
       .concat(dst.map((d)=>`<option value="${muEsc(d.key)}" ${pick!=="__auto"&&String(pick)===String(d.key)?"selected":""}>${muEsc(d.username)}</option>`)).join("");
     return `<div class="opt-row"><label>${muEsc(u.username)} ${target?"✓":"⚠"}</label><select class="input pair-user-match" data-src-key="${muEsc(key)}">${opts}</select></div>`;
   }).join("");
