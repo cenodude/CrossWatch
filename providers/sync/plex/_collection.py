@@ -94,8 +94,7 @@ def _hdr_levels(srv: Any, section_id: str, plex_type: int, section_keys: set[str
 def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
     srv = getattr(getattr(adapter, "client", None), "server", None)
     if not srv:
-        _info("index_skipped", reason="no_pms")
-        return {}
+        raise RuntimeError("PLEX server not bound")
 
     allowed = plex_feature_library_ids(adapter, "collection")
     include_media = bool(plex_feature_cfg(adapter, "collection").get("media_info"))
@@ -129,7 +128,7 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
     total_sections = max(1, len(sections))
 
     for index, (sid, lib_type, plex_type) in enumerate(sections, start=1):
-        rows, requests_made = _fetch_section_guid_rows(srv, sid, plex_type)
+        rows, requests_made = _fetch_section_guid_rows(srv, sid, plex_type, strict=True)
         scanned += len(rows)
         fallback_type = lib_type
         with_media = include_media and plex_type in (1, 4)

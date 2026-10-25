@@ -131,6 +131,112 @@ def make_logger(feature: str):  # type: ignore[return]
     return _dbg, _info, _warn, _error
 
 
+def _page_rows_and_total(body: Any, require_total: bool) -> tuple[list[Mapping[str, Any]], int | None] | None:
+    if not isinstance(body, Mapping):
+        return None
+    page = body.get("Items")
+    total = body.get("TotalRecordCount")
+    if not isinstance(page, list):
+        return None
+    if total is None:
+        if require_total:
+            return None
+    elif isinstance(total, bool) or not isinstance(total, int) or total < 0:
+        return None
+    if any(not isinstance(raw, Mapping) or not str(raw.get("Id") or "").strip() for raw in page):
+        return None
+    return page, total
+
+
+def fetch_item_pages(
+    http: Any,
+    path: str,
+    params: Mapping[str, Any],
+    *,
+    reason: str,
+    page_size: int = 500,
+    start_key: str = "StartIndex",
+    limit_key: str = "Limit",
+    require_total: bool = True,
+    id_key: str = "Id",
+    warn: Any = None,
+    **context: Any,
+) -> list[Mapping[str, Any]]:
+    log_warn = warn or (lambda msg, **fields: cw_log("EMBY", "common", "warn", msg, **fields))
+    limit = max(1, int(page_size))
+    out: list[Mapping[str, Any]] = []
+    start = 0
+    expected_total: int | None = None
+    seen_pages: set[tuple[str, ...]] = set()
+    seen_ids: set[str] = set()
+
+    def _fail(event: str, what: str, **fields: Any) -> RuntimeError:
+        log_warn(event, start_index=start, **context, **fields)
+        return RuntimeError(f"{reason}_{what}")
+
+    while True:
+        query = dict(params)
+        query[start_key] = start
+        query[limit_key] = limit
+        try:
+            response = http.get(path, params=query)
+        except Exception as exc:
+            raise _fail("read_query_failed", f"read_failed:{exc}", error=str(exc)) from exc
+        status = getattr(response, "status_code", 0)
+        if status != 200:
+            raise _fail("read_query_failed", f"http_{status}", status=status)
+        try:
+            body = response.json()
+        except Exception as exc:
+            raise _fail("read_query_failed", f"read_failed:{exc}", error=str(exc)) from exc
+        parsed = _page_rows_and_total(body, require_total)
+        if parsed is None:
+            raise _fail("read_invalid_page", "invalid_page")
+        page, total = parsed
+        if total is not None:
+            if expected_total is not None and total != expected_total:
+                raise _fail("read_total_changed", f"total_changed:{expected_total}->{total}", previous_total=expected_total, total=total)
+            expected_total = total
+        if not page:
+            if expected_total is not None and start < expected_total:
+                raise _fail("read_incomplete", f"incomplete_read:{start}/{expected_total}", read=start, total=expected_total)
+            break
+        signature = tuple(str(raw.get(id_key) or raw.get("Id")) for raw in page)
+        if signature in seen_pages:
+            raise _fail("pagination_repeated_page", "repeated_page")
+        seen_pages.add(signature)
+        if len(set(signature)) != len(signature):
+            raise _fail("pagination_duplicate_item", "duplicate_item")
+        overlap = seen_ids.intersection(signature)
+        if overlap:
+            raise _fail("pagination_overlapping_page", "overlapping_page", duplicate_ids=sorted(overlap)[:5])
+        seen_ids.update(signature)
+        out.extend(page)
+        start += len(page)
+        if expected_total is not None:
+            if start > expected_total:
+                raise _fail("read_invalid_page", f"total_exceeded:{start}/{expected_total}", read=start, total=expected_total)
+            if start == expected_total:
+                break
+        elif len(page) < limit:
+            break
+    return out
+
+
+def item_rows(response: Any, reason: str) -> list[Mapping[str, Any]]:
+    status = getattr(response, "status_code", 0)
+    if status != 200:
+        raise RuntimeError(f"{reason}_http_{status}")
+    try:
+        body = response.json()
+    except Exception as exc:
+        raise RuntimeError(f"{reason}_read_failed:{exc}") from exc
+    rows = body.get("Items") if isinstance(body, Mapping) else None
+    if not isinstance(rows, list) or any(not isinstance(row, Mapping) for row in rows):
+        raise RuntimeError(f"{reason}_invalid_page")
+    return rows
+
+
 def _now_iso_z() -> str:
     from datetime import datetime, timezone
     return datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -675,38 +781,22 @@ def all_ext_pairs(it_ids: Mapping[str, Any], priority: Iterable[str]) -> list[st
 def build_provider_index(adapter: Any, *, feature: str | None = None) -> dict[str, list[dict[str, Any]]]:
     http, uid = adapter.client, adapter.cfg.user_id
     out: dict[str, list[dict[str, Any]]] = {}
-    start, limit, total = 0, 500, None
     parents: list[str | None] = []
     parents.extend(sorted(emby_selected_library_ids(adapter.cfg, feature or "history")))
     if not parents:
         parents = [None]
-    parent_index = 0
-    seen_pages: set[tuple[str, ...]] = set()
-    while True:
+    for parent_id in parents:
         params = {
             "IncludeItemTypes": "Movie,Series",
             "Recursive": True,
             "Fields": "ProviderIds,ProductionYear,Type",
-            "StartIndex": start,
-            "Limit": limit,
             "EnableTotalRecordCount": True,
         }
-        parent_id = parents[parent_index]
         if parent_id:
             params["ParentId"] = parent_id
-        r = http.get(f"/Users/{uid}/Items", params=params)
-        if getattr(r, "status_code", 0) != 200:
-            raise RuntimeError(f"emby_provider_index_http_{getattr(r, 'status_code', 0)}")
-        body = r.json() or {}
-        items = body.get("Items") or []
-        signature = tuple(str(row.get("Id") or "") for row in items if isinstance(row, Mapping))
-        if items and signature in seen_pages:
-            break
-        seen_pages.add(signature)
-        if total is None:
-            total = int(body.get("TotalRecordCount") or 0)
-            cw_log("EMBY", "common", "debug", "index_fetch_counts", source="provider_index", total=total)
-        for row in items:
+        items = fetch_item_pages(http, f"/Users/{uid}/Items", params, reason="emby_provider_index")
+        for item in items:
+            row = dict(item)
             pids = row.get("ProviderIds") or {}
             if not pids:
                 continue
@@ -733,13 +823,6 @@ def build_provider_index(adapter: Any, *, feature: str | None = None) -> dict[st
                 m = _NUM_PAT.search(v_al)
                 if m:
                     out.setdefault(f"anilist.{int(m.group(1))}", []).append(row)
-        start += len(items)
-        if not items or len(items) < limit or (total is not None and total > 0 and start >= total):
-            parent_index += 1
-            if parent_index >= len(parents):
-                break
-            start, total = 0, None
-            seen_pages.clear()
     for k, rows in out.items():
         rows.sort(key=lambda r: str(r.get("Id") or ""))
     cw_log("EMBY", "common", "debug", "index_done", source="provider_index", count=len(out))
@@ -913,11 +996,13 @@ def _items_by_ids(http: Any, uid: str, ids: list[str]) -> tuple[bool, dict[str, 
     if getattr(r, "status_code", 0) != 200:
         return False, {}
     try:
-        arr = (r.json() or {}).get("Items") or []
+        arr = (r.json() or {}).get("Items")
     except Exception:
-        return True, {}
+        return False, {}
+    if not isinstance(arr, list):
+        return False, {}
     out: dict[str, Mapping[str, Any]] = {}
-    for raw in arr if isinstance(arr, list) else []:
+    for raw in arr:
         if not isinstance(raw, Mapping):
             continue
         rid = str(raw.get("Id") or "").strip()
@@ -934,8 +1019,10 @@ def _series_id_for_episode(http: Any, uid: str, ep: Mapping[str, Any]) -> str:
     if not parent:
         return ""
     ok, rows = _items_by_ids(http, uid, [parent])
+    if not ok:
+        raise RuntimeError("emby_series_lookup_failed")
     row = rows.get(parent)
-    if not ok or not isinstance(row, Mapping):
+    if not isinstance(row, Mapping):
         return ""
     kind = str(row.get("Type") or "").strip()
     if kind == "Series":
@@ -961,13 +1048,14 @@ def _series_minimal_from_episode(
         if sid in _cache:
             return _cache[sid]
     ok, rows = _items_by_ids(http, uid, [sid])
+    if not ok:
+        raise RuntimeError("emby_series_lookup_failed")
     row = rows.get(sid)
     if isinstance(row, Mapping) and str(row.get("Type") or "").strip() == "Series":
         m = normalize(row)
         _cache[sid] = m
         return m
-    if ok:
-        _cache[sid] = None
+    _cache[sid] = None
     return None
 
 
@@ -1019,19 +1107,17 @@ def _fetch_all_playlist_items(
     *,
     page_size: int,
 ) -> tuple[list[Mapping[str, Any]], int]:
-    start = 0
-    total: int | None = None
-    out: list[Mapping[str, Any]] = []
-    while True:
-        body = get_playlist_items(http, pid, start=start, limit=page_size)
-        rows: list[Mapping[str, Any]] = body.get("Items") or []
-        if total is None:
-            total = int(body.get("TotalRecordCount") or 0)
-        out.extend(rows)
-        start += len(rows)
-        if not rows or (total is not None and start >= total):
-            break
-    return out, int(total or len(out))
+    rows = fetch_item_pages(
+        http,
+        f"/Playlists/{pid}/Items",
+        {"Fields": "ProviderIds,ProductionYear,Type", "EnableUserData": False},
+        reason="emby_playlist_items",
+        page_size=page_size,
+        require_total=False,
+        id_key="PlaylistItemId",
+        playlist_id=pid,
+    )
+    return rows, len(rows)
 
 
 def _fetch_all_series_episodes(
@@ -1086,33 +1172,21 @@ def _fetch_all_collection_items(
     *,
     page_size: int,
 ) -> tuple[list[Mapping[str, Any]], int]:
-    start = 0
-    total: int | None = None
-    out: list[Mapping[str, Any]] = []
-    while True:
-        r = http.get(
-            f"/Users/{uid}/Items",
-            params={
-                "IncludeItemTypes": "Movie,Series",
-                "ParentId": cid,
-                "Recursive": False,
-                "Fields": "ProviderIds,ProductionYear,Type",
-                "EnableTotalRecordCount": True,
-                "StartIndex": start,
-                "Limit": page_size,
-            },
-        )
-        if getattr(r, "status_code", 0) != 200:
-            break
-        body = r.json() or {}
-        rows: list[Mapping[str, Any]] = body.get("Items") or []
-        if total is None:
-            total = int(body.get("TotalRecordCount") or 0)
-        out.extend(rows)
-        start += len(rows)
-        if not rows or (total is not None and start >= total):
-            break
-    return out, int(total or len(out))
+    rows = fetch_item_pages(
+        http,
+        f"/Users/{uid}/Items",
+        {
+            "IncludeItemTypes": "Movie,Series",
+            "ParentId": cid,
+            "Recursive": False,
+            "Fields": "ProviderIds,ProductionYear,Type",
+            "EnableTotalRecordCount": True,
+        },
+        reason="emby_collection_items",
+        page_size=page_size,
+        collection_id=cid,
+    )
+    return rows, len(rows)
 
 
 def playlist_as_watchlist_index(
@@ -1145,12 +1219,9 @@ def playlist_as_watchlist_index(
             except Exception:
                 pass
         elif t == "episode":
-            try:
-                m = _series_minimal_from_episode(http, user_id, row, cache)
-                if m:
-                    out[canonical_key(m)] = m
-            except Exception:
-                pass
+            m = _series_minimal_from_episode(http, user_id, row, cache)
+            if m:
+                out[canonical_key(m)] = m
 
         done += 1
         if progress:
@@ -1164,20 +1235,14 @@ def playlist_as_watchlist_index(
 # playlists (for future use)
 def find_playlist_id_by_name(http: Any, user_id: str, name: str) -> str | None:
     q = {"UserId": user_id, "IncludeItemTypes": "Playlist", "Recursive": True, "SearchTerm": name}
-    r = http.get(f"/Users/{user_id}/Items", params=q)
-    if getattr(r, "status_code", 0) != 200:
-        return None
-    items = (r.json() or {}).get("Items") or []
+    items = item_rows(http.get(f"/Users/{user_id}/Items", params=q), "emby_playlist_lookup")
     name_l = (name or "").strip().lower()
     for it in items:
         if (it.get("Name") or "").strip().lower() == name_l:
             return it.get("Id")
     if not items:
         q2 = {"UserId": user_id, "IncludeItemTypes": "Playlist", "Recursive": True}
-        r2 = http.get(f"/Users/{user_id}/Items", params=q2)
-        if getattr(r2, "status_code", 0) != 200:
-            return None
-        for it in (r2.json() or {}).get("Items") or []:
+        for it in item_rows(http.get(f"/Users/{user_id}/Items", params=q2), "emby_playlist_lookup"):
             if (it.get("Name") or "").strip().lower() == name_l:
                 return it.get("Id")
     return None
@@ -1201,22 +1266,6 @@ def create_playlist(http: Any, user_id: str, name: str, is_public: bool = False)
         pass
     pid2 = find_playlist_id_by_name(http, user_id, norm)
     return str(pid2) if pid2 else None
-
-
-def get_playlist_items(http: Any, playlist_id: str, start: int = 0, limit: int = 100) -> dict[str, Any]:
-    q = {
-        "StartIndex": max(0, int(start)),
-        "Limit": max(1, int(limit)),
-        "Fields": "ProviderIds,ProductionYear,Type",
-        "EnableUserData": False,
-    }
-    r = http.get(f"/Playlists/{playlist_id}/Items", params=q)
-    if getattr(r, "status_code", 0) != 200:
-        return {"Items": [], "TotalRecordCount": 0}
-    data = r.json() or {}
-    data.setdefault("Items", [])
-    data.setdefault("TotalRecordCount", len(data["Items"]))
-    return data
 
 
 def playlist_add_items(http: Any, playlist_id: str, user_id: str, item_ids: Iterable[str]) -> bool:
@@ -1286,18 +1335,13 @@ def find_seed_item_id(http: Any, user_id: str) -> str | None:
 
 def _collections_parent_ids(http: Any, user_id: str) -> list[str]:
     out: list[str] = []
-    try:
-        r = http.get(f"/Users/{user_id}/Views")
-        if getattr(r, "status_code", 0) == 200:
-            for it in (r.json() or {}).get("Items", []):
-                t = (it.get("Type") or "").strip()
-                ct = (it.get("CollectionType") or "").strip().lower()
-                if t == "CollectionFolder" or ct == "boxsets":
-                    vid = it.get("Id")
-                    if vid:
-                        out.append(str(vid))
-    except Exception:
-        pass
+    for it in item_rows(http.get(f"/Users/{user_id}/Views"), "emby_collection_views"):
+        t = (it.get("Type") or "").strip()
+        ct = (it.get("CollectionType") or "").strip().lower()
+        if t == "CollectionFolder" or ct == "boxsets":
+            vid = it.get("Id")
+            if vid:
+                out.append(str(vid))
     return out
 
 
@@ -1317,28 +1361,16 @@ def find_collection_id_by_name(http: Any, user_id: str, name: str) -> str | None
     if not norm:
         return None
     q1 = {"IncludeItemTypes": "BoxSet", "Recursive": True, "SearchTerm": norm, "Limit": 50}
-    r1 = http.get(f"/Users/{user_id}/Items", params=q1)
-    if getattr(r1, "status_code", 0) == 200:
-        hit = _match_name_eq((r1.json() or {}).get("Items", []), norm)
-        if hit:
-            return hit
+    hit = _match_name_eq(item_rows(http.get(f"/Users/{user_id}/Items", params=q1), "emby_collection_lookup"), norm)
+    if hit:
+        return hit
     for pid in _collections_parent_ids(http, user_id):
         q2 = {"IncludeItemTypes": "BoxSet", "Recursive": True, "ParentId": pid, "Limit": 200}
-        r2 = http.get(f"/Users/{user_id}/Items", params=q2)
-        if getattr(r2, "status_code", 0) == 200:
-            hit = _match_name_eq((r2.json() or {}).get("Items", []), norm)
-            if hit:
-                return hit
-    try:
-        q3 = {"IncludeItemTypes": "BoxSet", "Recursive": True, "SearchTerm": norm, "Limit": 50}
-        r3 = http.get("/Items", params=q3)
-        if getattr(r3, "status_code", 0) == 200:
-            hit = _match_name_eq((r3.json() or {}).get("Items", []), norm)
-            if hit:
-                return hit
-    except Exception:
-        pass
-    return None
+        hit = _match_name_eq(item_rows(http.get(f"/Users/{user_id}/Items", params=q2), "emby_collection_lookup"), norm)
+        if hit:
+            return hit
+    q3 = {"IncludeItemTypes": "BoxSet", "Recursive": True, "SearchTerm": norm, "Limit": 50}
+    return _match_name_eq(item_rows(http.get("/Items", params=q3), "emby_collection_lookup"), norm)
 
 
 def create_collection(
@@ -1379,24 +1411,6 @@ def create_collection(
     except Exception:
         pass
     return None
-
-
-def get_collection_items(http: Any, user_id: str, collection_id: str) -> dict[str, Any]:
-    q = {
-        "IncludeItemTypes": "Movie,Series",
-        "ParentId": collection_id,
-        "Recursive": False,
-        "Fields": "ProviderIds,ProductionYear,Type",
-        "EnableTotalRecordCount": True,
-        "Limit": 10000,
-    }
-    r = http.get(f"/Users/{user_id}/Items", params=q)
-    if getattr(r, "status_code", 0) != 200:
-        return {"Items": [], "TotalRecordCount": 0}
-    data = r.json() or {}
-    data.setdefault("Items", [])
-    data.setdefault("TotalRecordCount", len(data["Items"]))
-    return data
 
 
 def collection_add_items(http: Any, collection_id: str, item_ids: Iterable[str]) -> bool:

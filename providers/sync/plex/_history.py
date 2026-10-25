@@ -1248,8 +1248,7 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
     try:
         srv = getattr(getattr(adapter, "client", None), "server", None)
         if not srv:
-            _info("index_skipped", reason="account_only")
-            return {}
+            raise RuntimeError("PLEX server not bound")
         prog_mk = getattr(adapter, "progress_factory", None)
         prog: Any | None = prog_mk("history") if callable(prog_mk) else None
 

@@ -384,7 +384,7 @@ def _fetch_resume_items(
 def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
     srv = getattr(getattr(adapter, "client", None), "server", None)
     if not srv:
-        return {}
+        raise RuntimeError("PLEX server not bound")
 
     need_scope, did_switch, sel_aid, sel_uname = home_scope_enter(adapter)
     try:

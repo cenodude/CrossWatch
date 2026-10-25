@@ -214,9 +214,14 @@ def build_index(adapter: Any, *, progress: Any | None = None) -> dict[str, dict[
                 f"/Items/{iid}",
                 params={"UserId": uid, "Fields": "UserData"},
             )
-            if getattr(r, "status_code", 0) != 200:
+            status = getattr(r, "status_code", 0)
+            if status == 404:
                 continue
-            body = r.json() or {}
+            if status != 200:
+                raise RuntimeError(f"emby_ratings_item_http_{status}")
+            body = r.json()
+            if not isinstance(body, Mapping):
+                raise RuntimeError("emby_ratings_item_invalid_response")
             ud = body.get("UserData") or {}
             rating = ud.get("Rating")
             liked = ud.get("Likes")

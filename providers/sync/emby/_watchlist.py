@@ -29,6 +29,7 @@ from ._common import (
     sleep_ms,
     resolve_item_id,
     _fetch_all_playlist_items,
+    fetch_item_pages,
     _fetch_all_collection_items,
     _fetch_all_series_episodes,
     _is_future_episode,
@@ -246,65 +247,42 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
 
     # Favorites mode
     page_size = max(1, int(getattr(cfg, "watchlist_query_limit", 1000)))
-    start = 0
-    total: int | None = None
+    rows = fetch_item_pages(
+        http,
+        f"/Users/{uid}/Items",
+        {
+            "IncludeItemTypes": "Movie,Series",
+            "Recursive": True,
+            "EnableUserData": True,
+            "Fields": "ProviderIds,ProductionYear,UserData,Type",
+            "Filters": "IsFavorite",
+            "SortBy": "DateLastSaved",
+            "SortOrder": "Descending",
+            "EnableTotalRecordCount": True,
+        },
+        reason="emby_watchlist",
+        page_size=page_size,
+        warn=_warn,
+    )
+    total = len(rows)
+    if prog:
+        try:
+            prog.tick(0, total=total, force=True)
+        except Exception:
+            pass
 
     out: dict[str, dict[str, Any]] = {}
-    done = 0
-    seen_pages: set[tuple[str, ...]] = set()
-
-    while True:
-        r = http.get(
-            f"/Users/{uid}/Items",
-            params={
-                "IncludeItemTypes": "Movie,Series",
-                "Recursive": True,
-                "EnableUserData": True,
-                "Fields": "ProviderIds,ProductionYear,UserData,Type",
-                "Filters": "IsFavorite",
-                "SortBy": "DateLastSaved",
-                "SortOrder": "Descending",
-                "EnableTotalRecordCount": True,
-                "StartIndex": start,
-                "Limit": page_size,
-            },
-        )
-
+    for done, row in enumerate(rows, start=1):
         try:
-            body = r.json() or {}
-            rows: list[Mapping[str, Any]] = body.get("Items") or []
-            if total is None:
-                total = int(body.get("TotalRecordCount") or 0)
-                if prog:
-                    try:
-                        prog.tick(0, total=total, force=True)
-                    except Exception:
-                        pass
+            m = emby_normalize(row)
+            out[canonical_key(m)] = m
         except Exception:
-            rows = []
-            if total is None:
-                total = 0
-        signature = tuple(str(row.get("Id") or "") for row in rows if isinstance(row, Mapping))
-        if rows and signature in seen_pages:
-            break
-        seen_pages.add(signature)
-
-        for row in rows:
+            pass
+        if prog:
             try:
-                m = emby_normalize(row)
-                out[canonical_key(m)] = m
+                prog.tick(done, total=total)
             except Exception:
                 pass
-            done += 1
-            if prog and total is not None:
-                try:
-                    prog.tick(done, total=total)
-                except Exception:
-                    pass
-
-        start += len(rows)
-        if not rows or (total is not None and start >= total):
-            break
 
     _thaw_if_present(out.keys())
     _flush()

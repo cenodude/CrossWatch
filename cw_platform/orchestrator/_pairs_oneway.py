@@ -242,6 +242,7 @@ from ._snapshots import (
     provider_index_semantics,
     prev_checkpoint,
     refresh_destination_after_apply,
+    require_snapshot,
 )
 from ._applier import apply_add, apply_remove, apply_update
 from ._chunking import effective_chunk_size
@@ -1096,12 +1097,14 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
             feature=feature, config=src_cfg, providers={src: src_ops},
             snap_cache=ctx.snap_cache, snap_ttl_sec=ctx.snap_ttl_sec,
             dbg=dbg, emit_info=ctx.emit_info, on_snapshot=_on_snapshot,
-        ).get(src) or {}
+        )
+        src_cur = require_snapshot(src_cur, src, feature)
         dst_cur = build_snapshots_for_feature(
             feature=feature, config=dst_cfg, providers={dst: dst_ops},
             snap_cache=ctx.snap_cache, snap_ttl_sec=ctx.snap_ttl_sec,
             dbg=dbg, emit_info=ctx.emit_info,
-        ).get(dst) or {}
+        )
+        dst_cur = require_snapshot(dst_cur, dst, feature)
     else:
         snaps = build_snapshots_for_feature(
             feature=feature,
@@ -1115,8 +1118,8 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
             on_snapshot=_on_snapshot,
         )
 
-        src_cur = snaps.get(src) or {}
-        dst_cur = snaps.get(dst) or {}
+        src_cur = require_snapshot(snaps, src, feature)
+        dst_cur = require_snapshot(snaps, dst, feature)
     cancelled = bool(cancel_requested())
 
     prev_state = load_feature_state(ctx.state_store, feature)

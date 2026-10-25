@@ -135,7 +135,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "2.7"
+__VERSION__ = "2.8"
 os.environ.setdefault("CW_EMBY_UA", http_user_agent("Emby", override_env="CW_EMBY_UA"))
 __all__ = ["get_manifest", "EMBYModule", "OPS"]
 
@@ -685,7 +685,7 @@ class EMBYModule:
     def build_index(self, feature: str, **kwargs: Any) -> Mapping[str, dict[str, Any]]:
         f = (feature or "watchlist").lower()
         if not self._is_enabled(f):
-            _info("index_skipped", feature=f, reason="feature_disabled")
+            _info("index_skipped", sync_feature=f, reason="feature_disabled")
             return {}
         mod = _FEATURES.get(f)
         if not mod:
@@ -705,7 +705,7 @@ class EMBYModule:
     ) -> Mapping[str, Any]:
         f = (feature or "watchlist").lower()
         if not self._is_enabled(f):
-            _info("write_skipped", op="add", feature=f, reason="feature_disabled")
+            _info("write_skipped", op="add", sync_feature=f, reason="feature_disabled")
             return {"ok": True, "count": 0, "unresolved": []}
         if dry_run:
             return self._dry_result(items)
@@ -735,7 +735,7 @@ class EMBYModule:
     ) -> Mapping[str, Any]:
         f = (feature or "watchlist").lower()
         if not self._is_enabled(f):
-            _info("write_skipped", op="remove", feature=f, reason="feature_disabled")
+            _info("write_skipped", op="remove", sync_feature=f, reason="feature_disabled")
             return {"ok": True, "count": 0, "unresolved": []}
         if dry_run:
             return self._dry_result(items)

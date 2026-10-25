@@ -10,6 +10,7 @@ from cw_platform.playlists import PLAYLIST_KIND_REGULAR, PlaylistItem, PlaylistR
 from ._common import (
     _fetch_all_collection_items,
     _fetch_all_playlist_items,
+    fetch_item_pages,
     chunked,
     collection_add_items,
     collection_remove_items,
@@ -104,47 +105,28 @@ def _resource_from_row(adapter: Any, row: Mapping[str, Any], endpoint_type: str 
 
 
 def _fetch_resources(adapter: Any, endpoint_type: str) -> list[PlaylistResource]:
-    http = adapter.client
     uid = adapter.cfg.user_id
     include = "Playlist" if endpoint_type == "playlist" else "BoxSet"
+    rows = fetch_item_pages(
+        adapter.client,
+        f"/Users/{uid}/Items",
+        {
+            "UserId": uid,
+            "IncludeItemTypes": include,
+            "Recursive": True,
+            "Fields": "ChildCount,RecursiveItemCount,DateCreated,DateLastMediaAdded",
+            "EnableTotalRecordCount": True,
+        },
+        reason="emby_playlist_resources",
+        warn=_warn,
+        endpoint_type=endpoint_type,
+    )
     out: list[PlaylistResource] = []
-    start = 0
-    limit = 500
-    total: int | None = None
-    while True:
-        r = http.get(
-            f"/Users/{uid}/Items",
-            params={
-                "UserId": uid,
-                "IncludeItemTypes": include,
-                "Recursive": True,
-                "Fields": "ChildCount,RecursiveItemCount,DateCreated,DateLastMediaAdded",
-                "StartIndex": start,
-                "Limit": limit,
-                "EnableTotalRecordCount": True,
-            },
-        )
-        if getattr(r, "status_code", 0) != 200:
-            _warn("list_failed", endpoint_type=endpoint_type, status=getattr(r, "status_code", None))
-            return out
-        body = r.json() or {}
-        rows = body.get("Items") or []
-        if total is None:
-            try:
-                total = int(body.get("TotalRecordCount") or 0)
-            except Exception:
-                total = 0
-        for row in rows:
-            if not isinstance(row, Mapping):
-                continue
-            res = _resource_from_row(adapter, row, endpoint_type)
-            if res:
-                out.append(res)
-        start += len(rows)
-        if not rows or len(rows) < limit or (total is not None and total > 0 and start >= total):
-            break
+    for row in rows:
+        res = _resource_from_row(adapter, row, endpoint_type)
+        if res:
+            out.append(res)
     return out
-
 
 @retained_read
 def list_resources(adapter: Any) -> list[PlaylistResource]:
