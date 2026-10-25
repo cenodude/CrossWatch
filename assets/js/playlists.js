@@ -600,7 +600,7 @@
           </section>
           <section class="pl-section cw-page-panel" id="pl-published-lists">
             <div class="pl-section-head">
-              <div><div class="pl-section-title">Published lists</div><div class="pl-section-sub">Let Kometa, Radarr and Sonarr read a CrossWatch list.</div></div>
+              <div><div class="pl-section-title">Published lists</div><div class="pl-section-sub">Let Kometa, Radarr, Sonarr and MDBList JSON readers such as Kodi TMDBHelper read a CrossWatch list.</div></div>
               <button class="pl-btn small" data-action="sync-wizard-publish" ${state.loaded ? "" : "disabled"}><span class="material-symbols-rounded" aria-hidden="true">add</span>Publish a list</button>
             </div>
             <div class="pl-section-body">${renderPublished()}</div>
@@ -678,12 +678,12 @@
     if (state.loading && !state.loaded) return renderSkeleton("Loading published lists");
     const lists = (state.published && state.published.lists) || [];
     if (!lists.length) {
-      return `<div class="pl-empty"><strong>Nothing published yet</strong><span>Select Publish a list to make a list readable by Kometa, Radarr or Sonarr.</span></div>`;
+      return `<div class="pl-empty"><strong>Nothing published yet</strong><span>Select Publish a list to make a list readable by Kometa, Radarr, Sonarr or Kodi TMDBHelper.</span></div>`;
     }
     const rows = lists.map((row) => {
       const key = `${row.instance}|${row.list_id}`;
       const feed = row.feed;
-      const tool = { "kometa-movies.json": "Kometa (movies)", "kometa-shows.json": "Kometa (shows)", "radarr.json": "Radarr", "sonarr.json": "Sonarr" }[feed && feed.last_fetch_format] || "";
+      const tool = { "kometa-movies.json": "Kometa (movies)", "kometa-shows.json": "Kometa (shows)", "radarr.json": "Radarr", "sonarr.json": "Sonarr", "mdblist.json": "MDBList JSON" }[feed && feed.last_fetch_format] || "";
       const read = feed && feed.last_fetch_at ? `${timeText(feed.last_fetch_at)}<br>${esc(tool ? `by ${tool}` : "")}` : feed ? "Not read yet" : "-";
       const used = Number(row.endpoint_count || 0);
       const deleteLabel = !row.can_delete ? "This list cannot be deleted" : used ? `Delete list. Remove the ${used} endpoint(s) that use this list first` : "Delete list";
@@ -745,6 +745,8 @@
         ${block("Kometa, show library", "Paste into a collection file of your show library.", kometa(urls["kometa-shows.json"] || ""), true)}
         ${block("Radarr (movies)", "Settings, Import Lists, add a Custom List (StevenLu Custom) and paste this address. Movies without an IMDb ID are left out.", urls["radarr.json"] || "", false)}
         ${block("Sonarr (shows)", "Settings, Import Lists, add a Custom List and paste this address. Shows without a TVDB ID are left out.", urls["sonarr.json"] || "", false)}
+        ${block("MDBList JSON (movies and shows)", "One mixed list in the MDBList JSON layout, with TMDB IDs. Items without a TMDB ID are left out. Add &sort=random for a new order on every read.", urls["mdblist.json"] || "", false)}
+        ${block("Kodi TMDBHelper", "Use this path in a widget, menu item or button. It loads the MDBList JSON address above.", urls["mdblist.json"] ? `plugin://plugin.video.themoviedb.helper/?info=mdblist_locallist&&${urls["mdblist.json"]}` : "", false)}
       `,
       onOpen: (ctx) => {
         ctx.modal.addEventListener("click", async (e) => {
@@ -769,7 +771,7 @@
     const row = publishedRow(key);
     if (!row) return;
     if (action === "publish-show") return openPublishedModal(row, btn);
-    if (action === "publish-key" && !confirm("Create a new access key? Kometa, Radarr and Sonarr stop reading this list until you paste the new addresses.")) return;
+    if (action === "publish-key" && !confirm("Create a new access key? Kometa, Radarr, Sonarr and Kodi stop reading this list until you paste the new addresses.")) return;
     if (action === "publish-off" && !confirm("Stop publishing this list? The addresses stop working.")) return;
     if (action === "publish-delete" && !confirm(`Delete ${row.name || "this list"}? The list and its items are removed from CrossWatch${row.feed ? " and the addresses stop working" : ""}.`)) return;
     btn.disabled = true;
@@ -2150,7 +2152,7 @@
           <div class="pl-step-head"><span class="pl-step-index">2</span><div><b>To</b><span>Where the items should go.</span></div></div>
           <div class="pl-wizard-choice" role="radiogroup" aria-label="Destination">
             <label><input type="radio" name="pl-wz-dest" value="list" ${wizard.publish ? "" : "checked"}><span><b>A list on a provider</b><small>Plex, Trakt, MDBList and others.</small></span></label>
-            <label class="${cwAccounts.length ? "" : "is-disabled"}"><input type="radio" name="pl-wz-dest" value="publish" ${wizard.publish ? "checked" : ""} ${cwAccounts.length ? "" : "disabled"}><span><b>Kometa, Radarr or Sonarr</b><small>${cwAccounts.length ? "Publish the list so these tools can read it." : "Needs the CrossWatch provider to be connected."}</small></span></label>
+            <label class="${cwAccounts.length ? "" : "is-disabled"}"><input type="radio" name="pl-wz-dest" value="publish" ${wizard.publish ? "checked" : ""} ${cwAccounts.length ? "" : "disabled"}><span><b>Kometa, Radarr, Sonarr or Kodi</b><small>${cwAccounts.length ? "Publish the list so these tools can read it." : "Needs the CrossWatch provider to be connected."}</small></span></label>
           </div>
           <div class="pl-wizard-row" id="pl-wz-dst-list-row">
             <div class="pl-field"><label for="pl-wz-dst-account">Provider</label><select id="pl-wz-dst-account"><option value="">Choose a provider</option>${accountOptions(accounts)}</select></div>

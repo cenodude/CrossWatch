@@ -1,11 +1,12 @@
 # services/published_lists.py
-# CrossWatch - Published CrossWatch lists for Kometa, Radarr and Sonarr
+# CrossWatch - Published CrossWatch lists for Kometa, Radarr, Sonarr and MDBList JSON readers
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
 import hmac
 import json
 import os
+import random
 import secrets
 import threading
 import time
@@ -23,6 +24,7 @@ FORMATS: dict[str, dict[str, str]] = {
     "kometa-shows.json": {"tool": "Kometa", "label": "Kometa shows", "media": "show"},
     "radarr.json": {"tool": "Radarr", "label": "Radarr", "media": "movie"},
     "sonarr.json": {"tool": "Sonarr", "label": "Sonarr", "media": "show"},
+    "mdblist.json": {"tool": "MDBList JSON", "label": "MDBList JSON", "media": "all"},
 }
 _SHOW_TYPES = {"show", "anime", "season", "episode"}
 _LOCK = threading.Lock()
@@ -179,6 +181,14 @@ def _number(value: Any) -> int | None:
     return number if number > 0 else None
 
 
+def _index(value: Any) -> int | None:
+    try:
+        number = int(str(value).strip())
+    except Exception:
+        return None
+    return number if number >= 0 else None
+
+
 def _imdb(value: Any) -> str:
     text = str(value or "").strip()
     return text if text.startswith("tt") else ""
@@ -201,7 +211,54 @@ def _entries(items: Sequence[Mapping[str, Any]], media: str) -> list[tuple[str, 
     return out
 
 
+def _mdblist_rows(items: Sequence[Mapping[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    rows: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+    skipped = 0
+    for item in items:
+        typ = str(item.get("type") or "").strip().lower()
+        if typ != "movie" and typ not in _SHOW_TYPES:
+            continue
+        nested = typ in {"season", "episode"}
+        ids = item.get("show_ids") if nested else item.get("ids")
+        ids = ids if isinstance(ids, Mapping) else {}
+        tmdb = _number(ids.get("tmdb"))
+        season, episode = _index(item.get("season")), _number(item.get("episode"))
+        mediatype = "movie" if typ == "movie" else typ if nested else "show"
+        if not tmdb or (nested and season is None) or (typ == "episode" and episode is None):
+            skipped += 1
+            continue
+        mark = (tmdb, mediatype, season if nested else None, episode if typ == "episode" else None)
+        if mark in seen:
+            continue
+        seen.add(mark)
+        row: dict[str, Any] = {"id": tmdb, "rank": len(rows) + 1,
+                               "title": str((item.get("series_title") if nested else "") or item.get("title") or "")}
+        imdb, tvdb, year = _imdb(ids.get("imdb")), _number(ids.get("tvdb")), _number(item.get("year"))
+        if imdb:
+            row["imdb_id"] = imdb
+        if tvdb:
+            row["tvdbid"] = tvdb
+        row["mediatype"] = mediatype
+        if year:
+            row["release_year"] = year
+        if nested:
+            row["season"] = season
+        if typ == "episode":
+            row["episode"] = episode
+        rows.append(row)
+    return rows, skipped
+
+
+def sort_rows(rows: list[dict[str, Any]], sort: Any) -> list[dict[str, Any]]:
+    if str(sort or "").strip().lower() == "random":
+        random.shuffle(rows)
+    return rows
+
+
 def format_items(items: Sequence[Mapping[str, Any]], name: str) -> tuple[list[dict[str, Any]], int]:
+    if name == "mdblist.json":
+        return _mdblist_rows(items)
     spec = FORMATS[name]
     rows: list[dict[str, Any]] = []
     seen: set[str] = set()
