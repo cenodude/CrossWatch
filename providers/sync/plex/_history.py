@@ -818,6 +818,7 @@ def _iter_marked_watched_from_library(
                     raise RuntimeError("plex_watched_scan_normalize_failed")
                 if not (meta.get("ids") or {}).get("plex"):
                     raise RuntimeError("plex_watched_scan_missing_identity")
+                meta["library_id"] = section_id
                 meta['_cw_marked'] = True
                 meta['_cw_view_count'] = view_count
                 if ts_i is not None:
@@ -1020,6 +1021,7 @@ def _populate_catalog_episode_leaves(adapter: Any, allow: set[str], cat: History
                 entry = _catalog_episode_entry(cat, row, token)
                 if entry is None:
                     continue
+                entry["library_id"] = section_id
                 cat.add(entry)
                 added += 1
             start += len(rows)

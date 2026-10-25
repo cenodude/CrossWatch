@@ -200,13 +200,13 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
                 media_info = stream_media_info(raw)
                 if media_info:
                     item["media_info"] = media_info
-            lib_id = jf_resolve_library_id(
+            lib_id = source_library_id or jf_resolve_library_id(
                 raw,
                 roots,
                 scope_libs,
                 http,
                 allow_deep_lookup=False,
-            ) or source_library_id
+            )
             if lib_id:
                 item["library_id"] = lib_id
             series_id = str(raw.get("SeriesId") or "").strip()

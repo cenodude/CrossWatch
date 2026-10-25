@@ -686,7 +686,7 @@ def build_index(
                 break
 
             m = jelly_normalize(row)
-            lib_id = jf_resolve_library_id(
+            lib_id = current_parent or jf_resolve_library_id(
                 row,
                 roots,
                 scope_libs,
