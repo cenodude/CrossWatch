@@ -78,7 +78,7 @@
     const pin = state.provider === "plex" && u.home
       ? `<input type="password" class="cw-su-pin" inputmode="numeric" maxlength="8" autocomplete="off" data-pin="${esc(u.key)}" placeholder="${savedPin ? "PIN saved" : "PIN if needed"}" ${on ? "" : "hidden"} data-lpignore="true" data-1p-ignore="true" data-bwignore="true">`
       : "";
-    const match = `<input type="text" class="cw-su-match" maxlength="40" autocomplete="off" spellcheck="false" data-match="${esc(u.key)}" placeholder="Match as ${esc(u.username || u.key)}" title="Name used to match this user on your other servers. Leave empty to use the user name." ${on ? "" : "hidden"}>`;
+    const match = `<input type="text" class="cw-su-match" maxlength="40" autocomplete="off" spellcheck="false" data-match="${esc(u.key)}" list="cw-su-names-${state.provider}" placeholder="Match as (optional)" title="Name used to match this user on your other servers. Pick a name from the list or type one. Leave empty to use ${esc(u.username || u.key)}." ${on ? "" : "hidden"}>`;
     return `
       <label class="cw-wl-row cw-su-row ${on ? "is-on" : ""}" for="${id}" data-row="${esc(u.key)}" data-search="${esc(u.username.toLowerCase())}">
         <span class="cw-wl-ic cw-su-avatar" aria-hidden="true">${initial}</span>
@@ -112,6 +112,7 @@
           <button type="button" class="cw-wl-load" data-act="all"><span class="material-symbols-rounded" aria-hidden="true">done_all</span>Select all</button>
           <button type="button" class="cw-wl-load" data-act="none"><span class="material-symbols-rounded" aria-hidden="true">remove_done</span>Clear</button>
         </div>
+        <datalist id="cw-su-names-${state.provider}">${state.suggestions.map((name) => `<option value="${esc(name)}"></option>`).join("")}</datalist>
         <div class="cw-wl-scroll">
           <div class="cw-wl-rows">${list.length ? list.map((u, idx) => rowHTML(state, u, idx)).join("") : `<div class="cw-wl-empty">No users found on this server.</div>`}</div>
         </div>
@@ -319,7 +320,7 @@
       render(kept);
       return;
     }
-    const state = { root, provider: p, instance: inst(instance), server: [], saved: [], selected: new Set(), pins: new Map(), matches: new Map(), limit: 25, loadError: "", query: "", message: "", messageOk: true, ready: false, busy: false };
+    const state = { root, provider: p, instance: inst(instance), server: [], saved: [], selected: new Set(), pins: new Map(), matches: new Map(), suggestions: [], limit: 25, loadError: "", query: "", message: "", messageOk: true, ready: false, busy: false };
     root.__cwSyncUsersState = state;
     wire(root);
     root.innerHTML = `<div class="cw-wl cw-su"><div class="cw-wl-empty">Loading users…</div></div>`;
@@ -334,6 +335,7 @@
     }
     state.saved = Array.isArray(savedRes.value?.users) ? savedRes.value.users.map((s) => ({ ...s, key: txt(s.key), username: txt(s.username) })) : [];
     state.limit = savedRes.value?.limit || state.limit;
+    state.suggestions = Array.isArray(savedRes.value?.suggestions) ? savedRes.value.suggestions.map(txt).filter(Boolean) : [];
     state.selected = new Set(state.saved.map((s) => s.key));
     if (serverRes.status === "fulfilled") {
       const raw = Array.isArray(serverRes.value?.users) ? serverRes.value.users : [];

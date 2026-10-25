@@ -544,6 +544,23 @@ def _sync_user_error(exc: Exception) -> str:
     return _SYNC_USER_ERRORS.get(raw, "sync_users_failed")
 
 
+def _match_name_suggestions(cfg: Mapping[str, Any], provider: str, inst: str) -> list[str]:
+    names: dict[str, str] = {}
+    for other in sorted(_SYNC_USER_PROVIDERS):
+        for user_inst in list_sync_user_ids(cfg, other):
+            ref = split_sync_user_id(user_inst)
+            if ref is None or (other == provider and ref[0] == inst):
+                continue
+            name = sync_user_match_name(cfg, other, user_inst)
+            if name and len(name) <= 40:
+                names.setdefault(name.casefold(), name)
+    for row in list_user_profiles(cfg):
+        label = str(row.get("label") or "").strip()
+        if label:
+            names.setdefault(label.casefold(), label)
+    return sorted(names.values(), key=str.casefold)
+
+
 def _sync_users_target(cfg: Mapping[str, Any], provider: str, inst: str) -> tuple[str, str | None]:
     prov = _cfg_key(provider)
     if prov not in _SYNC_USER_PROVIDERS:
@@ -583,7 +600,7 @@ def api_provider_sync_users(provider: str, instance_id: str, request: Request = 
     if error:
         return {"ok": False, "error": error}
     rows = _sync_user_rows(cfg, prov, inst)
-    return {"ok": True, "users": rows, "count": len(rows), "limit": _max_sync_users_per_connection(cfg)}
+    return {"ok": True, "users": rows, "count": len(rows), "limit": _max_sync_users_per_connection(cfg), "suggestions": _match_name_suggestions(cfg, prov, inst)}
 
 
 @router.put("/provider-instances/{provider}/{instance_id}/sync-users")
