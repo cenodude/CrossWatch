@@ -603,7 +603,7 @@
         <div class="cw-auth-summary-row">
           ${summaryCards}
         </div>
-        <div class="cw-auth-service-list">${userProfileSection}${serviceSections}</div>
+        <div class="cw-auth-service-list">${serviceSections}${userProfileSection}</div>
       </div>`;
     if (shell.__cwAuthCardsHtml !== dashboardHtml) {
       updateAuthDashboard(shell, dashboardHtml);
