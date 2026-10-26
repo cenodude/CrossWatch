@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from .._path_matching import path_fallback, resolve_path
 from . import _discover_history
-from cw_platform.interactive_reads import retained_read, replace_retained, replaying
+from cw_platform.interactive_reads import retained_read, replace_retained, replaying, use_review_reads
 
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -948,14 +948,18 @@ def _catalog_episode_entry(cat: HistoryCatalog, row: Mapping[str, Any], token: s
     }
 
 
-def _populate_catalog_episode_leaves(adapter: Any, allow: set[str], cat: HistoryCatalog) -> int:
+def _populate_catalog_episode_leaves(adapter: Any, allow: set[str], cat: HistoryCatalog, *, strict: bool = False) -> int:
     srv = getattr(getattr(adapter, "client", None), "server", None)
     if not srv:
+        if strict:
+            raise RuntimeError("plex_episode_scope_unavailable")
         return 0
     base = _as_base_url(srv)
     ses = getattr(srv, "_session", None)
     token = getattr(srv, "token", None) or getattr(srv, "_token", None) or ""
     if not (base and ses and token):
+        if strict:
+            raise RuntimeError("plex_episode_scope_unavailable")
         return 0
 
     headers = dict(getattr(ses, "headers", {}) or {})
@@ -971,6 +975,8 @@ def _populate_catalog_episode_leaves(adapter: Any, allow: set[str], cat: History
     try:
         sections = list(adapter.libraries(types=("show",)) or [])
     except Exception:
+        if strict:
+            raise
         sections = []
 
     added = 0
@@ -993,24 +999,38 @@ def _populate_catalog_episode_leaves(adapter: Any, allow: set[str], cat: History
             try:
                 r = ses.get(f"{base}/library/sections/{section_id}/all", params=params, headers=headers, timeout=20)
             except Exception:
+                if strict:
+                    raise
                 break
             if not getattr(r, "ok", False):
+                if strict:
+                    raise RuntimeError("plex_episode_scope_http_failed")
                 break
             try:
                 ctype = (r.headers.get("content-type") or "").lower()
                 data = (r.json() or {}) if "application/json" in ctype else _xml_to_container(r.text or "")
+                if strict and not isinstance(data.get("MediaContainer"), Mapping):
+                    raise ValueError("plex_episode_scope_invalid_response")
                 mc = data.get("MediaContainer") or {}
                 rows0 = mc.get("Metadata") or []
+                if strict and (not isinstance(rows0, list) or any(not isinstance(x, Mapping) for x in rows0)):
+                    raise ValueError("plex_episode_scope_invalid_rows")
                 rows = [x for x in rows0 if isinstance(x, Mapping)]
                 total = mc.get("totalSize")
                 total_i = int(total) if total is not None else None
             except Exception:
+                if strict:
+                    raise
                 rows = []
                 total_i = None
             if not rows:
+                if strict and total_i is not None and start < total_i:
+                    raise RuntimeError("plex_episode_scope_incomplete")
                 break
             signature = tuple(str(row.get("ratingKey") or row.get("key") or "") for row in rows)
             if signature in seen_pages:
+                if strict:
+                    raise RuntimeError("plex_episode_scope_repeated_page")
                 break
             seen_pages.add(signature)
             scanned += len(rows)
@@ -1028,7 +1048,7 @@ def _populate_catalog_episode_leaves(adapter: Any, allow: set[str], cat: History
             start += len(rows)
             if total_i is not None and start >= total_i:
                 break
-            if len(rows) < page_size:
+            if len(rows) < page_size and total_i is None:
                 break
 
     _emit({
@@ -1703,6 +1723,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         to_scrobble: list[tuple[Mapping[str, Any], str, str, int]] = []
         episode_catalog_filled = False
         cloud_catalog = None
+        cloud_scope_failed = False
         if _discover_history.enabled(adapter) and not need_home_scope:
             cloud_writer = _discover_history.Writer(adapter)
             for outcome in cloud_writer.repair_pending().values():
@@ -1780,13 +1801,22 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                     else:
                         cloud_allowed = True
                         if allow:
-                            if cloud_catalog is None:
-                                cloud_catalog = _get_history_catalog(adapter, set(), force=force)
-                                _populate_catalog_episode_leaves(adapter, set(), cloud_catalog)
-                            other_rk, other_class = cloud_catalog.resolve(item, strict=True)
-                            if other_rk or other_class == CLASS_RESOLVE_AMBIGUOUS:
+                            if cloud_catalog is None and not cloud_scope_failed:
+                                try:
+                                    with use_review_reads(None):
+                                        scope_catalog = _get_history_catalog(adapter, set(), force=True)
+                                        _populate_catalog_episode_leaves(adapter, set(), scope_catalog, strict=True)
+                                    cloud_catalog = scope_catalog
+                                except Exception:
+                                    cloud_scope_failed = True
+                            if cloud_scope_failed:
                                 cloud_allowed = False
-                                reason = "plex_discover_outside_library_scope"
+                                reason = "plex_discover_scope_unavailable"
+                            else:
+                                other_rk, other_class = cloud_catalog.resolve(item, strict=True)
+                                if other_rk or other_class == CLASS_RESOLVE_AMBIGUOUS:
+                                    cloud_allowed = False
+                                    reason = "plex_discover_outside_library_scope"
                         if cloud_writer is None:
                             cloud_writer = _discover_history.Writer(adapter)
                         outcome = cloud_writer.add(item, int(ts)) if cloud_allowed else reason
