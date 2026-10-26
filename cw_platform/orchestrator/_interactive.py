@@ -41,6 +41,14 @@ class InteractivePlan:
     reads: Any = None
     collecting: bool = False
 
+    def discover_notice(self, feature, provider, instance, cfg):
+        if feature != "history" or provider != "PLEX" or ((cfg.get("plex") or {}).get("history") or {}).get("discover_fallback") is not True:
+            return
+        notice = dict(feature=feature, provider=provider, reason="Discover fallback enabled",
+                      detail=f"Plex ({instance}): items missing from the server may be marked watched in Plex cloud. The actual destination and date result are reported after applying.")
+        if notice not in self.notices:
+            self.notices.append(notice)
+
     def conflict(self, feature, key, a, b, left, right, default):
         cid = fingerprint([feature, key, a, b, left, right])
         winner = self.choices.get(cid, default)

@@ -1480,7 +1480,9 @@ def _items_confirmed_by_send(feature: Kind, items: list[dict[str, Any]], result:
         values = result.get(field)
         if isinstance(values, list):
             keep.update(str(v) for v in values if v)
-    if keep:
+    cloud = set(result.get("cloud_confirmed_keys") or [])
+    if keep or cloud:
+        keep -= cloud
         out: list[dict[str, Any]] = []
         for item in items:
             key = _editor_item_key(feature, str(item.get("_cw_event_key") or ""), item)
@@ -1602,6 +1604,11 @@ def api_editor_send(payload: dict[str, Any] = Body(...), request: Request = cast
             continue
 
         cfg_view = build_provider_config_view(cfg, provider, instance)
+        if provider == "PLEX" and feature == "history":
+            from copy import deepcopy
+
+            cfg_view = deepcopy(cfg_view)
+            cfg_view.setdefault("plex", {}).setdefault("history", {})["discover_fallback"] = payload.get("plex_discover_fallback") is True
         try:
             res = apply_add(
                 dst_ops=ops,

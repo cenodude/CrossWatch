@@ -177,7 +177,7 @@ def test_server_clock_used_to_identify_new_play(remote, monkeypatch):
     assert remote.marks == remote.edits == 1
 
 
-@pytest.mark.parametrize("outcome", ["present", "plex_discover_date_pending", "cached"])
+@pytest.mark.parametrize("outcome", ["dated", "present", "plex_discover_date_pending", "cached"])
 def test_cloud_metadata_survives_adapter_and_chunked_applier(monkeypatch, outcome):
     from providers.sync._mod_PLEX import PLEXModule
     from cw_platform.orchestrator import _applier
@@ -190,11 +190,16 @@ def test_cloud_metadata_survives_adapter_and_chunked_applier(monkeypatch, outcom
     rows = [MOVIE, dict(MOVIE, ids={"tmdb": "456"})]
     def add(cfg, items, *, feature, dry_run):
         return PLEXModule.add(adapter, feature, items, dry_run=dry_run)
+    events = []
     result = _applier.apply_add(
         dst_ops=NS(add=add), cfg={}, dst_name="PLEX", feature="history", items=rows,
-        dry_run=False, emit=lambda *a, **kw: None, dbg=lambda *a, **kw: None,
+        dry_run=False, emit=lambda name, **kw: events.append(dict(event=name, **kw)), dbg=lambda *a, **kw: None,
         chunk_size=1, chunk_pause_ms=0)
     keys = [history.canonical_key(item) for item in rows]
+    assert result["cloud_outcomes"] == {key: outcome for key in keys}
+    receipt = next(row for row in events if row["event"] == "apply:add:done")
+    assert {row["key"]: row["outcome"] for row in receipt["cloud_results"]} == result["cloud_outcomes"]
+    assert receipt["accepted_unverified"] == 0
     assert result["presence_confirmed_keys"] == result["live_confirmed_keys"] == []
     if outcome == "plex_discover_date_pending":
         assert result["deferred_keys"] == result["skipped_keys"] == keys

@@ -253,6 +253,7 @@ def _progress_skipped_keys(results: Any) -> list[str]:
 
 
 _PLEX_HISTORY_META_FIELDS = (
+    "cloud_outcomes",
     "cloud_confirmed_keys",
     "deferred_keys",
     "skipped_keys",

@@ -55,7 +55,7 @@ def _signature(item: Mapping[str, Any]) -> str:
     return sha256(json.dumps([kind, identity, item.get("season"), item.get("episode"), episode_ids]).encode()).hexdigest()
 
 
-def completed_items(adapter: Any, items: list[Mapping[str, Any]]) -> set[str]:
+def completed_items(adapter: Any, items: list[Mapping[str, Any]] | None) -> set[str]:
     if not enabled(adapter):
         return set()
     token = str(common.plex_cfg_get(adapter, "account_token", "") or "")
@@ -66,7 +66,7 @@ def completed_items(adapter: Any, items: list[Mapping[str, Any]]) -> set[str]:
     if getattr(cli, "selected_account_id", None) and not getattr(cli, "selected_username", None):
         return set()
     expected = getattr(cli, "selected_username", None) or getattr(cli, "user_username", None)
-    signatures = {_signature(item) for item in items}
+    signatures = {_signature(item) for item in items} if items is not None else None
     found: set[str] = set()
     for path in common.STATE_DIR.glob("plex_discover_history.*.json"):
         try:
@@ -76,7 +76,7 @@ def completed_items(adapter: Any, items: list[Mapping[str, Any]]) -> set[str]:
             if expected and str(expected).casefold() != str(state.get("username") or "").casefold():
                 continue
             pending = state.get("pending") or {}
-            found.update(key for key, value in state.get("completed", {}).items() if key in signatures
+            found.update(key for key, value in state.get("completed", {}).items() if (signatures is None or key in signatures)
                          and float(value["at"]) > time.time() - _COMPLETED_TTL and value["key"] not in pending)
         except (OSError, ValueError, TypeError, KeyError, AttributeError):
             continue

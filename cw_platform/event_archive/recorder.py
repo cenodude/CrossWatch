@@ -76,7 +76,7 @@ def make_event(*, hash_extra: Any = None, **kwargs: Any) -> dict[str, Any]:
     detail = row.get("detail")
     if detail is not None and not isinstance(detail, str):
         try:
-            row["detail"] = json.dumps(detail, ensure_ascii=False, sort_keys=True)[:4000]
+            row["detail"] = json.dumps(detail, ensure_ascii=False, sort_keys=True)
         except Exception:
             row["detail"] = None
     if not row.get("event_hash"):
@@ -407,6 +407,20 @@ class RunRecorder:
                 updated=int(f.get("updated") or 0),
                 errors=errors,
             )
+            detail = {k: f.get(k) for k in ("attempted", "count", "added", "removed", "updated", "skipped", "unresolved", "errors") if k in f}
+            cloud_rows = [row for row in _as_list(f.get("cloud_results")) if isinstance(row, Mapping)]
+            if cloud_rows:
+                counts: dict[str, int] = {}
+                for item in cloud_rows:
+                    outcome = str(item.get("outcome") or "unknown")
+                    counts[outcome] = counts.get(outcome, 0) + 1
+                visible_rows = cloud_rows[:20]
+                omitted = len(cloud_rows) - len(visible_rows)
+                detail.update(cloud_outcome_counts=counts, cloud_results=visible_rows, cloud_results_omitted=omitted)
+                while visible_rows and len(json.dumps(detail, ensure_ascii=False)) > 3800:
+                    visible_rows.pop()
+                    omitted += 1
+                    detail["cloud_results_omitted"] = omitted
             self._add(
                 event_type="write_attempted",
                 operation=op,
@@ -416,7 +430,7 @@ class RunRecorder:
                 source_instance=si or None,
                 destination_instance=di or None,
                 reason_code="errors" if errors else None,
-                detail={k: f.get(k) for k in ("attempted", "count", "added", "removed", "updated", "skipped", "unresolved", "errors") if k in f},
+                detail=detail,
             )
             if errors and attempted:
                 self._add(

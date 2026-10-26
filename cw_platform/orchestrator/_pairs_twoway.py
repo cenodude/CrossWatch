@@ -2032,6 +2032,8 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
 
     review = getattr(ctx, "interactive", None)
     if review is not None:
+        review.discover_notice(feature, a, src_inst, a_cfg)
+        review.discover_notice(feature, b, dst_inst, b_cfg)
         planned_A, planned_B = list(add_to_A), list(add_to_B)
         args_A = dict(source=b, source_instance=dst_inst, before=A_eff, down=a_down)
         args_B = dict(source=a, source_instance=src_inst, before=B_eff, down=b_down)
