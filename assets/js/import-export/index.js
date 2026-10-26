@@ -372,7 +372,7 @@ const ImportExport = {
     });
     on(host,"change",event=> {
       const input=event.target;
-      if (busy || input.id === "ie-search" || input.closest("#ie-recovery")) return;
+      if (busy || mode === "recovery" || input.id === "ie-search" || input.closest("#ie-recovery")) return;
       if (input.dataset.row != null) {
         if (loading) return;
         const row=rows[Number(input.dataset.row)];
