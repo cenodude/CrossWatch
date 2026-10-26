@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import math
+from datetime import date
 from typing import Any
 from cw_platform.event_archive import record_watch
 from cw_platform.provider_instances import build_provider_config_view, normalize_instance_id
@@ -40,6 +41,7 @@ class MyAnimeListSink(ScrobbleSink):
         item = _event_item(ev)
         if item is None:
             return {"ok": True, "skipped": True, "reason": "missing_media_identity"}
+        item["_cw_scrobble_date"] = date.today().isoformat()
         result = MYANIMELISTModule(view).add("history", [item])
         unresolved = result.get("unresolved") or []
         if unresolved:
