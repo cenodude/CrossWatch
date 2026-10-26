@@ -2627,6 +2627,25 @@ class _AnalysisContext:
     anime_eligibility: dict[tuple[str, str, str], dict[int, bool]] = field(default_factory=dict)
     episode_groups: Any = None
 
+    cloud_confirmations: dict[str, set[str]] = field(default_factory=dict)
+
+    def cloud_confirmed(self, target, item):
+        from types import SimpleNamespace
+        from cw_platform.provider_instances import build_provider_config_view, is_sync_user_instance
+        from providers.sync.plex._discover_history import completed_items, _signature
+
+        provider, instance = _split_prov_token(target)
+        if provider != "PLEX" or is_sync_user_instance(instance):
+            return False
+        cache = self.cloud_confirmations
+        if target not in cache:
+            view = build_provider_config_view(self.cfg, provider, instance)
+            plex = dict(view.get("plex") or {})
+            plex["history"] = dict(plex.get("history") or {}, discover_fallback=True)
+            adapter = SimpleNamespace(config={"plex": plex}, client=SimpleNamespace(user_username=plex.get("username"), selected_username=plex.get("username"), selected_account_id=plex.get("account_id")))
+            cache[target] = completed_items(adapter, None)
+        return _signature(item) in cache[target]
+
     def groups(self):
         if self.episode_groups is None:
             from services.analyzer_episode_groups import AnalyzerEpisodeGroups
@@ -3995,6 +4014,14 @@ def _problems(
                         details = ([{"target": "ALL", "feature": feat, "message": f"Blocked by {_MANUAL_POLICY_REF}."}] + (details or []))
                     if details:
                         prob["target_show_info"] = details
+                cloud_targets = [target for target in missing_targets if feat == "history" and analysis.cloud_confirmed(target, v)]
+                if cloud_targets:
+                    prob["cloud_confirmed_targets"] = cloud_targets
+                    cloud_message = "Recently confirmed watched in Plex cloud; absent from the saved server snapshot. Cloud confirmation is retained for 24 hours."
+                    prob["message"] = " ".join(filter(None, [prob.get("message"), cloud_message]))
+                    prob.setdefault("hints", []).append({"kind": "plex_cloud_confirmed", "message": cloud_message, "targets": cloud_targets})
+                    if len(cloud_targets) == len(missing_targets) and not blocked and not time_differences and not group_details:
+                        prob["severity"] = "info"
                 probs.append(prob)
 
     probs.extend(analysis.groups().problems)

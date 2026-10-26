@@ -151,3 +151,41 @@ test("A removed FLOPPY watch can succeed while other watches remain", async () =
   assert.match(f.node("[data-send-status]").innerHTML, /Removal complete/);
   assert.match(f.node("[data-send-status]").innerHTML, /1 removed - 1 still watched \(other watches remain\)/);
 });
+
+
+test("Plex History send requires a fresh explicit fallback opt-in", async () => {
+  const f = fixture("history");
+  f.provider.provider = "PLEX";
+  await f.open();
+  assert.equal(f.node("[data-discover-option]").hidden, false);
+  assert.equal(Boolean(f.node("[data-discover-fallback]").checked), false);
+  f.node("[data-discover-fallback]").checked = true;
+  await f.click(f.node("[data-send-submit]"));
+  assert.equal(f.requests.find(r => r.url.endsWith("/send")).body.plex_discover_fallback, true);
+  assert.equal(f.node("[data-discover-fallback]").checked, false);
+});
+
+test("switching to removal clears the Plex fallback option", async () => {
+  const f = fixture("history");
+  f.provider.provider = "PLEX";
+  await f.open();
+  f.node("[data-discover-fallback]").checked = true;
+  await f.click(f.modes[1]);
+  assert.equal(f.node("[data-discover-option]").hidden, true);
+  assert.equal(f.node("[data-discover-fallback]").checked, false);
+});
+
+
+test("Editor cloud failures display title and human reason", async () => {
+  const f = fixture("history");
+  f.provider.provider = "PLEX";
+  f.send(() => ({ok:false, unresolved:1, results:[{provider:"PLEX", ok:false, result:{cloud_results:[
+    {title:"<Example>", key:"movie:1", outcome:"plex_discover_not_found", reason:"Plex could not match this title."}
+  ]}}]}));
+  await f.open();
+  await f.click(f.node("[data-send-submit]"));
+  const html = f.node("[data-send-status]").innerHTML;
+  assert.match(html, /&lt;Example&gt;/);
+  assert.match(html, /Plex could not match this title/);
+  assert.doesNotMatch(html, /plex_discover_not_found/);
+});

@@ -323,3 +323,28 @@ def test_report_without_exclusion_breakdown_keeps_all_blocks():
     assert report["totals"]["blocked"] == report["engine_blocked"] == 11
     assert report["manual_excluded"] == 0
     assert report["outcome"] == "attention"
+
+
+def test_cloud_receipts_survive_report_without_becoming_issues():
+    report = SyncReport()
+    event = dict(event="apply:add:done", dst="PLEX", destination_instance="own", feature="history",
+                 cloud_results=[dict(key="movie:tmdb:1", title="Example", outcome="dated")])
+    report.event(event)
+    report.event(event)
+    result = report.finish(Session(pair_id="p1", owner="local"), InteractivePlan(), {"ok": True})
+    assert result["cloud_results"] == [dict(key="movie:tmdb:1", title="Example", outcome="dated", provider="PLEX", instance="own")]
+    assert result["outcome"] == "success"
+    assert result["issue_count"] == 0
+
+
+def test_discover_preview_notice_is_scoped_and_deduplicated():
+    plan = InteractivePlan()
+    cfg = {"plex": {"history": {"discover_fallback": True}}}
+    plan.discover_notice("ratings", "PLEX", "own", cfg)
+    plan.discover_notice("history", "TRAKT", "own", cfg)
+    plan.discover_notice("history", "PLEX", "own", {})
+    assert plan.notices == []
+    plan.discover_notice("history", "PLEX", "own", cfg)
+    plan.discover_notice("history", "PLEX", "own", cfg)
+    assert len(plan.notices) == 1
+    assert plan.notices[0]["reason"] == "Discover fallback enabled"

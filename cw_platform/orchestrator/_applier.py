@@ -24,7 +24,7 @@ _PASSTHROUGH_KEY_LISTS = (
     "removed_destination_keys",
 )
 
-_PASSTHROUGH_KEY_MAPS = ("confirmed_destinations",)
+_PASSTHROUGH_KEY_MAPS = ("confirmed_destinations", "cloud_outcomes")
 
 def _retry(fn: Callable[[], Any], *, attempts: int = 3, base_sleep: float = 0.5, on_retry: Callable[[int, Exception], None] | None = None) -> Any:
     last = None
@@ -573,7 +573,8 @@ def _accepted_unverified(res: Mapping[str, Any], dry_run: bool) -> int:
     if dry_run:
         return 0
     if "accepted_not_seen_live_keys" in res:
-        return len(res.get("accepted_not_seen_live_keys") or [])
+        cloud = set(res.get("cloud_confirmed_keys") or [])
+        return sum(key not in cloud for key in (res.get("accepted_not_seen_live_keys") or []))
     if replaying():
         observed = set(res.get("presence_confirmed_keys") or []) | set(res.get("live_confirmed_keys") or [])
         return max(0, int(res.get("confirmed", 0)) - len(observed))
@@ -653,6 +654,17 @@ def apply_add(
         "unresolved": int(res.get("unresolved", 0)),
         "errors": int(res.get("errors", 0)),
     }
+    if not dry_run and res.get("cloud_outcomes"):
+        from ..id_map import canonical_key
+        from ..reason_labels import reason_message
+
+        by_key = {canonical_key(item): item for item in items}
+        payload["cloud_results"] = [
+            {"key": key, "title": str((by_key.get(key) or {}).get("title") or key), "outcome": outcome, "reason": reason_message(outcome, provider=dst_name, feature=feature)}
+            for key, outcome in res["cloud_outcomes"].items()
+        ]
+    if "cloud_results" in payload:
+        res["cloud_results"] = payload["cloud_results"]
     emit("apply:add:done", **payload)
     try:
         spotlight = _ui_spotlight_items(

@@ -1811,6 +1811,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
 
     review = getattr(ctx, "interactive", None)
     if review is not None:
+        review.discover_notice(feature, dst, dst_inst, dst_cfg)
         planned_adds = list(adds)
         review_args = dict(source=src, source_instance=src_inst, before=dst_full, down=dst_down)
         review.excluded(feature, dst, dst_inst, "add", library_skipped, **review_args)

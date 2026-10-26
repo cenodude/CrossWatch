@@ -36,6 +36,7 @@ class SyncReport:
         self.authoritative = set()
         self.detail_omitted = {}
         self.accepted_unverified = {}
+        self.cloud_results = {}
         if store is not None:
             store.clear_report_issues()
 
@@ -99,6 +100,10 @@ class SyncReport:
         if name in ("apply:add:done", "apply:update:done", "apply:remove:done"):
             key = (name, value.get("dst"), value.get("destination_instance"), value.get("feature"))
             self.accepted_unverified[key] = count(value.get("accepted_unverified"))
+        if name == "apply:add:done" and not value.get("dry_run"):
+            for row in value.get("cloud_results") or []:
+                key = (value.get("dst"), value.get("destination_instance"), row["key"])
+                self.cloud_results[key] = dict(row, provider=value.get("dst"), instance=value.get("destination_instance"))
         self.item_event(value)
         if name in ("feature:cancelled", "run:cancelled"):
             self.cancelled = True
@@ -168,6 +173,7 @@ class SyncReport:
                     duration_seconds=session.progress.public().get("elapsed_seconds", 0),
                     outcome=outcome, totals=totals, requested=requested,
                     accepted_unverified=sum(self.accepted_unverified.values()),
+                    cloud_results=list(self.cloud_results.values()),
                     manual_excluded=manual_excluded, engine_blocked=engine_blocked,
                     proposed=count(counts.get("changes")),
                     not_selected=max(0, count(counts.get("changes")) - requested),

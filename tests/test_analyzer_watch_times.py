@@ -193,3 +193,17 @@ def test_provider_retry_metadata_is_preserved_in_history_attention(watch_pair, m
     record = A._unresolved_records({"first"})[0]
     assert record["reasons"] == metadata["reasons"]
     assert record.get("action") == metadata.get("action", "")
+
+
+def test_cloud_confirmation_does_not_downgrade_time_difference(watch_pair, monkeypatch):
+    cfg, state, key, peer_key = watch_pair
+    cfg["pairs"][0].update(source="JELLYFIN", target="PLEX")
+    state["providers"]["JELLYFIN"] = state["providers"].pop("CROSSWATCH")
+    state["providers"]["PLEX"] = state["providers"].pop("SIMKL")
+    monkeypatch.setattr(A._AnalysisContext, "cloud_confirmed", lambda *args: True)
+    save_pair(cfg, state)
+    result = A._cached_analysis("cw-simkl", include_hints=True)
+    problem = next(p for p in result["problems"] if p["type"] == "missing_peer")
+    assert problem["watch_time_differences"]
+    assert problem["severity"] == "warn"
+    assert problem["cloud_confirmed_targets"] == ["PLEX"]

@@ -46,6 +46,14 @@ const maybeTS = (v) => {
   return String(v);
 };
 
+const cloudResultsHTML = (e) => {
+  const detail = detailOf(e);
+  const rows = Array.isArray(detail.cloud_results) ? detail.cloud_results.filter(row => row && typeof row === "object") : [];
+  const omitted = Number(detail.cloud_results_omitted || 0);
+  const labels = {dated:"Plex cloud: original date restored",present:"Plex cloud: already watched, unchanged",cached:"Plex cloud: previously confirmed",plex_discover_date_pending:"Plex cloud: date repair pending"};
+  const counts = detail.cloud_outcome_counts && typeof detail.cloud_outcome_counts === "object" ? detail.cloud_outcome_counts : {};
+  return rows.length || omitted ? `<span class="ev-tl-desc"><strong>Plex Discover fallback</strong>${Object.entries(counts).map(([outcome, count]) => `<span>${esc(labels[outcome] || outcome)}: ${esc(count)}; </span>`).join("")}${rows.map(row => `<span><br>${esc(row.title || row.key)}: ${esc(labels[row.outcome] || row.reason || row.outcome)}</span>`).join("")}${omitted ? `<span><br>${omitted} additional item details omitted; totals include all outcomes.</span>` : ""}</span>` : "";
+};
 const detailOf = (e) => {
   try {
     return typeof e?.detail === "string" ? (e.detail ? JSON.parse(e.detail) : {}) : (e?.detail || {});
@@ -1468,7 +1476,7 @@ export default {
         const es = sevOf(e);
         const pct = detailOf(e).progress;
         const desc = [eventDesc(e), pct != null ? String(pct) + "%" : ""].filter(Boolean).join(" · ");
-        return `<div class="ev-tl" data-id="${e.id}"><span class="ev-tl-time">${esc(TS(e.created_at))}</span><span class="ev-tl-dot ${es}"></span><span class="ev-tl-body"><span class="ev-tl-head"><span class="ev-tl-title">${esc(titleLine(e))}</span><span class="ev-badge ${es}">${esc(badgeOf(e))}</span></span>${desc ? `<span class="ev-tl-desc">${esc(desc)}</span>` : ""}</span></div>`;
+        return `<div class="ev-tl" data-id="${e.id}"><span class="ev-tl-time">${esc(TS(e.created_at))}</span><span class="ev-tl-dot ${es}"></span><span class="ev-tl-body"><span class="ev-tl-head"><span class="ev-tl-title">${esc(titleLine(e))}</span><span class="ev-badge ${es}">${esc(badgeOf(e))}</span></span>${desc ? `<span class="ev-tl-desc">${esc(desc)}</span>` : ""}${cloudResultsHTML(e)}</span></div>`;
       }).join("");
 
       const detailsPane = kvGrid([
@@ -1585,7 +1593,7 @@ export default {
           <span class="ev-tl-dot ${es}"></span>
           <span class="ev-tl-body">
             <span class="ev-tl-head"><span class="ev-tl-title">${esc(titleLine(e))}</span><span class="ev-badge ${es}">${esc(badgeOf(e))}</span></span>
-            ${desc ? `<span class="ev-tl-desc">${esc(desc)}</span>` : ""}
+            ${desc ? `<span class="ev-tl-desc">${esc(desc)}</span>` : ""}${cloudResultsHTML(e)}
             ${e.reason_code ? `<span class="ev-tl-code mono">${esc(e.reason_code)}</span>` : ""}
           </span>
         </div>`;
@@ -1871,6 +1879,7 @@ export default {
         ["Destination", esc(dest)],
         ["Pair", esc(pairLabel)],
         ["Run", e.run_id ? `<span class="mono">${esc(e.run_id)}</span>` : "–"],
+        ...(cloudResultsHTML(e) ? [["Plex Discover fallback", cloudResultsHTML(e)]] : []),
         ["Reason", esc(e.reason || e.reason_code || "–")],
         ["Source", e.source_file ? `<span class="mono">${esc(e.source_file)}</span>` : esc(e.source_kind || "–")],
         ["Run time", runTime ? esc(runTime) : "–"],

@@ -82,6 +82,7 @@
         <span class="cw-editor-send-result-icon">${providerLogoHtml(r, esc)}</span>
         <strong>${esc(name)}</strong>
         <small>${esc(parts || (r?.ok ? "Done" : "Failed"))}</small>
+        ${(result.cloud_results || []).map(row => `<small>${esc(row.title || row.key)}: ${esc(({dated:"Plex cloud: original date restored",present:"Plex cloud: already watched, unchanged",cached:"Plex cloud: previously confirmed",plex_discover_date_pending:"Plex cloud: date repair pending"})[row.outcome] || row.reason || row.outcome)}</small>`).join("")}
       </div>`;
     }).join("");
     return `<div class="cw-editor-send-progress ${ok ? "done" : "error"}">
@@ -219,6 +220,7 @@
               <div><span>mode</span><b>Selective send</b></div>
             </div>
           </section>
+          ${kind === "history" ? `<section data-discover-option hidden><label><input type="checkbox" data-discover-fallback> Plex Discover watched-state fallback</label><p>For this send only. Items missing from Plex may be marked watched in the connected account with their original watch date. Existing cloud plays remain unchanged. Managed or switched Home users are not supported. Uncertain writes may require manual review.</p></section>` : ""}
           <section class="cw-editor-send-run-card">
             <div class="cw-editor-send-warning">
               <span class="material-symbols-rounded" aria-hidden="true">warning</span>
@@ -283,6 +285,14 @@
         btn.classList.toggle("active", on);
         btn.setAttribute("aria-pressed", on ? "true" : "false");
       });
+      const discoverOption = shell.querySelector("[data-discover-option]");
+      const discoverInput = shell.querySelector("[data-discover-fallback]");
+      const discoverAvailable = kind === "history" && operation === "add" && [...selected].some(key => key.startsWith("PLEX:"));
+      if (discoverOption) discoverOption.hidden = !discoverAvailable;
+      if (discoverInput) {
+        discoverInput.disabled = busy || !discoverAvailable;
+        if (!discoverAvailable) discoverInput.checked = false;
+      }
       if (submit) submit.disabled = busy || loading || !selected.size || !rows.length;
       shell.querySelectorAll("[data-operation], [data-provider-key], [data-send-close]").forEach(button => {
         button.disabled = busy || (button.dataset.operation === "add" && !ctx.selectedRowsForSend().length);
@@ -365,6 +375,7 @@
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ kind, operation, providers: targets, items: rows.map(ctx.rowToSendItem),
+            plex_discover_fallback: kind === "history" && operation === "add" && shell.querySelector("[data-discover-fallback]")?.checked === true,
             ...(operation === "remove" ? { confirmed: true, preview_id: previewId, ...removalScope() } : {}) }),
         });
         if (operation === "add" && !ctx.preselect) {
@@ -405,6 +416,8 @@
           resetConfirm();
         }
       } finally {
+        const discoverInput = shell.querySelector("[data-discover-fallback]");
+        if (discoverInput) discoverInput.checked = false;
         busy = false;
         // Require a fresh preview and confirmation before another removal attempt.
         if (operation === "remove") {

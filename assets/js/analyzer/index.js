@@ -59,8 +59,9 @@ export function watchDifferenceLabel(row, providerName = String) {
   const differences = array(row.watch_time_differences);
   const timeTargets = new Set(differences.map(entry => entry.target));
   const groupTargets = new Set(array(row.episode_groups).map(group => group.target));
-  const missing = array(row.targets).filter(target => !timeTargets.has(target) && !groupTargets.has(target));
-  return [episodeGroupLabel(row), differences.length && `Watch time differs at ${[...timeTargets].map(providerName).join(", ")}`,
+  const cloudTargets = new Set(array(row.cloud_confirmed_targets));
+  const missing = array(row.targets).filter(target => !timeTargets.has(target) && !groupTargets.has(target) && !cloudTargets.has(target));
+  return [cloudTargets.size && `Recently watched in Plex cloud (${[...cloudTargets].map(providerName).join(", ")}); absent from server snapshot`, episodeGroupLabel(row), differences.length && `Watch time differs at ${[...timeTargets].map(providerName).join(", ")}`,
     missing.length && `Missing at ${missing.map(providerName).join(", ")}`].filter(Boolean).join("; ") || "Missing at destination";
 }
 export function retryLabel(row) {

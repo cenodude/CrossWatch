@@ -120,3 +120,13 @@ test("rows offer add or edit and scoped removal without duplicate matching actio
   assert.match(edit, /Destination &lt;film&gt;/);
   assert.doesNotMatch(edit, /Add mapping|data-fix-matching/);
 });
+
+
+test("cloud confirmations remain separate from server presence and other missing targets", () => {
+  const row = {targets:["PLEX", "TRAKT"], cloud_confirmed_targets:["PLEX"]};
+  const label = watchDifferenceLabel(row);
+  assert.match(label, /Recently watched in Plex cloud/);
+  assert.match(label, /absent from server snapshot/);
+  assert.match(label, /Missing at TRAKT/);
+  assert.doesNotMatch(label, /Missing at PLEX/);
+});

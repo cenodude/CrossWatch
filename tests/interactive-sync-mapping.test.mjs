@@ -238,3 +238,31 @@ test("mapping removal only offers rules for this item, source instance and pair"
     assert.equal(mappingAppliesToRow({...rule, ...change}, row, "p1"), false);
   }
 });
+
+
+test("completion report distinguishes cloud outcomes and escapes titles", () => {
+  const source = readFileSync(new URL("../assets/js/interactive-sync.js", import.meta.url), "utf8");
+  const fn = source.slice(source.indexOf("  function reportHTML()"), source.indexOf("  function render()"));
+  const report = {outcome:"success", totals:{added:1,updated:0,removed:0}, features:[], cloud_results:
+    ["dated","present","cached","plex_discover_date_pending"].map(outcome => ({title:"<Example>",key:"movie:1",provider:"PLEX",instance:"own",outcome}))};
+  const context = {session:{report}, esc:value=>String(value ?? "").replaceAll("<","&lt;").replaceAll(">","&gt;"),
+    number:value=>Number(value || 0), duration:()=>"", requestBreakdown:()=>"", endpoint:(p,i)=>`${p} (${i})`,
+    reportIssuesHTML:()=>"", origin:()=>["main","Main"]};
+  vm.createContext(context);
+  vm.runInContext(fn + "globalThis.html = reportHTML();", context);
+  assert.match(context.html, /watched and original date restored/);
+  assert.match(context.html, /already watched, unchanged/);
+  assert.match(context.html, /previously confirmed/);
+  assert.match(context.html, /date repair pending/);
+  assert.match(context.html, /PLEX \(own\)/);
+  assert.match(context.html, /&lt;Example&gt;/);
+  assert.doesNotMatch(context.html, /<Example>/);
+  report.cloud_results = Array.from({length:51}, (_, n) => ({title:`Cloud title ${n}`, key:`movie:${n}`, outcome:"dated"}));
+  vm.runInContext("globalThis.html = reportHTML();", context);
+  assert.match(context.html, /Showing the first 50 of 51/);
+  assert.doesNotMatch(context.html, /Cloud title 50/);
+  assert.equal(report.cloud_results.length, 51);
+  report.cloud_results = [];
+  vm.runInContext("globalThis.html = reportHTML();", context);
+  assert.doesNotMatch(context.html, /<h2>Plex Discover fallback/);
+});

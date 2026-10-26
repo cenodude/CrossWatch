@@ -1174,6 +1174,7 @@ def _new_write_meta() -> dict[str, Any]:
         "unresolved_keys": [],
         "reason_counts": {},
         "cloud_confirmed_keys": [],
+        "cloud_outcomes": {},
         "deferred_keys": [],
         "skipped_keys": [],
     }
@@ -1789,6 +1790,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                         if cloud_writer is None:
                             cloud_writer = _discover_history.Writer(adapter)
                         outcome = cloud_writer.add(item, int(ts)) if cloud_allowed else reason
+                        meta["cloud_outcomes"][key] = outcome
                         if outcome in {"present", "dated", "cached"}:
                             ok += int(outcome != "cached")
                             meta["accepted_keys"].append(key)
