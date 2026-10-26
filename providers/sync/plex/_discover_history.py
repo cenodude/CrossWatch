@@ -34,6 +34,9 @@ _COMPLETED_TTL = 86400
 _HISTORY_PAGE_BUDGET = 100
 _HISTORY_BACKOFF = 3600
 _PENDING_TIMEOUT = 3600
+_SETTLE_DELAYS = (2, 4, 8)
+_SETTLE_BUDGET = 60
+_SETTLE_WINDOW = 900
 _HISTORY_QUERY = ("query history($id: ID!, $after: String) { user(id: $id) { "
                   "watchHistory(first: 100, after: $after) { nodes { id date metadataItem { id } } "
                   "pageInfo { hasNextPage endCursor } } } }")
@@ -335,6 +338,7 @@ class Writer:
         entry = pending.get(key)
         if entry and entry.get("terminal_reason"):
             raise CloudError(entry["terminal_reason"])
+        fresh = entry is None
         if entry is None:
             if self._watched(key):
                 return "present"
@@ -357,12 +361,26 @@ class Writer:
             finally:
                 self.history_rows = None
         if not entry.get("activity"):
-            rows = self._entries(key, float(entry["started"]) - 120)
+            settle = list(_SETTLE_DELAYS) if fresh else []
+            waited = state.get("settle") or {}
+            if time.time() - float(waited.get("since") or 0) >= _SETTLE_WINDOW:
+                waited = {"since": time.time(), "spent": 0}
+            while True:
+                rows = self._entries(key, float(entry["started"]) - 120)
+                candidates = [n for n in rows if n.get("id") and str(n["id"]) not in entry["before"]
+                              and float(entry["started"]) - 5 <= (common.as_epoch(n.get("date")) or 0) <= float(entry["started"]) + 120]
+                if (candidates or not settle or float(waited["spent"]) + settle[0] > _SETTLE_BUDGET
+                        or _HISTORY_PAGE_BUDGET - self.history_pages < self.history_scan_pages + 1):
+                    break
+                delay = settle.pop(0)
+                waited["spent"] = float(waited["spent"]) + delay
+                state["settle"] = waited
+                _save(path, state)
+                time.sleep(delay)
+                self.history_rows = None
             if "review_started_at" not in entry:
                 entry["review_started_at"] = time.time()
                 _save(path, state)
-            candidates = [n for n in rows if n.get("id") and str(n["id"]) not in entry["before"]
-                          and float(entry["started"]) - 5 <= (common.as_epoch(n.get("date")) or 0) <= float(entry["started"]) + 120]
             if len(candidates) != 1:
                 if time.time() - float(entry["review_started_at"]) >= _PENDING_TIMEOUT:
                     entry["terminal_reason"] = "plex_discover_manual_review"

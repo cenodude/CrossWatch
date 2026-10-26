@@ -539,6 +539,61 @@ def test_empty_live_index_does_not_prune_without_confirmed_removal(setup):
     assert "tmdb:1" in removal._items(database.load_state_features(setup.root, {"watchlist"}), "TRAKT", "default", "watchlist")
 
 
+def _tracker_only(s, rows):
+    s.ops["CROSSWATCH"] = Ops("CROSSWATCH")
+    s.ops["CROSSWATCH"].live[("default", "history")] = deepcopy(rows)
+    return s.ops["CROSSWATCH"]
+
+
+def test_viewed_tracker_offers_rows_that_no_pair_has_synced_yet(setup):
+    ops = _tracker_only(setup, {"tmdb:1": movie(), "tmdb:2": movie(2)})
+    payload = dict(kind="history", items=[movie()], source_provider="CROSSWATCH")
+    preview = api.api_editor_remove_preview(payload, request=None)
+    assert [(p["provider"], p["count"]) for p in preview["providers"]] == [("CROSSWATCH", 1)]
+    result = setup.execute(payload)
+    assert result["confirmed"] == 1
+    assert list(ops.live[("default", "history")]) == ["tmdb:2"]
+
+
+def test_tracker_rows_are_only_offered_when_viewing_that_tracker(setup):
+    _tracker_only(setup, {"tmdb:1": movie()})
+    for source in ("", "PLEX"):
+        preview = api.api_editor_remove_preview(dict(kind="history", items=[movie()], source_provider=source), request=None)
+        assert not preview["providers"]
+
+
+def test_tracker_row_already_in_a_baseline_is_counted_once(setup):
+    _tracker_only(setup, {})
+    setup.cfg["pairs"][0]["target"] = "CROSSWATCH"
+    setup.seed("p1", "CROSSWATCH", "default", "history", {"tmdb:1": movie()})
+    preview = api.api_editor_remove_preview(dict(kind="history", items=[movie()], source_provider="CROSSWATCH"), request=None)
+    assert [(p["provider"], p["count"], p["matched"]) for p in preview["providers"]] == [("CROSSWATCH", 1, 1)]
+
+
+def test_unreadable_tracker_falls_back_to_baselines(setup):
+    ops = _tracker_only(setup, {"tmdb:1": movie(), "tmdb:2": movie(2)})
+    setup.cfg["pairs"][0]["target"] = "CROSSWATCH"
+    setup.seed("p1", "CROSSWATCH", "default", "history", {"tmdb:1": movie()})
+    setup.seed("p1", "PLEX", "default", "history", {"tmdb:2": movie(2)})
+    ops.build_index = lambda *a, **k: (_ for _ in ()).throw(OSError("unreadable"))
+    payload = dict(kind="history", items=[movie(), movie(2)], source_provider="CROSSWATCH")
+    preview = api.api_editor_remove_preview(payload, request=None)
+    targets = {p["provider"]: (p["count"], p["matched"]) for p in preview["providers"]}
+    assert targets == {"CROSSWATCH": (1, 1), "PLEX": (1, 1)}
+
+
+def test_viewed_tracker_removes_one_unsynced_watch_and_keeps_the_other(setup):
+    first = movie(watched_at="2026-09-01T12:00:00Z")
+    second = movie(watched_at="2026-09-02T12:00:00Z")
+    ops = _tracker_only(setup, {history_event_key(v): v for v in (first, second)})
+    payload = dict(kind="history", items=[{**first, "key": history_event_key(first)}], source_provider="CROSSWATCH")
+    preview = api.api_editor_remove_preview(payload, request=None)
+    assert [(p["provider"], p["count"], p["viewings"]) for p in preview["providers"]] == [("CROSSWATCH", 1, 1)]
+    result = setup.execute(payload)
+    assert result["confirmed"] == 1
+    assert list(ops.live[("default", "history")]) == [history_event_key(second)]
+
+
 def _gone_from_provider(s, provider):
     s.cfg["pairs"][0]["target"] = provider
     s.ops.setdefault(provider, Ops(provider))

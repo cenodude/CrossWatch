@@ -1,5 +1,5 @@
 # services/editor_removal.py
-# CrossWatch - Selective removal of records known to pair sync baselines
+# CrossWatch - Selective removal of records known to pair sync baselines or the viewed CrossWatch tracker
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
@@ -200,6 +200,41 @@ def _can_remove(ops, feature, key, item, *, viewing=False):
     return True
 
 
+def _add_tracker_records(cfg, feature, selected, targets, entry):
+    provider, instance = entry["provider"], entry["instance"]
+    ops = load_sync_ops(provider)
+    view = build_provider_config_view(cfg, provider, instance)
+    titles = [(index, key, item) for index, (key, item) in enumerate(selected) if not _event(key, item)]
+    events = {key: (index, item) for index, (key, item) in enumerate(selected) if _event(key, item)}
+
+    def target():
+        return targets.setdefault((provider, instance), {**entry, "records": {}, "viewings": {}, "rows": set()})
+
+    try:
+        if titles:
+            current = _RecordIndex(_read_current(ops, config_with_history_rewatches(view, False), provider, instance, feature))
+            for index, key, item in titles:
+                matches = current.matches(key, item, same_account=True)
+                if len(matches) != 1 or index in targets.get((provider, instance), {}).get("rows", ()):
+                    continue
+                dest_key, dest = matches[0]
+                if _can_remove(ops, feature, dest_key, dest):
+                    target()["rows"].add(index)
+                    target()["records"].setdefault(dest_key, dest)
+        if events and _supports_viewings(provider, ops):
+            recorded = _read_viewings(ops, config_with_history_rewatches(view, True), provider, instance, feature)
+            matched = _match_viewings({k: item for k, (_, item) in events.items()}, recorded, cfg, same_account=True)
+            for key, dest_key in matched.items():
+                index = events[key][0]
+                if index in targets.get((provider, instance), {}).get("rows", ()):
+                    continue
+                if _can_remove(ops, feature, dest_key, recorded[dest_key], viewing=True):
+                    target()["rows"].add(index)
+                    target()["viewings"].setdefault(dest_key, recorded[dest_key])
+    except Exception:
+        LOG.warning("Editor removal could not read the %s tracker %s", feature, instance, exc_info=True)
+
+
 def _plan(payload, request):
     from api import editorAPI as api
 
@@ -273,6 +308,9 @@ def _plan(payload, request):
                 target["viewings"].setdefault(dest_key, dest)
     if not found_pair:
         raise HTTPException(404, "Sync pair not found for this feature")
+    tracker = (source, source_instance)
+    if source == "CROSSWATCH" and tracker in available and user_can_access_instance(cfg, user, *tracker):
+        _add_tracker_records(cfg, feature, selected, targets, available[tracker])
     rows = sorted(targets.values(), key=lambda t: (t["display"].casefold(), t["instance"]))
     signature = [(t["provider"], t["instance"], t["records"], t["viewings"]) for t in rows]
     digest = hashlib.sha256(json.dumps([feature, pair_id, signature], sort_keys=True, default=str).encode()).hexdigest()
@@ -401,6 +439,8 @@ def _confirmed_absent(ops, view, provider, feature, records, absent_keys):
         flags = check(view, [{**records[key], "key": key} for key in absent_keys])
     except Exception:
         LOG.warning("Editor removal could not confirm absent rows for %s", provider, exc_info=True)
+        return []
+    if not isinstance(flags, (list, tuple)):
         return []
     return [key for key, gone in zip(absent_keys, flags) if gone]
 

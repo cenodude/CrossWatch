@@ -22,7 +22,12 @@ def remote(tmp_path, monkeypatch):
     monkeypatch.setattr(common, "_is_capture_mode", lambda: False)
     monkeypatch.setattr(cloud.time, "time", lambda: NOW)
     state = NS(calls=[], watched=False, nodes=[], marks=0, edits=0, fail_date=False, fail_mark=False,
-               delay=False, rate_limit=False, extra=False, child_pages=[], restricted=False)
+               delay=False, rate_limit=False, extra=False, child_pages=[], restricted=False, sleeps=[], on_sleep=None)
+    def sleep(seconds):
+        state.sleeps.append(seconds)
+        if state.on_sleep:
+            state.on_sleep()
+    monkeypatch.setattr(cloud.time, "sleep", sleep)
     adapter = NS(config={"plex": {"account_token": "account-secret", "history": {"discover_fallback": True}}},
                  client=NS(user_username="owner", server=NS()))
     def request(method, url, **kw):
@@ -130,10 +135,62 @@ def test_delayed_activity_stays_pending_and_can_be_repaired(remote):
     assert remote.marks == 1
 
 
+def test_slow_activity_is_dated_in_the_same_run(remote):
+    remote.delay = True
+    remote.on_sleep = lambda: remote.nodes.append({"id": "slow", "date": common.iso_from_epoch(NOW), "metadataItem": {"id": "catalog"}}) if remote.sleeps == [2, 4] else None
+    assert remote.writer.add(MOVIE, WATCHED) == "dated"
+    assert remote.sleeps == [2, 4]
+    assert (remote.marks, remote.edits) == (1, 1)
+    assert json.loads(remote.path().read_text())["pending"] == {}
+
+
+def test_missing_activity_waits_briefly_then_stays_pending(remote):
+    remote.delay = True
+    assert remote.writer.add(MOVIE, WATCHED) == "plex_discover_date_pending"
+    assert remote.sleeps == list(cloud._SETTLE_DELAYS)
+    writer = cloud.Writer(remote.adapter)
+    try:
+        assert writer.repair_pending() == {"catalog": "plex_discover_date_pending"}
+    finally:
+        writer.close()
+    assert remote.sleeps == list(cloud._SETTLE_DELAYS)
+
+
+def test_settle_retry_never_spends_the_last_history_page(remote):
+    remote.delay = True
+    remote.writer.history_pages = 97
+    assert remote.writer.add(MOVIE, WATCHED) == "plex_discover_date_pending"
+    assert remote.sleeps == []
+    assert not json.loads(remote.path().read_text()).get("retry_at")
+
+
+def _journal(since, spent):
+    path = common.STATE_DIR / ("plex_discover_history." + cloud.sha256(b"account-uuid").hexdigest() + ".json")
+    path.write_text(json.dumps({"settle": {"since": since, "spent": spent}}))
+    return path
+
+
+def test_settle_waits_are_capped_across_writers(remote):
+    remote.delay = True
+    path = _journal(NOW - 10, cloud._SETTLE_BUDGET - 6)
+    assert remote.writer.add(MOVIE, WATCHED) == "plex_discover_date_pending"
+    assert remote.sleeps == [2, 4]
+    assert json.loads(path.read_text())["settle"]["spent"] == cloud._SETTLE_BUDGET
+
+
+def test_settle_allowance_renews_after_the_window(remote):
+    remote.delay = True
+    path = _journal(NOW - cloud._SETTLE_WINDOW, cloud._SETTLE_BUDGET)
+    assert remote.writer.add(MOVIE, WATCHED) == "plex_discover_date_pending"
+    assert remote.sleeps == list(cloud._SETTLE_DELAYS)
+    assert json.loads(path.read_text())["settle"] == {"since": NOW, "spent": sum(cloud._SETTLE_DELAYS)}
+
+
 def test_ambiguous_new_activities_are_not_edited(remote):
     remote.extra = True
     assert remote.writer.add(MOVIE, WATCHED) == "plex_discover_date_pending"
     assert remote.edits == 0
+    assert remote.sleeps == []
 
 
 def test_failed_mark_is_not_blindly_repeated(remote, monkeypatch):
@@ -273,7 +330,7 @@ def test_cloud_fallback_does_not_bypass_selected_libraries(monkeypatch):
     monkeypatch.setattr(history, "home_scope_enter", lambda a: (False, False, None, None))
     monkeypatch.setattr(history, "home_scope_exit", lambda *a: None)
     monkeypatch.setattr(history, "_get_history_catalog", lambda a, allow, **kw: missing if allow else present)
-    monkeypatch.setattr(history, "_populate_catalog_episode_leaves", lambda *a: True)
+    monkeypatch.setattr(history, "_populate_catalog_episode_leaves", lambda *a, **kw: True)
     monkeypatch.setattr(history, "resolve_path", lambda *a: (None, None))
     monkeypatch.setattr(history, "_maybe_trace", lambda *a, **kw: None)
     monkeypatch.setattr(history, "_shadow_add_batch", lambda *a: None)
