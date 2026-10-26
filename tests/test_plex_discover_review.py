@@ -207,3 +207,124 @@ def test_cloud_metadata_survives_adapter_and_chunked_applier(monkeypatch, outcom
         assert result["cloud_confirmed_keys"] == keys
     if outcome == "cached":
         assert result["confirmed"] == 0
+
+
+class _ScopeCatalog:
+    def __init__(self, rk):
+        self.rk = rk
+        self.by_rk = {}
+
+    def resolve(self, *args, **kwargs):
+        return self.rk, history.CLASS_NOT_IN_PLEX_CATALOG
+
+
+@pytest.mark.parametrize("outside", [False, True])
+def test_interactive_discover_reads_unrestricted_catalog_at_write_time(monkeypatch, outside):
+    from cw_platform.interactive_reads import ReviewReads, retained_read, use_review_reads
+
+    _stub_history(monkeypatch)
+    _fake_writer(monkeypatch, "dated")
+    monkeypatch.setattr(history, "plex_feature_library_ids", lambda *a: {"3"})
+    monkeypatch.setattr(history, "_populate_catalog_episode_leaves", lambda *a, **kw: 0)
+    calls = []
+    @retained_read
+    def catalog(adapter, allow, *, force=False):
+        calls.append((set(allow), force))
+        rk = "outside" if outside and not allow else None
+        return _ScopeCatalog(rk)
+    monkeypatch.setattr(history, "_get_history_catalog", catalog)
+    adapter = NS(config={"plex": {"history": {"discover_fallback": True}}}, client=NS(server=NS()))
+    reads = ReviewReads()
+    try:
+        with use_review_reads(reads, collecting=True):
+            catalog(adapter, {"3"})
+        with use_review_reads(reads):
+            with pytest.raises(RuntimeError, match="missing provider data"):
+                catalog(adapter, set())
+            count, unresolved = history.add(adapter, [MOVIE])
+        assert calls == [({"3"}, False), (set(), True)]
+        assert count == (0 if outside else 1)
+        if outside:
+            assert unresolved[0]["reason"] == "plex_discover_outside_library_scope"
+        else:
+            assert not unresolved
+    finally:
+        reads.close()
+
+
+def test_plex_write_exception_reports_location_without_secret(monkeypatch):
+    from providers.sync import _mod_PLEX as plex
+
+    secret = "private-token-do-not-log"
+    def fail(*args):
+        raise RuntimeError(f"https://example.test?X-Plex-Token={secret}")
+    monkeypatch.setattr(history, "add", fail)
+    logs = []
+    monkeypatch.setattr(plex, "_error", lambda *args, **fields: logs.append(fields))
+    adapter = NS(_is_enabled=lambda feature: True)
+    result = plex.PLEXModule.add(adapter, "history", [MOVIE])
+    assert result["errors"] == 0
+    assert result["unresolved"][0]["reason"] == "plex_write_exception"
+    assert "RuntimeError" in result["error"]
+    assert "test_plex_discover_review.py" in result["error"]
+    assert secret not in json.dumps([result, logs])
+
+
+@pytest.mark.parametrize("failure", ["catalog", "leaves"])
+def test_scope_read_failure_defers_cloud_but_keeps_local_writes(monkeypatch, failure):
+    _stub_history(monkeypatch)
+    _fake_writer(monkeypatch, "dated")
+    monkeypatch.setattr(history, "plex_feature_library_ids", lambda *a: {"3"})
+    local = dict(MOVIE, ids={"tmdb": "999"})
+    cat = NS(by_rk={}, resolve=lambda item, **kw: ("local", history.CLASS_IN_CATALOG_UNWATCHED) if item["ids"] == local["ids"] else (None, history.CLASS_NOT_IN_PLEX_CATALOG))
+    calls = []
+    def catalog(adapter, allow, **kw):
+        if not allow:
+            calls.append("scope")
+            if failure == "catalog":
+                raise RuntimeError("scope read failed")
+        return cat
+    def leaves(*args, **kwargs):
+        assert kwargs["strict"] is True
+        raise RuntimeError("episode scan failed")
+    monkeypatch.setattr(history, "_get_history_catalog", catalog)
+    monkeypatch.setattr(history, "_populate_catalog_episode_leaves", leaves)
+    writes = []
+    monkeypatch.setattr(history, "_scrobble_with_date", lambda *args: writes.append(args[1]) or True)
+    adapter = NS(config={"plex": {"history": {"discover_fallback": True}}}, client=NS(server=NS()))
+    count, unresolved = history.add(adapter, [local, MOVIE, dict(MOVIE, ids={"tmdb":"456"})])
+    assert writes == ["local"]
+    assert calls == ["scope"]
+    assert {row["reason"] for row in unresolved} == {"plex_discover_scope_unavailable"}
+    assert len(adapter._plex_history_write_meta["deferred_keys"]) == 2
+    assert not adapter._plex_history_write_meta["cloud_confirmed_keys"]
+
+
+@pytest.mark.parametrize("bad", ["http", "parse", "empty", "repeated"])
+def test_strict_episode_scope_scan_rejects_incomplete_data(monkeypatch, bad):
+    monkeypatch.setattr(history, "_as_base_url", lambda srv: "https://test.invalid")
+    monkeypatch.setattr(history, "_marked_section_id", lambda sec: "5")
+    def json_response():
+        if bad == "parse":
+            raise ValueError("invalid json")
+        rows = [] if bad == "empty" else [{"ratingKey":"1"}]
+        return {"MediaContainer":{"Metadata":rows,"totalSize":2}}
+    response = NS(ok=bad != "http", headers={"content-type":"application/json"}, json=json_response)
+    server = NS(token="test", _session=NS(headers={}, get=lambda *a, **kw: response))
+    adapter = NS(client=NS(server=server), libraries=lambda **kw:[NS()])
+    monkeypatch.setattr(history, "_catalog_episode_entry", lambda *a: None)
+    with pytest.raises((RuntimeError, ValueError)):
+        history._populate_catalog_episode_leaves(adapter, set(), NS(), strict=True)
+
+
+@pytest.mark.parametrize("feature", ["watchlist", "ratings", "collection", "progress"])
+def test_non_history_exception_keeps_original_accounting(monkeypatch, feature):
+    from providers.sync import _mod_PLEX as plex
+
+    def fail(*args):
+        raise RuntimeError("private")
+    monkeypatch.setitem(plex._FEATURES, feature, NS(add=fail))
+    result = plex.PLEXModule.add(NS(_is_enabled=lambda feature: True), feature, [MOVIE] * 3)
+    assert result["errors"] == 3
+    assert not result.get("unresolved")
+    assert "_mod_PLEX.py" in result["error"]

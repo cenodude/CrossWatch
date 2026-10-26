@@ -21,6 +21,7 @@ from . import _common as common
 
 COMMUNITY = "https://community.plex.tv/api"
 DEFERRED_REASONS = frozenset({
+    "plex_discover_scope_unavailable",
     "plex_discover_rate_limited", "plex_discover_date_pending", "plex_discover_request_failed",
     "plex_discover_invalid_response", "plex_discover_watch_state_unavailable", "plex_discover_history_order_unavailable",
     "plex_discover_history_unavailable", "plex_discover_history_incomplete", "plex_discover_catalog_incomplete",

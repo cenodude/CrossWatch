@@ -1507,7 +1507,19 @@ class PLEXModule:
                     res["confirmed_keys"] = [k for k in confirmed_keys if k not in skipped_set]
             return res
         except Exception as e:
-            return {"ok": False, "error": str(e), "count": 0, "errors": len(lst), "confirmed_keys": []}
+            import traceback
+
+            frames = traceback.extract_tb(e.__traceback__)
+            repo_frames = [frame for frame in frames if any(marker in frame.filename.replace("\\", "/") for marker in ("/providers/", "/cw_platform/"))]
+            chosen = ([repo_frames[-1]] if repo_frames else []) + (frames[-1:] if frames else [])
+            location = " > ".join(dict.fromkeys(f"{os.path.basename(frame.filename)}:{frame.lineno}:{frame.name}" for frame in chosen))
+            reason = f"Plex {feature} write failed ({type(e).__name__}) at {location}. Check the Plex connection before retrying."
+            _error("write_failed", op="add", sync_feature=feature, exception=type(e).__name__, location=location)
+            if feature == "history":
+                return {"ok": False, "error": reason, "count": 0, "errors": 0, "confirmed_keys": [],
+                        "unresolved": [{"item": dict(item), "reason": "plex_write_exception"} for item in lst]}
+            return {"ok": False, "error": reason, "count": 0, "errors": len(lst), "confirmed_keys": []}
+
 
     def remove(
         self,

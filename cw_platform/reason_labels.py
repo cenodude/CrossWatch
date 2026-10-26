@@ -6,6 +6,8 @@ from __future__ import annotations
 from typing import Any
 
 _PLEX_HISTORY_MESSAGES = {
+    "plex_discover_scope_unavailable": "Plex library scope could not be checked completely. Cloud fallback was deferred; retry when the server is available.",
+    "plex_write_exception": "Plex history write failed unexpectedly. Check the write_failed log for the exception type and code location.",
     "in_catalog_watched": "Plex catalog already has this item marked watched.",
     "in_catalog_unwatched": "Plex catalog has this item, but it is not marked watched yet.",
     "not_in_plex_catalog": "Plex could not find this item in the selected libraries.",
