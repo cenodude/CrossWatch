@@ -294,7 +294,8 @@ DEFAULT_CFG: dict[str, Any] = {
         "history": {
             "libraries": [],                            # Whitelist of library GUIDs; empty = all
             "include_marked_watched": True,             # Include items manually marked as watched in Plex
-            "discover_fallback": False,                 # Opt in to cloud watched-state writes for missing library items
+            "read_cloud_history": False,                # Include account-wide Plex cloud watch history when reading
+            "discover_fallback": False,                 # Include account-wide Plex cloud watch history when writing
         },
         "progress": {
             "libraries": [],                            # Whitelist for resumable items; empty = all

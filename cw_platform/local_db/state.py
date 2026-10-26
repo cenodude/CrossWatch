@@ -60,6 +60,7 @@ _BASELINE_ITEM_COLUMNS = [
     "provider_event_id",
     "path_metadata_json",
     "media_json",
+    "plex_cloud_history",
     "updated_at",
 ]
 _BASELINE_ITEM_COMPARE_COLUMNS = _BASELINE_ITEM_COLUMNS[1:-1]
@@ -233,6 +234,7 @@ def _item_to_row(provider_state_id: int, key: str, item: Mapping[str, Any], ts: 
         _s(item.get("provider_event_id") or item.get("_simkl_rewatch_id") or item.get("rewatch_id") or item.get("_publicmetadb_history_id") or item.get("_wetrakr_history_id")),
         json.dumps({k: item[k] for k in ("media_paths", "part") if k in item}, separators=(",", ":")) if item.get("media_paths") else None,
         json.dumps({k: item[k] for k in ("format", "media_info") if item.get(k)}, separators=(",", ":"), sort_keys=True) if item.get("format") or item.get("media_info") else None,
+        1 if item.get("_plex_cloud_history") is True else None,
         ts,
     )
 
@@ -286,6 +288,8 @@ def _row_to_item(row: sqlite3.Row) -> dict[str, Any]:
                         out[key] = media[key]
         except (TypeError, ValueError):
             pass
+    if row["plex_cloud_history"] == 1:
+        out["_plex_cloud_history"] = True
     if row["watched"] is not None:
         out["watched"] = bool(row["watched"])
     if row["rating"] is not None:

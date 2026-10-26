@@ -1104,7 +1104,7 @@ function applySubDisable(feature){
       "#tr-rt-perpage","#tr-rt-maxpages","#tr-rt-chunk",
       "#sm-rt-chunk","#st-rt-liked-min","#st-rt-loved-min","#md-rt-perpage","#md-rt-maxpages","#md-rt-chunk"
     ],
-    history: ["#plx-marked-watched", "#plx-discover-fallback", "#cx-hs-add", "#cx-hs-remove", "#cx-hs-rewatches", "#cx-hs-specials", "#cx-hs-library-only", "#cx-hs-anime-map", "#cx-hs-source-status", "#cx-tr-hs-numfb", "#cx-tr-hs-col", "#cx-tr-hs-col-movies", "#cx-tr-hs-col-shows", "#cx-hs-dropped","#cx-tr-hs-unres", "#tr-hs-perpage", "#tr-hs-maxpages", "#tr-hs-chunk", "#sm-hs-chunk", "#md-hs-perpage", "#md-hs-maxpages", "#md-hs-chunk", "#cx-em-hs-limit", "#cx-em-hs-delay", "#cx-em-hs-guid"],
+    history: ["#plx-marked-watched", "#plx-cloud-read", "#plx-discover-fallback", "#cx-hs-add", "#cx-hs-remove", "#cx-hs-rewatches", "#cx-hs-specials", "#cx-hs-library-only", "#cx-hs-anime-map", "#cx-hs-source-status", "#cx-tr-hs-numfb", "#cx-tr-hs-col", "#cx-tr-hs-col-movies", "#cx-tr-hs-col-shows", "#cx-hs-dropped","#cx-tr-hs-unres", "#tr-hs-perpage", "#tr-hs-maxpages", "#tr-hs-chunk", "#sm-hs-chunk", "#md-hs-perpage", "#md-hs-maxpages", "#md-hs-chunk", "#cx-em-hs-limit", "#cx-em-hs-delay", "#cx-em-hs-guid"],
     playlists:["#cx-pl-add","#cx-pl-remove"],
     progress:["#cx-pr-add","#cx-pr-remove","#cx-pr-min","#cx-pr-delta","#cx-pr-maxp","#cx-pr-replay","#cx-pr-tolerance","#cx-pr-specials","#cx-pr-library-only","#cx-pr-anime-map"],
     collection:["#cx-co-add","#cx-co-remove","#cx-co-type-all","#cx-co-type-movies","#cx-co-type-shows","#cx-co-type-seasons","#cx-co-type-episodes","#cx-co-media","#cx-co-media-upd"]
@@ -2019,7 +2019,9 @@ left.innerHTML = `
       ${animeRow}`];
 
     if (hasPlex(state)) parts.push(`<div class="panel-title small">Plex</div><div class="opt-row"><label for="plx-marked-watched">Marked Watched</label><label class="switch"><input id="plx-marked-watched" type="checkbox" ${getPairMarkedWatchedValue(state)?"checked":""}><span class="slider"></span></label></div><div class="muted">Include manually marked watched items from Plex. Applies only to this pair.</div>`);
-    if (same(state.dst,"plex") || (isTwoWayMode(state) && same(state.src,"plex"))) parts.push(`<div class="opt-row"><label for="plx-discover-fallback">Plex Discover watched-state fallback</label><label class="switch"><input id="plx-discover-fallback" type="checkbox" ${state.pairProviders?.plex?.history?.discover_fallback === true ? "checked" : ""}><span class="slider"></span></label></div><div class="muted">Opt in for this pair: mark missing movies and episodes watched in the connected Plex account, then restore their original watch dates. Applies to additions only; existing cloud plays are left unchanged. Managed users are not supported. Rate-limited or unfinished date updates remain unresolved for retry. Enabling this turns off “Only items in destination library” for this pair.</div>`);
+    if (hasPlex(state)) parts.push(`<div class="panel-title small">Plex cloud history</div>`);
+    if (same(state.src,"plex") || (isTwoWayMode(state) && same(state.dst,"plex"))) parts.push(`<div class="opt-row"><label for="plx-cloud-read" data-tip-id="plx-cloud-read">${isTwoWayMode(state) || (same(state.src,"plex") && same(state.dst,"plex")) ? "Read cloud history" : "Include Plex cloud history"}</label><label class="switch"><input id="plx-cloud-read" type="checkbox" ${state.pairProviders?.plex?.history?.read_cloud_history === true ? "checked" : ""}><span class="slider"></span></label></div><div class="muted">Include the connected account's watched movies and episodes, including titles outside your server libraries. Watch dates and rewatches are preserved where the destination supports them. Managed or switched users are not supported. History removals are disabled for this pair while cloud reads are enabled, including in two-way mode.</div>`);
+    if (same(state.dst,"plex") || (isTwoWayMode(state) && same(state.src,"plex"))) parts.push(`<div class="opt-row"><label for="plx-discover-fallback" data-tip-id="plx-discover-fallback">${isTwoWayMode(state) || (same(state.src,"plex") && same(state.dst,"plex")) ? "Write cloud fallback" : "Include Plex cloud history"}</label><label class="switch"><input id="plx-discover-fallback" type="checkbox" ${state.pairProviders?.plex?.history?.discover_fallback === true ? "checked" : ""}><span class="slider"></span></label></div><div class="muted">Opt in for this pair: mark missing movies and episodes watched in the connected Plex account, then restore their original watch dates. Applies to additions only; existing cloud plays are left unchanged. Managed users are not supported. Rate-limited or unfinished date updates remain unresolved for retry. Enabling this turns off “Only items in destination library” for this pair.</div>`);
 
     if (hasTrakt(state)) {
       parts.push(`
@@ -2328,6 +2330,17 @@ function bindChangeHandlers(state,root){
       state.pairProviders.plex={...plex,history:{...plex.history,discover_fallback:false}};
       const discover=ID("plx-discover-fallback");
       if(discover) discover.checked=false;
+    }
+    if(id==="plx-cloud-read"){
+      state.pairProviders=state.pairProviders||{};
+      const plex=state.pairProviders.plex||{};
+      state.pairProviders.plex={...plex,history:{...plex.history,read_cloud_history:el.checked===true}};
+      if(el.checked){
+        state.options.history={...(state.options.history||{}),remove:false};
+        const remove=ID("cx-hs-remove");
+        if(remove) remove.checked=false;
+      }
+      return;
     }
     if(id==="plx-discover-fallback"){
       state.pairProviders=state.pairProviders||{};

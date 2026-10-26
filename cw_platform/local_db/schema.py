@@ -6,7 +6,7 @@ from __future__ import annotations
 import sqlite3
 import time
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 ID_KEYS = (
     "tmdb",
@@ -629,6 +629,7 @@ def apply_schema(conn: sqlite3.Connection) -> int:
         for table in ("baseline_items", "pair_baseline_items"):
             _ensure_column(conn, table, "path_metadata_json", "TEXT")
             _ensure_column(conn, table, "media_json", "TEXT")
+            _ensure_column(conn, table, "plex_cloud_history", "INTEGER")
         conn.execute(_CREATE_LAST_SYNC_SUMMARY)
         conn.execute(_CREATE_LAST_SYNC_FIELDS)
         conn.execute(_CREATE_LAST_SYNC_RESULT_METRICS)

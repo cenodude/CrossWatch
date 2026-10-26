@@ -4014,6 +4014,11 @@ def _problems(
                         details = ([{"target": "ALL", "feature": feat, "message": f"Blocked by {_MANUAL_POLICY_REF}."}] + (details or []))
                     if details:
                         prob["target_show_info"] = details
+                if feat == "history" and v.get("_plex_cloud_history") is True:
+                    prob["history_source"] = "plex_cloud"
+                    source_message = "Source: Plex cloud history. This entry does not confirm presence in a Plex server library."
+                    prob["message"] = " ".join(filter(None, [prob.get("message"), source_message]))
+                    prob.setdefault("hints", []).append({"kind": "plex_cloud_history", "message": source_message})
                 cloud_targets = [target for target in missing_targets if feat == "history" and analysis.cloud_confirmed(target, v)]
                 if cloud_targets:
                     prob["cloud_confirmed_targets"] = cloud_targets
@@ -4614,6 +4619,8 @@ def _detail_for_item(pairs_raw: str | None, provider: str, feature: str, key: st
     blocked = bool(blocks and any(kk in blocks for kk in [key, *alias_keys]))
 
     hints = _missing_peer_hints(_unresolved_index(allowed), feat_key, alias_keys, missing_targets, blocked, key)
+    if feat_key == "history" and it.get("_plex_cloud_history") is True:
+        hints.append({"kind": "plex_cloud_history", "message": "Source: Plex cloud history. This entry does not confirm presence in a Plex server library."})
     group_details = [group for dst in context.pairs.get((prov_key, feat_key), [])
                      if feat_key == "history" and (group := context.groups().match(prov_key, dst, it))]
     hints.extend(dict(kind="episode_group", **group) for group in group_details)

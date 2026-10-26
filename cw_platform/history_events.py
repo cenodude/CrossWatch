@@ -55,6 +55,7 @@ EVENT_ID_FIELDS = (
 )
 
 EVENT_META_FIELDS = (
+    "_plex_cloud_history",
     *EVENT_ID_FIELDS,
     "_punchplay_history_ids",
     "_scrob_media_id",

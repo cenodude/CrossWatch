@@ -854,3 +854,14 @@ def coerce_suspect_snapshot(
         return dict(prev_idx), True, reason
 
     return dict(cur_idx), False, "progressed"
+
+
+def emit_cloud_history_read(emit, provider, feature, config, index):
+    if provider != "PLEX" or feature != "history":
+        return
+    if ((config.get("plex") or {}).get("history") or {}).get("read_cloud_history") is not True:
+        return
+    emit("history:cloud_read:done", provider=provider, feature=feature,
+         instance=config.get("_cw_endpoint_instance") or config.get("_cw_provider_instance") or "default",
+         cloud_history_entries=sum(1 for item in index.values() if isinstance(item, Mapping) and item.get("_plex_cloud_history") is True),
+         count=len(index))

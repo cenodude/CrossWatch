@@ -102,6 +102,7 @@ from ..anime_mapping.service import (
 from ..anime_mapping.history_coords import build_history_coordinate_aliases as _build_history_coordinate_aliases
 from ._snapshots import (
     build_snapshots_for_feature,
+    emit_cloud_history_read,
     bust_snapshot_cache,
     coerce_suspect_snapshot,
     module_checkpoint,
@@ -476,10 +477,14 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         except Exception:
             pass
 
-    emit("two:start", a=a, b=b, feature=feature, removals=allow_removals)
-
     a_cfg = pair_endpoint_config(provider_cfg, a, src_inst)
     b_cfg = pair_endpoint_config(provider_cfg, b, dst_inst)
+    reads_cloud_history = feature == "history" and any(provider == "PLEX" and ((view.get("plex") or {}).get("history") or {}).get("read_cloud_history") is True for provider, view in ((a, a_cfg), (b, b_cfg)))
+    if reads_cloud_history:
+        allow_removals = False
+    emit("two:start", a=a, b=b, feature=feature, removals=allow_removals)
+    if reads_cloud_history:
+        emit("history:cloud_read", feature=feature, provider="PLEX", reason="Plex cloud history reads enabled; History removals are disabled for this pair.")
     pair_providers = {a: aops, b: bops}
 
     if str(a).strip().upper() == "SIMKL" and str(b).strip().upper() != "SIMKL":
@@ -516,6 +521,9 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         )
         A_cur = require_snapshot(snaps, a, feature)
         B_cur = require_snapshot(snaps, b, feature)
+
+    emit_cloud_history_read(emit, a, feature, a_cfg, A_cur)
+    emit_cloud_history_read(emit, b, feature, b_cfg, B_cur)
     cancelled = bool(cancel_requested())
 
 
@@ -704,6 +712,10 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             A_eff = _comparison_view(aops, a_cfg, feature, A_eff, side=a, dbg=dbg)
             B_eff = _comparison_view(bops, b_cfg, feature, B_eff, side=b, dbg=dbg)
 
+    A_server_history = {k: v for k, v in A_eff.items() if not v.get("_plex_cloud_history")}
+    B_server_history = {k: v for k, v in B_eff.items() if not v.get("_plex_cloud_history")}
+    A_cloud_history = {k: v for k, v in A_eff.items() if v.get("_plex_cloud_history") is True}
+    B_cloud_history = {k: v for k, v in B_eff.items() if v.get("_plex_cloud_history") is True}
     if feature == "history":
         A_cur = filter_history_events(A_cur, event_mode=history_event_mode)
         B_cur = filter_history_events(B_cur, event_mode=history_event_mode)
@@ -1784,6 +1796,29 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                     add_to_A.append(_minimal(v))
             if coord_pruned_to_A or coord_pruned_to_B:
                 dbg("anime_mapping.coord_pruned", feature=feature, a=a, b=b, to_a=coord_pruned_to_A, to_b=coord_pruned_to_B)
+    if feature == "history":
+        for provider, view, source, server, cloud, target in (
+            (a, a_cfg, B_eff, A_server_history, A_cloud_history, add_to_A),
+            (b, b_cfg, A_eff, B_server_history, B_cloud_history, add_to_B),
+        ):
+            if provider != "PLEX" or ((view.get("plex") or {}).get("history") or {}).get("read_cloud_history") is not True:
+                continue
+            if history_event_mode:
+                missing, _, _ = compare_history_events(source, server, typed_tokens=_typed_tokens, tolerance_seconds=history_tolerance)
+            else:
+                server_alias = _alias_index(server)
+                missing = [item for item in source.values() if has_history_watch(item) and not _present(server, server_alias, item)]
+            candidates = {str(index): item for index, item in enumerate(missing)}
+            cloud_matches = history_event_matches(candidates, cloud, _typed_tokens, tolerance_seconds=history_tolerance)
+            planned = {_sync_key(item) for item in target}
+            for candidate, item in candidates.items():
+                if candidate in cloud_matches:
+                    continue
+                key = _sync_key(item)
+                if key not in planned:
+                    target.append(_sync_minimal(item))
+                    planned.add(key)
+
     add_to_A = groups.ordinary(0, add_to_A) + groups.adds[0]
     add_to_B = groups.ordinary(1, add_to_B) + groups.adds[1]
     upd_to_A, upd_to_B = groups.ordinary(0, upd_to_A), groups.ordinary(1, upd_to_B)

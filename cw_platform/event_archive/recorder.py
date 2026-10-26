@@ -390,6 +390,19 @@ class RunRecorder:
             self._flush()
             return
 
+        if event == "history:cloud_read:done":
+            self._add(
+                event_type="cloud_history_read",
+                source_instance=f.get("instance") or "default",
+                operation="read",
+                source_provider="PLEX",
+                feature="history",
+                detail={"cloud_history_entries": int(f.get("cloud_history_entries") or 0),
+                        "history_entries": int(f.get("count") or 0)},
+            )
+            self._flush()
+            return
+
         if event == "ui:spotlight":
             return
 

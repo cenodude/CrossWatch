@@ -207,3 +207,18 @@ def test_cloud_confirmation_does_not_downgrade_time_difference(watch_pair, monke
     assert problem["watch_time_differences"]
     assert problem["severity"] == "warn"
     assert problem["cloud_confirmed_targets"] == ["PLEX"]
+
+
+def test_cloud_history_source_label_preserves_watch_time_warning(watch_pair):
+    cfg, state, key, _ = watch_pair
+    state["providers"]["CROSSWATCH"]["history"]["baseline"]["items"][key]["_plex_cloud_history"] = True
+    save_pair(cfg, state)
+    result = A._cached_analysis("cw-simkl", include_hints=True)
+    problem = next(p for p in result["problems"] if p["type"] == "missing_peer")
+    assert problem["history_source"] == "plex_cloud"
+    assert "Source: Plex cloud history" in problem["message"]
+    assert problem["watch_time_differences"]
+    assert problem["severity"] == "warn"
+    assert any(h["kind"] == "plex_cloud_history" for h in problem["hints"])
+    detail = A._detail_for_item("cw-simkl", "CROSSWATCH", "history", key)
+    assert any(h["kind"] == "plex_cloud_history" for h in detail["hints"])

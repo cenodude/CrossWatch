@@ -16,8 +16,8 @@ def pair_endpoint_config(cfg: Mapping[str, Any], provider: str, instance: str) -
     blocks = cfg.get("_cw_pair_instance_blocks") or {}
     block = (blocks.get(provider) or {}).get(normalize_instance_id(instance))
     if block is None:
-        return dict(cfg)
-    return {**cfg, _config_key_for(cfg, provider): block, "_cw_provider_instance": normalize_instance_id(instance)}
+        return {**cfg, "_cw_endpoint_instance": instance}
+    return {**cfg, _config_key_for(cfg, provider): block, "_cw_provider_instance": normalize_instance_id(instance), "_cw_endpoint_instance": instance}
 
 LIBRARY_SCOPED_FEATURES = frozenset({"history", "ratings", "progress", "collection"})
 
