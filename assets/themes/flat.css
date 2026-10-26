@@ -948,7 +948,7 @@ html[data-cw-theme="flat-light"] body #page-settings #auth-providers .cw-connect
 html[data-cw-theme="flat-light"] body #page-settings #auth-providers .cw-connection-overlay[data-cw-connection-provider="anime-mapping"] .am-toggle-proxy:not(.is-on){border-color:rgba(16,24,40,0.2);background:#f2f4f7}
 html[data-cw-theme="flat-light"] body #page-settings #auth-providers .cw-connection-overlay[data-cw-connection-provider="anime-mapping"] .cw-connection-modal-footer.cw-connection-modal-footer{border-top-color:rgba(16,24,40,0.1)!important;background:#f7f9fc !important}
 :where(html[data-cw-theme="flat-light"]) code{background:#f1f4f9;border-color:rgba(16,24,40,0.16)}
-html[data-cw-theme="flat-light"] #page-settings .cw-code-badge,html[data-cw-theme="flat-light"] #page-settings .cw-settings-shell code{color:var(--cw-flat-text)}
+html[data-cw-theme="flat-light"] #page-settings .cw-code-badge,html[data-cw-theme="flat-light"] #page-settings .cw-settings-shell code{color:var(--cw-flat-text)}html[data-cw-theme="flat-light"] #page-settings .cw-code-badge,html[data-cw-theme="flat-light"] #page-settings .cw-settings-shell :not(pre)>code{background:#f1f4f9;border-color:rgba(16,24,40,0.16)}
 html[data-cw-theme="flat-light"] .cx-modal-shell.cw-anime-overrides-shell{--ao-bg:#f8fafc;--ao-panel:#ffffff;--ao-card:#ffffff;--ao-border:rgba(16,24,40,0.14);box-shadow:0 26px 70px rgba(16,24,40,0.22)!important}
 html[data-cw-theme="flat-light"] .cw-anime-overrides .ao-body{background:#f3f5f9}
 html[data-cw-theme="flat-light"] .cw-anime-overrides .ao-card{background:#ffffff;box-shadow:none}
@@ -977,3 +977,5 @@ html[data-cw-theme="flat-light"] #page-snapshots .ss-capture-progress-line span{
 html[data-cw-theme="flat-light"] #page-snapshots .ss-capture-progress-line b{color:#3b5bcc !important}
 html[data-cw-theme="flat-light"] #cx-modal.editor-raw-modal .raw-path{color:#31406e !important;-webkit-text-fill-color:#31406e !important}
 html[data-cw-theme="flat-light"] body.cw-profile-page .cw-profile-avatar{background:#eef2f7;color:#5865a8;box-shadow:0 10px 24px rgba(30,41,59,0.14)}
+html[data-cw-theme="flat-light"] .cx-modal-shell :is(.module-alert,.simkl-alert) .title{color:#9a5d00 !important}
+html[data-cw-theme="flat-light"] .cx-modal-shell :is(.module-alert,.simkl-alert) .body{color:#344054 !important}
