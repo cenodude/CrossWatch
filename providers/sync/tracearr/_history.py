@@ -274,8 +274,6 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
         if not isinstance(rows, list):
             raise RuntimeError("tracearr_history_invalid_response")
         if not rows:
-            if cursor:
-                raise RuntimeError("tracearr_history_incomplete_read")
             break
 
         _log("index_fetch_counts", page=pages, batch=len(rows))

@@ -69,7 +69,7 @@ def _read(adapter: Any, progress: Callable[..., None], check_cancel: Callable[[]
 
 
 def scan(adapter: Any, *, resolve: Callable[[str, str], Mapping[str, Any]], progress: Callable[..., None],
-         check_cancel: Callable[[], None], max_rows: int = 50_000) -> list[dict[str, Any]]:
+         check_cancel: Callable[[], None], max_rows: int = 50_000, ignore_live_tv: bool = True) -> list[dict[str, Any]]:
     check_cancel()
     watched_only = bool(history._cfg_get(adapter, "tautulli.history.watched_only", True))
     min_percent = history._to_float(history._cfg_get(adapter, "tautulli.history.min_percent", 90))
@@ -116,6 +116,11 @@ def scan(adapter: Any, *, resolve: Callable[[str, str], Mapping[str, Any]], prog
             report(index + 1)
             continue
         title = _label(row, kind)
+        if ignore_live_tv and (history._to_int(row.get("live")) == 1
+                               or str(row.get("guid") or "").lower().startswith("tv.plex.xmltv://")):
+            skipped += 1
+            report(index + 1, title, result="Skipped: Live TV")
+            continue
         guid = history._clean_guid(str(row.get("guid") or ""))
         rating_key = str(row.get("rating_key") or "").strip()
         show_key = str(row.get("grandparent_rating_key") or "").strip() if kind == "episode" else ""

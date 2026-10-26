@@ -68,6 +68,15 @@ def test_movies_use_the_cheapest_identity_source_and_never_store_plex_ids():
     assert all(not r["recovery_requires_review"] and r["item"]["watched_at"] and r["item"]["watched"] for r in result)
 
 
+def test_live_tv_rows_are_skipped_unless_asked():
+    source = Tautulli([movie("1", "imdb://tt0000001"), movie("2", "plex://movie/aa", live=1),
+                       movie("3", "tv.plex.xmltv://movie/Broadcast", live=0), episode("4", "plex://episode/4", 4, live="1")])
+    result, asked = scan(source)
+    assert [r["item"]["title"] for r in result] == ["Movie 1"]
+    assert asked == [] and source.lookups() == []
+    assert len(scan(source, ignore_live_tv=False)[0]) == 4
+
+
 def test_show_still_in_plex_costs_one_lookup_for_all_its_episodes():
     source = Tautulli([episode(str(i), f"plex://episode/{i}", i) for i in range(1, 6)],
                       metadata={"50": {"guid": "plex://show/s", "guids": ["tvdb://500", "tmdb://501"]}})
@@ -179,12 +188,12 @@ def run(api, payload):
 
 
 def test_tautulli_source_scans_into_the_shared_review_flow(api, monkeypatch):
-    seen = NS(token=None, resolve=None, adapter=None)
+    seen = NS(token=None, resolve=None, adapter=None, ignore_live_tv=None)
     def resolver(token):
         seen.token = token
         return lambda kind, guid: {}
-    def read(adapter, *, resolve, progress, check_cancel, max_rows):
-        seen.adapter, seen.resolve = adapter, resolve
+    def read(adapter, *, resolve, progress, check_cancel, max_rows, ignore_live_tv):
+        seen.adapter, seen.resolve, seen.ignore_live_tv = adapter, resolve, ignore_live_tv
         return [dict(feature="history", item=dict(type="movie", title="Old", year=2000, ids={"tmdb": "9"},
                                                   watched_at="2020-01-01T12:00:00Z", watched=True),
                      source_path="Tautulli history", recovery_match="Matched by Plex GUID", recovery_valid=True,
@@ -194,11 +203,12 @@ def test_tautulli_source_scans_into_the_shared_review_flow(api, monkeypatch):
     options = api.client.get("/api/import/plex-recovery/options").json()
     assert [t["id"] for t in options["tautulli"]] == ["default"] and [s["id"] for s in options["lookups"]] == ["default"]
     assert options["sources"] == []
-    response = run(api, dict(source="tautulli"))
+    response = run(api, dict(source="tautulli", ignore_live_tv=False))
     assert response.status_code == 200, response.text
     url = "/api/import/plex-recovery/" + response.json()["id"]
     job = api.client.get(url).json()
     assert (job["status"], job["source"], job["tautulli_instance"]) == ("review", "tautulli", "default")
+    assert seen.ignore_live_tv is False and job["ignore_live_tv"] is False
     assert seen.token == "token" and seen.adapter.cfg["tautulli"]["api_key"] == "key"
     rows = api.client.get(url + "/rows").json()
     assert rows["summary"]["ready"] == 1 and rows["rows"][0]["recovery_match"] == "Matched by Plex GUID"

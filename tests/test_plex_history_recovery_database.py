@@ -220,10 +220,34 @@ def test_library_scope_applies_to_existing_sections_and_keeps_deleted_libraries(
     path = library(tmp_path / "lib.db", views=[
         movie("imdb://tt0000001", "In scope", library_section_id=1), movie("imdb://tt0000002", "Out of scope", library_section_id=2),
         movie("imdb://tt0000003", "Deleted library", library_section_id=99), movie("imdb://tt0000004", "No library", library_section_id=None)])
-    result, _ = scan(path, libraries={"1"})
+    result, _ = scan(path, libraries={"1"}, ignore_live_tv=False)
     assert [r["item"]["title"] for r in result] == ["In scope", "Deleted library", "No library"]
-    assert len(scan(path)[0]) == 4
+    assert len(scan(path, ignore_live_tv=False)[0]) == 4
     assert scan(path, account=7)[0] == []
+
+
+def test_live_tv_plays_are_skipped_unless_asked(tmp_path):
+    path = library(tmp_path / "lib.db", views=[
+        movie("imdb://tt0000001", "Library"), movie("tv.plex.xmltv://movie/Broadcast", "Guide movie"),
+        movie("plex://movie/aa", "Guide via Plex", library_section_id=None),
+        episode("plex://episode/1", 1, library_section_id=None, grandparent_guid="", grandparent_title=""),
+        episode("plex://episode/2", 2, library_section_id=99)])
+    updates = []
+    result, asked = scan(path, {"plex://show/s": {"tvdb": "300"}}, progress=lambda *a: updates.append(a))
+    assert [r["item"].get("series_title") or r["item"]["title"] for r in result] == ["Library", "Series"]
+    assert asked == [("show", "plex://show/s")]
+    assert updates[-1][4]["skipped"] == 3
+    assert [u[4]["event"]["result"] for u in updates if len(u) > 4 and "event" in u[4]].count("Skipped: Live TV") == 3
+    assert len(scan(path, ignore_live_tv=False)[0]) == 5
+
+
+def test_views_table_without_a_section_column_never_drops_everything(tmp_path):
+    path = library(tmp_path / "lib.db", views=[movie("imdb://tt0000001", "Library"), movie("tv.plex.xmltv://movie/x", "Guide")])
+    con = sqlite3.connect(path)
+    con.execute("ALTER TABLE metadata_item_views DROP COLUMN library_section_id")
+    con.commit()
+    con.close()
+    assert [r["item"]["title"] for r in scan(path)[0]] == ["Library"]
 
 
 def test_row_limit_and_cancel_never_return_partial_results(tmp_path):
