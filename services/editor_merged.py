@@ -76,6 +76,8 @@ def _shared_tokens(key: str, item: Mapping[str, Any]) -> set[str]:
 def _display_item(feature: str, records: list[tuple[int, str, Mapping[str, Any]]]) -> dict[str, Any]:
     best = max(records, key=lambda record: len(record[2].get("ids") or {}))[2]
     item = minimal(best)
+    if feature == "history" and any(record.get("_plex_cloud_history") is True for _, _, record in records):
+        item["_plex_cloud_history"] = True
     for field in ("show_ids", "series_year", "simkl_bucket", "anime_type"):
         if best.get(field) not in (None, "", {}):
             item[field] = best.get(field)

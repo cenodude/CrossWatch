@@ -16,6 +16,7 @@ def test_state_database_preserves_current_sync_item_fields(tmp_path) -> None:
     item = {
         "type": "episode",
         "title": "Pilot",
+        "_plex_cloud_history": True,
         "year": 2026,
         "season": 1,
         "episode": 2,
@@ -351,3 +352,15 @@ def test_schema_upgrade_adds_media_json_to_existing_baseline_tables(tmp_path) ->
         conn.close()
 
     assert all("media_json" in columns for columns in tables.values())
+
+
+def test_cloud_history_column_upgrades_existing_state_schema():
+    conn = sqlite3.connect(":memory:")
+    sqlite_schema.apply_schema(conn)
+    for table in ("baseline_items", "pair_baseline_items"):
+        conn.execute(f"ALTER TABLE {table} DROP COLUMN plex_cloud_history")
+    conn.execute("DELETE FROM schema_migrations WHERE version=7")
+    sqlite_schema.apply_schema(conn)
+    sqlite_schema.apply_schema(conn)
+    for table in ("baseline_items", "pair_baseline_items"):
+        assert "plex_cloud_history" in {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}

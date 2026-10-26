@@ -207,12 +207,13 @@ def test_marked_watched_and_strict_ids_are_isolated_between_pairs(config_base, m
             source="PLEX", target="JELLYFIN", mode=mode, enabled=True,
             features={"history": {"enable": True, "add": True, "remove": False}},
             providers={"plex": {"strict_id_matching": enabled, "history": {"include_marked_watched": enabled,
-                                                                          "discover_fallback": enabled}}},
+                                                                          "discover_fallback": enabled, "read_cloud_history": enabled}}},
         ))
         assert result["ok"]
     assert not Orchestrator(cfg).run()["errors"]
     assert [row["history"]["include_marked_watched"] for row in seen] == [False, True]
     assert [row["history"]["discover_fallback"] for row in seen] == [False, True]
+    assert [row["history"]["read_cloud_history"] for row in seen] == [False, True]
     assert [row["strict_id_matching"] for row in seen] == [False, True]
     assert all(row["history"]["libraries"] == ["1"] for row in seen)
     assert cfg["plex"] == original
@@ -243,3 +244,21 @@ def test_history_add_prefers_ids_then_paths_over_matching_title(isolated_state, 
     calls.clear()
     assert history.add(adapter, [{**item, "ids": {"tmdb": "999"}}]) == (1, [])
     assert not calls
+
+
+def test_cloud_history_merges_after_server_scan_without_polluting_catalog(isolated_state, monkeypatch):
+    from providers.sync.plex import _cloud_history
+
+    server = SimpleNamespace(baseurl="http://plex", _token="token", machineIdentifier="server", history=lambda **kwargs: [])
+    adapter = SimpleNamespace(client=SimpleNamespace(server=server),
+                              config={"plex":{"history_workers":1,"history":{"include_marked_watched":False,"read_cloud_history":True}}},
+                              libraries=lambda **kwargs: [])
+    cloud_row = dict(type="movie", title="Cloud only", ids={"tmdb":"123"}, watched_at="2020-01-01T00:00:00Z", _plex_cloud_history=True)
+    calls = []
+    monkeypatch.setattr(_cloud_history, "read", lambda adapter: (calls.append(1) or [cloud_row], 0))
+    result = history.build_index(adapter)
+    assert list(result.values()) == [cloud_row]
+    assert not history._get_history_catalog(adapter, set()).presence()
+    adapter.config["plex"]["history"]["read_cloud_history"] = False
+    assert history.build_index(adapter) == {}
+    assert calls == [1]

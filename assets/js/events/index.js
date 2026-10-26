@@ -157,6 +157,7 @@ const BADGE = {
   blackbox_blocked: "Blackbox blocked",
   tombstone_created: "Tombstone created",
   tombstone_pruned: "Tombstone pruned",
+  cloud_history_read: "Plex cloud history read",
   plan_created: "Item planned",
   provider_health: "Provider health",
   sync_run_started: "Sync started",
@@ -281,6 +282,7 @@ const titleLine = (e) => {
     case "blackbox_blocked": return "Blocked by blackbox";
     case "tombstone_created": return "Tombstone created";
     case "tombstone_pruned": return "Tombstone pruned";
+    case "cloud_history_read": return `Plex cloud history: ${Number(detailOf(e).cloud_history_entries || 0)} entries included after merging with server history`;
     case "plan_created": return "Add attempted";
     case "provider_health": return `Provider health · ${(e.source_provider || "").toUpperCase()}`;
     case "sync_run_started": return "Sync run started";
@@ -306,6 +308,7 @@ const titleLine = (e) => {
 };
 
 const EVENT_TYPES = [
+  "cloud_history_read",
   "", "write_succeeded", "write_attempted", "write_failed", "unresolved_recorded",
   "blackbox_promoted", "blackbox_blocked", "tombstone_created", "plan_created",
   "provider_health", "sync_run_started", "sync_run_finished",
@@ -1855,6 +1858,7 @@ export default {
 
     // event detail (raw mode)
     const renderEventDetail = (ctx, e) => {
+      const d = detailOf(e);
       if (String(e.domain || "").toLowerCase() === "audit") {
         renderAuditDetail({ event: e, events: [e] }, e);
         return;
@@ -1879,6 +1883,7 @@ export default {
         ["Destination", esc(dest)],
         ["Pair", esc(pairLabel)],
         ["Run", e.run_id ? `<span class="mono">${esc(e.run_id)}</span>` : "–"],
+        ...(e.event_type === "cloud_history_read" ? [["Cloud history entries included", esc(d.cloud_history_entries ?? 0)], ["Total merged history entries", esc(d.history_entries ?? 0)]] : []),
         ...(cloudResultsHTML(e) ? [["Plex Discover fallback", cloudResultsHTML(e)]] : []),
         ["Reason", esc(e.reason || e.reason_code || "–")],
         ["Source", e.source_file ? `<span class="mono">${esc(e.source_file)}</span>` : esc(e.source_kind || "–")],

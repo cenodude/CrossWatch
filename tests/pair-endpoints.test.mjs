@@ -399,7 +399,7 @@ for (const [feature, prefix, rule] of [["ratings", "rt", "applyRatingsTypeRules"
   });
 }
 
-for (const controlId of ["plx-marked-watched", "plx-discover-fallback"]) test(`${controlId} follows History enable without changing its value`, () => {
+for (const controlId of ["plx-marked-watched", "plx-cloud-read", "plx-discover-fallback"]) test(`${controlId} follows History enable without changing its value`, () => {
   for (const checked of [false, true]) {
     const classes = new Set();
     const control = {checked, dataset: {}, closest: () => ({classList: {toggle: (name, on) => on ? classes.add(name) : classes.delete(name)}})};
@@ -413,6 +413,66 @@ for (const controlId of ["plx-marked-watched", "plx-discover-fallback"]) test(`$
       assert.equal(control.disabled, !enabled);
       assert.equal(classes.has("muted"), !enabled);
       assert.equal(control.checked, checked);
+    }
+  }
+});
+
+
+test("cloud read opt-in is independent of writes and disables removals", () => {
+  const listeners = [];
+  const remove = {checked:true};
+  const context = vm.createContext({ID: id => id === "cx-hs-remove" ? remove : null});
+  vm.runInContext(sourceFor("bindChangeHandlers"), context);
+  const state = {options:{history:{remove:true}}, pairProviders:{plex:{history:{discover_fallback:true}}}};
+  context.bindChangeHandlers(state, {addEventListener:(event, handler)=>{if(event === "change") listeners.push(handler);}});
+  for(const handler of listeners) handler({target:{id:"plx-cloud-read",checked:true}});
+  assert.equal(state.pairProviders.plex.history.read_cloud_history, true);
+  assert.equal(state.pairProviders.plex.history.discover_fallback, true);
+  assert.equal(state.options.history.remove, false);
+  assert.equal(remove.checked, false);
+  for(const handler of listeners) handler({target:{id:"plx-cloud-read",checked:false}});
+  assert.equal(state.pairProviders.plex.history.read_cloud_history, false);
+  assert.equal(state.pairProviders.plex.history.discover_fallback, true);
+});
+
+test("cloud read is offered only when Plex sends history", () => {
+  const render = index.split("\n").find(line => line.includes('parts.push(`') && line.includes('id="plx-cloud-read"'));
+  for(const [src,dst,twoWay,visible] of [["PLEX","TRAKT",false,true],["TRAKT","PLEX",false,false],["TRAKT","PLEX",true,true]]){
+    const context = vm.createContext({parts:[],state:{src,dst},same:(a,b)=>a.toLowerCase()===b.toLowerCase(),isTwoWayMode:()=>twoWay});
+    vm.runInContext(render, context);
+    assert.equal(context.parts.length > 0,visible);
+    assert.doesNotMatch(context.parts.join(""), /type="checkbox" checked/);
+  }
+});
+
+
+test("Plex cloud controls follow direction and preserve independent settings across mode changes", () => {
+  const render = index.split("\n").filter(line => line.includes('parts.push(`') && /id="plx-(cloud-read|discover-fallback)"/.test(line)).join("\n");
+  for (const [src, dst] of [["PLEX", "TRAKT"], ["SIMKL", "PLEX"], ["JELLYFIN", "PLEX"], ["TRAKT", "SIMKL"], ["PLEX", "PLEX"]]) {
+    for (const read of [false, true]) for (const write of [false, true]) {
+      const state = {src, dst, twoWay:false, pairProviders:{plex:{history:{read_cloud_history:read, discover_fallback:write}}}};
+      const before = JSON.stringify(state.pairProviders);
+      const context = vm.createContext({parts:[],state,same:(a,b)=>a.toLowerCase()===b.toLowerCase(),isTwoWayMode:state=>state.twoWay});
+      for (const twoWay of [false, true, false]) {
+        state.twoWay = twoWay;
+        context.parts = [];
+        vm.runInContext(render, context);
+        const html = context.parts.join("");
+        const hasPlex = src === "PLEX" || dst === "PLEX";
+        const separate = twoWay || (src === "PLEX" && dst === "PLEX");
+        assert.equal((html.match(/type="checkbox"/g) || []).length, hasPlex ? separate ? 2 : 1 : 0);
+        if (hasPlex) {
+          assert.equal(html.includes(">Include Plex cloud history</label>"), !separate);
+          assert.equal(html.includes(">Read cloud history</label>"), separate);
+          assert.equal(html.includes(">Write cloud fallback</label>"), separate);
+          for (const [id, visible, checked] of [["plx-cloud-read", twoWay || src === "PLEX", read], ["plx-discover-fallback", twoWay || dst === "PLEX", write]]) {
+            const input = html.match(new RegExp(`<input id="${id}"[^>]*>`));
+            assert.equal(!!input, visible);
+            if (input) assert.equal(input[0].includes(" checked"), checked);
+          }
+        }
+        assert.equal(JSON.stringify(state.pairProviders), before);
+      }
     }
   }
 });

@@ -115,3 +115,33 @@ def test_applier_cloud_failure_has_readable_reason():
                        emit=lambda event, **data: events.append((event, data)), dbg=lambda *a, **kw: None, chunk_size=0, chunk_pause_ms=0)
     assert "could not match" in result["cloud_results"][0]["reason"]
     assert _accepted_unverified({"accepted_not_seen_live_keys": ["same", "same"]}, False) == 2
+
+
+def test_cloud_history_read_summary_is_not_a_write():
+    from cw_platform.orchestrator._snapshots import emit_cloud_history_read
+
+    conn = connect(":memory:")
+    recorder = RunRecorder(lambda *a, **kw: None, run_id="cloud-read", conn=conn)
+    recorder.emit("feature:start", src="PLEX", dst="TRAKT", feature="history")
+    config = {"plex": {"history": {"read_cloud_history": True}}, "_cw_provider_instance": "p01"}
+    index = {"cloud": {"_plex_cloud_history": True}, "server": {}}
+    emit_cloud_history_read(recorder.emit, "PLEX", "history", config, index)
+    emit_cloud_history_read(recorder.emit, "PLEX", "ratings", config, index)
+    emit_cloud_history_read(recorder.emit, "PLEX", "history", {}, index)
+    recorder._flush(force=True)
+    rows = conn.execute("SELECT event_type, source_instance, detail FROM events").fetchall()
+    assert len(rows) == 1
+    assert rows[0][0] == "cloud_history_read"
+    assert rows[0][1] == "p01"
+    assert json.loads(rows[0][2]) == {"cloud_history_entries": 1, "history_entries": 2}
+
+
+def test_merged_editor_preserves_cloud_source_from_any_provider():
+    from services.editor_merged import merge_sources
+
+    server = {"type": "movie", "title": "Example", "ids": {"tmdb": "1"}, "watched_at": "2020-01-01T00:00:00Z"}
+    cloud = {**server, "_plex_cloud_history": True}
+    for sources in ([{"tmdb:1": server}, {"tmdb:1": cloud}], [{"tmdb:1": cloud}, {"tmdb:1": server}]):
+        items, _ = merge_sources("history", sources)
+        assert len(items) == 1
+        assert next(iter(items.values()))["_plex_cloud_history"] is True

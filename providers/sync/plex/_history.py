@@ -1598,6 +1598,15 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
             if reconciled:
                 _prune_playback_caches(cache_path, now)
 
+        from . import _cloud_history
+
+        if _cloud_history.enabled(adapter):
+            if need_home_scope or not scope_ok:
+                raise RuntimeError("plex_discover_account_unsupported")
+            cloud_rows, unmatched = _cloud_history.read(adapter)
+            out = _cloud_history.merge(out, cloud_rows)
+            _info("cloud_history_read", matched=len(cloud_rows), unmatched=unmatched, count=len(out))
+
         if prog:
             prog.done(total=len(out), ok=True)
 
@@ -1809,7 +1818,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                                     cloud_catalog = scope_catalog
                                 except Exception:
                                     cloud_scope_failed = True
-                            if cloud_scope_failed:
+                            if cloud_scope_failed or cloud_catalog is None:
                                 cloud_allowed = False
                                 reason = "plex_discover_scope_unavailable"
                             else:

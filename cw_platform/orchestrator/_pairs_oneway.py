@@ -246,6 +246,7 @@ from ..anime_mapping.history_coords import (
 )
 from ._snapshots import (
     build_snapshots_for_feature,
+    emit_cloud_history_read,
     bust_snapshot_cache,
     coerce_suspect_snapshot,
     module_checkpoint,
@@ -1091,6 +1092,14 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
 
     src_cfg = pair_endpoint_config(provider_cfg, src, src_inst)
     dst_cfg = pair_endpoint_config(provider_cfg, dst, dst_inst)
+    disable_dst_cloud_read = feature == "history" and dst == "PLEX" and ((dst_cfg.get("plex") or {}).get("history") or {}).get("read_cloud_history") is True
+    if disable_dst_cloud_read:
+        plex_cfg = dict(dst_cfg.get("plex") or {})
+        plex_cfg["history"] = {**(plex_cfg.get("history") or {}), "read_cloud_history": False}
+        dst_cfg = {**dst_cfg, "plex": plex_cfg}
+    if feature == "history" and src == "PLEX" and ((src_cfg.get("plex") or {}).get("history") or {}).get("read_cloud_history") is True:
+        allow_removes = False
+        emit("history:cloud_read", feature=feature, provider="PLEX", reason="Plex cloud history reads enabled; History removals are disabled for this pair.")
     pair_providers = {src: src_ops, dst: dst_ops}
 
     def _on_snapshot(name: str, idx: Mapping[str, Any]) -> None:
@@ -1104,7 +1113,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
             dbg=dbg,
         )
 
-    if src == dst:
+    if src == dst or disable_dst_cloud_read:
         src_cur = build_snapshots_for_feature(
             feature=feature, config=src_cfg, providers={src: src_ops},
             snap_cache=ctx.snap_cache, snap_ttl_sec=ctx.snap_ttl_sec,
@@ -1132,6 +1141,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
 
         src_cur = require_snapshot(snaps, src, feature)
         dst_cur = require_snapshot(snaps, dst, feature)
+    emit_cloud_history_read(emit, src, feature, src_cfg, src_cur)
     cancelled = bool(cancel_requested())
 
     prev_state = load_feature_state(ctx.state_store, feature)
