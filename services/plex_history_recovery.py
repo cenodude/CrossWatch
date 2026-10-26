@@ -46,10 +46,12 @@ class Start(BaseModel):
     model_config = ConfigDict(extra="forbid")
     source_instance: str = Field(default="default", max_length=128)
     target_instance: str = Field(default="default", max_length=128)
-    source: Literal["plex", "tautulli", "plex_db"] = "plex"
+    source: Literal["plex", "tautulli", "tracearr", "plex_db"] = "plex"
     tautulli_instance: str = Field(default="default", max_length=128)
+    tracearr_instance: str = Field(default="default", max_length=128)
     upload_id: str = Field(default="", max_length=64)
     db_account: int | None = None
+    ignore_live_tv: bool = True
 
 
 class Commit(importer.ImportCommitFields):
@@ -125,17 +127,20 @@ class Job:
     auto_stop: threading.Event = field(default_factory=threading.Event)
     auto_thread: threading.Thread | None = None
     tautulli: str = ""
+    tracearr: str = ""
     database: str = ""
     db_folder: str = ""
     db_path: str = ""
     db_account: int | None = None
+    ignore_live_tv: bool = True
 
     def public(self):
         return dict(id=self.id, import_id=self.id, status=self.status, message=self.message, stage=self.stage,
                     done=self.done, total=self.total, revision=self.revision, source_instance=self.source,
                     target_instance=self.target, imported=len(self.receipt),
-                    source="tautulli" if self.tautulli else "plex_db" if self.database else "plex",
-                    tautulli_instance=self.tautulli, database=self.database,
+                    source="tautulli" if self.tautulli else "tracearr" if self.tracearr else "plex_db" if self.database else "plex",
+                    tautulli_instance=self.tautulli, tracearr_instance=self.tracearr, database=self.database,
+                    ignore_live_tv=self.ignore_live_tv,
                     activity=dict(self.activity), recent=[dict(item) for item in self.recent], auto_match=dict(self.auto))
 
 
@@ -151,19 +156,33 @@ def _access(cfg, request, provider, instance):
         raise HTTPException(403, "Profile unavailable")
 
 
-def _source_hash(cfg, instance, tautulli=""):
+def _source_hash(cfg, instance, tautulli="", tracearr=""):
     block = build_provider_config_view(cfg, "PLEX", instance).get("plex") or {}
     if tautulli:
         block = [block, _tautulli_block(cfg, tautulli)]
+    if tracearr:
+        block = [block, _tracearr_block(cfg, tracearr)]
     return hashlib.sha256(json.dumps(block, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def _job_source_hash(cfg, job):
+    return _source_hash(cfg, job.source, job.tautulli, job.tracearr)
 
 
 def _tautulli_block(cfg, instance):
     return build_provider_config_view(cfg, "TAUTULLI", instance).get("tautulli") or {}
 
 
+def _tracearr_block(cfg, instance):
+    return build_provider_config_view(cfg, "TRACEARR", instance).get("tracearr") or {}
+
+
 def _tautulli_ready(block):
     return bool((block.get("server_url") or block.get("server")) and block.get("api_key"))
+
+
+def _tracearr_user(cfg, instance):
+    return str((_tracearr_block(cfg, instance).get("history") or {}).get("user_id") or "").strip()
 
 
 def _plex_token(cfg, instance):
@@ -180,7 +199,7 @@ def _search_fingerprint(cfg, job: Job, choice):
     from .interactive_sync_catalogs import provider_block
     route = choice["route"]
     catalog = {"api_key": (cfg.get("tmdb") or {}).get("api_key")} if choice["catalog"] == "tmdb" else provider_block(cfg, route["provider"], route["instance"])
-    dependencies = [_source_hash(cfg, job.source, job.tautulli), _target_hash(cfg, job.target), route, catalog]
+    dependencies = [_job_source_hash(cfg, job), _target_hash(cfg, job.target), route, catalog]
     return hashlib.sha256(json.dumps(dependencies, sort_keys=True, default=str).encode()).hexdigest()
 
 
@@ -239,6 +258,8 @@ def _job(sid, request, cfg):
     _access(cfg, request, "PLEX", job.source)
     if job.tautulli:
         _access(cfg, request, "TAUTULLI", job.tautulli)
+    if job.tracearr:
+        _access(cfg, request, "TRACEARR", job.tracearr)
     _access(cfg, request, "CROSSWATCH", job.target)
     job.touched = time.time()
     return job
@@ -282,6 +303,8 @@ def _scan_error(job, error):
         if isinstance(error, PermissionError) and error.errno is None:
             return "Recovery could not finish. Plex rejected the account token. Reconnect Plex, then retry. Nothing was imported."
         return "Recovery could not finish. Check the Plex connection and that there is enough free disk space for the database, then retry. Nothing was imported."
+    if job.tracearr:
+        return "Recovery could not finish. Check the Tracearr connection and its API key, then retry. Nothing was imported."
     if not job.tautulli:
         return "Recovery could not finish. Check that the Plex connection has server-owner access to play history, and check the connection and library access, then retry. Nothing was imported."
     if isinstance(error, PermissionError):
@@ -301,7 +324,20 @@ def _scan_tautulli(job, cfg, progress, check_cancel):
     try:
         return tautulli_recovery.scan(_HistoryAdapter(cfg=module.client.raw_cfg, client=module.client),
                                       resolve=plex_recovery.guid_resolver(token), progress=progress,
-                                      check_cancel=check_cancel, max_rows=importer.MAX_ROWS)
+                                      check_cancel=check_cancel, max_rows=importer.MAX_ROWS,
+                                      ignore_live_tv=job.ignore_live_tv)
+    finally:
+        module.client.session.close()
+
+
+def _scan_tracearr(job, cfg, progress, check_cancel):
+    from providers.sync._mod_TRACEARR import TRACEARRModule, _HistoryAdapter
+    from providers.sync.tracearr import _recovery as tracearr_recovery
+
+    module = TRACEARRModule(build_provider_config_view(cfg, "TRACEARR", job.tracearr))
+    try:
+        return tracearr_recovery.scan(_HistoryAdapter(cfg=module.client.raw_cfg, client=module.client),
+                                      progress=progress, check_cancel=check_cancel, max_rows=importer.MAX_ROWS)
     finally:
         module.client.session.close()
 
@@ -326,7 +362,8 @@ def _scan_database(job, cfg, adapter, progress, check_cancel):
     return recovery_db.scan(path, account=int(account), libraries=libraries, resolve=resolve, progress=progress,
                             check_cancel=check_cancel, max_rows=importer.MAX_ROWS,
                             release_tag=str((cfg.get("anime_mapping") or {}).get("release_tag") or "v3"),
-                            search=plex_recovery.title_resolver(token, check_cancel))
+                            search=plex_recovery.title_resolver(token, check_cancel),
+                            ignore_live_tv=job.ignore_live_tv)
 
 
 def _scan(job, cfg):
@@ -353,6 +390,8 @@ def _scan(job, cfg):
             check_cancel()
             if job.tautulli:
                 raw = _scan_tautulli(job, cfg, progress, check_cancel)
+            elif job.tracearr:
+                raw = _scan_tracearr(job, cfg, progress, check_cancel)
             elif job.database == "upload":
                 raw = _scan_database(job, cfg, None, progress, check_cancel)
             else:
@@ -419,8 +458,14 @@ def options(request: Request):
         if _tautulli_ready(block) and user_can_access_instance(cfg, request_user(request), "TAUTULLI", instance):
             tautulli.append(dict(id=instance, label=block.get("label") or instance,
                                  user=str((block.get("history") or {}).get("user_id") or "")))
+    tracearr = []
+    for instance in list_instance_ids(cfg, "tracearr"):
+        block = _tracearr_block(cfg, instance)
+        if _tautulli_ready(block) and user_can_access_instance(cfg, request_user(request), "TRACEARR", instance):
+            tracearr.append(dict(id=instance, label=block.get("label") or instance,
+                                 user=str((block.get("history") or {}).get("user_id") or "")))
     targets = [t for t in importer._target_instances(cfg) if user_can_access_instance(cfg, request_user(request), "CROSSWATCH", t["id"])]
-    return dict(sources=sources, targets=targets, lookups=lookups, tautulli=tautulli)
+    return dict(sources=sources, targets=targets, lookups=lookups, tautulli=tautulli, tracearr=tracearr)
 
 
 @router.post("/database")
@@ -480,6 +525,7 @@ def start(payload: Start, request: Request):
     owner = _owner(request)
     source, target = normalize_instance_id(payload.source_instance), normalize_instance_id(payload.target_instance)
     tautulli = normalize_instance_id(payload.tautulli_instance) if payload.source == "tautulli" else ""
+    tracearr = normalize_instance_id(payload.tracearr_instance) if payload.source == "tracearr" else ""
     database = ("upload" if payload.upload_id else "server") if payload.source == "plex_db" else ""
     _access(cfg, request, "PLEX", source)
     _access(cfg, request, "CROSSWATCH", target)
@@ -489,6 +535,12 @@ def start(payload: Start, request: Request):
             raise HTTPException(409, "Connect Tautulli before recovering its history.")
         if not _plex_token(cfg, source):
             raise HTTPException(409, "Connect a Plex account before recovering Tautulli history.")
+    if tracearr:
+        _access(cfg, request, "TRACEARR", tracearr)
+        if not _tautulli_ready(_tracearr_block(cfg, tracearr)):
+            raise HTTPException(409, "Connect Tracearr before recovering its history.")
+        if not _tracearr_user(cfg, tracearr):
+            raise HTTPException(409, "Choose your Tracearr user in the Tracearr settings before recovering its history.")
     if database and not _plex_token(cfg, source):
         raise HTTPException(409, "Connect a Plex account before recovering history from the Plex database.")
     if database == "upload":
@@ -513,9 +565,9 @@ def start(payload: Start, request: Request):
             raise HTTPException(409, "A Plex recovery is already open. Return to it or close it before starting another.")
         if syncAPI._is_sync_running():
             raise HTTPException(409, "Another sync or recovery is running. Try again when it finishes.")
-        message = "Connecting to Tautulli" if tautulli else "Reading the uploaded Plex database" if database == "upload" else "Connecting to Plex"
-        job = Job(owner, source, target, _source_hash(cfg, source, tautulli), target_hash=_target_hash(cfg, target),
-                  tautulli=tautulli, database=database, message=message)
+        message = "Connecting to Tautulli" if tautulli else "Connecting to Tracearr" if tracearr else "Reading the uploaded Plex database" if database == "upload" else "Connecting to Plex"
+        job = Job(owner, source, target, _source_hash(cfg, source, tautulli, tracearr), target_hash=_target_hash(cfg, target),
+                  tautulli=tautulli, tracearr=tracearr, database=database, message=message, ignore_live_tv=payload.ignore_live_tv)
         if database == "upload":
             upload = UPLOADS.pop(payload.upload_id, None)
             if upload is None:
@@ -541,6 +593,8 @@ def active(request: Request):
                 _access(cfg, request, "PLEX", job.source)
                 if job.tautulli:
                     _access(cfg, request, "TAUTULLI", job.tautulli)
+                if job.tracearr:
+                    _access(cfg, request, "TRACEARR", job.tracearr)
                 _access(cfg, request, "CROSSWATCH", job.target)
             except HTTPException:
                 continue
@@ -583,7 +637,7 @@ def _matching_job(sid, revision, request, cfg):
     job = _job(sid, request, cfg)
     if job.cancel.is_set() or job.status != "review" or job.revision != revision:
         raise HTTPException(409, "The recovery changed. Reopen matching.")
-    if job.source_hash != _source_hash(cfg, job.source, job.tautulli) or (job.target_hash and job.target_hash != _target_hash(cfg, job.target)):
+    if job.source_hash != _job_source_hash(cfg, job) or (job.target_hash and job.target_hash != _target_hash(cfg, job.target)):
         raise HTTPException(409, "Connection settings changed. Start a new recovery scan.")
     return job
 
@@ -931,8 +985,8 @@ def commit(sid: str, payload: Commit, request: Request):
             raise HTTPException(409, "Another sync is running. Wait before importing.")
         if job.target_hash and job.target_hash != _target_hash(cfg, job.target):
             raise HTTPException(409, "Tracker settings changed. Start a new recovery scan.")
-        if job.source_hash != _source_hash(cfg, job.source, job.tautulli):
-            raise HTTPException(409, ("Connection" if job.tautulli else "Plex") + " settings changed. Start a new recovery scan.")
+        if job.source_hash != _job_source_hash(cfg, job):
+            raise HTTPException(409, ("Connection" if job.tautulli or job.tracearr else "Plex") + " settings changed. Start a new recovery scan.")
         if normalize_instance_id(payload.target_instance) != job.target or payload.import_id != sid:
             raise HTTPException(400, "The import destination changed. Start a new preview.")
         _shape(job, cfg)

@@ -35,6 +35,7 @@ BATCH_ROWS = 500
 MAX_TEXT = 1024
 MAX_ACCOUNTS = 500
 MAX_LIBRARY_TOKENS = 4_000_000
+LIVE_TV_GUID = "tv.plex.xmltv://"
 
 _EXTERNAL = ("tmdb", "imdb", "tvdb")
 _KNOWN = "Known identity"
@@ -295,13 +296,15 @@ def _label(kind: str, title: str, show: str, season: int | None, episode: int | 
 def _scan(con: sqlite3.Connection, clock: _Clock, *, account: int, libraries: set[str],
           resolve: Callable[[str, str], Mapping[str, Any]], progress: Callable[..., None],
           check_cancel: Callable[[], None], max_rows: int, release_tag: str,
-          search: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None) -> list[dict[str, Any]]:
+          search: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None,
+          ignore_live_tv: bool = True) -> list[dict[str, Any]]:
     progress("libraries", "Checking the Plex library in the database", 0, 0)
     with clock:
         tables = _tables(con)
         current = _current(con, tables, check_cancel)
         sections = {str(row[0]) for row in con.execute(f"SELECT substr(id, 1, {MAX_TEXT}) FROM library_sections")} if "library_sections" in tables else set()
         columns = {str(row[1]) for row in con.execute("PRAGMA table_info(metadata_item_views)")}
+    sectioned = "library_section_id" in columns
 
     def text(name: str) -> str:
         return f'substr(v."{name}", 1, {MAX_TEXT})' if name in columns else "NULL"
@@ -362,6 +365,10 @@ def _scan(con: sqlite3.Connection, clock: _Clock, *, account: int, libraries: se
         if not guid or "/edition/trailer" in guid.lower() or out_of_scope:
             skipped += 1
             report(index + 1)
+            continue
+        if ignore_live_tv and (guid.lower().startswith(LIVE_TV_GUID) or (sectioned and section is None)):
+            skipped += 1
+            report(index + 1, title or show_title, result="Skipped: Live TV")
             continue
         method = _KNOWN
         if kind == "movie":
@@ -475,8 +482,10 @@ def _scan(con: sqlite3.Connection, clock: _Clock, *, account: int, libraries: se
 def scan(path: Path, *, account: int, libraries: set[str], resolve: Callable[[str, str], Mapping[str, Any]],
          progress: Callable[..., None], check_cancel: Callable[[], None], max_rows: int = 50_000,
          release_tag: str = "v3",
-         search: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None) -> list[dict[str, Any]]:
+         search: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None,
+         ignore_live_tv: bool = True) -> list[dict[str, Any]]:
     check_cancel()
     with _reading(path, SCAN_SECONDS, check_cancel) as (con, clock):
         return _scan(con, clock, account=account, libraries={str(x) for x in libraries}, resolve=resolve,
-                     progress=progress, check_cancel=check_cancel, max_rows=max_rows, release_tag=release_tag, search=search)
+                     progress=progress, check_cancel=check_cancel, max_rows=max_rows, release_tag=release_tag, search=search,
+                     ignore_live_tv=ignore_live_tv)

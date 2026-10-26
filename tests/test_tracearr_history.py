@@ -84,6 +84,14 @@ def _adapter(client: _Client, cfg: dict[str, Any] | None = None, **root: Any) ->
     return SimpleNamespace(client=client, cfg={"tracearr": {"history": dict(cfg or {})}, **root})
 
 
+def test_full_last_page_followed_by_an_empty_page_completes() -> None:
+    client = _Client([[_movie()], []])
+    idx = history.build_index(_adapter(client))
+
+    assert list(idx) == ["tmdb:157336"]
+    assert [call.get("cursor") for call in client.calls] == [None, "1"]
+
+
 def test_movie_uses_external_ids_and_stop_time() -> None:
     idx = history.build_index(_adapter(_Client([[_movie()]])))
 
