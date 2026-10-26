@@ -500,8 +500,14 @@ def _letterboxd_date(value: Any) -> str:
     return ""
 
 
-def _rating_raw(it: dict[str, Any]) -> str:
-    return str(it.get("rating") or it.get("user_rating") or "")
+def _letterboxd_rating10(it: dict[str, Any]) -> str:
+    try:
+        f = float(it.get("rating") or it.get("user_rating") or 0)
+    except (TypeError, ValueError):
+        return ""
+    if f <= 0:
+        return ""
+    return str(min(10, max(1, int(f + 0.5))))
 
 
 def _actual_watched_at(it: dict[str, Any]) -> str:
@@ -577,16 +583,16 @@ def _letterboxd_rows(
         ]
         return header, rows
     if feature == "ratings":
-        header = ["imdbID", "tmdbID", "Title", "Year", "Rating"]
+        header = ["imdbID", "tmdbID", "Title", "Year", "Rating10"]
         rows = [
-            [ids.get("imdb", ""), ids.get("tmdb", ""), title, year, _rating_raw(it)]
+            [ids.get("imdb", ""), ids.get("tmdb", ""), title, year, _letterboxd_rating10(it)]
             for _k, it in items
             for t, title, year, _wd, ids in [_row_base(it)]
             if t == "movie"
         ]
         return header, rows
     if feature == "combined":
-        header = ["imdbID", "tmdbID", "Title", "Year", "Rating"]
+        header = ["imdbID", "tmdbID", "Title", "Year", "Rating10"]
         if include_watched_date:
             header.append("WatchedDate")
         rows = [
@@ -595,7 +601,7 @@ def _letterboxd_rows(
                 ids.get("tmdb", ""),
                 title,
                 year,
-                _rating_raw(it),
+                _letterboxd_rating10(it),
                 *([_letterboxd_date(_actual_watched_at(it))] if include_watched_date else []),
             ]
             for _k, it in items
