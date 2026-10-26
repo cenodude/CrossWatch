@@ -21,7 +21,7 @@ from ._mod_common import build_op_result, build_session, _sleep_cancellable
 from ._log import log
 from .myanimelist import _history, _ratings, _watchlist
 
-__VERSION__ = "0.1"
+__VERSION__ = "0.2"
 __all__ = ["get_manifest", "MYANIMELISTModule", "OPS"]
 _FEATURES = {"watchlist": _watchlist, "ratings": _ratings, "history": _history}
 

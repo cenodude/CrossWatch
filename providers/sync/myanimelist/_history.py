@@ -56,6 +56,18 @@ def _validate_add(item: Any, episode: int, media_attr: Any) -> tuple[bool, int]:
     return movie, total
 
 
+def _scrobble_dates(item: Any, attr: Any, episode: int, status: str) -> dict[str, str]:
+    day = str(item.get("_cw_scrobble_date") or "")
+    if not day:
+        return {}
+    dates = {}
+    if episode == 1 and not attr.get("start_date"):
+        dates["start_date"] = day
+    if status == "completed" and not attr.get("finish_date"):
+        dates["finish_date"] = day
+    return dates
+
+
 def _add(adapter: Any, item: Any, ident: str, episode: int, entry: Any, media_attr: Any) -> None:
     movie, total = _validate_add(item, episode, media_attr)
     attr = entry if entry else {}
@@ -68,8 +80,10 @@ def _add(adapter: Any, item: Any, ident: str, episode: int, entry: Any, media_at
         if source_status and attr.get("status") == "watching":
             adapter.client.save(ident, entry, {"status": source_status})
         return
-    status = "completed" if complete else "watching"
-    adapter.client.save(ident, entry, {"num_episodes_watched": episode, "status": source_status or status})
+    status = source_status or ("completed" if complete else "watching")
+    attributes = {"num_episodes_watched": episode, "status": status}
+    attributes.update(_scrobble_dates(item, attr, episode, status))
+    adapter.client.save(ident, entry, attributes)
 
 
 def add(adapter: Any, items: Any) -> dict[str, Any]:

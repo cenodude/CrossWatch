@@ -329,6 +329,33 @@ def test_scrobble_watched_gate_profile_and_write(mapping, monkeypatch, kind):
     assert target.send(ev, cfg)["ok"]
     assert writes[0][0:2] == ("P01", "history")
     assert writes[0][2][0]["type"] == kind
+    assert writes[0][2][0]["_cw_scrobble_date"] == sink.date.today().isoformat()
+
+
+def test_scrobble_sets_start_and_finish_dates_once(adapter):
+    day = {"_cw_scrobble_date": "2026-10-27"}
+    adapter.client.rows.pop("1")
+    _history.add(adapter, [{**episode(1), **day}])
+    assert adapter.client.calls[-1][2]["data"] == {"num_watched_episodes": 1, "status": "watching", "start_date": "2026-10-27"}
+    _history.add(adapter, [{**episode(2), **day}])
+    assert "start_date" not in adapter.client.calls[-1][2]["data"]
+    _history.add(adapter, [{**episode(12), "_cw_scrobble_date": "2026-11-02"}])
+    assert adapter.client.calls[-1][2]["data"] == {"num_watched_episodes": 12, "status": "completed", "finish_date": "2026-11-02"}
+    assert adapter.client.rows["1"]["start_date"] == "2026-10-27"
+
+
+def test_scrobble_dates_keep_existing_and_skip_mid_series_start(adapter):
+    adapter.client.rows["2"].update(start_date="2026-01-01")
+    _history.add(adapter, [{**movie(), "_cw_scrobble_date": "2026-10-27"}])
+    assert adapter.client.calls[-1][2]["data"] == {"num_watched_episodes": 1, "status": "completed", "finish_date": "2026-10-27"}
+    _history.add(adapter, [{**episode(5), "_cw_scrobble_date": "2026-10-27"}])
+    assert adapter.client.calls[-1][2]["data"] == {"num_watched_episodes": 5, "status": "watching"}
+
+
+def test_history_sync_never_writes_dates(adapter):
+    adapter.client.rows.pop("1")
+    _history.add(adapter, [{**episode(n), "watched_at": "2026-10-01T00:00:00Z"} for n in range(1, 13)])
+    assert adapter.client.calls[-1][2]["data"] == {"num_watched_episodes": 12, "status": "completed"}
 
 
 def test_watcher_and_webhook_factories_accept_myanimelist_profile():
@@ -348,7 +375,7 @@ def test_capture_and_sync_api_discover_myanimelist(mapping, monkeypatch, config_
     monkeypatch.setattr("cw_platform.config_base.load_config", lambda: mapping)
     providers = json.loads(api_sync_providers().body)
     provider = next(row for row in providers if row["name"] == "MYANIMELIST")
-    assert provider["version"] == "0.1" and provider["configured"]
+    assert provider["version"] == "0.2" and provider["configured"]
     assert provider["features"]["history"] and not provider["features"]["progress"]
     monkeypatch.setattr(snapshots, "CONFIG", config_base)
     monkeypatch.setattr(module.MYANIMELISTModule, "build_index", lambda self, feature: {canonical_key(movie()): movie()})
