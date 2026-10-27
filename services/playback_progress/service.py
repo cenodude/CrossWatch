@@ -28,6 +28,7 @@ from .adapters.nuvio import NuvioPlaybackAdapter
 from .adapters.publicmetadb import PublicMetaDBPlaybackAdapter
 from .adapters.punchplay import PunchPlayPlaybackAdapter
 from .adapters.scrob import ScrobPlaybackAdapter
+from .adapters.silo import SiloPlaybackAdapter
 from .adapters.simkl import SimklPlaybackAdapter
 from .adapters.stremio import StremioPlaybackAdapter
 from .adapters.trakt import TraktPlaybackAdapter
@@ -41,7 +42,7 @@ MAX_WORKERS = 6
 DEFAULT_PROVIDER_TIMEOUT_SECONDS = 20.0
 FIRST_RESPONSE_SECONDS = 2.5
 GROUP_PROGRESS_TOLERANCE = 2.0
-PHASE1_PROVIDERS = ("crosswatch", "trakt", "simkl", "mdblist", "publicmetadb", "wetrakr", "punchplay", "flicklist", "plex", "emby", "jellyfin", "nuvio", "kodi", "stremio", "floppy", "scrob")
+PHASE1_PROVIDERS = ("crosswatch", "trakt", "simkl", "mdblist", "publicmetadb", "wetrakr", "punchplay", "flicklist", "plex", "emby", "jellyfin", "nuvio", "kodi", "stremio", "floppy", "scrob", "silo")
 SORT_VALUES = {"last_updated", "progress_high", "progress_low", "remaining_time", "rating_high", "title", "provider"}
 LIVE_MEDIA_PROVIDERS = {"plex", "emby", "jellyfin", "kodi"}
 LIVE_ACTIVE_STATES = {"playing", "paused", "buffering"}
@@ -771,7 +772,7 @@ def _validated_progress_percent(value: Any, *, max_exclusive: float = EDITABLE_P
 def _instance_label(cfg: Mapping[str, Any], provider: str, instance_id: str) -> str:
     block = get_provider_block(cfg, provider, instance_id)
     label = configured_label(block, "Default" if instance_id == "default" else instance_id)
-    if str(provider or "").strip().lower() == "nuvio":
+    if str(provider or "").strip().lower() in {"nuvio", "silo"}:
         label = str(block.get("profile_name") or "").strip() or label
     provider_label = {
         "trakt": "Trakt",
@@ -787,6 +788,7 @@ def _instance_label(cfg: Mapping[str, Any], provider: str, instance_id: str) -> 
         "stremio": "Stremio",
         "floppy": "Floppy",
         "crosswatch": "CrossWatch",
+        "silo": "Silo",
     }.get(provider, provider)
     if label.lower() == "default":
         return f"{provider_label} Default"
@@ -860,6 +862,7 @@ def _profile_has_explicit_identity(cfg: Mapping[str, Any], provider: str, instan
         "punchplay": ("access_token", "refresh_token", "user_id", "username"),
         "flicklist": ("api_key", "access_token", "token", "username", "user_id"),
         "scrob": ("server_url", "api_key", "username"),
+        "silo": ("access_token", "refresh_token", "profile_id"),
     }.get(str(provider or "").strip().lower(), ())
     return any(str(_path_value(raw, path) or "").strip() for path in identity_paths)
 
@@ -935,6 +938,7 @@ class PlaybackProgressService:
             "punchplay": PunchPlayPlaybackAdapter(),
             "flicklist": FlickListPlaybackAdapter(),
             "scrob": ScrobPlaybackAdapter(),
+            "silo": SiloPlaybackAdapter(),
             "crosswatch": CrossWatchPlaybackAdapter(),
         }
         self._cache: dict[tuple[str, str, str], dict[str, Any]] = {}

@@ -1,9 +1,9 @@
 /* CrossWatch - Scrobbler Route Modal */
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const label = (v) => ({ plex: "Plex", jellyfin: "Jellyfin", emby: "Emby", kodi: "Kodi", trakt: "Trakt", simkl: "SIMKL", mdblist: "MDBList", crosswatch: "CrossWatch", floppy: "Floppy", punchplay: "PunchPlay", bingebase: "BingeBase", flicklist: "FlickList", wetrakr: "WeTrakr", anilist: "AniList", myanimelist: "MyAnimeList", kitsu: "Kitsu", scrob: "Scrob", stremio: "Stremio" }[String(v || "").toLowerCase()] || String(v || "").toUpperCase());
-const sources = ["plex", "jellyfin", "emby", "kodi", "scrob", "stremio"];
-const sinks = ["myanimelist", "kitsu", "plex", "jellyfin", "emby", "kodi", "crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "bingebase", "flicklist", "wetrakr", "anilist", "scrob"];
-const ratingSinks = ["kitsu", "myanimelist", "crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "flicklist", "wetrakr", "anilist", "scrob"];
+const label = (v) => ({ plex: "Plex", jellyfin: "Jellyfin", emby: "Emby", kodi: "Kodi", trakt: "Trakt", simkl: "SIMKL", mdblist: "MDBList", crosswatch: "CrossWatch", floppy: "Floppy", punchplay: "PunchPlay", bingebase: "BingeBase", flicklist: "FlickList", wetrakr: "WeTrakr", anilist: "AniList", myanimelist: "MyAnimeList", kitsu: "Kitsu", scrob: "Scrob", stremio: "Stremio", silo: "Silo" }[String(v || "").toLowerCase()] || String(v || "").toUpperCase());
+const sources = ["plex", "jellyfin", "emby", "kodi", "scrob", "stremio", "silo"];
+const sinks = ["myanimelist", "kitsu", "plex", "jellyfin", "emby", "kodi", "crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "bingebase", "flicklist", "wetrakr", "anilist", "scrob", "silo"];
+const ratingSinks = ["kitsu", "myanimelist", "crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "flicklist", "wetrakr", "anilist", "scrob", "silo"];
 const mediaSinks = ["plex", "jellyfin", "emby", "kodi"];
 
 function flashCopied(btn) {
@@ -427,7 +427,7 @@ function filterRow(o) {
 }
 
 function matchUsersSupported(r) {
-  const media = ["plex", "emby", "jellyfin"];
+  const media = ["plex", "emby", "jellyfin", "silo"];
   return media.includes(String(r?.provider || "").toLowerCase()) && media.includes(String(r?.sink || "").toLowerCase());
 }
 
@@ -546,8 +546,8 @@ function optionsPanel(r) {
         ${field("Progress step (%)", `<input class="input" id="scr-progress-step" type="number" min="1" max="25" value="${esc(r.options.scrobble?.progress_step ?? "")}" placeholder="Global">`, "", "Minimum progress change required before sending another watching update. Leave this at the default, as it significantly affects API usage.")}
         ${field("Pause debounce (s)", `<input class="input" id="scr-watch-pause" type="number" min="0" max="3600" value="${esc(r.options.watch?.pause_debounce_seconds ?? "")}" placeholder="Global">`, "", "Seconds to ignore tiny pause/start flaps just after playback starts for this route.")}
         ${field("Suppress start (%)", `<input class="input" id="scr-watch-suppress" type="number" min="0" max="100" value="${esc(r.options.watch?.suppress_start_at ?? "")}" placeholder="Global">`, "", "Ignore new start events at or above this progress for this route.")}
-        ${["emby", "jellyfin", "kodi", "scrob"].includes(r.provider) ? field("Poll interval (s)", `<input class="input" id="scr-watch-poll" type="number" min="5" max="60" value="${esc(r.options.watch?.poll_seconds ?? "")}" placeholder="10">`, "", "Seconds between playback checks while something is playing, from 5 to 60. Higher values lower the load but delay pause and stop detection. Routes sharing this source use the lowest value set.") : ""}
-        ${["emby", "jellyfin", "kodi", "scrob"].includes(r.provider) ? field("Idle poll interval (s)", `<input class="input" id="scr-watch-idle-poll" type="number" min="5" max="120" value="${esc(r.options.watch?.idle_poll_seconds ?? "")}" placeholder="30">`, "", "Seconds between checks while nothing is playing, from 5 to 120. This decides how quickly a new playback is noticed. It never drops below the poll interval. Routes sharing this source use the lowest value set.") : ""}
+        ${["emby", "jellyfin", "kodi", "scrob", "silo"].includes(r.provider) ? field("Poll interval (s)", `<input class="input" id="scr-watch-poll" type="number" min="5" max="60" value="${esc(r.options.watch?.poll_seconds ?? "")}" placeholder="10">`, "", "Seconds between playback checks while something is playing, from 5 to 60. Higher values lower the load but delay pause and stop detection. Routes sharing this source use the lowest value set.") : ""}
+        ${["emby", "jellyfin", "kodi", "scrob", "silo"].includes(r.provider) ? field("Idle poll interval (s)", `<input class="input" id="scr-watch-idle-poll" type="number" min="5" max="120" value="${esc(r.options.watch?.idle_poll_seconds ?? "")}" placeholder="30">`, "", "Seconds between checks while nothing is playing, from 5 to 120. This decides how quickly a new playback is noticed. It never drops below the poll interval. Routes sharing this source use the lowest value set.") : ""}
       </div>
       ${unresolvedFallback}
       ${pkcSupport}

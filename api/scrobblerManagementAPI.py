@@ -44,7 +44,7 @@ from .scrobbleAPI import _ensure_media_profile_webhook_ids, _ensure_route_rating
 router = APIRouter(prefix="/api/scrobbler", tags=["scrobbler-management"])
 
 SOURCE_PROVIDERS = tuple(WEBHOOK_SOURCE_PROVIDERS)
-WATCHER_SOURCE_PROVIDERS = ("plex", "jellyfin", "emby", "kodi", "scrob", "stremio")
+WATCHER_SOURCE_PROVIDERS = ("plex", "jellyfin", "emby", "kodi", "scrob", "stremio", "silo")
 SINK_PROVIDERS = tuple(sorted(ROUTE_SINKS))
 ALLOWED_FILTER_KEYS = {
     "username_whitelist",
@@ -78,6 +78,7 @@ WEBHOOK_SETTING_KEYS = {
     "plex_kitsu_ratings",
     "plex_myanimelist_ratings",
     "plex_scrob_ratings",
+    "plex_silo_ratings",
     "pause_debounce_seconds",
     "suppress_start_at",
     "anime_mapping_crosswatch",
@@ -159,6 +160,10 @@ def _scrobble_source_connected(cfg: Mapping[str, Any], provider: str, instance: 
         from providers.scrobble.stremio.addon import source_ready as stremio_source_ready
 
         return stremio_source_ready(cfg, instance)
+    if key == "silo":
+        from providers.auth._auth_SILO import is_configured as silo_configured, provider_block as silo_block
+
+        return silo_configured(silo_block(_dict(cfg), normalize_instance_id(instance)))
     return media_source_connected(cfg, key, instance)
 
 
@@ -338,7 +343,7 @@ def _normalize_webhook_settings(cfg: Mapping[str, Any], provider: str, body: Map
         if key in body:
             out[key] = _normalize_filters(body.get(key), provider, key)
     if provider == "plex":
-        for key in ("plex_trakt_ratings", "plex_simkl_ratings", "plex_mdblist_ratings", "plex_crosswatch_ratings", "plex_floppy_ratings", "plex_punchplay_ratings", "plex_flicklist_ratings", "plex_wetrakr_ratings", "plex_anilist_ratings", "plex_kitsu_ratings", "plex_myanimelist_ratings", "plex_scrob_ratings"):
+        for key in ("plex_trakt_ratings", "plex_simkl_ratings", "plex_mdblist_ratings", "plex_crosswatch_ratings", "plex_floppy_ratings", "plex_punchplay_ratings", "plex_flicklist_ratings", "plex_wetrakr_ratings", "plex_anilist_ratings", "plex_kitsu_ratings", "plex_myanimelist_ratings", "plex_scrob_ratings", "plex_silo_ratings"):
             if key in body:
                 out[key] = bool(body.get(key))
     selected_sinks = [str(s or "").strip().lower() for s in (out.get("sinks") or _as_list(body.get("sinks")) or current_sinks)]
@@ -628,6 +633,7 @@ def build_overview(cfg: dict[str, Any], request: Request) -> dict[str, Any]:
             "kitsu": bool(watch.get("plex_kitsu_ratings")),
             "myanimelist": bool(watch.get("plex_myanimelist_ratings")),
             "scrob": bool(watch.get("plex_scrob_ratings")),
+            "silo": bool(watch.get("plex_silo_ratings")),
             "endpoint_url": _global_plex_ratings_url(request, cfg),
         },
     }

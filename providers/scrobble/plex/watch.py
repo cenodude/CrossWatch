@@ -2452,6 +2452,7 @@ def process_rating_webhook(
         enable_anilist = "anilist" in custom_targets
         enable_kitsu = "kitsu" in custom_targets
         enable_myanimelist = "myanimelist" in custom_targets
+        enable_silo = "silo" in custom_targets
     else:
         enable_trakt = bool(watch_cfg.get("plex_trakt_ratings"))
         enable_simkl = bool(watch_cfg.get("plex_simkl_ratings"))
@@ -2465,8 +2466,9 @@ def process_rating_webhook(
         enable_anilist = bool(watch_cfg.get("plex_anilist_ratings"))
         enable_kitsu = bool(watch_cfg.get("plex_kitsu_ratings"))
         enable_myanimelist = bool(watch_cfg.get("plex_myanimelist_ratings"))
+        enable_silo = bool(watch_cfg.get("plex_silo_ratings"))
 
-    if not (enable_trakt or enable_simkl or enable_mdblist or enable_crosswatch or enable_floppy or enable_punchplay or enable_flicklist or enable_scrob or enable_wetrakr or enable_anilist or enable_kitsu or enable_myanimelist):
+    if not (enable_trakt or enable_simkl or enable_mdblist or enable_crosswatch or enable_floppy or enable_punchplay or enable_flicklist or enable_scrob or enable_wetrakr or enable_anilist or enable_kitsu or enable_myanimelist or enable_silo):
         return {"ok": True, "ignored": True}
 
     if not payload:
@@ -2570,7 +2572,7 @@ def process_rating_webhook(
         results["mdblist"] = _mdblist_send_rating(media_type, ids, rating_precise, cfg, logger)
     ops_enabled = [
         name
-        for name, on in (("crosswatch", enable_crosswatch), ("floppy", enable_floppy), ("punchplay", enable_punchplay), ("flicklist", enable_flicklist), ("scrob", enable_scrob), ("wetrakr", enable_wetrakr), ("kitsu", enable_kitsu), ("myanimelist", enable_myanimelist))
+        for name, on in (("crosswatch", enable_crosswatch), ("floppy", enable_floppy), ("punchplay", enable_punchplay), ("flicklist", enable_flicklist), ("scrob", enable_scrob), ("wetrakr", enable_wetrakr), ("kitsu", enable_kitsu), ("myanimelist", enable_myanimelist), ("silo", enable_silo))
         if on
     ]
     if ops_enabled:

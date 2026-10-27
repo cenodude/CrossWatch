@@ -308,6 +308,7 @@ def test_plex_webhook_ratings_forward_to_every_dispatcher_sink(monkeypatch) -> N
         "wetrakr": {"instances": {"wetrakr-profile": {"access_token": "wetrakr-token"}}},
         "kitsu": {"instances": {"kitsu-profile": {"access_token": "kitsu-token"}}},
         "myanimelist": {"instances": {"myanimelist-profile": {"access_token": "mal-token"}}},
+        "silo": {"instances": {"silo-profile": {"server_url": "http://silo.test", "access_token": "silo-token", "refresh_token": "r", "profile_id": "p-1"}}},
         "scrob": {
             "server_url": "http://scrob.test",
             "api_key": "scrob-token",

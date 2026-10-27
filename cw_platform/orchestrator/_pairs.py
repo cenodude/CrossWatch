@@ -352,7 +352,7 @@ def _pair_scope_ids(ctx) -> set[str]:
     return {str(x).strip() for x in raw if str(x).strip()}
 
 
-_SYNC_USER_PROVIDERS = frozenset({"PLEX", "EMBY", "JELLYFIN"})
+_SYNC_USER_PROVIDERS = frozenset({"PLEX", "EMBY", "JELLYFIN", "SILO"})
 
 
 def _sync_users_by_key(cfg: Mapping[str, Any], provider: str, parent: str) -> dict[str, tuple[str, str, str]]:

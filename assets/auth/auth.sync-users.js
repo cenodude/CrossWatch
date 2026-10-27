@@ -1,12 +1,12 @@
 /* assets/auth/auth.sync-users.js */
-/* CrossWatch - Users tab for media server connections (Plex, Emby, Jellyfin) */
+/* CrossWatch - Users tab for media server connections (Plex, Emby, Jellyfin, Silo) */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function (w, d) {
   if (w.CW?.SyncUsers) return;
 
-  const PROVIDERS = new Set(["plex", "emby", "jellyfin"]);
-  const LABELS = { plex: "Plex", emby: "Emby", jellyfin: "Jellyfin" };
-  const KIND_CLASS = { Owner: "is-owner", Admin: "is-owner", Home: "is-home", Friend: "is-friend", Disabled: "is-disabled" };
+  const PROVIDERS = new Set(["plex", "emby", "jellyfin", "silo"]);
+  const LABELS = { plex: "Plex", emby: "Emby", jellyfin: "Jellyfin", silo: "Silo" };
+  const KIND_CLASS = { Owner: "is-owner", Admin: "is-owner", Connected: "is-owner", Home: "is-home", Child: "is-home", Friend: "is-friend", Disabled: "is-disabled" };
 
   const pending = new Map();
   const pendingKey = (provider, instance) => `${provider}:${instance}`;
@@ -42,6 +42,11 @@
       const kind = type === "owner" ? "Owner" : type === "friend" ? "Friend" : "Home";
       return key ? { key, username: txt(u?.username), kind, home: kind === "Home", disabled: false, cloud: txt(u?.cloud_account_id) } : null;
     }
+    if (provider === "silo") {
+      const key = txt(u?.id);
+      const kind = u?.connected ? "Connected" : u?.is_child ? "Child" : "";
+      return key ? { key, username: txt(u?.username), kind, home: u?.has_pin === true, disabled: false } : null;
+    }
     const key = txt(u?.id);
     const admin = u?.IsAdministrator === true;
     const disabled = u?.IsDisabled === true;
@@ -57,6 +62,9 @@
     if (code === "match_as_too_long") return "Match as can be at most 40 characters.";
     if (code === "not_found") return "This connection profile no longer exists.";
     if (code === "unsupported_provider") return `${LABELS[provider] || provider} does not support user syncing.`;
+    if (code === "invalid_pin") return "A profile PIN was not accepted.";
+    if (code === "pin_locked") return "Too many incorrect PINs. Try again later.";
+    if (code === "silo_unavailable") return "Could not reach the Silo server.";
     return code || "Something went wrong.";
   }
 
@@ -75,8 +83,8 @@
     const savedPin = state.saved.find((s) => s.key === u.key)?.has_pin;
     const initial = esc((u.username || u.key).charAt(0).toUpperCase());
     const tag = u.missing ? `<span class="cw-su-tag is-missing">Not on server</span>` : u.kind ? `<span class="cw-su-tag ${KIND_CLASS[u.kind] || ""}">${esc(u.kind)}</span>` : "";
-    const pin = state.provider === "plex" && u.home
-      ? `<input type="password" class="cw-su-pin" inputmode="numeric" maxlength="8" autocomplete="off" data-pin="${esc(u.key)}" placeholder="${savedPin ? "PIN saved" : "PIN if needed"}" ${on ? "" : "hidden"} data-lpignore="true" data-1p-ignore="true" data-bwignore="true">`
+    const pin = (state.provider === "plex" || state.provider === "silo") && u.home
+      ? `<input type="password" class="cw-su-pin" inputmode="numeric" maxlength="8" autocomplete="off" data-pin="${esc(u.key)}" placeholder="${savedPin ? "PIN saved" : state.provider === "silo" ? "Profile PIN" : "PIN if needed"}" ${on ? "" : "hidden"} data-lpignore="true" data-1p-ignore="true" data-bwignore="true">`
       : "";
     const match = `<input type="text" class="cw-su-match" maxlength="40" autocomplete="off" spellcheck="false" data-match="${esc(u.key)}" list="cw-su-names-${state.provider}" placeholder="Match as (optional)" title="Name used to match this user on your other servers. Pick a name from the list or type one. Leave empty to use ${esc(u.username || u.key)}." ${on ? "" : "hidden"}>`;
     return `
@@ -103,7 +111,7 @@
             <li>Each ticked user syncs with the user of the same name on the other server, each with their own history. Different names, like Carmen on Plex and carmii on Jellyfin? Tick carmii and set her <strong>Match as</strong> to Carmen.</li>
             <li>Ticked users join the user profile with the same name. Use <strong>Create user profiles</strong> below to make the missing ones, so each person sees only their own data.</li>
           </ol>
-          <p><strong>Media servers only.</strong> This works between Plex, Emby and Jellyfin. Trackers such as Trakt or SIMKL need every person to sign in with their own account, so for those create a connection profile per person (pick the user in Settings) and a normal sync pair to that person's tracker profile.</p>
+          <p><strong>Media servers only.</strong> This works between Plex, Emby, Jellyfin and Silo. Trackers such as Trakt or SIMKL need every person to sign in with their own account, so for those create a connection profile per person (pick the user in Settings) and a normal sync pair to that person's tracker profile.</p>
         </details>
         ${state.loadError ? `<div class="cw-wl-empty">Could not load users from ${esc(label)}: ${esc(state.loadError)}</div>` : ""}
         <div class="cw-su-tools">
