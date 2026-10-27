@@ -176,6 +176,8 @@
       openTypeEditor: ctx.openTypeEditor,
       openTitleSearchEditor: ctx.openTitleSearchEditor,
       openItemReplacer: ctx.openItemReplacer,
+      canTraceOrigin: ctx.canTraceOrigin,
+      openItemOrigin: ctx.openItemOrigin,
       openRawFieldsModal: ctx.openRawFieldsModal,
       openRatingEditor: ctx.openRatingEditor,
       openHistoryEditor: ctx.openHistoryEditor,

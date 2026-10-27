@@ -1951,6 +1951,8 @@
       openTypeEditor,
       openTitleSearchEditor,
       openItemReplacer,
+      canTraceOrigin,
+      openItemOrigin,
       openRawFieldsModal,
       sendRow,
       columnLabel,
@@ -1989,6 +1991,22 @@
 
   function openTypeEditor(row, anchor) {
     return editorRowEditor.openTypeEditor(row, anchor, rowEditorContext());
+  }
+
+  function canTraceOrigin(row) {
+    return !!row && isProviderPickerSource() && !isMergedView() && !!state.snapshot;
+  }
+
+  async function openItemOrigin(row, anchor) {
+    if (!canTraceOrigin(row)) return;
+    try {
+      const {openItemOrigin: open} = await import(`/assets/js/editor/origin.js?v=${encodeURIComponent(window.APP_VERSION || "1")}`);
+      const replacer = metadataReplacerContext();
+      open(row, anchor, {state, fetchJSON, openPopup, positionPopup, appendPopupTitle, appendPopupActions,
+        canReplaceRow, openMapping: replacer.openMapping});
+    } catch (error) {
+      setStatusSticky(error.message, 6000);
+    }
   }
 
   async function openRawFieldsModal(row) {

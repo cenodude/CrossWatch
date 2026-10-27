@@ -307,6 +307,15 @@ def mapped_or_default_media_type(item: Mapping[str, Any]) -> str:
 _SIDE_ENTRY_SCOPES = {"s0", "s", "o"}
 
 
+def _lookup_kind(media_type: Any) -> str:
+    kind = str(media_type or "").strip().lower()
+    if kind in ("movie", "movies", "film"):
+        return "movie"
+    if kind in ("show", "shows", "series", "tv", "episode", "season"):
+        return "show"
+    return ""
+
+
 def _is_side_entry(row: Mapping[str, Any]) -> bool:
     scope = str(row.get("source_scope") or "").strip().lower()
     return scope in _SIDE_ENTRY_SCOPES
@@ -403,10 +412,11 @@ class AnimeMappingService:
         identity_targets = self._identity_target_ids(ids0, media_type)
         seed_ids: dict[str, Any] = {**identity_seeds, **identity_targets, **ids0, **ruled}
 
-        seen_sources: set[tuple[str, str]] = set()
+        seen_sources: set[tuple[str, str, str]] = set()
         rows: list[dict[str, Any]] = []
         source_descriptors: list[str] = []
         queue: list[tuple[int, str]] = []
+        item_kind = _lookup_kind(media_type)
 
         for key, value in seed_ids.items():
             for raw_desc in descriptor_candidates_for_id(key, value, media_type=media_type):
@@ -419,8 +429,10 @@ class AnimeMappingService:
             desc = parse_descriptor(raw_desc)
             if desc is None:
                 continue
+            if depth == 0 and item_kind and desc.media_kind and desc.media_kind != item_kind:
+                continue
             source_descriptors.append(raw_desc)
-            skey = (desc.provider, desc.id)
+            skey = (desc.provider, desc.id, desc.media_kind)
             if skey in seen_sources:
                 continue
             seen_sources.add(skey)
@@ -428,6 +440,9 @@ class AnimeMappingService:
                 next_rows = query_edges(self.release_tag, desc.provider, desc.id)
             except Exception:
                 continue
+            if desc.media_kind:
+                next_rows = [row for row in next_rows
+                             if str(row.get("source_kind") or "").strip().lower() in ("", desc.media_kind)]
             for row in next_rows:
                 row["_depth"] = depth
             rows.extend(next_rows)

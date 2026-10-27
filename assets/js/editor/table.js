@@ -340,6 +340,16 @@
     };
     if (searchUsesCorrection) actionWrap.appendChild(searchBtn);
     else if (!ctx.merged) titleRow.appendChild(searchBtn);
+    if (!ctx.merged && call(ctx, "canTraceOrigin", row)) {
+      const originBtn = document.createElement("button");
+      originBtn.type = "button";
+      originBtn.className = "cw-title-search-btn cw-btn-origin";
+      originBtn.innerHTML = '<span class="material-symbol" aria-hidden="true">alt_route</span>';
+      originBtn.title = "Where does this come from?";
+      originBtn.setAttribute("aria-label", originBtn.title);
+      originBtn.onclick = () => call(ctx, "openItemOrigin", row, originBtn);
+      titleRow.appendChild(originBtn);
+    }
     const cloudLabel = cloudHistoryLabel([row], state.kind);
     if (cloudLabel) titleCell.appendChild(cloudLabel);
     if (ctx.merged) titleCell.appendChild(presenceChips(row, ctx));
