@@ -35,6 +35,7 @@ from cw_platform.provider_instances import (
 )
 from services import playlists as playlist_svc
 from services.editor_mapping import MappingRequest as EditorMappingRequest, BlockRequest
+from services.editor_origin import OriginRequest
 from services.mapping_transfer import RuleIdentity
 from services.episode_groups import GroupRequest
 from services.episode_alignment import AlignmentRequest, ApplyRequest
@@ -75,6 +76,12 @@ def api_apply_episode_alignment(payload: ApplyRequest, request: Request):
 def api_editor_mapping(payload: EditorMappingRequest, request: Request):
     from services.editor_mapping import handle_mapping
     return handle_mapping(payload, request)
+
+
+@router.post("/origin")
+def api_editor_origin(payload: OriginRequest, request: Request):
+    from services.editor_origin import item_origin
+    return item_origin(payload, request)
 
 
 @router.post("/mapping-block")
