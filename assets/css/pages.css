@@ -1449,7 +1449,10 @@ body>header #cw-mobile-navigation .cw-mobile-destination-icon{display:none}
 .cw-origin-label{font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}
 .cw-origin-sources{display:grid;gap:8px}
 .cw-origin-card{display:grid;gap:4px;padding:10px 12px;overflow-wrap:anywhere}
-.cw-origin-provider{justify-self:start;padding:3px 9px;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+.cw-origin-provider{display:inline-flex;align-items:center;gap:6px;justify-self:start;max-width:100%;padding:3px 10px 3px 6px;font-size:11px;line-height:1.4;box-sizing:border-box}
+.cw-origin-provider-logo{width:16px;height:16px;flex:0 0 auto;object-fit:contain}
+.cw-origin-provider-name{flex:0 0 auto;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+.cw-origin-profile{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
 .cw-origin-step{display:grid;grid-template-columns:20px minmax(0,1fr);align-items:center;gap:6px;overflow-wrap:anywhere}
 .cw-origin-arrow{display:grid;place-items:center;width:20px;height:20px}
 .cw-origin-links{display:grid;gap:6px}
