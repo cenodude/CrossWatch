@@ -498,3 +498,12 @@ def test_keepalive_refreshes_only_stale_sessions(monkeypatch: pytest.MonkeyPatch
 
     assert silo.refresh_all() == {"SILO-P01": "ok"}
     assert forced == [("SILO-P01", True)]
+
+
+def test_verify_ssl_defaults_off_for_self_signed_servers() -> None:
+    from cw_platform.config_base import DEFAULT_CFG
+    from providers.auth import _auth_SILO as silo
+
+    assert silo.verify_ssl_of({}) is False and silo.verify_ssl_of({"verify_ssl": True}) is True
+    assert DEFAULT_CFG["silo"]["verify_ssl"] is False
+    assert 'id="silo_verify_ssl" type="checkbox">' in silo.html()

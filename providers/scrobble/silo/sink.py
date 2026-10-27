@@ -9,7 +9,7 @@ from typing import Any
 
 from providers.scrobble._media_server import DeliveryError, MediaServerSink
 from providers.sync._mod_SILO import SILOModule
-from providers.sync.silo._common import as_int, cfg_section, item_detail, library, resolve_item, safe_json, silo_request
+from providers.sync.silo._common import as_int, cfg_section, item_detail, library, resolve_item, safe_json, selected_libraries, silo_request
 
 
 class SiloSink(MediaServerSink):
@@ -28,7 +28,8 @@ class SiloSink(MediaServerSink):
         return any(isinstance(r, dict) and r.get("content_id") == content_id and str(r.get("profile_id") or "") == profile for r in rows or [])
 
     def _deliver(self, adapter: Any, item: dict[str, Any], complete: bool, progress: float, destination: dict[str, Any], played_at: int) -> dict[str, Any]:
-        lib = library(adapter)
+        allowed = set(destination.get("libraries") or []) or selected_libraries(adapter, "history" if complete else "progress")
+        lib = library(adapter, libraries=allowed)
         cid, kind = resolve_item(adapter, lib, item, feature="scrobble")
         if not cid or kind not in ("movie", "episode"):
             raise DeliveryError("unmatched_in_silo")

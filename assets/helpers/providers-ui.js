@@ -676,8 +676,8 @@
     },
     SILO: {
       provider: "silo", logo: "SILO", help: window.CW.HelpLinks.url("silo"), deleteSelector: "#silo_disconnect",
-      tabs: { auth: ["lock", "Authentication", "Connect with a device code"], users: ["group", "Users", "Optional: sync several household profiles"] },
-      copy: { auth: ["Silo Authentication", "Sign in to your Silo server and select a household profile."], users: ["Silo Users", "Tick other household profiles to sync them as users of this connection."] },
+      tabs: { auth: ["lock", "Authentication", "Connect with a device code"], whitelist: ["verified_user", "Whitelisting", "Choose libraries and content to sync"], users: ["group", "Users", "Optional: sync several household profiles"] },
+      copy: { auth: ["Silo Authentication", "Sign in to your Silo server and select a household profile."], whitelist: ["Silo Whitelisting", "Choose which libraries CrossWatch can use for history, ratings, progress, collections and scrobbling."], users: ["Silo Users", "Tick other household profiles to sync them as users of this connection."] },
       journey: ["Connect to Silo", "Enter your Silo server URL, approve the code on its activate page, then choose a household profile.", "20,135,254", "245,11,79", "SILO"],
       steps: [["1", "Enter server", "Add your Silo server URL"], ["2", "Approve code", "Approve the code while signed in to Silo"], ["3", "Select profile", "Choose the household profile for this instance"]],
       order: [".silo-server-row", ".silo-actions", "#silo_login_state", "#silo_profile_state"],

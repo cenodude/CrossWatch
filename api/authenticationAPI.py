@@ -3097,6 +3097,19 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             _safe_log(log_fn, "SILO", f"[SILO] users failed reason={_silo_error(e)} instance={inst}")
             return {"ok": False, "error": _silo_error(e), "instance": inst, "users": []}
 
+    @app.get("/api/silo/libraries", tags=["media providers"])
+    def api_silo_libraries(instance: str | None = Query(None)) -> dict[str, Any]:
+        from providers.sync._mod_SILO import SILOModule
+        from providers.sync.silo._common import list_libraries
+
+        inst = normalize_instance_id(instance)
+        try:
+            rows = list_libraries(SILOModule({**load_config(), "_cw_provider_instance": inst}))
+            return {"ok": True, "instance": inst, "libraries": rows}
+        except Exception as e:
+            _safe_log(log_fn, "SILO", f"[SILO] libraries failed reason={_silo_error(e)} instance={inst}")
+            return {"ok": False, "error": _silo_error(e), "instance": inst, "libraries": []}
+
     @app.post("/api/silo/profile/select", tags=["auth"])
     def api_silo_profile_select(payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
         inst = normalize_instance_id(instance)

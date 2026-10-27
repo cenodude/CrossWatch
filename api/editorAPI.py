@@ -1351,7 +1351,7 @@ def _editor_send_targets(cfg: dict[str, Any], feature: str) -> list[dict[str, An
 
     targets: list[dict[str, Any]] = []
     for provider in sync_provider_names(upper=True):
-        if feat == "collection" and str(provider or "").strip().upper() in {"PLEX", "EMBY", "JELLYFIN", "KODI"}:
+        if feat == "collection" and str(provider or "").strip().upper() in {"PLEX", "EMBY", "JELLYFIN", "KODI", "SILO"}:
             continue
         ops = load_sync_ops(provider)
         if not ops:

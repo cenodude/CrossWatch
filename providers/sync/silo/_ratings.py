@@ -51,7 +51,7 @@ def rating_for(stars: int, written: Any) -> int | float:
 
 
 def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
-    lib = library(adapter)
+    lib = library(adapter, feature=FEATURE)
     rows = pages(adapter, "/ratings", feature=FEATURE) or []
     written = read_state(STATE_NAME, account_scope(adapter))
     collected: dict[str, dict[str, Any]] = {}
@@ -75,7 +75,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
 
 
 def _write(adapter: Any, items: Iterable[Mapping[str, Any]], *, clear: bool) -> dict[str, Any]:
-    lib = library(adapter)
+    lib = library(adapter, feature=FEATURE)
     scope = account_scope(adapter)
     written = read_state(STATE_NAME, scope)
     confirmed: list[str] = []

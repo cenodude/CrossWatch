@@ -35,7 +35,7 @@ def completed_rows(adapter: Any) -> dict[str, dict[str, Any]]:
 
 
 def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
-    lib = library(adapter)
+    lib = library(adapter, feature=FEATURE)
     rows = completed_rows(adapter)
     collected: dict[str, dict[str, Any]] = {}
     unmatched = 0
@@ -62,7 +62,7 @@ def _duration_seconds(lib: Any, cid: str, item: Mapping[str, Any]) -> int:
 
 
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
-    lib = library(adapter)
+    lib = library(adapter, feature=FEATURE)
     unresolved: list[dict[str, Any]] = []
     dated: list[dict[str, Any]] = []
     undated: list[tuple[str, str]] = []
@@ -134,7 +134,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
 
 
 def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
-    lib = library(adapter)
+    lib = library(adapter, feature=FEATURE)
     confirmed: list[str] = []
     unresolved: list[dict[str, Any]] = []
     hidden: list[dict[str, str]] = []

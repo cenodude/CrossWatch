@@ -102,7 +102,7 @@ def _config_with_pair_feature_options(
     provider_keys: list[str] = []
     for provider in providers:
         name = str(provider or "").upper().strip()
-        if name not in {"PLEX", "EMBY", "JELLYFIN", "KODI"}:
+        if name not in {"PLEX", "EMBY", "JELLYFIN", "KODI", "SILO"}:
             continue
         provider_key = name.lower()
         if provider_key not in provider_keys:

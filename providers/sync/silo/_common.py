@@ -276,11 +276,34 @@ class Library:
         self.movie_by_id: dict[str, str] = {}
         self.series_by_id: dict[str, str] = {}
         self.detail_passes: set[str] = set()
+        self.scoped = False
+        self.library_of: dict[str, str] | None = None
+        self.views: dict[frozenset[str], "Library"] = {}
+
+    def subset(self, keep: set[str]) -> "Library":
+        out = Library()
+        out.scoped = True
+        for cid, rec in self.movies.items():
+            if cid in keep:
+                out.movies[cid] = rec
+                for k, v in rec["ids"].items():
+                    out.movie_by_id.setdefault(f"{k}:{v}", cid)
+        for cid, rec in self.series.items():
+            if cid in keep:
+                out.series[cid] = rec
+                for k, v in rec["ids"].items():
+                    out.series_by_id.setdefault(f"{k}:{v}", cid)
+        for cid, rec in self.episodes.items():
+            if cid in keep:
+                out.episodes[cid] = rec
+                out.episode_by_coord.setdefault((rec["series_id"], rec["season"], rec["episode"]), cid)
+        return out
 
     def add_movie(self, row: Mapping[str, Any]) -> None:
         cid = str(row.get("content_id") or "")
         _kind, ids = ids_from_content_id(cid)
-        rec = {"content_id": cid, "ids": dict(ids), "title": str(row.get("title") or "").strip(), "year": as_int(row.get("year")), "runtime": as_int(row.get("runtime"))}
+        rec = {"content_id": cid, "ids": dict(ids), "title": str(row.get("title") or "").strip(), "year": as_int(row.get("year")), "runtime": as_int(row.get("runtime")),
+               "added_at": iso_z(row.get("added_at"))}
         self.movies[cid] = rec
         for k, v in ids.items():
             self.movie_by_id.setdefault(f"{k}:{v}", cid)
@@ -288,7 +311,8 @@ class Library:
     def add_series(self, row: Mapping[str, Any]) -> None:
         cid = str(row.get("content_id") or "")
         _kind, ids = ids_from_content_id(cid)
-        rec = {"content_id": cid, "ids": dict(ids), "title": str(row.get("title") or "").strip(), "year": as_int(row.get("year"))}
+        rec = {"content_id": cid, "ids": dict(ids), "title": str(row.get("title") or "").strip(), "year": as_int(row.get("year")),
+               "added_at": iso_z(row.get("added_at"))}
         self.series[cid] = rec
         for k, v in ids.items():
             self.series_by_id.setdefault(f"{k}:{v}", cid)
@@ -307,6 +331,7 @@ class Library:
             "title": str(row.get("title") or "").strip(),
             "series_title": str(row.get("series_title") or "").strip(),
             "runtime": as_int(row.get("runtime")),
+            "added_at": iso_z(row.get("added_at")),
         }
         self.episode_by_coord.setdefault((sid, s, e), cid)
 
@@ -333,7 +358,57 @@ class Library:
                 self.movie_by_id.setdefault(f"{k}:{v}", cid)
 
 
-def library(adapter: Any, *, refresh: bool = False) -> Library:
+def selected_libraries(adapter: Any, feature: str) -> set[str]:
+    block = cfg_section(adapter).get(feature)
+    raw = block.get("libraries") if isinstance(block, Mapping) else None
+    return {str(v).strip() for v in raw if str(v).strip()} if isinstance(raw, list) else set()
+
+
+def list_libraries(adapter: Any) -> list[dict[str, str]]:
+    resp = silo_request(adapter, "GET", "/user/libraries")
+    if resp.status_code != 200:
+        raise SiloSyncError(f"silo_libraries_http_{resp.status_code}")
+    data = safe_json(resp)
+    rows = data.get("items") if isinstance(data, Mapping) else None
+    if not isinstance(rows, list):
+        raise SiloSyncError("silo_libraries_invalid_response")
+    out: list[dict[str, str]] = []
+    for row in rows:
+        lid = str(row.get("id") or "").strip() if isinstance(row, Mapping) else ""
+        if lid:
+            out.append({"key": lid, "title": str(row.get("name") or lid).strip(), "type": str(row.get("type") or "").strip()})
+    return out
+
+
+def _membership(adapter: Any, lib: Library) -> dict[str, str]:
+    if lib.library_of is None:
+        found: dict[str, str] = {}
+        for row in list_libraries(adapter):
+            for typ in ("movie", "series", "episode"):
+                params = {"type": typ, "skip_total": "true", "library_id": row["key"]}
+                for item in pages(adapter, "/catalog", feature="library", params=params) or []:
+                    cid = str(item.get("content_id") or "")
+                    if cid:
+                        found.setdefault(cid, row["key"])
+        lib.library_of = found
+        _info("library", "membership_done", libraries=len(set(found.values())), items=len(found))
+    return lib.library_of
+
+
+def library(adapter: Any, *, refresh: bool = False, feature: str | None = None, libraries: set[str] | None = None) -> Library:
+    full = _full_library(adapter, refresh=refresh)
+    allowed = frozenset(libraries or (selected_libraries(adapter, feature) if feature else set()))
+    if not allowed:
+        return full
+    view = full.views.get(allowed)
+    if view is None:
+        membership = _membership(adapter, full)
+        view = full.subset({cid for cid, lid in membership.items() if lid in allowed})
+        full.views[allowed] = view
+    return view
+
+
+def _full_library(adapter: Any, *, refresh: bool = False) -> Library:
     key = f"{server_scope(adapter)}|{account_scope(adapter)}"
     now = time.monotonic()
     with _SHARED_LOCK:
@@ -540,6 +615,8 @@ def minimal_for(lib: Library, content_id: str) -> dict[str, Any] | None:
         if rec["title"]:
             out["title"] = rec["title"]
         return out
+    if lib.scoped:
+        return None
     kind, ids = ids_from_content_id(cid)
     if kind and ids:
         return {"type": kind, "ids": ids}
