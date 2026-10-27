@@ -9,7 +9,7 @@ import vm from "node:vm";
 function fakeDom() {
   const elements = [];
   const element = tag => {
-    const node = {tag, children:[], style:{}, dataset:{}, isConnected:true, _text:"",
+    const node = {tag, children:[], style:{setProperty(name, value) { this[name] = value; }}, dataset:{}, isConnected:true, _text:"",
       classList:{add(name) { node.className = `${node.className || ""} ${name}`.trim(); }, toggle() {}},
       get textContent() { return node._text + node.children.map(child => child.textContent || "").join(""); },
       set textContent(value) { node._text = String(value); node.children = []; },
@@ -55,7 +55,7 @@ async function openOrigin(data, overrides = {}) {
   const {document} = fakeDom();
   const source = readFileSync(new URL("../assets/js/editor/origin.js", import.meta.url), "utf8")
     .replace("export function openItemOrigin", "function openItemOrigin") + "\nthis.openItemOrigin = openItemOrigin;";
-  const context = vm.createContext({window:{}, document, structuredClone});
+  const context = vm.createContext({window:overrides.window || {}, document, structuredClone});
   vm.runInContext(source, context);
   const pop = document.createElement("div");
   const requests = [];
@@ -105,7 +105,7 @@ test("popover shows the chain from source title to anime entry", async () => {
     {provider:"ANILIST", instance:"default", feature:"watchlist", key:"", pair_id:"", original:undefined});
   const text = pop.textContent;
   assert.match(text, /Comes from/);
-  assert.match(text, /Trakt · Trakt → AniList/);
+  assert.match(text, /TraktDefault instanceDragon Ball Z \(1989\)Trakt → AniList/);
   assert.match(text, /TMDB 12971 S1 · E1-39 · 39 episodes/);
   assert.match(text, /Anime ID Mapping/);
   assert.match(text, /AniList #813/);
@@ -155,7 +155,8 @@ test("popover header says how a non-anime row maps to anime trackers", async () 
     title:"Some Movie", mode:"ids", mapping_ready:true, anime:[{namespace:"anilist", id:"5555", via:"custom", episodes:[]}],
     pairs:[], sources:[], sources_total:0, links:[], links_total:0,
   });
-  assert.match(pop.textContent, /On anime trackers: AniList #5555 \(via your custom mapping\)/);
+  assert.match(pop.textContent, /On anime trackers: AniList #5555/);
+  assert.doesNotMatch(pop.textContent, /via your custom mapping/);
 });
 
 test("popover shows saved fixes on sources and on the row itself", async () => {
@@ -196,4 +197,29 @@ test("popover says when the mapping search was cut off", async () => {
     pairs:[{pair_id:"p1"}], links:[], links_total:0, sources:[], sources_total:0, search_truncated:true,
   });
   assert.match(pop.textContent, /The mapping search hit its limit, so this list may be incomplete/);
+});
+
+
+test("provider chips use brand logo, colour and the custom profile name", async () => {
+  const meta = {
+    label:key => ({PLEX:"Plex", ANILIST:"AniList"})[key] || key,
+    tone:key => ({PLEX:{solid:"#e5a000"}, ANILIST:{solid:"#02a9ff"}})[key],
+    logLogoPath:key => `/assets/img/${key}-log.svg`,
+    instanceLabel:(key, id) => ({"PLEX:PLEX-P01":"Living room", "ANILIST:default":"Default instance"})[`${key}:${id}`] || id,
+  };
+  const {pop} = await openOrigin({
+    title:"Dragon Ball Z", mode:"anime", mapping_ready:true, anime:[{namespace:"anilist", id:"813", via:"direct", episodes:[]}],
+    pairs:[{pair_id:"p1"}], links:[], links_total:0, sources_total:1,
+    sources:[{pair_label:"Plex to AniList", provider:"PLEX", instance:"PLEX-P01~alice", title:"Dragon Ball Z", year:1989,
+      via:"mapping", link:{namespace:"tmdb", id:"12971", kind:"show", season:1}, season:1, count:1,
+      first_episode:1, last_episode:1, anime:{namespace:"anilist", id:"813"}}],
+  }, {window:{CW:{ProviderMeta:meta}}});
+  const chips = [];
+  const walk = node => { if (node.className === "cw-origin-provider") chips.push(node); (node.children || []).forEach(walk); };
+  walk(pop);
+  assert.equal(chips.length, 2);
+  assert.equal(chips[0].textContent, "AniListDefault instance");
+  assert.equal(chips[1].textContent, "PlexLiving room · alice");
+  assert.equal(chips[1].style["--cw-origin-tone"], "#e5a000");
+  assert.equal(chips[1].children[0].src, "/assets/img/PLEX-log.svg");
 });

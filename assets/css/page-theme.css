@@ -692,7 +692,9 @@ html.cw-compact .cw-ui-switch-track{background:var(--accent)}
 .cw-origin-muted,.cw-origin-note,.cw-origin-label{color:var(--cw-theme-muted);-webkit-text-fill-color:currentColor}
 .cw-origin-entry{border-radius:14px;border:1px solid color-mix(in srgb,var(--cw-theme-accent) 30%,var(--cw-theme-border));background:color-mix(in srgb,var(--cw-theme-accent) 7%,var(--cw-theme-surface))}
 .cw-origin-card,.cw-origin-note{border:1px solid var(--cw-theme-border);border-radius:14px;background:var(--cw-theme-surface-raised)}
-.cw-origin-provider{border-radius:6px;background:color-mix(in srgb,var(--cw-theme-accent) 12%,transparent);color:var(--cw-theme-text)}
+.cw-origin-provider{border:1px solid color-mix(in srgb,var(--cw-origin-tone,var(--cw-theme-accent)) 45%,transparent);border-radius:999px;background:color-mix(in srgb,var(--cw-origin-tone,var(--cw-theme-accent)) 14%,transparent);color:var(--cw-theme-text);-webkit-text-fill-color:currentColor}
+.cw-origin-provider-name{color:var(--cw-origin-tone,var(--cw-theme-accent));-webkit-text-fill-color:currentColor}
+.cw-origin-profile{color:var(--cw-theme-text);-webkit-text-fill-color:currentColor}
 .cw-origin-arrow{border-radius:50%;background:color-mix(in srgb,var(--cw-theme-accent) 12%,transparent);color:var(--cw-theme-accent);-webkit-text-fill-color:currentColor}
 .cw-origin-warn{border-radius:10px;background:color-mix(in srgb,var(--cw-theme-warning) 10%,transparent);color:var(--cw-theme-warning);-webkit-text-fill-color:currentColor}
 .cw-origin-pop .cw-pop-actions{border-top:1px solid var(--cw-theme-border)}

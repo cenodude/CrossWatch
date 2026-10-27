@@ -63,6 +63,37 @@ function episodesText(group) {
   return `${span} · ${group.count} episode${group.count === 1 ? "" : "s"}`;
 }
 
+function providerMeta() {
+  return window.CW?.ProviderMeta || {};
+}
+
+function profileText(provider, instance) {
+  const meta = providerMeta();
+  const id = String(instance || "default").trim() || "default";
+  const named = id => meta.instanceLabel?.(provider, id) || (id.toLowerCase() === "default" ? "Default instance" : id);
+  if (!id.includes("~")) return named(id);
+  const [account, ...user] = id.split("~");
+  return `${named(account)} · ${user.join("~")}`;
+}
+
+function providerChip(provider, instance) {
+  const meta = providerMeta();
+  const chip = el("span", "cw-origin-provider");
+  const tone = meta.tone?.(provider);
+  if (tone?.solid) chip.style.setProperty("--cw-origin-tone", tone.solid);
+  const logo = meta.logLogoPath?.(provider) || meta.logoPath?.(provider) || "";
+  if (logo) {
+    const img = el("img", "cw-origin-provider-logo");
+    img.src = logo;
+    img.alt = "";
+    img.setAttribute("aria-hidden", "true");
+    chip.append(img);
+  }
+  chip.append(el("span", "cw-origin-provider-name", meta.label?.(provider) || label(provider)),
+    el("span", "cw-origin-profile", profileText(provider, instance)));
+  return chip;
+}
+
 function chainLine(arrow, text, muted) {
   const line = el("div", "cw-origin-step");
   line.append(el("span", "cw-origin-arrow", arrow), el("span", muted ? "cw-origin-muted" : "", text));
@@ -71,14 +102,12 @@ function chainLine(arrow, text, muted) {
 
 function renderSource(group) {
   const card = el("div", "cw-origin-card");
-  card.append(el("div", "cw-origin-provider", label(group.provider)));
+  card.append(providerChip(group.provider, group.instance));
   const head = el("div", "cw-origin-card-head");
   head.append(el("strong", "", group.title || "Untitled"));
   if (group.year) head.append(el("span", "cw-origin-muted", ` (${group.year})`));
   card.append(head);
-  const where = [label(group.provider), group.instance && group.instance !== "default" ? group.instance : "",
-    group.pair_label ? `· ${group.pair_label}` : ""].filter(Boolean).join(" ");
-  card.append(el("div", "cw-origin-muted", where));
+  if (group.pair_label) card.append(el("div", "cw-origin-muted", group.pair_label));
   if (group.fix) card.append(chainLine("→", fixText(group.fix), true));
   const coord = [linkText(group.link) || (group.season != null ? `S${group.season}` : ""), episodesText(group)]
     .filter(Boolean).join(" · ");
@@ -108,20 +137,20 @@ function renderLinks(links, total) {
   return box;
 }
 
-function render(body, data) {
+function render(body, data, state = {}) {
   body.replaceChildren();
   const animeMode = data.mode === "anime";
   const anime = data.anime || [];
   const head = el("div", "cw-origin-entry");
   head.append(el("span", "cw-origin-label", "Destination"));
+  if (state.snapshot) head.append(providerChip(state.snapshot, state.instance || "default"));
   head.append(el("strong", "", data.title || "This item"));
   if (data.row_fix) head.append(el("div", "cw-origin-muted", rowFixText(data.row_fix)));
   if (anime.length) {
     const prefix = animeMode ? "" : "On anime trackers: ";
     head.append(el("div", "cw-origin-muted", prefix + anime.map(entry => {
       const eps = entry.episodes?.length ? ` episode ${entry.episodes.join(", ")}` : "";
-      const via = {mapping: " (via Anime ID Mapping)", custom: " (via your custom mapping)"}[entry.via] || "";
-      return `${animeText(entry)}${eps}${via}`;
+      return `${animeText(entry)}${eps}`;
     }).join(" · ")));
   }
   body.append(head);
@@ -200,7 +229,7 @@ export function openItemOrigin(row, anchor, ctx) {
         key: String(row.key || ""), pair_id: state.mappingPair || "", original}),
     }).then(data => {
       if (!pop.isConnected) return;
-      render(body, data);
+      render(body, data, state);
       finish(data);
     }).catch(error => {
       if (!pop.isConnected) return;
