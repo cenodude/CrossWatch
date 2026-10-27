@@ -753,6 +753,16 @@ DEFAULT_CFG: dict[str, Any] = {
         },
     },
 
+    "silo": {
+        "server_url": "",
+        "verify_ssl": True,
+        "access_token": "",
+        "refresh_token": "",
+        "expires_at": 0,
+        "profile_id": "",
+        "profile_name": "",
+    },
+
     "kodi": {
         "server": "",                                   # http(s)://host:port (required)
         "username": "",                                 # Optional HTTP Basic Auth username
@@ -898,6 +908,7 @@ DEFAULT_CFG: dict[str, Any] = {
             "plex_mdblist_ratings": False,              # Watch mode: forward Plex ratings to MDblist
             "plex_flicklist_ratings": False,            # Watch mode: forward Plex ratings to FlickList
             "plex_scrob_ratings": False,                # Watch mode: forward Plex ratings to Scrob
+            "plex_silo_ratings": False,
             "pause_debounce_seconds": 5,                # Ignore micro-pauses just after start
             "suppress_start_at": 99,                    # Kill near-end "start" flaps (credits)
             "filters": {
@@ -917,6 +928,7 @@ DEFAULT_CFG: dict[str, Any] = {
             "plex_trakt_ratings": False,                # Watch mode: forward Plex ratings to Trakt
             "plex_flicklist_ratings": False,            # Watch mode: forward Plex ratings to FlickList
             "plex_scrob_ratings": False,                # Watch mode: forward Plex ratings to Scrob
+            "plex_silo_ratings": False,
             # Plex-only filters
             "filters_plex": {
                 "username_whitelist": [],               # Restrict accepted Account.title values (empty = allow all)
@@ -1031,6 +1043,7 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
         "trakt": {"access_token", "refresh_token", "client_secret"},
         "jellyfin": {"access_token", "api_key", "password"},
         "emby": {"access_token", "api_key", "password"},
+        "silo": {"access_token", "refresh_token", "profile_token", "_pending_device"},
         "kodi": {"password"},
         "tmdb": {"api_key"},
         "tmdb_sync": {"api_key", "session_id", "_pending_request_token", "read_token", "access_token", "_pending_access_token"},
@@ -1055,11 +1068,17 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
             _mask_leaf(blk, k)
 
         insts = blk.get("instances")
-        if isinstance(insts, dict):
-            for inst in insts.values():
-                if isinstance(inst, dict):
-                    for k in keys:
-                        _mask_leaf(inst, k)
+        parents = [blk, *(inst for inst in (insts.values() if isinstance(insts, dict) else []) if isinstance(inst, dict))]
+        for parent in parents:
+            if parent is not blk:
+                for k in keys:
+                    _mask_leaf(parent, k)
+            users = parent.get("sync_users")
+            if isinstance(users, dict):
+                for entry in users.values():
+                    if isinstance(entry, dict):
+                        for k in keys:
+                            _mask_leaf(entry, k)
 
     # App UI auth secrets.
     a = out.get("app_auth")
@@ -1134,6 +1153,7 @@ CONFIG_TOP_LEVEL_ORDER: tuple[str, ...] = (
     "plex",
     "jellyfin",
     "emby",
+    "silo",
     "kodi",
     "tautulli",
     "tracearr",

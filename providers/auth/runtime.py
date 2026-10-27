@@ -54,6 +54,10 @@ def _backend(provider: Any) -> Any:
         from providers.auth import _auth_KITSU
 
         return _auth_KITSU
+    if name == "silo":
+        from providers.auth import _auth_SILO as silo_auth
+
+        return silo_auth
     if name == "scrob":
         from providers.auth import _auth_SCROB as scrob_auth
 

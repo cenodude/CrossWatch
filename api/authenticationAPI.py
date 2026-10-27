@@ -2971,6 +2971,173 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             _safe_log(log_fn, "NUVIO", f"[NUVIO] disconnect failed reason={_nuvio_error(e)} instance={inst}")
             return {"ok": False, "error": _nuvio_public_error(), "instance": inst}
 
+    # SILO
+    def _silo_client(cfg: dict[str, Any], inst: str):
+        from providers.auth._auth_SILO import SiloClient
+
+        return SiloClient(cfg, instance_id=inst)
+
+    _SILO_PUBLIC_ERRORS: tuple[str, ...] = (
+        "authentication_failed",
+        "connection_failed",
+        "device_login_unavailable",
+        "disconnect_first",
+        "http_error",
+        "invalid_pin",
+        "invalid_profile",
+        "invalid_response",
+        "invalid_url",
+        "missing_authentication",
+        "not_silo",
+        "pin_failed",
+        "pin_locked",
+        "pin_required",
+        "profile_unavailable",
+        "profile_verification_required",
+        "rate_limited",
+        "reconnect_required",
+        "service_unavailable",
+        "ssl_error",
+    )
+
+    def _silo_error(e: Exception) -> str:
+        code = str(e or "").strip()
+        if e.__class__.__name__ == "SiloServiceUnavailable":
+            return "service_unavailable"
+        return next((public for public in _SILO_PUBLIC_ERRORS if public == code), "silo_request_failed")
+
+    @app.post("/api/silo/server", tags=["auth"])
+    def api_silo_server(payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            res = _silo_client(cfg, inst).configure_server(cfg, (payload or {}).get("server_url"), (payload or {}).get("verify_ssl"))
+            _probe_bust("silo")
+            return res
+        except Exception as e:
+            _safe_log(log_fn, "SILO", f"[SILO] server check failed reason={_silo_error(e)} instance={inst}")
+            return {"ok": False, "error": _silo_error(e), "instance": inst}
+
+    @app.post("/api/silo/device/start", tags=["auth"])
+    def api_silo_device_start(payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            res = _provider_auth().start_device_code(
+                "silo",
+                cfg,
+                instance_id=inst,
+                server_url=(payload or {}).get("server_url"),
+                verify_ssl=(payload or {}).get("verify_ssl"),
+            )
+            _safe_log(log_fn, "SILO", f"[SILO] device login started instance={inst}")
+            return res
+        except Exception as e:
+            _safe_log(log_fn, "SILO", f"[SILO] device start failed reason={_silo_error(e)} instance={inst}")
+            return {"ok": False, "error": _silo_error(e), "instance": inst}
+
+    @app.post("/api/silo/device/poll", tags=["auth"])
+    def api_silo_device_poll(payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            res = _provider_auth().poll_device_code("silo", cfg, instance_id=inst)
+            if res.get("ok"):
+                _probe_bust("silo")
+                _safe_log(log_fn, "SILO", f"[SILO] device login completed instance={inst}")
+            return res
+        except Exception as e:
+            _safe_log(log_fn, "SILO", f"[SILO] device poll failed reason={_silo_error(e)} instance={inst}")
+            return {"ok": False, "status": _silo_error(e), "instance": inst}
+
+    @app.post("/api/silo/device/cancel", tags=["auth"])
+    def api_silo_device_cancel(instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            return _silo_client(cfg, inst).cancel_device_login(cfg)
+        except Exception as e:
+            _safe_log(log_fn, "SILO", f"[SILO] device cancel failed reason={_silo_error(e)} instance={inst}")
+            return {"ok": False, "error": _silo_error(e), "instance": inst}
+
+    @app.get("/api/silo/status", tags=["auth"])
+    def api_silo_status(instance: str | None = Query(None)) -> dict[str, Any]:
+        from providers.auth._auth_SILO import provider_block
+
+        cfg = load_config()
+        inst = normalize_instance_id(instance)
+        out = _provider_auth().status_for_block("silo", provider_block(cfg, inst))
+        out["instance"] = inst
+        return out
+
+    @app.get("/api/silo/profiles", tags=["auth"])
+    def api_silo_profiles(instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            profiles = _silo_client(cfg, inst).list_profiles()
+            return {"ok": True, "instance": inst, "profiles": profiles}
+        except Exception as e:
+            _safe_log(log_fn, "SILO", f"[SILO] profiles failed reason={_silo_error(e)} instance={inst}")
+            return {"ok": False, "error": _silo_error(e), "instance": inst, "profiles": []}
+
+    @app.get("/api/silo/users", tags=["auth"])
+    def api_silo_users(instance: str | None = Query(None)) -> dict[str, Any]:
+        from providers.auth._auth_SILO import provider_block
+
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            own = str(provider_block(cfg, inst).get("profile_id") or "")
+            rows = _silo_client(cfg, inst).list_profiles()
+            users = [{"id": p["id"], "username": p["name"], "has_pin": p["has_pin"], "is_child": p["is_child"], "is_primary": p["is_primary"],
+                      "connected": p["id"] == own} for p in rows]
+            return {"ok": True, "instance": inst, "users": users}
+        except Exception as e:
+            _safe_log(log_fn, "SILO", f"[SILO] users failed reason={_silo_error(e)} instance={inst}")
+            return {"ok": False, "error": _silo_error(e), "instance": inst, "users": []}
+
+    @app.post("/api/silo/profile/select", tags=["auth"])
+    def api_silo_profile_select(payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            selected = _silo_client(cfg, inst).select_profile(cfg, (payload or {}).get("profile_id"), (payload or {}).get("pin"))
+            _probe_bust("silo")
+            _safe_log(log_fn, "SILO", f"[SILO] profile selected instance={inst}")
+            return {"ok": True, "instance": inst, "profile": selected, "profile_id": selected.get("id"), "profile_name": selected.get("name") or ""}
+        except Exception as e:
+            _safe_log(log_fn, "SILO", f"[SILO] profile select failed reason={_silo_error(e)} instance={inst}")
+            return {"ok": False, "error": _silo_error(e), "instance": inst}
+
+    @app.post("/api/silo/refresh", tags=["auth"])
+    def api_silo_refresh(instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            res = _provider_auth().refresh_token("silo", cfg, instance_id=inst, force=True)
+            _probe_bust("silo")
+            return {k: v for k, v in res.items() if k not in {"access_token", "refresh_token"}}
+        except Exception as e:
+            _safe_log(log_fn, "SILO", f"[SILO] refresh failed reason={_silo_error(e)} instance={inst}")
+            return {"ok": False, "status": _silo_error(e), "instance": inst}
+
+    @app.post("/api/silo/disconnect", tags=["auth"])
+    def api_silo_disconnect(instance: str | None = Query(None)) -> Any:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            conflict = usage_conflict_response(cfg, "silo", inst)
+            if conflict is not None:
+                return conflict
+            _silo_client(cfg, inst).disconnect(cfg)
+            _probe_bust("silo")
+            _safe_log(log_fn, "SILO", f"[SILO] disconnected instance={inst}")
+            return {"ok": True, "instance": inst}
+        except Exception as e:
+            _safe_log(log_fn, "SILO", f"[SILO] disconnect failed reason={_silo_error(e)} instance={inst}")
+            return {"ok": False, "error": _silo_error(e), "instance": inst}
+
 
     # TAUTULLI
     @app.post("/api/tautulli/save", tags=["auth"])

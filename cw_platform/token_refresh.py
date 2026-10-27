@@ -14,6 +14,7 @@ INTERVAL_S = 3600
 PROVIDERS: dict[str, str] = {
     "SIMKL": "providers.auth._auth_SIMKL",
     "TRAKT": "providers.auth._auth_TRAKT",
+    "SILO": "providers.auth._auth_SILO",
 }
 
 _worker: threading.Thread | None = None

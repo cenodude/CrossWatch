@@ -428,6 +428,7 @@
     if (raw === "custom_list") return "Custom list";
     if (raw === "status_bucket") return "Status";
     if (raw === "collection") return "Collection";
+    if (raw === "favorites") return "Favorites";
     if (raw === "smart") return "Smart playlist";
     return "Playlist";
   }

@@ -27,6 +27,7 @@ CONNECTIONS = {
     "NUVIO": {"access_token": "nuvio-token", "profile_id": 2, "base_url": "https://nuvio.test"},
     "STREMIO": {"auth_key": "stremio-key"},
     "FLOPPY": {"server_url": "https://floppy.test", "api_token": "floppy-token"},
+    "SILO": {"server_url": "https://silo.test", "access_token": "silo-token", "refresh_token": "r", "profile_id": "p-1"},
 }
 
 

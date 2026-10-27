@@ -280,6 +280,12 @@
   }
 
   function providerProfileDetail(key, data) {
+    if (up(key) === "SILO" && data && typeof data === "object") {
+      const profileName = txt(data.profile_name);
+      const user = txt(data.username);
+      if (profileName && user) return `Silo profile: ${profileName} (${user})`;
+      return profileName ? `Silo profile: ${profileName}` : "";
+    }
     if (up(key) !== "NUVIO" || !data || typeof data !== "object") return "";
     const name = txt(data.nuvio_profile_name || data.profile_name);
     const id = txt(data.nuvio_profile_id || data.profile_id);

@@ -263,6 +263,9 @@ def _settings_auth_summary(cfg: dict[str, Any]) -> dict[str, Any]:
         if provider == "nuvio":
             b = _dict(block)
             return bool(_txt(b.get("profile_id"))) and _has(b, "access_token", "refresh_token")
+        if provider == "silo":
+            b = _dict(block)
+            return bool(_txt(b.get("server_url")) and _txt(b.get("profile_id"))) and _has(b, "access_token", "refresh_token")
         return _has(block, *_AUTH_KEYS.get(provider, ("access_token", "api_key", "token")))
 
     profiles: list[dict[str, Any]] = []
