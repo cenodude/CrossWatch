@@ -46,7 +46,7 @@
   }
 
   const AUTH_GROUPS = Object.freeze([
-    { id: "sec-auth-media", title: "Media servers", keys: ["PLEX", "JELLYFIN", "EMBY"] },
+    { id: "sec-auth-media", title: "Media servers", keys: ["PLEX", "JELLYFIN", "EMBY", "SILO"] },
     { id: "sec-auth-trackers", title: "Trackers", keys: ["CROSSWATCH", "TRAKT", "SIMKL", "TMDB", "MDBLIST", "PUBLICMETADB", "ANILIST", "MYANIMELIST", "KITSU", "WETRAKR", "PUNCHPLAY", "BINGEBASE", "FLICKLIST", "FLOPPY", "SCROB"] },
     { id: "sec-auth-clients", title: "Media clients", keys: ["NUVIO", "KODI", "STREMIO"] },
     { id: "sec-auth-others", title: "Others", keys: ["TAUTULLI", "TRACEARR"] },
@@ -257,6 +257,7 @@
     if (p === "floppy") return hasConfiguredValue(b.server_url || b.server) && hasConfiguredValue(b.api_token || b.token);
     if (p === "scrob") return hasConfiguredValue(b.server_url) && hasConfiguredValue(b.api_key) && hasConfiguredValue(b.username) && hasConfiguredValue(b.password);
     if (p === "nuvio") return (hasConfiguredValue(b.access_token) || hasConfiguredValue(b.refresh_token)) && hasConfiguredValue(b.profile_id);
+    if (p === "silo") return hasConfiguredValue(b.server_url) && (hasConfiguredValue(b.access_token) || hasConfiguredValue(b.refresh_token)) && hasConfiguredValue(b.profile_id) && b.auth_error !== "reconnect_required";
     if (p === "kodi") return hasConfiguredValue(b.server) && b.connection_verified === true;
     if (p === "stremio") return hasConfiguredValue(b.auth_key) || hasConfiguredValue(b.authKey);
     if (p === "tracearr") return hasConfiguredValue(b.server_url || b.server) && hasConfiguredValue(b.api_key);
@@ -672,6 +673,16 @@
       journey: ["Connect to Emby", "Enter your Emby server URL, username and password, then sign in. CrossWatch will move you to Settings next so you can validate the server, pick the user, and optionally whitelist libraries.", "82,181,75", "82,181,75", "EMBY"],
       steps: [["1", "Enter server", "Add your Emby server URL"], ["2", "Sign in", "Authorize with user credentials"], ["3", "Validate", "Confirm the account and server"]],
       order: [".grid2", ".inline"]
+    },
+    SILO: {
+      provider: "silo", logo: "SILO", help: window.CW.HelpLinks.url("silo"), deleteSelector: "#silo_disconnect",
+      tabs: { auth: ["lock", "Authentication", "Connect with a device code"], users: ["group", "Users", "Optional: sync several household profiles"] },
+      copy: { auth: ["Silo Authentication", "Sign in to your Silo server and select a household profile."], users: ["Silo Users", "Tick other household profiles to sync them as users of this connection."] },
+      journey: ["Connect to Silo", "Enter your Silo server URL, approve the code on its activate page, then choose a household profile.", "20,135,254", "245,11,79", "SILO"],
+      steps: [["1", "Enter server", "Add your Silo server URL"], ["2", "Approve code", "Approve the code while signed in to Silo"], ["3", "Select profile", "Choose the household profile for this instance"]],
+      order: [".silo-server-row", ".silo-actions", "#silo_login_state", "#silo_profile_state"],
+      code: ["#silo_login_state"],
+      actions: [{ row: ".silo-actions", status: "#silo_msg", buttons: "#silo_connect, #silo_cancel" }]
     },
     TRAKT: {
       provider: "trakt", logo: "TRAKT", help: window.CW.HelpLinks.url("trakt"), deleteSelector: "#btn-delete-trakt",
@@ -1150,6 +1161,10 @@
     if (info.key === "NUVIO") {
       const profileRow = panel?.querySelector("#nuvio_profile_state");
       if (profileRow && !profileRow.classList.contains("hidden") && String(panel?.querySelector("#nuvio_profile_select")?.value || "").trim()) return true;
+    }
+    if (info.key === "SILO") {
+      const profileRow = panel?.querySelector("#silo_profile_state");
+      if (profileRow && !profileRow.classList.contains("hidden") && String(panel?.querySelector("#silo_profile_select")?.value || "").trim()) return true;
     }
     if (connectionModalStatusTarget(panel)) return true;
     const inst = String(panel?.querySelector(".cw-profile-switcher select")?.value || "default");
@@ -1763,6 +1778,7 @@
       await window.CW?.AuthShared?.saveVisibleProfileLabels?.(panel);
       await window.CW?.SyncUsers?.saveDirty?.(panel);
       if (info.key === "NUVIO") await window.cwAuth?.nuvio?.saveSelectedProfile?.({ silent: true });
+      if (info.key === "SILO") await window.cwAuth?.silo?.saveSelectedProfile?.({ silent: true });
       const ret = window.saveSettings?.();
       if (ret && typeof ret.then === "function") await ret;
       if (btn) flashConnectionResult(btn, true);
@@ -2158,6 +2174,7 @@
         window.initPublicMetaDBAuthUI?.();
         window.cwAuth?.floppy?.init?.();
         window.initNuvioAuthUI?.();
+        window.initSiloAuthUI?.();
         window.initTautulliAuthUI?.();
         window.initTracearrAuthUI?.();
         window.initAniListAuthUI?.();

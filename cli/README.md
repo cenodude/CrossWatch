@@ -221,12 +221,18 @@ cw auth logout simkl
 
 Plex, Trakt, SIMKL, MDBList, PunchPlay, BingeBase and Nuvio give you a code and a URL, then poll until they report connected or `--timeout` runs out.
 
+Silo asks for the server URL first, then shows a code to approve on the server's activate page. Pick the household profile with `--profile NAME` and `--pin` for a PIN profile, or answer the prompt:
+
+```
+cw auth login silo --field silo.server_url=http://silo.local:8090 --profile Alice
+```
+
 Jellyfin, Emby, Kodi, Stremio, Floppy, Scrob, Tautulli, Tracearr, PublicMetaDB and TMDb ask for fields. Trakt, SIMKL and AniList want a client id and secret first. Pass them instead of typing them if you are scripting:
 
 ```
 cw auth login jellyfin \
-  --field jellyfin.server=http://192.168.2.100:8096 \
-  --field jellyfin.username=pascal \
+  --field jellyfin.server=http://jellyfin.local:8096 \
+  --field jellyfin.username=alice \
   --field jellyfin.password="$JF_PASSWORD" \
   --non-interactive
 ```

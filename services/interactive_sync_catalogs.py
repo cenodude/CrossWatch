@@ -12,9 +12,9 @@ from cw_platform.provider_instances import get_provider_block
 
 
 PROVIDERS = frozenset(("PLEX", "JELLYFIN", "EMBY", "KODI", "SCROB", "TRAKT", "MDBLIST", "SIMKL",
-                       "PUNCHPLAY", "FLICKLIST", "TMDB", "PUBLICMETADB", "NUVIO", "STREMIO", "FLOPPY", "WETRAKR"))
+                       "PUNCHPLAY", "FLICKLIST", "TMDB", "PUBLICMETADB", "NUVIO", "STREMIO", "FLOPPY", "WETRAKR", "SILO"))
 NATIVE = PROVIDERS - {"FLICKLIST", "PUBLICMETADB", "NUVIO", "STREMIO", "WETRAKR"}
-LIBRARY = {"JELLYFIN", "EMBY", "KODI"}
+LIBRARY = {"JELLYFIN", "EMBY", "KODI", "SILO"}
 
 
 def provider_block(cfg, provider, instance):
@@ -30,7 +30,7 @@ def provider_block(cfg, provider, instance):
 def configured(provider, block):
     if provider not in PROVIDERS or not block:
         return False
-    if provider in {"SCROB", "PUNCHPLAY", "FLICKLIST", "NUVIO", "STREMIO", "FLOPPY", "WETRAKR"}:
+    if provider in {"SCROB", "PUNCHPLAY", "FLICKLIST", "NUVIO", "STREMIO", "FLOPPY", "WETRAKR", "SILO"}:
         return import_module(f"providers.auth._auth_{provider}").is_configured(block)
     if provider == "MDBLIST":
         from providers.sync.mdblist._auth import is_configured
@@ -97,6 +97,20 @@ def destination_rows(client, cfg, row, block, query, entity):
                         "limits": {"start": 0, "end": 20}})
         return [dict(title=r.get("title") or r.get("label"), year=r.get("year"), ids=normalize_uniqueids(r.get("uniqueid")))
                 for r in body.get(kind.lower(), []) if isinstance(r, dict)]
+    if provider == "SILO":
+        from providers.sync._mod_SILO import SILOModule
+        from providers.sync.silo._common import ids_from_content_id, item_ids, silo_request
+        adapter = SILOModule({**cfg, "silo": block, "_cw_provider_instance": instance})
+        response = silo_request(adapter, "GET", "/catalog", params={"q": query, "type": "movie" if entity == "movie" else "series", "limit": 20, "skip_total": "true"})
+        body = checked_json(response, provider)
+        found = []
+        for r in body.get("items", []):
+            cid = str(r.get("content_id") or "") if isinstance(r, dict) else ""
+            if not cid.startswith(("movie-", "series-")):
+                continue
+            ids = {**ids_from_content_id(cid)[1], **item_ids(adapter, cid, feature="search")}
+            found.append(dict(title=r.get("title"), year=r.get("year"), ids=ids))
+        return found
     if provider == "SCROB":
         from providers.auth._auth_SCROB import request_with_auth
         from providers.sync.scrob._common import url_for

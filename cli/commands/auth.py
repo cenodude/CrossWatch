@@ -33,6 +33,8 @@ class Endpoints:
     cancel: str = ""
     disconnect: str = ""
     needs_origin: bool = False
+    profiles: str = ""
+    select_profile: str = ""
 
 
 ENDPOINTS: dict[str, Endpoints] = {
@@ -85,6 +87,15 @@ ENDPOINTS: dict[str, Endpoints] = {
         poll="/api/nuvio/device/poll",
         finish="/api/nuvio/device/finish",
         disconnect="/api/nuvio/disconnect",
+    ),
+    "SILO": Endpoints(
+        submit="/api/silo/server",
+        start="/api/silo/device/start",
+        poll="/api/silo/device/poll",
+        cancel="/api/silo/device/cancel",
+        disconnect="/api/silo/disconnect",
+        profiles="/api/silo/profiles",
+        select_profile="/api/silo/profile/select",
     ),
     "JELLYFIN": Endpoints(submit="/api/jellyfin/login", disconnect="/api/jellyfin/token/delete"),
     "EMBY": Endpoints(submit="/api/emby/login", disconnect="/api/emby/token/delete"),
@@ -367,6 +378,40 @@ def _wait(state: Ctx, manifest: Manifest, instance: str, timeout: float, interva
     return False
 
 
+def _choose_profile(state: Ctx, manifest: Manifest, instance: str, wanted: str, pin: str, *, interactive: bool) -> None:
+    endpoints = manifest.endpoints
+    if not endpoints.profiles or not endpoints.select_profile or _connected(state, manifest.name):
+        return
+    listing = as_dict(state.get(endpoints.profiles, params={"instance": instance}))
+    rows = [as_dict(p) for p in (listing.get("profiles") or []) if isinstance(p, dict)]
+    if not rows:
+        raise CLIError(f"{manifest.label} returned no profiles", hint=error_text(listing, ""))
+    want = str(wanted or "").strip().lower()
+    chosen = next((r for r in rows if want and want in {str(r.get("id") or "").lower(), str(r.get("name") or "").lower()}), None)
+    if chosen is None and want:
+        raise CLIError(f"{manifest.label} has no profile named '{wanted}'", hint="Profiles: " + ", ".join(str(r.get("name")) for r in rows), exit_code=EXIT_USAGE)
+    if chosen is None and len(rows) == 1:
+        chosen = rows[0]
+    if chosen is None:
+        if not interactive:
+            raise CLIError(f"{manifest.label} has several profiles", hint="Pass one with --profile NAME", exit_code=EXIT_USAGE)
+        state.out.kv([(str(i + 1), f"{r.get('name')}{' (PIN)' if r.get('has_pin') else ''}") for i, r in enumerate(rows)], title=f"{manifest.label} profiles")
+        picked = int(typer.prompt("Profile number", type=int))
+        if not 1 <= picked <= len(rows):
+            raise CLIError("No such profile", exit_code=EXIT_USAGE)
+        chosen = rows[picked - 1]
+    body: dict[str, Any] = {"profile_id": chosen.get("id")}
+    if chosen.get("has_pin"):
+        if not pin and not interactive:
+            raise CLIError(f"Profile '{chosen.get('name')}' has a PIN", hint="Pass it with --pin", exit_code=EXIT_USAGE)
+        body["pin"] = pin or str(typer.prompt("Profile PIN", hide_input=True) or "")
+    result = state.post(endpoints.select_profile, params={"instance": instance}, json_body=body)
+    rejected = _rejected(result)
+    if rejected:
+        raise CLIError(f"{manifest.label} refused the profile: {rejected}")
+    state.out.info(f"Profile: {chosen.get('name')}")
+
+
 @auth_app.command("providers")
 def auth_providers(
     ctx: typer.Context,
@@ -484,6 +529,8 @@ def auth_login(
     wait: bool = typer.Option(True, "--wait/--no-wait", help="Wait for a device code to be authorized."),
     timeout: float = typer.Option(300.0, "--timeout", help="How long to wait, in seconds."),
     interval: float = typer.Option(3.0, "--interval", help="Seconds between authorization checks."),
+    profile: str = typer.Option("", "--profile", help="Profile to use after login, by name or id (Silo)."),
+    pin: str = typer.Option("", "--pin", help="PIN of that profile, when it has one."),
 ) -> None:
     """Connect a provider, whichever way that provider authenticates."""
     state: Ctx = ctx.obj
@@ -547,6 +594,10 @@ def auth_login(
             except CLIError:
                 pass
         raise CLIError("Login cancelled", exit_code=0) from None
+
+    if ok:
+        _choose_profile(state, manifest, instance, profile, pin, interactive=interactive)
+        ok = _connected(state, manifest.name) if endpoints.select_profile else ok
 
     if state.out.json_mode:
         state.out.data({"ok": ok, "provider": manifest.name, "instance": instance})

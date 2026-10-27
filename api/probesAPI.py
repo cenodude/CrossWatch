@@ -87,6 +87,7 @@ PROVIDERS: tuple[str, ...] = (
     "tautulli",
     "tracearr",
     "nuvio",
+    "silo",
     "kodi",
     "stremio",
     "floppy",
@@ -286,6 +287,7 @@ PROBE_CFG_KEY: dict[str, str] = {
     "TAUTULLI": "tautulli",
     "TRACEARR": "tracearr",
     "NUVIO": "nuvio",
+    "SILO": "silo",
     "KODI": "kodi",
     "STREMIO": "stremio",
     "FLOPPY": "floppy",
@@ -423,6 +425,16 @@ def _probe_key(provider_id: str, cfg: Mapping[str, Any]) -> str:
         tok = str((n.get("access_token") or "")).strip()
         profile = str((n.get("profile_id") or "")).strip()
         return f"nuvio|base:{_secret_cache_tag(base)}|tok:{_secret_cache_tag(tok)}|profile:{profile}"
+
+    if p == "silo":
+        s = cfg.get("silo") or {}
+        if not _provider_auth().is_configured("silo", s):
+            return "silo|unconfigured"
+        base = _norm_url(s.get("server_url") or "")
+        tok = str((s.get("access_token") or s.get("refresh_token") or "")).strip()
+        ptok = str((s.get("profile_token") or "")).strip()
+        profile = str((s.get("profile_id") or "")).strip()
+        return f"silo|base:{_secret_cache_tag(base)}|tok:{_secret_cache_tag(tok)}|exp:{s.get('expires_at') or 0}|profile:{_secret_cache_tag(profile)}|ptok:{_secret_cache_tag(ptok)}"
 
     if p == "stremio":
         s = cfg.get("stremio") or {}
@@ -1245,6 +1257,69 @@ def _probe_nuvio_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tu
     except Exception:
         ok = bool(status.get("connected"))
         rsn = "Nuvio: service unavailable"
+
+    with _CACHE_LOCK:
+        PROBE_DETAIL_CACHE[key] = (now, ok, rsn)
+    return ok, rsn
+
+@_persistent_probe("silo")
+def _probe_silo_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
+    key = _probe_key("silo", cfg)
+    bust_ts = _consume_bust("silo")
+    now = time.time()
+    cached = PROBE_DETAIL_CACHE.get(key)
+    if cached and (now - cached[0]) < max_age_sec and (not bust_ts or cached[0] >= bust_ts):
+        return cached[1], cached[2]
+
+    from providers.auth._auth_SILO import (
+        SiloAuthError,
+        SiloClient,
+        SiloError,
+        SiloInvalidResponse,
+        SiloProfileVerificationRequired,
+        SiloReconnectRequired,
+    )
+
+    s: Mapping[str, Any] = (cfg.get("silo") or {}) if isinstance(cfg.get("silo"), Mapping) else {}
+    status = _provider_auth().status_for_block("silo", s)
+    rsn = ""
+    if status.get("reconnect_required"):
+        rsn = "Silo: reconnect required"
+    elif not status.get("authenticated"):
+        rsn = "Silo: missing authentication"
+    elif not status.get("profile_id"):
+        rsn = "Silo: missing profile"
+    elif status.get("profile_pin_required"):
+        rsn = "Silo: profile PIN required"
+    if rsn:
+        with _CACHE_LOCK:
+            PROBE_DETAIL_CACHE[key] = (now, False, rsn)
+        return False, rsn
+
+    try:
+        hint = cfg.get("_cw_probe") if isinstance(cfg.get("_cw_probe"), Mapping) else {}
+        inst = normalize_instance_id((hint or {}).get("instance"))
+        client = SiloClient(cfg, instance_id=inst)
+        pid = str(status.get("profile_id") or "")
+        profiles = client.list_profiles()
+        ok = any(p.get("id") == pid for p in profiles)
+        rsn = "" if ok else "Silo: profile unavailable"
+        if ok and status.get("profile_has_pin"):
+            resp = client.request("GET", "/progress/capabilities", profile=True)
+            if resp.status_code >= 400:
+                ok, rsn = False, _reason_http(resp.status_code, "Silo")
+    except SiloReconnectRequired:
+        ok, rsn = False, "Silo: reconnect required"
+    except SiloProfileVerificationRequired:
+        ok, rsn = False, "Silo: profile PIN required"
+    except SiloAuthError:
+        ok, rsn = False, "Silo: authentication failed"
+    except SiloInvalidResponse:
+        ok, rsn = False, "Silo: invalid response"
+    except SiloError:
+        ok, rsn = False, "Silo: service unavailable"
+    except Exception:
+        ok, rsn = False, "Silo: service unavailable"
 
     with _CACHE_LOCK:
         PROBE_DETAIL_CACHE[key] = (now, ok, rsn)
@@ -2349,6 +2424,9 @@ def _prov_configured(cfg: dict[str, Any], name: str, instance_id: Any = "default
     if ck == "nuvio":
         return _provider_auth().is_configured("nuvio", blk)
 
+    if ck == "silo":
+        return _provider_auth().is_configured("silo", blk)
+
     if ck == "stremio":
         return _provider_auth().is_configured("stremio", blk)
 
@@ -2457,6 +2535,7 @@ DETAIL_PROBES: dict[str, Callable[..., tuple[bool, str]]] = {
     "TAUTULLI": _probe_tautulli_detail,
     "TRACEARR": _probe_tracearr_detail,
     "NUVIO": _probe_nuvio_detail,
+    "SILO": _probe_silo_detail,
     "STREMIO": _probe_stremio_detail,
     "FLOPPY": _probe_floppy_detail,
     "MYANIMELIST": _probe_myanimelist_detail,
@@ -2651,7 +2730,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 }
                 if managed_scope:
                     insts &= set(allowed_instances.get(prov) or [])
-                if managed_scope or prov == "NUVIO":
+                if managed_scope or prov in {"NUVIO", "SILO"}:
                     insts = {
                         inst
                         for inst in insts
@@ -2786,6 +2865,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
             mdbl_ok, mdbl_reason, cfg_mdbl = _provider_tuple("MDBLIST")
             publicmetadb_ok, publicmetadb_reason, cfg_publicmetadb = _provider_tuple("PUBLICMETADB")
             nuvio_ok, nuvio_reason, cfg_nuvio = _provider_tuple("NUVIO")
+            silo_ok, silo_reason, cfg_silo = _provider_tuple("SILO")
             stremio_ok, stremio_reason, cfg_stremio = _provider_tuple("STREMIO")
             floppy_ok, floppy_reason, cfg_floppy = _provider_tuple("FLOPPY")
             myanimelist_ok, myanimelist_reason, cfg_myanimelist = _provider_tuple("MYANIMELIST")
@@ -3092,6 +3172,22 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                     "rep_instance": inst_sum.get("rep"),
                 }
 
+            if "SILO" in active_providers:
+                inst_map, inst_sum = _instances_payload("SILO")
+                s_block = (cfg_silo.get("silo") or {}) if isinstance(cfg_silo.get("silo"), Mapping) else {}
+                s_profile_name = str(s_block.get("profile_name") or "").strip()
+                s_username = str(s_block.get("username") or "").strip()
+                providers_out["SILO"] = {
+                    "connected": silo_ok,
+                    **({} if silo_ok else {"reason": silo_reason}),
+                    "experimental": True,
+                    **({"profile_name": s_profile_name} if s_profile_name else {}),
+                    **({"username": s_username} if s_username else {}),
+                    "instances": inst_map,
+                    "instances_summary": inst_sum,
+                    "rep_instance": inst_sum.get("rep"),
+                }
+
             if "STREMIO" in active_providers:
                 inst_map, inst_sum = _instances_payload("STREMIO")
                 providers_out["STREMIO"] = {
@@ -3271,6 +3367,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 "mdblist_connected": mdbl_ok,
                 "publicmetadb_connected": publicmetadb_ok,
                 "nuvio_connected": nuvio_ok,
+                "silo_connected": silo_ok,
                 "stremio_connected": stremio_ok,
                 "floppy_connected": floppy_ok,
                 "myanimelist_connected": myanimelist_ok,
