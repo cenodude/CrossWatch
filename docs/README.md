@@ -63,6 +63,12 @@
     <span>Media server</span>
     <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
   </article>
+  <article class="cw-provider-card is-silo">
+    <img class="cw-provider-mark" src="images/providers/SILO.svg" alt="" aria-hidden="true">
+    <strong>Silo</strong>
+    <span>Media server</span>
+    <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
+  </article>
   <article class="cw-provider-card is-kodi">
     <img class="cw-provider-mark" src="images/providers/KODI.png" alt="" aria-hidden="true">
     <strong>Kodi</strong>
@@ -234,7 +240,7 @@
   <article>
     <span class="cw-token">LIVE</span>
     <h3>Watcher and webhooks</h3>
-    <p>Send play events from Plex, Emby, Jellyfin, Kodi or Scrob to supported trackers with Watcher, without Plex Pass or Emby Premiere. Webhooks are also available for Plex, Emby and Jellyfin.</p>
+    <p>Send play events from Plex, Emby, Jellyfin, Silo, Kodi or Scrob to supported trackers with Watcher, without Plex Pass or Emby Premiere. Webhooks are also available for Plex, Emby and Jellyfin.</p>
   </article>
   <article>
     <span class="cw-token">SAFE</span>

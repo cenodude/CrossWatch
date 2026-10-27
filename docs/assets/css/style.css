@@ -361,6 +361,7 @@ a[href="#content"],
 }
 
 .cw-provider-card.is-plex,
+.cw-provider-card.is-silo,
 .cw-provider-card.is-mdblist,
 .cw-provider-card.is-tmdb {
   border-color: rgba(105, 185, 255, .28);
