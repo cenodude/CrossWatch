@@ -209,6 +209,58 @@ def test_crosswatch_history_sparse_update_keeps_existing_identity(tmp_path: Path
     assert item["_cw_anime_map"]["absolute"] == 5
 
 
+def _undated_episode() -> dict[str, Any]:
+    return {
+        "type": "episode",
+        "series_title": "Dragon Ball Z",
+        "season": 1,
+        "episode": 3,
+        "watched": True,
+        "_cw_watched_state": True,
+        "watch_status": "completed",
+        "show_ids": {"tvdb": "81472", "mal": "813"},
+    }
+
+
+def test_crosswatch_history_stores_undated_watched_state(tmp_path: Path) -> None:
+    from cw_platform.history_events import has_history_watch
+    from providers.sync.crosswatch import _history
+
+    adapter = _adapter(tmp_path)
+    added, unresolved = _history.add(adapter, [_undated_episode()])
+    item = next(iter(_history.build_index(adapter).values()))
+
+    assert added == 1
+    assert unresolved == []
+    assert "watched_at" not in item
+    assert item["_cw_watched_state"] is True
+    assert has_history_watch(item)
+
+
+def test_crosswatch_history_dated_watch_wins_over_undated(tmp_path: Path) -> None:
+    from providers.sync.crosswatch import _history
+
+    adapter = _adapter(tmp_path)
+    dated = {**_undated_episode(), "watched_at": "2026-09-01T14:27:40Z"}
+    _history.add(adapter, [_undated_episode()])
+    _history.add(adapter, [dated])
+    _history.add(adapter, [_undated_episode()])
+    items = list(_history.build_index(adapter).values())
+
+    assert len(items) == 1
+    assert items[0]["watched_at"] == "2026-09-01T14:27:40Z"
+
+
+def test_crosswatch_history_rejects_undated_rows_without_watched_state(tmp_path: Path) -> None:
+    from providers.sync.crosswatch import _history
+
+    row = {k: v for k, v in _undated_episode().items() if k != "_cw_watched_state"}
+    added, unresolved = _history.add(_adapter(tmp_path), [row])
+
+    assert added == 0
+    assert len(unresolved) == 1
+
+
 def test_crosswatch_watchlist_tmdb_enrichment_keeps_source_identity(monkeypatch) -> None:
     from providers.sync.crosswatch import _watchlist
 

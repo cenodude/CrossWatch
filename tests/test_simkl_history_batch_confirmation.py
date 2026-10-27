@@ -637,11 +637,39 @@ def test_simkl_source_status_failure_does_not_write_unchecked_status(env):
     session.post.assert_not_called()
 
 
-@pytest.mark.parametrize("enabled", [False, True])
-def test_simkl_accepts_undated_tracker_progress_without_inventing_dates(env, enabled):
+def test_simkl_skips_undated_tracker_progress_by_default(env):
     adapter, session = env
     adapter.config = {"_cw_history_rewatches": False}
-    adapter.raw_cfg = {"_cw_pair_feature_options": {"feature": "history", "use_source_status": enabled}}
+    adapter.raw_cfg = {"_cw_pair_feature_options": {"feature": "history", "use_source_status": True}}
+    dated = _episode(2, rewatches=False)
+    session.post.return_value = _response({"added": {"episodes": 1}, "not_found": {}})
+    undated = {**_episode(1, rewatches=False), "watched": True, "watch_status": "on_hold"}
+    undated.pop("watched_at")
+    undated["_cw_watched_state"] = True
+    count, unresolved = history.add(adapter, [undated, dated])
+    assert count == 1
+    assert [u["hint"] for u in unresolved] == ["missing_watched_at"]
+    episodes = session.post.call_args.kwargs["json"]["shows"][0]["seasons"][0]["episodes"]
+    assert [e["number"] for e in episodes] == [2]
+
+
+def test_simkl_skips_only_undated_batch_without_posting(env):
+    adapter, session = env
+    adapter.config = {"_cw_history_rewatches": False}
+    item = {**_episode(1, rewatches=False), "watched": True}
+    item.pop("watched_at")
+    item["_cw_watched_state"] = True
+    count, unresolved = history.add(adapter, [item])
+    assert count == 0
+    assert [u["hint"] for u in unresolved] == ["missing_watched_at"]
+    session.post.assert_not_called()
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_simkl_writes_undated_tracker_progress_when_opted_in(env, enabled):
+    adapter, session = env
+    adapter.config = {"_cw_history_rewatches": False}
+    adapter.raw_cfg = {"_cw_pair_feature_options": {"feature": "history", "use_source_status": enabled, "undated_as_today": True}}
     session.post.return_value = _response({"added": {"episodes": 1}, "not_found": {}})
     item = {**_episode(1, rewatches=False), "watched": True, "watch_status": "on_hold"}
     item.pop("watched_at")

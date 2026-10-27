@@ -27,6 +27,7 @@ from ._common import (
     watch_only_once,
 )
 from .._mod_common import request_with_retries
+from cw_platform.history_events import has_history_watch
 from cw_platform.id_map import minimal as id_minimal, canonical_key
 from .._log import log as cw_log
 from ._pagination import TraktPager
@@ -142,6 +143,23 @@ def _as_epoch(iso: str) -> int | None:
         return int(datetime.fromisoformat(s).timestamp())
     except Exception:
         return None
+
+
+def _set_history_watch(m: dict[str, Any], watched_at: Any) -> None:
+    w = _iso8601(watched_at)
+    if w and _as_epoch(w) == 0:
+        m.pop("watched_at", None)
+        m["watched"] = True
+        m["_cw_watched_state"] = True
+    else:
+        m["watched_at"] = watched_at
+
+
+def _history_row_epoch(m: Mapping[str, Any]) -> int | None:
+    w = _iso8601(m.get("watched_at"))
+    if w:
+        return _as_epoch(w)
+    return 0 if m.get("_cw_watched_state") is True and has_history_watch(m) else None
 
 
 def _max_iso(a: str | None, b: str | None) -> str | None:
@@ -1349,7 +1367,7 @@ def _fetch_history(
                 m = id_minimal(
                     {"type": "movie", "ids": mv.get("ids") or {}, "title": mv.get("title"), "year": mv.get("year")}
                 )
-                m["watched_at"] = w
+                _set_history_watch(m, w)
                 if hid is not None:
                     m["_trakt_history_id"] = str(hid)
                 out.append(m)
@@ -1368,7 +1386,7 @@ def _fetch_history(
                         "title": ep.get("title"),
                     }
                 )
-                m["watched_at"] = w
+                _set_history_watch(m, w)
                 if hid is not None:
                     m["_trakt_history_id"] = str(hid)
                 abs_no = _int_or_none(ep.get("number_abs"))
@@ -1402,6 +1420,9 @@ def build_index(adapter: Any, *, per_page: int = 250, max_pages: int = 100000) -
 
     doc = _load_cache_doc()
     cached_items: dict[str, dict[str, Any]] = dict(doc.get("items") or {})
+    for item in cached_items.values():
+        if isinstance(item, dict) and item.get("watched_at"):
+            _set_history_watch(item, item["watched_at"])
     cached_wm = str((doc.get("wm") or {}).get("watched_at") or "").strip()
 
     acts = fetch_last_activities(sess, headers, timeout=timeout, max_retries=retries)
@@ -1502,8 +1523,7 @@ def build_index(adapter: Any, *, per_page: int = 250, max_pages: int = 100000) -
                 added = 0
 
                 for m in movies + episodes:
-                    w = _iso8601(m.get("watched_at"))
-                    ts = _as_epoch(w) if w else None
+                    ts = _history_row_epoch(m)
                     if ts is None:
                         continue
                     if (
@@ -1631,8 +1651,7 @@ def build_index(adapter: Any, *, per_page: int = 250, max_pages: int = 100000) -
     )
     idx: dict[str, dict[str, Any]] = {}
     for m in movies + episodes:
-        w = _iso8601(m.get("watched_at"))
-        ts = _as_epoch(w) if w else None
+        ts = _history_row_epoch(m)
         if ts is None:
             continue
         if (
@@ -1870,13 +1889,13 @@ def _extract_show_ids_for_episode(it: Mapping[str, Any]) -> dict[str, Any]:
 
 def _history_when_for_add(item: Mapping[str, Any], kind: str) -> tuple[str | None, str | None]:
     raw = item.get("watched_at")
-    if raw is None:
-        return None, None
-    s = str(raw).strip()
+    s = str(raw).strip() if raw is not None else ""
     if not s:
+        if kind in {"movies", "episodes"} and item.get("_cw_watched_state") is True and has_history_watch(item):
+            return "unknown", None
         return None, None
     special = s.lower()
-    if kind == "episodes" and special in {"released", "unknown"}:
+    if (special == "unknown" and kind in {"movies", "episodes"}) or (kind == "episodes" and special == "released"):
         return special, None
     when = _iso8601(raw)
     if when:
@@ -2462,7 +2481,7 @@ def _history_body_to_collection(body: Mapping[str, Any], types: set[str]) -> dic
             out.setdefault("movies", []).append(
                 {
                     "ids": ids,
-                    "collected_at": m.get("watched_at") or _now_iso(),
+                    "collected_at": _iso8601(m.get("watched_at")) or _now_iso(),
                 }
             )
 
@@ -2479,7 +2498,7 @@ def _history_body_to_collection(body: Mapping[str, Any], types: set[str]) -> dic
             out.setdefault("episodes", []).append(
                 {
                     "ids": ids,
-                    "collected_at": e.get("watched_at") or _now_iso(),
+                    "collected_at": _iso8601(e.get("watched_at")) or _now_iso(),
                 }
             )
 
@@ -2505,7 +2524,7 @@ def _history_body_to_collection(body: Mapping[str, Any], types: set[str]) -> dic
                         eps_out.append(
                             {
                                 "number": int(n),
-                                "collected_at": ep.get("watched_at") or _now_iso(),
+                                "collected_at": _iso8601(ep.get("watched_at")) or _now_iso(),
                             }
                         )
                     if eps_out:

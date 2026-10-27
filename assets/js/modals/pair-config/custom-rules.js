@@ -62,6 +62,11 @@ export function sourceWatchStatusAllowed(state) {
   return [state?.src, state?.dst].every(provider => ["simkl", "anilist", "kitsu", "myanimelist"].some(name => same(provider, name)));
 }
 
+export function undatedAsTodayAllowed(state) {
+  const sides = [state?.src, state?.dst];
+  return sides.some(provider => same(provider, "simkl")) && sides.some(provider => ["myanimelist", "kitsu", "crosswatch"].some(name => same(provider, name)));
+}
+
 export function featureAllowedForPair(state, feature) {
   const key = String(feature || "").trim().toLowerCase();
   if (key === "ratings" && (same(state?.src, "stremio") || same(state?.dst, "stremio"))) {
@@ -93,6 +98,9 @@ export function collectionDisabledForPair(state) {
 
 export function sanitizeFeaturesForPair(state, features) {
   const out = features && typeof features === "object" ? features : {};
+  if (out.history && typeof out.history === "object" && !undatedAsTodayAllowed(state)) {
+    delete out.history.undated_as_today;
+  }
   if (!featureAllowedForPair(state, "ratings") && out.ratings && typeof out.ratings === "object") {
     Object.assign(out.ratings, { enable: false, add: false, remove: false });
   }

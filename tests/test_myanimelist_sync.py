@@ -522,7 +522,8 @@ def test_anime_tracker_history_transfers_source_status(adapter, mapping, monkeyp
         monkeypatch.setattr(simkl_history, "_anibridge_config", lambda *a, **kw: None)
         monkeypatch.setattr(simkl_history, "_inject_adds_into_cache", lambda *a: None)
         monkeypatch.setattr(simkl_history, "_remember_source_aliases", lambda *a: None)
-        dest = SimpleNamespace(raw_cfg=cfg, config={}, cfg=SimpleNamespace(timeout=5), client=SimpleNamespace(session=session))
+        dest_cfg = {**cfg, "_cw_pair_feature_options": {**cfg["_cw_pair_feature_options"], "undated_as_today": True}}
+        dest = SimpleNamespace(raw_cfg=dest_cfg, config={}, cfg=SimpleNamespace(timeout=5), client=SimpleNamespace(session=session))
         count, unresolved = simkl_history.add(dest, items)
         assert count == 3 and not unresolved
         assert session.post.call_args.kwargs["json"]["shows"][0].get("status") == ("hold" if enabled else None)
