@@ -18,12 +18,12 @@ from cw_platform.provider_instances import (
 
 
 DEFAULT_INSTANCE_ID = "default"
-ROUTE_PROVIDERS = {"plex", "emby", "jellyfin", "kodi", "scrob", "stremio"}
+ROUTE_PROVIDERS = {"plex", "emby", "jellyfin", "kodi", "scrob", "stremio", "silo"}
 ROUTE_SINGLE_ACCOUNT_PROVIDERS = {"stremio"}
 ROUTE_PROFILE_NAME_PROVIDERS = {"kodi"}
-ROUTE_SINKS = {"myanimelist", "kitsu", "plex", "jellyfin", "emby", "kodi", "trakt", "simkl", "mdblist", "crosswatch", "floppy", "punchplay", "bingebase", "flicklist", "wetrakr", "anilist", "scrob"}
+ROUTE_SINKS = {"myanimelist", "kitsu", "plex", "jellyfin", "emby", "kodi", "trakt", "simkl", "mdblist", "crosswatch", "floppy", "punchplay", "bingebase", "flicklist", "wetrakr", "anilist", "scrob", "silo"}
 ROUTE_MEDIA_SINKS = {"plex", "jellyfin", "emby", "kodi"}
-ROUTE_RATING_SINKS = {"kitsu", "myanimelist", "trakt", "simkl", "mdblist", "crosswatch", "floppy", "punchplay", "flicklist", "wetrakr", "anilist", "scrob"}
+ROUTE_RATING_SINKS = {"kitsu", "myanimelist", "trakt", "simkl", "mdblist", "crosswatch", "floppy", "punchplay", "flicklist", "wetrakr", "anilist", "scrob", "silo"}
 ROUTE_OPTION_STATES = {"inherit", "on", "off"}
 ROUTE_RATINGS_MODES = {"off", "custom"}
 ROUTE_SCROBBLE_POLICY_RANGES = {
@@ -39,7 +39,7 @@ ROUTE_WATCH_POLICY_RANGES = {
     "idle_poll_seconds": (5, 120),
 }
 ROUTE_POLL_KEYS = ("poll_seconds", "idle_poll_seconds")
-ROUTE_POLL_PROVIDERS = {"emby", "jellyfin", "kodi", "scrob"}
+ROUTE_POLL_PROVIDERS = {"emby", "jellyfin", "kodi", "scrob", "silo"}
 ROUTE_WATCH_BOOLEAN_KEYS = {"unresolved_user_fallback", "anime_mapping", "simkl_rewatches", "plexkodiconnect_support"}
 ROUTE_WATCH_STRICT_BOOLEAN_KEYS = {"simkl_rewatches", "plexkodiconnect_support"}
 
@@ -53,7 +53,7 @@ def route_is_self_target(route: dict[str, Any]) -> bool:
     return same_scrobble_endpoint(route.get("provider"), route.get("provider_instance"), route.get("sink"), route.get("sink_instance"))
 
 
-SYNC_USER_ENDPOINTS = {"plex", "emby", "jellyfin"}
+SYNC_USER_ENDPOINTS = {"plex", "emby", "jellyfin", "silo"}
 
 
 def sync_user_endpoints_supported(provider: Any, provider_instance: Any, sink: Any, sink_instance: Any) -> bool:
@@ -74,7 +74,7 @@ def _sync_user_name(cfg: dict[str, Any], provider: str, instance: str) -> str:
 def _sync_user_account_ids(cfg: dict[str, Any], provider: str, instance: str, key: str) -> list[str]:
     entry = get_instance_block(cfg, provider, instance)
     ids = [key]
-    for field in ("user_id", "account_id", "cloud_account_id"):
+    for field in ("user_id", "account_id", "cloud_account_id", "profile_id"):
         value = str(entry.get(field) or "").strip()
         if value and value not in ids:
             ids.append(value)

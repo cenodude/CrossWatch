@@ -104,7 +104,7 @@ def _ops(provider: str, sinks: Iterable[str] | None = None) -> Any | None:
     return load_sync_ops(provider) if provider in allowed else None
 
 
-OPS_RATING_SINKS: tuple[str, ...] = ("crosswatch", "floppy", "punchplay", "flicklist", "wetrakr", "scrob", "kitsu", "myanimelist")
+OPS_RATING_SINKS: tuple[str, ...] = ("crosswatch", "floppy", "punchplay", "flicklist", "wetrakr", "scrob", "kitsu", "myanimelist", "silo")
 RATING_SINKS: tuple[str, ...] = ("trakt", "simkl", "mdblist", "anilist", *OPS_RATING_SINKS)
 
 
@@ -159,7 +159,7 @@ def send_rating(
     if ops is None:
         return {"ok": False, "error": "unsupported_rating_sink"}
 
-    if sink in {"kitsu", "myanimelist"} and item.get("type") not in {"movie", "show"}:
+    if sink in {"kitsu", "myanimelist", "silo"} and item.get("type") not in {"movie", "show"}:
         return {"ok": True, "skipped": True, "reason": "unsupported_media_type"}
     inst = normalize_instance_id(instance)
     view = build_provider_config_view(dict(cfg or {}), sink, inst)

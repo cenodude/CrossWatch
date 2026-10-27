@@ -264,6 +264,10 @@ def _make_sink(name: str, cfg_provider: Callable[[], dict[str, Any]], instance_i
         from providers.scrobble.scrob.sink import ScrobSink
 
         cls = ScrobSink
+    elif sink == "silo":
+        from providers.scrobble.silo.sink import SiloSink
+
+        cls = SiloSink
     else:
         raise ValueError(f"Unknown sink: {sink}")
 
@@ -308,6 +312,8 @@ def _make_watcher(provider: str, group_dispatcher: MultiDispatcher, cfg_provider
         from providers.scrobble.scrob.watch import make_default_watch as make_watch
     elif prov == "stremio":
         from providers.scrobble.stremio.watch import make_default_watch as make_watch
+    elif prov == "silo":
+        from providers.scrobble.silo.watch import make_default_watch as make_watch
     else:
         from providers.scrobble.plex.watch import make_default_watch as make_watch
         prov = "plex"

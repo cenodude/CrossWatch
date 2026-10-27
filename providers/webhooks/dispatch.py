@@ -147,6 +147,10 @@ def _make_sink(name: str, instance_id: str, cfg_provider: Callable[[], dict[str,
         from providers.scrobble.scrob.sink import ScrobSink
 
         cls = ScrobSink
+    elif sink == "silo":
+        from providers.scrobble.silo.sink import SiloSink
+
+        cls = SiloSink
     else:
         raise ValueError(f"Unknown sink: {sink}")
     for kwargs in (

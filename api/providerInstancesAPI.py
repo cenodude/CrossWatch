@@ -77,7 +77,7 @@ def _max_generated_profiles(cfg: Mapping[str, Any] | None = None) -> int:
 
 
 _DEFAULT_MAX_SYNC_USERS = 25
-_SYNC_USER_PROVIDERS = frozenset({"plex", "emby", "jellyfin"})
+_SYNC_USER_PROVIDERS = frozenset({"plex", "emby", "jellyfin", "silo"})
 
 
 def _max_sync_users_per_connection(cfg: Mapping[str, Any] | None = None) -> int:
@@ -494,6 +494,9 @@ def _sync_user_rows(cfg: Mapping[str, Any], provider: str, inst: str) -> list[di
         row: dict[str, Any] = {"key": ref[1], "id": user_inst, "username": str(entry.get("username") or ""), "match_as": str(entry.get("match_as") or ""), "match_key": sync_user_match_name(cfg, provider, user_inst).casefold(), "added_at": entry.get("added_at")}
         if provider == "plex":
             row["has_pin"] = bool(str(entry.get("home_pin") or "").strip())
+        if provider == "silo":
+            row["has_pin"] = bool(str(entry.get("profile_token") or "").strip())
+            row["needs_pin"] = bool(entry.get("profile_has_pin")) and not row["has_pin"]
         rows.append(row)
     rows.sort(key=lambda row: row["username"].casefold())
     return rows
@@ -508,6 +511,12 @@ def _build_sync_user_entry(provider: str, key: str, raw: Mapping[str, Any], exis
         cloud_id = str(raw.get("cloud_account_id") or existing.get("cloud_account_id") or "").strip()
         if cloud_id and cloud_id != key:
             entry["cloud_account_id"] = cloud_id
+    elif provider == "silo":
+        entry = {"profile_id": key, "profile_name": name, "username": name, "user": name,
+                 "profile_has_pin": bool(raw.get("profile_has_pin", existing.get("profile_has_pin")))}
+        token = str(raw.get("profile_token") or existing.get("profile_token") or "") if entry["profile_has_pin"] else ""
+        entry["profile_token"] = token
+        entry["profile_token_expires_at"] = int(raw.get("profile_token_expires_at") or existing.get("profile_token_expires_at") or 0) if token else 0
     else:
         entry = {"user_id": key, "username": name, "user": name}
     source = raw.get("match_as") if "match_as" in raw else existing.get("match_as")
@@ -518,6 +527,32 @@ def _build_sync_user_entry(provider: str, key: str, raw: Mapping[str, Any], exis
         entry["match_as"] = match_as
     entry["added_at"] = existing.get("added_at") or now
     return entry
+
+
+def _silo_prepare_sync_users(cfg: Mapping[str, Any], inst: str, wanted: dict[str, Mapping[str, Any]]) -> str:
+    from providers.auth._auth_SILO import SiloClient, SiloError, SiloRateLimited
+
+    client = SiloClient(cfg, instance_id=inst)
+    try:
+        profiles = {p["id"]: p for p in client.list_profiles()}
+    except SiloError:
+        return "silo_unavailable"
+    for key, raw in list(wanted.items()):
+        profile = profiles.get(key)
+        if profile is None:
+            return "not_found"
+        row = {k: v for k, v in raw.items() if k != "home_pin"}
+        row["profile_has_pin"] = bool(profile["has_pin"])
+        pin = str(raw.get("home_pin") or "").strip()
+        if profile["has_pin"] and pin:
+            try:
+                row["profile_token"], row["profile_token_expires_at"] = client.verify_pin(key, pin)
+            except SiloRateLimited:
+                return "pin_locked"
+            except SiloError:
+                return "invalid_pin"
+        wanted[key] = row
+    return ""
 
 
 def _profile_identity(cfg: Mapping[str, Any], provider: str, user_inst: str) -> tuple[str, str]:
@@ -620,6 +655,10 @@ def api_provider_sync_users_update(provider: str, instance_id: str, payload: dic
         key = str(raw.get("key") or "").strip()
         if key and "~" not in key and str(raw.get("username") or "").strip():
             wanted.setdefault(key, raw)
+    if _cfg_key(provider) == "silo" and wanted:
+        silo_error = _silo_prepare_sync_users(cfg, inst, wanted)
+        if silo_error:
+            return {"ok": False, "error": silo_error}
 
     def _mutate(latest: dict[str, Any]) -> dict[str, Any]:
         prov, error = _sync_users_target(latest, provider, inst)

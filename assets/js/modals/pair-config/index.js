@@ -28,11 +28,12 @@ const isManagedPlaylistPair=(pair)=>String(playlistBlockOf(pair).managed_by||"")
 const isEmby = v => same(v, "emby");
 function getPairMarkedWatchedValue(state){ return !!(state?.pairProviders?.plex?.history?.include_marked_watched ?? state?.cfgRaw?.plex?.history?.include_marked_watched ?? true) }
 function supportsPathMatching(state){ return [state?.src,state?.dst].every(p=>["PLEX","JELLYFIN","EMBY"].includes(String(p||"").toUpperCase())) }
-const MU_LABELS={PLEX:"Plex",EMBY:"Emby",JELLYFIN:"Jellyfin"};
+function supportsMatchUsers(state){ return [state?.src,state?.dst].every(p=>["PLEX","JELLYFIN","EMBY","SILO"].includes(String(p||"").toUpperCase())) }
+const MU_LABELS={PLEX:"Plex",EMBY:"Emby",JELLYFIN:"Jellyfin",SILO:"Silo"};
 const muEsc=(v)=>String(v??"").replace(/[&<>"']/g,(c)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const muLabel=(p)=>MU_LABELS[String(p||"").toUpperCase()]||String(p||"");
 function renderMatchUsersCard(state){
-  if(!supportsPathMatching(state)) return "";
+  if(!supportsMatchUsers(state)) return "";
   return `<div class="provider-card mu-card">
     <div class="provider-card-head">
       <div class="providers-intro-copy">
@@ -46,7 +47,7 @@ function renderMatchUsersCard(state){
 }
 async function loadMatchUsersPreview(state){
   const host=ID("pair-match-users-list");
-  if(!host||!state.match_users||!supportsPathMatching(state)) return;
+  if(!host||!state.match_users||!supportsMatchUsers(state)) return;
   const url=(p,i)=>`/api/provider-instances/${encodeURIComponent(String(p||"").toLowerCase())}/${encodeURIComponent(String(i||"default"))}/sync-users`;
   const token=(state.__muToken=(state.__muToken||0)+1);
   host.innerHTML=`<div class="muted">Loading users…</div>`;
@@ -3071,7 +3072,7 @@ function buildPayload(state,wrap){
   if(state.pair_remove_mode_touched) applyPairRemoveMode(features,state.pair_remove_mode);
   const payload={source:src,target:dst,source_instance:String(srcInst||"default"),target_instance:String(dstInst??"default"),enabled,mode:modeTwo?"two-way":"one-way",features};
   payload.path_matching=supportsPathMatching({src,dst})&&!!state.path_matching;
-  payload.match_users=supportsPathMatching({src,dst})&&!!state.match_users;
+  payload.match_users=supportsMatchUsers({src,dst})&&!!state.match_users;
   payload.user_matches=payload.match_users?{...(state.user_matches||{})}:{};
   const eid=wrap.dataset&&wrap.dataset.editingId?String(wrap.dataset.editingId||""):"";
   const selectedProfileId=String(state.selected_user_profile_id||"").trim();

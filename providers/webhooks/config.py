@@ -29,6 +29,7 @@ _SINK_CREDENTIALS: dict[str, tuple[str, ...]] = {
     "bingebase": ("webhook_url",),
     "flicklist": ("api_key", "access_token", "token"),
     "scrob": ("api_key",),
+    "silo": ("access_token", "refresh_token"),
 }
 
 _MEDIA_CREDENTIALS: dict[str, tuple[str, ...]] = {
@@ -117,6 +118,10 @@ def sink_configured(cfg: Mapping[str, Any] | None, sink: str, instance_id: Any =
         server = block.get("server_url") or block.get("baseurl") or pms.get("url") or pms.get("baseurl") or pms.get("server_url") or block.get("server_name") or block.get("server")
         token = block.get("pms_token") or block.get("account_token") or block.get("token") or pms.get("token") or pms.get("x_plex_token")
         return bool(server and token)
+    if key == "silo":
+        from providers.auth._auth_SILO import is_configured, provider_block
+
+        return is_configured(provider_block(_dict(cfg), normalize_instance_id(instance_id)))
     if key == "crosswatch":
         block = get_provider_block(_dict(cfg), key, normalize_instance_id(instance_id))
         value = block.get("enabled")
