@@ -2977,7 +2977,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
 
         return SiloClient(cfg, instance_id=inst)
 
-    _SILO_PUBLIC_ERRORS: set[str] = {
+    _SILO_PUBLIC_ERRORS: tuple[str, ...] = (
         "authentication_failed",
         "connection_failed",
         "device_login_unavailable",
@@ -2998,17 +2998,13 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         "reconnect_required",
         "service_unavailable",
         "ssl_error",
-    }
+    )
 
     def _silo_error(e: Exception) -> str:
         code = str(e or "").strip()
         if e.__class__.__name__ == "SiloServiceUnavailable":
             return "service_unavailable"
-        return code if code in _SILO_PUBLIC_ERRORS else "silo_request_failed"
-
-    def _silo_retry_after(e: Exception) -> dict[str, Any]:
-        wait = int(getattr(e, "retry_after", 0) or 0)
-        return {"retry_after": wait} if wait else {}
+        return next((public for public in _SILO_PUBLIC_ERRORS if public == code), "silo_request_failed")
 
     @app.post("/api/silo/server", tags=["auth"])
     def api_silo_server(payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
@@ -3038,7 +3034,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return res
         except Exception as e:
             _safe_log(log_fn, "SILO", f"[SILO] device start failed reason={_silo_error(e)} instance={inst}")
-            return {"ok": False, "error": _silo_error(e), "instance": inst, **_silo_retry_after(e)}
+            return {"ok": False, "error": _silo_error(e), "instance": inst}
 
     @app.post("/api/silo/device/poll", tags=["auth"])
     def api_silo_device_poll(payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
@@ -3112,7 +3108,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return {"ok": True, "instance": inst, "profile": selected, "profile_id": selected.get("id"), "profile_name": selected.get("name") or ""}
         except Exception as e:
             _safe_log(log_fn, "SILO", f"[SILO] profile select failed reason={_silo_error(e)} instance={inst}")
-            return {"ok": False, "error": _silo_error(e), "instance": inst, **_silo_retry_after(e)}
+            return {"ok": False, "error": _silo_error(e), "instance": inst}
 
     @app.post("/api/silo/refresh", tags=["auth"])
     def api_silo_refresh(instance: str | None = Query(None)) -> dict[str, Any]:
