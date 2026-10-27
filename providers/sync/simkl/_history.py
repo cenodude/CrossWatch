@@ -1554,6 +1554,26 @@ def _source_status_enabled(adapter: Any) -> bool:
     return bool(runtime_pair_feature_options(cfg, "history").get("use_source_status"))
 
 
+def _undated_as_today(adapter: Any) -> bool:
+    cfg = getattr(adapter, "raw_cfg", None)
+    if not isinstance(cfg, Mapping) or PAIR_FEATURE_OPTIONS_KEY not in cfg:
+        return False
+    return bool(runtime_pair_feature_options(cfg, "history").get("undated_as_today"))
+
+
+def _split_undated(adapter: Any, items: list[Mapping[str, Any]]) -> tuple[list[Mapping[str, Any]], list[dict[str, Any]]]:
+    if _undated_as_today(adapter):
+        return items, []
+    kept: list[Mapping[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for item in items:
+        if has_history_watch(item) and not str(item.get("watched_at") or item.get("watchedAt") or "").strip():
+            skipped.append({"item": id_minimal(item), "hint": "missing_watched_at"})
+        else:
+            kept.append(item)
+    return kept, skipped
+
+
 def _apply_source_watch_status(
     adapter: Any,
     body: Mapping[str, Any],
@@ -3447,7 +3467,8 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     thaw_keys: list[str] = []
     main_thaw_keys: list[str] = []
     main_items_list: list[Mapping[str, Any]] = []
-    items_list: list[Mapping[str, Any]] = _apply_anibridge_maps(adapter, list(items or []))
+    items_list, undated = _split_undated(adapter, _apply_anibridge_maps(adapter, list(items or [])))
+    unresolved.extend(undated)
     mapping_enabled = _anibridge_config(adapter) is not None
     native_retry_candidates: list[Mapping[str, Any]] = []
     native_retry_confirmed_keys: set[str] = set()

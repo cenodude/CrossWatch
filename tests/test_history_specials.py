@@ -892,6 +892,142 @@ def test_trakt_history_index_keeps_epoch_zero_watched_at(monkeypatch) -> None:
     assert list(saved["items"]) == ["tmdb:11@0"]
 
 
+def test_trakt_unknown_date_play_reads_as_undated_watch(monkeypatch) -> None:
+    from cw_platform.orchestrator._history_rewatches import filter_history_events
+
+    rows = [
+        {
+            "id": 14578012000,
+            "watched_at": "1970-01-01T00:00:00.000Z",
+            "action": "watch",
+            "type": "movie",
+            "movie": {"ids": {"tmdb": 17473, "trakt": 10677}, "title": "The Room", "year": 2003},
+        },
+        {
+            "id": 14578012001,
+            "watched_at": "2026-10-12T23:00:00.000Z",
+            "action": "scrobble",
+            "type": "movie",
+            "movie": {"ids": {"tmdb": 1757386, "trakt": 1395551}, "title": "Funny Money", "year": 2026},
+        },
+    ]
+
+    class Pager:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def read(self, response, page, **_kwargs):
+            return rows if page == 1 else []
+
+    monkeypatch.setattr(trakt_history, "TraktPager", Pager)
+    monkeypatch.setattr(trakt_history, "request_with_retries", lambda *a, **k: None)
+    fetched = trakt_history._fetch_history(object(), {}, trakt_history.URL_HIST_MOV, per_page=250, max_pages=1, timeout=5, max_retries=1)
+
+    monkeypatch.setattr(trakt_history, "_load_cache_doc", lambda: {})
+    monkeypatch.setattr(trakt_history, "_save_cache_doc", lambda *a, **k: None)
+    monkeypatch.setattr(trakt_history, "fetch_last_activities", lambda *a, **k: None)
+    monkeypatch.setattr(trakt_history, "update_watermarks_from_last_activities", lambda *a, **k: None)
+    monkeypatch.setattr(trakt_history, "_preflight_total", lambda *a, **k: None)
+    monkeypatch.setattr(trakt_history, "headers_for_adapter", lambda *a, **k: {})
+    monkeypatch.setattr(
+        trakt_history,
+        "_fetch_history",
+        lambda _sess, _headers, url, **_kwargs: [dict(m) for m in fetched] if url == trakt_history.URL_HIST_MOV else [],
+    )
+    idx = trakt_history.build_index(_trakt_adapter())
+
+    undated = idx["tmdb:17473@0"]
+    assert "watched_at" not in undated
+    assert undated["_cw_watched_state"] is True
+    dated_key = next(k for k in idx if k.startswith("tmdb:1757386@"))
+    assert idx[dated_key]["watched_at"] == "2026-10-12T23:00:00.000Z"
+    assert set(filter_history_events(idx, event_mode=False)) == {"tmdb:17473", "tmdb:1757386"}
+    assert set(filter_history_events(idx, event_mode=True)) == {dated_key}
+
+
+@pytest.mark.parametrize("activities_available", [False, True])
+def test_trakt_cached_unknown_watch_is_normalized(monkeypatch, activities_available) -> None:
+    stamp = "2026-10-12T23:00:00.000Z"
+    item = {"type": "movie", "ids": {"tmdb": "11"}, "watched_at": "1970-01-01T00:00:00.000Z"}
+    monkeypatch.setattr(trakt_history, "_load_cache_doc", lambda: {"items": {"tmdb:11@0": item}, "wm": {"watched_at": stamp}})
+    monkeypatch.setattr(trakt_history, "_save_cache_doc", lambda *a, **k: None)
+    monkeypatch.setattr(trakt_history, "fetch_last_activities", lambda *a, **k: {"movies": {"watched_at": stamp}} if activities_available else None)
+    monkeypatch.setattr(trakt_history, "update_watermarks_from_last_activities", lambda *a, **k: None)
+    monkeypatch.setattr(trakt_history, "headers_for_adapter", lambda *a, **k: {})
+    monkeypatch.setattr(trakt_history, "_preflight_total", lambda _s, _h, url, **k: int(url == trakt_history.URL_HIST_MOV))
+
+    row = trakt_history.build_index(_trakt_adapter())["tmdb:11@0"]
+
+    assert "watched_at" not in row
+    assert row["watched"] is True
+    assert row["_cw_watched_state"] is True
+
+
+def test_trakt_unknown_watch_delta_falls_back_once(monkeypatch) -> None:
+    old_stamp = "2026-10-11T23:00:00.000Z"
+    stamp = "2026-10-12T23:00:00.000Z"
+    dated = {"type": "movie", "ids": {"tmdb": "11"}, "watched_at": old_stamp}
+    undated = {"type": "movie", "ids": {"tmdb": "22"}, "watched": True, "_cw_watched_state": True}
+    doc = {"items": {f"tmdb:11@{trakt_history._as_epoch(old_stamp)}": dated}, "wm": {"watched_at": old_stamp}}
+    calls = []
+
+    def save(items, watched_at, validated_at=None):
+        doc.update(items=dict(items), wm={"watched_at": watched_at}, validated_at=validated_at)
+
+    def fetch(_session, _headers, url, **kwargs):
+        calls.append((url, kwargs.get("start_at")))
+        return [dated, undated] if url == trakt_history.URL_HIST_MOV and not kwargs.get("start_at") else []
+
+    monkeypatch.setattr(trakt_history, "_load_cache_doc", lambda: doc)
+    monkeypatch.setattr(trakt_history, "_save_cache_doc", save)
+    monkeypatch.setattr(trakt_history, "_bust_index_cache", lambda **k: None)
+    monkeypatch.setattr(trakt_history, "fetch_last_activities", lambda *a, **k: {"movies": {"watched_at": stamp}})
+    monkeypatch.setattr(trakt_history, "update_watermarks_from_last_activities", lambda *a, **k: None)
+    monkeypatch.setattr(trakt_history, "headers_for_adapter", lambda *a, **k: {})
+    monkeypatch.setattr(trakt_history, "_preflight_total", lambda _s, _h, url, **k: 2 if url == trakt_history.URL_HIST_MOV else 0)
+    monkeypatch.setattr(trakt_history, "_fetch_history", fetch)
+
+    first = trakt_history.build_index(_trakt_adapter())
+    second = trakt_history.build_index(_trakt_adapter())
+
+    assert first == second
+    assert first["tmdb:22@0"] == undated
+    assert len(calls) == 4
+    assert all(start for _, start in calls[:2])
+    assert all(start is None for _, start in calls[2:])
+
+
+def test_trakt_unknown_history_collection_uses_collection_time(monkeypatch) -> None:
+    stamp = "2026-10-12T23:00:00.000Z"
+    monkeypatch.setattr(trakt_history, "_now_iso", lambda: stamp)
+    body = {
+        "movies": [{"ids": {"tmdb": 11}, "watched_at": "unknown"}],
+        "episodes": [{"ids": {"trakt": 22}, "watched_at": "unknown"}],
+        "shows": [{"ids": {"tvdb": 33}, "seasons": [{"number": 1, "episodes": [{"number": 2, "watched_at": "unknown"}]}]}],
+    }
+
+    collection = trakt_history._history_body_to_collection(body, {"movies", "shows"})
+
+    assert collection["movies"][0]["collected_at"] == stamp
+    assert collection["episodes"][0]["collected_at"] == stamp
+    assert collection["shows"][0]["seasons"][0]["episodes"][0]["collected_at"] == stamp
+
+
+def test_trakt_writes_undated_watches_as_unknown() -> None:
+    movie = {"type": "movie", "ids": {"tmdb": "17473"}, "watched": True, "_cw_watched_state": True}
+    episode = {**_special(1), "watched": True, "_cw_watched_state": True}
+    episode.pop("watched_at")
+    plain = {"type": "movie", "ids": {"tmdb": "1757386"}}
+
+    body, unresolved, *_ = _batch_add(SimpleNamespace(config={}), [movie, episode, plain])
+
+    movies = {str(m["ids"]["tmdb"]): m for m in body["movies"]}
+    assert movies["17473"]["watched_at"] == "unknown"
+    assert "watched_at" not in movies["1757386"]
+    assert body["shows"][0]["seasons"][0]["episodes"] == [{"number": 1, "watched_at": "unknown"}]
+    assert unresolved == []
+
+
 def test_simkl_special_episode_is_available_as_history_source() -> None:
     row = {
         "show": {
